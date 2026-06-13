@@ -21,6 +21,7 @@ const { default: subscriptionsRoutes } = await import('../../routes/subscription
 const { default: objectsRoutes } = await import('../../routes/objects')
 const { default: eventsRoutes } = await import('../../routes/events')
 const { default: graphRoutes } = await import('../../routes/graph')
+const { default: relationshipsRoutes } = await import('../../routes/relationships')
 
 // Mock session manager — we don't exercise container startup in this test, but
 // the events route reads c.get('sessionManager') for @mention handling. Empty
@@ -63,6 +64,7 @@ function appAs(actorId: string) {
 	app.route('/api/subscriptions', subscriptionsRoutes)
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/graph', graphRoutes)
+	app.route('/api/relationships', relationshipsRoutes)
 	return app
 }
 
@@ -254,6 +256,84 @@ describe('Subscriptions Integration', () => {
 			.then((r) => r.json())
 		expect(detail2.is_subscribed).toBe(false)
 		expect(detail2.subscriber_count).toBe(1)
+	})
+
+	it('a watcher of a bet is NOT subscribed to its child tasks via breaks_into', async () => {
+		// Locks the invariant behind the "stop bet→task notification cascade" bet:
+		// subscribing to a bet must never surface its child tasks' activity in the
+		// watcher's For You unless the watcher is directly involved with the task.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		// A creates a bet → A is auto-subscribed as 'author'.
+		const betRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({ type: 'bet', title: 'Parent bet', status: 'active' }),
+				headersA,
+			),
+		)
+		expect(betRes.status).toBe(201)
+		const bet = await betRes.json()
+
+		// B creates a task → B is auto-subscribed; A is NOT.
+		const taskRes = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({ type: 'task', title: 'Child task', status: 'todo' }),
+				headersB,
+			),
+		)
+		expect(taskRes.status).toBe(201)
+		const task = await taskRes.json()
+
+		// Link bet → task via `breaks_into`. This must not subscribe A to the task.
+		const relRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/relationships',
+				{
+					source_type: 'object',
+					source_id: bet.id,
+					target_type: 'object',
+					target_id: task.id,
+					type: 'breaks_into',
+				},
+				headersA,
+			),
+		)
+		expect(relRes.status).toBe(201)
+
+		// B comments on the task with NO @mention of A. The cascade we're guarding
+		// against would surface this in A's For You via bet-membership.
+		const commentRes = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{ entity_id: task.id, content: 'progress update on the task' },
+				headersB,
+			),
+		)
+		expect(commentRes.status).toBe(201)
+
+		// A's view of the task: not subscribed, unread=0.
+		const taskDetailA = await appA
+			.request(jsonGet(`/api/objects/${task.id}`, headersA))
+			.then((r) => r.json())
+		expect(taskDetailA.is_subscribed).toBe(false)
+		expect(taskDetailA.unread_count).toBe(0)
+
+		// A's For You: the task must NOT appear. The bet has no comment activity
+		// of its own, so the unread feed should be empty for A.
+		const unreadA = await appA
+			.request(jsonGet('/api/subscriptions/unread', headersA))
+			.then((r) => r.json())
+		const taskIds = unreadA.items.map((i: { entity_id: string }) => i.entity_id)
+		expect(taskIds).not.toContain(task.id)
 	})
 
 	it('auto-subscribes the creator to every node created via POST /api/graph', async () => {
