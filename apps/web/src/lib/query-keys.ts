@@ -102,4 +102,10 @@ export const queryKeys = {
 		detail: (workspaceId: string, objectType: string) =>
 			['user-display-settings', workspaceId, 'detail', objectType] as const,
 	},
+	catalogPackages: {
+		all: () => ['catalog-packages'] as const,
+		list: (filters?: { type?: string; use_case?: string; q?: string }) =>
+			['catalog-packages', 'list', filters ?? {}] as const,
+		detail: (id: string) => ['catalog-packages', 'detail', id] as const,
+	},
 } as const
