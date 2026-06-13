@@ -17,6 +17,7 @@ import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
+import catalogPackagesRoutes from './routes/catalog-packages'
 import claudeOauthRoutes from './routes/claude-oauth'
 import eventsRoutes from './routes/events'
 import filesRoutes from './routes/files'
@@ -211,6 +212,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
+	app.route('/api/catalog', catalogPackagesRoutes)
 	app.route('/api/webhooks', webhookApp)
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/sessions', sessionsRoutes)
