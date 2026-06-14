@@ -47,6 +47,7 @@ import {
 	XCircle,
 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
 import { ObjectReference } from '../shared/object-reference'
@@ -580,7 +581,9 @@ function SessionRow({
 	const resultObjects = Array.isArray(result?.objects)
 		? (result.objects as unknown[]).filter(
 				(item): item is { id: string } =>
-					typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>).id === 'string',
+					typeof item === 'object' &&
+					item !== null &&
+					typeof (item as Record<string, unknown>).id === 'string',
 			)
 		: []
 
@@ -823,8 +826,17 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				onUpdateLlmConfig={handleUpdateLlmConfig}
 				onUpdateTools={handleUpdateTools}
 				onUpdateMemory={handleUpdateMemory}
-				onRun={() => run.mutate({ id: agent.id })}
-				onPause={() => pause.mutate(agent.id)}
+				onRun={() =>
+					run.mutate(
+						{ id: agent.id },
+						{ onError: () => toast.error(`Couldn't start ${agent.name}`) },
+					)
+				}
+				onPause={() =>
+					pause.mutate(agent.id, {
+						onError: () => toast.error(`Couldn't pause ${agent.name}`),
+					})
+				}
 				isRunPending={run.isPending}
 				isPausePending={pause.isPending}
 			/>

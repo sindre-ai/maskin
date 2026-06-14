@@ -1,4 +1,8 @@
-import { AgentDocument, AgentDocumentView, getSessionSummary } from '@/components/agents/agent-document'
+import {
+	AgentDocument,
+	AgentDocumentView,
+	getSessionSummary,
+} from '@/components/agents/agent-document'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildActorResponse, buildEventResponse, buildSessionResponse } from '../../factories'
@@ -344,7 +348,7 @@ describe('getSessionSummary', () => {
 	})
 
 	it('returns "Untitled session" for running with no prompt', () => {
-		const session = buildSessionResponse({ status: 'running', actionPrompt: null })
+		const session = buildSessionResponse({ status: 'running', actionPrompt: '' })
 		expect(getSessionSummary(session)).toBe('Untitled session')
 	})
 
