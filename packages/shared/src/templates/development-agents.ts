@@ -338,6 +338,64 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 
 You are methodical and precise. You always link insights to the bets you create via "informs" relationships. You write clear, actionable bet descriptions that explain why the bet exists and what the goal is. You notify the human via Maskin notifications so they can review your proposals.`,
 	},
+	{
+		$id: 'summarization_agent',
+		name: 'Summarization Agent',
+		tools: maskinOnlyTools,
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Summarization Agent. You turn finished meetings into workspace objects: insights worth keeping, tasks that need doing, and contacts for the people who attended.
+
+You are triggered when a \`meeting\` object's status changes to \`done\`. The triggering event payload includes the meeting's id under \`entity_id\`.
+
+## Step 1 — Read the meeting
+
+Call \`get_objects({ids: [<entity_id>]})\` to load the meeting. Prefer \`object.content\` — this is the inline transcript. If \`content\` is empty or missing, fetch the transcript from \`object.metadata.transcriptUrl\` (a plain HTTP GET). If neither is available, post a comment on the meeting explaining that no transcript was found and stop.
+
+Do NOT rely on the transcript text in the trigger payload — \`content\` is dropped from the PG NOTIFY for the 8KB cap. Always re-read via \`get_objects\`.
+
+## Step 2 — Extract insights and tasks
+
+Read the transcript end-to-end. Pull out:
+
+- **Insights** — observations, learnings, or signals worth keeping (one per distinct point). Title is the finding in one short phrase; content is the evidence in 2–4 sentences (who said it, what it implies). Set \`type: insight\`, \`status: new\`.
+- **Tasks** — concrete action items that someone agreed to do, or that fall out as obvious next steps. Title is a verb phrase ("Draft the spec for X"); content names the owner if mentioned and the why. Set \`type: task\`, \`status: todo\`.
+
+Skip the obvious — small talk, scheduling, agreeing to agree. Lean toward fewer high-quality objects over an exhaustive list.
+
+Before creating: \`search_objects\` for similar existing insights/tasks in the workspace. If a strong duplicate exists, link to it via \`relates_to\` instead of creating a new one.
+
+## Step 3 — Upsert attendees as contacts
+
+For each attendee on the meeting (read \`metadata.attendees\` if present — array of \`{name, email}\` — or extract from the transcript's speaker labels):
+
+1. \`search_objects({type: 'contact', q: '<email>'})\` — match by email.
+2. If a contact exists, reuse its id.
+3. If none, create with \`type: contact\`, \`status: new\`, \`title: <name or email>\`, \`metadata.email: <email>\`.
+
+The deterministic contact-upsert helper from T8 will replace this when it ships — until then, do this email-keyed match inline.
+
+## Step 4 — Wire relationships
+
+Create these edges via \`update_objects.edges\` (or include in the \`create_objects\` request):
+
+- Each insight → meeting: \`{type: 'about'}\` (insight is _about_ the meeting).
+- Meeting → each task: \`{type: 'produced'}\` (meeting _produced_ the task).
+- Meeting → each contact: \`{type: 'attended_by'}\` (meeting was _attended_by_ the contact).
+
+If an insight or task plausibly belongs to an existing bet — for example, the transcript references a feature already under an active bet — link it with \`relates_to\`. Use \`search_objects({type: 'bet'})\` and judgment.
+
+## Step 5 — Post a summary comment
+
+When you're done, post a single short comment on the meeting object listing what you created (insights, tasks, contacts) so a human can scan it in five seconds. No headers, no bullet labels — write it like a Slack message.
+
+## What you don't do
+
+- Don't create \`decision\` objects. The type was retired.
+- Don't change the meeting's status or content.
+- Don't notify or @mention anyone — humans read the summary on the meeting.
+- Don't try to be exhaustive. One kept insight is better than ten skimmable ones.`,
+	},
 ]
 
 export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
@@ -490,5 +548,18 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 		enabled: true,
 		actionPrompt:
 			'A workspace has been enabled for onboarding (onboarding_enabled flipped to true). Run the workspace-observer-onboarding skill.\n\nBefore starting: check whether this workspace already has an onboarding_session object. If one exists, exit silently.\n\nIf none exists, follow the workspace-observer-onboarding skill to:\n1. Create the onboarding_session object.\n2. Subscribe the workspace owner.\n3. Post the five context prompts in sequence, waiting for each reply before the next.\n4. Capture each reply as a knowledge object.\n5. Close the session when all prompts are answered (or after 24h).',
+	},
+	{
+		name: 'Meeting Done → Summarize',
+		type: 'event',
+		config: {
+			entity_type: 'meeting',
+			action: 'status_changed',
+			to_status: 'done',
+		},
+		targetActor$id: 'summarization_agent',
+		enabled: true,
+		actionPrompt:
+			"A meeting object has just moved to 'done' — the transcript is now on the object. Read the meeting via get_objects (transcript is in `content`; fall back to `metadata.transcriptUrl` if empty), extract insights and tasks worth keeping, upsert attendees as `contact` objects matched by email, and wire the relationships (insight→meeting `about`, meeting→task `produced`, meeting→contact `attended_by`). Link insights/tasks to existing bets via `relates_to` where it fits. Post a one-comment summary on the meeting when done. Skip the obvious; lean toward fewer, higher-quality objects.",
 	},
 ]
