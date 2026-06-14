@@ -260,6 +260,12 @@ export function CommentInput({
 			}
 
 			if (e.key === 'Enter' && !e.shiftKey) {
+				// On touch-primary devices (iOS, mobile), let Enter insert a newline —
+				// the soft keyboard's Enter is the source of accidental submits. The
+				// Send button is the only submit path on these devices.
+				if (typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches) {
+					return
+				}
 				e.preventDefault()
 				handleSubmit()
 			}
