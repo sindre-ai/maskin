@@ -5,6 +5,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { AlertTriangle, Pause, Play } from 'lucide-react'
 import { ActorAvatar } from '../shared/actor-avatar'
+import { Button } from '../ui/button'
 import { Spinner } from '../ui/spinner'
 
 export type PortraitStatus = 'running' | 'paused' | 'idle' | 'failed'
@@ -114,25 +115,21 @@ function PortraitButton({
 }) {
 	const Icon = intent === 'run' ? Play : Pause
 	return (
-		<button
+		<Button
 			type="button"
+			size="sm"
+			variant={intent === 'run' ? 'default' : 'outline'}
 			onClick={(e) => {
 				e.preventDefault()
 				e.stopPropagation()
 				onClick()
 			}}
 			disabled={disabled}
-			className={cn(
-				'inline-flex w-full items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-colors',
-				'min-h-[44px] disabled:cursor-not-allowed disabled:opacity-60',
-				intent === 'run'
-					? 'border border-accent/40 bg-accent/10 text-accent hover:bg-accent/15'
-					: 'border border-border bg-bg-surface text-foreground hover:bg-bg-hover',
-			)}
+			className="w-full min-h-[44px]"
 		>
 			<Icon size={14} aria-hidden="true" />
 			{label}
-		</button>
+		</Button>
 	)
 }
 
