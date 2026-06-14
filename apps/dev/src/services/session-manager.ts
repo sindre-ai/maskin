@@ -29,6 +29,7 @@ import { logger } from '../lib/logger'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import type { SessionDispatchQueue } from './session-dispatch-queue'
 import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
 import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
 
@@ -107,6 +108,7 @@ export class SessionManager extends EventEmitter {
 	private static readonly LOG_STREAM_RECONNECT_DELAY_MS = 2000
 	private agentBaseBuildContext: string | null = null
 	private drainingWorkspaces: Set<string> = new Set()
+	private dispatchQueue: SessionDispatchQueue | null = null
 
 	constructor(
 		private db: Database,
@@ -119,6 +121,17 @@ export class SessionManager extends EventEmitter {
 
 	setAgentBaseBuildContext(buildContext: string) {
 		this.agentBaseBuildContext = buildContext
+	}
+
+	/**
+	 * Wire a `SessionDispatchQueue` to take over the start path. When set
+	 * (production), `startSession` enqueues the session instead of spawning a
+	 * local Docker container; the queue calls the `SessionDispatcher`, which
+	 * routes to an `agent_servers` row over HTTPS. Local-dev leaves this null
+	 * and the manager keeps spawning Docker.
+	 */
+	setDispatchQueue(queue: SessionDispatchQueue) {
+		this.dispatchQueue = queue
 	}
 
 	async start() {
@@ -212,6 +225,40 @@ export class SessionManager extends EventEmitter {
 			.update(sessions)
 			.set({ status: 'starting', updatedAt: new Date() })
 			.where(eq(sessions.id, sessionId))
+
+		// Production path: hand off to the dispatch queue, which routes through
+		// `SessionDispatcher` to an agent_servers row over HTTPS. The agent-
+		// server pulls its own /agent workspace from S3 (T8), so we don't
+		// pre-stage a temp dir locally — we only own the queue handoff.
+		if (this.dispatchQueue) {
+			try {
+				await this.dispatchQueue.enqueue(sessionId)
+				logger.info(`Session enqueued for remote dispatch: ${sessionId}`, {
+					workspaceId: session.workspaceId,
+				})
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err)
+				await this.db
+					.update(sessions)
+					.set({
+						status: 'failed',
+						result: { error: `Enqueue failed: ${message}` },
+						completedAt: new Date(),
+						updatedAt: new Date(),
+					})
+					.where(eq(sessions.id, sessionId))
+				await this.db.insert(events).values({
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					action: 'session_failed',
+					entityType: 'session',
+					entityId: sessionId,
+					data: { error: `Enqueue failed: ${message}` },
+				})
+				throw err
+			}
+			return
+		}
 
 		try {
 			// Pull agent files from S3 to temp dir (chmod 777 so non-root agent user in container can write)
@@ -629,13 +676,18 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Shared helper: build env vars (including integration credentials) and create+start container.
+	 * Build the launch spec for a session — env vars (including integration
+	 * credentials), image, and resource limits. The shape mirrors
+	 * `StartSessionRequest` on `AgentServerClient` so the SessionDispatcher (T6)
+	 * can pass it straight through to apps/agent-server. Local Docker launches
+	 * call this from `launchContainer` so both paths derive env identically.
 	 */
-	private async launchContainer(
-		session: typeof sessions.$inferSelect,
-		tempDir: string,
-		containerName?: string,
-	): Promise<string> {
+	async buildLaunchSpec(session: typeof sessions.$inferSelect): Promise<{
+		image: string
+		env: Record<string, string>
+		memoryMib: number
+		cpus: number
+	}> {
 		const [agent] = await this.db
 			.select()
 			.from(actors)
@@ -869,12 +921,34 @@ export class SessionManager extends EventEmitter {
 			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers })
 		}
 
-		const name = containerName ?? `anko-session-${session.id.slice(0, 8)}`
 		const image = (sessionConfig.base_image as string) ?? 'agent-base:latest'
+		// memory_mb / cpu_shares are the Docker-native units used historically;
+		// the spec exposes MiB and a CPU count so apps/agent-server can pass
+		// them through to libkrun without re-translating per call site.
+		const memoryMib = (sessionConfig.memory_mb as number) ?? 4096
+		const cpuShares = (sessionConfig.cpu_shares as number) ?? 1024
+		const cpus = Math.max(1, Math.round(cpuShares / 1024))
+
+		return { image, env: envVars, memoryMib, cpus }
+	}
+
+	/**
+	 * Shared helper: build the launch spec and create+start the local Docker
+	 * container. Local-dev only — production goes through the dispatch queue
+	 * to apps/agent-server.
+	 */
+	private async launchContainer(
+		session: typeof sessions.$inferSelect,
+		tempDir: string,
+		containerName?: string,
+	): Promise<string> {
+		const spec = await this.buildLaunchSpec(session)
+		const envVars = { ...spec.env }
+		const name = containerName ?? `anko-session-${session.id.slice(0, 8)}`
 
 		// Ensure the image exists — rebuild if it was pruned or lost
-		if (image === 'agent-base:latest' && this.agentBaseBuildContext) {
-			await this.containers.ensureImage(image, this.agentBaseBuildContext)
+		if (spec.image === 'agent-base:latest' && this.agentBaseBuildContext) {
+			await this.containers.ensureImage(spec.image, this.agentBaseBuildContext)
 		}
 
 		// Provision browser sidecar if Playwright MCP is configured
@@ -889,11 +963,11 @@ export class SessionManager extends EventEmitter {
 		}
 
 		const containerId = await this.containers.create({
-			image,
+			image: spec.image,
 			name,
 			env: envVars,
-			memoryMb: (sessionConfig.memory_mb as number) ?? 4096,
-			cpuShares: (sessionConfig.cpu_shares as number) ?? 1024,
+			memoryMb: spec.memoryMib,
+			cpuShares: spec.cpus * 1024,
 			binds: [`${tempDir}:/agent:rw`],
 			networkMode,
 			interactive: session.interactive,

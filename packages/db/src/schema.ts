@@ -1,6 +1,7 @@
 import type { AgentState, FileAnnotation, SessionResult } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {
+	type AnyPgColumn,
 	bigint,
 	bigserial,
 	boolean,
@@ -206,6 +207,10 @@ export const sessions = pgTable(
 		triggerId: uuid('trigger_id').references(() => triggers.id, { onDelete: 'set null' }),
 		status: text('status').notNull(),
 		containerId: text('container_id'),
+		// Set by the SessionDispatcher (T6) on a successful production dispatch
+		// to apps/agent-server. NULL for local-dev sessions launched via Docker
+		// directly from session-manager.
+		agentServerId: uuid('agent_server_id').references((): AnyPgColumn => agentServers.id),
 		actionPrompt: text('action_prompt').notNull(),
 		config: jsonb('config').notNull().default({}),
 		interactive: boolean('interactive').notNull().default(false),
@@ -233,6 +238,11 @@ export const sessions = pgTable(
 		index('sessions_actor_completed_idx')
 			.on(t.actorId, t.completedAt)
 			.where(sql`${t.completedAt} IS NOT NULL`),
+		// Hot path for the dispatcher's least-loaded lookup: counts active
+		// sessions grouped by agent_server_id.
+		index('sessions_agent_server_active_idx')
+			.on(t.agentServerId, t.status)
+			.where(sql`${t.agentServerId} IS NOT NULL`),
 	],
 )
 
