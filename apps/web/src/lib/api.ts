@@ -453,6 +453,18 @@ export const api = {
 			}),
 	},
 
+	catalogPackages: {
+		list: (params?: { type?: string; use_case?: string; q?: string }) => {
+			const qs = params
+				? `?${new URLSearchParams(
+						Object.entries(params).filter(([, v]) => v !== undefined) as [string, string][],
+					)}`
+				: ''
+			return request<CatalogPackagesListResponse>(`/catalog/packages${qs}`)
+		},
+		get: (id: string) => request<CatalogPackageDetailResponse>(`/catalog/packages/${id}`),
+	},
+
 	subscriptions: {
 		subscribe: (workspaceId: string, entityType: string, entityId: string) =>
 			request<{ subscribed: true }>('/subscriptions', {
@@ -1129,4 +1141,43 @@ export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
 	csvOptions?: CsvOptions
+}
+
+export type CatalogItemType = 'actor' | 'trigger' | 'skill' | 'integration'
+
+export interface CatalogPackageSummary {
+	id: string
+	name: string
+	slug: string
+	description: string
+	version: string
+	use_case: string | null
+	item_types: CatalogItemType[]
+	created_at: string | null
+	updated_at: string | null
+}
+
+export interface CatalogPackageItem {
+	id: string
+	package_id: string
+	item_type: CatalogItemType
+	source_item_id: string
+	item_snapshot: Record<string, unknown>
+	created_at: string | null
+}
+
+export interface CatalogPackageCounts {
+	total: number
+	by_type: Record<CatalogItemType, number>
+	by_use_case: Record<string, number>
+}
+
+export interface CatalogPackagesListResponse {
+	packages: CatalogPackageSummary[]
+	counts: CatalogPackageCounts
+}
+
+export interface CatalogPackageDetailResponse {
+	package: CatalogPackageSummary
+	items: CatalogPackageItem[]
 }
