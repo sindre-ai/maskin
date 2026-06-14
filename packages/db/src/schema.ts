@@ -36,6 +36,10 @@ export const actors = pgTable('actors', {
 	isSystem: boolean('is_system').notNull().default(false),
 	agentState: text('agent_state').notNull().default('idle').$type<AgentState>(),
 	agentStateUpdatedAt: timestamp('agent_state_updated_at', { withTimezone: true }),
+	// Per-row marker keys for managed-package installs. Nullable everywhere;
+	// install-provisioned rows carry { installed_package_id, source_item_id }
+	// so the version-push cron can find them. See catalogPackages comment.
+	metadata: jsonb('metadata'),
 	// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
 	createdBy: uuid('created_by').references((): any => actors.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
@@ -153,6 +157,8 @@ export const integrations = pgTable(
 		externalId: text('external_id'),
 		credentials: text('credentials').notNull(),
 		config: jsonb('config').notNull().default({}),
+		// Per-row marker keys for managed-package installs; nullable everywhere.
+		metadata: jsonb('metadata'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -184,6 +190,8 @@ export const triggers = pgTable('triggers', {
 		.references(() => actors.id)
 		.notNull(),
 	enabled: boolean('enabled').notNull().default(true),
+	// Per-row marker keys for managed-package installs; nullable everywhere.
+	metadata: jsonb('metadata'),
 	createdBy: uuid('created_by')
 		.references(() => actors.id)
 		.notNull(),
@@ -293,6 +301,8 @@ export const workspaceSkills = pgTable(
 		storageKey: text('storage_key').notNull(),
 		sizeBytes: integer('size_bytes').notNull(),
 		isValid: boolean('is_valid').notNull().default(true),
+		// Per-row marker keys for managed-package installs; nullable everywhere.
+		metadata: jsonb('metadata'),
 		createdBy: uuid('created_by').references(() => actors.id),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
