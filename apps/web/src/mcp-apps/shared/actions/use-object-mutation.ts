@@ -18,7 +18,7 @@ import type { MutationOutcome, ObjectMutation } from './types'
 interface UseObjectMutationOptions<T> {
 	objectId: string
 	/** Object field name on the `update_objects` payload — e.g. `status`, `owner`. */
-	field: 'status' | 'owner' | 'title' | 'content'
+	field: 'status' | 'driver' | 'title' | 'content'
 	workspaceId?: string
 	/** Optional callback fired after the server confirmed the change. */
 	onSuccess?: (next: T) => void

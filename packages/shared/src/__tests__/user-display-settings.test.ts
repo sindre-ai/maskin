@@ -8,7 +8,7 @@ describe('displaySettingsBodySchema', () => {
 			sort: 'title',
 			order: 'asc',
 			groupBy: 'status',
-			filters: { status: 'active', owner: 'me' },
+			filters: { status: 'active', driver: 'me' },
 			columnVisibility: { title: true, 'metadata.priority': false },
 		})
 		expect(result.view).toBe('list')

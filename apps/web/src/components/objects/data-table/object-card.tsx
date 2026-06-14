@@ -25,7 +25,7 @@ export function ObjectCard({
 	onSelect,
 	onClick,
 }: ObjectCardProps) {
-	const owner = object.owner ? actors?.find((a) => a.id === object.owner) : null
+	const owner = object.driver ? actors?.find((a) => a.id === object.driver) : null
 
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: card click supplements the inner Link, which keyboard users tab to and activate with Enter

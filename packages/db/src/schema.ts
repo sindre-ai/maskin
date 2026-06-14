@@ -1,3 +1,4 @@
+import type { AgentState, FileAnnotation, SessionResult } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {
 	bigint,
@@ -33,6 +34,8 @@ export const actors = pgTable('actors', {
 	llmProvider: text('llm_provider'),
 	llmConfig: jsonb('llm_config'),
 	isSystem: boolean('is_system').notNull().default(false),
+	agentState: text('agent_state').notNull().default('idle').$type<AgentState>(),
+	agentStateUpdatedAt: timestamp('agent_state_updated_at', { withTimezone: true }),
 	// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
 	createdBy: uuid('created_by').references((): any => actors.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
@@ -45,6 +48,7 @@ export const workspaces = pgTable('workspaces', {
 	id: uuid('id').defaultRandom().primaryKey(),
 	name: text('name').notNull(),
 	settings: jsonb('settings').notNull().default({}),
+	onboardingEnabled: boolean('onboarding_enabled').notNull().default(true),
 	createdBy: uuid('created_by').references(() => actors.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
@@ -81,7 +85,7 @@ export const objects = pgTable(
 		content: text('content'),
 		status: text('status').notNull(),
 		metadata: jsonb('metadata'),
-		owner: uuid('owner').references(() => actors.id),
+		driver: uuid('driver').references(() => actors.id),
 		activeSessionId: uuid('active_session_id'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
@@ -205,7 +209,7 @@ export const sessions = pgTable(
 		actionPrompt: text('action_prompt').notNull(),
 		config: jsonb('config').notNull().default({}),
 		interactive: boolean('interactive').notNull().default(false),
-		result: jsonb('result'),
+		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		startedAt: timestamp('started_at', { withTimezone: true }),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
@@ -216,6 +220,7 @@ export const sessions = pgTable(
 		cacheCreationInputTokens: integer('cache_creation_input_tokens'),
 		cacheReadInputTokens: integer('cache_read_input_tokens'),
 		durationMs: integer('duration_ms'),
+		currentActivity: text('current_activity'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -514,6 +519,10 @@ export const files = pgTable(
 		mimeType: text('mime_type').notNull(),
 		sizeBytes: integer('size_bytes').notNull(),
 		storageKey: text('storage_key').notNull(),
+		// Pinned review annotations (humans pin comments on rendered HTML files).
+		// Stored on the row so they round-trip with the file for every reader —
+		// UI and MCP get_file — without an extra S3 fetch.
+		annotations: jsonb('annotations').notNull().default([]).$type<FileAnnotation[]>(),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -604,3 +613,32 @@ export const userDisplaySettings = pgTable(
 
 export type UserDisplaySettings = typeof userDisplaySettings.$inferSelect
 export type NewUserDisplaySettings = typeof userDisplaySettings.$inferInsert
+
+// ── Workspace Onboarding Prompts ──────────────────────────────────────────────
+//
+// One row per prompt type per workspace. Written when onboarding is enabled;
+// `answered_at` and `object_id` are filled in once the owner replies and the
+// knowledge object is created.
+
+export const workspaceOnboardingPrompts = pgTable(
+	'workspace_onboarding_prompts',
+	{
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		promptType: text('prompt_type').notNull(),
+		sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+		answeredAt: timestamp('answered_at', { withTimezone: true }),
+		objectId: uuid('object_id'),
+	},
+	(t) => [
+		primaryKey({ columns: [t.workspaceId, t.promptType] }),
+		check(
+			'workspace_onboarding_prompts_prompt_type_check',
+			sql`${t.promptType} IN ('product_vision','icp','first_bet_hypothesis','north_star_metric','customer_evidence')`,
+		),
+	],
+)
+
+export type WorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferSelect
+export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferInsert

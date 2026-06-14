@@ -280,6 +280,32 @@ describe('Files Routes', () => {
 			expect(putCall?.[1]).toEqual(Buffer.from('# Updated', 'utf8'))
 		})
 
+		it('persists annotations without re-uploading bytes', async () => {
+			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
+			const file = buildFile({ workspaceId, mimeType: 'text/html' })
+			const annotations = [
+				{
+					id: 'a1',
+					pinNumber: 1,
+					selector: 'div.card-title',
+					bounds: { x: 0.05, y: 0.35, w: 0.27, h: 0.06 },
+					comment: 'this is also not good',
+					position: { x: 0.19, y: 0.38 },
+				},
+			]
+			const updated = { ...file, annotations }
+			vi.mocked(storageProvider.get).mockResolvedValue(Buffer.from('<h1>hi</h1>'))
+			mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })], [file]]
+			mockResults.updateQueue = [[updated]]
+
+			const res = await app.request(jsonRequest('PATCH', `/api/files/${file.id}`, { annotations }))
+
+			expect(res.status).toBe(200)
+			expect(storageProvider.put).not.toHaveBeenCalled()
+			const body = (await res.json()) as { annotations: typeof annotations }
+			expect(body.annotations).toEqual(annotations)
+		})
+
 		it('re-uploads when content changes (explicit base64 encoding)', async () => {
 			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
 			const file = buildFile({ workspaceId, mimeType: 'image/png' })

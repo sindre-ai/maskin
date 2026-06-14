@@ -48,10 +48,12 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' },
 	},
 	slack: {
-		type: 'stdio',
-		command: 'npx',
-		args: ['-y', '@modelcontextprotocol/server-slack'],
-		env: { SLACK_BOT_TOKEN: '${SLACK_TOKEN}' },
+		type: 'http',
+		url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+		headers: {
+			Authorization: 'Bearer ${MASKIN_API_KEY}',
+			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+		},
 	},
 	gmail: {
 		type: 'http',
@@ -294,14 +296,14 @@ function ServerCard({
 		: Object.keys(server.env ?? {}).length
 
 	return (
-		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface px-3 py-2">
+		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-bg-surface px-3 py-2">
 			{http ? (
 				<Globe className="h-4 w-4 text-muted-foreground shrink-0" />
 			) : (
 				<Terminal className="h-4 w-4 text-muted-foreground shrink-0" />
 			)}
 			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground">{name}</p>
+				<p className="text-sm font-medium text-foreground truncate">{name}</p>
 				<p className="text-xs text-muted-foreground truncate">
 					{http ? server.url : `${server.command} ${server.args?.join(' ')}`}
 					{detailCount > 0 && (
@@ -313,7 +315,7 @@ function ServerCard({
 				</p>
 			</div>
 			{confirmDelete ? (
-				<div className="flex items-center gap-1">
+				<div className="flex items-center gap-1 shrink-0">
 					<Button size="sm" variant="destructive" onClick={onDelete}>
 						Delete
 					</Button>
@@ -322,7 +324,7 @@ function ServerCard({
 					</Button>
 				</div>
 			) : (
-				<div className="flex items-center gap-1">
+				<div className="flex items-center gap-1 shrink-0">
 					<Button
 						size="icon"
 						variant="ghost"
@@ -542,7 +544,7 @@ function KeyValueEditor({
 							onChange(pairs.map((p) => (p.id === pair.id ? { ...p, key: e.target.value } : p)))
 						}
 						placeholder={keyPlaceholder}
-						className="h-7 text-xs font-mono flex-1"
+						className="h-7 text-xs font-mono flex-1 min-w-0"
 					/>
 					<Input
 						value={pair.value}
@@ -550,7 +552,7 @@ function KeyValueEditor({
 							onChange(pairs.map((p) => (p.id === pair.id ? { ...p, value: e.target.value } : p)))
 						}
 						placeholder={valuePlaceholder}
-						className="h-7 text-xs font-mono flex-1"
+						className="h-7 text-xs font-mono flex-1 min-w-0"
 					/>
 					<Button
 						size="icon"

@@ -77,6 +77,32 @@ export function isTextMimeType(mime: string): boolean {
 	return mime.startsWith('text/') || TEXT_MIME_EXACT.has(mime)
 }
 
+// Max comment length — kept in sync with sanitizeAnnotations in apps/web.
+export const MAX_ANNOTATION_COMMENT_LENGTH = 500
+// Cap the number of pins per file so the jsonb blob stays bounded.
+export const MAX_ANNOTATIONS_PER_FILE = 200
+
+// A single pinned review comment on a file. `pinNumber` and `position` are the
+// UI's pin badge + drop location; they're optional so non-UI writers (or older
+// rows) can omit them and let the viewer backfill from `bounds`.
+export const fileAnnotationSchema = z.object({
+	id: z.string().max(100),
+	pinNumber: z.number().int().positive().optional(),
+	selector: z.string().max(1000).default(''),
+	bounds: z.object({
+		x: z.number(),
+		y: z.number(),
+		w: z.number(),
+		h: z.number(),
+	}),
+	comment: z.string().max(MAX_ANNOTATION_COMMENT_LENGTH),
+	position: z.object({ x: z.number(), y: z.number() }).optional(),
+})
+
+export type FileAnnotation = z.infer<typeof fileAnnotationSchema>
+
+export const fileAnnotationsSchema = z.array(fileAnnotationSchema).max(MAX_ANNOTATIONS_PER_FILE)
+
 export const createFileSchema = z
 	.object({
 		name: fileNameSchema,
@@ -96,6 +122,7 @@ export const updateFileSchema = z
 		mime_type: mimeTypeSchema.optional(),
 		content: z.string().optional(),
 		encoding: fileEncodingSchema.optional(),
+		annotations: fileAnnotationsSchema.optional(),
 	})
 	.refine(
 		(o) => Object.values(o).some((v) => v !== undefined),
@@ -127,6 +154,7 @@ export const fileDetailSchema = fileListItemSchema.extend({
 	content: z.string(),
 	encoding: fileEncodingSchema,
 	url: z.string().url(),
+	annotations: fileAnnotationsSchema.default([]),
 })
 
 export type FileDetail = z.infer<typeof fileDetailSchema>

@@ -1,0 +1,114 @@
+_metadata:
+  major_version: 1
+  minor_version: 2
+
+display_information:
+  name: Machine
+  description: The colleague your AI agents post as in Slack.
+  long_description: >-
+    Machine is Maskin's bot identity in Slack. Every agent reply, DM, and
+    mention lands here — branded as Machine, with the calling agent's name
+    and workspace in a per-message subscript (e.g. `Synthesizer · in mesh-firm`)
+    via Slack's `chat:write.customize` scope. Operators see one consistent
+    teammate instead of posts attributed to individual founders.
+  background_color: "#0F1117"
+
+features:
+  bot_user:
+    display_name: Machine
+    always_online: true
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+
+oauth_config:
+  # The OAuth redirect must match apps/dev's callback route exactly. Replace
+  # REPLACE_WITH_ENV_URL with the target environment's public host before
+  # uploading (prod: maskin.sindre.ai). Dropping this breaks the connect flow.
+  redirect_urls:
+    - https://REPLACE_WITH_ENV_URL/api/integrations/slack/callback
+  pkce_enabled: false
+  scopes:
+    # Bot token (xoxb-) — what agents post as. `chat:write.customize` is what
+    # lets the MCP set the per-agent `username` + `icon_url` on chat.postMessage.
+    bot:
+      - channels:read
+      - channels:history
+      - channels:join
+      - groups:read
+      - groups:history
+      - im:read
+      - im:history
+      - im:write
+      - mpim:read
+      - mpim:history
+      - chat:write
+      - chat:write.customize
+      - users:read
+      - app_mentions:read
+      - reactions:read
+      - reactions:write
+    # User token (xoxp-) — required by user-token-only features (Slack search,
+    # canvases, file reads). NOT used by the agent-posting path; the runtime
+    # guard refuses to post with a user token. Keep these unless you have
+    # confirmed nothing in apps/dev reads the user token.
+    user:
+      - search:read.public
+      - search:read.private
+      - search:read.mpim
+      - search:read.im
+      - search:read.files
+      - search:read.users
+      - chat:write
+      - channels:history
+      - groups:history
+      - mpim:history
+      - im:history
+      - canvases:read
+      - canvases:write
+      - users:read
+      - users:read.email
+      - reactions:write
+      - reactions:read
+      - emoji:read
+      - files:read
+      - channels:write
+      - groups:write
+      - im:write
+      - mpim:write
+      - channels:read
+      - groups:read
+      - mpim:read
+    user_optional:
+      - search:read.private
+      - search:read.mpim
+      - search:read.im
+      - search:read.files
+      - chat:write
+      - groups:history
+      - mpim:history
+      - im:history
+      - canvases:read
+      - canvases:write
+
+settings:
+  event_subscriptions:
+    request_url: https://REPLACE_WITH_ENV_URL/api/webhooks/slack
+    bot_events:
+      - app_mention
+      - message.channels
+      - message.groups
+      - message.im
+      - message.mpim
+      - reaction_added
+      - reaction_removed
+      - channel_created
+      - channel_deleted
+      - channel_rename
+      - member_joined_channel
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

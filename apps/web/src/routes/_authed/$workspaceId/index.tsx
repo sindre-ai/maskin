@@ -1,4 +1,5 @@
 import { NewConversationComposer } from '@/components/foryou/new-conversation-composer'
+import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { PersistentReplyBar } from '@/components/foryou/persistent-reply-bar'
 import { UnreadThreadCard } from '@/components/foryou/unread-thread-card'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -24,14 +25,23 @@ function ForYouDashboard() {
 	const [composerOpen, setComposerOpen] = useState(false)
 	const markRead = useMarkRead(workspaceId)
 
-	// mentions_you items ("Needs your input") sort before FYI items; stable within each tier
-	const sorted = useMemo(
+	// Onboarding sessions render as their own prompt card above the thread stream.
+	const onboardingItems = useMemo(
+		() => items.filter((item) => item.object?.type === 'onboarding_session'),
+		[items],
+	)
+
+	// Regular threads, with mentions_you items ("Needs your input") sorted before FYI
+	// items; stable within each tier.
+	const sortedRegular = useMemo(
 		() =>
-			[...items].sort((a, b) => {
-				if (a.mentions_you && !b.mentions_you) return -1
-				if (!a.mentions_you && b.mentions_you) return 1
-				return 0
-			}),
+			items
+				.filter((item) => item.object?.type !== 'onboarding_session')
+				.sort((a, b) => {
+					if (a.mentions_you && !b.mentions_you) return -1
+					if (!a.mentions_you && b.mentions_you) return 1
+					return 0
+				}),
 		[items],
 	)
 
@@ -152,7 +162,14 @@ function ForYouDashboard() {
 					</div>
 				</div>
 				<div className="space-y-4">
-					{sorted.map((item) => (
+					{onboardingItems.map((item) => (
+						<OnboardingPromptCard
+							key={`${item.entity_type}-${item.entity_id}`}
+							workspaceId={workspaceId}
+							item={item}
+						/>
+					))}
+					{sortedRegular.map((item) => (
 						<UnreadThreadCard
 							key={`${item.entity_type}-${item.entity_id}`}
 							workspaceId={workspaceId}

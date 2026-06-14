@@ -179,7 +179,7 @@ const [rawBet1, rawBet2] = await db
 			title: 'Simplify onboarding to 2 steps',
 			content: 'Merge team-invite into post-signup flow to reduce drop-off.',
 			status: 'active',
-			owner: demoUser.id,
+			driver: demoUser.id,
 			createdBy: demoUser.id,
 		},
 		{
@@ -188,7 +188,7 @@ const [rawBet1, rawBet2] = await db
 			title: 'Add command palette',
 			content: 'Expose all actions via Cmd+K palette for power users.',
 			status: 'proposed',
-			owner: demoUser.id,
+			driver: demoUser.id,
 			createdBy: demoUser.id,
 		},
 	])
@@ -207,7 +207,7 @@ const [rawTask1, rawTask2, rawTask3] = await db
 			type: 'task',
 			title: 'Remove team-invite step from onboarding',
 			status: 'in_progress',
-			owner: demoUser.id,
+			driver: demoUser.id,
 			createdBy: demoUser.id,
 		},
 		{
@@ -215,7 +215,7 @@ const [rawTask1, rawTask2, rawTask3] = await db
 			type: 'task',
 			title: 'Design command palette UI',
 			status: 'todo',
-			owner: demoUser.id,
+			driver: demoUser.id,
 			createdBy: demoUser.id,
 		},
 		{

@@ -61,6 +61,7 @@ function buildSession(id: string): SessionResponse {
 		createdBy: 'user-1',
 		createdAt: null,
 		updatedAt: null,
+		currentActivity: null,
 	}
 }
 

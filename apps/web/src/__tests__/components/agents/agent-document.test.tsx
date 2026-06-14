@@ -53,6 +53,8 @@ vi.mock('@/components/agents/instruction-log', () => ({
 
 vi.mock('@/components/agents/session-detail-panel', () => ({
 	SessionDetailPanel: () => null,
+	FailureCard: () => null,
+	parseFailureReason: () => null,
 }))
 
 vi.mock('@/components/agents/mcp-servers', () => ({

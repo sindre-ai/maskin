@@ -189,7 +189,7 @@ app.openapi(createGraphRoute, async (c) => {
 						content: node.content,
 						status: node.status,
 						metadata: node.metadata,
-						owner: node.owner,
+						driver: node.driver,
 						createdBy: actorId,
 					})
 					.returning()

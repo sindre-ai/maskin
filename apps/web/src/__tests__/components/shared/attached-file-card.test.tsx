@@ -29,6 +29,7 @@ function buildImageDetail(overrides: Partial<FileDetail> = {}): FileDetail {
 		content: 'ZmFrZS1wbmctYnl0ZXM=', // base64 of "fake-png-bytes"
 		encoding: 'base64',
 		url: 'http://localhost:5173/ws-1/files/file-img-1',
+		annotations: [],
 		...overrides,
 	}
 }
