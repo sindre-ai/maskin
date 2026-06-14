@@ -53,10 +53,6 @@ vi.mock('@/components/layout/page-header', () => ({
 	),
 }))
 
-vi.mock('@/components/agents/instruction-log', () => ({
-	InstructionLog: () => null,
-}))
-
 vi.mock('@/components/agents/session-detail-panel', () => ({
 	SessionDetailPanel: () => null,
 	FailureCard: () => null,
