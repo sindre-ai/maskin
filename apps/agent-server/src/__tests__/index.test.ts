@@ -65,6 +65,24 @@ describe('GET /health', () => {
 			msb_version: '0.5.4',
 		})
 	})
+
+	it('reports unhealthy (503, ok:false) when msb is unavailable', async () => {
+		const run = async () => {
+			throw new Error('msb: command not found')
+		}
+		const app = buildApp({
+			env: makeEnv(),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const res = await app.request('/health')
+		expect(res.status).toBe(503)
+		expect(await res.json()).toEqual({
+			ok: false,
+			backend: 'microsandbox',
+			msb_version: null,
+		})
+	})
 })
 
 describe('POST /sessions auth', () => {

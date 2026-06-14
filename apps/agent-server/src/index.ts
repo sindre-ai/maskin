@@ -31,12 +31,19 @@ export function buildApp(deps: AppDeps): Hono {
 	const app = new Hono()
 
 	app.get('/health', async (c) => {
+		// `ok` must track msb liveness — a box whose `msb` is missing or broken
+		// is not healthy, even though the process is up. readMsbVersion returns
+		// null on any failure, so a null version is an unhealthy box (503).
 		const msbVersion = await readMsbVersion({ msbBin: deps.msb.msbBin, run: deps.msb.run })
-		return c.json({
-			ok: true,
-			backend: 'microsandbox',
-			msb_version: msbVersion,
-		})
+		const ok = msbVersion !== null
+		return c.json(
+			{
+				ok,
+				backend: 'microsandbox',
+				msb_version: msbVersion,
+			},
+			ok ? 200 : 503,
+		)
 	})
 
 	app.post('/sessions', async (c) => {
