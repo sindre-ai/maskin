@@ -15,7 +15,7 @@
 -- None of these tables are hot per `webhook-deliveries-cleaner.ts` — only
 -- `webhook_deliveries` is — so plain ADD COLUMN is fine, no CONCURRENTLY.
 -- All ADDs are `IF NOT EXISTS` so the migration is safe to co-land with the
--- T5 PR that also reaches for the same column.
+-- T3 install PR and the T5 version-push PR that also reach for the same column.
 
 ALTER TABLE "actors"
 	ADD COLUMN IF NOT EXISTS "metadata" jsonb;

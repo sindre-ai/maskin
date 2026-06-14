@@ -38,7 +38,7 @@ export const actors = pgTable('actors', {
 	agentStateUpdatedAt: timestamp('agent_state_updated_at', { withTimezone: true }),
 	// Per-row marker keys for managed-package installs. Nullable everywhere;
 	// install-provisioned rows carry { installed_package_id, source_item_id }
-	// so the version-push cron can find them. See catalogPackages comment.
+	// so the T5 version-push cron can find them. See catalogPackages comment.
 	metadata: jsonb('metadata'),
 	// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
 	createdBy: uuid('created_by').references((): any => actors.id),
@@ -668,10 +668,10 @@ export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$in
 // version-push cron uses both keys to find what to update and to resolve
 // intra-package wiring (e.g. a trigger whose `target_actor_id` points at an
 // agent in the same loop) against the snapshot graph instead of the live
-// publisher workspace. The convention lives in element-row metadata rather
-// than as columns on `actors` / `triggers` / `workspace_skills` /
-// `integrations` because only the install path and the cron read it, and we
-// don't want a feature-specific column on four hot-ish element tables.
+// publisher workspace. Carried as a nullable `metadata jsonb` column on each
+// of the four element tables (added by 0035_install_metadata.sql) so non-
+// install rows pay nothing and install rows are findable by a partial
+// expression index on `metadata->>'installed_package_id'`.
 
 export const catalogPackages = pgTable('catalog_packages', {
 	id: uuid('id').defaultRandom().primaryKey(),
