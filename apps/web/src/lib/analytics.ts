@@ -82,12 +82,13 @@ export function trackAgentSessionCompleted(
 }
 
 export function trackCommentPosted(
-	p: BaseProps & { is_reply: boolean; attachment_count: number },
+	p: BaseProps & { is_reply: boolean; attachment_count: number; content: string },
 ): void {
 	trackEvent('comment_posted', {
 		...fillBase(p),
 		is_reply: p.is_reply,
 		attachment_count: p.attachment_count,
+		content: p.content,
 	})
 }
 
