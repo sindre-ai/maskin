@@ -553,9 +553,8 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 		name: 'Meeting Done → Summarize',
 		type: 'event',
 		config: {
-			entity_type: 'object',
+			entity_type: 'meeting',
 			action: 'status_changed',
-			filter: { type: 'meeting' },
 			to_status: 'done',
 		},
 		targetActor$id: 'summarization_agent',

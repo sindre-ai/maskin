@@ -52,10 +52,13 @@ describe('Meeting Done → Summarize trigger seed', () => {
 
 	it('fires when a meeting object reaches status=done', () => {
 		expect(trigger?.type).toBe('event')
+		// The trigger-runner matches events by `event.entity_type === config.entity_type`,
+		// and the events table writes the object's own type (e.g. 'meeting') into
+		// entity_type — so we target 'meeting' directly, not 'object' with a filter.
+		// See apps/dev/src/services/trigger-runner.ts.
 		expect(trigger?.config).toMatchObject({
-			entity_type: 'object',
+			entity_type: 'meeting',
 			action: 'status_changed',
-			filter: { type: 'meeting' },
 			to_status: 'done',
 		})
 	})
