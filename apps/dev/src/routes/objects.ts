@@ -4,6 +4,7 @@ import {
 	events,
 	actors,
 	files,
+	notifications,
 	objects,
 	readState,
 	relationships,
@@ -36,6 +37,7 @@ import {
 	eq,
 	ilike,
 	inArray,
+	ne,
 	or,
 	sql,
 } from 'drizzle-orm'
@@ -872,8 +874,87 @@ app.openapi(updateObjectRoute, async (c) => {
 		data: { previous: existing, updated },
 	})
 
+	// Fan out a notification row to every subscriber when a bet reaches a
+	// terminal state. The status_changed event itself surfaces the entity in
+	// the unread feed (see subscriptions.ts); the notification row drives the
+	// dedicated terminal-signal UI and is the canonical record for
+	// "watcher was told the bet ended". Author/manual/commenter/mentioned
+	// subscribers are all included; the actor making the change is excluded
+	// (you don't notify yourself about your own flip).
+	if (
+		action === 'status_changed' &&
+		existing.type === 'bet' &&
+		(updated.status === 'succeeded' || updated.status === 'failed')
+	) {
+		await fanOutBetTerminalNotifications(db, {
+			workspaceId: existing.workspaceId,
+			actorId,
+			bet: updated,
+		})
+	}
+
 	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
 })
+
+async function fanOutBetTerminalNotifications(
+	db: Database,
+	args: { workspaceId: string; actorId: string; bet: typeof objects.$inferSelect },
+): Promise<void> {
+	const { workspaceId, actorId, bet } = args
+	const isSuccess = bet.status === 'succeeded'
+
+	const subs = await db
+		.select({ actorId: subscriptions.actorId })
+		.from(subscriptions)
+		.where(
+			and(
+				eq(subscriptions.workspaceId, workspaceId),
+				eq(subscriptions.entityType, 'object'),
+				eq(subscriptions.entityId, bet.id),
+				ne(subscriptions.actorId, actorId),
+			),
+		)
+
+	if (subs.length === 0) {
+		logger.info('Bet reached terminal state, no subscribers to notify', {
+			betId: bet.id,
+			status: bet.status,
+		})
+		return
+	}
+
+	const rows = subs.map((s) => ({
+		workspaceId,
+		type: (isSuccess ? 'good_news' : 'alert') as 'good_news' | 'alert',
+		title: isSuccess ? `Bet succeeded: ${bet.title}` : `Bet failed: ${bet.title}`,
+		content: null,
+		sourceActorId: actorId,
+		targetActorId: s.actorId,
+		objectId: bet.id,
+		status: 'pending' as const,
+	}))
+
+	const created = await db.insert(notifications).values(rows).returning()
+
+	if (created.length > 0) {
+		await db.insert(events).values(
+			created.map((n) => ({
+				workspaceId,
+				actorId,
+				action: 'created',
+				entityType: 'notification',
+				entityId: n.id,
+				data: n,
+			})),
+		)
+	}
+
+	logger.info('Bet reached terminal state, notified subscribers', {
+		betId: bet.id,
+		status: bet.status,
+		notified: created.length,
+	})
+}
 
 // DELETE /{id} - Delete object
 const deleteObjectRoute = createRoute({

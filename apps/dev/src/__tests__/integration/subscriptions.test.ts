@@ -22,6 +22,7 @@ const { default: objectsRoutes } = await import('../../routes/objects')
 const { default: eventsRoutes } = await import('../../routes/events')
 const { default: graphRoutes } = await import('../../routes/graph')
 const { default: relationshipsRoutes } = await import('../../routes/relationships')
+const { default: notificationsRoutes } = await import('../../routes/notifications')
 
 // Mock session manager — we don't exercise container startup in this test, but
 // the events route reads c.get('sessionManager') for @mention handling. Empty
@@ -65,6 +66,7 @@ function appAs(actorId: string) {
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/graph', graphRoutes)
 	app.route('/api/relationships', relationshipsRoutes)
+	app.route('/api/notifications', notificationsRoutes)
 	return app
 }
 
@@ -336,6 +338,182 @@ describe('Subscriptions Integration', () => {
 			.then((r) => r.json())
 		const taskIds = unreadA.items.map((i: { entity_id: string }) => i.entity_id)
 		expect(taskIds).not.toContain(task.id)
+	})
+
+	it('a bet watcher receives the terminal status_changed signal in unread + notifications', async () => {
+		// T2 on bet/notif-cascade-fix: when a bet flips to succeeded/failed, every
+		// subscribed actor must (1) see the bet in their /api/subscriptions/unread
+		// feed and (2) get a notifications row. Without this, watchers miss the
+		// terminal signal — the bet's own kill_threshold.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		// A creates a bet (auto-subscribed as 'author'). B manually subscribes so
+		// we exercise the fan-out across two subscribers.
+		const betRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({ type: 'bet', title: 'Watched bet', status: 'active' }),
+				headersA,
+			),
+		)
+		expect(betRes.status).toBe(201)
+		const bet = await betRes.json()
+
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: bet.id },
+				headersB,
+			),
+		)
+
+		// A flips the bet to succeeded. The actor making the flip (A) should NOT
+		// be notified — you don't notify yourself about your own action.
+		const patchRes = await appA.request(
+			jsonRequest('PATCH', `/api/objects/${bet.id}`, { status: 'succeeded' }, headersA),
+		)
+		expect(patchRes.status).toBe(200)
+
+		// B's For You: the bet appears with unread_count=1, latest_event is the
+		// status_changed event. This is what the For You panel reads.
+		const unreadB = await appB
+			.request(jsonGet('/api/subscriptions/unread', headersB))
+			.then((r) => r.json())
+		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === bet.id)
+		expect(itemB).toBeDefined()
+		expect(itemB.unread_count).toBe(1)
+
+		// A's For You: A made the change, so the bet should NOT appear in their
+		// unread feed for this transition.
+		const unreadA = await appA
+			.request(jsonGet('/api/subscriptions/unread', headersA))
+			.then((r) => r.json())
+		const itemA = unreadA.items.find((i: { entity_id: string }) => i.entity_id === bet.id)
+		expect(itemA).toBeUndefined()
+
+		// B gets a `good_news` notification row pointing at the bet. A does not
+		// (they made the flip).
+		const notifsForB = await appB
+			.request(jsonGet(`/api/notifications?object_id=${bet.id}`, headersB))
+			.then((r) => r.json())
+		const bGoodNews = notifsForB.find(
+			(n: { type: string; target_actor_id: string }) =>
+				n.type === 'good_news' && n.target_actor_id === bId,
+		)
+		expect(bGoodNews).toBeDefined()
+		expect(bGoodNews.title).toContain('succeeded')
+		expect(bGoodNews.object_id).toBe(bet.id)
+		expect(bGoodNews.status).toBe('pending')
+
+		const aGoodNews = notifsForB.find(
+			(n: { type: string; target_actor_id: string }) =>
+				n.type === 'good_news' && n.target_actor_id === aId,
+		)
+		expect(aGoodNews).toBeUndefined()
+	})
+
+	it('a bet watcher receives the failed signal even when the bet has no other activity', async () => {
+		// Failure mode covered: a long-running bet that flips straight from active
+		// to failed with no comments in between must still surface in the
+		// watcher's unread feed. Without (2) in the unread join condition this
+		// returns an empty feed because the entity has no `commented` events.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const betRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({ type: 'bet', title: 'Silent bet', status: 'active' }),
+				headersA,
+			),
+		)
+		const bet = await betRes.json()
+
+		// B subscribes manually; no comments are ever posted.
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: bet.id },
+				headersB,
+			),
+		)
+
+		const patchRes = await appA.request(
+			jsonRequest('PATCH', `/api/objects/${bet.id}`, { status: 'failed' }, headersA),
+		)
+		expect(patchRes.status).toBe(200)
+
+		const unreadB = await appB
+			.request(jsonGet('/api/subscriptions/unread', headersB))
+			.then((r) => r.json())
+		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === bet.id)
+		expect(itemB).toBeDefined()
+		expect(itemB.unread_count).toBe(1)
+		expect(itemB.mentions_you).toBe(false)
+
+		const notifsForB = await appB
+			.request(jsonGet(`/api/notifications?object_id=${bet.id}`, headersB))
+			.then((r) => r.json())
+		const bAlert = notifsForB.find(
+			(n: { type: string; target_actor_id: string }) =>
+				n.type === 'alert' && n.target_actor_id === bId,
+		)
+		expect(bAlert).toBeDefined()
+		expect(bAlert.title).toContain('failed')
+	})
+
+	it('non-terminal bet status changes do NOT trigger watcher notifications', async () => {
+		// Guards against accidentally widening the trigger to every status_changed
+		// event. proposed → active is part of the normal bet lifecycle and must
+		// not page watchers.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const betRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({ type: 'bet', title: 'Lifecycle bet', status: 'proposed' }),
+				headersA,
+			),
+		)
+		const bet = await betRes.json()
+
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: bet.id },
+				headersB,
+			),
+		)
+
+		const patchRes = await appA.request(
+			jsonRequest('PATCH', `/api/objects/${bet.id}`, { status: 'active' }, headersA),
+		)
+		expect(patchRes.status).toBe(200)
+
+		const unreadB = await appB
+			.request(jsonGet('/api/subscriptions/unread', headersB))
+			.then((r) => r.json())
+		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === bet.id)
+		expect(itemB).toBeUndefined()
+
+		const notifsForB = await appB
+			.request(jsonGet(`/api/notifications?object_id=${bet.id}`, headersB))
+			.then((r) => r.json())
+		expect(notifsForB).toEqual([])
 	})
 
 	it('auto-subscribes the creator to every node created via POST /api/graph', async () => {

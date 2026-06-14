@@ -8,7 +8,7 @@ import {
 	unreadQuerySchema,
 	unsubscribeBodySchema,
 } from '@maskin/shared'
-import { and, count, desc, eq, gt, inArray, max, ne, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gt, inArray, max, ne, or, sql } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -313,11 +313,24 @@ app.openapi(listUnreadRoute, (async (c) => {
 			events,
 			and(
 				eq(events.workspaceId, subscriptions.workspaceId),
-				eq(events.entityType, subscriptions.entityType),
 				eq(events.entityId, subscriptions.entityId),
-				eq(events.action, 'commented'),
 				ne(events.actorId, actorId),
 				gt(events.id, lastReadExpr),
+				// Two surfaces land in the unread feed:
+				// (1) comments on the subscribed entity (events.entity_type matches the
+				//     subscription's polymorphic type, e.g. 'object'), and
+				// (2) the bet's own succeeded/failed transition (events.entity_type is
+				//     the object's `type`, e.g. 'bet', not the subscription's 'object').
+				// Without (2) a watcher misses the terminal signal — see T2 on
+				// bet/notif-cascade-fix.
+				or(
+					and(eq(events.entityType, subscriptions.entityType), eq(events.action, 'commented')),
+					and(
+						eq(events.entityType, 'bet'),
+						eq(events.action, 'status_changed'),
+						sql`${events.data}->'updated'->>'status' in ('succeeded', 'failed')`,
+					),
+				),
 			),
 		)
 		.where(and(...subConditions))
