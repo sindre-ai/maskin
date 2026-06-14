@@ -280,6 +280,28 @@ export const tools = {
 			id: z.string().uuid(),
 		}),
 	},
+	upsert_contact: {
+		description:
+			'Deterministically upsert a CRM `contact` by lowercased email and optionally wire a `meeting—attended_by→contact` edge. Use this for every meeting attendee — it replaces the search-by-email-then-create dance. On first use in a workspace, auto-enables the `crm` module and surfaces a `good_news` notification (modules are never silently mutated). Idempotent: a duplicate call with the same email and meeting_id returns the same ids without inserting.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			email: z
+				.string()
+				.email()
+				.describe('Attendee email — used as the deterministic match key (case-insensitive).'),
+			name: z
+				.string()
+				.trim()
+				.min(1)
+				.optional()
+				.describe('Display name. Sets the contact title when creating; ignored on match.'),
+			meeting_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('If set, also create a `meeting—attended_by→contact` relationship.'),
+		}),
+	},
 	create_actor: {
 		description:
 			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role. If auto_create_workspace is true (default for humans), a new workspace is created instead.',

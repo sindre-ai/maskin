@@ -182,6 +182,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	delete_object: 'delete',
 	create_relationship: 'relationship_create',
 	delete_relationship: 'relationship_delete',
+	upsert_contact: 'contact_upsert',
 	// Workspaces + members
 	create_workspace: 'workspace_create',
 	update_workspace: 'workspace_update',

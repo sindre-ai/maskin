@@ -35,6 +35,12 @@ describe('Summarization Agent seed', () => {
 		const prompt = agent?.systemPrompt ?? ''
 		expect(prompt).toMatch(/decision/i)
 	})
+
+	it('system prompt calls the deterministic `upsert_contact` helper (T8) instead of the search-then-create stub', () => {
+		const prompt = agent?.systemPrompt ?? ''
+		expect(prompt).toContain('upsert_contact')
+		expect(prompt).not.toContain("search_objects({type: 'contact'")
+	})
 })
 
 describe('Meeting Done → Summarize trigger seed', () => {

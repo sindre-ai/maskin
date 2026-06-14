@@ -1880,6 +1880,29 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	registerAppTool(
+		server,
+		'upsert_contact',
+		{
+			description: tools.upsert_contact.description,
+			inputSchema: tools.upsert_contact.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/contacts/upsert',
+				{ email: args.email, name: args.name, meeting_id: args.meeting_id },
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('upsert_contact', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Actors ───────────────────────────────────────────────
 	registerAppTool(
 		server,
