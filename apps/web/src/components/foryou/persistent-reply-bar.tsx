@@ -13,6 +13,9 @@ interface PersistentReplyBarProps {
 	activeId: string | null
 	activeTitle: string | null
 	onClear: () => void
+	// Called after a reply is successfully posted, so the parent can advance the
+	// thread's read high-water-mark (replying implies you've seen the thread).
+	onSent: () => void
 }
 
 const MAX_TEXTAREA_HEIGHT = 120
@@ -22,6 +25,7 @@ export function PersistentReplyBar({
 	activeId,
 	activeTitle,
 	onClear,
+	onSent,
 }: PersistentReplyBarProps) {
 	const { open } = useSidebar()
 	const isMobile = useIsMobile()
@@ -53,10 +57,11 @@ export function PersistentReplyBar({
 				onSuccess: () => {
 					setContent('')
 					toast('Reply sent')
+					onSent()
 				},
 			},
 		)
-	}, [content, activeId, createComment])
+	}, [content, activeId, createComment, onSent])
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -90,9 +95,7 @@ export function PersistentReplyBar({
 							activeId ? 'font-medium text-foreground' : 'text-muted-foreground',
 						)}
 					>
-						{activeId
-							? `Replying to: ${activeTitle ?? 'Untitled'}`
-							: 'Select a card to reply'}
+						{activeId ? `Replying to: ${activeTitle ?? 'Untitled'}` : 'Select a card to reply'}
 					</span>
 					{activeId && (
 						<button

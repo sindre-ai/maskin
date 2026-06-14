@@ -5,8 +5,8 @@ import { UnreadBadge } from '@/components/shared/unread-badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
-import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
 import { useMarkRead } from '@/hooks/use-subscriptions'
+import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
 import type { EventResponse, UnreadItem } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -72,90 +72,89 @@ export function UnreadThreadCard({
 	})
 	const currentActorId = getStoredActor()?.id ?? null
 
-	const { nodes, firstUnreadRootId, firstUnreadEventId, latestEventId } =
-		useMemo(() => {
-			if (!events) {
-				return {
-					nodes: [] as CommentNode[],
-					firstUnreadRootId: null as number | null,
-					firstUnreadEventId: null as number | null,
-					latestEventId: 0,
-				}
-			}
-			const chronological = [...events].reverse()
-
-			const repliesByParent = new Map<number, EventResponse[]>()
-			const roots: EventResponse[] = []
-			for (const event of chronological) {
-				if (event.action !== 'commented') continue
-				const parentId = event.data?.parentEventId as number | undefined
-				if (parentId) {
-					const list = repliesByParent.get(parentId) ?? []
-					list.push(event)
-					repliesByParent.set(parentId, list)
-					continue
-				}
-				roots.push(event)
-			}
-
-			const built: CommentNode[] = roots.map((root) => ({
-				root,
-				replies: repliesByParent.get(root.id) ?? [],
-			}))
-
-			let maxId = 0
-			for (const node of built) {
-				if (node.root.id > maxId) maxId = node.root.id
-				for (const reply of node.replies) if (reply.id > maxId) maxId = reply.id
-			}
-
-			// Walk the *flat* timeline (root + replies in chronological order)
-			// from the newest backward, counting comments that don't belong to
-			// the viewer. item.unread_count anchors the boundary so the divider
-			// always reflects the server's count even when the local event list
-			// is partial.
-			const flat: { rootId: number; eventId: number; actorId: string }[] = []
-			for (const node of built) {
-				flat.push({ rootId: node.root.id, eventId: node.root.id, actorId: node.root.actorId })
-				for (const reply of node.replies) {
-					flat.push({ rootId: node.root.id, eventId: reply.id, actorId: reply.actorId })
-				}
-			}
-
-			const targetCount = item.unread_count
-			let counted = 0
-			let boundaryRootId: number | null = null
-			let boundaryEventId: number | null = null
-			let oldestUnreadRootId: number | null = null
-			let oldestUnreadEventId: number | null = null
-			for (let i = flat.length - 1; i >= 0 && counted < targetCount; i--) {
-				const entry = flat[i]
-				if (!entry) continue
-				if (currentActorId && entry.actorId === currentActorId) continue
-				counted++
-				oldestUnreadRootId = entry.rootId
-				oldestUnreadEventId = entry.eventId
-				if (counted === targetCount) {
-					boundaryRootId = entry.rootId
-					boundaryEventId = entry.eventId
-				}
-			}
-
-			// If the server reports more unread events than we have loaded (the
-			// events query is capped at 50), anchor to the oldest non-viewer comment
-			// in the loaded window so the divider still appears above visible unread activity.
-			if (boundaryEventId === null && targetCount > 0 && oldestUnreadEventId !== null) {
-				boundaryRootId = oldestUnreadRootId
-				boundaryEventId = oldestUnreadEventId
-			}
-
+	const { nodes, firstUnreadRootId, firstUnreadEventId, latestEventId } = useMemo(() => {
+		if (!events) {
 			return {
-				nodes: built,
-				firstUnreadRootId: boundaryRootId,
-				firstUnreadEventId: boundaryEventId,
-				latestEventId: maxId,
+				nodes: [] as CommentNode[],
+				firstUnreadRootId: null as number | null,
+				firstUnreadEventId: null as number | null,
+				latestEventId: 0,
 			}
-		}, [events, item.unread_count, currentActorId])
+		}
+		const chronological = [...events].reverse()
+
+		const repliesByParent = new Map<number, EventResponse[]>()
+		const roots: EventResponse[] = []
+		for (const event of chronological) {
+			if (event.action !== 'commented') continue
+			const parentId = event.data?.parentEventId as number | undefined
+			if (parentId) {
+				const list = repliesByParent.get(parentId) ?? []
+				list.push(event)
+				repliesByParent.set(parentId, list)
+				continue
+			}
+			roots.push(event)
+		}
+
+		const built: CommentNode[] = roots.map((root) => ({
+			root,
+			replies: repliesByParent.get(root.id) ?? [],
+		}))
+
+		let maxId = 0
+		for (const node of built) {
+			if (node.root.id > maxId) maxId = node.root.id
+			for (const reply of node.replies) if (reply.id > maxId) maxId = reply.id
+		}
+
+		// Walk the *flat* timeline (root + replies in chronological order)
+		// from the newest backward, counting comments that don't belong to
+		// the viewer. item.unread_count anchors the boundary so the divider
+		// always reflects the server's count even when the local event list
+		// is partial.
+		const flat: { rootId: number; eventId: number; actorId: string }[] = []
+		for (const node of built) {
+			flat.push({ rootId: node.root.id, eventId: node.root.id, actorId: node.root.actorId })
+			for (const reply of node.replies) {
+				flat.push({ rootId: node.root.id, eventId: reply.id, actorId: reply.actorId })
+			}
+		}
+
+		const targetCount = item.unread_count
+		let counted = 0
+		let boundaryRootId: number | null = null
+		let boundaryEventId: number | null = null
+		let oldestUnreadRootId: number | null = null
+		let oldestUnreadEventId: number | null = null
+		for (let i = flat.length - 1; i >= 0 && counted < targetCount; i--) {
+			const entry = flat[i]
+			if (!entry) continue
+			if (currentActorId && entry.actorId === currentActorId) continue
+			counted++
+			oldestUnreadRootId = entry.rootId
+			oldestUnreadEventId = entry.eventId
+			if (counted === targetCount) {
+				boundaryRootId = entry.rootId
+				boundaryEventId = entry.eventId
+			}
+		}
+
+		// If the server reports more unread events than we have loaded (the
+		// events query is capped at 50), anchor to the oldest non-viewer comment
+		// in the loaded window so the divider still appears above visible unread activity.
+		if (boundaryEventId === null && targetCount > 0 && oldestUnreadEventId !== null) {
+			boundaryRootId = oldestUnreadRootId
+			boundaryEventId = oldestUnreadEventId
+		}
+
+		return {
+			nodes: built,
+			firstUnreadRootId: boundaryRootId,
+			firstUnreadEventId: boundaryEventId,
+			latestEventId: maxId,
+		}
+	}, [events, item.unread_count, currentActorId])
 
 	const markRead = useMarkRead(workspaceId)
 	const handleMarkRead = useCallback(() => {
@@ -310,9 +309,7 @@ export function UnreadThreadCard({
 				</div>
 
 				{/* Quick-reply chips — one-tap sends immediately with a toast */}
-				<div
-					className="flex gap-1.5 overflow-x-auto border-t border-border px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-				>
+				<div className="flex gap-1.5 overflow-x-auto border-t border-border px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 					{QUICK_REPLY_CHIPS.map((chip) => (
 						<button
 							key={chip}
@@ -322,7 +319,12 @@ export function UnreadThreadCard({
 								e.stopPropagation()
 								quickReply.mutate(
 									{ entity_id: objectId, content: chip },
-									{ onSuccess: () => toast(`✓ Sent: "${chip}"`) },
+									{
+										onSuccess: () => {
+											handleMarkRead()
+											toast(`✓ Sent: "${chip}"`)
+										},
+									},
 								)
 							}}
 							disabled={quickReply.isPending}

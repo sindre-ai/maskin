@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TestWrapper } from '../../setup'
 
@@ -38,6 +38,7 @@ describe('PersistentReplyBar', () => {
 				activeId={null}
 				activeTitle={null}
 				onClear={noop}
+				onSent={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -51,6 +52,7 @@ describe('PersistentReplyBar', () => {
 				activeId="obj-1"
 				activeTitle="Some Bet"
 				onClear={noop}
+				onSent={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -64,6 +66,7 @@ describe('PersistentReplyBar', () => {
 				activeId="obj-1"
 				activeTitle="Some Bet"
 				onClear={noop}
+				onSent={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -77,6 +80,7 @@ describe('PersistentReplyBar', () => {
 				activeId={null}
 				activeTitle={null}
 				onClear={noop}
+				onSent={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -84,11 +88,9 @@ describe('PersistentReplyBar', () => {
 	})
 
 	it('clears input after successful send', async () => {
-		mockMutate.mockImplementation(
-			(_args: unknown, opts?: { onSuccess?: () => void }) => {
-				opts?.onSuccess?.()
-			},
-		)
+		mockMutate.mockImplementation((_args: unknown, opts?: { onSuccess?: () => void }) => {
+			opts?.onSuccess?.()
+		})
 		const user = userEvent.setup()
 		render(
 			<PersistentReplyBar
@@ -96,6 +98,7 @@ describe('PersistentReplyBar', () => {
 				activeId="obj-1"
 				activeTitle="Some Bet"
 				onClear={noop}
+				onSent={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -104,6 +107,48 @@ describe('PersistentReplyBar', () => {
 		expect(textarea).toHaveValue('hello')
 		await user.click(screen.getByRole('button', { name: /send reply/i }))
 		expect(textarea).toHaveValue('')
+	})
+
+	it('calls onSent after a successful send so the thread is marked read', async () => {
+		mockMutate.mockImplementation((_args: unknown, opts?: { onSuccess?: () => void }) => {
+			opts?.onSuccess?.()
+		})
+		const user = userEvent.setup()
+		const onSent = vi.fn()
+		render(
+			<PersistentReplyBar
+				workspaceId="ws-1"
+				activeId="obj-1"
+				activeTitle="Some Bet"
+				onClear={noop}
+				onSent={onSent}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		await user.type(screen.getByRole('textbox'), 'hello')
+		await user.click(screen.getByRole('button', { name: /send reply/i }))
+		expect(onSent).toHaveBeenCalledTimes(1)
+	})
+
+	it('does not call onSent when send fails', async () => {
+		mockMutate.mockImplementation(() => {
+			// no onSuccess invocation simulates a failed mutation
+		})
+		const user = userEvent.setup()
+		const onSent = vi.fn()
+		render(
+			<PersistentReplyBar
+				workspaceId="ws-1"
+				activeId="obj-1"
+				activeTitle="Some Bet"
+				onClear={noop}
+				onSent={onSent}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		await user.type(screen.getByRole('textbox'), 'hello')
+		await user.click(screen.getByRole('button', { name: /send reply/i }))
+		expect(onSent).not.toHaveBeenCalled()
 	})
 
 	it('calls onClear when the clear selection button is clicked', async () => {
@@ -115,6 +160,7 @@ describe('PersistentReplyBar', () => {
 				activeId="obj-1"
 				activeTitle="Some Bet"
 				onClear={onClear}
+				onSent={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)

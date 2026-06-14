@@ -389,4 +389,29 @@ describe('UnreadThreadCard', () => {
 			expect.objectContaining({ onSuccess: expect.any(Function) }),
 		)
 	})
+
+	it('marks the thread read after a quick-reply chip send succeeds', async () => {
+		mockCreateCommentMutate.mockImplementation(
+			(_args: unknown, opts?: { onSuccess?: () => void }) => {
+				opts?.onSuccess?.()
+			},
+		)
+		const user = userEvent.setup()
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ latest_event_id: 20 })}
+				isActive={false}
+				onActivate={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		await user.click(screen.getByRole('button', { name: 'On it' }))
+		expect(mockMarkReadMutate).toHaveBeenCalledWith({
+			entityType: 'object',
+			entityId: 'obj-1',
+			lastEventId: 20,
+		})
+	})
 })

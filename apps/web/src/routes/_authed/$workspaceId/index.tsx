@@ -7,10 +7,11 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
+import type { UnreadItem } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
 	component: ForYouDashboard,
@@ -50,6 +51,21 @@ function ForYouDashboard() {
 		[activeId, items],
 	)
 
+	// Advance the read high-water-mark for a single unread item, using the
+	// server's authoritative latest_event_id.
+	const markItemRead = useCallback(
+		(item: UnreadItem) => {
+			const eventId = item.latest_event_id ?? 0
+			if (eventId <= 0) return
+			markRead.mutate({
+				entityType: item.entity_type,
+				entityId: item.entity_id,
+				lastEventId: eventId,
+			})
+		},
+		[markRead],
+	)
+
 	const totalUnread = items.reduce((sum, item) => sum + (item.unread_count ?? 0), 0)
 
 	// ⌘N / Ctrl+N opens the composer. Prevent the default browser "new window" so
@@ -70,18 +86,12 @@ function ForYouDashboard() {
 		return () => window.removeEventListener('keydown', onKeyDown)
 	}, [])
 
-	// Fires one mutation per item — non-batched by design; typical inboxes are small and
-	// a batch endpoint doesn't exist yet.
+	// Fires one mutation per thread — non-batched by design; typical inboxes are small
+	// and a batch endpoint doesn't exist yet. Onboarding prompts render as their own
+	// card and aren't part of the unread thread stream, so they're excluded here.
 	function handleMarkAllRead() {
-		for (const item of items) {
-			const eventId = item.latest_event_id ?? 0
-			if (eventId > 0) {
-				markRead.mutate({
-					entityType: item.entity_type,
-					entityId: item.entity_id,
-					lastEventId: eventId,
-				})
-			}
+		for (const item of sortedRegular) {
+			markItemRead(item)
 		}
 	}
 
@@ -185,6 +195,9 @@ function ForYouDashboard() {
 				activeId={activeId}
 				activeTitle={activeItem?.object?.title ?? null}
 				onClear={() => setActiveId(null)}
+				onSent={() => {
+					if (activeItem) markItemRead(activeItem)
+				}}
 			/>
 			{composer}
 		</>

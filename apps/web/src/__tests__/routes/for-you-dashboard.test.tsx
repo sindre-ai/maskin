@@ -34,6 +34,12 @@ vi.mock('@/components/foryou/unread-thread-card', () => ({
 	),
 }))
 
+vi.mock('@/components/foryou/onboarding-prompt-card', () => ({
+	OnboardingPromptCard: ({ item }: { item: UnreadItem }) => (
+		<div data-testid="onboarding-prompt-card">{item.entity_id}</div>
+	),
+}))
+
 vi.mock('@/components/foryou/new-conversation-composer', () => ({
 	NewConversationComposer: ({ open }: { open: boolean }) =>
 		open ? <div data-testid="new-conversation-composer" /> : null,
@@ -147,6 +153,35 @@ describe('ForYouDashboard', () => {
 			entityType: 'object',
 			entityId: 'obj-2',
 			lastEventId: 22,
+		})
+	})
+
+	it('"Mark all read" skips onboarding prompt cards', () => {
+		mockUseUnread.mockReturnValue({
+			data: {
+				items: [
+					buildUnreadItem({
+						entity_type: 'object',
+						entity_id: 'onboarding-1',
+						latest_event_id: 99,
+						object: buildObjectResponse({ id: 'onboarding-1', type: 'onboarding_session' }),
+					}),
+					buildUnreadItem({
+						entity_type: 'object',
+						entity_id: 'obj-1',
+						latest_event_id: 11,
+					}),
+				],
+			},
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		fireEvent.click(screen.getByRole('button', { name: 'Mark all read' }))
+		expect(mockMarkReadMutate).toHaveBeenCalledTimes(1)
+		expect(mockMarkReadMutate).toHaveBeenCalledWith({
+			entityType: 'object',
+			entityId: 'obj-1',
+			lastEventId: 11,
 		})
 	})
 
