@@ -32,6 +32,11 @@ const STATUS_POLL_INTERVAL_MS = 500
 const STATUS_POLL_TIMEOUT_MS = 90_000
 const CREATE_TIMEOUT_MS = 60_000
 
+// `always` re-pulls every spawn; `missing` skips the network round-trip when the
+// image is already cached locally (warm-pool hits use this). `never` is the
+// libkrun-equivalent of an air-gap for tests.
+export type PullPolicy = 'always' | 'missing' | 'never'
+
 export type SpawnSessionInput = {
 	sessionId: string
 	image: string
@@ -41,6 +46,7 @@ export type SpawnSessionInput = {
 	hostPort: number
 	publicHost?: string
 	sessionDir: string
+	pullPolicy?: PullPolicy
 }
 
 export type SpawnSessionResult = {
@@ -117,6 +123,7 @@ export function buildMsbCreateArgs(input: {
 	hostPort: number
 	env: Record<string, string>
 	sessionDir: string
+	pullPolicy?: PullPolicy
 }): string[] {
 	const args: string[] = [
 		'create',
@@ -128,7 +135,7 @@ export function buildMsbCreateArgs(input: {
 		String(input.cpus),
 		'--replace',
 		'--pull',
-		'always',
+		input.pullPolicy ?? 'always',
 		'--quiet',
 		'--net-rule',
 		`allow@${HOST_RULE_HOST}:tcp:${input.hostPort}`,
@@ -142,7 +149,7 @@ export function buildMsbCreateArgs(input: {
 	return args
 }
 
-function defaultRunner(): CommandRunner {
+export function defaultRunner(): CommandRunner {
 	return async (bin, args, options) => {
 		const result = await execFile(bin, args as string[], {
 			timeout: options?.timeoutMs,
@@ -203,6 +210,7 @@ export async function spawnSession(
 		hostPort: input.hostPort,
 		env: inline,
 		sessionDir: input.sessionDir,
+		...(input.pullPolicy !== undefined && { pullPolicy: input.pullPolicy }),
 	})
 
 	logger.info('msb create starting', { sessionId: input.sessionId, image: input.image })
@@ -267,6 +275,12 @@ async function waitForRunning(
 	throw new Error(
 		`msb sandbox ${sessionId} did not reach Running within ${STATUS_POLL_TIMEOUT_MS}ms (last status: ${lastStatus || 'unknown'})`,
 	)
+}
+
+export async function removeSandbox(name: string, deps: MicrosandboxDeps): Promise<void> {
+	assertValidSessionId(name)
+	const run = deps.run ?? defaultRunner()
+	await run(deps.msbBin, ['remove', '-f', '--quiet', name], { timeoutMs: 15_000 })
 }
 
 export async function readMsbVersion(deps: { msbBin: string; run?: CommandRunner }): Promise<

@@ -7,6 +7,7 @@ import {
 	buildMsbCreateArgs,
 	ensureSessionSkeleton,
 	formatOverflowEnvFile,
+	removeSandbox,
 	sanitizeEnvForMicroVM,
 	spawnSession,
 } from '../services/microsandbox'
@@ -146,6 +147,62 @@ describe('buildMsbCreateArgs', () => {
 			sessionDir: '/d',
 		})
 		expect(args.at(-1)).toBe('alpine:3.20')
+	})
+
+	it("defaults --pull to 'always' when no pullPolicy is provided", () => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+		})
+		const idx = args.indexOf('--pull')
+		expect(idx).toBeGreaterThan(-1)
+		expect(args[idx + 1]).toBe('always')
+	})
+
+	it("respects pullPolicy='missing' (warm-pool hits use this)", () => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+			pullPolicy: 'missing',
+		})
+		const idx = args.indexOf('--pull')
+		expect(args[idx + 1]).toBe('missing')
+	})
+})
+
+describe('removeSandbox', () => {
+	it('shells out msb remove -f --quiet <name>', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			return { stdout: '', stderr: '' }
+		}
+		await removeSandbox('warm-pool-0-abc', { msbBin: '/usr/local/bin/msb', run })
+		expect(calls.length).toBe(1)
+		expect(calls[0]).toEqual(['remove', '-f', '--quiet', 'warm-pool-0-abc'])
+	})
+
+	it('rejects an invalid sandbox name before shelling out', async () => {
+		const run = async (): Promise<{ stdout: string; stderr: string }> => ({
+			stdout: '',
+			stderr: '',
+		})
+		await expect(
+			removeSandbox('../etc/passwd', { msbBin: '/usr/local/bin/msb', run }),
+		).rejects.toThrow(/Invalid session id/)
 	})
 })
 
