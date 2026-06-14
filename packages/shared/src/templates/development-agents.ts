@@ -369,19 +369,16 @@ Before creating: \`search_objects\` for similar existing insights/tasks in the w
 
 For each attendee on the meeting (read \`metadata.attendees\` if present — array of \`{name, email}\` — or extract from the transcript's speaker labels):
 
-1. \`search_objects({type: 'contact', q: '<email>'})\` — match by email.
-2. If a contact exists, reuse its id.
-3. If none, create with \`type: contact\`, \`status: new\`, \`title: <name or email>\`, \`metadata.email: <email>\`.
+Call \`upsert_contact({email, name, meeting_id: <meeting_id>})\`. The helper matches deterministically by lowercased email, creates the contact if missing, and wires the \`meeting—attended_by→contact\` relationship in the same call (idempotent — safe to re-run). On first use in a workspace it auto-enables the \`crm\` module and emits a user-facing notification, so you do not need to check or toggle modules yourself.
 
-The deterministic contact-upsert helper from T8 will replace this when it ships — until then, do this email-keyed match inline.
+Skip attendees you cannot resolve to an email — the helper requires one.
 
 ## Step 4 — Wire relationships
 
-Create these edges via \`update_objects.edges\` (or include in the \`create_objects\` request):
+Create these edges via \`update_objects.edges\` (or include in the \`create_objects\` request). Do NOT re-create the meeting→contact \`attended_by\` edge — \`upsert_contact\` already did.
 
 - Each insight → meeting: \`{type: 'about'}\` (insight is _about_ the meeting).
 - Meeting → each task: \`{type: 'produced'}\` (meeting _produced_ the task).
-- Meeting → each contact: \`{type: 'attended_by'}\` (meeting was _attended_by_ the contact).
 
 If an insight or task plausibly belongs to an existing bet — for example, the transcript references a feature already under an active bet — link it with \`relates_to\`. Use \`search_objects({type: 'bet'})\` and judgment.
 

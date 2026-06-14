@@ -31,6 +31,7 @@ const ALL_TOOL_NAMES = [
 	'search_objects',
 	'list_relationships',
 	'delete_relationship',
+	'upsert_contact',
 	'create_actor',
 	'update_actor',
 	'regenerate_api_key',
