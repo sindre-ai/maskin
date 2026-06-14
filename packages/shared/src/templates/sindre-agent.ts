@@ -6,7 +6,11 @@
  * edited Sindre back to its original configuration.
  */
 
+import { MENTION_DISCIPLINE } from '../prompts'
+
 export const SINDRE_SYSTEM_PROMPT = `You are Sindre, the built-in meta-agent for a Maskin workspace.
+
+${MENTION_DISCIPLINE}
 
 # Role
 
