@@ -2,14 +2,18 @@ import './extensions'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
 import { createDb } from '@maskin/db'
+import { sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
+import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { type DevBootstrapResult, maybeBootstrapDev } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { ContainerManager } from './services/container-manager'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { SessionDispatchQueue } from './services/session-dispatch-queue'
+import { SessionDispatcher } from './services/session-dispatcher'
 import { SessionManager } from './services/session-manager'
 import { TriggerRunner } from './services/trigger-runner'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
@@ -84,6 +88,37 @@ logger.info('Webhook deliveries cleaner started')
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
+
+// Session dispatch queue absorbs backpressure when no agent-server has
+// capacity and retries failed dispatches. In production the SessionDispatcher
+// is wired as the queue's DispatchFn and SessionManager routes session-start
+// through the queue instead of spawning a local Docker container; outside
+// production the queue stays inert (every tick parks at no-capacity backoff)
+// so local-dev keeps its Docker-based session-manager path unchanged.
+const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: 'no_capacity' }))
+if (process.env.NODE_ENV === 'production') {
+	const dispatcher = new SessionDispatcher({
+		db,
+		buildStartRequest: async (sessionId) => {
+			const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
+			if (!session) return null
+			if (session.status !== 'starting' && session.status !== 'pending') return null
+			const spec = await sessionManager.buildLaunchSpec(session)
+			return {
+				sessionId: session.id,
+				image: spec.image,
+				env: spec.env,
+				memoryMib: spec.memoryMib,
+				cpus: spec.cpus,
+			}
+		},
+	})
+	sessionDispatchQueue.setDispatchFn(dispatcher.dispatch)
+	sessionManager.setDispatchQueue(sessionDispatchQueue)
+	logger.info('Session dispatcher wired for production — sessions route to agent-servers')
+}
+sessionDispatchQueue.start()
+logger.info('Session dispatch queue started')
 
 logger.info(`Starting server on port ${port}`)
 

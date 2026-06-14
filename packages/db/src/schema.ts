@@ -1,6 +1,7 @@
 import type { AgentState, FileAnnotation, SessionResult } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {
+	type AnyPgColumn,
 	bigint,
 	bigserial,
 	boolean,
@@ -206,6 +207,10 @@ export const sessions = pgTable(
 		triggerId: uuid('trigger_id').references(() => triggers.id, { onDelete: 'set null' }),
 		status: text('status').notNull(),
 		containerId: text('container_id'),
+		// Set by the SessionDispatcher (T6) on a successful production dispatch
+		// to apps/agent-server. NULL for local-dev sessions launched via Docker
+		// directly from session-manager.
+		agentServerId: uuid('agent_server_id').references((): AnyPgColumn => agentServers.id),
 		actionPrompt: text('action_prompt').notNull(),
 		config: jsonb('config').notNull().default({}),
 		interactive: boolean('interactive').notNull().default(false),
@@ -233,6 +238,11 @@ export const sessions = pgTable(
 		index('sessions_actor_completed_idx')
 			.on(t.actorId, t.completedAt)
 			.where(sql`${t.completedAt} IS NOT NULL`),
+		// Hot path for the dispatcher's least-loaded lookup: counts active
+		// sessions grouped by agent_server_id.
+		index('sessions_agent_server_active_idx')
+			.on(t.agentServerId, t.status)
+			.where(sql`${t.agentServerId} IS NOT NULL`),
 	],
 )
 
@@ -669,3 +679,40 @@ export const agentServers = pgTable(
 
 export type AgentServer = typeof agentServers.$inferSelect
 export type NewAgentServer = typeof agentServers.$inferInsert
+
+// ── Session Dispatch Attempts ───────────────────────────────────────────────
+//
+// Postgres-backed dispatch queue for session-start calls from apps/dev to
+// apps/agent-server. Absorbs backpressure when no agent-server has capacity
+// and retries failed dispatches with exponential backoff. The same
+// `idempotency_key` is reused across every retry of a given session — the
+// receiver and downstream side-effect layer (per the idempotency middleware)
+// dedupe any double-fire.
+//
+// One row per session_id (UNIQUE). Re-enqueueing the same session is an
+// UPSERT. Status moves pending → row deleted on dispatch, or pending →
+// failed on permanent failure or after max_attempts is exhausted.
+
+export const sessionDispatchAttempts = pgTable(
+	'session_dispatch_attempts',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		sessionId: uuid('session_id').notNull(),
+		idempotencyKey: text('idempotency_key').notNull(),
+		attempt: integer('attempt').notNull().default(0),
+		maxAttempts: integer('max_attempts').notNull().default(5),
+		status: text('status').notNull().default('pending'),
+		nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+		lastError: text('last_error'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('session_dispatch_attempts_session_id_uniq').on(t.sessionId),
+		check('session_dispatch_attempts_status_check', sql`${t.status} IN ('pending','failed')`),
+		index('session_dispatch_attempts_ready_idx').on(t.status, t.nextAttemptAt),
+	],
+)
+
+export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
+export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
