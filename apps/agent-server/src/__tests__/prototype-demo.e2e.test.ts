@@ -1,23 +1,33 @@
-// T4 prototype demo, code half — drives spawn (T2-equivalent) → comment →
-// stop → snapshot → drift → restore through T3's Hono boundary with a fake
-// msb in place of libkrun. Verifies the bet's verdict-gating idempotency
-// contract: the agent's one side-effect write survives a snapshot-restore
-// round-trip without duplication, even if a "careless retry" tried to
-// re-write the same idempotency key into the drifted host workspace.
+// T4 prototype demo, code half — drives the merged bet branch's actual
+// `buildApp()` for the spawn path (T2's `POST /sessions`, bearer-auth-gated
+// by T7) plus the T3 lifecycle routes for `stop`/`snapshot`/`restore`,
+// against an in-process fake `msb`. Verifies the bet's verdict-gating
+// idempotency contract:
 //
-// When Finland comes up, swap FakeMsb for MsbCliImpl and the host-side
-// `sessionDir` for the bind-mount path created by apps/dev's session
-// manager — the same flow re-runs against the real microsandbox runtime.
+//   1. sandbox name preserved across restore (sandboxName === sessionId)
+//   2. drift wiped — post-restore tree matches pre-snapshot tree
+//   3. no double-write — careless retry that writes a duplicate idempotency
+//      key into the drifted host workspace is dropped on restore
+//
+// When Finland is up, swap the fake `CommandRunner` for the real msb v0.5.4
+// binary and the same flow re-runs against libkrun. The harness already
+// drives the production buildApp() + lifecycle routes so the swap point is
+// the runner injection on AppDeps.msb, not the test scaffolding.
 
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Hono } from 'hono'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { buildApp } from '../index'
 import { createSessionsLifecycleRoutes } from '../routes/sessions-lifecycle'
+import type { CommandRunner } from '../services/microsandbox'
 import type { MsbCli, MsbCreateOptions, MsbListEntry } from '../services/msb-cli'
 import { SessionLifecycle } from '../services/session-lifecycle'
 import { SnapshotStore } from '../services/snapshot-store'
+
+const AGENT_SERVER_SECRET = 'demo-secret-for-prototype-1234'
+const SANDBOX_IMAGE = 'maskin/agent-base:latest'
+const MSB_VERSION = '0.5.4'
 
 class FakeMsb implements MsbCli {
 	createCalls: MsbCreateOptions[] = []
@@ -31,6 +41,30 @@ class FakeMsb implements MsbCli {
 	async list(): Promise<MsbListEntry[]> {
 		return []
 	}
+}
+
+// `msb` shim for the T2 spawn path. Real msb on Finland is a CLI; the
+// production code shells out via execFile. Tests inject a CommandRunner
+// that mirrors the v0.5.4 surface buildMsbCreateArgs() drives.
+function createFakeRunner(): { runner: CommandRunner; createdSandboxes: string[] } {
+	const createdSandboxes: string[] = []
+	const runner: CommandRunner = async (_bin, args) => {
+		const a = [...args]
+		if (a[0] === '--version') return { stdout: `microsandbox ${MSB_VERSION}\n`, stderr: '' }
+		if (a[0] === 'create') {
+			const nameIdx = a.indexOf('--name')
+			const name = nameIdx >= 0 ? a[nameIdx + 1] : undefined
+			if (name) createdSandboxes.push(name)
+			return { stdout: '', stderr: '' }
+		}
+		if (a[0] === 'list') {
+			const rows = createdSandboxes.map((name) => ({ name, status: 'Running' }))
+			return { stdout: JSON.stringify(rows), stderr: '' }
+		}
+		if (a[0] === 'remove') return { stdout: '', stderr: '' }
+		return { stdout: '', stderr: '' }
+	}
+	return { runner, createdSandboxes }
 }
 
 type SideEffect = { idempotencyKey: string; payload: string; createdAt: string }
@@ -82,10 +116,31 @@ afterEach(async () => {
 	await rm(sessionDirRoot, { recursive: true, force: true })
 })
 
-describe('T4 prototype demo — stop → snapshot → restore round-trip', () => {
-	it('survives drift + duplicate retry with one side-effect entry, drift wiped, sandbox identity preserved', async () => {
+describe('T4 prototype demo — POST /sessions → stop → snapshot → restore', () => {
+	it('drives merged buildApp() + lifecycle routes with bearer auth; survives drift + duplicate retry', async () => {
 		const sessionId = `demo-${Date.now()}`
 		const sessionDir = join(sessionDirRoot, sessionId)
+
+		// Production app — same buildApp() that boots on Finland, with a fake
+		// CommandRunner standing in for msb v0.5.4 on the box.
+		const { runner } = createFakeRunner()
+		const app = buildApp({
+			env: {
+				PORT: 3001,
+				AGENT_SERVER_SECRET,
+				MSB_BIN: '/fake/msb',
+				AGENT_SESSION_ROOT: sessionDirRoot,
+				S3_REGION: 'us-east-1',
+			} as never,
+			storage: null,
+			msb: { msbBin: '/fake/msb', run: runner, sleep: async () => {}, now: Date.now },
+		})
+
+		// Gap surfaced in this session: the merged buildApp() does NOT mount
+		// T3's lifecycle routes. The harness mounts them itself on the same
+		// app so the demo can drive the real production code paths end-to-end.
+		// See verdict report — this is a follow-up task for whoever wires T2
+		// + T3 together into the agent-server entry point.
 		const msb = new FakeMsb()
 		const snapshots = new SnapshotStore(storeRoot)
 		const lifecycle = new SessionLifecycle(msb, snapshots, {
@@ -93,34 +148,48 @@ describe('T4 prototype demo — stop → snapshot → restore round-trip', () =>
 			defaultMemoryMib: 1024,
 			defaultCpus: 2,
 		})
-		const app = new Hono()
 		app.route('/sessions', createSessionsLifecycleRoutes(lifecycle))
 
 		const timings: Record<string, number> = {}
-		const time = async <T,>(step: string, fn: () => Promise<T>): Promise<T> => {
+		const time = async <T>(step: string, fn: () => Promise<T>): Promise<T> => {
 			const t0 = performance.now()
 			const r = await fn()
 			timings[step] = Math.round(performance.now() - t0)
 			return r
 		}
 
-		// Spawn — host pre-creates the bind-mount subtree (bet constraint #3,
-		// HOST_SETUP §5). T2's POST /sessions would do this over HTTP.
-		await time('spawn', async () => {
-			for (const sub of ['workspace', 'skills', 'learnings', 'memory']) {
-				await mkdir(join(sessionDir, sub), { recursive: true })
-			}
-			await msb.create({
-				name: sessionId,
-				image: 'maskin/agent-base:latest',
-				memoryMib: 1024,
-				cpus: 2,
-				env: { MASKIN_SESSION_ID: sessionId },
-				volumes: [{ host: sessionDir, guest: '/agent' }],
-			})
-		})
+		const authHeader = `Bearer ${AGENT_SERVER_SECRET}`
 
-		// Comment — the agent's only side effect, idempotency-keyed.
+		// /health — `ok` tracks msb liveness via the injected runner.
+		const health = await app.request('/health')
+		expect(health.status).toBe(200)
+		const healthBody = (await health.json()) as { ok: boolean; msb_version: string }
+		expect(healthBody).toMatchObject({ ok: true, msb_version: MSB_VERSION })
+
+		// Auth gate — sessions endpoints reject unauthenticated requests.
+		const noAuth = await app.request('/sessions', { method: 'POST' })
+		expect(noAuth.status).toBe(401)
+
+		// Spawn via T2 POST /sessions (bearer-gated).
+		const spawn = await time('spawn', async () => {
+			const r = await app.request('/sessions', {
+				method: 'POST',
+				headers: { authorization: authHeader, 'content-type': 'application/json' },
+				body: JSON.stringify({
+					sessionId,
+					image: SANDBOX_IMAGE,
+					env: { MASKIN_SESSION_ID: sessionId },
+				}),
+			})
+			expect(r.status).toBe(201)
+			return (await r.json()) as { sandboxName: string; connection: { host: string; port: number } }
+		})
+		expect(spawn.sandboxName).toBe(sessionId)
+		expect(spawn.connection.port).toBe(3001)
+
+		// Comment — the agent's one side effect, idempotency-keyed. Real
+		// agents write to /agent inside the microVM; the host sees it through
+		// the bind mount, so this test writes directly into sessionDir.
 		const initial = await time('comment', () =>
 			appendSideEffect(sessionDir, {
 				idempotencyKey: 'comment-prototype-demo-1',
@@ -132,28 +201,32 @@ describe('T4 prototype demo — stop → snapshot → restore round-trip', () =>
 
 		const preSnapshotTree = await listTree(sessionDir)
 
-		// Stop → Snapshot
+		// Stop → Snapshot via T3 lifecycle routes (also bearer-gated because
+		// the auth middleware in buildApp is mounted on `/sessions/*`).
 		const stop = await time('stop', async () => {
-			const r = await app.request(`/sessions/${sessionId}/stop`, { method: 'POST' })
+			const r = await app.request(`/sessions/${sessionId}/stop`, {
+				method: 'POST',
+				headers: { authorization: authHeader },
+			})
 			expect(r.status).toBe(200)
 			return r.json() as Promise<{ stopped: true }>
 		})
 		expect(stop.stopped).toBe(true)
 
 		const snapshotResp = await time('snapshot', async () => {
-			const r = await app.request(`/sessions/${sessionId}/snapshot`, { method: 'POST' })
+			const r = await app.request(`/sessions/${sessionId}/snapshot`, {
+				method: 'POST',
+				headers: { authorization: authHeader },
+			})
 			expect(r.status).toBe(200)
 			return (await r.json()) as { snapshot: { snapshotId: string; archiveBytes: number } }
 		})
 		expect(snapshotResp.snapshot.archiveBytes).toBeGreaterThan(0)
 
-		// Drift — simulate post-snapshot host-side mutation + a careless retry
-		// that tries to re-append the same idempotency key. Restore must wipe
-		// the drift and the retry's re-append both.
+		// Drift — post-snapshot host-side mutation + a careless retry that
+		// re-appends the same idempotency key. Restore must wipe both.
 		await time('drift', async () => {
 			await writeFile(join(sessionDir, 'workspace/drift.txt'), 'stale; should be wiped')
-			// Bypass the in-memory dedup by direct write — this is what a
-			// non-idempotent retry path would do.
 			await writeFile(
 				join(sessionDir, 'workspace/side_effects.json'),
 				JSON.stringify(
@@ -171,17 +244,15 @@ describe('T4 prototype demo — stop → snapshot → restore round-trip', () =>
 			)
 		})
 
-		// Quiescence window — matches the shape of yesterday's local run.
 		await new Promise((r) => setTimeout(r, 250))
 		timings.wait = 250
 
-		// Restore
 		const restoreResp = await time('restore', async () => {
 			const r = await app.request(`/sessions/${sessionId}/restore`, {
 				method: 'POST',
-				headers: { 'content-type': 'application/json' },
+				headers: { authorization: authHeader, 'content-type': 'application/json' },
 				body: JSON.stringify({
-					image: 'maskin/agent-base:latest',
+					image: SANDBOX_IMAGE,
 					env: { MASKIN_SESSION_ID: sessionId },
 				}),
 			})
@@ -205,10 +276,10 @@ describe('T4 prototype demo — stop → snapshot → restore round-trip', () =>
 		expect(msb.removeCalls).toContain(sessionId)
 		expect(msb.createCalls.at(-1)?.name).toBe(sessionId)
 
-		// Verdict report — printed for the verifier to copy into the bet comment.
 		const report = {
 			pass: true,
 			sessionId,
+			msb_version: healthBody.msb_version,
 			timings_ms: timings,
 			archive_bytes: snapshotResp.snapshot.archiveBytes,
 			snapshot_id: snapshotResp.snapshot.snapshotId,
@@ -221,6 +292,7 @@ describe('T4 prototype demo — stop → snapshot → restore round-trip', () =>
 				sandbox_name_preserved: true,
 				drift_wiped_by_restore: true,
 				no_double_write_on_retry: true,
+				bearer_auth_enforced: true,
 			},
 		}
 		process.stdout.write(`\nT4 PROTOTYPE DEMO VERDICT REPORT\n${JSON.stringify(report, null, 2)}\n`)
