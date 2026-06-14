@@ -397,22 +397,23 @@ describe('Subscriptions Integration', () => {
 		expect(itemA).toBeUndefined()
 
 		// B gets a `good_news` notification row pointing at the bet. A does not
-		// (they made the flip).
+		// (they made the flip). The list endpoint serializes Drizzle records as-is
+		// (camelCase keys), so target_actor_id surfaces as targetActorId.
 		const notifsForB = await appB
 			.request(jsonGet(`/api/notifications?object_id=${bet.id}`, headersB))
 			.then((r) => r.json())
 		const bGoodNews = notifsForB.find(
-			(n: { type: string; target_actor_id: string }) =>
-				n.type === 'good_news' && n.target_actor_id === bId,
+			(n: { type: string; targetActorId: string }) =>
+				n.type === 'good_news' && n.targetActorId === bId,
 		)
 		expect(bGoodNews).toBeDefined()
 		expect(bGoodNews.title).toContain('succeeded')
-		expect(bGoodNews.object_id).toBe(bet.id)
+		expect(bGoodNews.objectId).toBe(bet.id)
 		expect(bGoodNews.status).toBe('pending')
 
 		const aGoodNews = notifsForB.find(
-			(n: { type: string; target_actor_id: string }) =>
-				n.type === 'good_news' && n.target_actor_id === aId,
+			(n: { type: string; targetActorId: string }) =>
+				n.type === 'good_news' && n.targetActorId === aId,
 		)
 		expect(aGoodNews).toBeUndefined()
 	})
@@ -464,8 +465,7 @@ describe('Subscriptions Integration', () => {
 			.request(jsonGet(`/api/notifications?object_id=${bet.id}`, headersB))
 			.then((r) => r.json())
 		const bAlert = notifsForB.find(
-			(n: { type: string; target_actor_id: string }) =>
-				n.type === 'alert' && n.target_actor_id === bId,
+			(n: { type: string; targetActorId: string }) => n.type === 'alert' && n.targetActorId === bId,
 		)
 		expect(bAlert).toBeDefined()
 		expect(bAlert.title).toContain('failed')
