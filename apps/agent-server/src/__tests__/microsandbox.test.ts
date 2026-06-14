@@ -60,7 +60,9 @@ describe('sanitizeEnvForMicroVM', () => {
 	it('throws on an invalid env var key (shell injection guard)', () => {
 		expect(() => sanitizeEnvForMicroVM({ 'FOO=BAR': 'v' })).toThrow(/Invalid env var key/)
 		expect(() => sanitizeEnvForMicroVM({ 'A;rm -rf /': 'v' })).toThrow(/Invalid env var key/)
-		expect(() => sanitizeEnvForMicroVM({ '1STARTS_WITH_DIGIT': 'v' })).toThrow(/Invalid env var key/)
+		expect(() => sanitizeEnvForMicroVM({ '1STARTS_WITH_DIGIT': 'v' })).toThrow(
+			/Invalid env var key/,
+		)
 	})
 })
 

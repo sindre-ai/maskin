@@ -1,9 +1,9 @@
-import { timingSafeEqual } from 'node:crypto'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import type { StorageProvider } from '@maskin/storage'
 import { Hono } from 'hono'
 import { z } from 'zod'
+import { bearerAuth } from './lib/auth'
 import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
 import { type MicrosandboxDeps, readMsbVersion, spawnSession } from './services/microsandbox'
@@ -52,15 +52,16 @@ export function buildApp(deps: AppDeps): Hono {
 		)
 	})
 
-	app.post('/sessions', async (c) => {
-		const auth = c.req.header('authorization') ?? ''
-		const expected = `Bearer ${deps.env.AGENT_SERVER_SECRET}`
-		const authBuf = Buffer.from(auth)
-		const expectedBuf = Buffer.from(expected)
-		if (authBuf.length !== expectedBuf.length || !timingSafeEqual(authBuf, expectedBuf)) {
-			return c.json({ error: 'unauthorized' }, 401)
-		}
+	// `/health` is the only unauthenticated route — HOST_SETUP.md §9 probes it
+	// without a secret. Every other route under `/sessions` requires the shared
+	// bearer token. Mount the middleware on both the collection path and the
+	// sub-paths so future per-session routes (T3 stop/snapshot/restore) inherit
+	// the gate at the mount point without re-implementing the check.
+	const requireBearer = bearerAuth({ expectedSecret: deps.env.AGENT_SERVER_SECRET })
+	app.use('/sessions', requireBearer)
+	app.use('/sessions/*', requireBearer)
 
+	app.post('/sessions', async (c) => {
 		let raw: unknown
 		try {
 			raw = await c.req.json()

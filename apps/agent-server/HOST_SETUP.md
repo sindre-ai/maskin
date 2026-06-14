@@ -248,3 +248,85 @@ capacity check. No application redeploy needed.
 - Bet: [Scalable Agent Session Infrastructure](https://maskin.sindre.ai/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/8b88c5bc-8767-42e4-8efd-68a074de7dee) — operational constraints #1–#7 are the authoritative list.
 - `apps/agent-server/MICROSANDBOX_HANDOVER.md` on `feat/microsandbox` (PR #342) — the v0.3.12 investigation that produced the constraints. Read for context, do not merge.
 - `apps/agent-server/DEPLOY.md` on `feat/microsandbox` — earlier v0.3.12 deploy notes. Superseded by this file once v0.5.4 lands on `main`.
+
+## 13. Rotating the bearer secret
+
+`AGENT_SERVER_SECRET` (the value in §6's `.env` and the `agent_servers.secret`
+column for this host) is the shared bearer token apps/dev presents on every
+dispatch to this box. Rotate it whenever:
+
+- A laptop or backup that ever held the value is lost.
+- A contractor with `.env` read access offboards.
+- The token is older than 90 days (calendar rotation — pick a quarterly cadence
+  and stick to it; the absence of suspicious access is not evidence of safety).
+- An incident is suspected or confirmed.
+
+The rotation is **two writes that must succeed together**: the new secret has
+to land in the box's `.env` *and* in `agent_servers.secret` for this host's row
+before the agent-server is restarted. If the two get out of sync, apps/dev
+dispatches with the old value, the agent-server checks against the new value,
+and every session-start 401s until the values agree again.
+
+### 13.1. Rotation procedure
+
+Run on the apps/dev box (or wherever you have `psql` access) so the DB write
+happens first; then jump to the agent-server host for the restart.
+
+```bash
+# 1. Generate a new 32-byte hex secret. Do not reuse old values.
+NEW_SECRET="$(openssl rand -hex 32)"
+
+# 2. Update the DB row for this host. `url` identifies which host.
+psql "$DATABASE_URL" <<SQL
+UPDATE agent_servers
+   SET secret = '$NEW_SECRET'
+ WHERE url = 'https://agent-<region>.maskin.sindre.ai:3001';
+SQL
+
+# 3. On the agent-server host: write the new value to .env, then restart.
+#    The 5-second restart window is the only time when a dispatch can race
+#    the rotation. apps/dev dispatchers will retry on transient 401 once.
+ssh root@<agent-server-host> <<'REMOTE'
+  set -euo pipefail
+  cd /opt/maskin/apps/agent-server
+  # Replace the AGENT_SERVER_SECRET=... line in-place.
+  sed -i.bak "s|^AGENT_SERVER_SECRET=.*|AGENT_SERVER_SECRET=__NEW__|" .env
+  chmod 600 .env .env.bak
+  systemctl restart maskin-agent-server
+  systemctl is-active maskin-agent-server
+REMOTE
+```
+
+Replace `__NEW__` with `$NEW_SECRET` in step 3 — keep the value out of shell
+history (`unset HISTFILE` or pipe it through `ssh` over stdin).
+
+### 13.2. Verify the rotation
+
+```bash
+# 1. Dispatch a test session-start from apps/dev — should succeed (2xx).
+#    SessionDispatcher (T6) reads the new agent_servers.secret on the next
+#    capacity check; no apps/dev restart is needed.
+curl -fsS -X POST https://app.maskin.sindre.ai/api/dispatch/probe -H ...
+
+# 2. Confirm the old secret is rejected (defence in depth).
+curl -i -X POST https://agent-<region>.maskin.sindre.ai:3001/sessions \
+  -H "authorization: Bearer <OLD_SECRET>" -d '{}'
+# expect: HTTP/1.1 401  {"error":"unauthorized"}
+
+# 3. Clean up the .env.bak file once you're satisfied.
+ssh root@<agent-server-host> 'rm /opt/maskin/apps/agent-server/.env.bak'
+```
+
+### 13.3. If the rotation goes wrong
+
+If apps/dev starts seeing a wall of 401s after step 3:
+
+- The most common cause is a typo in either the SQL `UPDATE` or the `sed` —
+  the two values disagree. Re-run §13.1 step 2 *or* step 3 with the value the
+  other side has; they must match byte-for-byte.
+- The second most common cause is `.env.bak` still being readable by an
+  attacker. Delete it immediately (§13.2 step 3) once the rotation is verified.
+- If you need to roll back, the `.env.bak` file holds the previous value;
+  copy it back over `.env`, restart the service, and re-run the SQL `UPDATE`
+  with the rolled-back secret. Then start the rotation again from scratch with
+  a freshly generated value.
