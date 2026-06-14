@@ -132,6 +132,47 @@ describe('POST /api/contacts/upsert', () => {
 		expect(edges).toHaveLength(1)
 	})
 
+	it('produces exactly one contact and one notification when the same email upserts in parallel', async () => {
+		// Falsification: two Summarization Agent runs (watchdog kick + retry)
+		// both call upsert_contact for the same attendee on a fresh workspace.
+		// Pre-fix this raced: duplicate contacts, duplicate good_news notifications,
+		// or a 500 from relationships_src_tgt_type_uniq.
+		const responses = await Promise.all([
+			postUpsert({ email: 'race@example.com', name: 'Race', meeting_id: meetingId }, workspaceId),
+			postUpsert({ email: 'race@example.com', name: 'Race', meeting_id: meetingId }, workspaceId),
+		])
+		expect(responses.map((r) => r.status)).toEqual([200, 200])
+		const bodies = await Promise.all(responses.map((r) => r.json()))
+		expect(bodies.every((b) => b.contact_id === bodies[0].contact_id)).toBe(true)
+		expect(bodies.filter((b) => b.created).length).toBe(1)
+		expect(bodies.filter((b) => b.crm_auto_enabled).length).toBe(1)
+
+		const contacts = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'contact')))
+		expect(contacts).toHaveLength(1)
+
+		const notifs = await db
+			.select()
+			.from(notifications)
+			.where(eq(notifications.workspaceId, workspaceId))
+		expect(notifs).toHaveLength(1)
+		expect(notifs[0].type).toBe('good_news')
+
+		const edges = await db
+			.select()
+			.from(relationships)
+			.where(
+				and(
+					eq(relationships.sourceId, meetingId),
+					eq(relationships.targetId, bodies[0].contact_id),
+					eq(relationships.type, 'attended_by'),
+				),
+			)
+		expect(edges).toHaveLength(1)
+	})
+
 	it('produces N unique contacts for N unique-email attendees in one meeting', async () => {
 		const inputs = [
 			{ email: 'carol@example.com', name: 'Carol' },

@@ -47,6 +47,8 @@ export class WorkspaceNotFoundError extends Error {
 	}
 }
 
+type Tx = Parameters<Parameters<Database['transaction']>[0]>[0]
+
 /**
  * Deterministically upsert a CRM contact for a meeting attendee.
  *
@@ -55,6 +57,13 @@ export class WorkspaceNotFoundError extends Error {
  * forbids silently mutating workspace modules. Idempotent across the contact,
  * the relationship, and module-enable: a duplicate call with the same email
  * (case-insensitive) and meeting_id returns the same ids without inserting.
+ *
+ * Two parallel Summarization Agent runs cannot race-create duplicate contacts
+ * or duplicate notifications. The whole body runs in one transaction; the
+ * contact + relationship inserts use `ON CONFLICT DO NOTHING` (relying on
+ * `objects_contact_email_lower_uniq` and `relationships_src_tgt_type_uniq`);
+ * the workspace row is `SELECT … FOR UPDATE`-locked so concurrent first-time
+ * CRM enables serialize and emit the notification exactly once.
  */
 export async function upsertContactByEmail(
 	input: UpsertContactInput,
@@ -64,83 +73,75 @@ export async function upsertContactByEmail(
 	if (!EMAIL_RE.test(email)) throw new InvalidEmailError(input.email)
 	const name = input.name?.trim() || null
 
-	// 1. Ensure CRM module enabled — emit notification on first enable.
-	const enableResult = await ensureCrmEnabled({
-		db,
-		workspaceId,
-		sourceActorId,
-	})
+	return await db.transaction(async (tx) => {
+		// 1. Lock the workspace row so concurrent runs serialize on the
+		//    first-enable check. Without this, two parallel runs both see crm
+		//    disabled and both insert the `good_news` notification.
+		const enableResult = await ensureCrmEnabled(tx, workspaceId, sourceActorId)
 
-	// 2. Find existing contact by lowercased email.
-	const matches = await db
-		.select({ id: objects.id })
-		.from(objects)
-		.where(
-			and(
-				eq(objects.workspaceId, workspaceId),
-				eq(objects.type, CONTACT_TYPE),
-				sql`lower(${objects.metadata}->>'email') = ${email}`,
-			),
-		)
-		.limit(1)
-
-	let contactId: string
-	let created = false
-	const existingContact = matches[0]
-	if (existingContact) {
-		contactId = existingContact.id
-	} else {
+		// 2. Insert-or-match contact via the partial unique index. Drizzle's
+		//    onConflictDoNothing target is column-only and can't express
+		//    `(workspace_id, (lower((metadata->>'email')))) WHERE type='contact'`,
+		//    so the insert is raw SQL parameterized through drizzle's `sql`.
 		const metadata: Record<string, string> = { email }
 		if (name) metadata.name = name
-		const [contact] = await db
-			.insert(objects)
-			.values({
-				workspaceId,
-				type: CONTACT_TYPE,
-				status: 'new',
-				title: name || email,
-				createdBy: sourceActorId,
-				metadata,
-			})
-			.returning()
-		if (!contact) throw new Error(`Failed to insert contact for ${email}`)
-		contactId = contact.id
-		created = true
-		await db.insert(events).values({
-			workspaceId,
-			actorId: sourceActorId,
-			action: 'created',
-			entityType: 'object',
-			entityId: contactId,
-			data: contact,
-		})
-		logger.info('attendee-contact: created contact', {
-			workspaceId,
-			contactId,
-			email,
-		})
-	}
-
-	// 3. Optionally create meeting—attended_by→contact (idempotent on the
-	//    (sourceId, targetId, type) unique constraint).
-	let attendedByRelationshipId: string | null = null
-	if (meetingId) {
-		const existing = await db
-			.select({ id: relationships.id })
-			.from(relationships)
-			.where(
-				and(
-					eq(relationships.sourceId, meetingId),
-					eq(relationships.targetId, contactId),
-					eq(relationships.type, ATTENDED_BY),
-				),
+		const metadataJson = JSON.stringify(metadata)
+		const insertedIds = (await tx.execute(sql`
+			INSERT INTO objects (workspace_id, type, status, title, created_by, metadata)
+			VALUES (
+				${workspaceId}::uuid,
+				${CONTACT_TYPE},
+				'new',
+				${name || email},
+				${sourceActorId}::uuid,
+				${metadataJson}::jsonb
 			)
-			.limit(1)
-		const existingRel = existing[0]
-		if (existingRel) {
-			attendedByRelationshipId = existingRel.id
+			ON CONFLICT (workspace_id, (lower((metadata->>'email')))) WHERE type = 'contact'
+			DO NOTHING
+			RETURNING id
+		`)) as unknown as Array<{ id: string }>
+
+		let contactId: string
+		let created = false
+		if (insertedIds[0]) {
+			contactId = insertedIds[0].id
+			created = true
+			const [contactRow] = await tx.select().from(objects).where(eq(objects.id, contactId)).limit(1)
+			await tx.insert(events).values({
+				workspaceId,
+				actorId: sourceActorId,
+				action: 'created',
+				entityType: 'object',
+				entityId: contactId,
+				data: contactRow,
+			})
+			logger.info('attendee-contact: created contact', {
+				workspaceId,
+				contactId,
+				email,
+			})
 		} else {
-			const [rel] = await db
+			const matches = await tx
+				.select({ id: objects.id })
+				.from(objects)
+				.where(
+					and(
+						eq(objects.workspaceId, workspaceId),
+						eq(objects.type, CONTACT_TYPE),
+						sql`lower(${objects.metadata}->>'email') = ${email}`,
+					),
+				)
+				.limit(1)
+			const existing = matches[0]
+			if (!existing) throw new Error(`Failed to upsert contact for ${email}`)
+			contactId = existing.id
+		}
+
+		// 3. Optionally create meeting—attended_by→contact (idempotent on the
+		//    (sourceId, targetId, type) unique constraint).
+		let attendedByRelationshipId: string | null = null
+		if (meetingId) {
+			const insertedRels = await tx
 				.insert(relationships)
 				.values({
 					sourceType: MEETING_TYPE,
@@ -150,34 +151,46 @@ export async function upsertContactByEmail(
 					type: ATTENDED_BY,
 					createdBy: sourceActorId,
 				})
+				.onConflictDoNothing({
+					target: [relationships.sourceId, relationships.targetId, relationships.type],
+				})
 				.returning()
-			if (rel) {
-				attendedByRelationshipId = rel.id
-				await db.insert(events).values({
+			const newRel = insertedRels[0]
+			if (newRel) {
+				attendedByRelationshipId = newRel.id
+				await tx.insert(events).values({
 					workspaceId,
 					actorId: sourceActorId,
 					action: 'created',
 					entityType: 'relationship',
-					entityId: rel.id,
-					data: rel,
+					entityId: newRel.id,
+					data: newRel,
 				})
+			} else {
+				const existingRels = await tx
+					.select({ id: relationships.id })
+					.from(relationships)
+					.where(
+						and(
+							eq(relationships.sourceId, meetingId),
+							eq(relationships.targetId, contactId),
+							eq(relationships.type, ATTENDED_BY),
+						),
+					)
+					.limit(1)
+				const existingRel = existingRels[0]
+				if (existingRel) attendedByRelationshipId = existingRel.id
 			}
 		}
-	}
 
-	return {
-		contactId,
-		created,
-		crmAutoEnabled: enableResult.crmAutoEnabled,
-		notificationId: enableResult.notificationId,
-		attendedByRelationshipId,
-	}
-}
-
-interface EnsureCrmInput {
-	db: Database
-	workspaceId: string
-	sourceActorId: string
+		return {
+			contactId,
+			created,
+			crmAutoEnabled: enableResult.crmAutoEnabled,
+			notificationId: enableResult.notificationId,
+			attendedByRelationshipId,
+		}
+	})
 }
 
 interface EnsureCrmResult {
@@ -185,15 +198,18 @@ interface EnsureCrmResult {
 	notificationId: string | null
 }
 
-async function ensureCrmEnabled({
-	db,
-	workspaceId,
-	sourceActorId,
-}: EnsureCrmInput): Promise<EnsureCrmResult> {
-	const [workspaceRow] = await db
+async function ensureCrmEnabled(
+	tx: Tx,
+	workspaceId: string,
+	sourceActorId: string,
+): Promise<EnsureCrmResult> {
+	// FOR UPDATE row-lock the workspace so two concurrent first-enables
+	// can't both observe `crm disabled` and both emit a notification.
+	const [workspaceRow] = await tx
 		.select()
 		.from(workspaces)
 		.where(eq(workspaces.id, workspaceId))
+		.for('update')
 		.limit(1)
 	if (!workspaceRow) throw new WorkspaceNotFoundError(workspaceId)
 
@@ -232,14 +248,14 @@ async function ensureCrmEnabled({
 		mergedSettings.relationship_types = [...existingRelTypes, ...relTypesToAdd]
 	}
 
-	const [updatedWs] = await db
+	const [updatedWs] = await tx
 		.update(workspaces)
 		.set({ settings: mergedSettings, updatedAt: new Date() })
 		.where(eq(workspaces.id, workspaceId))
 		.returning()
 	if (!updatedWs) throw new Error(`Failed to update workspace ${workspaceId}`)
 
-	await db.insert(events).values({
+	await tx.insert(events).values({
 		workspaceId,
 		actorId: sourceActorId,
 		action: 'updated',
@@ -249,7 +265,7 @@ async function ensureCrmEnabled({
 	})
 
 	if (!crmAlreadyOn) {
-		const [notif] = await db
+		const [notif] = await tx
 			.insert(notifications)
 			.values({
 				workspaceId,
