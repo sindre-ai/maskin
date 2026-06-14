@@ -642,3 +642,30 @@ export const workspaceOnboardingPrompts = pgTable(
 
 export type WorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferSelect
 export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferInsert
+
+// ── Agent Servers ─────────────────────────────────────────────────────────
+//
+// Pool of microsandbox-running hosts. `SessionDispatcher` in apps/dev picks
+// an `active` row with capacity (least-loaded) and routes session-start over
+// HTTPS, using `secret` as the bearer token. v1 seeds one row for the Finland
+// host via env-var-backed `seed-agent-servers.ts`; adding a second host is
+// a single row insert with no code change.
+
+export const agentServers = pgTable(
+	'agent_servers',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		url: text('url').notNull().unique(),
+		secret: text('secret').notNull(),
+		maxConcurrentSessions: integer('max_concurrent_sessions').notNull(),
+		status: text('status').notNull().$type<'active' | 'draining' | 'disabled'>(),
+		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check('agent_servers_status_check', sql`${t.status} IN ('active', 'draining', 'disabled')`),
+	],
+)
+
+export type AgentServer = typeof agentServers.$inferSelect
+export type NewAgentServer = typeof agentServers.$inferInsert
