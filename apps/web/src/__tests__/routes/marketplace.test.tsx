@@ -56,9 +56,7 @@ describe('MarketplacePage', () => {
 		// (Type + Use case groups).
 		expect(screen.getAllByRole('button', { name: /^All\s/ }).length).toBeGreaterThanOrEqual(2)
 		expect(screen.getAllByRole('button', { name: /^Agents\s5/ }).length).toBeGreaterThanOrEqual(1)
-		expect(screen.getAllByRole('button', { name: /^Triggers\s2/ }).length).toBeGreaterThanOrEqual(
-			1,
-		)
+		expect(screen.getAllByRole('button', { name: /^Triggers\s2/ }).length).toBeGreaterThanOrEqual(1)
 		expect(screen.getAllByRole('button', { name: /^Skills\s6/ }).length).toBeGreaterThanOrEqual(1)
 		expect(
 			screen.getAllByRole('button', { name: /^Integrations\s3/ }).length,
