@@ -903,12 +903,16 @@ webhookApp.post('/:provider', async (c) => {
 		}
 	}
 
-	// Parse and normalize
-	let payload: unknown
-	try {
-		payload = JSON.parse(body)
-	} catch {
-		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON payload'), 400)
+	// Parse and normalize. Some providers (Google Calendar) send pointer-style
+	// pushes with an empty body — the verifier and normalizer work off headers
+	// alone. Treat empty body as a null payload rather than 400-ing it.
+	let payload: unknown = null
+	if (body.length > 0) {
+		try {
+			payload = JSON.parse(body)
+		} catch {
+			return c.json(createApiError('BAD_REQUEST', 'Invalid JSON payload'), 400)
+		}
 	}
 
 	// Allow provider to short-circuit (e.g. Slack url_verification challenge)
