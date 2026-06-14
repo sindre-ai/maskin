@@ -14,6 +14,12 @@ const PRINTABLE_ASCII_RE = /[^\x20-\x7E]/g
 // agent-base entrypoint sources the spill file at boot. Bet constraint #2.
 const ENV_OVERFLOW_THRESHOLD = 1500
 
+// Overflow keys are written as `export KEY='value'` bash lines — only valid
+// POSIX identifiers are safe here. This is the same allowlist rule that
+// `.claude/rules/input-validation.md` requires for any env-var key that
+// reaches a shell context.
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+
 // Whitelist on sessionId before it reaches an `msb` arg list or a host path.
 // Same shape as T8's session-workspace.ts so the two halves stay aligned.
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
@@ -81,6 +87,9 @@ export function sanitizeEnvForMicroVM(env: Record<string, string>): {
 	const overflow: Array<{ key: string; value: string }> = []
 	let sanitizedCount = 0
 	for (const [key, value] of Object.entries(env)) {
+		if (!ENV_KEY_RE.test(key)) {
+			throw new Error(`Invalid env var key: ${JSON.stringify(key)}`)
+		}
 		const cleaned = value.replace(PRINTABLE_ASCII_RE, '')
 		if (cleaned !== value) sanitizedCount += 1
 		if (cleaned.length > ENV_OVERFLOW_THRESHOLD) {
@@ -227,7 +236,20 @@ export async function spawnSession(
 		throw new Error(`msb create failed for ${input.sessionId}: ${stderr || e.message || 'unknown'}`)
 	}
 
-	await waitForRunning(deps.msbBin, input.sessionId, { run, sleep, now })
+	try {
+		await waitForRunning(deps.msbBin, input.sessionId, { run, sleep, now })
+	} catch (err) {
+		logger.error('msb sandbox did not reach Running, cleaning up', {
+			sessionId: input.sessionId,
+			error: String(err),
+		})
+		try {
+			await run(deps.msbBin, ['remove', '-f', '--quiet', input.sessionId], { timeoutMs: 15_000 })
+		} catch {
+			/* ignored */
+		}
+		throw err
+	}
 
 	logger.info('msb sandbox running', { sessionId: input.sessionId })
 

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import type { StorageProvider } from '@maskin/storage'
@@ -16,7 +17,12 @@ const SESSION_REQUEST_SCHEMA = z.object({
 			'sessionId must match ^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$',
 		),
 	image: z.string().min(1),
-	env: z.record(z.string(), z.string()).default({}),
+	env: z
+		.record(
+			z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'env key must be a valid shell identifier'),
+			z.string(),
+		)
+		.default({}),
 	memoryMib: z.number().int().positive().optional(),
 	cpus: z.number().int().positive().optional(),
 })
@@ -49,7 +55,9 @@ export function buildApp(deps: AppDeps): Hono {
 	app.post('/sessions', async (c) => {
 		const auth = c.req.header('authorization') ?? ''
 		const expected = `Bearer ${deps.env.AGENT_SERVER_SECRET}`
-		if (auth.length !== expected.length || auth !== expected) {
+		const authBuf = Buffer.from(auth)
+		const expectedBuf = Buffer.from(expected)
+		if (authBuf.length !== expectedBuf.length || !timingSafeEqual(authBuf, expectedBuf)) {
 			return c.json({ error: 'unauthorized' }, 401)
 		}
 

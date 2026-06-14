@@ -200,4 +200,23 @@ describe('POST /sessions validation', () => {
 		})
 		expect(res.status).toBe(400)
 	})
+
+	it('rejects invalid env var keys with 400', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-1',
+				image: 'alpine:3.20',
+				env: { 'INJECT=evil; rm -rf /': 'value' },
+			}),
+		})
+		expect(res.status).toBe(400)
+	})
 })

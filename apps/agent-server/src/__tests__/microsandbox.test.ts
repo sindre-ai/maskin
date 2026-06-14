@@ -56,6 +56,12 @@ describe('sanitizeEnvForMicroVM', () => {
 		const { sanitizedCount } = sanitizeEnvForMicroVM({ X: 'æøåæøå' })
 		expect(sanitizedCount).toBe(1)
 	})
+
+	it('throws on an invalid env var key (shell injection guard)', () => {
+		expect(() => sanitizeEnvForMicroVM({ 'FOO=BAR': 'v' })).toThrow(/Invalid env var key/)
+		expect(() => sanitizeEnvForMicroVM({ 'A;rm -rf /': 'v' })).toThrow(/Invalid env var key/)
+		expect(() => sanitizeEnvForMicroVM({ '1STARTS_WITH_DIGIT': 'v' })).toThrow(/Invalid env var key/)
+	})
 })
 
 describe('formatOverflowEnvFile', () => {
@@ -244,12 +250,13 @@ describe('spawnSession (orchestration)', () => {
 		}
 	})
 
-	it('throws when the sandbox never reports Running within the polling deadline', async () => {
+	it('throws and best-effort removes the sandbox when the polling deadline expires', async () => {
 		const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-stuck-'))
 		try {
-			const { run } = makeRunner({
+			const { run, calls } = makeRunner({
 				create: { stdout: '' },
 				list: { stdout: JSON.stringify([{ name: 'orch-4', status: 'Starting' }]) },
+				remove: { stdout: '' },
 			})
 			let t = 0
 			await expect(
@@ -265,6 +272,7 @@ describe('spawnSession (orchestration)', () => {
 					},
 				),
 			).rejects.toThrow(/did not reach Running/)
+			expect(calls.map((c) => c.args[0])).toContain('remove')
 		} finally {
 			await rm(dir, { recursive: true, force: true })
 		}
