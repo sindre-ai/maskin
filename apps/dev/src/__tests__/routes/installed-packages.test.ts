@@ -121,8 +121,9 @@ describe('POST /api/installed-packages', () => {
 			items,
 			[],
 		]
-		// Inserts fire in this order: installed_packages, actor, trigger, event.
-		mockResults.insertQueue = [[install], [{ id: newActorId }], [{ id: newTriggerId }], []]
+		// Inserts fire in this order: installed_packages, actor, workspace_members
+		// (binds the provisioned agent to the workspace), trigger, event.
+		mockResults.insertQueue = [[install], [{ id: newActorId }], [], [{ id: newTriggerId }], []]
 
 		const res = await app.request(
 			jsonRequest('POST', '/api/installed-packages', { packageId, workspaceId }),
@@ -132,9 +133,16 @@ describe('POST /api/installed-packages', () => {
 		const body = await res.json()
 		expect(body.provisioned).toEqual({ actors: 1, triggers: 1, skills: 0, integrations: 0 })
 
+		// 3rd insert binds the freshly-minted actor to the target workspace as a
+		// member — without it the agent is orphaned and its trigger can't run.
+		const memberInsert = calls.inserts[2] as Record<string, unknown>
+		expect(memberInsert.workspaceId).toBe(workspaceId)
+		expect(memberInsert.actorId).toBe(newActorId)
+		expect(memberInsert.role).toBe('member')
+
 		// 4th insert is the trigger: its targetActorId should have been rewritten to
 		// the freshly-minted local actor id, not the publisher's source actor id.
-		const triggerInsert = calls.inserts[2] as Record<string, unknown>
+		const triggerInsert = calls.inserts[3] as Record<string, unknown>
 		expect(triggerInsert.targetActorId).toBe(newActorId)
 		// Metadata snapshot also carries the rewritten id, not the source id.
 		const triggerMeta = triggerInsert.metadata as Record<string, unknown>

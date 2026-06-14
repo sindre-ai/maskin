@@ -8,6 +8,7 @@ import {
 	installedPackages,
 	integrations,
 	triggers,
+	workspaceMembers,
 	workspaceSkills,
 } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
@@ -187,6 +188,17 @@ app.openapi(installPackageRoute, async (c) => {
 						.values(buildActorInsert(snapshot, metadata, actorId))
 						.returning({ id: actors.id })
 					if (!row) throw new Error(`insert returned no row for actor ${item.sourceItemId}`)
+					// Actors are global identities; a workspace_members row is what binds one
+					// to a workspace. Without it the provisioned agent is orphaned — it never
+					// shows up in the workspace's agent list (those queries join through
+					// workspace_members) and its own MCP/API calls, which carry X-Workspace-Id,
+					// would 403 in authMiddleware, so a trigger targeting it couldn't run.
+					// Mirrors how the seeded Sindre agent is added on workspace creation.
+					await tx.insert(workspaceMembers).values({
+						workspaceId,
+						actorId: row.id,
+						role: 'member',
+					})
 					sourceToLocal.set(item.sourceItemId, row.id)
 					provisioned.actors++
 					break
