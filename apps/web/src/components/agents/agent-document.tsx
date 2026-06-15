@@ -356,7 +356,10 @@ export function AgentDocumentView({
 							<span>Managed{managedPackageName ? ` · ${managedPackageName}` : ''}</span>
 							<button
 								type="button"
-								onClick={(e) => { e.stopPropagation(); onForkPackage?.() }}
+								onClick={(e) => {
+									e.stopPropagation()
+									onForkPackage?.()
+								}}
 								className="text-primary hover:underline cursor-pointer"
 							>
 								Fork to edit

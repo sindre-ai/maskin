@@ -6,7 +6,7 @@ vi.mock('sonner', () => ({
 }))
 
 import { PackageGrid } from '@/components/catalog/package-grid'
-import type { CatalogPackageSummary } from '@/lib/api'
+import type { CatalogPackageItem, CatalogPackageSummary } from '@/lib/api'
 import { TestWrapper } from '../../setup'
 
 function buildPackage(
@@ -24,8 +24,26 @@ function buildPackage(
 	}
 }
 
+function buildItem(
+	overrides: Partial<CatalogPackageItem> & {
+		id: string
+		packageId: string
+		itemType: CatalogPackageItem['item_type']
+		name: string
+	},
+): CatalogPackageItem {
+	return {
+		id: overrides.id,
+		package_id: overrides.packageId,
+		item_type: overrides.itemType,
+		source_item_id: overrides.id,
+		item_snapshot: { name: overrides.name, description: null },
+		created_at: null,
+	}
+}
+
 describe('PackageGrid', () => {
-	it('renders a section per item type the catalog actually has', () => {
+	it('renders single-type packages in their matching typed section', () => {
 		const packages = [
 			buildPackage({ id: 'a', name: 'Agent Only', item_types: ['actor'] }),
 			buildPackage({ id: 't', name: 'Trigger Only', item_types: ['trigger'] }),
@@ -37,29 +55,77 @@ describe('PackageGrid', () => {
 		expect(screen.queryByRole('region', { name: 'Integrations' })).not.toBeInTheDocument()
 	})
 
-	it('lists a multi-type package in every matching section', () => {
+	it('places a multi-type package in the Packages section, not in typed sections', () => {
 		const pkg = buildPackage({
 			id: 'bundle',
 			name: 'Multi-element bundle',
 			item_types: ['actor', 'trigger'],
 		})
 		render(<PackageGrid packages={[pkg]} workspaceId="ws-1" />, { wrapper: TestWrapper })
-		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent('Multi-element bundle')
-		expect(screen.getByRole('region', { name: 'Triggers' })).toHaveTextContent(
+		expect(screen.getByRole('region', { name: 'Packages' })).toHaveTextContent(
 			'Multi-element bundle',
 		)
+		expect(screen.queryByRole('region', { name: 'Agents' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('region', { name: 'Triggers' })).not.toBeInTheDocument()
 	})
 
-	it('renders only the active type section when activeType is set', () => {
+	it('shows individual items from a multi-type package in their typed sections', () => {
 		const pkg = buildPackage({
 			id: 'bundle',
 			name: 'Multi-element bundle',
 			item_types: ['actor', 'trigger'],
 		})
-		render(<PackageGrid packages={[pkg]} activeType="actor" workspaceId="ws-1" />, {
+		const items = [
+			buildItem({ id: 'item-1', packageId: 'bundle', itemType: 'actor', name: 'My Agent' }),
+			buildItem({ id: 'item-2', packageId: 'bundle', itemType: 'trigger', name: 'My Trigger' }),
+		]
+		render(<PackageGrid packages={[pkg]} items={items} workspaceId="ws-1" />, {
 			wrapper: TestWrapper,
 		})
-		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent('Multi-element bundle')
+		expect(screen.getByRole('region', { name: 'Packages' })).toHaveTextContent(
+			'Multi-element bundle',
+		)
+		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent('My Agent')
+		expect(screen.getByRole('region', { name: 'Triggers' })).toHaveTextContent('My Trigger')
+		// The bundle itself should not appear in typed sections
+		expect(screen.getByRole('region', { name: 'Agents' })).not.toHaveTextContent(
+			'Multi-element bundle',
+		)
+		expect(screen.getByRole('region', { name: 'Triggers' })).not.toHaveTextContent(
+			'Multi-element bundle',
+		)
+	})
+
+	it('renders only the Agents section when typeFilter is actor', () => {
+		const pkg = buildPackage({
+			id: 'bundle',
+			name: 'Multi-element bundle',
+			item_types: ['actor', 'trigger'],
+		})
+		const items = [
+			buildItem({ id: 'item-1', packageId: 'bundle', itemType: 'actor', name: 'My Agent' }),
+		]
+		render(<PackageGrid packages={[pkg]} items={items} typeFilter="actor" workspaceId="ws-1" />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent('My Agent')
+		expect(screen.queryByRole('region', { name: 'Triggers' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('region', { name: 'Packages' })).not.toBeInTheDocument()
+	})
+
+	it('renders only the Packages section when typeFilter is packages', () => {
+		const pkg = buildPackage({
+			id: 'bundle',
+			name: 'Multi-element bundle',
+			item_types: ['actor', 'trigger'],
+		})
+		render(<PackageGrid packages={[pkg]} typeFilter="packages" workspaceId="ws-1" />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByRole('region', { name: 'Packages' })).toHaveTextContent(
+			'Multi-element bundle',
+		)
+		expect(screen.queryByRole('region', { name: 'Agents' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('region', { name: 'Triggers' })).not.toBeInTheDocument()
 	})
 

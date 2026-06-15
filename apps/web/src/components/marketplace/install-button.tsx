@@ -6,9 +6,15 @@ interface InstallButtonProps {
 	workspaceId: string
 	packageId: string
 	disabled?: boolean
+	label?: string
 }
 
-export function InstallButton({ workspaceId, packageId, disabled }: InstallButtonProps) {
+export function InstallButton({
+	workspaceId,
+	packageId,
+	disabled,
+	label = 'Install package',
+}: InstallButtonProps) {
 	const install = useInstallPackage(workspaceId)
 	const isInstalling = install.isPending
 
@@ -24,7 +30,7 @@ export function InstallButton({ workspaceId, packageId, disabled }: InstallButto
 					Installing…
 				</>
 			) : (
-				'Install package'
+				label
 			)}
 		</Button>
 	)
