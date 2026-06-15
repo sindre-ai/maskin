@@ -465,6 +465,25 @@ export const api = {
 		get: (id: string) => request<CatalogPackageDetailResponse>(`/catalog/packages/${id}`),
 	},
 
+	installedPackages: {
+		list: (workspaceId: string) =>
+			request<InstalledPackagesListResponse>(
+				`/installed-packages?workspaceId=${encodeURIComponent(workspaceId)}`,
+				{ workspaceId },
+			),
+		install: (workspaceId: string, packageId: string) =>
+			request<InstalledPackageInstallResponse>('/installed-packages', {
+				method: 'POST',
+				body: { packageId, workspaceId },
+				workspaceId,
+			}),
+		fork: (workspaceId: string, installedPackageId: string) =>
+			request<InstalledPackageForkResponse>(`/installed-packages/${installedPackageId}/fork`, {
+				method: 'POST',
+				workspaceId,
+			}),
+	},
+
 	subscriptions: {
 		subscribe: (workspaceId: string, entityType: string, entityId: string) =>
 			request<{ subscribed: true }>('/subscriptions', {
@@ -1180,4 +1199,45 @@ export interface CatalogPackagesListResponse {
 export interface CatalogPackageDetailResponse {
 	package: CatalogPackageSummary
 	items: CatalogPackageItem[]
+}
+
+export interface InstalledPackageRow {
+	id: string
+	workspaceId: string
+	sourcePackageId: string
+	installedVersion: string
+	isLocked: boolean
+	forkedAt: string | null
+	installedAt: string | null
+	updatedAt: string | null
+	availableVersion: string
+	hasUpdate: boolean
+}
+
+export interface InstalledPackagesListResponse {
+	installs: InstalledPackageRow[]
+}
+
+export interface InstalledPackageInstallResponse {
+	id: string
+	workspaceId: string
+	sourcePackageId: string
+	installedVersion: string
+	isLocked: boolean
+	forkedAt: string | null
+	installedAt: string | null
+	updatedAt: string | null
+	provisioned: { actors: number; triggers: number; skills: number; integrations: number }
+}
+
+export interface InstalledPackageForkResponse {
+	id: string
+	workspaceId: string
+	sourcePackageId: string
+	installedVersion: string
+	isLocked: boolean
+	forkedAt: string | null
+	installedAt: string | null
+	updatedAt: string | null
+	detached: { actors: number; triggers: number; skills: number; integrations: number }
 }

@@ -1,11 +1,17 @@
 import { PackageGrid } from '@/components/catalog/package-grid'
 import { RouteError } from '@/components/shared/route-error'
 import { useCatalogPackages } from '@/hooks/use-catalog-packages'
-import type { CatalogItemType, CatalogPackageCounts, CatalogPackageSummary } from '@/lib/api'
+import { useInstalledPackages } from '@/hooks/use-installed-packages'
+import type {
+	CatalogItemType,
+	CatalogPackageCounts,
+	CatalogPackageSummary,
+	InstalledPackageRow,
+} from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/marketplace')({
 	component: MarketplacePage,
@@ -46,17 +52,22 @@ const SUBHEAD =
 	'Vetted agents, triggers, skills, and integrations — install them on their own, or as packages wired end-to-end.'
 
 function MarketplacePage() {
-	useWorkspace()
+	const { workspaceId } = useWorkspace()
 	const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
 	const [useCaseFilter, setUseCaseFilter] = useState<UseCaseFilter>('all')
 
 	const { data, isLoading, isError } = useCatalogPackages()
 	const counts = data?.counts
+	const packages = data?.packages ?? []
 
-	const handleInstall = (pkg: CatalogPackageSummary) => {
-		// T9 wires the install mutation. Keeps the success path observable here.
-		console.info('[marketplace] install requested', { id: pkg.id, slug: pkg.slug })
-	}
+	const { data: installsData } = useInstalledPackages(workspaceId)
+	const installsByPackage = useMemo(() => {
+		const map = new Map<string, InstalledPackageRow>()
+		for (const row of installsData?.installs ?? []) {
+			map.set(row.sourcePackageId, row)
+		}
+		return map
+	}, [installsData])
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
@@ -117,13 +128,18 @@ function MarketplacePage() {
 						</p>
 					) : isLoading ? (
 						<p className="text-sm text-muted-foreground">Loading catalog…</p>
+					) : packages.length === 0 ? (
+						<p className="text-sm text-muted-foreground">
+							No packages yet — check back once Maskin publishes the first one.
+						</p>
 					) : (
 						<PackageGrid
-							packages={filterPackages(data?.packages ?? [], typeFilter, useCaseFilter)}
+							packages={filterPackages(packages, typeFilter, useCaseFilter)}
 							activeType={
 								typeFilter === 'all' || typeFilter === 'packages' ? undefined : typeFilter
 							}
-							onInstall={handleInstall}
+							workspaceId={workspaceId}
+							installLookup={(pkg) => installsByPackage.get(pkg.id)}
 						/>
 					)}
 				</section>

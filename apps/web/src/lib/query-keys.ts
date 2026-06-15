@@ -108,4 +108,8 @@ export const queryKeys = {
 			['catalog-packages', 'list', filters ?? {}] as const,
 		detail: (id: string) => ['catalog-packages', 'detail', id] as const,
 	},
+	installedPackages: {
+		all: (workspaceId: string) => ['installed-packages', workspaceId] as const,
+		list: (workspaceId: string) => ['installed-packages', workspaceId, 'list'] as const,
+	},
 } as const

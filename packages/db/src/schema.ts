@@ -754,3 +754,28 @@ export const installedPackages = pgTable(
 
 export type InstalledPackage = typeof installedPackages.$inferSelect
 export type NewInstalledPackage = typeof installedPackages.$inferInsert
+
+// ── Loop Active Days ──────────────────────────────────────────────────────────
+//
+// One row per (installed_package_id, UTC day) that has emitted a
+// `loop_active_day` PostHog event. The PRIMARY KEY is the idempotency
+// guarantee: the session-completion path runs INSERT ... ON CONFLICT DO
+// NOTHING and only fires the analytics event when the insert actually
+// added a row. The ON DELETE CASCADE drops the rows automatically when an
+// install is deleted, so an install re-created later for the same
+// workspace + package can emit `loop_active_day` again from day one.
+
+export const loopActiveDays = pgTable(
+	'loop_active_days',
+	{
+		installedPackageId: uuid('installed_package_id')
+			.notNull()
+			.references(() => installedPackages.id, { onDelete: 'cascade' }),
+		utcDay: text('utc_day').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.installedPackageId, t.utcDay] })],
+)
+
+export type LoopActiveDay = typeof loopActiveDays.$inferSelect
+export type NewLoopActiveDay = typeof loopActiveDays.$inferInsert

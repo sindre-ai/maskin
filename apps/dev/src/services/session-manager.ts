@@ -19,6 +19,11 @@ import {
 import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, inArray, lt, ne, or } from 'drizzle-orm'
+import {
+	claimLoopActiveDay,
+	trackLoopActiveDay,
+	utcDayString,
+} from '../lib/analytics/catalog-events'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
@@ -1299,6 +1304,16 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// Ship-metric emit. If this session belongs to a managed-catalog actor
+		// (carries `metadata.installed_package_id`), claim the per-(workspace,
+		// install, UTC day) idempotency slot and emit `loop_active_day` to
+		// PostHog when the claim is won. Both the lookup and the emit are
+		// best-effort — analytics failures must not affect the completion
+		// path that downstream watchdogs and SSE clients depend on.
+		await this.maybeEmitLoopActiveDay(session.actorId, session.workspaceId).catch((err) => {
+			logger.warn('Failed loop_active_day emit', { sessionId, error: String(err) })
+		})
+
 		try {
 			await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
 		} catch (err) {
@@ -1337,6 +1352,56 @@ export class SessionManager extends EventEmitter {
 		await this.drainQueue(session.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after completion', { error: String(err) }),
 		)
+	}
+
+	/**
+	 * If the completing session's actor is part of a managed-catalog install
+	 * (carries `metadata.installed_package_id`), claim today's idempotency
+	 * slot and emit `loop_active_day`. Returns silently when the actor isn't
+	 * a managed install or when today has already been claimed for that
+	 * install — both are normal no-ops.
+	 */
+	private async maybeEmitLoopActiveDay(actorId: string, workspaceId: string): Promise<void> {
+		const [actor] = await this.db
+			.select({ metadata: actors.metadata })
+			.from(actors)
+			.where(eq(actors.id, actorId))
+			.limit(1)
+
+		const meta = (actor?.metadata as Record<string, unknown> | null) ?? null
+		const installedPackageId = meta?.installed_package_id
+		if (typeof installedPackageId !== 'string' || installedPackageId.length === 0) return
+
+		const utcDay = utcDayString()
+		const claim = await claimLoopActiveDay(this.db, installedPackageId, utcDay)
+		if (!claim) return
+
+		// Guard against a misaligned actor metadata (workspace_id mismatch is
+		// not expected but can happen if an install row was deleted while a
+		// session was still in flight). The emitted workspace_id is the one
+		// stored on the install row, which is the canonical join key for
+		// PostHog's Synthesizer.
+		if (claim.workspaceId !== workspaceId) {
+			logger.warn('loop_active_day workspace mismatch', {
+				actorWorkspace: workspaceId,
+				installWorkspace: claim.workspaceId,
+				installedPackageId,
+			})
+		}
+
+		await trackLoopActiveDay({
+			installedPackageId: claim.installedPackageId,
+			packageId: claim.packageId,
+			packageSlug: claim.packageSlug,
+			workspaceId: claim.workspaceId,
+			utcDay,
+		})
+
+		logger.info('loop_active_day emitted', {
+			installedPackageId: claim.installedPackageId,
+			workspaceId: claim.workspaceId,
+			utcDay,
+		})
 	}
 
 	private async runWatchdog(): Promise<void> {

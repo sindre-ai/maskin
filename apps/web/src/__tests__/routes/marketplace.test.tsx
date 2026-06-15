@@ -19,6 +19,12 @@ vi.mock('@/hooks/use-catalog-packages', () => ({
 	useCatalogPackages: () => mockUseCatalogPackages(),
 }))
 
+vi.mock('@/hooks/use-installed-packages', () => ({
+	useInstalledPackages: () => ({ data: { installs: [] }, isLoading: false, isError: false }),
+	useInstallPackage: () => ({ mutate: vi.fn(), isPending: false }),
+	useForkInstalledPackage: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
 import { Route } from '@/routes/_authed/$workspaceId/marketplace'
 
 const MarketplacePage = (Route as unknown as { component: React.FC }).component
@@ -119,6 +125,11 @@ describe('MarketplacePage', () => {
 		expect(screen.getByRole('region', { name: 'Triggers' })).toHaveTextContent(
 			'Customer Continuous Discovery',
 		)
+	})
+
+	it('shows the empty-state copy when the catalog has no packages', () => {
+		render(<MarketplacePage />)
+		expect(screen.getByText(/No packages yet/i)).toBeInTheDocument()
 	})
 
 	it('hides the desktop sidebar via the md:hidden / hidden md:block split', () => {

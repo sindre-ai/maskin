@@ -1,7 +1,13 @@
+import { render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('sonner', () => ({
+	toast: { success: vi.fn(), error: vi.fn() },
+}))
+
 import { PackageGrid } from '@/components/catalog/package-grid'
 import type { CatalogPackageSummary } from '@/lib/api'
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { TestWrapper } from '../../setup'
 
 function buildPackage(
 	overrides: Partial<CatalogPackageSummary> & { id: string; name: string },
@@ -24,7 +30,7 @@ describe('PackageGrid', () => {
 			buildPackage({ id: 'a', name: 'Agent Only', item_types: ['actor'] }),
 			buildPackage({ id: 't', name: 'Trigger Only', item_types: ['trigger'] }),
 		]
-		render(<PackageGrid packages={packages} />)
+		render(<PackageGrid packages={packages} workspaceId="ws-1" />, { wrapper: TestWrapper })
 		expect(screen.getByRole('region', { name: 'Agents' })).toBeInTheDocument()
 		expect(screen.getByRole('region', { name: 'Triggers' })).toBeInTheDocument()
 		expect(screen.queryByRole('region', { name: 'Skills' })).not.toBeInTheDocument()
@@ -37,7 +43,7 @@ describe('PackageGrid', () => {
 			name: 'Multi-element bundle',
 			item_types: ['actor', 'trigger'],
 		})
-		render(<PackageGrid packages={[pkg]} />)
+		render(<PackageGrid packages={[pkg]} workspaceId="ws-1" />, { wrapper: TestWrapper })
 		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent('Multi-element bundle')
 		expect(screen.getByRole('region', { name: 'Triggers' })).toHaveTextContent(
 			'Multi-element bundle',
@@ -50,13 +56,17 @@ describe('PackageGrid', () => {
 			name: 'Multi-element bundle',
 			item_types: ['actor', 'trigger'],
 		})
-		render(<PackageGrid packages={[pkg]} activeType="actor" />)
+		render(<PackageGrid packages={[pkg]} activeType="actor" workspaceId="ws-1" />, {
+			wrapper: TestWrapper,
+		})
 		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent('Multi-element bundle')
 		expect(screen.queryByRole('region', { name: 'Triggers' })).not.toBeInTheDocument()
 	})
 
 	it('renders nothing when the package list is empty', () => {
-		const { container } = render(<PackageGrid packages={[]} />)
+		const { container } = render(<PackageGrid packages={[]} workspaceId="ws-1" />, {
+			wrapper: TestWrapper,
+		})
 		expect(container.firstChild).toBeNull()
 	})
 })

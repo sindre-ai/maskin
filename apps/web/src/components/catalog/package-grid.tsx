@@ -1,7 +1,6 @@
-import type { CatalogItemType, CatalogPackageSummary } from '@/lib/api'
+import { PackageCard } from '@/components/marketplace/package-card'
+import type { CatalogItemType, CatalogPackageSummary, InstalledPackageRow } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import type { InstallState } from './install-state-badge'
-import { PackageCard } from './package-card'
 
 const SECTION_ORDER: CatalogItemType[] = ['actor', 'trigger', 'skill', 'integration']
 
@@ -15,15 +14,15 @@ const SECTION_TITLE: Record<CatalogItemType, string> = {
 export function PackageGrid({
 	packages,
 	activeType,
+	workspaceId,
 	installLookup,
-	onInstall,
 	className,
 }: {
 	packages: CatalogPackageSummary[]
 	/** When set, render only this type's section instead of one per item_type. */
 	activeType?: CatalogItemType
-	installLookup?: (pkg: CatalogPackageSummary) => InstallState | undefined
-	onInstall?: (pkg: CatalogPackageSummary) => void
+	workspaceId: string
+	installLookup?: (pkg: CatalogPackageSummary) => InstalledPackageRow | undefined
 	className?: string
 }) {
 	const order = activeType ? [activeType] : SECTION_ORDER
@@ -45,9 +44,9 @@ export function PackageGrid({
 						{bucket.map((pkg) => (
 							<PackageCard
 								key={pkg.id}
+								workspaceId={workspaceId}
 								pkg={pkg}
-								installState={installLookup?.(pkg)}
-								onInstall={onInstall}
+								install={installLookup?.(pkg)}
 							/>
 						))}
 					</div>
