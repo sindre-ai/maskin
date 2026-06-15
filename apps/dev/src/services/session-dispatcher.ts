@@ -234,14 +234,23 @@ export class SessionDispatcher {
 		serverId: string,
 		sandboxName: string,
 	): Promise<void> {
+		const [session] = await this.db
+			.select({ config: sessions.config })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		const config = (session?.config ?? {}) as Record<string, unknown>
+		const timeoutSeconds = (config.timeout_seconds as number) ?? 7200
+		const now = new Date()
 		await this.db
 			.update(sessions)
 			.set({
 				status: 'running',
 				agentServerId: serverId,
 				containerId: sandboxName,
-				startedAt: new Date(),
-				updatedAt: new Date(),
+				startedAt: now,
+				timeoutAt: new Date(now.getTime() + timeoutSeconds * 1000),
+				updatedAt: now,
 			})
 			.where(
 				and(eq(sessions.id, sessionId), sql`${sessions.status} NOT IN ('completed', 'failed')`),
