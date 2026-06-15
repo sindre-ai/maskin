@@ -13,7 +13,8 @@ export class InputQueue {
 		const queued = this.pending.get(sessionId) ?? []
 		this.pending.delete(sessionId)
 		for (let i = 0; i < queued.length; i++) {
-			if (!flusher(queued[i])) {
+			const msg = queued[i] as string
+			if (!flusher(msg)) {
 				// Stream closed mid-flush — re-park this message and everything after it.
 				this.pending.set(sessionId, queued.slice(i))
 				return () => {}
