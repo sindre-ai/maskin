@@ -44,6 +44,17 @@ describe('PackageGrid', () => {
 		)
 	})
 
+	it('renders only the active type section when activeType is set', () => {
+		const pkg = buildPackage({
+			id: 'bundle',
+			name: 'Multi-element bundle',
+			item_types: ['actor', 'trigger'],
+		})
+		render(<PackageGrid packages={[pkg]} activeType="actor" />)
+		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent('Multi-element bundle')
+		expect(screen.queryByRole('region', { name: 'Triggers' })).not.toBeInTheDocument()
+	})
+
 	it('renders nothing when the package list is empty', () => {
 		const { container } = render(<PackageGrid packages={[]} />)
 		expect(container.firstChild).toBeNull()

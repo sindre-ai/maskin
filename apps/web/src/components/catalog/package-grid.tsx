@@ -14,19 +14,25 @@ const SECTION_TITLE: Record<CatalogItemType, string> = {
 
 export function PackageGrid({
 	packages,
+	activeType,
 	installLookup,
 	onInstall,
 	className,
 }: {
 	packages: CatalogPackageSummary[]
+	/** When set, render only this type's section instead of one per item_type. */
+	activeType?: CatalogItemType
 	installLookup?: (pkg: CatalogPackageSummary) => InstallState | undefined
 	onInstall?: (pkg: CatalogPackageSummary) => void
 	className?: string
 }) {
-	const sections = SECTION_ORDER.map((type) => ({
-		type,
-		packages: packages.filter((p) => p.item_types.includes(type)),
-	})).filter((s) => s.packages.length > 0)
+	const order = activeType ? [activeType] : SECTION_ORDER
+	const sections = order
+		.map((type) => ({
+			type,
+			packages: packages.filter((p) => p.item_types.includes(type)),
+		}))
+		.filter((s) => s.packages.length > 0)
 
 	if (sections.length === 0) return null
 

@@ -120,6 +120,9 @@ function MarketplacePage() {
 					) : (
 						<PackageGrid
 							packages={filterPackages(data?.packages ?? [], typeFilter, useCaseFilter)}
+							activeType={
+								typeFilter === 'all' || typeFilter === 'packages' ? undefined : typeFilter
+							}
 							onInstall={handleInstall}
 						/>
 					)}
