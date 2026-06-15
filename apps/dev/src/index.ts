@@ -1,7 +1,7 @@
 import './extensions'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
-import { createDb } from '@maskin/db'
+import { createDb, syncAgentServersFromEnv } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
@@ -26,6 +26,24 @@ if (!databaseUrl) {
 	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
 const db = createDb(databaseUrl)
+
+// Sync agent-server pool from env on every startup.
+// Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
+try {
+	const synced = await syncAgentServersFromEnv(db, process.env)
+	if (synced.length > 0) {
+		logger.info('Agent servers synced from env', {
+			count: synced.length,
+			urls: synced.map((s) => s.url),
+		})
+	} else if (process.env.NODE_ENV === 'production') {
+		logger.warn('No agent servers configured — set AGENT_SERVERS=url1|secret1,url2|secret2')
+	}
+} catch (err) {
+	logger.error('Failed to sync agent servers from env', {
+		error: err instanceof Error ? err.message : String(err),
+	})
+}
 
 // Real-time: PG NOTIFY → SSE bridge
 // LISTEN/NOTIFY requires a direct (session-mode) connection when using a connection
