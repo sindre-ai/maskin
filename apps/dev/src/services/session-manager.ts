@@ -23,6 +23,7 @@ import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
+import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
@@ -940,6 +941,25 @@ export class SessionManager extends EventEmitter {
 
 					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
 				} else {
+					// Slack: only inject the bot token. A user token (xoxp-) here means
+					// the install granted user scopes instead of bot scopes — posting
+					// with it would attribute every message to the human installer
+					// (the mesh-firm bug). Skip injection so the agent gets a clean
+					// "Slack not configured" error from its tools rather than silently
+					// posting as a person.
+					if (integration.provider === 'slack' && !isSlackBotToken(accessToken)) {
+						logger.warn(
+							'Skipping Slack token injection — stored access token is not a bot (xoxb-) token',
+							{
+								sessionId: session.id,
+								workspaceId: session.workspaceId,
+								integrationId: integration.id,
+								tokenPrefix: accessToken.slice(0, 5),
+							},
+						)
+						continue
+					}
+
 					const envVarName =
 						resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
 					envVars[envVarName] = accessToken
