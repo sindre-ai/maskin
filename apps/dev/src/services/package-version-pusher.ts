@@ -12,6 +12,20 @@ import {
 } from '@maskin/db/schema'
 import { and, eq, ne, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import {
+	buildActorInsert,
+	buildIntegrationInsert,
+	buildSkillInsert,
+	buildTriggerInsert,
+	installMetadata,
+	rewriteWiring,
+} from './package-provisioning'
+
+// The install endpoint and this cron must build element rows identically, so
+// the insert builders + wiring helpers live in `package-provisioning` and are
+// shared. Re-exported so the existing test importing `rewriteWiring` from this
+// module keeps working.
+export { rewriteWiring }
 
 const TICK_MS = 60 * 60 * 1000 // 1h
 const STARTUP_DELAY_MS = 90_000 // run once shortly after boot
@@ -178,6 +192,14 @@ export class PackageVersionPusher {
 			if (row.sourceItemId) sourceToLocal.set(row.sourceItemId, row.id)
 		}
 
+		// The cron has no request actor, so provisioned rows are attributed to a
+		// workspace actor (system actor if present, else any member). Only resolved
+		// when there's actually an add to make — updates and removes don't need it.
+		// Triggers and integrations have a NOT NULL `created_by` FK, so an add of
+		// either with no resolvable actor is a hard error rather than a bad insert.
+		const needsCreatedBy = catalogItems.some((item) => !installedBySourceId.has(item.sourceItemId))
+		const createdBy = needsCreatedBy ? await this.resolveWorkspaceActor(install.workspaceId) : null
+
 		let adds = 0
 		let updates = 0
 		let removes = 0
@@ -227,15 +249,32 @@ export class PackageVersionPusher {
 						case 'actor': {
 							const [row] = await tx
 								.insert(actors)
-								.values(buildActorInsert(rewritten, metadata))
+								.values(buildActorInsert(rewritten, metadata, createdBy))
 								.returning({ id: actors.id })
 							newId = row?.id
+							// Bind the freshly-minted actor to the workspace, exactly as the
+							// install endpoint does. Without a workspace_members row the agent
+							// is orphaned — it never appears in the workspace agent list and its
+							// own X-Workspace-Id calls 403 in authMiddleware, so a trigger
+							// targeting it could never run.
+							if (newId) {
+								await tx.insert(workspaceMembers).values({
+									workspaceId: install.workspaceId,
+									actorId: newId,
+									role: 'member',
+								})
+							}
 							break
 						}
 						case 'trigger': {
+							if (!createdBy) {
+								throw new Error(
+									`cannot provision trigger ${item.sourceItemId} for install ${install.id}: no workspace actor to attribute it to`,
+								)
+							}
 							const [row] = await tx
 								.insert(triggers)
-								.values(buildTriggerInsert(install.workspaceId, rewritten, metadata))
+								.values(buildTriggerInsert(install.workspaceId, rewritten, metadata, createdBy))
 								.returning({ id: triggers.id })
 							newId = row?.id
 							break
@@ -243,15 +282,20 @@ export class PackageVersionPusher {
 						case 'skill': {
 							const [row] = await tx
 								.insert(workspaceSkills)
-								.values(buildSkillInsert(install.workspaceId, rewritten, metadata))
+								.values(buildSkillInsert(install.workspaceId, rewritten, metadata, createdBy))
 								.returning({ id: workspaceSkills.id })
 							newId = row?.id
 							break
 						}
 						case 'integration': {
+							if (!createdBy) {
+								throw new Error(
+									`cannot provision integration ${item.sourceItemId} for install ${install.id}: no workspace actor to attribute it to`,
+								)
+							}
 							const [row] = await tx
 								.insert(integrations)
-								.values(buildIntegrationInsert(install.workspaceId, rewritten, metadata))
+								.values(buildIntegrationInsert(install.workspaceId, rewritten, metadata, createdBy))
 								.returning({ id: integrations.id })
 							newId = row?.id
 							break
@@ -360,7 +404,7 @@ export class PackageVersionPusher {
 			.limit(1)
 		if (existing.length > 0) return
 
-		const sourceActorId = await this.resolveNotificationSource(install.workspaceId)
+		const sourceActorId = await this.resolveWorkspaceActor(install.workspaceId)
 		if (!sourceActorId) {
 			logger.warn('No source actor available for package_update_available notification', {
 				installId: install.id,
@@ -391,9 +435,10 @@ export class PackageVersionPusher {
 		})
 	}
 
-	private async resolveNotificationSource(workspaceId: string): Promise<string | null> {
-		// Prefer a system actor (e.g. Sindre) that is a member of this workspace,
-		// then fall back to any member at all.
+	// Resolve an actor to attribute cron-side writes to (notification source,
+	// provisioned-row `created_by`). Prefers a system actor (e.g. Sindre) that is
+	// a member of this workspace, then falls back to any member at all.
+	private async resolveWorkspaceActor(workspaceId: string): Promise<string | null> {
 		const systemMember = await this.db
 			.select({ id: actors.id })
 			.from(workspaceMembers)
@@ -423,80 +468,8 @@ function toInstalledRow(id: string, type: ItemType, metadata: unknown): Installe
 	}
 }
 
-/**
- * Build the per-row metadata for an install-provisioned element. Carries the
- * install id + source item id (so the cron finds the row again next push) plus
- * the snapshot itself (so we can diff against the catalog without scraping the
- * row's structured columns — which differ per element type).
- */
-function installMetadata(
-	installId: string,
-	sourceItemId: string,
-	snapshot: Record<string, unknown>,
-): Record<string, unknown> {
-	return {
-		installed_package_id: installId,
-		source_item_id: sourceItemId,
-		snapshot,
-	}
-}
-
-/**
- * Rewrite intra-package wiring in a snapshot. Any string value in the snapshot
- * that matches a known `source_item_id` is replaced with the local id it was
- * provisioned into. Used so a trigger's `target_actor_id` (which points at the
- * publisher's actor id) becomes the installed actor's id.
- */
-export function rewriteWiring(
-	snapshot: Record<string, unknown>,
-	sourceToLocal: Map<string, string>,
-): Record<string, unknown> {
-	if (sourceToLocal.size === 0) return snapshot
-	return walk(snapshot, sourceToLocal) as Record<string, unknown>
-}
-
-function walk(value: unknown, sourceToLocal: Map<string, string>): unknown {
-	if (typeof value === 'string') {
-		const local = sourceToLocal.get(value)
-		return local ?? value
-	}
-	if (Array.isArray(value)) {
-		return value.map((v) => walk(v, sourceToLocal))
-	}
-	if (value && typeof value === 'object') {
-		const out: Record<string, unknown> = {}
-		for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-			out[k] = walk(v, sourceToLocal)
-		}
-		return out
-	}
-	return value
-}
-
 function snapshotsEqual(a: unknown, b: unknown): boolean {
 	return JSON.stringify(a) === JSON.stringify(b)
-}
-
-function buildActorInsert(
-	snapshot: Record<string, unknown>,
-	metadata: Record<string, unknown>,
-): typeof actors.$inferInsert {
-	const apiKey =
-		(snapshot.apiKey as string) ?? (snapshot.api_key as string) ?? `pkg_${randomToken()}`
-	return {
-		type: (snapshot.type as string) ?? 'agent',
-		name: (snapshot.name as string) ?? 'Untitled agent',
-		description: (snapshot.description as string) ?? null,
-		systemPrompt: (snapshot.systemPrompt as string) ?? (snapshot.system_prompt as string) ?? null,
-		llmProvider: (snapshot.llmProvider as string) ?? (snapshot.llm_provider as string) ?? null,
-		llmConfig:
-			(snapshot.llmConfig as Record<string, unknown>) ??
-			(snapshot.llm_config as Record<string, unknown>) ??
-			null,
-		tools: (snapshot.tools as Record<string, unknown>) ?? null,
-		apiKey,
-		metadata,
-	}
 }
 
 function buildActorUpdate(snapshot: Record<string, unknown>): Partial<typeof actors.$inferInsert> {
@@ -513,24 +486,6 @@ function buildActorUpdate(snapshot: Record<string, unknown>): Partial<typeof act
 	}
 }
 
-function buildTriggerInsert(
-	workspaceId: string,
-	snapshot: Record<string, unknown>,
-	metadata: Record<string, unknown>,
-): typeof triggers.$inferInsert {
-	return {
-		workspaceId,
-		name: (snapshot.name as string) ?? 'Untitled trigger',
-		type: (snapshot.type as string) ?? 'cron',
-		config: (snapshot.config as Record<string, unknown>) ?? {},
-		actionPrompt: (snapshot.actionPrompt as string) ?? (snapshot.action_prompt as string) ?? '',
-		targetActorId: (snapshot.targetActorId as string) ?? (snapshot.target_actor_id as string) ?? '',
-		enabled: typeof snapshot.enabled === 'boolean' ? snapshot.enabled : true,
-		createdBy: (snapshot.createdBy as string) ?? (snapshot.created_by as string) ?? '',
-		metadata,
-	}
-}
-
 function buildTriggerUpdate(
 	snapshot: Record<string, unknown>,
 ): Partial<typeof triggers.$inferInsert> {
@@ -541,28 +496,6 @@ function buildTriggerUpdate(
 		actionPrompt: (snapshot.actionPrompt as string) ?? (snapshot.action_prompt as string) ?? '',
 		targetActorId: (snapshot.targetActorId as string) ?? (snapshot.target_actor_id as string) ?? '',
 		enabled: typeof snapshot.enabled === 'boolean' ? snapshot.enabled : true,
-	}
-}
-
-function buildSkillInsert(
-	workspaceId: string,
-	snapshot: Record<string, unknown>,
-	metadata: Record<string, unknown>,
-): typeof workspaceSkills.$inferInsert {
-	return {
-		workspaceId,
-		name: (snapshot.name as string) ?? 'untitled-skill',
-		description: (snapshot.description as string) ?? null,
-		content: (snapshot.content as string) ?? '',
-		storageKey: (snapshot.storageKey as string) ?? (snapshot.storage_key as string) ?? '',
-		sizeBytes:
-			typeof snapshot.sizeBytes === 'number'
-				? snapshot.sizeBytes
-				: typeof snapshot.size_bytes === 'number'
-					? (snapshot.size_bytes as number)
-					: 0,
-		isValid: typeof snapshot.isValid === 'boolean' ? snapshot.isValid : true,
-		metadata,
 	}
 }
 
@@ -583,23 +516,6 @@ function buildSkillUpdate(
 	}
 }
 
-function buildIntegrationInsert(
-	workspaceId: string,
-	snapshot: Record<string, unknown>,
-	metadata: Record<string, unknown>,
-): typeof integrations.$inferInsert {
-	return {
-		workspaceId,
-		provider: (snapshot.provider as string) ?? 'unknown',
-		status: (snapshot.status as string) ?? 'inactive',
-		externalId: (snapshot.externalId as string) ?? (snapshot.external_id as string) ?? null,
-		credentials: (snapshot.credentials as string) ?? '',
-		config: (snapshot.config as Record<string, unknown>) ?? {},
-		createdBy: (snapshot.createdBy as string) ?? (snapshot.created_by as string) ?? '',
-		metadata,
-	}
-}
-
 function buildIntegrationUpdate(
 	snapshot: Record<string, unknown>,
 ): Partial<typeof integrations.$inferInsert> {
@@ -609,8 +525,4 @@ function buildIntegrationUpdate(
 		externalId: (snapshot.externalId as string) ?? (snapshot.external_id as string) ?? null,
 		config: (snapshot.config as Record<string, unknown>) ?? {},
 	}
-}
-
-function randomToken(): string {
-	return Math.random().toString(36).slice(2) + Date.now().toString(36)
 }

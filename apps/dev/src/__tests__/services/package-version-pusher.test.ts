@@ -169,6 +169,95 @@ describe('PackageVersionPusher', () => {
 		expect(update.installedVersion).toBe('2.0.0')
 	})
 
+	it('adds a new catalog item to a locked install: actor gets a fresh apiKey + workspace_members binding, trigger gets a resolved createdBy and rewritten target', async () => {
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.selectQueue = [
+			// tick(): pending installs join — one locked install at v1 vs catalog v2
+			[
+				{
+					install: {
+						id: 'install-1',
+						workspaceId: 'ws-1',
+						sourcePackageId: 'pkg-1',
+						installedVersion: '1.0.0',
+						isLocked: true,
+						forkedAt: null,
+						installedAt: new Date('2026-05-01'),
+						updatedAt: new Date('2026-05-01'),
+					},
+					targetVersion: '2.0.0',
+				},
+			],
+			// pushLockedInstall(): catalog items — a brand-new actor + trigger the
+			// install doesn't have yet. The trigger targets the actor by source id.
+			[
+				{
+					id: 'item-actor',
+					sourceItemId: 'src-actor',
+					itemType: 'actor',
+					// Snapshot carries a publisher apiKey — must be ignored, not copied.
+					itemSnapshot: {
+						name: 'Researcher',
+						type: 'agent',
+						systemPrompt: 'Listen.',
+						apiKey: 'ank_publisherleak',
+					},
+				},
+				{
+					id: 'item-trigger',
+					sourceItemId: 'src-trigger',
+					itemType: 'trigger',
+					itemSnapshot: {
+						name: 'Daily',
+						type: 'cron',
+						config: { expression: '0 9 * * *' },
+						action_prompt: 'Run.',
+						target_actor_id: 'src-actor',
+					},
+				},
+			],
+			// loadInstalledRows(): nothing installed yet — both items are adds.
+			[],
+			[],
+			[],
+			[],
+			// resolveWorkspaceActor(): a system actor is a member of the workspace.
+			[{ id: 'sindre-actor' }],
+		]
+		// Inserts fire in order: actor, workspace_members (binds the actor), trigger.
+		mockResults.insertQueue = [[{ id: 'new-actor' }], [], [{ id: 'new-trigger' }]]
+
+		const pusher = new PackageVersionPusher(db, 60_000)
+		await pusher.tick()
+
+		// #1 — actor minted a fresh, cryptographically-secure apiKey; the
+		// publisher's snapshot apiKey was NOT honored (no auth leak / index collision).
+		const actorInsert = calls.inserts[0] as Record<string, unknown>
+		expect(actorInsert.apiKey).toMatch(/^ank_/)
+		expect(actorInsert.apiKey).not.toBe('ank_publisherleak')
+		expect((actorInsert.metadata as Record<string, unknown>).installed_package_id).toBe('install-1')
+
+		// #2 — the freshly-minted actor is bound to the workspace as a member,
+		// mirroring the install endpoint. Without it the agent is orphaned.
+		const memberInsert = calls.inserts[1] as Record<string, unknown>
+		expect(memberInsert).toMatchObject({
+			workspaceId: 'ws-1',
+			actorId: 'new-actor',
+			role: 'member',
+		})
+
+		// #1 — trigger gets a valid resolved createdBy (NOT the empty string that
+		// would 've thrown an FK violation) and its target_actor_id is rewritten
+		// from the source id to the freshly-minted local actor id.
+		const triggerInsert = calls.inserts[2] as Record<string, unknown>
+		expect(triggerInsert.createdBy).toBe('sindre-actor')
+		expect(triggerInsert.targetActorId).toBe('new-actor')
+
+		// The install row's version is bumped on success.
+		const update = calls.updates[0] as Record<string, unknown>
+		expect(update.installedVersion).toBe('2.0.0')
+	})
+
 	it('start() does not blow up and stop() clears timers', async () => {
 		const { db } = createTestContext()
 		const pusher = new PackageVersionPusher(db, 60_000)
