@@ -1,14 +1,17 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FilterTabs } from '@/components/shared/filter-tabs'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useTriggers } from '@/hooks/use-triggers'
 import type { TriggerResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Link, createFileRoute } from '@tanstack/react-router'
-import { Bell, Clock, Zap } from 'lucide-react'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Bell, Clock, Plus, Zap } from 'lucide-react'
+import { useCallback, useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/triggers/')({
 	component: TriggersPage,
@@ -46,14 +49,57 @@ const TRIGGER_TYPE_ICON: Record<string, typeof Zap> = {
 	reminder: Bell,
 }
 
+type TriggerTypeFilter = 'all' | 'event' | 'cron' | 'reminder'
+
 function TriggersPage() {
 	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
 	const { data: triggers, isLoading } = useTriggers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
+	const [typeFilter, setTypeFilter] = useState<TriggerTypeFilter>('all')
+
+	// New trigger persists once configured on its detail page (matches the
+	// global "+" menu flow).
+	const handleNewTrigger = useCallback(() => {
+		navigate({
+			to: '/$workspaceId/triggers/$triggerId',
+			params: { workspaceId, triggerId: crypto.randomUUID() },
+		})
+	}, [navigate, workspaceId])
+
+	const newTriggerAction = (
+		<Button size="sm" className="gap-1.5" onClick={handleNewTrigger}>
+			<Plus size={14} />
+			New trigger
+		</Button>
+	)
+
+	const counts = useMemo(() => {
+		const c = { all: triggers?.length ?? 0, event: 0, cron: 0, reminder: 0 }
+		for (const t of triggers ?? []) {
+			if (t.type === 'event' || t.type === 'cron' || t.type === 'reminder') c[t.type]++
+		}
+		return c
+	}, [triggers])
+
+	const filtered = useMemo(
+		() =>
+			typeFilter === 'all'
+				? (triggers ?? [])
+				: (triggers ?? []).filter((t) => t.type === typeFilter),
+		[triggers, typeFilter],
+	)
+
+	const tabs: { label: string; value: TriggerTypeFilter; count: number }[] = [
+		{ label: 'All', value: 'all', count: counts.all },
+		{ label: 'Event', value: 'event', count: counts.event },
+		{ label: 'Schedule', value: 'cron', count: counts.cron },
+		{ label: 'Reminder', value: 'reminder', count: counts.reminder },
+	]
 
 	return (
 		<div>
-			<PageHeader title="Triggers" />
+			<PageHeader title="Triggers" actions={newTriggerAction} />
 
 			{isLoading ? (
 				<ListSkeleton />
@@ -61,15 +107,19 @@ function TriggersPage() {
 				<EmptyState
 					title="No triggers yet"
 					description="Triggers automate your workspace by running agents in response to events, schedules, or one-time reminders. Create your first trigger to get started."
+					action={newTriggerAction}
 				/>
 			) : (
-				<div className="space-y-1">
-					<p className="text-xs text-muted-foreground mb-3">
-						Triggers automatically run agents when events happen, on a schedule, or at a specific
-						time.
-					</p>
+				<>
+					<FilterTabs
+						aria-label="Trigger type"
+						className="mb-4"
+						tabs={tabs}
+						value={typeFilter}
+						onChange={setTypeFilter}
+					/>
 					<div className="space-y-2">
-						{triggers.map((trigger) => {
+						{filtered.map((trigger) => {
 							const agent = actors?.find((a) => a.id === trigger.targetActorId)
 							return (
 								<TriggerRow
@@ -81,7 +131,7 @@ function TriggersPage() {
 							)
 						})}
 					</div>
-				</div>
+				</>
 			)}
 		</div>
 	)
@@ -105,12 +155,13 @@ function TriggerRow({
 			params={{ workspaceId, triggerId: trigger.id }}
 			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
 		>
-			<div className="flex flex-col items-center gap-1">
-				<span
-					className={`h-3 w-3 rounded-full shrink-0 ${trigger.enabled ? 'bg-success' : 'bg-zinc-600'}`}
-				/>
-			</div>
-			<Icon size={15} className="shrink-0 text-muted-foreground" />
+			<span
+				title={trigger.enabled ? 'Enabled' : 'Disabled'}
+				className={`h-2.5 w-2.5 rounded-full shrink-0 ${trigger.enabled ? 'bg-success' : 'bg-muted-foreground/40'}`}
+			>
+				<span className="sr-only">{trigger.enabled ? 'Enabled' : 'Disabled'}</span>
+			</span>
+			<Icon size={15} className="shrink-0 text-muted-foreground" aria-hidden="true" />
 			<div className="flex-1 min-w-0">
 				<div className="flex items-center gap-2">
 					<p className="text-sm font-medium text-foreground truncate">{trigger.name}</p>

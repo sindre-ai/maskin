@@ -1,7 +1,7 @@
+import { FilterTabs } from '@/components/shared/filter-tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { ActorListItem } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
 import { Plus, Search, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -101,23 +101,12 @@ export function DataTableToolbar({
 			{/* Type tabs — navigation between object types. Kept on their own row so
 			    they read as "which collection am I in", separate from the
 			    refinement controls below. */}
-			<div className="flex gap-1 overflow-x-auto">
-				{tabs.map((tab) => (
-					<button
-						key={tab.label}
-						type="button"
-						className={cn(
-							'rounded px-3 py-1 text-sm whitespace-nowrap transition-colors',
-							typeFilter === tab.value
-								? 'bg-muted text-foreground font-medium'
-								: 'text-muted-foreground hover:text-foreground',
-						)}
-						onClick={() => onTypeFilterChange(tab.value)}
-					>
-						{tab.label}
-					</button>
-				))}
-			</div>
+			<FilterTabs
+				aria-label="Object type"
+				tabs={tabs}
+				value={typeFilter}
+				onChange={onTypeFilterChange}
+			/>
 
 			{/* Refinement + actions row: search and display options refine the
 			    current collection; the action group is right-aligned with the

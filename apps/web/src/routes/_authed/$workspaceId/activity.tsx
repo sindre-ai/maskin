@@ -1,6 +1,7 @@
 import { ActivityFeed } from '@/components/activity/activity-feed'
 import { type CategoryFilter, FILTER_TABS } from '@/components/activity/activity-filters'
 import { PageHeader } from '@/components/layout/page-header'
+import { FilterTabs } from '@/components/shared/filter-tabs'
 import { RouteError } from '@/components/shared/route-error'
 import {
 	Select,
@@ -9,7 +10,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
-import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 
@@ -60,24 +60,14 @@ function ActivityPage() {
 				</Select>
 			</div>
 
-			{/* Desktop: button row */}
-			<div className="hidden md:flex gap-1 mb-4 shrink-0">
-				{FILTER_TABS.map((tab) => (
-					<button
-						key={tab.label}
-						type="button"
-						className={cn(
-							'rounded px-3 py-1 text-sm',
-							filter === tab.value
-								? 'bg-muted text-foreground font-medium'
-								: 'text-muted-foreground hover:text-foreground',
-						)}
-						onClick={() => navigateFilter(tab.value)}
-					>
-						{tab.label}
-					</button>
-				))}
-			</div>
+			{/* Desktop: segmented filter */}
+			<FilterTabs
+				aria-label="Activity category"
+				className="hidden md:flex mb-4 shrink-0"
+				tabs={FILTER_TABS}
+				value={filter}
+				onChange={navigateFilter}
+			/>
 
 			<div className="flex-1 min-h-0">
 				<ActivityFeed workspaceId={workspaceId} filter={filter} />
