@@ -10,7 +10,7 @@ import {
 	ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
 import { useUploadAvatar } from '@/hooks/use-actors'
-import { trackEvent } from '@/lib/analytics'
+import { trackProfileFieldUpdated } from '@/lib/analytics'
 import { type ActorResponse, ApiError } from '@/lib/api'
 import { type ChangeEvent, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -129,7 +129,7 @@ function AvatarUploadDialog({
 		setServerError(null)
 		try {
 			await mutation.mutateAsync(file)
-			trackEvent('profile.field_changed', { field: 'avatar' })
+			trackProfileFieldUpdated({ field: 'avatar' })
 			toast.success('Avatar updated')
 			onSaved()
 			onOpenChange(false)

@@ -35,6 +35,8 @@ vi.mock('@/lib/auth', () => ({
 
 vi.mock('@/lib/analytics', () => ({
 	trackEvent: (...args: unknown[]) => trackEventSpy(...args),
+	trackProfileFieldUpdated: ({ field }: { field: string }) =>
+		trackEventSpy('profile_field_updated', { field }),
 }))
 
 vi.mock('sonner', () => ({
@@ -135,7 +137,9 @@ describe('ProfilePage — Display name + Bio rows', () => {
 		)
 
 		await waitFor(() => {
-			expect(trackEventSpy).toHaveBeenCalledWith('profile.field_changed', { field: 'name' })
+			expect(trackEventSpy).toHaveBeenCalledWith('profile_field_updated', {
+				field: 'display_name',
+			})
 		})
 	})
 
@@ -154,7 +158,7 @@ describe('ProfilePage — Display name + Bio rows', () => {
 		)
 
 		await waitFor(() => {
-			expect(trackEventSpy).toHaveBeenCalledWith('profile.field_changed', { field: 'bio' })
+			expect(trackEventSpy).toHaveBeenCalledWith('profile_field_updated', { field: 'bio' })
 		})
 	})
 
@@ -218,7 +222,7 @@ describe('ProfilePage — Display name + Bio rows', () => {
 		renderPage()
 		await new Promise((r) => setTimeout(r, 800))
 		expect(mockUpdate).not.toHaveBeenCalled()
-		expect(trackEventSpy).not.toHaveBeenCalledWith('profile.field_changed', expect.any(Object))
+		expect(trackEventSpy).not.toHaveBeenCalledWith('profile_field_updated', expect.any(Object))
 	})
 })
 
@@ -252,7 +256,7 @@ describe('ProfilePage — Notification preference switches', () => {
 			}),
 		)
 		await waitFor(() =>
-			expect(trackEventSpy).toHaveBeenCalledWith('profile.field_changed', {
+			expect(trackEventSpy).toHaveBeenCalledWith('profile_field_updated', {
 				field: 'notification_prefs',
 			}),
 		)
