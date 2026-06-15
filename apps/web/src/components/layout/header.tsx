@@ -161,7 +161,10 @@ export function Header() {
 				)}
 				{/* Visible page title on mobile, where the breadcrumb is hidden. */}
 				{pageTitle && (
-					<span className="md:hidden min-w-0 flex-1 truncate text-sm font-medium" aria-hidden="true">
+					<span
+						className="md:hidden min-w-0 flex-1 truncate text-sm font-medium"
+						aria-hidden="true"
+					>
 						{pageTitle}
 					</span>
 				)}
