@@ -1033,7 +1033,8 @@ export class SessionManager extends EventEmitter {
 			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers })
 		}
 
-		const image = (sessionConfig.base_image as string) ?? 'agent-base:latest'
+		const image =
+			(sessionConfig.base_image as string) ?? process.env.AGENT_BASE_IMAGE ?? 'agent-base:latest'
 		// memory_mb / cpu_shares are the Docker-native units used historically;
 		// the spec exposes MiB and a CPU count so apps/agent-server can pass
 		// them through to libkrun without re-translating per call site.
