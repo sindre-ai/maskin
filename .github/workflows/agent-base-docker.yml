@@ -51,15 +51,14 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE: ${{ vars.AGENT_BASE_IMAGE }}
         run: |
-          REPO="${IMAGE#*/}"
           TOKEN=$(curl -s -X POST "https://hub.docker.com/v2/users/login" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"$DOCKERHUB_USERNAME\",\"password\":\"$DOCKERHUB_TOKEN\"}" \
+            -d "$(jq -n --arg u "$DOCKERHUB_USERNAME" --arg p "$DOCKERHUB_TOKEN" '{username:$u,password:$p}')" \
             | jq -r '.token')
 
-          # Fetch all SHA tags (sha-*), sorted by last_updated ascending
+          # Fetch all SHA tags (sha-*), sort by last_updated ascending so oldest are first
           TAGS=$(curl -s "https://hub.docker.com/v2/repositories/$IMAGE/tags?page_size=100" \
-            | jq -r '.results[] | select(.name | startswith("sha-")) | .name')
+            | jq -r '[.results[] | select(.name | startswith("sha-"))] | sort_by(.last_updated) | .[].name')
 
           COUNT=$(echo "$TAGS" | grep -c .) || COUNT=0
           KEEP=10
