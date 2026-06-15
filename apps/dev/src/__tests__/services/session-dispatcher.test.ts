@@ -26,8 +26,8 @@ function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 	// We satisfy that one shape and compute `active` from sessionsRows directly.
 	const select = (_columns?: Record<string, unknown>) => ({
 		from: (_table: unknown) => ({
-			where: (_predicate: unknown) =>
-				servers
+			where: (_predicate: unknown) => {
+				const rows = servers
 					.filter((s) => (s.status as unknown as string) === 'active')
 					.map((s) => {
 						const active = sessionsRows.filter(
@@ -35,14 +35,14 @@ function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 								row.agentServerId === s.id &&
 								(row.status === 'starting' || row.status === 'running'),
 						).length
-						return {
-							id: s.id,
-							url: s.url,
-							secret: s.secret,
-							max: s.max,
-							active,
-						}
-					}),
+						return { id: s.id, url: s.url, secret: s.secret, max: s.max, active }
+					})
+				const promise = Promise.resolve(rows) as Promise<typeof rows> & {
+					limit: (n: number) => Promise<typeof rows>
+				}
+				promise.limit = (n: number) => Promise.resolve(rows.slice(0, n))
+				return promise
+			},
 		}),
 	})
 

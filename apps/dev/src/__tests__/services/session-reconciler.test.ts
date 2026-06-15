@@ -28,10 +28,12 @@ function makeFakeDb(candidates: Candidate[]) {
 		}),
 		update: () => ({
 			set: (values: Record<string, unknown>) => ({
-				where: (predicate: unknown) => {
-					updates.push({ values, where: predicate })
-					return Promise.resolve()
-				},
+				where: (predicate: unknown) => ({
+					returning: () => {
+						updates.push({ values, where: predicate })
+						return Promise.resolve([{ id: 'updated' }])
+					},
+				}),
 			}),
 		}),
 		insert: () => ({
@@ -139,11 +141,13 @@ describe('SessionReconciler.reconcile', () => {
 			select: () => ({ from: () => ({ where: () => Promise.resolve(candidates) }) }),
 			update: () => ({
 				set: () => ({
-					where: () => {
-						updateCall++
-						if (updateCall === 1) return Promise.reject(new Error('db blew up'))
-						return Promise.resolve()
-					},
+					where: () => ({
+						returning: () => {
+							updateCall++
+							if (updateCall === 1) return Promise.reject(new Error('db blew up'))
+							return Promise.resolve([{ id: 'updated' }])
+						},
+					}),
 				}),
 			}),
 			insert: () => ({
