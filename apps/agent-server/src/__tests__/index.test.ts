@@ -216,7 +216,7 @@ describe('POST /sessions image warmer integration', () => {
 			.find((c) => c.args.includes('sess-warm'))
 		expect(sessionCreate).toBeDefined()
 		const pullIdx = sessionCreate?.args.indexOf('--pull') ?? -1
-		expect(sessionCreate?.args[pullIdx + 1]).toBe('missing')
+		expect(sessionCreate?.args[pullIdx + 1]).toBe('if-missing')
 	})
 
 	it('falls back to --pull always and warm_hit:false when the image does not match the warmer', async () => {

@@ -185,7 +185,7 @@ describe('buildMsbCreateArgs', () => {
 			pullPolicy: 'if-missing',
 		})
 		const idx = args.indexOf('--pull')
-		expect(args[idx + 1]).toBe('missing')
+		expect(args[idx + 1]).toBe('if-missing')
 	})
 })
 
