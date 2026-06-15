@@ -63,6 +63,15 @@ export class AgentServerClient {
 		return this.postJson<StartSessionResponse>('/sessions', req)
 	}
 
+	async sendInput(
+		sessionId: string,
+		payload: { type: string; message: { role: string; content: string } },
+	): Promise<void> {
+		await this.postJson<{ ok: boolean }>(`/sessions/${sessionId}/input`, {
+			content: payload.message.content,
+		})
+	}
+
 	// Public to let lifecycle-route callers (T3 stop/snapshot/restore) reuse the
 	// bearer + content-type plumbing without re-implementing it.
 	async postJson<T>(path: string, body: unknown): Promise<T> {

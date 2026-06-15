@@ -20,6 +20,10 @@ const envSchema = z.object({
 		),
 	MSB_BIN: z.string().optional().default('/root/.microsandbox/bin/msb'),
 	MASKIN_AGENT_SERVER_PUBLIC_HOST: z.string().optional(),
+	// Hostname the microVM uses to reach this agent-server over the host loopback.
+	// microsandbox writes `host.microsandbox.internal` into /etc/hosts of each VM;
+	// override only when deploying on a different hypervisor or custom network setup.
+	AGENT_SERVER_INTERNAL_HOST: z.string().optional(),
 	AGENT_SESSION_ROOT: z.string().optional().default('/agent/sessions'),
 	S3_ENDPOINT: z.string().optional(),
 	S3_BUCKET: z.string().optional(),
