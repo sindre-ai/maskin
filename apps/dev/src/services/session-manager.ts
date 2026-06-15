@@ -29,9 +29,29 @@ import { logger } from '../lib/logger'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
 import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
 import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
+
+/**
+ * Today's runtime is Docker on the same host as `apps/dev`. The bet introduces
+ * a real `agent_servers` table (T5) + dispatcher (T6) — until those land, every
+ * session is bucketed under this synthetic URL so the ship-metric query has a
+ * stable group-by key from day one.
+ */
+const LOCAL_RUNTIME_BUCKET = 'local-docker'
+
+/**
+ * `sessions.startedAt`/`createdAt` are typed `Date | null` by Drizzle but
+ * `createdAt` is always populated (DB default). When measuring elapsed runtime
+ * for telemetry, prefer `startedAt`, fall back to `createdAt`, and emit zero if
+ * both are missing rather than crashing analytics.
+ */
+function elapsedMs(startedAt: Date | null, createdAt: Date | null): number {
+	const anchor = startedAt ?? createdAt
+	return anchor ? Date.now() - anchor.getTime() : 0
+}
 
 export interface CreateSessionParams {
 	actorId: string
@@ -109,10 +129,17 @@ export class SessionManager extends EventEmitter {
 	private agentBaseBuildContext: string | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 	private dispatchQueue: SessionDispatchQueue | null = null
+	/**
+	 * Session IDs the operator (or the agent itself) has asked to stop. Read by
+	 * `handleCompletion` to distinguish a `user_stopped` end from a `failed` one
+	 * even though both arrive at `watchContainerExit` as a non-zero exit code.
+	 */
+	private stopRequested: Set<string> = new Set()
 
 	constructor(
 		private db: Database,
 		private storage: StorageProvider,
+		private telemetry: RuntimeTelemetry = new RuntimeTelemetry(),
 	) {
 		super()
 		this.containers = new ContainerManager()
@@ -149,6 +176,21 @@ export class SessionManager extends EventEmitter {
 			clearInterval(this.watchdogInterval)
 			this.watchdogInterval = null
 		}
+		await this.telemetry.shutdown()
+	}
+
+	/**
+	 * Per-agent-server snapshot of how many sessions are currently `starting` or
+	 * `running`. Used by the telemetry gauge loop to emit
+	 * `runtime_concurrent_sessions_gauge`. Until `agent_servers` lands (T5) every
+	 * session bucket is the local Docker runtime.
+	 */
+	async getConcurrencyByAgentServer(): Promise<Map<string, number>> {
+		const [row] = await this.db
+			.select({ count: countFn() })
+			.from(sessions)
+			.where(inArray(sessions.status, ['starting', 'running']))
+		return new Map([[LOCAL_RUNTIME_BUCKET, Number(row?.count ?? 0)]])
 	}
 
 	async createSession(
@@ -284,18 +326,37 @@ export class SessionManager extends EventEmitter {
 			// retry) doesn't collide with a Docker name we forced ourselves.
 			const containerId = await this.launchContainer(session, tempDir)
 
+			const startedAt = new Date()
 			await this.db
 				.update(sessions)
 				.set({
 					status: 'running',
 					containerId,
-					startedAt: new Date(),
+					startedAt,
 					timeoutAt: this.computeTimeout(session),
-					updatedAt: new Date(),
+					updatedAt: startedAt,
 				})
 				.where(eq(sessions.id, sessionId))
 
 			logger.info(`Session started: ${sessionId}`, { containerId })
+
+			const sessionStartLatencyMs = session.createdAt
+				? startedAt.getTime() - session.createdAt.getTime()
+				: 0
+			this.telemetry.recordSessionStarted({
+				sessionId,
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				sessionStartLatencyMs,
+			})
+			// Per-session isolation is structural in Docker (separate cgroup, separate
+			// bind-mounted /agent tempDir). The future agent-server runtime (T2) will
+			// swap in a real probe — until then this is a literal observation, not a
+			// placeholder.
+			this.telemetry.recordCrossSessionCheck({
+				sessionId,
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				hostIsolationOk: true,
+			})
 
 			// Start streaming logs
 			this.streamContainerLogs(sessionId, containerId)
@@ -321,6 +382,13 @@ export class SessionManager extends EventEmitter {
 				entityType: 'session',
 				entityId: sessionId,
 				data: { error: message },
+			})
+
+			this.telemetry.recordSessionEnded({
+				sessionId,
+				endReason: 'failed',
+				durationMs: elapsedMs(null, session.createdAt),
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -372,6 +440,7 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not found or has no container`)
 		}
 
+		this.stopRequested.add(sessionId)
 		this.containers.detachStdin(sessionId)
 		await this.containers.stop(session.containerId)
 		// handleCompletion will be called by the exit watcher
@@ -473,6 +542,12 @@ export class SessionManager extends EventEmitter {
 		sessionId: string,
 		workspaceId: string,
 	): Promise<void> {
+		const [existing] = await this.db
+			.select({ startedAt: sessions.startedAt, createdAt: sessions.createdAt })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+
 		await this.db
 			.update(sessions)
 			.set({
@@ -493,6 +568,15 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			}),
 		)
+
+		if (existing) {
+			this.telemetry.recordSessionEnded({
+				sessionId,
+				endReason: 'failed',
+				durationMs: elapsedMs(existing.startedAt, existing.createdAt),
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			})
+		}
 
 		await this.clearActiveSession(sessionId).catch(() => {})
 
@@ -597,6 +681,13 @@ export class SessionManager extends EventEmitter {
 				entityType: 'session',
 				entityId: sessionId,
 				data: { error: message },
+			})
+
+			this.telemetry.recordSessionEnded({
+				sessionId,
+				endReason: 'failed',
+				durationMs: elapsedMs(session.startedAt, session.createdAt),
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -1373,6 +1464,21 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		const wasUserStopped = this.stopRequested.delete(sessionId)
+		const endReason: RuntimeEndReason = wasUserStopped
+			? 'user_stopped'
+			: status === 'completed'
+				? 'completed'
+				: failureReason
+					? 'irrecoverable'
+					: 'failed'
+		this.telemetry.recordSessionEnded({
+			sessionId,
+			endReason,
+			durationMs: elapsedMs(session.startedAt, session.createdAt),
+			agentServerUrl: LOCAL_RUNTIME_BUCKET,
+		})
+
 		// Clear active session link on object
 		await this.clearActiveSession(sessionId)
 
@@ -1472,6 +1578,13 @@ export class SessionManager extends EventEmitter {
 				entityType: 'session',
 				entityId: session.id,
 				data: {},
+			})
+
+			this.telemetry.recordSessionEnded({
+				sessionId: session.id,
+				endReason: 'irrecoverable',
+				durationMs: elapsedMs(session.startedAt, session.createdAt),
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			})
 
 			await this.insertSystemLog(session.id, 'Session timed out').catch((err) =>
@@ -1648,6 +1761,13 @@ export class SessionManager extends EventEmitter {
 				entityType: 'session',
 				entityId: session.id,
 				data: { error: 'Session stuck in starting state' },
+			})
+
+			this.telemetry.recordSessionEnded({
+				sessionId: session.id,
+				endReason: 'failed',
+				durationMs: elapsedMs(session.startedAt, session.createdAt),
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			})
 
 			await this.cleanupBrowserSidecar(session.id).catch(() => {})

@@ -12,6 +12,7 @@ import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { ContainerManager } from './services/container-manager'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
 import { SessionManager } from './services/session-manager'
@@ -59,10 +60,16 @@ try {
 
 const agentStorage = new AgentStorageManager(storageProvider, db)
 
-const sessionManager = new SessionManager(db, storageProvider)
+const runtimeTelemetry = new RuntimeTelemetry({
+	apiKey: process.env.POSTHOG_API_KEY,
+	host: process.env.POSTHOG_HOST,
+})
+
+const sessionManager = new SessionManager(db, storageProvider, runtimeTelemetry)
 sessionManager.setAgentBaseBuildContext(
 	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
 )
+runtimeTelemetry.startGaugeLoop(() => sessionManager.getConcurrencyByAgentServer())
 
 const port = Number(process.env.PORT) || 3000
 
