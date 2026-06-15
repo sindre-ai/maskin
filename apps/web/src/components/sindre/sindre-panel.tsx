@@ -1,4 +1,5 @@
-import { SindreChat, type SindreChatHandle } from '@/components/sindre/sindre-chat'
+import { ConversationSwitcher } from '@/components/sindre/conversation-switcher'
+import { ConversationView } from '@/components/sindre/conversation-view'
 import { SindreSidebarProvider } from '@/components/sindre/sindre-sidebar-provider'
 import { Button } from '@/components/ui/button'
 import {
@@ -9,27 +10,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Sidebar, SidebarContent, SidebarHeader } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useSindreConversation } from '@/hooks/use-sindre-conversation'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { getStoredActor } from '@/lib/auth'
-import { type SindreAttachment, useSindre } from '@/lib/sindre-context'
-import {
-	buildSindreExportFilename,
-	downloadSindreMarkdown,
-	formatSindreMarkdown,
-} from '@/lib/sindre-export'
-import {
-	EMPTY_SINDRE_SELECTION,
-	type SindreSelectionAgent,
-	type SindreSelectionNotification,
-	type SindreSelectionObject,
-	sindreSelectionReducer,
-} from '@/lib/sindre-selection'
-import type { SindreEvent } from '@/lib/sindre-stream'
+import { conversationToMarkdown } from '@/lib/chat-store'
+import { useSindre } from '@/lib/sindre-context'
+import { buildSindreExportFilename, downloadSindreMarkdown } from '@/lib/sindre-export'
 import { Copy, Download, MoreHorizontal, Pin, PinOff, Plus, X } from 'lucide-react'
-import { type PointerEvent, useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { type PointerEvent, useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
-
-const SINDRE_AGENT_NAME = 'Sindre'
 
 interface SindrePanelProps {
 	workspaceId: string
@@ -37,12 +25,12 @@ interface SindrePanelProps {
 }
 
 /**
- * Right-side Sindre surface. Wraps `<SindreChat surface="sheet" />` in a
- * shadcn `<Sidebar>` inside a local provider that never reserves horizontal
- * space in the main page layout (so the panel floats as an overlay by
- * default). When the user clicks the pin button, the route layout applies a
- * matching right margin to the main content so the panel pushes content
- * aside like a traditional sidebar.
+ * Right-side Sindre surface. Hosts a standalone, multiplayer conversation
+ * (the current user + one or more agents) via `useSindreConversation`, with a
+ * conversation switcher in the header and the attributed transcript + composer
+ * in the body. Wrapped in a shadcn `<Sidebar>` inside a local provider so it
+ * floats as an overlay by default and docks (pushing content aside) when
+ * pinned.
  */
 export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 	const {
@@ -57,31 +45,19 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 		panelWidth,
 		setPanelWidth,
 	} = useSindre()
-	const [selection, dispatch] = useReducer(sindreSelectionReducer, EMPTY_SINDRE_SELECTION)
 	const panelRef = useRef<HTMLDivElement | null>(null)
-	const chatRef = useRef<SindreChatHandle | null>(null)
-	const [events, setEvents] = useState<SindreEvent[]>([])
 	const isMobile = useIsMobile()
 
-	const handleNewChat = useCallback(() => {
-		chatRef.current?.newChat()
-	}, [])
+	const conversation = useSindreConversation({ workspaceId, sindreActorId })
+	const { messages, conversations, activeId, newConversation, selectConversation, deleteConversation } =
+		conversation
+	const hasMessages = messages.length > 0
 
-	const buildExportMarkdown = useCallback(() => {
-		const actor = getStoredActor()
-		return formatSindreMarkdown(events, {
-			workspaceId,
-			frontendUrl:
-				typeof window !== 'undefined' ? window.location.origin : 'https://maskin.sindre.ai',
-			userName: actor?.name?.trim() || 'You',
-			agentName: SINDRE_AGENT_NAME,
-		})
-	}, [events, workspaceId])
+	const buildExportMarkdown = useCallback(() => conversationToMarkdown(messages), [messages])
 
 	const handleCopy = useCallback(async () => {
-		const md = buildExportMarkdown()
 		try {
-			await navigator.clipboard.writeText(md)
+			await navigator.clipboard.writeText(buildExportMarkdown())
 			toast.success('Conversation copied as markdown')
 		} catch (err) {
 			console.error('[sindre] clipboard copy failed', err)
@@ -90,25 +66,12 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 	}, [buildExportMarkdown])
 
 	const handleDownload = useCallback(() => {
-		const md = buildExportMarkdown()
-		downloadSindreMarkdown(md, buildSindreExportFilename(SINDRE_AGENT_NAME))
+		downloadSindreMarkdown(buildExportMarkdown(), buildSindreExportFilename('Sindre'))
 	}, [buildExportMarkdown])
 
-	useEffect(() => {
-		if (pendingAttachments.length === 0) return
-		for (const attachment of pendingAttachments) {
-			const action = attachmentToAction(attachment)
-			if (action) dispatch(action)
-		}
-		clearPendingAttachments()
-	}, [pendingAttachments, clearPendingAttachments])
-
-	// In overlay mode (unpinned), close on outside click — matches the prior
-	// Sheet behaviour. When pinned, Sindre is docked and should survive clicks
-	// in the reflowed main content. The picker popovers and tooltips render in
-	// portals rooted at document.body; treat anything inside [data-radix-popper-content-wrapper]
-	// or other Radix portal containers as "inside" so opening a picker doesn't
-	// close the panel.
+	// In overlay mode (unpinned), close on outside click. Radix portals (picker
+	// popovers, tooltips, dropdowns) render at document.body, so treat anything
+	// inside a popper wrapper as "inside" to avoid closing on those clicks.
 	useEffect(() => {
 		if (!open || pinned) return
 		function handleMouseDown(event: MouseEvent) {
@@ -130,31 +93,21 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 			onOpenChange={setOpen}
 			style={
 				{
-					// On narrow viewports the configured width can exceed the
-					// screen — clamp to 100vw so the panel never hangs off the
-					// right edge.
 					'--sidebar-width': `min(${panelWidth}px, 100vw)`,
 				} as React.CSSProperties
 			}
 		>
-			<Sidebar
-				ref={panelRef}
-				side="right"
-				collapsible="offcanvas"
-				// `!flex` overrides the primitive's `hidden md:flex` so the
-				// inner fixed panel renders on mobile too. The outer
-				// `hidden md:block` wrapper is already forced visible by the
-				// SindreSidebarProvider via `[&_[data-side=right]]:!block`.
-				className="pointer-events-auto !flex"
-			>
-				<ResizeHandle
-					width={panelWidth}
-					onWidthChange={setPanelWidth}
-					visible={open && !isMobile}
-				/>
+			<Sidebar ref={panelRef} side="right" collapsible="offcanvas" className="pointer-events-auto !flex">
+				<ResizeHandle width={panelWidth} onWidthChange={setPanelWidth} visible={open && !isMobile} />
 				<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
-					<div className="flex items-center gap-1">
-						<h2 className="font-semibold text-base">Sindre</h2>
+					<div className="flex min-w-0 items-center gap-1">
+						<ConversationSwitcher
+							conversations={conversations}
+							activeId={activeId}
+							onSelect={selectConversation}
+							onNew={newConversation}
+							onDelete={deleteConversation}
+						/>
 						<DropdownMenu>
 							<DropdownMenuTrigger asChild>
 								<Button
@@ -163,7 +116,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 									size="icon"
 									className="h-7 w-7"
 									aria-label="Conversation menu"
-									disabled={events.length === 0}
+									disabled={!hasMessages}
 								>
 									<MoreHorizontal size={15} />
 								</Button>
@@ -188,7 +141,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 									variant="ghost"
 									size="icon"
 									className="h-7 w-7"
-									onClick={handleNewChat}
+									onClick={newConversation}
 									aria-label="New conversation"
 								>
 									<Plus size={15} />
@@ -210,16 +163,13 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 					</div>
 				</SidebarHeader>
 				<SidebarContent className="min-h-0 flex-1 p-3">
-					<SindreChat
-						ref={chatRef}
+					<ConversationView
 						workspaceId={workspaceId}
-						sindreActorId={sindreActorId}
-						surface="sheet"
-						selection={selection}
-						onDispatchSelection={dispatch}
-						autoSendMessage={pendingMessage}
-						onAutoSendConsumed={clearPendingMessage}
-						onEventsChange={setEvents}
+						conversation={conversation}
+						pendingMessage={pendingMessage}
+						clearPendingMessage={clearPendingMessage}
+						pendingAttachments={pendingAttachments}
+						clearPendingAttachments={clearPendingAttachments}
 					/>
 				</SidebarContent>
 			</Sidebar>
@@ -229,10 +179,8 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 
 /**
  * Thin vertical hit-target on the left edge of the Sindre panel. Captures
- * pointer events and reports the live drag width back via `onWidthChange` —
- * the panel container re-renders immediately so the drag feels responsive.
- * Clamping to [min, max] happens inside the Sindre context setter so the
- * user can't drag the panel off-screen or down to zero.
+ * pointer events and reports the live drag width back via `onWidthChange`.
+ * Clamping happens inside the Sindre context setter.
  */
 function ResizeHandle({
 	width,
@@ -260,7 +208,6 @@ function ResizeHandle({
 		(event: PointerEvent<HTMLButtonElement>) => {
 			const drag = dragStartRef.current
 			if (!drag) return
-			// Sidebar lives on the right edge, so dragging left should grow it.
 			const delta = drag.startX - event.clientX
 			onWidthChange(drag.startWidth + delta)
 		},
@@ -310,30 +257,4 @@ function PinToggle({ pinned, onToggle }: { pinned: boolean; onToggle: () => void
 			<TooltipContent>{label}</TooltipContent>
 		</Tooltip>
 	)
-}
-
-function attachmentToAction(attachment: SindreAttachment) {
-	if (attachment.kind === 'agent') {
-		const agent: SindreSelectionAgent = {
-			id: attachment.id,
-			name: attachment.name ?? null,
-		}
-		return { type: 'add_agent' as const, agent }
-	}
-	if (attachment.kind === 'object') {
-		const object: SindreSelectionObject = {
-			id: attachment.id,
-			title: attachment.title ?? null,
-			type: attachment.type ?? null,
-		}
-		return { type: 'add_object' as const, object }
-	}
-	if (attachment.kind === 'notification') {
-		const notification: SindreSelectionNotification = {
-			id: attachment.id,
-			title: attachment.title ?? null,
-		}
-		return { type: 'add_notification' as const, notification }
-	}
-	return null
 }
