@@ -72,7 +72,7 @@ const developmentTemplate: WorkspaceTemplate = {
 				'paused',
 			],
 			task: ['todo', 'in_progress', 'in_review', 'testing', 'done', 'blocked'],
-			insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
+			insight: ['new', 'processing', 'clustered', 'scored', 'promoted', 'parked', 'discarded'],
 		},
 		field_definitions: {
 			bet: [
@@ -158,7 +158,7 @@ const growthTemplate: WorkspaceTemplate = {
 				'paused',
 			],
 			task: ['todo', 'in_progress', 'done', 'blocked'],
-			insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
+			insight: ['new', 'processing', 'clustered', 'scored', 'promoted', 'parked', 'discarded'],
 			linkedin_post: ['draft', 'proposed', 'approved', 'published', 'skipped'],
 		},
 		field_definitions: {
@@ -328,7 +328,7 @@ const outboundSalesTemplate: WorkspaceTemplate = {
 				'paused',
 			],
 			task: ['todo', 'in_progress', 'done', 'blocked'],
-			insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
+			insight: ['new', 'processing', 'clustered', 'scored', 'promoted', 'parked', 'discarded'],
 			company: ['prospect', 'qualifying', 'qualified', 'customer', 'churned'],
 			contact: ['identified', 'engaged', 'responsive', 'champion', 'inactive'],
 			deal: ['prospecting', 'discovery', 'proposal', 'negotiation', 'closed_won', 'closed_lost'],

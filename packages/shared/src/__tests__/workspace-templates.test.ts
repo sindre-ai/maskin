@@ -14,6 +14,14 @@ describe('workspace templates — Bet Council schema deltas', () => {
 				)
 			})
 
+			it('exposes promoted as an insight terminal status', () => {
+				expect(template.settings.statuses?.insight).toEqual(expect.arrayContaining(['promoted']))
+			})
+
+			it('keeps discarded on insight for backwards compatibility', () => {
+				expect(template.settings.statuses?.insight).toEqual(expect.arrayContaining(['discarded']))
+			})
+
 			it('exposes qualified as a bet status', () => {
 				expect(template.settings.statuses?.bet).toEqual(expect.arrayContaining(['qualified']))
 			})

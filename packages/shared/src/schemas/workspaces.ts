@@ -44,7 +44,7 @@ export const workspaceSettingsSchema = z.object({
 		task: 'Task',
 	}),
 	statuses: z.record(z.array(z.string())).default({
-		insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
+		insight: ['new', 'processing', 'clustered', 'scored', 'promoted', 'parked', 'discarded'],
 		bet: [
 			'signal',
 			'qualified',

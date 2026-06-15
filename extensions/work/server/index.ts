@@ -10,7 +10,15 @@ const workExtension: ModuleDefinition = {
 			type: 'insight',
 			label: 'Insight',
 			icon: 'lightbulb',
-			defaultStatuses: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
+			defaultStatuses: [
+				'new',
+				'processing',
+				'clustered',
+				'scored',
+				'promoted',
+				'parked',
+				'discarded',
+			],
 		},
 		{
 			type: 'bet',
@@ -41,7 +49,7 @@ const workExtension: ModuleDefinition = {
 			task: 'Task',
 		},
 		statuses: {
-			insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
+			insight: ['new', 'processing', 'clustered', 'scored', 'promoted', 'parked', 'discarded'],
 			bet: [
 				'signal',
 				'qualified',

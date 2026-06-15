@@ -17,6 +17,7 @@ describe('workspaceSettingsSchema', () => {
 			'processing',
 			'clustered',
 			'scored',
+			'promoted',
 			'parked',
 			'discarded',
 		])
