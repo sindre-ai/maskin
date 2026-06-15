@@ -136,13 +136,30 @@ run_agent() {
         mcp_args=(--mcp-config "$MCP_CONFIG_FILE")
       fi
       if [ "$INTERACTIVE" = "1" ]; then
-        exec claude -p \
-          --input-format stream-json \
-          --output-format stream-json \
-          --verbose \
-          --dangerously-skip-permissions \
-          "${mcp_args[@]}" \
-          2>&1
+        if [ -n "$AGENT_SERVER_URL" ]; then
+          # Remote microsandbox path: stream user turns from the agent-server.
+          # curl holds a long-lived HTTP connection; process substitution pipes
+          # its output into claude's stdin so each newline-delimited JSON message
+          # is delivered as a user turn without needing Docker stdin attach.
+          exec claude -p \
+            --input-format stream-json \
+            --output-format stream-json \
+            --verbose \
+            --dangerously-skip-permissions \
+            "${mcp_args[@]}" \
+            2>&1 \
+            < <(curl -sN --no-buffer \
+                "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream")
+        else
+          # Local Docker path: stdin is attached by ContainerManager.attachStdin.
+          exec claude -p \
+            --input-format stream-json \
+            --output-format stream-json \
+            --verbose \
+            --dangerously-skip-permissions \
+            "${mcp_args[@]}" \
+            2>&1
+        fi
       fi
       exec claude -p "$ACTION_PROMPT" \
         --print \

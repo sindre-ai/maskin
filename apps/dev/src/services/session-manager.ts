@@ -10,6 +10,7 @@ import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
+	agentServers,
 	integrations,
 	objects,
 	sessionLogs,
@@ -28,6 +29,7 @@ import { getProvider } from '../lib/integrations/registry'
 import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
+import { AgentServerClient } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
@@ -401,12 +403,33 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Deliver a user turn to an interactive session's stdin. Caller must have
-	 * already validated the session is interactive and in `running` state; this
-	 * method only performs the stdin write and propagates any underlying error.
+	 * Deliver a user turn to an interactive session's stdin. Routes to the remote
+	 * agent-server when the session was dispatched there, otherwise writes to the
+	 * local Docker stdin stream. Caller must have already validated the session is
+	 * interactive and in `running` state.
 	 */
 	async writeInput(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
-		await this.containers.write(sessionId, payload)
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+
+		if (session?.agentServerId) {
+			const [serverRow] = await this.db
+				.select({ id: agentServers.id, url: agentServers.url, secret: agentServers.secret })
+				.from(agentServers)
+				.where(eq(agentServers.id, session.agentServerId))
+				.limit(1)
+			if (!serverRow) {
+				throw new Error(`Agent server ${session.agentServerId} not found`)
+			}
+			const client = new AgentServerClient({ server: serverRow })
+			await client.sendInput(sessionId, payload)
+		} else {
+			await this.containers.write(sessionId, payload)
+		}
+
 		// The CLI does not echo the user turn back to stdout — only the
 		// assistant response. Persist the same JSON envelope we wrote to
 		// stdin as a stdout-stream log row so historical transcripts and the

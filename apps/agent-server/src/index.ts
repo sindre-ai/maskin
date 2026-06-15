@@ -2,11 +2,13 @@ import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import type { StorageProvider } from '@maskin/storage'
 import { Hono } from 'hono'
+import { stream } from 'hono/streaming'
 import { z } from 'zod'
 import { bearerAuth } from './lib/auth'
 import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
 import { ImageWarmer } from './services/image-warmer'
+import { InputQueue } from './services/input-queue'
 import {
 	type MicrosandboxDeps,
 	type PullPolicy,
@@ -20,6 +22,8 @@ import {
 	pullSessionWorkspace,
 	pushSessionWorkspace,
 } from './services/session-workspace'
+
+const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 
 const SESSION_REQUEST_SCHEMA = z.object({
 	sessionId: z
@@ -81,6 +85,7 @@ async function monitorSession(
 
 export function buildApp(deps: AppDeps): Hono {
 	const app = new Hono()
+	const inputQueue = new InputQueue()
 
 	app.get('/health', async (c) => {
 		// `ok` must track msb liveness — a box whose `msb` is missing or broken
@@ -150,12 +155,22 @@ export function buildApp(deps: AppDeps): Hono {
 		const warmHit = deps.warmer?.isWarm(body.image) ?? false
 		const pullPolicy: PullPolicy = warmHit ? 'if-missing' : 'always'
 
+		// Inject AGENT_SERVER_URL so agent-run.sh can stream interactive input
+		// from this server. The microVM can reach us at host.microsandbox.internal
+		// (written into the VM's /etc/hosts by microsandbox) on our own PORT.
+		const agentServerInternalHost =
+			deps.env.AGENT_SERVER_INTERNAL_HOST ?? 'host.microsandbox.internal'
+		const sessionEnv = {
+			...body.env,
+			AGENT_SERVER_URL: `http://${agentServerInternalHost}:${deps.env.PORT}`,
+		}
+
 		try {
 			const result = await spawnSession(
 				{
 					sessionId: body.sessionId,
 					image: body.image,
-					env: body.env,
+					env: sessionEnv,
 					...(body.memoryMib !== undefined && { memoryMib: body.memoryMib }),
 					...(body.cpus !== undefined && { cpus: body.cpus }),
 					hostPort: deps.env.PORT,
@@ -176,8 +191,11 @@ export function buildApp(deps: AppDeps): Hono {
 				envSanitized: result.envSanitized,
 			})
 
-			// Background: wait for VM exit → push workspace to S3 → delete local dir.
-			void monitorSession(body.sessionId, sessionDir, deps.storage, deps.msb)
+			// Background: wait for VM exit → push workspace to S3 → delete local dir
+			// → drain the input queue so pending messages don't accumulate in memory.
+			void monitorSession(body.sessionId, sessionDir, deps.storage, deps.msb).finally(() => {
+				inputQueue.drainSession(body.sessionId)
+			})
 
 			return c.json(
 				{
@@ -194,6 +212,63 @@ export function buildApp(deps: AppDeps): Hono {
 			logger.error('session spawn failed', { sessionId: body.sessionId, error: String(err) })
 			return c.json({ error: 'spawn_failed', message: String(err) }, 500)
 		}
+	})
+
+	// POST /sessions/:id/input — apps/dev calls this to deliver a user turn to an
+	// interactive session. Bearer auth is inherited from the /sessions/* middleware.
+	app.post('/sessions/:id/input', async (c) => {
+		const { id } = c.req.param()
+		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+		let body: unknown
+		try {
+			body = await c.req.json()
+		} catch {
+			return c.json({ error: 'Invalid JSON' }, 400)
+		}
+		if (
+			!body ||
+			typeof body !== 'object' ||
+			typeof (body as Record<string, unknown>).content !== 'string'
+		) {
+			return c.json({ error: 'Missing content field' }, 400)
+		}
+		const payload = {
+			type: 'user',
+			message: { role: 'user', content: (body as Record<string, unknown>).content as string },
+		}
+		await inputQueue.enqueue(id, `${JSON.stringify(payload)}\n`)
+		return c.json({ ok: true })
+	})
+
+	// GET /sessions/:id/input/stream — the VM's agent-run.sh curl connects here on
+	// boot and holds the connection open to receive newline-delimited JSON user turns.
+	// Auth: the session ID itself is 122-bit entropy and the endpoint is only
+	// reachable via the host loopback from inside a microsandbox VM, so no separate
+	// bearer token is required here.
+	app.get('/sessions/:id/input/stream', async (c) => {
+		const { id } = c.req.param()
+		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+		return stream(c, async (s) => {
+			let resolveStream!: () => void
+			const done = new Promise<void>((resolve) => {
+				resolveStream = resolve
+			})
+			const unregister = await inputQueue.registerStream(id, async (line) => {
+				try {
+					await s.write(line)
+					return true
+				} catch {
+					resolveStream()
+					return false
+				}
+			})
+			c.req.raw.signal.addEventListener('abort', () => {
+				unregister()
+				resolveStream()
+			})
+			await done
+			unregister()
+		})
 	})
 
 	return app
