@@ -11,7 +11,7 @@ Machine identity:
 1. Open the [Slack app dashboard](https://api.slack.com/apps) and pick the Maskin/Machine app (one per environment — dev / prod).
 2. Go to **Features → App Manifest** (left sidebar).
 3. Switch the editor to **YAML**, paste the contents of `manifest.yml`, and **Save changes**.
-4. Before saving, replace `REPLACE_WITH_ENV_URL` in `settings.event_subscriptions.request_url` with the public hostname of the target environment. Production points at `/api/webhooks/slack` on your deployed `apps/dev` host.
+4. Before saving, replace **both** occurrences of `REPLACE_WITH_ENV_URL` — in `settings.event_subscriptions.request_url` and in `oauth_config.redirect_urls` — with the public hostname of the target environment. Production is `maskin.sindre.ai` (request URL → `/api/webhooks/slack`, redirect → `/api/integrations/slack/callback`).
 5. Slack will show a diff against the current app state and list every change. **Read it.** Any change to scopes or events flips the app into a state where existing installations must re-authorise (see below).
 6. Go to **Settings → Basic Information → App Icon** and upload the icon. Use the T2 PNG when ready; until then use `icon-placeholder.svg` exported to PNG at 512×512.
 7. Go to **Settings → Install App** and re-install to every workspace that needs the new identity (mesh-firm first).
@@ -31,6 +31,10 @@ Workflow when changing scopes:
 The Slack app icon is **not** part of the manifest YAML — it is uploaded separately under **Settings → Basic Information → App Icon**. The runtime per-message `icon_url` override (set on every `chat.postMessage` call via the `chat:write.customize` scope) is governed by the `MASKIN_MACHINE_ICON_URL` env var consumed in `apps/dev/src/lib/integrations/providers/slack/mcp-server.ts`. Both should point at the same brand asset.
 
 Until the T2 PNG lands, `icon-placeholder.svg` documents the placeholder. It is not loaded by any runtime path — it exists to show reviewers what is being uploaded and to give the next session an obvious "replace me" target.
+
+## Scopes — bot vs user
+
+The agent-posting path this bet ships uses **only the bot token** (`chat:write` + `chat:write.customize`). The `user` / `user_optional` scopes are retained from the live app because other Maskin features rely on the **user token** — Slack search (`search:read.*` is user-token-only), canvases, and file reads. They are intentionally NOT part of the trust-surface posting path; the runtime guard in `apps/dev/src/services/session-manager.ts` and `mcp-server.ts` refuses to post with a user (`xoxp-`) token. **Do not strip the user scopes** unless you have confirmed nothing in `apps/dev` reads the user token — removing them forces a re-authorise and breaks those features.
 
 ## What this manifest deliberately does NOT include
 
