@@ -25,6 +25,19 @@
 	--color-input: var(--input);
 	--color-ring: var(--ring);
 
+	/* Text hierarchy + interactive surfaces.
+	   These back the `text-text*`, `bg-bg-surface`, `bg-bg-hover`, and
+	   `border-border-hover` utilities used across the app. Primary/muted
+	   text and the resting surface reuse the canonical tokens; the
+	   secondary text level and the hover surface/border are dedicated
+	   vars (defined per-theme below) since there was no existing match. */
+	--color-text: var(--foreground);
+	--color-text-secondary: var(--text-secondary);
+	--color-text-muted: var(--muted-foreground);
+	--color-bg-surface: var(--muted);
+	--color-bg-hover: var(--bg-hover);
+	--color-border-hover: var(--border-hover);
+
 	/* Semantic */
 	--color-success: var(--success);
 	--color-warning: var(--warning);
@@ -121,6 +134,13 @@
 	--input: oklch(0.922 0.004 286.32);
 	--ring: oklch(0.708 0.005 286.344);
 
+	/* Gap tokens (no canonical equivalent): a secondary text level that
+	   sits between foreground and muted-foreground, plus subtly deeper
+	   hover surface/border for tight, low-contrast affordances. */
+	--text-secondary: oklch(0.37 0.006 285.885);
+	--bg-hover: oklch(0.922 0.004 286.32);
+	--border-hover: oklch(0.87 0.004 286.32);
+
 	/* Semantic */
 	--success: #16a34a;
 	--warning: #d97706;
@@ -197,6 +217,13 @@
 	--border: oklch(0.264 0.006 286.033);
 	--input: oklch(0.264 0.006 286.033);
 	--ring: oklch(0.556 0.005 286.286);
+
+	/* Gap tokens (dark) — secondary text sits between foreground and
+	   muted-foreground; hover surface/border step subtly lighter than
+	   their resting counterparts. */
+	--text-secondary: oklch(0.84 0.005 286.344);
+	--bg-hover: oklch(0.3 0.006 286.033);
+	--border-hover: oklch(0.34 0.006 286.033);
 
 	/* Semantic */
 	--success: #22c55e;

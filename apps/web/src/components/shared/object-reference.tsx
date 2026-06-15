@@ -63,8 +63,8 @@ export function ObjectReference({
 	const title = object.title || 'Untitled'
 	const baseClasses =
 		variant === 'inline'
-			? 'inline-flex items-center gap-1.5 align-middle rounded px-1 -mx-1 py-0.5 hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring text-foreground transition-colors'
-			: 'flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors'
+			? 'inline-flex items-center gap-1.5 align-middle rounded px-1 -mx-1 py-0.5 hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 text-foreground transition-colors'
+			: 'flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 transition-colors'
 
 	return (
 		<Link
