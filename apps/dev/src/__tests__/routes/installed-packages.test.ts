@@ -374,6 +374,38 @@ describe('POST /api/installed-packages/:id/fork', () => {
 		const res = await app.request(jsonRequest('POST', '/api/installed-packages/not-a-uuid/fork'))
 		expect(res.status).toBe(400)
 	})
+
+	// Two concurrent forks both pass the pre-tx `if (!install.isLocked)` check
+	// because they read the row before either UPDATE has committed. The UPDATE
+	// inside the tx has an `is_locked = true` guard, so the loser's UPDATE
+	// matches zero rows. Simulated here by an empty `.returning()` on the install
+	// flip: handler must bail out of the tx (no element detaches, no audit event)
+	// and return 409.
+	it('returns 409 and writes no audit event when a concurrent fork won the install UPDATE race', async () => {
+		const { app, mockResults, calls } = setup()
+		const install = installRow({ isLocked: true, forkedAt: null })
+
+		mockResults.selectQueue = [
+			[install],
+			[buildWorkspaceMember({ workspaceId: install.workspaceId, actorId: ACTOR_ID })],
+		]
+		// Install UPDATE matches zero rows — the row's already been flipped by the
+		// winning concurrent tx. Element-row UPDATEs should never run, so no
+		// further queue entries are needed.
+		mockResults.updateQueue = [[]]
+
+		const res = await app.request(jsonRequest('POST', `/api/installed-packages/${install.id}/fork`))
+
+		expect(res.status).toBe(409)
+		const body = await res.json()
+		expect(body.error.code).toBe('CONFLICT')
+		// Only the install UPDATE was attempted; the four element-table UPDATEs
+		// (actors/triggers/workspace_skills/integrations) were correctly skipped.
+		expect(calls.updates).toHaveLength(1)
+		// And critically: no `installed_package.forked` event row was inserted —
+		// that's the duplicate-audit failure mode the guard exists to prevent.
+		expect(calls.inserts).toHaveLength(0)
+	})
 })
 
 describe('GET /api/installed-packages', () => {

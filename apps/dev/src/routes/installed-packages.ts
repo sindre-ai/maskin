@@ -477,13 +477,20 @@ app.openapi(forkPackageRoute, async (c) => {
 
 		// 3. Flip the install row. Lineage (source_package_id, installed_version)
 		//    stays on the row — that's how the UI shows "forked from v1.4".
+		//    The `is_locked = true` guard in the WHERE makes this the TOCTOU
+		//    backstop for the pre-tx 409 check: if a concurrent fork has already
+		//    flipped the row in the gap, our UPDATE matches zero rows and we bail
+		//    out before writing any element-row detaches or the audit event row.
 		const [row] = await tx
 			.update(installedPackages)
 			.set({ isLocked: false, forkedAt: now, updatedAt: now })
-			.where(eq(installedPackages.id, install.id))
+			.where(and(eq(installedPackages.id, install.id), eq(installedPackages.isLocked, true)))
 			.returning()
 
-		if (!row) throw new Error('Failed to update installed_packages row on fork')
+		// Lost the race — another fork transaction committed first. Surface as 409
+		// (same shape as the pre-tx isLocked check); the winning tx already wrote
+		// the single audit event row.
+		if (!row) return null
 
 		// 4. Drop `installed_package_id` from each provisioned element's metadata.
 		//    Postgres `jsonb - 'key'` removes the top-level key in place; the
@@ -535,6 +542,10 @@ app.openapi(forkPackageRoute, async (c) => {
 
 		return row
 	})
+
+	if (!forked) {
+		return c.json(createApiError('CONFLICT', 'Install is already forked'), 409)
+	}
 
 	logger.info('Installed package forked', {
 		installedPackageId: forked.id,
