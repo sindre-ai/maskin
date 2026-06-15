@@ -85,14 +85,22 @@
 	--font-sans: "Inter", system-ui, sans-serif;
 	--font-mono: "JetBrains Mono", ui-monospace, monospace;
 
-	--radius-sm: calc(var(--radius) - 4px);
-	--radius-md: calc(var(--radius) - 2px);
+	--radius-sm: calc(var(--radius) - 3px);
+	--radius-md: calc(var(--radius) - 1px);
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 4px);
+
+	/* Refined elevation scale — soft, low-spread shadows tuned for a
+	   light utilitarian UI. Used by cards, popovers, and overlays. */
+	--shadow-2xs: 0 1px 2px 0 oklch(0 0 0 / 0.04);
+	--shadow-xs: 0 1px 2px 0 oklch(0 0 0 / 0.05), 0 1px 1px -1px oklch(0 0 0 / 0.04);
+	--shadow-sm: 0 1px 3px 0 oklch(0 0 0 / 0.06), 0 1px 2px -1px oklch(0 0 0 / 0.05);
+	--shadow-md: 0 2px 6px -1px oklch(0 0 0 / 0.07), 0 1px 3px -1px oklch(0 0 0 / 0.05);
+	--shadow-lg: 0 8px 24px -6px oklch(0 0 0 / 0.1), 0 2px 6px -2px oklch(0 0 0 / 0.06);
 }
 
 :root {
-	--radius: 0.625rem;
+	--radius: 0.5rem;
 	--background: oklch(1 0 0);
 	--foreground: oklch(0.145 0.005 285.823);
 	--card: oklch(1 0 0);
@@ -252,6 +260,24 @@
 	}
 	body {
 		@apply bg-background text-foreground font-sans antialiased;
+		/* Inter: contextual alternates + tabular-friendly defaults for a
+		   crisper, more refined render across the UI. */
+		font-feature-settings: "cv11", "ss01";
+		text-rendering: optimizeLegibility;
+	}
+
+	/* Headings get slightly tighter tracking for a tighter, editorial feel. */
+	h1,
+	h2,
+	h3,
+	h4 {
+		letter-spacing: -0.011em;
+	}
+
+	/* Tabular numerals everywhere numbers carry meaning (counts, metrics,
+	   timestamps) so columns stay aligned. */
+	.tabular-nums {
+		font-variant-numeric: tabular-nums;
 	}
 
 	/* Slim scrollbars — claude.ai-style thin track. Firefox uses the
