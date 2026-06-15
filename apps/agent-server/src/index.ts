@@ -5,6 +5,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
+import { ImageWarmer } from './services/image-warmer'
 import {
 	type MicrosandboxDeps,
 	type PullPolicy,
@@ -12,7 +13,6 @@ import {
 	spawnSession,
 } from './services/microsandbox'
 import { pullSessionWorkspace } from './services/session-workspace'
-import { WarmPool } from './services/warm-pool'
 
 const SESSION_REQUEST_SCHEMA = z.object({
 	sessionId: z
@@ -31,7 +31,7 @@ export type AppDeps = {
 	env: AgentServerEnv
 	storage: StorageProvider | null
 	msb: MicrosandboxDeps
-	warmPool?: WarmPool | null
+	warmer?: ImageWarmer | null
 }
 
 export function buildApp(deps: AppDeps): Hono {
@@ -89,11 +89,11 @@ export function buildApp(deps: AppDeps): Hono {
 			}
 		}
 
-		// Warm-pool claim is synchronous and best-effort: a hit lets us skip the
-		// network image pull because the image is already in libkrun's local
-		// cache. A miss falls back to the cold `--pull always` path.
-		const claim = deps.warmPool?.claim(body.image) ?? { hit: false }
-		const pullPolicy: PullPolicy = claim.hit ? 'missing' : 'always'
+		// If the warmer has this image in libkrun's local cache we can skip the
+		// network pull (`--pull missing`). Otherwise fall back to the cold
+		// `--pull always` path, which self-corrects by pulling if absent.
+		const warmHit = deps.warmer?.isWarm(body.image) ?? false
+		const pullPolicy: PullPolicy = warmHit ? 'missing' : 'always'
 
 		try {
 			const result = await spawnSession(
@@ -115,7 +115,7 @@ export function buildApp(deps: AppDeps): Hono {
 			logger.info('session spawned', {
 				sessionId: body.sessionId,
 				image: body.image,
-				warmHit: claim.hit,
+				warmHit,
 				pullPolicy,
 				envOverflowSpilled: result.envOverflowSpilled,
 				envSanitized: result.envSanitized,
@@ -125,7 +125,7 @@ export function buildApp(deps: AppDeps): Hono {
 					sessionId: body.sessionId,
 					sandboxName: result.sandboxName,
 					connection: result.connection,
-					warm_hit: claim.hit,
+					warm_hit: warmHit,
 					env_overflow_spilled: result.envOverflowSpilled,
 					env_sanitized: result.envSanitized,
 				},
@@ -160,26 +160,26 @@ async function main(): Promise<void> {
 	const storage = await buildStorage(env)
 	const msb: MicrosandboxDeps = { msbBin: env.MSB_BIN }
 
-	let warmPool: WarmPool | null = null
-	if (env.WARM_POOL_IMAGE && env.WARM_POOL_SIZE > 0) {
-		warmPool = new WarmPool({
+	let warmer: ImageWarmer | null = null
+	if (env.WARM_POOL_IMAGE) {
+		warmer = new ImageWarmer({
 			image: env.WARM_POOL_IMAGE,
-			size: env.WARM_POOL_SIZE,
 			hostPort: env.PORT,
 			msb,
+			refreshMs: env.WARM_POOL_REFRESH_MINUTES * 60_000,
 		})
 		try {
-			await warmPool.start()
+			await warmer.start()
 		} catch (err) {
-			// A pool that can't start is degraded but not fatal — sessions still
+			// A warmer that can't start is degraded but not fatal — sessions still
 			// fall back to the cold path. Surface and continue.
-			logger.error('warm pool failed to start', { error: String(err) })
+			logger.error('image warmer failed to start', { error: String(err) })
 		}
 	} else {
-		logger.info('warm pool disabled', { reason: env.WARM_POOL_IMAGE ? 'size_zero' : 'no_image' })
+		logger.info('image warmer disabled', { reason: 'no_image' })
 	}
 
-	const app = buildApp({ env, storage, msb, warmPool })
+	const app = buildApp({ env, storage, msb, warmer })
 
 	const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, ({ port }) => {
 		logger.info('agent-server listening', { port })
@@ -190,9 +190,9 @@ async function main(): Promise<void> {
 		if (shuttingDown) return
 		shuttingDown = true
 		logger.info('agent-server shutting down', { signal })
-		if (warmPool) {
-			await warmPool.shutdown().catch((err) => {
-				logger.error('warm pool shutdown failed', { error: String(err) })
+		if (warmer) {
+			await warmer.shutdown().catch((err) => {
+				logger.error('image warmer shutdown failed', { error: String(err) })
 			})
 		}
 		server.close(() => process.exit(0))

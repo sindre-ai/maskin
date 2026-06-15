@@ -26,17 +26,22 @@ const envSchema = z.object({
 	S3_ACCESS_KEY: z.string().optional(),
 	S3_SECRET_KEY: z.string().optional(),
 	S3_REGION: z.string().optional().default('us-east-1'),
+	// Image to keep present in libkrun's host cache so session spawns can skip
+	// the network pull. Unset disables warming entirely.
 	WARM_POOL_IMAGE: z.string().optional(),
-	WARM_POOL_SIZE: z
+	// Minutes between cache re-warms. 0 warms once at startup only (zero ongoing
+	// overhead); a positive value lets a moving `:latest` reach sessions without
+	// a restart. Bounded so a typo can't schedule a sub-second pull loop.
+	WARM_POOL_REFRESH_MINUTES: z
 		.string()
 		.optional()
-		.default('5')
+		.default('0')
 		.transform((v) => {
 			const n = Number(v)
-			if (!Number.isFinite(n) || n < 0 || n > 50) {
-				throw new Error(`Invalid WARM_POOL_SIZE: ${v} (expected integer 0..50)`)
+			if (!Number.isInteger(n) || n < 0 || n > 1440) {
+				throw new Error(`Invalid WARM_POOL_REFRESH_MINUTES: ${v} (expected integer 0..1440)`)
 			}
-			return Math.floor(n)
+			return n
 		}),
 })
 

@@ -164,7 +164,7 @@ describe('buildMsbCreateArgs', () => {
 		expect(args[idx + 1]).toBe('always')
 	})
 
-	it("respects pullPolicy='missing' (warm-pool hits use this)", () => {
+	it("respects pullPolicy='missing' (warmer hits use this)", () => {
 		const args = buildMsbCreateArgs({
 			sessionId: 's',
 			image: 'i',
@@ -190,9 +190,9 @@ describe('removeSandbox', () => {
 			calls.push(args)
 			return { stdout: '', stderr: '' }
 		}
-		await removeSandbox('warm-pool-0-abc', { msbBin: '/usr/local/bin/msb', run })
+		await removeSandbox('image-warmer-abc', { msbBin: '/usr/local/bin/msb', run })
 		expect(calls.length).toBe(1)
-		expect(calls[0]).toEqual(['remove', '-f', '--quiet', 'warm-pool-0-abc'])
+		expect(calls[0]).toEqual(['remove', '-f', '--quiet', 'image-warmer-abc'])
 	})
 
 	it('rejects an invalid sandbox name before shelling out', async () => {

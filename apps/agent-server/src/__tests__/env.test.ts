@@ -36,31 +36,35 @@ describe('parseEnv', () => {
 		expect(() => parseEnv({ AGENT_SERVER_SECRET: 'short' })).toThrow(/16 chars/)
 	})
 
-	it('defaults WARM_POOL_SIZE to 5 and leaves WARM_POOL_IMAGE unset', () => {
+	it('defaults WARM_POOL_REFRESH_MINUTES to 0 and leaves WARM_POOL_IMAGE unset', () => {
 		const env = parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32) })
-		expect(env.WARM_POOL_SIZE).toBe(5)
+		expect(env.WARM_POOL_REFRESH_MINUTES).toBe(0)
 		expect(env.WARM_POOL_IMAGE).toBeUndefined()
 	})
 
-	it('parses WARM_POOL_SIZE=0 (pool disabled even with an image set)', () => {
+	it('parses a positive WARM_POOL_REFRESH_MINUTES alongside an image', () => {
 		const env = parseEnv({
 			AGENT_SERVER_SECRET: 'a'.repeat(32),
-			WARM_POOL_SIZE: '0',
+			WARM_POOL_REFRESH_MINUTES: '30',
 			WARM_POOL_IMAGE: 'maskin/agent-base:latest',
 		})
-		expect(env.WARM_POOL_SIZE).toBe(0)
+		expect(env.WARM_POOL_REFRESH_MINUTES).toBe(30)
 		expect(env.WARM_POOL_IMAGE).toBe('maskin/agent-base:latest')
 	})
 
-	it('rejects WARM_POOL_SIZE outside 0..50', () => {
-		expect(() => parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), WARM_POOL_SIZE: '-1' })).toThrow(
-			/Invalid WARM_POOL_SIZE/,
-		)
-		expect(() => parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), WARM_POOL_SIZE: '51' })).toThrow(
-			/Invalid WARM_POOL_SIZE/,
-		)
-		expect(() => parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), WARM_POOL_SIZE: 'abc' })).toThrow(
-			/Invalid WARM_POOL_SIZE/,
-		)
+	it('rejects WARM_POOL_REFRESH_MINUTES outside 0..1440 or non-integer', () => {
+		const secret = 'a'.repeat(32)
+		expect(() =>
+			parseEnv({ AGENT_SERVER_SECRET: secret, WARM_POOL_REFRESH_MINUTES: '-1' }),
+		).toThrow(/Invalid WARM_POOL_REFRESH_MINUTES/)
+		expect(() =>
+			parseEnv({ AGENT_SERVER_SECRET: secret, WARM_POOL_REFRESH_MINUTES: '1441' }),
+		).toThrow(/Invalid WARM_POOL_REFRESH_MINUTES/)
+		expect(() =>
+			parseEnv({ AGENT_SERVER_SECRET: secret, WARM_POOL_REFRESH_MINUTES: '1.5' }),
+		).toThrow(/Invalid WARM_POOL_REFRESH_MINUTES/)
+		expect(() =>
+			parseEnv({ AGENT_SERVER_SECRET: secret, WARM_POOL_REFRESH_MINUTES: 'abc' }),
+		).toThrow(/Invalid WARM_POOL_REFRESH_MINUTES/)
 	})
 })

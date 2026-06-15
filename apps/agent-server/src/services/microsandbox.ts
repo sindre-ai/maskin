@@ -33,7 +33,7 @@ const STATUS_POLL_TIMEOUT_MS = 90_000
 const CREATE_TIMEOUT_MS = 60_000
 
 // `always` re-pulls every spawn; `missing` skips the network round-trip when the
-// image is already cached locally (warm-pool hits use this). `never` is the
+// image is already cached locally (image-warmer hits use this). `never` is the
 // libkrun-equivalent of an air-gap for tests.
 export type PullPolicy = 'always' | 'missing' | 'never'
 
