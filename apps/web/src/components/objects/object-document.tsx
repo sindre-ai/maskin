@@ -121,7 +121,7 @@ export function ObjectDocumentView({
 					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Untitled"
 					rows={1}
-					className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
+					className="w-full text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
 					ref={(el) => {
 						if (el) {
 							el.style.height = 'auto'
