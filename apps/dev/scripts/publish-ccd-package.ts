@@ -13,10 +13,17 @@
 //
 // Idempotency: the `catalog_packages.slug` unique constraint blocks a second
 // run at the same slug; pass `--force` to delete and re-create the row plus
-// its items.
+// its items. `--force` is refused if the package already has installs, since
+// the delete would orphan their lineage — bump the version instead.
 
 import { createDb } from '@maskin/db'
-import { actors, catalogPackageItems, catalogPackages, triggers } from '@maskin/db/schema'
+import {
+	actors,
+	catalogPackageItems,
+	catalogPackages,
+	installedPackages,
+	triggers,
+} from '@maskin/db/schema'
 import { eq, inArray } from 'drizzle-orm'
 import {
 	CCD_ACTOR_IDS,
@@ -72,6 +79,10 @@ async function main(): Promise<void> {
 		}
 	}
 
+	// Guard against pulling an item from the wrong workspace. Only triggers carry
+	// a workspaceId column — actors are global (workspace membership lives in
+	// workspace_members, not on the actor row), so they have no workspaceId to
+	// check and pass through this guard by design.
 	for (const row of [...actorRows, ...triggerRows]) {
 		const wsId = (row as { workspaceId?: string }).workspaceId
 		if (wsId !== undefined && wsId !== SOURCE_WORKSPACE_ID) {
@@ -93,6 +104,26 @@ async function main(): Promise<void> {
 			`Package ${CCD_PACKAGE.slug} is already published as ${existing.id} at v${existing.version}. Pass --force to delete and re-create.`,
 		)
 		process.exit(1)
+	}
+
+	// --force deletes the existing catalog row, cascading to its items. But
+	// installed_packages.source_package_id is ON DELETE NO ACTION, so the delete
+	// would fail with a raw Postgres FK violation if any workspace has already
+	// installed this package. Detect that up front and refuse with a clear
+	// message — blowing away a package out from under live installs orphans their
+	// lineage; the right move is to publish a new version, not re-cut this one.
+	if (existing && FORCE) {
+		const [install] = await db
+			.select({ id: installedPackages.id })
+			.from(installedPackages)
+			.where(eq(installedPackages.sourcePackageId, existing.id))
+			.limit(1)
+		if (install) {
+			console.error(
+				`Cannot --force re-publish ${CCD_PACKAGE.slug}: it has at least one active install (installed_packages.source_package_id = ${existing.id}). Deleting it would orphan those installs — publish a new version instead.`,
+			)
+			process.exit(1)
+		}
 	}
 
 	const inserted = await db.transaction(async (tx) => {
