@@ -363,7 +363,7 @@ function ThemePicker() {
 							className={cn(
 								'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors',
 								isActive
-									? 'bg-muted text-foreground font-medium shadow-sm'
+									? 'bg-muted text-foreground font-medium shadow-2xs'
 									: 'text-muted-foreground hover:text-muted-foreground',
 							)}
 						>
