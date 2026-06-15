@@ -58,7 +58,8 @@
 		"POSTHOG_HOST",
 		"AGENT_SERVERS",
 		"AGENT_SERVER_MAX_SESSIONS",
-		"AGENT_BASE_IMAGE"
+		"AGENT_BASE_IMAGE",
+		"MASKIN_BACKEND_URL"
 	],
 	"tasks": {
 		"build": {
