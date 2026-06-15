@@ -1,10 +1,13 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { UnreadItem } from '@/lib/api'
 import { buildObjectResponse } from '../factories'
 
 const mockUseUnread = vi.fn()
+const mockMarkReadMutate = vi.fn()
+const mockUseMarkRead = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -20,6 +23,7 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useUnread: (...args: unknown[]) => mockUseUnread(...args),
+	useMarkRead: (...args: unknown[]) => mockUseMarkRead(...args),
 }))
 
 vi.mock('@/components/foryou/unread-thread-card', () => ({
@@ -60,6 +64,7 @@ function buildUnreadItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 describe('ForYouDashboard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mockUseMarkRead.mockReturnValue({ mutate: mockMarkReadMutate, isPending: false })
 	})
 
 	it('shows loading skeletons while loading', () => {
@@ -71,7 +76,7 @@ describe('ForYouDashboard', () => {
 	it('shows the empty state when there are no unread threads', () => {
 		mockUseUnread.mockReturnValue({ data: { items: [] }, isLoading: false })
 		render(<ForYouDashboard />)
-		expect(screen.getByText('All caught up')).toBeInTheDocument()
+		expect(screen.getByText("You're all caught up")).toBeInTheDocument()
 	})
 
 	it('renders one UnreadThreadCard per unread item', () => {
@@ -85,5 +90,31 @@ describe('ForYouDashboard', () => {
 		expect(screen.getAllByTestId('unread-thread-card')).toHaveLength(2)
 		expect(screen.getByText('obj-1')).toBeInTheDocument()
 		expect(screen.getByText('obj-2')).toBeInTheDocument()
+	})
+
+	it('marks every regular unread item read up to its latest event on "Mark all as read"', async () => {
+		const user = userEvent.setup()
+		mockUseUnread.mockReturnValue({
+			data: {
+				items: [
+					buildUnreadItem({ entity_id: 'obj-1', latest_event_id: 10 }),
+					buildUnreadItem({ entity_id: 'obj-2', latest_event_id: 22 }),
+				],
+			},
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		await user.click(screen.getByRole('button', { name: /mark all as read/i }))
+		expect(mockMarkReadMutate).toHaveBeenCalledTimes(2)
+		expect(mockMarkReadMutate).toHaveBeenCalledWith({
+			entityType: 'object',
+			entityId: 'obj-1',
+			lastEventId: 10,
+		})
+		expect(mockMarkReadMutate).toHaveBeenCalledWith({
+			entityType: 'object',
+			entityId: 'obj-2',
+			lastEventId: 22,
+		})
 	})
 })

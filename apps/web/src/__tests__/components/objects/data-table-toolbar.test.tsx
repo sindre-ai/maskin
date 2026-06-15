@@ -34,6 +34,7 @@ function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableT
 		groupBy: undefined,
 		onGroupByChange: vi.fn(),
 		onImportClick: vi.fn(),
+		onNewClick: vi.fn(),
 		...overrides,
 	}
 	return { ...render(<DataTableToolbar {...props} />), props }
@@ -42,16 +43,16 @@ function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableT
 describe('DataTableToolbar', () => {
 	it('renders type tab buttons', () => {
 		renderToolbar()
-		expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Bets' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Tasks' })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: 'All' })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: 'Bets' })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: 'Tasks' })).toBeInTheDocument()
 	})
 
 	it('calls onTypeFilterChange when a tab is clicked', async () => {
 		const user = userEvent.setup()
 		const { props } = renderToolbar()
 
-		await user.click(screen.getByRole('button', { name: 'Bets' }))
+		await user.click(screen.getByRole('tab', { name: 'Bets' }))
 		expect(props.onTypeFilterChange).toHaveBeenCalledWith('bet')
 	})
 
@@ -59,8 +60,19 @@ describe('DataTableToolbar', () => {
 		const user = userEvent.setup()
 		const { props } = renderToolbar({ typeFilter: 'bet' })
 
-		await user.click(screen.getByRole('button', { name: 'All' }))
+		await user.click(screen.getByRole('tab', { name: 'All' }))
 		expect(props.onTypeFilterChange).toHaveBeenCalledWith(undefined)
+	})
+
+	it('renders New button and calls onNewClick when clicked', async () => {
+		const user = userEvent.setup()
+		const { props } = renderToolbar()
+
+		const newButton = screen.getByRole('button', { name: /^new$/i })
+		expect(newButton).toBeInTheDocument()
+
+		await user.click(newButton)
+		expect(props.onNewClick).toHaveBeenCalledOnce()
 	})
 
 	it('renders search input with placeholder', () => {

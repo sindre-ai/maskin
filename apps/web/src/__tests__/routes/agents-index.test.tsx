@@ -103,8 +103,8 @@ describe('AgentsPage', () => {
 			isLoading: false,
 		})
 		render(<AgentsPage />)
-		expect(screen.getByRole('button', { name: /All \(2\)/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Idle \(2\)/ })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: /All\s*2/ })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: /Idle\s*2/ })).toBeInTheDocument()
 	})
 
 	it('shows empty state when no agents match filter', async () => {
@@ -114,7 +114,7 @@ describe('AgentsPage', () => {
 		})
 		const user = userEvent.setup()
 		render(<AgentsPage />)
-		await user.click(screen.getByRole('button', { name: /Failed/ }))
+		await user.click(screen.getByRole('tab', { name: /Failed/ }))
 		expect(screen.queryByTestId('agent-card')).not.toBeInTheDocument()
 	})
 })
