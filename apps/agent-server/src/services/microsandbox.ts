@@ -41,7 +41,7 @@ const CREATE_TIMEOUT_MS = 60_000
 // `always` re-pulls every spawn; `missing` skips the network round-trip when the
 // image is already cached locally (image-warmer hits use this). `never` is the
 // libkrun-equivalent of an air-gap for tests.
-export type PullPolicy = 'always' | 'missing' | 'never'
+export type PullPolicy = 'always' | 'if-missing' | 'never'
 
 export type SpawnSessionInput = {
 	sessionId: string

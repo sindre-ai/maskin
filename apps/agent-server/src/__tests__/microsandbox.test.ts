@@ -182,7 +182,7 @@ describe('buildMsbCreateArgs', () => {
 			hostPort: 3001,
 			env: {},
 			sessionDir: '/d',
-			pullPolicy: 'missing',
+			pullPolicy: 'if-missing',
 		})
 		const idx = args.indexOf('--pull')
 		expect(args[idx + 1]).toBe('missing')

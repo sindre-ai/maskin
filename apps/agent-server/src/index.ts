@@ -148,7 +148,7 @@ export function buildApp(deps: AppDeps): Hono {
 		// network pull (`--pull missing`). Otherwise fall back to the cold
 		// `--pull always` path, which self-corrects by pulling if absent.
 		const warmHit = deps.warmer?.isWarm(body.image) ?? false
-		const pullPolicy: PullPolicy = warmHit ? 'missing' : 'always'
+		const pullPolicy: PullPolicy = warmHit ? 'if-missing' : 'always'
 
 		try {
 			const result = await spawnSession(
