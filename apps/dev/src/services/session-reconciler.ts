@@ -130,7 +130,9 @@ export class SessionReconciler {
 				updatedAt: now,
 				currentActivity: null,
 			})
-			.where(and(eq(sessions.id, sessionId), sql`${sessions.status} NOT IN ('completed', 'failed')`))
+			.where(
+				and(eq(sessions.id, sessionId), sql`${sessions.status} NOT IN ('completed', 'failed')`),
+			)
 			.returning({ id: sessions.id })
 
 		if (!updated) return

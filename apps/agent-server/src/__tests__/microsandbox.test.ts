@@ -366,7 +366,18 @@ describe('waitForCompletion', () => {
 			return { stdout: JSON.stringify([]), stderr: '' }
 		}
 		let t = 0
-		await waitForCompletion(msbBin, 'sess-done', { run, sleep: async () => { t += 5_000 }, now: () => t }, 60_000)
+		await waitForCompletion(
+			msbBin,
+			'sess-done',
+			{
+				run,
+				sleep: async () => {
+					t += 5_000
+				},
+				now: () => t,
+			},
+			60_000,
+		)
 		expect(calls.length).toBe(1)
 	})
 
@@ -378,12 +389,22 @@ describe('waitForCompletion', () => {
 		): Promise<{ stdout: string; stderr: string }> => {
 			pollCount++
 			// Running for first two polls, gone on the third
-			const list =
-				pollCount < 3 ? [{ name: 'sess-1', status: 'Running' }] : []
+			const list = pollCount < 3 ? [{ name: 'sess-1', status: 'Running' }] : []
 			return { stdout: JSON.stringify(list), stderr: '' }
 		}
 		let t = 0
-		await waitForCompletion(msbBin, 'sess-1', { run, sleep: async () => { t += 5_000 }, now: () => t }, 60_000)
+		await waitForCompletion(
+			msbBin,
+			'sess-1',
+			{
+				run,
+				sleep: async () => {
+					t += 5_000
+				},
+				now: () => t,
+			},
+			60_000,
+		)
 		expect(pollCount).toBe(3)
 	})
 
@@ -393,7 +414,18 @@ describe('waitForCompletion', () => {
 			stderr: '',
 		})
 		let t = 0
-		await waitForCompletion(msbBin, 'sess-2', { run, sleep: async () => { t += 5_000 }, now: () => t }, 60_000)
+		await waitForCompletion(
+			msbBin,
+			'sess-2',
+			{
+				run,
+				sleep: async () => {
+					t += 5_000
+				},
+				now: () => t,
+			},
+			60_000,
+		)
 		// Should not throw or hang
 	})
 
@@ -404,7 +436,18 @@ describe('waitForCompletion', () => {
 		})
 		let t = 0
 		// Advance time past the timeout on each sleep so the loop exits
-		await waitForCompletion(msbBin, 'stuck', { run, sleep: async () => { t += 10_000 }, now: () => t }, 5_000)
+		await waitForCompletion(
+			msbBin,
+			'stuck',
+			{
+				run,
+				sleep: async () => {
+					t += 10_000
+				},
+				now: () => t,
+			},
+			5_000,
+		)
 	})
 
 	it('tolerates transient msb list errors without throwing', async () => {
@@ -415,7 +458,18 @@ describe('waitForCompletion', () => {
 			return { stdout: JSON.stringify([]), stderr: '' }
 		}
 		let t = 0
-		await waitForCompletion(msbBin, 'sess-3', { run, sleep: async () => { t += 5_000 }, now: () => t }, 60_000)
+		await waitForCompletion(
+			msbBin,
+			'sess-3',
+			{
+				run,
+				sleep: async () => {
+					t += 5_000
+				},
+				now: () => t,
+			},
+			60_000,
+		)
 		expect(calls).toBe(3)
 	})
 })

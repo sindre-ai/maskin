@@ -8,9 +8,9 @@ import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
 import { ImageWarmer } from './services/image-warmer'
 import {
-	defaultRunner,
 	type MicrosandboxDeps,
 	type PullPolicy,
+	defaultRunner,
 	readMsbVersion,
 	spawnSession,
 	waitForCompletion,
