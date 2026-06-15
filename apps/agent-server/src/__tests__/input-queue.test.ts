@@ -66,6 +66,28 @@ describe('InputQueue', () => {
 		expect(received2).toEqual(['msg\n'])
 	})
 
+	it('re-parks failed message and remainder when flusher returns false during initial flush', () => {
+		const queue = new InputQueue()
+		queue.enqueue('s1', 'msg1\n')
+		queue.enqueue('s1', 'msg2\n')
+		queue.enqueue('s1', 'msg3\n')
+
+		const received: string[] = []
+		queue.registerStream('s1', (line) => {
+			received.push(line)
+			return line !== 'msg2\n' // close on second message
+		})
+		expect(received).toEqual(['msg1\n', 'msg2\n'])
+
+		// msg2 (the one that returned false) and msg3 should be re-parked
+		const received2: string[] = []
+		queue.registerStream('s1', (line) => {
+			received2.push(line)
+			return true
+		})
+		expect(received2).toEqual(['msg2\n', 'msg3\n'])
+	})
+
 	it('drainSession removes both stream and pending queue', () => {
 		const queue = new InputQueue()
 		queue.enqueue('s1', 'pending\n')

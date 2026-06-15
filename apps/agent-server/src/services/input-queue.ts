@@ -12,7 +12,13 @@ export class InputQueue {
 	registerStream(sessionId: string, flusher: Flusher): () => void {
 		const queued = this.pending.get(sessionId) ?? []
 		this.pending.delete(sessionId)
-		for (const line of queued) flusher(line)
+		for (let i = 0; i < queued.length; i++) {
+			if (!flusher(queued[i])) {
+				// Stream closed mid-flush — re-park this message and everything after it.
+				this.pending.set(sessionId, queued.slice(i))
+				return () => {}
+			}
+		}
 		this.streams.set(sessionId, flusher)
 		return () => this.streams.delete(sessionId)
 	}

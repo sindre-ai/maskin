@@ -191,8 +191,11 @@ export function buildApp(deps: AppDeps): Hono {
 				envSanitized: result.envSanitized,
 			})
 
-			// Background: wait for VM exit → push workspace to S3 → delete local dir.
-			void monitorSession(body.sessionId, sessionDir, deps.storage, deps.msb)
+			// Background: wait for VM exit → push workspace to S3 → delete local dir
+			// → drain the input queue so pending messages don't accumulate in memory.
+			void monitorSession(body.sessionId, sessionDir, deps.storage, deps.msb).then(() => {
+				inputQueue.drainSession(body.sessionId)
+			})
 
 			return c.json(
 				{
