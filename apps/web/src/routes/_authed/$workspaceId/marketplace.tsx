@@ -125,7 +125,7 @@ function MarketplacePage() {
 function SidebarGroup({ label, children }: { label: string; children: React.ReactNode }) {
 	return (
 		<div className="mb-4">
-			<div className="px-2 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+			<div className="px-2 mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
 				{label}
 			</div>
 			<ul className="flex flex-col gap-0.5">{children}</ul>
@@ -150,7 +150,7 @@ function SidebarItem({
 				type="button"
 				onClick={onClick}
 				className={cn(
-					'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-[13px] transition-colors',
+					'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors',
 					active
 						? 'bg-muted font-medium text-foreground'
 						: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
