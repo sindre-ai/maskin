@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildApp } from '../index'
 import type { AgentServerEnv } from '../lib/env'
+import { WarmPool } from '../services/warm-pool'
 
 function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 	return {
@@ -12,6 +13,7 @@ function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 		MSB_BIN: '/usr/local/bin/msb',
 		AGENT_SESSION_ROOT: '/tmp/agent-server-test',
 		S3_REGION: 'us-east-1',
+		WARM_POOL_SIZE: 0,
 		...overrides,
 	}
 }
@@ -167,6 +169,100 @@ describe('POST /sessions happy path', () => {
 
 		const skel = await readdir(join(sessionRoot, 'sess-happy'))
 		expect(skel.sort()).toEqual(['learnings', 'memory', 'skills', 'workspace'])
+	})
+})
+
+describe('POST /sessions warm pool integration', () => {
+	it('uses --pull missing and reports warm_hit:true when the warm pool has the image', async () => {
+		const { run, calls } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		let suffix = 0
+		const warmPool = new WarmPool({
+			image: 'maskin/agent-base:latest',
+			size: 1,
+			hostPort: env.PORT,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			randomSuffix: () => `w${suffix++}`,
+		})
+		await warmPool.start()
+
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+			warmPool,
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-warm',
+				image: 'maskin/agent-base:latest',
+				env: {},
+			}),
+		})
+
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { warm_hit: boolean }
+		expect(body.warm_hit).toBe(true)
+
+		// The session VM's create call carries --pull missing because the warm
+		// pool guarantees the image is locally cached.
+		const sessionCreate = calls
+			.filter((c) => c.args[0] === 'create')
+			.find((c) => c.args.includes('sess-warm'))
+		expect(sessionCreate).toBeDefined()
+		const pullIdx = sessionCreate?.args.indexOf('--pull') ?? -1
+		expect(sessionCreate?.args[pullIdx + 1]).toBe('missing')
+	})
+
+	it('falls back to --pull always and warm_hit:false when the image does not match the pool', async () => {
+		const { run, calls } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		let suffix = 0
+		const warmPool = new WarmPool({
+			image: 'maskin/agent-base:latest',
+			size: 1,
+			hostPort: env.PORT,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			randomSuffix: () => `w${suffix++}`,
+		})
+		await warmPool.start()
+
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+			warmPool,
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-cold',
+				image: 'other/image:1.0',
+				env: {},
+			}),
+		})
+
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { warm_hit: boolean }
+		expect(body.warm_hit).toBe(false)
+
+		const sessionCreate = calls
+			.filter((c) => c.args[0] === 'create')
+			.find((c) => c.args.includes('sess-cold'))
+		expect(sessionCreate).toBeDefined()
+		const pullIdx = sessionCreate?.args.indexOf('--pull') ?? -1
+		expect(sessionCreate?.args[pullIdx + 1]).toBe('always')
 	})
 })
 

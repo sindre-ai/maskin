@@ -26,6 +26,18 @@ const envSchema = z.object({
 	S3_ACCESS_KEY: z.string().optional(),
 	S3_SECRET_KEY: z.string().optional(),
 	S3_REGION: z.string().optional().default('us-east-1'),
+	WARM_POOL_IMAGE: z.string().optional(),
+	WARM_POOL_SIZE: z
+		.string()
+		.optional()
+		.default('5')
+		.transform((v) => {
+			const n = Number(v)
+			if (!Number.isFinite(n) || n < 0 || n > 50) {
+				throw new Error(`Invalid WARM_POOL_SIZE: ${v} (expected integer 0..50)`)
+			}
+			return Math.floor(n)
+		}),
 })
 
 export type AgentServerEnv = z.infer<typeof envSchema>

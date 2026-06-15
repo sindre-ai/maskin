@@ -6,8 +6,14 @@ import { z } from 'zod'
 import { bearerAuth } from './lib/auth'
 import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
-import { type MicrosandboxDeps, readMsbVersion, spawnSession } from './services/microsandbox'
+import {
+	type MicrosandboxDeps,
+	type PullPolicy,
+	readMsbVersion,
+	spawnSession,
+} from './services/microsandbox'
 import { pullSessionWorkspace } from './services/session-workspace'
+import { WarmPool } from './services/warm-pool'
 
 const SESSION_REQUEST_SCHEMA = z.object({
 	sessionId: z
@@ -31,6 +37,7 @@ export type AppDeps = {
 	env: AgentServerEnv
 	storage: StorageProvider | null
 	msb: MicrosandboxDeps
+	warmPool?: WarmPool | null
 }
 
 export function buildApp(deps: AppDeps): Hono {
@@ -98,6 +105,12 @@ export function buildApp(deps: AppDeps): Hono {
 			}
 		}
 
+		// Warm-pool claim is synchronous and best-effort: a hit lets us skip the
+		// network image pull because the image is already in libkrun's local
+		// cache. A miss falls back to the cold `--pull always` path.
+		const claim = deps.warmPool?.claim(body.image) ?? { hit: false }
+		const pullPolicy: PullPolicy = claim.hit ? 'missing' : 'always'
+
 		try {
 			const result = await spawnSession(
 				{
@@ -111,12 +124,15 @@ export function buildApp(deps: AppDeps): Hono {
 						publicHost: deps.env.MASKIN_AGENT_SERVER_PUBLIC_HOST,
 					}),
 					sessionDir,
+					pullPolicy,
 				},
 				deps.msb,
 			)
 			logger.info('session spawned', {
 				sessionId: body.sessionId,
 				image: body.image,
+				warmHit: claim.hit,
+				pullPolicy,
 				envOverflowSpilled: result.envOverflowSpilled,
 				envSanitized: result.envSanitized,
 			})
@@ -125,6 +141,7 @@ export function buildApp(deps: AppDeps): Hono {
 					sessionId: body.sessionId,
 					sandboxName: result.sandboxName,
 					connection: result.connection,
+					warm_hit: claim.hit,
 					env_overflow_spilled: result.envOverflowSpilled,
 					env_sanitized: result.envSanitized,
 				},
@@ -157,16 +174,50 @@ async function buildStorage(env: AgentServerEnv): Promise<StorageProvider | null
 async function main(): Promise<void> {
 	const env = parseEnv()
 	const storage = await buildStorage(env)
+	const msb: MicrosandboxDeps = { msbBin: env.MSB_BIN }
 
-	const app = buildApp({
-		env,
-		storage,
-		msb: { msbBin: env.MSB_BIN },
-	})
+	let warmPool: WarmPool | null = null
+	if (env.WARM_POOL_IMAGE && env.WARM_POOL_SIZE > 0) {
+		warmPool = new WarmPool({
+			image: env.WARM_POOL_IMAGE,
+			size: env.WARM_POOL_SIZE,
+			hostPort: env.PORT,
+			msb,
+		})
+		try {
+			await warmPool.start()
+		} catch (err) {
+			// A pool that can't start is degraded but not fatal — sessions still
+			// fall back to the cold path. Surface and continue.
+			logger.error('warm pool failed to start', { error: String(err) })
+		}
+	} else {
+		logger.info('warm pool disabled', { reason: env.WARM_POOL_IMAGE ? 'size_zero' : 'no_image' })
+	}
 
-	serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, ({ port }) => {
+	const app = buildApp({ env, storage, msb, warmPool })
+
+	const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, ({ port }) => {
 		logger.info('agent-server listening', { port })
 	})
+
+	let shuttingDown = false
+	const shutdown = async (signal: string): Promise<void> => {
+		if (shuttingDown) return
+		shuttingDown = true
+		logger.info('agent-server shutting down', { signal })
+		if (warmPool) {
+			await warmPool.shutdown().catch((err) => {
+				logger.error('warm pool shutdown failed', { error: String(err) })
+			})
+		}
+		server.close(() => process.exit(0))
+		// Hard-stop after 10s if the server doesn't close cleanly (libkrun hangs
+		// have shown up here in the past).
+		setTimeout(() => process.exit(0), 10_000).unref()
+	}
+	process.on('SIGTERM', () => void shutdown('SIGTERM'))
+	process.on('SIGINT', () => void shutdown('SIGINT'))
 }
 
 // Bundled entrypoint runs main; tests import buildApp directly without booting.
