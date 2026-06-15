@@ -13,7 +13,7 @@ import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import type { ObjectResponse, WorkspaceWithRole } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { SafeJsonValue, SafeMetadata } from '@maskin/shared'
-import { X } from 'lucide-react'
+import { Calendar, CheckSquare, Hash, List, type LucideIcon, Type, X } from 'lucide-react'
 import { useState } from 'react'
 
 interface FieldDefinition {
@@ -530,16 +530,15 @@ function CreateFieldForm({
 }
 
 function FieldTypeIcon({ type }: { type: string }) {
-	const icons: Record<string, string> = {
-		text: 'T',
-		number: '#',
-		date: '📅',
-		boolean: '☑',
-		enum: '▤',
+	const icons: Record<string, LucideIcon> = {
+		text: Type,
+		number: Hash,
+		date: Calendar,
+		boolean: CheckSquare,
+		enum: List,
 	}
-	return (
-		<span className="w-4 text-center text-muted-foreground text-[10px]">{icons[type] ?? '·'}</span>
-	)
+	const Icon = icons[type] ?? Type
+	return <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
 }
 
 function inferType(value: unknown): string {

@@ -120,6 +120,7 @@ export function ObjectDocumentView({
 					onBlur={handleTitleBlur}
 					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Untitled"
+					aria-label="Title"
 					rows={1}
 					className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
 					ref={(el) => {
@@ -145,35 +146,47 @@ export function ObjectDocumentView({
 				/>
 			)}
 
-			{/* Metadata badges row */}
-			<div className="flex flex-wrap items-center gap-2 mb-6">
-				<TypeBadge type={object.type} />
-				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
-				{statuses.length > 0 ? (
-					<StatusSelect current={object.status} options={statuses} onChange={handleStatusChange} />
-				) : (
-					<StatusBadge status={object.status} />
-				)}
-				{members && (
-					<OwnerSelect
-						members={members}
-						currentOwnerId={object.driver ?? null}
-						onChange={onUpdateDriver}
+			{/* Metadata row. Split into two groups so editable attributes (type,
+			    status, driver, subscription) read as controls, while read-only
+			    provenance (who created it, when) sits apart as quiet context. */}
+			<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-6">
+				<div className="flex flex-wrap items-center gap-2">
+					<TypeBadge type={object.type} />
+					{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
+					{statuses.length > 0 ? (
+						<StatusSelect
+							current={object.status}
+							options={statuses}
+							onChange={handleStatusChange}
+						/>
+					) : (
+						<StatusBadge status={object.status} />
+					)}
+					{members && (
+						<OwnerSelect
+							members={members}
+							currentOwnerId={object.driver ?? null}
+							onChange={onUpdateDriver}
+						/>
+					)}
+					<SubscribeToggle
+						workspaceId={workspaceId}
+						entityType="object"
+						entityId={object.id}
+						isSubscribed={object.is_subscribed}
 					/>
-				)}
-				<SubscribeToggle
-					workspaceId={workspaceId}
-					entityType="object"
-					entityId={object.id}
-					isSubscribed={object.is_subscribed}
-				/>
-				{creator && (
-					<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-						<ActorAvatar name={creator.name} type={creator.type} size="sm" />
-						{creator.name}
-					</span>
-				)}
-				<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
+				</div>
+				<div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+					{creator && (
+						<span className="inline-flex items-center gap-1">
+							<span>Created by</span>
+							<ActorAvatar name={creator.name} type={creator.type} size="sm" />
+							<span className="text-foreground/80">{creator.name}</span>
+							<span aria-hidden="true">·</span>
+						</span>
+					)}
+					<RelativeTime date={object.createdAt} />
+				</div>
 			</div>
 
 			{/* Properties */}
@@ -472,20 +485,22 @@ function OwnerSelect({
 		<Select value={currentOwnerId ?? UNASSIGNED_OWNER} onValueChange={handleChange}>
 			<SelectTrigger>
 				<SelectValue>
-					{current ? (
-						<span className="inline-flex items-center gap-1.5">
-							{current.type !== 'agent' && <User className="size-3 text-amber-600 shrink-0" />}
-							<span className="text-muted-foreground text-[11px]">Driver:</span>
-							<ActorAvatar name={current.name} type={current.type} size="sm" />
-							{current.name}
-						</span>
-					) : currentOwnerId ? (
-						<span className="italic text-muted-foreground">
-							Unknown ({currentOwnerId.slice(0, 8)})
-						</span>
-					) : (
-						<span className="text-muted-foreground">Driver: Unassigned</span>
-					)}
+					<span className="inline-flex items-center gap-1.5">
+						<span className="text-muted-foreground text-[11px]">Driver</span>
+						{current ? (
+							<>
+								{current.type !== 'agent' && <User className="size-3 text-amber-600 shrink-0" />}
+								<ActorAvatar name={current.name} type={current.type} size="sm" />
+								{current.name}
+							</>
+						) : currentOwnerId ? (
+							<span className="italic text-muted-foreground">
+								Unknown ({currentOwnerId.slice(0, 8)})
+							</span>
+						) : (
+							<span className="text-muted-foreground">Unassigned</span>
+						)}
+					</span>
 				</SelectValue>
 			</SelectTrigger>
 			<SelectContent>
