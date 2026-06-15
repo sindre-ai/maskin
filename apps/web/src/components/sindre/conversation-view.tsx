@@ -92,6 +92,28 @@ export function ConversationView({
 		clearPendingAttachments()
 	}, [pendingMessage, pendingAttachments, send, clearPendingMessage, clearPendingAttachments])
 
+	// When the panel is opened with context but no message to auto-send (e.g.
+	// the Pulse card's "Talk to Sindre" on a notification), stage the
+	// attachments into the composer so the user sees the chips / participants
+	// and can type their message instead of losing the context.
+	useEffect(() => {
+		if (pendingMessage && pendingMessage.length > 0) return
+		if (pendingAttachments.length === 0) return
+		for (const a of pendingAttachments) {
+			if (a.kind === 'object') {
+				dispatch({
+					type: 'add_object',
+					object: { id: a.id, title: a.title ?? null, type: a.type ?? null },
+				})
+			} else if (a.kind === 'notification') {
+				dispatch({ type: 'add_notification', notification: { id: a.id, title: a.title ?? null } })
+			} else if (a.kind === 'agent') {
+				addParticipant(a.id)
+			}
+		}
+		clearPendingAttachments()
+	}, [pendingMessage, pendingAttachments, addParticipant, clearPendingAttachments])
+
 	const isEmpty = messages.length === 0
 
 	return (
