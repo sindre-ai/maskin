@@ -1,3 +1,4 @@
+import { trackChatSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
 import { API_BASE } from '@/lib/constants'
@@ -99,6 +100,13 @@ export function useSindreOneShot(): UseSindreOneShotResult {
 
 		setSessionId(session.id)
 		setStatus('streaming')
+		// Founder-substitution measurement: each one-shot is a fresh container
+		// and a self-contained conversation start, so fire once per send.
+		trackChatSessionStarted({
+			entity_id: session.id,
+			entity_type: 'session',
+			entry_point: 'agent_one_shot',
+		})
 
 		const apiKey = getApiKey()
 		const headers: Record<string, string> = { 'X-Workspace-Id': workspaceId }

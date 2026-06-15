@@ -1,3 +1,4 @@
+import { trackChatSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { SessionInputAttachment } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
@@ -221,6 +222,17 @@ export function useSindreSession({
 					}
 					currentSessionId = session.id
 					setSessionId(session.id)
+					// Founder-substitution measurement: fire exactly once per
+					// fresh container — guarded by the `sessionId` transition
+					// from null to set, so subsequent sends on the persistent
+					// session don't re-fire. `reset()` bumps generationRef and
+					// nulls sessionId, so the next first-send legitimately
+					// counts as a new chat session start.
+					trackChatSessionStarted({
+						entity_id: session.id,
+						entity_type: 'session',
+						entry_point: 'sindre_session',
+					})
 					// Wait for the container to actually be running before we
 					// POST the user's turn — otherwise the input endpoint
 					// rejects with 409 "Session is not running".
