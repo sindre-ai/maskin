@@ -55,6 +55,11 @@ let mockNodeRes: ReturnType<typeof createEnv>['mockNodeRes']
 let env: ReturnType<typeof createEnv>['env']
 
 describe('MCP Routes', () => {
+	beforeAll(async () => {
+		// Pre-warm the import cache so the first test doesn't hit a cold-transform timeout.
+		await createApp()
+	}, 15000)
+
 	beforeEach(() => {
 		vi.clearAllMocks()
 		;({ mockNodeReq, mockNodeRes, env } = createEnv())

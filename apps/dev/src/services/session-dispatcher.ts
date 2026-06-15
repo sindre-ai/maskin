@@ -153,9 +153,9 @@ export class SessionDispatcher {
 				max: agentServers.maxConcurrentSessions,
 				active: sql<number>`COALESCE((
 					SELECT COUNT(*)::int
-					FROM ${sessions}
-					WHERE ${sessions.agentServerId} = ${agentServers.id}
-					  AND ${sessions.status} IN ('starting','running')
+					FROM sessions
+					WHERE sessions.agent_server_id = agent_servers.id
+					  AND sessions.status IN ('starting','running')
 				), 0)`,
 			})
 			.from(agentServers)
@@ -224,10 +224,7 @@ export class SessionDispatcher {
 				updatedAt: new Date(),
 			})
 			.where(
-			and(
-				eq(sessions.id, sessionId),
-				sql`${sessions.status} NOT IN ('completed', 'failed')`,
-			),
-		)
+				and(eq(sessions.id, sessionId), sql`${sessions.status} NOT IN ('completed', 'failed')`),
+			)
 	}
 }
