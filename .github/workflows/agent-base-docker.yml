@@ -1,0 +1,53 @@
+name: Build & Push agent-base Docker image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/agent-base/**'
+
+concurrency:
+  group: agent-base-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: magnusnoeddegaard/agent-base
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/agent-base
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Restart agent-server to pick up new image
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.AGENT_SERVER_HOST }}
+          username: ${{ secrets.AGENT_SERVER_USER }}
+          key: ${{ secrets.AGENT_SERVER_SSH_KEY }}
+          script: systemctl restart maskin-agent-server
