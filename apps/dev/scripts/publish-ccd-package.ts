@@ -139,6 +139,7 @@ async function main(): Promise<void> {
 				description: CCD_PACKAGE.description,
 				version: CCD_PACKAGE.version,
 				useCase: CCD_PACKAGE.useCase,
+				isFeatured: CCD_PACKAGE.isFeatured,
 			})
 			.returning()
 

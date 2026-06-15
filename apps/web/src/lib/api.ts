@@ -1171,6 +1171,7 @@ export interface CatalogPackageSummary {
 	description: string
 	version: string
 	use_case: string | null
+	is_featured: boolean
 	item_types: CatalogItemType[]
 	created_at: string | null
 	updated_at: string | null

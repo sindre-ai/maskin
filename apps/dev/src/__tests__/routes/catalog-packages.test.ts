@@ -13,6 +13,7 @@ function buildCatalogPackage(overrides?: Record<string, unknown>) {
 		description: 'Feedback → insights → bets → lifecycle comms.',
 		version: '0.1.0',
 		useCase: 'continuous-discovery',
+		isFeatured: false,
 		createdAt: new Date('2026-06-01T00:00:00Z'),
 		updatedAt: new Date('2026-06-01T00:00:00Z'),
 		...overrides,
@@ -76,6 +77,7 @@ describe('Catalog Packages Routes', () => {
 			expect(body.packages).toHaveLength(2)
 			expect(body.packages[0].name).toBe('Aardvark')
 			expect(body.packages[0].item_types).toEqual(['actor', 'skill'])
+			expect(body.packages[0].is_featured).toBe(false)
 			expect(body.packages[1].item_types).toEqual(['integration'])
 
 			expect(body.counts.total).toBe(2)
@@ -112,6 +114,22 @@ describe('Catalog Packages Routes', () => {
 
 			const res = await app.request(jsonGet('/api/catalog/packages?type=widget'))
 			expect(res.status).toBe(400)
+		})
+
+		it('surfaces is_featured from the row onto the summary response', async () => {
+			const { app, mockResults } = createTestApp(catalogPackagesRoutes, '/api/catalog')
+			const pkg = buildCatalogPackage({ isFeatured: true })
+			mockResults.selectQueue = [
+				[{ id: pkg.id, useCase: pkg.useCase }],
+				[{ packageId: pkg.id, itemType: 'actor' }],
+				[pkg],
+				[{ packageId: pkg.id, itemType: 'actor' }],
+			]
+
+			const res = await app.request(jsonGet('/api/catalog/packages'))
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.packages[0].is_featured).toBe(true)
 		})
 
 		it('accepts use_case and q filters without 400', async () => {

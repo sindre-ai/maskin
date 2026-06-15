@@ -680,6 +680,10 @@ export const catalogPackages = pgTable('catalog_packages', {
 	description: text('description').notNull(),
 	version: text('version').notNull(),
 	useCase: text('use_case'),
+	// Editorial flag: when true the package surfaces in the /marketplace
+	// FeaturedStrip above the grid. Defaults to false; flipped per-package
+	// at publish time (or via the 0037 migration for the seed CCD row).
+	isFeatured: boolean('is_featured').notNull().default(false),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })

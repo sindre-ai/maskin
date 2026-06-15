@@ -30,6 +30,7 @@ function pkg(overrides: Partial<CatalogPackageSummary> = {}): CatalogPackageSumm
 		description: 'Turns feedback into clustered insights.',
 		version: '1.0.0',
 		use_case: 'Discovery',
+		is_featured: false,
 		item_types: ['actor', 'trigger'],
 		created_at: null,
 		updated_at: null,

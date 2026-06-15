@@ -108,6 +108,7 @@ describe('MarketplacePage', () => {
 						description: 'Loop',
 						version: '1.0.0',
 						use_case: 'Discovery',
+						is_featured: false,
 						item_types: ['actor', 'trigger'],
 						created_at: null,
 						updated_at: null,
@@ -130,6 +131,63 @@ describe('MarketplacePage', () => {
 	it('shows the empty-state copy when the catalog has no packages', () => {
 		render(<MarketplacePage />)
 		expect(screen.getByText(/No packages yet/i)).toBeInTheDocument()
+	})
+
+	it('renders the featured strip above the grid when a package is featured', () => {
+		mockUseCatalogPackages.mockReturnValue({
+			data: {
+				packages: [
+					{
+						id: 'p-featured',
+						name: 'Customer Continuous Discovery',
+						slug: 'continuous-discovery',
+						description: 'Loop',
+						version: '1.0.0',
+						use_case: 'Discovery',
+						is_featured: true,
+						item_types: ['actor'],
+						created_at: null,
+						updated_at: null,
+					},
+				],
+				counts: COUNTS,
+			},
+			isLoading: false,
+			isError: false,
+		})
+		render(<MarketplacePage />)
+		const featured = screen.getByRole('region', { name: 'Featured' })
+		expect(featured).toHaveTextContent('Customer Continuous Discovery')
+		// The same package also appears in the grid below — its Agents section.
+		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent(
+			'Customer Continuous Discovery',
+		)
+	})
+
+	it('omits the featured strip when no package is featured', () => {
+		mockUseCatalogPackages.mockReturnValue({
+			data: {
+				packages: [
+					{
+						id: 'p1',
+						name: 'Not Featured',
+						slug: 'not-featured',
+						description: '',
+						version: '1.0.0',
+						use_case: null,
+						is_featured: false,
+						item_types: ['actor'],
+						created_at: null,
+						updated_at: null,
+					},
+				],
+				counts: COUNTS,
+			},
+			isLoading: false,
+			isError: false,
+		})
+		render(<MarketplacePage />)
+		expect(screen.queryByRole('region', { name: 'Featured' })).not.toBeInTheDocument()
 	})
 
 	it('hides the desktop sidebar via the md:hidden / hidden md:block split', () => {
