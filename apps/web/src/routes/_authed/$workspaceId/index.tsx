@@ -6,6 +6,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { useUnread } from '@/hooks/use-subscriptions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
+import { CheckCheck } from 'lucide-react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
 	component: ForYouDashboard,
@@ -30,6 +31,7 @@ function ForYouDashboard() {
 	if (items.length === 0) {
 		return (
 			<EmptyState
+				icon={<CheckCheck />}
 				title="All caught up"
 				description="New comments and replies on things you're subscribed to will appear here."
 			/>

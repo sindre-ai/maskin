@@ -67,7 +67,7 @@ import {
 	useReactTable,
 } from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Layers } from 'lucide-react'
 import { useCallback, useEffect, useRef } from 'react'
 import type { ObjectsTableMeta } from './columns'
 import { ObjectCard } from './object-card'
@@ -176,7 +176,11 @@ export function DataTable({
 
 	if (data.length === 0) {
 		return (
-			<EmptyState title="No objects found" description="Create your first object to get started" />
+			<EmptyState
+				icon={<Layers />}
+				title="No objects found"
+				description="Create your first object to get started"
+			/>
 		)
 	}
 
