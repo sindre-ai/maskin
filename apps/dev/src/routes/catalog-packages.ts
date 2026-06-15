@@ -5,12 +5,23 @@ import {
 	type CatalogPackage,
 	type CatalogPackageItem,
 	actors,
+	agentFiles,
 	catalogPackageItems,
 	catalogPackages,
+	files,
+	imports,
 	integrations,
+	notifications,
+	objects,
+	readState,
+	relationships,
+	sessionLogs,
+	sessions,
+	subscriptions,
 	triggers,
 	workspaceMembers,
 	workspaceSkills,
+	workspaces,
 } from '@maskin/db/schema'
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
@@ -317,6 +328,408 @@ app.openapi(getPackageRoute, (async (c) => {
 
 	return c.json(response)
 }) as RouteHandler<typeof getPackageRoute, Env>)
+
+// ── GET /api/catalog/items/installed?workspaceId=X ───────────────────────────
+//
+// Returns all catalog items (installed via the individual-item endpoint) that
+// are present in the given workspace. Actors are matched via workspace_members;
+// other types are matched by workspace_id column. All rows must have a
+// non-null catalog_item_id in their metadata to appear here.
+
+const installedItemsQuerySchema = z.object({
+	workspaceId: z.string().uuid(),
+})
+
+const installedItemEntrySchema = z.object({
+	catalog_item_id: z.string().uuid(),
+	entity_id: z.string().uuid(),
+	entity_type: z.enum(['actor', 'trigger', 'skill', 'integration']),
+})
+
+const installedItemsResponseSchema = z.object({
+	items: z.array(installedItemEntrySchema),
+})
+
+const listInstalledItemsRoute = createRoute({
+	method: 'get',
+	path: '/items/installed',
+	tags: ['Catalog'],
+	summary: 'List individually-installed catalog items for a workspace',
+	request: { query: installedItemsQuerySchema },
+	responses: {
+		200: {
+			description: 'Installed catalog items',
+			content: { 'application/json': { schema: installedItemsResponseSchema } },
+		},
+		400: {
+			description: 'Validation error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Not a member of the workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(listInstalledItemsRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { workspaceId } = c.req.valid('query')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'You are not a member of the workspace'), 403)
+	}
+
+	const [actorRows, triggerRows, skillRows, integrationRows] = await Promise.all([
+		db
+			.select({
+				catalogItemId: sql<string>`${actors.metadata}->>'catalog_item_id'`,
+				entityId: actors.id,
+			})
+			.from(actors)
+			.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, workspaceId),
+					sql`${actors.metadata}->>'catalog_item_id' IS NOT NULL`,
+				),
+			),
+		db
+			.select({
+				catalogItemId: sql<string>`${triggers.metadata}->>'catalog_item_id'`,
+				entityId: triggers.id,
+			})
+			.from(triggers)
+			.where(
+				and(
+					eq(triggers.workspaceId, workspaceId),
+					sql`${triggers.metadata}->>'catalog_item_id' IS NOT NULL`,
+				),
+			),
+		db
+			.select({
+				catalogItemId: sql<string>`${workspaceSkills.metadata}->>'catalog_item_id'`,
+				entityId: workspaceSkills.id,
+			})
+			.from(workspaceSkills)
+			.where(
+				and(
+					eq(workspaceSkills.workspaceId, workspaceId),
+					sql`${workspaceSkills.metadata}->>'catalog_item_id' IS NOT NULL`,
+				),
+			),
+		db
+			.select({
+				catalogItemId: sql<string>`${integrations.metadata}->>'catalog_item_id'`,
+				entityId: integrations.id,
+			})
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.workspaceId, workspaceId),
+					sql`${integrations.metadata}->>'catalog_item_id' IS NOT NULL`,
+				),
+			),
+	])
+
+	const items = [
+		...actorRows.map((r) => ({
+			catalog_item_id: r.catalogItemId,
+			entity_id: r.entityId,
+			entity_type: 'actor' as const,
+		})),
+		...triggerRows.map((r) => ({
+			catalog_item_id: r.catalogItemId,
+			entity_id: r.entityId,
+			entity_type: 'trigger' as const,
+		})),
+		...skillRows.map((r) => ({
+			catalog_item_id: r.catalogItemId,
+			entity_id: r.entityId,
+			entity_type: 'skill' as const,
+		})),
+		...integrationRows.map((r) => ({
+			catalog_item_id: r.catalogItemId,
+			entity_id: r.entityId,
+			entity_type: 'integration' as const,
+		})),
+	]
+
+	return c.json({ items }, 200)
+}) as RouteHandler<typeof listInstalledItemsRoute, Env>)
+
+// ── DELETE /api/catalog/items/:id/uninstall ───────────────────────────────────
+//
+// Remove an individually-installed catalog item from a workspace.
+// `keepProvisionedItems` mirrors the package-uninstall semantics:
+//   false — cascade-delete the provisioned entity
+//   true  — strip catalog metadata so the entity becomes a plain workspace resource
+
+const uninstallItemBodySchema = z.object({
+	workspaceId: z.string().uuid(),
+	keepProvisionedItems: z.boolean(),
+})
+
+const uninstallItemResponseSchema = z.object({
+	deleted: z.boolean(),
+})
+
+const uninstallItemRoute = createRoute({
+	method: 'delete',
+	path: '/items/{id}/uninstall',
+	tags: ['Catalog'],
+	summary: 'Remove an individually-installed catalog item from a workspace',
+	request: {
+		params: idParamSchema,
+		body: { content: { 'application/json': { schema: uninstallItemBodySchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Item removed',
+			content: { 'application/json': { schema: uninstallItemResponseSchema } },
+		},
+		400: {
+			description: 'Validation error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Not a member of the workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Catalog item not found or not installed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(uninstallItemRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id: itemId } = c.req.valid('param')
+	const { workspaceId, keepProvisionedItems } = c.req.valid('json')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'You are not a member of the workspace'), 403)
+	}
+
+	const [item] = await db
+		.select()
+		.from(catalogPackageItems)
+		.where(eq(catalogPackageItems.id, itemId))
+		.limit(1)
+
+	if (!item) {
+		return c.json(createApiError('NOT_FOUND', 'Catalog item not found'), 404)
+	}
+
+	const type = item.itemType as CatalogItemType
+
+	// Find the local entity that was provisioned from this catalog item.
+	type LocalEntity = { entityId: string }
+	let localEntity: LocalEntity | undefined
+
+	switch (type) {
+		case 'actor': {
+			const [row] = await db
+				.select({ entityId: actors.id })
+				.from(actors)
+				.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, workspaceId),
+						sql`${actors.metadata}->>'catalog_item_id' = ${itemId}`,
+					),
+				)
+				.limit(1)
+			if (row) localEntity = row
+			break
+		}
+		case 'trigger': {
+			const [row] = await db
+				.select({ entityId: triggers.id })
+				.from(triggers)
+				.where(
+					and(
+						eq(triggers.workspaceId, workspaceId),
+						sql`${triggers.metadata}->>'catalog_item_id' = ${itemId}`,
+					),
+				)
+				.limit(1)
+			if (row) localEntity = row
+			break
+		}
+		case 'skill': {
+			const [row] = await db
+				.select({ entityId: workspaceSkills.id })
+				.from(workspaceSkills)
+				.where(
+					and(
+						eq(workspaceSkills.workspaceId, workspaceId),
+						sql`${workspaceSkills.metadata}->>'catalog_item_id' = ${itemId}`,
+					),
+				)
+				.limit(1)
+			if (row) localEntity = row
+			break
+		}
+		case 'integration': {
+			const [row] = await db
+				.select({ entityId: integrations.id })
+				.from(integrations)
+				.where(
+					and(
+						eq(integrations.workspaceId, workspaceId),
+						sql`${integrations.metadata}->>'catalog_item_id' = ${itemId}`,
+					),
+				)
+				.limit(1)
+			if (row) localEntity = row
+			break
+		}
+	}
+
+	if (!localEntity) {
+		return c.json(
+			createApiError('NOT_FOUND', 'This catalog item is not installed in the workspace'),
+			404,
+		)
+	}
+
+	const { entityId } = localEntity
+
+	await db.transaction(async (tx) => {
+		if (keepProvisionedItems) {
+			// Strip catalog tracking keys so the entity becomes a plain workspace resource.
+			const catalogKeysClause = sql`${actors.metadata} - 'catalog_item_id' - 'source_item_id' - 'snapshot'`
+			switch (type) {
+				case 'actor':
+					await tx
+						.update(actors)
+						.set({ metadata: catalogKeysClause })
+						.where(eq(actors.id, entityId))
+					break
+				case 'trigger':
+					await tx
+						.update(triggers)
+						.set({
+							metadata: sql`${triggers.metadata} - 'catalog_item_id' - 'source_item_id' - 'snapshot'`,
+						})
+						.where(eq(triggers.id, entityId))
+					break
+				case 'skill':
+					await tx
+						.update(workspaceSkills)
+						.set({
+							metadata: sql`${workspaceSkills.metadata} - 'catalog_item_id' - 'source_item_id' - 'snapshot'`,
+						})
+						.where(eq(workspaceSkills.id, entityId))
+					break
+				case 'integration':
+					await tx
+						.update(integrations)
+						.set({
+							metadata: sql`${integrations.metadata} - 'catalog_item_id' - 'source_item_id' - 'snapshot'`,
+						})
+						.where(eq(integrations.id, entityId))
+					break
+			}
+		} else {
+			// Hard-delete the entity. Actors require a full cascade; others are a single row delete.
+			switch (type) {
+				case 'actor': {
+					const actorSessions = await tx
+						.select({ id: sessions.id })
+						.from(sessions)
+						.where(eq(sessions.actorId, entityId))
+					const sessionIds = actorSessions.map((s) => s.id)
+					if (sessionIds.length > 0) {
+						await tx.delete(sessionLogs).where(inArray(sessionLogs.sessionId, sessionIds))
+					}
+					await tx.delete(sessions).where(eq(sessions.actorId, entityId))
+					await tx
+						.update(sessions)
+						.set({ createdBy: actorId })
+						.where(eq(sessions.createdBy, entityId))
+					await tx
+						.delete(triggers)
+						.where(or(eq(triggers.targetActorId, entityId), eq(triggers.createdBy, entityId)))
+					await tx.delete(agentFiles).where(eq(agentFiles.actorId, entityId))
+					await tx
+						.delete(notifications)
+						.where(
+							or(
+								eq(notifications.sourceActorId, entityId),
+								eq(notifications.targetActorId, entityId),
+							),
+						)
+					await tx.delete(events).where(eq(events.actorId, entityId))
+					await tx.delete(relationships).where(eq(relationships.createdBy, entityId))
+					await tx.delete(subscriptions).where(eq(subscriptions.actorId, entityId))
+					await tx.delete(readState).where(eq(readState.actorId, entityId))
+					await tx.update(objects).set({ driver: null }).where(eq(objects.driver, entityId))
+					await tx
+						.update(objects)
+						.set({ createdBy: actorId })
+						.where(eq(objects.createdBy, entityId))
+					await tx.update(files).set({ createdBy: actorId }).where(eq(files.createdBy, entityId))
+					await tx
+						.update(imports)
+						.set({ createdBy: actorId })
+						.where(eq(imports.createdBy, entityId))
+					await tx
+						.update(workspaceSkills)
+						.set({ createdBy: null })
+						.where(eq(workspaceSkills.createdBy, entityId))
+					await tx
+						.update(workspaces)
+						.set({ createdBy: null })
+						.where(eq(workspaces.createdBy, entityId))
+					await tx
+						.update(integrations)
+						.set({ createdBy: actorId })
+						.where(eq(integrations.createdBy, entityId))
+					await tx.update(actors).set({ createdBy: null }).where(eq(actors.createdBy, entityId))
+					await tx.delete(workspaceMembers).where(eq(workspaceMembers.actorId, entityId))
+					await tx.delete(actors).where(eq(actors.id, entityId))
+					break
+				}
+				case 'trigger':
+					await tx.delete(triggers).where(eq(triggers.id, entityId))
+					break
+				case 'skill':
+					await tx.delete(workspaceSkills).where(eq(workspaceSkills.id, entityId))
+					break
+				case 'integration':
+					await tx.delete(integrations).where(eq(integrations.id, entityId))
+					break
+			}
+		}
+
+		await tx.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'deleted',
+			entityType: type === 'actor' ? 'actor' : type === 'trigger' ? 'trigger' : type,
+			entityId,
+			data: {
+				source: 'catalog_item',
+				catalog_item_id: itemId,
+				kept_items: keepProvisionedItems,
+			},
+		})
+	})
+
+	logger.info('Catalog item uninstalled', {
+		itemId,
+		workspaceId,
+		type,
+		entityId,
+		keepProvisionedItems,
+	})
+	return c.json({ deleted: true }, 200)
+}) as RouteHandler<typeof uninstallItemRoute, Env>)
 
 // ── POST /api/catalog/items/:id/install ──────────────────────────────────────
 //

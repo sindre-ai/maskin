@@ -17,9 +17,13 @@ interface UninstallDialogProps {
 	open: boolean
 	onOpenChange: (open: boolean) => void
 	workspaceId: string
-	installedPackageId: string
+	// Required for package uninstall; omit when providing onConfirm.
+	installedPackageId?: string
 	packageName: string
 	isLocked: boolean
+	// Override the internal package-uninstall mutation (e.g. for individual items).
+	onConfirm?: (keepItems: boolean) => void
+	confirmPending?: boolean
 }
 
 export function UninstallDialog({
@@ -29,11 +33,20 @@ export function UninstallDialog({
 	installedPackageId,
 	packageName,
 	isLocked,
+	onConfirm,
+	confirmPending,
 }: UninstallDialogProps) {
 	const uninstall = useUninstallPackage(workspaceId)
 	const [keepItems, setKeepItems] = useState(false)
 
+	const isPending = onConfirm ? (confirmPending ?? false) : uninstall.isPending
+
 	const handleConfirm = () => {
+		if (onConfirm) {
+			onConfirm(keepItems)
+			return
+		}
+		if (!installedPackageId) return
 		uninstall.mutate(
 			{ installedPackageId, keepProvisionedItems: keepItems },
 			{ onSuccess: () => onOpenChange(false) },
@@ -82,15 +95,11 @@ export function UninstallDialog({
 				</RadioGroup>
 
 				<DialogFooter className="gap-2">
-					<Button
-						variant="ghost"
-						onClick={() => onOpenChange(false)}
-						disabled={uninstall.isPending}
-					>
+					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
 						Cancel
 					</Button>
-					<Button variant="destructive" onClick={handleConfirm} disabled={uninstall.isPending}>
-						{uninstall.isPending ? (
+					<Button variant="destructive" onClick={handleConfirm} disabled={isPending}>
+						{isPending ? (
 							<>
 								<Spinner className="h-3 w-3" />
 								Removing…

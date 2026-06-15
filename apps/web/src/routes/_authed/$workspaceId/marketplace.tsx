@@ -1,8 +1,9 @@
 import { PackageGrid } from '@/components/catalog/package-grid'
 import { RouteError } from '@/components/shared/route-error'
-import { useCatalogPackages } from '@/hooks/use-catalog-packages'
+import { useCatalogPackages, useInstalledCatalogItems } from '@/hooks/use-catalog-packages'
 import { useInstalledPackages } from '@/hooks/use-installed-packages'
 import type {
+	CatalogItemInstalledEntry,
 	CatalogItemType,
 	CatalogPackageCounts,
 	CatalogPackageItem,
@@ -118,6 +119,15 @@ function MarketplacePage() {
 		return map
 	}, [installsData])
 
+	const { data: installedItemsData } = useInstalledCatalogItems(workspaceId)
+	const installedItemsById = useMemo(() => {
+		const map = new Map<string, CatalogItemInstalledEntry>()
+		for (const entry of installedItemsData?.items ?? []) {
+			map.set(entry.catalog_item_id, entry)
+		}
+		return map
+	}, [installedItemsData])
+
 	const isEmpty = !isLoading && !isError && packages.length === 0
 
 	return (
@@ -192,6 +202,7 @@ function MarketplacePage() {
 							typeFilter={typeFilter}
 							workspaceId={workspaceId}
 							installLookup={(id) => installsByPackage.get(id)}
+							installedItemLookup={(id) => installedItemsById.get(id)}
 						/>
 					)}
 				</section>

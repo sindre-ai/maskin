@@ -1,6 +1,7 @@
 import { ItemCard } from '@/components/marketplace/item-card'
 import { PackageCard } from '@/components/marketplace/package-card'
 import type {
+	CatalogItemInstalledEntry,
 	CatalogItemType,
 	CatalogPackageItem,
 	CatalogPackageSummary,
@@ -25,6 +26,7 @@ export function PackageGrid({
 	typeFilter,
 	workspaceId,
 	installLookup,
+	installedItemLookup,
 	className,
 }: {
 	packages: CatalogPackageSummary[]
@@ -34,6 +36,8 @@ export function PackageGrid({
 	workspaceId: string
 	/** Receives a package or item's parent-package ID and returns its install row. */
 	installLookup?: (id: string) => InstalledPackageRow | undefined
+	/** Receives a catalog item ID and returns its individual-install entry. */
+	installedItemLookup?: (itemId: string) => CatalogItemInstalledEntry | undefined
 	className?: string
 }) {
 	const filter = typeFilter ?? 'all'
@@ -93,6 +97,7 @@ export function PackageGrid({
 								workspaceId={workspaceId}
 								item={item}
 								install={installLookup?.(item.package_id)}
+								installedEntity={installedItemLookup?.(item.id)}
 							/>
 						))}
 					</div>

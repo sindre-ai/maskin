@@ -30,6 +30,30 @@ export function useInstallCatalogItem(workspaceId: string) {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.catalogItems.installed(workspaceId) })
+		},
+	})
+}
+
+export function useInstalledCatalogItems(workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.catalogItems.installed(workspaceId),
+		queryFn: () => api.catalogItems.installed(workspaceId),
+	})
+}
+
+export function useUninstallCatalogItem(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({
+			itemId,
+			keepProvisionedItems,
+		}: { itemId: string; keepProvisionedItems: boolean }) =>
+			api.catalogItems.uninstall(itemId, workspaceId, keepProvisionedItems),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.catalogItems.installed(workspaceId) })
 		},
 	})
 }

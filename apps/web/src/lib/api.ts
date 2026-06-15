@@ -472,6 +472,17 @@ export const api = {
 				body: { workspaceId },
 				workspaceId,
 			}),
+		installed: (workspaceId: string) =>
+			request<CatalogItemsInstalledResponse>(
+				`/catalog/items/installed?workspaceId=${encodeURIComponent(workspaceId)}`,
+				{ workspaceId },
+			),
+		uninstall: (itemId: string, workspaceId: string, keepProvisionedItems: boolean) =>
+			request<{ deleted: boolean }>(`/catalog/items/${encodeURIComponent(itemId)}/uninstall`, {
+				method: 'DELETE',
+				body: { workspaceId, keepProvisionedItems },
+				workspaceId,
+			}),
 	},
 
 	installedPackages: {
@@ -1220,6 +1231,16 @@ export interface CatalogItemInstallResponse {
 	id: string
 	item_type: CatalogItemType
 	name: string
+}
+
+export interface CatalogItemInstalledEntry {
+	catalog_item_id: string
+	entity_id: string
+	entity_type: 'actor' | 'trigger' | 'skill' | 'integration'
+}
+
+export interface CatalogItemsInstalledResponse {
+	items: CatalogItemInstalledEntry[]
 }
 
 export interface InstalledPackageRow {

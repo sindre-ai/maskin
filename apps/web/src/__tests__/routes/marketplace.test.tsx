@@ -18,6 +18,8 @@ const mockUseCatalogPackages = vi.fn()
 vi.mock('@/hooks/use-catalog-packages', () => ({
 	useCatalogPackages: () => mockUseCatalogPackages(),
 	useInstallCatalogItem: () => ({ mutate: vi.fn(), isPending: false, isSuccess: false }),
+	useInstalledCatalogItems: () => ({ data: undefined, isLoading: false }),
+	useUninstallCatalogItem: () => ({ mutate: vi.fn(), isPending: false, isSuccess: false }),
 }))
 
 vi.mock('@/hooks/use-installed-packages', () => ({

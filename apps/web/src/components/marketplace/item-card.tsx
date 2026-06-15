@@ -1,7 +1,14 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { useInstallCatalogItem } from '@/hooks/use-catalog-packages'
-import type { CatalogItemType, CatalogPackageItem, InstalledPackageRow } from '@/lib/api'
+import { useInstallCatalogItem, useUninstallCatalogItem } from '@/hooks/use-catalog-packages'
+import type {
+	CatalogItemInstalledEntry,
+	CatalogItemType,
+	CatalogPackageItem,
+	InstalledPackageRow,
+} from '@/lib/api'
+import { useState } from 'react'
+import { UninstallDialog } from './uninstall-dialog'
 
 const TYPE_LABEL: Record<CatalogItemType, string> = {
 	actor: 'Agent',
@@ -13,15 +20,25 @@ const TYPE_LABEL: Record<CatalogItemType, string> = {
 interface ItemCardProps {
 	workspaceId: string
 	item: CatalogPackageItem
+	/** Set when the whole parent package is installed — suppresses individual install/remove. */
 	install?: InstalledPackageRow
+	/** Set when this specific item was individually installed. */
+	installedEntity?: CatalogItemInstalledEntry
 }
 
-export function ItemCard({ workspaceId, item, install }: ItemCardProps) {
+export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCardProps) {
 	const snapshot = item.item_snapshot
 	const name = (snapshot.name as string) ?? 'Untitled'
 	const description = (snapshot.description as string) ?? null
 	const locked = install?.isLocked ?? false
+
 	const installMutation = useInstallCatalogItem(workspaceId)
+	const uninstallMutation = useUninstallCatalogItem(workspaceId)
+	const [removeOpen, setRemoveOpen] = useState(false)
+
+	// Compute installed state across sessions (server data) and within the session (mutation state).
+	const isCurrentlyInstalled =
+		(!!installedEntity || installMutation.isSuccess) && !uninstallMutation.isSuccess
 
 	return (
 		<article className="flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm">
@@ -59,10 +76,34 @@ export function ItemCard({ workspaceId, item, install }: ItemCardProps) {
 
 			<div className="mt-auto flex items-center justify-end gap-2">
 				{!install &&
-					(installMutation.isSuccess ? (
-						<Badge variant="secondary" className="text-[11px] font-medium">
-							Installed
-						</Badge>
+					(isCurrentlyInstalled ? (
+						<>
+							<Badge variant="secondary" className="text-[11px] font-medium">
+								Installed
+							</Badge>
+							<Button
+								size="sm"
+								variant="ghost"
+								className="h-7 text-xs text-muted-foreground hover:text-destructive"
+								onClick={() => setRemoveOpen(true)}
+							>
+								Remove
+							</Button>
+							<UninstallDialog
+								open={removeOpen}
+								onOpenChange={setRemoveOpen}
+								workspaceId={workspaceId}
+								packageName={name}
+								isLocked={false}
+								onConfirm={(keepItems) => {
+									uninstallMutation.mutate(
+										{ itemId: item.id, keepProvisionedItems: keepItems },
+										{ onSuccess: () => setRemoveOpen(false) },
+									)
+								}}
+								confirmPending={uninstallMutation.isPending}
+							/>
+						</>
 					) : (
 						<Button
 							size="sm"
