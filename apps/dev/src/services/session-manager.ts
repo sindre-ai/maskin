@@ -19,7 +19,18 @@ import {
 } from '@maskin/db/schema'
 import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, count as countFn, desc, eq, inArray, lt, ne, or } from 'drizzle-orm'
+import {
+	and,
+	count as countFn,
+	desc,
+	eq,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	ne,
+	or,
+} from 'drizzle-orm'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
@@ -1648,7 +1659,46 @@ export class SessionManager extends EventEmitter {
 			)
 		}
 
-		// 2. Auto-pause idle non-interactive sessions (no log output for >10 minutes).
+		// 2. Reap agent-server sessions that exceeded the default 2-hour timeout but
+		// never had timeoutAt set (dispatcher bug in earlier versions). The normal
+		// timeout reaper above requires timeoutAt to be non-null, so without this
+		// fallback these sessions accumulate as permanent zombies consuming workspace
+		// capacity indefinitely.
+		const defaultTimeoutMs = 7200 * 1000
+		const defaultTimeoutAgo = new Date(now.getTime() - defaultTimeoutMs)
+		const stuckAgentSessions = await this.db
+			.select()
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.status, 'running'),
+					isNotNull(sessions.agentServerId),
+					isNull(sessions.timeoutAt),
+					lt(sessions.startedAt, defaultTimeoutAgo),
+				),
+			)
+		for (const session of stuckAgentSessions) {
+			logger.warn('Reaping stuck agent-server session (no timeoutAt, past default 2h limit)', {
+				sessionId: session.id,
+			})
+			await this.db
+				.update(sessions)
+				.set({
+					status: 'timeout',
+					result: { error: 'Session timed out' },
+					completedAt: now,
+					currentActivity: null,
+					updatedAt: now,
+				})
+				.where(eq(sessions.id, session.id))
+			await this.drainQueue(session.workspaceId).catch((err) =>
+				logger.error('Failed to drain queue after stuck agent-server session reap', {
+					error: String(err),
+				}),
+			)
+		}
+
+		// 3. Auto-pause idle non-interactive sessions (no log output for >10 minutes).
 		// Interactive sessions (Sindre chat) are long-lived by design and naturally
 		// idle between user turns — pausing them silently breaks the next /input call.
 		const runningSessions = await this.db
@@ -1734,7 +1784,7 @@ export class SessionManager extends EventEmitter {
 				)
 		}
 
-		// 3. Archive old paused sessions (7 days)
+		// 4. Archive old paused sessions (7 days)
 		const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
 		const expiredPaused = await this.db
 			.select()
