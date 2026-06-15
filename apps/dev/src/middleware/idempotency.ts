@@ -30,6 +30,18 @@ function startCleanupTimer(db: Database) {
  *
  * Fail-open semantics: a DB read or write failure does NOT block the request.
  * Worst case the dedup is lost (the same outcome as no key being sent).
+ *
+ * Guarantee boundary: the ledger row is written AFTER the handler runs (below),
+ * so dedup is best-effort, not transactional. It reliably collapses a
+ * *sequential* replay — a retry that begins after the original attempt fully
+ * completed, including the ledger write. It does NOT cover two cases:
+ *   1. A crash between the handler committing its side effect and the ledger
+ *      INSERT landing — the replay finds no row and re-executes.
+ *   2. Two concurrent requests with the same key — both miss the lookup and
+ *      both run the handler; `onConflictDoUpdate` then dedups only the row,
+ *      not the execution. (The retry queue is expected to serialize these.)
+ * Transactional dedup would require reserving the key in the same transaction
+ * as the side effect, which a generic handler-wrapping middleware can't do.
  */
 export function createIdempotencyMiddleware(db: Database) {
 	startCleanupTimer(db)
@@ -53,7 +65,14 @@ export function createIdempotencyMiddleware(db: Database) {
 
 			if (cached) {
 				const age = Date.now() - new Date(cached.createdAt).getTime()
-				if (age <= TTL_MS) {
+				// Only replay when the key was used against the SAME endpoint.
+				// The cache key is scoped by actor + key but not by route, so a
+				// client reusing one Idempotency-Key across different endpoints
+				// would otherwise get the first endpoint's response back. Falling
+				// through here re-runs the handler; the post-handler upsert then
+				// overwrites the stale row for the new (method, path).
+				const matchesRequest = cached.method === method && cached.path === c.req.path
+				if (age <= TTL_MS && matchesRequest) {
 					logger.info('idempotency hit — replaying cached response', {
 						actorId,
 						method,

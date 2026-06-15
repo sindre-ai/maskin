@@ -140,6 +140,36 @@ describe('idempotency middleware', () => {
 		expect(getCallCount()).toBe(1)
 	})
 
+	it('does not replay a cached row from a different endpoint (same key)', async () => {
+		const dbCtx = createTestContext()
+		const { app, getCallCount } = createApp('actor-1', dbCtx)
+
+		// Row cached under the same key but for a DIFFERENT (method, path).
+		// The key is actor-scoped, not route-scoped, so without a guard this
+		// would wrongly replay the other endpoint's response.
+		dbCtx.mockResults.selectQueue = [
+			[
+				{
+					key: 'actor-1:shared',
+					actorId: 'actor-1',
+					method: 'PATCH',
+					path: '/other',
+					status: 200,
+					response: { count: 99 },
+					createdAt: new Date(),
+				},
+			],
+		]
+
+		const res = await app.request('/test', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'shared' },
+		})
+
+		expect((await res.json()).count).toBe(1) // handler ran, mismatched row ignored
+		expect(getCallCount()).toBe(1)
+	})
+
 	it('caches PATCH and DELETE with Idempotency-Key', async () => {
 		const dbCtx = createTestContext()
 		const { app } = createApp('actor-1', dbCtx)
