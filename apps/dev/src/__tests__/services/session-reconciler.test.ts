@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { SessionReconciler } from '../../services/session-reconciler'
 
+function deepContainsValue(obj: unknown, target: string, seen = new Set<unknown>()): boolean {
+	if (obj === target) return true
+	if (typeof obj !== 'object' || obj === null || seen.has(obj)) return false
+	seen.add(obj)
+	return Object.values(obj).some((v) => deepContainsValue(v, target, seen))
+}
+
 interface Candidate {
 	id: string
 	workspaceId: string
@@ -205,6 +212,32 @@ describe('SessionReconciler.reconcile', () => {
 		expect(result.orphanSandboxes).toEqual([])
 		expect(updates).toHaveLength(0)
 		expect(eventsInserted).toHaveLength(0)
+	})
+
+	it('scopes the DB query to the given agentServerId', async () => {
+		let capturedWhere: unknown
+		const db = {
+			select: () => ({
+				from: () => ({
+					where: (pred: unknown) => {
+						capturedWhere = pred
+						return Promise.resolve([])
+					},
+				}),
+			}),
+			update: () => ({ set: () => ({ where: () => Promise.resolve() }) }),
+			insert: () => ({ values: () => Promise.resolve() }),
+		}
+
+		const reconciler = new SessionReconciler(db as never)
+		await reconciler.reconcile({ agentServerId, sandboxes: [] })
+
+		// The WHERE predicate must reference the agentServerId so that on a
+		// multi-server deployment each agent-server only sees its own sessions.
+		// We do a cycle-safe deep search since Drizzle SQL objects contain
+		// circular table references that prevent JSON.stringify.
+		expect(capturedWhere).toBeDefined()
+		expect(deepContainsValue(capturedWhere, agentServerId)).toBe(true)
 	})
 
 	it('handles an empty DB and empty snapshot without writes', async () => {

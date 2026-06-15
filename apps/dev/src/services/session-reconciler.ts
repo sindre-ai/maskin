@@ -42,11 +42,7 @@ const FAILURE_REASON: SessionResultFailureReason = {
 }
 
 export interface ReconcileInput {
-	/**
-	 * UUID of the agent_servers row making the call. v1 is single-host so this
-	 * is informational; once `sessions.agent_server_id` lands (T6) the reconcile
-	 * will be scoped to sessions owned by this server.
-	 */
+	/** UUID of the agent_servers row making the call. Only sessions owned by this server are considered. */
 	agentServerId: string
 	/** Sandbox names the agent-server's `msb list` reports as currently present. */
 	sandboxes: string[]
@@ -78,7 +74,13 @@ export class SessionReconciler {
 				status: sessions.status,
 			})
 			.from(sessions)
-			.where(and(inArray(sessions.status, [...CLAIMED_STATUSES]), isNotNull(sessions.containerId)))
+			.where(
+				and(
+					eq(sessions.agentServerId, input.agentServerId),
+					inArray(sessions.status, [...CLAIMED_STATUSES]),
+					isNotNull(sessions.containerId),
+				),
+			)
 
 		const dbContainerIds = new Set<string>()
 		const lost: typeof candidates = []

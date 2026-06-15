@@ -726,7 +726,9 @@ export const sessionDispatchAttempts = pgTable(
 	'session_dispatch_attempts',
 	{
 		id: uuid('id').defaultRandom().primaryKey(),
-		sessionId: uuid('session_id').notNull(),
+		sessionId: uuid('session_id')
+			.notNull()
+			.references(() => sessions.id, { onDelete: 'cascade' }),
 		idempotencyKey: text('idempotency_key').notNull(),
 		attempt: integer('attempt').notNull().default(0),
 		maxAttempts: integer('max_attempts').notNull().default(5),
