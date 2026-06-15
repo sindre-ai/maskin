@@ -98,7 +98,7 @@ describe('ensureSessionSkeleton', () => {
 })
 
 describe('buildMsbCreateArgs', () => {
-	it('includes --net-rule allow@host:tcp:<port> (bet constraint #7, v0.5.4 fix)', () => {
+	it('includes --net-rule allow@host:tcp:<port> and allow@public (bet constraint #7, v0.5.4 fix)', () => {
 		const args = buildMsbCreateArgs({
 			sessionId: 'sess-1',
 			image: 'maskin/agent-base:latest',
@@ -108,9 +108,13 @@ describe('buildMsbCreateArgs', () => {
 			env: {},
 			sessionDir: '/agent/sessions/sess-1',
 		})
-		expect(args).toContain('--net-rule')
-		const idx = args.indexOf('--net-rule')
-		expect(args[idx + 1]).toBe('allow@host:tcp:3001')
+		// Collect all --net-rule values
+		const netRules: string[] = []
+		for (let i = 0; i < args.length - 1; i++) {
+			if (args[i] === '--net-rule') netRules.push(args[i + 1] as string)
+		}
+		expect(netRules).toContain('allow@host:tcp:3001')
+		expect(netRules).toContain('allow@public')
 	})
 
 	it('bind-mounts sessionDir at /agent', () => {
