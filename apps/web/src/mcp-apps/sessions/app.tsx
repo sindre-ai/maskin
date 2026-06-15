@@ -289,7 +289,7 @@ function SessionRow({
 			<button
 				type="button"
 				onClick={onSelect}
-				className="flex-1 min-w-0 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"
+				className="flex-1 min-w-0 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 rounded"
 			>
 				<div className="flex items-center gap-2 flex-wrap">
 					<StatusBadge status={session.status} />

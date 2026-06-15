@@ -400,7 +400,7 @@ export function AgentDocumentView({
 							<div className="flex justify-end mt-2">
 								<button
 									type="button"
-									className="rounded bg-accent px-3 py-1 text-xs text-accent-foreground hover:bg-accent-hover"
+									className="rounded bg-accent px-3 py-1 text-xs text-accent-foreground hover:bg-bg-hover transition-colors"
 									onClick={handleMemorySave}
 								>
 									Save Memory
