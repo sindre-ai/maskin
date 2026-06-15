@@ -16,7 +16,8 @@ vi.mock('@/lib/workspace-context', () => ({
 
 const mockUseCatalogPackages = vi.fn()
 vi.mock('@/hooks/use-catalog-packages', () => ({
-	useCatalogPackages: () => mockUseCatalogPackages(),
+	useCatalogPackages: (filters?: { q?: string; type?: string; use_case?: string }) =>
+		mockUseCatalogPackages(filters),
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/marketplace'
@@ -106,5 +107,36 @@ describe('MarketplacePage', () => {
 		expect(aside).not.toBeNull()
 		expect(aside?.className).toMatch(/hidden/)
 		expect(aside?.className).toMatch(/md:block/)
+	})
+
+	it('renders the search input inside the page header', () => {
+		render(<MarketplacePage />)
+		const input = screen.getByRole('searchbox', { name: /search the marketplace/i })
+		expect(input).toBeInTheDocument()
+		const heading = screen.getByRole('heading', { name: 'Marketplace' })
+		// Both live inside the same <header> element.
+		const header = heading.closest('header')
+		expect(header).not.toBeNull()
+		expect(header?.contains(input)).toBe(true)
+	})
+
+	it('updates the search input value as the user types', async () => {
+		render(<MarketplacePage />)
+		const user = userEvent.setup()
+		const input = screen.getByRole('searchbox', { name: /search the marketplace/i })
+		await user.type(input, 'discovery')
+		expect(input).toHaveValue('discovery')
+	})
+
+	it('passes the trimmed search value to useCatalogPackages', async () => {
+		render(<MarketplacePage />)
+		const user = userEvent.setup()
+		// On first render with empty query, hook is called with undefined.
+		expect(mockUseCatalogPackages).toHaveBeenLastCalledWith(undefined)
+
+		const input = screen.getByRole('searchbox', { name: /search the marketplace/i })
+		await user.type(input, '  customer ')
+
+		expect(mockUseCatalogPackages).toHaveBeenLastCalledWith({ q: 'customer' })
 	})
 })

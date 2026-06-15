@@ -1,9 +1,11 @@
 import { RouteError } from '@/components/shared/route-error'
+import { Input } from '@/components/ui/input'
 import { useCatalogPackages } from '@/hooks/use-catalog-packages'
 import type { CatalogItemType, CatalogPackageCounts } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
+import { Search } from 'lucide-react'
 import { useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/marketplace')({
@@ -48,16 +50,37 @@ function MarketplacePage() {
 	useWorkspace()
 	const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
 	const [useCaseFilter, setUseCaseFilter] = useState<UseCaseFilter>('all')
+	const [searchQuery, setSearchQuery] = useState('')
 
-	const { data, isLoading, isError } = useCatalogPackages()
+	const trimmedQuery = searchQuery.trim()
+	const { data, isLoading, isError } = useCatalogPackages(
+		trimmedQuery ? { q: trimmedQuery } : undefined,
+	)
 	const counts = data?.counts
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
-			<div className="mb-4 md:mb-6">
-				<h1 className="text-lg font-semibold text-foreground">Marketplace</h1>
-				<p className="mt-1 text-sm text-muted-foreground max-w-2xl">{SUBHEAD}</p>
-			</div>
+			<header className="mb-4 md:mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between md:gap-6">
+				<div>
+					<h1 className="text-lg font-semibold text-foreground">Marketplace</h1>
+					<p className="mt-1 text-sm text-muted-foreground max-w-2xl">{SUBHEAD}</p>
+				</div>
+				<div className="relative w-full md:max-w-xs md:shrink-0">
+					<Search
+						size={14}
+						aria-hidden="true"
+						className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+					/>
+					<Input
+						type="search"
+						value={searchQuery}
+						onChange={(e) => setSearchQuery(e.target.value)}
+						placeholder="Search the marketplace"
+						aria-label="Search the marketplace"
+						className="h-9 pl-8 text-sm"
+					/>
+				</div>
+			</header>
 
 			<div className="flex flex-col md:flex-row md:gap-8 flex-1 min-h-0">
 				{/* Mobile: horizontal chip strip. Hidden ≥md. */}
