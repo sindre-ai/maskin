@@ -83,6 +83,7 @@
 
 @theme {
 	--font-sans: "Inter", system-ui, sans-serif;
+	--font-display: "Inter", system-ui, sans-serif;
 	--font-mono: "JetBrains Mono", ui-monospace, monospace;
 
 	--radius-sm: calc(var(--radius) - 4px);
@@ -252,6 +253,32 @@
 	}
 	body {
 		@apply bg-background text-foreground font-sans antialiased;
+		/* Let Inter's variable optical-size axis pick the right cut per size:
+		   the "Text" design at body sizes, the tighter "Display" design at
+		   heading sizes. Paired with a hair of negative tracking for the
+		   polished, utilitarian Linear/v0 feel. */
+		font-optical-sizing: auto;
+		letter-spacing: -0.0075em;
+		text-rendering: optimizeLegibility;
+	}
+
+	/* Headings read as a distinct, confident "display" voice — tighter
+	   letter-spacing and balanced wrapping — while staying the same family
+	   as body so the system feels cohesive, not decorative. */
+	h1,
+	h2,
+	h3,
+	h4,
+	h5,
+	h6 {
+		letter-spacing: -0.02em;
+		text-wrap: balance;
+	}
+
+	/* Long-form reading surfaces (object detail, transcripts, notes): keep
+	   measure comfortable and let body copy breathe. */
+	.prose p {
+		text-wrap: pretty;
 	}
 
 	/* Slim scrollbars — claude.ai-style thin track. Firefox uses the
