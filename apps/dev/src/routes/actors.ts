@@ -28,7 +28,7 @@ import {
 	updateActorSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { and, asc, count, countDistinct, desc, eq, inArray, or } from 'drizzle-orm'
+import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -568,6 +568,7 @@ app.openapi(getActorRoute, (async (c) => {
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
 			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
+			installedPackageId: sql<string | null>`${actors.metadata}->>'installed_package_id'`,
 		})
 		.from(actors)
 		.where(eq(actors.id, id))

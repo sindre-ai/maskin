@@ -31,6 +31,28 @@ export function useForkInstalledPackage(workspaceId: string) {
 		onSuccess: () => {
 			toast.success('Package forked')
 			queryClient.invalidateQueries({ queryKey: queryKeys.installedPackages.all(workspaceId) })
+			// Agent detail pages need to re-fetch so the managed lock state clears.
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+		},
+	})
+}
+
+export function useUninstallPackage(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({
+			installedPackageId,
+			keepProvisionedItems,
+		}: {
+			installedPackageId: string
+			keepProvisionedItems: boolean
+		}) => api.installedPackages.uninstall(workspaceId, installedPackageId, keepProvisionedItems),
+		onSuccess: () => {
+			toast.success('Package removed')
+			queryClient.invalidateQueries({ queryKey: queryKeys.installedPackages.all(workspaceId) })
+			// Agents that were provisioned by the package may have been deleted or
+			// detached — invalidate the actors cache so lists and detail pages refresh.
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 		},
 	})
 }

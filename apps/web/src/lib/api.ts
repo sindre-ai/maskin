@@ -482,6 +482,12 @@ export const api = {
 				method: 'POST',
 				workspaceId,
 			}),
+		uninstall: (workspaceId: string, installedPackageId: string, keepProvisionedItems: boolean) =>
+			request<{ deleted: boolean }>(`/installed-packages/${installedPackageId}`, {
+				method: 'DELETE',
+				body: { keepProvisionedItems },
+				workspaceId,
+			}),
 	},
 
 	subscriptions: {
@@ -1205,6 +1211,7 @@ export interface InstalledPackageRow {
 	id: string
 	workspaceId: string
 	sourcePackageId: string
+	packageName: string
 	installedVersion: string
 	isLocked: boolean
 	forkedAt: string | null

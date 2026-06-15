@@ -3,16 +3,31 @@ import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
+	agentFiles,
 	catalogPackageItems,
 	catalogPackages,
+	files,
+	imports,
 	installedPackages,
 	integrations,
+	notifications,
+	objects,
+	readState,
+	relationships,
+	sessionLogs,
+	sessions,
+	subscriptions,
 	triggers,
 	workspaceMembers,
 	workspaceSkills,
+	workspaces,
 } from '@maskin/db/schema'
-import { and, eq, sql } from 'drizzle-orm'
-import { trackPackageForked, trackPackageInstalled } from '../lib/analytics/catalog-events'
+import { and, eq, inArray, or, sql } from 'drizzle-orm'
+import {
+	trackPackageForked,
+	trackPackageInstalled,
+	trackPackageUninstalled,
+} from '../lib/analytics/catalog-events'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
@@ -58,6 +73,7 @@ const installedPackageRowSchema = z.object({
 	updatedAt: z.string().nullable(),
 	availableVersion: z.string(),
 	hasUpdate: z.boolean(),
+	packageName: z.string(),
 })
 
 const listInstalledPackagesResponseSchema = z.object({
@@ -134,6 +150,7 @@ app.openapi(listInstalledPackagesRoute, async (c) => {
 			installedAt: installedPackages.installedAt,
 			updatedAt: installedPackages.updatedAt,
 			availableVersion: catalogPackages.version,
+			packageName: catalogPackages.name,
 		})
 		.from(installedPackages)
 		.innerJoin(catalogPackages, eq(catalogPackages.id, installedPackages.sourcePackageId))
@@ -145,6 +162,7 @@ app.openapi(listInstalledPackagesRoute, async (c) => {
 				...serialize(row),
 				availableVersion: row.availableVersion,
 				hasUpdate: row.installedVersion !== row.availableVersion,
+				packageName: row.packageName,
 			})),
 		},
 		200,
@@ -570,6 +588,257 @@ app.openapi(forkPackageRoute, async (c) => {
 		},
 		200,
 	)
+})
+
+// ── DELETE /api/installed-packages/:id ───────────────────────────────────────
+//
+// Remove an installed package from the workspace.
+//
+// `keepProvisionedItems` (body boolean) controls what happens to the actors,
+// triggers, skills, and integrations that were provisioned during install:
+//
+//   false — cascade-delete all provisioned elements, same as the actor delete
+//           route for each provisioned agent plus explicit deletes for the
+//           non-actor element types.
+//
+//   true  — for locked (managed) installs: strip `installed_package_id` from
+//            all element metadata so they become workspace-owned (same outcome
+//            as a fork, but the installed_packages row is also deleted).
+//            For forked installs: elements are already detached; just remove
+//            the tracking row.
+
+const uninstallPackageBodySchema = z.object({
+	keepProvisionedItems: z.boolean(),
+})
+
+const uninstallResponseSchema = z.object({
+	deleted: z.boolean(),
+	removedElements: z
+		.object({
+			actors: z.number(),
+			triggers: z.number(),
+			skills: z.number(),
+			integrations: z.number(),
+		})
+		.optional(),
+})
+
+const uninstallPackageRoute = createRoute({
+	method: 'delete',
+	path: '/{id}',
+	tags: ['installed-packages'],
+	summary: 'Remove an installed package from a workspace',
+	request: {
+		params: idParamSchema,
+		body: {
+			content: { 'application/json': { schema: uninstallPackageBodySchema } },
+		},
+	},
+	responses: {
+		200: {
+			description: 'Package removed',
+			content: { 'application/json': { schema: uninstallResponseSchema } },
+		},
+		400: {
+			description: 'Validation error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Not a member of the install workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Installed package not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Internal server error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(uninstallPackageRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { keepProvisionedItems } = c.req.valid('json')
+
+	const [install] = await db
+		.select()
+		.from(installedPackages)
+		.where(eq(installedPackages.id, id))
+		.limit(1)
+
+	if (!install) {
+		return c.json(createApiError('NOT_FOUND', 'Installed package not found'), 404)
+	}
+
+	if (!(await isWorkspaceMember(db, actorId, install.workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'You are not a member of the install workspace'), 403)
+	}
+
+	let removedElements:
+		| { actors: number; triggers: number; skills: number; integrations: number }
+		| undefined
+
+	await db.transaction(async (tx) => {
+		if (keepProvisionedItems) {
+			// For managed (locked) installs: detach all element rows from the
+			// package by removing `installed_package_id` from their metadata.
+			// Forked installs already have no `installed_package_id` in metadata
+			// so these updates are no-ops, which is fine.
+			if (install.isLocked) {
+				await tx
+					.update(actors)
+					.set({ metadata: sql`${actors.metadata} - 'installed_package_id'` })
+					.where(sql`${actors.metadata}->>'installed_package_id' = ${install.id}`)
+				await tx
+					.update(triggers)
+					.set({ metadata: sql`${triggers.metadata} - 'installed_package_id'` })
+					.where(sql`${triggers.metadata}->>'installed_package_id' = ${install.id}`)
+				await tx
+					.update(workspaceSkills)
+					.set({ metadata: sql`${workspaceSkills.metadata} - 'installed_package_id'` })
+					.where(sql`${workspaceSkills.metadata}->>'installed_package_id' = ${install.id}`)
+				await tx
+					.update(integrations)
+					.set({ metadata: sql`${integrations.metadata} - 'installed_package_id'` })
+					.where(sql`${integrations.metadata}->>'installed_package_id' = ${install.id}`)
+			}
+		} else {
+			// Cascade-delete all provisioned elements.
+			// Delete non-actor elements by metadata first (triggers, skills, integrations).
+			const triggerRes = await tx
+				.delete(triggers)
+				.where(sql`${triggers.metadata}->>'installed_package_id' = ${install.id}`)
+				.returning({ id: triggers.id })
+
+			const skillRes = await tx
+				.delete(workspaceSkills)
+				.where(sql`${workspaceSkills.metadata}->>'installed_package_id' = ${install.id}`)
+				.returning({ id: workspaceSkills.id })
+
+			const integrationRes = await tx
+				.delete(integrations)
+				.where(sql`${integrations.metadata}->>'installed_package_id' = ${install.id}`)
+				.returning({ id: integrations.id })
+
+			// Find provisioned actor IDs.
+			const provisionedActorRows = await tx
+				.select({ id: actors.id })
+				.from(actors)
+				.where(sql`${actors.metadata}->>'installed_package_id' = ${install.id}`)
+
+			const actorIds = provisionedActorRows.map((r) => r.id)
+
+			if (actorIds.length > 0) {
+				// Delete session logs for sessions owned by provisioned actors.
+				const actorSessions = await tx
+					.select({ id: sessions.id })
+					.from(sessions)
+					.where(inArray(sessions.actorId, actorIds))
+				const sessionIds = actorSessions.map((s) => s.id)
+				if (sessionIds.length > 0) {
+					await tx.delete(sessionLogs).where(inArray(sessionLogs.sessionId, sessionIds))
+				}
+				await tx.delete(sessions).where(inArray(sessions.actorId, actorIds))
+				// Reassign sessions created by provisioned actors.
+				await tx
+					.update(sessions)
+					.set({ createdBy: actorId })
+					.where(inArray(sessions.createdBy, actorIds))
+
+				// Cascade-delete remaining actor data.
+				await tx.delete(agentFiles).where(inArray(agentFiles.actorId, actorIds))
+				await tx
+					.delete(notifications)
+					.where(
+						or(
+							inArray(notifications.sourceActorId, actorIds),
+							inArray(notifications.targetActorId, actorIds),
+						),
+					)
+				await tx.delete(events).where(inArray(events.actorId, actorIds))
+				await tx.delete(relationships).where(inArray(relationships.createdBy, actorIds))
+				await tx.delete(subscriptions).where(inArray(subscriptions.actorId, actorIds))
+				await tx.delete(readState).where(inArray(readState.actorId, actorIds))
+
+				// Reassign objects/files/imports/skills/workspaces/integrations.
+				await tx.update(objects).set({ driver: null }).where(inArray(objects.driver, actorIds))
+				await tx
+					.update(objects)
+					.set({ createdBy: actorId })
+					.where(inArray(objects.createdBy, actorIds))
+				await tx.update(files).set({ createdBy: actorId }).where(inArray(files.createdBy, actorIds))
+				await tx
+					.update(imports)
+					.set({ createdBy: actorId })
+					.where(inArray(imports.createdBy, actorIds))
+				await tx
+					.update(workspaceSkills)
+					.set({ createdBy: null })
+					.where(inArray(workspaceSkills.createdBy, actorIds))
+				await tx
+					.update(workspaces)
+					.set({ createdBy: null })
+					.where(inArray(workspaces.createdBy, actorIds))
+				await tx
+					.update(integrations)
+					.set({ createdBy: actorId })
+					.where(inArray(integrations.createdBy, actorIds))
+
+				// Null out self-referential createdBy on actors, then delete.
+				for (const aid of actorIds) {
+					await tx.update(actors).set({ createdBy: null }).where(eq(actors.createdBy, aid))
+				}
+				await tx.delete(workspaceMembers).where(inArray(workspaceMembers.actorId, actorIds))
+				await tx.delete(actors).where(inArray(actors.id, actorIds))
+			}
+
+			removedElements = {
+				actors: actorIds.length,
+				triggers: triggerRes.length,
+				skills: skillRes.length,
+				integrations: integrationRes.length,
+			}
+		}
+
+		// Delete the installed_packages tracking row.
+		await tx.delete(installedPackages).where(eq(installedPackages.id, install.id))
+
+		await tx.insert(events).values({
+			workspaceId: install.workspaceId,
+			actorId,
+			action: 'deleted',
+			entityType: 'installed_package',
+			entityId: install.id,
+			data: {
+				source_package_id: install.sourcePackageId,
+				installed_version: install.installedVersion,
+				kept_items: keepProvisionedItems,
+				removed_elements: removedElements ?? null,
+			},
+		})
+	})
+
+	logger.info('Installed package removed', {
+		installedPackageId: install.id,
+		workspaceId: install.workspaceId,
+		sourcePackageId: install.sourcePackageId,
+		keepProvisionedItems,
+		removedElements,
+	})
+
+	void trackPackageUninstalled({
+		packageId: install.sourcePackageId,
+		installedPackageId: install.id,
+		workspaceId: install.workspaceId,
+		actorId,
+		keptItems: keepProvisionedItems,
+	})
+
+	return c.json({ deleted: true, removedElements }, 200)
 })
 
 export default app

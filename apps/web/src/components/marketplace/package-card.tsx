@@ -4,6 +4,7 @@ import type { CatalogPackageSummary, InstalledPackageRow } from '@/lib/api'
 import { useState } from 'react'
 import { ForkDialog } from './fork-dialog'
 import { InstallButton } from './install-button'
+import { UninstallDialog } from './uninstall-dialog'
 import { UpdateAvailableBanner } from './update-available-banner'
 
 interface PackageCardProps {
@@ -14,6 +15,7 @@ interface PackageCardProps {
 
 export function PackageCard({ workspaceId, pkg, install }: PackageCardProps) {
 	const [forkOpen, setForkOpen] = useState(false)
+	const [uninstallOpen, setUninstallOpen] = useState(false)
 	const locked = install?.isLocked ?? false
 	const forked = install ? !install.isLocked : false
 	const showUpdateBanner = locked && install?.hasUpdate === true
@@ -60,11 +62,23 @@ export function PackageCard({ workspaceId, pkg, install }: PackageCardProps) {
 			<div className="mt-auto flex items-center justify-end gap-2">
 				{!install ? (
 					<InstallButton workspaceId={workspaceId} packageId={pkg.id} />
-				) : locked ? (
-					<Button size="sm" variant="outline" onClick={() => setForkOpen(true)}>
-						Fork
-					</Button>
-				) : null}
+				) : (
+					<>
+						{locked && (
+							<Button size="sm" variant="outline" onClick={() => setForkOpen(true)}>
+								Fork
+							</Button>
+						)}
+						<Button
+							size="sm"
+							variant="ghost"
+							className="text-muted-foreground hover:text-error"
+							onClick={() => setUninstallOpen(true)}
+						>
+							Remove
+						</Button>
+					</>
+				)}
 			</div>
 
 			{install && locked ? (
@@ -76,6 +90,17 @@ export function PackageCard({ workspaceId, pkg, install }: PackageCardProps) {
 					packageName={pkg.name}
 					installedVersion={install.installedVersion}
 					pendingVersion={install.hasUpdate ? install.availableVersion : null}
+				/>
+			) : null}
+
+			{install ? (
+				<UninstallDialog
+					open={uninstallOpen}
+					onOpenChange={setUninstallOpen}
+					workspaceId={workspaceId}
+					installedPackageId={install.id}
+					packageName={pkg.name}
+					isLocked={locked}
 				/>
 			) : null}
 

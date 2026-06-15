@@ -42,6 +42,7 @@ function install(overrides: Partial<InstalledPackageRow> = {}): InstalledPackage
 		id: 'inst-1',
 		workspaceId,
 		sourcePackageId: 'pkg-1',
+		packageName: 'Customer Continuous Discovery',
 		installedVersion: '1.0.0',
 		isLocked: true,
 		forkedAt: null,

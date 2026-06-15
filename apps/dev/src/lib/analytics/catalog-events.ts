@@ -50,6 +50,24 @@ export async function trackPackageForked(p: PackageForkedProps): Promise<void> {
 	})
 }
 
+export interface PackageUninstalledProps {
+	packageId: string
+	installedPackageId: string
+	workspaceId: string
+	actorId: string
+	keptItems: boolean
+}
+
+export async function trackPackageUninstalled(p: PackageUninstalledProps): Promise<void> {
+	await capturePosthogEvent('package_uninstalled', p.workspaceId, {
+		package_id: p.packageId,
+		installed_package_id: p.installedPackageId,
+		workspace_id: p.workspaceId,
+		actor_id: p.actorId,
+		kept_items: p.keptItems,
+	})
+}
+
 export interface LoopActiveDayProps {
 	installedPackageId: string
 	packageId: string
