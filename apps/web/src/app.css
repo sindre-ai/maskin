@@ -281,6 +281,17 @@
 		text-wrap: pretty;
 	}
 
+	/* Monospace surfaces (IDs, code, keys): slashed zeros so `0` is never
+	   confused with `O`, plus tabular figures for column alignment — the
+	   data-app polish Linear/GitHub use for identifiers. */
+	code,
+	pre,
+	kbd,
+	samp,
+	[class*="font-mono"] {
+		font-variant-numeric: slashed-zero tabular-nums;
+	}
+
 	/* Slim scrollbars — claude.ai-style thin track. Firefox uses the
 	   `scrollbar-width` rule; Chromium/Safari pick up the `-webkit-*`
 	   pseudo-elements. */
