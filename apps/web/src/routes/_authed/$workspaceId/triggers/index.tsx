@@ -59,6 +59,7 @@ function TriggersPage() {
 				<ListSkeleton />
 			) : !triggers?.length ? (
 				<EmptyState
+					icon={<Zap />}
 					title="No triggers yet"
 					description="Triggers automate your workspace by running agents in response to events, schedules, or one-time reminders. Create your first trigger to get started."
 				/>

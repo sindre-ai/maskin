@@ -10,6 +10,7 @@ import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib
 import type { ActorResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
+import { Bot } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
@@ -81,6 +82,7 @@ function AgentsPage() {
 
 			{agents.length === 0 ? (
 				<EmptyState
+					icon={<Bot />}
 					title="No agents in this workspace"
 					description="Create an agent to get started with automation"
 				/>
