@@ -1,3 +1,4 @@
+# CI: trigger automated build and deploy
 FROM node:20-slim
 
 # System tools
