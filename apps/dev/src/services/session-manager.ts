@@ -1691,13 +1691,25 @@ export class SessionManager extends EventEmitter {
 			}
 
 			if (!(await this.isContainerAlive(session.containerId))) {
-				// Container died but the exit watcher hasn't noticed (e.g.,
-				// inspect calls were transiently failing). Skip this tick;
-				// watchContainerExit will route it to terminal-failed once it
-				// recovers, or the timeout reaper will catch it.
-				logger.warn('Skipping auto-pause: container is no longer running', {
+				if (session.agentServerId) {
+					// Agent-server session — containerId is an msb sandbox name on a
+					// remote host; local Docker inspect is meaningless here. The
+					// agent-server reports completion via its exit callback.
+					continue
+				}
+				// Local Docker session — container is gone. watchContainerExit is not
+				// re-registered after a server restart, so it will never fire for
+				// these sessions. Mark as failed to free workspace capacity.
+				logger.warn('Marking session failed: local container no longer running', {
 					sessionId: session.id,
 				})
+				await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId).catch(
+					(err) =>
+						logger.error('Failed to mark session failed after container loss', {
+							sessionId: session.id,
+							error: String(err),
+						}),
+				)
 				continue
 			}
 
