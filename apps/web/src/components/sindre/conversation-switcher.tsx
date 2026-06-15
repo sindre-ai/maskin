@@ -1,3 +1,4 @@
+import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -7,7 +8,6 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { RelativeTime } from '@/components/shared/relative-time'
 import type { ConversationSummary } from '@/hooks/use-sindre-conversation'
 import { cn } from '@/lib/cn'
 import { Check, ChevronDown, MessageSquarePlus, Trash2 } from 'lucide-react'

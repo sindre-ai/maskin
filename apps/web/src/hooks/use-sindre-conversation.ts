@@ -220,9 +220,7 @@ export function useSindreConversation({
 			patchConversation(conversationId, (c) => ({
 				...c,
 				messages: c.messages.map((m) =>
-					m.role === 'agent' && m.id === messageId
-						? { ...m, events: [...m.events, ...events] }
-						: m,
+					m.role === 'agent' && m.id === messageId ? { ...m, events: [...m.events, ...events] } : m,
 				),
 			}))
 		},

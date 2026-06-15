@@ -10,8 +10,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Sidebar, SidebarContent, SidebarHeader } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useSindreConversation } from '@/hooks/use-sindre-conversation'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { useSindreConversation } from '@/hooks/use-sindre-conversation'
 import { conversationToMarkdown } from '@/lib/chat-store'
 import { useSindre } from '@/lib/sindre-context'
 import { buildSindreExportFilename, downloadSindreMarkdown } from '@/lib/sindre-export'
@@ -49,8 +49,14 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 	const isMobile = useIsMobile()
 
 	const conversation = useSindreConversation({ workspaceId, sindreActorId })
-	const { messages, conversations, activeId, newConversation, selectConversation, deleteConversation } =
-		conversation
+	const {
+		messages,
+		conversations,
+		activeId,
+		newConversation,
+		selectConversation,
+		deleteConversation,
+	} = conversation
 	const hasMessages = messages.length > 0
 
 	const buildExportMarkdown = useCallback(() => conversationToMarkdown(messages), [messages])
@@ -97,8 +103,17 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 				} as React.CSSProperties
 			}
 		>
-			<Sidebar ref={panelRef} side="right" collapsible="offcanvas" className="pointer-events-auto !flex">
-				<ResizeHandle width={panelWidth} onWidthChange={setPanelWidth} visible={open && !isMobile} />
+			<Sidebar
+				ref={panelRef}
+				side="right"
+				collapsible="offcanvas"
+				className="pointer-events-auto !flex"
+			>
+				<ResizeHandle
+					width={panelWidth}
+					onWidthChange={setPanelWidth}
+					visible={open && !isMobile}
+				/>
 				<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
 					<div className="flex min-w-0 items-center gap-1">
 						<ConversationSwitcher

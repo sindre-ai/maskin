@@ -1,5 +1,5 @@
-import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { MarkdownContent } from '@/components/shared/markdown-content'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { MessageActions } from '@/components/sindre/message-actions'
 import { Button } from '@/components/ui/button'
@@ -94,11 +94,7 @@ export function ConversationTranscript({
 
 	return (
 		<div className={cn('relative min-h-0 flex-1', className)}>
-			<div
-				ref={scrollerRef}
-				onScroll={handleScroll}
-				className="h-full overflow-y-auto px-1 py-2"
-			>
+			<div ref={scrollerRef} onScroll={handleScroll} className="h-full overflow-y-auto px-1 py-2">
 				<ol className="flex flex-col gap-0.5">
 					{messages.map((message, index) => {
 						const prev = messages[index - 1]
@@ -114,9 +110,7 @@ export function ConversationTranscript({
 								grouped={grouped}
 								isSelf={message.role === 'user' && message.senderId === currentUserId}
 								onRegenerate={() => onRegenerate(message.id)}
-								onEdit={
-									message.role === 'user' ? () => onEditUserMessage(message.text) : undefined
-								}
+								onEdit={message.role === 'user' ? () => onEditUserMessage(message.text) : undefined}
 							/>
 						)
 					})}
@@ -237,7 +231,13 @@ function AgentBody({
 		return (
 			<div className="flex flex-col items-start gap-1.5">
 				<p className="text-error text-xs">{message.errorText ?? 'Something went wrong.'}</p>
-				<Button type="button" size="sm" variant="outline" className="h-7 gap-1.5" onClick={onRegenerate}>
+				<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					className="h-7 gap-1.5"
+					onClick={onRegenerate}
+				>
 					<RotateCcw size={13} />
 					Retry
 				</Button>
@@ -282,7 +282,9 @@ function Dot({ delay }: { delay: string }) {
 }
 
 function StreamingCaret() {
-	return <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-primary/70 align-middle" />
+	return (
+		<span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-primary/70 align-middle" />
+	)
 }
 
 function EventBlock({ event }: { event: SindreEvent }) {
@@ -339,9 +341,7 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean }) {
 	const [open, setOpen] = useState(false)
 	const label = redacted ? 'Thinking (redacted)' : 'Thinking'
-	const body = redacted
-		? 'The internal reasoning for this turn was withheld.'
-		: text
+	const body = redacted ? 'The internal reasoning for this turn was withheld.' : text
 	return (
 		<div className="rounded-md border border-border bg-bg text-xs">
 			<button

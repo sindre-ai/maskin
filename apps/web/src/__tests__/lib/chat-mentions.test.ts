@@ -58,7 +58,9 @@ describe('getActiveMention', () => {
 describe('applyMention', () => {
 	it('replaces the active token with a completed mention and trailing space', () => {
 		const value = 'hi @Sin'
-		const active = getActiveMention(value, value.length)!
+		const active = getActiveMention(value, value.length)
+		expect(active).not.toBeNull()
+		if (!active) return
 		const result = applyMention(value, active, 'Sindre')
 		expect(result.value).toBe('hi @Sindre ')
 		expect(result.caret).toBe(result.value.length)
@@ -66,7 +68,9 @@ describe('applyMention', () => {
 
 	it('preserves text after the caret', () => {
 		const value = 'hi @Sin there'
-		const active = getActiveMention(value, 7)!
+		const active = getActiveMention(value, 7)
+		expect(active).not.toBeNull()
+		if (!active) return
 		const result = applyMention(value, active, 'Sindre')
 		expect(result.value).toBe('hi @Sindre  there')
 	})

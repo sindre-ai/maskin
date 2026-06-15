@@ -189,7 +189,9 @@ export function ConversationComposer({
 				// naturally and the orchestrator routes the reply.
 				const name = result.ref.name?.trim()
 				if (name) {
-					onValueChange(value.length > 0 && !value.endsWith(' ') ? `${value} @${name} ` : `@${name} `)
+					onValueChange(
+						value.length > 0 && !value.endsWith(' ') ? `${value} @${name} ` : `@${name} `,
+					)
 				}
 			}
 		},

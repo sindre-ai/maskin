@@ -15,12 +15,16 @@ interface MentionTypeaheadProps {
  * list, and keyboard navigation (`activeIndex`), so arrow keys keep working
  * while focus stays in the textarea.
  */
-export function MentionTypeahead({ agents, activeIndex, onSelect, onHover }: MentionTypeaheadProps) {
+export function MentionTypeahead({
+	agents,
+	activeIndex,
+	onSelect,
+	onHover,
+}: MentionTypeaheadProps) {
 	if (agents.length === 0) return null
 	return (
 		<div
 			className="absolute right-2 bottom-full left-2 z-30 mb-1 overflow-hidden rounded-md border border-border bg-popover shadow-md"
-			role="listbox"
 			aria-label="Mention an agent"
 		>
 			<ul className="max-h-56 overflow-y-auto p-1">
@@ -28,8 +32,7 @@ export function MentionTypeahead({ agents, activeIndex, onSelect, onHover }: Men
 					<li key={agent.id}>
 						<button
 							type="button"
-							role="option"
-							aria-selected={index === activeIndex}
+							aria-pressed={index === activeIndex}
 							// Use pointer-down so the click lands before the textarea blurs.
 							onMouseDown={(e) => {
 								e.preventDefault()

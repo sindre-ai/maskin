@@ -9,9 +9,11 @@ describe('ActorAvatar', () => {
 		expect(screen.getByText('A')).toBeInTheDocument()
 	})
 
-	it('renders lightning emoji for agent type', () => {
-		render(<ActorAvatar name="Bot" type="agent" />)
-		expect(screen.getByText('⚡')).toBeInTheDocument()
+	it('renders a bot icon for agent type', () => {
+		render(<ActorAvatar name="BotName" type="agent" />)
+		const el = screen.getByTitle('BotName')
+		expect(el.querySelector('svg')).toBeInTheDocument()
+		expect(el).not.toHaveTextContent('B')
 	})
 
 	it('has title attribute with name', () => {

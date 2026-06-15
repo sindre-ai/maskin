@@ -85,8 +85,7 @@ export function ConversationView({
 			text: `${mentionPrefix}${pendingMessage}`,
 			objects,
 			notifications,
-			displayAttachments:
-				displayAttachments.length > 0 ? displayAttachments : undefined,
+			displayAttachments: displayAttachments.length > 0 ? displayAttachments : undefined,
 		})
 		clearPendingMessage()
 		clearPendingAttachments()
@@ -223,7 +222,12 @@ function splitPendingAttachments(attachments: SindreAttachment[]): {
 	for (const a of attachments) {
 		if (a.kind === 'object') {
 			objects.push({ id: a.id, title: a.title ?? null, type: a.type ?? null })
-			displayAttachments.push({ kind: 'object', id: a.id, title: a.title ?? null, type: a.type ?? null })
+			displayAttachments.push({
+				kind: 'object',
+				id: a.id,
+				title: a.title ?? null,
+				type: a.type ?? null,
+			})
 		} else if (a.kind === 'notification') {
 			notifications.push({ id: a.id, title: a.title ?? null })
 			displayAttachments.push({ kind: 'notification', id: a.id, title: a.title ?? null })
