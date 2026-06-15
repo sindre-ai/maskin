@@ -1,4 +1,4 @@
-type Flusher = (line: string) => boolean
+type Flusher = (line: string) => boolean | Promise<boolean>
 
 export class InputQueue {
 	private streams = new Map<string, Flusher>()
@@ -9,12 +9,12 @@ export class InputQueue {
 	 * call are flushed immediately. Returns an unregister function to call when
 	 * the stream closes.
 	 */
-	registerStream(sessionId: string, flusher: Flusher): () => void {
+	async registerStream(sessionId: string, flusher: Flusher): Promise<() => void> {
 		const queued = this.pending.get(sessionId) ?? []
 		this.pending.delete(sessionId)
 		for (let i = 0; i < queued.length; i++) {
 			const msg = queued[i] as string
-			if (!flusher(msg)) {
+			if (!(await flusher(msg))) {
 				// Stream closed mid-flush — re-park this message and everything after it.
 				this.pending.set(sessionId, queued.slice(i))
 				return () => {}
@@ -30,10 +30,10 @@ export class InputQueue {
 	 * `registerStream` is called. If the flusher signals the stream is closed
 	 * (returns false) the message is re-parked for the next connection.
 	 */
-	enqueue(sessionId: string, line: string): void {
+	async enqueue(sessionId: string, line: string): Promise<void> {
 		const flusher = this.streams.get(sessionId)
 		if (flusher) {
-			const ok = flusher(line)
+			const ok = await flusher(line)
 			if (!ok) {
 				this.streams.delete(sessionId)
 				const q = this.pending.get(sessionId) ?? []

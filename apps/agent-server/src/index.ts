@@ -236,7 +236,7 @@ export function buildApp(deps: AppDeps): Hono {
 			type: 'user',
 			message: { role: 'user', content: (body as Record<string, unknown>).content as string },
 		}
-		inputQueue.enqueue(id, `${JSON.stringify(payload)}\n`)
+		await inputQueue.enqueue(id, `${JSON.stringify(payload)}\n`)
 		return c.json({ ok: true })
 	})
 
@@ -249,19 +249,25 @@ export function buildApp(deps: AppDeps): Hono {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
 		return stream(c, async (s) => {
-			await new Promise<void>((resolve) => {
-				const unregister = inputQueue.registerStream(id, (line) => {
-					s.write(line).catch(() => {
-						unregister()
-						resolve()
-					})
-					return true
-				})
-				c.req.raw.signal.addEventListener('abort', () => {
-					unregister()
-					resolve()
-				})
+			let resolveStream!: () => void
+			const done = new Promise<void>((resolve) => {
+				resolveStream = resolve
 			})
+			const unregister = await inputQueue.registerStream(id, async (line) => {
+				try {
+					await s.write(line)
+					return true
+				} catch {
+					resolveStream()
+					return false
+				}
+			})
+			c.req.raw.signal.addEventListener('abort', () => {
+				unregister()
+				resolveStream()
+			})
+			await done
+			unregister()
 		})
 	})
 
