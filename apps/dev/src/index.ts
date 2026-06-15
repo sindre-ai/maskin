@@ -145,6 +145,15 @@ if (process.env.NODE_ENV === 'production') {
 sessionDispatchQueue.start()
 logger.info('Session dispatch queue started')
 
+const shutdown = (signal: string) => {
+	logger.info(`Received ${signal}, shutting down`)
+	sessionDispatchQueue.stop()
+	notifyBridge.stop?.()
+	process.exit(0)
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
+
 logger.info(`Starting server on port ${port}`)
 
 let bootstrap: DevBootstrapResult | null = null

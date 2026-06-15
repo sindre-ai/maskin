@@ -77,6 +77,14 @@ export async function pullSessionWorkspace(
 	return { restored, archiveBytes }
 }
 
+/**
+ * Delete the session's host-side workspace directory. Called after the workspace
+ * has been pushed to S3 so the bind-mount dir doesn't accumulate on disk.
+ */
+export async function deleteSessionDir(sessionDir: string): Promise<void> {
+	await rm(sessionDir, { recursive: true, force: true })
+}
+
 export type PushSessionWorkspaceResult = {
 	archiveBytes: number
 }

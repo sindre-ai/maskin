@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { events, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, eq, inArray, isNotNull } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 
 /**
@@ -121,7 +121,7 @@ export class SessionReconciler {
 
 	private async markFailed(sessionId: string, workspaceId: string, actorId: string): Promise<void> {
 		const now = new Date()
-		await this.db
+		const [updated] = await this.db
 			.update(sessions)
 			.set({
 				status: 'failed',
@@ -130,7 +130,10 @@ export class SessionReconciler {
 				updatedAt: now,
 				currentActivity: null,
 			})
-			.where(eq(sessions.id, sessionId))
+			.where(and(eq(sessions.id, sessionId), sql`${sessions.status} NOT IN ('completed', 'failed')`))
+			.returning({ id: sessions.id })
+
+		if (!updated) return
 
 		await this.db.insert(events).values({
 			workspaceId,

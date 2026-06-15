@@ -43,7 +43,7 @@ export interface SessionDispatcherDeps {
 }
 
 export interface PickedServer {
-	server: AgentServerRow
+	server: { id: string; url: string }
 	active: number
 	max: number
 }
@@ -80,6 +80,18 @@ export class SessionDispatcher {
 			}
 		}
 
+		// Fetch the secret only after committing to this server so the full pool's
+		// bearer tokens are never in memory at the same time.
+		const secret = await this.fetchSecret(picked.server.id)
+		if (!secret) {
+			await this.releaseSlot(sessionId, picked.server.id)
+			return {
+				kind: 'transient_failure',
+				error: `agent-server ${picked.server.id} no longer in DB`,
+			}
+		}
+		const serverRow: AgentServerRow = { ...picked.server, secret }
+
 		let request: StartSessionRequest | null
 		try {
 			request = await this.buildStartRequest(sessionId)
@@ -98,7 +110,7 @@ export class SessionDispatcher {
 			}
 		}
 
-		const client = this.clientFactory(picked.server)
+		const client = this.clientFactory(serverRow)
 		try {
 			const response = await client.startSession(request)
 			await this.markDispatched(sessionId, picked.server.id, response.sandboxName)
@@ -149,7 +161,6 @@ export class SessionDispatcher {
 			.select({
 				id: agentServers.id,
 				url: agentServers.url,
-				secret: agentServers.secret,
 				max: agentServers.maxConcurrentSessions,
 				active: sql<number>`COALESCE((
 					SELECT COUNT(*)::int
@@ -173,13 +184,22 @@ export class SessionDispatcher {
 				(load === best.active / best.max && row.id < best.server.id)
 			) {
 				best = {
-					server: { id: row.id, url: row.url, secret: row.secret },
+					server: { id: row.id, url: row.url },
 					active,
 					max,
 				}
 			}
 		}
 		return best
+	}
+
+	private async fetchSecret(serverId: string): Promise<string | null> {
+		const [row] = await this.db
+			.select({ secret: agentServers.secret })
+			.from(agentServers)
+			.where(eq(agentServers.id, serverId))
+			.limit(1)
+		return row?.secret ?? null
 	}
 
 	/**

@@ -111,6 +111,7 @@ export class SessionDispatchQueue {
 				logger.error('Session dispatch queue tick failed', { error: String(err) }),
 			)
 		}, this.tickMs)
+		this.timer.unref()
 		setTimeout(() => this.tick().catch(() => undefined), 1_000).unref()
 	}
 

@@ -27,7 +27,14 @@ export function readAgentServerConfigs(
 		const url = entry.slice(0, pipe).trim()
 		const secret = entry.slice(pipe + 1).trim()
 		if (!url) throw new Error(`AGENT_SERVERS entry ${i + 1} has an empty URL`)
+		try {
+			new URL(url)
+		} catch {
+			throw new Error(`AGENT_SERVERS entry ${i + 1} has an invalid URL: ${url}`)
+		}
 		if (!secret) throw new Error(`AGENT_SERVERS entry ${i + 1} has an empty secret`)
+		if (secret.length < 16)
+			throw new Error(`AGENT_SERVERS entry ${i + 1} secret must be at least 16 characters`)
 		return { url, secret, maxConcurrentSessions: max }
 	})
 }

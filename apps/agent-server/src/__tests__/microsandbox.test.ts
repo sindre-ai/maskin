@@ -10,6 +10,7 @@ import {
 	removeSandbox,
 	sanitizeEnvForMicroVM,
 	spawnSession,
+	waitForCompletion,
 } from '../services/microsandbox'
 
 describe('assertValidSessionId', () => {
@@ -349,5 +350,72 @@ describe('spawnSession (orchestration)', () => {
 				},
 			),
 		).rejects.toThrow(/Invalid session id/)
+	})
+})
+
+describe('waitForCompletion', () => {
+	const msbBin = '/usr/local/bin/msb'
+
+	it('resolves immediately when the sandbox is no longer in the list', async () => {
+		const calls: string[][] = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push([...args])
+			return { stdout: JSON.stringify([]), stderr: '' }
+		}
+		let t = 0
+		await waitForCompletion(msbBin, 'sess-done', { run, sleep: async () => { t += 5_000 }, now: () => t }, 60_000)
+		expect(calls.length).toBe(1)
+	})
+
+	it('keeps polling while the sandbox is Running, resolves when it disappears', async () => {
+		let pollCount = 0
+		const run = async (
+			_bin: string,
+			_args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			pollCount++
+			// Running for first two polls, gone on the third
+			const list =
+				pollCount < 3 ? [{ name: 'sess-1', status: 'Running' }] : []
+			return { stdout: JSON.stringify(list), stderr: '' }
+		}
+		let t = 0
+		await waitForCompletion(msbBin, 'sess-1', { run, sleep: async () => { t += 5_000 }, now: () => t }, 60_000)
+		expect(pollCount).toBe(3)
+	})
+
+	it('resolves when status changes to non-Running (e.g. Exited)', async () => {
+		const run = async (): Promise<{ stdout: string; stderr: string }> => ({
+			stdout: JSON.stringify([{ name: 'sess-2', status: 'Exited' }]),
+			stderr: '',
+		})
+		let t = 0
+		await waitForCompletion(msbBin, 'sess-2', { run, sleep: async () => { t += 5_000 }, now: () => t }, 60_000)
+		// Should not throw or hang
+	})
+
+	it('resolves (with a warning) when the timeout elapses without the sandbox exiting', async () => {
+		const run = async (): Promise<{ stdout: string; stderr: string }> => ({
+			stdout: JSON.stringify([{ name: 'stuck', status: 'Running' }]),
+			stderr: '',
+		})
+		let t = 0
+		// Advance time past the timeout on each sleep so the loop exits
+		await waitForCompletion(msbBin, 'stuck', { run, sleep: async () => { t += 10_000 }, now: () => t }, 5_000)
+	})
+
+	it('tolerates transient msb list errors without throwing', async () => {
+		let calls = 0
+		const run = async (): Promise<{ stdout: string; stderr: string }> => {
+			calls++
+			if (calls < 3) throw new Error('msb list failed')
+			return { stdout: JSON.stringify([]), stderr: '' }
+		}
+		let t = 0
+		await waitForCompletion(msbBin, 'sess-3', { run, sleep: async () => { t += 5_000 }, now: () => t }, 60_000)
+		expect(calls).toBe(3)
 	})
 })

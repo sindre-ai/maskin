@@ -8,12 +8,18 @@ import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
 import { ImageWarmer } from './services/image-warmer'
 import {
+	defaultRunner,
 	type MicrosandboxDeps,
 	type PullPolicy,
 	readMsbVersion,
 	spawnSession,
+	waitForCompletion,
 } from './services/microsandbox'
-import { pullSessionWorkspace } from './services/session-workspace'
+import {
+	deleteSessionDir,
+	pullSessionWorkspace,
+	pushSessionWorkspace,
+} from './services/session-workspace'
 
 const SESSION_REQUEST_SCHEMA = z.object({
 	sessionId: z
@@ -38,6 +44,39 @@ export type AppDeps = {
 	storage: StorageProvider | null
 	msb: MicrosandboxDeps
 	warmer?: ImageWarmer | null
+}
+
+/**
+ * Background task that runs after a session's microVM is confirmed Running.
+ * Waits for the sandbox to exit, pushes the workspace to S3 (so the agent's
+ * learnings and memory survive), then deletes the host-side session dir so
+ * disk space doesn't accumulate across sessions.
+ */
+async function monitorSession(
+	sessionId: string,
+	sessionDir: string,
+	storage: StorageProvider | null,
+	msb: MicrosandboxDeps,
+): Promise<void> {
+	const run = msb.run ?? defaultRunner()
+	const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+	await waitForCompletion(msb.msbBin, sessionId, { run, sleep, now: Date.now })
+
+	if (storage) {
+		try {
+			const { archiveBytes } = await pushSessionWorkspace(storage, sessionId, sessionDir)
+			logger.info('session workspace pushed to S3', { sessionId, archiveBytes })
+		} catch (err) {
+			logger.error('session workspace push failed', { sessionId, error: String(err) })
+		}
+	}
+
+	try {
+		await deleteSessionDir(sessionDir)
+		logger.info('session dir cleaned up', { sessionId, sessionDir })
+	} catch (err) {
+		logger.warn('session dir cleanup failed', { sessionId, error: String(err) })
+	}
 }
 
 export function buildApp(deps: AppDeps): Hono {
@@ -136,6 +175,10 @@ export function buildApp(deps: AppDeps): Hono {
 				envOverflowSpilled: result.envOverflowSpilled,
 				envSanitized: result.envSanitized,
 			})
+
+			// Background: wait for VM exit → push workspace to S3 → delete local dir.
+			void monitorSession(body.sessionId, sessionDir, deps.storage, deps.msb)
+
 			return c.json(
 				{
 					sessionId: body.sessionId,

@@ -299,6 +299,35 @@ async function waitForRunning(
 	)
 }
 
+const COMPLETION_POLL_INTERVAL_MS = 5_000
+const COMPLETION_TIMEOUT_MS = 8 * 60 * 60_000
+
+/**
+ * Resolves when the sandbox is no longer listed as Running — either it exited
+ * naturally, was removed externally, or the timeout elapsed. The 8-hour timeout
+ * is a safety valve so the background watcher doesn't run forever on a stuck VM.
+ */
+export async function waitForCompletion(
+	msbBin: string,
+	sessionId: string,
+	deps: { run: CommandRunner; sleep: (ms: number) => Promise<void>; now: () => number },
+	timeoutMs = COMPLETION_TIMEOUT_MS,
+): Promise<void> {
+	const deadline = deps.now() + timeoutMs
+	while (deps.now() < deadline) {
+		await deps.sleep(COMPLETION_POLL_INTERVAL_MS)
+		try {
+			const { stdout } = await deps.run(msbBin, ['list', '--format', 'json'], { timeoutMs: 5_000 })
+			const list = JSON.parse(stdout) as MsbStatusRow[]
+			const entry = list.find((s) => s.name === sessionId)
+			if (!entry || entry.status.toLowerCase() !== 'running') return
+		} catch {
+			/* transient — keep polling */
+		}
+	}
+	logger.warn('session completion watch timed out', { sessionId, timeoutMs })
+}
+
 export async function removeSandbox(name: string, deps: MicrosandboxDeps): Promise<void> {
 	assertValidSessionId(name)
 	const run = deps.run ?? defaultRunner()
