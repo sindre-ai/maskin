@@ -13,7 +13,7 @@ vi.mock('@/lib/api', async () => {
 })
 
 vi.mock('@/lib/analytics', () => ({
-	trackEvent: vi.fn(),
+	trackProfileFieldUpdated: vi.fn(),
 }))
 
 vi.mock('sonner', () => ({
@@ -21,7 +21,7 @@ vi.mock('sonner', () => ({
 }))
 
 import { AvatarRow } from '@/components/profile/avatar-row'
-import { trackEvent } from '@/lib/analytics'
+import { trackProfileFieldUpdated } from '@/lib/analytics'
 import { ApiError, api } from '@/lib/api'
 import { toast } from 'sonner'
 import { buildActorResponse } from '../../factories'
@@ -106,7 +106,7 @@ describe('AvatarRow', () => {
 		await waitFor(() =>
 			expect(api.actors.uploadAvatar).toHaveBeenCalledWith('actor-1', expect.any(File)),
 		)
-		expect(trackEvent).toHaveBeenCalledWith('profile.field_changed', { field: 'avatar' })
+		expect(trackProfileFieldUpdated).toHaveBeenCalledWith({ field: 'avatar' })
 		expect(toast.success).toHaveBeenCalledWith('Avatar updated')
 		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 	})
@@ -124,6 +124,6 @@ describe('AvatarRow', () => {
 
 		expect(await screen.findByText(/avatar bytes do not match/i)).toBeInTheDocument()
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
-		expect(trackEvent).not.toHaveBeenCalled()
+		expect(trackProfileFieldUpdated).not.toHaveBeenCalled()
 	})
 })

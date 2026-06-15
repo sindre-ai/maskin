@@ -110,3 +110,12 @@ export function trackObjectAttachedFile(
 		parent_entity_type: p.parent_entity_type,
 	})
 }
+
+export type ProfileField = 'display_name' | 'bio' | 'avatar' | 'notification_prefs'
+
+// Ship-metric event for the User profile page bet. The bet's PostHog query
+// keys off the event name and groups by `distinct_id`, so the helper exists
+// purely to keep the contract — event name + field enum — in one place.
+export function trackProfileFieldUpdated(p: { field: ProfileField }): void {
+	trackEvent('profile_field_updated', { field: p.field })
+}

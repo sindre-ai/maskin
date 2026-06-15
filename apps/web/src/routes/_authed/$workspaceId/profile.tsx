@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useActor } from '@/hooks/use-actors'
 import { useAutoSave } from '@/hooks/use-auto-save'
-import { trackEvent } from '@/lib/analytics'
+import { type ProfileField, trackEvent, trackProfileFieldUpdated } from '@/lib/analytics'
 import { type ActorResponse, type NotificationPrefs, type UpdateActorInput, api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -30,6 +30,16 @@ export const Route = createFileRoute('/_authed/$workspaceId/profile')({
 })
 
 const NOTIFICATION_DEFAULTS: NotificationPrefs = notificationPrefsSchema.parse({})
+
+// Maps the API field key the save handler PATCHes with onto the ship-metric
+// field value the bet's posthog_query groups by. Only the four fields this
+// page emits as `profile_field_updated` are listed — other UpdateActorInput
+// keys are handled by their own components and do not flow through this hook.
+const PROFILE_FIELD_BY_INPUT_KEY: Partial<Record<keyof UpdateActorInput, ProfileField>> = {
+	name: 'display_name',
+	bio: 'bio',
+	notification_prefs: 'notification_prefs',
+}
 
 const NOTIFICATION_ROWS: ReadonlyArray<{
 	key: keyof NotificationPrefs
@@ -290,8 +300,9 @@ function useProfileFieldSave(actorId: string) {
 			toast.error('Could not save profile change')
 		},
 		onSuccess: (_result, input) => {
-			for (const field of Object.keys(input)) {
-				trackEvent('profile.field_changed', { field })
+			for (const inputKey of Object.keys(input) as Array<keyof UpdateActorInput>) {
+				const field = PROFILE_FIELD_BY_INPUT_KEY[inputKey]
+				if (field) trackProfileFieldUpdated({ field })
 			}
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(actorId) })
 		},
