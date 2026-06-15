@@ -1,15 +1,29 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
+	events,
 	type CatalogPackage,
 	type CatalogPackageItem,
+	actors,
 	catalogPackageItems,
 	catalogPackages,
+	integrations,
+	triggers,
+	workspaceMembers,
+	workspaceSkills,
 } from '@maskin/db/schema'
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
+import { isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	type CatalogItemType,
+	buildActorInsert,
+	buildIntegrationInsert,
+	buildSkillInsert,
+	buildTriggerInsert,
+} from '../services/package-provisioning'
 
 type Env = {
 	Variables: {
@@ -303,5 +317,283 @@ app.openapi(getPackageRoute, (async (c) => {
 
 	return c.json(response)
 }) as RouteHandler<typeof getPackageRoute, Env>)
+
+// ── POST /api/catalog/items/:id/install ──────────────────────────────────────
+//
+// Install a single catalog item into a workspace. This is the individual-item
+// counterpart to POST /api/installed-packages (which installs every item in a
+// package). Actors get a fresh apiKey and a workspace_members row; triggers
+// resolve their target actor via source_item_id in the workspace's actor pool.
+// No installed_packages row is created — the item becomes a plain workspace
+// resource tracked only by catalog_item_id in its metadata.
+
+const installItemBodySchema = z.object({
+	workspaceId: z.string().uuid(),
+})
+
+const installItemResponseSchema = z.object({
+	id: z.string().uuid(),
+	item_type: itemTypeSchema,
+	name: z.string(),
+})
+
+const installItemRoute = createRoute({
+	method: 'post',
+	path: '/items/{id}/install',
+	tags: ['Catalog'],
+	summary: 'Install a single catalog item into a workspace',
+	request: {
+		params: idParamSchema,
+		body: { content: { 'application/json': { schema: installItemBodySchema } } },
+	},
+	responses: {
+		201: {
+			description: 'Item installed',
+			content: { 'application/json': { schema: installItemResponseSchema } },
+		},
+		400: {
+			description: 'Validation error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Not a member of the target workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Catalog item not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Item already installed in this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		422: {
+			description: 'Trigger target agent not found — install the agent first',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(installItemRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id: itemId } = c.req.valid('param')
+	const { workspaceId } = c.req.valid('json')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'You are not a member of the target workspace'), 403)
+	}
+
+	const [item] = await db
+		.select()
+		.from(catalogPackageItems)
+		.where(eq(catalogPackageItems.id, itemId))
+		.limit(1)
+
+	if (!item) {
+		return c.json(createApiError('NOT_FOUND', 'Catalog item not found'), 404)
+	}
+
+	const type = item.itemType as CatalogItemType
+	const snapshot = (item.itemSnapshot as Record<string, unknown>) ?? {}
+	// Individual-item installs are tracked by catalog_item_id in metadata.
+	// No installed_package_id is set so the version-push cron ignores them.
+	const meta = { catalog_item_id: item.id, source_item_id: item.sourceItemId, snapshot }
+
+	const name = (snapshot.name as string) ?? 'Untitled'
+
+	switch (type) {
+		case 'actor': {
+			const [existing] = await db
+				.select({ id: actors.id })
+				.from(actors)
+				.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, workspaceId),
+						sql`${actors.metadata}->>'catalog_item_id' = ${item.id}`,
+					),
+				)
+				.limit(1)
+			if (existing) {
+				return c.json(
+					createApiError('CONFLICT', 'This agent is already installed in the workspace'),
+					409,
+				)
+			}
+			const [row] = await db.transaction(async (tx) => {
+				const [a] = await tx
+					.insert(actors)
+					.values(buildActorInsert(snapshot, meta, actorId))
+					.returning({ id: actors.id, name: actors.name })
+				if (!a) throw new Error('Actor insert returned no row')
+				await tx.insert(workspaceMembers).values({ workspaceId, actorId: a.id, role: 'member' })
+				await tx.insert(events).values({
+					workspaceId,
+					actorId,
+					action: 'created',
+					entityType: 'actor',
+					entityId: a.id,
+					data: { source: 'catalog_item', catalog_item_id: item.id },
+				})
+				return [a] as const
+			})
+			logger.info('Catalog item installed (actor)', { itemId, workspaceId, actorId: row.id })
+			return c.json({ id: row.id, item_type: type, name: row.name ?? name }, 201)
+		}
+
+		case 'trigger': {
+			const [existing] = await db
+				.select({ id: triggers.id })
+				.from(triggers)
+				.where(
+					and(
+						eq(triggers.workspaceId, workspaceId),
+						sql`${triggers.metadata}->>'catalog_item_id' = ${item.id}`,
+					),
+				)
+				.limit(1)
+			if (existing) {
+				return c.json(
+					createApiError('CONFLICT', 'This trigger is already installed in the workspace'),
+					409,
+				)
+			}
+			// The trigger snapshot's targetActorId is the source actor ID from the
+			// publishing workspace. Find the corresponding installed actor in this
+			// workspace by matching source_item_id in actor metadata.
+			const targetSourceId =
+				(snapshot.targetActorId as string) ?? (snapshot.target_actor_id as string)
+			const [localActor] = await db
+				.select({ id: actors.id })
+				.from(actors)
+				.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, workspaceId),
+						sql`${actors.metadata}->>'source_item_id' = ${targetSourceId}`,
+					),
+				)
+				.limit(1)
+			if (!localActor) {
+				return c.json(
+					createApiError(
+						'BAD_REQUEST',
+						'Target agent not found in workspace — install the agent first',
+					),
+					422,
+				)
+			}
+			const rewrittenSnapshot = { ...snapshot, targetActorId: localActor.id }
+			const triggerMeta = { ...meta, snapshot: rewrittenSnapshot }
+			const [row] = await db.transaction(async (tx) => {
+				const [t] = await tx
+					.insert(triggers)
+					.values(buildTriggerInsert(workspaceId, rewrittenSnapshot, triggerMeta, actorId))
+					.returning({ id: triggers.id, name: triggers.name })
+				if (!t) throw new Error('Trigger insert returned no row')
+				await tx.insert(events).values({
+					workspaceId,
+					actorId,
+					action: 'created',
+					entityType: 'trigger',
+					entityId: t.id,
+					data: { source: 'catalog_item', catalog_item_id: item.id },
+				})
+				return [t] as const
+			})
+			logger.info('Catalog item installed (trigger)', { itemId, workspaceId, triggerId: row.id })
+			return c.json({ id: row.id, item_type: type, name: row.name ?? name }, 201)
+		}
+
+		case 'skill': {
+			const [existing] = await db
+				.select({ id: workspaceSkills.id })
+				.from(workspaceSkills)
+				.where(
+					and(
+						eq(workspaceSkills.workspaceId, workspaceId),
+						sql`${workspaceSkills.metadata}->>'catalog_item_id' = ${item.id}`,
+					),
+				)
+				.limit(1)
+			if (existing) {
+				return c.json(
+					createApiError('CONFLICT', 'This skill is already installed in the workspace'),
+					409,
+				)
+			}
+			const [row] = await db.transaction(async (tx) => {
+				const [s] = await tx
+					.insert(workspaceSkills)
+					.values(buildSkillInsert(workspaceId, snapshot, meta, actorId))
+					.returning({ id: workspaceSkills.id, name: workspaceSkills.name })
+				if (!s) throw new Error('Skill insert returned no row')
+				await tx.insert(events).values({
+					workspaceId,
+					actorId,
+					action: 'created',
+					entityType: 'workspace_skill',
+					entityId: s.id,
+					data: { source: 'catalog_item', catalog_item_id: item.id },
+				})
+				return [s] as const
+			})
+			logger.info('Catalog item installed (skill)', { itemId, workspaceId, skillId: row.id })
+			return c.json({ id: row.id, item_type: type, name: row.name ?? name }, 201)
+		}
+
+		case 'integration': {
+			const [existing] = await db
+				.select({ id: integrations.id })
+				.from(integrations)
+				.where(
+					and(
+						eq(integrations.workspaceId, workspaceId),
+						sql`${integrations.metadata}->>'catalog_item_id' = ${item.id}`,
+					),
+				)
+				.limit(1)
+			if (existing) {
+				return c.json(
+					createApiError('CONFLICT', 'This integration is already installed in the workspace'),
+					409,
+				)
+			}
+			const [row] = await db.transaction(async (tx) => {
+				const [i] = await tx
+					.insert(integrations)
+					.values(buildIntegrationInsert(workspaceId, snapshot, meta, actorId))
+					.returning({ id: integrations.id })
+				if (!i) throw new Error('Integration insert returned no row')
+				await tx.insert(events).values({
+					workspaceId,
+					actorId,
+					action: 'created',
+					entityType: 'integration',
+					entityId: i.id,
+					data: { source: 'catalog_item', catalog_item_id: item.id },
+				})
+				return [i] as const
+			})
+			logger.info('Catalog item installed (integration)', {
+				itemId,
+				workspaceId,
+				integrationId: row.id,
+			})
+			return c.json(
+				{
+					id: row.id,
+					item_type: type,
+					name: (snapshot.provider as string) ?? name,
+				},
+				201,
+			)
+		}
+
+		default:
+			return c.json(createApiError('BAD_REQUEST', `Unsupported item type: ${type}`), 400)
+	}
+}) as RouteHandler<typeof installItemRoute, Env>)
 
 export default app

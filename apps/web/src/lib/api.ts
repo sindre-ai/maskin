@@ -465,6 +465,15 @@ export const api = {
 		get: (id: string) => request<CatalogPackageDetailResponse>(`/catalog/packages/${id}`),
 	},
 
+	catalogItems: {
+		install: (itemId: string, workspaceId: string) =>
+			request<CatalogItemInstallResponse>(`/catalog/items/${encodeURIComponent(itemId)}/install`, {
+				method: 'POST',
+				body: { workspaceId },
+				workspaceId,
+			}),
+	},
+
 	installedPackages: {
 		list: (workspaceId: string) =>
 			request<InstalledPackagesListResponse>(
@@ -1205,6 +1214,12 @@ export interface CatalogPackagesListResponse {
 export interface CatalogPackageDetailResponse {
 	package: CatalogPackageSummary
 	items: CatalogPackageItem[]
+}
+
+export interface CatalogItemInstallResponse {
+	id: string
+	item_type: CatalogItemType
+	name: string
 }
 
 export interface InstalledPackageRow {

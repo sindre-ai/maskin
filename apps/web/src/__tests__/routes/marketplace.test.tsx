@@ -17,6 +17,7 @@ vi.mock('@/lib/workspace-context', () => ({
 const mockUseCatalogPackages = vi.fn()
 vi.mock('@/hooks/use-catalog-packages', () => ({
 	useCatalogPackages: () => mockUseCatalogPackages(),
+	useInstallCatalogItem: () => ({ mutate: vi.fn(), isPending: false, isSuccess: false }),
 }))
 
 vi.mock('@/hooks/use-installed-packages', () => ({
@@ -27,7 +28,7 @@ vi.mock('@/hooks/use-installed-packages', () => ({
 
 // useQueries is used to fetch individual items from multi-type packages.
 // Default to returning no data so most tests stay simple.
-const mockUseQueries = vi.fn(() => [])
+const mockUseQueries = vi.fn((): unknown[] => [])
 vi.mock('@tanstack/react-query', async () => {
 	const actual = await vi.importActual('@tanstack/react-query')
 	return { ...actual, useQueries: () => mockUseQueries() }
@@ -75,7 +76,9 @@ describe('MarketplacePage', () => {
 		expect(
 			screen.getAllByRole('button', { name: /^Integrations\s3/ }).length,
 		).toBeGreaterThanOrEqual(1)
-		expect(screen.getAllByRole('button', { name: /^Discovery\s1/ }).length).toBeGreaterThanOrEqual(1)
+		expect(screen.getAllByRole('button', { name: /^Discovery\s1/ }).length).toBeGreaterThanOrEqual(
+			1,
+		)
 		expect(screen.getAllByRole('button', { name: /^Sales\s2/ }).length).toBeGreaterThanOrEqual(1)
 	})
 

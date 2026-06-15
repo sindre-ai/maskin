@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { useInstallCatalogItem } from '@/hooks/use-catalog-packages'
 import type { CatalogItemType, CatalogPackageItem, InstalledPackageRow } from '@/lib/api'
-import { InstallButton } from './install-button'
 
 const TYPE_LABEL: Record<CatalogItemType, string> = {
 	actor: 'Agent',
@@ -20,6 +21,7 @@ export function ItemCard({ workspaceId, item, install }: ItemCardProps) {
 	const name = (snapshot.name as string) ?? 'Untitled'
 	const description = (snapshot.description as string) ?? null
 	const locked = install?.isLocked ?? false
+	const installMutation = useInstallCatalogItem(workspaceId)
 
 	return (
 		<article className="flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm">
@@ -56,9 +58,22 @@ export function ItemCard({ workspaceId, item, install }: ItemCardProps) {
 			</div>
 
 			<div className="mt-auto flex items-center justify-end gap-2">
-				{!install && (
-					<InstallButton workspaceId={workspaceId} packageId={item.package_id} label="Install" />
-				)}
+				{!install &&
+					(installMutation.isSuccess ? (
+						<Badge variant="secondary" className="text-[11px] font-medium">
+							Installed
+						</Badge>
+					) : (
+						<Button
+							size="sm"
+							variant="default"
+							className="h-7 text-xs"
+							disabled={installMutation.isPending}
+							onClick={() => installMutation.mutate(item.id)}
+						>
+							{installMutation.isPending ? 'Installing…' : 'Install'}
+						</Button>
+					))}
 			</div>
 		</article>
 	)

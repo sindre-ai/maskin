@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
@@ -20,5 +20,16 @@ export function useCatalogPackage(id: string | undefined) {
 		queryKey: queryKeys.catalogPackages.detail(id ?? ''),
 		queryFn: () => api.catalogPackages.get(id as string),
 		enabled: Boolean(id),
+	})
+}
+
+export function useInstallCatalogItem(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (itemId: string) => api.catalogItems.install(itemId, workspaceId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
+		},
 	})
 }
