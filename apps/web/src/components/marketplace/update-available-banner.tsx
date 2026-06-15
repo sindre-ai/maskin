@@ -8,7 +8,7 @@ interface UpdateAvailableBannerProps {
 export function UpdateAvailableBanner({ newVersion }: UpdateAvailableBannerProps) {
 	return (
 		<div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
-			Updated to v{newVersion}.
+			Update to v{newVersion} available.
 		</div>
 	)
 }

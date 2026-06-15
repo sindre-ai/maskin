@@ -83,7 +83,7 @@ describe('PackageCard', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.getByText(/Updated to v1\.1\.0/)).toBeInTheDocument()
+		expect(screen.getByText(/Update to v1\.1\.0 available/)).toBeInTheDocument()
 	})
 
 	it('shows Forked-from badge and no Fork button when forked', () => {

@@ -519,9 +519,13 @@ function buildSkillUpdate(
 function buildIntegrationUpdate(
 	snapshot: Record<string, unknown>,
 ): Partial<typeof integrations.$inferInsert> {
+	// status and credentials are runtime state owned by the install workspace —
+	// never restore them from a catalog snapshot. Honoring snapshot.status here
+	// would flip a freshly-installed integration to 'active' even though its
+	// credentials column is empty, causing decrypt() to crash on first access.
+	// (Same rationale as buildIntegrationInsert forcing status='inactive'.)
 	return {
 		provider: (snapshot.provider as string) ?? 'unknown',
-		status: (snapshot.status as string) ?? 'inactive',
 		externalId: (snapshot.externalId as string) ?? (snapshot.external_id as string) ?? null,
 		config: (snapshot.config as Record<string, unknown>) ?? {},
 	}
