@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 
+import { cn } from '@/lib/cn'
+
 function formatRelative(date: Date): string {
 	const now = Date.now()
 	const diff = now - date.getTime()
@@ -33,7 +35,11 @@ export function RelativeTime({
 	if (!date) return null
 
 	return (
-		<time className={className} dateTime={date} title={new Date(date).toLocaleString()}>
+		<time
+			className={cn('tabular-nums', className)}
+			dateTime={date}
+			title={new Date(date).toLocaleString()}
+		>
 			{formatRelative(new Date(date))}
 		</time>
 	)
