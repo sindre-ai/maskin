@@ -1,0 +1,28 @@
+[Unit]
+Description=Maskin Agent Server (microsandbox runtime)
+Documentation=https://github.com/sindre-ai/maskin/blob/main/apps/agent-server/HOST_SETUP.md
+After=network-online.target
+Wants=network-online.target
+Requires=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/maskin
+EnvironmentFile=/opt/maskin/apps/agent-server/.env
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=RUNTIME_BACKEND=microsandbox
+ExecStart=/usr/bin/node apps/agent-server/dist/index.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=maskin-agent-server
+
+# Run as root: agent-server shells out to `msb` and bind-mounts /agent into
+# microVMs. /dev/kvm and the libkrun-side privileges are most reliable when
+# the parent runs as root on a single-tenant Hetzner box.
+
+[Install]
+WantedBy=multi-user.target
