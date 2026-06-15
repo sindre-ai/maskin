@@ -1,7 +1,7 @@
+import { FilterTabs } from '@/components/shared/filter-tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { ActorListItem } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
 import { Search, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -96,23 +96,7 @@ export function DataTableToolbar({
 	return (
 		<div className="flex items-center gap-2 md:gap-3 mb-4 flex-wrap">
 			{/* Type tabs */}
-			<div className="flex gap-1 overflow-x-auto">
-				{tabs.map((tab) => (
-					<button
-						key={tab.label}
-						type="button"
-						className={cn(
-							'rounded px-3 py-1 text-sm whitespace-nowrap transition-colors',
-							typeFilter === tab.value
-								? 'bg-muted text-foreground font-medium'
-								: 'text-muted-foreground hover:text-foreground',
-						)}
-						onClick={() => onTypeFilterChange(tab.value)}
-					>
-						{tab.label}
-					</button>
-				))}
-			</div>
+			<FilterTabs tabs={tabs} value={typeFilter} onChange={onTypeFilterChange} />
 
 			{/* Search */}
 			<div className="relative flex-1 min-w-0 max-w-full sm:max-w-xs">
