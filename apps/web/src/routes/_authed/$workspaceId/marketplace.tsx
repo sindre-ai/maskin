@@ -1,3 +1,4 @@
+import { FeaturedStrip } from '@/components/catalog/featured-strip'
 import { PackageGrid } from '@/components/catalog/package-grid'
 import { RouteError } from '@/components/shared/route-error'
 import { useCatalogPackages } from '@/hooks/use-catalog-packages'
@@ -133,14 +134,21 @@ function MarketplacePage() {
 							No packages yet — check back once Maskin publishes the first one.
 						</p>
 					) : (
-						<PackageGrid
-							packages={filterPackages(packages, typeFilter, useCaseFilter)}
-							activeType={
-								typeFilter === 'all' || typeFilter === 'packages' ? undefined : typeFilter
-							}
-							workspaceId={workspaceId}
-							installLookup={(pkg) => installsByPackage.get(pkg.id)}
-						/>
+						<div className="space-y-8">
+							<FeaturedStrip
+								packages={filterPackages(packages, typeFilter, useCaseFilter)}
+								workspaceId={workspaceId}
+								installLookup={(pkg) => installsByPackage.get(pkg.id)}
+							/>
+							<PackageGrid
+								packages={filterPackages(packages, typeFilter, useCaseFilter)}
+								activeType={
+									typeFilter === 'all' || typeFilter === 'packages' ? undefined : typeFilter
+								}
+								workspaceId={workspaceId}
+								installLookup={(pkg) => installsByPackage.get(pkg.id)}
+							/>
+						</div>
 					)}
 				</section>
 			</div>

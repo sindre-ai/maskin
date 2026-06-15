@@ -15,6 +15,7 @@ export const CCD_PACKAGE = {
 	useCase: 'Discovery',
 	description:
 		'Turns customer feedback into clustered insights, new bets, and replies back to the customer.',
+	isFeatured: true,
 } as const
 
 export const CCD_ACTOR_IDS = [

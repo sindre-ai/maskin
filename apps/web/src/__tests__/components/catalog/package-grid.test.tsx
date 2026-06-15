@@ -17,6 +17,7 @@ function buildPackage(
 		description: '',
 		version: '1.0.0',
 		use_case: null,
+		is_featured: false,
 		item_types: ['actor'],
 		created_at: null,
 		updated_at: null,

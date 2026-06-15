@@ -64,6 +64,10 @@ describe('CCD package definition', () => {
 		expect(CCD_PACKAGE.description).toMatch(/feedback/)
 	})
 
+	it('is published as featured so it surfaces in the marketplace strip', () => {
+		expect(CCD_PACKAGE.isFeatured).toBe(true)
+	})
+
 	it('ships four actors and nine triggers, no duplicates', () => {
 		expect(CCD_ACTOR_IDS.length).toBe(4)
 		expect(CCD_TRIGGER_IDS.length).toBe(9)
