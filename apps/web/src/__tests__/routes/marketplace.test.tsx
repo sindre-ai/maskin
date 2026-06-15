@@ -91,9 +91,34 @@ describe('MarketplacePage', () => {
 		expect(screen.getByText(/Couldn't load the catalog/i)).toBeInTheDocument()
 	})
 
-	it('shows a content placeholder while the grid lands in T8', () => {
+	it('renders the package grid in the content area when packages exist', () => {
+		mockUseCatalogPackages.mockReturnValue({
+			data: {
+				packages: [
+					{
+						id: 'p1',
+						name: 'Customer Continuous Discovery',
+						slug: 'continuous-discovery',
+						description: 'Loop',
+						version: '1.0.0',
+						use_case: 'Discovery',
+						item_types: ['actor', 'trigger'],
+						created_at: null,
+						updated_at: null,
+					},
+				],
+				counts: COUNTS,
+			},
+			isLoading: false,
+			isError: false,
+		})
 		render(<MarketplacePage />)
-		expect(screen.getByText(/Marketplace items will appear here/i)).toBeInTheDocument()
+		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent(
+			'Customer Continuous Discovery',
+		)
+		expect(screen.getByRole('region', { name: 'Triggers' })).toHaveTextContent(
+			'Customer Continuous Discovery',
+		)
 	})
 
 	it('hides the desktop sidebar via the md:hidden / hidden md:block split', () => {

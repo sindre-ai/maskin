@@ -1,6 +1,7 @@
+import { PackageGrid } from '@/components/catalog/package-grid'
 import { RouteError } from '@/components/shared/route-error'
 import { useCatalogPackages } from '@/hooks/use-catalog-packages'
-import type { CatalogItemType, CatalogPackageCounts } from '@/lib/api'
+import type { CatalogItemType, CatalogPackageCounts, CatalogPackageSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -51,6 +52,11 @@ function MarketplacePage() {
 
 	const { data, isLoading, isError } = useCatalogPackages()
 	const counts = data?.counts
+
+	const handleInstall = (pkg: CatalogPackageSummary) => {
+		// T9 wires the install mutation. Keeps the success path observable here.
+		console.info('[marketplace] install requested', { id: pkg.id, slug: pkg.slug })
+	}
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
@@ -112,9 +118,10 @@ function MarketplacePage() {
 					) : isLoading ? (
 						<p className="text-sm text-muted-foreground">Loading catalog…</p>
 					) : (
-						<p className="text-sm text-muted-foreground">
-							Marketplace items will appear here once the card grid lands.
-						</p>
+						<PackageGrid
+							packages={filterPackages(data?.packages ?? [], typeFilter, useCaseFilter)}
+							onInstall={handleInstall}
+						/>
 					)}
 				</section>
 			</div>
@@ -234,4 +241,20 @@ function countForUseCase(
 	if (!counts) return undefined
 	if (value === 'all') return counts.total
 	return counts.by_use_case[value] ?? 0
+}
+
+function filterPackages(
+	packages: CatalogPackageSummary[],
+	typeFilter: TypeFilter,
+	useCaseFilter: UseCaseFilter,
+): CatalogPackageSummary[] {
+	return packages.filter((pkg) => {
+		if (typeFilter !== 'all' && typeFilter !== 'packages') {
+			if (!pkg.item_types.includes(typeFilter)) return false
+		}
+		if (useCaseFilter !== 'all') {
+			if (pkg.use_case !== useCaseFilter) return false
+		}
+		return true
+	})
 }
