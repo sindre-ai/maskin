@@ -347,9 +347,22 @@ export function AgentDocumentView({
 
 			{/* Configuration (collapsible) */}
 			<Collapsible open={configExpanded} onOpenChange={setConfigExpanded}>
-				<CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground mb-4 hover:text-foreground transition-colors cursor-pointer">
+				<CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground mb-4 hover:text-foreground transition-colors cursor-pointer">
 					{configExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
 					Configuration
+					{isManaged && (
+						<span className="ml-auto flex items-center gap-1 normal-case tracking-normal font-normal text-[11px] text-muted-foreground">
+							<span>🔒</span>
+							<span>Managed{managedPackageName ? ` · ${managedPackageName}` : ''}</span>
+							<button
+								type="button"
+								onClick={(e) => { e.stopPropagation(); onForkPackage?.() }}
+								className="text-primary hover:underline cursor-pointer"
+							>
+								Fork to edit
+							</button>
+						</span>
+					)}
 				</CollapsibleTrigger>
 				<CollapsibleContent>
 					{/* Instructions */}

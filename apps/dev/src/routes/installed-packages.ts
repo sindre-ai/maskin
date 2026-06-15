@@ -510,13 +510,12 @@ app.openapi(forkPackageRoute, async (c) => {
 		// the single audit event row.
 		if (!row) return null
 
-		// 4. Drop `installed_package_id` from each provisioned element's metadata.
-		//    Postgres `jsonb - 'key'` removes the top-level key in place; the
-		//    `source_item_id` and frozen `snapshot` keys stay so element → catalog
-		//    item lineage remains queryable post-fork. The T5 cron's locked-install
-		//    join keys on `installed_package_id`, so clearing it here is what
-		//    actually unmanages these rows.
-		const detachClause = sql`${actors.metadata} - 'installed_package_id'`
+		// 4. Swap `installed_package_id` → `forked_from_installed_package_id` in each
+		//    provisioned element's metadata. Removing `installed_package_id` stops the
+		//    T5 cron from treating these rows as managed. Keeping the install ID under
+		//    a different key lets the uninstall route find and optionally delete these
+		//    elements even after the fork. `source_item_id` and `snapshot` stay as-is.
+		const detachClause = sql`(${actors.metadata} - 'installed_package_id') || jsonb_build_object('forked_from_installed_package_id', ${install.id}::text)`
 		const actorRes = await tx
 			.update(actors)
 			.set({ metadata: detachClause })
@@ -526,21 +525,27 @@ app.openapi(forkPackageRoute, async (c) => {
 
 		const triggerRes = await tx
 			.update(triggers)
-			.set({ metadata: sql`${triggers.metadata} - 'installed_package_id'` })
+			.set({
+				metadata: sql`(${triggers.metadata} - 'installed_package_id') || jsonb_build_object('forked_from_installed_package_id', ${install.id}::text)`,
+			})
 			.where(sql`${triggers.metadata}->>'installed_package_id' = ${install.id}`)
 			.returning({ id: triggers.id })
 		detached.triggers = triggerRes.length
 
 		const skillRes = await tx
 			.update(workspaceSkills)
-			.set({ metadata: sql`${workspaceSkills.metadata} - 'installed_package_id'` })
+			.set({
+				metadata: sql`(${workspaceSkills.metadata} - 'installed_package_id') || jsonb_build_object('forked_from_installed_package_id', ${install.id}::text)`,
+			})
 			.where(sql`${workspaceSkills.metadata}->>'installed_package_id' = ${install.id}`)
 			.returning({ id: workspaceSkills.id })
 		detached.skills = skillRes.length
 
 		const integrationRes = await tx
 			.update(integrations)
-			.set({ metadata: sql`${integrations.metadata} - 'installed_package_id'` })
+			.set({
+				metadata: sql`(${integrations.metadata} - 'installed_package_id') || jsonb_build_object('forked_from_installed_package_id', ${install.id}::text)`,
+			})
 			.where(sql`${integrations.metadata}->>'installed_package_id' = ${install.id}`)
 			.returning({ id: integrations.id })
 		detached.integrations = integrationRes.length
@@ -684,51 +689,76 @@ app.openapi(uninstallPackageRoute, async (c) => {
 
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {
-			// For managed (locked) installs: detach all element rows from the
-			// package by removing `installed_package_id` from their metadata.
-			// Forked installs already have no `installed_package_id` in metadata
-			// so these updates are no-ops, which is fine.
-			if (install.isLocked) {
-				await tx
-					.update(actors)
-					.set({ metadata: sql`${actors.metadata} - 'installed_package_id'` })
-					.where(sql`${actors.metadata}->>'installed_package_id' = ${install.id}`)
-				await tx
-					.update(triggers)
-					.set({ metadata: sql`${triggers.metadata} - 'installed_package_id'` })
-					.where(sql`${triggers.metadata}->>'installed_package_id' = ${install.id}`)
-				await tx
-					.update(workspaceSkills)
-					.set({ metadata: sql`${workspaceSkills.metadata} - 'installed_package_id'` })
-					.where(sql`${workspaceSkills.metadata}->>'installed_package_id' = ${install.id}`)
-				await tx
-					.update(integrations)
-					.set({ metadata: sql`${integrations.metadata} - 'installed_package_id'` })
-					.where(sql`${integrations.metadata}->>'installed_package_id' = ${install.id}`)
-			}
+			// Strip both `installed_package_id` (managed) and `forked_from_installed_package_id`
+			// (forked) from element metadata so elements become plain workspace resources.
+			// The WHERE covers both managed installs (which still have `installed_package_id`)
+			// and forked installs (which carry `forked_from_installed_package_id` instead).
+			await tx
+				.update(actors)
+				.set({
+					metadata: sql`${actors.metadata} - 'installed_package_id' - 'forked_from_installed_package_id'`,
+				})
+				.where(
+					sql`${actors.metadata}->>'installed_package_id' = ${install.id} OR ${actors.metadata}->>'forked_from_installed_package_id' = ${install.id}`,
+				)
+			await tx
+				.update(triggers)
+				.set({
+					metadata: sql`${triggers.metadata} - 'installed_package_id' - 'forked_from_installed_package_id'`,
+				})
+				.where(
+					sql`${triggers.metadata}->>'installed_package_id' = ${install.id} OR ${triggers.metadata}->>'forked_from_installed_package_id' = ${install.id}`,
+				)
+			await tx
+				.update(workspaceSkills)
+				.set({
+					metadata: sql`${workspaceSkills.metadata} - 'installed_package_id' - 'forked_from_installed_package_id'`,
+				})
+				.where(
+					sql`${workspaceSkills.metadata}->>'installed_package_id' = ${install.id} OR ${workspaceSkills.metadata}->>'forked_from_installed_package_id' = ${install.id}`,
+				)
+			await tx
+				.update(integrations)
+				.set({
+					metadata: sql`${integrations.metadata} - 'installed_package_id' - 'forked_from_installed_package_id'`,
+				})
+				.where(
+					sql`${integrations.metadata}->>'installed_package_id' = ${install.id} OR ${integrations.metadata}->>'forked_from_installed_package_id' = ${install.id}`,
+				)
 		} else {
 			// Cascade-delete all provisioned elements.
+			// Match by `installed_package_id` (managed) or `forked_from_installed_package_id` (forked)
+			// so both managed and forked removals work correctly.
+
 			// Delete non-actor elements by metadata first (triggers, skills, integrations).
 			const triggerRes = await tx
 				.delete(triggers)
-				.where(sql`${triggers.metadata}->>'installed_package_id' = ${install.id}`)
+				.where(
+					sql`${triggers.metadata}->>'installed_package_id' = ${install.id} OR ${triggers.metadata}->>'forked_from_installed_package_id' = ${install.id}`,
+				)
 				.returning({ id: triggers.id })
 
 			const skillRes = await tx
 				.delete(workspaceSkills)
-				.where(sql`${workspaceSkills.metadata}->>'installed_package_id' = ${install.id}`)
+				.where(
+					sql`${workspaceSkills.metadata}->>'installed_package_id' = ${install.id} OR ${workspaceSkills.metadata}->>'forked_from_installed_package_id' = ${install.id}`,
+				)
 				.returning({ id: workspaceSkills.id })
 
 			const integrationRes = await tx
 				.delete(integrations)
-				.where(sql`${integrations.metadata}->>'installed_package_id' = ${install.id}`)
+				.where(
+					sql`${integrations.metadata}->>'installed_package_id' = ${install.id} OR ${integrations.metadata}->>'forked_from_installed_package_id' = ${install.id}`,
+				)
 				.returning({ id: integrations.id })
 
 			// Find provisioned actor IDs.
 			const provisionedActorRows = await tx
 				.select({ id: actors.id })
 				.from(actors)
-				.where(sql`${actors.metadata}->>'installed_package_id' = ${install.id}`)
+				.where(
+					sql`${actors.metadata}->>'installed_package_id' = ${install.id} OR ${actors.metadata}->>'forked_from_installed_package_id' = ${install.id}`,
+				)
 
 			const actorIds = provisionedActorRows.map((r) => r.id)
 

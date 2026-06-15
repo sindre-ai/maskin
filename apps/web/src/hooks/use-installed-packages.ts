@@ -19,6 +19,8 @@ export function useInstallPackage(workspaceId: string) {
 		onSuccess: () => {
 			toast.success('Package installed')
 			queryClient.invalidateQueries({ queryKey: queryKeys.installedPackages.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
 		},
 	})
 }
@@ -31,8 +33,8 @@ export function useForkInstalledPackage(workspaceId: string) {
 		onSuccess: () => {
 			toast.success('Package forked')
 			queryClient.invalidateQueries({ queryKey: queryKeys.installedPackages.all(workspaceId) })
-			// Agent detail pages need to re-fetch so the managed lock state clears.
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
 		},
 	})
 }
@@ -50,9 +52,8 @@ export function useUninstallPackage(workspaceId: string) {
 		onSuccess: () => {
 			toast.success('Package removed')
 			queryClient.invalidateQueries({ queryKey: queryKeys.installedPackages.all(workspaceId) })
-			// Agents that were provisioned by the package may have been deleted or
-			// detached — invalidate the actors cache so lists and detail pages refresh.
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
 		},
 	})
 }

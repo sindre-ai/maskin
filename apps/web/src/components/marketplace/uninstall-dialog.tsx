@@ -40,48 +40,46 @@ export function UninstallDialog({
 		)
 	}
 
-	const hasComponents = isLocked
-
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>Remove {packageName}?</DialogTitle>
 					<DialogDescription>
-						{hasComponents
+						{isLocked
 							? 'This package has provisioned agents, triggers, and skills in your workspace.'
-							: 'This will remove the package tracking record from your workspace.'}
+							: 'This package has agents, triggers, and skills in your workspace.'}
 					</DialogDescription>
 				</DialogHeader>
 
-				{hasComponents && (
-					<RadioGroup
-						value={keepItems ? 'keep' : 'remove'}
-						onValueChange={(v) => setKeepItems(v === 'keep')}
-						className="space-y-3"
-					>
-						<div className="flex items-start gap-3">
-							<RadioGroupItem value="remove" id="remove-all" className="mt-0.5" />
-							<Label htmlFor="remove-all" className="cursor-pointer font-normal leading-snug">
-								<span className="font-medium">Remove everything</span>
-								<br />
-								<span className="text-xs text-muted-foreground">
-									Deletes all agents, triggers, and skills provisioned by this package.
-								</span>
-							</Label>
-						</div>
-						<div className="flex items-start gap-3">
-							<RadioGroupItem value="keep" id="keep-items" className="mt-0.5" />
-							<Label htmlFor="keep-items" className="cursor-pointer font-normal leading-snug">
-								<span className="font-medium">Keep agents, triggers, and skills</span>
-								<br />
-								<span className="text-xs text-muted-foreground">
-									Components stay in your workspace as regular (unmanaged) resources.
-								</span>
-							</Label>
-						</div>
-					</RadioGroup>
-				)}
+				<RadioGroup
+					value={keepItems ? 'keep' : 'remove'}
+					onValueChange={(v) => setKeepItems(v === 'keep')}
+					className="space-y-3"
+				>
+					<div className="flex items-start gap-3">
+						<RadioGroupItem value="remove" id="remove-all" className="mt-0.5" />
+						<Label htmlFor="remove-all" className="cursor-pointer font-normal leading-snug">
+							<span className="font-medium">Remove everything</span>
+							<br />
+							<span className="text-xs text-muted-foreground">
+								Deletes all agents, triggers, and skills from this package.
+							</span>
+						</Label>
+					</div>
+					<div className="flex items-start gap-3">
+						<RadioGroupItem value="keep" id="keep-items" className="mt-0.5" />
+						<Label htmlFor="keep-items" className="cursor-pointer font-normal leading-snug">
+							<span className="font-medium">Keep agents, triggers, and skills</span>
+							<br />
+							<span className="text-xs text-muted-foreground">
+								{isLocked
+									? 'Components stay in your workspace as regular (unmanaged) resources.'
+									: 'They remain in your workspace as regular resources.'}
+							</span>
+						</Label>
+					</div>
+				</RadioGroup>
 
 				<DialogFooter className="gap-2">
 					<Button
