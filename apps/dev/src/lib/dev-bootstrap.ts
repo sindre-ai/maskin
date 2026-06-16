@@ -7,13 +7,19 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import { SINDRE_DEFAULT } from '@maskin/shared'
+import {
+	CCD_ACTOR_CUSTOMER_CURATOR,
+	CCD_ACTOR_CUSTOMER_FEEDBACK,
+	CCD_ACTOR_INSIGHTS_TRIAGE,
+	CCD_ACTOR_PRODUCT_IDEATOR,
+	CCD_PACKAGE_DESCRIPTION,
+	CCD_PACKAGE_NAME,
+	CCD_PACKAGE_SLUG,
+	CCD_PACKAGE_USE_CASE,
+	CCD_PACKAGE_VERSION,
+	SINDRE_DEFAULT,
+} from '@maskin/shared'
 import { and, count, eq, isNotNull } from 'drizzle-orm'
-
-const CCD_ACTOR_CUSTOMER_FEEDBACK = '0e03b5fb-300a-4c46-97f4-3bbfbd1ba3d6'
-const CCD_ACTOR_INSIGHTS_TRIAGE = '99b416f2-a0c3-4ffb-8299-ff9d0e2be0e8'
-const CCD_ACTOR_PRODUCT_IDEATOR = '11cda8bc-1048-4139-8fa3-fa142dfcb397'
-const CCD_ACTOR_CUSTOMER_CURATOR = 'bc03c9ac-bc2c-401d-89e5-df5ce4714bcb'
 
 /**
  * Seeds the global catalog with the Customer Continuous Discovery package if
@@ -27,12 +33,11 @@ export async function seedCatalogIfEmpty(db: Database): Promise<void> {
 	const [pkg] = await db
 		.insert(catalogPackages)
 		.values({
-			slug: 'customer-continuous-discovery',
-			name: 'Customer Continuous Discovery',
-			description:
-				'Turns customer feedback into clustered insights, new bets, and replies back to the customer.',
-			version: '1.0.0',
-			useCase: 'Discovery',
+			slug: CCD_PACKAGE_SLUG,
+			name: CCD_PACKAGE_NAME,
+			description: CCD_PACKAGE_DESCRIPTION,
+			version: CCD_PACKAGE_VERSION,
+			useCase: CCD_PACKAGE_USE_CASE,
 		})
 		.returning()
 
@@ -124,6 +129,7 @@ export async function seedCatalogIfEmpty(db: Database): Promise<void> {
 			sourceItemId: 'f1d1c055-432f-462a-a177-f27ae7bc5c0e',
 			itemSnapshot: {
 				name: 'Bug Fix Merged → Reply in Slack',
+				description: 'Notifies customers via Slack when a bug they reported has shipped.',
 				type: 'event',
 				config: { entity_type: 'bet', action: 'status_changed', filter: { status: 'shipped' } },
 				actionPrompt:
@@ -138,6 +144,7 @@ export async function seedCatalogIfEmpty(db: Database): Promise<void> {
 			sourceItemId: '34fa2aa8-75c0-4919-9170-27fed672528e',
 			itemSnapshot: {
 				name: 'Deploy Confirmed → Customer Reply',
+				description: 'Sends personalised updates to customers when a related deploy goes live.',
 				type: 'event',
 				config: { entity_type: 'bet', action: 'status_changed', filter: { status: 'shipped' } },
 				actionPrompt:
@@ -152,6 +159,7 @@ export async function seedCatalogIfEmpty(db: Database): Promise<void> {
 			sourceItemId: 'f41f513a-5a58-4ab2-aab3-83e002f2c3b7',
 			itemSnapshot: {
 				name: 'Insight Created → Synthesizer Triage',
+				description: 'Runs triage on every new insight to update or create bets.',
 				type: 'event',
 				config: { entity_type: 'insight', action: 'created' },
 				actionPrompt:
@@ -166,6 +174,7 @@ export async function seedCatalogIfEmpty(db: Database): Promise<void> {
 			sourceItemId: 'a7470be0-05c7-46b9-a003-f48b43a1a6b4',
 			itemSnapshot: {
 				name: 'Insight Updated → Synthesizer Re-triage',
+				description: 'Re-evaluates bets whenever an existing insight changes.',
 				type: 'event',
 				config: { entity_type: 'insight', action: 'updated' },
 				actionPrompt:
@@ -180,6 +189,7 @@ export async function seedCatalogIfEmpty(db: Database): Promise<void> {
 			sourceItemId: 'd458e38d-d486-4da3-8c89-74f989b2f104',
 			itemSnapshot: {
 				name: 'Daily Synthesizer Sweep',
+				description: 'Clusters unprocessed insights and flags new patterns every morning.',
 				type: 'cron',
 				config: { cron: '0 8 * * *' },
 				actionPrompt:
@@ -194,6 +204,7 @@ export async function seedCatalogIfEmpty(db: Database): Promise<void> {
 			sourceItemId: 'b65382c4-0287-4aa8-a477-9a61296e5702',
 			itemSnapshot: {
 				name: 'Weekly Synthesizer Digest',
+				description: "Summarises the week's top insight themes and new bets every Monday.",
 				type: 'cron',
 				config: { cron: '0 9 * * 1' },
 				actionPrompt:
@@ -208,6 +219,7 @@ export async function seedCatalogIfEmpty(db: Database): Promise<void> {
 			sourceItemId: '28c063e2-4a39-4f5a-883d-5f5ef6a29a9e',
 			itemSnapshot: {
 				name: 'Daily Product Ideation — 3 Bet Candidates',
+				description: 'Proposes three new bet candidates from recent insights each morning.',
 				type: 'cron',
 				config: { cron: '0 10 * * *' },
 				actionPrompt:
@@ -222,6 +234,7 @@ export async function seedCatalogIfEmpty(db: Database): Promise<void> {
 			sourceItemId: '6bcede7c-2095-43b7-b9a1-82aeceab340f',
 			itemSnapshot: {
 				name: 'Insight Clustered → Update Customer',
+				description: "Lets customers know their feedback is being acted on when it's clustered.",
 				type: 'event',
 				config: {
 					entity_type: 'insight',
@@ -240,6 +253,8 @@ export async function seedCatalogIfEmpty(db: Database): Promise<void> {
 			sourceItemId: 'a8862b32-31c2-4714-8c47-34d61d73aee2',
 			itemSnapshot: {
 				name: 'Daily Customer Roster Sweep',
+				description:
+					'Closes the loop with customers whose feedback was resolved in the last 24 hours.',
 				type: 'cron',
 				config: { cron: '0 7 * * *' },
 				actionPrompt:

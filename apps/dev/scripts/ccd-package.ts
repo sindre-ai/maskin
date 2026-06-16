@@ -5,23 +5,33 @@
 // helper the script writes with.
 
 import type { actors, triggers } from '@maskin/db/schema'
+import {
+	CCD_ACTOR_CUSTOMER_CURATOR,
+	CCD_ACTOR_CUSTOMER_FEEDBACK,
+	CCD_ACTOR_INSIGHTS_TRIAGE,
+	CCD_ACTOR_PRODUCT_IDEATOR,
+	CCD_PACKAGE_DESCRIPTION,
+	CCD_PACKAGE_NAME,
+	CCD_PACKAGE_SLUG,
+	CCD_PACKAGE_USE_CASE,
+	CCD_PACKAGE_VERSION,
+} from '@maskin/shared'
 
 export const CCD_SOURCE_WORKSPACE_ID = 'fe944fe6-7b45-478c-afc7-b889cea63c08'
 
 export const CCD_PACKAGE = {
-	slug: 'customer-continuous-discovery',
-	name: 'Customer Continuous Discovery',
-	version: '1.0.0',
-	useCase: 'Discovery',
-	description:
-		'Turns customer feedback into clustered insights, new bets, and replies back to the customer.',
+	slug: CCD_PACKAGE_SLUG,
+	name: CCD_PACKAGE_NAME,
+	version: CCD_PACKAGE_VERSION,
+	useCase: CCD_PACKAGE_USE_CASE,
+	description: CCD_PACKAGE_DESCRIPTION,
 } as const
 
 export const CCD_ACTOR_IDS = [
-	'0e03b5fb-300a-4c46-97f4-3bbfbd1ba3d6', // Customer Feedback Agent
-	'99b416f2-a0c3-4ffb-8299-ff9d0e2be0e8', // Insights Triage Agent
-	'11cda8bc-1048-4139-8fa3-fa142dfcb397', // Product Ideator
-	'bc03c9ac-bc2c-401d-89e5-df5ce4714bcb', // Customer Curator
+	CCD_ACTOR_CUSTOMER_FEEDBACK, // Customer Feedback Agent
+	CCD_ACTOR_INSIGHTS_TRIAGE, // Insights Triage Agent
+	CCD_ACTOR_PRODUCT_IDEATOR, // Product Ideator
+	CCD_ACTOR_CUSTOMER_CURATOR, // Customer Curator
 ] as const
 
 export const CCD_TRIGGER_IDS = [

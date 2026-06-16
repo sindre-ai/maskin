@@ -43,10 +43,18 @@ export function rewriteWiring(
 	return walk(snapshot, sourceToLocal) as Record<string, unknown>
 }
 
+// Only UUID-format strings are candidates for intra-package ID rewriting.
+// This prevents systemPrompt / actionPrompt / config text from being silently
+// rewritten if it happens to contain a string that coincides with a source ID.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 function walk(value: unknown, sourceToLocal: Map<string, string>): unknown {
 	if (typeof value === 'string') {
-		const local = sourceToLocal.get(value)
-		return local ?? value
+		if (UUID_RE.test(value)) {
+			const local = sourceToLocal.get(value)
+			return local ?? value
+		}
+		return value
 	}
 	if (Array.isArray(value)) {
 		return value.map((v) => walk(v, sourceToLocal))
@@ -120,12 +128,18 @@ export function buildSkillInsert(
 	metadata: Record<string, unknown>,
 	createdBy: string | null,
 ): typeof workspaceSkills.$inferInsert {
+	const storageKey = (snapshot.storageKey as string) ?? (snapshot.storage_key as string) ?? null
+	if (!storageKey) {
+		throw new Error(
+			'Skill snapshot is missing a storageKey — cannot provision a skill without a valid S3 path',
+		)
+	}
 	return {
 		workspaceId,
 		name: (snapshot.name as string) ?? 'untitled-skill',
 		description: (snapshot.description as string) ?? null,
 		content: (snapshot.content as string) ?? '',
-		storageKey: (snapshot.storageKey as string) ?? (snapshot.storage_key as string) ?? '',
+		storageKey,
 		sizeBytes:
 			typeof snapshot.sizeBytes === 'number'
 				? snapshot.sizeBytes
