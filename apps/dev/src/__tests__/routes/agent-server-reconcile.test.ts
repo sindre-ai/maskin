@@ -18,7 +18,7 @@ function bodyWith(overrides: Partial<{ agent_server_id: string; sandboxes: strin
 
 describe('POST /api/internal/agent-servers/reconcile', () => {
 	beforeEach(() => {
-		vi.stubEnv('AGENT_SERVER_SHARED_SECRET', SECRET)
+		vi.stubEnv('AGENT_SERVER_SECRET', SECRET)
 	})
 
 	afterEach(() => {
@@ -89,8 +89,8 @@ describe('POST /api/internal/agent-servers/reconcile', () => {
 		expect(res.status).toBe(401)
 	})
 
-	it('returns 503 when AGENT_SERVER_SHARED_SECRET is not configured', async () => {
-		vi.stubEnv('AGENT_SERVER_SHARED_SECRET', '')
+	it('returns 503 when AGENT_SERVER_SECRET is not configured', async () => {
+		vi.stubEnv('AGENT_SERVER_SECRET', '')
 		const { app } = createTestApp(agentServerReconcileRoutes, '/api/internal/agent-servers')
 
 		const res = await app.request(

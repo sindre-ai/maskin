@@ -31,7 +31,7 @@ const reconcileRoute = createRoute({
 	tags: ['Internal'],
 	summary: 'Reconcile DB sessions against an agent-server sandbox snapshot',
 	description:
-		'Called by an agent-server on boot. The body lists every sandbox name the agent-server still has running. Any active session row whose containerId is not in that list is marked failed with reason `agent_server_lost`. The response includes orphan sandbox names the agent-server should `msb remove -f`. Authentication: `Authorization: Bearer <AGENT_SERVER_SHARED_SECRET>`.',
+		'Called by an agent-server on boot. The body lists every sandbox name the agent-server still has running. Any active session row whose containerId is not in that list is marked failed with reason `agent_server_lost`. The response includes orphan sandbox names the agent-server should `msb remove -f`. Authentication: `Authorization: Bearer <AGENT_SERVER_SECRET>`.',
 	request: {
 		body: {
 			content: {
@@ -55,17 +55,17 @@ const reconcileRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		503: {
-			description: 'Endpoint disabled — AGENT_SERVER_SHARED_SECRET not configured',
+			description: 'Endpoint disabled — AGENT_SERVER_SECRET not configured',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
 })
 
 app.openapi(reconcileRoute, async (c) => {
-	const expected = process.env.AGENT_SERVER_SHARED_SECRET
+	const expected = process.env.AGENT_SERVER_SECRET
 	if (!expected) {
 		logger.error(
-			'Agent-server reconcile called but AGENT_SERVER_SHARED_SECRET is not set — refusing',
+			'Agent-server reconcile called but AGENT_SERVER_SECRET is not set — refusing',
 		)
 		return c.json(
 			createApiError(ApiErrorCode.INTERNAL_ERROR, 'Agent-server reconcile endpoint not configured'),
@@ -139,7 +139,7 @@ const logIngestRoute = createRoute({
 })
 
 app.openapi(logIngestRoute, async (c) => {
-	const expected = process.env.AGENT_SERVER_SHARED_SECRET
+	const expected = process.env.AGENT_SERVER_SECRET
 	if (!expected) {
 		return c.json(
 			createApiError(ApiErrorCode.INTERNAL_ERROR, 'Agent-server endpoint not configured'),
@@ -197,7 +197,7 @@ const sessionCompleteRoute = createRoute({
 })
 
 app.openapi(sessionCompleteRoute, async (c) => {
-	const expected = process.env.AGENT_SERVER_SHARED_SECRET
+	const expected = process.env.AGENT_SERVER_SECRET
 	if (!expected) {
 		return c.json(
 			createApiError(ApiErrorCode.INTERNAL_ERROR, 'Agent-server endpoint not configured'),
