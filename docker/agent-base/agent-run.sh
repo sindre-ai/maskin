@@ -134,6 +134,27 @@ CREDS_EOF
 
 # Run the agent
 run_agent() {
+  # Pipe output to the agent-server's log ingest endpoint so the Maskin UI
+  # can show live logs. Bind mounts from the microVM to the host are not
+  # reliable in the current microsandbox version, so we stream over HTTP
+  # instead. Falls back to plain stdout if AGENT_SERVER_URL is unset.
+  local log_ingest_url=""
+  if [ -n "$AGENT_SERVER_URL" ] && [ -n "$SESSION_ID" ]; then
+    log_ingest_url="${AGENT_SERVER_URL}/sessions/${SESSION_ID}/logs/ingest"
+  fi
+
+  log_tee() {
+    if [ -n "$log_ingest_url" ]; then
+      tee >(curl -sN -X POST "$log_ingest_url" \
+        -H "Content-Type: text/plain" \
+        --data-binary @- \
+        -o /dev/null \
+        2>/dev/null)
+    else
+      cat
+    fi
+  }
+
   case "$RUNTIME" in
     claude-code)
       local max_turns="${MAX_TURNS:-5000}"
@@ -156,7 +177,7 @@ run_agent() {
             2>&1 \
             < <(curl -sN --no-buffer \
                 "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream") \
-            | tee /agent/session.log
+            | log_tee
         else
           # Local Docker path: stdin is attached by ContainerManager.attachStdin.
           claude -p \
@@ -165,7 +186,7 @@ run_agent() {
             --verbose \
             --dangerously-skip-permissions \
             "${mcp_args[@]}" \
-            2>&1 | tee /agent/session.log
+            2>&1 | log_tee
         fi
       else
         claude -p "$ACTION_PROMPT" \
@@ -175,7 +196,7 @@ run_agent() {
           --max-turns "$max_turns" \
           --dangerously-skip-permissions \
           "${mcp_args[@]}" \
-          2>&1 | tee /agent/session.log
+          2>&1 | log_tee
       fi
       ;;
     codex)
@@ -183,7 +204,7 @@ run_agent() {
       codex \
         --approval-mode "$approval_mode" \
         --prompt "$ACTION_PROMPT" \
-        2>&1 | tee /agent/session.log
+        2>&1 | log_tee
       ;;
     custom)
       if [ -z "$CUSTOM_COMMAND" ]; then
@@ -202,7 +223,7 @@ run_agent() {
         echo "[error] CUSTOM_COMMAND is empty after tokenization" >&2
         exit 1
       fi
-      "${custom_argv[@]}" 2>&1 | tee /agent/session.log
+      "${custom_argv[@]}" 2>&1 | log_tee
       ;;
   esac
 }
