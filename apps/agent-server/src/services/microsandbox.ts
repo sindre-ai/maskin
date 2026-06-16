@@ -351,7 +351,7 @@ export function streamMsbLogs(
 ): Promise<void> {
 	assertValidSessionId(sessionId)
 	return new Promise((resolve, reject) => {
-		const proc = spawn(msbBin, ['logs', '-f', sessionId], { signal })
+		const proc = spawn(msbBin, ['logs', '-f', '--source', 'all', sessionId], { signal })
 
 		const readLines = (data: Buffer, stream: 'stdout' | 'stderr', buf: { val: string }): void => {
 			buf.val += data.toString('utf8')
