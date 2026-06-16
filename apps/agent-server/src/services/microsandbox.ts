@@ -350,10 +350,61 @@ export async function waitForCompletion(
 }
 
 /**
+ * Stream session output from the log file written by agent-run.sh.
+ * agent-run.sh tees all claude/codex output to /agent/session.log inside the
+ * VM, which maps to <sessionDir>/session.log on the host via the bind mount.
+ * Uses `tail -F` so it tolerates the file not yet existing at call time (the
+ * VM may still be booting). Resolves when `signal` is aborted. Rejects only
+ * if `tail` cannot be spawned.
+ */
+export function streamSessionLogFile(
+	logPath: string,
+	onLine: (stream: 'stdout' | 'stderr', line: string) => void,
+	signal?: AbortSignal,
+): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const proc = spawn('tail', ['-F', '-n', '+1', logPath], { signal })
+
+		const readLines = (data: Buffer, buf: { val: string }): void => {
+			buf.val += data.toString('utf8')
+			for (;;) {
+				const nl = buf.val.indexOf('\n')
+				if (nl === -1) break
+				const line = buf.val.slice(0, nl + 1)
+				buf.val = buf.val.slice(nl + 1)
+				if (line.trimEnd()) onLine('stdout', line)
+			}
+		}
+
+		const stdoutBuf = { val: '' }
+
+		proc.stdout.on('data', (chunk: Buffer) => readLines(chunk, stdoutBuf))
+		proc.stderr.on('data', () => {}) // tail's "file not found" warnings are noise
+
+		proc.on('error', (err) => {
+			if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR') {
+				resolve()
+			} else {
+				reject(err)
+			}
+		})
+
+		proc.on('close', () => {
+			if (stdoutBuf.val.trimEnd()) onLine('stdout', stdoutBuf.val)
+			resolve()
+		})
+	})
+}
+
+/**
  * Stream stdout/stderr from a running microsandbox VM via `msb logs -f`.
  * Calls `onLine` for each newline-delimited output line. Resolves when the
  * process exits or `signal` is aborted. Rejects if the process cannot be
  * spawned (e.g. `msb` not found) — callers should catch and log.
+ *
+ * NOTE: microsandbox VMs run in PTY mode so application stdout goes through
+ * the PTY, not the log buffer. This function only captures system/relay
+ * messages. Use streamSessionLogFile() for actual session output.
  */
 export function streamMsbLogs(
 	msbBin: string,

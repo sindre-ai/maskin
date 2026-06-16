@@ -15,7 +15,7 @@ import {
 	defaultRunner,
 	readMsbVersion,
 	spawnSession,
-	streamMsbLogs,
+	streamSessionLogFile,
 	waitForCompletion,
 } from './services/microsandbox'
 import {
@@ -107,11 +107,10 @@ async function monitorSession(
 	const abortCtrl = new AbortController()
 
 	const logStreamPromise = maskinBaseUrl
-		? streamMsbLogs(
-				msb.msbBin,
-				sessionId,
-				(stream, line) => {
-					logBuffer.push({ stream, content: line })
+		? streamSessionLogFile(
+				join(sessionDir, 'session.log'),
+				(_stream, line) => {
+					logBuffer.push({ stream: 'stdout', content: line })
 					if (logBuffer.length >= LOG_FLUSH_MAX_LINES) {
 						void flushLogs()
 					} else {
@@ -120,7 +119,7 @@ async function monitorSession(
 				},
 				abortCtrl.signal,
 			).catch((err) => {
-				logger.warn('msb log stream failed — logs will not appear in UI', {
+				logger.warn('session log file stream failed — logs will not appear in UI', {
 					sessionId,
 					error: String(err),
 				})

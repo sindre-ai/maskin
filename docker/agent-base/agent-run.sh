@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
 # Source overflow env vars (values >1500 chars spilled here by the agent-server)
 if [ -f /agent/.env-overflow.sh ]; then
@@ -147,7 +147,7 @@ run_agent() {
           # curl holds a long-lived HTTP connection; process substitution pipes
           # its output into claude's stdin so each newline-delimited JSON message
           # is delivered as a user turn without needing Docker stdin attach.
-          exec claude -p \
+          claude -p \
             --input-format stream-json \
             --output-format stream-json \
             --verbose \
@@ -155,33 +155,35 @@ run_agent() {
             "${mcp_args[@]}" \
             2>&1 \
             < <(curl -sN --no-buffer \
-                "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream")
+                "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream") \
+            | tee /agent/session.log
         else
           # Local Docker path: stdin is attached by ContainerManager.attachStdin.
-          exec claude -p \
+          claude -p \
             --input-format stream-json \
             --output-format stream-json \
             --verbose \
             --dangerously-skip-permissions \
             "${mcp_args[@]}" \
-            2>&1
+            2>&1 | tee /agent/session.log
         fi
+      else
+        claude -p "$ACTION_PROMPT" \
+          --print \
+          --verbose \
+          --output-format stream-json \
+          --max-turns "$max_turns" \
+          --dangerously-skip-permissions \
+          "${mcp_args[@]}" \
+          2>&1 | tee /agent/session.log
       fi
-      exec claude -p "$ACTION_PROMPT" \
-        --print \
-        --verbose \
-        --output-format stream-json \
-        --max-turns "$max_turns" \
-        --dangerously-skip-permissions \
-        "${mcp_args[@]}" \
-        2>&1
       ;;
     codex)
       local approval_mode="${CODEX_APPROVAL_MODE:-full-auto}"
-      exec codex \
+      codex \
         --approval-mode "$approval_mode" \
         --prompt "$ACTION_PROMPT" \
-        2>&1
+        2>&1 | tee /agent/session.log
       ;;
     custom)
       if [ -z "$CUSTOM_COMMAND" ]; then
@@ -200,7 +202,7 @@ run_agent() {
         echo "[error] CUSTOM_COMMAND is empty after tokenization" >&2
         exit 1
       fi
-      exec "${custom_argv[@]}" 2>&1
+      "${custom_argv[@]}" 2>&1 | tee /agent/session.log
       ;;
   esac
 }
