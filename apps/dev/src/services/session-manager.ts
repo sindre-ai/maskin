@@ -2078,6 +2078,121 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
+	/**
+	 * Append log lines received from a remote agent-server and emit them on the
+	 * in-process bus so SSE /logs/stream clients see them in real time.
+	 */
+	async appendRemoteSessionLogs(
+		sessionId: string,
+		lines: Array<{ stream: 'stdout' | 'stderr' | 'system'; content: string }>,
+	): Promise<void> {
+		for (const line of lines) {
+			const [log] = await this.db
+				.insert(sessionLogs)
+				.values({ sessionId, stream: line.stream, content: line.content })
+				.returning()
+			if (log) {
+				this.emit('log', {
+					sessionId,
+					logId: log.id,
+					stream: line.stream,
+					data: line.content,
+				} satisfies SessionLogEvent)
+			}
+		}
+	}
+
+	/**
+	 * Mark a remote agent-server session as completed or failed. Mirrors the
+	 * relevant parts of `handleCompletion` but skips local Docker cleanup (the
+	 * agent-server owns the sandbox lifecycle; the workspace is already in S3).
+	 */
+	async markRemoteSessionComplete(sessionId: string, exitCode: number | null): Promise<void> {
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		if (!session) return
+		if (['completed', 'failed', 'timeout', 'paused', 'snapshotting'].includes(session.status))
+			return
+
+		const status = exitCode === 0 ? 'completed' : 'failed'
+
+		try {
+			await this.db
+				.update(sessions)
+				.set({
+					status,
+					result: { exit_code: exitCode },
+					completedAt: new Date(),
+					updatedAt: new Date(),
+					currentActivity: null,
+				})
+				.where(eq(sessions.id, sessionId))
+		} catch (err) {
+			logger.error('Failed to update remote session status', {
+				sessionId,
+				status,
+				error: String(err),
+			})
+		}
+
+		try {
+			if (!(await this.hasOtherActiveSessions(session.actorId, sessionId))) {
+				await this.db
+					.update(actors)
+					.set({
+						agentState: status === 'completed' ? 'idle' : 'failed',
+						agentStateUpdatedAt: new Date(),
+						updatedAt: new Date(),
+					})
+					.where(eq(actors.id, session.actorId))
+			}
+		} catch (err) {
+			logger.warn('Failed to sync agentState for remote session', { sessionId, error: String(err) })
+		}
+
+		try {
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: `session_${status}`,
+				entityType: 'session',
+				entityId: sessionId,
+				data: { exit_code: exitCode },
+			})
+		} catch (err) {
+			logger.error('Failed to insert remote session completion event', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
+		// Terminal system log is required for SSE /logs/stream clients to close.
+		await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`).catch(
+			(err) => {
+				logger.error('Failed to write terminal system log for remote session', {
+					sessionId,
+					error: String(err),
+				})
+				this.emit('log', {
+					sessionId,
+					logId: -Date.now(),
+					stream: 'system',
+					data: `Session ${status} with exit code ${exitCode}`,
+				})
+			},
+		)
+
+		await this.clearActiveSession(sessionId)
+		await this.drainQueue(session.workspaceId).catch((err) =>
+			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
+		)
+
+		logger.info(`Remote session ${status}: ${sessionId}`, { exitCode })
+	}
+
 	/** Clear activeSessionId on any object linked to this session. */
 	private async clearActiveSession(sessionId: string): Promise<void> {
 		await this.db

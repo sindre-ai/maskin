@@ -15,6 +15,7 @@ import {
 	defaultRunner,
 	readMsbVersion,
 	spawnSession,
+	streamMsbLogs,
 	waitForCompletion,
 } from './services/microsandbox'
 import {
@@ -50,21 +51,110 @@ export type AppDeps = {
 	warmer?: ImageWarmer | null
 }
 
+const LOG_FLUSH_INTERVAL_MS = 2_000
+const LOG_FLUSH_MAX_LINES = 100
+
 /**
  * Background task that runs after a session's microVM is confirmed Running.
- * Waits for the sandbox to exit, pushes the workspace to S3 (so the agent's
- * learnings and memory survive), then deletes the host-side session dir so
- * disk space doesn't accumulate across sessions.
+ * Streams logs back to the Maskin backend (when MASKIN_BASE_URL is set),
+ * waits for the sandbox to exit, pushes the workspace to S3, reports
+ * completion to the backend, then cleans up the host-side session dir.
  */
 async function monitorSession(
 	sessionId: string,
 	sessionDir: string,
 	storage: StorageProvider | null,
 	msb: MicrosandboxDeps,
+	maskinBaseUrl?: string,
+	agentServerSecret?: string,
 ): Promise<void> {
 	const run = msb.run ?? defaultRunner()
 	const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+	// Log streaming: buffer lines and POST them to the Maskin backend in batches.
+	// Best-effort — if msb logs fails or the POST fails, sessions still complete.
+	let logBuffer: Array<{ stream: 'stdout' | 'stderr'; content: string }> = []
+	let flushTimer: NodeJS.Timeout | null = null
+
+	const flushLogs = async (): Promise<void> => {
+		if (!maskinBaseUrl || logBuffer.length === 0) {
+			logBuffer = []
+			return
+		}
+		const batch = logBuffer.splice(0)
+		try {
+			await fetch(`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/logs`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${agentServerSecret}`,
+				},
+				body: JSON.stringify({ logs: batch }),
+			})
+		} catch (err) {
+			logger.warn('failed to POST logs to Maskin', { sessionId, error: String(err) })
+		}
+	}
+
+	const scheduleFlush = (): void => {
+		if (flushTimer) return
+		flushTimer = setTimeout(() => {
+			flushTimer = null
+			void flushLogs()
+		}, LOG_FLUSH_INTERVAL_MS)
+	}
+
+	const abortCtrl = new AbortController()
+
+	const logStreamPromise = maskinBaseUrl
+		? streamMsbLogs(
+				msb.msbBin,
+				sessionId,
+				(stream, line) => {
+					logBuffer.push({ stream, content: line })
+					if (logBuffer.length >= LOG_FLUSH_MAX_LINES) {
+						void flushLogs()
+					} else {
+						scheduleFlush()
+					}
+				},
+				abortCtrl.signal,
+			).catch((err) => {
+				logger.warn('msb log stream failed — logs will not appear in UI', {
+					sessionId,
+					error: String(err),
+				})
+			})
+		: Promise.resolve()
+
 	await waitForCompletion(msb.msbBin, sessionId, { run, sleep, now: Date.now })
+
+	abortCtrl.abort()
+	if (flushTimer) {
+		clearTimeout(flushTimer)
+		flushTimer = null
+	}
+	await logStreamPromise
+	await flushLogs()
+
+	if (maskinBaseUrl) {
+		try {
+			await fetch(`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/complete`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${agentServerSecret}`,
+				},
+				body: JSON.stringify({ exitCode: 0 }),
+			})
+			logger.info('session completion reported to Maskin', { sessionId })
+		} catch (err) {
+			logger.error('failed to report session completion to Maskin', {
+				sessionId,
+				error: String(err),
+			})
+		}
+	}
 
 	if (storage) {
 		try {
@@ -191,9 +281,16 @@ export function buildApp(deps: AppDeps): Hono {
 				envSanitized: result.envSanitized,
 			})
 
-			// Background: wait for VM exit → push workspace to S3 → delete local dir
-			// → drain the input queue so pending messages don't accumulate in memory.
-			void monitorSession(body.sessionId, sessionDir, deps.storage, deps.msb).finally(() => {
+			// Background: wait for VM exit → stream logs → report completion →
+			// push workspace to S3 → delete local dir → drain input queue.
+			void monitorSession(
+				body.sessionId,
+				sessionDir,
+				deps.storage,
+				deps.msb,
+				deps.env.MASKIN_BASE_URL,
+				deps.env.AGENT_SERVER_SECRET,
+			).finally(() => {
 				inputQueue.drainSession(body.sessionId)
 			})
 
