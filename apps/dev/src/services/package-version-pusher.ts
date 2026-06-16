@@ -1,16 +1,27 @@
 import type { Database } from '@maskin/db'
 import {
 	actors,
+	agentFiles,
 	catalogPackageItems,
 	catalogPackages,
+	events,
+	files,
+	imports,
 	installedPackages,
 	integrations,
 	notifications,
+	objects,
+	readState,
+	relationships,
+	sessionLogs,
+	sessions,
+	subscriptions,
 	triggers,
 	workspaceMembers,
 	workspaceSkills,
+	workspaces,
 } from '@maskin/db/schema'
-import { and, eq, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, ne, or, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import {
 	buildActorInsert,
@@ -193,11 +204,15 @@ export class PackageVersionPusher {
 		}
 
 		// The cron has no request actor, so provisioned rows are attributed to a
-		// workspace actor (system actor if present, else any member). Only resolved
-		// when there's actually an add to make — updates and removes don't need it.
-		// Triggers and integrations have a NOT NULL `created_by` FK, so an add of
-		// either with no resolvable actor is a hard error rather than a bad insert.
-		const needsCreatedBy = catalogItems.some((item) => !installedBySourceId.has(item.sourceItemId))
+		// workspace actor (system actor if present, else any member). Resolved
+		// when there are adds (triggers/integrations require a NOT NULL created_by)
+		// or actor removes (cascade reassigns FK references on objects/files/etc.).
+		const hasActorRemoves = installed.some(
+			(row) =>
+				row.type === 'actor' && !(row.sourceItemId && catalogBySourceId.has(row.sourceItemId)),
+		)
+		const needsCreatedBy =
+			hasActorRemoves || catalogItems.some((item) => !installedBySourceId.has(item.sourceItemId))
 		const createdBy = needsCreatedBy ? await this.resolveWorkspaceActor(install.workspaceId) : null
 
 		let adds = 0
@@ -310,11 +325,14 @@ export class PackageVersionPusher {
 			}
 
 			// Removes — installed elements whose source_item_id is no longer in catalog.
+			// Collect actor IDs so they can be cascade-deleted as a batch after the
+			// non-actor items are gone; a bare DELETE actors would violate FK constraints.
+			const removedActorIds: string[] = []
 			for (const row of installed) {
 				if (row.sourceItemId && catalogBySourceId.has(row.sourceItemId)) continue
 				switch (row.type) {
 					case 'actor':
-						await tx.delete(actors).where(eq(actors.id, row.id))
+						removedActorIds.push(row.id)
 						break
 					case 'trigger':
 						await tx.delete(triggers).where(eq(triggers.id, row.id))
@@ -327,6 +345,85 @@ export class PackageVersionPusher {
 						break
 				}
 				removes++
+			}
+
+			if (removedActorIds.length > 0) {
+				// Delete triggers targeting or created by removed actors. This covers both
+				// catalog-managed triggers that reference a removed actor AND any
+				// user-created triggers pointing at the same agent.
+				await tx
+					.delete(triggers)
+					.where(
+						or(
+							inArray(triggers.targetActorId, removedActorIds),
+							inArray(triggers.createdBy, removedActorIds),
+						),
+					)
+
+				// Full cascade mirroring the uninstall route — must stay in sync.
+				const actorSessions = await tx
+					.select({ id: sessions.id })
+					.from(sessions)
+					.where(inArray(sessions.actorId, removedActorIds))
+				const sessionIds = actorSessions.map((s) => s.id)
+				if (sessionIds.length > 0) {
+					await tx.delete(sessionLogs).where(inArray(sessionLogs.sessionId, sessionIds))
+				}
+				await tx.delete(sessions).where(inArray(sessions.actorId, removedActorIds))
+				if (createdBy) {
+					await tx
+						.update(sessions)
+						.set({ createdBy })
+						.where(inArray(sessions.createdBy, removedActorIds))
+				}
+				await tx.delete(agentFiles).where(inArray(agentFiles.actorId, removedActorIds))
+				await tx
+					.delete(notifications)
+					.where(
+						or(
+							inArray(notifications.sourceActorId, removedActorIds),
+							inArray(notifications.targetActorId, removedActorIds),
+						),
+					)
+				await tx.delete(events).where(inArray(events.actorId, removedActorIds))
+				await tx.delete(relationships).where(inArray(relationships.createdBy, removedActorIds))
+				await tx.delete(subscriptions).where(inArray(subscriptions.actorId, removedActorIds))
+				await tx.delete(readState).where(inArray(readState.actorId, removedActorIds))
+				await tx
+					.update(objects)
+					.set({ driver: null })
+					.where(inArray(objects.driver, removedActorIds))
+				if (createdBy) {
+					await tx
+						.update(objects)
+						.set({ createdBy })
+						.where(inArray(objects.createdBy, removedActorIds))
+					await tx
+						.update(files)
+						.set({ createdBy })
+						.where(inArray(files.createdBy, removedActorIds))
+					await tx
+						.update(imports)
+						.set({ createdBy })
+						.where(inArray(imports.createdBy, removedActorIds))
+					await tx
+						.update(integrations)
+						.set({ createdBy })
+						.where(inArray(integrations.createdBy, removedActorIds))
+				}
+				await tx
+					.update(workspaceSkills)
+					.set({ createdBy: null })
+					.where(inArray(workspaceSkills.createdBy, removedActorIds))
+				await tx
+					.update(workspaces)
+					.set({ createdBy: null })
+					.where(inArray(workspaces.createdBy, removedActorIds))
+				for (const aid of removedActorIds) {
+					await tx.update(actors).set({ createdBy: null }).where(eq(actors.createdBy, aid))
+				}
+				await tx.delete(workspaceMembers).where(inArray(workspaceMembers.actorId, removedActorIds))
+				await tx.delete(actors).where(inArray(actors.id, removedActorIds))
 			}
 
 			await tx

@@ -763,6 +763,19 @@ app.openapi(uninstallPackageRoute, async (c) => {
 			const actorIds = provisionedActorRows.map((r) => r.id)
 
 			if (actorIds.length > 0) {
+				// Delete triggers that target or were created by provisioned actors.
+				// The metadata-based delete above only removed catalog-managed triggers;
+				// user-created triggers pointing at the same agents must also go before
+				// the actors are deleted or we risk an FK violation.
+				await tx
+					.delete(triggers)
+					.where(
+						or(
+							inArray(triggers.targetActorId, actorIds),
+							inArray(triggers.createdBy, actorIds),
+						),
+					)
+
 				// Delete session logs for sessions owned by provisioned actors.
 				const actorSessions = await tx
 					.select({ id: sessions.id })
