@@ -64,9 +64,7 @@ const reconcileRoute = createRoute({
 app.openapi(reconcileRoute, async (c) => {
 	const expected = process.env.AGENT_SERVER_SECRET
 	if (!expected) {
-		logger.error(
-			'Agent-server reconcile called but AGENT_SERVER_SECRET is not set — refusing',
-		)
+		logger.error('Agent-server reconcile called but AGENT_SERVER_SECRET is not set — refusing')
 		return c.json(
 			createApiError(ApiErrorCode.INTERNAL_ERROR, 'Agent-server reconcile endpoint not configured'),
 			503,

@@ -15,7 +15,6 @@ import {
 	defaultRunner,
 	readMsbVersion,
 	spawnSession,
-	streamSessionLogFile,
 	waitForCompletion,
 } from './services/microsandbox'
 import {
@@ -59,6 +58,10 @@ const LOG_FLUSH_MAX_LINES = 100
  * Streams logs back to the Maskin backend (when MASKIN_BASE_URL is set),
  * waits for the sandbox to exit, pushes the workspace to S3, reports
  * completion to the backend, then cleans up the host-side session dir.
+ *
+ * Log lines arrive via the /sessions/:id/logs/ingest HTTP endpoint that
+ * agent-run.sh pipes into via curl. The `sessionLogRouters` map connects
+ * that endpoint to this function's log buffer.
  */
 async function monitorSession(
 	sessionId: string,
@@ -67,12 +70,13 @@ async function monitorSession(
 	msb: MicrosandboxDeps,
 	maskinBaseUrl?: string,
 	agentServerSecret?: string,
+	sessionLogRouters?: Map<string, (line: string) => void>,
 ): Promise<void> {
 	const run = msb.run ?? defaultRunner()
 	const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 	// Log streaming: buffer lines and POST them to the Maskin backend in batches.
-	// Best-effort — if msb logs fails or the POST fails, sessions still complete.
+	// Best-effort — if the POST fails, sessions still complete.
 	let logBuffer: Array<{ stream: 'stdout' | 'stderr'; content: string }> = []
 	let flushTimer: NodeJS.Timeout | null = null
 
@@ -104,36 +108,27 @@ async function monitorSession(
 		}, LOG_FLUSH_INTERVAL_MS)
 	}
 
-	const abortCtrl = new AbortController()
-
-	const logStreamPromise = maskinBaseUrl
-		? streamSessionLogFile(
-				join(sessionDir, 'session.log'),
-				(_stream, line) => {
-					logBuffer.push({ stream: 'stdout', content: line })
-					if (logBuffer.length >= LOG_FLUSH_MAX_LINES) {
-						void flushLogs()
-					} else {
-						scheduleFlush()
-					}
-				},
-				abortCtrl.signal,
-			).catch((err) => {
-				logger.warn('session log file stream failed — logs will not appear in UI', {
-					sessionId,
-					error: String(err),
-				})
-			})
-		: Promise.resolve()
+	// Register a push function so the /sessions/:id/logs/ingest endpoint can
+	// deliver lines into this session's log buffer.
+	if (sessionLogRouters && maskinBaseUrl) {
+		sessionLogRouters.set(sessionId, (line: string) => {
+			logBuffer.push({ stream: 'stdout', content: line })
+			if (logBuffer.length >= LOG_FLUSH_MAX_LINES) {
+				void flushLogs()
+			} else {
+				scheduleFlush()
+			}
+		})
+	}
 
 	await waitForCompletion(msb.msbBin, sessionId, { run, sleep, now: Date.now })
 
-	abortCtrl.abort()
+	// Unregister before flushing so no new lines arrive mid-flush.
+	sessionLogRouters?.delete(sessionId)
 	if (flushTimer) {
 		clearTimeout(flushTimer)
 		flushTimer = null
 	}
-	await logStreamPromise
 	await flushLogs()
 
 	if (maskinBaseUrl) {
@@ -175,6 +170,8 @@ async function monitorSession(
 export function buildApp(deps: AppDeps): Hono {
 	const app = new Hono()
 	const inputQueue = new InputQueue()
+	// Connects the /sessions/:id/logs/ingest endpoint to monitorSession's buffer.
+	const sessionLogRouters = new Map<string, (line: string) => void>()
 
 	app.get('/health', async (c) => {
 		// `ok` must track msb liveness — a box whose `msb` is missing or broken
@@ -192,11 +189,75 @@ export function buildApp(deps: AppDeps): Hono {
 		)
 	})
 
-	// `/health` is the only unauthenticated route — HOST_SETUP.md §9 probes it
-	// without a secret. Every other route under `/sessions` requires the shared
-	// bearer token. Mount the middleware on both the collection path and the
-	// sub-paths so future per-session routes (T3 stop/snapshot/restore) inherit
-	// the gate at the mount point without re-implementing the check.
+	// VM-facing endpoints — registered BEFORE requireBearer so microsandbox VMs
+	// (which hold no AGENT_SERVER_SECRET) can reach them. Security relies on the
+	// 122-bit session ID entropy and host-loopback reachability.
+
+	// GET /sessions/:id/input/stream — VM polls here to receive newline-delimited
+	// JSON user turns for interactive sessions.
+	app.get('/sessions/:id/input/stream', async (c) => {
+		const { id } = c.req.param()
+		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+		return stream(c, async (s) => {
+			let resolveStream!: () => void
+			const done = new Promise<void>((resolve) => {
+				resolveStream = resolve
+			})
+			const unregister = await inputQueue.registerStream(id, async (line) => {
+				try {
+					await s.write(line)
+					return true
+				} catch {
+					resolveStream()
+					return false
+				}
+			})
+			c.req.raw.signal.addEventListener('abort', () => {
+				unregister()
+				resolveStream()
+			})
+			await done
+			unregister()
+		})
+	})
+
+	// POST /sessions/:id/logs/ingest — agent-run.sh pipes all output here via
+	// `tee >(curl -sN -X POST ...)`. Streams the request body line-by-line into
+	// the session's log buffer so monitorSession can forward to the Maskin backend.
+	app.post('/sessions/:id/logs/ingest', async (c) => {
+		const { id } = c.req.param()
+		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+
+		const push = sessionLogRouters.get(id)
+		const rawBody = c.req.raw.body
+		if (!rawBody) return c.json({ ok: true })
+
+		const handleLine = push ?? ((_line: string) => {}) // drain body even if not monitored
+		const decoder = new TextDecoder()
+		let buf = ''
+		const reader = rawBody.getReader()
+		try {
+			for (;;) {
+				const { done, value } = await reader.read()
+				if (done) break
+				buf += decoder.decode(value as Uint8Array, { stream: true })
+				let nl = buf.indexOf('\n')
+				while (nl !== -1) {
+					const line = buf.slice(0, nl + 1)
+					buf = buf.slice(nl + 1)
+					if (line.trimEnd()) handleLine(line)
+					nl = buf.indexOf('\n')
+				}
+			}
+			const remaining = buf + decoder.decode()
+			if (remaining.trimEnd()) handleLine(remaining)
+		} catch {
+			// Connection closed early — that's fine, we have what we got
+		}
+		return c.json({ ok: true })
+	})
+
+	// All other /sessions routes require the shared bearer token.
 	const requireBearer = bearerAuth({ expectedSecret: deps.env.AGENT_SERVER_SECRET })
 	app.use('/sessions', requireBearer)
 	app.use('/sessions/*', requireBearer)
@@ -280,7 +341,7 @@ export function buildApp(deps: AppDeps): Hono {
 				envSanitized: result.envSanitized,
 			})
 
-			// Background: wait for VM exit → stream logs → report completion →
+			// Background: wait for VM exit → flush logs → report completion →
 			// push workspace to S3 → delete local dir → drain input queue.
 			void monitorSession(
 				body.sessionId,
@@ -289,6 +350,7 @@ export function buildApp(deps: AppDeps): Hono {
 				deps.msb,
 				deps.env.MASKIN_BASE_URL,
 				deps.env.AGENT_SERVER_SECRET,
+				sessionLogRouters,
 			).finally(() => {
 				inputQueue.drainSession(body.sessionId)
 			})
@@ -334,37 +396,6 @@ export function buildApp(deps: AppDeps): Hono {
 		}
 		await inputQueue.enqueue(id, `${JSON.stringify(payload)}\n`)
 		return c.json({ ok: true })
-	})
-
-	// GET /sessions/:id/input/stream — the VM's agent-run.sh curl connects here on
-	// boot and holds the connection open to receive newline-delimited JSON user turns.
-	// Auth: the session ID itself is 122-bit entropy and the endpoint is only
-	// reachable via the host loopback from inside a microsandbox VM, so no separate
-	// bearer token is required here.
-	app.get('/sessions/:id/input/stream', async (c) => {
-		const { id } = c.req.param()
-		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
-		return stream(c, async (s) => {
-			let resolveStream!: () => void
-			const done = new Promise<void>((resolve) => {
-				resolveStream = resolve
-			})
-			const unregister = await inputQueue.registerStream(id, async (line) => {
-				try {
-					await s.write(line)
-					return true
-				} catch {
-					resolveStream()
-					return false
-				}
-			})
-			c.req.raw.signal.addEventListener('abort', () => {
-				unregister()
-				resolveStream()
-			})
-			await done
-			unregister()
-		})
 	})
 
 	return app
