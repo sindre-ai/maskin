@@ -68,6 +68,7 @@ export type SpawnSessionInput = {
 	publicHost?: string
 	sessionDir: string
 	pullPolicy?: PullPolicy
+	maxDuration?: string
 }
 
 export type SpawnSessionResult = {
@@ -148,6 +149,7 @@ export function buildMsbCreateArgs(input: {
 	env: Record<string, string>
 	sessionDir: string
 	pullPolicy?: PullPolicy
+	maxDuration?: string
 }): string[] {
 	const args: string[] = [
 		'create',
@@ -172,6 +174,12 @@ export function buildMsbCreateArgs(input: {
 		'-v',
 		`${input.sessionDir}:${SESSION_GUEST_PATH}`,
 	]
+	// Backstop only: a `create`d microVM is persistent and won't power off when its
+	// entrypoint exits, so without a cap a wedged/crashed session sits "running"
+	// forever. The normal teardown is the /sessions/:id/complete signal (see index.ts).
+	if (input.maxDuration && input.maxDuration !== '0') {
+		args.push('--max-duration', input.maxDuration)
+	}
 	for (const [key, value] of Object.entries(input.env)) {
 		args.push('-e', `${key}=${value}`)
 	}
@@ -241,6 +249,7 @@ export async function spawnSession(
 		env: inline,
 		sessionDir: input.sessionDir,
 		...(input.pullPolicy !== undefined && { pullPolicy: input.pullPolicy }),
+		...(input.maxDuration !== undefined && { maxDuration: input.maxDuration }),
 	})
 
 	logger.info('msb create starting', { sessionId: input.sessionId, image: input.image })
@@ -453,6 +462,20 @@ export async function removeSandbox(name: string, deps: MicrosandboxDeps): Promi
 	assertValidSessionId(name)
 	const run = deps.run ?? defaultRunner()
 	await run(deps.msbBin, ['remove', '-f', '--quiet', name], { timeoutMs: 15_000 })
+}
+
+/**
+ * Gracefully stop a sandbox (`msb stop`, SIGTERM + grace) so the bind-mounted
+ * /agent workspace is flushed to the host before it is pushed to S3 — a force
+ * `remove -f` can skip that flush. Used by the VM-facing /sessions/:id/complete
+ * signal: a `create`d microVM is persistent and does NOT power off when
+ * agent-run.sh exits, so we stop it explicitly. Idempotent enough for retries —
+ * stopping an already-stopped/absent sandbox is a no-op error the caller swallows.
+ */
+export async function stopSandbox(name: string, deps: MicrosandboxDeps): Promise<void> {
+	assertValidSessionId(name)
+	const run = deps.run ?? defaultRunner()
+	await run(deps.msbBin, ['stop', name], { timeoutMs: 20_000 })
 }
 
 export async function readMsbVersion(deps: { msbBin: string; run?: CommandRunner }): Promise<

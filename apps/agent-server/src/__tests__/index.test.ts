@@ -1,7 +1,7 @@
 import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildApp } from '../index'
 import type { AgentServerEnv } from '../lib/env'
 import { ImageWarmer } from '../services/image-warmer'
@@ -14,6 +14,7 @@ function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 		AGENT_SESSION_ROOT: '/tmp/agent-server-test',
 		S3_REGION: 'us-east-1',
 		WARM_POOL_REFRESH_MINUTES: 0,
+		SESSION_MAX_DURATION: '8h',
 		...overrides,
 	}
 }
@@ -166,6 +167,11 @@ describe('POST /sessions happy path', () => {
 		const createCall = calls.find((c) => c.args[0] === 'create')
 		expect(createCall).toBeDefined()
 		expect(createCall?.args).toContain('--net-rule')
+		// The SESSION_MAX_DURATION backstop is threaded into the spawn so a
+		// persistent VM can't sit "running" forever if completion never signals.
+		const maxIdx = createCall?.args.indexOf('--max-duration') ?? -1
+		expect(maxIdx).toBeGreaterThan(-1)
+		expect(createCall?.args[maxIdx + 1]).toBe('8h')
 
 		const skel = await readdir(join(sessionRoot, 'sess-happy'))
 		expect(skel.sort()).toEqual(['learnings', 'memory', 'skills', 'workspace'])
@@ -312,5 +318,44 @@ describe('POST /sessions validation', () => {
 			}),
 		})
 		expect(res.status).toBe(400)
+	})
+})
+
+describe('POST /sessions/:id/complete', () => {
+	it('is reachable without a bearer token (the VM holds no secret) and stops the sandbox after a deferral', async () => {
+		vi.useFakeTimers()
+		try {
+			const { run, calls } = makeRunner()
+			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+			const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
+
+			const res = await app.request('/sessions/sess-done/complete', { method: 'POST' })
+
+			expect(res.status).toBe(200)
+			expect(await res.json()).toEqual({ ok: true })
+			// The stop MUST be deferred so this response flushes back to the VM's
+			// report_complete curl before msb tears down the VM network — it must not
+			// have fired synchronously.
+			expect(calls.find((c) => c.args[0] === 'stop')).toBeUndefined()
+
+			// Once the deferral elapses, the graceful stop fires.
+			await vi.advanceTimersByTimeAsync(2_000)
+			const stopCall = calls.find((c) => c.args[0] === 'stop')
+			expect(stopCall?.args).toEqual(['stop', 'sess-done'])
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('rejects an invalid session id with 400 and does not shell out', async () => {
+		const { run, calls } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
+
+		const res = await app.request('/sessions/-bad/complete', { method: 'POST' })
+
+		expect(res.status).toBe(400)
+		await new Promise((r) => setTimeout(r, 0))
+		expect(calls.find((c) => c.args[0] === 'stop')).toBeUndefined()
 	})
 })
