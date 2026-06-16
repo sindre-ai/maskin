@@ -36,12 +36,13 @@ const HOST_RULE_HOST = 'host'
 // only globally-routable IPs).
 const PUBLIC_EGRESS_RULE = 'allow@public'
 
-// libkrun's DHCP assigns a private-IP DNS resolver (e.g. 172.16.1.181) to
-// each microVM. With explicit net-rules active, that private IP is blocked,
-// so all hostname resolution fails. Override with public resolvers via
-// --dns-nameserver so DNS traffic stays within the already-allowed public
-// egress rule and no private-IP traffic needs to be permitted.
-const DNS_NAMESERVERS = ['1.1.1.1', '8.8.8.8'] as const
+// microsandbox intercepts DNS queries at the smoltcp layer before they ever
+// reach the IP routing stage, so `allow@private` (or any IP-based rule) has
+// no effect on DNS. The DNS forwarder runs its own policy check via
+// decide_dns_action() which only honours explicit protocol/port rules.
+// `allow@any:udp:53` and `allow@any:tcp:53` are the rules it recognises.
+const DNS_UDP_RULE = 'allow@any:udp:53'
+const DNS_TCP_RULE = 'allow@any:tcp:53'
 
 const SESSION_GUEST_PATH = '/agent'
 const SKELETON_SUBDIRS = ['workspace', 'skills', 'learnings', 'memory'] as const
@@ -164,7 +165,10 @@ export function buildMsbCreateArgs(input: {
 		`allow@${HOST_RULE_HOST}:tcp:${input.hostPort}`,
 		'--net-rule',
 		PUBLIC_EGRESS_RULE,
-		...DNS_NAMESERVERS.flatMap((ns) => ['--dns-nameserver', ns]),
+		'--net-rule',
+		DNS_UDP_RULE,
+		'--net-rule',
+		DNS_TCP_RULE,
 		'-v',
 		`${input.sessionDir}:${SESSION_GUEST_PATH}`,
 	]
