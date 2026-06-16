@@ -1,6 +1,12 @@
 #!/bin/bash
 set -e
 
+# Source overflow env vars (values >1500 chars spilled here by the agent-server)
+if [ -f /agent/.env-overflow.sh ]; then
+  # shellcheck source=/dev/null
+  source /agent/.env-overflow.sh
+fi
+
 RUNTIME="${AGENT_RUNTIME:-claude-code}"
 
 # Install runtime if not already present

@@ -1,4 +1,4 @@
-import { execFile as execFileCb } from 'node:child_process'
+import { execFile as execFileCb, spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -335,6 +335,55 @@ export async function waitForCompletion(
 		}
 	}
 	logger.warn('session completion watch timed out', { sessionId, timeoutMs })
+}
+
+/**
+ * Stream stdout/stderr from a running microsandbox VM via `msb logs -f`.
+ * Calls `onLine` for each newline-delimited output line. Resolves when the
+ * process exits or `signal` is aborted. Rejects if the process cannot be
+ * spawned (e.g. `msb` not found) — callers should catch and log.
+ */
+export function streamMsbLogs(
+	msbBin: string,
+	sessionId: string,
+	onLine: (stream: 'stdout' | 'stderr', line: string) => void,
+	signal?: AbortSignal,
+): Promise<void> {
+	assertValidSessionId(sessionId)
+	return new Promise((resolve, reject) => {
+		const proc = spawn(msbBin, ['logs', '-f', sessionId], { signal })
+
+		const readLines = (data: Buffer, stream: 'stdout' | 'stderr', buf: { val: string }): void => {
+			buf.val += data.toString('utf8')
+			for (;;) {
+				const nl = buf.val.indexOf('\n')
+				if (nl === -1) break
+				const line = buf.val.slice(0, nl + 1)
+				buf.val = buf.val.slice(nl + 1)
+				if (line.trimEnd()) onLine(stream, line)
+			}
+		}
+
+		const stdoutBuf = { val: '' }
+		const stderrBuf = { val: '' }
+
+		proc.stdout.on('data', (chunk: Buffer) => readLines(chunk, 'stdout', stdoutBuf))
+		proc.stderr.on('data', (chunk: Buffer) => readLines(chunk, 'stderr', stderrBuf))
+
+		proc.on('error', (err) => {
+			if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR') {
+				resolve()
+			} else {
+				reject(err)
+			}
+		})
+
+		proc.on('close', () => {
+			if (stdoutBuf.val.trimEnd()) onLine('stdout', stdoutBuf.val)
+			if (stderrBuf.val.trimEnd()) onLine('stderr', stderrBuf.val)
+			resolve()
+		})
+	})
 }
 
 export async function removeSandbox(name: string, deps: MicrosandboxDeps): Promise<void> {
