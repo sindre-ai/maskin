@@ -12,7 +12,6 @@ WorkingDirectory=/opt/maskin
 EnvironmentFile=/opt/maskin/apps/agent-server/.env
 Environment=NODE_ENV=production
 Environment=PORT=3001
-Environment=RUNTIME_BACKEND=microsandbox
 ExecStart=/usr/bin/node apps/agent-server/dist/index.js
 Restart=on-failure
 RestartSec=5
