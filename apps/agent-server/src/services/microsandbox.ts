@@ -458,6 +458,33 @@ export function streamMsbLogs(
 	})
 }
 
+/**
+ * Launch `msb exec <sessionId>` as a fire-and-forget background process.
+ *
+ * microsandbox's TCP proxy (allow@host:tcp:PORT) is only active while an exec
+ * session is in progress — not during the VM's create-time boot. Calling this
+ * after spawnSession writes the .exec-trigger file causes entrypoint.sh to skip
+ * the sleep path and run agent-run.sh with the proxy active.
+ *
+ * stdout/stderr are piped and drained silently; we don't need PTY output here
+ * because agent-run.sh streams logs via HTTP POST to /sessions/:id/logs/ingest.
+ */
+export function launchSessionExec(sessionId: string, deps: MicrosandboxDeps): void {
+	assertValidSessionId(sessionId)
+	const proc = spawn(deps.msbBin, ['exec', sessionId], {
+		stdio: ['ignore', 'pipe', 'pipe'],
+	})
+	proc.stdout?.on('data', () => {})
+	proc.stderr?.on('data', () => {})
+	proc.on('error', (err) => {
+		logger.error('msb exec spawn error', { sessionId, error: String(err) })
+	})
+	proc.on('close', (code, sig) => {
+		logger.info('msb exec process exited', { sessionId, code, signal: sig })
+	})
+	proc.unref()
+}
+
 export async function removeSandbox(name: string, deps: MicrosandboxDeps): Promise<void> {
 	assertValidSessionId(name)
 	const run = deps.run ?? defaultRunner()

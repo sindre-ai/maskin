@@ -174,7 +174,7 @@ describe('POST /sessions happy path', () => {
 		expect(createCall?.args[maxIdx + 1]).toBe('8h')
 
 		const skel = await readdir(join(sessionRoot, 'sess-happy'))
-		expect(skel.sort()).toEqual(['learnings', 'memory', 'skills', 'workspace'])
+		expect(skel.sort()).toEqual(['.exec-trigger', 'learnings', 'memory', 'skills', 'workspace'])
 	})
 })
 

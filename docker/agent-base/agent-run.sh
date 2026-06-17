@@ -19,9 +19,17 @@ fi
 # answers, AGENT_SERVER_URL is left unchanged (calls stay best-effort no-ops).
 resolve_agent_server_url() {
   [ -z "$AGENT_SERVER_URL" ] && return
-  local port gw cand
+  local port gw cand deadline
   port="${AGENT_SERVER_URL##*:}"
-  gw="$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf 2>/dev/null)"
+  # /etc/resolv.conf is populated by microsandbox a few seconds after VM boot;
+  # the create-time entrypoint runs before it's ready, so spin until it appears
+  # (up to 15s) rather than falling through to the unreliable host alias.
+  deadline=$(( $(date +%s) + 15 ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    gw="$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf 2>/dev/null)"
+    [ -n "$gw" ] && break
+    sleep 1
+  done
   for cand in ${gw:+"http://${gw}:${port}"} "$AGENT_SERVER_URL"; do
     if curl -4 -s -m 4 -o /dev/null "${cand}/health" 2>/dev/null; then
       AGENT_SERVER_URL="$cand"

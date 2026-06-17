@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import type { StorageProvider } from '@maskin/storage'
@@ -13,6 +14,7 @@ import {
 	type MicrosandboxDeps,
 	type PullPolicy,
 	defaultRunner,
+	launchSessionExec,
 	readMsbVersion,
 	removeSandbox,
 	spawnSession,
@@ -398,8 +400,15 @@ export function buildApp(deps: AppDeps): Hono {
 				envSanitized: result.envSanitized,
 			})
 
+			// Write exec trigger to the bind-mounted session dir. entrypoint.sh sleeps
+			// during create-time (no trigger); finding this file tells it to run the
+			// real workload. Must happen before msb exec is launched.
+			await writeFile(join(sessionDir, '.exec-trigger'), '1', { mode: 0o644 })
+
 			// Background: wait for VM exit → flush logs → report completion →
 			// push workspace to S3 → delete local dir → drain input queue.
+			// Register session in sessionLogRouters synchronously (before first await)
+			// so ingest calls from the forthcoming exec don't miss.
 			void monitorSession(
 				body.sessionId,
 				sessionDir,
@@ -411,6 +420,11 @@ export function buildApp(deps: AppDeps): Hono {
 			).finally(() => {
 				inputQueue.drainSession(body.sessionId)
 			})
+
+			// Launch msb exec in the background. entrypoint.sh finds the trigger and
+			// runs agent-run.sh under the exec TCP proxy (the proxy is only active
+			// during exec sessions, not during the VM's create-time boot).
+			launchSessionExec(body.sessionId, deps.msb)
 
 			return c.json(
 				{
