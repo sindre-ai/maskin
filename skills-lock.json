@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "skills": {
+    "embedded-captions": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/embedded-captions/SKILL.md",
+      "computedHash": "133c9401ef6b831470fe4256686071a26afb2caeacb2cbe8faad540b96d3473b"
+    },
+    "faceless-explainer": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/faceless-explainer/SKILL.md",
+      "computedHash": "ca36fc6ab615af173e08f6a4f99f39a338bdf98f37cc86b967418b26da229d08"
+    },
+    "general-video": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/general-video/SKILL.md",
+      "computedHash": "95db6a3704a096e6c438bf4d9f02ccdbf8e58202ed2027994e93d28942acbb3c"
+    },
+    "graphic-overlays": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/graphic-overlays/SKILL.md",
+      "computedHash": "3994532b78c9374556bc329461636e17dff376a4bf94c2223b110ae7efe19cea"
+    },
+    "hyperframes": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/hyperframes/SKILL.md",
+      "computedHash": "c7c236d562fd48ea967dd8bc10987b94cac4277f18b88224378118bfd29c45cc"
+    },
+    "hyperframes-animation": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/hyperframes-animation/SKILL.md",
+      "computedHash": "d9da94dd7074eb539ca246260ce46dc32797316a243aa6d3bd17c43fc864f9ac"
+    },
+    "hyperframes-cli": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/hyperframes-cli/SKILL.md",
+      "computedHash": "17116283a667e6f61b3caa42b7d098ccb0a14a1cb1696371d445e06919b6bda4"
+    },
+    "hyperframes-core": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/hyperframes-core/SKILL.md",
+      "computedHash": "4579d85b85a9df9c2700e89e3f730c1f75f33f35712543cc4cffd3a072476618"
+    },
+    "hyperframes-creative": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/hyperframes-creative/SKILL.md",
+      "computedHash": "d2a3fa822a57e8acd3c9ea8375abf5c3a10717df1970ac8a609ef66da9454b6b"
+    },
+    "hyperframes-media": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/hyperframes-media/SKILL.md",
+      "computedHash": "b07f9ef6f08b79373ebdb0f253bfdee80d5644f22a422115e10da5eb29dfffa8"
+    },
+    "hyperframes-registry": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/hyperframes-registry/SKILL.md",
+      "computedHash": "a65dd053db01700a8c52ee2dd005807bb48962808b6dc32b59699561dea3eabd"
+    },
+    "motion-graphics": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/motion-graphics/SKILL.md",
+      "computedHash": "79ba3f91318733ba6b200a8bc364dee474a6248d6ad49bea936ea303e0017b52"
+    },
+    "pr-to-video": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/pr-to-video/SKILL.md",
+      "computedHash": "dde4bc07b4475a068247bf987e03e278b4f23b718abdacb59219f3939951d3f9"
+    },
+    "product-launch-video": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/product-launch-video/SKILL.md",
+      "computedHash": "ef9a7d92ce90983ad0d0190be26747533acb4ec4927f264ebc14366e0fd46ad8"
+    },
+    "remotion-to-hyperframes": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-to-hyperframes/SKILL.md",
+      "computedHash": "ac3968058e8b13ae4fc8882672b999be12072ccfb0487c1264cf243d4d165bca"
+    },
+    "website-to-video": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/website-to-video/SKILL.md",
+      "computedHash": "6398520768f5962258bdc68147258b202536cef03ceac80284bbfd6121537355"
+    }
+  }
+}
