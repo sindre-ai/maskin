@@ -1,55 +1,27 @@
 #!/bin/bash
 set -eo pipefail
 
-# Source overflow env vars (values >1500 chars spilled here by the agent-server)
+# This script is started by the agent-server as the agentd "PRIMARY SESSION":
+#   msb exec -u agent <sid> -- bash /agent-run.sh
+# so this process's stdout/stderr are captured on the HOST via `msb logs` (the
+# agentd/vsock channel). That path is reliable; microsandbox 0.5.7's VM->host TCP
+# egress is NOT (it doesn't forward held-open/streamed bytes — see the network bug
+# notes). So the agent just writes to stdout/stderr, and the host pulls the logs.
+# Interactive user turns arrive on THIS process's stdin (the `msb exec` stdin, fed
+# by the agent-server). No HTTP log push, no input-stream curl, no completion
+# signal — the process exiting IS completion.
+
+# `msb exec` does NOT inherit the environment set at `msb create`, so the agent-server
+# writes the full session env to /agent/.session-env.sh (sourceable) for us to load.
+if [ -f /agent/.session-env.sh ]; then
+  # shellcheck source=/dev/null
+  source /agent/.session-env.sh
+fi
+# Legacy overflow spill file (kept for backward compatibility).
 if [ -f /agent/.env-overflow.sh ]; then
   # shellcheck source=/dev/null
   source /agent/.env-overflow.sh
 fi
-
-# Resolve a working URL for the agent-server (log ingest, input stream, completion
-# signal). The server injects AGENT_SERVER_URL as http://host.microsandbox.internal:<port>,
-# but on msb 0.5.7 that alias does not reliably resolve inside the VM, so every
-# VM->host call silently fails (this is why logs never appeared and the completion
-# signal never arrived). microsandbox routes the VM to the host via the per-sandbox
-# gateway IP — the nameserver in /etc/resolv.conf — which msb rewrites to the host
-# loopback. We probe the gateway IP first, then the injected alias, and keep the
-# first candidate that actually answers /health. Forcing IPv4 avoids the IPv6
-# happy-eyeballs path (the agent-server listens on 0.0.0.0 only). If nothing
-# answers, AGENT_SERVER_URL is left unchanged (calls stay best-effort no-ops).
-resolve_agent_server_url() {
-  [ -z "$AGENT_SERVER_URL" ] && return
-  local port gw cand
-  port="${AGENT_SERVER_URL##*:}"
-  gw="$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf 2>/dev/null)"
-  for cand in ${gw:+"http://${gw}:${port}"} "$AGENT_SERVER_URL"; do
-    if curl -4 -s -m 4 -o /dev/null "${cand}/health" 2>/dev/null; then
-      AGENT_SERVER_URL="$cand"
-      echo "[system] agent-server reachable at ${cand}"
-      return
-    fi
-  done
-  echo "[system] WARNING: agent-server not reachable from VM (tried gateway + alias)" >&2
-}
-resolve_agent_server_url
-
-# Signal session completion so the agent-server tears down this microVM.
-# A microsandbox `create`d VM is PERSISTENT: it does NOT power off when this
-# script exits, because the guest's PID 1 is microsandbox's agentd, not us.
-# Without this signal the sandbox sits "running" until the server's max-duration
-# backstop fires (hours). The EXIT trap fires on normal completion, on `set -e`
-# failure, and on most signals, so teardown is tied to the workload ending.
-# Best-effort; --http1.0/--max-time stop a slow ingest from blocking VM exit.
-# Only meaningful on the remote microsandbox path (AGENT_SERVER_URL set); the
-# local Docker path manages container lifecycle itself.
-report_complete() {
-  if [ -n "$AGENT_SERVER_URL" ] && [ -n "$SESSION_ID" ]; then
-    curl -4 -s --http1.0 --max-time 10 -X POST \
-      "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/complete" \
-      -o /dev/null 2>/dev/null || true
-  fi
-}
-trap report_complete EXIT
 
 RUNTIME="${AGENT_RUNTIME:-claude-code}"
 
@@ -176,74 +148,10 @@ CREDS_EOF
   echo "[system] Claude OAuth credentials written to $creds_dir/.credentials.json"
 }
 
-# Run the agent
+# Run the agent. stdout+stderr (merged via 2>&1) go straight to this process's
+# stdout, which the host captures with `msb logs --source stdout`. Interactive
+# turns are read from stdin (the `msb exec` stdin).
 run_agent() {
-  # Pipe output to the agent-server's log ingest endpoint so the Maskin UI
-  # can show live logs. Bind mounts from the microVM to the host are not
-  # reliable in the current microsandbox version, so we stream over HTTP
-  # instead. Falls back to plain stdout if AGENT_SERVER_URL is unset.
-  local log_ingest_url=""
-  if [ -n "$AGENT_SERVER_URL" ] && [ -n "$SESSION_ID" ]; then
-    log_ingest_url="${AGENT_SERVER_URL}/sessions/${SESSION_ID}/logs/ingest"
-  fi
-
-  # Stream agent output to the agent-server's log-ingest endpoint LINE BY LINE
-  # over a single long-lived chunked POST, so the Maskin UI shows logs live
-  # while the agent runs.  The previous implementation buffered ALL output to a
-  # temp file (`cat > file`) and POSTed it once at exit (`--data-binary @file`),
-  # which (a) showed nothing until the process exited and (b) showed NOTHING for
-  # interactive sessions, where `claude` never exits.
-  log_tee() {
-    if [ -z "$log_ingest_url" ]; then
-      # No agent-server reachable: just drain stdin (to the unread PTY) so the
-      # agent isn't blocked by a full pipe.
-      cat
-      return
-    fi
-    # `curl -T -` uploads stdin with Transfer-Encoding: chunked, forwarding bytes
-    # as they arrive — unlike `--data-binary @-`, which first buffers ALL of
-    # stdin to compute a Content-Length (effectively what `cat > file` did).
-    # Chunked requires HTTP/1.1, so we drop the old `--http1.0`.  The server
-    # (apps/agent-server) reads the request body as a stream and pushes each
-    # newline-delimited line into the session's log buffer immediately, so one
-    # POST carries the whole session and the UI updates as lines arrive.
-    # `-H "Expect:"` strips the 100-continue handshake (curl adds it for uploads
-    # >1KB), which would otherwise stall the stream waiting for a 100 Continue.
-    #
-    # Why a function fed by a pipe (`agent ... | log_tee`) and not process
-    # substitution: bash WAITS for every stage of a pipeline before the script
-    # exits, so curl finishes before run_agent returns and the VM is torn down.
-    # bash does NOT wait for `>(...)` subprocesses (the reason the old code could
-    # not use them).  curl also continuously drains the pipe, so the undrained
-    # microsandbox PTY never fills and freezes the agent — the problem that ruled
-    # out plain `tee`.
-    #
-    # The reconnect loop keeps a reader on the pipe AT ALL TIMES.  Without it a
-    # dropped upload connection would leave the agent writing to a broken pipe
-    # (SIGPIPE -> the agent dies).  With it, a transient drop reconnects and
-    # resumes streaming; after repeated failures we fall back to draining stdin
-    # so the agent keeps running and this script can still reach its EXIT trap
-    # (the completion signal).  curl returns 0 only once stdin hits EOF (the
-    # agent exited) and the body flushed — the clean end-of-stream.
-    local attempts=0
-    while true; do
-      if curl -4 -sN -X POST "$log_ingest_url" \
-          -H "Content-Type: text/plain" \
-          -H "Expect:" \
-          -T - \
-          -o /dev/null \
-          2>/dev/null; then
-        return 0
-      fi
-      attempts=$((attempts + 1))
-      if [ "$attempts" -ge 5 ]; then
-        cat > /dev/null
-        return 0
-      fi
-      sleep 1
-    done
-  }
-
   case "$RUNTIME" in
     claude-code)
       local max_turns="${MAX_TURNS:-5000}"
@@ -252,31 +160,14 @@ run_agent() {
         mcp_args=(--mcp-config "$MCP_CONFIG_FILE")
       fi
       if [ "$INTERACTIVE" = "1" ]; then
-        if [ -n "$AGENT_SERVER_URL" ]; then
-          # Remote microsandbox path: stream user turns from the agent-server.
-          # curl holds a long-lived HTTP connection; process substitution pipes
-          # its output into claude's stdin so each newline-delimited JSON message
-          # is delivered as a user turn without needing Docker stdin attach.
-          claude -p \
-            --input-format stream-json \
-            --output-format stream-json \
-            --verbose \
-            --dangerously-skip-permissions \
-            "${mcp_args[@]}" \
-            2>&1 \
-            < <(curl -4 -sN --no-buffer \
-                "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream") \
-            | log_tee
-        else
-          # Local Docker path: stdin is attached by ContainerManager.attachStdin.
-          claude -p \
-            --input-format stream-json \
-            --output-format stream-json \
-            --verbose \
-            --dangerously-skip-permissions \
-            "${mcp_args[@]}" \
-            2>&1 | log_tee
-        fi
+        # Newline-delimited stream-json user turns arrive on stdin (msb exec stdin).
+        claude -p \
+          --input-format stream-json \
+          --output-format stream-json \
+          --verbose \
+          --dangerously-skip-permissions \
+          "${mcp_args[@]}" \
+          2>&1
       else
         claude -p "$ACTION_PROMPT" \
           --print \
@@ -285,7 +176,7 @@ run_agent() {
           --max-turns "$max_turns" \
           --dangerously-skip-permissions \
           "${mcp_args[@]}" \
-          2>&1 | log_tee
+          2>&1
       fi
       ;;
     codex)
@@ -293,7 +184,7 @@ run_agent() {
       codex \
         --approval-mode "$approval_mode" \
         --prompt "$ACTION_PROMPT" \
-        2>&1 | log_tee
+        2>&1
       ;;
     custom)
       if [ -z "$CUSTOM_COMMAND" ]; then
@@ -312,7 +203,7 @@ run_agent() {
         echo "[error] CUSTOM_COMMAND is empty after tokenization" >&2
         exit 1
       fi
-      "${custom_argv[@]}" 2>&1 | log_tee
+      "${custom_argv[@]}" 2>&1
       ;;
   esac
 }
