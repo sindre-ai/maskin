@@ -1,3 +1,4 @@
+import changelogWebExtension from '@maskin/ext-changelog/web'
 import crmWebExtension from '@maskin/ext-crm/web'
 import knowledgeWebExtension from '@maskin/ext-knowledge/web'
 import workWebExtension from '@maskin/ext-work/web'
@@ -9,3 +10,4 @@ import { registerWebModule } from '@maskin/module-sdk'
 registerWebModule(workWebExtension)
 registerWebModule(knowledgeWebExtension)
 registerWebModule(crmWebExtension)
+registerWebModule(changelogWebExtension)

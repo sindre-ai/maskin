@@ -41,6 +41,9 @@ importers:
       '@maskin/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@maskin/ext-changelog':
+        specifier: workspace:*
+        version: link:../../extensions/changelog
       '@maskin/ext-crm':
         specifier: workspace:*
         version: link:../../extensions/crm
@@ -144,6 +147,9 @@ importers:
       '@dnd-kit/sortable':
         specifier: ^10.0.0
         version: 10.0.0(@dnd-kit/core@6.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(react@19.2.5)
+      '@maskin/ext-changelog':
+        specifier: workspace:*
+        version: link:../../extensions/changelog
       '@maskin/ext-crm':
         specifier: workspace:*
         version: link:../../extensions/crm
@@ -317,6 +323,16 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/debug@4.1.13)(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.2)
 
+  extensions/changelog:
+    dependencies:
+      '@maskin/module-sdk':
+        specifier: workspace:*
+        version: link:../../packages/module-sdk
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   extensions/crm:
     dependencies:
       '@maskin/module-sdk':
@@ -409,6 +425,9 @@ importers:
 
   packages/mcp:
     dependencies:
+      '@maskin/ext-changelog':
+        specifier: workspace:*
+        version: link:../../extensions/changelog
       '@maskin/ext-crm':
         specifier: workspace:*
         version: link:../../extensions/crm

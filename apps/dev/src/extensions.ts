@@ -1,3 +1,4 @@
+import changelogExtension from '@maskin/ext-changelog/server'
 import crmExtension from '@maskin/ext-crm/server'
 import knowledgeExtension from '@maskin/ext-knowledge/server'
 import notetakerExtension from '@maskin/ext-notetaker/server'
@@ -11,3 +12,4 @@ registerModule(workExtension)
 registerModule(knowledgeExtension)
 registerModule(notetakerExtension)
 registerModule(crmExtension)
+registerModule(changelogExtension)

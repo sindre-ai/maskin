@@ -87,6 +87,44 @@ describe('Objects Routes', () => {
 			const body = await res.json()
 			expect(body.error.message).toContain('Invalid object type')
 		})
+
+		it('creates a changelog_entry when the changelog module is enabled', async () => {
+			const ws = buildWorkspace({
+				id: wsId,
+				settings: {
+					enabled_modules: ['work', 'changelog'],
+					display_names: { changelog_entry: 'Changelog entry' },
+					statuses: { changelog_entry: ['draft', 'approved', 'published'] },
+				},
+			})
+			const entry = buildObject({
+				workspaceId: wsId,
+				type: 'changelog_entry',
+				status: 'draft',
+				metadata: { tag: 'New', source_bet_id: randomUUID() },
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+			mockResults.insert = [entry]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects',
+					buildCreateObjectBody({
+						type: 'changelog_entry',
+						status: 'draft',
+						metadata: { tag: 'New', source_bet_id: entry.metadata.source_bet_id },
+					}),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.type).toBe('changelog_entry')
+			expect(body.status).toBe('draft')
+		})
 	})
 
 	describe('GET /api/objects', () => {
@@ -316,6 +354,25 @@ describe('Objects Routes', () => {
 				company: 'Acme',
 				priority: 'hot',
 			})
+		})
+
+		it('accepts changelog_eligible boolean on a bet via metadata', async () => {
+			const existing = buildObject({ type: 'bet', status: 'active', metadata: {} })
+			const updated = { ...existing, metadata: { changelog_eligible: true } }
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}] // event insert
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, {
+					metadata: { changelog_eligible: true },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.metadata.changelog_eligible).toBe(true)
 		})
 	})
 
