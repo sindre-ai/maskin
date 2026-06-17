@@ -459,7 +459,7 @@ describe('Subscriptions Integration', () => {
 		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === bet.id)
 		expect(itemB).toBeDefined()
 		expect(itemB.unread_count).toBe(1)
-		expect(itemB.mentions_you).toBe(false)
+		expect(itemB.mentioning_unread_count).toBe(0)
 
 		const notifsForB = await appB
 			.request(jsonGet(`/api/notifications?object_id=${bet.id}`, headersB))
@@ -514,6 +514,94 @@ describe('Subscriptions Integration', () => {
 			.request(jsonGet(`/api/notifications?object_id=${bet.id}`, headersB))
 			.then((r) => r.json())
 		expect(notifsForB).toEqual([])
+	})
+
+	it('counts mentioning unread events per-event grain, never rolls up to an object-level mention flag', async () => {
+		// Regression test for the per-comment vs per-object mention rollup (T5 on
+		// bet/notif-cascade-fix). One @mention of A among nine non-mentioning
+		// comments on the same object used to surface as "the whole object
+		// mentions you" via a bool_or aggregate. Now: mentioning_unread_count = 1,
+		// unread_count = 10, and the legacy mentions_you boolean is gone.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const createRes = await appA.request(
+			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA),
+		)
+		const obj = await createRes.json()
+
+		// B comments nine times without mentioning A.
+		for (let i = 0; i < 9; i++) {
+			const r = await appB.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: obj.id, content: `agent chatter ${i}` },
+					headersB,
+				),
+			)
+			expect(r.status).toBe(201)
+		}
+
+		// B posts one comment that actually @-mentions A.
+		const mentioningRes = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{ entity_id: obj.id, content: 'hey there', mentions: [aId] },
+				headersB,
+			),
+		)
+		expect(mentioningRes.status).toBe(201)
+
+		const unreadA = await appA
+			.request(jsonGet('/api/subscriptions/unread', headersA))
+			.then((r) => r.json())
+		const itemA = unreadA.items.find((i: { entity_id: string }) => i.entity_id === obj.id)
+		expect(itemA).toBeDefined()
+		expect(itemA.unread_count).toBe(10)
+		expect(itemA.mentioning_unread_count).toBe(1)
+		// The legacy object-level rollup boolean must not be present.
+		expect('mentions_you' in itemA).toBe(false)
+	})
+
+	it("agent-to-agent mentions on a shared object never raise a human watcher's mentioning count", async () => {
+		// The bet's commitment: agent→agent mentions route to the target agent via
+		// the per-event notification path and never surface to a human's For You.
+		// Reuse B as a stand-in for "another agent" mentioned in passing.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		// A (human) creates the object and is auto-subscribed.
+		const createRes = await appA.request(
+			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA),
+		)
+		const obj = await createRes.json()
+
+		// B posts a comment that mentions B themselves (i.e. an agent→agent
+		// mention that does not target A). A should see the unread but their
+		// mentioning count must stay at zero.
+		const commentRes = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{ entity_id: obj.id, content: 'agent ping', mentions: [bId] },
+				headersB,
+			),
+		)
+		expect(commentRes.status).toBe(201)
+
+		const unreadA = await appA
+			.request(jsonGet('/api/subscriptions/unread', headersA))
+			.then((r) => r.json())
+		const itemA = unreadA.items.find((i: { entity_id: string }) => i.entity_id === obj.id)
+		expect(itemA).toBeDefined()
+		expect(itemA.unread_count).toBe(1)
+		expect(itemA.mentioning_unread_count).toBe(0)
 	})
 
 	it('auto-subscribes the creator to every node created via POST /api/graph', async () => {

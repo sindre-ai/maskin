@@ -79,9 +79,11 @@ const unreadItemSchema = z.object({
 	entity_type: z.string(),
 	entity_id: z.string().uuid(),
 	unread_count: z.number(),
-	// True when at least one unread comment on the entity @-mentions the
-	// current actor — drives the "Mentioned" badge on the For You card.
-	mentions_you: z.boolean(),
+	// Count of unread comments on the entity that actually @-mention the current
+	// actor. Per-event grain — not a bool_or rollup — so a single buried mention
+	// among nine agent→agent comments yields 1, not "the whole object is
+	// mentioned". The For You card surfaces the "Mentioned" pill when > 0.
+	mentioning_unread_count: z.number(),
 	latest_event_id: z.number().nullable(),
 	latest_activity_at: z.string().nullable(),
 	object: objectResponseSchema.optional(),
@@ -292,19 +294,20 @@ app.openapi(listUnreadRoute, (async (c) => {
 	]
 	if (entity_type) subConditions.push(eq(subscriptions.entityType, entity_type))
 
-	// Aggregate flag: does any unread comment on the entity contain the
-	// current actor in its data->'mentions' array? Uses @> with a jsonb
-	// array of the actor id (the stable form), and coalesces to false for
-	// rows where the left-join produced no events (defensive — the HAVING
-	// clause filters those out, but bool_or on an empty set is NULL).
-	const mentionsYouExpr = sql<boolean>`coalesce(bool_or(${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), false)`
+	// Per-event mention count: how many of the unread events on this entity
+	// actually @-mention the current actor. Replaces the object-level bool_or
+	// that previously flagged the whole object as "mentions you" the moment a
+	// single buried mention existed, dragging agent-to-agent comments into
+	// human For You with it. Counted at the event grain, so the share of
+	// objects flagged tracks the share of comments that actually mention.
+	const mentioningUnreadCountExpr = sql<number>`coalesce(count(*) filter (where ${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), 0)::int`
 
 	const rows = await db
 		.select({
 			entityType: subscriptions.entityType,
 			entityId: subscriptions.entityId,
 			unreadCount: count(events.id),
-			mentionsYou: mentionsYouExpr,
+			mentioningUnreadCount: mentioningUnreadCountExpr,
 			latestEventId: max(events.id),
 			latestActivityAt: max(events.createdAt),
 		})
@@ -358,7 +361,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 			entity_type: r.entityType,
 			entity_id: r.entityId,
 			unread_count: r.unreadCount,
-			mentions_you: Boolean(r.mentionsYou),
+			mentioning_unread_count: Number(r.mentioningUnreadCount),
 			latest_event_id: r.latestEventId,
 			latest_activity_at:
 				r.latestActivityAt instanceof Date ? r.latestActivityAt.toISOString() : r.latestActivityAt,
