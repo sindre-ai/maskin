@@ -241,9 +241,11 @@ export function buildApp(deps: AppDeps): Hono {
 		})
 	})
 
-	// POST /sessions/:id/logs/ingest — agent-run.sh pipes all output here via
-	// `tee >(curl -sN -X POST ...)`. Streams the request body line-by-line into
-	// the session's log buffer so monitorSession can forward to the Maskin backend.
+	// POST /sessions/:id/logs/ingest — agent-run.sh streams all agent output here
+	// over a single long-lived chunked POST (`curl -T -`). We read the request
+	// body as it arrives and push each newline-delimited line into the session's
+	// log buffer immediately, so monitorSession forwards them to the Maskin
+	// backend live (~2s batches) instead of all at once at session end.
 	app.post('/sessions/:id/logs/ingest', async (c) => {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
