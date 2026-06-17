@@ -432,6 +432,35 @@ export function calendarEventToMeetingFields(
 	}
 }
 
+/**
+ * User-writable per-meeting policy fields. When the calendar fan-out updates an
+ * existing meeting, these are pinned from `existingMeta` over the incoming spread
+ * so a user-set override (e.g. `autoJoin: true` on one meeting whose workspace
+ * default is `false`) survives every subsequent calendar push. First-write
+ * semantics are unchanged — when there's no existing meeting, the calendar still
+ * seeds these from the workspace default.
+ */
+const USER_WRITABLE_MEETING_FIELDS = ['autoJoin', 'skjaldJoin'] as const
+
+/**
+ * Merge calendar-sourced metadata onto an existing meeting object's metadata.
+ * Calendar-sourced fields win over stale `existingMeta` values, but the
+ * user-writable allowlist wins over both. Pinning is conditional on the field
+ * actually being present in `existingMeta` — legacy meetings predating these
+ * fields stay free to receive the calendar's freshly-seeded default. Exported
+ * for unit-testing without DB round-trips.
+ */
+export function mergeMeetingMetadata(
+	existingMeta: Record<string, unknown>,
+	nextMetadata: Record<string, unknown>,
+): Record<string, unknown> {
+	const merged: Record<string, unknown> = { ...existingMeta, ...nextMetadata }
+	for (const field of USER_WRITABLE_MEETING_FIELDS) {
+		if (field in existingMeta) merged[field] = existingMeta[field]
+	}
+	return merged
+}
+
 interface NotetakerWorkspaceSettings {
 	notetaker?: { autoJoin?: boolean }
 }
@@ -550,7 +579,7 @@ async function upsertMeetingFromEvent(
 	// the user/Skjald may have written (transcriptUrl, audioUrl, language, botName);
 	// only refresh the calendar-sourced ones.
 	const existingMeta = (existing.metadata as Record<string, unknown> | null) ?? {}
-	const mergedMetadata = { ...existingMeta, ...nextMetadata }
+	const mergedMetadata = mergeMeetingMetadata(existingMeta, nextMetadata)
 	await db
 		.update(objects)
 		.set({ title, metadata: mergedMetadata, updatedAt: new Date() })

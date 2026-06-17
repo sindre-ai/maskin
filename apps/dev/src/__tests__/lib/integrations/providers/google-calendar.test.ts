@@ -2,7 +2,10 @@ import { createHmac } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { config } from '../../../../lib/integrations/providers/google-calendar/config'
 import { resolveExternalId } from '../../../../lib/integrations/providers/google-calendar/resolve-id'
-import { calendarEventToMeetingFields } from '../../../../lib/integrations/providers/google-calendar/watch'
+import {
+	calendarEventToMeetingFields,
+	mergeMeetingMetadata,
+} from '../../../../lib/integrations/providers/google-calendar/watch'
 import {
 	buildChannelToken,
 	googleCalendarEventNormalizer,
@@ -299,5 +302,86 @@ describe('calendarEventToMeetingFields', () => {
 		)
 		expect(out.skjaldJoin).toBe(false)
 		expect(out.autoJoin).toBe(false)
+	})
+})
+
+describe('mergeMeetingMetadata', () => {
+	it('preserves a user-set autoJoin override when calendar push carries the workspace default', () => {
+		const existing = {
+			meetingUrl: 'https://meet.google.com/aaa',
+			calendarEventId: 'evt-1',
+			autoJoin: true,
+			skjaldJoin: true,
+		}
+		const next = {
+			meetingUrl: 'https://meet.google.com/aaa',
+			calendarEventId: 'evt-1',
+			autoJoin: false,
+			skjaldJoin: false,
+		}
+		const merged = mergeMeetingMetadata(existing, next)
+		expect(merged.autoJoin).toBe(true)
+		expect(merged.skjaldJoin).toBe(true)
+	})
+
+	it('preserves a user-cleared autoJoin (false) when the calendar push would otherwise re-enable it', () => {
+		const existing = { autoJoin: false, skjaldJoin: false }
+		const next = { autoJoin: true, skjaldJoin: true }
+		const merged = mergeMeetingMetadata(existing, next)
+		expect(merged.autoJoin).toBe(false)
+		expect(merged.skjaldJoin).toBe(false)
+	})
+
+	it('lets the calendar seed autoJoin on legacy meetings that predate the field', () => {
+		const existing = {
+			meetingUrl: 'https://meet.google.com/legacy',
+			calendarEventId: 'evt-legacy',
+		}
+		const next = {
+			meetingUrl: 'https://meet.google.com/legacy',
+			calendarEventId: 'evt-legacy',
+			autoJoin: true,
+			skjaldJoin: true,
+		}
+		const merged = mergeMeetingMetadata(existing, next)
+		expect(merged.autoJoin).toBe(true)
+		expect(merged.skjaldJoin).toBe(true)
+	})
+
+	it('refreshes calendar-sourced fields (title-adjacent metadata) on every push', () => {
+		const existing = {
+			meetingUrl: 'https://meet.google.com/old',
+			startTime: '2026-06-14T10:00:00Z',
+			endTime: '2026-06-14T10:30:00Z',
+			autoJoin: true,
+		}
+		const next = {
+			meetingUrl: 'https://meet.google.com/new',
+			startTime: '2026-06-14T11:00:00Z',
+			endTime: '2026-06-14T11:30:00Z',
+			autoJoin: false,
+		}
+		const merged = mergeMeetingMetadata(existing, next)
+		expect(merged.meetingUrl).toBe('https://meet.google.com/new')
+		expect(merged.startTime).toBe('2026-06-14T11:00:00Z')
+		expect(merged.endTime).toBe('2026-06-14T11:30:00Z')
+		expect(merged.autoJoin).toBe(true)
+	})
+
+	it('keeps non-calendar Skjald-written fields untouched', () => {
+		const existing = {
+			meetingUrl: 'https://meet.google.com/aaa',
+			transcriptUrl: 'https://skjald.example.com/t/1',
+			audioUrl: 'https://skjald.example.com/a/1',
+			autoJoin: true,
+		}
+		const next = {
+			meetingUrl: 'https://meet.google.com/aaa',
+			autoJoin: false,
+		}
+		const merged = mergeMeetingMetadata(existing, next)
+		expect(merged.transcriptUrl).toBe('https://skjald.example.com/t/1')
+		expect(merged.audioUrl).toBe('https://skjald.example.com/a/1')
+		expect(merged.autoJoin).toBe(true)
 	})
 })
