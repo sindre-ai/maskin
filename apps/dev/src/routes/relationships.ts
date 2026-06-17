@@ -78,26 +78,31 @@ app.openapi(createRelationshipRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create relationship'), 500)
 	}
 
+	// Look up endpoint titles + status before the event insert so the event payload can
+	// carry `targetStatus`. Triggers filter on this — without it, any `informs` trigger
+	// fires once per edge regardless of whether the target bet is still active.
+	const endpointRows = await db
+		.select({ id: objects.id, title: objects.title, status: objects.status })
+		.from(objects)
+		.where(inArray(objects.id, [created.sourceId, created.targetId]))
+	const endpointById = new Map(endpointRows.map((r) => [r.id, r]))
+	const targetEndpoint = endpointById.get(created.targetId)
+	const targetStatus = targetEndpoint?.status ?? null
+
 	await db.insert(events).values({
 		workspaceId,
 		actorId,
 		action: 'created',
 		entityType: 'relationship',
 		entityId: created.id,
-		data: created,
+		data: { ...created, targetStatus },
 	})
-
-	const endpointRows = await db
-		.select({ id: objects.id, title: objects.title })
-		.from(objects)
-		.where(inArray(objects.id, [created.sourceId, created.targetId]))
-	const titleById = new Map(endpointRows.map((r) => [r.id, r.title ?? null]))
 
 	return c.json(
 		{
 			...serialize(created),
-			sourceTitle: titleById.get(created.sourceId) ?? null,
-			targetTitle: titleById.get(created.targetId) ?? null,
+			sourceTitle: endpointById.get(created.sourceId)?.title ?? null,
+			targetTitle: targetEndpoint?.title ?? null,
 		} as z.infer<typeof relationshipResponseSchema>,
 		201,
 	)
