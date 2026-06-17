@@ -67,4 +67,28 @@ describe('parseEnv', () => {
 			parseEnv({ AGENT_SERVER_SECRET: secret, WARM_POOL_REFRESH_MINUTES: 'abc' }),
 		).toThrow(/Invalid WARM_POOL_REFRESH_MINUTES/)
 	})
+
+	it('defaults SESSION_MAX_DURATION to 8h and accepts msb duration syntax / disable', () => {
+		const secret = 'a'.repeat(32)
+		expect(parseEnv({ AGENT_SERVER_SECRET: secret }).SESSION_MAX_DURATION).toBe('8h')
+		expect(
+			parseEnv({ AGENT_SERVER_SECRET: secret, SESSION_MAX_DURATION: '30m' }).SESSION_MAX_DURATION,
+		).toBe('30m')
+		expect(
+			parseEnv({ AGENT_SERVER_SECRET: secret, SESSION_MAX_DURATION: '0' }).SESSION_MAX_DURATION,
+		).toBe('0')
+		expect(
+			parseEnv({ AGENT_SERVER_SECRET: secret, SESSION_MAX_DURATION: '' }).SESSION_MAX_DURATION,
+		).toBe('')
+	})
+
+	it('rejects a malformed SESSION_MAX_DURATION', () => {
+		const secret = 'a'.repeat(32)
+		expect(() =>
+			parseEnv({ AGENT_SERVER_SECRET: secret, SESSION_MAX_DURATION: '8 hours' }),
+		).toThrow(/SESSION_MAX_DURATION/)
+		expect(() =>
+			parseEnv({ AGENT_SERVER_SECRET: secret, SESSION_MAX_DURATION: 'forever' }),
+		).toThrow(/SESSION_MAX_DURATION/)
+	})
 })

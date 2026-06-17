@@ -7,6 +7,50 @@ if [ -f /agent/.env-overflow.sh ]; then
   source /agent/.env-overflow.sh
 fi
 
+# Resolve a working URL for the agent-server (log ingest, input stream, completion
+# signal). The server injects AGENT_SERVER_URL as http://host.microsandbox.internal:<port>,
+# but on msb 0.5.7 that alias does not reliably resolve inside the VM, so every
+# VM->host call silently fails (this is why logs never appeared and the completion
+# signal never arrived). microsandbox routes the VM to the host via the per-sandbox
+# gateway IP — the nameserver in /etc/resolv.conf — which msb rewrites to the host
+# loopback. We probe the gateway IP first, then the injected alias, and keep the
+# first candidate that actually answers /health. Forcing IPv4 avoids the IPv6
+# happy-eyeballs path (the agent-server listens on 0.0.0.0 only). If nothing
+# answers, AGENT_SERVER_URL is left unchanged (calls stay best-effort no-ops).
+resolve_agent_server_url() {
+  [ -z "$AGENT_SERVER_URL" ] && return
+  local port gw cand
+  port="${AGENT_SERVER_URL##*:}"
+  gw="$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf 2>/dev/null)"
+  for cand in ${gw:+"http://${gw}:${port}"} "$AGENT_SERVER_URL"; do
+    if curl -4 -s -m 4 -o /dev/null "${cand}/health" 2>/dev/null; then
+      AGENT_SERVER_URL="$cand"
+      echo "[system] agent-server reachable at ${cand}"
+      return
+    fi
+  done
+  echo "[system] WARNING: agent-server not reachable from VM (tried gateway + alias)" >&2
+}
+resolve_agent_server_url
+
+# Signal session completion so the agent-server tears down this microVM.
+# A microsandbox `create`d VM is PERSISTENT: it does NOT power off when this
+# script exits, because the guest's PID 1 is microsandbox's agentd, not us.
+# Without this signal the sandbox sits "running" until the server's max-duration
+# backstop fires (hours). The EXIT trap fires on normal completion, on `set -e`
+# failure, and on most signals, so teardown is tied to the workload ending.
+# Best-effort; --http1.0/--max-time stop a slow ingest from blocking VM exit.
+# Only meaningful on the remote microsandbox path (AGENT_SERVER_URL set); the
+# local Docker path manages container lifecycle itself.
+report_complete() {
+  if [ -n "$AGENT_SERVER_URL" ] && [ -n "$SESSION_ID" ]; then
+    curl -4 -s --http1.0 --max-time 10 -X POST \
+      "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/complete" \
+      -o /dev/null 2>/dev/null || true
+  fi
+}
+trap report_complete EXIT
+
 RUNTIME="${AGENT_RUNTIME:-claude-code}"
 
 # Install runtime if not already present
@@ -145,11 +189,32 @@ run_agent() {
 
   log_tee() {
     if [ -n "$log_ingest_url" ]; then
-      tee >(curl -sN -X POST "$log_ingest_url" \
+      # Buffer output to a temp file, then POST synchronously BEFORE returning.
+      # Process substitution >(curl ...) is intentionally avoided: bash does NOT
+      # wait for process-substitution subprocesses before exiting.  When
+      # agent-run.sh exits the microsandbox VM shuts down, killing the curl
+      # process before it can POST anything.  Running curl after the capture
+      # finishes (and before run_agent returns) keeps the VM alive until the
+      # POST completes.
+      local _logfile
+      _logfile=$(mktemp /tmp/agent-logs-XXXXXX)
+      # Use `cat > file` (not `tee file`) so we DON'T also write to stdout (the
+      # microsandbox PTY).  Nobody drains the PTY, so its ~4KB ring buffer fills
+      # on large output (claude emits hundreds of KB of JSON) and tee blocks
+      # forever, freezing the whole session.  PTY output is sacrificed; the
+      # Maskin UI gets the logs over HTTP instead.
+      cat > "$_logfile"
+      # --http1.0 forces connection-close semantics so curl exits immediately
+      # after reading the response.  Over microsandbox's smoltcp TCP proxy the
+      # server-side FIN/keep-alive close isn't reliably forwarded to the VM, so
+      # an HTTP/1.1 keep-alive curl hangs after the POST even though it already
+      # received {"ok":true}.  --max-time 15 is a backstop.
+      curl -4 -s --http1.0 --max-time 15 -X POST "$log_ingest_url" \
         -H "Content-Type: text/plain" \
-        --data-binary @- \
+        --data-binary "@$_logfile" \
         -o /dev/null \
-        2>/dev/null)
+        2>/dev/null || true
+      rm -f "$_logfile"
     else
       cat
     fi
@@ -175,7 +240,7 @@ run_agent() {
             --dangerously-skip-permissions \
             "${mcp_args[@]}" \
             2>&1 \
-            < <(curl -sN --no-buffer \
+            < <(curl -4 -sN --no-buffer \
                 "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream") \
             | log_tee
         else

@@ -25,6 +25,20 @@ const envSchema = z.object({
 	// override only when deploying on a different hypervisor or custom network setup.
 	AGENT_SERVER_INTERNAL_HOST: z.string().optional(),
 	AGENT_SESSION_ROOT: z.string().optional().default('/agent/sessions'),
+	// Hard cap on a session microVM's lifetime, passed to `msb create --max-duration`.
+	// A `create`d sandbox is persistent: microsandbox does NOT power it off when its
+	// entrypoint exits (the guest's PID 1 is msb's agentd, not agent-run.sh). The
+	// normal teardown is agent-run.sh POSTing /sessions/:id/complete, which stops the
+	// VM. This duration is the backstop for a VM that wedges or whose agent dies before
+	// signalling, so it can't sit "running" forever. msb duration syntax (e.g. 30s,
+	// 5m, 8h). Empty or `0` disables the cap.
+	SESSION_MAX_DURATION: z
+		.string()
+		.optional()
+		.default('8h')
+		.refine((v) => v === '' || v === '0' || /^\d+(ms|s|m|h)$/.test(v), {
+			message: 'SESSION_MAX_DURATION must be empty, 0, or msb duration syntax (e.g. 30s, 5m, 8h)',
+		}),
 	S3_ENDPOINT: z.string().optional(),
 	S3_BUCKET: z.string().optional(),
 	S3_ACCESS_KEY: z.string().optional(),

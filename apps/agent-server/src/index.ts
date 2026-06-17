@@ -14,7 +14,9 @@ import {
 	type PullPolicy,
 	defaultRunner,
 	readMsbVersion,
+	removeSandbox,
 	spawnSession,
+	stopSandbox,
 	waitForCompletion,
 } from './services/microsandbox'
 import {
@@ -52,6 +54,14 @@ export type AppDeps = {
 
 const LOG_FLUSH_INTERVAL_MS = 2_000
 const LOG_FLUSH_MAX_LINES = 100
+
+// Delay before stopping a microVM after it signals completion. `msb stop` tears
+// down the VM's (smoltcp) network, so we must let the {ok:true} response flush
+// back to agent-run.sh's report_complete curl FIRST. Stopping synchronously
+// strands that curl (it never receives the response, and curl's --max-time is
+// not honored once msb destroys the socket), which wedges the VM's EXIT trap and
+// leaves the session "running" until the max-duration backstop fires (hours).
+const COMPLETE_STOP_DELAY_MS = 2_000
 
 /**
  * Background task that runs after a session's microVM is confirmed Running.
@@ -165,6 +175,16 @@ async function monitorSession(
 	} catch (err) {
 		logger.warn('session dir cleanup failed', { sessionId, error: String(err) })
 	}
+
+	// A `create`d sandbox lingers in "stopped" state after it stops (via the
+	// /complete signal or the max-duration backstop) until explicitly removed.
+	// Remove it so stopped VMs don't accumulate in `msb list` across sessions.
+	try {
+		await removeSandbox(sessionId, msb)
+		logger.info('sandbox removed', { sessionId })
+	} catch (err) {
+		logger.warn('sandbox removal failed', { sessionId, error: String(err) })
+	}
 }
 
 export function buildApp(deps: AppDeps): Hono {
@@ -257,6 +277,37 @@ export function buildApp(deps: AppDeps): Hono {
 		return c.json({ ok: true })
 	})
 
+	// POST /sessions/:id/complete — agent-run.sh's EXIT trap signals that the
+	// session workload finished. A `create`d microVM is persistent and does NOT
+	// power off when its entrypoint exits (its PID 1 is microsandbox's agentd),
+	// so we stop it here. The resulting running → stopped transition is what
+	// monitorSession's waitForCompletion polls for; it then flushes logs, reports
+	// completion, pushes the workspace to S3, and removes the sandbox. Registered
+	// before requireBearer because the VM holds no AGENT_SERVER_SECRET — the 122-bit
+	// session id + host-loopback reachability are the guard, same as ingest/input.
+	app.post('/sessions/:id/complete', async (c) => {
+		const { id } = c.req.param()
+		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+		logger.info('completion signal received', { sessionId: id })
+		// Graceful stop (not force-remove) so the bind-mounted /agent workspace
+		// flushes before the S3 push. Deferred (not immediate): `msb stop` tears
+		// down this VM's network, and if we stop before this response flushes back
+		// to the VM, agent-run.sh's report_complete curl blocks indefinitely (curl
+		// --max-time isn't honored once the smoltcp socket is destroyed), wedging
+		// the EXIT trap so the session never actually completes. Responding first
+		// and stopping after COMPLETE_STOP_DELAY_MS lets the curl return cleanly.
+		// Best-effort and idempotent.
+		setTimeout(() => {
+			void stopSandbox(id, deps.msb).catch((err) => {
+				logger.warn('failed to stop sandbox on completion signal', {
+					sessionId: id,
+					error: String(err),
+				})
+			})
+		}, COMPLETE_STOP_DELAY_MS)
+		return c.json({ ok: true })
+	})
+
 	// All other /sessions routes require the shared bearer token.
 	const requireBearer = bearerAuth({ expectedSecret: deps.env.AGENT_SERVER_SECRET })
 	app.use('/sessions', requireBearer)
@@ -329,6 +380,10 @@ export function buildApp(deps: AppDeps): Hono {
 					}),
 					sessionDir,
 					pullPolicy,
+					...(deps.env.SESSION_MAX_DURATION !== '' &&
+						deps.env.SESSION_MAX_DURATION !== '0' && {
+							maxDuration: deps.env.SESSION_MAX_DURATION,
+						}),
 				},
 				deps.msb,
 			)

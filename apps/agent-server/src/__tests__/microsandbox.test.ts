@@ -10,6 +10,7 @@ import {
 	removeSandbox,
 	sanitizeEnvForMicroVM,
 	spawnSession,
+	stopSandbox,
 	waitForCompletion,
 } from '../services/microsandbox'
 
@@ -191,6 +192,36 @@ describe('buildMsbCreateArgs', () => {
 		const idx = args.indexOf('--pull')
 		expect(args[idx + 1]).toBe('if-missing')
 	})
+
+	it('adds --max-duration <value> as the persistent-VM backstop when provided', () => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+			maxDuration: '8h',
+		})
+		const idx = args.indexOf('--max-duration')
+		expect(idx).toBeGreaterThan(-1)
+		expect(args[idx + 1]).toBe('8h')
+	})
+
+	it.each([undefined, '0'])('omits --max-duration when maxDuration is %s', (maxDuration) => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+			...(maxDuration !== undefined && { maxDuration }),
+		})
+		expect(args).not.toContain('--max-duration')
+	})
 })
 
 describe('removeSandbox', () => {
@@ -215,6 +246,32 @@ describe('removeSandbox', () => {
 		})
 		await expect(
 			removeSandbox('../etc/passwd', { msbBin: '/usr/local/bin/msb', run }),
+		).rejects.toThrow(/Invalid session id/)
+	})
+})
+
+describe('stopSandbox', () => {
+	it('shells out msb stop <name> (graceful, so the /agent mount flushes)', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			return { stdout: '', stderr: '' }
+		}
+		await stopSandbox('sess-done', { msbBin: '/usr/local/bin/msb', run })
+		expect(calls.length).toBe(1)
+		expect(calls[0]).toEqual(['stop', 'sess-done'])
+	})
+
+	it('rejects an invalid sandbox name before shelling out', async () => {
+		const run = async (): Promise<{ stdout: string; stderr: string }> => ({
+			stdout: '',
+			stderr: '',
+		})
+		await expect(
+			stopSandbox('foo;rm -rf /', { msbBin: '/usr/local/bin/msb', run }),
 		).rejects.toThrow(/Invalid session id/)
 	})
 })
