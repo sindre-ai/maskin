@@ -680,6 +680,12 @@ export const catalogPackages = pgTable('catalog_packages', {
 	description: text('description').notNull(),
 	version: text('version').notNull(),
 	useCase: text('use_case'),
+	// Coarse classifier for the storefront tab filter (e.g. `job-loop` for the
+	// cross-functional loops shipped by bet/curated-catalog-content, `discovery`
+	// for the Customer Continuous Discovery package). Free-form text rather than
+	// an enum so new categories can land in a seed without a schema change. Null
+	// means uncategorised.
+	category: text('category'),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })

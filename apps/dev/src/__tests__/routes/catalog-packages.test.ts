@@ -13,6 +13,7 @@ function buildCatalogPackage(overrides?: Record<string, unknown>) {
 		description: 'Feedback → insights → bets → lifecycle comms.',
 		version: '0.1.0',
 		useCase: 'continuous-discovery',
+		category: 'discovery',
 		createdAt: new Date('2026-06-01T00:00:00Z'),
 		updatedAt: new Date('2026-06-01T00:00:00Z'),
 		...overrides,
@@ -76,6 +77,7 @@ describe('Catalog Packages Routes', () => {
 			expect(body.packages).toHaveLength(2)
 			expect(body.packages[0].name).toBe('Aardvark')
 			expect(body.packages[0].item_types).toEqual(['actor', 'skill'])
+			expect(body.packages[0].category).toBe('discovery')
 			expect(body.packages[1].item_types).toEqual(['integration'])
 
 			expect(body.counts.total).toBe(2)
@@ -141,6 +143,7 @@ describe('Catalog Packages Routes', () => {
 
 			expect(body.package.id).toBe(pkg.id)
 			expect(body.package.use_case).toBe(pkg.useCase)
+			expect(body.package.category).toBe('discovery')
 			expect(body.package.item_types).toEqual(['actor', 'skill'])
 			expect(body.items).toHaveLength(2)
 			expect(body.items[0].package_id).toBe(pkg.id)

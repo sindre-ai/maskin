@@ -17,6 +17,10 @@ import {
 	CCD_PACKAGE_SLUG,
 	CCD_PACKAGE_USE_CASE,
 	CCD_PACKAGE_VERSION,
+	DISCOVERY_CATEGORY,
+	JOB_LOOP_CATEGORY,
+	JOB_LOOP_PACKAGES,
+	JOB_LOOP_PACKAGE_VERSION,
 	SINDRE_DEFAULT,
 } from '@maskin/shared'
 import { and, count, eq, isNotNull } from 'drizzle-orm'
@@ -38,6 +42,7 @@ export async function seedCatalogIfEmpty(db: Database): Promise<void> {
 			description: CCD_PACKAGE_DESCRIPTION,
 			version: CCD_PACKAGE_VERSION,
 			useCase: CCD_PACKAGE_USE_CASE,
+			category: DISCOVERY_CATEGORY,
 		})
 		.returning()
 
@@ -264,6 +269,34 @@ export async function seedCatalogIfEmpty(db: Database): Promise<void> {
 			},
 		},
 	])
+
+	// Job-loop packages — Bug triage, Launch, Standup, Incident. Names and
+	// items are placeholders today (T1 + T2 own the curated content); the
+	// category tag is what T4's storefront tab filter reads.
+	for (const loop of JOB_LOOP_PACKAGES) {
+		const [loopRow] = await db
+			.insert(catalogPackages)
+			.values({
+				slug: loop.slug,
+				name: loop.name,
+				description: loop.description,
+				version: JOB_LOOP_PACKAGE_VERSION,
+				useCase: loop.useCase,
+				category: JOB_LOOP_CATEGORY,
+			})
+			.returning()
+
+		if (!loopRow || loop.items.length === 0) continue
+
+		await db.insert(catalogPackageItems).values(
+			loop.items.map((item) => ({
+				packageId: loopRow.id,
+				itemType: item.itemType,
+				sourceItemId: item.sourceItemId,
+				itemSnapshot: item.itemSnapshot,
+			})),
+		)
+	}
 }
 
 export interface DevBootstrapResult {

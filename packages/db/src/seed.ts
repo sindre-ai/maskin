@@ -9,6 +9,10 @@ import {
 	CCD_PACKAGE_SLUG,
 	CCD_PACKAGE_USE_CASE,
 	CCD_PACKAGE_VERSION,
+	DISCOVERY_CATEGORY,
+	JOB_LOOP_CATEGORY,
+	JOB_LOOP_PACKAGES,
+	JOB_LOOP_PACKAGE_VERSION,
 	KNOWLEDGE_NUDGES,
 } from '@maskin/shared'
 import { createDb } from './connection'
@@ -410,6 +414,7 @@ const [ccdPkg] = await db
 		description: CCD_PACKAGE_DESCRIPTION,
 		version: CCD_PACKAGE_VERSION,
 		useCase: CCD_PACKAGE_USE_CASE,
+		category: DISCOVERY_CATEGORY,
 	})
 	.returning()
 
@@ -637,6 +642,41 @@ if (ccdPkg) {
 			},
 		},
 	])
+}
+
+// ── Job-Loop Catalog Packages ────────────────────────────────────────────────
+//
+// Four cross-functional job loops for the storefront: Bug triage, Launch,
+// Standup, Incident. Names, descriptions, and item composition are
+// placeholders today — T1 (curated picks) and T2 (final copy) replace them
+// once those tasks ship. The packages are tagged with `JOB_LOOP_CATEGORY` so
+// T4's storefront tab can filter to them.
+
+for (const pkg of JOB_LOOP_PACKAGES) {
+	const [row] = await db
+		.insert(catalogPackages)
+		.values({
+			slug: pkg.slug,
+			name: pkg.name,
+			description: pkg.description,
+			version: JOB_LOOP_PACKAGE_VERSION,
+			useCase: pkg.useCase,
+			category: JOB_LOOP_CATEGORY,
+		})
+		.returning()
+
+	if (!row) continue
+
+	if (pkg.items.length > 0) {
+		await db.insert(catalogPackageItems).values(
+			pkg.items.map((item) => ({
+				packageId: row.id,
+				itemType: item.itemType,
+				sourceItemId: item.sourceItemId,
+				itemSnapshot: item.itemSnapshot,
+			})),
+		)
+	}
 }
 
 console.log('Seed complete')
