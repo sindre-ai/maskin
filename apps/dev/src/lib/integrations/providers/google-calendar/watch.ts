@@ -446,23 +446,22 @@ async function readAutoJoinDefault(db: Database, workspaceId: string): Promise<b
 	return settings.notetaker?.autoJoin === true
 }
 
-/**
- * Apply one calendar event diff to the workspace's meeting objects:
- * - cancelled events → status='cancelled' if a meeting object exists
- * - new events with a meetingUrl → insert a new `meeting` object
- * - existing events → update the meeting object's metadata + status
- *
- * Match key: `metadata->>'calendarEventId'` on `type='meeting'` in the workspace.
- */
-async function upsertMeetingFromEvent(
+/** Postgres SQLSTATE for a unique constraint violation. */
+const PG_UNIQUE_VIOLATION = '23505'
+
+function isUniqueViolation(err: unknown): boolean {
+	return (
+		typeof err === 'object' &&
+		err !== null &&
+		(err as { code?: string }).code === PG_UNIQUE_VIOLATION
+	)
+}
+
+async function findExistingMeeting(
 	db: Database,
 	workspaceId: string,
-	systemActorId: string,
-	autoJoinDefault: boolean,
-	event: CalendarEvent,
-): Promise<NormalizedEvent | null> {
-	const fields = calendarEventToMeetingFields(event, autoJoinDefault)
-
+	calendarEventId: string,
+): Promise<typeof objects.$inferSelect | undefined> {
 	const [existing] = await db
 		.select()
 		.from(objects)
@@ -470,10 +469,71 @@ async function upsertMeetingFromEvent(
 			and(
 				eq(objects.workspaceId, workspaceId),
 				eq(objects.type, 'meeting'),
-				sql`${objects.metadata}->>'calendarEventId' = ${fields.calendarEventId}`,
+				sql`${objects.metadata}->>'calendarEventId' = ${calendarEventId}`,
 			),
 		)
 		.limit(1)
+	return existing
+}
+
+async function updateExistingMeeting(
+	db: Database,
+	workspaceId: string,
+	systemActorId: string,
+	existing: typeof objects.$inferSelect,
+	title: string,
+	nextMetadata: Record<string, unknown>,
+	calendarEventId: string,
+): Promise<NormalizedEvent> {
+	// Existing meeting — merge fresh fields. Skip metadata replacement of fields
+	// the user/Skjald may have written (transcriptUrl, audioUrl, language, botName);
+	// only refresh the calendar-sourced ones.
+	const existingMeta = (existing.metadata as Record<string, unknown> | null) ?? {}
+	const mergedMetadata = { ...existingMeta, ...nextMetadata }
+	await db
+		.update(objects)
+		.set({ title, metadata: mergedMetadata, updatedAt: new Date() })
+		.where(eq(objects.id, existing.id))
+	await db.insert(events).values({
+		workspaceId,
+		actorId: systemActorId,
+		action: 'updated',
+		entityType: 'meeting',
+		entityId: existing.id,
+		data: { calendarEventId },
+	})
+	return {
+		entityType: 'google-calendar.event',
+		action: 'updated',
+		installationId: '',
+		data: { meetingId: existing.id, calendarEventId },
+	}
+}
+
+/**
+ * Apply one calendar event diff to the workspace's meeting objects:
+ * - cancelled events → status='cancelled' if a meeting object exists
+ * - new events with a meetingUrl → insert a new `meeting` object
+ * - existing events → update the meeting object's metadata + status
+ *
+ * Match key: `metadata->>'calendarEventId'` on `type='meeting'` in the workspace.
+ *
+ * Concurrent-push safety: the SELECT-then-INSERT is not atomic. Two pushes
+ * with different webhook delivery ids (channel rotation, intermediate-state
+ * pushes) can both miss the existing row and race into INSERT. The DB-level
+ * partial unique index `objects_meeting_calendar_event_id_uniq` makes the
+ * loser surface `23505 unique_violation`, which we catch and convert into a
+ * re-SELECT + UPDATE so we end with exactly one meeting row.
+ */
+export async function upsertMeetingFromEvent(
+	db: Database,
+	workspaceId: string,
+	systemActorId: string,
+	autoJoinDefault: boolean,
+	event: CalendarEvent,
+): Promise<NormalizedEvent | null> {
+	const fields = calendarEventToMeetingFields(event, autoJoinDefault)
+	const existing = await findExistingMeeting(db, workspaceId, fields.calendarEventId)
 
 	const title = event.summary?.trim() || 'Untitled meeting'
 
@@ -518,57 +578,71 @@ async function upsertMeetingFromEvent(
 		// notetake (i.e. a video conference URL). All-day events / phone-only events
 		// don't need a meeting object.
 		if (!fields.meetingUrl) return null
-		const [created] = await db
-			.insert(objects)
-			.values({
+		try {
+			const [created] = await db
+				.insert(objects)
+				.values({
+					workspaceId,
+					type: 'meeting',
+					title,
+					status: 'scheduled',
+					metadata: nextMetadata,
+					createdBy: systemActorId,
+				})
+				.returning({ id: objects.id })
+			if (!created) return null
+			await db.insert(events).values({
 				workspaceId,
-				type: 'meeting',
-				title,
-				status: 'scheduled',
-				metadata: nextMetadata,
-				createdBy: systemActorId,
+				actorId: systemActorId,
+				action: 'created',
+				entityType: 'meeting',
+				entityId: created.id,
+				data: { calendarEventId: fields.calendarEventId },
 			})
-			.returning({ id: objects.id })
-		if (!created) return null
-		await db.insert(events).values({
-			workspaceId,
-			actorId: systemActorId,
-			action: 'created',
-			entityType: 'meeting',
-			entityId: created.id,
-			data: { calendarEventId: fields.calendarEventId },
-		})
-		return {
-			entityType: 'google-calendar.event',
-			action: 'created',
-			installationId: '',
-			data: { meetingId: created.id, calendarEventId: fields.calendarEventId },
+			return {
+				entityType: 'google-calendar.event',
+				action: 'created',
+				installationId: '',
+				data: { meetingId: created.id, calendarEventId: fields.calendarEventId },
+			}
+		} catch (err) {
+			if (!isUniqueViolation(err)) throw err
+			// Concurrent push won the INSERT race. Re-SELECT the winner and
+			// fold our diff into it as an UPDATE so neither push is lost.
+			logger.info('Google Calendar concurrent upsert detected — falling back to update', {
+				workspaceId,
+				calendarEventId: fields.calendarEventId,
+			})
+			const winner = await findExistingMeeting(db, workspaceId, fields.calendarEventId)
+			if (!winner) {
+				// Read-committed: a unique_violation guarantees a committed
+				// row visible to this transaction. If SELECT can't find it,
+				// the constraint and the read disagree — surface loudly.
+				throw new Error(
+					`upsertMeetingFromEvent: 23505 raised but no row visible on re-SELECT for calendarEventId=${fields.calendarEventId}`,
+				)
+			}
+			return updateExistingMeeting(
+				db,
+				workspaceId,
+				systemActorId,
+				winner,
+				title,
+				nextMetadata,
+				fields.calendarEventId,
+			)
 		}
 	}
 
-	// Existing meeting — merge fresh fields. Skip metadata replacement of fields
-	// the user/Skjald may have written (transcriptUrl, audioUrl, language, botName);
-	// only refresh the calendar-sourced ones.
-	const existingMeta = (existing.metadata as Record<string, unknown> | null) ?? {}
-	const mergedMetadata = { ...existingMeta, ...nextMetadata }
-	await db
-		.update(objects)
-		.set({ title, metadata: mergedMetadata, updatedAt: new Date() })
-		.where(eq(objects.id, existing.id))
-	await db.insert(events).values({
+	return updateExistingMeeting(
+		db,
 		workspaceId,
-		actorId: systemActorId,
-		action: 'updated',
-		entityType: 'meeting',
-		entityId: existing.id,
-		data: { calendarEventId: fields.calendarEventId },
-	})
-	return {
-		entityType: 'google-calendar.event',
-		action: 'updated',
-		installationId: '',
-		data: { meetingId: existing.id, calendarEventId: fields.calendarEventId },
-	}
+		systemActorId,
+		existing,
+		title,
+		nextMetadata,
+		fields.calendarEventId,
+	)
 }
 
 /**

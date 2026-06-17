@@ -2,12 +2,16 @@ import { createHmac } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { config } from '../../../../lib/integrations/providers/google-calendar/config'
 import { resolveExternalId } from '../../../../lib/integrations/providers/google-calendar/resolve-id'
-import { calendarEventToMeetingFields } from '../../../../lib/integrations/providers/google-calendar/watch'
+import {
+	calendarEventToMeetingFields,
+	upsertMeetingFromEvent,
+} from '../../../../lib/integrations/providers/google-calendar/watch'
 import {
 	buildChannelToken,
 	googleCalendarEventNormalizer,
 	googleCalendarWebhookVerifier,
 } from '../../../../lib/integrations/providers/google-calendar/webhooks'
+import { createTestContext } from '../../../setup'
 
 describe('Google Calendar provider config', () => {
 	it('has correct name and display name', () => {
@@ -299,5 +303,102 @@ describe('calendarEventToMeetingFields', () => {
 		)
 		expect(out.skjaldJoin).toBe(false)
 		expect(out.autoJoin).toBe(false)
+	})
+})
+
+describe('upsertMeetingFromEvent — concurrent insert', () => {
+	const WORKSPACE_ID = 'ws-1'
+	const SYSTEM_ACTOR_ID = 'actor-system'
+	const newEvent = {
+		id: 'evt-race',
+		status: 'confirmed',
+		summary: 'Standup',
+		hangoutLink: 'https://meet.google.com/aaa-bbbb-ccc',
+		start: { dateTime: '2026-06-14T10:00:00Z' },
+		end: { dateTime: '2026-06-14T10:30:00Z' },
+	}
+
+	const uniqueViolation = (): Error => {
+		const err = new Error(
+			'duplicate key value violates unique constraint "objects_meeting_calendar_event_id_uniq"',
+		)
+		;(err as { code?: string }).code = '23505'
+		return err
+	}
+
+	it('falls back to UPDATE when the INSERT loses the race (23505)', async () => {
+		const { db, mockResults, calls } = createTestContext()
+		const winner = {
+			id: 'meeting-winner',
+			workspaceId: WORKSPACE_ID,
+			type: 'meeting',
+			metadata: { calendarEventId: 'evt-race' },
+		}
+		mockResults.selectQueue = [
+			[], // initial findExistingMeeting — no row yet, both racers reach INSERT
+			[winner], // re-SELECT after 23505 finds the row the other transaction committed
+		]
+		// First INSERT (objects) throws 23505; subsequent INSERTs (events row) succeed.
+		mockResults.insertErrorQueue = [uniqueViolation()]
+
+		const result = await upsertMeetingFromEvent(db, WORKSPACE_ID, SYSTEM_ACTOR_ID, false, newEvent)
+
+		expect(result).toEqual({
+			entityType: 'google-calendar.event',
+			action: 'updated',
+			installationId: '',
+			data: { meetingId: 'meeting-winner', calendarEventId: 'evt-race' },
+		})
+		// Race loser becomes a single UPDATE against the winner's row, not a duplicate insert.
+		expect(calls.updates.length).toBe(1)
+	})
+
+	it('preserves user-written metadata fields when folding the race loser into an UPDATE', async () => {
+		const { db, mockResults, calls } = createTestContext()
+		const winner = {
+			id: 'meeting-winner',
+			workspaceId: WORKSPACE_ID,
+			type: 'meeting',
+			metadata: {
+				calendarEventId: 'evt-race',
+				transcriptUrl: 'https://skjald.example/transcript/abc',
+				botName: 'Skjald Bot',
+				audioUrl: 'https://skjald.example/audio/abc',
+			},
+		}
+		mockResults.selectQueue = [[], [winner]]
+		mockResults.insertErrorQueue = [uniqueViolation()]
+
+		await upsertMeetingFromEvent(db, WORKSPACE_ID, SYSTEM_ACTOR_ID, false, newEvent)
+
+		const updateArg = calls.updates[0] as { metadata: Record<string, unknown> }
+		expect(updateArg.metadata.transcriptUrl).toBe('https://skjald.example/transcript/abc')
+		expect(updateArg.metadata.botName).toBe('Skjald Bot')
+		expect(updateArg.metadata.audioUrl).toBe('https://skjald.example/audio/abc')
+		// Calendar-sourced fields are refreshed.
+		expect(updateArg.metadata.calendarEventId).toBe('evt-race')
+		expect(updateArg.metadata.meetingUrl).toBe('https://meet.google.com/aaa-bbbb-ccc')
+	})
+
+	it('rethrows non-unique-violation Postgres errors', async () => {
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = [[]]
+		const connErr = new Error('connection terminated')
+		;(connErr as { code?: string }).code = '08006'
+		mockResults.insertErrorQueue = [connErr]
+
+		await expect(
+			upsertMeetingFromEvent(db, WORKSPACE_ID, SYSTEM_ACTOR_ID, false, newEvent),
+		).rejects.toThrow('connection terminated')
+	})
+
+	it('surfaces an explicit error if 23505 is raised but re-SELECT finds nothing', async () => {
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = [[], []] // first AND second SELECT empty
+		mockResults.insertErrorQueue = [uniqueViolation()]
+
+		await expect(
+			upsertMeetingFromEvent(db, WORKSPACE_ID, SYSTEM_ACTOR_ID, false, newEvent),
+		).rejects.toThrow(/no row visible on re-SELECT/)
 	})
 })
