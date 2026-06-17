@@ -1,15 +1,11 @@
 import type { Database } from '@maskin/db'
-import { actors, integrations, workspaces } from '@maskin/db/schema'
+import { actors, workspaces } from '@maskin/db/schema'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
-import { decrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
-import {
-	createSlackMcpServer,
-	isSlackBotToken,
-} from '../lib/integrations/providers/slack/mcp-server'
-import type { StoredCredentials } from '../lib/integrations/types'
+import { resolveSlackBotToken } from '../lib/integrations/providers/slack/bot-token'
+import { createSlackMcpServer } from '../lib/integrations/providers/slack/mcp-server'
 import { logger } from '../lib/logger'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
@@ -21,58 +17,6 @@ type Env = {
 }
 
 const app = new Hono<Env>()
-
-/**
- * Resolve the bot token for the workspace's active Slack integration. Returns
- * null when there is no active integration or the stored credential is not a
- * bot token — the guard prevents posting as a user when the OAuth scope drift
- * left an `xoxp-` token in the row.
- */
-async function resolveSlackBotToken(
-	db: Database,
-	workspaceId: string,
-): Promise<{ botToken: string; slackTeamId: string | undefined } | null> {
-	const [integration] = await db
-		.select()
-		.from(integrations)
-		.where(
-			and(
-				eq(integrations.workspaceId, workspaceId),
-				eq(integrations.provider, 'slack'),
-				eq(integrations.status, 'active'),
-			),
-		)
-		.limit(1)
-
-	if (!integration) return null
-
-	let credentials: StoredCredentials
-	try {
-		credentials = JSON.parse(decrypt(integration.credentials as string)) as StoredCredentials
-	} catch (err) {
-		logger.error('Failed to decrypt Slack credentials', {
-			workspaceId,
-			integrationId: integration.id,
-			error: String(err),
-		})
-		return null
-	}
-
-	const accessToken = credentials.accessToken
-	if (!isSlackBotToken(accessToken)) {
-		logger.warn('Refusing to post to Slack with a non-bot token', {
-			workspaceId,
-			integrationId: integration.id,
-			tokenPrefix: typeof accessToken === 'string' ? accessToken.slice(0, 5) : 'missing',
-		})
-		return null
-	}
-
-	return {
-		botToken: accessToken as string,
-		slackTeamId: integration.externalId ?? undefined,
-	}
-}
 
 app.post('/', async (c) => {
 	const db = c.get('db')

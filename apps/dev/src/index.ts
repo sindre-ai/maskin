@@ -9,6 +9,7 @@ import { type DevBootstrapResult, maybeBootstrapDev } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { ContainerManager } from './services/container-manager'
+import { FounderExternalChatReporter } from './services/founder-external-chat-reporter'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { SessionManager } from './services/session-manager'
 import { TriggerRunner } from './services/trigger-runner'
@@ -72,6 +73,16 @@ const triggerRunner = new TriggerRunner(db, notifyBridge, sessionManager)
 triggerRunner.start().then(() => {
 	logger.info('Trigger runner started')
 })
+
+const founderExternalChatReporter = new FounderExternalChatReporter({
+	bridge: notifyBridge,
+	db,
+	configJson: process.env.FOUNDER_EXTERNAL_REPORT_CONFIG,
+	cronExpression: process.env.FOUNDER_EXTERNAL_REPORT_CRON,
+	timezone: process.env.FOUNDER_EXTERNAL_REPORT_TZ,
+	machineIconUrl: process.env.MASKIN_MACHINE_ICON_URL?.trim() || undefined,
+})
+founderExternalChatReporter.start()
 
 const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()

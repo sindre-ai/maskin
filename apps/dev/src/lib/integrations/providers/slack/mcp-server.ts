@@ -54,7 +54,7 @@ export function isSlackBotToken(token: string | undefined | null): boolean {
 	return typeof token === 'string' && token.startsWith('xoxb-')
 }
 
-async function slackPostMessage(
+export async function slackPostMessage(
 	ctx: SlackPostContext,
 	args: { channel: string; text: string; thread_ts?: string },
 ): Promise<SlackPostMessageResponse> {
