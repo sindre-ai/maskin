@@ -78,6 +78,26 @@ describe('Webhook Routes', () => {
 			expect(body.error.message).toContain('Invalid webhook signature')
 		})
 
+		it('accepts an empty body for pointer-style pushes (custom verifier)', async () => {
+			// Google Calendar POSTs with an empty body — the verifier and normalizer
+			// work off headers alone. A 400 here means we'd reject every real push.
+			mockGetProvider.mockReturnValue({
+				config: { name: 'google-calendar', webhook: { type: 'custom' } },
+				customWebhookVerifier: () => true,
+			})
+			mockNormalizeEvent.mockReturnValue(null)
+			const { app } = createWebhookTestApp()
+
+			const res = await app.request(
+				new Request('http://localhost/api/webhooks/google-calendar', { method: 'POST' }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.ok).toBe(true)
+			expect(body.skipped).toBe(true)
+		})
+
 		it('returns 200 with skipped for unhandled event type', async () => {
 			mockGetProvider.mockReturnValue({
 				config: {
