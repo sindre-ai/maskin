@@ -187,37 +187,61 @@ run_agent() {
     log_ingest_url="${AGENT_SERVER_URL}/sessions/${SESSION_ID}/logs/ingest"
   fi
 
+  # Stream agent output to the agent-server's log-ingest endpoint LINE BY LINE
+  # over a single long-lived chunked POST, so the Maskin UI shows logs live
+  # while the agent runs.  The previous implementation buffered ALL output to a
+  # temp file (`cat > file`) and POSTed it once at exit (`--data-binary @file`),
+  # which (a) showed nothing until the process exited and (b) showed NOTHING for
+  # interactive sessions, where `claude` never exits.
   log_tee() {
-    if [ -n "$log_ingest_url" ]; then
-      # Buffer output to a temp file, then POST synchronously BEFORE returning.
-      # Process substitution >(curl ...) is intentionally avoided: bash does NOT
-      # wait for process-substitution subprocesses before exiting.  When
-      # agent-run.sh exits the microsandbox VM shuts down, killing the curl
-      # process before it can POST anything.  Running curl after the capture
-      # finishes (and before run_agent returns) keeps the VM alive until the
-      # POST completes.
-      local _logfile
-      _logfile=$(mktemp /tmp/agent-logs-XXXXXX)
-      # Use `cat > file` (not `tee file`) so we DON'T also write to stdout (the
-      # microsandbox PTY).  Nobody drains the PTY, so its ~4KB ring buffer fills
-      # on large output (claude emits hundreds of KB of JSON) and tee blocks
-      # forever, freezing the whole session.  PTY output is sacrificed; the
-      # Maskin UI gets the logs over HTTP instead.
-      cat > "$_logfile"
-      # --http1.0 forces connection-close semantics so curl exits immediately
-      # after reading the response.  Over microsandbox's smoltcp TCP proxy the
-      # server-side FIN/keep-alive close isn't reliably forwarded to the VM, so
-      # an HTTP/1.1 keep-alive curl hangs after the POST even though it already
-      # received {"ok":true}.  --max-time 15 is a backstop.
-      curl -4 -s --http1.0 --max-time 15 -X POST "$log_ingest_url" \
-        -H "Content-Type: text/plain" \
-        --data-binary "@$_logfile" \
-        -o /dev/null \
-        2>/dev/null || true
-      rm -f "$_logfile"
-    else
+    if [ -z "$log_ingest_url" ]; then
+      # No agent-server reachable: just drain stdin (to the unread PTY) so the
+      # agent isn't blocked by a full pipe.
       cat
+      return
     fi
+    # `curl -T -` uploads stdin with Transfer-Encoding: chunked, forwarding bytes
+    # as they arrive — unlike `--data-binary @-`, which first buffers ALL of
+    # stdin to compute a Content-Length (effectively what `cat > file` did).
+    # Chunked requires HTTP/1.1, so we drop the old `--http1.0`.  The server
+    # (apps/agent-server) reads the request body as a stream and pushes each
+    # newline-delimited line into the session's log buffer immediately, so one
+    # POST carries the whole session and the UI updates as lines arrive.
+    # `-H "Expect:"` strips the 100-continue handshake (curl adds it for uploads
+    # >1KB), which would otherwise stall the stream waiting for a 100 Continue.
+    #
+    # Why a function fed by a pipe (`agent ... | log_tee`) and not process
+    # substitution: bash WAITS for every stage of a pipeline before the script
+    # exits, so curl finishes before run_agent returns and the VM is torn down.
+    # bash does NOT wait for `>(...)` subprocesses (the reason the old code could
+    # not use them).  curl also continuously drains the pipe, so the undrained
+    # microsandbox PTY never fills and freezes the agent — the problem that ruled
+    # out plain `tee`.
+    #
+    # The reconnect loop keeps a reader on the pipe AT ALL TIMES.  Without it a
+    # dropped upload connection would leave the agent writing to a broken pipe
+    # (SIGPIPE -> the agent dies).  With it, a transient drop reconnects and
+    # resumes streaming; after repeated failures we fall back to draining stdin
+    # so the agent keeps running and this script can still reach its EXIT trap
+    # (the completion signal).  curl returns 0 only once stdin hits EOF (the
+    # agent exited) and the body flushed — the clean end-of-stream.
+    local attempts=0
+    while true; do
+      if curl -4 -sN -X POST "$log_ingest_url" \
+          -H "Content-Type: text/plain" \
+          -H "Expect:" \
+          -T - \
+          -o /dev/null \
+          2>/dev/null; then
+        return 0
+      fi
+      attempts=$((attempts + 1))
+      if [ "$attempts" -ge 5 ]; then
+        cat > /dev/null
+        return 0
+      fi
+      sleep 1
+    done
   }
 
   case "$RUNTIME" in
