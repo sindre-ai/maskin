@@ -3,56 +3,623 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=1920, height=1080" />
-    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <title>Maskin — product walkthrough</title>
+    <script src="./vendor/gsap.min.js"></script>
     <style>
-      * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 1920px; height: 1080px; overflow: hidden;
+        background: #08080c;
+        font-family: "Inter", system-ui, sans-serif;
+        color: #18181b;
+        -webkit-font-smoothing: antialiased;
       }
-      html,
-      body {
-        margin: 0;
-        width: 1920px;
-        height: 1080px;
-        overflow: hidden;
-        background: #000;
+      .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+      /* ---------- backdrop ---------- */
+      #backdrop { position: absolute; inset: 0; background: #0b0b12; overflow: hidden; }
+      #glow {
+        position: absolute; left: 50%; top: 44%; width: 1500px; height: 1500px;
+        margin-left: -750px; margin-top: -750px; border-radius: 50%;
+        background: radial-gradient(circle, rgba(99,102,241,0.32) 0%, rgba(99,102,241,0.10) 34%, rgba(99,102,241,0) 64%);
       }
-      body {
-        font-family: "Inter", sans-serif;
+      #grid {
+        position: absolute; inset: -60px;
+        background-image:
+          linear-gradient(rgba(255,255,255,0.045) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255,255,255,0.045) 1px, transparent 1px);
+        background-size: 64px 64px;
       }
-      code,
-      pre,
-      .monospace {
-        font-family: "JetBrains Mono", monospace;
+      .mark { position: absolute; width: 26px; height: 26px; opacity: 0.5; }
+      .mark::before, .mark::after { content: ""; position: absolute; background: rgba(255,255,255,0.4); }
+      .mark::before { left: 0; top: 12px; width: 26px; height: 1px; }
+      .mark::after { top: 0; left: 12px; height: 26px; width: 1px; }
+      #m-tl { left: 40px; top: 40px; }
+      #m-tr { right: 40px; top: 40px; }
+      #m-bl { left: 40px; bottom: 40px; }
+      #m-br { right: 40px; bottom: 40px; }
+
+      #wordmark {
+        position: absolute; left: 50px; top: 30px;
+        font-size: 15px; letter-spacing: 0.34em; font-weight: 700; color: rgba(255,255,255,0.82);
       }
+      #wordmark span { color: #a5b4fc; }
+      #tagline {
+        position: absolute; right: 50px; top: 32px;
+        font-size: 12px; letter-spacing: 0.22em; color: rgba(255,255,255,0.42); text-transform: uppercase;
+      }
+
+      /* caption + progress */
+      #caption-wrap { position: absolute; left: 50px; bottom: 30px; height: 22px; width: 900px; }
+      .caption {
+        position: absolute; left: 0; top: 0; opacity: 0;
+        font-size: 14px; letter-spacing: 0.12em; color: rgba(255,255,255,0.74);
+        white-space: nowrap;
+      }
+      .caption b { color: #a5b4fc; font-weight: 700; margin-right: 12px; }
+      #dots { position: absolute; right: 50px; bottom: 32px; display: flex; gap: 10px; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.22); }
+
+      /* ---------- app window ---------- */
+      #window {
+        position: absolute; left: 96px; top: 52px; width: 1728px; height: 976px;
+        background: #ffffff; border-radius: 16px; overflow: hidden;
+        box-shadow: 0 50px 120px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06);
+      }
+      #titlebar {
+        position: absolute; left: 0; top: 0; width: 100%; height: 40px;
+        background: #f4f4f5; border-bottom: 1px solid #e4e4e7;
+        display: flex; align-items: center; padding: 0 16px; gap: 8px;
+      }
+      .tl-dot { width: 12px; height: 12px; border-radius: 50%; }
+      .url-pill {
+        position: absolute; left: 50%; top: 9px; transform: translateX(-50%);
+        height: 22px; padding: 0 16px; border-radius: 6px; background: #ffffff;
+        border: 1px solid #e4e4e7; display: flex; align-items: center; gap: 8px;
+        font-size: 12px; color: #71717a;
+      }
+      .url-pill .lock { width: 9px; height: 9px; border: 1.5px solid #a1a1aa; border-radius: 2px; }
+
+      #appbody { position: absolute; left: 0; top: 40px; width: 100%; height: 936px; }
+
+      /* sidebar */
+      #sidebar {
+        position: absolute; left: 0; top: 0; width: 224px; height: 100%;
+        background: #fafafa; border-right: 1px solid #e4e4e7;
+      }
+      #sb-head { height: 44px; display: flex; align-items: center; padding: 0 18px; }
+      .sb-logo { width: 22px; height: 22px; border-radius: 6px; background: #18181b; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800; font-size:13px;}
+      #sb-ws { margin-left: 10px; font-size: 13px; font-weight: 600; color: #18181b; }
+      #nav { position: relative; padding: 8px 12px; }
+      #nav-active {
+        position: absolute; left: 12px; top: 8px; width: 200px; height: 36px;
+        background: #f0f0f1; border-radius: 8px;
+      }
+      #nav-rail {
+        position: absolute; left: 12px; top: 16px; width: 3px; height: 20px;
+        background: #4f46e5; border-radius: 3px;
+      }
+      .nav-item {
+        position: relative; height: 36px; margin-bottom: 4px; border-radius: 8px;
+        display: flex; align-items: center; padding: 0 14px; gap: 11px;
+        font-size: 14px; color: #52525b; font-weight: 500;
+      }
+      .nav-item.on { color: #18181b; font-weight: 600; }
+      .nav-ico { width: 16px; height: 16px; border: 1.8px solid currentColor; border-radius: 4px; opacity: 0.85; }
+      .nav-badge { margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #18181b; color: #fff; font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+      #sb-foot { position: absolute; left: 0; bottom: 0; width: 100%; padding: 14px 18px; border-top: 1px solid #e4e4e7; }
+      #pulse-wrap { position: relative; height: 18px; font-size: 12px; color: #71717a; }
+      .pulse-state { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+      .pulse-dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; }
+      #sb-user { margin-top: 12px; display: flex; align-items: center; gap: 9px; }
+      .avatar { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; flex: 0 0 auto; }
+      .av-human { background: #3f3f46; color: #e4e4e7; }
+      .av-agent { background: #e0e7ff; color: #4338ca; font-size: 13px; }
+      #sb-user .nm { font-size: 13px; font-weight: 600; color: #18181b; }
+      #sb-user .em { font-size: 11px; color: #a1a1aa; }
+
+      /* top bar (header) */
+      #topbar {
+        position: absolute; left: 224px; top: 0; width: 1504px; height: 52px;
+        display: flex; align-items: center; padding: 0 22px; gap: 10px;
+      }
+      .crumb { position: relative; width: 360px; height: 18px; font-size: 13px; color: #71717a; }
+      .crumb-v { position: absolute; left: 0; top: 0; white-space: nowrap; }
+      .crumb b { color: #18181b; font-weight: 600; }
+      .crumb .sep { margin: 0 8px; color: #d4d4d8; }
+      .top-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+      .ico-btn { width: 28px; height: 28px; border-radius: 7px; display: flex; align-items: center; justify-content: center; color: #71717a; }
+      .plus { position: relative; width: 15px; height: 15px; }
+      .plus::before, .plus::after { content:""; position:absolute; background:#71717a;}
+      .plus::before { left: 7px; top: 1px; width: 1.6px; height: 13px; }
+      .plus::after { top: 7px; left: 1px; height: 1.6px; width: 13px; }
+      .spark { font-size: 15px; color: #71717a; }
+
+      /* content region */
+      #content {
+        position: absolute; left: 224px; top: 52px; width: 1504px; height: 884px;
+        overflow: hidden; background: #ffffff;
+      }
+      .panel { position: absolute; inset: 0; padding: 40px 56px; }
+
+      /* shared UI bits */
+      .page-h { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; color: #18181b; }
+      .page-sub { margin-top: 4px; font-size: 14px; color: #71717a; }
+
+      .badge { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 11px; font-size: 12px; font-weight: 600; }
+      .b-type { background: transparent; color: #3f3f46; font-weight: 500; border: 1px solid #e4e4e7; }
+      .b-proposed { background: #e0e7ff; color: #3730a3; }
+      .b-active { background: #dcfce7; color: #166534; }
+      .b-todo { background: #f4f4f5; color: #71717a; }
+      .b-prog { background: #dbeafe; color: #1e40af; }
+
+      .card { background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+
+      /* thread card (For You) */
+      .thread-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid #e4e4e7; }
+      .thread-title { font-size: 16px; font-weight: 600; color: #18181b; }
+      .thread-time { font-size: 12px; color: #a1a1aa; }
+      .mention { margin-left: auto; height: 18px; padding: 0 7px; border-radius: 6px; background: #e0e7ff; color: #3730a3; font-size: 11px; font-weight: 600; display: flex; align-items: center; }
+      .unread { min-width: 18px; height: 18px; padding: 0 6px; border-radius: 9px; background: #4f46e5; color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+      .mark-read { font-size: 12px; color: #71717a; padding: 4px 8px; border-radius: 6px; }
+      .thread-body { padding: 16px 18px; }
+
+      .nd { display: flex; align-items: center; gap: 10px; margin: 4px 0 14px; }
+      .nd-line { height: 1px; flex: 1; background: #dc2626; transform-origin: left center; }
+      .nd-txt { font-size: 12px; font-weight: 600; color: #dc2626; }
+
+      .comment { display: flex; gap: 11px; padding: 6px 0; }
+      .c-body { flex: 1; min-width: 0; }
+      .c-name { font-size: 14px; font-weight: 600; color: #18181b; }
+      .c-name.link { color: #4338ca; }
+      .c-time { font-size: 12px; color: #a1a1aa; margin-left: 8px; }
+      .c-text { margin-top: 3px; font-size: 14px; line-height: 1.5; color: #3f3f46; }
+      .needs-you { margin-left: 8px; height: 18px; padding: 0 8px; border-radius: 9px; background: #e0e7ff; color: #3730a3; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; vertical-align: middle; }
+      .dp-rail { position: absolute; left: 0; top: 4px; bottom: 4px; width: 3px; border-radius: 3px; background: #4f46e5; }
+
+      .composer { display: flex; align-items: center; gap: 12px; border-top: 1px solid #e4e4e7; padding: 14px 18px; }
+      .composer-box { position: relative; flex: 1; height: 38px; border: 1px solid #e4e4e7; border-radius: 9px; display: flex; align-items: center; padding: 0 14px; font-size: 14px; color: #a1a1aa; background: #fff; }
+      .btn-primary { height: 38px; padding: 0 18px; border-radius: 9px; background: #18181b; color: #fafafa; font-size: 14px; font-weight: 600; display: flex; align-items: center; }
+
+      /* chips */
+      .chips { display: flex; gap: 10px; }
+      .chip { height: 34px; padding: 0 16px; border-radius: 17px; border: 1px solid #d4d4d8; background: #fff; font-size: 14px; font-weight: 500; color: #3f3f46; display: flex; align-items: center; gap: 6px; }
+
+      /* bet detail */
+      .doc-title { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; color: #18181b; }
+      .doc-meta { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+      .meta-driver { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: #71717a; }
+      .meta-star { color: #d4d4d8; font-size: 15px; }
+      .work-banner { display: flex; align-items: center; gap: 10px; margin-top: 16px; padding: 10px 14px; border-radius: 10px; background: #eef2ff; border: 1px solid #c7d2fe; font-size: 13px; color: #3730a3; font-weight: 500; }
+      .doc-section { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #a1a1aa; }
+      .doc-p { font-size: 15px; line-height: 1.6; color: #3f3f46; }
+
+      .task-row { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border: 1px solid #e4e4e7; border-radius: 10px; background: #fff; }
+      .task-check { width: 17px; height: 17px; border: 1.8px solid #d4d4d8; border-radius: 5px; flex: 0 0 auto; }
+      .task-title { font-size: 14px; font-weight: 500; color: #27272a; flex: 1; }
+
+      .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #bfdbfe; border-top-color: #1e40af; flex: 0 0 auto; }
+
+      /* agent cards */
+      .ag-card { padding: 18px; }
+      .ag-card.working { border-color: #c7d2fe; background: #f5f6ff; }
+      .ag-head { display: flex; align-items: center; gap: 10px; }
+      .ag-name { font-size: 15px; font-weight: 600; color: #18181b; }
+      .ag-status { margin-left: auto; font-size: 13px; font-weight: 600; }
+      .ag-status.working { color: #1e40af; }
+      .ag-status.idle { color: #a1a1aa; }
+      .ag-desc { font-size: 12px; color: #71717a; margin: 8px 0 12px; margin-left: 36px; }
+      .ag-act { font-size: 13px; color: #52525b; margin-left: 36px; }
+      .idle-dot { width: 7px; height: 7px; border-radius: 50%; background: #a1a1aa; }
+      .tab { height: 30px; padding: 0 14px; border-radius: 8px; font-size: 14px; color: #71717a; display: flex; align-items: center; }
+      .tab.on { background: #f4f4f5; color: #18181b; font-weight: 600; }
+
+      /* cursor */
+      #cursor { position: absolute; left: 0; top: 0; z-index: 9999; pointer-events: none; opacity: 0; }
+      #cursor svg { display: block; filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35)); }
+      .ripple { position: absolute; left: 4px; top: 2px; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; border: 2px solid #4f46e5; transform: scale(0); opacity: 0; }
     </style>
   </head>
   <body>
-    <div
-      id="root"
-      data-composition-id="main"
-      data-start="0"
-      data-duration="10"
-      data-width="1920"
-      data-height="1080"
-    >
-      
-      
+    <div id="root" data-composition-id="main" data-width="1920" data-height="1080" data-start="0" data-duration="60">
 
-      <!--
-        Add your clips here. Example:
-        <div id="title" class="clip" data-start="0" data-duration="5" data-track-index="1"
-             style="font-size: 64px; color: #fff; padding: 40px">
-          Hello World
+      <!-- ============ BACKDROP ============ -->
+      <div id="backdrop" class="clip" data-start="0" data-duration="60" data-track-index="0">
+        <div id="grid" data-layout-allow-overflow></div>
+        <div id="glow" data-layout-allow-overflow></div>
+        <div class="mark" id="m-tl"></div>
+        <div class="mark" id="m-tr"></div>
+        <div class="mark" id="m-bl"></div>
+        <div class="mark" id="m-br"></div>
+        <div id="wordmark">MASK<span>IN</span></div>
+        <div id="tagline">product walkthrough</div>
+        <div id="caption-wrap">
+          <div class="caption" id="cap1"><b class="mono">01</b>For You — a new bet is proposed</div>
+          <div class="caption" id="cap2"><b class="mono">02</b>Reading the bet</div>
+          <div class="caption" id="cap3"><b class="mono">03</b>&ldquo;Let&rsquo;s start the work.&rdquo;</div>
+          <div class="caption" id="cap4"><b class="mono">04</b>Agents break down the work &amp; start</div>
+          <div class="caption" id="cap5"><b class="mono">05</b>The Agents page — working in parallel</div>
+          <div class="caption" id="cap6"><b class="mono">06</b>Back on For You — you answer</div>
         </div>
-      -->
+        <div id="dots">
+          <div class="dot" id="d1"></div><div class="dot" id="d2"></div><div class="dot" id="d3"></div>
+          <div class="dot" id="d4"></div><div class="dot" id="d5"></div><div class="dot" id="d6"></div>
+        </div>
+      </div>
+
+      <!-- ============ APP WINDOW (persistent chrome) ============ -->
+      <div id="window" class="clip" data-start="0" data-duration="60" data-track-index="1">
+        <!-- titlebar -->
+        <div id="titlebar">
+          <div class="tl-dot" style="background:#ff5f57"></div>
+          <div class="tl-dot" style="background:#febc2e"></div>
+          <div class="tl-dot" style="background:#28c840"></div>
+          <div class="url-pill"><span class="lock"></span>app.maskin.com / My Workspace</div>
+        </div>
+
+        <div id="appbody">
+          <!-- sidebar -->
+          <div id="sidebar">
+            <div id="sb-head"><div class="sb-logo">M</div><div id="sb-ws">My Workspace</div></div>
+            <div id="nav">
+              <div id="nav-active"></div>
+              <div id="nav-rail"></div>
+              <div class="nav-item on" id="nav-foryou"><div class="nav-ico"></div>For You<div class="nav-badge" id="nav-fy-badge">1</div></div>
+              <div class="nav-item"><div class="nav-ico"></div>Objects</div>
+              <div class="nav-item"><div class="nav-ico"></div>Activity</div>
+              <div class="nav-item" id="nav-agents"><div class="nav-ico"></div>Agents</div>
+              <div class="nav-item"><div class="nav-ico"></div>Triggers</div>
+            </div>
+            <div id="sb-foot">
+              <div id="pulse-wrap">
+                <div class="pulse-state" id="pulse-idle" style="opacity:1">No agents working</div>
+                <div class="pulse-state" id="pulse-on" style="opacity:0"><span class="pulse-dot"></span>3 agents working</div>
+              </div>
+              <div id="sb-user">
+                <div class="avatar av-human">S</div>
+                <div><div class="nm">Sebastian</div><div class="em">sebastian@meshfirm.com</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- top bar -->
+          <div id="topbar">
+            <div class="crumb">
+              <span class="crumb-v" id="cv1" style="opacity:1"><b>For You</b></span>
+              <span class="crumb-v" id="cv2" style="opacity:0">Objects<span class="sep">/</span><b>Bet</b></span>
+              <span class="crumb-v" id="cv3" style="opacity:0"><b>Agents</b></span>
+            </div>
+            <div class="top-actions">
+              <div class="ico-btn"><div class="plus"></div></div>
+              <div class="ico-btn"><div class="spark">✦</div></div>
+            </div>
+          </div>
+
+          <!-- content region -->
+          <div id="content">
+
+            <!-- ===== PANEL 1 — For You: new bet appears ===== -->
+            <div class="panel" id="p1" style="opacity:1">
+              <div id="p1-head"><div class="page-h">For You</div><div class="page-sub">Unread threads on things you follow</div></div>
+
+              <div class="card" id="p1-old" style="margin-top:22px">
+                <div class="thread-head">
+                  <span class="badge b-type">task</span>
+                  <span class="thread-title">Polish the objects empty state</span>
+                  <span class="thread-time">3h ago</span>
+                  <span class="unread">2</span>
+                  <span class="mark-read">Mark as read</span>
+                </div>
+              </div>
+
+              <div class="card" id="p1-new" style="margin-top:18px">
+                <div class="thread-head">
+                  <span class="badge b-type">bet</span>
+                  <span class="thread-title">Switch onboarding to a guided checklist</span>
+                  <span class="thread-time">just now</span>
+                  <span class="mention" id="p1-mention">@you</span>
+                  <span class="unread">1</span>
+                  <span class="mark-read">Mark as read</span>
+                </div>
+                <div class="thread-body">
+                  <div class="nd"><div class="nd-line" id="p1-ndline"></div><div class="nd-txt">New</div></div>
+                  <div class="comment">
+                    <div class="avatar av-agent">⚡</div>
+                    <div class="c-body">
+                      <div><span class="c-name link">Sindre</span><span class="c-time">just now</span></div>
+                      <div class="c-text">I&rsquo;m proposing a new bet — <b>switch onboarding to a guided checklist</b> to lift activation. Take a look when you have a sec.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ===== PANEL 2 — Bet detail: read → comment → breakdown ===== -->
+            <div class="panel" id="p2" style="opacity:0">
+              <div class="doc-title" id="p2-title">Switch onboarding to a guided checklist</div>
+              <div class="doc-meta" id="p2-meta">
+                <span class="badge b-type">bet</span>
+                <span style="position:relative; display:inline-block;">
+                  <span class="badge b-proposed" id="p2-st-proposed" style="position:relative">proposed</span>
+                  <span class="badge b-active" id="p2-st-active" style="position:absolute; left:0; top:0; opacity:0">active</span>
+                </span>
+                <span class="meta-driver"><span class="avatar av-human" style="width:20px;height:20px;font-size:10px">S</span>Driver: Sebastian</span>
+                <span class="meta-star">☆</span>
+                <span class="meta-driver"><span class="avatar av-agent" style="width:20px;height:20px;font-size:11px">⚡</span>Sindre</span>
+                <span class="thread-time">just now</span>
+              </div>
+
+              <div class="work-banner" id="p2-banner" style="opacity:0"><span class="spinner"></span>Sindre is working on this bet…</div>
+
+              <div style="margin-top:22px" id="p2-content">
+                <div class="doc-section">Hypothesis</div>
+                <div class="doc-p" style="margin-top:8px">New signups hit a blank workspace and bounce before their first action. A guided checklist that walks them to &ldquo;first object created&rdquo; should lift week-1 activation by ~15%.</div>
+                <div class="doc-p" style="margin-top:10px">Scope: a dismissible checklist on the For You page, 4 steps, driven by real workspace events. Ship behind a flag, measure activation.</div>
+              </div>
+
+              <div id="p2-tasks" style="margin-top:24px; opacity:0">
+                <div class="doc-section">Tasks <span style="color:#d4d4d8">·</span> 4</div>
+                <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px">
+                  <div class="task-row" id="p2-t1"><div class="task-check"></div><div class="task-title">Design the 4-step checklist component</div><span class="badge b-prog" id="p2-t1-b">in_progress</span></div>
+                  <div class="task-row" id="p2-t2"><div class="task-check"></div><div class="task-title">Wire checklist steps to workspace events</div><span class="badge b-prog" id="p2-t2-b">in_progress</span></div>
+                  <div class="task-row" id="p2-t3"><div class="task-check"></div><div class="task-title">Add activation tracking + feature flag</div><span class="badge b-todo">todo</span></div>
+                  <div class="task-row" id="p2-t4"><div class="task-check"></div><div class="task-title">Write onboarding E2E coverage</div><span class="badge b-todo">todo</span></div>
+                </div>
+              </div>
+
+              <div id="p2-activity" style="position:absolute; left:56px; right:56px; bottom:90px">
+                <div class="doc-section" style="margin-bottom:10px">Activity</div>
+                <div class="comment">
+                  <div class="avatar av-agent">⚡</div>
+                  <div class="c-body"><div><span class="c-name link">Sindre</span><span class="c-time">just now</span></div>
+                  <div class="c-text">Proposed this bet.</div></div>
+                </div>
+                <div class="comment" id="p2-user-comment" style="opacity:0">
+                  <div class="avatar av-human">S</div>
+                  <div class="c-body"><div><span class="c-name">Sebastian</span><span class="c-time">now</span></div>
+                  <div class="c-text">Let&rsquo;s start the work — moving it to Active. 🚀</div></div>
+                </div>
+                <div class="comment" id="p2-agent-reply" style="opacity:0">
+                  <div class="avatar av-agent">⚡</div>
+                  <div class="c-body"><div><span class="c-name link">Sindre</span><span class="c-time">now</span></div>
+                  <div class="c-text">On it. Breaking this down into 4 tasks and kicking off the agents.</div></div>
+                </div>
+              </div>
+
+              <div class="composer" id="p2-composer" style="position:absolute; left:0; right:0; bottom:0; background:#fff">
+                <div class="avatar av-human">S</div>
+                <div class="composer-box" id="p2-box">
+                  <span id="p2-box-placeholder">Add a comment…</span>
+                  <span id="p2-box-typed" style="position:absolute; left:14px; color:#18181b; opacity:0">Let&rsquo;s start the work — moving it to Active. 🚀</span>
+                </div>
+                <div class="btn-primary" id="p2-send">Comment</div>
+              </div>
+            </div>
+
+            <!-- ===== PANEL 3 — Agents page ===== -->
+            <div class="panel" id="p3" style="opacity:0">
+              <div class="page-h" id="p3-head">Agents</div>
+              <div style="display:flex; gap:8px; margin-top:16px" id="p3-tabs">
+                <div class="tab on">All (4)</div><div class="tab">Working (3)</div><div class="tab">Idle (1)</div><div class="tab">Failed (0)</div>
+              </div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:20px" id="p3-grid">
+                <div class="card ag-card working" id="ag1">
+                  <div class="ag-head"><div class="avatar av-agent">⚡</div><div class="ag-name">Sindre</div><div class="spinner"></div><div class="ag-status working">working</div></div>
+                  <div class="ag-desc">Strategy &amp; task decomposition</div>
+                  <div class="ag-act">Breaking down &ldquo;guided checklist&rdquo; bet · 0:38</div>
+                </div>
+                <div class="card ag-card working" id="ag2">
+                  <div class="ag-head"><div class="avatar av-agent">⚡</div><div class="ag-name">Atlas</div><div class="spinner"></div><div class="ag-status working">working</div></div>
+                  <div class="ag-desc">Frontend implementation</div>
+                  <div class="ag-act">Building the 4-step checklist UI · 1:12</div>
+                </div>
+                <div class="card ag-card working" id="ag3">
+                  <div class="ag-head"><div class="avatar av-agent">⚡</div><div class="ag-name">Probe</div><div class="spinner"></div><div class="ag-status working">working</div></div>
+                  <div class="ag-desc">Testing &amp; QA</div>
+                  <div class="ag-act">Writing onboarding E2E tests · 0:51</div>
+                </div>
+                <div class="card ag-card" id="ag4">
+                  <div class="ag-head"><div class="avatar av-agent">⚡</div><div class="ag-name">Echo</div><span class="idle-dot"></span><div class="ag-status idle">idle</div></div>
+                  <div class="ag-desc">Insights &amp; reporting</div>
+                  <div class="ag-act">Summarized weekly metrics · 2h ago</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ===== PANEL 4 — For You: answer a question ===== -->
+            <div class="panel" id="p4" style="opacity:0">
+              <div class="page-h">For You</div><div class="page-sub">Unread threads on things you follow</div>
+              <div class="card" id="p4-card" style="margin-top:22px">
+                <div class="thread-head">
+                  <span class="badge b-type">bet</span>
+                  <span class="thread-title">Switch onboarding to a guided checklist</span>
+                  <span class="thread-time">now</span>
+                  <span class="mention">@you</span>
+                  <span class="unread">1</span>
+                  <span class="mark-read">Mark as read</span>
+                </div>
+                <div class="thread-body">
+                  <div class="comment" style="position:relative; padding-left:14px">
+                    <div class="dp-rail"></div>
+                    <div class="avatar av-agent">⚡</div>
+                    <div class="c-body">
+                      <div><span class="c-name link">Sindre</span><span class="needs-you">Needs you</span><span class="c-time">now</span></div>
+                      <div class="c-text">Quick decision before I ship: should the guided checklist also roll out to <b>existing users</b>, or only new signups?</div>
+                      <div class="chips" id="p4-chips" style="margin-top:12px">
+                        <div class="chip" id="chip1">Only new signups</div>
+                        <div class="chip" id="chip2"><span id="chip2-check" style="opacity:0">✓</span>Migrate everyone</div>
+                        <div class="chip" id="chip3">Ask me later</div>
+                      </div>
+                      <div class="comment" id="p4-confirm" style="opacity:0; margin-top:14px; padding:0">
+                        <div class="avatar av-agent">⚡</div>
+                        <div class="c-body"><div><span class="c-name link">Sindre</span><span class="c-time">now</span></div>
+                        <div class="c-text">Perfect — rolling it out to everyone. I&rsquo;ll update the tasks. 🎯</div></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="composer">
+                  <div class="avatar av-human">S</div>
+                  <div class="composer-box">Reply…</div>
+                  <div class="btn-primary">Comment</div>
+                </div>
+              </div>
+            </div>
+
+          </div><!-- /content -->
+        </div><!-- /appbody -->
+      </div><!-- /window -->
+
+      <!-- ============ CURSOR ============ -->
+      <div id="cursor" class="clip" data-start="0" data-duration="60" data-track-index="2">
+        <div class="ripple" id="rip1"></div>
+        <div class="ripple" id="rip2"></div>
+        <svg width="26" height="26" viewBox="0 0 24 24">
+          <path d="M5 3L19 12L12 13L9 20L5 3Z" fill="#ffffff" stroke="#18181b" stroke-width="1.4" stroke-linejoin="round"/>
+        </svg>
+      </div>
+
     </div>
 
     <script>
       window.__timelines = window.__timelines || {};
       const tl = gsap.timeline({ paused: true });
-      // Example: tl.from("#title", { opacity: 0, y: -50, duration: 1 }, 0);
+      const R = (dur, cycle) => Math.max(0, Math.floor(dur / cycle) - 1);
+
+      gsap.set("#cursor", { x: 1180, y: 940 });
+
+      /* ---------- ambient (persistent) ---------- */
+      tl.to("#glow", { scale: 1.12, duration: 7, ease: "sine.inOut", yoyo: true, repeat: R(60, 7) }, 0);
+      tl.to("#glow", { opacity: 0.82, duration: 5, ease: "sine.inOut", yoyo: true, repeat: R(60, 5) }, 0);
+      tl.to("#grid", { x: 28, y: 18, duration: 14, ease: "sine.inOut", yoyo: true, repeat: R(60, 14) }, 0);
+      tl.to("#window", { y: 8, duration: 8, ease: "sine.inOut", yoyo: true, repeat: R(59, 8) }, 1.0);
+      tl.to(".spinner", { rotation: 360, duration: 0.9, ease: "none", repeat: R(60, 0.9), transformOrigin: "50% 50%" }, 0);
+
+      /* caption + progress */
+      const caps = ["#cap1","#cap2","#cap3","#cap4","#cap5","#cap6"];
+      const dots = ["#d1","#d2","#d3","#d4","#d5","#d6"];
+      const beatAt = [0.4, 8.2, 11.4, 17.0, 30.2, 44.2];
+      caps.forEach((c, i) => {
+        const t = beatAt[i];
+        tl.fromTo(c, { opacity: 0, x: -10 }, { opacity: 1, x: 0, duration: 0.5, ease: "power2.out" }, t);
+        if (i < caps.length - 1) tl.to(c, { opacity: 0, duration: 0.4, ease: "power2.in" }, beatAt[i + 1] - 0.1);
+        tl.to(dots[i], { backgroundColor: "#a5b4fc", scale: 1.25, duration: 0.4, ease: "power2.out" }, t);
+        if (i < dots.length - 1) tl.to(dots[i], { backgroundColor: "rgba(255,255,255,0.22)", scale: 1, duration: 0.4 }, beatAt[i + 1] - 0.1);
+      });
+
+      /* intro */
+      tl.from("#backdrop", { opacity: 0, duration: 0.6, ease: "power1.out" }, 0);
+      tl.from("#window", { scale: 0.965, opacity: 0, y: 26, duration: 0.85, ease: "power3.out" }, 0.15);
+
+      /* ============ PANEL 1 — For You ============ */
+      tl.from("#p1-head", { y: 18, opacity: 0, duration: 0.55, ease: "power3.out" }, 0.9);
+      tl.fromTo("#p1-old", { y: 22, opacity: 0 }, { y: 0, opacity: 0.85, duration: 0.55, ease: "power3.out" }, 1.15);
+      tl.fromTo("#p1-new", { y: -26, opacity: 0, scale: 0.985 }, { y: 0, opacity: 1, scale: 1, duration: 0.6, ease: "back.out(1.4)" }, 2.2);
+      tl.fromTo("#p1-new", { boxShadow: "0 0 0 0 rgba(79,70,229,0.55)" }, { boxShadow: "0 0 0 7px rgba(79,70,229,0)", duration: 1.0, ease: "power2.out" }, 2.3);
+      tl.fromTo("#p1-ndline", { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "power2.out" }, 2.7);
+      tl.from("#p1-mention", { scale: 0, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 2.9);
+
+      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 3.4);
+      tl.to("#cursor", { x: 760, y: 360, duration: 1.0, ease: "power3.inOut" }, 3.6);
+      cursorClick(5.0);
+      tl.to("#p1-new", { y: -4, duration: 0.18, ease: "power2.in", yoyo: true, repeat: 1 }, 5.0);
+
+      /* T1 (7.6): P1 -> P2 */
+      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 7.4);
+      transition("#p1", "#p2", 7.6);
+      tl.to("#cv1", { opacity: 0, duration: 0.4 }, 7.6);
+      tl.to("#cv2", { opacity: 1, duration: 0.4 }, 7.8);
+
+      /* ============ PANEL 2 — Bet detail ============ */
+      tl.from("#p2-title", { y: 20, opacity: 0, duration: 0.55, ease: "power3.out" }, 8.2);
+      tl.from("#p2-meta", { y: 14, opacity: 0, duration: 0.5, ease: "power3.out" }, 8.45);
+      tl.from("#p2-content", { y: 18, opacity: 0, duration: 0.55, ease: "power3.out" }, 8.7);
+      tl.from("#p2-activity", { y: 16, opacity: 0, duration: 0.55, ease: "power3.out" }, 9.0);
+      tl.from("#p2-composer", { y: 20, opacity: 0, duration: 0.5, ease: "power3.out" }, 9.2);
+
+      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 11.2);
+      tl.to("#cursor", { x: 720, y: 980, duration: 1.0, ease: "power3.inOut" }, 11.3);
+      cursorClick(12.4);
+      tl.to("#p2-box", { borderColor: "#4f46e5", boxShadow: "0 0 0 3px rgba(79,70,229,0.18)", duration: 0.3 }, 12.5);
+      tl.to("#p2-box-placeholder", { opacity: 0, duration: 0.2 }, 12.7);
+      tl.to("#p2-box-typed", { opacity: 1, duration: 0.5, ease: "power1.out" }, 12.9);
+      tl.to("#cursor", { x: 1720, y: 982, duration: 0.8, ease: "power3.inOut" }, 14.0);
+      cursorClick(15.0);
+      tl.to("#p2-send", { scale: 0.95, duration: 0.1, yoyo: true, repeat: 1, ease: "power2.in", transformOrigin: "50% 50%" }, 15.0);
+      tl.to("#p2-box", { borderColor: "#e4e4e7", boxShadow: "0 0 0 0 rgba(0,0,0,0)", duration: 0.3 }, 15.3);
+      tl.to("#p2-box-typed", { opacity: 0, duration: 0.2 }, 15.3);
+      tl.to("#p2-box-placeholder", { opacity: 1, duration: 0.2 }, 15.4);
+      tl.fromTo("#p2-user-comment", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 15.5);
+      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 15.9);
+
+      tl.to("#p2-st-proposed", { opacity: 0, duration: 0.35 }, 16.4);
+      tl.fromTo("#p2-st-active", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 16.5);
+      tl.fromTo("#p2-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 16.8);
+      tl.to("#pulse-idle", { opacity: 0, duration: 0.3 }, 17.0);
+      tl.to("#pulse-on", { opacity: 1, duration: 0.3 }, 17.2);
+      tl.to(".pulse-dot", { opacity: 0.3, duration: 0.7, ease: "sine.inOut", yoyo: true, repeat: R(42, 0.7) }, 17.3);
+      tl.fromTo("#p2-agent-reply", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 17.6);
+
+      tl.to("#p2-tasks", { opacity: 1, duration: 0.3 }, 18.4);
+      tl.from(["#p2-t1", "#p2-t2", "#p2-t3", "#p2-t4"], { opacity: 0, y: 16, duration: 0.45, ease: "power3.out", stagger: 0.18 }, 18.7);
+      tl.fromTo("#p2-t1-b", { scale: 0.7, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.35, ease: "back.out(2)", transformOrigin: "50% 50%" }, 20.6);
+      tl.fromTo("#p2-t2-b", { scale: 0.7, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.35, ease: "back.out(2)", transformOrigin: "50% 50%" }, 21.1);
+
+      /* T2 (29.6): P2 -> P3, nav rail to Agents */
+      transition("#p2", "#p3", 29.6);
+      tl.to("#cv2", { opacity: 0, duration: 0.4 }, 29.6);
+      tl.to("#cv3", { opacity: 1, duration: 0.4 }, 29.9);
+      tl.to("#nav-active", { y: 120, duration: 0.5, ease: "power3.inOut" }, 29.6);
+      tl.to("#nav-rail", { y: 120, duration: 0.5, ease: "power3.inOut" }, 29.6);
+      tl.to("#nav-foryou", { color: "#52525b", fontWeight: 500, duration: 0.4 }, 29.6);
+      tl.to("#nav-agents", { color: "#18181b", fontWeight: 600, duration: 0.4 }, 29.6);
+      tl.to("#nav-fy-badge", { opacity: 0, duration: 0.3 }, 29.6);
+
+      /* ============ PANEL 3 — Agents page ============ */
+      tl.from("#p3-head", { y: 16, opacity: 0, duration: 0.5, ease: "power3.out" }, 30.2);
+      tl.from("#p3-tabs", { y: 12, opacity: 0, duration: 0.5, ease: "power3.out" }, 30.4);
+      tl.from(["#ag1", "#ag2", "#ag3", "#ag4"], { opacity: 0, y: 24, scale: 0.98, duration: 0.5, ease: "power3.out", stagger: 0.12, transformOrigin: "50% 50%" }, 30.6);
+      tl.to(["#ag1", "#ag2", "#ag3"], { boxShadow: "0 0 0 3px rgba(79,70,229,0.12)", duration: 1.6, ease: "sine.inOut", yoyo: true, repeat: R(12, 1.6), stagger: 0.3 }, 31.6);
+
+      /* T3 (43.6): P3 -> P4, nav rail back to For You */
+      transition("#p3", "#p4", 43.6);
+      tl.to("#cv3", { opacity: 0, duration: 0.4 }, 43.6);
+      tl.to("#cv1", { opacity: 1, duration: 0.4 }, 43.9);
+      tl.to("#nav-active", { y: 0, duration: 0.5, ease: "power3.inOut" }, 43.6);
+      tl.to("#nav-rail", { y: 0, duration: 0.5, ease: "power3.inOut" }, 43.6);
+      tl.to("#nav-agents", { color: "#52525b", fontWeight: 500, duration: 0.4 }, 43.6);
+      tl.to("#nav-foryou", { color: "#18181b", fontWeight: 600, duration: 0.4 }, 43.6);
+      tl.to("#nav-fy-badge", { opacity: 1, duration: 0.3 }, 43.8);
+
+      /* ============ PANEL 4 — answer the question ============ */
+      tl.from("#p4-card", { y: 22, opacity: 0, duration: 0.55, ease: "power3.out" }, 44.2);
+      tl.from("#p4-chips .chip", { y: 14, opacity: 0, duration: 0.4, ease: "power3.out", stagger: 0.1 }, 44.8);
+
+      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 45.4);
+      tl.fromTo("#cursor", { x: 1180, y: 940 }, { x: 700, y: 718, duration: 1.1, ease: "power3.inOut" }, 45.5);
+      cursorClick(46.9);
+      tl.to("#chip2", { backgroundColor: "#4f46e5", borderColor: "#4f46e5", color: "#ffffff", scale: 0.96, duration: 0.25, ease: "power2.in", transformOrigin: "50% 50%" }, 46.9);
+      tl.to("#chip2", { scale: 1, duration: 0.25, ease: "back.out(2)" }, 47.15);
+      tl.to("#chip2-check", { opacity: 1, duration: 0.25 }, 47.1);
+      tl.to(["#chip1", "#chip3"], { opacity: 0.4, duration: 0.3 }, 47.0);
+      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 47.6);
+      tl.fromTo("#p4-confirm", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 48.0);
+
+      /* outro */
+      tl.to("#glow", { opacity: 0.6, duration: 2.5, ease: "sine.inOut" }, 56.5);
+
+      /* ---------- helpers ---------- */
+      function cursorClick(t) {
+        tl.to("#cursor", { scale: 0.82, duration: 0.09, ease: "power2.in", yoyo: true, repeat: 1, transformOrigin: "0% 0%" }, t);
+        tl.set(["#rip1", "#rip2"], { opacity: 1, scale: 0 }, t);
+        tl.to(["#rip1", "#rip2"], { scale: 4.2, opacity: 0, duration: 0.7, ease: "power2.out", stagger: 0.09, immediateRender: false }, t);
+      }
+      function transition(oldSel, newSel, T) {
+        tl.to(oldSel, { opacity: 0, scale: 1.015, duration: 0.55, ease: "power2.inOut", transformOrigin: "50% 50%" }, T);
+        tl.fromTo(newSel, { opacity: 0, scale: 0.985 }, { opacity: 1, scale: 1, duration: 0.55, ease: "power2.inOut", transformOrigin: "50% 50%" }, T + 0.05);
+        tl.set(oldSel, { scale: 1 }, T + 0.62);
+      }
+
       window.__timelines["main"] = tl;
     </script>
   </body>

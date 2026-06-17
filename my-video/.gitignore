@@ -1,0 +1,3 @@
+# Render + snapshot build artifacts (regenerate with `npm run render` / `hyperframes snapshot`)
+*.mp4
+snapshots/
