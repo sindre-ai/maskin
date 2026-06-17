@@ -309,6 +309,50 @@ describe('Workspace Skills Integration', () => {
 		})
 	})
 
+	describe('folder bundle columns', () => {
+		it('defaults is_folder to false and leaves bundle_prefix null for legacy single-file rows', async () => {
+			const app = createSkillsApp(storage)
+
+			const createRes = await app.request(
+				jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+					name: 'deploy-prod',
+					content: SKILL_BODY,
+				}),
+			)
+			const created = await createRes.json()
+
+			const [row] = await db
+				.select()
+				.from(workspaceSkills)
+				.where(eq(workspaceSkills.id, created.id))
+			expect(row.isFolder).toBe(false)
+			expect(row.bundlePrefix).toBeNull()
+			expect(row.content).toBe(SKILL_BODY)
+			expect(row.sizeBytes).toBe(Buffer.byteLength(SKILL_BODY, 'utf-8'))
+		})
+
+		it('accepts a folder-bundle row with is_folder=true and a bundle_prefix', async () => {
+			const bundlePrefix = `workspaces/${workspaceId}/skills/docx-bundle/`
+			const [row] = await db
+				.insert(workspaceSkills)
+				.values({
+					workspaceId,
+					name: 'docx-bundle',
+					description: 'Multi-file docx skill',
+					content: SKILL_BODY,
+					storageKey: `${bundlePrefix}SKILL.md`,
+					sizeBytes: Buffer.byteLength(SKILL_BODY, 'utf-8'),
+					isFolder: true,
+					bundlePrefix,
+				})
+				.returning()
+
+			expect(row.isFolder).toBe(true)
+			expect(row.bundlePrefix).toBe(bundlePrefix)
+			expect(row.storageKey).toBe(`${bundlePrefix}SKILL.md`)
+		})
+	})
+
 	describe('delete cascade', () => {
 		it('removes matching agent_skills rows when a workspace_skills row is deleted', async () => {
 			const app = createSkillsApp(storage)
