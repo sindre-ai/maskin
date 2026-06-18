@@ -110,3 +110,24 @@ export function trackObjectAttachedFile(
 		parent_entity_type: p.parent_entity_type,
 	})
 }
+
+// Ship-metric event for the iOS bulk-select ergonomics bet. Fires once per
+// bulk action bar commit so we can read `avg(selected_count)` filtered by
+// `platform_device='ios'` in PostHog. Intentionally lighter than the v1
+// taxonomy helpers above — there's no `entity_id` because the commit spans
+// many objects; `selected_count` carries the n instead.
+export type BulkEditCommitAction = 'status_change' | 'owner_change' | 'copy' | 'delete'
+export type PlatformDevice = 'ios' | 'android' | 'desktop'
+
+export function trackBulkEditCommit(p: {
+	selected_count: number
+	action: BulkEditCommitAction
+	platform_device: PlatformDevice
+}): void {
+	trackEvent('bulk_edit_commit', {
+		selected_count: p.selected_count,
+		action: p.action,
+		platform_device: p.platform_device,
+		source: 'web',
+	})
+}
