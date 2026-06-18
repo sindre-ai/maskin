@@ -10,6 +10,19 @@ import { type ReactNode, useMemo, useState } from 'react'
 const uploadProgressMock = vi.fn()
 const eventsCreateMock = vi.fn()
 
+vi.mock('@/lib/analytics', async () => ({
+	...(await vi.importActual('@/lib/analytics')),
+	trackObjectAttachedFile: vi.fn(),
+}))
+
+vi.mock('@/hooks/use-events', async () => ({
+	...(await vi.importActual('@/hooks/use-events')),
+	trackCommentPostedFor: vi.fn(),
+}))
+
+import { trackCommentPostedFor } from '@/hooks/use-events'
+import { trackObjectAttachedFile } from '@/lib/analytics'
+
 vi.mock('@/lib/api', async () => {
 	return {
 		api: {
@@ -71,6 +84,8 @@ describe('PendingCommentsProvider', () => {
 	beforeEach(() => {
 		uploadProgressMock.mockReset()
 		eventsCreateMock.mockReset()
+		vi.mocked(trackCommentPostedFor).mockReset()
+		vi.mocked(trackObjectAttachedFile).mockReset()
 	})
 
 	it('uploads on attach, advances status to uploaded, and exposes file id', async () => {
@@ -259,5 +274,51 @@ describe('PendingCommentsProvider', () => {
 
 		await waitFor(() => expect(result.current.feed).toHaveLength(0))
 		expect(aborts[0].aborted).toBe(true)
+	})
+
+	it('emits trackCommentPostedFor and trackObjectAttachedFile once per attachment on post', async () => {
+		uploadProgressMock.mockResolvedValue({ id: 'file-1' })
+		eventsCreateMock.mockResolvedValue({})
+
+		// Pre-seed cache so the context's parentType lookup finds a valid entity type.
+		// gcTime must be > 0 — the lookup happens after an async POST, and gcTime:0
+		// would evict the unseeded entry before tryAdvance reads it.
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false, gcTime: 60000 }, mutations: { retry: false } },
+		})
+		client.setQueryData(['objects', 'detail', 'obj-analytics'], { type: 'bet' })
+
+		const Wrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={client}>
+				<PendingCommentsProvider workspaceId="ws-1">{children}</PendingCommentsProvider>
+			</QueryClientProvider>
+		)
+
+		const { result } = renderHook(
+			() => useDraft({ draftId: 'd-analytics', workspaceId: 'ws-1', objectId: 'obj-analytics' }),
+			{ wrapper: Wrapper },
+		)
+
+		await act(async () => {
+			result.current.attach(new File(['hi'], 'a.txt', { type: 'text/plain' }))
+		})
+		await waitFor(() => expect(result.current.files[0].status).toBe('uploaded'))
+
+		await act(async () => {
+			result.current.submit({ content: 'with attachment', mentions: [] })
+		})
+
+		await waitFor(() => expect(eventsCreateMock).toHaveBeenCalledTimes(1))
+
+		expect(trackCommentPostedFor).toHaveBeenCalledTimes(1)
+		expect(trackObjectAttachedFile).toHaveBeenCalledTimes(1)
+		expect(trackObjectAttachedFile).toHaveBeenCalledWith(
+			expect.objectContaining({
+				entity_id: 'obj-analytics',
+				entity_type: 'bet',
+				file_id: 'file-1',
+				parent_entity_type: 'bet',
+			}),
+		)
 	})
 })

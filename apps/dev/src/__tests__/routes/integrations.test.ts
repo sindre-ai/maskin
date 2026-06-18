@@ -102,7 +102,7 @@ describe('Integrations Routes', () => {
 			expect(body.error.message).toContain('Unknown provider')
 		})
 
-		it('returns 200 with install_url for a known provider', async () => {
+		it('returns 200 with redirect_url (and install_url alias) for a known provider', async () => {
 			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
 
 			const res = await app.request(
@@ -113,8 +113,9 @@ describe('Integrations Routes', () => {
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.install_url).toBeDefined()
-			expect(body.install_url).toContain('github.com')
+			expect(body.redirect_url).toBeDefined()
+			expect(body.redirect_url).toContain('github.com')
+			expect(body.install_url).toBe(body.redirect_url)
 		})
 
 		it('activates an api_key provider (posthog) immediately and stores the request key in credentials', async () => {
@@ -137,7 +138,8 @@ describe('Integrations Routes', () => {
 
 				expect(res.status).toBe(200)
 				const body = await res.json()
-				expect(body.install_url).toBe(`http://localhost:5173/${wsId}/settings/integrations`)
+				expect(body.redirect_url).toBe(`http://localhost:5173/${wsId}/settings/integrations`)
+				expect(body.install_url).toBe(body.redirect_url)
 
 				const integrationInsert = calls.inserts[0] as Record<string, unknown>
 				expect(integrationInsert.provider).toBe('posthog')
@@ -217,7 +219,7 @@ describe('Integrations Routes', () => {
 			expect(body.error.message).toContain('requires an API key')
 		})
 
-		it('returns 200 with install_url for standard oauth2 provider (slack)', async () => {
+		it('returns 200 with redirect_url (and install_url alias) for standard oauth2 provider (slack)', async () => {
 			const originalClientId = process.env.SLACK_CLIENT_ID
 			process.env.SLACK_CLIENT_ID = 'test-slack-client-id'
 			try {

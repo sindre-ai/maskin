@@ -300,7 +300,7 @@ export const api = {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
 		connect: (workspaceId: string, provider: string, body?: { api_key?: string }) =>
-			request<{ install_url: string }>(`/integrations/${provider}/connect`, {
+			request<{ redirect_url: string; install_url: string }>(`/integrations/${provider}/connect`, {
 				method: 'POST',
 				body,
 				workspaceId,

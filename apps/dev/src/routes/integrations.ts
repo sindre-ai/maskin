@@ -128,8 +128,15 @@ const connectRoute = createRoute({
 	},
 	responses: {
 		200: {
-			description: 'Install URL for OAuth/GitHub App',
-			content: { 'application/json': { schema: z.object({ install_url: z.string() }) } },
+			description: 'Redirect URL to complete the OAuth/installation flow',
+			content: {
+				'application/json': {
+					schema: z.object({
+						redirect_url: z.string(),
+						install_url: z.string().describe('Deprecated — use redirect_url'),
+					}),
+				},
+			},
 		},
 		400: {
 			description: 'Error',
@@ -179,6 +186,10 @@ app.openapi(connectRoute, (async (c) => {
 		const encryptedCredentials = encrypt(JSON.stringify(credentials))
 		const externalId = `${providerName}-personal`
 
+		// config intentionally unset — api_key providers have no webhook routing today.
+		// If you add an api_key provider with a webhook config, mirror the OAuth callback
+		// path: create a system actor and set config: { system_actor_id } here, otherwise
+		// the webhook handler will warn and drop events for this integration.
 		const [row] = await db
 			.insert(integrations)
 			.values({
@@ -239,7 +250,8 @@ app.openapi(connectRoute, (async (c) => {
 		})
 
 		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
-		return c.json({ install_url: `${frontendUrl}/${workspaceId}/settings/integrations` })
+		const url = `${frontendUrl}/${workspaceId}/settings/integrations`
+		return c.json({ redirect_url: url, install_url: url })
 	}
 
 	// Create signed state containing workspace + actor info + one-time nonce
@@ -305,7 +317,7 @@ app.openapi(connectRoute, (async (c) => {
 		)
 	}
 
-	return c.json({ install_url: installUrl })
+	return c.json({ redirect_url: installUrl, install_url: installUrl })
 }) as RouteHandler<typeof connectRoute, Env>)
 
 // ── GET /api/integrations/:provider/callback ───────────────────────────────

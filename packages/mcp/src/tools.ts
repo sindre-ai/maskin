@@ -967,7 +967,7 @@ export const tools = {
 	},
 	connect_integration: {
 		description:
-			'Start an integration connection flow for a provider (e.g. "github"). Returns an install_url that must be opened in a browser to complete the OAuth/installation flow. The callback is handled automatically by the server.',
+			'Start an integration connection flow for a provider (e.g. "github"). Returns a redirect_url that must be opened in a browser to complete the OAuth/installation flow. The callback is handled automatically by the server.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z

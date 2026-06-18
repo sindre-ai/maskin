@@ -27,7 +27,7 @@ export function useConnectIntegration(workspaceId: string) {
 			),
 		onSuccess: (data) => {
 			// Redirect to the provider's install/OAuth page
-			window.location.href = data.install_url
+			window.location.href = data.redirect_url ?? data.install_url
 		},
 	})
 }
