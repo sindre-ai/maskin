@@ -824,6 +824,12 @@ export interface HeroCardObject {
 	driver: HeroCardActor | null
 	contextLine: string
 	badges?: string[]
+	// Full detail fields — populated by get_actor, ignored by list display
+	description?: string | null
+	systemPrompt?: string | null
+	tools?: Record<string, unknown> | null
+	llmProvider?: string | null
+	llmConfig?: Record<string, unknown> | null
 }
 
 export type HeroCardKind = 'single' | 'list' | 'empty'
@@ -1042,6 +1048,11 @@ interface RawActor {
 	email?: string | null
 	role?: string | null
 	isSystem?: boolean | null
+	description?: string | null
+	systemPrompt?: string | null
+	tools?: Record<string, unknown> | null
+	llmProvider?: string | null
+	llmConfig?: Record<string, unknown> | null
 }
 
 interface RawWorkspace {
@@ -1060,9 +1071,9 @@ function buildActorContextLine(actor: RawActor): string {
 	return parts.join(' · ')
 }
 
-function buildActorHeroCardObject(actor: RawActor): HeroCardObject {
+function buildActorHeroCardObject(actor: RawActor, includeDetails = false): HeroCardObject {
 	const status = actor.isSystem ? 'system' : (actor.role ?? actor.type ?? null)
-	return {
+	const obj: HeroCardObject = {
 		id: actor.id,
 		type: 'actor',
 		title: actor.name ?? null,
@@ -1070,6 +1081,14 @@ function buildActorHeroCardObject(actor: RawActor): HeroCardObject {
 		driver: null,
 		contextLine: buildActorContextLine(actor),
 	}
+	if (includeDetails) {
+		obj.description = actor.description ?? null
+		obj.systemPrompt = actor.systemPrompt ?? null
+		obj.tools = actor.tools ?? null
+		obj.llmProvider = actor.llmProvider ?? null
+		obj.llmConfig = actor.llmConfig ?? null
+	}
+	return obj
 }
 
 function buildWorkspaceContextLine(workspace: RawWorkspace): string {
@@ -1969,7 +1988,7 @@ export function createMcpServer(config: McpConfig) {
 				args.workspace_id ? { workspaceId: args.workspace_id } : { skipWorkspace: true },
 			)
 			const rows = Array.isArray(data) ? (data as RawActor[]) : []
-			const heroObjects = rows.map(buildActorHeroCardObject)
+			const heroObjects = rows.map((a) => buildActorHeroCardObject(a))
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
@@ -2016,7 +2035,7 @@ export function createMcpServer(config: McpConfig) {
 			const heroCard: HeroCardPayload = {
 				kind: 'single',
 				tool: 'get_actor',
-				object: buildActorHeroCardObject(result),
+				object: buildActorHeroCardObject(result, true),
 			}
 			const workspaceId = (args as { workspace_id?: string }).workspace_id
 			return {
