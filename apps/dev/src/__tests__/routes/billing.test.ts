@@ -466,6 +466,41 @@ describe('GET /api/billing/usage', () => {
 		expect(await res.json()).toMatchObject({ hard_cap_tokens: 12_345_678 })
 	})
 
+	it('uses stored period_end for period_resets_in_ms when present', async () => {
+		// When Stripe writes period_end, the resets-in hint should reflect the exact
+		// Stripe period boundary — not the 30d approximation from period_start.
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		const periodStart = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60
+		// period_end set to ~10 days from now (not 23d as the 30d approximation would give)
+		const periodEnd = Math.floor(Date.now() / 1000) + 10 * 24 * 60 * 60
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'starter',
+							status: 'active',
+							hard_cap_tokens: 32_000_000,
+							period_start: periodStart,
+							period_end: periodEnd,
+						},
+					},
+				},
+			],
+			[],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		const oneDay = 24 * 60 * 60 * 1000
+		// Should be ~10 days, not the 30d-from-start approximation (~23d)
+		expect(body.period_resets_in_ms).toBeGreaterThan(9 * oneDay)
+		expect(body.period_resets_in_ms).toBeLessThan(11 * oneDay)
+	})
+
 	it('coerces malformed billing.period_start to null and returns 200', async () => {
 		// Regression: a non-integer / non-positive `period_start` (legacy ms
 		// values, NaN from a broken webhook write) used to slip past the
