@@ -355,6 +355,34 @@ describe('Objects Integration', () => {
 			expect(body[0].type).toBe('task')
 		})
 
+		it('excludes type=conversation from generic listings, but returns it when asked explicitly', async () => {
+			// Chat conversations live in `objects` (type='conversation') but the
+			// generic list/search/board endpoints fan across object types — they
+			// must not leak chat rooms into bets/insights/tasks lists. Callers
+			// that want conversations (the chat panel) pass `?type=conversation`.
+			const app = createApp()
+
+			await insertObject(db, workspaceId, getTestActorId(), { type: 'task', status: 'todo' })
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'conversation',
+				status: 'active',
+				metadata: { kind: 'channel' },
+			})
+
+			const noFilter = await app.request(jsonGet('/api/objects', { 'x-workspace-id': workspaceId }))
+			const allTypes = ((await noFilter.json()) as Array<{ type: string }>).map((o) => o.type)
+			expect(allTypes).toContain('task')
+			expect(allTypes).not.toContain('conversation')
+
+			const explicit = await app.request(
+				jsonGet('/api/objects?type=conversation', { 'x-workspace-id': workspaceId }),
+			)
+			const conversationTypes = ((await explicit.json()) as Array<{ type: string }>).map(
+				(o) => o.type,
+			)
+			expect(conversationTypes).toEqual(['conversation'])
+		})
+
 		it('uses a deterministic secondary sort when the primary column has ties', async () => {
 			// Without a unique tiebreaker, OFFSET/LIMIT pagination over `createdAt DESC`
 			// is non-deterministic for rows that share a timestamp — the same row can
