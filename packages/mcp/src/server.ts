@@ -1156,7 +1156,6 @@ interface RawTrigger {
 	target_actor_id?: string | null
 	createdAt?: string | null
 	updatedAt?: string | null
-	description?: string | null
 	actionPrompt?: string | null
 }
 
@@ -1234,9 +1233,8 @@ function buildTriggerHeroCardObject(
 		status: trigger.enabled ? 'enabled' : 'disabled',
 		driver,
 		contextLine: buildTriggerContextLine(trigger, nowMs),
-		description: trigger.description ?? null,
 		actionPrompt: trigger.actionPrompt ?? null,
-		config: trigger.config ?? null,
+		config: trigger.config,
 	}
 }
 
