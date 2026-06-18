@@ -172,17 +172,14 @@ async function monitorSession(
 		let reported = false
 		for (let attempt = 1; attempt <= REPORT_RETRIES; attempt++) {
 			try {
-				await fetch(
-					`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/complete`,
-					{
-						method: 'POST',
-						headers: {
-							'Content-Type': 'application/json',
-							Authorization: `Bearer ${agentServerSecret}`,
-						},
-						body: JSON.stringify({ exitCode }),
+				await fetch(`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/complete`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						Authorization: `Bearer ${agentServerSecret}`,
 					},
-				)
+					body: JSON.stringify({ exitCode }),
+				})
 				logger.info('session completion reported to Maskin', { sessionId, exitCode })
 				reported = true
 				break
