@@ -47,7 +47,6 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
-		actorType: string
 	}
 }
 

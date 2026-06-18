@@ -1261,7 +1261,7 @@ export interface InstalledPackagesListResponse {
 	installs: InstalledPackageRow[]
 }
 
-export interface InstalledPackageInstallResponse {
+interface InstalledPackageInstallResponse {
 	id: string
 	workspaceId: string
 	sourcePackageId: string
@@ -1273,7 +1273,7 @@ export interface InstalledPackageInstallResponse {
 	provisioned: { actors: number; triggers: number; skills: number; integrations: number }
 }
 
-export interface InstalledPackageForkResponse {
+interface InstalledPackageForkResponse {
 	id: string
 	workspaceId: string
 	sourcePackageId: string
