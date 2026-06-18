@@ -1,15 +1,38 @@
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
+import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
+import {
+	DropdownMenu,
+	DropdownMenuCheckboxItem,
+	DropdownMenuContent,
+	DropdownMenuLabel,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from '@/components/ui/table'
 import { useCreateFile, useFiles } from '@/hooks/use-files'
 import { useCreateRelationship } from '@/hooks/use-relationships'
 import type { RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { readFileAsBase64 } from '@/lib/file-utils'
-import { Loader2, Plus, Upload } from 'lucide-react'
+import { formatSize, readFileAsBase64 } from '@/lib/file-utils'
+import { Loader2, Plus, SlidersHorizontal, Upload } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 const ATTACHED_REL_TYPE = 'attached'
+
+type ToggleableColumn = 'created_at' | 'modified_at'
+
+const TOGGLEABLE_COLUMNS: { id: ToggleableColumn; label: string }[] = [
+	{ id: 'created_at', label: 'Created' },
+	{ id: 'modified_at', label: 'Modified' },
+]
 
 interface ObjectFilesProps {
 	workspaceId: string
@@ -56,6 +79,10 @@ export function ObjectFiles({
 	const inputRef = useRef<HTMLInputElement>(null)
 	const [isDragging, setIsDragging] = useState(false)
 	const [isUploading, setIsUploading] = useState(false)
+	const [visibleColumns, setVisibleColumns] = useState<Record<ToggleableColumn, boolean>>({
+		created_at: false,
+		modified_at: false,
+	})
 
 	const handleUpload = useCallback(
 		async (incoming: File[]) => {
@@ -106,6 +133,10 @@ export function ObjectFiles({
 		[handleUpload],
 	)
 
+	const toggleColumn = useCallback((id: ToggleableColumn, visible: boolean) => {
+		setVisibleColumns((prev) => ({ ...prev, [id]: visible }))
+	}, [])
+
 	const hasFiles = files.length > 0
 	const totalCount = files.length
 
@@ -124,6 +155,33 @@ export function ObjectFiles({
 					Files ({totalCount})
 				</h3>
 				<div className="flex-1" />
+				<DropdownMenu>
+					<DropdownMenuTrigger asChild>
+						<Button
+							variant="ghost"
+							size="icon"
+							className="h-8 w-8"
+							title="File properties"
+							aria-label="File properties"
+						>
+							<SlidersHorizontal size={14} />
+						</Button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="end" className="w-48">
+						<DropdownMenuLabel className="text-[11px] font-medium uppercase tracking-wide text-text-secondary">
+							Properties
+						</DropdownMenuLabel>
+						{TOGGLEABLE_COLUMNS.map((col) => (
+							<DropdownMenuCheckboxItem
+								key={col.id}
+								checked={visibleColumns[col.id]}
+								onCheckedChange={(checked) => toggleColumn(col.id, checked === true)}
+							>
+								{col.label}
+							</DropdownMenuCheckboxItem>
+						))}
+					</DropdownMenuContent>
+				</DropdownMenu>
 				<Button
 					variant="ghost"
 					size="icon"
@@ -140,13 +198,46 @@ export function ObjectFiles({
 			<input ref={inputRef} type="file" multiple className="hidden" onChange={handleFileChange} />
 
 			{hasFiles ? (
-				<ul className="space-y-1">
-					{files.map((file) => (
-						<li key={file.id}>
-							<AttachedFileCard workspaceId={workspaceId} file={file} />
-						</li>
-					))}
-				</ul>
+				<Table>
+					<TableHeader>
+						<TableRow>
+							<TableHead className="h-8 px-2 text-xs">Name</TableHead>
+							<TableHead className="h-8 px-2 text-xs w-24 text-right">Size</TableHead>
+							{visibleColumns.created_at && (
+								<TableHead className="h-8 px-2 text-xs w-28">Created</TableHead>
+							)}
+							{visibleColumns.modified_at && (
+								<TableHead className="h-8 px-2 text-xs w-28">Modified</TableHead>
+							)}
+						</TableRow>
+					</TableHeader>
+					<TableBody>
+						{files.map((file) => (
+							<TableRow key={file.id}>
+								<TableCell className="p-1">
+									<AttachedFileCard
+										workspaceId={workspaceId}
+										file={file}
+										className="border-0 bg-transparent px-2 py-1"
+									/>
+								</TableCell>
+								<TableCell className="px-2 py-1 text-right text-xs text-muted-foreground font-mono">
+									{formatSize(file.sizeBytes)}
+								</TableCell>
+								{visibleColumns.created_at && (
+									<TableCell className="px-2 py-1 text-xs text-muted-foreground">
+										<RelativeTime date={file.createdAt} />
+									</TableCell>
+								)}
+								{visibleColumns.modified_at && (
+									<TableCell className="px-2 py-1 text-xs text-muted-foreground">
+										<RelativeTime date={file.updatedAt} />
+									</TableCell>
+								)}
+							</TableRow>
+						))}
+					</TableBody>
+				</Table>
 			) : (
 				<button
 					type="button"

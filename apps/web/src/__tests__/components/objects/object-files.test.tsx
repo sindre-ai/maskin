@@ -1,6 +1,7 @@
 import { ObjectFiles } from '@/components/objects/object-files'
 import type { FileListItem, RelationshipResponse } from '@/lib/api'
-import { render, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { TestWrapper } from '../../setup'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -12,6 +13,10 @@ vi.mock('@/lib/api', () => ({
 	api: {
 		files: {
 			list: vi.fn(),
+			get: vi.fn(),
+			create: vi.fn(),
+			createWithProgress: vi.fn(),
+			update: vi.fn(),
 		},
 		relationships: {
 			create: vi.fn(),
@@ -55,6 +60,12 @@ function buildFileItem(overrides: Partial<FileListItem> = {}): FileListItem {
 	}
 }
 
+const baseProps = {
+	workspaceId: 'ws-1',
+	objectId: 'obj-1',
+	objectType: 'bet',
+}
+
 beforeEach(() => {
 	vi.clearAllMocks()
 })
@@ -74,9 +85,7 @@ describe('ObjectFiles — endpoint resolution by id', () => {
 		const { findByText } = render(
 			<TestWrapper>
 				<ObjectFiles
-					workspaceId="ws-1"
-					objectId="obj-1"
-					objectType="bet"
+					{...baseProps}
 					relationships={{ asSource: [rel], asTarget: [] }}
 				/>
 			</TestWrapper>,
@@ -104,9 +113,7 @@ describe('ObjectFiles — endpoint resolution by id', () => {
 		const { findByText } = render(
 			<TestWrapper>
 				<ObjectFiles
-					workspaceId="ws-1"
-					objectId="obj-1"
-					objectType="bet"
+					{...baseProps}
 					relationships={{ asSource: [rel], asTarget: [] }}
 				/>
 			</TestWrapper>,
@@ -133,9 +140,7 @@ describe('ObjectFiles — endpoint resolution by id', () => {
 		const { findByText } = render(
 			<TestWrapper>
 				<ObjectFiles
-					workspaceId="ws-1"
-					objectId="obj-1"
-					objectType="bet"
+					{...baseProps}
 					relationships={{ asSource: [], asTarget: [rel] }}
 				/>
 			</TestWrapper>,
@@ -159,9 +164,7 @@ describe('ObjectFiles — endpoint resolution by id', () => {
 		render(
 			<TestWrapper>
 				<ObjectFiles
-					workspaceId="ws-1"
-					objectId="obj-1"
-					objectType="bet"
+					{...baseProps}
 					relationships={{ asSource: [informs], asTarget: [] }}
 				/>
 			</TestWrapper>,
@@ -171,5 +174,87 @@ describe('ObjectFiles — endpoint resolution by id', () => {
 		await waitFor(() => {
 			expect(api.files.list).not.toHaveBeenCalled()
 		})
+	})
+})
+
+describe('ObjectFiles — scoped property menu', () => {
+	it('renders attached files in a table with Name + Size by default', async () => {
+		const file = buildFileItem({ name: 'spec.md', sizeBytes: 2048 })
+		vi.mocked(api.files.list).mockResolvedValue([file])
+
+		render(
+			<TestWrapper>
+				<ObjectFiles
+					{...baseProps}
+					relationships={{ asSource: [buildRel({ targetId: file.id })], asTarget: [] }}
+				/>
+			</TestWrapper>,
+		)
+
+		await screen.findByText('spec.md')
+		expect(screen.getByRole('columnheader', { name: 'Name' })).toBeInTheDocument()
+		expect(screen.getByRole('columnheader', { name: 'Size' })).toBeInTheDocument()
+		expect(screen.queryByRole('columnheader', { name: 'Created' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('columnheader', { name: 'Modified' })).not.toBeInTheDocument()
+	})
+
+	it('toggling Created in the property menu shows the Created column for files in the same session', async () => {
+		const user = userEvent.setup()
+		const file = buildFileItem({ name: 'spec.md' })
+		vi.mocked(api.files.list).mockResolvedValue([file])
+
+		render(
+			<TestWrapper>
+				<ObjectFiles
+					{...baseProps}
+					relationships={{ asSource: [buildRel({ targetId: file.id })], asTarget: [] }}
+				/>
+			</TestWrapper>,
+		)
+
+		await screen.findByText('spec.md')
+		expect(screen.queryByRole('columnheader', { name: 'Created' })).not.toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'File properties' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Created' }))
+
+		expect(screen.getByRole('columnheader', { name: 'Created' })).toBeInTheDocument()
+	})
+
+	it('toggling Modified off after on hides the Modified column again', async () => {
+		const user = userEvent.setup()
+		const file = buildFileItem({ name: 'spec.md' })
+		vi.mocked(api.files.list).mockResolvedValue([file])
+
+		render(
+			<TestWrapper>
+				<ObjectFiles
+					{...baseProps}
+					relationships={{ asSource: [buildRel({ targetId: file.id })], asTarget: [] }}
+				/>
+			</TestWrapper>,
+		)
+
+		await screen.findByText('spec.md')
+
+		await user.click(screen.getByRole('button', { name: 'File properties' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Modified' }))
+		expect(screen.getByRole('columnheader', { name: 'Modified' })).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'File properties' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Modified' }))
+		expect(screen.queryByRole('columnheader', { name: 'Modified' })).not.toBeInTheDocument()
+	})
+
+	it('shows the empty-state uploader when no files are attached', () => {
+		vi.mocked(api.files.list).mockResolvedValue([])
+
+		render(
+			<TestWrapper>
+				<ObjectFiles {...baseProps} relationships={{ asSource: [], asTarget: [] }} />
+			</TestWrapper>,
+		)
+
+		expect(screen.getByText(/drop a file here|click to upload/i)).toBeInTheDocument()
 	})
 })
