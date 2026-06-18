@@ -10,10 +10,16 @@ import {
 	updateWorkspaceSkillSchema,
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import {
+	SKILL_BUNDLE_MAX_UNCOMPRESSED_BYTES,
+	type SkillBundleError,
+	extractSkillBundle,
+} from '../lib/skill-bundles'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 
 type Env = {
@@ -68,6 +74,8 @@ const workspaceSkillListItemSchema = z.object({
 	storageKey: z.string(),
 	sizeBytes: z.number().int().nonnegative(),
 	isValid: z.boolean(),
+	isFolder: z.boolean(),
+	fileCount: z.number().int().nonnegative().nullable(),
 	createdBy: z.string().uuid().nullable(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
@@ -75,6 +83,19 @@ const workspaceSkillListItemSchema = z.object({
 
 const workspaceSkillDetailSchema = workspaceSkillListItemSchema.extend({
 	content: z.string(),
+})
+
+// The upload endpoint persists malformed bundles with `isValid: false` so the
+// UI's AlertTriangle pattern can surface them. The structured `error` echoes
+// the parse failure so the client can render a useful message inline without
+// re-running zip validation.
+const workspaceSkillUploadResponseSchema = workspaceSkillDetailSchema.extend({
+	error: z
+		.object({
+			kind: z.string(),
+			message: z.string(),
+		})
+		.nullable(),
 })
 
 const workspaceIdParam = z.object({ workspaceId: z.string().uuid() })
@@ -125,6 +146,8 @@ app.openapi(listWorkspaceSkillsRoute, (async (c) => {
 			storageKey: workspaceSkills.storageKey,
 			sizeBytes: workspaceSkills.sizeBytes,
 			isValid: workspaceSkills.isValid,
+			isFolder: workspaceSkills.isFolder,
+			fileCount: workspaceSkills.fileCount,
 			createdBy: workspaceSkills.createdBy,
 			createdAt: workspaceSkills.createdAt,
 			updatedAt: workspaceSkills.updatedAt,
@@ -331,8 +354,384 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 		})
 	}
 
+	logger.info('Workspace skill created via JSON POST', {
+		workspaceId,
+		skillId: created.id,
+		isFolder: false,
+		sizeBytes: created.sizeBytes,
+	})
+
+	// Ship-metric event for the folder-skills bet — fires on BOTH the JSON path
+	// and the multipart upload path so the dashboard sees every workspace_skill
+	// land regardless of how the user submitted it. Fire-and-forget after commit
+	// so an analytics outage cannot fail the mutation.
+	void capturePosthogEvent('workspace_skill_uploaded', workspaceId, {
+		workspace_id: workspaceId,
+		skill_id: created.id,
+		is_folder: false,
+		is_valid: created.isValid,
+		size_bytes: created.sizeBytes,
+		actor_id: callerActorId,
+	})
+
 	return c.json(serialize(created) as z.infer<typeof workspaceSkillDetailSchema>, 201)
 }) as RouteHandler<typeof createWorkspaceSkillRoute, Env>)
+
+// POST /:workspaceId/skills/upload — Multipart upload for `.md` or `.zip` bundles.
+//
+// One drop-zone in the UI lands both shapes here; the server sniffs the
+// filename to decide single-file vs folder path. Malformed bundles are
+// persisted with `isValid: false` so the existing AlertTriangle UI surfaces
+// them, instead of being rejected with a 4xx.
+const uploadWorkspaceSkillRoute = createRoute({
+	method: 'post',
+	path: '/{workspaceId}/skills/upload',
+	tags: ['Workspace Skills'],
+	summary: 'Upload a workspace skill from a single SKILL.md or a zip bundle',
+	request: {
+		params: workspaceIdParam,
+		query: z.object({
+			skillId: z.string().uuid().optional(),
+			name: skillNameSchema.optional(),
+		}),
+		body: {
+			content: {
+				'multipart/form-data': {
+					schema: z.object({
+						file: z.any().openapi({ type: 'string', format: 'binary' }),
+					}),
+				},
+			},
+		},
+	},
+	responses: {
+		201: {
+			content: { 'application/json': { schema: workspaceSkillUploadResponseSchema } },
+			description: 'Skill uploaded (or persisted with isValid=false on a malformed bundle)',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request — missing file, unsupported extension, or oversize zip',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not a workspace member',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Skill to replace not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'A skill with this name already exists',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Internal server error',
+		},
+	},
+})
+
+// Compressed upload cap. Mirrors imports.ts's cap so the 10MB cap covers the
+// raw zip on the wire; SKILL_BUNDLE_MAX_UNCOMPRESSED_BYTES guards zip-bombs
+// after extraction.
+const MAX_UPLOAD_BYTES = SKILL_BUNDLE_MAX_UNCOMPRESSED_BYTES
+
+function sanitiseDerivedName(raw: string): string {
+	const lower = raw.toLowerCase()
+	const collapsed = lower
+		.replace(/\.zip$/, '')
+		.replace(/\.md$/, '')
+		.replace(/[^a-z0-9-]+/g, '-')
+		.replace(/-+/g, '-')
+		.replace(/^-+|-+$/g, '')
+		.slice(0, 64)
+	return collapsed
+}
+
+function describeBundleError(err: SkillBundleError): { kind: string; message: string } {
+	return { kind: err.kind, message: err.message }
+}
+
+app.openapi(uploadWorkspaceSkillRoute, (async (c) => {
+	const db = c.get('db')
+	const callerActorId = c.get('actorId')
+	const storage = c.get('agentStorage')
+	const { workspaceId } = c.req.valid('param')
+	const { skillId: replaceSkillId, name: nameOverride } = c.req.valid('query')
+
+	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
+	if (!member) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	const formData = await c.req.formData()
+	const file = formData.get('file')
+	if (!file || !(file instanceof File)) {
+		return c.json(createApiError('BAD_REQUEST', 'No file provided'), 400)
+	}
+	if (file.size > MAX_UPLOAD_BYTES) {
+		return c.json(
+			createApiError('BAD_REQUEST', `Upload too large. Maximum is ${MAX_UPLOAD_BYTES} bytes.`),
+			400,
+		)
+	}
+
+	const filename = file.name
+	const ext = filename.split('.').pop()?.toLowerCase()
+	if (ext !== 'md' && ext !== 'zip') {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`Unsupported file type: .${ext ?? '(none)'}`,
+				[],
+				'Supported formats: .md, .zip',
+			),
+			400,
+		)
+	}
+
+	const buffer = Buffer.from(await file.arrayBuffer())
+	const isFolderUpload = ext === 'zip'
+
+	// Replace lookup happens once up front so both paths share the same row.
+	let replaceRow: typeof workspaceSkills.$inferSelect | undefined
+	if (replaceSkillId) {
+		const [row] = await db
+			.select()
+			.from(workspaceSkills)
+			.where(
+				and(eq(workspaceSkills.id, replaceSkillId), eq(workspaceSkills.workspaceId, workspaceId)),
+			)
+			.limit(1)
+		if (!row) {
+			return c.json(createApiError('NOT_FOUND', 'Workspace skill to replace not found'), 404)
+		}
+		replaceRow = row
+	}
+
+	// --- Resolve content + structural validity, depending on upload shape ---
+	let skillMdContent: string
+	let parsedDescription: string | null = null
+	let frontmatterName: string | null = null
+	let fileCount: number | null = null
+	let bundleEntries: { path: string; data: Buffer }[] | null = null
+	let bundleError: { kind: string; message: string } | null = null
+
+	if (isFolderUpload) {
+		const result = extractSkillBundle(buffer)
+		if (!result.ok) {
+			bundleError = describeBundleError(result.error)
+			// Land the SKILL.md row as an empty/invalid placeholder so the UI can
+			// render the error inline. file_count stays 0 because we never wrote
+			// any bundled file.
+			skillMdContent = ''
+			fileCount = 0
+			logger.warn('Folder skill upload malformed', {
+				workspaceId,
+				filename,
+				error: bundleError,
+			})
+		} else {
+			skillMdContent = result.bundle.skillMd.content
+			fileCount = result.bundle.entries.length
+			bundleEntries = result.bundle.entries
+			try {
+				const parsed = parseSkillMd(skillMdContent)
+				parsedDescription = parsed.description || null
+				frontmatterName = parsed.name || null
+			} catch {
+				// YAML failure — treat like a missing-frontmatter SKILL.md and let
+				// isValid drop to false. We still write the bundle so the user can
+				// fix it in the editor without re-uploading.
+			}
+		}
+	} else {
+		skillMdContent = buffer.toString('utf-8')
+		try {
+			const parsed = parseSkillMd(skillMdContent)
+			parsedDescription = parsed.description || null
+			frontmatterName = parsed.name || null
+		} catch {
+			// As above — accept it, mark invalid, let the UI surface it.
+		}
+	}
+
+	// --- Resolve the row name ---
+	// Priority: explicit query override → SKILL.md frontmatter → sanitised
+	// filename. On replace, default to the existing name when nothing else
+	// gives us a valid candidate (avoids accidental renames on a bundle whose
+	// SKILL.md is malformed).
+	const candidateName =
+		nameOverride ??
+		(frontmatterName && skillNameSchema.safeParse(frontmatterName).success
+			? frontmatterName
+			: null) ??
+		sanitiseDerivedName(filename)
+	const resolvedName =
+		candidateName && skillNameSchema.safeParse(candidateName).success
+			? candidateName
+			: (replaceRow?.name ?? `skill-${randomUUID().slice(0, 8)}`)
+
+	const isValid =
+		bundleError === null &&
+		frontmatterName !== null &&
+		skillNameSchema.safeParse(frontmatterName).success
+
+	const sizeBytes = Buffer.byteLength(skillMdContent, 'utf-8')
+	const now = new Date()
+	const skillId = replaceRow?.id ?? randomUUID()
+	const storageKey = workspaceSkillKey(workspaceId, skillId)
+
+	// --- Persist DB row, then write S3, all inside one tx for atomicity ---
+	let row: typeof workspaceSkills.$inferSelect | undefined
+	try {
+		row = await db.transaction(async (tx) => {
+			let persisted: typeof workspaceSkills.$inferSelect | undefined
+			if (replaceRow) {
+				// Replace path: lock the row, then UPDATE in place. We do NOT change
+				// `createdBy`/`createdAt` so the row keeps its provenance.
+				const [locked] = await tx
+					.select()
+					.from(workspaceSkills)
+					.where(eq(workspaceSkills.id, replaceRow.id))
+					.for('update')
+					.limit(1)
+				if (!locked) return undefined
+
+				const updated = await tx
+					.update(workspaceSkills)
+					.set({
+						name: resolvedName,
+						description: parsedDescription,
+						content: skillMdContent,
+						storageKey,
+						sizeBytes,
+						isValid,
+						isFolder: isFolderUpload,
+						fileCount,
+						updatedAt: now,
+					})
+					.where(eq(workspaceSkills.id, replaceRow.id))
+					.returning()
+				persisted = updated[0]
+				if (!persisted) return undefined
+
+				// Clear the prior bundle's files (single-file's SKILL.md, or every
+				// file under a previous folder skill) so stale paths don't survive.
+				await storage.clearWorkspaceSkillFolder(workspaceId, replaceRow.id)
+			} else {
+				const inserted = await tx
+					.insert(workspaceSkills)
+					.values({
+						id: skillId,
+						workspaceId,
+						name: resolvedName,
+						description: parsedDescription,
+						content: skillMdContent,
+						storageKey,
+						sizeBytes,
+						isValid,
+						isFolder: isFolderUpload,
+						fileCount,
+						createdBy: callerActorId,
+					})
+					.returning()
+				persisted = inserted[0]
+				if (!persisted) throw new Error('INSERT returned no row')
+			}
+
+			// SKILL.md write — present in both single-file and folder skills.
+			await storage.putWorkspaceSkill(workspaceId, skillId, skillMdContent)
+
+			// Folder skill: write every other entry under the same prefix. SKILL.md
+			// itself is written by putWorkspaceSkill above so we skip it here.
+			if (bundleEntries) {
+				for (const entry of bundleEntries) {
+					if (entry.path === 'SKILL.md') continue
+					await storage.putWorkspaceSkillFile(workspaceId, skillId, entry.path, entry.data)
+				}
+			}
+
+			return persisted
+		})
+	} catch (err) {
+		if (isUniqueViolation(err, 'workspace_skills_ws_name_uniq')) {
+			return c.json(
+				createApiError('CONFLICT', 'A skill with this name already exists in this workspace'),
+				409,
+			)
+		}
+		logger.error('Workspace skill upload failed', {
+			workspaceId,
+			skillId,
+			filename,
+			isFolder: isFolderUpload,
+			error: String(err),
+		})
+		throw err
+	}
+
+	if (!row) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace skill to replace not found'), 404)
+	}
+
+	// Audit event — same shape as the JSON create path so existing listeners
+	// keep working. `content` is omitted to stay under the 8KB NOTIFY cap.
+	try {
+		await db.insert(events).values({
+			workspaceId,
+			actorId: callerActorId,
+			action: replaceRow ? 'updated' : 'created',
+			entityType: 'workspace_skill',
+			entityId: row.id,
+			data: {
+				id: row.id,
+				name: row.name,
+				description: row.description,
+				sizeBytes: row.sizeBytes,
+				isFolder: row.isFolder,
+				fileCount: row.fileCount,
+			},
+		})
+	} catch (err) {
+		logger.error('Failed to record workspace_skill upload audit event', {
+			workspaceId,
+			skillId: row.id,
+			error: String(err),
+		})
+	}
+
+	logger.info('Workspace skill uploaded', {
+		workspaceId,
+		skillId: row.id,
+		isFolder: row.isFolder,
+		fileCount: row.fileCount,
+		isValid: row.isValid,
+		sizeBytes: row.sizeBytes,
+		replace: Boolean(replaceRow),
+	})
+
+	// Ship-metric event — the folder-skills bet's primary funnel signal.
+	// Fires on every successful commit; `is_folder` lets the dashboard split
+	// single-file vs folder uploads without a second query.
+	void capturePosthogEvent('workspace_skill_uploaded', workspaceId, {
+		workspace_id: workspaceId,
+		skill_id: row.id,
+		is_folder: row.isFolder,
+		file_count: row.fileCount,
+		is_valid: row.isValid,
+		size_bytes: row.sizeBytes,
+		replace: Boolean(replaceRow),
+		actor_id: callerActorId,
+	})
+
+	const response = {
+		...serialize(row),
+		error: bundleError,
+	} as z.infer<typeof workspaceSkillUploadResponseSchema>
+	return c.json(response, 201)
+}) as RouteHandler<typeof uploadWorkspaceSkillRoute, Env>)
 
 // PUT /:workspaceId/skills/:name — Update a workspace skill's content
 const updateWorkspaceSkillRoute = createRoute({
