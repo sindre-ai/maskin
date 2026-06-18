@@ -12,6 +12,7 @@ import { useSindreOneShot } from '@/hooks/use-sindre-one-shot'
 import { useSindreSession } from '@/hooks/use-sindre-session'
 import type { SessionInputAttachment } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { trackChatMessageSent } from '@/lib/posthog'
 import {
 	EMPTY_SINDRE_SELECTION,
 	type SindreSelection,
@@ -209,6 +210,17 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 			const displayAttachments = buildDisplayAttachments(activeSelection)
 			const hasContext =
 				selectedObjects.length > 0 || selectedNotifications.length > 0 || selectedFiles.length > 0
+			// Chat ship-metric — fire on the user's intent to send so the count
+			// reflects sends the user actually initiated, even if the network
+			// round-trip rejects below.
+			trackChatMessageSent({
+				workspace_id: workspaceId,
+				surface,
+				target_agent_id: selectedAgent?.id ?? null,
+				attached_objects: selectedObjects.length,
+				attached_notifications: selectedNotifications.length,
+				attached_files: selectedFiles.length,
+			})
 			try {
 				if (selectedAgent) {
 					// The one-shot hook builds its own action_prompt — pass raw
@@ -261,6 +273,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 			selectedObjects,
 			selectedNotifications,
 			selectedFiles,
+			surface,
 			workspaceId,
 		],
 	)
