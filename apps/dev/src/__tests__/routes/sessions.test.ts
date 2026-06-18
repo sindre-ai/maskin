@@ -115,6 +115,86 @@ describe('Sessions Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it('includes currentActivity in response', async () => {
+			const session = buildSession({ workspaceId: wsId, currentActivity: 'Running tests' })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [session]
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.currentActivity).toBe('Running tests')
+		})
+	})
+
+	describe('PATCH /api/sessions/:id', () => {
+		it('writes currentActivity, fires session_updated event, and returns updated session', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const updated = { ...session, currentActivity: 'Searching codebase' }
+			const { app, mockResults, calls } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [session]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/sessions/${session.id}`,
+					{ current_activity: 'Searching codebase' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.currentActivity).toBe('Searching codebase')
+			expect(calls.inserts).toContainEqual(
+				expect.objectContaining({
+					action: 'session_updated',
+					entityType: 'session',
+					entityId: session.id,
+				}),
+			)
+		})
+
+		it('clears currentActivity to null', async () => {
+			const session = buildSession({ workspaceId: wsId, currentActivity: 'Old activity' })
+			const updated = { ...session, currentActivity: null }
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [session]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/sessions/${session.id}`,
+					{ current_activity: null },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.currentActivity).toBeNull()
+		})
+
+		it('returns 404 when session not found', async () => {
+			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					'/api/sessions/00000000-0000-0000-0000-000000000099',
+					{ current_activity: 'anything' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+		})
 	})
 
 	describe('POST /api/sessions/:id/stop', () => {

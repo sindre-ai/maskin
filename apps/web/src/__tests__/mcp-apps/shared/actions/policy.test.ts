@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 describe('MUTATION_POLICY', () => {
 	it('exposes the v1 mutation kinds', () => {
 		expect(Object.keys(MUTATION_POLICY).sort()).toEqual(
-			['object_delete', 'object_owner', 'object_relationship_add', 'object_status'].sort(),
+			['object_delete', 'object_driver', 'object_relationship_add', 'object_status'].sort(),
 		)
 	})
 
@@ -18,7 +18,7 @@ describe('MUTATION_POLICY', () => {
 	it('keeps status / owner one-click + optimistic per the v1 design doc', () => {
 		expect(getMutationPolicy('object_status').confirm).toBe(false)
 		expect(getMutationPolicy('object_status').optimistic).toBe(true)
-		expect(getMutationPolicy('object_owner').confirm).toBe(false)
-		expect(getMutationPolicy('object_owner').optimistic).toBe(true)
+		expect(getMutationPolicy('object_driver').confirm).toBe(false)
+		expect(getMutationPolicy('object_driver').optimistic).toBe(true)
 	})
 })

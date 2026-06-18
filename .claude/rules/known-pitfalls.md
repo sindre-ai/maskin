@@ -23,12 +23,28 @@ A living registry of bugs that have been fixed before and should be checked for 
 - **Fix pattern**: Always check `Number.isFinite()` after parsing and fall back to a sensible default. Also validate range (e.g., no negative values for pagination `limit` or `offset`). See `.claude/rules/input-validation.md` for the safe parsing pattern.
 - **History**: `NaN` propagation to SQL query in `GET /sessions` route, fixed in PR #235.
 
-## `text-accent` Used as a Text Color (Invisible in Light Mode)
+## `accent` Token Used Without Its Foreground Pair (Invisible in Light Mode)
 
-- **What**: `--accent` is a near-white background token in light mode — using `text-accent` on a white surface makes text nearly invisible. `accent-hover` is not defined, so `hover:text-accent-hover` silently does nothing.
+`--accent` is a near-white background token in light mode. Using it as a standalone visible color (text, dot, or rail) produces near-invisible output on white surfaces.
+
+**Variant A — `text-accent` as a text color**
+- **What**: Text rendered with `text-accent` is nearly invisible in light mode.
 - **When to check**: Any time you add a styled text button or inline action element.
-- **Fix pattern**: Use `text-muted-foreground hover:text-foreground` for inline action buttons. Only use `accent` as a background (paired with `text-accent-foreground`).
+- **Fix pattern**: Use `text-muted-foreground hover:text-foreground` for inline action buttons.
 - **History**: Introduced on Restart/Retry buttons in PR #503, fixed on `bet/session-restart`.
+
+**Variant B — `bg-accent` on a text-free indicator (dot, rail, badge background)**
+- **What**: `bg-accent` on a small shape (unread dot, gutter rail, status indicator) with no accompanying text looks correct in dark mode but is near-invisible in light mode. Unlike a labelled pill, there is no `text-accent-foreground` child to catch the problem.
+- **When to check**: Any time you add a purely visual indicator — a dot, a stripe, a pill background, a left-border rail — that carries no text content.
+- **Fix pattern**: Use `bg-primary` for indicators that must be visually prominent in both modes. Reserve `bg-accent` for backgrounds that are always paired with `text-accent-foreground` (e.g. the "Needs you" pill: `bg-accent text-accent-foreground`).
+- **History**: Introduced on unread dot and decision-point gutter rail in PR #622, fixed in the review commit on `bet/timeline-ux`.
+
+## Drizzle Column Objects in a Correlated `sql` Subquery Render Unqualified
+
+- **What**: Embedding Drizzle column objects (e.g. `${sessions.agentServerId}`, `${agentServers.id}`) inside a raw `` sql`` `` template that builds a **correlated subquery** renders them **without a table qualifier** — `WHERE agent_server_id = id` instead of `WHERE sessions.agent_server_id = agent_servers.id`. When the inner table also has a column of that bare name (here `sessions.id`), Postgres silently binds it to the *inner* table, so the correlation is never true and the aggregate (`COUNT(*)`, `SUM`, …) is always `0`/empty. No error is raised — the query just returns wrong numbers.
+- **When to check**: Any correlated scalar subquery written inside a Drizzle `` sql`` `` template — especially a per-row `COUNT`/`SUM` that references both the outer and inner tables (load counters, capacity checks, "active children" tallies). Unit tests that mock `db.select` will NOT catch this; only a real-Postgres (integration) test does.
+- **Fix pattern**: Write the correlated columns as **literal, table-qualified SQL** inside the template — `` sql`... WHERE sessions.agent_server_id = agent_servers.id ...` `` — instead of interpolating Drizzle column objects. Or use a `LEFT JOIN LATERAL` with explicit aliases (the shape documented in migration `0036_sessions_agent_server_id.sql`). Cover it with an integration test against a real DB, not a mocked one — see `apps/dev/src/__tests__/integration/session-dispatcher.test.ts`.
+- **History**: `SessionDispatcher.pickLeastLoadedServer()` in PR #714 — the active-session load count rendered `WHERE agent_server_id = id`, so every agent-server read as load 0: capacity (`active >= max`) was never enforced and least-loaded routing collapsed to the lowest server id, defeating the bet's horizontal scaling. Caught by a real-Postgres dispatch test, not the mocked unit tests.
 
 ## Adding New Entries
 

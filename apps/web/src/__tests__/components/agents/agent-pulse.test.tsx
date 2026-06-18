@@ -1,52 +1,39 @@
 import { AgentPulse } from '@/components/agents/agent-pulse'
 import { render, screen } from '@testing-library/react'
-import { buildEventResponse } from '../../factories'
+import { buildSessionResponse } from '../../factories'
 
-const mockEvents = vi.fn()
+const mockSessions = vi.fn()
 
-vi.mock('@/hooks/use-events', () => ({
-	useEvents: () => ({ data: mockEvents() }),
+vi.mock('@/hooks/use-sessions', () => ({
+	useWorkspaceSessions: () => ({ data: mockSessions() }),
 }))
 
 describe('AgentPulse', () => {
-	beforeEach(() => {
-		vi.useFakeTimers()
-		vi.setSystemTime(new Date('2026-01-01T00:10:00Z'))
-	})
-
-	afterEach(() => {
-		vi.useRealTimers()
-	})
-
-	it('shows "No recent agent activity" when no events', () => {
-		mockEvents.mockReturnValue([])
+	it('shows "No agents working" when no sessions', () => {
+		mockSessions.mockReturnValue([])
 		render(<AgentPulse workspaceId="ws-1" />)
-		expect(screen.getByText('No recent agent activity')).toBeInTheDocument()
+		expect(screen.getByText('No agents working')).toBeInTheDocument()
 	})
 
-	it('shows "No recent agent activity" when events are older than 5 minutes', () => {
-		mockEvents.mockReturnValue([
-			buildEventResponse({ actorId: 'a-1', createdAt: '2026-01-01T00:01:00Z' }),
+	it('shows "No agents working" when all sessions are completed', () => {
+		mockSessions.mockReturnValue([buildSessionResponse({ actorId: 'a-1', status: 'completed' })])
+		render(<AgentPulse workspaceId="ws-1" />)
+		expect(screen.getByText('No agents working')).toBeInTheDocument()
+	})
+
+	it('shows "1 agent working" for single active agent', () => {
+		mockSessions.mockReturnValue([buildSessionResponse({ actorId: 'a-1', status: 'running' })])
+		render(<AgentPulse workspaceId="ws-1" />)
+		expect(screen.getByText('1 agent working')).toBeInTheDocument()
+	})
+
+	it('shows "N agents working" with pluralization', () => {
+		mockSessions.mockReturnValue([
+			buildSessionResponse({ actorId: 'a-1', status: 'running' }),
+			buildSessionResponse({ actorId: 'a-2', status: 'pending' }),
+			buildSessionResponse({ actorId: 'a-1', status: 'completed' }),
 		])
 		render(<AgentPulse workspaceId="ws-1" />)
-		expect(screen.getByText('No recent agent activity')).toBeInTheDocument()
-	})
-
-	it('shows "1 agent active" for single active agent', () => {
-		mockEvents.mockReturnValue([
-			buildEventResponse({ actorId: 'a-1', createdAt: '2026-01-01T00:06:00Z' }),
-		])
-		render(<AgentPulse workspaceId="ws-1" />)
-		expect(screen.getByText('1 agent active')).toBeInTheDocument()
-	})
-
-	it('shows "N agents active" with pluralization', () => {
-		mockEvents.mockReturnValue([
-			buildEventResponse({ actorId: 'a-1', createdAt: '2026-01-01T00:06:00Z' }),
-			buildEventResponse({ actorId: 'a-2', createdAt: '2026-01-01T00:07:00Z' }),
-			buildEventResponse({ actorId: 'a-1', createdAt: '2026-01-01T00:08:00Z' }),
-		])
-		render(<AgentPulse workspaceId="ws-1" />)
-		expect(screen.getByText('2 agents active')).toBeInTheDocument()
+		expect(screen.getByText('2 agents working')).toBeInTheDocument()
 	})
 })

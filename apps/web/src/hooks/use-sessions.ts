@@ -1,3 +1,4 @@
+import { trackAgentSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { CreateSessionInput } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
@@ -25,11 +26,26 @@ export function useCreateSession(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (data: CreateSessionInput) => api.sessions.create(workspaceId, data),
-		onSuccess: (_result, data) => {
+		onSuccess: (result, data) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.sessions.byActor(workspaceId, data.actor_id),
 			})
+			trackAgentSessionStarted({
+				entity_id: result.id,
+				entity_type: 'session',
+			})
+		},
+	})
+}
+
+export function useStopSession(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (sessionId: string) => api.sessions.stop(sessionId, workspaceId),
+		onSuccess: (result) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(result.id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
 		},
 	})
 }

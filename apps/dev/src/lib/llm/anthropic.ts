@@ -2,9 +2,11 @@ import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool } from './adapter'
 
 export class AnthropicAdapter implements LLMAdapter {
 	private apiKey: string
+	private baseUrl: string
 
-	constructor(apiKey: string) {
+	constructor(apiKey: string, baseUrl = 'https://api.anthropic.com') {
 		this.apiKey = apiKey
+		this.baseUrl = baseUrl
 	}
 
 	async chat(options: {
@@ -13,31 +15,23 @@ export class AnthropicAdapter implements LLMAdapter {
 		tools?: LLMTool[]
 		temperature?: number
 	}): Promise<LLMResponse> {
-		const systemMessage = options.messages.find((m) => m.role === 'system')
-		const otherMessages = options.messages.filter((m) => m.role !== 'system')
+		const systemMessages = options.messages.filter((m) => m.role === 'system')
+		const nonSystemMessages = options.messages.filter((m) => m.role !== 'system')
 
 		const body: Record<string, unknown> = {
-			model: options.model || 'claude-opus-4-7',
+			model: options.model || 'claude-sonnet-4-6',
 			max_tokens: 4096,
-			messages: otherMessages.map((m) => {
-				if (m.role === 'tool') {
-					return {
-						role: 'user',
-						content: [
-							{
-								type: 'tool_result',
-								tool_use_id: m.tool_call_id,
-								content: m.content,
-							},
-						],
-					}
-				}
-				return { role: m.role, content: m.content }
-			}),
+			messages: nonSystemMessages.map((m) => ({
+				role: m.role === 'tool' ? 'user' : m.role,
+				content:
+					m.role === 'tool'
+						? [{ type: 'tool_result', tool_use_id: m.tool_call_id, content: m.content }]
+						: m.content,
+			})),
 		}
 
-		if (systemMessage) {
-			body.system = systemMessage.content
+		if (systemMessages.length > 0) {
+			body.system = systemMessages.map((m) => m.content).join('\n')
 		}
 
 		if (options.tools?.length) {
@@ -52,7 +46,7 @@ export class AnthropicAdapter implements LLMAdapter {
 			body.temperature = options.temperature
 		}
 
-		const response = await fetch('https://api.anthropic.com/v1/messages', {
+		const response = await fetch(`${this.baseUrl}/v1/messages`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
@@ -68,25 +62,24 @@ export class AnthropicAdapter implements LLMAdapter {
 		}
 
 		const data = (await response.json()) as Record<string, unknown>
-		const contentBlocks = (data.content ?? []) as Array<Record<string, unknown>>
+		const content = data.content as Array<Record<string, unknown>>
 
-		const toolCalls = contentBlocks
-			.filter((block) => block.type === 'tool_use')
-			.map((block) => ({
-				id: block.id as string,
-				name: block.name as string,
-				arguments: block.input as Record<string, unknown>,
-			}))
+		const textContent = content.find((b) => b.type === 'text')
+		const toolUseBlocks = content.filter((b) => b.type === 'tool_use')
 
-		const textContent = contentBlocks
-			.filter((block) => block.type === 'text')
-			.map((block) => block.text as string)
-			.join('')
+		const toolCalls = toolUseBlocks.map((b) => ({
+			id: b.id as string,
+			name: b.name as string,
+			arguments: b.input as Record<string, unknown>,
+		}))
+
+		const stopReason = data.stop_reason as string
+		const finishReason = stopReason === 'tool_use' ? ('tool_calls' as const) : ('stop' as const)
 
 		return {
-			content: textContent || null,
+			content: (textContent?.text as string) ?? null,
 			tool_calls: toolCalls,
-			finish_reason: data.stop_reason === 'tool_use' ? 'tool_calls' : 'stop',
+			finish_reason: finishReason,
 		}
 	}
 }

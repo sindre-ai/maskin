@@ -6,7 +6,7 @@ import type { VisibilityState } from '@tanstack/react-table'
 import { Search, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ColumnInfo } from './data-table-controls'
-import { DisplayPanel } from './display-panel'
+import { DisplayPanel, type DisplayPanelView } from './display-panel'
 
 interface Tab {
 	label: string
@@ -29,8 +29,8 @@ interface DataTableToolbarProps {
 	statusFilter?: string
 	onStatusFilterChange: (value: string | undefined) => void
 	statusesByType: Record<string, string[]>
-	ownerFilter?: string
-	onOwnerFilterChange: (value: string | undefined) => void
+	driverFilter?: string
+	onDriverFilterChange: (value: string | undefined) => void
 	actors?: ActorListItem[]
 	onResetFilters?: () => void
 	sort: string
@@ -39,6 +39,10 @@ interface DataTableToolbarProps {
 	onOrderChange: (value: 'asc' | 'desc') => void
 	groupBy?: string
 	onGroupByChange: (value: string | undefined) => void
+	// View switcher
+	view?: DisplayPanelView
+	onViewChange?: (view: DisplayPanelView) => void
+	boardSupported?: boolean
 	// Import
 	onImportClick: () => void
 }
@@ -55,8 +59,8 @@ export function DataTableToolbar({
 	statusFilter,
 	onStatusFilterChange,
 	statusesByType,
-	ownerFilter,
-	onOwnerFilterChange,
+	driverFilter,
+	onDriverFilterChange,
 	actors,
 	onResetFilters,
 	sort,
@@ -65,6 +69,9 @@ export function DataTableToolbar({
 	onOrderChange,
 	groupBy,
 	onGroupByChange,
+	view,
+	onViewChange,
+	boardSupported,
 	onImportClick,
 }: DataTableToolbarProps) {
 	const [localSearch, setLocalSearch] = useState(search ?? '')
@@ -123,14 +130,17 @@ export function DataTableToolbar({
 
 			{/* Display panel */}
 			<DisplayPanel
+				view={view}
+				onViewChange={onViewChange}
+				boardSupported={boardSupported}
 				columns={columns}
 				columnVisibility={columnVisibility}
 				onColumnVisibilityChange={onColumnVisibilityChange}
 				statusFilter={statusFilter}
 				onStatusFilterChange={onStatusFilterChange}
 				statusesByType={statusesByType}
-				ownerFilter={ownerFilter}
-				onOwnerFilterChange={onOwnerFilterChange}
+				driverFilter={driverFilter}
+				onDriverFilterChange={onDriverFilterChange}
 				actors={actors}
 				onResetFilters={onResetFilters}
 				sort={sort}

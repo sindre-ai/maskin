@@ -7,6 +7,7 @@ import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { isArray, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
 import type { ObjectResponse } from '../shared/types'
+import { WebAppLink, useWebAppHref } from '../shared/web-app-link'
 import {
 	extractCreateObjectsList,
 	extractFirstUpdatedObject,
@@ -50,10 +51,10 @@ function ObjectsApp() {
 		[callTool],
 	)
 
-	const handleUpdateOwner = useCallback(
-		(obj: ObjectResponse) => async (owner: string | null) => {
-			setLocalObject({ ...obj, owner })
-			const result = await callTool('update_objects', { updates: [{ id: obj.id, owner }] })
+	const handleUpdateDriver = useCallback(
+		(obj: ObjectResponse) => async (driver: string | null) => {
+			setLocalObject({ ...obj, driver })
+			const result = await callTool('update_objects', { updates: [{ id: obj.id, driver }] })
 			const updated = extractFirstUpdatedObject(result)
 			if (updated) setLocalObject(updated)
 		},
@@ -95,7 +96,7 @@ function ObjectsApp() {
 		onUpdateTitle: handleUpdateTitle(obj),
 		onUpdateContent: handleUpdateContent(obj),
 		onUpdateStatus: handleUpdateStatus(obj),
-		onUpdateOwner: handleUpdateOwner(obj),
+		onUpdateDriver: handleUpdateDriver(obj),
 		onDelete: handleDelete(obj),
 	})
 
@@ -130,12 +131,15 @@ function ObjectDocument({
 		onUpdateTitle: (title: string) => Promise<void>
 		onUpdateContent: (content: string) => Promise<void>
 		onUpdateStatus: (status: string) => Promise<void>
-		onUpdateOwner: (owner: string | null) => Promise<void>
+		onUpdateDriver: (driver: string | null) => Promise<void>
 		onDelete: () => Promise<void>
 	}
 }) {
 	return (
 		<div className="p-4">
+			<div className="flex justify-end mb-3">
+				<WebAppLink target={{ kind: 'object', id: obj.id }} />
+			</div>
 			<ObjectDocumentView
 				object={obj}
 				workspaceId={obj.workspaceId ?? ''}
@@ -143,7 +147,7 @@ function ObjectDocument({
 				onUpdateTitle={handlers.onUpdateTitle}
 				onUpdateContent={handlers.onUpdateContent}
 				onUpdateStatus={handlers.onUpdateStatus}
-				onUpdateOwner={handlers.onUpdateOwner}
+				onUpdateDriver={handlers.onUpdateDriver}
 				onDelete={handlers.onDelete}
 			/>
 		</div>
@@ -158,16 +162,37 @@ function ObjectListView({ objects }: { objects: ObjectResponse[] }) {
 	return (
 		<div className="p-4 space-y-1">
 			{objects.map((obj) => (
-				<div
-					key={obj.id}
-					className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors"
-				>
-					<TypeBadge type={obj.type} />
-					<span className="flex-1 text-sm text-foreground truncate">{obj.title || 'Untitled'}</span>
-					<StatusBadge status={obj.status} />
-				</div>
+				<ObjectListRow key={obj.id} obj={obj} />
 			))}
 		</div>
+	)
+}
+
+function ObjectListRow({ obj }: { obj: ObjectResponse }) {
+	const href = useWebAppHref({ kind: 'object', id: obj.id })
+	const content = (
+		<>
+			<TypeBadge type={obj.type} />
+			<span className="flex-1 text-sm text-foreground truncate">{obj.title || 'Untitled'}</span>
+			<StatusBadge status={obj.status} />
+		</>
+	)
+	if (!href) {
+		return (
+			<div className="flex items-center gap-3 px-3 py-2 rounded-lg transition-colors">
+				{content}
+			</div>
+		)
+	}
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
+		>
+			{content}
+		</a>
 	)
 }
 

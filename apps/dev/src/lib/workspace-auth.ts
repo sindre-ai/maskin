@@ -25,3 +25,22 @@ export async function isWorkspaceMember(
 		.limit(1)
 	return !!member
 }
+
+export async function isWorkspaceOwner(
+	db: Database,
+	actorId: string,
+	workspaceId: string,
+): Promise<boolean> {
+	const [member] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, actorId),
+				eq(workspaceMembers.workspaceId, workspaceId),
+				eq(workspaceMembers.role, 'owner'),
+			),
+		)
+		.limit(1)
+	return !!member
+}

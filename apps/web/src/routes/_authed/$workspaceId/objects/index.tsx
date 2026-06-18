@@ -1,10 +1,12 @@
 import { ImportDialog } from '@/components/imports/import-dialog'
 import { PageHeader } from '@/components/layout/page-header'
+import { BoardView } from '@/components/objects/board/board-view'
 import { BulkActionBar } from '@/components/objects/bulk-action-bar'
 import { type ObjectsTableMeta, getStaticColumns } from '@/components/objects/data-table/columns'
 import { DataTable } from '@/components/objects/data-table/data-table'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
 import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
+import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import { RouteError } from '@/components/shared/route-error'
 import { Badge } from '@/components/ui/badge'
@@ -18,6 +20,7 @@ import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
+import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
@@ -27,6 +30,7 @@ import {
 	type InfiniteData,
 	keepPreviousData,
 	useInfiniteQuery,
+	useQuery,
 	useQueryClient,
 } from '@tanstack/react-query'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
@@ -41,7 +45,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	validateSearch: (search: Record<string, unknown>) => ({
 		type: typeof search.type === 'string' ? search.type : undefined,
 		status: typeof search.status === 'string' ? search.status : undefined,
-		owner: typeof search.owner === 'string' ? search.owner : undefined,
+		driver: typeof search.driver === 'string' ? search.driver : undefined,
 		sort: typeof search.sort === 'string' ? search.sort : 'createdAt',
 		order:
 			typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
@@ -54,6 +58,8 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 })
 
 const PAGE_SIZE = 50
+const BOARD_PAGE_SIZE = 20
+const BOARD_MANUAL_SORT = 'boardOrder'
 
 function ObjectsPage() {
 	const { workspaceId, workspace } = useWorkspace()
@@ -62,7 +68,7 @@ function ObjectsPage() {
 	const {
 		type: typeFilter,
 		status: statusFilter,
-		owner: ownerFilter,
+		driver: driverFilter,
 		sort,
 		order,
 		q,
@@ -76,11 +82,29 @@ function ObjectsPage() {
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
 		createdBy: false,
 	})
+	// View switcher (List | Board). Route-local — persists per object type
+	// through the same Display settings row, never via the URL.
+	const [view, setView] = useState<DisplayPanelView>('list')
 
 	// Row selection keys are object IDs (data-table sets getRowId: row => row.id),
 	// so we can lift them directly as the selection surface for sibling bulk-action UI.
 	const selectedIds = useMemo(() => Object.keys(rowSelection), [rowSelection])
 	const clearSelection = useCallback(() => setRowSelection({}), [])
+	const handleObjectSelectionChange = useCallback((id: string, selected: boolean) => {
+		setRowSelection((current) => {
+			const next = { ...current }
+			if (selected) next[id] = true
+			else delete next[id]
+			return next
+		})
+	}, [])
+	const handleObjectRangeSelectionChange = useCallback((ids: string[]) => {
+		setRowSelection((current) => {
+			const next = { ...current }
+			for (const id of ids) next[id] = true
+			return next
+		})
+	}, [])
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset selection whenever the active workspace changes
 	useEffect(() => {
 		setRowSelection({})
@@ -110,12 +134,12 @@ function ObjectsPage() {
 		const f: Record<string, string> = {}
 		if (typeFilter) f.type = typeFilter
 		if (statusFilter) f.status = statusFilter
-		if (ownerFilter) f.owner = ownerFilter
+		if (driverFilter) f.driver = driverFilter
 		if (idsFilter) f.ids = idsFilter
 		f.sort = sort
 		f.order = order
 		return f
-	}, [typeFilter, statusFilter, ownerFilter, idsFilter, sort, order])
+	}, [typeFilter, statusFilter, driverFilter, idsFilter, sort, order])
 
 	// Infinite query — use search endpoint when q is present
 	const infiniteQuery = useInfiniteQuery({
@@ -150,6 +174,44 @@ function ObjectsPage() {
 		const enabledTypes = new Set(tabs.map((t) => t.value).filter(Boolean))
 		return Object.fromEntries(Object.entries(statusMap).filter(([type]) => enabledTypes.has(type)))
 	}, [settings, typeFilter, tabs])
+
+	// Board view needs a single active object type with at least one configured
+	// status. The All tab has no slot for "all types" in the persistence row
+	// (Task 5 keyed the row by object_type), so List is the only option there.
+	const boardSupported = Boolean(typeFilter && (statusesByType[typeFilter]?.length ?? 0) > 0)
+	// Effective view: even if the user previously chose Board for this type, an
+	// unsupported context (All tab, type with zero configured statuses) renders
+	// List. We never write that fallback back to settings — the stored
+	// preference is preserved for when the type becomes board-capable again.
+	const effectiveView: DisplayPanelView = boardSupported ? view : 'list'
+
+	const boardParams = useMemo(() => {
+		if (!typeFilter) return null
+		const params: Record<string, string> = {
+			...filters,
+			type: typeFilter,
+			sort,
+			order,
+			limit: String(BOARD_PAGE_SIZE),
+			offset: '0',
+		}
+		if (q) params.q = q
+		if (groupBy) params.groupBy = groupBy
+		return params
+	}, [filters, groupBy, order, q, sort, typeFilter])
+
+	const boardQuery = useQuery({
+		queryKey: queryKeys.objects.board(workspaceId, boardParams ?? {}),
+		queryFn: () => api.objects.board(workspaceId, boardParams as Record<string, string>),
+		enabled: effectiveView === 'board' && !!boardParams,
+		placeholderData: keepPreviousData,
+	})
+
+	const boardInitialObjects = useMemo(
+		() => boardQuery.data?.columns.flatMap((column) => column.objects) ?? [],
+		[boardQuery.data],
+	)
+	const visibleObjects = effectiveView === 'board' ? boardInitialObjects : allObjects
 
 	// Field definitions for dynamic columns
 	const fieldDefinitions = settings?.field_definitions as
@@ -208,7 +270,7 @@ function ObjectsPage() {
 		const staticNames: Record<string, string> = {
 			status: 'Status',
 			type: 'Type',
-			owner: 'Owner',
+			driver: 'Driver',
 			createdBy: 'Created by',
 			createdAt: 'Created',
 			updatedAt: 'Updated',
@@ -274,13 +336,13 @@ function ObjectsPage() {
 			(!searchParams.order || searchParams.order === 'desc') &&
 			!searchParams.groupBy &&
 			!searchParams.status &&
-			!searchParams.owner,
+			!searchParams.driver,
 		[
 			searchParams.sort,
 			searchParams.order,
 			searchParams.groupBy,
 			searchParams.status,
-			searchParams.owner,
+			searchParams.driver,
 		],
 	)
 
@@ -293,14 +355,22 @@ function ObjectsPage() {
 		// first change, without re-running this hydrate block.
 		hydratedTypesRef.current.add(typeFilter)
 		const persisted = displaySettingsQuery.data
-		if (!persisted || !urlIsInDefaultShape) return
+		if (!persisted) {
+			// No saved view for this type — fall back to the route default.
+			setView('list')
+			return
+		}
 		const s = persisted.settings
+		// View hydrates regardless of urlIsInDefaultShape: `view` is route-local
+		// (not in the URL), so the URL's shape can't conflict with it.
+		setView(s.view ?? 'list')
+		if (!urlIsInDefaultShape) return
 		const updates: Record<string, string | undefined> = {}
 		if (s.sort) updates.sort = s.sort
 		if (s.order) updates.order = s.order
 		if (s.groupBy) updates.groupBy = s.groupBy
 		if (s.filters?.status) updates.status = s.filters.status
-		if (s.filters?.owner) updates.owner = s.filters.owner
+		if (s.filters?.driver) updates.driver = s.filters.driver
 		if (Object.keys(updates).length > 0) updateSearch(updates)
 		// Persisted blob wins: the saved map REPLACES the route's initial
 		// columnVisibility defaults (e.g. `{ createdBy: false }`). The user's
@@ -320,22 +390,22 @@ function ObjectsPage() {
 		if (!typeFilter) return
 		if (!hydratedTypesRef.current.has(typeFilter)) return
 		const settings: DisplaySettingsBody = {
-			view: 'list',
+			view,
 			sort,
 			order,
 			groupBy: groupBy ?? null,
 			columnVisibility,
 		}
-		const filters: { status?: string; owner?: string } = {}
+		const filters: { status?: string; driver?: string } = {}
 		if (statusFilter) filters.status = statusFilter
-		if (ownerFilter) filters.owner = ownerFilter
-		if (filters.status || filters.owner) settings.filters = filters
+		if (driverFilter) filters.driver = driverFilter
+		if (filters.status || filters.driver) settings.filters = filters
 
 		const handle = setTimeout(() => {
 			updateMutateRef.current({ objectType: typeFilter, settings })
 		}, 500)
 		return () => clearTimeout(handle)
-	}, [typeFilter, sort, order, groupBy, statusFilter, ownerFilter, columnVisibility])
+	}, [typeFilter, view, sort, order, groupBy, statusFilter, driverFilter, columnVisibility])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
 
@@ -392,7 +462,7 @@ function ObjectsPage() {
 			if (selectedIds.length === 0) return
 			const ids = [...selectedIds]
 			bulkUpdate.mutate(
-				{ ids, patch: { owner: ownerId } },
+				{ ids, patch: { driver: ownerId } },
 				{
 					onSuccess: (data) => reportBulkResult(data, ids.length, 'updated'),
 					onError: () => toast.error('Failed to update objects'),
@@ -413,8 +483,8 @@ function ObjectsPage() {
 	const selectedObjectsLoaded = useMemo(() => {
 		if (selectedIds.length === 0) return []
 		const idSet = new Set(selectedIds)
-		return allObjects.filter((o) => idSet.has(o.id))
-	}, [selectedIds, allObjects])
+		return visibleObjects.filter((o) => idSet.has(o.id))
+	}, [selectedIds, visibleObjects])
 
 	// Status options for the bulk action bar — scoped to the selected objects' type.
 	// When the selection spans multiple types (or any selected row isn't loaded so we
@@ -585,7 +655,7 @@ function ObjectsPage() {
 							sort: 'createdAt',
 							order: 'desc',
 							status: undefined,
-							owner: undefined,
+							driver: undefined,
 							q: undefined,
 							groupBy: undefined,
 							ids: undefined,
@@ -598,38 +668,84 @@ function ObjectsPage() {
 				statusFilter={statusFilter}
 				onStatusFilterChange={(value) => updateSearch({ status: value })}
 				statusesByType={statusesByType}
-				ownerFilter={ownerFilter}
-				onOwnerFilterChange={(value) => updateSearch({ owner: value })}
+				driverFilter={driverFilter}
+				onDriverFilterChange={(value) => updateSearch({ driver: value })}
 				actors={actors}
-				onResetFilters={() => updateSearch({ status: undefined, owner: undefined })}
+				onResetFilters={() => updateSearch({ status: undefined, driver: undefined })}
 				sort={sort}
-				onSortChange={(value) => updateSearch({ sort: value })}
+				onSortChange={(value) =>
+					updateSearch({
+						sort: value,
+						order: value === BOARD_MANUAL_SORT ? 'asc' : order,
+					})
+				}
 				order={order}
 				onOrderChange={(value) => updateSearch({ order: value })}
 				groupBy={groupBy}
 				onGroupByChange={(value) => updateSearch({ groupBy: value })}
+				view={effectiveView}
+				onViewChange={(next) => {
+					setView(next)
+					if (next === 'list' && sort === BOARD_MANUAL_SORT) {
+						updateSearch({ sort: 'createdAt', order: 'desc' })
+					}
+					// One analytics line per user-initiated switch so we can count
+					// distinct operators reaching for Board (the bet's success
+					// criterion). Hydration also sets view but bypasses this path.
+					trackEvent('objects_control_changed', {
+						source: 'objects-page',
+						control: 'view',
+						value: next,
+						objectType: typeFilter ?? null,
+					})
+				}}
+				boardSupported={boardSupported}
 				onImportClick={() => setImportOpen(true)}
 			/>
 
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
 
-			<DataTable
-				data={allObjects}
-				columns={columns}
-				workspaceId={workspaceId}
-				actors={actors}
-				rowSelection={rowSelection}
-				onRowSelectionChange={setRowSelection}
-				columnVisibility={effectiveVisibility}
-				onColumnVisibilityChange={setColumnVisibility}
-				grouping={groupingState}
-				meta={tableMeta}
-				hasNextPage={infiniteQuery.hasNextPage}
-				isFetchingNextPage={infiniteQuery.isFetchingNextPage}
-				isError={infiniteQuery.isError}
-				fetchNextPage={infiniteQuery.fetchNextPage}
-				isLoading={infiniteQuery.isLoading}
-			/>
+			{effectiveView === 'board' && typeFilter ? (
+				<div className="pb-4 flex-1 min-h-0 overflow-x-auto overflow-y-hidden md:px-6">
+					<BoardView
+						objectType={typeFilter}
+						columns={boardQuery.data?.columns ?? []}
+						boardParams={boardParams ?? {}}
+						pageSize={BOARD_PAGE_SIZE}
+						statusesByType={statusesByType}
+						workspaceId={workspaceId}
+						isLoading={boardQuery.isLoading}
+						actors={actors}
+						selectedIds={selectedIds}
+						onObjectSelectionChange={handleObjectSelectionChange}
+						onObjectRangeSelectionChange={handleObjectRangeSelectionChange}
+						sort={sort}
+						order={order}
+						groupBy={groupBy}
+						displayColumns={columnInfo}
+						columnVisibility={effectiveVisibility}
+						onManualOrderChange={() => updateSearch({ sort: BOARD_MANUAL_SORT, order: 'asc' })}
+					/>
+				</div>
+			) : (
+				<DataTable
+					data={allObjects}
+					columns={columns}
+					workspaceId={workspaceId}
+					actors={actors}
+					rowSelection={rowSelection}
+					onRowSelectionChange={setRowSelection}
+					columnVisibility={effectiveVisibility}
+					onColumnVisibilityChange={setColumnVisibility}
+					grouping={groupingState}
+					meta={tableMeta}
+					hasNextPage={infiniteQuery.hasNextPage}
+					isFetchingNextPage={infiniteQuery.isFetchingNextPage}
+					isError={infiniteQuery.isError}
+					fetchNextPage={infiniteQuery.fetchNextPage}
+					isLoading={infiniteQuery.isLoading}
+				/>
+			)}
 			<BulkActionBar
 				selectedCount={selectedIds.length}
 				statusOptions={bulkStatusOptions}

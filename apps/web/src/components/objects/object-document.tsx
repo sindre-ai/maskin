@@ -28,14 +28,16 @@ import type {
 } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { Check } from 'lucide-react'
+import { Check, User } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ActionBanner } from '../activity/action-banner'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentWorkingBadge } from '../shared/agent-working-badge'
 import { MarkdownContent } from '../shared/markdown-content'
 import { RelativeTime } from '../shared/relative-time'
+import { SourceBadge } from '../shared/source-badge'
 import { StatusBadge } from '../shared/status-badge'
 import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
@@ -59,7 +61,7 @@ interface ObjectDocumentViewProps {
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
 	onUpdateStatus: (status: string) => void
-	onUpdateOwner: (owner: string | null) => void
+	onUpdateDriver: (driver: string | null) => void
 	onDelete: () => void
 	isDeleting?: boolean
 	showSaved?: boolean
@@ -77,7 +79,7 @@ export function ObjectDocumentView({
 	onUpdateTitle,
 	onUpdateContent,
 	onUpdateStatus,
-	onUpdateOwner,
+	onUpdateDriver,
 	onDelete,
 	isDeleting = false,
 	showSaved = false,
@@ -146,6 +148,7 @@ export function ObjectDocumentView({
 			{/* Metadata badges row */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
 				<TypeBadge type={object.type} />
+				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
 				{statuses.length > 0 ? (
 					<StatusSelect current={object.status} options={statuses} onChange={handleStatusChange} />
 				) : (
@@ -154,8 +157,8 @@ export function ObjectDocumentView({
 				{members && (
 					<OwnerSelect
 						members={members}
-						currentOwnerId={object.owner ?? null}
-						onChange={onUpdateOwner}
+						currentOwnerId={object.driver ?? null}
+						onChange={onUpdateDriver}
 					/>
 				)}
 				<SubscribeToggle
@@ -261,9 +264,9 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[object.id, updateObject],
 	)
 
-	const handleUpdateOwner = useCallback(
-		(owner: string | null) => {
-			updateObject.mutate({ id: object.id, data: { owner } })
+	const handleUpdateDriver = useCallback(
+		(driver: string | null) => {
+			updateObject.mutate({ id: object.id, data: { driver } })
 		},
 		[object.id, updateObject],
 	)
@@ -284,7 +287,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 					search: (prev) => ({
 						type: prev.type,
 						status: prev.status,
-						owner: prev.owner,
+						driver: prev.driver,
 						sort: prev.sort ?? 'createdAt',
 						order: prev.order ?? 'desc',
 						q: prev.q,
@@ -364,6 +367,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onConfirm={handleConfirmDelete}
 				isPending={deleteObject.isPending}
 			/>
+			<ActionBanner events={events} workspaceId={workspaceId} />
 			<ObjectDocumentView
 				object={object}
 				workspaceId={workspaceId}
@@ -376,7 +380,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onUpdateTitle={handleUpdateTitle}
 				onUpdateContent={handleUpdateContent}
 				onUpdateStatus={handleUpdateStatus}
-				onUpdateOwner={handleUpdateOwner}
+				onUpdateDriver={handleUpdateDriver}
 				onDelete={handleDelete}
 				isDeleting={deleteObject.isPending}
 			/>
@@ -470,6 +474,8 @@ function OwnerSelect({
 				<SelectValue>
 					{current ? (
 						<span className="inline-flex items-center gap-1.5">
+							{current.type !== 'agent' && <User className="size-3 text-amber-600 shrink-0" />}
+							<span className="text-muted-foreground text-[11px]">Driver:</span>
 							<ActorAvatar name={current.name} type={current.type} size="sm" />
 							{current.name}
 						</span>
@@ -478,7 +484,7 @@ function OwnerSelect({
 							Unknown ({currentOwnerId.slice(0, 8)})
 						</span>
 					) : (
-						<span className="text-muted-foreground">Unassigned</span>
+						<span className="text-muted-foreground">Driver: Unassigned</span>
 					)}
 				</SelectValue>
 			</SelectTrigger>

@@ -70,7 +70,7 @@ When triggered:
 5. **Map dependencies** — where tasks must run in order, create "blocks" relationships.
 6. **Set all tasks to "todo"**. The tag-routed triggers will pull them into "in_progress" when the specialist is ready.
 
-If anything is ambiguous (no hypothesis, no success criteria, no owner), create a notification asking the human for input instead of inventing details.`,
+If anything is ambiguous (no hypothesis, no success criteria, no driver), create a notification asking the human for input instead of inventing details.`,
 	},
 	{
 		$id: 'bet_shepherd',
@@ -380,7 +380,7 @@ export const GROWTH_TRIGGERS: SeedTrigger[] = [
 		targetActor$id: 'bet_shepherd',
 		enabled: false,
 		actionPrompt:
-			'Run your daily bet review. For each bet in proposed / active / paused: summarize progress, flag stale bets (no activity 3+ days), identify missing elements (no tasks, no success criteria, no owner), and recommend the next action. Transition any bet that clearly belongs in a new status. Create notifications only for things that need a human.',
+			'Run your daily bet review. For each bet in proposed / active / paused: summarize progress, flag stale bets (no activity 3+ days), identify missing elements (no tasks, no success criteria, no driver), and recommend the next action. Transition any bet that clearly belongs in a new status. Create notifications only for things that need a human.',
 	},
 
 	// ── Task lifecycle ───────────────────────────────────────────────────────

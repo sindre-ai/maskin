@@ -1,10 +1,17 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { actors, workspaceMembers, workspaces } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	workspaceMembers,
+	workspaceOnboardingPrompts,
+	workspaces,
+} from '@maskin/db/schema'
 import {
 	SINDRE_DEFAULT,
 	createWorkspaceSchema,
+	updateWorkspaceAdminSchema,
 	updateWorkspaceSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
@@ -21,7 +28,9 @@ import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/open
 import { serialize, serializeArray } from '../lib/serialize'
 import { getStripeClient, readStripeEnv } from '../lib/stripe'
 import type { WorkspaceSettings } from '../lib/types'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
+import type { AgentStorageManager } from '../services/agent-storage'
+import { bootstrapWorkspaceObserver } from '../services/workspace-bootstrap'
 
 type WorkspaceBilling = WorkspaceSettings['billing']
 
@@ -30,6 +39,7 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType: string
+		agentStorage: AgentStorageManager
 	}
 }
 
@@ -138,6 +148,13 @@ app.openapi(createWorkspaceRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace'), 500)
 	}
 
+	const agentStorage = c.get('agentStorage')
+	if (agentStorage) {
+		bootstrapWorkspaceObserver(c.get('db'), agentStorage, workspace.id, actorId).catch((err) =>
+			logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
+		)
+	}
+
 	return c.json(serialize(workspace) as z.infer<typeof workspaceResponseSchema>, 201)
 })
 
@@ -204,6 +221,7 @@ const updateWorkspaceRoute = createRoute({
 
 app.openapi(updateWorkspaceRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 
@@ -250,6 +268,15 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
+
+	await db.insert(events).values({
+		workspaceId: id,
+		actorId,
+		action: 'updated',
+		entityType: 'workspace',
+		entityId: id,
+		data: { updated },
+	})
 
 	return c.json(serialize(updated) as z.infer<typeof workspaceResponseSchema>)
 }) as RouteHandler<typeof updateWorkspaceRoute, Env>)
@@ -308,6 +335,88 @@ async function cancelPaidPlanForByoTransition(
 	})
 	return null
 }
+
+// PATCH /api/workspaces/admin/:id — flip onboarding_enabled without a code deploy
+const updateWorkspaceOnboardingRoute = createRoute({
+	method: 'patch',
+	path: '/admin/{id}',
+	tags: ['workspaces'],
+	summary: 'Set onboarding_enabled flag (owner only)',
+	request: {
+		params: idParamSchema,
+		body: {
+			content: {
+				'application/json': {
+					schema: updateWorkspaceAdminSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Workspace updated',
+			content: { 'application/json': { schema: workspaceResponseSchema } },
+		},
+		403: {
+			description: 'Caller is not the workspace owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+const ONBOARDING_PROMPT_TYPES = [
+	'product_vision',
+	'icp',
+	'first_bet_hypothesis',
+	'north_star_metric',
+	'customer_evidence',
+] as const
+
+app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const body = c.req.valid('json')
+
+	const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	if (!(await isWorkspaceOwner(db, actorId, id))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a workspace owner'), 403)
+	}
+
+	const [updated] = await db
+		.update(workspaces)
+		.set({ onboardingEnabled: body.onboarding_enabled, updatedAt: new Date() })
+		.where(eq(workspaces.id, id))
+		.returning()
+
+	if (!updated) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	if (body.onboarding_enabled) {
+		await db
+			.insert(workspaceOnboardingPrompts)
+			.values(ONBOARDING_PROMPT_TYPES.map((promptType) => ({ workspaceId: id, promptType })))
+			.onConflictDoNothing()
+	}
+
+	await db.insert(events).values({
+		workspaceId: id,
+		actorId,
+		action: 'updated',
+		entityType: 'workspace',
+		entityId: id,
+		data: { previous: existing, updated },
+	})
+
+	return c.json(serialize(updated) as z.infer<typeof workspaceResponseSchema>)
+}) as RouteHandler<typeof updateWorkspaceOnboardingRoute, Env>)
 
 // POST /api/workspaces/:id/members
 const addMemberRoute = createRoute({

@@ -1,4 +1,4 @@
-import { vi } from 'vitest'
+﻿import { vi } from 'vitest'
 
 // Mock external dependencies
 vi.mock('node:fs/promises', () => ({
@@ -55,6 +55,21 @@ vi.mock('../../lib/integrations/registry', () => ({
 	getProvider: vi.fn().mockReturnValue(null),
 }))
 
+const { mockGetValidToken, mockFetchInstallationOwnerLogin } = vi.hoisted(() => ({
+	mockGetValidToken: vi.fn(),
+	mockFetchInstallationOwnerLogin: vi.fn(),
+}))
+
+vi.mock('../../lib/integrations/oauth/token-manager', () => ({
+	TokenManager: vi.fn().mockImplementation(() => ({
+		getValidToken: mockGetValidToken,
+	})),
+}))
+
+vi.mock('../../lib/integrations/providers/github/auth', () => ({
+	fetchInstallationOwnerLogin: mockFetchInstallationOwnerLogin,
+}))
+
 vi.mock('../../services/workspace-briefing', () => ({
 	buildWorkspaceStartupBlock: vi.fn().mockReturnValue(''),
 	renderWorkspaceBriefing: vi.fn().mockResolvedValue('briefing'),
@@ -63,11 +78,21 @@ vi.mock('../../services/workspace-briefing', () => ({
 	workspaceLedgerKey: vi.fn().mockReturnValue('agents/ws/_workspace/learnings.md'),
 }))
 
+const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
+	mockClassifyCreditExhaustion: vi.fn(),
+}))
+
+vi.mock('../../lib/credit-classifier', () => ({
+	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+}))
+
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
+import { getProvider } from '../../lib/integrations/registry'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { SessionManager } from '../../services/session-manager'
-import { buildSession } from '../factories'
+import { buildIntegration, buildSession } from '../factories'
 import { createTestContext } from '../setup'
 
 function createMockStorageProvider() {
@@ -357,6 +382,292 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('startSession() — GitHub installations', () => {
+		const githubProviderConfig = {
+			config: {
+				name: 'github',
+				mcp: {
+					command: 'npx',
+					args: ['-y', '@modelcontextprotocol/server-github'],
+					envKey: 'GITHUB_TOKEN',
+				},
+			},
+		}
+
+		function setupLaunchMocks(opts: {
+			session: ReturnType<typeof buildSession>
+			workspace: { id: string; settings: Record<string, unknown> }
+			agent: Record<string, unknown>
+			integrationRows: ReturnType<typeof buildIntegration>[]
+		}) {
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+			mockResults.selectQueue = [
+				[opts.session], // startSession: load session
+				[opts.workspace], // hasCapacity: workspace lookup
+				[{ count: 0 }], // hasCapacity: running count
+				[opts.agent], // launchContainer: agent lookup
+				[opts.workspace], // launchContainer: workspace lookup (llm keys)
+				opts.integrationRows, // launchContainer: integrations lookup
+			]
+		}
+
+		function buildLaunchFixtures(integrationRows: ReturnType<typeof buildIntegration>[]) {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			return {
+				session,
+				workspace: { id: session.workspaceId, settings: {} },
+				agent: {
+					id: session.actorId,
+					type: 'agent',
+					systemPrompt: 'You are a helpful AI agent.',
+					llmProvider: null,
+					llmConfig: null,
+					apiKey: 'ank_test_agent_key',
+					tools: null,
+				},
+				integrationRows,
+			}
+		}
+
+		it('produces per-owner env vars for two GitHub installations (agents opt into MCP servers via tools config)', async () => {
+			const wsId = randomUUID()
+			const integrationA = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-aaa',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const integrationB = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-bbb',
+				config: { owner_login: 'vaerksted-ai' },
+			})
+			const fixtures = buildLaunchFixtures([integrationA, integrationB])
+			fixtures.session.workspaceId = wsId
+			fixtures.workspace.id = wsId
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken
+				.mockResolvedValueOnce('ghs_token_sindre_ai')
+				.mockResolvedValueOnce('ghs_token_vaerksted_ai')
+
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+
+			expect(createArgs.env.GITHUB_TOKEN_SINDRE_AI).toBe('ghs_token_sindre_ai')
+			expect(createArgs.env.GITHUB_TOKEN_VAERKSTED_AI).toBe('ghs_token_vaerksted_ai')
+			expect(createArgs.env.GITHUB_TOKEN).toBeUndefined()
+			// GitHub MCP server entries are not auto-injected — agents opt in per-agent
+			const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+				? Object.keys(
+						(
+							JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+								mcpServers: Record<string, unknown>
+							}
+						).mcpServers,
+					)
+				: []
+			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(0)
+		})
+
+		it('lazily backfills owner_login and persists it when the row is missing it', async () => {
+			const integration = buildIntegration({
+				provider: 'github',
+				externalId: 'install-needs-backfill',
+				config: {},
+			})
+			const fixtures = buildLaunchFixtures([integration])
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_token_acme')
+			mockFetchInstallationOwnerLogin.mockResolvedValueOnce('acme-org')
+
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			expect(mockFetchInstallationOwnerLogin).toHaveBeenCalledWith('install-needs-backfill')
+
+			const updateCall = calls.updates.find(
+				(u): u is { config: { owner_login?: string } } =>
+					typeof u === 'object' && u !== null && 'config' in u,
+			) as { config: { owner_login?: string } } | undefined
+			expect(updateCall?.config.owner_login).toBe('acme-org')
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.GITHUB_TOKEN_ACME_ORG).toBe('ghs_token_acme')
+			const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+				? Object.keys(
+						(
+							JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+								mcpServers: Record<string, unknown>
+							}
+						).mcpServers,
+					)
+				: []
+			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(0)
+		})
+
+		it('skips the integration when owner_login backfill fails (does not kill the session)', async () => {
+			const integration = buildIntegration({
+				provider: 'github',
+				externalId: 'install-broken',
+				config: {},
+			})
+			const fixtures = buildLaunchFixtures([integration])
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_token_unused')
+			mockFetchInstallationOwnerLogin.mockRejectedValueOnce(new Error('GitHub 404'))
+
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const githubKeys = Object.keys(createArgs.env).filter((k) => k.startsWith('GITHUB_TOKEN_'))
+			expect(githubKeys).toEqual([])
+			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
+		})
+
+		describe('Slack auto-inject + xoxb- guard', () => {
+			const slackProviderConfig = {
+				config: {
+					name: 'slack',
+					mcp: {
+						envKey: 'SLACK_BOT_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+							headers: {
+								Authorization: 'Bearer ${MASKIN_API_KEY}',
+								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+							},
+						},
+					},
+				},
+			}
+
+			it('injects SLACK_BOT_TOKEN and the auto-inject MCP server when the stored token is a bot token', async () => {
+				const integration = buildIntegration({ provider: 'slack', externalId: 'T-abc' })
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('xoxb-real-bot-token')
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBe('xoxb-real-bot-token')
+				expect(createArgs.env.MCP_SERVERS_JSON).toBeDefined()
+				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, { type: string; url: string }>
+				}
+				expect(parsed.mcpServers['integration-slack']).toEqual({
+					type: 'http',
+					url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+					headers: {
+						Authorization: 'Bearer ${MASKIN_API_KEY}',
+						'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+					},
+				})
+			})
+
+			it('refuses to inject when the stored Slack token is not a bot (xoxb-) token — guards against posting as a user', async () => {
+				const integration = buildIntegration({ provider: 'slack', externalId: 'T-abc' })
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+				// The stored credential is a user token — wrong scopes, do not inject
+				mockGetValidToken.mockResolvedValueOnce('xoxp-user-token')
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBeUndefined()
+				const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+					? Object.keys(
+							(
+								JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+									mcpServers: Record<string, unknown>
+								}
+							).mcpServers,
+						)
+					: []
+				expect(mcpKeys).not.toContain('integration-slack')
+			})
+		})
+
+		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {
+			const integration = buildIntegration({
+				provider: 'github',
+				externalId: 'install-aaa',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const fixtures = buildLaunchFixtures([integration])
+			// Agent has opted into the GitHub MCP server for this org
+			fixtures.agent.tools = {
+				mcpServers: {
+					'github-sindre-ai': {
+						type: 'stdio',
+						command: 'npx',
+						args: ['-y', '@modelcontextprotocol/server-github'],
+						env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
+					},
+				},
+			}
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_real_token')
+
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+
+			// Token env var is present for envsubst to substitute into the MCP config
+			expect(createArgs.env.GITHUB_TOKEN_SINDRE_AI).toBe('ghs_real_token')
+
+			// AGENT_MCP_JSON carries the MCP config with the placeholder intact —
+			// the container entrypoint runs envsubst to resolve it at startup
+			expect(createArgs.env.AGENT_MCP_JSON).toBeDefined()
+			const agentMcp = JSON.parse(createArgs.env.AGENT_MCP_JSON) as {
+				mcpServers: Record<string, { env: Record<string, string> }>
+			}
+			expect(agentMcp.mcpServers['github-sindre-ai']).toBeDefined()
+			expect(agentMcp.mcpServers['github-sindre-ai'].env.GITHUB_TOKEN).toBe(
+				'${GITHUB_TOKEN_SINDRE_AI}',
+			)
+		})
+	})
+
 	describe('stopSession()', () => {
 		it('stops the container', async () => {
 			const session = buildSession({
@@ -441,6 +752,24 @@ describe('SessionManager', () => {
 
 			await expect(manager.pauseSession(session.id)).rejects.toThrow('copy failed')
 			// Status should be reverted to running (via the catch block's db.update call)
+		})
+
+		it('clears currentActivity to null on successful pause', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'container-abc',
+				currentActivity: 'Searching codebase',
+			})
+			mockResults.select = [session]
+			mockResults.insert = []
+			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
+
+			await manager.pauseSession(session.id)
+
+			const pauseUpdate = calls.updates.find(
+				(u) => (u as Record<string, unknown>).status === 'paused',
+			)
+			expect(pauseUpdate).toMatchObject({ currentActivity: null })
 		})
 
 		it('marks session failed when container is already gone (no snapshot attempt)', async () => {
@@ -723,6 +1052,50 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('hasCapacity()', () => {
+		it('returns false when starting sessions fill the workspace capacity', async () => {
+			// Regression guard for the fix in PR #511: before the fix only 'running'
+			// sessions were counted, so containers allocated in the 'starting' state
+			// were invisible to the limiter and drainQueue could bypass the per-workspace cap.
+			mockResults.selectQueue = [
+				[{ settings: { max_concurrent_sessions: 2 } }], // workspace lookup
+				[{ count: 2 }], // starting + running = at cap
+			]
+
+			const result = await (
+				manager as unknown as { hasCapacity(workspaceId: string): Promise<boolean> }
+			).hasCapacity('ws-1')
+
+			expect(result).toBe(false)
+		})
+
+		it('returns true when there is remaining capacity', async () => {
+			mockResults.selectQueue = [
+				[{ settings: { max_concurrent_sessions: 3 } }], // workspace lookup
+				[{ count: 1 }], // one session active, two slots free
+			]
+
+			const result = await (
+				manager as unknown as { hasCapacity(workspaceId: string): Promise<boolean> }
+			).hasCapacity('ws-1')
+
+			expect(result).toBe(true)
+		})
+
+		it('uses the default cap of 3 when workspace has no max_concurrent_sessions setting', async () => {
+			mockResults.selectQueue = [
+				[{ settings: {} }], // workspace with no cap setting
+				[{ count: 3 }], // three sessions active = at default cap
+			]
+
+			const result = await (
+				manager as unknown as { hasCapacity(workspaceId: string): Promise<boolean> }
+			).hasCapacity('ws-1')
+
+			expect(result).toBe(false)
+		})
+	})
+
 	describe('start() and stop()', () => {
 		it('starts and stops watchdog without error', async () => {
 			await manager.start()
@@ -812,16 +1185,19 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[orphan], // 2. runningSessions (idle check)
-				[], // 3. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
+				[], // 2. stuckAgentSessions (no stuck sessions)
+				[orphan], // 3. runningSessions (idle check)
+				[], // 4. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
+				// markSessionFailedAfterContainerLoss → existing session select (new in this branch):
+				[], // 5. existing session lookup (undefined → skip telemetry, update still fires)
 				// markSessionFailedAfterContainerLoss → drainQueue → hasCapacity:
-				[{ settings: {} }], // 4. drainQueue > workspace lookup
-				[{ count: 0 }], // 5. drainQueue > running count
-				[], // 6. drainQueue > nextQueued (empty = break)
-				[], // 7. expiredPaused
-				[], // 8. stuckPending
-				[], // 9. stuckStarting
-				[], // 10. final queuedSessions
+				[{ settings: {} }], // 6. drainQueue > workspace lookup
+				[{ count: 0 }], // 7. drainQueue > running count
+				[], // 8. drainQueue > nextQueued (empty = break)
+				[], // 9. expiredPaused
+				[], // 10. stuckPending
+				[], // 11. stuckStarting
+				[], // 12. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
@@ -835,14 +1211,15 @@ describe('SessionManager', () => {
 			expect(failedUpdate).toBeDefined()
 		})
 
-		it('skips auto-pause when inspect reports the container is no longer running', async () => {
-			// Container died but the exit watcher hasn't noticed yet (e.g., inspect was
-			// transiently failing). The watchdog should leave the session alone this tick
-			// instead of pausing — watchContainerExit / the timeout reaper will catch it.
+		it('skips auto-pause when inspect reports the container is no longer running (agent-server session)', async () => {
+			// For agent-server sessions the containerId is a remote msb sandbox name —
+			// local Docker inspect is meaningless. The watchdog must skip (continue)
+			// instead of marking failed; the agent-server's exit callback owns cleanup.
 			const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
 			const stale = buildSession({
 				status: 'running',
 				containerId: 'container-dead',
+				agentServerId: 'server-1',
 				startedAt: twentyMinutesAgo,
 				interactive: false,
 			})
@@ -851,19 +1228,21 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[stale], // 2. runningSessions
-				[], // 3. lastLog (empty → falls back to startedAt, which is >10min old)
-				[], // 4. expiredPaused
-				[], // 5. stuckPending
-				[], // 6. stuckStarting
-				[], // 7. final queuedSessions
+				[], // 2. stuckAgentSessions (no stuck sessions)
+				[stale], // 3. runningSessions
+				[], // 4. lastLog (empty → falls back to startedAt, which is >10min old)
+				// isContainerAlive → inspect mock returns { running: false } (consumed here)
+				// stale.agentServerId is set → continue, no markSessionFailedAfterContainerLoss
+				[], // 5. expiredPaused
+				[], // 6. stuckPending
+				[], // 7. stuckStarting
+				[], // 8. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
 
 			expect(pauseSpy).not.toHaveBeenCalled()
-			// No 'failed' update should have happened either — we explicitly defer to
-			// watchContainerExit so the session isn't yanked out from under it.
+			// No 'failed' update — agent-server sessions are deferred to the server's exit callback.
 			const failedUpdate = calls.updates.find(
 				(u): u is { status: string } =>
 					typeof u === 'object' && u !== null && (u as { status?: string }).status === 'failed',
@@ -958,6 +1337,199 @@ describe('SessionManager', () => {
 					(i as { content?: string }).content === 'recovered-chunk',
 			)
 			expect(recovered).toBeDefined()
+		})
+	})
+
+	describe('handleCompletion() — agentState sync', () => {
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(null)
+		})
+
+		it('sets agentState to idle when session completes (exitCode 0)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate?.agentState).toBe('idle')
+		})
+
+		it('sets agentState to failed when session fails (exitCode non-zero)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 1)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate?.agentState).toBe('failed')
+		})
+
+		it('does not touch agentState when the agent has another active session', async () => {
+			const session = buildSession({ status: 'running' })
+			const otherSession = buildSession({ actorId: session.actorId, status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[otherSession], // hasOtherActiveSessions: agent still has live work
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate).toBeUndefined()
+		})
+	})
+
+	describe('handleCompletion() — credit-exhaustion classification', () => {
+		const knownReason = {
+			provider: 'anthropic',
+			reason_code: 'billing_error',
+			human_message: 'Anthropic billing error — credit balance may be exhausted',
+			http_status: 402,
+			reset_at: null,
+			verbatim_output: null,
+		}
+
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(knownReason)
+		})
+
+		it('writes failure_reason to both the DB result payload and the event data payload', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail: 'billing_error',
+			})
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 1)
+
+			// DB sessions.result must contain failure_reason
+			const sessionUpdate = calls.updates.find(
+				(u): u is { result: { exit_code: number; failure_reason: unknown } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'result' in (u as Record<string, unknown>) &&
+					typeof (u as Record<string, unknown>).result === 'object',
+			)
+			expect(sessionUpdate?.result).toMatchObject({ failure_reason: knownReason })
+
+			// Event insert data must contain failure_reason
+			const eventInsert = calls.inserts.find(
+				(i): i is { action: string; data: { exit_code: number; failure_reason: unknown } } =>
+					typeof i === 'object' &&
+					i !== null &&
+					typeof (i as Record<string, unknown>).action === 'string' &&
+					(i as { action: string }).action.startsWith('session_'),
+			)
+			expect(eventInsert?.data).toMatchObject({ failure_reason: knownReason })
+		})
+
+		it('does not call classifier and omits failure_reason when exitCode is 0', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
+			const sessionUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate?.result as Record<string, unknown>).not.toHaveProperty('failure_reason')
+		})
+
+		it('does not call classifier when exitCode is null (OOM kill)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(
+						sessionId: string,
+						containerId: string,
+						exitCode: number | null,
+					): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', null)
+
+			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
 		})
 	})
 })

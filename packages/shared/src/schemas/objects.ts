@@ -15,7 +15,7 @@ export const createObjectSchema = z.object({
 	content: z.string().optional(),
 	status: z.string(),
 	metadata: safeMetadataSchema.optional(),
-	owner: z.string().uuid().optional(),
+	driver: z.string().uuid().optional(),
 })
 
 export const updateObjectSchema = z.object({
@@ -23,7 +23,7 @@ export const updateObjectSchema = z.object({
 	content: z.string().optional(),
 	status: z.string().optional(),
 	metadata: safeMetadataSchema.optional(),
-	owner: z.string().uuid().nullable().optional(),
+	driver: z.string().uuid().nullable().optional(),
 })
 
 /** Bulk-update many objects in one call. Status/owner/metadata are validated
@@ -34,11 +34,11 @@ export const bulkUpdateObjectsSchema = z.object({
 	patch: z
 		.object({
 			status: z.string().optional(),
-			owner: z.string().uuid().nullable().optional(),
+			driver: z.string().uuid().nullable().optional(),
 			metadata: safeMetadataSchema.optional(),
 		})
-		.refine((p) => p.status !== undefined || p.owner !== undefined || p.metadata !== undefined, {
-			message: 'patch must include at least one of status, owner, metadata',
+		.refine((p) => p.status !== undefined || p.driver !== undefined || p.metadata !== undefined, {
+			message: 'patch must include at least one of status, driver, metadata',
 		}),
 })
 
@@ -81,7 +81,7 @@ export const KNOWN_SORT_COLUMNS = [
 	'title',
 	'status',
 	'type',
-	'owner',
+	'driver',
 	'createdBy',
 ] as const
 
@@ -94,12 +94,32 @@ const sortFieldSchema = z.string().max(200).default('createdAt')
 export const objectQuerySchema = z.object({
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
-	owner: z.string().optional(),
+	driver: z.string().optional(),
 	ids: z.string().optional(),
 	sort: sortFieldSchema,
 	order: z.enum(['asc', 'desc']).default('desc'),
 	limit: z.coerce.number().int().min(1).max(100).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
+})
+
+export const boardObjectQuerySchema = objectQuerySchema.extend({
+	type: objectTypeSchema,
+	q: z.string().optional(),
+	groupBy: z.string().max(200).optional(),
+	column: z.string().max(200).optional(),
+	limit: z.coerce.number().int().min(1).max(100).default(20),
+})
+
+export const boardObjectColumnSchema = z.object({
+	id: z.string(),
+	label: z.string(),
+	value: z.string(),
+	total: z.number().int().nonnegative(),
+	objects: z.array(z.unknown()),
+})
+
+export const boardObjectResponseSchema = z.object({
+	columns: z.array(boardObjectColumnSchema),
 })
 
 export const searchObjectsSchema = z.object({

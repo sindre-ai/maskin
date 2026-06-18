@@ -2,6 +2,7 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
+import { useWebAppHref } from '../shared/web-app-link'
 
 interface GraphNode {
 	$id: string
@@ -48,13 +49,7 @@ function GraphApp() {
 					Nodes
 				</h3>
 				{data.nodes.map((node) => (
-					<div key={node.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-card">
-						<TypeBadge type={node.type} />
-						<span className="flex-1 text-sm text-foreground truncate">
-							{node.title || 'Untitled'}
-						</span>
-						<StatusBadge status={node.status} />
-					</div>
+					<GraphNodeRow key={node.id} node={node} />
 				))}
 			</div>
 
@@ -64,25 +59,66 @@ function GraphApp() {
 						Edges
 					</h3>
 					{data.edges.map((edge) => (
-						<div
-							key={edge.id}
-							className="flex items-center gap-2 px-3 py-2 rounded-lg bg-card text-sm"
-						>
-							<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
-								{edge.source.slice(0, 8)}
-							</span>
-							<span className="text-accent-foreground font-medium text-xs">
-								{edge.type.replace(/_/g, ' ')}
-							</span>
-							<span className="text-muted-foreground">→</span>
-							<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
-								{edge.target.slice(0, 8)}
-							</span>
-						</div>
+						<GraphEdgeRow key={edge.id} edge={edge} />
 					))}
 				</div>
 			)}
 		</div>
+	)
+}
+
+function GraphNodeRow({ node }: { node: GraphNode }) {
+	const href = useWebAppHref({ kind: 'object', id: node.id })
+	const content = (
+		<>
+			<TypeBadge type={node.type} />
+			<span className="flex-1 text-sm text-foreground truncate">{node.title || 'Untitled'}</span>
+			<StatusBadge status={node.status} />
+		</>
+	)
+	if (!href)
+		return <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-card">{content}</div>
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className="flex items-center gap-3 px-3 py-2 rounded-lg bg-card hover:bg-accent transition-colors no-underline"
+		>
+			{content}
+		</a>
+	)
+}
+
+function GraphEdgeRow({ edge }: { edge: GraphEdge }) {
+	const href = useWebAppHref({ kind: 'relationship', sourceId: edge.source, targetId: edge.target })
+	const content = (
+		<>
+			<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
+				{edge.source.slice(0, 8)}
+			</span>
+			<span className="text-accent-foreground font-medium text-xs">
+				{edge.type.replace(/_/g, ' ')}
+			</span>
+			<span className="text-muted-foreground">→</span>
+			<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
+				{edge.target.slice(0, 8)}
+			</span>
+		</>
+	)
+	if (!href)
+		return (
+			<div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-card text-sm">{content}</div>
+		)
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className="flex items-center gap-2 px-3 py-2 rounded-lg bg-card hover:bg-accent transition-colors text-sm no-underline"
+		>
+			{content}
+		</a>
 	)
 }
 

@@ -12,21 +12,28 @@ import { logger as honoLogger } from 'hono/logger'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
-import { idempotencyMiddleware } from './middleware/idempotency'
+import { createIdempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
+import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
+import agentServerReconcileRoutes from './routes/agent-server-reconcile'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
 import billingRoutes from './routes/billing'
+import catalogPackagesRoutes from './routes/catalog-packages'
 import claudeOauthRoutes from './routes/claude-oauth'
 import eventsRoutes from './routes/events'
 import filesRoutes from './routes/files'
 import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
+import installedPackagesRoutes from './routes/installed-packages'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import mcpRoutes from './routes/mcp'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
+import publicBetStrategistRoutes from './routes/public-bet-strategist'
+import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
 import stripeWebhookRoutes from './routes/stripe-webhook'
@@ -196,6 +203,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - POST /api/auth/login: pre-auth credential exchange
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
+	//   - POST /api/public/landing-events: landing-page funnel event ingest
+	//     (per-IP rate-limited inside the handler).
+	//   - /api/internal/agent-servers/*: authenticated via the shared bearer
+	//     secret enforced inside the handler, not our API key.
 	const auth = authMiddleware(db)
 	app.use('/api/*', async (c, next) => {
 		const path = c.req.path
@@ -204,14 +215,21 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/actors' && method === 'POST') return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
 		if (path.startsWith('/api/webhooks/')) return next()
+		if (path.startsWith('/api/internal/agent-servers/')) return next()
+		if (path === '/api/public/landing-events' && method === 'POST') return next()
+		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
+		if (path === '/api/public/bet-strategist/claim' && method === 'POST') return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
 
 		return auth(c, next)
 	})
 
-	app.use('/api/*', idempotencyMiddleware)
+	app.use('/api/*', createIdempotencyMiddleware(db))
 
 	app.route('/api/objects', objectsRoutes)
+	app.route('/api/public/landing-events', publicLandingEventsRoutes)
+	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
+	app.route('/api/admin/landing-funnel', adminLandingFunnelRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
@@ -221,18 +239,22 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/relationships', relationshipsRoutes)
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/integrations', integrationsRoutes)
+	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
+	app.route('/api/catalog', catalogPackagesRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
 	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.
 	// Stripe is billing, not an integration provider.
 	app.route('/api/webhooks/stripe', stripeWebhookRoutes)
 	app.route('/api/webhooks', webhookApp)
 	app.route('/api/billing', billingRoutes)
+	app.route('/api/internal/agent-servers', agentServerReconcileRoutes)
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)
 	app.route('/api/graph', graphRoutes)
 	app.route('/api/imports', importsRoutes)
+	app.route('/api/installed-packages', installedPackagesRoutes)
 	app.route('/api/files', filesRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)

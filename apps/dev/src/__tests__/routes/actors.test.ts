@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { PLATFORM_MCP_PRESET, SINDRE_DEFAULT } from '@maskin/shared'
-import { buildActor, buildCreateActorBody, buildWorkspaceMember } from '../factories'
+import { buildActor, buildCreateActorBody, buildSession, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
-import { createTestApp } from '../setup'
+import { createSessionTestApp, createTestApp } from '../setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 
@@ -132,8 +132,7 @@ describe('Actors Routes', () => {
 			const a2 = buildActor({ type: 'agent', name: 'Bot', email: null })
 			const wsId = '00000000-0000-0000-0000-000000000001'
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			// First select: get workspaces the actor belongs to
-			// Second select: get (actor, workspace, role) rows
+			// Without pagination: caller's workspaces, then membership rows.
 			mockResults.selectQueue = [
 				[{ workspaceId: wsId }],
 				[
@@ -161,6 +160,7 @@ describe('Actors Routes', () => {
 			const res = await app.request(jsonGet('/api/actors'))
 
 			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('2')
 			const body = await res.json()
 			expect(body).toHaveLength(2)
 			expect(body[0].workspaces).toEqual([{ id: wsId, name: 'Acme', role: 'owner' }])
@@ -199,6 +199,7 @@ describe('Actors Routes', () => {
 			const res = await app.request(jsonGet('/api/actors'))
 
 			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('1')
 			const body = await res.json()
 			expect(body).toHaveLength(1)
 			expect(body[0].workspaces).toEqual([
@@ -214,8 +215,125 @@ describe('Actors Routes', () => {
 			const res = await app.request(jsonGet('/api/actors'))
 
 			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('0')
 			const body = await res.json()
 			expect(body).toHaveLength(0)
+		})
+
+		it('paginates workspace-scoped listing and surfaces total count beyond the page cap', async () => {
+			const wsId = '00000000-0000-0000-0000-000000000001'
+			const a1 = buildActor({ type: 'human', name: 'Alice', email: null })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			// Workspace-scoped paginated path runs two parallel queries: page + count.
+			mockResults.selectQueue = [
+				[
+					{
+						id: a1.id,
+						type: a1.type,
+						name: a1.name,
+						email: a1.email,
+						isSystem: a1.isSystem,
+						role: 'member',
+					},
+				],
+				[{ value: 1234 }],
+			]
+
+			const res = await app.request(
+				jsonGet('/api/actors?limit=1&offset=0', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('1234')
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			expect(body[0].id).toBe(a1.id)
+		})
+
+		it('rejects oversized limit query at the boundary', async () => {
+			const wsId = '00000000-0000-0000-0000-000000000001'
+			const { app } = createTestApp(actorsRoutes, '/api/actors')
+
+			const res = await app.request(jsonGet('/api/actors?limit=999', { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(400)
+		})
+
+		describe('with ?ids= filter', () => {
+			const id1 = '11111111-1111-1111-1111-111111111111'
+			const id2 = '22222222-2222-2222-2222-222222222222'
+			const wsId = '00000000-0000-0000-0000-000000000001'
+
+			it('returns only the requested actors (workspace-scoped branch)', async () => {
+				const a1 = buildActor({ id: id1, type: 'human', name: 'Alice', email: 'a@test.com' })
+				const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.select = [{ ...a1, role: 'owner' }]
+
+				const res = await app.request(
+					jsonGet(`/api/actors?ids=${id1},${id2}`, { 'x-workspace-id': wsId }),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body).toHaveLength(1)
+				expect(body[0].id).toBe(id1)
+			})
+
+			it('returns only the requested actors (cross-workspace branch)', async () => {
+				const a1 = buildActor({ id: id1, type: 'human', name: 'Alice', email: 'a@test.com' })
+				const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.selectQueue = [
+					[{ workspaceId: wsId }],
+					[
+						{
+							id: a1.id,
+							type: a1.type,
+							name: a1.name,
+							email: a1.email,
+							workspaceId: wsId,
+							workspaceName: 'Acme',
+							role: 'owner',
+						},
+					],
+				]
+
+				const res = await app.request(jsonGet(`/api/actors?ids=${id1}`))
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body).toHaveLength(1)
+				expect(body[0].id).toBe(a1.id)
+			})
+
+			it('returns 400 when ids contains a non-UUID value', async () => {
+				const { app } = createTestApp(actorsRoutes, '/api/actors')
+
+				const res = await app.request(jsonGet(`/api/actors?ids=${id1},not-a-uuid`))
+
+				expect(res.status).toBe(400)
+			})
+
+			it('returns 400 when ids exceeds the 200 entry cap', async () => {
+				const { app } = createTestApp(actorsRoutes, '/api/actors')
+
+				const overflow = Array.from(
+					{ length: 201 },
+					(_, i) => `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`,
+				).join(',')
+				const res = await app.request(jsonGet(`/api/actors?ids=${overflow}`))
+
+				expect(res.status).toBe(400)
+			})
+
+			it('returns an empty list when ids is empty after trimming', async () => {
+				const { app } = createTestApp(actorsRoutes, '/api/actors')
+
+				const res = await app.request(jsonGet('/api/actors?ids=,,'))
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body).toEqual([])
+			})
 		})
 	})
 
@@ -678,6 +796,329 @@ describe('Actors Routes', () => {
 			expect(body.name).toBe('Sindre')
 			expect(body.email).toBe('sindre@maskin')
 			expect(body.memory).toEqual({ notes: 'user preference: concise replies' })
+		})
+	})
+
+	describe('POST /api/actors/:id/pause', () => {
+		const wsId = randomUUID()
+
+		it('pauses the agent and any running session', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'running' })
+			const runningSession = buildSession({
+				actorId: agent.id,
+				workspaceId: wsId,
+				status: 'running',
+			})
+			const updated = { ...agent, agentState: 'paused', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			// isWorkspaceMember (requester), actor lookup, isWorkspaceMember (target),
+			// live sessions select.
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[runningSession],
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.agentState).toBe('paused')
+			expect(sessionManager.pauseSession).toHaveBeenCalledWith(runningSession.id)
+		})
+
+		it('pauses the agent with no live session — just sets state', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'idle' })
+			const updated = { ...agent, agentState: 'paused', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[], // no live sessions
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.agentState).toBe('paused')
+			expect(sessionManager.pauseSession).not.toHaveBeenCalled()
+			expect(sessionManager.stopSession).not.toHaveBeenCalled()
+		})
+
+		it('stops a non-running live session (e.g. starting) instead of pausing it', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'running' })
+			const startingSession = buildSession({
+				actorId: agent.id,
+				workspaceId: wsId,
+				status: 'starting',
+			})
+			const updated = { ...agent, agentState: 'paused', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[startingSession],
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(sessionManager.stopSession).toHaveBeenCalledWith(startingSession.id)
+			expect(sessionManager.pauseSession).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 when requester is not a workspace member', async () => {
+			const { app } = createSessionTestApp(actorsRoutes, '/api/actors')
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${randomUUID()}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when target actor is not in the workspace', async () => {
+			const agent = buildActor({ type: 'agent' })
+			const { app, mockResults } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[], // target not a member
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('still pauses the agent even when sessionManager.pauseSession fails', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'running' })
+			const runningSession = buildSession({
+				actorId: agent.id,
+				workspaceId: wsId,
+				status: 'running',
+			})
+			const updated = { ...agent, agentState: 'paused', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[runningSession],
+			]
+			mockResults.update = [updated]
+			;(sessionManager.pauseSession as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+				new Error('snapshot failed'),
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.agentState).toBe('paused')
+		})
+
+		it('attempts all sessions and still pauses the agent when multiple sessions fail', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'running' })
+			const session1 = buildSession({ actorId: agent.id, workspaceId: wsId, status: 'running' })
+			const session2 = buildSession({ actorId: agent.id, workspaceId: wsId, status: 'running' })
+			const updated = { ...agent, agentState: 'paused', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[session1, session2],
+			]
+			mockResults.update = [updated]
+			;(sessionManager.pauseSession as ReturnType<typeof vi.fn>)
+				.mockRejectedValueOnce(new Error('first failed'))
+				.mockRejectedValueOnce(new Error('second failed'))
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			// Both sessions were attempted despite failures
+			expect(sessionManager.pauseSession).toHaveBeenCalledTimes(2)
+			// Actor is still marked paused
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.agentState).toBe('paused')
+		})
+	})
+
+	describe('POST /api/actors/:id/run', () => {
+		const wsId = randomUUID()
+
+		it('starts a fresh session when no paused or running session exists', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'idle' })
+			const updated = { ...agent, agentState: 'running', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[], // no live session
+				[], // no paused session
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/actors/${agent.id}/run`,
+					{ action_prompt: 'Pick up where you left off' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.agentState).toBe('running')
+			expect(sessionManager.createSession).toHaveBeenCalledWith(
+				wsId,
+				expect.objectContaining({
+					actorId: agent.id,
+					actionPrompt: 'Pick up where you left off',
+					createdBy: 'test-actor-id',
+				}),
+			)
+			expect(sessionManager.resumeSession).not.toHaveBeenCalled()
+		})
+
+		it('uses a default action_prompt when none provided', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'idle' })
+			const updated = { ...agent, agentState: 'running', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[],
+				[],
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/run`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const created = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0][1]
+			expect(typeof created.actionPrompt).toBe('string')
+			expect(created.actionPrompt.length).toBeGreaterThan(0)
+		})
+
+		it('resumes the most recent paused session', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'paused' })
+			const pausedSession = buildSession({
+				actorId: agent.id,
+				workspaceId: wsId,
+				status: 'paused',
+			})
+			const updated = { ...agent, agentState: 'running', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[], // no live session
+				[pausedSession],
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/run`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.agentState).toBe('running')
+			expect(sessionManager.resumeSession).toHaveBeenCalledWith(pausedSession.id)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('is a no-op for live sessions — does not create or resume', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'running' })
+			const liveSession = buildSession({
+				actorId: agent.id,
+				workspaceId: wsId,
+				status: 'running',
+			})
+			const updated = { ...agent, agentState: 'running', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[liveSession],
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/run`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+			expect(sessionManager.resumeSession).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 when requester is not a workspace member', async () => {
+			const { app } = createSessionTestApp(actorsRoutes, '/api/actors')
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${randomUUID()}/run`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 400 with empty action_prompt', async () => {
+			const { app } = createSessionTestApp(actorsRoutes, '/api/actors')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/actors/${randomUUID()}/run`,
+					{ action_prompt: '' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
 		})
 	})
 })

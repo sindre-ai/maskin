@@ -1,15 +1,21 @@
-import { FileBody, base64ToBytes } from '@/components/files/file-body'
+import { FileBody } from '@/components/files/file-body'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
+import { useActors } from '@/hooks/use-actors'
 import { useFile } from '@/hooks/use-files'
-import { ApiError, type FileDetail } from '@/lib/api'
+import type { AnnotationJson } from '@/lib/annotations'
+import { buildRevisePrompt } from '@/lib/annotations'
+import { ApiError, type FileDetail, api } from '@/lib/api'
+import { base64ToBytes } from '@/lib/file-utils'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { Download } from 'lucide-react'
+import { useCallback, useState } from 'react'
+import { toast } from 'sonner'
 
 function downloadFile(file: FileDetail): void {
 	const blob =
@@ -41,6 +47,32 @@ function FileViewerPage() {
 	const { fileId } = Route.useParams()
 	const { workspaceId } = useWorkspace()
 	const { data: file, isLoading, error } = useFile(workspaceId, fileId)
+	const { data: actors } = useActors(workspaceId)
+	const [isRevising, setIsRevising] = useState(false)
+
+	const designAgent = actors?.find(
+		(a) => a.type === 'agent' && a.name.toLowerCase().includes('design'),
+	)
+
+	const handleReviseWithAnnotations = useCallback(
+		async (annotationJson: AnnotationJson) => {
+			if (!file || !designAgent) return
+			setIsRevising(true)
+			try {
+				await api.sessions.create(workspaceId, {
+					actor_id: designAgent.id,
+					action_prompt: buildRevisePrompt(file, annotationJson),
+					auto_start: true,
+				})
+				toast.success('Design Agent session started')
+			} catch {
+				toast.error('Failed to start Design Agent session')
+			} finally {
+				setIsRevising(false)
+			}
+		},
+		[file, designAgent, workspaceId],
+	)
 
 	if (isLoading) {
 		return (
@@ -92,7 +124,11 @@ function FileViewerPage() {
 					</Button>
 				</div>
 
-				<FileBody file={file} />
+				<FileBody
+					file={file}
+					onReviseWithAnnotations={designAgent ? handleReviseWithAnnotations : undefined}
+					isRevising={isRevising}
+				/>
 			</div>
 		</>
 	)

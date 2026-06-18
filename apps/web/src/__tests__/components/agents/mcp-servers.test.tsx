@@ -97,10 +97,102 @@ describe('McpServers', () => {
 
 	it('does not show quick-add for integration already added as server', () => {
 		mockIntegrations.mockReturnValue([
-			buildIntegrationResponse({ provider: 'github', status: 'active' }),
+			buildIntegrationResponse({ provider: 'slack', status: 'active' }),
 		])
-		render(<McpServers tools={stdioTools} onUpdate={vi.fn()} />)
+		const slackTools = {
+			mcpServers: {
+				slack: {
+					type: 'stdio',
+					command: 'npx',
+					args: ['-y', '@modelcontextprotocol/server-slack'],
+					env: { SLACK_BOT_TOKEN: 'tok' },
+				},
+			},
+		}
+		render(<McpServers tools={slackTools} onUpdate={vi.fn()} />)
+		expect(screen.queryByRole('button', { name: /Add slack/ })).not.toBeInTheDocument()
+	})
+
+	it('shows a single "Add github" button when any GitHub installation has owner_login', () => {
+		mockIntegrations.mockReturnValue([
+			buildIntegrationResponse({
+				id: 'g1',
+				provider: 'github',
+				status: 'active',
+				config: { owner_login: 'sindre-ai' },
+			}),
+			buildIntegrationResponse({
+				id: 'g2',
+				provider: 'github',
+				status: 'active',
+				config: { owner_login: 'vaerksted-ai' },
+			}),
+		])
+		render(<McpServers tools={null} onUpdate={vi.fn()} />)
+		expect(screen.getAllByRole('button', { name: /Add github/ })).toHaveLength(1)
+	})
+
+	it('does not show "Add github" when no installation has owner_login', () => {
+		mockIntegrations.mockReturnValue([
+			buildIntegrationResponse({ provider: 'github', status: 'active', config: {} }),
+		])
+		render(<McpServers tools={null} onUpdate={vi.fn()} />)
 		expect(screen.queryByRole('button', { name: /Add github/ })).not.toBeInTheDocument()
+	})
+
+	it('does not show "Add github" when all installations are already added', () => {
+		mockIntegrations.mockReturnValue([
+			buildIntegrationResponse({
+				provider: 'github',
+				status: 'active',
+				config: { owner_login: 'sindre-ai' },
+			}),
+		])
+		const tools = {
+			mcpServers: {
+				'github-sindre-ai': {
+					type: 'stdio',
+					command: 'npx',
+					args: ['-y', '@modelcontextprotocol/server-github'],
+					env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
+				},
+			},
+		}
+		render(<McpServers tools={tools} onUpdate={vi.fn()} />)
+		expect(screen.queryByRole('button', { name: /Add github/ })).not.toBeInTheDocument()
+	})
+
+	it('adds all GitHub installations as separate server entries on click', async () => {
+		const user = userEvent.setup()
+		const onUpdate = vi.fn()
+		mockIntegrations.mockReturnValue([
+			buildIntegrationResponse({
+				id: 'g1',
+				provider: 'github',
+				status: 'active',
+				config: { owner_login: 'sindre-ai' },
+			}),
+			buildIntegrationResponse({
+				id: 'g2',
+				provider: 'github',
+				status: 'active',
+				config: { owner_login: 'vaerksted-ai' },
+			}),
+		])
+		render(<McpServers tools={null} onUpdate={onUpdate} />)
+
+		await user.click(screen.getByRole('button', { name: /Add github/ }))
+
+		expect(onUpdate).toHaveBeenCalledWith({
+			mcpServers: expect.objectContaining({
+				'github-sindre-ai': expect.objectContaining({
+					env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
+				}),
+				'github-vaerksted-ai': expect.objectContaining({
+					env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
+				}),
+			}),
+		})
 	})
 
 	it('does not show quick-add for integration without MCP preset', () => {
@@ -137,7 +229,10 @@ describe('McpServers', () => {
 
 		expect(onUpdate).toHaveBeenCalledWith({
 			mcpServers: expect.objectContaining({
-				slack: expect.objectContaining({ command: 'npx' }),
+				slack: expect.objectContaining({
+					type: 'http',
+					url: expect.stringContaining('/api/integrations/slack/mcp'),
+				}),
 			}),
 		})
 	})

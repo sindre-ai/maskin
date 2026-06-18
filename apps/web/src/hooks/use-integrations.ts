@@ -19,7 +19,12 @@ export function useProviders() {
 
 export function useConnectIntegration(workspaceId: string) {
 	return useMutation({
-		mutationFn: (provider: string) => api.integrations.connect(workspaceId, provider),
+		mutationFn: (input: { provider: string; apiKey?: string }) =>
+			api.integrations.connect(
+				workspaceId,
+				input.provider,
+				input.apiKey ? { api_key: input.apiKey } : undefined,
+			),
 		onSuccess: (data) => {
 			// Redirect to the provider's install/OAuth page
 			window.location.href = data.install_url

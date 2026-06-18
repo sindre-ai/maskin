@@ -226,7 +226,7 @@ const RESERVED_ALIASES: Record<string, string[]> = {
 	title: ['title', 'name', 'subject', 'heading'],
 	content: ['content', 'description', 'notes', 'body', 'details', 'summary'],
 	status: ['status', 'state', 'stage'],
-	owner: ['owner', 'assigned_to', 'assignee', 'responsible'],
+	driver: ['owner', 'assigned_to', 'assignee', 'responsible'],
 }
 
 function normalize(s: string): string {
@@ -378,7 +378,7 @@ interface MappedRow {
 	content?: string
 	status: string
 	metadata: Record<string, unknown>
-	owner?: string
+	driver?: string
 }
 
 function applyTransform(value: string, transform: string): string | number | boolean {
@@ -404,7 +404,7 @@ export function mapRowForType(
 	const titleParts: string[] = []
 	const contentParts: string[] = []
 	let status: string | undefined
-	let owner: string | undefined
+	let driver: string | undefined
 	const metadata: Record<string, unknown> = {}
 	let hasValue = false
 
@@ -420,8 +420,8 @@ export function mapRowForType(
 			contentParts.push(value)
 		} else if (col.targetField === 'status') {
 			status = value
-		} else if (col.targetField === 'owner') {
-			owner = value
+		} else if (col.targetField === 'driver') {
+			driver = value
 		} else if (col.targetField.startsWith('metadata.')) {
 			const fieldName = col.targetField.slice('metadata.'.length)
 			const transformed = applyTransform(value, col.transform)
@@ -451,7 +451,7 @@ export function mapRowForType(
 		status = typeMapping.defaultStatus ?? settings.statuses?.[type]?.[0] ?? 'new'
 	}
 
-	return { type, title, content, status, metadata, owner }
+	return { type, title, content, status, metadata, driver }
 }
 
 export async function executeImport(
@@ -505,7 +505,7 @@ export async function executeImport(
 								content: mapped.content,
 								status: mapped.status,
 								metadata: Object.keys(mapped.metadata).length > 0 ? mapped.metadata : undefined,
-								owner: mapped.owner,
+								driver: mapped.driver,
 								createdBy: actorId,
 							})),
 						)

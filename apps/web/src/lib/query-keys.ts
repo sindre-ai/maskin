@@ -7,6 +7,9 @@ export const queryKeys = {
 		listInfinite: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'listInfinite', filters] as const,
 		listInfinitePrefix: (workspaceId: string) => ['objects', workspaceId, 'listInfinite'] as const,
+		board: (workspaceId: string, filters?: Record<string, unknown>) =>
+			['objects', workspaceId, 'board', filters] as const,
+		boardPrefix: (workspaceId: string) => ['objects', workspaceId, 'board'] as const,
 		detail: (id: string) => ['objects', 'detail', id] as const,
 		graph: (id: string) => ['objects', 'graph', id] as const,
 	},
@@ -60,6 +63,8 @@ export const queryKeys = {
 		logs: (sessionId: string) => ['sessions', sessionId, 'logs'] as const,
 		byActor: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'running'] as const,
+		byActorAll: (workspaceId: string, actorId: string) =>
+			['sessions', workspaceId, 'actor', actorId] as const,
 		byActorAllInfinite: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'all', 'infinite'] as const,
 		byMentionObject: (workspaceId: string, objectId: string) =>
@@ -99,5 +104,17 @@ export const queryKeys = {
 		list: (workspaceId: string) => ['user-display-settings', workspaceId, 'list'] as const,
 		detail: (workspaceId: string, objectType: string) =>
 			['user-display-settings', workspaceId, 'detail', objectType] as const,
+	},
+	catalogItems: {
+		installed: (workspaceId: string) => ['catalog-items', workspaceId, 'installed'] as const,
+	},
+	catalogPackages: {
+		list: (filters?: { type?: string; use_case?: string; q?: string }) =>
+			['catalog-packages', 'list', filters ?? {}] as const,
+		detail: (id: string) => ['catalog-packages', 'detail', id] as const,
+	},
+	installedPackages: {
+		all: (workspaceId: string) => ['installed-packages', workspaceId] as const,
+		list: (workspaceId: string) => ['installed-packages', workspaceId, 'list'] as const,
 	},
 } as const
