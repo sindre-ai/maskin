@@ -11,6 +11,7 @@ import { Sidebar, SidebarContent, SidebarHeader } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { getStoredActor } from '@/lib/auth'
+import { trackChatSessionOpened } from '@/lib/posthog'
 import { type SindreAttachment, useSindre } from '@/lib/sindre-context'
 import {
 	buildSindreExportFilename,
@@ -102,6 +103,20 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 		}
 		clearPendingAttachments()
 	}, [pendingAttachments, clearPendingAttachments])
+
+	// Emit the chat ship-metric `chat_session_opened` on every closed→open
+	// transition. The panel mounts once per route and the user toggles the
+	// drawer many times, so a mount-time fire would undercount.
+	const sessionOpenedSeenRef = useRef(false)
+	useEffect(() => {
+		if (!open) {
+			sessionOpenedSeenRef.current = false
+			return
+		}
+		if (sessionOpenedSeenRef.current) return
+		sessionOpenedSeenRef.current = true
+		trackChatSessionOpened({ workspace_id: workspaceId, surface: 'sheet' })
+	}, [open, workspaceId])
 
 	// In overlay mode (unpinned), close on outside click — matches the prior
 	// Sheet behaviour. When pinned, Sindre is docked and should survive clicks
