@@ -36,6 +36,7 @@ import {
 	eq,
 	ilike,
 	inArray,
+	ne,
 	or,
 	sql,
 } from 'drizzle-orm'
@@ -118,6 +119,10 @@ function buildObjectListConditions(query: {
 }) {
 	const conditions: SQL[] = []
 	if (query.type) conditions.push(eq(objects.type, query.type))
+	// Chat conversations live in `objects` (type='conversation') but should
+	// not appear in the generic bets/insights/tasks lists. Callers that want
+	// them (the chat panel) pass `?type=conversation` explicitly.
+	else conditions.push(ne(objects.type, 'conversation'))
 	if (query.status) {
 		const statuses = query.status.split(',').filter(Boolean)
 		if (statuses.length === 1) conditions.push(eq(objects.status, statuses[0] as string))

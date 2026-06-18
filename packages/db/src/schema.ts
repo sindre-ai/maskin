@@ -72,6 +72,42 @@ export const workspaceMembers = pgTable(
 )
 
 // ── Objects ─────────────────────────────────────────────────────────────────
+//
+// `objects` is the unified entity table. `type` partitions it into the
+// recognised object kinds: 'insight' | 'bet' | 'task' | 'conversation'
+// (plus whatever workspace extensions add — see `getAllValidTypes`).
+//
+// `metadata` is JSONB and shape varies by `type`. For `type='conversation'`
+// (Maskin Chat rooms — see bet `fbaac94e-1686-41ec-a2cb-1c96ee82a836`) the
+// shape is the contract T3's `/api/conversations` facade reads against:
+//
+//   metadata: {
+//     // Required: 'direct' for a 1:1 / agent-pair, 'channel' for an open
+//     // multi-participant room, 'thread' for a side-thread off a parent
+//     // conversation. Used by the chat panel to render the right surface.
+//     kind: 'direct' | 'channel' | 'thread'
+//
+//     // Optional: when omitted, the panel auto-derives a title from the
+//     // participants (e.g. "You, Planner"). When set, this wins.
+//     title?: string
+//
+//     // Optional: which agents auto-join newly-created conversations of
+//     // this kind. Each entry is an actor id. The room creator is always
+//     // joined separately via subscriptions; this is for default agents.
+//     auto_join?: string[]
+//
+//     // Optional: only set on kind='thread'; points at the parent
+//     // conversation object id.
+//     parent_conversation_id?: string
+//   }
+//
+// Messages are NOT a separate table: they are rows in `events` with
+// `entity_type='object'`, `entity_id=<conversation object id>`, and
+// `action='commented'` — reusing subscriptions, read state, notifications,
+// and the PG NOTIFY → SSE bridge already in place for object comments.
+// Generic listing endpoints (GET /api/objects, /search, /board) filter
+// `type='conversation'` out unless the caller asks for it explicitly, so
+// chat rooms don't leak into bets/insights/tasks views.
 
 export const objects = pgTable(
 	'objects',
