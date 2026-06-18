@@ -93,3 +93,6 @@ export function parsePositiveIntEnv(
  */
 export const STARTER_HARD_CAP_DEFAULT_TOKENS = 32_000_000
 export const PRO_HARD_CAP_DEFAULT_TOKENS = 96_000_000
+
+/** Billing periods on paid plans run ~30 days; used when Stripe hasn't written `period_end` yet. */
+export const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000

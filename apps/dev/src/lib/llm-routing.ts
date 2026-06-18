@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
-import { parsePositiveIntEnv } from './billing-defaults'
+import { DEFAULT_PERIOD_LENGTH_MS, parsePositiveIntEnv } from './billing-defaults'
 import { getValidOAuthToken } from './claude-oauth'
 import type { WorkspaceSettings } from './types'
 
@@ -33,9 +33,6 @@ const MASKIN_PLAN_ROUTED_PLANS = new Set(['starter', 'pro', 'trial'])
 
 /** Approx 50 messages at ~2k tokens each — see Task 803dcf11 brief. */
 const TRIAL_DEFAULT_CAP_TOKENS = 100_000
-
-/** Billing periods on paid plans run ~30 days; used when Stripe hasn't written `period_end` yet. */
-const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
 
 export interface LlmRoutingResult {
 	route: LlmRoute

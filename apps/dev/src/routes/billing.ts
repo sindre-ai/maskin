@@ -1,14 +1,16 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { sessions, workspaces } from '@maskin/db/schema'
+import { workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
-import { and, eq, gte, sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import {
+	DEFAULT_PERIOD_LENGTH_MS,
 	PRO_HARD_CAP_DEFAULT_TOKENS,
 	STARTER_HARD_CAP_DEFAULT_TOKENS,
 	parsePositiveIntEnv,
 } from '../lib/billing-defaults'
 import { createApiError } from '../lib/errors'
+import { getWorkspacePlanTokenUsage } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { createCheckoutSession, getStripeClient, readStripeEnv } from '../lib/stripe'
@@ -21,7 +23,6 @@ import { createCheckoutSession, getStripeClient, readStripeEnv } from '../lib/st
  * literal so the UI never depends on a deploy-time env var being set.
  */
 const DEFAULT_TRIAL_HARD_CAP_TOKENS = 100_000
-const TRIAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 
 /**
  * Fallback hard caps for paid plans when `billing.hard_cap_tokens` hasn't been
@@ -46,14 +47,6 @@ function planHardCapFallback(plan: 'trial' | 'starter' | 'pro' | 'byollm'): numb
 			return parsePositiveIntEnv('MASKIN_PRO_HARD_CAP_TOKENS') ?? PRO_HARD_CAP_DEFAULT_TOKENS
 	}
 }
-
-/**
- * LLM-route tag the paid-plan + trial sessions write on `sessions.config.llm_route`.
- * Lives as a literal here so this task doesn't import from the hard-cap branch;
- * when the bet branch rebases everything together the constant in
- * `lib/llm-routing.ts` is the canonical source.
- */
-const LLM_ROUTE_MASKIN_PLAN = 'maskin_plan'
 
 type Env = {
 	Variables: {
@@ -174,7 +167,7 @@ app.openapi(usageRoute, async (c) => {
 			? Math.floor(rawPeriodStart)
 			: null
 	const periodStartMs =
-		periodStartSec !== null ? periodStartSec * 1000 : Date.now() - TRIAL_WINDOW_MS
+		periodStartSec !== null ? periodStartSec * 1000 : Date.now() - DEFAULT_PERIOD_LENGTH_MS
 	const rawPeriodEnd = billing?.period_end
 	const periodEndSec =
 		typeof rawPeriodEnd === 'number' && Number.isFinite(rawPeriodEnd) && rawPeriodEnd > 0
@@ -184,30 +177,11 @@ app.openapi(usageRoute, async (c) => {
 		periodEndSec !== null
 			? periodEndSec * 1000
 			: periodStartSec !== null
-				? periodStartSec * 1000 + TRIAL_WINDOW_MS
-				: Date.now() + TRIAL_WINDOW_MS
+				? periodStartSec * 1000 + DEFAULT_PERIOD_LENGTH_MS
+				: Date.now() + DEFAULT_PERIOD_LENGTH_MS
 
-	let tokensUsed = 0
-	if (plan !== 'byollm') {
-		const since = new Date(periodStartMs)
-		const rows = await db
-			.select({
-				inputTokens: sessions.inputTokens,
-				outputTokens: sessions.outputTokens,
-			})
-			.from(sessions)
-			.where(
-				and(
-					eq(sessions.workspaceId, workspaceId),
-					gte(sessions.createdAt, since),
-					sql`${sessions.config}->>'llm_route' = ${LLM_ROUTE_MASKIN_PLAN}`,
-				),
-			)
-		for (const row of rows) {
-			tokensUsed += row.inputTokens ?? 0
-			tokensUsed += row.outputTokens ?? 0
-		}
-	}
+	const tokensUsed =
+		plan !== 'byollm' ? await getWorkspacePlanTokenUsage(db, workspaceId, periodStartMs) : 0
 
 	const resetsIn = Math.max(0, periodEndMs - Date.now())
 
