@@ -830,6 +830,9 @@ export interface HeroCardObject {
 	tools?: Record<string, unknown> | null
 	llmProvider?: string | null
 	llmConfig?: Record<string, unknown> | null
+	// Full detail fields — populated by list_triggers
+	actionPrompt?: string | null
+	config?: Record<string, unknown> | null
 }
 
 export type HeroCardKind = 'single' | 'list' | 'empty'
@@ -1153,6 +1156,8 @@ interface RawTrigger {
 	target_actor_id?: string | null
 	createdAt?: string | null
 	updatedAt?: string | null
+	description?: string | null
+	actionPrompt?: string | null
 }
 
 function formatRelativeFuture(targetMs: number, nowMs: number): string {
@@ -1229,6 +1234,9 @@ function buildTriggerHeroCardObject(
 		status: trigger.enabled ? 'enabled' : 'disabled',
 		driver,
 		contextLine: buildTriggerContextLine(trigger, nowMs),
+		description: trigger.description ?? null,
+		actionPrompt: trigger.actionPrompt ?? null,
+		config: trigger.config ?? null,
 	}
 }
 
