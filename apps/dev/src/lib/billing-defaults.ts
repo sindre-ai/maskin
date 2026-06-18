@@ -2,13 +2,13 @@
  * Single source of truth for billing-related fallback defaults and the env
  * parsing helper that wraps them. Both `lib/stripe.ts` (boot-time strict read)
  * and `routes/billing.ts` (request-time defensive read) consume this module so
- * the `32_000_000` / `96_000_000` literals never drift between the two paths,
- * `.env.example`, and the frontend tests that pin the same numbers.
+ * the cap literals never drift between code paths, `.env.example`, and the
+ * frontend tests that pin the same numbers.
  *
- * `scripts/verify-billing-cap-literals.mjs` runs in CI to enforce the four-site
- * contract — bump the literals here and the script will fail until
- * `.env.example` and `apps/web/src/__tests__/components/settings/billing-section.test.tsx`
- * are updated too.
+ * `scripts/verify-billing-cap-literals.mjs` runs in CI to enforce the contract
+ * — bump the literals here and the script will fail until `.env.example` and
+ * `apps/web/src/__tests__/components/settings/billing-section.test.tsx` are
+ * updated too.
  */
 
 import { logger } from './logger'
@@ -91,6 +91,7 @@ export function parsePositiveIntEnv(
  * here and the CI `verify-billing-cap-literals` step will fail until the other
  * sites are updated.
  */
+export const TRIAL_HARD_CAP_DEFAULT_TOKENS = 100_000
 export const STARTER_HARD_CAP_DEFAULT_TOKENS = 32_000_000
 export const PRO_HARD_CAP_DEFAULT_TOKENS = 96_000_000
 

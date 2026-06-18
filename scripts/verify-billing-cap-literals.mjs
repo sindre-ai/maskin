@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * Enforces the three-site billing-cap literal contract.
+ * Enforces the billing-cap literal contract.
  *
- * STARTER_HARD_CAP_DEFAULT_TOKENS and PRO_HARD_CAP_DEFAULT_TOKENS appear in:
+ * TRIAL_HARD_CAP_DEFAULT_TOKENS, STARTER_HARD_CAP_DEFAULT_TOKENS, and
+ * PRO_HARD_CAP_DEFAULT_TOKENS are the single source of truth in:
  *
  *   1. apps/dev/src/lib/billing-defaults.ts            (source of truth — TS)
  *   2. .env.example                                    (operator-facing default)
@@ -24,37 +25,25 @@ const stripUnderscores = (s) => s.replace(/_/g, '')
 
 const read = (relPath) => readFileSync(resolve(repoRoot, relPath), 'utf8')
 
-const expected = {
-	starter: 32_000_000,
-	pro: 96_000_000,
-}
-
-// `100_000` is the trial-plan cap pinned in the web test's `baseUsage` and is
-// the only non-Starter/Pro `hard_cap_tokens` literal that's allowed to appear.
-// Anything else means a stray value has slipped in.
-const TRIAL_CAP = 100_000
-
 const errors = []
 const observed = []
 
-// Site 1 — apps/dev/src/lib/billing-defaults.ts
+// Site 1 — apps/dev/src/lib/billing-defaults.ts (source of truth)
+// All three cap values are read from here; downstream sites are compared against them.
+const expected = { trial: 0, starter: 0, pro: 0 }
 {
 	const path = 'apps/dev/src/lib/billing-defaults.ts'
 	const source = read(path)
+	const trialMatch = source.match(/TRIAL_HARD_CAP_DEFAULT_TOKENS\s*=\s*([\d_]+)/)
 	const starterMatch = source.match(/STARTER_HARD_CAP_DEFAULT_TOKENS\s*=\s*([\d_]+)/)
 	const proMatch = source.match(/PRO_HARD_CAP_DEFAULT_TOKENS\s*=\s*([\d_]+)/)
-	if (!starterMatch || !proMatch) {
-		errors.push(`${path}: could not find STARTER/PRO_HARD_CAP_DEFAULT_TOKENS literals`)
+	if (!trialMatch || !starterMatch || !proMatch) {
+		errors.push(`${path}: could not find TRIAL/STARTER/PRO_HARD_CAP_DEFAULT_TOKENS literals`)
 	} else {
-		const starter = Number(stripUnderscores(starterMatch[1]))
-		const pro = Number(stripUnderscores(proMatch[1]))
-		observed.push({ path, starter, pro })
-		if (starter !== expected.starter) {
-			errors.push(`${path}: starter cap ${starter} ≠ expected ${expected.starter}`)
-		}
-		if (pro !== expected.pro) {
-			errors.push(`${path}: pro cap ${pro} ≠ expected ${expected.pro}`)
-		}
+		expected.trial = Number(stripUnderscores(trialMatch[1]))
+		expected.starter = Number(stripUnderscores(starterMatch[1]))
+		expected.pro = Number(stripUnderscores(proMatch[1]))
+		observed.push({ path, trial: expected.trial, starter: expected.starter, pro: expected.pro })
 	}
 }
 
@@ -93,7 +82,7 @@ const observed = []
 {
 	const path = 'apps/web/src/__tests__/components/settings/billing-section.test.tsx'
 	const source = read(path)
-	const ALLOWED = new Set([TRIAL_CAP, expected.starter, expected.pro])
+	const ALLOWED = new Set([expected.trial, expected.starter, expected.pro])
 	const seen = new Set()
 	let foundAny = false
 	for (const match of source.matchAll(/hard_cap_tokens:\s*([\d_]+)/g)) {
@@ -133,5 +122,5 @@ if (errors.length > 0) {
 }
 
 console.log(
-	`verify-billing-cap-literals: OK — starter=${expected.starter}, pro=${expected.pro} across 3 sites`,
+	`verify-billing-cap-literals: OK — trial=${expected.trial}, starter=${expected.starter}, pro=${expected.pro} across 3 sites`,
 )

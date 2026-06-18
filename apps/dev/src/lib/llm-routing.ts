@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
-import { DEFAULT_PERIOD_LENGTH_MS, parsePositiveIntEnv } from './billing-defaults'
+import { DEFAULT_PERIOD_LENGTH_MS, TRIAL_HARD_CAP_DEFAULT_TOKENS, parsePositiveIntEnv } from './billing-defaults'
 import { getValidOAuthToken } from './claude-oauth'
 import type { WorkspaceSettings } from './types'
 
@@ -31,8 +31,6 @@ export type LlmRoute =
  */
 const MASKIN_PLAN_ROUTED_PLANS = new Set(['starter', 'pro', 'trial'])
 
-/** Approx 50 messages at ~2k tokens each — see Task 803dcf11 brief. */
-const TRIAL_DEFAULT_CAP_TOKENS = 100_000
 
 export interface LlmRoutingResult {
 	route: LlmRoute
@@ -174,7 +172,7 @@ export class PlanCapExceededError extends Error {
 
 function readTrialDefaultCap(env: NodeJS.ProcessEnv = process.env): number {
 	const raw = Number(env.MASKIN_TRIAL_HARD_CAP_TOKENS)
-	return Number.isFinite(raw) && raw > 0 ? raw : TRIAL_DEFAULT_CAP_TOKENS
+	return Number.isFinite(raw) && raw > 0 ? raw : TRIAL_HARD_CAP_DEFAULT_TOKENS
 }
 
 /**

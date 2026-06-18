@@ -7,6 +7,7 @@ import {
 	DEFAULT_PERIOD_LENGTH_MS,
 	PRO_HARD_CAP_DEFAULT_TOKENS,
 	STARTER_HARD_CAP_DEFAULT_TOKENS,
+	TRIAL_HARD_CAP_DEFAULT_TOKENS,
 	parsePositiveIntEnv,
 } from '../lib/billing-defaults'
 import { createApiError } from '../lib/errors'
@@ -15,14 +16,6 @@ import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { createCheckoutSession, getStripeClient, readStripeEnv } from '../lib/stripe'
 
-/**
- * Trial bucket sizing when no Stripe-driven `period_start` is set yet.
- * The trial fallback is intentionally a literal — the hard-cap enforcement
- * path reads `MASKIN_TRIAL_HARD_CAP_TOKENS` for trial workspaces, but this
- * route is the Settings row's display value and stays on a deterministic
- * literal so the UI never depends on a deploy-time env var being set.
- */
-const DEFAULT_TRIAL_HARD_CAP_TOKENS = 100_000
 
 /**
  * Fallback hard caps for paid plans when `billing.hard_cap_tokens` hasn't been
@@ -38,7 +31,7 @@ function planHardCapFallback(plan: 'trial' | 'starter' | 'pro' | 'byollm'): numb
 	switch (plan) {
 		case 'trial':
 		case 'byollm':
-			return DEFAULT_TRIAL_HARD_CAP_TOKENS
+			return TRIAL_HARD_CAP_DEFAULT_TOKENS
 		case 'starter':
 			return (
 				parsePositiveIntEnv('MASKIN_STARTER_HARD_CAP_TOKENS') ?? STARTER_HARD_CAP_DEFAULT_TOKENS
