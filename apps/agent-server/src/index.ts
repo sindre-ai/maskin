@@ -163,21 +163,50 @@ async function monitorSession(
 	}
 
 	if (maskinBaseUrl) {
-		try {
-			await fetch(`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/complete`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${agentServerSecret}`,
-				},
-				body: JSON.stringify({ exitCode }),
-			})
-			logger.info('session completion reported to Maskin', { sessionId, exitCode })
-		} catch (err) {
-			logger.error('failed to report session completion to Maskin', {
-				sessionId,
-				error: String(err),
-			})
+		// Retry up to 3 times with a 5s gap. Cleanup (deleteSessionDir + removeSandbox)
+		// only runs after a successful report so the sandbox is never silently orphaned:
+		// if we clean up before reporting, there is nothing left to retry with and the
+		// session row in apps/dev stays `running` until the 2-hour watchdog reaper fires.
+		const REPORT_RETRIES = 3
+		const REPORT_RETRY_DELAY_MS = 5_000
+		let reported = false
+		for (let attempt = 1; attempt <= REPORT_RETRIES; attempt++) {
+			try {
+				await fetch(
+					`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/complete`,
+					{
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+							Authorization: `Bearer ${agentServerSecret}`,
+						},
+						body: JSON.stringify({ exitCode }),
+					},
+				)
+				logger.info('session completion reported to Maskin', { sessionId, exitCode })
+				reported = true
+				break
+			} catch (err) {
+				logger.warn('failed to report session completion to Maskin, will retry', {
+					sessionId,
+					attempt,
+					maxAttempts: REPORT_RETRIES,
+					error: String(err),
+				})
+				if (attempt < REPORT_RETRIES) {
+					await sleep(REPORT_RETRY_DELAY_MS)
+				}
+			}
+		}
+		if (!reported) {
+			// All retries exhausted. The session row in apps/dev will stay `running`
+			// until the watchdog reaper (or a reconcile call on next boot) marks it
+			// terminal. Cleanup still runs so the stopped VM and tmp dir don't linger
+			// on disk indefinitely — the workspace is already safely in S3.
+			logger.error(
+				'session completion report failed after all retries — session may appear running until watchdog fires',
+				{ sessionId, exitCode },
+			)
 		}
 	}
 
@@ -444,9 +473,16 @@ export function buildApp(deps: AppDeps): Hono {
 				deps.env.AGENT_SERVER_SECRET,
 				sessionLogRouters,
 				sessionExitCodes,
-			).finally(() => {
-				inputQueue.drainSession(body.sessionId)
-			})
+			)
+				.catch((err) => {
+					logger.error('monitorSession crashed unexpectedly', {
+						sessionId: body.sessionId,
+						error: String(err),
+					})
+				})
+				.finally(() => {
+					inputQueue.drainSession(body.sessionId)
+				})
 
 			// Launch msb exec in the background. entrypoint.sh finds the trigger and
 			// runs agent-run.sh under the exec TCP proxy (the proxy is only active
