@@ -314,11 +314,15 @@ export function DataTable({
 											key={row.id}
 											data-index={virtualItem.index}
 											ref={virtualizer.measureElement}
-											className="bg-muted/30 hover:bg-muted/50 cursor-pointer"
-											onClick={() => row.toggleExpanded()}
+											className="bg-muted/30 hover:bg-muted/50"
 										>
 											<TableCell colSpan={columns.length}>
-												<div className="flex items-center gap-2">
+												<button
+													type="button"
+													onClick={() => row.toggleExpanded()}
+													aria-expanded={row.getIsExpanded()}
+													className="flex items-center gap-2 text-left"
+												>
 													<ChevronRight
 														size={14}
 														className={cn(
@@ -330,7 +334,7 @@ export function DataTable({
 													<span className="text-muted-foreground text-xs">
 														({row.subRows.length})
 													</span>
-												</div>
+												</button>
 											</TableCell>
 										</TableRow>
 									)

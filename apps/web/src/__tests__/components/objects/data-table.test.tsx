@@ -134,6 +134,68 @@ describe('DataTable', () => {
 		expect(spinners.length).toBeGreaterThanOrEqual(1)
 	})
 
+	describe('grouped (chevron scoping)', () => {
+		it('keeps the group expanded after a child-row checkbox is clicked (desktop)', async () => {
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			renderDataTable({ data, grouping: ['status'] })
+
+			// Group header renders even when collapsed — open it via the chevron button.
+			const groupToggle = screen.getByRole('button', { expanded: false })
+			await user.click(groupToggle)
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+			expect(screen.getByText('Beta')).toBeInTheDocument()
+
+			const [firstRowCheckbox] = screen.getAllByRole('checkbox', { name: 'Select row' })
+			await user.click(firstRowCheckbox as HTMLElement)
+
+			// Group must still be expanded; both children remain in the DOM.
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+			expect(screen.getByText('Beta')).toBeInTheDocument()
+			expect(screen.getByRole('button', { expanded: true })).toBe(groupToggle)
+		})
+
+		it('chevron button still toggles expansion (desktop)', async () => {
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			renderDataTable({ data, grouping: ['status'] })
+
+			const groupToggle = screen.getByRole('button', { expanded: false })
+			await user.click(groupToggle)
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+
+			await user.click(screen.getByRole('button', { expanded: true }))
+			expect(screen.queryByText('Alpha')).not.toBeInTheDocument()
+		})
+
+		it('keeps the group expanded after a child-row checkbox is clicked (mobile)', async () => {
+			mockIsMobile.mockReturnValue(true)
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			renderDataTable({ data, grouping: ['status'] })
+
+			const groupToggle = screen.getByRole('button', { name: /active/i })
+			await user.click(groupToggle)
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+			expect(screen.getByText('Beta')).toBeInTheDocument()
+
+			const [firstRowCheckbox] = screen.getAllByRole('checkbox', { name: 'Select row' })
+			await user.click(firstRowCheckbox as HTMLElement)
+
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+			expect(screen.getByText('Beta')).toBeInTheDocument()
+		})
+	})
+
 	describe('mobile (below md)', () => {
 		beforeEach(() => {
 			mockIsMobile.mockReturnValue(true)
