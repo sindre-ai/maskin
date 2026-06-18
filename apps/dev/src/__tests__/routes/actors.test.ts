@@ -83,9 +83,12 @@ describe('Actors Routes', () => {
 			expect(inserted.tools?.mcpServers.maskin.url).toBe('https://custom/mcp')
 		})
 
-		it('seeds Sindre with a generated apiKey when auto-creating a workspace', async () => {
+		it('seeds Sindre + the default trio when auto-creating a workspace', async () => {
 			const actor = buildActor({ type: 'human' })
 			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const driver = buildActor({ type: 'agent', name: 'Driver', isSystem: true })
+			const coach = buildActor({ type: 'agent', name: 'Coach', isSystem: true })
+			const strategist = buildActor({ type: 'agent', name: 'Strategist', isSystem: true })
 			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.insertQueue = [
 				[actor], // human actor insert (already has apiKey via generateApiKey)
@@ -93,6 +96,12 @@ describe('Actors Routes', () => {
 				[{}], // owner workspaceMembers insert
 				[sindre], // Sindre actor insert — must carry apiKey
 				[{}], // Sindre workspaceMembers insert
+				[driver], // Driver actor insert
+				[{}], // Driver workspaceMembers insert
+				[coach], // Coach actor insert
+				[{}], // Coach workspaceMembers insert
+				[strategist], // Strategist actor insert
+				[{}], // Strategist workspaceMembers insert
 			]
 
 			const res = await app.request(
@@ -100,7 +109,7 @@ describe('Actors Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
-			// inserts: [actor, workspace, owner-member, sindre, sindre-member]
+			// inserts: [actor, workspace, owner-member, sindre, sindre-member, driver, driver-m, coach, coach-m, strategist, strategist-m]
 			const sindreInsert = calls.inserts[3] as { apiKey?: string; isSystem?: boolean }
 			expect(sindreInsert.isSystem).toBe(true)
 			expect(sindreInsert.apiKey).toBeDefined()
@@ -109,6 +118,16 @@ describe('Actors Routes', () => {
 			// And it must NOT be the same key as the creator's key
 			const creatorInsert = calls.inserts[0] as { apiKey?: string }
 			expect(sindreInsert.apiKey).not.toBe(creatorInsert.apiKey)
+
+			// Trio actor inserts: indexes 5, 7, 9.
+			const trioInserts = [calls.inserts[5], calls.inserts[7], calls.inserts[9]] as Array<{
+				name?: string
+				isSystem?: boolean
+				apiKey?: string
+			}>
+			expect(trioInserts.map((i) => i.name)).toEqual(['Driver', 'Coach', 'Strategist'])
+			expect(trioInserts.every((i) => i.isSystem === true)).toBe(true)
+			expect(trioInserts.every((i) => i.apiKey?.startsWith('ank_'))).toBe(true)
 		})
 
 		it('does not default tools when creating a human actor', async () => {

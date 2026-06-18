@@ -22,6 +22,7 @@ import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/open
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
+import { seedDefaultAgents } from '../services/seed-default-agents'
 import { bootstrapWorkspaceObserver } from '../services/workspace-bootstrap'
 
 type Env = {
@@ -130,6 +131,10 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			actorId: sindre.id,
 			role: 'member',
 		})
+
+		// Seat Driver, Coach, Strategist alongside Sindre. Idempotent inside
+		// the same transaction — handles future re-entry from other paths.
+		await seedDefaultAgents(tx, ws.id, actorId)
 
 		return ws
 	})

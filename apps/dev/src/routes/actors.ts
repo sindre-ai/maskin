@@ -42,6 +42,7 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
+import { seedDefaultAgents } from '../services/seed-default-agents'
 import type { SessionManager } from '../services/session-manager'
 import { bootstrapWorkspaceObserver } from '../services/workspace-bootstrap'
 
@@ -213,6 +214,9 @@ app.openapi(createActorRoute, async (c) => {
 				actorId: sindre.id,
 				role: 'member',
 			})
+
+			// Seat Driver, Coach, Strategist alongside Sindre on the new workspace.
+			await seedDefaultAgents(tx, workspace.id, actor.id)
 
 			return workspace
 		})
