@@ -11,7 +11,7 @@ import { capturePosthogEvent } from './posthog'
 // need to be wired exactly once each and dedup'd where the call site
 // can fire more than once per logical event.
 
-export interface PackageInstalledProps {
+interface PackageInstalledProps {
 	packageId: string
 	packageSlug: string
 	packageVersion: string
@@ -29,7 +29,7 @@ export async function trackPackageInstalled(p: PackageInstalledProps): Promise<v
 	})
 }
 
-export interface PackageForkedProps {
+interface PackageForkedProps {
 	packageId: string
 	installedPackageId: string
 	versionAtFork: string
@@ -50,7 +50,7 @@ export async function trackPackageForked(p: PackageForkedProps): Promise<void> {
 	})
 }
 
-export interface PackageUninstalledProps {
+interface PackageUninstalledProps {
 	packageId: string
 	installedPackageId: string
 	workspaceId: string
@@ -68,7 +68,7 @@ export async function trackPackageUninstalled(p: PackageUninstalledProps): Promi
 	})
 }
 
-export interface LoopActiveDayProps {
+interface LoopActiveDayProps {
 	installedPackageId: string
 	packageId: string
 	packageSlug: string
