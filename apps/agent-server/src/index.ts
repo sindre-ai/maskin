@@ -83,6 +83,7 @@ async function monitorSession(
 	maskinBaseUrl?: string,
 	agentServerSecret?: string,
 	sessionLogRouters?: Map<string, (line: string) => void>,
+	sessionExitCodes?: Map<string, number>,
 ): Promise<void> {
 	const run = msb.run ?? defaultRunner()
 	const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -143,6 +144,24 @@ async function monitorSession(
 	}
 	await flushLogs()
 
+	// Read the exit code recorded by the /complete endpoint, then clean up the entry.
+	let exitCode = sessionExitCodes?.get(sessionId) ?? 0
+	sessionExitCodes?.delete(sessionId)
+
+	// Push workspace BEFORE reporting completion so a push failure can be reflected
+	// in the exit code. Reporting first would mark the session completed even when
+	// the workspace was lost, giving the user a silently incorrect starting state on
+	// the next session.
+	if (storage) {
+		try {
+			const { archiveBytes } = await pushSessionWorkspace(storage, sessionId, sessionDir)
+			logger.info('session workspace pushed to S3', { sessionId, archiveBytes })
+		} catch (err) {
+			logger.error('session workspace push failed', { sessionId, error: String(err) })
+			if (exitCode === 0) exitCode = 1
+		}
+	}
+
 	if (maskinBaseUrl) {
 		try {
 			await fetch(`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/complete`, {
@@ -151,23 +170,14 @@ async function monitorSession(
 					'Content-Type': 'application/json',
 					Authorization: `Bearer ${agentServerSecret}`,
 				},
-				body: JSON.stringify({ exitCode: 0 }),
+				body: JSON.stringify({ exitCode }),
 			})
-			logger.info('session completion reported to Maskin', { sessionId })
+			logger.info('session completion reported to Maskin', { sessionId, exitCode })
 		} catch (err) {
 			logger.error('failed to report session completion to Maskin', {
 				sessionId,
 				error: String(err),
 			})
-		}
-	}
-
-	if (storage) {
-		try {
-			const { archiveBytes } = await pushSessionWorkspace(storage, sessionId, sessionDir)
-			logger.info('session workspace pushed to S3', { sessionId, archiveBytes })
-		} catch (err) {
-			logger.error('session workspace push failed', { sessionId, error: String(err) })
 		}
 	}
 
@@ -194,6 +204,8 @@ export function buildApp(deps: AppDeps): Hono {
 	const inputQueue = new InputQueue()
 	// Connects the /sessions/:id/logs/ingest endpoint to monitorSession's buffer.
 	const sessionLogRouters = new Map<string, (line: string) => void>()
+	// Receives exit codes from the /sessions/:id/complete endpoint for monitorSession.
+	const sessionExitCodes = new Map<string, number>()
 
 	app.get('/health', async (c) => {
 		// `ok` must track msb liveness — a box whose `msb` is missing or broken
@@ -292,7 +304,21 @@ export function buildApp(deps: AppDeps): Hono {
 	app.post('/sessions/:id/complete', async (c) => {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
-		logger.info('completion signal received', { sessionId: id })
+
+		// Parse optional exit code from agent-run.sh. Missing body or parse failure
+		// defaults to 0 so the endpoint stays compatible with older agent images.
+		let exitCode = 0
+		try {
+			const raw = await c.req.json()
+			if (raw && typeof raw === 'object' && typeof raw.exitCode === 'number') {
+				exitCode = raw.exitCode
+			}
+		} catch {
+			// no body or non-JSON — keep default 0
+		}
+		sessionExitCodes.set(id, exitCode)
+
+		logger.info('completion signal received', { sessionId: id, exitCode })
 		// Graceful stop (not force-remove) so the bind-mounted /agent workspace
 		// flushes before the S3 push. Deferred (not immediate): `msb stop` tears
 		// down this VM's network, and if we stop before this response flushes back
@@ -417,6 +443,7 @@ export function buildApp(deps: AppDeps): Hono {
 				deps.env.MASKIN_BASE_URL,
 				deps.env.AGENT_SERVER_SECRET,
 				sessionLogRouters,
+				sessionExitCodes,
 			).finally(() => {
 				inputQueue.drainSession(body.sessionId)
 			})

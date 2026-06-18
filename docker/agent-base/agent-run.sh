@@ -54,12 +54,15 @@ report_complete() {
   if [ -n "$AGENT_SERVER_URL" ] && [ -n "$SESSION_ID" ]; then
     curl -4 -s --http1.0 --max-time 10 -X POST \
       "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/complete" \
+      -H "Content-Type: application/json" \
+      -d "{\"exitCode\":${AGENT_EXIT_CODE}}" \
       -o /dev/null 2>/dev/null || true
   fi
 }
 trap report_complete EXIT
 
 RUNTIME="${AGENT_RUNTIME:-claude-code}"
+AGENT_EXIT_CODE=0
 
 # Install runtime if not already present
 install_runtime() {
@@ -265,6 +268,7 @@ run_agent() {
           # curl holds a long-lived HTTP connection; process substitution pipes
           # its output into claude's stdin so each newline-delimited JSON message
           # is delivered as a user turn without needing Docker stdin attach.
+          set +o pipefail
           claude -p \
             --input-format stream-json \
             --output-format stream-json \
@@ -275,8 +279,11 @@ run_agent() {
             < <(curl -4 -sN --no-buffer \
                 "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream") \
             | log_tee
+          AGENT_EXIT_CODE=${PIPESTATUS[0]}
+          set -o pipefail
         else
           # Local Docker path: stdin is attached by ContainerManager.attachStdin.
+          set +o pipefail
           claude -p \
             --input-format stream-json \
             --output-format stream-json \
@@ -284,8 +291,11 @@ run_agent() {
             --dangerously-skip-permissions \
             "${mcp_args[@]}" \
             2>&1 | log_tee
+          AGENT_EXIT_CODE=${PIPESTATUS[0]}
+          set -o pipefail
         fi
       else
+        set +o pipefail
         claude -p "$ACTION_PROMPT" \
           --print \
           --verbose \
@@ -294,14 +304,19 @@ run_agent() {
           --dangerously-skip-permissions \
           "${mcp_args[@]}" \
           2>&1 | log_tee
+        AGENT_EXIT_CODE=${PIPESTATUS[0]}
+        set -o pipefail
       fi
       ;;
     codex)
       local approval_mode="${CODEX_APPROVAL_MODE:-full-auto}"
+      set +o pipefail
       codex \
         --approval-mode "$approval_mode" \
         --prompt "$ACTION_PROMPT" \
         2>&1 | log_tee
+      AGENT_EXIT_CODE=${PIPESTATUS[0]}
+      set -o pipefail
       ;;
     custom)
       if [ -z "$CUSTOM_COMMAND" ]; then
@@ -320,7 +335,10 @@ run_agent() {
         echo "[error] CUSTOM_COMMAND is empty after tokenization" >&2
         exit 1
       fi
+      set +o pipefail
       "${custom_argv[@]}" 2>&1 | log_tee
+      AGENT_EXIT_CODE=${PIPESTATUS[0]}
+      set -o pipefail
       ;;
   esac
 }
