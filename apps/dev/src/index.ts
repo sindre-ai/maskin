@@ -1,15 +1,20 @@
 import './extensions'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
-import { createDb } from '@maskin/db'
+import { createDb, syncAgentServersFromEnv } from '@maskin/db'
+import { sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
+import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { type DevBootstrapResult, maybeBootstrapDev } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { ContainerManager } from './services/container-manager'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { RuntimeTelemetry } from './services/runtime-telemetry'
+import { SessionDispatchQueue } from './services/session-dispatch-queue'
+import { SessionDispatcher } from './services/session-dispatcher'
 import { SessionManager } from './services/session-manager'
 import { TriggerRunner } from './services/trigger-runner'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
@@ -21,6 +26,24 @@ if (!databaseUrl) {
 	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
 const db = createDb(databaseUrl)
+
+// Sync agent-server pool from env on every startup.
+// Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
+try {
+	const synced = await syncAgentServersFromEnv(db, process.env)
+	if (synced.length > 0) {
+		logger.info('Agent servers synced from env', {
+			count: synced.length,
+			urls: synced.map((s) => s.url),
+		})
+	} else if (process.env.NODE_ENV === 'production') {
+		logger.warn('No agent servers configured — set AGENT_SERVERS=url1|secret1,url2|secret2')
+	}
+} catch (err) {
+	logger.error('Failed to sync agent servers from env', {
+		error: err instanceof Error ? err.message : String(err),
+	})
+}
 
 // Real-time: PG NOTIFY → SSE bridge
 // LISTEN/NOTIFY requires a direct (session-mode) connection when using a connection
@@ -55,10 +78,16 @@ try {
 
 const agentStorage = new AgentStorageManager(storageProvider, db)
 
-const sessionManager = new SessionManager(db, storageProvider)
+const runtimeTelemetry = new RuntimeTelemetry({
+	apiKey: process.env.POSTHOG_API_KEY,
+	host: process.env.POSTHOG_HOST,
+})
+
+const sessionManager = new SessionManager(db, storageProvider, runtimeTelemetry)
 sessionManager.setAgentBaseBuildContext(
 	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
 )
+runtimeTelemetry.startGaugeLoop(() => sessionManager.getConcurrencyByAgentServer())
 
 const port = Number(process.env.PORT) || 3000
 
@@ -84,6 +113,46 @@ logger.info('Webhook deliveries cleaner started')
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
+
+// Session dispatch queue absorbs backpressure when no agent-server has
+// capacity and retries failed dispatches. In production the SessionDispatcher
+// is wired as the queue's DispatchFn and SessionManager routes session-start
+// through the queue instead of spawning a local Docker container; outside
+// production the queue stays inert (every tick parks at no-capacity backoff)
+// so local-dev keeps its Docker-based session-manager path unchanged.
+const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: 'no_capacity' }))
+if (process.env.NODE_ENV === 'production') {
+	const dispatcher = new SessionDispatcher({
+		db,
+		buildStartRequest: async (sessionId) => {
+			const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
+			if (!session) return null
+			if (session.status !== 'starting' && session.status !== 'pending') return null
+			const spec = await sessionManager.buildLaunchSpec(session)
+			return {
+				sessionId: session.id,
+				image: spec.image,
+				env: spec.env,
+				memoryMib: spec.memoryMib,
+				cpus: spec.cpus,
+			}
+		},
+	})
+	sessionDispatchQueue.setDispatchFn(dispatcher.dispatch)
+	sessionManager.setDispatchQueue(sessionDispatchQueue)
+	logger.info('Session dispatcher wired for production — sessions route to agent-servers')
+}
+sessionDispatchQueue.start()
+logger.info('Session dispatch queue started')
+
+const shutdown = (signal: string) => {
+	logger.info(`Received ${signal}, shutting down`)
+	sessionDispatchQueue.stop()
+	notifyBridge.stop?.()
+	process.exit(0)
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
 
 logger.info(`Starting server on port ${port}`)
 

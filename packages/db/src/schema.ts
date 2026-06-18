@@ -1,6 +1,7 @@
 import type { AgentState, FileAnnotation, SessionResult } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {
+	type AnyPgColumn,
 	bigint,
 	bigserial,
 	boolean,
@@ -206,6 +207,10 @@ export const sessions = pgTable(
 		triggerId: uuid('trigger_id').references(() => triggers.id, { onDelete: 'set null' }),
 		status: text('status').notNull(),
 		containerId: text('container_id'),
+		// Set by the SessionDispatcher (T6) on a successful production dispatch
+		// to apps/agent-server. NULL for local-dev sessions launched via Docker
+		// directly from session-manager.
+		agentServerId: uuid('agent_server_id').references((): AnyPgColumn => agentServers.id),
 		actionPrompt: text('action_prompt').notNull(),
 		config: jsonb('config').notNull().default({}),
 		interactive: boolean('interactive').notNull().default(false),
@@ -233,6 +238,11 @@ export const sessions = pgTable(
 		index('sessions_actor_completed_idx')
 			.on(t.actorId, t.completedAt)
 			.where(sql`${t.completedAt} IS NOT NULL`),
+		// Hot path for the dispatcher's least-loaded lookup: counts active
+		// sessions grouped by agent_server_id.
+		index('sessions_agent_server_active_idx')
+			.on(t.agentServerId, t.status)
+			.where(sql`${t.agentServerId} IS NOT NULL`),
 	],
 )
 
@@ -572,6 +582,35 @@ export const webhookDeliveries = pgTable(
 	],
 )
 
+// ── Idempotency Records ─────────────────────────────────────────────────────
+// Outbound-side idempotency ledger for the API's `Idempotency-Key` header.
+// Replaces the previous in-memory cache so that a session snapshot + replay
+// (T11/T12 of the session-infra-scale bet) does NOT double-fire side effects:
+// the snapshotted agent re-emits the same tool call with the same derived key,
+// the ledger short-circuits the duplicate and returns the original response.
+//
+// `key` is the cache key (`{actorId|anon}:{idempotency-key-header}`).
+// `actorId` is stored separately so cleanup queries can scope by actor and
+// so the row is interpretable in audit. Anonymous calls (signup) carry NULL.
+// `status` + `response` mirror what the original handler returned; replays
+// re-emit them as-is.
+// `createdAt` drives the 24h sliding TTL — see webhook-deliveries-cleaner.ts
+// for the established cleanup pattern.
+
+export const idempotencyRecords = pgTable(
+	'idempotency_records',
+	{
+		key: text('key').primaryKey(),
+		actorId: uuid('actor_id'),
+		method: text('method').notNull(),
+		path: text('path').notNull(),
+		status: integer('status').notNull(),
+		response: jsonb('response').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('idempotency_records_created_at_idx').on(t.createdAt)],
+)
+
 // ── User Display Settings ───────────────────────────────────────────────────
 //
 // Per-actor, per-workspace, per-object-type display preferences for the
@@ -642,3 +681,69 @@ export const workspaceOnboardingPrompts = pgTable(
 
 export type WorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferSelect
 export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferInsert
+
+// ── Agent Servers ─────────────────────────────────────────────────────────
+//
+// Pool of microsandbox-running hosts. `SessionDispatcher` in apps/dev picks
+// an `active` row with capacity (least-loaded) and routes session-start over
+// HTTPS, using `secret` as the bearer token. v1 seeds one row for the Finland
+// host via env-var-backed `seed-agent-servers.ts`; adding a second host is
+// a single row insert with no code change.
+
+export const agentServers = pgTable(
+	'agent_servers',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		url: text('url').notNull().unique(),
+		secret: text('secret').notNull(),
+		maxConcurrentSessions: integer('max_concurrent_sessions').notNull(),
+		status: text('status').notNull().$type<'active' | 'draining' | 'disabled'>(),
+		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check('agent_servers_status_check', sql`${t.status} IN ('active', 'draining', 'disabled')`),
+	],
+)
+
+export type AgentServer = typeof agentServers.$inferSelect
+export type NewAgentServer = typeof agentServers.$inferInsert
+
+// ── Session Dispatch Attempts ───────────────────────────────────────────────
+//
+// Postgres-backed dispatch queue for session-start calls from apps/dev to
+// apps/agent-server. Absorbs backpressure when no agent-server has capacity
+// and retries failed dispatches with exponential backoff. The same
+// `idempotency_key` is reused across every retry of a given session — the
+// receiver and downstream side-effect layer (per the idempotency middleware)
+// dedupe any double-fire.
+//
+// One row per session_id (UNIQUE). Re-enqueueing the same session is an
+// UPSERT. Status moves pending → row deleted on dispatch, or pending →
+// failed on permanent failure or after max_attempts is exhausted.
+
+export const sessionDispatchAttempts = pgTable(
+	'session_dispatch_attempts',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		sessionId: uuid('session_id')
+			.notNull()
+			.references(() => sessions.id, { onDelete: 'cascade' }),
+		idempotencyKey: text('idempotency_key').notNull(),
+		attempt: integer('attempt').notNull().default(0),
+		maxAttempts: integer('max_attempts').notNull().default(5),
+		status: text('status').notNull().default('pending'),
+		nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+		lastError: text('last_error'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('session_dispatch_attempts_session_id_uniq').on(t.sessionId),
+		check('session_dispatch_attempts_status_check', sql`${t.status} IN ('pending','failed')`),
+		index('session_dispatch_attempts_ready_idx').on(t.status, t.nextAttemptAt),
+	],
+)
+
+export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
+export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
