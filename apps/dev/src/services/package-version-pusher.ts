@@ -1,10 +1,10 @@
 import type { Database } from '@maskin/db'
 import {
+	events,
 	actors,
 	agentFiles,
 	catalogPackageItems,
 	catalogPackages,
-	events,
 	files,
 	imports,
 	installedPackages,
@@ -398,10 +398,7 @@ export class PackageVersionPusher {
 						.update(objects)
 						.set({ createdBy })
 						.where(inArray(objects.createdBy, removedActorIds))
-					await tx
-						.update(files)
-						.set({ createdBy })
-						.where(inArray(files.createdBy, removedActorIds))
+					await tx.update(files).set({ createdBy }).where(inArray(files.createdBy, removedActorIds))
 					await tx
 						.update(imports)
 						.set({ createdBy })

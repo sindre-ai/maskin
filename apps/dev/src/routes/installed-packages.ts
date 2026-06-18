@@ -770,10 +770,7 @@ app.openapi(uninstallPackageRoute, async (c) => {
 				await tx
 					.delete(triggers)
 					.where(
-						or(
-							inArray(triggers.targetActorId, actorIds),
-							inArray(triggers.createdBy, actorIds),
-						),
+						or(inArray(triggers.targetActorId, actorIds), inArray(triggers.createdBy, actorIds)),
 					)
 
 				// Delete session logs for sessions owned by provisioned actors.
