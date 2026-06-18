@@ -29,6 +29,33 @@ describe('Relationships Routes', () => {
 			expect(body.id).toBe(rel.id)
 			expect(body.type).toBe('informs')
 		})
+
+		it('writes the created event with the target object status so triggers can filter on it', async () => {
+			const target = buildObject({ status: 'active' })
+			const source = buildObject({ status: 'clustered' })
+			const rel = buildRelationship({ sourceId: source.id, targetId: target.id })
+			const { app, mockResults, calls } = createTestApp(relationshipsRoutes, '/api/relationships')
+			// First insert: relationship row. Then a select for the two endpoint objects.
+			// Then a second insert: the `created` event for the relationship.
+			mockResults.insertQueue = [[rel], []]
+			mockResults.select = [source, target]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/relationships',
+					buildCreateRelationshipBody({ source_id: source.id, target_id: target.id }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			// First captured insert is the relationship row; second is the event.
+			expect(calls.inserts).toHaveLength(2)
+			const eventValues = calls.inserts[1] as { entityType: string; data: { targetStatus: string } }
+			expect(eventValues.entityType).toBe('relationship')
+			expect(eventValues.data.targetStatus).toBe('active')
+		})
 	})
 
 	describe('GET /api/relationships', () => {
