@@ -61,12 +61,29 @@ const developmentTemplate: WorkspaceTemplate = {
 			insight: 'Insight',
 		},
 		statuses: {
-			bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
+			bet: [
+				'signal',
+				'qualified',
+				'proposed',
+				'active',
+				'completed',
+				'succeeded',
+				'failed',
+				'paused',
+			],
 			task: ['todo', 'in_progress', 'in_review', 'testing', 'done', 'blocked'],
-			insight: ['new', 'processing', 'clustered', 'discarded'],
+			insight: ['new', 'processing', 'clustered', 'scored', 'promoted', 'parked', 'discarded'],
 		},
 		field_definitions: {
-			bet: [{ name: 'github_repo', type: 'text', required: false }],
+			bet: [
+				{ name: 'github_repo', type: 'text', required: false },
+				{
+					name: 'promotion_mode',
+					type: 'enum',
+					required: false,
+					values: ['auto', 'human_approved'],
+				},
+			],
 			task: [{ name: 'github_link', type: 'text', required: false }],
 			insight: [{ name: 'tags', type: 'text', required: false }],
 		},
@@ -130,9 +147,18 @@ const growthTemplate: WorkspaceTemplate = {
 			linkedin_post: 'LinkedIn Post',
 		},
 		statuses: {
-			bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
+			bet: [
+				'signal',
+				'qualified',
+				'proposed',
+				'active',
+				'completed',
+				'succeeded',
+				'failed',
+				'paused',
+			],
 			task: ['todo', 'in_progress', 'done', 'blocked'],
-			insight: ['new', 'processing', 'clustered', 'discarded'],
+			insight: ['new', 'processing', 'clustered', 'scored', 'promoted', 'parked', 'discarded'],
 			linkedin_post: ['draft', 'proposed', 'approved', 'published', 'skipped'],
 		},
 		field_definitions: {
@@ -152,6 +178,12 @@ const growthTemplate: WorkspaceTemplate = {
 				},
 				{ name: 'deadline', type: 'date', required: false },
 				{ name: 'tag', type: 'text', required: false },
+				{
+					name: 'promotion_mode',
+					type: 'enum',
+					required: false,
+					values: ['auto', 'human_approved'],
+				},
 			],
 			task: [
 				{
@@ -285,15 +317,32 @@ const outboundSalesTemplate: WorkspaceTemplate = {
 			deal: 'Deal',
 		},
 		statuses: {
-			bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
+			bet: [
+				'signal',
+				'qualified',
+				'proposed',
+				'active',
+				'completed',
+				'succeeded',
+				'failed',
+				'paused',
+			],
 			task: ['todo', 'in_progress', 'done', 'blocked'],
-			insight: ['new', 'processing', 'clustered', 'discarded'],
+			insight: ['new', 'processing', 'clustered', 'scored', 'promoted', 'parked', 'discarded'],
 			company: ['prospect', 'qualifying', 'qualified', 'customer', 'churned'],
 			contact: ['identified', 'engaged', 'responsive', 'champion', 'inactive'],
 			deal: ['prospecting', 'discovery', 'proposal', 'negotiation', 'closed_won', 'closed_lost'],
 		},
 		field_definitions: {
-			bet: [{ name: 'github_repo', type: 'text', required: false }],
+			bet: [
+				{ name: 'github_repo', type: 'text', required: false },
+				{
+					name: 'promotion_mode',
+					type: 'enum',
+					required: false,
+					values: ['auto', 'human_approved'],
+				},
+			],
 			company: [
 				{ name: 'industry', type: 'text', required: false },
 				{
