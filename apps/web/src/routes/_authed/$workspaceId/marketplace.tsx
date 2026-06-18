@@ -45,13 +45,16 @@ const TYPE_ITEMS: TypeItem[] = [
 	{ value: 'integration', label: 'Integrations' },
 ]
 
-const USE_CASE_ITEMS: UseCaseItem[] = [
-	{ value: 'all', label: 'All' },
-	{ value: 'Discovery', label: 'Discovery' },
-	{ value: 'Sales', label: 'Sales' },
-	{ value: 'Research', label: 'Research' },
-	{ value: 'Lifecycle comms', label: 'Lifecycle comms' },
-]
+function buildUseCaseItems(counts: CatalogPackageCounts | undefined): UseCaseItem[] {
+	const base: UseCaseItem[] = [{ value: 'all', label: 'All' }]
+	if (!counts) return base
+	return [
+		...base,
+		...Object.keys(counts.by_use_case)
+			.sort()
+			.map((key) => ({ value: key, label: key })),
+	]
+}
 
 const SUBHEAD =
 	'Vetted agents, triggers, skills, and integrations — install them on their own, or as packages wired end-to-end.'
@@ -64,6 +67,7 @@ function MarketplacePage() {
 	const { data, isLoading, isError } = useCatalogPackages()
 	const counts = data?.counts
 	const packages = data?.packages ?? []
+	const useCaseItems = useMemo(() => buildUseCaseItems(counts), [counts])
 
 	// Fetch individual items for multi-type packages (bundles) so they can be
 	// shown independently in the Agents / Triggers / etc. sections.
@@ -149,7 +153,7 @@ function MarketplacePage() {
 						kind="type"
 					/>
 					<ChipStrip
-						items={USE_CASE_ITEMS}
+						items={useCaseItems}
 						active={useCaseFilter}
 						onSelect={(v) => setUseCaseFilter(v as UseCaseFilter)}
 						counts={counts}
@@ -172,7 +176,7 @@ function MarketplacePage() {
 						))}
 					</SidebarGroup>
 					<SidebarGroup label="Use case">
-						{USE_CASE_ITEMS.map((item) => (
+						{useCaseItems.map((item) => (
 							<SidebarItem
 								key={item.value}
 								label={item.label}

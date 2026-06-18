@@ -34,9 +34,7 @@ import {
 
 // The install endpoint and this cron must build element rows identically, so
 // the insert builders + wiring helpers live in `package-provisioning` and are
-// shared. Re-exported so the existing test importing `rewriteWiring` from this
-// module keeps working.
-export { rewriteWiring }
+// shared.
 
 const TICK_MS = 60 * 60 * 1000 // 1h
 const STARTUP_DELAY_MS = 90_000 // run once shortly after boot

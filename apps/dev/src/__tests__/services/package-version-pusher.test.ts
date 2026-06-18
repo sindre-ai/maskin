@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PackageVersionPusher, rewriteWiring } from '../../services/package-version-pusher'
+import { rewriteWiring } from '../../services/package-provisioning'
+import { PackageVersionPusher } from '../../services/package-version-pusher'
 import { createTestContext } from '../setup'
 
 // UUID-format IDs used across rewriteWiring tests.
