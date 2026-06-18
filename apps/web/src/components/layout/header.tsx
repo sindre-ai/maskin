@@ -139,9 +139,14 @@ export function Header() {
 		crumbs.push({ label: leafConfig.label, path: leafMatch.pathname })
 	}
 
+	// Leaf label drives the visible mobile title and the a11y <h1>.
+	const pageTitle = crumbs.length > 0 ? crumbs[crumbs.length - 1].label : undefined
+
 	return (
 		<header className="relative flex h-11 shrink-0 items-center gap-2 after:pointer-events-none after:absolute after:top-full after:right-0 after:left-0 after:z-10 after:h-8 after:bg-gradient-to-b after:from-background after:to-transparent after:content-['']">
 			<div className="flex w-full min-w-0 items-center gap-1 px-3 lg:gap-2 lg:px-4">
+				{/* Persistent a11y heading for the current page (all viewports). */}
+				{pageTitle && <h1 className="sr-only">{pageTitle}</h1>}
 				<SidebarTrigger className="md:hidden -ml-1 h-7 w-7 shrink-0" />
 				{crumbs.length > 1 && (
 					<Button
@@ -153,6 +158,15 @@ export function Header() {
 						<ArrowLeft />
 						<span className="sr-only">Go back</span>
 					</Button>
+				)}
+				{/* Visible page title on mobile, where the breadcrumb is hidden. */}
+				{pageTitle && (
+					<span
+						className="md:hidden min-w-0 flex-1 truncate text-sm font-medium"
+						aria-hidden="true"
+					>
+						{pageTitle}
+					</span>
 				)}
 				<div className="hidden md:flex min-w-0 flex-1 items-center gap-1 opacity-0 hover:opacity-100 transition-opacity duration-150 lg:gap-2">
 					{crumbs.length > 1 && (

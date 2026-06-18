@@ -1,15 +1,16 @@
 import { AgentCard, type AgentStatus } from '@/components/agents/agent-card'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FilterTabs } from '@/components/shared/filter-tabs'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { useActors } from '@/hooks/use-actors'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import type { ActorResponse } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
+import { Bot } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
@@ -81,28 +82,18 @@ function AgentsPage() {
 
 			{agents.length === 0 ? (
 				<EmptyState
+					icon={<Bot />}
 					title="No agents in this workspace"
 					description="Create an agent to get started with automation"
 				/>
 			) : (
 				<>
-					<div className="flex gap-1 mb-4">
-						{tabs.map((tab) => (
-							<button
-								key={tab.value}
-								type="button"
-								className={cn(
-									'rounded px-3 py-1 text-sm',
-									statusFilter === tab.value
-										? 'bg-muted text-foreground font-medium'
-										: 'text-muted-foreground hover:text-foreground',
-								)}
-								onClick={() => setStatusFilter(tab.value)}
-							>
-								{tab.label} ({counts[tab.value]})
-							</button>
-						))}
-					</div>
+					<FilterTabs
+						className="mb-4"
+						value={statusFilter}
+						onChange={setStatusFilter}
+						tabs={tabs.map((tab) => ({ ...tab, count: counts[tab.value] }))}
+					/>
 
 					<div className="grid gap-4 md:grid-cols-2">
 						{filtered.map((agent) => (

@@ -103,8 +103,8 @@ describe('AgentsPage', () => {
 			isLoading: false,
 		})
 		render(<AgentsPage />)
-		expect(screen.getByRole('button', { name: /All \(2\)/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Idle \(2\)/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /All\s*2/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Idle\s*2/ })).toBeInTheDocument()
 	})
 
 	it('shows empty state when no agents match filter', async () => {

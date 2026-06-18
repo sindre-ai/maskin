@@ -56,7 +56,7 @@ describe('Header', () => {
 
 		render(<Header />)
 		expect(screen.getByText('Settings')).toBeInTheDocument()
-		expect(screen.getByText('Members')).toBeInTheDocument()
+		expect(screen.getAllByText('Members').length).toBeGreaterThan(0)
 	})
 
 	it('renders a Sindre launcher that opens the panel without navigating', () => {

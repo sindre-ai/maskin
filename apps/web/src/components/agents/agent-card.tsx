@@ -3,6 +3,7 @@ import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
+import { X } from 'lucide-react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
 import { Spinner } from '../ui/spinner'
@@ -27,7 +28,7 @@ export function AgentCard({
 			to="/$workspaceId/agents/$agentId"
 			params={{ workspaceId, agentId: agent.id }}
 			className={cn(
-				'block rounded-lg border bg-card p-4 shadow-md transition-colors hover:border-border-hover',
+				'block rounded-lg border bg-card p-4 shadow-xs transition-colors hover:border-border-hover',
 				status === 'working' && 'border-accent bg-accent/5',
 				status === 'failed' && 'border-error',
 				status === 'idle' && 'border-border',
@@ -90,8 +91,9 @@ function ActivityLine({ status, session }: { status: AgentStatus; session?: Sess
 
 	if (status === 'failed') {
 		return (
-			<p className="text-xs text-error truncate">
-				✕ {session.actionPrompt}
+			<p className="flex items-center gap-1 text-xs text-error truncate">
+				<X className="size-3 shrink-0" />
+				{session.actionPrompt}
 				{session.completedAt && (
 					<>
 						{' · '}

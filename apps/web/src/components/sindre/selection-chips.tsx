@@ -101,7 +101,7 @@ function Chip({ icon, label, onRemove, removeLabel }: ChipProps) {
 				type="button"
 				onClick={onRemove}
 				aria-label={removeLabel}
-				className="-mr-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				className="-mr-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
 			>
 				<X size={10} aria-hidden />
 			</button>

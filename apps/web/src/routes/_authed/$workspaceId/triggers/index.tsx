@@ -59,6 +59,7 @@ function TriggersPage() {
 				<ListSkeleton />
 			) : !triggers?.length ? (
 				<EmptyState
+					icon={<Zap />}
 					title="No triggers yet"
 					description="Triggers automate your workspace by running agents in response to events, schedules, or one-time reminders. Create your first trigger to get started."
 				/>
@@ -107,7 +108,7 @@ function TriggerRow({
 		>
 			<div className="flex flex-col items-center gap-1">
 				<span
-					className={`h-3 w-3 rounded-full shrink-0 ${trigger.enabled ? 'bg-success' : 'bg-zinc-600'}`}
+					className={`h-2 w-2 rounded-full shrink-0 ${trigger.enabled ? 'bg-success' : 'bg-muted-foreground/40'}`}
 				/>
 			</div>
 			<Icon size={15} className="shrink-0 text-muted-foreground" />
@@ -115,7 +116,7 @@ function TriggerRow({
 				<div className="flex items-center gap-2">
 					<p className="text-sm font-medium text-foreground truncate">{trigger.name}</p>
 					{!trigger.enabled && (
-						<span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+						<span className="rounded-full border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
 							Disabled
 						</span>
 					)}

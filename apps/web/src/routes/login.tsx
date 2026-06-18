@@ -81,7 +81,7 @@ function LoginPage() {
 
 				<p className="text-center text-xs text-muted-foreground">
 					Don't have an account?{' '}
-					<Link to="/signup" className="text-primary hover:text-primary-hover">
+					<Link to="/signup" className="text-primary hover:text-primary/80 transition-colors">
 						Sign up
 					</Link>
 				</p>
