@@ -1049,10 +1049,10 @@ interface RawActor {
 	role?: string | null
 	isSystem?: boolean | null
 	description?: string | null
-	systemPrompt?: string | null
+	system_prompt?: string | null
 	tools?: Record<string, unknown> | null
-	llmProvider?: string | null
-	llmConfig?: Record<string, unknown> | null
+	llm_provider?: string | null
+	llm_config?: Record<string, unknown> | null
 }
 
 interface RawWorkspace {
@@ -1083,10 +1083,10 @@ function buildActorHeroCardObject(actor: RawActor, includeDetails = false): Hero
 	}
 	if (includeDetails) {
 		obj.description = actor.description ?? null
-		obj.systemPrompt = actor.systemPrompt ?? null
+		obj.systemPrompt = actor.system_prompt ?? null
 		obj.tools = actor.tools ?? null
-		obj.llmProvider = actor.llmProvider ?? null
-		obj.llmConfig = actor.llmConfig ?? null
+		obj.llmProvider = actor.llm_provider ?? null
+		obj.llmConfig = actor.llm_config ?? null
 	}
 	return obj
 }
