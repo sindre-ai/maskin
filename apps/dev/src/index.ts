@@ -7,11 +7,12 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
-import { type DevBootstrapResult, maybeBootstrapDev } from './lib/dev-bootstrap'
+import { type DevBootstrapResult, maybeBootstrapDev, seedCatalogIfEmpty } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { ContainerManager } from './services/container-manager'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { PackageVersionPusher } from './services/package-version-pusher'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
@@ -114,6 +115,10 @@ const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
 
+const packageVersionPusher = new PackageVersionPusher(db)
+packageVersionPusher.start()
+logger.info('Package version pusher started')
+
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher
 // is wired as the queue's DispatchFn and SessionManager routes session-start
@@ -165,6 +170,7 @@ try {
 			workspaceName: bootstrap.workspaceName,
 		})
 	}
+	await seedCatalogIfEmpty(db)
 } catch (err) {
 	logger.error('Dev bootstrap failed', { error: err instanceof Error ? err.message : String(err) })
 }
