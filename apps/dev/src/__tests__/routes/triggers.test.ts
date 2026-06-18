@@ -98,6 +98,59 @@ describe('Triggers Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
+		it('includes name in DB update set when provided', async () => {
+			const trigger = buildTrigger()
+			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [{ ...trigger, name: 'New Name' }]
+
+			await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { name: 'New Name' }),
+			)
+
+			expect(calls.updates[0]).toHaveProperty('name', 'New Name')
+		})
+
+		it('omits name from DB update set when not provided', async () => {
+			const trigger = buildTrigger()
+			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [trigger]
+
+			await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { enabled: false }),
+			)
+
+			expect(calls.updates[0]).not.toHaveProperty('name')
+		})
+
+		it('includes config in DB update set when provided', async () => {
+			const newConfig = { entity_type: 'task', action: 'updated' }
+			const trigger = buildTrigger()
+			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [{ ...trigger, config: newConfig }]
+
+			await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { config: newConfig }),
+			)
+
+			expect(calls.updates[0]).toHaveProperty('config', newConfig)
+		})
+
+		it('omits config from DB update set when not provided', async () => {
+			const trigger = buildTrigger()
+			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [trigger]
+
+			await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { enabled: false }),
+			)
+
+			expect(calls.updates[0]).not.toHaveProperty('config')
+		})
+
 		it('returns 404 when trigger not found', async () => {
 			const { app } = createTestApp(triggersRoutes, '/api/triggers')
 
