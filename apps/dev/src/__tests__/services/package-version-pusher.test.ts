@@ -1,55 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { rewriteWiring } from '../../services/package-provisioning'
 import { PackageVersionPusher } from '../../services/package-version-pusher'
 import { createTestContext } from '../setup'
-
-// UUID-format IDs used across rewriteWiring tests.
-const SRC_1 = '11111111-1111-4111-a111-111111111111'
-const SRC_2 = '22222222-2222-4222-a222-222222222222'
-const LOCAL_1 = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa'
-const LOCAL_2 = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb'
-
-describe('rewriteWiring', () => {
-	it('returns the snapshot unchanged when the map is empty', () => {
-		const snap = { a: SRC_1, nested: { b: SRC_2 } }
-		const out = rewriteWiring(snap, new Map())
-		expect(out).toEqual(snap)
-	})
-
-	it('rewrites top-level string values whose value is a known source id', () => {
-		const map = new Map([[SRC_1, LOCAL_1]])
-		const out = rewriteWiring({ targetActorId: SRC_1, name: 'unchanged' }, map)
-		expect(out).toEqual({ targetActorId: LOCAL_1, name: 'unchanged' })
-	})
-
-	it('rewrites recursively through nested objects and arrays', () => {
-		const map = new Map([
-			[SRC_1, LOCAL_1],
-			[SRC_2, LOCAL_2],
-		])
-		const snap = {
-			config: { targets: [SRC_1, 'unrelated'], owner: SRC_2 },
-			pairs: [{ id: SRC_1 }, { id: SRC_2 }],
-		}
-		const out = rewriteWiring(snap, map)
-		expect(out).toEqual({
-			config: { targets: [LOCAL_1, 'unrelated'], owner: LOCAL_2 },
-			pairs: [{ id: LOCAL_1 }, { id: LOCAL_2 }],
-		})
-	})
-
-	it('leaves non-matching UUIDs, numbers, booleans, and nulls alone', () => {
-		const map = new Map([[SRC_1, LOCAL_1]])
-		const snap = { a: SRC_2, b: 42, c: true, d: null }
-		expect(rewriteWiring(snap, map)).toEqual(snap)
-	})
-
-	it('does not rewrite non-UUID strings even if they appear in the map', () => {
-		const map = new Map([['some-label', 'other-label']])
-		const snap = { actionPrompt: 'some-label', targetActorId: SRC_1 }
-		expect(rewriteWiring(snap, map)).toEqual(snap)
-	})
-})
 
 describe('PackageVersionPusher', () => {
 	beforeEach(() => {

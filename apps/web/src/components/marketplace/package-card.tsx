@@ -1,9 +1,10 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+import { useInstallPackage } from '@/hooks/use-installed-packages'
 import type { CatalogPackageSummary, InstalledPackageRow } from '@/lib/api'
 import { useState } from 'react'
 import { ForkDialog } from './fork-dialog'
-import { InstallButton } from './install-button'
 import { UninstallDialog } from './uninstall-dialog'
 import { UpdateAvailableBanner } from './update-available-banner'
 
@@ -16,6 +17,7 @@ interface PackageCardProps {
 export function PackageCard({ workspaceId, pkg, install }: PackageCardProps) {
 	const [forkOpen, setForkOpen] = useState(false)
 	const [uninstallOpen, setUninstallOpen] = useState(false)
+	const installPkg = useInstallPackage(workspaceId)
 	const locked = install?.isLocked ?? false
 	const forked = install ? !install.isLocked : false
 	const showUpdateBanner = locked && install?.hasUpdate === true
@@ -61,7 +63,20 @@ export function PackageCard({ workspaceId, pkg, install }: PackageCardProps) {
 
 			<div className="mt-auto flex items-center justify-end gap-2">
 				{!install ? (
-					<InstallButton workspaceId={workspaceId} packageId={pkg.id} />
+					<Button
+						size="sm"
+						disabled={installPkg.isPending}
+						onClick={() => installPkg.mutate({ packageId: pkg.id })}
+					>
+						{installPkg.isPending ? (
+							<>
+								<Spinner className="h-3 w-3" />
+								Installing…
+							</>
+						) : (
+							'Install package'
+						)}
+					</Button>
 				) : (
 					<>
 						{locked && (

@@ -1,7 +1,11 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
-import { DEFAULT_PERIOD_LENGTH_MS, TRIAL_HARD_CAP_DEFAULT_TOKENS, parsePositiveIntEnv } from './billing-defaults'
+import {
+	DEFAULT_PERIOD_LENGTH_MS,
+	TRIAL_HARD_CAP_DEFAULT_TOKENS,
+	parsePositiveIntEnv,
+} from './billing-defaults'
 import { getValidOAuthToken } from './claude-oauth'
 import type { WorkspaceSettings } from './types'
 
@@ -30,7 +34,6 @@ export type LlmRoute =
  * own credentials — capped low via `MASKIN_TRIAL_HARD_CAP_TOKENS`.
  */
 const MASKIN_PLAN_ROUTED_PLANS = new Set(['starter', 'pro', 'trial'])
-
 
 export interface LlmRoutingResult {
 	route: LlmRoute

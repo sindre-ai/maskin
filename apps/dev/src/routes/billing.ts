@@ -16,7 +16,6 @@ import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { createCheckoutSession, getStripeClient, readStripeEnv } from '../lib/stripe'
 
-
 /**
  * Fallback hard caps for paid plans when `billing.hard_cap_tokens` hasn't been
  * populated yet (delayed Stripe webhook, partial state after a webhook
