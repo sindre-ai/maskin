@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -123,6 +123,36 @@ type ApiCallOptions = {
 	idempotencyKey?: string
 }
 
+const MUTATING_METHODS = new Set(['POST', 'PATCH', 'DELETE', 'PUT'])
+
+/**
+ * Derive a deterministic Idempotency-Key from the host session id + the call
+ * shape. When the MCP server runs inside an agent container, `SESSION_ID` is
+ * injected by the host session-manager. A snapshotted session restored later
+ * replays the same tool calls; deriving the key from `(sessionId, method, path,
+ * sha256(body))` means the API ledger short-circuits the duplicate without
+ * the agent having to thread a tool_use_id through.
+ *
+ * Returns `undefined` outside an agent session (no SESSION_ID) so a developer
+ * running the MCP server locally does not accidentally dedup their own retries
+ * across processes.
+ */
+export function deriveIdempotencyKey(
+	method: string,
+	path: string,
+	body: unknown,
+): string | undefined {
+	const sessionId = process.env.SESSION_ID
+	if (!sessionId) return undefined
+	if (!MUTATING_METHODS.has(method)) return undefined
+	const payload = body === undefined ? '' : JSON.stringify(body)
+	const hash = createHash('sha256')
+		.update(`${method}:${path}:${payload}`)
+		.digest('hex')
+		.slice(0, 32)
+	return `mcp:${sessionId}:${hash}`
+}
+
 async function apiFetch(
 	config: McpConfig,
 	method: string,
@@ -148,8 +178,9 @@ async function apiFetch(
 	if (effectiveWorkspaceId) {
 		headers['X-Workspace-Id'] = effectiveWorkspaceId
 	}
-	if (options?.idempotencyKey) {
-		headers['Idempotency-Key'] = options.idempotencyKey
+	const idempotencyKey = options?.idempotencyKey ?? deriveIdempotencyKey(method, path, body)
+	if (idempotencyKey) {
+		headers['Idempotency-Key'] = idempotencyKey
 	}
 
 	const response = await fetch(url, {
