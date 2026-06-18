@@ -134,6 +134,113 @@ describe('DataTable', () => {
 		expect(spinners.length).toBeGreaterThanOrEqual(1)
 	})
 
+	describe('group-header select-all checkbox', () => {
+		it('selects every leaf row in the group when the header checkbox is checked (desktop)', async () => {
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			let selection: RowSelectionState = {}
+			const onRowSelectionChange = vi.fn((updater) => {
+				selection =
+					typeof updater === 'function'
+						? (updater as (s: RowSelectionState) => RowSelectionState)(selection)
+						: updater
+			})
+			renderDataTable({ data, grouping: ['status'], rowSelection: selection, onRowSelectionChange })
+
+			const groupChevron = screen.getByRole('button', { expanded: false })
+			await user.click(groupChevron)
+
+			const groupCheckbox = screen.getByRole('checkbox', { name: /select all in active/i })
+			await user.click(groupCheckbox)
+
+			expect(selection).toEqual({ a: true, b: true })
+		})
+
+		it('clears every leaf row in the group when the header checkbox is unchecked (desktop)', async () => {
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			let selection: RowSelectionState = { a: true, b: true }
+			const onRowSelectionChange = vi.fn((updater) => {
+				selection =
+					typeof updater === 'function'
+						? (updater as (s: RowSelectionState) => RowSelectionState)(selection)
+						: updater
+			})
+			renderDataTable({ data, grouping: ['status'], rowSelection: selection, onRowSelectionChange })
+
+			const groupChevron = screen.getByRole('button', { expanded: false })
+			await user.click(groupChevron)
+
+			const groupCheckbox = screen.getByRole('checkbox', { name: /select all in active/i })
+			expect(groupCheckbox).toHaveAttribute('data-state', 'checked')
+			await user.click(groupCheckbox)
+
+			expect(selection).toEqual({})
+		})
+
+		it('renders the indeterminate state when only some leaf rows are selected (desktop)', () => {
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			renderDataTable({
+				data,
+				grouping: ['status'],
+				rowSelection: { a: true } as RowSelectionState,
+			})
+
+			const groupCheckbox = screen.getByRole('checkbox', { name: /select all in active/i })
+			expect(groupCheckbox).toHaveAttribute('data-state', 'indeterminate')
+		})
+
+		it('does not toggle expansion when the group-header checkbox is clicked (desktop)', async () => {
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			renderDataTable({ data, grouping: ['status'] })
+
+			const groupChevron = screen.getByRole('button', { expanded: false })
+			await user.click(groupChevron)
+
+			const groupCheckbox = screen.getByRole('checkbox', { name: /select all in active/i })
+			await user.click(groupCheckbox)
+
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+			expect(screen.getByText('Beta')).toBeInTheDocument()
+			expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument()
+		})
+
+		it('selects every leaf row in the group when the header checkbox is checked (mobile)', async () => {
+			mockIsMobile.mockReturnValue(true)
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			let selection: RowSelectionState = {}
+			const onRowSelectionChange = vi.fn((updater) => {
+				selection =
+					typeof updater === 'function'
+						? (updater as (s: RowSelectionState) => RowSelectionState)(selection)
+						: updater
+			})
+			renderDataTable({ data, grouping: ['status'], rowSelection: selection, onRowSelectionChange })
+
+			const groupCheckbox = screen.getByRole('checkbox', { name: /select all in active/i })
+			await user.click(groupCheckbox)
+
+			expect(selection).toEqual({ a: true, b: true })
+		})
+	})
+
 	describe('mobile (below md)', () => {
 		beforeEach(() => {
 			mockIsMobile.mockReturnValue(true)
