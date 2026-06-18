@@ -642,3 +642,98 @@ export const workspaceOnboardingPrompts = pgTable(
 
 export type WorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferSelect
 export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferInsert
+
+// ── Conversations ───────────────────────────────────────────────────────────
+//
+// A conversation groups a sequence of messages exchanged between actors
+// (human + agent) inside a workspace. Used by Maskin Chat as the durable
+// store the SSE message stream is replayed against.
+
+export const conversations = pgTable(
+	'conversations',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		title: text('title'),
+		metadata: jsonb('metadata').notNull().default({}),
+		createdBy: uuid('created_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('conversations_ws_updated_at_idx').on(t.workspaceId, t.updatedAt)],
+)
+
+export type Conversation = typeof conversations.$inferSelect
+export type NewConversation = typeof conversations.$inferInsert
+
+// ── Messages ────────────────────────────────────────────────────────────────
+//
+// Append-only message rows under a conversation. `parts` carries the Pulse-
+// style structured content blocks (text, tool_use, tool_result, thinking) so
+// streaming UIs can render granular updates; `content` is a plain-text
+// fallback for legacy consumers. `parent_message_id` lets agent replies link
+// back to the user turn that triggered them.
+
+export const messages = pgTable(
+	'messages',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		conversationId: uuid('conversation_id')
+			.notNull()
+			.references(() => conversations.id, { onDelete: 'cascade' }),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id),
+		role: text('role').notNull(),
+		content: text('content').notNull().default(''),
+		parts: jsonb('parts').notNull().default([]),
+		// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
+		parentMessageId: uuid('parent_message_id').references((): any => messages.id, {
+			onDelete: 'cascade',
+		}),
+		metadata: jsonb('metadata').notNull().default({}),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('messages_conversation_created_at_idx').on(t.conversationId, t.createdAt),
+		index('messages_parent_idx').on(t.parentMessageId),
+	],
+)
+
+export type Message = typeof messages.$inferSelect
+export type NewMessage = typeof messages.$inferInsert
+
+// ── Conversation Participants ───────────────────────────────────────────────
+//
+// Joins actors to conversations. `last_read_message_id` tracks per-actor read
+// state for unread badges. `left_at` is nullable — a NULL row is an active
+// member; setting it preserves history without delete.
+
+export const conversationParticipants = pgTable(
+	'conversation_participants',
+	{
+		conversationId: uuid('conversation_id')
+			.notNull()
+			.references(() => conversations.id, { onDelete: 'cascade' }),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		role: text('role').notNull().default('member'),
+		lastReadMessageId: uuid('last_read_message_id'),
+		joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+		leftAt: timestamp('left_at', { withTimezone: true }),
+	},
+	(t) => [
+		primaryKey({ columns: [t.conversationId, t.actorId] }),
+		index('conversation_participants_actor_idx').on(t.actorId),
+	],
+)
+
+export type ConversationParticipant = typeof conversationParticipants.$inferSelect
+export type NewConversationParticipant = typeof conversationParticipants.$inferInsert
