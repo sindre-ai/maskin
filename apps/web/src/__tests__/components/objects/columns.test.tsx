@@ -156,4 +156,38 @@ describe('getStaticColumns', () => {
 		await user.click(screen.getByRole('button', { name: /title/i }))
 		expect(onSort).toHaveBeenCalledWith('title')
 	})
+
+	// iOS HIG requires a 44×44pt minimum tap target. jsdom doesn't run Tailwind so we
+	// assert on the sizing classes rather than computed pixels — `min-h-11` / `min-w-11`
+	// resolve to 44px at the default root font size.
+	it('wraps header + row checkboxes in a ≥44px tap target', () => {
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const data = [buildObjectResponse()]
+		render(<TestTable data={data} columns={columns} />)
+
+		const headerTarget = screen.getByTestId('select-all-tap-target')
+		const rowTarget = screen.getByTestId('select-row-tap-target')
+
+		for (const target of [headerTarget, rowTarget]) {
+			expect(target.className).toMatch(/min-h-11/)
+			expect(target.className).toMatch(/min-w-11/)
+		}
+	})
+
+	it('tap target click does not bubble to ancestor row handler', async () => {
+		const user = userEvent.setup()
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const data = [buildObjectResponse({ id: 'row-1' })]
+		const rowClick = vi.fn()
+
+		render(
+			// biome-ignore lint/a11y/useKeyWithClickEvents: test scaffold for click propagation
+			<div onClick={rowClick}>
+				<TestTable data={data} columns={columns} />
+			</div>,
+		)
+
+		await user.click(screen.getByTestId('select-row-tap-target'))
+		expect(rowClick).not.toHaveBeenCalled()
+	})
 })
