@@ -56,13 +56,14 @@ describe('Header', () => {
 
 		render(<Header />)
 		expect(screen.getByText('Settings')).toBeInTheDocument()
-		expect(screen.getByText('Members')).toBeInTheDocument()
+		// "Members" appears in both the breadcrumb leaf and the sr-only <h1>.
+		expect(screen.getAllByText('Members').length).toBeGreaterThanOrEqual(1)
 	})
 
 	it('renders a Sindre launcher that opens the panel without navigating', () => {
 		setSindreOpen.mockClear()
 		render(<Header />)
-		const launcher = screen.getByRole('button', { name: /open sindre/i })
+		const launcher = screen.getByRole('button', { name: /ask sindre/i })
 		fireEvent.click(launcher)
 		expect(setSindreOpen).toHaveBeenCalledWith(true)
 	})

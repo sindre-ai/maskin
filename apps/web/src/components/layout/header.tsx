@@ -11,8 +11,10 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuLabel,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { usePageHeader } from '@/lib/page-header-context'
 import { useSindre } from '@/lib/sindre-context'
@@ -142,6 +144,9 @@ export function Header() {
 	return (
 		<header className="relative flex h-11 shrink-0 items-center gap-2 after:pointer-events-none after:absolute after:top-full after:right-0 after:left-0 after:z-10 after:h-8 after:bg-gradient-to-b after:from-background after:to-transparent after:content-['']">
 			<div className="flex w-full min-w-0 items-center gap-1 px-3 lg:gap-2 lg:px-4">
+				{/* Single document-level heading for the active page. Visible title
+				    is the breadcrumb leaf; this keeps a real <h1> in the a11y tree. */}
+				{leafConfig && <h1 className="sr-only">{leafConfig.label}</h1>}
 				<SidebarTrigger className="md:hidden -ml-1 h-7 w-7 shrink-0" />
 				{crumbs.length > 1 && (
 					<Button
@@ -154,12 +159,15 @@ export function Header() {
 						<span className="sr-only">Go back</span>
 					</Button>
 				)}
-				<div className="hidden md:flex min-w-0 flex-1 items-center gap-1 opacity-0 hover:opacity-100 transition-opacity duration-150 lg:gap-2">
+				{/* Persistent location: the breadcrumb is the page's primary
+				    wayfinding + visible title, so it stays visible at rest. Only the
+				    secondary back button is hover-revealed on desktop. */}
+				<div className="group/crumbs hidden md:flex min-w-0 flex-1 items-center gap-1 lg:gap-2">
 					{crumbs.length > 1 && (
 						<Button
 							variant="ghost"
 							size="icon"
-							className="-ml-1 h-7 w-7"
+							className="-ml-1 h-7 w-7 opacity-60 transition-opacity hover:opacity-100 focus-visible:opacity-100 group-hover/crumbs:opacity-100"
 							onClick={() => router.history.back()}
 						>
 							<ArrowLeft />
@@ -192,14 +200,18 @@ export function Header() {
 				</div>
 				<div className="ml-auto flex shrink-0 items-center gap-2">
 					{actions}
+					{/* Divider keeps page-specific actions visually distinct from the
+					    always-present global create / Sindre controls. */}
+					{actions && <Separator orientation="vertical" className="h-5" />}
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
-							<Button variant="ghost" size="icon" className="h-7 w-7">
+							<Button variant="ghost" size="icon" className="h-7 w-7" title="Create new…">
 								<Plus size={15} />
 								<span className="sr-only">Create new</span>
 							</Button>
 						</DropdownMenuTrigger>
 						<DropdownMenuContent align="end">
+							<DropdownMenuLabel>Create new</DropdownMenuLabel>
 							{createItems.map((item) => {
 								const Icon = item.icon
 								return (
@@ -219,7 +231,8 @@ export function Header() {
 						size="icon"
 						className="h-7 w-7"
 						onClick={() => setSindreOpen(true)}
-						aria-label="Open Sindre"
+						title="Ask Sindre"
+						aria-label="Ask Sindre"
 					>
 						<Sparkles size={15} />
 					</Button>

@@ -61,6 +61,31 @@ const PAGE_SIZE = 50
 const BOARD_PAGE_SIZE = 20
 const BOARD_MANUAL_SORT = 'boardOrder'
 
+function FilterChip({
+	label,
+	value,
+	onClear,
+}: {
+	label: string
+	value: string
+	onClear: () => void
+}) {
+	return (
+		<span className="inline-flex items-center gap-1.5 rounded-md border bg-muted/40 py-0.5 pl-2 pr-1 text-xs">
+			<span className="text-muted-foreground">{label}:</span>
+			<span className="font-medium">{value}</span>
+			<button
+				type="button"
+				onClick={onClear}
+				aria-label={`Clear ${label.toLowerCase()} filter`}
+				className="rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
+			>
+				<X className="h-3 w-3" />
+			</button>
+		</span>
+	)
+}
+
 function ObjectsPage() {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
@@ -413,6 +438,21 @@ function ObjectsPage() {
 		updateSearch({ ids: undefined })
 	}, [updateSearch])
 
+	// Create a fresh object and drop the user straight into its detail page,
+	// which persists once a type + title are chosen (matches the global "+" menu).
+	const handleNewObject = useCallback(() => {
+		navigate({
+			to: '/$workspaceId/objects/$objectId',
+			params: { workspaceId, objectId: crypto.randomUUID() },
+		})
+	}, [navigate, workspaceId])
+
+	// Human-readable label for the active driver filter (falls back to the id).
+	const driverFilterName = useMemo(() => {
+		if (!driverFilter) return undefined
+		return actors?.find((a) => a.id === driverFilter)?.name ?? driverFilter
+	}, [driverFilter, actors])
+
 	const bulkOwnerOptions = useMemo(
 		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),
 		[actors],
@@ -701,7 +741,39 @@ function ObjectsPage() {
 				}}
 				boardSupported={boardSupported}
 				onImportClick={() => setImportOpen(true)}
+				onNewClick={handleNewObject}
 			/>
+
+			{/* Active filter chips: surface status/driver filters (set inside the
+			    Display panel) so it's obvious at a glance why the list is scoped,
+			    each individually dismissible. */}
+			{(statusFilter || driverFilter) && (
+				<div className="flex flex-wrap items-center gap-2 mb-3">
+					<span className="text-xs text-muted-foreground">Filters</span>
+					{statusFilter && (
+						<FilterChip
+							label="Status"
+							value={statusFilter.replace(/_/g, ' ')}
+							onClear={() => updateSearch({ status: undefined })}
+						/>
+					)}
+					{driverFilter && (
+						<FilterChip
+							label="Driver"
+							value={driverFilterName ?? driverFilter}
+							onClear={() => updateSearch({ driver: undefined })}
+						/>
+					)}
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+						onClick={() => updateSearch({ status: undefined, driver: undefined })}
+					>
+						Clear all
+					</Button>
+				</div>
+			)}
 
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
 

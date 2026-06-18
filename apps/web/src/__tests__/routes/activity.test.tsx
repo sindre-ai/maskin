@@ -54,7 +54,7 @@ describe('ActivityPage', () => {
 
 	it('renders desktop filter tabs', () => {
 		render(<ActivityPage />)
-		expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: 'All' })).toBeInTheDocument()
 	})
 
 	it('passes filter to ActivityFeed', () => {
@@ -67,8 +67,8 @@ describe('ActivityPage', () => {
 	it('calls navigate with filter on tab click', async () => {
 		const user = userEvent.setup()
 		render(<ActivityPage />)
-		const decisionButton = screen.getByRole('button', { name: 'Decision' })
-		await user.click(decisionButton)
+		const decisionTab = screen.getByRole('tab', { name: 'Decision' })
+		await user.click(decisionTab)
 		expect(mockNavigate).toHaveBeenCalled()
 	})
 })

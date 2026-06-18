@@ -1,9 +1,9 @@
+import { FilterTabs } from '@/components/shared/filter-tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { ActorListItem } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
-import { Search, Upload } from 'lucide-react'
+import { Plus, Search, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ColumnInfo } from './data-table-controls'
 import { DisplayPanel, type DisplayPanelView } from './display-panel'
@@ -45,6 +45,8 @@ interface DataTableToolbarProps {
 	boardSupported?: boolean
 	// Import
 	onImportClick: () => void
+	// Create
+	onNewClick?: () => void
 }
 
 export function DataTableToolbar({
@@ -73,6 +75,7 @@ export function DataTableToolbar({
 	onViewChange,
 	boardSupported,
 	onImportClick,
+	onNewClick,
 }: DataTableToolbarProps) {
 	const [localSearch, setLocalSearch] = useState(search ?? '')
 	const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -94,68 +97,71 @@ export function DataTableToolbar({
 	}
 
 	return (
-		<div className="flex items-center gap-2 md:gap-3 mb-4 flex-wrap">
-			{/* Type tabs */}
-			<div className="flex gap-1 overflow-x-auto">
-				{tabs.map((tab) => (
-					<button
-						key={tab.label}
-						type="button"
-						className={cn(
-							'rounded px-3 py-1 text-sm whitespace-nowrap transition-colors',
-							typeFilter === tab.value
-								? 'bg-muted text-foreground font-medium'
-								: 'text-muted-foreground hover:text-foreground',
-						)}
-						onClick={() => onTypeFilterChange(tab.value)}
-					>
-						{tab.label}
-					</button>
-				))}
-			</div>
-
-			{/* Search */}
-			<div className="relative flex-1 min-w-0 max-w-full sm:max-w-xs">
-				<Search
-					size={14}
-					className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
-				/>
-				<Input
-					value={localSearch}
-					onChange={(e) => handleSearchChange(e.target.value)}
-					placeholder="Search..."
-					className="h-8 pl-8 text-sm"
-				/>
-			</div>
-
-			{/* Display panel */}
-			<DisplayPanel
-				view={view}
-				onViewChange={onViewChange}
-				boardSupported={boardSupported}
-				columns={columns}
-				columnVisibility={columnVisibility}
-				onColumnVisibilityChange={onColumnVisibilityChange}
-				statusFilter={statusFilter}
-				onStatusFilterChange={onStatusFilterChange}
-				statusesByType={statusesByType}
-				driverFilter={driverFilter}
-				onDriverFilterChange={onDriverFilterChange}
-				actors={actors}
-				onResetFilters={onResetFilters}
-				sort={sort}
-				onSortChange={onSortChange}
-				order={order}
-				onOrderChange={onOrderChange}
-				groupBy={groupBy}
-				onGroupByChange={onGroupByChange}
+		<div className="mb-4 flex flex-col gap-3">
+			{/* Type tabs — navigation between object types. Kept on their own row so
+			    they read as "which collection am I in", separate from the
+			    refinement controls below. */}
+			<FilterTabs
+				aria-label="Object type"
+				tabs={tabs}
+				value={typeFilter}
+				onChange={onTypeFilterChange}
 			/>
 
-			{/* Import */}
-			<Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={onImportClick}>
-				<Upload size={14} />
-				Import
-			</Button>
+			{/* Refinement + actions row: search and display options refine the
+			    current collection; the action group is right-aligned with the
+			    primary "New" affordance leading. */}
+			<div className="flex items-center gap-2 md:gap-3 flex-wrap">
+				{/* Search */}
+				<div className="relative flex-1 min-w-0 max-w-full sm:max-w-xs">
+					<Search
+						size={14}
+						className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+					/>
+					<Input
+						value={localSearch}
+						onChange={(e) => handleSearchChange(e.target.value)}
+						placeholder="Search..."
+						className="h-8 pl-8 text-sm"
+					/>
+				</div>
+
+				{/* Display panel */}
+				<DisplayPanel
+					view={view}
+					onViewChange={onViewChange}
+					boardSupported={boardSupported}
+					columns={columns}
+					columnVisibility={columnVisibility}
+					onColumnVisibilityChange={onColumnVisibilityChange}
+					statusFilter={statusFilter}
+					onStatusFilterChange={onStatusFilterChange}
+					statusesByType={statusesByType}
+					driverFilter={driverFilter}
+					onDriverFilterChange={onDriverFilterChange}
+					actors={actors}
+					onResetFilters={onResetFilters}
+					sort={sort}
+					onSortChange={onSortChange}
+					order={order}
+					onOrderChange={onOrderChange}
+					groupBy={groupBy}
+					onGroupByChange={onGroupByChange}
+				/>
+
+				<div className="ml-auto flex items-center gap-2">
+					{/* Import is a secondary, occasional task. */}
+					<Button variant="ghost" size="sm" className="gap-1.5" onClick={onImportClick}>
+						<Upload size={14} />
+						Import
+					</Button>
+					{/* Primary creation affordance lives on the page it acts on. */}
+					<Button size="sm" className="gap-1.5" onClick={onNewClick}>
+						<Plus size={14} />
+						New
+					</Button>
+				</div>
+			</div>
 		</div>
 	)
 }
