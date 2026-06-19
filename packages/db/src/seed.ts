@@ -732,7 +732,7 @@ if (pkgPlannerPkg) {
 1. **Primary:** The Bet Strategist @mentions you after recording \`## Chosen direction\` in the bet description.
 2. **Fallback:** A trigger fires on \`define\` status, or the Workspace Driver rescues an orphaned bet.
 
-The GitHub repo: https://github.com/sindre-ai/maskin
+The GitHub repo is stored in the workspace settings under \`metadata.github_repo\`. Read the workspace via get_workspace_schema to find the repo URL.
 
 ## THE ONE NON-NEGOTIABLE RULE: NOTHING IS EVER BLOCKED
 
@@ -769,7 +769,7 @@ Understand the bet's title, description, goal, and \`## Chosen direction\`. Chec
 
 ## Step 2: Explore the codebase
 
-Browse https://github.com/sindre-ai/maskin to understand the tech stack, project structure, and which files the chosen direction will touch. This makes tasks specific and grounded in actual code.
+Browse the workspace's GitHub repo (read \`metadata.github_repo\` from the workspace via get_workspace_schema) to understand the tech stack, project structure, and which files the chosen direction will touch. This makes tasks specific and grounded in actual code.
 
 ## Step 3: Create tasks — in numerical order
 
@@ -888,18 +888,6 @@ After planning, post a comment on the bet (do NOT @mention anyone) summarising: 
 								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
 							},
 						},
-						'github-sindre-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
-						'github-vaerksted-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
 					},
 				},
 			},
@@ -1008,7 +996,7 @@ Read the parent bet (via \`breaks_into\` relationship). If the bet status is NOT
 ## Step 1: Read context
 
 1. Read the task — title, description, DoD, sequence number.
-2. Read the parent bet — goal, \`## Chosen direction\`, repo (\`metadata.github_repo\` or infer from context). The canonical repo is https://github.com/sindre-ai/maskin unless the bet says otherwise.
+2. Read the parent bet — goal, \`## Chosen direction\`, repo (\`metadata.github_repo\` or infer from context). The canonical repo is in the workspace's \`metadata.github_repo\` field (read via get_workspace_schema). If the bet's \`metadata.github_repo\` overrides this, use that instead.
 3. Read earlier-numbered tasks for context (their PRs/branches if available). Do not wait for them — proceed with best available context.
 4. Load \`writing-standards\` and any bet-specific skills via get_workspace_skill.
 
@@ -1076,18 +1064,6 @@ Move the task to \`in_review\`. The Code Reviewer trigger fires automatically.
 						playwright: {
 							env: {},
 							args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
-						'github-sindre-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
-						'github-vaerksted-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
 						},
@@ -1181,7 +1157,7 @@ Read the parent bet for strategic context. Read linked insights for why this bet
 
 ## Step 2: Research the codebase
 
-Browse https://github.com/sindre-ai/maskin — specifically the files and patterns the decision will affect. Understand existing conventions, abstractions, and constraints before proposing anything.
+Browse the workspace's GitHub repo (read \`metadata.github_repo\` from the workspace via get_workspace_schema) — specifically the files and patterns the decision will affect. Understand existing conventions, abstractions, and constraints before proposing anything.
 
 ## Step 3: Evaluate options
 
@@ -1236,18 +1212,6 @@ Do NOT move the task to any other status. The human approves by replying. The Wo
 								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
 							},
 						},
-						'github-sindre-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
-						'github-vaerksted-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
 					},
 				},
 			},
@@ -1272,10 +1236,10 @@ Do NOT move the task to any other status. The human approves by replying. The Wo
 Read the task via get_objects, follow your system prompt to research the codebase and post a concrete architectural proposal, then move the task to \`in_review\`.
 
 **After moving to \`in_review\`, you MUST post a comment on the task:**
-- mentions: ["08964c08-4ea5-45b0-bfa9-251f956909c7"]
-- content: "@Magnus architecture proposal above — reply with \`architecture approved\` to proceed, or leave feedback and I'll iterate."
+- mentions: []
+- content: "@workspace-owner architecture proposal above — reply with \`architecture approved\` to proceed, or leave feedback and I'll iterate."
 
-Do NOT mark the task \`done\`. Do NOT @mention the Strategist to proceed. Magnus (08964c08-4ea5-45b0-bfa9-251f956909c7) is the sole decision-maker on architecture tasks. The task stays in \`in_review\` until he explicitly approves.
+Do NOT mark the task \`done\`. Do NOT @mention the Strategist to proceed. The workspace owner is the sole decision-maker on architecture tasks. Look up workspace members to find the owner actor ID for @mentions. The task stays in \`in_review\` until he explicitly approves.
 
 Triggering event: {triggering_event}`,
 				targetActorId: DEV_ACTOR_ARCHITECT,
@@ -1321,7 +1285,7 @@ Read the parent bet for context. If there's a linked \`copy\` task, read it for 
 
 ## Step 2: Research the design system
 
-Browse https://github.com/sindre-ai/maskin — specifically \`apps/web/src/components/\` to understand the existing component library, design tokens, and patterns. Your prototype must use the real Tailwind tokens and Radix/shadcn components, not invented styles.
+Browse the workspace's GitHub repo (read \`metadata.github_repo\` from the workspace via get_workspace_schema) — specifically the component library directory, design tokens, and patterns. Your prototype must use the actual tokens and components from that codebase, not invented styles.
 
 Use the Exa search tool to find inspiration and best-in-class examples of the pattern you're designing, if helpful.
 
@@ -1381,18 +1345,6 @@ Do NOT move the task to any other status.
 							type: 'stdio' as const,
 							command: 'npx',
 						},
-						'github-sindre-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
-						'github-vaerksted-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
 					},
 				},
 			},
@@ -1417,10 +1369,10 @@ Do NOT move the task to any other status.
 Read the task via get_objects, follow your system prompt to study SaaS patterns, produce an HTML mockup, and post a concrete UX proposal, then move the task to \`in_review\`.
 
 **After moving to \`in_review\`, you MUST post a comment on the task:**
-- mentions: ["3e16ed51-e5e1-4b87-959f-7eda01b21bea"]
-- content: "@Sebk design proposal above — reply with \`direction [N] approved\` to proceed, or leave feedback and I'll iterate."
+- mentions: []
+- content: "@workspace-owner design proposal above — reply with \`direction [N] approved\` to proceed, or leave feedback and I'll iterate."
 
-Do NOT mark the task \`done\`. Do NOT @mention the Strategist to proceed. Sebastian (3e16ed51-e5e1-4b87-959f-7eda01b21bea) is the sole decision-maker on UX tasks. The task stays in \`in_review\` until he explicitly approves a direction.
+Do NOT mark the task \`done\`. Do NOT @mention the Strategist to proceed. The workspace owner is the sole decision-maker on UX tasks. Look up workspace members to find the owner actor ID for @mentions. The task stays in \`in_review\` until he explicitly approves a direction.
 
 Triggering event: {triggering_event}`,
 				targetActorId: DEV_ACTOR_DESIGNER,
@@ -1521,18 +1473,6 @@ Do NOT move the task to any other status.
 							type: 'stdio' as const,
 							command: 'npx',
 						},
-						'github-sindre-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
-						'github-vaerksted-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
 					},
 				},
 			},
@@ -1557,10 +1497,10 @@ Do NOT move the task to any other status.
 Read the task via get_objects, follow your system prompt to ground in what actually shipped (read the bet, tasks, and PRs), draft the customer-facing copy, and post a concrete proposal, then move the task to \`in_review\`.
 
 **After moving to \`in_review\`, you MUST post a comment on the task:**
-- mentions: ["3e16ed51-e5e1-4b87-959f-7eda01b21bea"]
-- content: "@Sebk copy proposal above — reply with \`copy approved\` to proceed, or leave feedback and I'll iterate."
+- mentions: []
+- content: "@workspace-owner copy proposal above — reply with \`copy approved\` to proceed, or leave feedback and I'll iterate."
 
-Do NOT mark the task \`done\`. Do NOT @mention the Strategist to proceed. Sebastian (3e16ed51-e5e1-4b87-959f-7eda01b21bea) is the sole decision-maker on copy tasks. The task stays in \`in_review\` until he explicitly approves.
+Do NOT mark the task \`done\`. Do NOT @mention the Strategist to proceed. The workspace owner is the sole decision-maker on copy tasks. Look up workspace members to find the owner actor ID for @mentions. The task stays in \`in_review\` until he explicitly approves.
 
 Triggering event: {triggering_event}`,
 				targetActorId: DEV_ACTOR_PRODUCT_MARKETER,
@@ -1677,18 +1617,6 @@ If checks cannot be fixed (e.g. requires domain knowledge you don't have): post 
 								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
 							},
 						},
-						'github-sindre-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
-						'github-vaerksted-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
 					},
 				},
 			},
@@ -1760,7 +1688,7 @@ If no exit hit, re-score:
    - If band is unchanged or moved DOWN: exit silently. Task continues on its current path.
    - If band moved UP (e.g., AUTO-APPROVE ELIGIBLE → AGENT RECOMMENDS HUMAN, or AGENT RECOMMENDS HUMAN → TWO-HUMAN REQUIRED): post a comment on the task via create_comment:
      - entity_id: <task_id>
-     - mentions: ["3e16ed51-e5e1-4b87-959f-7eda01b21bea", "08964c08-4ea5-45b0-bfa9-251f956909c7"]
+     - mentions: []
      - content: "⚠️ Risk band increased after push: <old band> → <new band>. Top new risk signals: [list]. PR: [url]. Reply by @mentioning me with: \`approved\` (to continue at new band) · \`block-two-human\` (if a second human reviewer is required)"
    - If the task was already at \`testing\` and the band moved up: ALSO move the task back to \`in_review\` so the Acceptance Validator doesn't validate against the now-stale prior pass.
 
@@ -1874,18 +1802,6 @@ If an architecture was approved: does the implementation follow the chosen ADR?
 							type: 'stdio' as const,
 							command: 'npx',
 						},
-						'github-sindre-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
-						'github-vaerksted-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
 					},
 				},
 			},
@@ -1910,7 +1826,7 @@ Read the task's \`metadata.review_round_trips\` (default 0). This counter increm
   - Idempotency: call get_comments on this task. If a comment from you (actor 4c1a09da-dca8-4972-8a6f-68717197ffe3) with "Validation loop hit 3-bounce limit" already exists in the last 48h, exit silently.
   - Otherwise post a comment via create_comment:
     - entity_id: <task_id>
-    - mentions: ["3e16ed51-e5e1-4b87-959f-7eda01b21bea", "08964c08-4ea5-45b0-bfa9-251f956909c7"]
+    - mentions: []
     - content: "🔴 Validation loop hit 3-bounce limit — human decision needed. The CTO has failed validation 3 times on the same commit. [Brief summary of why — pull from the most recent \`## CTO FAIL\` section of the task content]. PR: [github_link from metadata]. Reply by @mentioning me with: \`force-done\` (to accept and mark done, bypassing further CTO validation) · \`rework\` (to send back to dev for a fresh approach)"
   - Exit. Do NOT update task status. Do NOT increment any counter.
 
@@ -2026,18 +1942,6 @@ If all tasks are done:
 							type: 'stdio' as const,
 							command: 'npx',
 						},
-						'github-sindre-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
-						'github-vaerksted-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
 					},
 				},
 			},
@@ -2069,7 +1973,7 @@ Read the task, find its parent bet via \`breaks_into\`. If there is no parent be
 
 On any block (wrong band, missing Risk Score block, dirty PR, open threads, rejected approve, rejected merge): leave the bet \`active\` and post a comment on the bet via create_comment:
 - entity_id: <bet_id>
-- mentions: ["3e16ed51-e5e1-4b87-959f-7eda01b21bea", "08964c08-4ea5-45b0-bfa9-251f956909c7"]
+- mentions: []
 - content: "🔴 Auto-merge blocked: [specific reason]. PR: [url]. Risk band: [band]. Reply by @mentioning me with: \`manual-merge\` (I'll handle the merge manually) · \`reopen\` (to send the task back to dev)"
 
 Respect your idempotency rules.
@@ -2186,18 +2090,6 @@ When a \`decision_type: ux\` or \`decision_type: architecture\` task moves to \`
 						playwright: {
 							env: {},
 							args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
-						'github-sindre-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
-						'github-vaerksted-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
 						},
@@ -2374,7 +2266,7 @@ Status changes are NOT natively blocking — by the time you fire, the bet is in
 
 5. **If FAIL:** post a comment on the bet via create_comment:
    - entity_id: <bet_id>
-   - mentions: [<bet's createdBy UUID>, "3e16ed51-e5e1-4b87-959f-7eda01b21bea"]
+   - mentions: [<bet's createdBy UUID>]
    - content: "🔴 Measurement gate failed. [List of failed rules and what's missing]. Reply by @mentioning me with: \`revert\` (to go back to active and fix) · \`override\` (if the rule genuinely doesn't apply — state your reason)"
    Then stop.
 
@@ -2384,7 +2276,7 @@ Status changes are NOT natively blocking — by the time you fire, the bet is in
 
    b. Compute the **review date** = today + live-period length (round to a calendar date). Record on the bet via ONE update_objects call: \`live_started_at = today\`, \`review_date = <computed date>\`, and — extracted from the description if not already set — \`posthog_query\`, \`metric_baseline\`, \`metric_target\`, \`kill_threshold\`. These structured fields are what the Product Analyst's daily measurement sweep reads. Prose alone is not measurable; do not skip this.
 
-   b2. **Hand off to the Product Analyst for verification.** Spawn a session for the Product Analyst (actor ID: \`21cce128-9c80-4ebe-982f-41c82820c6aa\`) via create_session with auto_start: true. Action prompt: "A bet just went live and needs measurement verification. Bet ID: {bet_id}. Load maskin-voice and bet-measurement. Verify that metadata.posthog_query resolves in PostHog, and confirm or correct metadata.metric_baseline against live data. Post one short comment with the verified baseline, the query used, and the time window. If the metric is NOT instrumented in PostHog, post a comment @mentioning Sebastian (3e16ed51-e5e1-4b87-959f-7eda01b21bea) and the Strategist (c524aac2-4373-485b-b709-bbb4eb2d021e): the bet is live but unmeasurable until the metric is instrumented or the query corrected." Do not block on completion.
+   b2. **Hand off to the Product Analyst for verification.** Spawn a session for the Product Analyst (actor ID: \`21cce128-9c80-4ebe-982f-41c82820c6aa\`) via create_session with auto_start: true. Action prompt: "A bet just went live and needs measurement verification. Bet ID: {bet_id}. Load maskin-voice and bet-measurement. Verify that metadata.posthog_query resolves in PostHog, and confirm or correct metadata.metric_baseline against live data. Post one short comment with the verified baseline, the query used, and the time window. If the metric is NOT instrumented in PostHog, post a comment @mentioning the workspace owner and the Strategist: the bet is live but unmeasurable until the metric is instrumented or the query corrected." Do not block on completion.
 
    c. Post a comment on the bet titled **"Live — measurement window opens. Review on [review date]"** containing:
       - Ship metric name + current baseline value → target + deadline
@@ -2394,7 +2286,7 @@ Status changes are NOT natively blocking — by the time you fire, the bet is in
       - Reminder: "The Product Analyst measures this bet daily against PostHog and will deliver a verdict-ready report on the review date. Push qualitative evidence into the workspace as it accumulates."
 
    d. Post a second comment on the bet via create_comment:
-      - mentions: [<bet's createdBy UUID>, "3e16ed51-e5e1-4b87-959f-7eda01b21bea"]
+      - mentions: [<bet's createdBy UUID>]
       - content: [same content as 6c above] + "Reply by @mentioning me with: \`acknowledged\` (measurement starts now) · \`add-sources\` (to name additional evidence sources)"
 
 Source actor: c524aac2-4373-485b-b709-bbb4eb2d021e. Do NOT call create_notification. All human escalations go through create_comment with mentions.
@@ -2462,7 +2354,7 @@ Then \`update_objects\` on the source insight: \`status: "promoted"\`, \`metadat
 
 ## STEP 4 — One digest comment, @-mention Sebastian
 
-\`create_comment\` on the new bet, exactly once. \`mentions: ["3e16ed51-e5e1-4b87-959f-7eda01b21bea"]\`. Fast-track digest format from \`strategic-intake-review\`.
+\`create_comment\` on the new bet, exactly once. \`mentions: []\`. Fast-track digest format from \`strategic-intake-review\`.
 
 ## STEP 5 — Verify
 
@@ -2577,7 +2469,7 @@ Find every bet created via the fast-track lane since the previous council digest
 STEP 7 — Post EXACTLY ONE batched digest comment. This is non-negotiable.
 create_comment with:
 - entity_id: "425c1a6e-1908-49ef-a0b0-be83409ef4a1"
-- mentions: ["3e16ed51-e5e1-4b87-959f-7eda01b21bea"]
+- mentions: []
 - content: the digest in the format defined by strategic-intake-review (Bet Council — YYYY-MM-DD; Reviewed N; Promote/Escalate/Park/Discard sections; Fast-track reconciliation; Portfolio snapshot). Plain language inside each bullet per maskin-voice.
 
 Hard rules — refuse to violate:
@@ -2636,7 +2528,7 @@ For each bet routed to **Promote**:
 
 ## STEP 4 — Post council digest
 Post ONE comment on the Bet Council bet (id: 425c1a6e-1908-49ef-a0b0-be83409ef4a1) with:
-- mentions: ["3e16ed51-e5e1-4b87-959f-7eda01b21bea"]
+- mentions: []
 - The council digest per the \`strategic-intake-review\` format
 
 For each **Escalated** bet, also post a comment directly on that bet with Sebastian's @mention and the specific question.
@@ -2764,18 +2656,6 @@ Check all @mention comments in the last 24h. Flag any where an agent @mentioned 
 								Authorization: 'Bearer ${MASKIN_API_KEY}',
 								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
 							},
-						},
-						'github-sindre-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
-						},
-						'github-vaerksted-ai': {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							type: 'stdio' as const,
-							command: 'npx',
 						},
 					},
 				},
@@ -3010,7 +2890,7 @@ Compare the new task's title against every existing sibling task (status not \`d
 a. Determine which is canonical: prefer the existing task (especially if \`in_progress\`/\`done\`). The new task is the redundant one.
 b. Mark the new task \`discarded\` via update_objects.
 c. Delete its \`breaks_into\` relationship to the bet via delete_relationship.
-d. Post ONE comment on the parent bet with: mentions: ["3e16ed51-e5e1-4b87-959f-7eda01b21bea"], content: "Duplicate task detected and discarded: '[new task title]' duplicates '[canonical task title]' which already exists. No action needed."
+d. Post ONE comment on the parent bet with: mentions: [], content: "Duplicate task detected and discarded: '[new task title]' duplicates '[canonical task title]' which already exists. No action needed."
 e. Send a Slack message to C075JBZ65RT: "⚠️ Duplicate task auto-discarded on *[bet title]*: '[new task title]' duplicated '[canonical task title]'. Check if a second Planner run fired."
 
 ## Step 5 — If no duplicate
@@ -3129,7 +3009,7 @@ Load \`maskin-voice\` first.
 
 **Procedure:**
 1. Get all events from the last 24h where \`type = comment_created\`.
-2. For each comment, check if it @mentions a human founder (Sebastian: 3e16ed51-e5e1-4b87-959f-7eda01b21bea, Magnus: 08964c08-4ea5-45b0-bfa9-251f956909c7) — look at the \`mentions\` array.
+2. For each comment, check if it @mentions a human founder — look at the \`mentions\` array and cross-reference with workspace owners (check workspace members list for owner actor IDs).
 3. For each such comment, check if the @mention was appropriate:
    - Appropriate: the task has \`decision_type: ux\` (→ Sebastian) or \`decision_type: architecture\` (→ Magnus), or the context genuinely required founder attention (gate override, circuit breaker, unresolvable blocker).
    - Wrong mention: the agent @mentioned a founder for a routine handoff, a status update, or something another agent should handle.
@@ -3822,7 +3702,7 @@ Triggering event: {triggering_event}`,
 
 2. **Comments by humans** — list every comment authored by a human. Format: "[human name] on [object title]: [first 80 chars of comment]"
 
-3. **@mentions of founders** — find every comment that @mentions Sebastian (3e16ed51-e5e1-4b87-959f-7eda01b21bea) or Magnus (08964c08-4ea5-45b0-bfa9-251f956909c7). Note which agent sent the mention and what for.
+3. **@mentions of founders** — find every comment that @mentions workspace owners (find via workspace members list). Note which agent sent the mention and what for.
 
 4. **New objects created by humans** — bets, insights, tasks created directly by a human (not spawned by an agent). List titles.
 
@@ -3831,7 +3711,7 @@ Triggering event: {triggering_event}`,
 6. **Open threads needing human response** — tasks in \`in_review\` with \`decision_type: ux\` or \`decision_type: architecture\` where no human has commented since the agent's proposal was posted. List them as "⏳ Waiting for your input: [task title]".
 
 **OUTPUT:**
-Send a Slack message to Sebastian's DM (find his Slack user ID via slack_search_users with email 3e16ed51-e5e1-4b87-959f-7eda01b21bea or name "Sebastian"). Message format:
+Send a Slack message to the workspace owner's DM (find the workspace owner's Slack user ID via slack_search_users — look up owner actor via workspace members, then find their email). Message format:
 
 \`\`\`
 Good morning, @Sebk 👋 Here's what happened yesterday:
