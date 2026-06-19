@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useSindreConversation } from '@/hooks/use-sindre-conversation'
 import { conversationToMarkdown } from '@/lib/chat-store'
+import { trackChatSessionOpened } from '@/lib/posthog'
 import { useSindre } from '@/lib/sindre-context'
 import { buildSindreExportFilename, downloadSindreMarkdown } from '@/lib/sindre-export'
 import { Copy, Download, MoreHorizontal, Pin, PinOff, Plus, X } from 'lucide-react'
@@ -74,6 +75,21 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 	const handleDownload = useCallback(() => {
 		downloadSindreMarkdown(buildExportMarkdown(), buildSindreExportFilename('Sindre'))
 	}, [buildExportMarkdown])
+
+	// Ship metric — every closed→open transition fires `chat_session_opened`.
+	// `sessionOpenedSeenRef` makes the emit idempotent per open so re-renders
+	// while the panel stays open don't inflate the count; the ref resets when
+	// the panel closes so the next open fires again.
+	const sessionOpenedSeenRef = useRef(false)
+	useEffect(() => {
+		if (!open) {
+			sessionOpenedSeenRef.current = false
+			return
+		}
+		if (sessionOpenedSeenRef.current) return
+		sessionOpenedSeenRef.current = true
+		trackChatSessionOpened({ workspace_id: workspaceId, surface: 'sheet' })
+	}, [open, workspaceId])
 
 	// In overlay mode (unpinned), close on outside click. Radix portals (picker
 	// popovers, tooltips, dropdowns) render at document.body, so treat anything

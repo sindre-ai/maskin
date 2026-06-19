@@ -7,12 +7,13 @@ import {
 	type ChatMessage,
 	type Conversation,
 	type ConversationRepository,
+	apiConversationRepository,
 	createConversation,
 	createId,
 	deriveConversationTitle,
-	localStorageRepository,
 } from '@/lib/chat-store'
 import { API_BASE } from '@/lib/constants'
+import { trackChatMessageSent } from '@/lib/posthog'
 import type {
 	SindreSelectionFile,
 	SindreSelectionNotification,
@@ -75,15 +76,17 @@ export interface UseSindreConversationResult {
 
 /**
  * Orchestrates a standalone, multiplayer Sindre conversation: many agents +
- * the current human in one transcript, persisted client-side. Each agent reply
- * is an independent one-shot session streamed in parallel, so several agents
- * can be "working…" at once. Only `@mentioned` agents reply to a given
- * message; if none are mentioned the default agent (Sindre) answers.
+ * the current human in one transcript, persisted through the
+ * `ConversationRepository` (API-backed by default; pass `localStorageRepository`
+ * to disable server-side persistence). Each agent reply is an independent
+ * one-shot session streamed in parallel, so several agents can be "working…"
+ * at once. Only `@mentioned` agents reply to a given message; if none are
+ * mentioned the default agent (Sindre) answers.
  */
 export function useSindreConversation({
 	workspaceId,
 	sindreActorId,
-	repository = localStorageRepository,
+	repository = apiConversationRepository,
 }: UseSindreConversationArgs): UseSindreConversationResult {
 	const { data: actors } = useActors(workspaceId, { enabled: !!workspaceId })
 	const [conversations, setConversations] = useState<Conversation[]>([])
@@ -96,39 +99,41 @@ export function useSindreConversation({
 		return { id: stored?.id ?? 'you', name: stored?.name?.trim() || 'You' }
 	}, [])
 
-	// Hydrate from storage on mount / workspace switch. Always guarantee one
-	// active conversation so the composer has somewhere to write.
+	// Hydrate from the repository on mount / workspace switch. If hydration
+	// returns no conversations, create one through the repository so it gets
+	// persisted server-side and the composer has somewhere to write.
 	useEffect(() => {
 		if (!workspaceId || hydratedRef.current === workspaceId) return
 		hydratedRef.current = workspaceId
-		const loaded = repository.list(workspaceId)
-		if (loaded.length > 0) {
-			setConversations(loaded)
-			setActiveId(loaded[0].id)
-		} else {
-			const fresh = createConversation()
+		let cancelled = false
+		;(async () => {
+			let loaded: Conversation[] = []
+			try {
+				loaded = await repository.list(workspaceId)
+			} catch (err) {
+				console.error('[sindre-conversation] failed to load conversations', err)
+			}
+			if (cancelled) return
+			if (loaded.length > 0) {
+				setConversations(loaded)
+				setActiveId(loaded[0].id)
+				return
+			}
+			let fresh: Conversation
+			try {
+				fresh = await repository.createConversation(workspaceId, {})
+			} catch (err) {
+				console.error('[sindre-conversation] failed to create conversation', err)
+				fresh = createConversation()
+			}
+			if (cancelled) return
 			setConversations([fresh])
 			setActiveId(fresh.id)
+		})()
+		return () => {
+			cancelled = true
 		}
 	}, [workspaceId, repository])
-
-	// Persist (debounced) on any change.
-	const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-	useEffect(() => {
-		if (!workspaceId || conversations.length === 0) return
-		if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
-		persistTimerRef.current = setTimeout(() => {
-			// Only persist conversations that actually contain messages — an
-			// untouched "New conversation" shouldn't clutter history.
-			repository.save(
-				workspaceId,
-				conversations.filter((c) => c.messages.length > 0),
-			)
-		}, 400)
-		return () => {
-			if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
-		}
-	}, [conversations, workspaceId, repository])
 
 	// Abort every in-flight stream on unmount.
 	useEffect(() => {
@@ -181,7 +186,9 @@ export function useSindreConversation({
 		return Array.from(ids)
 	}, [active?.messages])
 
-	// ---- mutation helpers -------------------------------------------------
+	// ---- in-memory mutation helpers --------------------------------------
+	// The repository owns server-side writes; these helpers keep React state in
+	// sync for the streaming UI.
 
 	const patchConversation = useCallback(
 		(conversationId: string, updater: (c: Conversation) => Conversation) => {
@@ -340,7 +347,8 @@ export function useSindreConversation({
 				...targets.filter((t) => !participants.some((p) => p.id === t.id)).map((t) => t.name),
 			]
 
-			// Commit user message + new participants first.
+			// Commit user message + new participants to local state first so the
+			// transcript renders without waiting on the round-trip.
 			patchConversation(conversationId, (c) => {
 				const next: Conversation = {
 					...c,
@@ -350,6 +358,37 @@ export function useSindreConversation({
 				if (c.title === 'New conversation') next.title = deriveConversationTitle(next)
 				return next
 			})
+
+			// Ship metric — the bet's weekly-active surface lives on this event.
+			// Fire on intent (pre-await) so a transient API failure doesn't drop
+			// the metric. T4's surface-agnostic shape is preserved verbatim so
+			// `chat_session_opened` + `chat_message_sent` share `surface`.
+			trackChatMessageSent({
+				workspace_id: workspaceId,
+				surface: 'sheet',
+				target_agent_id: targets.length === 1 && !targets[0].isDefault ? targets[0].id : null,
+				attached_objects: args.objects?.length ?? 0,
+				attached_notifications: args.notifications?.length ?? 0,
+				attached_files: args.files?.length ?? 0,
+			})
+
+			// Persist server-side. Failures are logged but don't roll back the
+			// optimistic UI commit — the user already sees their message.
+			void repository
+				.postUserMessage(workspaceId, conversationId, userMessage, {
+					mentions: mentionedIds.length > 0 ? mentionedIds : undefined,
+				})
+				.then((res) => {
+					if (res.remoteId === undefined) return
+					patchMessage(conversationId, userMessage.id, { remoteId: res.remoteId })
+				})
+				.catch((err) => console.error('[sindre-conversation] postUserMessage failed', err))
+
+			for (const actorId of newParticipantIds) {
+				void repository.addParticipant(workspaceId, conversationId, actorId).catch((err) => {
+					console.error('[sindre-conversation] addParticipant failed', err)
+				})
+			}
 
 			// Spawn a streaming reply per target agent.
 			for (const agent of targets) {
@@ -382,7 +421,10 @@ export function useSindreConversation({
 			defaultParticipant,
 			participants,
 			currentUser,
+			workspaceId,
+			repository,
 			patchConversation,
+			patchMessage,
 			appendMessage,
 			runAgentTurn,
 		],
@@ -446,35 +488,46 @@ export function useSindreConversation({
 	)
 
 	const newConversation = useCallback(() => {
-		setConversations((prev) => {
-			// Reuse an existing empty conversation instead of stacking blanks.
-			const empty = prev.find((c) => c.messages.length === 0)
-			if (empty) {
-				setActiveId(empty.id)
-				return prev
+		const empty = conversations.find((c) => c.messages.length === 0)
+		if (empty) {
+			setActiveId(empty.id)
+			return
+		}
+		;(async () => {
+			let fresh: Conversation
+			try {
+				fresh = await repository.createConversation(workspaceId, {})
+			} catch (err) {
+				console.error('[sindre-conversation] failed to create conversation', err)
+				fresh = createConversation()
 			}
-			const fresh = createConversation()
+			setConversations((prev) => [fresh, ...prev])
 			setActiveId(fresh.id)
-			return [fresh, ...prev]
-		})
-	}, [])
+		})()
+	}, [conversations, repository, workspaceId])
 
 	const selectConversation = useCallback((id: string) => setActiveId(id), [])
 
 	const deleteConversation = useCallback(
 		(id: string) => {
+			void repository.deleteConversation(workspaceId, id).catch((err) => {
+				console.error('[sindre-conversation] deleteConversation failed', err)
+			})
 			setConversations((prev) => {
 				const next = prev.filter((c) => c.id !== id)
 				if (next.length === 0) {
 					const fresh = createConversation()
 					setActiveId(fresh.id)
+					// The freshly-created placeholder isn't persisted until the user
+					// sends a message — matches the previous behaviour where empty
+					// conversations didn't write to localStorage.
 					return [fresh]
 				}
 				if (id === activeId) setActiveId(next[0].id)
 				return next
 			})
 		},
-		[activeId],
+		[activeId, repository, workspaceId],
 	)
 
 	const renameConversation = useCallback(
@@ -482,30 +535,41 @@ export function useSindreConversation({
 			const trimmed = title.trim()
 			if (trimmed.length === 0) return
 			patchConversation(id, (c) => ({ ...c, title: trimmed }))
+			void repository.updateConversation(workspaceId, id, { title: trimmed }).catch((err) => {
+				console.error('[sindre-conversation] updateConversation failed', err)
+			})
 		},
-		[patchConversation],
+		[patchConversation, repository, workspaceId],
 	)
 
 	const addParticipant = useCallback(
 		(id: string) => {
 			if (!active || id === sindreActorId) return
-			patchConversation(active.id, (c) => ({
+			const conversationId = active.id
+			patchConversation(conversationId, (c) => ({
 				...c,
 				participantIds: [...new Set([...(c.participantIds ?? []), id])],
 			}))
+			void repository.addParticipant(workspaceId, conversationId, id).catch((err) => {
+				console.error('[sindre-conversation] addParticipant failed', err)
+			})
 		},
-		[active, sindreActorId, patchConversation],
+		[active, sindreActorId, patchConversation, repository, workspaceId],
 	)
 
 	const removeParticipant = useCallback(
 		(id: string) => {
 			if (!active) return
-			patchConversation(active.id, (c) => ({
+			const conversationId = active.id
+			patchConversation(conversationId, (c) => ({
 				...c,
 				participantIds: (c.participantIds ?? []).filter((p) => p !== id),
 			}))
+			void repository.removeParticipant(workspaceId, conversationId, id).catch((err) => {
+				console.error('[sindre-conversation] removeParticipant failed', err)
+			})
 		},
-		[active, patchConversation],
+		[active, patchConversation, repository, workspaceId],
 	)
 
 	const summaries = useMemo<ConversationSummary[]>(
