@@ -1,4 +1,5 @@
 import { notifications, objects, relationships, workspaces } from '@maskin/db/schema'
+import { CONTACT_STATUSES, CRM_DEFAULT_SETTINGS } from '@maskin/ext-crm/shared'
 import { and, eq } from 'drizzle-orm'
 import { insertObject, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
@@ -203,5 +204,46 @@ describe('POST /api/contacts/upsert', () => {
 			jsonRequest('POST', '/api/contacts/upsert', { email: 'a@b.com' }, {}),
 		)
 		expect(res.status).toBe(400)
+	})
+
+	it('merges canonical CRM defaults into workspace on auto-enable, with existing values winning', async () => {
+		// Fresh workspace, CRM not enabled, no display_names or statuses for contact.
+		// Auto-enable via the helper should leave the workspace with the same
+		// display_names.contact and statuses.contact as the UI's enableModule path.
+		await postUpsert({ email: 'hank@example.com', name: 'Hank' }, workspaceId)
+		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+		const settings = ws.settings as Record<string, unknown>
+		const displayNames = settings.display_names as Record<string, string>
+		const statuses = settings.statuses as Record<string, unknown>
+		expect(displayNames.contact).toBe(CRM_DEFAULT_SETTINGS.display_names.contact)
+		expect(displayNames.contact).toBe('Contact')
+		expect(displayNames.company).toBe(CRM_DEFAULT_SETTINGS.display_names.company)
+		expect(statuses.contact).toEqual(CONTACT_STATUSES)
+		expect(statuses.company).toEqual(CRM_DEFAULT_SETTINGS.statuses.company)
+		// Pre-existing non-CRM key on statuses (task: ['todo'] from beforeEach) survives.
+		expect(statuses.task).toEqual(['todo'])
+	})
+
+	it('preserves existing display_names.contact and statuses.contact when CRM auto-enables', async () => {
+		const customWs = await insertWorkspace(db, getTestActorId(), {
+			settings: {
+				enabled_modules: ['work'],
+				display_names: { contact: 'Lead' },
+				statuses: { contact: ['lead', 'qualified'] },
+				field_definitions: {},
+				relationship_types: ['informs', 'relates_to'],
+			},
+		})
+		await postUpsert({ email: 'iris@example.com', name: 'Iris' }, customWs.id)
+		const [after] = await db.select().from(workspaces).where(eq(workspaces.id, customWs.id))
+		const settings = after.settings as Record<string, unknown>
+		const displayNames = settings.display_names as Record<string, string>
+		const statuses = settings.statuses as Record<string, unknown>
+		// User-customized values win over defaults — same precedence as the UI.
+		expect(displayNames.contact).toBe('Lead')
+		expect(statuses.contact).toEqual(['lead', 'qualified'])
+		// Defaults still fill in keys the workspace didn't customize.
+		expect(displayNames.company).toBe('Company')
+		expect(statuses.company).toEqual(CRM_DEFAULT_SETTINGS.statuses.company)
 	})
 })

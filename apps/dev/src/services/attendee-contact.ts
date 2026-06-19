@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { events, notifications, objects, relationships, workspaces } from '@maskin/db/schema'
 import {
 	CONTACT_FIELDS,
+	CRM_DEFAULT_SETTINGS,
 	MODULE_ID as CRM_MODULE_ID,
 	CRM_RELATIONSHIP_TYPES,
 } from '@maskin/ext-crm/shared'
@@ -217,6 +218,21 @@ async function ensureCrmEnabled({
 		const fieldDefs = (currentSettings.field_definitions ?? {}) as Record<string, unknown>
 		if (!fieldDefs.contact) {
 			mergedSettings.field_definitions = { ...fieldDefs, contact: CONTACT_FIELDS }
+		}
+		// Defaults first, existing values win — same precedence as the UI's
+		// enableModule path (apps/web/.../settings/index.tsx). Without this the
+		// helper-enabled workspace was missing display_names.contact = 'Contact'
+		// and statuses.contact = CONTACT_STATUSES, so 'new'-status contacts
+		// rendered with a generic badge and the type label fell back to 'contact'.
+		const currentDisplayNames = (currentSettings.display_names ?? {}) as Record<string, string>
+		const currentStatuses = (currentSettings.statuses ?? {}) as Record<string, string[]>
+		mergedSettings.display_names = {
+			...CRM_DEFAULT_SETTINGS.display_names,
+			...currentDisplayNames,
+		}
+		mergedSettings.statuses = {
+			...CRM_DEFAULT_SETTINGS.statuses,
+			...currentStatuses,
 		}
 	}
 	const relTypesToAdd: string[] = []
