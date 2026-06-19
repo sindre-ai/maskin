@@ -43,14 +43,7 @@ import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
-import {
-	LLM_ROUTE_MASKIN_PLAN,
-	type LlmRoute,
-	checkPlanCap,
-	getWorkspacePlanCap,
-	getWorkspacePlanTokenUsage,
-	resolveLlmRoute,
-} from '../lib/llm-routing'
+import { type LlmRoute, checkPlanCap, resolveLlmRoute } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { AgentServerClient } from './agent-server-client'
@@ -162,10 +155,6 @@ export class SessionManager extends EventEmitter {
 	 * even though both arrive at `watchContainerExit` as a non-zero exit code.
 	 */
 	private stopRequested: Set<string> = new Set()
-	private maskinPlanCapSessions = new Map<
-		string,
-		{ cap: number; usedAtStart: number; accumulated: number }
-	>()
 
 	constructor(
 		private db: Database,
@@ -943,20 +932,6 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Record cap context for maskin_plan sessions so we can auto-stop
-		// mid-session the moment accumulated tokens push the workspace over cap.
-		if (routeTaken === LLM_ROUTE_MASKIN_PLAN) {
-			const cap = getWorkspacePlanCap(wsSettings)
-			if (cap !== null) {
-				const used = await getWorkspacePlanTokenUsage(
-					this.db,
-					session.workspaceId,
-					wsSettings.billing?.period_start ?? undefined,
-				)
-				this.maskinPlanCapSessions.set(session.id, { cap, usedAtStart: used, accumulated: 0 })
-			}
-		}
-
 		// Inject agent's API key for Maskin MCP access. Refuse to launch without
 		// one — an empty Bearer token causes MCP writes to either fail outright
 		// or, when a fallback key is present in the env, get attributed to the
@@ -1262,25 +1237,6 @@ export class SessionManager extends EventEmitter {
 									next.length > SessionManager.STDOUT_TAIL_BYTES
 										? next.slice(next.length - SessionManager.STDOUT_TAIL_BYTES)
 										: next
-							}
-
-							// Auto-stop maskin_plan sessions the moment a turn pushes the
-							// workspace over its token cap.
-							const capCtx = this.maskinPlanCapSessions.get(sessionId)
-							if (capCtx) {
-								for (const line of chunk.data.split('\n')) {
-									try {
-										const ev = JSON.parse(line)
-										const usage = ev?.type === 'assistant' ? ev.message?.usage : null
-										if (usage) {
-											capCtx.accumulated += (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0)
-											if (capCtx.usedAtStart + capCtx.accumulated >= capCtx.cap) {
-												this.maskinPlanCapSessions.delete(sessionId)
-												this.stopSession(sessionId).catch(() => {})
-											}
-										}
-									} catch {}
-								}
 							}
 						}
 					}
@@ -1590,7 +1546,6 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
-		this.maskinPlanCapSessions.delete(sessionId)
 		const wasUserStopped = this.stopRequested.delete(sessionId)
 		const endReason: RuntimeEndReason = wasUserStopped
 			? 'user_stopped'
