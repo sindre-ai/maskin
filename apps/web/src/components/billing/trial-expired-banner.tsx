@@ -10,20 +10,18 @@ import {
 import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
 import { Link } from '@tanstack/react-router'
 import { AlertTriangle } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export function TrialExpiredBanner({ workspaceId }: { workspaceId: string }) {
 	const { data: usage } = useBillingUsage(workspaceId)
 	const [hasExpired, setHasExpired] = useState(false)
 	const [dialogOpen, setDialogOpen] = useState(false)
-	const autoOpenedRef = useRef(false)
 
 	// Sticky: once expired, stay expired until the plan changes away from trial
 	useEffect(() => {
 		if (!usage) return
 		if (usage.plan !== 'trial') {
 			setHasExpired(false)
-			autoOpenedRef.current = false
 			return
 		}
 		if (usage.period_resets_in_ms === 0) {
@@ -31,19 +29,11 @@ export function TrialExpiredBanner({ workspaceId }: { workspaceId: string }) {
 		}
 	}, [usage])
 
-	// Auto-open the dialog once per mount when expiry is first detected
-	useEffect(() => {
-		if (hasExpired && !autoOpenedRef.current) {
-			autoOpenedRef.current = true
-			setDialogOpen(true)
-		}
-	}, [hasExpired])
-
 	if (!hasExpired) return null
 
 	return (
 		<>
-			<div className="flex items-center justify-between gap-4 border-b border-warning/30 bg-warning/10 px-4 py-2.5">
+			<div className="relative z-20 flex items-center justify-between gap-4 border-b border-warning/30 bg-warning/10 px-4 py-2.5">
 				<div className="flex items-center gap-2 text-sm text-warning">
 					<AlertTriangle size={14} className="shrink-0" />
 					<span>Your trial has expired. Upgrade to keep using Maskin's hosted LLM.</span>
