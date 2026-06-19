@@ -1,0 +1,404 @@
+import { randomUUID } from 'node:crypto'
+import { describe, expect, it } from 'vitest'
+import { buildEvent } from '../factories'
+import { jsonGet, jsonRequest } from '../helpers'
+import { createTestApp } from '../setup'
+
+const { default: reactionsRoutes } = await import('../../routes/reactions')
+
+const wsId = '00000000-0000-0000-0000-000000000099'
+
+describe('Reactions Routes', () => {
+	describe('POST /api/reactions', () => {
+		it('returns 201 when adding a reaction to an in-workspace comment', async () => {
+			const objectId = randomUUID()
+			const eventId = 4242
+			const lookup = buildEvent({
+				workspaceId: wsId,
+				id: eventId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+			})
+			const { app, mockResults, calls } = createTestApp(reactionsRoutes, '/api/reactions')
+			mockResults.select = [lookup]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/reactions',
+					{ event_id: eventId, emoji: '👍' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			// Two inserts in the same transaction: the reactions row and the
+			// realtime-driving `reacted` event row pointing at the parent object.
+			expect(calls.inserts.length).toBe(2)
+			const reactionInsert = calls.inserts[0] as Record<string, unknown>
+			expect(reactionInsert.emoji).toBe('👍')
+			expect(reactionInsert.eventId).toBe(eventId)
+			const eventInsert = calls.inserts[1] as Record<string, unknown>
+			expect(eventInsert.action).toBe('reacted')
+			expect(eventInsert.entityType).toBe('object')
+			expect(eventInsert.entityId).toBe(objectId)
+		})
+
+		it('returns 404 when target event does not exist', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/reactions',
+					{ event_id: 1, emoji: '👍' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when target event is in a different workspace', async () => {
+			const otherWs = randomUUID()
+			const lookup = buildEvent({
+				workspaceId: otherWs,
+				id: 1,
+				action: 'commented',
+				entityType: 'object',
+				entityId: randomUUID(),
+			})
+			const { app, mockResults } = createTestApp(reactionsRoutes, '/api/reactions')
+			mockResults.select = [lookup]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/reactions',
+					{ event_id: 1, emoji: '👍' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when target event is not on an object', async () => {
+			const lookup = buildEvent({
+				workspaceId: wsId,
+				id: 1,
+				action: 'created',
+				entityType: 'session',
+				entityId: randomUUID(),
+			})
+			const { app, mockResults } = createTestApp(reactionsRoutes, '/api/reactions')
+			mockResults.select = [lookup]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/reactions',
+					{ event_id: 1, emoji: '👍' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 400 when emoji is missing', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/reactions', { event_id: 1 }, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when emoji exceeds max length', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/reactions',
+					{ event_id: 1, emoji: 'A'.repeat(64) },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+	})
+
+	describe('DELETE /api/reactions', () => {
+		it('returns 200 and emits an unreacted event when removing a reaction', async () => {
+			const objectId = randomUUID()
+			const eventId = 99
+			const lookup = buildEvent({
+				workspaceId: wsId,
+				id: eventId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+			})
+			const { app, mockResults, calls } = createTestApp(reactionsRoutes, '/api/reactions')
+			mockResults.select = [lookup]
+
+			const res = await app.request(
+				jsonRequest(
+					'DELETE',
+					'/api/reactions',
+					{ event_id: eventId, emoji: '🎉' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			// One insert for the realtime `unreacted` event row; the delete uses
+			// `delete`, not insert, so it does not appear in the inserts capture.
+			expect(calls.inserts.length).toBe(1)
+			const eventInsert = calls.inserts[0] as Record<string, unknown>
+			expect(eventInsert.action).toBe('unreacted')
+			expect(eventInsert.entityId).toBe(objectId)
+		})
+
+		it('returns 404 when target event missing', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(
+				jsonRequest(
+					'DELETE',
+					'/api/reactions',
+					{ event_id: 1, emoji: '🎉' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('GET /api/reactions', () => {
+		it('returns reactions grouped by event id for the given object', async () => {
+			const objectId = randomUUID()
+			const ev1 = 10
+			const ev2 = 11
+			const a1 = randomUUID()
+			const a2 = randomUUID()
+			const { app, mockResults } = createTestApp(reactionsRoutes, '/api/reactions')
+			mockResults.selectQueue = [
+				// First select: object workspace check
+				[{ id: objectId }],
+				// Second select: events under this object
+				[{ id: ev1 }, { id: ev2 }],
+				// Third select: reaction rows
+				[
+					{
+						id: randomUUID(),
+						workspaceId: wsId,
+						eventId: ev1,
+						actorId: a1,
+						emoji: '👍',
+						createdAt: new Date('2026-01-01T00:00:00Z'),
+					},
+					{
+						id: randomUUID(),
+						workspaceId: wsId,
+						eventId: ev1,
+						actorId: a2,
+						emoji: '👍',
+						createdAt: new Date('2026-01-01T00:00:01Z'),
+					},
+					{
+						id: randomUUID(),
+						workspaceId: wsId,
+						eventId: ev2,
+						actorId: a1,
+						emoji: '🎉',
+						createdAt: new Date('2026-01-01T00:00:02Z'),
+					},
+				],
+			]
+
+			const res = await app.request(
+				jsonGet(`/api/reactions?object_id=${objectId}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.reactionsByEventId[String(ev1)]).toHaveLength(2)
+			expect(body.reactionsByEventId[String(ev2)]).toHaveLength(1)
+			expect(body.reactionsByEventId[String(ev1)][0].emoji).toBe('👍')
+			expect(body.reactionsByEventId[String(ev1)][0].createdAt).toBe('2026-01-01T00:00:00.000Z')
+		})
+
+		it('returns empty map when object has no events', async () => {
+			const objectId = randomUUID()
+			const { app, mockResults } = createTestApp(reactionsRoutes, '/api/reactions')
+			mockResults.selectQueue = [[{ id: objectId }], []]
+
+			const res = await app.request(
+				jsonGet(`/api/reactions?object_id=${objectId}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.reactionsByEventId).toEqual({})
+		})
+
+		it('returns 404 when object is not in workspace', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(
+				jsonGet(`/api/reactions?object_id=${randomUUID()}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 400 when object_id is not a uuid', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(
+				jsonGet('/api/reactions?object_id=not-a-uuid', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('accepts a custom limit within bounds', async () => {
+			const objectId = randomUUID()
+			const { app, mockResults } = createTestApp(reactionsRoutes, '/api/reactions')
+			mockResults.selectQueue = [
+				[{ id: objectId }],
+				[{ id: 1 }],
+				[
+					{
+						id: randomUUID(),
+						workspaceId: wsId,
+						eventId: 1,
+						actorId: randomUUID(),
+						emoji: '👍',
+						createdAt: new Date('2026-01-01T00:00:00Z'),
+					},
+				],
+			]
+
+			const res = await app.request(
+				jsonGet(`/api/reactions?object_id=${objectId}&limit=100`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+		})
+
+		it('returns 400 when limit exceeds the hard ceiling', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(
+				jsonGet(`/api/reactions?object_id=${randomUUID()}&limit=5000`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when neither object_id nor event_ids is provided', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(jsonGet('/api/reactions', { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when both object_id and event_ids are provided', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(
+				jsonGet(`/api/reactions?object_id=${randomUUID()}&event_ids=1,2`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when event_ids contains a non-integer value', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(
+				jsonGet('/api/reactions?event_ids=1,abc,3', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns reactions for a windowed event_ids query without object lookup', async () => {
+			const ev1 = 10
+			const ev2 = 11
+			const a1 = randomUUID()
+			const { app, mockResults } = createTestApp(reactionsRoutes, '/api/reactions')
+			// event_ids path: first select verifies workspace boundary on events,
+			// second select returns reactions. No object lookup happens.
+			mockResults.selectQueue = [
+				[{ id: ev1 }, { id: ev2 }],
+				[
+					{
+						id: randomUUID(),
+						workspaceId: wsId,
+						eventId: ev1,
+						actorId: a1,
+						emoji: '👍',
+						createdAt: new Date('2026-01-01T00:00:00Z'),
+					},
+					{
+						id: randomUUID(),
+						workspaceId: wsId,
+						eventId: ev2,
+						actorId: a1,
+						emoji: '🎉',
+						createdAt: new Date('2026-01-01T00:00:01Z'),
+					},
+				],
+			]
+
+			const res = await app.request(
+				jsonGet(`/api/reactions?event_ids=${ev1},${ev2}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.reactionsByEventId[String(ev1)]).toHaveLength(1)
+			expect(body.reactionsByEventId[String(ev2)]).toHaveLength(1)
+		})
+
+		it('returns empty map when event_ids resolves to no events in the workspace', async () => {
+			const { app, mockResults } = createTestApp(reactionsRoutes, '/api/reactions')
+			// First select returns no matching events — request targets event ids
+			// that live in another workspace.
+			mockResults.selectQueue = [[]]
+
+			const res = await app.request(
+				jsonGet('/api/reactions?event_ids=99,100', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.reactionsByEventId).toEqual({})
+		})
+
+		it('returns 400 when event_ids exceeds the per-request cap', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+			const ids = Array.from({ length: 201 }, (_, i) => i + 1).join(',')
+
+			const res = await app.request(
+				jsonGet(`/api/reactions?event_ids=${ids}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+	})
+})

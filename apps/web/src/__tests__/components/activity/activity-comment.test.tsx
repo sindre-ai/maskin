@@ -30,6 +30,11 @@ vi.mock('@/hooks/use-files', () => ({
 	useFiles: () => ({ data: [] }),
 }))
 
+vi.mock('@/hooks/use-reactions', () => ({
+	useReactionsByObject: () => ({ data: { reactionsByEventId: {} } }),
+	useToggleReaction: () => ({ mutate: vi.fn() }),
+}))
+
 vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => ({ id: 'actor-1', name: 'Alice', type: 'human' }),
 }))

@@ -642,3 +642,37 @@ export const workspaceOnboardingPrompts = pgTable(
 
 export type WorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferSelect
 export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferInsert
+
+// ── Reactions ──────────────────────────────────────────────────────────────
+//
+// Per-actor emoji reactions on persisted events (currently used for comments).
+// The composite uniqueness on (event_id, actor_id, emoji) makes toggle a single
+// idempotent insert/delete with no aggregate-by-latest read pattern. Realtime
+// fan-out reuses the existing events → PG NOTIFY → SSE bridge: every reaction
+// add/remove writes an events row with action='reacted'/'unreacted' whose
+// entity_id is the parent object, so existing SSE consumers see the change
+// without any new transport plumbing.
+
+export const reactions = pgTable(
+	'reactions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		eventId: bigint('event_id', { mode: 'number' }).notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		emoji: text('emoji').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+	},
+	(t) => [
+		unique('reactions_event_actor_emoji_uniq').on(t.eventId, t.actorId, t.emoji),
+		index('reactions_event_idx').on(t.eventId),
+		index('reactions_ws_idx').on(t.workspaceId),
+	],
+)
+
+export type Reaction = typeof reactions.$inferSelect
+export type NewReaction = typeof reactions.$inferInsert

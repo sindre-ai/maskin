@@ -482,6 +482,39 @@ export const api = {
 		},
 	},
 
+	reactions: {
+		// `eventIds` is the windowed shape — chat surfaces pass the ids of the
+		// messages currently on screen so the server only ships their reactions.
+		// When omitted, the server returns reactions for every event under the
+		// object (activity-feed shape, capped by `limit`).
+		listByObject: (
+			workspaceId: string,
+			objectId: string,
+			opts?: { eventIds?: number[]; limit?: number },
+		) => {
+			const params = new URLSearchParams()
+			if (opts?.eventIds && opts.eventIds.length > 0) {
+				params.set('event_ids', opts.eventIds.join(','))
+			} else {
+				params.set('object_id', objectId)
+			}
+			if (opts?.limit !== undefined) params.set('limit', String(opts.limit))
+			return request<ReactionsByObjectResponse>(`/reactions?${params.toString()}`, { workspaceId })
+		},
+		add: (workspaceId: string, eventId: number, emoji: string) =>
+			request<{ added: true }>('/reactions', {
+				method: 'POST',
+				body: { event_id: eventId, emoji },
+				workspaceId,
+			}),
+		remove: (workspaceId: string, eventId: number, emoji: string) =>
+			request<{ removed: true }>('/reactions', {
+				method: 'DELETE',
+				body: { event_id: eventId, emoji },
+				workspaceId,
+			}),
+	},
+
 	userDisplaySettings: {
 		list: (workspaceId: string) =>
 			request<UserDisplaySettingsListResponse>('/user-display-settings', { workspaceId }),
@@ -633,6 +666,18 @@ export interface UnreadItem {
 
 export interface UnreadResponse {
 	items: UnreadItem[]
+}
+
+export interface ReactionItem {
+	id: string
+	eventId: number
+	actorId: string
+	emoji: string
+	createdAt: string
+}
+
+export interface ReactionsByObjectResponse {
+	reactionsByEventId: Record<string, ReactionItem[]>
 }
 
 export interface UserDisplaySettingsResponse {

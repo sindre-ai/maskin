@@ -10,6 +10,7 @@ import { useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { AttachedFileCard } from '../shared/attached-file-card'
 import { MarkdownContent } from '../shared/markdown-content'
+import { ReactionsBar } from '../shared/reactions-bar'
 import { RelativeTime } from '../shared/relative-time'
 import { CommentInput } from './comment-input'
 import { DecisionChips, hasDecisionChips } from './decision-chips'
@@ -39,6 +40,7 @@ interface CommentRowProps {
 	event: EventResponse
 	actors: ActorListItem[]
 	workspaceId: string
+	objectId: string
 	onReply?: () => void
 	isUnread?: boolean
 	isDecisionPoint?: boolean
@@ -48,6 +50,7 @@ function CommentRow({
 	event,
 	actors,
 	workspaceId,
+	objectId,
 	onReply,
 	isUnread,
 	isDecisionPoint,
@@ -118,7 +121,7 @@ function CommentRow({
 		<>
 			<div
 				className={cn(
-					'relative flex items-start gap-2 py-1 px-1 -mx-1 rounded-md hover:bg-secondary/50 transition-colors',
+					'group/comment-hover relative flex items-start gap-2 py-1 px-1 -mx-1 rounded-md hover:bg-secondary/50 transition-colors',
 					isDecisionPoint && 'pl-3',
 				)}
 			>
@@ -168,6 +171,7 @@ function CommentRow({
 							})}
 						</ul>
 					)}
+					<ReactionsBar workspaceId={workspaceId} objectId={objectId} eventId={event.id} />
 				</div>
 				{onReply && (
 					<button
@@ -220,6 +224,7 @@ export function ActivityComment({
 				event={event}
 				actors={actorList}
 				workspaceId={workspaceId}
+				objectId={objectId}
 				onReply={hasReplies ? undefined : openReplyInput}
 				isUnread={isUnread}
 				isDecisionPoint={isDecisionPoint}
@@ -248,6 +253,7 @@ export function ActivityComment({
 								event={reply}
 								actors={actorList}
 								workspaceId={workspaceId}
+								objectId={objectId}
 								onReply={idx === replies.length - 1 ? openReplyInput : undefined}
 							/>
 						</div>
