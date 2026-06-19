@@ -223,8 +223,16 @@ export const localStorageRepository: ConversationRepository = {
  */
 export const apiConversationRepository: ConversationRepository = {
 	async list(workspaceId) {
-		const summaries = await api.conversations.list(workspaceId)
 		const me = getStoredActor()
+		if (!me) {
+			// Hydration keys role assignment off the viewer's actor id. With no
+			// stored actor (auth bootstrap race, signed-out preview) we'd hydrate
+			// every persisted user message as `role: 'agent'`. Defer to local
+			// storage instead of producing a wrong-by-default transcript.
+			console.warn('[chat-store] no stored actor — falling back to localStorageRepository.list')
+			return localStorageRepository.list(workspaceId)
+		}
+		const summaries = await api.conversations.list(workspaceId)
 		// Load messages per conversation in parallel — the bet's panel never
 		// renders more than a handful of recent conversations at once.
 		const detailed = await Promise.all(
@@ -237,7 +245,7 @@ export const apiConversationRepository: ConversationRepository = {
 					summary,
 					messages,
 					participants,
-					currentUserId: me?.id ?? null,
+					currentUserId: me.id,
 				})
 			}),
 		)
