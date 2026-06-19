@@ -201,9 +201,14 @@ export const localStorageRepository: ConversationRepository = {
 		writeLocal(workspaceId, next)
 	},
 	async postUserMessage(workspaceId, conversationId, message) {
+		// The localStorage write IS success — there's no later async step that
+		// can fail. Strip the in-flight `status`/`errorText` the hook sets just
+		// before calling us so the persisted row reads as `sent` (undefined =
+		// sent in v1) and `reviveConversation` doesn't catch it on hydrate.
+		const { status: _status, errorText: _errorText, ...persisted } = message
 		const next = patchConversationInList(readLocal(workspaceId), conversationId, (c) => ({
 			...c,
-			messages: [...c.messages, message],
+			messages: [...c.messages, persisted],
 		}))
 		writeLocal(workspaceId, next)
 		return {}
