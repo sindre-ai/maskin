@@ -110,3 +110,22 @@ export function trackObjectAttachedFile(
 		parent_entity_type: p.parent_entity_type,
 	})
 }
+
+// Annotation-canvas ship-metric events. `actor_id` rides every capture via the
+// workspace super-properties registered in posthog.ts, so it's not passed here.
+export function trackPinCreated(p: {
+	pin_id: string
+	selector: string
+	artifact_id: string
+	pin_index: number
+}): void {
+	trackEvent('pin_created', p)
+}
+
+export function trackDesignFeedbackRoundStarted(p: {
+	round_id: string
+	artifact_id: string
+	pin_count: number
+}): void {
+	trackEvent('design_feedback_round_started', p)
+}

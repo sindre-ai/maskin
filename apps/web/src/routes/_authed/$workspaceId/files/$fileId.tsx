@@ -7,6 +7,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useFile } from '@/hooks/use-files'
+import { trackDesignFeedbackRoundStarted } from '@/lib/analytics'
 import type { AnnotationJson } from '@/lib/annotations'
 import { buildRevisePrompt } from '@/lib/annotations'
 import { ApiError, type FileDetail, api } from '@/lib/api'
@@ -58,6 +59,13 @@ function FileViewerPage() {
 		async (annotationJson: AnnotationJson) => {
 			if (!file || !designAgent) return
 			setIsRevising(true)
+			// Ship-metric event: every send-to-Design-Agent counts as a feedback
+			// round; pin_count=0 rounds are the denominator for the ≥70% rate.
+			trackDesignFeedbackRoundStarted({
+				round_id: crypto.randomUUID(),
+				artifact_id: file.id,
+				pin_count: annotationJson.annotations.length,
+			})
 			try {
 				await api.sessions.create(workspaceId, {
 					actor_id: designAgent.id,

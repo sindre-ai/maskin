@@ -8,6 +8,7 @@ function renderOverlay(onChange = vi.fn()) {
 		<AnnotationOverlay
 			html="<p>test</p>"
 			name="test.html"
+			artifactId="file-test"
 			annotations={[]}
 			onAnnotationsChange={onChange}
 		/>,

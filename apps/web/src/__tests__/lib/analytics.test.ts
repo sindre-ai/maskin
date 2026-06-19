@@ -5,8 +5,10 @@ import {
 	trackBetCreated,
 	trackBetStatusChanged,
 	trackCommentPosted,
+	trackDesignFeedbackRoundStarted,
 	trackEvent,
 	trackObjectAttachedFile,
+	trackPinCreated,
 	trackRelationshipCreated,
 	trackTriggerFired,
 } from '@/lib/analytics'
@@ -212,5 +214,39 @@ describe('v1 taxonomy helpers', () => {
 				parent_entity_type: 'bet',
 			}),
 		)
+	})
+
+	it('pin_created carries pin_id, selector, artifact_id, pin_index', () => {
+		const capture = captureSpy()
+
+		trackPinCreated({
+			pin_id: 'pin-1',
+			selector: '#hero .cta',
+			artifact_id: 'file-77',
+			pin_index: 3,
+		})
+
+		expect(capture).toHaveBeenCalledWith('pin_created', {
+			pin_id: 'pin-1',
+			selector: '#hero .cta',
+			artifact_id: 'file-77',
+			pin_index: 3,
+		})
+	})
+
+	it('design_feedback_round_started carries round_id, artifact_id, pin_count', () => {
+		const capture = captureSpy()
+
+		trackDesignFeedbackRoundStarted({
+			round_id: 'round-1',
+			artifact_id: 'file-77',
+			pin_count: 0,
+		})
+
+		expect(capture).toHaveBeenCalledWith('design_feedback_round_started', {
+			round_id: 'round-1',
+			artifact_id: 'file-77',
+			pin_count: 0,
+		})
 	})
 })
