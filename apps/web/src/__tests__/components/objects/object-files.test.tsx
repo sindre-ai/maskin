@@ -1,8 +1,8 @@
 import { ObjectFiles } from '@/components/objects/object-files'
-import type { FileListItem, RelationshipResponse } from '@/lib/api'
-import { render, screen } from '@testing-library/react'
+import type { FileListItem, RelationshipResponse, UserDisplaySettingsResponse } from '@/lib/api'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -23,6 +23,30 @@ const createRelationshipMock = vi.fn()
 vi.mock('@/hooks/use-relationships', () => ({
 	useCreateRelationship: () => ({ mutateAsync: createRelationshipMock }),
 }))
+
+const useUserDisplaySettingsMock = vi.fn()
+const updateMutateMock = vi.fn()
+vi.mock('@/hooks/use-user-display-settings', () => ({
+	useUserDisplaySettings: (...args: unknown[]) => useUserDisplaySettingsMock(...args),
+	useUpdateUserDisplaySettings: () => ({ mutate: updateMutateMock }),
+}))
+
+function persistedSettings(columnVisibility: Record<string, boolean>): UserDisplaySettingsResponse {
+	return {
+		object_type: 'files',
+		name: 'default',
+		settings: { columnVisibility },
+		updated_at: '2026-06-19T10:00:00.000Z',
+	}
+}
+
+function noPersistedSettings() {
+	return { isSuccess: true, data: null }
+}
+
+function withPersisted(columnVisibility: Record<string, boolean>) {
+	return { isSuccess: true, data: persistedSettings(columnVisibility) }
+}
 
 function buildFile(overrides: Partial<FileListItem> = {}): FileListItem {
 	return {
@@ -64,6 +88,9 @@ describe('ObjectFiles', () => {
 		useFilesMock.mockReset()
 		useFileMock.mockReset()
 		useFileMock.mockReturnValue({ data: undefined })
+		useUserDisplaySettingsMock.mockReset()
+		useUserDisplaySettingsMock.mockReturnValue(noPersistedSettings())
+		updateMutateMock.mockReset()
 	})
 
 	it('renders attached files in a table with Name + Size by default', () => {
@@ -136,5 +163,93 @@ describe('ObjectFiles', () => {
 		})
 
 		expect(screen.getByText('Drop a file here or click to upload')).toBeInTheDocument()
+	})
+
+	it('rehydrates Created/Modified visibility from persisted settings under object_type "files"', async () => {
+		const file = buildFile()
+		useFilesMock.mockReturnValue({ data: [file] })
+		useUserDisplaySettingsMock.mockReturnValue(
+			withPersisted({ created_at: true, modified_at: true }),
+		)
+
+		render(
+			<ObjectFiles
+				{...baseProps}
+				relationships={{ asSource: [buildAttachedRelationship(file.id)], asTarget: [] }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => {
+			expect(screen.getByRole('columnheader', { name: 'Created' })).toBeInTheDocument()
+		})
+		expect(screen.getByRole('columnheader', { name: 'Modified' })).toBeInTheDocument()
+		expect(useUserDisplaySettingsMock).toHaveBeenCalledWith('ws-1', 'files')
+	})
+
+	it('falls back to default-OFF columns when no persisted settings exist', async () => {
+		const file = buildFile()
+		useFilesMock.mockReturnValue({ data: [file] })
+		useUserDisplaySettingsMock.mockReturnValue(noPersistedSettings())
+
+		render(
+			<ObjectFiles
+				{...baseProps}
+				relationships={{ asSource: [buildAttachedRelationship(file.id)], asTarget: [] }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		expect(screen.queryByRole('columnheader', { name: 'Created' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('columnheader', { name: 'Modified' })).not.toBeInTheDocument()
+	})
+
+	it('debounces a write-through to upsert under object_type "files" when a column is toggled', async () => {
+		const user = userEvent.setup()
+		const file = buildFile()
+		useFilesMock.mockReturnValue({ data: [file] })
+
+		render(
+			<ObjectFiles
+				{...baseProps}
+				relationships={{ asSource: [buildAttachedRelationship(file.id)], asTarget: [] }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await user.click(screen.getByRole('button', { name: 'File properties' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Created' }))
+
+		await waitFor(() => {
+			expect(updateMutateMock).toHaveBeenCalledWith({
+				objectType: 'files',
+				settings: { columnVisibility: { created_at: true, modified_at: false } },
+			})
+		})
+	})
+
+	it('does not write through before the persisted-settings query has resolved', async () => {
+		// Loading state — no row yet, query still pending. Toggling should not
+		// trigger an upsert until hydration finishes; otherwise the user's
+		// transient state would overwrite a not-yet-loaded saved view.
+		useUserDisplaySettingsMock.mockReturnValue({ isSuccess: false, data: undefined })
+		const user = userEvent.setup()
+		const file = buildFile()
+		useFilesMock.mockReturnValue({ data: [file] })
+
+		render(
+			<ObjectFiles
+				{...baseProps}
+				relationships={{ asSource: [buildAttachedRelationship(file.id)], asTarget: [] }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await user.click(screen.getByRole('button', { name: 'File properties' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Created' }))
+
+		// Wait long enough that any debounced write would have fired (>500ms).
+		await new Promise((resolve) => setTimeout(resolve, 700))
+		expect(updateMutateMock).not.toHaveBeenCalled()
 	})
 })

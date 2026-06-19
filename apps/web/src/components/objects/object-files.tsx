@@ -18,14 +18,23 @@ import {
 } from '@/components/ui/table'
 import { useCreateFile, useFiles } from '@/hooks/use-files'
 import { useCreateRelationship } from '@/hooks/use-relationships'
+import {
+	useUpdateUserDisplaySettings,
+	useUserDisplaySettings,
+} from '@/hooks/use-user-display-settings'
 import type { RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatSize, readFileAsBase64 } from '@/lib/file-utils'
 import { Loader2, Plus, SlidersHorizontal, Upload } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 const ATTACHED_REL_TYPE = 'attached'
+
+// Scope value the per-actor display-settings store is keyed by for the files
+// table. Distinct from any real `object.type`; the route's `objectTypeSchema`
+// (/^[a-z][a-z0-9_]*$/) accepts it as a scope name.
+const FILES_SETTINGS_SCOPE = 'files'
 
 type ToggleableColumn = 'created_at' | 'modified_at'
 
@@ -33,6 +42,11 @@ const TOGGLEABLE_COLUMNS: { id: ToggleableColumn; label: string }[] = [
 	{ id: 'created_at', label: 'Created' },
 	{ id: 'modified_at', label: 'Modified' },
 ]
+
+const DEFAULT_VISIBLE_COLUMNS: Record<ToggleableColumn, boolean> = {
+	created_at: false,
+	modified_at: false,
+}
 
 interface ObjectFilesProps {
 	workspaceId: string
@@ -67,10 +81,47 @@ export function ObjectFiles({
 	const inputRef = useRef<HTMLInputElement>(null)
 	const [isDragging, setIsDragging] = useState(false)
 	const [isUploading, setIsUploading] = useState(false)
-	const [visibleColumns, setVisibleColumns] = useState<Record<ToggleableColumn, boolean>>({
-		created_at: false,
-		modified_at: false,
-	})
+	const [visibleColumns, setVisibleColumns] =
+		useState<Record<ToggleableColumn, boolean>>(DEFAULT_VISIBLE_COLUMNS)
+
+	// Per-actor column-visibility persistence under `object_type = "files"`.
+	// Reuses the display-settings store from PR #486; `columnVisibility` is the
+	// only field we write here.
+	const displaySettingsQuery = useUserDisplaySettings(workspaceId, FILES_SETTINGS_SCOPE)
+	const updateDisplaySettings = useUpdateUserDisplaySettings(workspaceId)
+	// Pinning the stable mutate fn into a ref keeps the write-through effect's
+	// deps from churning on every render — same trick the objects page uses to
+	// avoid a write-every-debounce-cycle loop.
+	const updateMutateRef = useRef(updateDisplaySettings.mutate)
+	updateMutateRef.current = updateDisplaySettings.mutate
+	const hydratedRef = useRef(false)
+
+	useEffect(() => {
+		if (hydratedRef.current) return
+		if (!displaySettingsQuery.isSuccess) return
+		hydratedRef.current = true
+		const persisted = displaySettingsQuery.data
+		const vis = persisted?.settings.columnVisibility
+		if (!vis) return
+		// Apply only the keys we own; ignore anything else stored under this
+		// scope so a stray entry can't poison local state.
+		setVisibleColumns((prev) => ({
+			...prev,
+			created_at: vis.created_at ?? prev.created_at,
+			modified_at: vis.modified_at ?? prev.modified_at,
+		}))
+	}, [displaySettingsQuery.isSuccess, displaySettingsQuery.data])
+
+	useEffect(() => {
+		if (!hydratedRef.current) return
+		const handle = setTimeout(() => {
+			updateMutateRef.current({
+				objectType: FILES_SETTINGS_SCOPE,
+				settings: { columnVisibility: visibleColumns },
+			})
+		}, 500)
+		return () => clearTimeout(handle)
+	}, [visibleColumns])
 
 	const handleUpload = useCallback(
 		async (incoming: File[]) => {
