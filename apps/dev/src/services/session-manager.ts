@@ -48,6 +48,7 @@ import {
 	checkPlanCap,
 	resolveLlmRoute,
 } from '../lib/llm-routing'
+import { getValidOAuthToken } from '../lib/claude-oauth'
 import { logger } from '../lib/logger'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { AgentServerClient } from './agent-server-client'
@@ -224,17 +225,24 @@ export class SessionManager extends EventEmitter {
 		const config = params.config ?? {}
 		const interactive = config.interactive === true
 
-		// Pre-flight billing cap. Throws PlanCapExceededError → 402 on
-		// maskin_plan workspaces over their hard_cap_tokens. Reading settings
-		// here keeps the cap visible to the HTTP caller before we create the
-		// session row (cf. resolveLlmRoute, which guards background paths).
+		// Pre-flight billing cap. Only enforced when no BYO credentials are
+		// present — BYO routes (OAuth, custom_llm, api_key) take precedence over
+		// the maskin_plan route and never count against the cap. Checking OAuth
+		// here mirrors the route-resolution priority so the 402 surfaces before
+		// a session row is created rather than failing silently at container start.
 		const [ws] = await this.db
 			.select()
 			.from(workspaces)
 			.where(eq(workspaces.id, workspaceId))
 			.limit(1)
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
-		await checkPlanCap({ db: this.db, workspaceId, wsSettings })
+		const hasByoCredentials =
+			(wsSettings.custom_llm?.enabled && !!wsSettings.custom_llm?.base_url) ||
+			!!wsSettings.llm_keys?.anthropic ||
+			!!(await getValidOAuthToken(this.db, workspaceId).catch(() => null))
+		if (!hasByoCredentials) {
+			await checkPlanCap({ db: this.db, workspaceId, wsSettings })
+		}
 
 		const [session] = await this.db
 			.insert(sessions)

@@ -296,11 +296,15 @@ function buildMaskinPlanEnv(
  * Resolves which LLM the session should use, in priority order:
  *
  *   1. Agent-level api_key (caller-injected override)
- *   2. Maskin paid plan (`settings.billing.plan ∈ {starter, pro}`)
+ *   2. Workspace Claude OAuth (Pro/Max/Teams subscription)
  *   3. Workspace custom_llm (BYO endpoint — OpenRouter, Ollama, vLLM, …)
- *   4. Workspace Claude OAuth (Pro/Max/Teams subscription)
- *   5. Workspace anthropic api_key (`settings.llm_keys.anthropic`)
+ *   4. Workspace anthropic api_key (`settings.llm_keys.anthropic`)
+ *   5. Maskin plan (starter/pro/trial) — Maskin's funded OR account, counts against cap
  *   6. System fallback (MASKIN_FALLBACK_OPENROUTER_KEY) with daily quota
+ *
+ * BYO credentials (2-4) always take precedence over the Maskin-funded route so
+ * a connected Claude subscription or custom endpoint is never bypassed and never
+ * counts against the workspace's token cap.
  *
  * Throws FallbackQuotaExceededError if route #6 is selected and the actor has
  * already burned through their 24h budget.
@@ -330,28 +334,9 @@ export async function resolveLlmRoute(params: {
 		return null
 	}
 
-	// Read once and share with the system-fallback branch below.
-	const fallback = readFallbackConfig()
-
-	// 2. Maskin plan (starter/pro/trial) — routed through Maskin's funded OR
-	//    account; the route tag is what makes per-period usage queryable
-	//    downstream (hard-cap enforcement and the credits banner both read
-	//    `sessions.config.llm_route = 'maskin_plan'`). The cap re-check here is
-	//    defense-in-depth — the pre-flight in `createSession` is what surfaces
-	//    402 to the user; this guards background callers that skipped it.
-	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback)
-	if (maskinPlanEnv) {
-		await checkPlanCap({ db, workspaceId, wsSettings })
-		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
-	}
-
-	// 3. Workspace custom_llm
-	const customEnv = buildCustomLlmEnv(wsSettings.custom_llm)
-	if (customEnv) {
-		return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
-	}
-
-	// 4. Claude OAuth subscription
+	// 2. Claude OAuth subscription — checked first among BYO routes so a
+	//    connected Pro/Max subscription is always preferred over custom endpoints
+	//    and never consumes maskin plan tokens.
 	try {
 		const oauthResult = await getValidOAuthToken(db, workspaceId)
 		if (oauthResult) {
@@ -373,13 +358,33 @@ export async function resolveLlmRoute(params: {
 		// is logged by the caller for parity with the previous behavior.
 	}
 
-	// 5. Workspace anthropic api key
+	// 3. Workspace custom_llm
+	const customEnv = buildCustomLlmEnv(wsSettings.custom_llm)
+	if (customEnv) {
+		return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
+	}
+
+	// 4. Workspace anthropic api key
 	const wsAnthropic = wsSettings.llm_keys?.anthropic
 	if (wsAnthropic) {
 		return {
 			route: LLM_ROUTE_API_KEY,
 			envVars: { ANTHROPIC_API_KEY: wsAnthropic },
 		}
+	}
+
+	// Read once and share between the maskin_plan and system-fallback branches.
+	const fallback = readFallbackConfig()
+
+	// 5. Maskin plan (starter/pro/trial) — routed through Maskin's funded OR
+	//    account. Only reached when no BYO credentials are present so tokens are
+	//    never counted against the cap when the user has their own LLM configured.
+	//    The cap check here is defense-in-depth; the pre-flight in `createSession`
+	//    is what surfaces 402 to the user before a session row is created.
+	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback)
+	if (maskinPlanEnv) {
+		await checkPlanCap({ db, workspaceId, wsSettings })
+		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
 	}
 
 	// 6. System fallback (re-uses the `fallback` config already read above)

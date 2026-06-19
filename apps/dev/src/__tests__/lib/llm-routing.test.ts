@@ -163,7 +163,7 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result).toBeNull()
 	})
 
-	it('2. workspace custom_llm overrides Claude OAuth', async () => {
+	it('2. Claude OAuth overrides custom_llm', async () => {
 		getValidOAuthTokenMock.mockResolvedValue({
 			tokens: {
 				accessToken: 'oauth-access',
@@ -183,16 +183,10 @@ describe('resolveLlmRoute priority order', () => {
 			wsSettings: settings,
 			agent: {},
 		})
-		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
-		expect(result?.envVars).toMatchObject({
-			ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
-			ANTHROPIC_AUTH_TOKEN: 'sk-or-test',
-			ANTHROPIC_API_KEY: '',
-			ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
-			ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
-		})
-		// OAuth env vars should NOT be set when custom_llm wins.
-		expect(result?.envVars.CLAUDE_OAUTH_ACCESS_TOKEN).toBeUndefined()
+		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
+		expect(result?.envVars.CLAUDE_OAUTH_ACCESS_TOKEN).toBe('oauth-access')
+		// custom_llm env vars should NOT be set when OAuth wins.
+		expect(result?.envVars.ANTHROPIC_BASE_URL).toBeUndefined()
 	})
 
 	it('skips custom_llm when enabled but missing fields', async () => {
@@ -343,23 +337,10 @@ describe('resolveLlmRoute priority order', () => {
 			},
 		)
 
-		it('paid plan wins over custom_llm, OAuth, and workspace api_key', async () => {
-			getValidOAuthTokenMock.mockResolvedValue({
-				tokens: {
-					accessToken: 'oauth-access',
-					refreshToken: 'oauth-refresh',
-					expiresAt: Date.now() + 60_000,
-				},
-			})
+		it('maskin_plan is only used when no BYO credentials are present', async () => {
+			getValidOAuthTokenMock.mockResolvedValue(null)
 			const settings = emptySettings()
 			settings.billing = { plan: 'pro' }
-			settings.custom_llm = {
-				enabled: true,
-				base_url: 'https://example.com',
-				api_key: 'sk-cust',
-				model: 'mod',
-			}
-			settings.llm_keys = { anthropic: 'sk-ant-x' }
 			const result = await resolveLlmRoute({
 				...baseParams,
 				db: dbWithSessionUsage([]),
@@ -368,6 +349,49 @@ describe('resolveLlmRoute priority order', () => {
 			})
 			expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
 			expect(result?.envVars.ANTHROPIC_AUTH_TOKEN).toBe('sk-or-maskin')
+		})
+
+		it('OAuth wins over maskin_plan — never counts against cap', async () => {
+			getValidOAuthTokenMock.mockResolvedValue({
+				tokens: { accessToken: 'oauth-access', refreshToken: 'r', expiresAt: 9999 },
+			})
+			const settings = emptySettings()
+			settings.billing = { plan: 'pro' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				db: dbWithSessionUsage([]),
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result?.route).toBe(LLM_ROUTE_OAUTH)
+		})
+
+		it('custom_llm wins over maskin_plan', async () => {
+			getValidOAuthTokenMock.mockResolvedValue(null)
+			const settings = emptySettings()
+			settings.billing = { plan: 'pro' }
+			settings.custom_llm = { enabled: true, base_url: 'https://example.com', api_key: 'sk-cust', model: 'mod' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				db: dbWithSessionUsage([]),
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
+		})
+
+		it('workspace api_key wins over maskin_plan', async () => {
+			getValidOAuthTokenMock.mockResolvedValue(null)
+			const settings = emptySettings()
+			settings.billing = { plan: 'pro' }
+			settings.llm_keys = { anthropic: 'sk-ant-x' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				db: dbWithSessionUsage([]),
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result?.route).toBe(LLM_ROUTE_API_KEY)
 		})
 
 		it('agent anthropic api_key still wins over paid plan', async () => {
@@ -409,14 +433,12 @@ describe('resolveLlmRoute priority order', () => {
 			expect(result?.route).toBe(LLM_ROUTE_API_KEY)
 		})
 
-		it('no billing block defaults to trial and routes through maskin_plan', async () => {
+		it('no billing block defaults to trial and routes through maskin_plan when no BYO set', async () => {
 			getValidOAuthTokenMock.mockResolvedValue(null)
-			const settings = emptySettings()
-			settings.llm_keys = { anthropic: 'sk-ant-untouched' }
 			const result = await resolveLlmRoute({
 				...baseParams,
 				db: dbWithSessionUsage([]),
-				wsSettings: settings,
+				wsSettings: emptySettings(),
 				agent: {},
 			})
 			expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
