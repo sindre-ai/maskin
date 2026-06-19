@@ -1,3 +1,4 @@
+import { getStoredActor } from '@/lib/auth'
 import {
 	apiConversationRepository,
 	conversationToMarkdown,
@@ -370,5 +371,30 @@ describe('apiConversationRepository', () => {
 		await apiConversationRepository.updateConversation(WS, 'conv-1', { title: 'x' })
 		await apiConversationRepository.deleteConversation(WS, 'conv-1')
 		expect(fetchSpy).not.toHaveBeenCalled()
+	})
+
+	it('list falls back to localStorageRepository when no actor is stored', async () => {
+		// Without a stored actor, hydration cannot tell user messages from agent
+		// ones — every persisted user message would re-hydrate as `role: 'agent'`.
+		// The repo defers to localStorage rather than emit a wrong transcript.
+		vi.mocked(getStoredActor).mockReturnValueOnce(null)
+		const seeded = await localStorageRepository.createConversation(WS, { title: 'Local only' })
+		await localStorageRepository.postUserMessage(WS, seeded.id, {
+			id: 'msg_local_1',
+			role: 'user',
+			senderId: 'user-1',
+			senderName: 'Me',
+			text: 'cached',
+			createdAt: Date.now(),
+		})
+
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+		const loaded = await apiConversationRepository.list(WS)
+		warnSpy.mockRestore()
+
+		expect(fetchSpy).not.toHaveBeenCalled()
+		expect(loaded).toHaveLength(1)
+		expect(loaded[0].title).toBe('Local only')
+		expect(loaded[0].messages[0]).toMatchObject({ role: 'user', text: 'cached' })
 	})
 })
