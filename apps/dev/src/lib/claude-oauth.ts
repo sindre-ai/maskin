@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
 import { CLAUDE_OAUTH_CLIENT_ID, CLAUDE_TOKEN_URL } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { decrypt, encrypt } from './crypto'
 import { logger } from './logger'
 
@@ -125,10 +125,16 @@ export async function getValidOAuthToken(
 	const { tokens: fresh, refreshed } = await refreshClaudeTokenIfNeeded(tokens, bufferMs)
 
 	if (refreshed) {
+		// Targeted JSONB update — only `claude_oauth` is touched. Refreshing the
+		// token spans a network call, so any concurrent settings update (e.g. a
+		// `max_concurrent_sessions` bump) would be clobbered if we read-modify-
+		// wrote the whole settings object. `jsonb_set` mutates in-place at the
+		// SQL level and is safe under concurrent writers.
+		const encrypted = JSON.stringify(encryptOAuthTokens(fresh))
 		await db
 			.update(workspaces)
 			.set({
-				settings: { ...wsSettings, claude_oauth: encryptOAuthTokens(fresh) },
+				settings: sql`jsonb_set(coalesce(${workspaces.settings}, '{}'::jsonb), '{claude_oauth}', ${encrypted}::jsonb)`,
 				updatedAt: new Date(),
 			})
 			.where(eq(workspaces.id, workspaceId))
