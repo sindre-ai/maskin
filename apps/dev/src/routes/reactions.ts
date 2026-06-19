@@ -90,9 +90,11 @@ app.openapi(addReactionRoute, (async (c) => {
 
 	await db.transaction(async (tx) => {
 		// Idempotent: a second click on the same emoji from the same actor is a
-		// no-op at the database level. We still emit the SSE-driving event row
-		// so any optimistic UI that toggled off can re-sync from server truth.
-		await tx
+		// no-op at the database level. `returning` is empty when `onConflictDoNothing`
+		// suppressed the insert — in that case we skip the events row too, so a
+		// misbehaving client retrying a stuck button can't inflate the activity
+		// stream or trigger redundant SSE fans.
+		const inserted = await tx
 			.insert(reactions)
 			.values({
 				workspaceId,
@@ -103,6 +105,9 @@ app.openapi(addReactionRoute, (async (c) => {
 			.onConflictDoNothing({
 				target: [reactions.eventId, reactions.actorId, reactions.emoji],
 			})
+			.returning({ id: reactions.id })
+
+		if (inserted.length === 0) return
 
 		// Realtime fan-out. The events row carries the parent object id as
 		// entity_id (matches the existing SSE convention for the object's
@@ -163,7 +168,11 @@ app.openapi(removeReactionRoute, (async (c) => {
 	if (!parent) return c.json(createApiError('NOT_FOUND', 'Event not found'), 404)
 
 	await db.transaction(async (tx) => {
-		await tx
+		// `returning` is empty when the WHERE matched no rows — that means the
+		// reaction was already absent, so we skip the events row to avoid letting
+		// a misbehaving client (or stuck button retry) inflate the activity stream
+		// with arbitrary `unreacted` events.
+		const deleted = await tx
 			.delete(reactions)
 			.where(
 				and(
@@ -172,9 +181,10 @@ app.openapi(removeReactionRoute, (async (c) => {
 					eq(reactions.emoji, body.emoji),
 				),
 			)
+			.returning({ id: reactions.id })
 
-		// Always emit the SSE row, even on a no-op delete — same reasoning as
-		// the add path. Clients with optimistic UI re-sync from server truth.
+		if (deleted.length === 0) return
+
 		await tx.insert(events).values({
 			workspaceId,
 			actorId,
