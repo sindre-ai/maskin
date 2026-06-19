@@ -14,6 +14,15 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 	queryClient.invalidateQueries({ queryKey: queryKeys.events.history(workspaceId) })
 	queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(event.entity_id) })
 
+	// Reactions are scoped to the same parent object as the comment they sit on,
+	// so the events row uses the object as `entity_id`. Refresh the reaction map
+	// for that object whenever a reaction lands or leaves.
+	if (event.action === 'reacted' || event.action === 'unreacted') {
+		queryClient.invalidateQueries({
+			queryKey: queryKeys.reactions.byObject(event.entity_id),
+		})
+	}
+
 	// New comments may change unread counts for any subscriber in this workspace
 	// and the subscriber list for the entity that was commented on (the latter
 	// because the commenter auto-subscribes server-side).
