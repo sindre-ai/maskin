@@ -1,4 +1,9 @@
-import { SLASH_KINDS, SlashPicker, type SlashPickerResult } from '@/components/sindre/slash-picker'
+import {
+	SLASH_COMMANDS,
+	SLASH_KINDS,
+	SlashPicker,
+	type SlashPickerResult,
+} from '@/components/sindre/slash-picker'
 import { queryKeys } from '@/lib/query-keys'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -244,5 +249,62 @@ describe('<SlashPicker>', () => {
 
 		expect(await screen.findByText('Cached Agent')).toBeInTheDocument()
 		expect(api.actors.list).not.toHaveBeenCalled()
+	})
+})
+
+describe('SLASH_COMMANDS registry', () => {
+	it('ships with the four conversation commands in a stable order', () => {
+		expect(SLASH_COMMANDS.map((c) => c.id)).toEqual(['summarize', 'clear', 'rename', 'invite'])
+	})
+})
+
+describe('<SlashPicker> commands', () => {
+	it('renders the four commands in the top-level menu', () => {
+		renderPicker()
+
+		expect(screen.getByText('/summarize')).toBeInTheDocument()
+		expect(screen.getByText('/clear')).toBeInTheDocument()
+		expect(screen.getByText('/rename')).toBeInTheDocument()
+		expect(screen.getByText('/invite')).toBeInTheDocument()
+	})
+
+	it('emits a command result and closes when a command is picked', async () => {
+		const user = userEvent.setup()
+		const { onSelect, onOpenChange } = renderPicker()
+
+		await user.click(screen.getByText('/summarize'))
+
+		expect(onSelect).toHaveBeenCalledTimes(1)
+		expect(onSelect.mock.calls[0][0]).toEqual({ kind: 'command', id: 'summarize' })
+		expect(onOpenChange).toHaveBeenLastCalledWith(false)
+	})
+
+	it('filters commands by the query alongside kinds', async () => {
+		const user = userEvent.setup()
+		renderPicker()
+
+		await user.type(screen.getByPlaceholderText('Choose a kind…'), 'rename')
+
+		expect(screen.getByText('/rename')).toBeInTheDocument()
+		expect(screen.queryByText('/clear')).not.toBeInTheDocument()
+		expect(screen.queryByText('Agent')).not.toBeInTheDocument()
+	})
+
+	it('hides the commands group when commands prop is an empty array', () => {
+		renderPicker({ commands: [] })
+
+		expect(screen.queryByText('/summarize')).not.toBeInTheDocument()
+		expect(screen.queryByText('Commands')).not.toBeInTheDocument()
+		// Kinds still render.
+		expect(screen.getByText('Agent')).toBeInTheDocument()
+	})
+
+	it('shows a single empty-state when neither kinds nor commands match the query', async () => {
+		const user = userEvent.setup()
+		renderPicker()
+
+		await user.type(screen.getByPlaceholderText('Choose a kind…'), 'zzz')
+
+		expect(await screen.findByText(/No matches for/)).toBeInTheDocument()
 	})
 })
