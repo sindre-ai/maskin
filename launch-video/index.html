@@ -6,215 +6,269 @@
     <title>Maskin — launch</title>
     <script src="./vendor/gsap.min.js"></script>
     <style>
+      @font-face { font-family:"Schibsted Grotesk"; src:url("./assets/fonts/schibsted-grotesk-400.woff2") format("woff2"); font-weight:400; font-style:normal; font-display:block; }
+      @font-face { font-family:"Schibsted Grotesk"; src:url("./assets/fonts/schibsted-grotesk-500.woff2") format("woff2"); font-weight:500; font-style:normal; font-display:block; }
+      @font-face { font-family:"Schibsted Grotesk"; src:url("./assets/fonts/schibsted-grotesk-600.woff2") format("woff2"); font-weight:600; font-style:normal; font-display:block; }
+      @font-face { font-family:"Schibsted Grotesk"; src:url("./assets/fonts/schibsted-grotesk-700.woff2") format("woff2"); font-weight:700; font-style:normal; font-display:block; }
+      @font-face { font-family:"Newsreader"; src:url("./assets/fonts/newsreader-400.woff2") format("woff2"); font-weight:400; font-style:normal; font-display:block; }
+      @font-face { font-family:"Newsreader"; src:url("./assets/fonts/newsreader-400-italic.woff2") format("woff2"); font-weight:400; font-style:italic; font-display:block; }
+
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body {
         width: 1920px; height: 1080px; overflow: hidden;
-        background: #08080c; color: #18181b;
-        font-family: "Inter", system-ui, sans-serif; -webkit-font-smoothing: antialiased;
+        background: #ECE9E2; color: #111110;
+        font-family: "Schibsted Grotesk", system-ui, sans-serif; -webkit-font-smoothing: antialiased;
       }
+      .serif { font-family: "Newsreader", Georgia, serif; }
       .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
 
-      /* ---------- persistent backdrop ---------- */
-      #backdrop { position: absolute; inset: 0; background: #0b0b12; overflow: hidden; }
-      #glow { position: absolute; left: 50%; top: 48%; width: 1700px; height: 1700px;
-        margin-left: -850px; margin-top: -850px; border-radius: 50%;
-        background: radial-gradient(circle, rgba(99,102,241,0.30) 0%, rgba(99,102,241,0.09) 36%, rgba(99,102,241,0) 64%); }
-      #grid { position: absolute; inset: -60px;
-        background-image: linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
-        background-size: 68px 68px; }
-      .mark { position: absolute; width: 26px; height: 26px; opacity: 0.45; }
-      .mark::before, .mark::after { content: ""; position: absolute; background: rgba(255,255,255,0.4); }
-      .mark::before { left: 0; top: 12px; width: 26px; height: 1px; }
-      .mark::after { top: 0; left: 12px; height: 26px; width: 1px; }
-      #m-tl { left: 40px; top: 40px; } #m-tr { right: 40px; top: 40px; }
-      #m-bl { left: 40px; bottom: 40px; } #m-br { right: 40px; bottom: 40px; }
-      #kicker-tl { position: absolute; left: 50px; top: 32px; font-size: 14px; letter-spacing: 0.34em; font-weight: 700; color: rgba(255,255,255,0.8); }
-      #kicker-tl span { color: #a5b4fc; }
-      #kicker-tr { position: absolute; right: 50px; top: 34px; font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase; color: rgba(255,255,255,0.4); }
+      /* ---------- persistent backdrop (warm editorial) ---------- */
+      #backdrop { position: absolute; inset: 0; background: #FAFAF8; overflow: hidden; }
+      #glow { position: absolute; left: 64%; top: 18%; width: 1500px; height: 1500px;
+        margin-left: -750px; margin-top: -750px; border-radius: 50%;
+        background: radial-gradient(circle, rgba(37,99,235,0.10) 0%, rgba(37,99,235,0.04) 38%, rgba(37,99,235,0) 66%); }
+      #grain { position: absolute; inset: -60px;
+        background-image: linear-gradient(rgba(17,17,16,0.022) 1px, transparent 1px), linear-gradient(90deg, rgba(17,17,16,0.022) 1px, transparent 1px);
+        background-size: 72px 72px; }
+      .mark { position: absolute; width: 24px; height: 24px; opacity: 0.5; }
+      .mark::before, .mark::after { content: ""; position: absolute; background: #C9C3BA; }
+      .mark::before { left: 0; top: 11px; width: 24px; height: 1px; }
+      .mark::after { top: 0; left: 11px; height: 24px; width: 1px; }
+      #m-tl { left: 44px; top: 44px; } #m-tr { right: 44px; top: 44px; }
+      #m-bl { left: 44px; bottom: 44px; } #m-br { right: 44px; bottom: 44px; }
+      /* top-left persistent logo lockup */
+      #brandbar { position: absolute; left: 52px; top: 40px; display: flex; align-items: center; gap: 11px; }
+      #brandbar .lg { width: 26px; height: 26px; border-radius: 7px; }
+      #brandbar .wd { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; color: #111110; }
+      #kicker-tr { position: absolute; right: 52px; top: 46px; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: #9B958F; }
 
-      /* full-frame scenes */
       .scene { position: absolute; inset: 0; }
       #s1 { z-index: 5; } #s2 { z-index: 6; opacity: 0; } #s3 { z-index: 7; opacity: 0; }
       #s4 { z-index: 8; opacity: 0; } #s5 { z-index: 9; opacity: 0; }
 
-      /* ---------- Act 1 — thesis ---------- */
-      .thesis { position: absolute; left: 200px; right: 200px; top: 50%; transform: translateY(-50%); text-align: center; }
-      .t-kick { font-size: 17px; letter-spacing: 0.32em; text-transform: uppercase; font-weight: 700; color: #a5b4fc; margin-bottom: 22px; }
-      .t-head { font-size: 78px; line-height: 1.08; font-weight: 800; letter-spacing: -0.025em; color: #f4f4f5; }
-      .t-head .hl { color: #a5b4fc; }
-      .t-sub { margin-top: 20px; font-size: 28px; font-weight: 400; color: #a1a1aa; letter-spacing: -0.01em; }
-      .t-strike { color: #71717a; text-decoration: line-through; text-decoration-color: rgba(220,38,38,0.7); }
+      /* ---------- Act 1 — hook + loop ---------- */
+      #a1-left { position: absolute; left: 110px; top: 50%; transform: translateY(-50%); width: 760px; }
+      .a1-kick { font-size: 14px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; color: #2563EB; margin-bottom: 22px; }
+      .a1-head { font-size: 66px; line-height: 1.05; font-weight: 700; letter-spacing: -0.03em; color: #111110; }
+      .a1-head em { font-style: italic; font-weight: 400; color: #2563EB; font-family: "Newsreader", serif; letter-spacing: -0.01em; }
+      .a1-sub { margin-top: 26px; font-size: 21px; font-weight: 400; color: #5A5751; line-height: 1.5; max-width: 30ch; }
+      .a1-status { margin-top: 28px; font-size: 13px; color: #9B958F; letter-spacing: 0.04em; }
 
-      /* ---------- Act 2 — closed loop ---------- */
-      #loop-title { position: absolute; left: 0; right: 0; top: 86px; text-align: center; }
-      #loop-title .lt-kick { font-size: 15px; letter-spacing: 0.3em; text-transform: uppercase; font-weight: 700; color: #a5b4fc; }
-      #loop-title .lt-h { margin-top: 8px; font-size: 40px; font-weight: 800; letter-spacing: -0.02em; color: #f4f4f5; }
-      #ring-svg { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
-      .node { position: absolute; transform: translate(-50%, -50%); width: 230px; text-align: center; }
-      .node-card { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; padding: 12px 16px; border-radius: 12px;
-        background: rgba(20,20,30,0.72); border: 1px solid rgba(165,180,252,0.35); backdrop-filter: blur(2px); min-width: 168px; }
-      .node-n { width: 22px; height: 22px; border-radius: 50%; background: #4f46e5; color: #fff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
-      .node-t { font-size: 19px; font-weight: 700; color: #f4f4f5; }
-      .node-s { font-size: 12.5px; color: #a1a1aa; }
-      .node-head { display: flex; align-items: center; gap: 8px; }
-      #loop-callout { position: absolute; left: 50%; transform: translateX(-50%); bottom: 70px; width: 1060px;
-        background: rgba(20,20,30,0.82); border: 1px solid rgba(255,255,255,0.1); border-left: 3px solid #4f46e5; border-radius: 12px; padding: 16px 22px; }
-      #loop-callout .lc-k { font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: #a5b4fc; font-weight: 700; }
-      #loop-callout .lc-t { margin-top: 6px; font-size: 19px; color: #e4e4e7; line-height: 1.45; }
-      #loop-callout .lc-t b { color: #fff; }
+      /* loop diagram (right) — insight → bet → task → shipped */
+      #loop { position: absolute; right: 150px; top: 50%; transform: translateY(-50%); width: 620px; height: 660px; }
+      #loop-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+      .lpath { fill: none; stroke: #E2DDD7; stroke-width: 2; stroke-dasharray: 6 5; }
+      .lpath.lit { stroke: #2563EB; stroke-dasharray: none; }
+      .lcard { position: absolute; background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 13px; padding: 14px 16px; width: 232px;
+        box-shadow: 0 1px 4px rgba(17,17,16,0.05); }
+      .lcard.active { border-color: #2563EB; box-shadow: 0 6px 26px rgba(37,99,235,0.16); }
+      .lcard .ll { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #9B958F; margin-bottom: 5px; }
+      .lcard.active .ll { color: #2563EB; }
+      .lcard .lt { font-size: 15px; font-weight: 600; color: #111110; line-height: 1.3; margin-bottom: 9px; }
+      .lactor { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: #5A5751; background: #F0EDE7; padding: 3px 8px; border-radius: 20px; }
+      .lactor .ad { width: 5px; height: 5px; border-radius: 50%; background: #9B958F; }
+      .lcard.active .lactor .ad { background: #2563EB; }
+      .lval { display:inline-flex; align-items:center; gap:5px; margin-top:7px; font-size:11px; font-weight:600; color:#27AE60; background:rgba(39,174,96,.1); padding:3px 8px; border-radius:20px; }
+      #lc-ins { top: 0; left: 50%; transform: translateX(-50%); }
+      #lc-bet { bottom: 150px; left: 0; }
+      #lc-task { bottom: 150px; right: 0; }
+      #lc-ship { bottom: 0; left: 50%; transform: translateX(-50%); width: 210px; }
 
-      /* ---------- Act 3 — product tour (app window) ---------- */
-      #s3-title { position: absolute; left: 80px; top: 64px; }
-      #s3-title .s3-k { font-size: 14px; letter-spacing: 0.3em; text-transform: uppercase; font-weight: 700; color: #a5b4fc; }
-      #s3-title .s3-h { margin-top: 6px; font-size: 34px; font-weight: 800; letter-spacing: -0.02em; color: #f4f4f5; }
+      /* ---------- Act 2 — the gap ---------- */
+      #a2 { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); padding: 0 150px; }
+      #a2-head { text-align: center; font-size: 50px; font-weight: 700; letter-spacing: -0.03em; color: #111110; line-height: 1.08; }
+      #a2-head em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
+      #a2-split { display: flex; gap: 28px; margin-top: 48px; justify-content: center; }
+      .a2-col { width: 540px; background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 16px; padding: 28px 30px; }
+      .a2-col.after { border-color: #2563EB; box-shadow: 0 8px 30px rgba(37,99,235,0.10); }
+      .a2-lbl { font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #9B958F; }
+      .a2-col.after .a2-lbl { color: #2563EB; }
+      .a2-t { margin-top: 10px; font-size: 27px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.12; color: #111110; }
+      .a2-li { margin-top: 14px; display: flex; gap: 10px; font-size: 16px; color: #5A5751; line-height: 1.45; }
+      .a2-li .mk { color: #9B958F; flex: 0 0 auto; }
+      .a2-col.after .a2-li { color: #111110; } .a2-col.after .a2-li .mk { color: #2563EB; }
 
-      #win { position: absolute; left: 80px; top: 156px; width: 1150px; height: 812px; background: #fff; border-radius: 16px; overflow: hidden;
-        box-shadow: 0 50px 120px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06); }
-      #wtitle { position: absolute; left: 0; top: 0; width: 100%; height: 36px; background: #f4f4f5; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; padding: 0 14px; gap: 7px; }
+      /* ---------- Act 3 — product (app on warm canvas) ---------- */
+      #s3-title { position: absolute; left: 110px; top: 70px; }
+      #s3-title .k { font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; color: #2563EB; }
+      #s3-title .h { margin-top: 6px; font-size: 32px; font-weight: 700; letter-spacing: -0.025em; color: #111110; }
+
+      #win { position: absolute; left: 96px; top: 168px; width: 1130px; height: 836px; background: #FAFAF8; border-radius: 16px; overflow: hidden;
+        box-shadow: 0 40px 90px rgba(17,17,16,0.22), 0 0 0 1px #E2DDD7; }
+      #wtitle { position: absolute; left: 0; top: 0; width: 100%; height: 36px; background: #F0EDE7; border-bottom: 1px solid #E2DDD7; display: flex; align-items: center; padding: 0 14px; gap: 7px; }
       .tld { width: 11px; height: 11px; border-radius: 50%; }
-      .upill { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); height: 20px; padding: 0 14px; border-radius: 6px; background: #fff; border: 1px solid #e4e4e7; font-size: 11px; color: #71717a; display: flex; align-items: center; }
-      #wbody { position: absolute; left: 0; top: 36px; width: 100%; height: 776px; }
-      #wsb { position: absolute; left: 0; top: 0; width: 196px; height: 100%; background: #fafafa; border-right: 1px solid #e4e4e7; }
-      #wsb-h { height: 42px; display: flex; align-items: center; padding: 0 16px; gap: 9px; }
-      .sblogo { width: 21px; height: 21px; border-radius: 6px; background: #18181b; color: #fff; font-weight: 800; font-size: 12px; display: flex; align-items: center; justify-content: center; }
-      .sbws { font-size: 12.5px; font-weight: 600; color: #18181b; }
+      .upill { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); height: 20px; padding: 0 14px; border-radius: 6px; background: #FAFAF8; border: 1px solid #E2DDD7; font-size: 11px; color: #5A5751; display: flex; align-items: center; }
+      #wbody { position: absolute; left: 0; top: 36px; width: 100%; height: 800px; }
+      #wsb { position: absolute; left: 0; top: 0; width: 196px; height: 100%; background: #F4F1EB; border-right: 1px solid #E2DDD7; }
+      #wsb-h { height: 44px; display: flex; align-items: center; padding: 0 16px; gap: 9px; }
+      .sblogo { width: 21px; height: 21px; border-radius: 6px; }
+      .sbws { font-size: 12.5px; font-weight: 600; color: #111110; }
       #wnav { position: relative; padding: 8px 10px; }
-      #wnav-active { position: absolute; left: 10px; top: 8px; width: 176px; height: 34px; background: #f0f0f1; border-radius: 8px; }
-      #wnav-rail { position: absolute; left: 10px; top: 15px; width: 3px; height: 20px; background: #4f46e5; border-radius: 3px; }
-      .wnav-i { position: relative; height: 34px; margin-bottom: 3px; border-radius: 8px; display: flex; align-items: center; padding: 0 13px; gap: 10px; font-size: 13.5px; color: #52525b; font-weight: 500; }
-      .wnav-i.on { color: #18181b; font-weight: 600; }
-      .wnav-ico { width: 15px; height: 15px; border: 1.7px solid currentColor; border-radius: 4px; opacity: 0.85; }
-      .wnav-badge { margin-left: auto; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: #18181b; color: #fff; font-size: 10.5px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
-      #wsb-foot { position: absolute; left: 0; bottom: 0; width: 100%; padding: 13px 16px; border-top: 1px solid #e4e4e7; }
-      #wpulse { position: relative; height: 17px; font-size: 11.5px; color: #71717a; }
+      #wnav-active { position: absolute; left: 10px; top: 8px; width: 176px; height: 34px; background: #E7E2D9; border-radius: 8px; }
+      #wnav-rail { position: absolute; left: 10px; top: 15px; width: 3px; height: 20px; background: #2563EB; border-radius: 3px; }
+      .wnav-i { position: relative; height: 34px; margin-bottom: 3px; border-radius: 8px; display: flex; align-items: center; padding: 0 13px; gap: 10px; font-size: 13.5px; color: #5A5751; font-weight: 500; }
+      .wnav-i.on { color: #111110; font-weight: 600; }
+      .wnav-ico { width: 15px; height: 15px; border: 1.7px solid currentColor; border-radius: 4px; opacity: 0.8; }
+      .wnav-badge { margin-left: auto; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: #2563EB; color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+      #wsb-foot { position: absolute; left: 0; bottom: 0; width: 100%; padding: 13px 16px; border-top: 1px solid #E2DDD7; }
+      #wpulse { position: relative; height: 17px; font-size: 11.5px; color: #5A5751; }
       .wpst { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 7px; white-space: nowrap; }
-      .wpdot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; }
+      .wpdot { width: 7px; height: 7px; border-radius: 50%; background: #27AE60; }
       #wuser { margin-top: 11px; display: flex; align-items: center; gap: 8px; }
       .avatar { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; flex: 0 0 auto; }
-      .av-h { background: #3f3f46; color: #e4e4e7; } .av-a { background: #e0e7ff; color: #4338ca; font-size: 12px; }
-      #wuser .nm { font-size: 12px; font-weight: 600; color: #18181b; } #wuser .em { font-size: 10px; color: #a1a1aa; }
-      #wtop { position: absolute; left: 196px; top: 0; width: 954px; height: 46px; display: flex; align-items: center; padding: 0 20px; }
-      .wcrumb { position: relative; width: 320px; height: 16px; font-size: 12.5px; color: #71717a; }
-      .wcv { position: absolute; left: 0; top: 0; white-space: nowrap; } .wcrumb b { color: #18181b; font-weight: 600; } .wcrumb .sep { margin: 0 7px; color: #d4d4d8; }
-      #wcontent { position: absolute; left: 196px; top: 46px; width: 954px; height: 730px; overflow: hidden; background: #fff; }
-      .wpanel { position: absolute; inset: 0; padding: 28px 36px; }
+      .av-h { background: #5A5751; color: #FAFAF8; } .av-a { background: rgba(37,99,235,.14); color: #2563EB; font-size: 12px; }
+      #wuser .nm { font-size: 12px; font-weight: 600; color: #111110; } #wuser .em { font-size: 10px; color: #9B958F; }
+      #wtop { position: absolute; left: 196px; top: 0; width: 934px; height: 46px; display: flex; align-items: center; padding: 0 20px; }
+      .wcrumb { position: relative; width: 320px; height: 16px; font-size: 12.5px; color: #5A5751; }
+      .wcv { position: absolute; left: 0; top: 0; white-space: nowrap; } .wcrumb b { color: #111110; font-weight: 600; } .wcrumb .sep { margin: 0 7px; color: #C9C3BA; }
+      #wcontent { position: absolute; left: 196px; top: 46px; width: 934px; height: 754px; overflow: hidden; background: #FAFAF8; }
+      .wpanel { position: absolute; inset: 0; padding: 28px 34px; }
 
-      .page-h { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: #18181b; }
-      .page-sub { margin-top: 3px; font-size: 13px; color: #71717a; }
-      .card { background: #fff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+      .page-h { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: #111110; }
+      .page-sub { margin-top: 3px; font-size: 13px; color: #5A5751; }
+      .card { background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 12px; box-shadow: 0 1px 2px rgba(17,17,16,0.04); }
       .badge { display: inline-flex; align-items: center; height: 21px; padding: 0 9px; border-radius: 11px; font-size: 11.5px; font-weight: 600; }
-      .b-type { background: transparent; color: #3f3f46; font-weight: 500; border: 1px solid #e4e4e7; }
-      .b-insight { background: #fef3c7; color: #92400e; } .b-proposed { background: #e0e7ff; color: #3730a3; }
-      .b-active { background: #dcfce7; color: #166534; } .b-done { background: #d1fae5; color: #065f46; } .b-prog { background: #dbeafe; color: #1e40af; }
-      .thead { display: flex; align-items: center; gap: 9px; padding: 12px 16px; border-bottom: 1px solid #e4e4e7; }
-      .ttl { font-size: 15px; font-weight: 600; color: #18181b; } .ttime { font-size: 11.5px; color: #a1a1aa; }
-      .unread { min-width: 17px; height: 17px; padding: 0 6px; border-radius: 9px; background: #4f46e5; color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+      .b-type { background: transparent; color: #5A5751; font-weight: 500; border: 1px solid #E2DDD7; }
+      .b-insight { background: rgba(91,141,217,.14); color: #3F6CA8; }
+      .b-bet { background: rgba(230,126,34,.14); color: #B45F12; }
+      .b-proposed { background: rgba(37,99,235,.12); color: #1E50C8; }
+      .b-active { background: rgba(39,174,96,.14); color: #1E844A; }
+      .b-done { background: rgba(39,174,96,.16); color: #1E844A; }
+      .thead { display: flex; align-items: center; gap: 9px; padding: 12px 16px; border-bottom: 1px solid #E2DDD7; }
+      .ttl { font-size: 15px; font-weight: 600; color: #111110; } .ttime { font-size: 11.5px; color: #9B958F; }
+      .unread { min-width: 17px; height: 17px; padding: 0 6px; border-radius: 9px; background: #2563EB; color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
       .tbody { padding: 14px 16px; }
       .cmt { display: flex; gap: 10px; padding: 5px 0; } .cb { flex: 1; min-width: 0; }
-      .cn { font-size: 13.5px; font-weight: 600; color: #18181b; } .cn.link { color: #4338ca; } .ct { font-size: 11.5px; color: #a1a1aa; margin-left: 7px; }
-      .cx { margin-top: 3px; font-size: 13.5px; line-height: 1.5; color: #3f3f46; }
-      .doc-title { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: #18181b; }
+      .cn { font-size: 13.5px; font-weight: 600; color: #111110; } .cn.link { color: #2563EB; } .ct { font-size: 11.5px; color: #9B958F; margin-left: 7px; }
+      .cx { margin-top: 3px; font-size: 13.5px; line-height: 1.5; color: #5A5751; }
+      .doc-title { font-size: 26px; font-weight: 700; letter-spacing: -0.025em; color: #111110; }
       .doc-meta { display: flex; align-items: center; gap: 9px; margin-top: 12px; flex-wrap: wrap; }
-      .mdrv { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: #71717a; }
-      .wbanner { display: flex; align-items: center; gap: 9px; margin-top: 14px; padding: 9px 13px; border-radius: 10px; background: #eef2ff; border: 1px solid #c7d2fe; font-size: 12.5px; color: #3730a3; font-weight: 500; }
-      .wbanner.ok { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
-      .dsec { font-size: 11.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #a1a1aa; }
-      .dp { font-size: 13.5px; line-height: 1.55; color: #3f3f46; }
-      .spinner { width: 13px; height: 13px; border-radius: 50%; border: 2px solid #bfdbfe; border-top-color: #1e40af; flex: 0 0 auto; }
-      .ag-card { padding: 15px; } .ag-card.working { border-color: #c7d2fe; background: #f5f6ff; }
-      .ag-h { display: flex; align-items: center; gap: 9px; } .ag-nm { font-size: 13.5px; font-weight: 600; color: #18181b; }
-      .ag-st { margin-left: auto; font-size: 12px; font-weight: 600; } .ag-st.working { color: #1e40af; } .ag-st.idle { color: #a1a1aa; }
-      .ag-ds { font-size: 11px; color: #71717a; margin: 6px 0 9px; margin-left: 33px; } .ag-ac { font-size: 12px; color: #52525b; margin-left: 33px; }
-      .idot { width: 7px; height: 7px; border-radius: 50%; background: #a1a1aa; }
+      .mdrv { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: #5A5751; }
+      .wbanner { display: flex; align-items: center; gap: 9px; margin-top: 14px; padding: 9px 13px; border-radius: 10px; background: rgba(37,99,235,.08); border: 1px solid rgba(37,99,235,.22); font-size: 12.5px; color: #1E50C8; font-weight: 500; }
+      .wbanner.ok { background: rgba(39,174,96,.1); border-color: rgba(39,174,96,.28); color: #1E844A; }
+      .dsec { font-size: 11.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #9B958F; }
+      .dp { font-size: 13.5px; line-height: 1.55; color: #5A5751; }
+      .spinner { width: 13px; height: 13px; border-radius: 50%; border: 2px solid rgba(37,99,235,.3); border-top-color: #2563EB; flex: 0 0 auto; }
+      .ag-card { padding: 15px; } .ag-card.working { border-color: rgba(37,99,235,.4); background: rgba(37,99,235,.05); }
+      .ag-h { display: flex; align-items: center; gap: 9px; } .ag-nm { font-size: 13.5px; font-weight: 600; color: #111110; }
+      .ag-st { margin-left: auto; font-size: 12px; font-weight: 600; } .ag-st.working { color: #2563EB; } .ag-st.idle { color: #9B958F; }
+      .ag-ds { font-size: 11px; color: #9B958F; margin: 6px 0 9px; margin-left: 33px; } .ag-ac { font-size: 12px; color: #5A5751; margin-left: 33px; }
+      .idot { width: 7px; height: 7px; border-radius: 50%; background: #9B958F; }
 
-      /* callout cards (right column) */
-      .callout { position: absolute; left: 1290px; width: 552px; background: rgba(20,20,30,0.86); border: 1px solid rgba(255,255,255,0.1);
-        border-left: 3px solid #4f46e5; border-radius: 14px; padding: 22px 26px; opacity: 0; }
-      .callout .co-step { font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: #a5b4fc; font-weight: 700; }
-      .callout .co-h { margin-top: 8px; font-size: 27px; font-weight: 800; letter-spacing: -0.015em; color: #f4f4f5; line-height: 1.15; }
-      .callout .co-t { margin-top: 12px; font-size: 16px; line-height: 1.5; color: #c4c4cd; }
-      .callout .co-t b { color: #fff; }
-      .co-dot { position: absolute; left: -3px; top: 36px; width: 12px; height: 12px; border-radius: 50%; background: #4f46e5; box-shadow: 0 0 0 5px rgba(79,70,229,0.25); }
+      /* callout cards (right) */
+      .callout { position: absolute; left: 1286px; top: 392px; width: 560px; background: #111110; border-radius: 16px; padding: 24px 28px; opacity: 0; box-shadow: 0 24px 60px rgba(17,17,16,.3); }
+      .callout::before { content:""; position:absolute; left:0; top:28px; bottom:28px; width:3px; border-radius:3px; background:#3B74F2; }
+      .callout .co-step { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #6F9BF5; font-weight: 700; }
+      .callout .co-h { margin-top: 9px; font-size: 28px; font-weight: 700; letter-spacing: -0.02em; color: #FAFAF8; line-height: 1.15; }
+      .callout .co-t { margin-top: 13px; font-size: 16px; line-height: 1.55; color: #C7C3BB; }
+      .callout .co-t b { color: #FAFAF8; font-weight: 600; }
 
       /* ---------- Act 4 — marketplace ---------- */
-      #mkt-title { position: absolute; left: 0; right: 0; top: 120px; text-align: center; }
-      #mkt-title .mk { font-size: 15px; letter-spacing: 0.3em; text-transform: uppercase; font-weight: 700; color: #a5b4fc; }
-      #mkt-title .mh { margin-top: 10px; font-size: 52px; font-weight: 800; letter-spacing: -0.025em; color: #f4f4f5; }
-      #mkt-title .ms { margin-top: 12px; font-size: 20px; color: #a1a1aa; }
-      #mkt-grid { position: absolute; left: 50%; top: 420px; transform: translateX(-50%); display: flex; gap: 30px; }
-      .loop-card { width: 500px; background: rgba(18,18,26,0.85); border: 1px solid rgba(255,255,255,0.1); border-radius: 18px; padding: 30px; }
-      .loop-card .lc-tag { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #a5b4fc; font-weight: 700; }
-      .loop-card .lc-h { margin-top: 14px; font-size: 27px; font-weight: 800; color: #f4f4f5; letter-spacing: -0.015em; }
-      .loop-card .lc-d { margin-top: 12px; font-size: 16px; line-height: 1.55; color: #b4b4bd; min-height: 100px; }
-      .loop-card .lc-chips { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px; }
-      .chip { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 13px; border-radius: 15px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); font-size: 13px; color: #d4d4d8; }
-      .chip .cdot { width: 8px; height: 8px; border-radius: 50%; }
-      .mini-cycle { margin-top: 4px; }
+      #mkt-title { position: absolute; left: 0; right: 0; top: 96px; text-align: center; }
+      #mkt-title .k { font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; color: #2563EB; }
+      #mkt-title .h { margin-top: 9px; font-size: 46px; font-weight: 700; letter-spacing: -0.03em; color: #111110; }
+      #mkt-title .h em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
+      #mkt-title .s { margin-top: 12px; font-size: 18px; color: #5A5751; }
+      #mkt-grid { position: absolute; left: 50%; top: 320px; transform: translateX(-50%); display: grid; grid-template-columns: repeat(3, 372px); gap: 20px; }
+      .mcard { background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 14px; padding: 22px; border-top-width: 3px; }
+      .mcard .role { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #9B958F; }
+      .mcard .mt { margin-top: 12px; font-size: 18px; font-weight: 700; letter-spacing: -0.015em; color: #111110; line-height: 1.25; min-height: 46px; }
+      .mcard .md { margin-top: 11px; font-size: 13px; line-height: 1.5; color: #5A5751; min-height: 76px; }
+      .mflow { margin-top: 14px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+      .ot { font-family: "JetBrains Mono", monospace; font-size: 11px; font-weight: 500; padding: 2px 7px; border-radius: 5px; }
+      .ot-i { color: #3F6CA8; background: rgba(91,141,217,.12); } .ot-b { color: #B45F12; background: rgba(230,126,34,.12); }
+      .ot-t { color: #1E844A; background: rgba(39,174,96,.12); } .ot-src { color: #9B958F; border: 1px dashed #C9C3BA; font-family: "JetBrains Mono", monospace; }
+      .ot-ar { color: #C9C3BA; }
+      .mcard--custom { background: #F0EDE7; border-top-color: #2563EB; }
 
-      /* ---------- Act 5 — logo + CTA ---------- */
+      /* ---------- Act 5 — close ---------- */
       #close-wrap { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; }
-      #logo-lockup { display: inline-flex; align-items: center; gap: 20px; }
-      #logo-mark { width: 76px; height: 76px; border-radius: 18px; background: #18181b; box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 20px 50px rgba(0,0,0,0.5); color: #fff; font-weight: 800; font-size: 46px; display: flex; align-items: center; justify-content: center; }
-      #logo-word { font-size: 84px; font-weight: 800; letter-spacing: -0.03em; color: #f4f4f5; }
-      #logo-word span { color: #a5b4fc; }
-      #close-tag { margin-top: 26px; font-size: 26px; font-weight: 400; color: #a1a1aa; letter-spacing: -0.01em; }
-      #close-cta { margin-top: 30px; display: inline-flex; align-items: center; gap: 9px; height: 48px; padding: 0 26px; border-radius: 24px; background: #4f46e5; color: #fff; font-size: 19px; font-weight: 600; }
-      #close-cta .arrow { font-size: 18px; }
+      #lockup { display: inline-flex; align-items: center; gap: 22px; }
+      #close-mark { width: 84px; height: 84px; }
+      #close-word { font-size: 84px; font-weight: 700; letter-spacing: -0.035em; color: #111110; }
+      #close-tag { margin-top: 28px; font-size: 28px; font-weight: 400; color: #5A5751; letter-spacing: -0.01em; }
+      #close-tag em { font-style: italic; font-family: "Newsreader", serif; color: #2563EB; }
+      #close-row { margin-top: 34px; display: inline-flex; align-items: center; gap: 16px; }
+      #close-cta { display: inline-flex; align-items: center; gap: 9px; height: 50px; padding: 0 28px; border-radius: 10px; background: #111110; color: #FAFAF8; font-size: 19px; font-weight: 600; }
+      #close-oss { font-size: 15px; color: #9B958F; letter-spacing: 0.02em; }
 
-      /* ---------- cursor ---------- */
+      /* cursor */
       #cursor { position: absolute; left: 0; top: 0; z-index: 50; pointer-events: none; opacity: 0; }
-      #cursor svg { display: block; filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35)); }
-      .ripple { position: absolute; left: 4px; top: 2px; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; border: 2px solid #4f46e5; transform: scale(0); opacity: 0; }
+      #cursor svg { display: block; filter: drop-shadow(0 2px 5px rgba(17,17,16,0.3)); }
+      .ripple { position: absolute; left: 4px; top: 2px; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; border: 2px solid #2563EB; transform: scale(0); opacity: 0; }
     </style>
   </head>
   <body>
-    <div id="root" data-composition-id="main" data-width="1920" data-height="1080" data-start="0" data-duration="90">
+    <div id="root" data-composition-id="main" data-width="1920" data-height="1080" data-start="0" data-duration="60">
 
       <!-- persistent backdrop -->
-      <div id="backdrop" class="clip" data-start="0" data-duration="90" data-track-index="0">
-        <div id="grid" data-layout-allow-overflow></div>
+      <div id="backdrop" class="clip" data-start="0" data-duration="60" data-track-index="0">
+        <div id="grain" data-layout-allow-overflow></div>
         <div id="glow" data-layout-allow-overflow></div>
         <div class="mark" id="m-tl"></div><div class="mark" id="m-tr"></div>
         <div class="mark" id="m-bl"></div><div class="mark" id="m-br"></div>
-        <div id="kicker-tl">MASK<span>IN</span></div>
-        <div id="kicker-tr">the agent-native workspace</div>
+        <div id="brandbar">
+          <svg class="lg" viewBox="0 0 80 80"><rect width="80" height="80" rx="14" fill="#111110"/><path d="M17 60 L17 20 L40 46 L63 20 L63 60" stroke="#FAFAF8" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg>
+          <span class="wd">Maskin</span>
+        </div>
+        <div id="kicker-tr">AI-native workspace</div>
       </div>
 
-      <!-- ===== Act 1 — thesis ===== -->
+      <!-- ===== Act 1 — hook + loop ===== -->
       <div class="scene" id="s1">
-        <div class="thesis" id="th1"><div class="t-kick">01 — the promise</div><div class="t-head">AI made <span class="hl">individuals</span><br>faster than ever.</div></div>
-        <div class="thesis" id="th2" style="opacity:0"><div class="t-kick">02 — the gap</div><div class="t-head">But <span class="hl">organizations</span> haven’t felt the value.</div></div>
-        <div class="thesis" id="th3" style="opacity:0"><div class="t-kick">03 — the trap</div><div class="t-head">AI just turned teams into <span class="hl">feature factories</span>.</div><div class="t-sub">Shipping <span class="t-strike">more code</span> — not more outcomes.</div></div>
-        <div class="thesis" id="th4" style="opacity:0"><div class="t-kick">04 — the fix</div><div class="t-head">What’s missing is a <span class="hl">closed loop</span>.</div><div class="t-sub">A workspace where agents and humans close it — together.</div></div>
+        <div id="a1-left">
+          <div class="a1-kick">build the loops that make your company AI-native</div>
+          <div class="a1-head">AI made individuals faster.<br>Maskin makes companies <em>smarter</em>.</div>
+          <div class="a1-sub">Signals become decisions. Decisions become work. Work closes the loop — automatically.</div>
+          <div class="a1-status mono" id="a1-status">insight → bet → task → shipped → repeat</div>
+        </div>
+
+        <div id="loop">
+          <svg id="loop-svg" viewBox="0 0 620 660" preserveAspectRatio="xMidYMid meet">
+            <path id="p-ib" class="lpath" d="M 300 70 C 200 150, 150 180, 120 250"/>
+            <path id="p-it" class="lpath" d="M 320 70 C 420 150, 470 180, 500 250"/>
+            <path id="p-bs" class="lpath" d="M 130 430 C 160 510, 230 545, 300 558"/>
+            <path id="p-ts" class="lpath" d="M 490 430 C 460 510, 390 545, 320 558"/>
+            <path id="p-si" class="lpath" d="M 305 560 C 600 540, 600 120, 340 56"/>
+          </svg>
+          <div class="lcard" id="lc-ins"><div class="ll">Insight</div><div class="lt">Onboarding drop-off spike — week 2</div><div class="lactor"><div class="ad"></div>Product Analyst</div></div>
+          <div class="lcard" id="lc-bet"><div class="ll">Bet</div><div class="lt">Onboarding quiz reduces churn 15%</div><div class="lactor"><div class="ad"></div>Bet Strategist</div></div>
+          <div class="lcard" id="lc-task"><div class="ll">Task</div><div class="lt">Design quiz flow + UI screens</div><div class="lactor"><div class="ad"></div>Designer · Developer</div></div>
+          <div class="lcard" id="lc-ship"><div class="ll">Shipped</div><div class="lt">Onboarding quiz live</div><div class="lval">✓ Bet validated · drop-off ↓18%</div></div>
+        </div>
       </div>
 
-      <!-- ===== Act 2 — closed loop diagram ===== -->
+      <!-- ===== Act 2 — the gap ===== -->
       <div class="scene" id="s2">
-        <div id="loop-title"><div class="lt-kick">the maskin closed loop</div><div class="lt-h">Outcomes in, outcomes out.</div></div>
-        <svg id="ring-svg" viewBox="0 0 1920 1080">
-          <ellipse id="ring-base" cx="960" cy="492" rx="470" ry="232" fill="none" stroke="rgba(165,180,252,0.18)" stroke-width="2" pathLength="1000"></ellipse>
-          <ellipse id="ring-draw" cx="960" cy="492" rx="470" ry="232" fill="none" stroke="rgba(99,102,241,0.55)" stroke-width="2.5" pathLength="1000" style="stroke-dasharray:1000; stroke-dashoffset:1000"></ellipse>
-          <ellipse id="ring-pulse" cx="960" cy="492" rx="470" ry="232" fill="none" stroke="#6366f1" stroke-width="5" stroke-linecap="round" pathLength="1000" style="stroke-dasharray:70 930; stroke-dashoffset:0; opacity:0"></ellipse>
-        </svg>
-        <!-- 6 nodes: cx960 cy492 rx470 ry232 ; x=960+470 sinθ, y=492-232 cosθ -->
-        <div class="node" id="nd1" style="left:960px; top:260px"><div class="node-card"><div class="node-head"><div class="node-n">1</div><div class="node-t">Feedback</div></div><div class="node-s">HubSpot · Intercom · Slack</div></div></div>
-        <div class="node" id="nd2" style="left:1367px; top:376px"><div class="node-card"><div class="node-head"><div class="node-n">2</div><div class="node-t">Insight</div></div><div class="node-s">an agent clusters the signals</div></div></div>
-        <div class="node" id="nd3" style="left:1367px; top:608px"><div class="node-card"><div class="node-head"><div class="node-n">3</div><div class="node-t">Bet</div></div><div class="node-s">a strategist proposes a bet</div></div></div>
-        <div class="node" id="nd4" style="left:960px; top:724px"><div class="node-card"><div class="node-head"><div class="node-n">4</div><div class="node-t">Build</div></div><div class="node-s">coding + design agents ship it</div></div></div>
-        <div class="node" id="nd5" style="left:553px; top:608px"><div class="node-card"><div class="node-head"><div class="node-n">5</div><div class="node-t">Production</div></div><div class="node-s">live for customers</div></div></div>
-        <div class="node" id="nd6" style="left:553px; top:376px"><div class="node-card"><div class="node-head"><div class="node-n">6</div><div class="node-t">Verify</div></div><div class="node-s">PostHog · feedback → success / fail</div></div></div>
-        <div id="loop-callout"><div class="lc-k">worked example</div><div class="lc-t"><b>Churn spikes after week 1.</b> A strategist agent researches, finds users need a <b>longer onboarding</b> to invest in the product — and the system builds, ships, and verifies the fix.</div></div>
+        <div id="a2">
+          <div id="a2-head">Your team is shipping more.<br>Your business <em>isn’t moving</em>.</div>
+          <div id="a2-split">
+            <div class="a2-col before" id="a2-before">
+              <div class="a2-lbl">Today</div>
+              <div class="a2-t">Faster output. No better outcomes.</div>
+              <div class="a2-li"><span class="mk">—</span>You ship more, but you’re not sure it’s the right thing.</div>
+              <div class="a2-li"><span class="mk">—</span>AI insights live in private chats. Nothing compounds.</div>
+              <div class="a2-li"><span class="mk">—</span>The company invests in AI. The P&amp;L doesn’t know.</div>
+            </div>
+            <div class="a2-col after" id="a2-after">
+              <div class="a2-lbl">With Maskin</div>
+              <div class="a2-t">The right bets, running themselves.</div>
+              <div class="a2-li"><span class="mk">→</span>Agents surface signals. Humans decide. Work starts itself.</div>
+              <div class="a2-li"><span class="mk">→</span>One shared system — every decision and outcome is visible.</div>
+              <div class="a2-li"><span class="mk">→</span>The loop closes: signal → shipped bet → measured result.</div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <!-- ===== Act 3 — product tour ===== -->
+      <!-- ===== Act 3 — product ===== -->
       <div class="scene" id="s3">
-        <div id="s3-title"><div class="s3-k">inside the workspace</div><div class="s3-h">The loop, running in the product.</div></div>
-
+        <div id="s3-title"><div class="k">see it run</div><div class="h">The loop, inside the product.</div></div>
         <div id="win">
-          <div id="wtitle"><div class="tld" style="background:#ff5f57"></div><div class="tld" style="background:#febc2e"></div><div class="tld" style="background:#28c840"></div><div class="upill">app.maskin.com / My Workspace</div></div>
+          <div id="wtitle"><div class="tld" style="background:#ff5f57"></div><div class="tld" style="background:#febc2e"></div><div class="tld" style="background:#28c840"></div><div class="upill">app.maskin.io / My Workspace</div></div>
           <div id="wbody">
             <div id="wsb">
-              <div id="wsb-h"><div class="sblogo">M</div><div class="sbws">My Workspace</div></div>
+              <div id="wsb-h"><svg class="sblogo" viewBox="0 0 80 80"><rect width="80" height="80" rx="14" fill="#111110"/><path d="M17 60 L17 20 L40 46 L63 20 L63 60" stroke="#FAFAF8" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg><span class="sbws">My Workspace</span></div>
               <div id="wnav">
                 <div id="wnav-active"></div><div id="wnav-rail"></div>
                 <div class="wnav-i on" id="wn-fy"><div class="wnav-ico"></div>For You<div class="wnav-badge" id="wn-fyb">1</div></div>
@@ -224,7 +278,7 @@
                 <div class="wnav-i"><div class="wnav-ico"></div>Triggers</div>
               </div>
               <div id="wsb-foot">
-                <div id="wpulse"><div class="wpst" id="wp-idle" style="opacity:1">No agents working</div><div class="wpst" id="wp-on" style="opacity:0"><span class="wpdot"></span>2 agents working</div></div>
+                <div id="wpulse"><div class="wpst" id="wp-idle" style="opacity:1">No agents working</div><div class="wpst" id="wp-on" style="opacity:0"><span class="wpdot"></span>3 agents working</div></div>
                 <div id="wuser"><div class="avatar av-h">S</div><div><div class="nm">Sebastian</div><div class="em">sebastian@meshfirm.com</div></div></div>
               </div>
             </div>
@@ -236,100 +290,123 @@
               </div>
             </div>
             <div id="wcontent">
-              <!-- tour panel A: For You -->
+              <!-- A: For You -->
               <div class="wpanel" id="wpA" style="opacity:1">
                 <div class="page-h">For You</div><div class="page-sub">Unread threads on things you follow</div>
-                <div class="card" id="wpA-insight" style="margin-top:18px"><div class="thead"><span class="badge b-insight">insight</span><span class="ttl">Week-1 churn is climbing</span><span class="ttime">just now</span><span class="unread">3</span></div></div>
+                <div class="card" id="wpA-ins" style="margin-top:18px"><div class="thead"><span class="badge b-insight">insight</span><span class="ttl">Onboarding drop-off spike — week 2</span><span class="ttime">just now</span><span class="unread">3</span></div></div>
                 <div class="card" id="wpA-bet" style="margin-top:14px">
-                  <div class="thead"><span class="badge b-type">bet</span><span class="ttl">Deepen first-week onboarding</span><span class="ttime">just now</span><span class="unread">1</span></div>
-                  <div class="tbody"><div class="cmt"><div class="avatar av-a">⚡</div><div class="cb"><div><span class="cn link">Sindre</span><span class="ct">just now</span></div><div class="cx">Clustered 142 signals from HubSpot, Intercom &amp; Slack into one insight — and proposed a bet to fix it.</div></div></div></div>
+                  <div class="thead"><span class="badge b-bet">bet</span><span class="ttl">Onboarding quiz reduces churn 15%</span><span class="ttime">just now</span><span class="unread">1</span></div>
+                  <div class="tbody"><div class="cmt"><div class="avatar av-a">⚡</div><div class="cb"><div><span class="cn link">Feedback Monitor</span><span class="ct">just now</span></div><div class="cx">Clustered 142 signals from Slack &amp; Intercom into one insight — and proposed a bet to fix it.</div></div></div></div>
                 </div>
               </div>
-              <!-- tour panel B: bet detail -->
+              <!-- B: bet detail -->
               <div class="wpanel" id="wpB" style="opacity:0">
-                <div class="doc-title">Deepen first-week onboarding</div>
+                <div class="doc-title">Onboarding quiz reduces churn 15%</div>
                 <div class="doc-meta">
-                  <span class="badge b-type">bet</span>
+                  <span class="badge b-bet">bet</span>
                   <span style="position:relative; display:inline-block"><span class="badge b-proposed" id="wpB-st1" style="position:relative">proposed</span><span class="badge b-active" id="wpB-st2" style="position:absolute; left:0; top:0; opacity:0">active</span></span>
-                  <span class="mdrv"><span class="avatar av-a" style="width:18px;height:18px;font-size:10px">⚡</span>Sindre</span><span class="ttime">just now</span>
+                  <span class="mdrv"><span class="avatar av-a" style="width:18px;height:18px;font-size:10px">⚡</span>Bet Strategist</span><span class="ttime">just now</span>
                 </div>
                 <div class="wbanner" id="wpB-banner" style="opacity:0"><span class="spinner"></span>Agents are building this bet…</div>
                 <div style="margin-top:18px"><div class="dsec">Hypothesis</div>
-                  <div class="dp" style="margin-top:7px">Most new users churn after week 1. Research shows they leave before investing in the product. A longer, guided onboarding that gets them to real value should raise week-1 retention by ~15%.</div></div>
+                  <div class="dp" style="margin-top:7px">New users drop off in week 2. Research shows they leave before reaching value. A short onboarding quiz that routes them to the right first action should cut early churn ~15%.</div></div>
                 <div style="margin-top:18px"><div class="dsec">Activity</div>
-                  <div class="cmt" style="margin-top:8px"><div class="avatar av-a">⚡</div><div class="cb"><div><span class="cn link">Sindre</span><span class="ct">now</span></div><div class="cx">Proposed this bet from the churn insight.</div></div></div>
-                  <div class="cmt" id="wpB-c2" style="opacity:0"><div class="avatar av-h">S</div><div class="cb"><div><span class="cn">Sebastian</span><span class="ct">now</span></div><div class="cx">Agreed — let’s build it. 🚀</div></div></div>
+                  <div class="cmt" style="margin-top:8px"><div class="avatar av-a">⚡</div><div class="cb"><div><span class="cn link">Bet Strategist</span><span class="ct">now</span></div><div class="cx">Proposed this bet from the drop-off insight.</div></div></div>
+                  <div class="cmt" id="wpB-c2" style="opacity:0"><div class="avatar av-h">S</div><div class="cb"><div><span class="cn">Sebastian</span><span class="ct">now</span></div><div class="cx">Approved — let’s build it. 🚀</div></div></div>
                 </div>
               </div>
-              <!-- tour panel C: agents working -->
+              <!-- C: agents -->
               <div class="wpanel" id="wpC" style="opacity:0">
                 <div class="page-h">Agents</div>
-                <div style="display:flex; gap:7px; margin-top:14px"><div class="badge b-type" style="background:#f4f4f5;border:none;color:#18181b;font-weight:600">All (4)</div><div class="badge b-type" style="border:none;color:#71717a">Working (2)</div><div class="badge b-type" style="border:none;color:#71717a">Idle (2)</div></div>
+                <div style="display:flex; gap:7px; margin-top:14px"><div class="badge b-type" style="background:#F0EDE7;border:none;color:#111110;font-weight:600">All (4)</div><div class="badge b-type" style="border:none;color:#9B958F">Working (3)</div><div class="badge b-type" style="border:none;color:#9B958F">Idle (1)</div></div>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px">
-                  <div class="card ag-card working" id="agc1"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Atlas</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Frontend coding agent</div><div class="ag-ac">Building the guided onboarding · 1:12</div></div>
-                  <div class="card ag-card working" id="agc2"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Muse</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Design agent</div><div class="ag-ac">Designing the 4-step flow · 0:48</div></div>
-                  <div class="card ag-card" id="agc3"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Sindre</div><span class="idot"></span><div class="ag-st idle">idle</div></div><div class="ag-ds">Strategy agent</div><div class="ag-ac">Proposed the bet · 2m ago</div></div>
-                  <div class="card ag-card" id="agc4"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Echo</div><span class="idot"></span><div class="ag-st idle">idle</div></div><div class="ag-ds">Insights agent</div><div class="ag-ac">Watching PostHog &amp; Intercom · live</div></div>
+                  <div class="card ag-card working" id="agc1"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Designer</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Design agent</div><div class="ag-ac">Designing the quiz flow · 0:48</div></div>
+                  <div class="card ag-card working" id="agc2"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Developer</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Coding agent</div><div class="ag-ac">Building quiz + UI screens · 1:12</div></div>
+                  <div class="card ag-card working" id="agc3"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Feedback Monitor</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Signal agent</div><div class="ag-ac">Watching Slack · Intercom · PostHog · live</div></div>
+                  <div class="card ag-card" id="agc4"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Bet Strategist</div><span class="idot"></span><div class="ag-st idle">idle</div></div><div class="ag-ds">Strategy agent</div><div class="ag-ac">Proposed the bet · 2m ago</div></div>
                 </div>
               </div>
-              <!-- tour panel D: outcome -->
+              <!-- D: outcome -->
               <div class="wpanel" id="wpD" style="opacity:0">
-                <div class="doc-title">Deepen first-week onboarding</div>
-                <div class="doc-meta"><span class="badge b-type">bet</span><span class="badge b-done">succeeded</span><span class="mdrv"><span class="avatar av-a" style="width:18px;height:18px;font-size:10px">⚡</span>Sindre</span><span class="ttime">shipped · 6 days ago</span></div>
-                <div class="wbanner ok" id="wpD-banner" style="opacity:0"><span style="font-size:14px">✓</span>Outcome verified — week-1 retention up 18%. Loop closed.</div>
-                <div style="margin-top:18px"><div class="dsec">New insights (post-launch)</div>
-                  <div class="cmt" style="margin-top:8px"><div class="avatar av-a">⚡</div><div class="cb"><div><span class="cn link">Echo</span><span class="ct">6d</span></div><div class="cx">PostHog + Intercom show week-1 retention climbing. Marking the bet a success.</div></div></div>
+                <div class="doc-title">Onboarding quiz reduces churn 15%</div>
+                <div class="doc-meta"><span class="badge b-bet">bet</span><span class="badge b-done">succeeded</span><span class="mdrv"><span class="avatar av-a" style="width:18px;height:18px;font-size:10px">⚡</span>Bet Strategist</span><span class="ttime">shipped · 6 days ago</span></div>
+                <div class="wbanner ok" id="wpD-banner" style="opacity:0"><span style="font-size:14px">✓</span>Outcome verified — week-2 drop-off down 18%. Loop closed.</div>
+                <div style="margin-top:18px"><div class="dsec">Post-launch</div>
+                  <div class="cmt" style="margin-top:8px"><div class="avatar av-a">⚡</div><div class="cb"><div><span class="cn link">Feedback Monitor</span><span class="ct">6d</span></div><div class="cx">PostHog confirms drop-off down 18%. Marked the bet a success — and notified the customers who asked.</div></div></div>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- callout column (right) -->
-        <div class="callout" id="coA"><div class="co-dot"></div><div class="co-step">step 1 · feedback → bet</div><div class="co-h">Feedback becomes an insight — then a bet.</div><div class="co-t">Agents pull <b>quantitative &amp; qualitative</b> feedback from your tools and cluster it into one clear insight.</div></div>
-        <div class="callout" id="coB"><div class="co-dot"></div><div class="co-step">step 2 · the strategist</div><div class="co-h">A strategist agent proposes the bet.</div><div class="co-t">It researches the problem and writes a <b>hypothesis</b> with a measurable outcome — you just steer.</div></div>
-        <div class="callout" id="coC"><div class="co-dot"></div><div class="co-step">step 3 · build</div><div class="co-h">Coding &amp; design agents build it.</div><div class="co-t">The bet is decomposed into work and <b>shipped to production</b> — humans and agents in the same workspace.</div></div>
-        <div class="callout" id="coD"><div class="co-dot"></div><div class="co-step">step 4 · verify</div><div class="co-h">Outcomes verified — the loop closes.</div><div class="co-t">Post-launch, agents review fresh feedback and mark the bet <b>succeeded or failed</b>. Did we build the right thing?</div></div>
+        <div class="callout" id="coA"><div class="co-step">step 1 · signal in</div><div class="co-h">Feedback becomes an insight — then a bet.</div><div class="co-t">Agents pull <b>quantitative &amp; qualitative</b> signals from Slack, Intercom &amp; PostHog and cluster them automatically.</div></div>
+        <div class="callout" id="coB"><div class="co-step">step 2 · you decide</div><div class="co-h">Humans approve the bet. Agents do the rest.</div><div class="co-t">A strategist agent writes the <b>hypothesis</b> and outcome. You steer — judgment is the part that doesn’t delegate.</div></div>
+        <div class="callout" id="coC"><div class="co-step">step 3 · work done</div><div class="co-h">Agents build it — in your existing tools.</div><div class="co-t">Design &amp; coding agents ship through <b>Slack, GitHub &amp; Linear</b>. No new stack, no glue work.</div></div>
+        <div class="callout" id="coD"><div class="co-step">step 4 · loop closed</div><div class="co-h">Outcome measured. Customer notified.</div><div class="co-t">Post-launch, agents verify the result and mark the bet <b>succeeded or failed</b>. The organisation learns.</div></div>
       </div>
 
       <!-- ===== Act 4 — marketplace ===== -->
       <div class="scene" id="s4">
-        <div id="mkt-title"><div class="mk">one loop of many</div><div class="mh">A marketplace of closed loops.</div><div class="ms">Compose the loops your organization needs — ready to run.</div></div>
+        <div id="mkt-title"><div class="k">marketplace</div><div class="h">One loop of many.</div><div class="s">Pre-built closed loops that turn AI spend into business outcomes.</div></div>
         <div id="mkt-grid">
-          <div class="loop-card" id="lc1">
-            <div class="lc-tag"><span class="mini-cycle">↻</span> product feedback</div>
-            <div class="lc-h">Continuous product feedback</div>
-            <div class="lc-d">Gather feedback, turn it into bets, ship the fix, and verify the outcome — the loop you just saw.</div>
-            <div class="lc-chips"><span class="chip"><span class="cdot" style="background:#ff7a59"></span>HubSpot</span><span class="chip"><span class="cdot" style="background:#1f8ded"></span>Intercom</span><span class="chip"><span class="cdot" style="background:#eb5424"></span>PostHog</span></div>
+          <div class="mcard" id="mc1" style="border-top-color:#7C3AED">
+            <div class="role">Competitive intelligence</div>
+            <div class="mt">Know what competitors shipped first</div>
+            <div class="md">Watches changelogs, pricing &amp; job posts. Routes feature gaps to product, battlecards to sales.</div>
+            <div class="mflow"><span class="ot ot-src">web</span><span class="ot ot-ar">→</span><span class="ot ot-i">Signal</span><span class="ot ot-ar">→</span><span class="ot ot-b">Roadmap bet</span></div>
           </div>
-          <div class="loop-card" id="lc2">
-            <div class="lc-tag"><span class="mini-cycle">↻</span> close the loop with users</div>
-            <div class="lc-h">Ship-back in Slack</div>
-            <div class="lc-d">Collect customer requests right in Slack — and message the customer back automatically the moment their feature ships.</div>
-            <div class="lc-chips"><span class="chip"><span class="cdot" style="background:#4a154b"></span>Slack</span><span class="chip"><span class="cdot" style="background:#4f46e5"></span>Maskin bets</span></div>
+          <div class="mcard" id="mc2" style="border-top-color:#E67E22">
+            <div class="role">Lost deals → roadmap</div>
+            <div class="mt">Turn every lost deal into a bet</div>
+            <div class="md">Synthesises closed-lost reasons by ARR and surfaces the patterns your roadmap is missing.</div>
+            <div class="mflow"><span class="ot ot-src">HubSpot</span><span class="ot ot-ar">→</span><span class="ot ot-i">Loss patterns</span><span class="ot ot-ar">→</span><span class="ot ot-b">Roadmap bet</span></div>
           </div>
-          <div class="loop-card" id="lc3">
-            <div class="lc-tag"><span class="mini-cycle">↻</span> less noise, more signal</div>
-            <div class="lc-h">Signal radar</div>
-            <div class="lc-d">Agents follow competitors, influencers &amp; customers, surface insights only when they’re relevant, and auto-create bets to match the market.</div>
-            <div class="lc-chips"><span class="chip"><span class="cdot" style="background:#1d9bf0"></span>X / news</span><span class="chip"><span class="cdot" style="background:#16a34a"></span>auto-bets</span></div>
+          <div class="mcard" id="mc3" style="border-top-color:#2563EB">
+            <div class="role">Churn &amp; expansion</div>
+            <div class="mt">Catch at-risk accounts early</div>
+            <div class="md">Usage drops, login gaps, error spikes — the right person gets context, not a dashboard.</div>
+            <div class="mflow"><span class="ot ot-src">PostHog</span><span class="ot ot-ar">→</span><span class="ot ot-i">Risk signal</span><span class="ot ot-ar">→</span><span class="ot ot-b">CSM bet</span></div>
+          </div>
+          <div class="mcard" id="mc4" style="border-top-color:#5B8DD9">
+            <div class="role">Customer feedback</div>
+            <div class="mt">Complaint → shipped fix, automatically</div>
+            <div class="md">Feedback becomes a bet, gets built, and the customer who asked is notified when it ships.</div>
+            <div class="mflow"><span class="ot ot-src">Slack</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insight</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bet</span><span class="ot ot-ar">→</span><span class="ot ot-t">Shipped</span></div>
+          </div>
+          <div class="mcard" id="mc5" style="border-top-color:#27AE60">
+            <div class="role">Market signals</div>
+            <div class="mt">Turn market noise into bets</div>
+            <div class="md">Monitors Reddit, X &amp; LinkedIn, extracts what’s relevant, surfaces the bets worth acting on.</div>
+            <div class="mflow"><span class="ot ot-src">X · Reddit</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insights</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bets</span></div>
+          </div>
+          <div class="mcard mcard--custom" id="mc6">
+            <div class="role">Custom</div>
+            <div class="mt">Any workflow your team runs</div>
+            <div class="md">Compose your own closed loop — add agent roles, wire the objects, define the handoffs.</div>
+            <div class="mflow"><span class="ot ot-src">your agents</span><span class="ot ot-ar">→</span><span class="ot ot-src">your objects</span></div>
           </div>
         </div>
       </div>
 
-      <!-- ===== Act 5 — logo + CTA ===== -->
+      <!-- ===== Act 5 — close ===== -->
       <div class="scene" id="s5">
         <div id="close-wrap">
-          <div id="logo-lockup"><div id="logo-mark">M</div><div id="logo-word">Mask<span>in</span></div></div>
-          <div id="close-tag">Where agents and humans close the loop.</div>
-          <div id="close-cta">maskin.io <span class="arrow">→</span></div>
+          <div id="lockup">
+            <svg id="close-mark" viewBox="0 0 80 80"><rect width="80" height="80" rx="14" fill="#111110"/><path d="M17 60 L17 20 L40 46 L63 20 L63 60" stroke="#FAFAF8" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg>
+            <span id="close-word">Maskin</span>
+          </div>
+          <div id="close-tag">Build the loops that make your company <em>AI-native</em>.</div>
+          <div id="close-row">
+            <span id="close-cta">maskin.io →</span>
+            <span id="close-oss">Open source · Apache 2.0</span>
+          </div>
         </div>
       </div>
 
       <!-- cursor -->
-      <div id="cursor" class="clip" data-start="0" data-duration="90" data-track-index="2">
+      <div id="cursor" class="clip" data-start="0" data-duration="60" data-track-index="2">
         <div class="ripple" id="rip1"></div><div class="ripple" id="rip2"></div>
-        <svg width="26" height="26" viewBox="0 0 24 24"><path d="M5 3L19 12L12 13L9 20L5 3Z" fill="#ffffff" stroke="#18181b" stroke-width="1.4" stroke-linejoin="round"/></svg>
+        <svg width="26" height="26" viewBox="0 0 24 24"><path d="M5 3L19 12L12 13L9 20L5 3Z" fill="#ffffff" stroke="#111110" stroke-width="1.4" stroke-linejoin="round"/></svg>
       </div>
 
     </div>
@@ -340,11 +417,10 @@
       const R = (dur, cycle) => Math.max(0, Math.floor(dur / cycle) - 1);
       gsap.set("#cursor", { x: 980, y: 900 });
 
-      /* ambient (persistent) */
-      tl.to("#glow", { scale: 1.1, duration: 7, ease: "sine.inOut", yoyo: true, repeat: R(90, 7) }, 0);
-      tl.to("#glow", { opacity: 0.85, duration: 5.5, ease: "sine.inOut", yoyo: true, repeat: R(90, 5.5) }, 0);
-      tl.to("#grid", { x: 30, y: 20, duration: 16, ease: "sine.inOut", yoyo: true, repeat: R(90, 16) }, 0);
-      tl.to(".spinner", { rotation: 360, duration: 0.9, ease: "none", repeat: R(90, 0.9), transformOrigin: "50% 50%" }, 0);
+      /* ambient */
+      tl.to("#glow", { scale: 1.12, duration: 8, ease: "sine.inOut", yoyo: true, repeat: R(60, 8) }, 0);
+      tl.to("#grain", { x: 26, y: 16, duration: 16, ease: "sine.inOut", yoyo: true, repeat: R(60, 16) }, 0);
+      tl.to(".spinner", { rotation: 360, duration: 0.9, ease: "none", repeat: R(60, 0.9), transformOrigin: "50% 50%" }, 0);
 
       /* helpers */
       function cursorClick(t) {
@@ -352,138 +428,121 @@
         tl.set(["#rip1", "#rip2"], { opacity: 1, scale: 0 }, t);
         tl.to(["#rip1", "#rip2"], { scale: 4.2, opacity: 0, duration: 0.7, ease: "power2.out", stagger: 0.09, immediateRender: false }, t);
       }
-      // full-frame act transition (blur crossfade)
       function actTrans(oldSel, newSel, T) {
-        tl.to(oldSel, { opacity: 0, scale: 1.03, filter: "blur(10px)", duration: 0.6, ease: "power2.inOut", transformOrigin: "50% 50%" }, T);
-        tl.fromTo(newSel, { opacity: 0, scale: 0.97, filter: "blur(10px)" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.6, ease: "power2.inOut", transformOrigin: "50% 50%" }, T + 0.05);
-        tl.set(oldSel, { scale: 1, filter: "blur(0px)" }, T + 0.7);
+        tl.to(oldSel, { opacity: 0, scale: 1.03, filter: "blur(9px)", duration: 0.55, ease: "power2.inOut", transformOrigin: "50% 50%" }, T);
+        tl.fromTo(newSel, { opacity: 0, scale: 0.975, filter: "blur(9px)" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.55, ease: "power2.inOut", transformOrigin: "50% 50%" }, T + 0.05);
+        tl.set(oldSel, { scale: 1, filter: "blur(0px)" }, T + 0.65);
       }
-      // in-app panel swap
       function panelSwap(oldSel, newSel, T) {
-        tl.to(oldSel, { opacity: 0, scale: 1.015, duration: 0.5, ease: "power2.inOut", transformOrigin: "50% 50%" }, T);
-        tl.fromTo(newSel, { opacity: 0, scale: 0.985 }, { opacity: 1, scale: 1, duration: 0.5, ease: "power2.inOut", transformOrigin: "50% 50%" }, T + 0.05);
-        tl.set(oldSel, { scale: 1 }, T + 0.56);
+        tl.to(oldSel, { opacity: 0, scale: 1.015, duration: 0.45, ease: "power2.inOut", transformOrigin: "50% 50%" }, T);
+        tl.fromTo(newSel, { opacity: 0, scale: 0.985 }, { opacity: 1, scale: 1, duration: 0.45, ease: "power2.inOut", transformOrigin: "50% 50%" }, T + 0.05);
+        tl.set(oldSel, { scale: 1 }, T + 0.5);
       }
-      function calloutIn(sel, t) { tl.fromTo(sel, { opacity: 0, x: 36 }, { opacity: 1, x: 0, duration: 0.55, ease: "power3.out" }, t); }
-      function calloutOut(sel, t) { tl.to(sel, { opacity: 0, x: -16, duration: 0.4, ease: "power2.in" }, t); }
+      const cIn = (s, t) => tl.fromTo(s, { opacity: 0, x: 34 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, t);
+      const cOut = (s, t) => tl.to(s, { opacity: 0, x: -14, duration: 0.35, ease: "power2.in" }, t);
 
-      /* ============ ACT 1 — thesis (0–16.4) ============ */
-      tl.from("#backdrop", { opacity: 0, duration: 0.6 }, 0);
-      // L1
-      tl.from("#th1 .t-kick", { opacity: 0, y: 16, duration: 0.5, ease: "power3.out" }, 0.4);
-      tl.from("#th1 .t-head", { opacity: 0, y: 30, duration: 0.7, ease: "power3.out" }, 0.6);
-      tl.to("#th1", { opacity: 0, y: -24, duration: 0.5, ease: "power2.in" }, 3.4);
-      // L2
-      tl.fromTo("#th2", { opacity: 0 }, { opacity: 1, duration: 0.01 }, 3.7);
-      tl.from("#th2 .t-kick", { opacity: 0, x: -20, duration: 0.5, ease: "power3.out" }, 3.7);
-      tl.from("#th2 .t-head", { opacity: 0, scale: 0.92, duration: 0.7, ease: "back.out(1.5)", transformOrigin: "50% 50%" }, 3.9);
-      tl.to("#th2", { opacity: 0, scale: 1.06, duration: 0.5, ease: "power2.in", transformOrigin: "50% 50%" }, 6.7);
-      // L3
-      tl.fromTo("#th3", { opacity: 0 }, { opacity: 1, duration: 0.01 }, 7.0);
-      tl.from("#th3 .t-kick", { opacity: 0, y: 14, duration: 0.5, ease: "power3.out" }, 7.0);
-      tl.from("#th3 .t-head", { opacity: 0, y: 26, duration: 0.6, ease: "power3.out" }, 7.2);
-      tl.from("#th3 .t-sub", { opacity: 0, y: 16, duration: 0.5, ease: "power2.out" }, 7.7);
-      tl.to("#th3", { opacity: 0, y: -22, duration: 0.5, ease: "power2.in" }, 10.2);
-      // L4 (the fix)
-      tl.fromTo("#th4", { opacity: 0 }, { opacity: 1, duration: 0.01 }, 10.5);
-      tl.from("#th4 .t-kick", { opacity: 0, y: 14, duration: 0.5, ease: "power3.out" }, 10.5);
-      tl.from("#th4 .t-head", { opacity: 0, scale: 0.9, duration: 0.75, ease: "back.out(1.6)", transformOrigin: "50% 50%" }, 10.7);
-      tl.from("#th4 .t-sub", { opacity: 0, y: 16, duration: 0.55, ease: "power2.out" }, 11.5);
+      /* ===== ACT 1 — hook + loop (0–13.4) ===== */
+      tl.from("#backdrop", { opacity: 0, duration: 0.5 }, 0);
+      tl.from("#brandbar", { opacity: 0, y: -10, duration: 0.5, ease: "power2.out" }, 0.2);
+      tl.from("#a1-left .a1-kick", { opacity: 0, y: 14, duration: 0.5, ease: "power3.out" }, 0.5);
+      tl.from("#a1-head", { opacity: 0, y: 26, duration: 0.7, ease: "power3.out" }, 0.7);
+      tl.from("#a1-sub", { opacity: 0, y: 16, duration: 0.55, ease: "power2.out" }, 1.4);
+      tl.from("#a1-status", { opacity: 0, duration: 0.5 }, 2.0);
+      // loop cards pop + paths light in sequence (insight→bet→task→shipped→repeat)
+      tl.fromTo(["#lc-ins","#lc-bet","#lc-task","#lc-ship"], { opacity: 0, scale: 0.85, y: 10 }, { opacity: 1, scale: 1, y: 0, duration: 0.45, ease: "back.out(1.6)", stagger: 0.18, transformOrigin: "50% 50%" }, 1.2);
+      function lit(p, card, t) {
+        tl.to(p, { duration: 0.01, onComplete: () => {} }, t);
+        tl.fromTo(p, { opacity: 0.0 }, { opacity: 1, duration: 0.01 }, t);
+        tl.set(p, { attr: {} }, t);
+        tl.to(p, { stroke: "#2563EB", strokeDasharray: 0, duration: 0.35, ease: "power1.inOut" }, t);
+        if (card) tl.to(card, { boxShadow: "0 6px 26px rgba(37,99,235,0.16)", borderColor: "#2563EB", duration: 0.3 }, t);
+      }
+      // highlight walk around the loop
+      tl.to("#lc-ins", { borderColor: "#2563EB", duration: 0.3 }, 3.0);
+      lit("#p-ib", "#lc-bet", 3.4); lit("#p-it", "#lc-task", 3.9);
+      lit("#p-bs", null, 4.6); lit("#p-ts", "#lc-ship", 5.0);
+      lit("#p-si", null, 5.8);
+      tl.fromTo("#lc-ship .lval", { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "0% 50%" }, 5.4);
 
-      actTrans("#s1", "#s2", 16.0);
+      actTrans("#s1", "#s2", 13.0);
 
-      /* ============ ACT 2 — closed loop (16.6–39.4) ============ */
-      tl.from("#loop-title .lt-kick", { opacity: 0, y: 14, duration: 0.5, ease: "power3.out" }, 16.8);
-      tl.from("#loop-title .lt-h", { opacity: 0, y: 18, duration: 0.55, ease: "power3.out" }, 17.0);
-      tl.fromTo("#ring-draw", { strokeDashoffset: 1000 }, { strokeDashoffset: 0, duration: 2.0, ease: "power1.inOut" }, 17.4);
-      // nodes pop in around the ring
-      tl.fromTo(["#nd1","#nd2","#nd3","#nd4","#nd5","#nd6"], { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.45, ease: "back.out(1.7)", stagger: 0.26, transformOrigin: "50% 50%" }, 17.8);
-      // traveling pulse around the loop
-      tl.to("#ring-pulse", { opacity: 1, duration: 0.3 }, 19.6);
-      tl.to("#ring-pulse", { strokeDashoffset: -1000, duration: 3.0, ease: "none", repeat: R(19, 3) }, 19.8);
-      // worked-example callout
-      tl.fromTo("#loop-callout", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 25.5);
+      /* ===== ACT 2 — the gap (13.4–20.4) ===== */
+      tl.from("#a2-head", { opacity: 0, y: 20, duration: 0.6, ease: "power3.out" }, 13.5);
+      tl.from("#a2-before", { opacity: 0, x: -26, duration: 0.55, ease: "power3.out" }, 14.0);
+      tl.from("#a2-after", { opacity: 0, x: 26, duration: 0.55, ease: "power3.out" }, 14.25);
 
-      actTrans("#s2", "#s3", 39.0);
+      actTrans("#s2", "#s3", 20.0);
 
-      /* ============ ACT 3 — product tour (39.6–71.4) ============ */
-      tl.from("#s3-title .s3-k", { opacity: 0, y: 12, duration: 0.5, ease: "power3.out" }, 39.8);
-      tl.from("#s3-title .s3-h", { opacity: 0, y: 16, duration: 0.55, ease: "power3.out" }, 40.0);
-      tl.fromTo("#win", { opacity: 0, scale: 0.96, y: 18 }, { opacity: 1, scale: 1, y: 0, duration: 0.7, ease: "power3.out", transformOrigin: "50% 50%" }, 39.9);
+      /* ===== ACT 3 — product (20.4–48.6) ===== */
+      tl.from("#s3-title .k", { opacity: 0, y: 10, duration: 0.45 }, 20.6);
+      tl.from("#s3-title .h", { opacity: 0, y: 14, duration: 0.5, ease: "power3.out" }, 20.75);
+      tl.fromTo("#win", { opacity: 0, scale: 0.965, y: 16 }, { opacity: 1, scale: 1, y: 0, duration: 0.65, ease: "power3.out", transformOrigin: "50% 50%" }, 20.6);
 
-      // Panel A — For You (insight + bet)
-      tl.from("#wpA .page-h", { opacity: 0, y: 12, duration: 0.45 }, 40.6);
-      tl.fromTo("#wpA-insight", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 40.9);
-      tl.fromTo("#wpA-bet", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.55, ease: "back.out(1.3)" }, 41.3);
-      calloutIn("#coA", 41.6);
-      // cursor moves to the bet card and clicks to open it
-      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 43.6);
-      tl.to("#cursor", { x: 560, y: 470, duration: 1.0, ease: "power3.inOut" }, 43.8);
-      cursorClick(45.2);
-      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 45.8);
-      calloutOut("#coA", 45.8);
-      panelSwap("#wpA", "#wpB", 46.0);
-      tl.to("#wcv1", { opacity: 0, duration: 0.4 }, 46.0); tl.to("#wcv2", { opacity: 1, duration: 0.4 }, 46.2);
+      // A — For You
+      tl.from("#wpA .page-h", { opacity: 0, y: 10, duration: 0.4 }, 21.2);
+      tl.fromTo("#wpA-ins", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 21.4);
+      tl.fromTo("#wpA-bet", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.5, ease: "back.out(1.3)" }, 21.8);
+      cIn("#coA", 22.0);
+      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 24.0);
+      tl.to("#cursor", { x: 560, y: 470, duration: 0.9, ease: "power3.inOut" }, 24.2);
+      cursorClick(25.4);
+      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 26.0);
+      cOut("#coA", 26.2);
+      panelSwap("#wpA", "#wpB", 26.4);
+      tl.to("#wcv1", { opacity: 0, duration: 0.4 }, 26.4); tl.to("#wcv2", { opacity: 1, duration: 0.4 }, 26.6);
 
-      // Panel B — bet detail; user agrees, status → active, banner
-      tl.from("#wpB .doc-title", { opacity: 0, y: 14, duration: 0.5, ease: "power3.out" }, 46.7);
-      tl.from("#wpB .doc-meta", { opacity: 0, y: 10, duration: 0.45 }, 46.95);
-      calloutIn("#coB", 47.0);
-      tl.fromTo("#wpB-c2", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 49.0);
-      tl.to("#wpB-st1", { opacity: 0, duration: 0.3 }, 49.8);
-      tl.fromTo("#wpB-st2", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 49.9);
-      tl.fromTo("#wpB-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 50.2);
-      // sidebar pulse → working, nav → Agents
-      tl.to("#wp-idle", { opacity: 0, duration: 0.3 }, 50.4); tl.to("#wp-on", { opacity: 1, duration: 0.3 }, 50.6);
-      tl.to(".wpdot", { opacity: 0.3, duration: 0.7, ease: "sine.inOut", yoyo: true, repeat: R(20, 0.7) }, 50.6);
-      calloutOut("#coB", 53.4);
-      panelSwap("#wpB", "#wpC", 53.6);
-      tl.to("#wcv2", { opacity: 0, duration: 0.4 }, 53.6); tl.to("#wcv3", { opacity: 1, duration: 0.4 }, 53.8);
-      tl.to("#wnav-active", { y: 111, duration: 0.5, ease: "power3.inOut" }, 53.6);
-      tl.to("#wnav-rail", { y: 111, duration: 0.5, ease: "power3.inOut" }, 53.6);
-      tl.to("#wn-fy", { color: "#52525b", fontWeight: 500, duration: 0.4 }, 53.6);
-      tl.to("#wn-ag", { color: "#18181b", fontWeight: 600, duration: 0.4 }, 53.6);
-      tl.to("#wn-fyb", { opacity: 0, duration: 0.3 }, 53.6);
+      // B — bet detail
+      tl.from("#wpB .doc-title", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 27.0);
+      tl.from("#wpB .doc-meta", { opacity: 0, y: 8, duration: 0.4 }, 27.2);
+      cIn("#coB", 27.2);
+      tl.fromTo("#wpB-c2", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 29.0);
+      tl.to("#wpB-st1", { opacity: 0, duration: 0.3 }, 29.7);
+      tl.fromTo("#wpB-st2", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 29.8);
+      tl.fromTo("#wpB-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 30.1);
+      tl.to("#wp-idle", { opacity: 0, duration: 0.3 }, 30.3); tl.to("#wp-on", { opacity: 1, duration: 0.3 }, 30.5);
+      tl.to(".wpdot", { opacity: 0.3, duration: 0.7, ease: "sine.inOut", yoyo: true, repeat: R(17, 0.7) }, 30.5);
+      cOut("#coB", 32.4);
+      panelSwap("#wpB", "#wpC", 32.6);
+      tl.to("#wcv2", { opacity: 0, duration: 0.4 }, 32.6); tl.to("#wcv3", { opacity: 1, duration: 0.4 }, 32.8);
+      tl.to(["#wnav-active","#wnav-rail"], { y: 111, duration: 0.45, ease: "power3.inOut" }, 32.6);
+      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.4 }, 32.6);
+      tl.to("#wn-ag", { color: "#111110", fontWeight: 600, duration: 0.4 }, 32.6);
+      tl.to("#wn-fyb", { opacity: 0, duration: 0.3 }, 32.6);
 
-      // Panel C — agents working
-      tl.from("#wpC .page-h", { opacity: 0, y: 12, duration: 0.45 }, 54.3);
-      tl.fromTo(["#agc1","#agc2","#agc3","#agc4"], { opacity: 0, y: 20, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "power3.out", stagger: 0.12, transformOrigin: "50% 50%" }, 54.5);
-      calloutIn("#coC", 54.8);
-      tl.to(["#agc1","#agc2"], { boxShadow: "0 0 0 3px rgba(79,70,229,0.12)", duration: 1.5, ease: "sine.inOut", yoyo: true, repeat: R(5, 1.5), stagger: 0.3 }, 55.6);
-      calloutOut("#coC", 60.4);
-      panelSwap("#wpC", "#wpD", 60.6);
-      tl.to("#wcv3", { opacity: 0, duration: 0.4 }, 60.6); tl.to("#wcv2", { opacity: 1, duration: 0.4 }, 60.8);
-      tl.to("#wnav-active", { y: 0, duration: 0.5, ease: "power3.inOut" }, 60.6);
-      tl.to("#wnav-rail", { y: 0, duration: 0.5, ease: "power3.inOut" }, 60.6);
-      tl.to("#wn-ag", { color: "#52525b", fontWeight: 500, duration: 0.4 }, 60.6);
-      tl.to("#wn-fy", { color: "#18181b", fontWeight: 600, duration: 0.4 }, 60.6);
+      // C — agents
+      tl.from("#wpC .page-h", { opacity: 0, y: 10, duration: 0.4 }, 33.2);
+      tl.fromTo(["#agc1","#agc2","#agc3","#agc4"], { opacity: 0, y: 18, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "power3.out", stagger: 0.1, transformOrigin: "50% 50%" }, 33.4);
+      cIn("#coC", 33.6);
+      tl.to(["#agc1","#agc2","#agc3"], { boxShadow: "0 0 0 3px rgba(37,99,235,0.12)", duration: 1.4, ease: "sine.inOut", yoyo: true, repeat: R(6, 1.4), stagger: 0.25 }, 34.4);
+      cOut("#coC", 39.4);
+      panelSwap("#wpC", "#wpD", 39.6);
+      tl.to("#wcv3", { opacity: 0, duration: 0.4 }, 39.6); tl.to("#wcv2", { opacity: 1, duration: 0.4 }, 39.8);
+      tl.to(["#wnav-active","#wnav-rail"], { y: 0, duration: 0.45, ease: "power3.inOut" }, 39.6);
+      tl.to("#wn-ag", { color: "#5A5751", fontWeight: 500, duration: 0.4 }, 39.6);
+      tl.to("#wn-fy", { color: "#111110", fontWeight: 600, duration: 0.4 }, 39.6);
 
-      // Panel D — outcome verified
-      tl.from("#wpD .doc-title", { opacity: 0, y: 14, duration: 0.5, ease: "power3.out" }, 61.3);
-      tl.from("#wpD .doc-meta", { opacity: 0, y: 10, duration: 0.45 }, 61.55);
-      calloutIn("#coD", 61.6);
-      tl.fromTo("#wpD-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.5, ease: "back.out(1.4)" }, 62.2);
+      // D — outcome
+      tl.from("#wpD .doc-title", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 40.2);
+      tl.from("#wpD .doc-meta", { opacity: 0, y: 8, duration: 0.4 }, 40.4);
+      cIn("#coD", 40.4);
+      tl.fromTo("#wpD-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.45, ease: "back.out(1.4)" }, 41.0);
+      cOut("#coD", 47.6);
+      actTrans("#s3", "#s4", 48.0);
 
-      tl.to("#cursor", { opacity: 0, duration: 0.2 }, 70.6);
-      calloutOut("#coD", 70.6);
-      actTrans("#s3", "#s4", 71.0);
+      /* ===== ACT 4 — marketplace (48.4–54.4) ===== */
+      tl.from("#mkt-title .k", { opacity: 0, y: 10, duration: 0.45 }, 48.5);
+      tl.from("#mkt-title .h", { opacity: 0, y: 16, duration: 0.55, ease: "power3.out" }, 48.7);
+      tl.from("#mkt-title .s", { opacity: 0, y: 12, duration: 0.5, ease: "power2.out" }, 49.0);
+      tl.fromTo(["#mc1","#mc2","#mc3","#mc4","#mc5","#mc6"], { opacity: 0, y: 30, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.3)", stagger: 0.09, transformOrigin: "50% 50%" }, 49.2);
 
-      /* ============ ACT 4 — marketplace (71.6–83.4) ============ */
-      tl.from("#mkt-title .mk", { opacity: 0, y: 14, duration: 0.5, ease: "power3.out" }, 71.8);
-      tl.from("#mkt-title .mh", { opacity: 0, y: 20, duration: 0.6, ease: "power3.out" }, 72.0);
-      tl.from("#mkt-title .ms", { opacity: 0, y: 14, duration: 0.5, ease: "power2.out" }, 72.4);
-      tl.fromTo(["#lc1","#lc2","#lc3"], { opacity: 0, y: 40, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.6, ease: "back.out(1.4)", stagger: 0.16, transformOrigin: "50% 50%" }, 72.7);
-      tl.to(["#lc1","#lc2","#lc3"], { y: -10, duration: 2.4, ease: "sine.inOut", yoyo: true, repeat: R(8, 2.4), stagger: 0.4 }, 75.0);
+      actTrans("#s4", "#s5", 54.0);
 
-      actTrans("#s4", "#s5", 83.0);
-
-      /* ============ ACT 5 — logo + CTA (83.6–90) ============ */
-      tl.from("#logo-mark", { opacity: 0, scale: 0.6, rotation: -12, duration: 0.7, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 83.8);
-      tl.from("#logo-word", { opacity: 0, x: -24, duration: 0.6, ease: "power3.out" }, 84.0);
-      tl.from("#close-tag", { opacity: 0, y: 16, duration: 0.55, ease: "power2.out" }, 84.5);
-      tl.fromTo("#close-cta", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: "back.out(1.5)" }, 84.9);
-      tl.to("#close-cta", { scale: 1.04, duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(4, 1.3), transformOrigin: "50% 50%" }, 85.6);
-      tl.to("#glow", { opacity: 0.55, duration: 2.5, ease: "sine.inOut" }, 87.0);
+      /* ===== ACT 5 — close (54.4–60) ===== */
+      tl.from("#close-mark", { opacity: 0, scale: 0.6, rotation: -10, duration: 0.65, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 54.5);
+      tl.from("#close-word", { opacity: 0, x: -22, duration: 0.55, ease: "power3.out" }, 54.7);
+      tl.from("#close-tag", { opacity: 0, y: 14, duration: 0.5, ease: "power2.out" }, 55.2);
+      tl.fromTo("#close-row", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "back.out(1.4)" }, 55.6);
+      tl.to("#close-cta", { scale: 1.04, duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(3.5, 1.3), transformOrigin: "50% 50%" }, 56.4);
 
       window.__timelines["main"] = tl;
     </script>
