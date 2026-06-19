@@ -303,6 +303,10 @@ app.openapi(cancelRoute, async (c) => {
 	const billing = settings.billing
 
 	if (hasActivePaidPlan({ billing })) {
+		const subscriptionId = billing?.stripe_subscription_id
+		if (!subscriptionId) {
+			return c.json(createApiError('INTERNAL_ERROR', 'No active subscription id'), 500)
+		}
 		let stripeEnv: ReturnType<typeof readStripeEnv>
 		try {
 			stripeEnv = readStripeEnv()
@@ -310,11 +314,7 @@ app.openapi(cancelRoute, async (c) => {
 			return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
 		}
 		try {
-			// biome-ignore lint/style/noNonNullAssertion: hasActivePaidPlan guarantees this
-			await cancelActivePaidSubscription(
-				getStripeClient(stripeEnv),
-				billing!.stripe_subscription_id!,
-			)
+			await cancelActivePaidSubscription(getStripeClient(stripeEnv), subscriptionId)
 		} catch (err) {
 			logger.error('Stripe cancel failed', { workspaceId, error: String(err) })
 			return c.json(createApiError('INTERNAL_ERROR', 'Failed to cancel subscription'), 500)

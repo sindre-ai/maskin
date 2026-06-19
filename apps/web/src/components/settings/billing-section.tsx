@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label'
 import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
 import type { BillingPlan, BillingStatus } from '@/lib/api'
 import { ExternalLink } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 const PLAN_LABEL: Record<BillingPlan, string> = {
 	trial: 'Trial',
@@ -32,9 +32,36 @@ export function formatResetsIn(ms: number | null): string {
 	if (ms == null || ms <= 0) return ''
 	const days = Math.floor(ms / (24 * 60 * 60 * 1000))
 	if (days > 0) return `resets in ${days}d`
-	const hours = Math.floor(ms / (60 * 60 * 1000))
-	if (hours > 0) return `resets in ${hours}h`
-	return 'resets soon'
+	return ''
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+function PeriodCountdown({ ms, label }: { ms: number; label: string }) {
+	const [remaining, setRemaining] = useState(ms)
+
+	useEffect(() => {
+		setRemaining(ms)
+		if (ms <= 0) return
+		const id = setInterval(() => setRemaining((r) => Math.max(0, r - 1000)), 1000)
+		return () => clearInterval(id)
+	}, [ms])
+
+	if (remaining <= 0) return <span>· {label} now</span>
+
+	const h = Math.floor(remaining / 3_600_000)
+	const m = Math.floor((remaining % 3_600_000) / 60_000)
+	const s = Math.floor((remaining % 60_000) / 1_000)
+	const hms =
+		h > 0
+			? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+			: `${m}:${String(s).padStart(2, '0')}`
+
+	return (
+		<span>
+			· {label} in {hms}
+		</span>
+	)
 }
 
 function statusBadge(plan: BillingPlan, status: BillingStatus): { label: string; tone: string } {
@@ -93,7 +120,8 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 	const isTrial = usage.plan === 'trial'
 	const cap = usage.hard_cap_tokens ?? 0
 	const pct = cap > 0 ? Math.min(100, Math.round((usage.tokens_used / cap) * 100)) : 0
-	const resetsIn = formatResetsIn(usage.period_resets_in_ms)
+	const periodMs = usage.period_resets_in_ms
+	const resetsIn = formatResetsIn(periodMs)
 
 	return (
 		<div>
@@ -129,7 +157,11 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 							<span>
 								{formatTokens(usage.tokens_used)} / {formatTokens(cap)} tokens
 							</span>
-							{resetsIn && <span>· {resetsIn}</span>}
+							{periodMs !== null && periodMs > 0 && periodMs < DAY_MS ? (
+								<PeriodCountdown ms={periodMs} label={isTrial ? 'expires' : 'resets'} />
+							) : resetsIn ? (
+								<span>· {resetsIn}</span>
+							) : null}
 						</div>
 						<div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
 							<div
