@@ -253,6 +253,12 @@ export function useSindreConversation({
 					actor_id: agent.id,
 					action_prompt: prompt,
 					auto_start: true,
+					// Tell the session runtime which conversation this turn answers,
+					// so the final reply is persisted as a `commented` event on the
+					// conversation object once the session completes. Without this
+					// the agent message only lives in the SSE log replay and has no
+					// stable events.id for reactions / threading / reload hydration.
+					config: { chat_reply: { conversation_id: conversationId } },
 				})
 			} catch (err) {
 				controllersRef.current.delete(messageId)

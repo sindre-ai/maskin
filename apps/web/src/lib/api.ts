@@ -1092,6 +1092,12 @@ export interface SessionConfigInput {
 	cpu_shares?: number
 	env_vars?: Record<string, string>
 	mcps?: Array<Record<string, unknown>>
+	/**
+	 * Set when an agent turn is spawned from a Maskin Chat conversation.
+	 * Tells the session runtime to persist the agent's final reply as a
+	 * `commented` event on the conversation object after the session ends.
+	 */
+	chat_reply?: { conversation_id: string }
 }
 
 export interface CreateSessionInput {
