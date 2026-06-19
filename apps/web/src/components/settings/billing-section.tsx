@@ -38,7 +38,7 @@ export function formatResetsIn(ms: number | null): string {
 }
 
 function statusBadge(plan: BillingPlan, status: BillingStatus): { label: string; tone: string } {
-	if (plan === 'byollm') return { label: 'Inactive', tone: 'bg-muted text-muted-foreground' }
+	if (plan === 'byollm') return { label: 'Free', tone: 'bg-muted text-muted-foreground' }
 	if (status === 'active') return { label: 'Active', tone: 'bg-success/10 text-success' }
 	if (status === 'past_due') return { label: 'Past due', tone: 'bg-warning/10 text-warning' }
 	if (status === 'canceled') return { label: 'Canceled', tone: 'bg-muted text-muted-foreground' }
@@ -184,7 +184,7 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 					)}
 					{isPaid && usage.status === 'active' && (
 						<Button size="sm" variant="ghost" onClick={() => setSwitchOpen(true)}>
-							Switch to bring-your-own
+							Downgrade to Free
 						</Button>
 					)}
 				</div>
@@ -212,11 +212,11 @@ function SwitchToByoDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>Switch to bring-your-own?</DialogTitle>
+					<DialogTitle>Downgrade to Free?</DialogTitle>
 					<DialogDescription>
-						To cancel your paid plan, set up one of the bring-your-own options below — Claude
-						subscription, Anthropic API key, or a custom model endpoint. Saving any of them cancels
-						your active Maskin subscription atomically (you won't be charged again).
+						To cancel your paid plan, connect your own LLM below — Claude subscription, Anthropic
+						API key, or a custom model endpoint. Saving any of them cancels your active Maskin
+						subscription atomically (you won't be charged again).
 					</DialogDescription>
 				</DialogHeader>
 				<DialogFooter>
