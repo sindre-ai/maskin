@@ -1,5 +1,6 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { MarkdownContent } from '@/components/shared/markdown-content'
+import { ReactionsBar } from '@/components/shared/reactions-bar'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { MessageActions } from '@/components/sindre/message-actions'
 import { Button } from '@/components/ui/button'
@@ -23,6 +24,14 @@ interface ConversationTranscriptProps {
 	currentUserId: string
 	onRegenerate: (messageId: string) => void
 	onEditUserMessage: (text: string) => void
+	/**
+	 * Workspace + conversation id are required to mount the per-message
+	 * `ReactionsBar` — reactions are keyed on the conversation object and the
+	 * persisted `events.id` of the message. When unset (e.g. an unrouted dev
+	 * harness or a transient hydration state), reactions are simply not shown.
+	 */
+	workspaceId?: string
+	conversationId?: string | null
 	className?: string
 }
 
@@ -43,6 +52,8 @@ export function ConversationTranscript({
 	currentUserId,
 	onRegenerate,
 	onEditUserMessage,
+	workspaceId,
+	conversationId,
 	className,
 }: ConversationTranscriptProps) {
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
@@ -111,6 +122,8 @@ export function ConversationTranscript({
 								isSelf={message.role === 'user' && message.senderId === currentUserId}
 								onRegenerate={() => onRegenerate(message.id)}
 								onEdit={message.role === 'user' ? () => onEditUserMessage(message.text) : undefined}
+								workspaceId={workspaceId}
+								conversationId={conversationId}
 							/>
 						)
 					})}
@@ -140,18 +153,29 @@ function MessageRow({
 	isSelf,
 	onRegenerate,
 	onEdit,
+	workspaceId,
+	conversationId,
 }: {
 	message: ChatMessage
 	grouped: boolean
 	isSelf: boolean
 	onRegenerate: () => void
 	onEdit?: () => void
+	workspaceId?: string
+	conversationId?: string | null
 }) {
 	const copyText = message.role === 'user' ? message.text : agentPlainText(message.events)
+	// Reactions can only attach to a row in `events` — they need a persisted
+	// `events.id`. Today only user messages get one (via T3's
+	// `/api/conversations/:id/messages`); agent replies stream over session
+	// logs and aren't written as commented events. Local-only user messages
+	// (before the round-trip completes) also don't have one yet.
+	const reactionEventId =
+		workspaceId && conversationId && message.role === 'user' ? message.remoteId : undefined
 	return (
 		<li
 			className={cn(
-				'group relative flex gap-2.5 rounded-md px-2 py-1 hover:bg-bg-hover/50',
+				'group group/comment-hover relative flex gap-2.5 rounded-md px-2 py-1 hover:bg-bg-hover/50',
 				grouped ? 'mt-0' : 'mt-2',
 			)}
 		>
@@ -183,6 +207,13 @@ function MessageRow({
 						<AgentBody message={message} onRegenerate={onRegenerate} />
 					)}
 				</div>
+				{reactionEventId !== undefined && workspaceId && conversationId ? (
+					<ReactionsBar
+						workspaceId={workspaceId}
+						objectId={conversationId}
+						eventId={reactionEventId}
+					/>
+				) : null}
 			</div>
 			{copyText.trim().length > 0 ? (
 				<div className="absolute top-0 right-2 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
