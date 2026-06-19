@@ -19,134 +19,160 @@
       .serif { font-family: "Newsreader", Georgia, serif; }
       .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
 
-      /* ---------- persistent backdrop ---------- */
+      /* ---------- backdrop ---------- */
       #backdrop { position: absolute; inset: 0; background: #F2EFE9; overflow: hidden; }
-      #glow { position: absolute; left: 60%; top: 14%; width: 1600px; height: 1600px; margin-left: -800px; margin-top: -800px; border-radius: 50%;
+      #glow { position: absolute; left: 64%; top: 14%; width: 1500px; height: 1500px; margin-left: -750px; margin-top: -750px; border-radius: 50%;
         background: radial-gradient(circle, rgba(37,99,235,0.10) 0%, rgba(37,99,235,0.04) 38%, rgba(37,99,235,0) 66%); }
       #grain { position: absolute; inset: -80px;
         background-image: linear-gradient(rgba(17,17,16,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(17,17,16,0.02) 1px, transparent 1px); background-size: 74px 74px; }
-      #brandbar { position: absolute; left: 54px; top: 42px; display: flex; align-items: center; gap: 11px; z-index: 40; }
-      #brandbar .lg { width: 26px; height: 26px; border-radius: 7px; }
-      #brandbar .wd { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; color: #111110; }
-      #kicker-tr { position: absolute; right: 54px; top: 48px; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: #9B958F; z-index: 40; }
+      #brandbar { position: absolute; left: 54px; top: 40px; display: flex; align-items: center; gap: 11px; z-index: 40; opacity: 0; }
+      #brandbar .lg { width: 24px; height: 24px; border-radius: 7px; }
+      #brandbar .wd { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; color: #111110; }
+      #kicker-tr { position: absolute; right: 54px; top: 46px; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: #9B958F; z-index: 40; opacity: 0; }
 
-      /* ---------- camera stage + app window ---------- */
-      #stage { position: absolute; inset: 0; transform-origin: 0px 0px; }
-      #app { position: absolute; left: 110px; top: 96px; width: 1700px; height: 888px; background: #FAFAF8; border-radius: 18px; overflow: hidden;
-        box-shadow: 0 50px 110px rgba(17,17,16,0.20), 0 0 0 1px #E2DDD7; }
-      #wtitle { position: absolute; left: 0; top: 0; width: 100%; height: 38px; background: #F0EDE7; border-bottom: 1px solid #E2DDD7; display: flex; align-items: center; padding: 0 15px; gap: 7px; }
-      .tld { width: 11px; height: 11px; border-radius: 50%; }
-      .upill { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); height: 21px; padding: 0 15px; border-radius: 6px; background: #FAFAF8; border: 1px solid #E2DDD7; font-size: 12px; color: #5A5751; display: flex; align-items: center; }
-      #wbody { position: absolute; left: 0; top: 38px; width: 100%; height: 850px; }
-      #wsb { position: absolute; left: 0; top: 0; width: 230px; height: 100%; background: #F4F1EB; border-right: 1px solid #E2DDD7; }
-      #wsb-h { height: 46px; display: flex; align-items: center; padding: 0 18px; gap: 9px; }
-      .sblogo { width: 22px; height: 22px; border-radius: 6px; }
+      /* ---------- left caption column ---------- */
+      #cap { position: absolute; left: 96px; top: 0; width: 418px; height: 1080px; z-index: 30; }
+      .cap { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 418px; opacity: 0; }
+      .cap .ck { display: inline-flex; align-items: center; gap: 9px; font-size: 13px; letter-spacing: 0.15em; text-transform: uppercase; font-weight: 700; color: #2563EB; margin-bottom: 18px; }
+      .cap .ck::before { content: ""; width: 22px; height: 2px; background: #2563EB; }
+      .cap .ch { font-size: 47px; line-height: 1.08; font-weight: 700; letter-spacing: -0.025em; color: #111110; }
+      .cap .ch em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
+      .cap .cs { margin-top: 20px; font-size: 19px; line-height: 1.5; color: #5A5751; }
+
+      /* ---------- right stage (camera) ---------- */
+      #stage { position: absolute; inset: 0; transform-origin: 1210px 540px; }
+      .rcard { position: absolute; left: 560px; top: 104px; width: 1300px; height: 872px; background: #FAFAF8; border-radius: 18px; overflow: hidden;
+        box-shadow: 0 46px 100px rgba(17,17,16,0.18), 0 0 0 1px #E2DDD7; opacity: 0; }
+
+      /* window chrome (shared) */
+      .wtitle { position: absolute; left: 0; top: 0; width: 100%; height: 36px; background: #F0EDE7; border-bottom: 1px solid #E2DDD7; display: flex; align-items: center; padding: 0 14px; gap: 7px; }
+      .tld { width: 10px; height: 10px; border-radius: 50%; }
+      .upill { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); height: 20px; padding: 0 14px; border-radius: 6px; background: #FAFAF8; border: 1px solid #E2DDD7; font-size: 11.5px; color: #5A5751; display: flex; align-items: center; }
+
+      /* maskin app */
+      #wbody { position: absolute; left: 0; top: 36px; width: 100%; height: 836px; }
+      #wsb { position: absolute; left: 0; top: 0; width: 220px; height: 100%; background: #F4F1EB; border-right: 1px solid #E2DDD7; }
+      #wsb-h { height: 46px; display: flex; align-items: center; padding: 0 17px; gap: 9px; }
+      .sblogo { width: 21px; height: 21px; border-radius: 6px; }
       .sbws { font-size: 13px; font-weight: 600; color: #111110; }
-      #wnav { position: relative; padding: 8px 12px; }
-      #wnav-active { position: absolute; left: 12px; top: 8px; width: 206px; height: 36px; background: #E7E2D9; border-radius: 8px; }
-      #wnav-rail { position: absolute; left: 12px; top: 16px; width: 3px; height: 20px; background: #2563EB; border-radius: 3px; }
-      .wnav-i { position: relative; height: 36px; margin-bottom: 3px; border-radius: 8px; display: flex; align-items: center; padding: 0 14px; gap: 11px; font-size: 14px; color: #5A5751; font-weight: 500; }
+      #wnav { position: relative; padding: 8px 11px; }
+      #wnav-active { position: absolute; left: 11px; top: 8px; width: 198px; height: 35px; background: #E7E2D9; border-radius: 8px; }
+      #wnav-rail { position: absolute; left: 11px; top: 15px; width: 3px; height: 21px; background: #2563EB; border-radius: 3px; }
+      .wnav-i { position: relative; height: 35px; margin-bottom: 3px; border-radius: 8px; display: flex; align-items: center; padding: 0 13px; gap: 11px; font-size: 13.5px; color: #5A5751; font-weight: 500; }
       .wnav-i.on { color: #111110; font-weight: 600; }
-      .wnav-ico { width: 16px; height: 16px; border: 1.7px solid currentColor; border-radius: 4px; opacity: 0.8; }
+      .wnav-ico { width: 15px; height: 15px; border: 1.7px solid currentColor; border-radius: 4px; opacity: 0.8; }
       .wnav-badge { margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #2563EB; color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
-      #wsb-foot { position: absolute; left: 0; bottom: 0; width: 100%; padding: 14px 18px; border-top: 1px solid #E2DDD7; }
+      #wsb-foot { position: absolute; left: 0; bottom: 0; width: 100%; padding: 13px 17px; border-top: 1px solid #E2DDD7; }
       #wpulse { position: relative; height: 18px; font-size: 12px; color: #5A5751; }
       .wpst { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 7px; white-space: nowrap; }
       .wpdot { width: 7px; height: 7px; border-radius: 50%; background: #27AE60; }
-      #wuser { margin-top: 12px; display: flex; align-items: center; gap: 9px; }
-      .avatar { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; flex: 0 0 auto; }
+      #wuser { margin-top: 11px; display: flex; align-items: center; gap: 9px; }
+      .avatar { width: 25px; height: 25px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; flex: 0 0 auto; }
       .av-h { background: #5A5751; color: #FAFAF8; } .av-a { background: rgba(37,99,235,.14); color: #2563EB; font-size: 13px; }
-      #wuser .nm { font-size: 13px; font-weight: 600; color: #111110; } #wuser .em { font-size: 11px; color: #9B958F; }
-      #wtop { position: absolute; left: 230px; top: 0; width: 1470px; height: 52px; display: flex; align-items: center; padding: 0 24px; }
+      #wuser .nm { font-size: 12.5px; font-weight: 600; color: #111110; } #wuser .em { font-size: 11px; color: #9B958F; }
+      #wtop { position: absolute; left: 220px; top: 0; width: 1080px; height: 48px; display: flex; align-items: center; padding: 0 22px; }
       .wcrumb { position: relative; width: 340px; height: 17px; font-size: 13px; color: #5A5751; }
       .wcv { position: absolute; left: 0; top: 0; white-space: nowrap; } .wcrumb b { color: #111110; font-weight: 600; } .wcrumb .sep { margin: 0 8px; color: #C9C3BA; }
-      #wcontent { position: absolute; left: 230px; top: 52px; width: 1470px; height: 798px; overflow: hidden; background: #FAFAF8; }
-      .wpanel { position: absolute; inset: 0; padding: 34px 44px; }
+      #wcontent { position: absolute; left: 220px; top: 48px; width: 1080px; height: 788px; overflow: hidden; background: #FAFAF8; }
+      .wpanel { position: absolute; inset: 0; padding: 30px 38px; }
 
-      .page-h { font-size: 23px; font-weight: 700; letter-spacing: -0.015em; color: #111110; }
-      .page-sub { margin-top: 4px; font-size: 14px; color: #5A5751; }
+      .page-h { font-size: 22px; font-weight: 700; letter-spacing: -0.015em; color: #111110; }
+      .page-sub { margin-top: 4px; font-size: 13.5px; color: #5A5751; }
       .card { background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 13px; box-shadow: 0 1px 3px rgba(17,17,16,0.05); }
-      .badge { display: inline-flex; align-items: center; height: 23px; padding: 0 10px; border-radius: 12px; font-size: 12.5px; font-weight: 600; }
+      .badge { display: inline-flex; align-items: center; height: 22px; padding: 0 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
       .b-type { background: transparent; color: #5A5751; font-weight: 500; border: 1px solid #E2DDD7; }
       .b-insight { background: rgba(91,141,217,.14); color: #3F6CA8; }
       .b-bet { background: rgba(230,126,34,.14); color: #B45F12; }
       .b-proposed { background: rgba(37,99,235,.12); color: #1E50C8; }
       .b-active { background: rgba(39,174,96,.14); color: #1E844A; }
       .b-done { background: rgba(39,174,96,.16); color: #1E844A; }
-      .thead { display: flex; align-items: center; gap: 11px; padding: 15px 18px; border-bottom: 1px solid #E2DDD7; }
-      .ttl { font-size: 16.5px; font-weight: 600; color: #111110; } .ttime { font-size: 12.5px; color: #9B958F; }
+      .thead { display: flex; align-items: center; gap: 11px; padding: 14px 17px; border-bottom: 1px solid #E2DDD7; }
+      .ttl { font-size: 15.5px; font-weight: 600; color: #111110; } .ttime { font-size: 12px; color: #9B958F; }
       .unread { min-width: 19px; height: 19px; padding: 0 6px; border-radius: 10px; background: #2563EB; color: #fff; font-size: 11.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
-      .tbody { padding: 16px 18px; }
-      .cmt { display: flex; gap: 12px; padding: 6px 0; } .cb { flex: 1; min-width: 0; }
-      .cn { font-size: 14.5px; font-weight: 600; color: #111110; } .cn.link { color: #2563EB; } .ct { font-size: 12.5px; color: #9B958F; margin-left: 8px; }
-      .cx { margin-top: 3px; font-size: 14.5px; line-height: 1.5; color: #5A5751; }
-      .doc-title { font-size: 29px; font-weight: 700; letter-spacing: -0.025em; color: #111110; }
-      .doc-meta { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
-      .mdrv { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: #5A5751; }
-      .wbanner { display: flex; align-items: center; gap: 10px; margin-top: 16px; padding: 11px 15px; border-radius: 11px; background: rgba(37,99,235,.08); border: 1px solid rgba(37,99,235,.22); font-size: 14px; color: #1E50C8; font-weight: 500; }
+      .tbody { padding: 15px 17px; }
+      .cmt { display: flex; gap: 11px; padding: 5px 0; } .cb { flex: 1; min-width: 0; }
+      .cn { font-size: 14px; font-weight: 600; color: #111110; } .cn.link { color: #2563EB; } .ct { font-size: 12px; color: #9B958F; margin-left: 8px; }
+      .cx { margin-top: 3px; font-size: 14px; line-height: 1.5; color: #5A5751; }
+      .doc-title { font-size: 27px; font-weight: 700; letter-spacing: -0.025em; color: #111110; }
+      .doc-meta { display: flex; align-items: center; gap: 10px; margin-top: 13px; flex-wrap: wrap; }
+      .mdrv { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: #5A5751; }
+      .wbanner { display: flex; align-items: center; gap: 10px; margin-top: 15px; padding: 11px 14px; border-radius: 11px; background: rgba(37,99,235,.08); border: 1px solid rgba(37,99,235,.22); font-size: 13.5px; color: #1E50C8; font-weight: 500; }
       .wbanner.ok { background: rgba(39,174,96,.1); border-color: rgba(39,174,96,.28); color: #1E844A; }
-      .dsec { font-size: 12.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #9B958F; }
-      .dp { font-size: 15px; line-height: 1.6; color: #5A5751; }
+      .dsec { font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #9B958F; }
+      .dp { font-size: 14.5px; line-height: 1.6; color: #5A5751; }
       .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(37,99,235,.3); border-top-color: #2563EB; flex: 0 0 auto; }
-      .ag-card { padding: 17px; } .ag-card.working { border-color: rgba(37,99,235,.4); background: rgba(37,99,235,.05); }
-      .ag-h { display: flex; align-items: center; gap: 10px; } .ag-nm { font-size: 14.5px; font-weight: 600; color: #111110; }
-      .ag-st { margin-left: auto; font-size: 13px; font-weight: 600; } .ag-st.working { color: #2563EB; } .ag-st.idle { color: #9B958F; }
-      .ag-ds { font-size: 12px; color: #9B958F; margin: 7px 0 10px; margin-left: 36px; } .ag-ac { font-size: 13px; color: #5A5751; margin-left: 36px; }
+      .ag-card { padding: 16px; } .ag-card.working { border-color: rgba(37,99,235,.4); background: rgba(37,99,235,.05); }
+      .ag-h { display: flex; align-items: center; gap: 10px; } .ag-nm { font-size: 14px; font-weight: 600; color: #111110; }
+      .ag-st { margin-left: auto; font-size: 12.5px; font-weight: 600; } .ag-st.working { color: #2563EB; } .ag-st.idle { color: #9B958F; }
+      .ag-ds { font-size: 11.5px; color: #9B958F; margin: 7px 0 9px; margin-left: 35px; } .ag-ac { font-size: 12.5px; color: #5A5751; margin-left: 35px; }
       .idot { width: 7px; height: 7px; border-radius: 50%; background: #9B958F; }
 
-      /* in-app marketplace tiles */
-      .mkgrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-top: 18px; }
-      .mtile { background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 13px; border-top-width: 3px; padding: 17px; }
-      .mtile .r { font-size: 11px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #9B958F; }
-      .mtile .t { margin-top: 9px; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: #111110; line-height: 1.25; min-height: 40px; }
-      .mtile .f { margin-top: 12px; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+      /* marketplace tiles (2 cols) */
+      .mkgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 17px; }
+      .mtile { background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 12px; border-top-width: 3px; padding: 15px 16px; }
+      .mtile .r { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #9B958F; }
+      .mtile .t { margin-top: 7px; font-size: 15.5px; font-weight: 700; letter-spacing: -0.01em; color: #111110; line-height: 1.2; }
+      .mtile .f { margin-top: 10px; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
       .ot { font-family: "JetBrains Mono", monospace; font-size: 10.5px; font-weight: 500; padding: 2px 6px; border-radius: 5px; }
       .ot-i { color: #3F6CA8; background: rgba(91,141,217,.12); } .ot-b { color: #B45F12; background: rgba(230,126,34,.12); }
       .ot-t { color: #1E844A; background: rgba(39,174,96,.12); } .ot-src { color: #9B958F; border: 1px dashed #C9C3BA; } .ot-ar { color: #C9C3BA; }
       .mtile--c { background: #F0EDE7; border-top-color: #2563EB; }
 
-      /* ---------- cursor (inside stage) ---------- */
-      #cursor { position: absolute; left: 0; top: 0; z-index: 30; pointer-events: none; opacity: 0; }
+      /* ---------- chat (Claude-like, no logos) ---------- */
+      .chat-h { position: absolute; left: 0; top: 36px; width: 100%; height: 46px; display: flex; align-items: center; padding: 0 22px; gap: 10px; border-bottom: 1px solid #ECE7DF; }
+      .chat-h .nt { font-size: 13.5px; font-weight: 600; color: #111110; } .chat-h .mp { margin-left: auto; font-size: 12px; color: #9B958F; border: 1px solid #E2DDD7; border-radius: 7px; padding: 3px 10px; }
+      .chat-body { position: absolute; left: 50%; transform: translateX(-50%); top: 100px; width: 880px; }
+      .crow { display: flex; margin-bottom: 18px; } .crow.u { justify-content: flex-end; }
+      .cu { max-width: 560px; background: #EEF3FD; border: 1px solid rgba(37,99,235,.16); border-radius: 14px 14px 4px 14px; padding: 12px 16px; font-size: 15px; color: #1f3a66; line-height: 1.45; }
+      .ca { display: flex; gap: 12px; max-width: 720px; }
+      .ca .dot { width: 28px; height: 28px; border-radius: 8px; background: #111110; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+      .ca .dot span { width: 11px; height: 11px; border-radius: 50%; background: #FAFAF8; }
+      .ca .txt { font-size: 15px; color: #2c2a27; line-height: 1.55; }
+      .ca .txt b { color: #111110; font-weight: 600; }
+      .typing { display: inline-flex; gap: 5px; align-items: center; height: 22px; }
+      .typing i { width: 7px; height: 7px; border-radius: 50%; background: #C9C3BA; display: inline-block; }
+      .chat-in { position: absolute; left: 50%; transform: translateX(-50%); bottom: 30px; width: 880px; height: 52px; border: 1.5px solid #E2DDD7; border-radius: 14px; background: #fff; display: flex; align-items: center; padding: 0 8px 0 18px; }
+      .chat-in .ph { font-size: 14.5px; color: #B7B1A8; } .chat-in .snd { margin-left: auto; width: 36px; height: 36px; border-radius: 10px; background: #111110; display: flex; align-items: center; justify-content: center; color: #FAFAF8; font-size: 16px; }
+
+      /* siloed chat grid */
+      #chatgrid { padding: 30px; }
+      .gwrap { position: absolute; inset: 30px; display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; gap: 18px; }
+      .mini { background: #fff; border: 1.5px solid #E2DDD7; border-radius: 12px; padding: 13px; overflow: hidden; }
+      .mini .mh { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; } .mini .md { width: 16px; height: 16px; border-radius: 5px; background: #111110; } .mini .mn { font-size: 11px; color: #9B958F; }
+      .mb { height: 9px; border-radius: 5px; background: #EDE9E2; margin-bottom: 7px; } .mb.u { background: #EEF3FD; margin-left: auto; } .mb.s { width: 60%; }
+
+      /* integrations hub */
+      #integ-svg { position: absolute; inset: 0; }
+      .ichip { position: absolute; height: 50px; padding: 0 18px; background: #fff; border: 1.5px solid #E2DDD7; border-radius: 11px; box-shadow: 0 2px 6px rgba(17,17,16,0.05); display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; color: #111110; }
+      .ichip .gd { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+      #ihub { position: absolute; left: 575px; top: 325px; width: 150px; height: 150px; border-radius: 26px; background: #111110; display: flex; align-items: center; justify-content: center; box-shadow: 0 20px 50px rgba(17,17,16,0.28); }
+      #ihub svg { width: 72px; height: 72px; }
+      #ihub-ring { position: absolute; left: 555px; top: 305px; width: 190px; height: 190px; border-radius: 34px; border: 2px solid rgba(37,99,235,.4); opacity: 0; }
+
+      /* ---------- cursor ---------- */
+      #cursor { position: absolute; left: 0; top: 0; z-index: 24; pointer-events: none; opacity: 0; }
       #cursor svg { display: block; filter: drop-shadow(0 2px 5px rgba(17,17,16,0.3)); }
       .ripple { position: absolute; left: 4px; top: 2px; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; border: 2px solid #2563EB; transform: scale(0); opacity: 0; }
 
-      /* ---------- FX overlay (statements + lower-thirds) ---------- */
-      #fx { position: absolute; inset: 0; z-index: 45; pointer-events: none; }
-      #lscrim { position: absolute; inset: 0; opacity: 0;
-        background: linear-gradient(100deg, #F2EFE9 0%, #F2EFE9 34%, rgba(242,239,233,0.85) 50%, rgba(242,239,233,0) 72%); }
-      .stmt { position: absolute; left: 130px; top: 50%; transform: translateY(-50%); width: 1040px; opacity: 0; }
-      .stmt .sk { font-size: 14px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; color: #2563EB; margin-bottom: 20px; }
-      .stmt .sh { font-size: 72px; line-height: 1.04; font-weight: 700; letter-spacing: -0.03em; color: #111110; }
-      .stmt .sh em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
-      .stmt .ss { margin-top: 22px; font-size: 25px; font-weight: 400; color: #5A5751; line-height: 1.45; max-width: 26ch; }
-
-      /* centered statement (one loop of many) */
-      #cscrim { position: absolute; inset: 0; background: #F2EFE9; opacity: 0; }
-      #cstmt { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0; }
-      #cstmt .ch { font-size: 64px; font-weight: 700; letter-spacing: -0.03em; color: #111110; }
-      #cstmt .ch em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
-      #cstmt .cs { margin-top: 14px; font-size: 22px; color: #5A5751; }
-
-      /* lower-third */
-      #lt-grad { position: absolute; left: 0; right: 0; bottom: 0; height: 340px; opacity: 0;
-        background: linear-gradient(0deg, rgba(242,239,233,0.96) 0%, rgba(242,239,233,0.72) 42%, rgba(242,239,233,0) 100%); }
-      .lt { position: absolute; left: 120px; bottom: 96px; width: 1180px; opacity: 0; }
-      .lt .lk { display: inline-flex; align-items: center; gap: 9px; font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; color: #2563EB; margin-bottom: 11px; }
-      .lt .lk::before { content: ""; width: 22px; height: 2px; background: #2563EB; }
-      .lt .lh { font-size: 40px; font-weight: 600; letter-spacing: -0.02em; color: #111110; line-height: 1.12; }
-      .lt .lh em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
-
-      /* ---------- close scene ---------- */
-      #close { position: absolute; inset: 0; z-index: 60; opacity: 0; background: #F2EFE9; }
-      #close-wrap { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; }
-      #lockup { display: inline-flex; align-items: center; gap: 22px; }
-      #close-mark { width: 86px; height: 86px; }
-      #close-word { font-size: 88px; font-weight: 700; letter-spacing: -0.035em; color: #111110; }
-      #close-tag { margin-top: 28px; font-size: 29px; font-weight: 400; color: #5A5751; letter-spacing: -0.01em; }
+      /* ---------- intro + close ---------- */
+      .endcap { position: absolute; inset: 0; z-index: 60; background: #F2EFE9; opacity: 0; }
+      .ec-wrap { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; }
+      .ec-lock { display: inline-flex; align-items: center; gap: 22px; }
+      .ec-mark { width: 84px; height: 84px; }
+      .ec-word { font-size: 86px; font-weight: 700; letter-spacing: -0.035em; color: #111110; }
+      #intro-tag { margin-top: 26px; font-size: 24px; font-weight: 400; color: #5A5751; letter-spacing: 0.01em; }
+      #close-tag { margin-top: 28px; font-size: 28px; font-weight: 400; color: #5A5751; letter-spacing: -0.01em; }
       #close-tag em { font-style: italic; font-family: "Newsreader", serif; color: #2563EB; }
-      #close-row { margin-top: 34px; display: inline-flex; align-items: center; gap: 16px; }
+      #close-row { margin-top: 32px; display: inline-flex; align-items: center; gap: 16px; }
       #close-cta { display: inline-flex; align-items: center; gap: 9px; height: 52px; padding: 0 30px; border-radius: 11px; background: #111110; color: #FAFAF8; font-size: 20px; font-weight: 600; }
       #close-oss { font-size: 15px; color: #9B958F; }
+
+      /* centered statement (one loop of many) */
+      #cscrim { position: absolute; inset: 0; background: #F2EFE9; opacity: 0; z-index: 35; }
+      #cstmt { position: absolute; inset: 0; z-index: 36; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0; }
+      #cstmt .ch { font-size: 62px; font-weight: 700; letter-spacing: -0.03em; color: #111110; }
+      #cstmt .ch em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
+      #cstmt .cs { margin-top: 14px; font-size: 21px; color: #5A5751; }
     </style>
   </head>
   <body>
@@ -160,10 +186,62 @@
         <div id="kicker-tr">AI-native workspace</div>
       </div>
 
-      <!-- camera stage with the hero app -->
+      <!-- left captions -->
+      <div id="cap">
+        <div class="cap" data-layout-allow-overlap id="cap1"><div class="ck">the promise</div><div class="ch">AI made your individuals faster.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap2"><div class="ck">the gap</div><div class="ch">But your organization <em>hasn’t</em> felt it.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap3"><div class="ck">what’s missing</div><div class="ch">True AI + human collaboration.</div><div class="cs">An AI-native workspace — where the whole organization compounds, not just the individual.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap4"><div class="ck">your stack</div><div class="ch">Connect the services you already run.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap5"><div class="ck">no friction</div><div class="ch">No new stack. No bespoke connectors.</div><div class="cs">Slack, GitHub, Linear, Intercom, PostHog, HubSpot, Salesforce &amp; more.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap6"><div class="ck">always on</div><div class="ch">Agents monitor them — and detect the <em>insights</em> that matter.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap7"><div class="ck">signal</div><div class="ch">Agents cut through the noise — surfacing what you must respond to.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap8"><div class="ck">conviction</div><div class="ch">Signals become <em>bets</em> — what your org decides to believe in.</div><div class="cs">You approve. Humans set direction; agents do the rest.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap9"><div class="ck">execution</div><div class="ch">Agents take care of the work — and ship it.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap10"><div class="ck">validated</div><div class="ch">Live in production, agents <em>validate the business value</em>.</div></div>
+        <div class="cap" data-layout-allow-overlap id="capM"><div class="ck">the marketplace</div><div class="ch">Pick a loop — or build your <em>own</em>.</div><div class="cs">Every loop turns AI spend into business outcomes.</div></div>
+      </div>
+
+      <!-- right stage -->
       <div id="stage" class="clip" data-start="0" data-duration="62" data-track-index="1">
-        <div id="app">
-          <div id="wtitle"><div class="tld" style="background:#ff5f57"></div><div class="tld" style="background:#febc2e"></div><div class="tld" style="background:#28c840"></div><div class="upill">app.maskin.io / My Workspace</div></div>
+
+        <!-- chat (big) -->
+        <div class="rcard" id="chatbig">
+          <div class="wtitle"><div class="tld" style="background:#ff5f57"></div><div class="tld" style="background:#febc2e"></div><div class="tld" style="background:#28c840"></div></div>
+          <div class="chat-h"><span class="nt">New chat</span><span class="mp">Assistant</span></div>
+          <div class="chat-body">
+            <div class="crow u" id="cm1"><div class="cu">Summarize last week’s 312 support tickets and find the top issues.</div></div>
+            <div class="crow" id="cm2"><div class="ca"><div class="dot"><span></span></div><div class="txt">Top three: <b>onboarding confusion</b>, <b>billing surprises</b>, and <b>mobile crashes</b>. Onboarding drives ~40% of week-1 complaints.</div></div></div>
+            <div class="crow u" id="cm3"><div class="cu">Draft a fix plan for onboarding.</div></div>
+            <div class="crow" id="cm4"><div class="ca"><div class="dot"><span></span></div><div class="txt"><span class="typing"><i></i><i></i><i></i></span></div></div></div>
+          </div>
+          <div class="chat-in"><span class="ph">Reply to assistant…</span><span class="snd">↑</span></div>
+        </div>
+
+        <!-- chat grid (siloed) -->
+        <div class="rcard" id="chatgrid">
+          <div class="gwrap" id="gwrap"></div>
+        </div>
+
+        <!-- integrations hub -->
+        <div class="rcard" id="integ">
+          <svg id="integ-svg" viewBox="0 0 1300 872" preserveAspectRatio="none">
+            <g stroke="#C9C3BA" stroke-width="1.6" fill="none" id="ilines"></g>
+          </svg>
+          <div id="ihub-ring"></div>
+          <div id="ihub"><svg viewBox="0 0 80 80"><rect width="80" height="80" rx="14" fill="#FAFAF8"/><path d="M17 60 L17 20 L40 46 L63 20 L63 60" stroke="#111110" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg></div>
+          <div class="ichip" id="ic0" style="left:90px;  top:120px"><span class="gd" style="background:#4A154B"></span>Slack</div>
+          <div class="ichip" id="ic1" style="left:90px;  top:268px"><span class="gd" style="background:#181717"></span>GitHub</div>
+          <div class="ichip" id="ic2" style="left:90px;  top:416px"><span class="gd" style="background:#5E6AD2"></span>Linear</div>
+          <div class="ichip" id="ic3" style="left:90px;  top:564px"><span class="gd" style="background:#1F8DED"></span>Intercom</div>
+          <div class="ichip" id="ic4" style="left:1010px; top:120px"><span class="gd" style="background:#F54E00"></span>PostHog</div>
+          <div class="ichip" id="ic5" style="left:1010px; top:268px"><span class="gd" style="background:#FF7A59"></span>HubSpot</div>
+          <div class="ichip" id="ic6" style="left:982px;  top:416px"><span class="gd" style="background:#00A1E0"></span>Salesforce</div>
+          <div class="ichip" id="ic7" style="left:952px;  top:564px"><span class="gd" style="background:#E37400"></span>Google Analytics</div>
+        </div>
+
+        <!-- maskin app -->
+        <div class="rcard" id="app">
+          <div class="wtitle"><div class="tld" style="background:#ff5f57"></div><div class="tld" style="background:#febc2e"></div><div class="tld" style="background:#28c840"></div><div class="upill">app.maskin.io / My Workspace</div></div>
           <div id="wbody">
             <div id="wsb">
               <div id="wsb-h"><svg class="sblogo" viewBox="0 0 80 80"><rect width="80" height="80" rx="14" fill="#111110"/><path d="M17 60 L17 20 L40 46 L63 20 L63 60" stroke="#FAFAF8" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg><span class="sbws">My Workspace</span></div>
@@ -171,7 +249,7 @@
                 <div id="wnav-active"></div><div id="wnav-rail"></div>
                 <div class="wnav-i on" id="wn-fy"><div class="wnav-ico"></div>For You<div class="wnav-badge" id="wn-fyb">2</div></div>
                 <div class="wnav-i"><div class="wnav-ico"></div>Objects</div>
-                <div class="wnav-i"><div class="wnav-ico"></div>Activity</div>
+                <div class="wnav-i" id="wn-int"><div class="wnav-ico"></div>Integrations</div>
                 <div class="wnav-i" id="wn-ag"><div class="wnav-ico"></div>Agents</div>
                 <div class="wnav-i" id="wn-mk"><div class="wnav-ico"></div>Marketplace</div>
               </div>
@@ -189,16 +267,16 @@
               </div>
             </div>
             <div id="wcontent">
-              <!-- A: For You -->
+              <!-- For You -->
               <div class="wpanel" id="wpA" style="opacity:1">
                 <div class="page-h">For You</div><div class="page-sub">Unread threads on things you follow</div>
-                <div class="card" id="wpA-ins" style="margin-top:20px"><div class="thead"><span class="badge b-insight">insight</span><span class="ttl">Most new users churn after week 1</span><span class="ttime">just now</span><span class="unread">3</span></div></div>
-                <div class="card" id="wpA-bet" style="margin-top:16px">
+                <div class="card" id="wpA-ins" style="margin-top:18px"><div class="thead"><span class="badge b-insight">insight</span><span class="ttl">Most new users churn after week 1</span><span class="ttime">just now</span><span class="unread">3</span></div></div>
+                <div class="card" id="wpA-bet" style="margin-top:14px">
                   <div class="thead"><span class="badge b-bet">bet</span><span class="ttl">A longer onboarding cuts week-1 churn</span><span class="ttime">just now</span><span class="unread">1</span></div>
                   <div class="tbody"><div class="cmt"><div class="avatar av-a">⚡</div><div class="cb"><div><span class="cn link">Feedback Monitor</span><span class="ct">just now</span></div><div class="cx">Clustered 142 signals from HubSpot, Intercom &amp; Slack into one insight — and proposed a bet to fix it.</div></div></div></div>
                 </div>
               </div>
-              <!-- B: bet detail -->
+              <!-- bet detail -->
               <div class="wpanel" id="wpB" style="opacity:0">
                 <div class="doc-title">A longer onboarding cuts week-1 churn</div>
                 <div class="doc-meta">
@@ -207,42 +285,42 @@
                   <span class="mdrv"><span class="avatar av-a" style="width:19px;height:19px;font-size:11px">⚡</span>Bet Strategist</span><span class="ttime">just now</span>
                 </div>
                 <div class="wbanner" id="wpB-banner" style="opacity:0"><span class="spinner"></span>Agents are building this bet…</div>
-                <div style="margin-top:20px"><div class="dsec">Hypothesis</div>
-                  <div class="dp" style="margin-top:8px">Most customers churn in week 1. Research shows they leave before investing in the product. A longer, guided onboarding that gets them to real value should lift week-1 retention by ~15% — so they stay attached.</div></div>
-                <div style="margin-top:20px"><div class="dsec">Activity</div>
+                <div style="margin-top:18px"><div class="dsec">Hypothesis</div>
+                  <div class="dp" style="margin-top:8px">Most customers churn in week 1 — they leave before investing in the product. A longer, guided onboarding that gets them to real value should lift week-1 retention ~15%, so they stay attached.</div></div>
+                <div style="margin-top:18px"><div class="dsec">Activity</div>
                   <div class="cmt" style="margin-top:9px"><div class="avatar av-a">⚡</div><div class="cb"><div><span class="cn link">Bet Strategist</span><span class="ct">now</span></div><div class="cx">Proposed this bet from the churn insight, with supporting research.</div></div></div>
                   <div class="cmt" id="wpB-c2" style="opacity:0"><div class="avatar av-h">S</div><div class="cb"><div><span class="cn">Sebastian</span><span class="ct">now</span></div><div class="cx">Approved — let’s build it. 🚀</div></div></div>
                 </div>
               </div>
-              <!-- C: agents -->
+              <!-- agents -->
               <div class="wpanel" id="wpC" style="opacity:0">
                 <div class="page-h">Agents</div>
-                <div style="display:flex; gap:8px; margin-top:16px"><div class="badge b-type" style="background:#F0EDE7;border:none;color:#111110;font-weight:600">All (4)</div><div class="badge b-type" style="border:none;color:#9B958F">Working (3)</div><div class="badge b-type" style="border:none;color:#9B958F">Idle (1)</div></div>
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:18px">
+                <div style="display:flex; gap:8px; margin-top:15px"><div class="badge b-type" style="background:#F0EDE7;border:none;color:#111110;font-weight:600">All (4)</div><div class="badge b-type" style="border:none;color:#9B958F">Working (3)</div><div class="badge b-type" style="border:none;color:#9B958F">Idle (1)</div></div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-top:16px">
                   <div class="card ag-card working" id="agc1"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Designer</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Design agent</div><div class="ag-ac">Designing the onboarding flow · 0:48</div></div>
-                  <div class="card ag-card working" id="agc2"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Developer</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Coding agent</div><div class="ag-ac">Building onboarding + UI screens · 1:12</div></div>
-                  <div class="card ag-card working" id="agc3"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Feedback Monitor</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Signal agent</div><div class="ag-ac">Watching HubSpot · Intercom · PostHog · live</div></div>
+                  <div class="card ag-card working" id="agc2"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Developer</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Coding agent</div><div class="ag-ac">Building onboarding screens · 1:12</div></div>
+                  <div class="card ag-card working" id="agc3"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Feedback Monitor</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Signal agent</div><div class="ag-ac">Watching Intercom · PostHog · live</div></div>
                   <div class="card ag-card" id="agc4"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Bet Strategist</div><span class="idot"></span><div class="ag-st idle">idle</div></div><div class="ag-ds">Strategy agent</div><div class="ag-ac">Proposed the bet · 2m ago</div></div>
                 </div>
               </div>
-              <!-- D: outcome -->
+              <!-- outcome -->
               <div class="wpanel" id="wpD" style="opacity:0">
                 <div class="doc-title">A longer onboarding cuts week-1 churn</div>
                 <div class="doc-meta"><span class="badge b-bet">bet</span><span class="badge b-done">succeeded</span><span class="mdrv"><span class="avatar av-a" style="width:19px;height:19px;font-size:11px">⚡</span>Bet Strategist</span><span class="ttime">shipped · 6 days ago</span></div>
                 <div class="wbanner ok" id="wpD-banner" style="opacity:0"><span style="font-size:15px">✓</span>Outcome verified — week-1 retention up 18%. Loop closed.</div>
-                <div style="margin-top:20px"><div class="dsec">Post-launch insight</div>
+                <div style="margin-top:18px"><div class="dsec">Post-launch insight</div>
                   <div class="cmt" style="margin-top:9px"><div class="avatar av-a">⚡</div><div class="cb"><div><span class="cn link">Feedback Monitor</span><span class="ct">6d</span></div><div class="cx">PostHog &amp; Intercom show retention climbing. Marked the bet a success — did we build the right thing? Yes.</div></div></div>
                 </div>
               </div>
-              <!-- E: marketplace (in-app) -->
+              <!-- marketplace -->
               <div class="wpanel" id="wpE" style="opacity:0">
                 <div class="page-h">Marketplace</div><div class="page-sub">Pre-built closed loops — turn AI spend into business outcomes</div>
                 <div class="mkgrid">
-                  <div class="mtile" style="border-top-color:#5B8DD9"><div class="r">Customer feedback</div><div class="t">Complaint → shipped → customer notified</div><div class="f"><span class="ot ot-src">Slack</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insight</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bet</span><span class="ot ot-ar">→</span><span class="ot ot-t">Shipped</span></div></div>
-                  <div class="mtile" style="border-top-color:#7C3AED"><div class="r">Signal radar</div><div class="t">Track competitors &amp; market, auto-create bets</div><div class="f"><span class="ot ot-src">X · Reddit</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insights</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bets</span></div></div>
-                  <div class="mtile" style="border-top-color:#2563EB"><div class="r">Churn &amp; expansion</div><div class="t">Catch at-risk accounts early</div><div class="f"><span class="ot ot-src">PostHog</span><span class="ot ot-ar">→</span><span class="ot ot-i">Risk signal</span><span class="ot ot-ar">→</span><span class="ot ot-b">CSM bet</span></div></div>
-                  <div class="mtile" style="border-top-color:#E67E22"><div class="r">Lost deals → roadmap</div><div class="t">Turn every lost deal into a bet</div><div class="f"><span class="ot ot-src">HubSpot</span><span class="ot ot-ar">→</span><span class="ot ot-i">Loss patterns</span><span class="ot ot-ar">→</span><span class="ot ot-b">Roadmap bet</span></div></div>
                   <div class="mtile" style="border-top-color:#27AE60"><div class="r">Continuous feedback</div><div class="t">The product loop you just saw</div><div class="f"><span class="ot ot-src">Intercom</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insight</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bet</span><span class="ot ot-ar">→</span><span class="ot ot-t">Outcome</span></div></div>
+                  <div class="mtile" style="border-top-color:#5B8DD9"><div class="r">Customer feedback</div><div class="t">Request in Slack → shipped → customer notified</div><div class="f"><span class="ot ot-src">Slack</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insight</span><span class="ot ot-ar">→</span><span class="ot ot-t">Shipped</span></div></div>
+                  <div class="mtile" style="border-top-color:#7C3AED"><div class="r">Signal radar</div><div class="t">Track competitors &amp; market, auto-create bets</div><div class="f"><span class="ot ot-src">X · Reddit</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insights</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bets</span></div></div>
+                  <div class="mtile" style="border-top-color:#E67E22"><div class="r">Lost deals → roadmap</div><div class="t">Turn every lost deal into a bet</div><div class="f"><span class="ot ot-src">HubSpot</span><span class="ot ot-ar">→</span><span class="ot ot-i">Loss patterns</span><span class="ot ot-ar">→</span><span class="ot ot-b">Roadmap bet</span></div></div>
+                  <div class="mtile" style="border-top-color:#2563EB"><div class="r">Churn &amp; expansion</div><div class="t">Catch at-risk accounts early</div><div class="f"><span class="ot ot-src">PostHog</span><span class="ot ot-ar">→</span><span class="ot ot-i">Risk signal</span><span class="ot ot-ar">→</span><span class="ot ot-b">CSM bet</span></div></div>
                   <div class="mtile mtile--c"><div class="r">Custom</div><div class="t">Any workflow your team runs</div><div class="f"><span class="ot ot-src">your agents</span><span class="ot ot-ar">→</span><span class="ot ot-src">your objects</span></div></div>
                 </div>
               </div>
@@ -250,35 +328,27 @@
           </div>
         </div>
 
-        <!-- cursor lives in stage coordinates -->
+        <!-- cursor -->
         <div id="cursor"><div class="ripple" id="rip1"></div><div class="ripple" id="rip2"></div>
           <svg width="28" height="28" viewBox="0 0 24 24"><path d="M5 3L19 12L12 13L9 20L5 3Z" fill="#ffffff" stroke="#111110" stroke-width="1.4" stroke-linejoin="round"/></svg></div>
       </div>
 
-      <!-- FX overlay -->
-      <div id="fx">
-        <div id="lscrim"></div>
-        <div class="stmt" data-layout-allow-overlap id="st1"><div class="sk">the promise</div><div class="sh">AI made your individuals faster.</div></div>
-        <div class="stmt" data-layout-allow-overlap id="st2"><div class="sk">the gap</div><div class="sh">Your organization <em>hasn’t</em> felt it.</div></div>
-        <div class="stmt" data-layout-allow-overlap id="st3"><div class="sk">the trap</div><div class="sh">AI just built a faster feature factory.</div><div class="ss">More code shipped. Not more outcomes.</div></div>
+      <!-- centred 'one loop of many' -->
+      <div id="cscrim"></div>
+      <div id="cstmt" data-layout-allow-overlap><div class="ch">One closed loop of <em>many</em>.</div><div class="cs">A marketplace of loops, ready to run.</div></div>
 
-        <div id="lt-grad"></div>
-        <div class="lt" data-layout-allow-overlap id="lt0"><div class="lk">the fix</div><div class="lh">A workspace where agents and humans <em>close the loop</em>.</div></div>
-        <div class="lt" data-layout-allow-overlap id="lt1"><div class="lk">signal in</div><div class="lh">Feedback from HubSpot, Intercom &amp; Slack becomes an <em>insight</em> — then a bet.</div></div>
-        <div class="lt" data-layout-allow-overlap id="lt2"><div class="lk">you decide</div><div class="lh">An agent proposes the bet. <em>You</em> approve — agents do the rest.</div></div>
-        <div class="lt" data-layout-allow-overlap id="lt3"><div class="lk">work done</div><div class="lh">Coding &amp; design agents build it — and ship to production.</div></div>
-        <div class="lt" data-layout-allow-overlap id="lt4"><div class="lk">loop closed</div><div class="lh">Post-launch, agents measure the outcome. <em>Did we build the right thing?</em></div></div>
-        <div class="lt" data-layout-allow-overlap id="lt5"><div class="lk">feedback → shipped</div><div class="lh">Collect requests in Slack — tell the customer the moment it ships.</div></div>
-        <div class="lt" data-layout-allow-overlap id="lt6"><div class="lk">signal radar</div><div class="lh">Agents follow the market and <em>create the bets</em> automatically.</div></div>
-
-        <div id="cscrim"></div>
-        <div id="cstmt" data-layout-allow-overlap><div class="ch">One closed loop of <em>many</em>.</div><div class="cs">A marketplace of loops, ready to run.</div></div>
+      <!-- intro -->
+      <div class="endcap" id="intro" style="opacity:1">
+        <div class="ec-wrap">
+          <div class="ec-lock"><svg class="ec-mark" id="intro-mark" viewBox="0 0 80 80"><rect width="80" height="80" rx="14" fill="#111110"/><path d="M17 60 L17 20 L40 46 L63 20 L63 60" stroke="#FAFAF8" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg><span class="ec-word" id="intro-word">Maskin</span></div>
+          <div id="intro-tag">The AI-native workspace</div>
+        </div>
       </div>
 
       <!-- close -->
-      <div id="close">
-        <div id="close-wrap">
-          <div id="lockup"><svg id="close-mark" viewBox="0 0 80 80"><rect width="80" height="80" rx="14" fill="#111110"/><path d="M17 60 L17 20 L40 46 L63 20 L63 60" stroke="#FAFAF8" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg><span id="close-word">Maskin</span></div>
+      <div class="endcap" id="close">
+        <div class="ec-wrap">
+          <div class="ec-lock"><svg class="ec-mark" id="close-mark" viewBox="0 0 80 80"><rect width="80" height="80" rx="14" fill="#111110"/><path d="M17 60 L17 20 L40 46 L63 20 L63 60" stroke="#FAFAF8" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg><span class="ec-word">Maskin</span></div>
           <div id="close-tag">Close the loop. Build a company that’s <em>AI-native</em>.</div>
           <div id="close-row"><span id="close-cta">maskin.io →</span><span id="close-oss">Open source · Apache 2.0</span></div>
         </div>
@@ -291,139 +361,177 @@
       const tl = gsap.timeline({ paused: true });
       const R = (dur, cycle) => Math.max(0, Math.floor(dur / cycle) - 1);
 
-      gsap.set("#stage", { transformOrigin: "0px 0px", scale: 1, x: 0, y: 0 });
-      gsap.set("#cursor", { x: 1300, y: 520 });
+      gsap.set("#stage", { transformOrigin: "1210px 540px", scale: 1, x: 0, y: 0 });
+      gsap.set("#cursor", { x: 1100, y: 520 });
+
+      /* build siloed chat-grid minis */
+      (function () {
+        const w = document.getElementById("gwrap");
+        for (let i = 0; i < 9; i++) {
+          const d = document.createElement("div"); d.className = "mini";
+          d.innerHTML = '<div class="mh"><div class="md"></div><div class="mn">teammate</div></div>' +
+            '<div class="mb u s"></div><div class="mb"></div><div class="mb s"></div><div class="mb u"></div><div class="mb s"></div>';
+          w.appendChild(d);
+        }
+      })();
+      /* build integration hub lines (hub centre 650,400 in 1300x872 space) */
+      (function () {
+        const g = document.getElementById("ilines");
+        const tips = [[230,145],[230,293],[230,441],[230,589],[1075,145],[1075,293],[1075,441],[1090,589]];
+        tips.forEach(([x, y], i) => {
+          const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          l.setAttribute("x1", 650); l.setAttribute("y1", 400); l.setAttribute("x2", x); l.setAttribute("y2", y);
+          l.setAttribute("id", "il" + i); g.appendChild(l);
+        });
+      })();
 
       /* ambient */
       tl.to("#glow", { scale: 1.12, duration: 9, ease: "sine.inOut", yoyo: true, repeat: R(62, 9) }, 0);
       tl.to("#grain", { x: 24, y: 16, duration: 18, ease: "sine.inOut", yoyo: true, repeat: R(62, 18) }, 0);
       tl.to(".spinner", { rotation: 360, duration: 0.9, ease: "none", repeat: R(62, 0.9), transformOrigin: "50% 50%" }, 0);
 
-      /* ---------- camera ---------- */
-      // place stage so that frame point (tx,ty) sits at frame centre, scaled S (origin 0,0)
-      function cam(t, dur, S, tx, ty, ease) {
-        tl.to("#stage", { scale: S, x: 960 - S * tx, y: 540 - S * ty, duration: dur, ease: ease || "power2.inOut" }, t);
-      }
-      function camFull(t, dur, ease) { tl.to("#stage", { scale: 1, x: 0, y: 0, duration: dur, ease: ease || "power2.inOut" }, t); }
-
       /* helpers */
+      function cam(t, dur, S, ty) { tl.to("#stage", { scale: S, x: 0, y: (540 - ty) * S, duration: dur, ease: "power2.inOut" }, t); }
+      function camReset(t, dur) { tl.to("#stage", { scale: 1, x: 0, y: 0, duration: dur, ease: "power2.inOut" }, t); }
+      const capIn = (s, t) => { tl.fromTo(s + " .ck", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.45, ease: "power3.out" }, t); tl.set(s, { opacity: 1 }, t); tl.fromTo(s + " .ch", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, t + 0.06); tl.fromTo(s + " .cs", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, t + 0.22); };
+      const capOut = (s, t) => tl.to(s, { opacity: 0, y: -12, duration: 0.4, ease: "power2.in" }, t);
+      const show = (s, t, d) => tl.fromTo(s, { opacity: 0 }, { opacity: 1, duration: d || 0.5, ease: "power2.inOut" }, t);
+      const hide = (s, t, d) => tl.to(s, { opacity: 0, duration: d || 0.45, ease: "power2.inOut" }, t);
+      function panelSwap(oldSel, newSel, T) { hide(oldSel, T, 0.4); show(newSel, T + 0.05, 0.45); }
       function cursorClick(t) {
         tl.to("#cursor", { scale: 0.82, duration: 0.09, ease: "power2.in", yoyo: true, repeat: 1, transformOrigin: "0% 0%" }, t);
         tl.set(["#rip1", "#rip2"], { opacity: 1, scale: 0 }, t);
         tl.to(["#rip1", "#rip2"], { scale: 4, opacity: 0, duration: 0.7, ease: "power2.out", stagger: 0.09, immediateRender: false }, t);
       }
-      function panelSwap(oldSel, newSel, T) {
-        tl.to(oldSel, { opacity: 0, duration: 0.4, ease: "power2.inOut" }, T);
-        tl.fromTo(newSel, { opacity: 0 }, { opacity: 1, duration: 0.45, ease: "power2.inOut" }, T + 0.05);
-      }
-      const ltIn = (s, t) => tl.fromTo(s, { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, t);
-      const ltOut = (s, t) => tl.to(s, { opacity: 0, y: -14, duration: 0.35, ease: "power2.in" }, t);
-      const stIn = (s, t) => { tl.fromTo(s + " .sk", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, t); tl.fromTo(s, { opacity: 1 }, { opacity: 1, duration: 0.01 }, t); tl.fromTo(s + " .sh", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, t + 0.08); if (document) {} ; tl.fromTo(s + " .ss", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, t + 0.25); };
-      const stWhole = (s, t, on) => tl.to(s, { opacity: on, duration: 0.45, ease: "power2.inOut" }, t);
 
-      /* ===== 0–1.6 cold open on product ===== */
-      tl.from("#backdrop", { opacity: 0, duration: 0.5 }, 0);
-      tl.from("#brandbar", { opacity: 0, y: -10, duration: 0.5 }, 0.2);
-      tl.fromTo("#app", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 0.2);
-      tl.from("#wpA-ins", { opacity: 0, y: 14, duration: 0.5, ease: "power3.out" }, 0.7);
-      tl.from("#wpA-bet", { opacity: 0, y: 16, duration: 0.55, ease: "power3.out" }, 0.95);
-      cam(0.2, 3.2, 1.16, 1320, 470);     // ease into the feed, right-weighted
-      cam(8.6, 2.2, 1.0, 960, 540);        // pull to full as opening ends (centre-ish)
+      /* ===== 0–3 intro logo ===== */
+      tl.from("#intro-mark", { opacity: 0, scale: 0.6, rotation: -12, duration: 0.7, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 0.2);
+      tl.from("#intro-word", { opacity: 0, x: -24, duration: 0.6, ease: "power3.out" }, 0.45);
+      tl.from("#intro-tag", { opacity: 0, y: 12, duration: 0.5, ease: "power2.out" }, 0.9);
+      tl.to("#intro", { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 2.6);
+      tl.to(["#brandbar", "#kicker-tr"], { opacity: 1, duration: 0.5 }, 2.9);
 
-      /* ===== 1.6–8.6 opening statements over left scrim ===== */
-      stWhole("#lscrim", 1.6, 1);
-      stIn("#st1", 2.0); stWhole("#st1", 4.2, 0);
-      stIn("#st2", 4.5); stWhole("#st2", 6.6, 0);
-      stIn("#st3", 6.9); stWhole("#st3", 9.4, 0);
-      stWhole("#lscrim", 9.3, 0);
+      /* ===== 3–6.4 promise + chat ===== */
+      show("#chatbig", 3.0, 0.6);
+      tl.from("#chatbig", { y: 22, duration: 0.6, ease: "power3.out" }, 3.0);
+      capIn("#cap1", 3.3);
+      tl.from("#cm1", { opacity: 0, y: 14, duration: 0.4, ease: "power3.out" }, 3.7);
+      tl.from("#cm2", { opacity: 0, y: 14, duration: 0.4, ease: "power3.out" }, 4.3);
+      tl.from("#cm3", { opacity: 0, y: 14, duration: 0.4, ease: "power3.out" }, 5.0);
+      tl.from("#cm4", { opacity: 0, y: 14, duration: 0.4, ease: "power3.out" }, 5.5);
+      tl.to(".typing i", { y: -4, duration: 0.32, ease: "sine.inOut", yoyo: true, repeat: R(3.5, 0.32), stagger: 0.1 }, 5.8);
 
-      /* ===== lower-third grad on for the tour ===== */
-      tl.to("#lt-grad", { opacity: 1, duration: 0.5 }, 9.4);
+      /* ===== 6.4–10 gap: siloed grid ===== */
+      capOut("#cap1", 6.5); capIn("#cap2", 6.8);
+      hide("#chatbig", 6.6, 0.4); show("#chatgrid", 6.9, 0.5);
+      tl.from(".mini", { opacity: 0, scale: 0.9, duration: 0.4, ease: "power2.out", stagger: 0.05, transformOrigin: "50% 50%" }, 7.0);
+      tl.to("#chatgrid", { filter: "saturate(0.6)", opacity: 0.82, duration: 0.8, ease: "power2.inOut" }, 8.4);
 
-      /* ===== 9.6–13 the fix ===== */
-      ltIn("#lt0", 9.8); ltOut("#lt0", 12.8);
-      cam(10.2, 2.6, 1.22, 1000, 320);     // push toward the insight card
+      /* ===== 10–14.5 what's missing → reveal app ===== */
+      capOut("#cap2", 9.9); capIn("#cap3", 10.2);
+      hide("#chatgrid", 10.2, 0.5); show("#app", 10.6, 0.6);
+      tl.from("#app", { y: 22, duration: 0.6, ease: "power3.out" }, 10.6);
+      tl.from("#wpA-ins", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 11.2);
+      tl.from("#wpA-bet", { opacity: 0, y: 14, duration: 0.5, ease: "power3.out" }, 11.5);
 
-      /* ===== 13–19 For You: insight → bet ===== */
-      ltIn("#lt1", 13.1);
-      cam(13.6, 2.4, 1.26, 1000, 470);     // pan down to the bet card
-      // cursor click the bet to open it
-      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 15.6);
-      tl.to("#cursor", { x: 760, y: 470, duration: 0.9, ease: "power3.inOut" }, 15.8);
-      cursorClick(17.0);
-      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 17.6);
-      ltOut("#lt1", 18.2);
-      panelSwap("#wpA", "#wpB", 18.4);
-      tl.to("#wcv1", { opacity: 0, duration: 0.4 }, 18.4); tl.to("#wcv2", { opacity: 1, duration: 0.4 }, 18.6);
-      camFull(18.4, 1.0);                  // ease back to read the doc
+      /* ===== 14.5–23 connect services: integrations ===== */
+      capOut("#cap3", 14.2); capIn("#cap4", 14.6);
+      // nav to Integrations
+      tl.to(["#wnav-active", "#wnav-rail"], { y: 76, duration: 0.4, ease: "power3.inOut" }, 14.6);
+      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 14.6);
+      tl.to("#wn-int", { color: "#111110", fontWeight: 600, duration: 0.3 }, 14.6);
+      tl.to("#wn-fyb", { opacity: 0, duration: 0.3 }, 14.6);
+      hide("#app", 14.9, 0.4); show("#integ", 15.0, 0.5);
+      // hub + chips + lines
+      tl.from("#ihub", { opacity: 0, scale: 0.6, duration: 0.55, ease: "back.out(1.7)", transformOrigin: "50% 50%" }, 15.2);
+      tl.from(["#ic0", "#ic1", "#ic2", "#ic3", "#ic4", "#ic5", "#ic6", "#ic7"], { opacity: 0, scale: 0.85, duration: 0.4, ease: "back.out(1.5)", stagger: 0.08, transformOrigin: "50% 50%" }, 15.6);
+      tl.fromTo("#ilines line", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out", stagger: 0.07 }, 15.7);
+      capOut("#cap4", 17.8); capIn("#cap5", 18.1);
+      // pulse lines (monitoring)
+      tl.to("#ilines", { opacity: 0.55, duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: R(5, 0.9) }, 18.4);
+      tl.to("#ihub-ring", { opacity: 1, scale: 1.25, duration: 1.4, ease: "sine.out", yoyo: true, repeat: R(5, 1.4), transformOrigin: "50% 50%" }, 18.6);
+      capOut("#cap5", 20.4); capIn("#cap6", 20.7);
+      // back to For You with the surfaced insight
+      hide("#integ", 22.3, 0.45); show("#app", 22.5, 0.5);
+      tl.to(["#wnav-active", "#wnav-rail"], { y: 0, duration: 0.4, ease: "power3.inOut" }, 22.5);
+      tl.to("#wn-int", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 22.5);
+      tl.to("#wn-fy", { color: "#111110", fontWeight: 600, duration: 0.3 }, 22.5);
+      tl.set("#wpA", { opacity: 1 }, 22.5);
 
-      /* ===== 19–27 bet detail: hypothesis + approve ===== */
-      ltIn("#lt2", 19.4);
-      cam(19.6, 2.2, 1.18, 820, 470);      // push to the hypothesis
-      tl.fromTo("#wpB-c2", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 22.4);
-      tl.to("#wpB-st1", { opacity: 0, duration: 0.3 }, 23.2);
-      tl.fromTo("#wpB-st2", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 23.3);
-      tl.fromTo("#wpB-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 23.7);
-      tl.to("#wp-idle", { opacity: 0, duration: 0.3 }, 24.0); tl.to("#wp-on", { opacity: 1, duration: 0.3 }, 24.2);
-      tl.to(".wpdot", { opacity: 0.3, duration: 0.7, ease: "sine.inOut", yoyo: true, repeat: R(22, 0.7) }, 24.2);
-      ltOut("#lt2", 26.0);
-      panelSwap("#wpB", "#wpC", 26.4);
-      tl.to("#wcv2", { opacity: 0, duration: 0.4 }, 26.4); tl.to("#wcv3", { opacity: 1, duration: 0.4 }, 26.6);
-      tl.to(["#wnav-active","#wnav-rail"], { y: 117, duration: 0.45, ease: "power3.inOut" }, 26.4);
-      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.4 }, 26.4);
-      tl.to("#wn-ag", { color: "#111110", fontWeight: 600, duration: 0.4 }, 26.4);
-      tl.to("#wn-fyb", { opacity: 0, duration: 0.3 }, 26.4);
+      /* ===== 23–47 the loop ===== */
+      capOut("#cap6", 23.0); capIn("#cap7", 23.3);
+      cam(23.5, 2.0, 1.16, 320);                       // push to the insight
+      tl.fromTo("#wpA-ins", { boxShadow: "0 1px 3px rgba(17,17,16,0.05)" }, { boxShadow: "0 0 0 3px rgba(91,141,217,0.3)", duration: 1.0, ease: "sine.inOut", yoyo: true, repeat: 1 }, 24.0);
 
-      /* ===== 27–35 agents working ===== */
-      ltIn("#lt3", 27.2);
-      cam(26.6, 2.0, 1.14, 1075, 520);     // frame the agent grid
-      tl.fromTo(["#agc1","#agc2","#agc3","#agc4"], { opacity: 0, y: 18, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "power3.out", stagger: 0.1, transformOrigin: "50% 50%" }, 27.0);
-      tl.to(["#agc1","#agc2","#agc3"], { boxShadow: "0 0 0 3px rgba(37,99,235,0.12)", duration: 1.4, ease: "sine.inOut", yoyo: true, repeat: R(6, 1.4), stagger: 0.25 }, 28.0);
-      ltOut("#lt3", 33.6);
-      panelSwap("#wpC", "#wpD", 33.8);
-      tl.to("#wcv3", { opacity: 0, duration: 0.4 }, 33.8); tl.to("#wcv2", { opacity: 1, duration: 0.4 }, 34.0);
-      tl.to(["#wnav-active","#wnav-rail"], { y: 0, duration: 0.45, ease: "power3.inOut" }, 33.8);
-      tl.to("#wn-ag", { color: "#5A5751", fontWeight: 500, duration: 0.4 }, 33.8);
-      tl.to("#wn-fy", { color: "#111110", fontWeight: 600, duration: 0.4 }, 33.8);
+      // → bet detail (conviction + approve)
+      capOut("#cap7", 26.6); capIn("#cap8", 26.9);
+      cam(26.4, 1.4, 1.18, 430);
+      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 27.0);
+      tl.to("#cursor", { x: 1000, y: 470, duration: 0.8, ease: "power3.inOut" }, 27.1);
+      cursorClick(28.0);
+      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 28.5);
+      panelSwap("#wpA", "#wpB", 28.6);
+      tl.to("#wcv1", { opacity: 0, duration: 0.35 }, 28.6); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 28.8);
+      camReset(28.6, 1.0);
+      cam(29.8, 1.6, 1.14, 540);                       // hypothesis
+      tl.fromTo("#wpB-c2", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 31.6);
+      tl.to("#wpB-st1", { opacity: 0, duration: 0.3 }, 32.3);
+      tl.fromTo("#wpB-st2", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 32.4);
+      tl.fromTo("#wpB-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 32.8);
 
-      /* ===== 35–43 outcome / loop closed ===== */
-      ltIn("#lt4", 35.0);
-      cam(34.0, 2.0, 1.2, 840, 330);       // push to the verified banner
-      tl.fromTo("#wpD-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.45, ease: "back.out(1.4)" }, 35.4);
-      ltOut("#lt4", 41.6);
+      // → agents (execution)
+      capOut("#cap8", 33.6); capIn("#cap9", 33.9);
+      camReset(33.4, 0.9);
+      tl.to("#wp-idle", { opacity: 0, duration: 0.3 }, 33.6); tl.to("#wp-on", { opacity: 1, duration: 0.3 }, 33.8);
+      tl.to(".wpdot", { opacity: 0.3, duration: 0.7, ease: "sine.inOut", yoyo: true, repeat: R(12, 0.7) }, 33.8);
+      panelSwap("#wpB", "#wpC", 34.2);
+      tl.to("#wcv2", { opacity: 0, duration: 0.35 }, 34.2); tl.to("#wcv3", { opacity: 1, duration: 0.35 }, 34.4);
+      tl.to(["#wnav-active", "#wnav-rail"], { y: 114, duration: 0.4, ease: "power3.inOut" }, 34.2);
+      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 34.2);
+      tl.to("#wn-ag", { color: "#111110", fontWeight: 600, duration: 0.3 }, 34.2);
+      tl.fromTo(["#agc1", "#agc2", "#agc3", "#agc4"], { opacity: 0, y: 16, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "power3.out", stagger: 0.1, transformOrigin: "50% 50%" }, 34.6);
+      tl.to(["#agc1", "#agc2", "#agc3"], { boxShadow: "0 0 0 3px rgba(37,99,235,0.12)", duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(5, 1.3), stagger: 0.2 }, 35.4);
 
-      /* ===== 43 → marketplace: 'one loop of many' then in-app marketplace ===== */
-      camFull(41.4, 1.4);
-      // brief centred statement
-      stWhole("#cscrim", 42.0, 0.92);
-      tl.fromTo("#cstmt .ch", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 42.2);
-      tl.fromTo("#cstmt .cs", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 42.5);
-      tl.to("#cstmt", { opacity: 1, duration: 0.01 }, 42.2);
-      // swap content to marketplace under the scrim, switch nav to Marketplace
-      panelSwap("#wpD", "#wpE", 43.2);
-      tl.to("#wcv2", { opacity: 0, duration: 0.3 }, 43.2); tl.to("#wcv4", { opacity: 1, duration: 0.3 }, 43.4);
-      tl.to(["#wnav-active","#wnav-rail"], { y: 156, duration: 0.4, ease: "power3.inOut" }, 43.2);
-      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 43.2);
-      tl.to("#wn-mk", { color: "#111110", fontWeight: 600, duration: 0.3 }, 43.2);
-      // reveal marketplace
-      tl.to("#cstmt", { opacity: 0, duration: 0.45, ease: "power2.in" }, 44.6);
-      tl.to("#cscrim", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 44.7);
-      tl.fromTo([".mtile"], { opacity: 0, y: 22, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.3)", stagger: 0.07, transformOrigin: "50% 50%" }, 44.9);
-      cam(45.2, 6.5, 1.06, 1010, 470, "sine.inOut");   // slow drift over the tiles
+      // → outcome (validated)
+      capOut("#cap9", 39.4); capIn("#cap10", 39.7);
+      panelSwap("#wpC", "#wpD", 40.0);
+      tl.to("#wcv3", { opacity: 0, duration: 0.35 }, 40.0); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 40.2);
+      tl.to(["#wnav-active", "#wnav-rail"], { y: 0, duration: 0.4, ease: "power3.inOut" }, 40.0);
+      tl.to("#wn-ag", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 40.0);
+      tl.to("#wn-fy", { color: "#111110", fontWeight: 600, duration: 0.3 }, 40.0);
+      cam(40.4, 1.8, 1.16, 330);
+      tl.fromTo("#wpD-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.45, ease: "back.out(1.4)" }, 40.8);
 
-      /* tour the 'other loops' as lower-thirds */
-      ltIn("#lt5", 46.0); ltOut("#lt5", 49.4);
-      ltIn("#lt6", 49.7); ltOut("#lt6", 53.4);
+      /* ===== 47–55 marketplace ===== */
+      capOut("#cap10", 45.4);
+      camReset(45.2, 1.2);
+      // one loop of many over scrim
+      tl.to("#cscrim", { opacity: 0.92, duration: 0.5, ease: "power2.inOut" }, 45.8);
+      tl.fromTo("#cstmt .ch", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 46.0);
+      tl.fromTo("#cstmt .cs", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 46.3);
+      tl.to("#cstmt", { opacity: 1, duration: 0.01 }, 46.0);
+      // swap content to marketplace under scrim
+      panelSwap("#wpD", "#wpE", 46.6);
+      tl.to("#wcv2", { opacity: 0, duration: 0.3 }, 46.6); tl.to("#wcv4", { opacity: 1, duration: 0.3 }, 46.8);
+      tl.to(["#wnav-active", "#wnav-rail"], { y: 152, duration: 0.4, ease: "power3.inOut" }, 46.6);
+      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 46.6);
+      tl.to("#wn-mk", { color: "#111110", fontWeight: 600, duration: 0.3 }, 46.6);
+      // reveal
+      tl.to("#cstmt", { opacity: 0, duration: 0.45, ease: "power2.in" }, 48.4);
+      tl.to("#cscrim", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 48.5);
+      capIn("#capM", 48.7);
+      tl.fromTo(".mtile", { opacity: 0, y: 20, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.3)", stagger: 0.07, transformOrigin: "50% 50%" }, 48.8);
+      cam(49.2, 5.0, 1.05, 540);
 
-      /* ===== 54 → close ===== */
-      tl.to("#lt-grad", { opacity: 0, duration: 0.5 }, 53.4);
-      tl.to(["#stage","#fx","#backdrop"], { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 53.8);
+      /* ===== 55–62 close ===== */
+      capOut("#capM", 53.6);
+      tl.to(["#stage", "#cap", "#backdrop"], { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 53.8);
       tl.to("#close", { opacity: 1, duration: 0.6, ease: "power2.inOut" }, 54.0);
       tl.from("#close-mark", { opacity: 0, scale: 0.6, rotation: -10, duration: 0.65, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 54.5);
-      tl.from("#close-word", { opacity: 0, x: -22, duration: 0.55, ease: "power3.out" }, 54.7);
+      tl.from(".endcap#close .ec-word", { opacity: 0, x: -22, duration: 0.55, ease: "power3.out" }, 54.7);
       tl.from("#close-tag", { opacity: 0, y: 14, duration: 0.5, ease: "power2.out" }, 55.3);
       tl.fromTo("#close-row", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "back.out(1.4)" }, 55.7);
-      tl.to("#close-cta", { scale: 1.04, duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(4, 1.3), transformOrigin: "50% 50%" }, 56.6);
+      tl.to("#close-cta", { scale: 1.04, duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(5, 1.3), transformOrigin: "50% 50%" }, 56.6);
 
       window.__timelines["main"] = tl;
     </script>
