@@ -143,7 +143,7 @@ export async function getWorkspacePlanTokenUsage(
 
 export type MaskinPlan = 'trial' | 'starter' | 'pro'
 
-export interface PlanCapContext {
+interface PlanCapContext {
 	plan: MaskinPlan
 	used: number
 	cap: number
@@ -174,8 +174,7 @@ export class PlanCapExceededError extends Error {
 }
 
 function readTrialDefaultCap(env: NodeJS.ProcessEnv = process.env): number {
-	const raw = Number(env.MASKIN_TRIAL_HARD_CAP_TOKENS)
-	return Number.isFinite(raw) && raw > 0 ? raw : TRIAL_HARD_CAP_DEFAULT_TOKENS
+	return parsePositiveIntEnv('MASKIN_TRIAL_HARD_CAP_TOKENS', env) ?? TRIAL_HARD_CAP_DEFAULT_TOKENS
 }
 
 /**

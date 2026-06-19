@@ -2,7 +2,7 @@ import Stripe from 'stripe'
 import { parsePositiveIntEnv } from './billing-defaults'
 import { logger } from './logger'
 
-export type MaskinPlan = 'starter' | 'pro'
+type PaidMaskinPlan = 'starter' | 'pro'
 
 export interface StripeEnv {
 	secretKey: string
@@ -13,9 +13,9 @@ export interface StripeEnv {
 	proHardCapTokens: number
 }
 
-export interface CheckoutInputs {
+interface CheckoutInputs {
 	workspaceId: string
-	plan: MaskinPlan
+	plan: PaidMaskinPlan
 	successUrl: string
 	cancelUrl: string
 	existingCustomerId?: string | null
@@ -82,17 +82,17 @@ export function resetStripeClientForTests() {
 	cachedClient = null
 }
 
-export function priceIdForPlan(plan: MaskinPlan, env: StripeEnv): string {
+export function priceIdForPlan(plan: PaidMaskinPlan, env: StripeEnv): string {
 	return plan === 'starter' ? env.priceStarter : env.pricePro
 }
 
-export function planForPriceId(priceId: string, env: StripeEnv): MaskinPlan | null {
+export function planForPriceId(priceId: string, env: StripeEnv): PaidMaskinPlan | null {
 	if (priceId === env.priceStarter) return 'starter'
 	if (priceId === env.pricePro) return 'pro'
 	return null
 }
 
-export function hardCapForPlan(plan: MaskinPlan, env: StripeEnv): number {
+export function hardCapForPlan(plan: PaidMaskinPlan, env: StripeEnv): number {
 	return plan === 'starter' ? env.starterHardCapTokens : env.proHardCapTokens
 }
 
@@ -147,7 +147,7 @@ export function verifyStripeWebhook(
 	return stripe.webhooks.constructEvent(rawBody, signature, webhookSecret)
 }
 
-export type StripeEventName =
+type StripeEventName =
 	| 'checkout.session.completed'
 	| 'customer.subscription.created'
 	| 'customer.subscription.updated'
