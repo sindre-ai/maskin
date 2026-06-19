@@ -562,6 +562,121 @@ export const api = {
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
 	},
+
+	// Conversation facade — T3 (`/api/conversations` is a thin Hono shim over the
+	// existing `objects` (`type='conversation'`) and `events` (`action='commented'`)
+	// stream). Used by `apiConversationRepository` in `chat-store.ts`.
+	conversations: {
+		list: (workspaceId: string, params?: { limit?: number; offset?: number }) => {
+			const qs = params
+				? `?${new URLSearchParams(
+						Object.entries(params).reduce<Record<string, string>>((acc, [k, v]) => {
+							if (v !== undefined) acc[k] = String(v)
+							return acc
+						}, {}),
+					)}`
+				: ''
+			return request<ConversationResponse[]>(`/conversations${qs}`, { workspaceId })
+		},
+		get: (workspaceId: string, id: string) =>
+			request<ConversationResponse>(`/conversations/${id}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateConversationInput) =>
+			request<ConversationResponse>('/conversations', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		messages: {
+			list: (
+				workspaceId: string,
+				conversationId: string,
+				params?: { limit?: number; offset?: number; before_id?: number },
+			) => {
+				const qs = params
+					? `?${new URLSearchParams(
+							Object.entries(params).reduce<Record<string, string>>((acc, [k, v]) => {
+								if (v !== undefined) acc[k] = String(v)
+								return acc
+							}, {}),
+						)}`
+					: ''
+				return request<ConversationMessageResponse[]>(
+					`/conversations/${conversationId}/messages${qs}`,
+					{ workspaceId },
+				)
+			},
+			create: (workspaceId: string, conversationId: string, data: CreateMessageInput) =>
+				request<ConversationMessageResponse>(`/conversations/${conversationId}/messages`, {
+					method: 'POST',
+					body: data,
+					workspaceId,
+				}),
+		},
+		participants: {
+			list: (workspaceId: string, conversationId: string) =>
+				request<ConversationParticipantResponse[]>(
+					`/conversations/${conversationId}/participants`,
+					{ workspaceId },
+				),
+			add: (workspaceId: string, conversationId: string, actorId: string) =>
+				request<ConversationParticipantResponse>(`/conversations/${conversationId}/participants`, {
+					method: 'POST',
+					body: { actor_id: actorId },
+					workspaceId,
+				}),
+			remove: (workspaceId: string, conversationId: string, actorId: string) =>
+				request<{ removed: boolean }>(`/conversations/${conversationId}/participants/${actorId}`, {
+					method: 'DELETE',
+					workspaceId,
+				}),
+		},
+	},
+}
+
+export interface ConversationResponse {
+	id: string
+	workspaceId: string
+	title: string | null
+	metadata: SafeMetadata | null
+	createdBy: string
+	createdAt: string | null
+	updatedAt: string | null
+}
+
+export interface CreateConversationInput {
+	title?: string
+	kind?: 'chat' | 'room' | 'thread'
+	auto_join?: string[]
+	metadata?: SafeMetadata
+	participant_actor_ids?: string[]
+}
+
+export interface ConversationMessageResponse {
+	id: number
+	workspaceId: string
+	conversationId: string
+	actorId: string
+	content: string
+	mentions: string[] | null
+	parentEventId: number | null
+	attachmentFileIds: string[] | null
+	metadata: SafeMetadata | null
+	createdAt: string | null
+}
+
+export interface CreateMessageInput {
+	content: string
+	mentions?: string[]
+	parent_event_id?: number
+	attachment_file_ids?: string[]
+	metadata?: SafeMetadata
+}
+
+export interface ConversationParticipantResponse {
+	conversationId: string
+	actorId: string
+	source: string
+	createdAt: string | null
 }
 
 export interface ClaudeOAuthExchangeResponse {
@@ -977,6 +1092,12 @@ export interface SessionConfigInput {
 	cpu_shares?: number
 	env_vars?: Record<string, string>
 	mcps?: Array<Record<string, unknown>>
+	/**
+	 * Set when an agent turn is spawned from a Maskin Chat conversation.
+	 * Tells the session runtime to persist the agent's final reply as a
+	 * `commented` event on the conversation object after the session ends.
+	 */
+	chat_reply?: { conversation_id: string }
 }
 
 export interface CreateSessionInput {

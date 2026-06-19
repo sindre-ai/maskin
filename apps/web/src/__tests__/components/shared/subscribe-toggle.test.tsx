@@ -47,7 +47,7 @@ describe('SubscribeToggle', () => {
 		)
 
 		await waitFor(() => expect(screen.getByText('A')).toBeInTheDocument())
-		expect(screen.getByText('⚡')).toBeInTheDocument()
+		expect(screen.getByTitle('Bot')).toBeInTheDocument()
 	})
 
 	it('shows a +N chip when there are more subscribers than the cap', async () => {

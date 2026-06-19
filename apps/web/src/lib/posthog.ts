@@ -100,3 +100,76 @@ export async function identifyForWorkspace(actorId: string, anonymize: boolean):
 export function __setInitializedForTesting(value: boolean): void {
 	initialized = value
 }
+
+// Maskin Chat ship-metric events. These power the bet's weekly-active chat
+// usage metric; T28 verifies they reach PostHog from the live surface.
+// Surface-agnostic on purpose so the same emitter keeps firing when PR #720
+// replaces sindre-chat with the multi-agent conversation surface.
+
+export type ChatSurface = 'sheet' | 'pulse-bar'
+
+export interface ChatSessionOpenedProps {
+	workspace_id: string
+	surface: ChatSurface
+}
+
+export interface ChatMessageSentProps {
+	workspace_id: string
+	surface: ChatSurface
+	/** Null when the message is routed to the default Sindre session. */
+	target_agent_id: string | null
+	attached_objects: number
+	attached_notifications: number
+	attached_files: number
+}
+
+export interface ChatActiveUserSessionProps {
+	workspace_id: string
+}
+
+const ACTIVE_USER_SESSION_DEBOUNCE_MS = 24 * 60 * 60 * 1000
+const ACTIVE_USER_SESSION_STORAGE_PREFIX = 'maskin.posthog.chat_active_user_session'
+
+function activeUserSessionStorageKey(workspaceId: string): string {
+	return `${ACTIVE_USER_SESSION_STORAGE_PREFIX}.${workspaceId}`
+}
+
+export function trackChatSessionOpened(props: ChatSessionOpenedProps): void {
+	capture('chat_session_opened', { ...props })
+	trackChatActiveUserSession({ workspace_id: props.workspace_id })
+}
+
+export function trackChatMessageSent(props: ChatMessageSentProps): void {
+	capture('chat_message_sent', { ...props })
+	trackChatActiveUserSession({ workspace_id: props.workspace_id })
+}
+
+// Fires at most once per 24h per workspace per browser. Debounced via
+// localStorage so a tab reload doesn't re-emit and PostHog's weekly-active
+// count stays driven by real activity rather than refresh count.
+export function trackChatActiveUserSession(props: ChatActiveUserSessionProps): void {
+	if (!initialized) return
+	if (typeof window === 'undefined') return
+	try {
+		const key = activeUserSessionStorageKey(props.workspace_id)
+		const raw = window.localStorage.getItem(key)
+		const last = raw === null ? 0 : Number.parseInt(raw, 10)
+		const now = Date.now()
+		if (Number.isFinite(last) && last > 0 && now - last < ACTIVE_USER_SESSION_DEBOUNCE_MS) {
+			return
+		}
+		capture('chat_active_user_session', { ...props })
+		window.localStorage.setItem(key, String(now))
+	} catch {
+		// Analytics must never break the UI.
+	}
+}
+
+// Test-only — drops the persisted debounce timestamp so suites can replay the
+// first-emit path.
+export function __clearChatActiveUserSessionForTesting(workspaceId: string): void {
+	if (typeof window === 'undefined') return
+	try {
+		window.localStorage.removeItem(activeUserSessionStorageKey(workspaceId))
+	} catch {}
+}
