@@ -1,6 +1,6 @@
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { useWorkspaces } from '@/hooks/use-workspaces'
-import { Navigate, createFileRoute } from '@tanstack/react-router'
+import { Link, Navigate, createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authed/workspaces')({
 	component: WorkspacePicker,
@@ -30,14 +30,15 @@ function WorkspacePicker() {
 				</div>
 				<div className="space-y-2">
 					{workspaces?.map((ws) => (
-						<a
+						<Link
 							key={ws.id}
-							href={`/${ws.id}`}
-							className="block rounded-lg border border-border bg-card p-4 hover:border-border hover:bg-accent/30 transition-all"
+							to="/$workspaceId"
+							params={{ workspaceId: ws.id }}
+							className="block rounded-lg border border-border bg-card p-4 hover:bg-muted transition-all"
 						>
 							<p className="text-sm font-medium text-foreground">{ws.name}</p>
 							<p className="text-xs text-muted-foreground mt-1">Role: {ws.role}</p>
-						</a>
+						</Link>
 					))}
 				</div>
 			</div>
