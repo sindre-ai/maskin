@@ -1,4 +1,5 @@
 import {
+	__clearChatActiveUserSessionForTesting,
 	__setInitializedForTesting,
 	capture,
 	hashDistinctId,
@@ -6,17 +7,25 @@ import {
 	isPosthogReady,
 	registerWorkspaceProperties,
 	setCapturingEnabled,
+	trackChatActiveUserSession,
+	trackChatMessageSent,
+	trackChatSessionOpened,
 } from '@/lib/posthog'
 import posthog from 'posthog-js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const TEST_WORKSPACE_ID = 'ws-test'
+
 beforeEach(() => {
 	__setInitializedForTesting(false)
+	__clearChatActiveUserSessionForTesting(TEST_WORKSPACE_ID)
 })
 
 afterEach(() => {
 	__setInitializedForTesting(false)
+	__clearChatActiveUserSessionForTesting(TEST_WORKSPACE_ID)
 	vi.restoreAllMocks()
+	vi.useRealTimers()
 })
 
 describe('posthog helper', () => {
@@ -150,5 +159,114 @@ describe('posthog helper', () => {
 		__setInitializedForTesting(true)
 
 		await expect(identifyForWorkspace('actor-1', false)).resolves.toBeUndefined()
+	})
+})
+
+describe('chat ship-metric events', () => {
+	it('trackChatSessionOpened emits chat_session_opened and ticks active-user-session once initialised', () => {
+		const capSpy = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		trackChatSessionOpened({ workspace_id: TEST_WORKSPACE_ID, surface: 'sheet' })
+
+		expect(capSpy).toHaveBeenCalledWith('chat_session_opened', {
+			workspace_id: TEST_WORKSPACE_ID,
+			surface: 'sheet',
+		})
+		expect(capSpy).toHaveBeenCalledWith('chat_active_user_session', {
+			workspace_id: TEST_WORKSPACE_ID,
+		})
+	})
+
+	it('trackChatMessageSent emits chat_message_sent with attachment counts and target agent', () => {
+		const capSpy = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		trackChatMessageSent({
+			workspace_id: TEST_WORKSPACE_ID,
+			surface: 'pulse-bar',
+			target_agent_id: 'agent-42',
+			attached_objects: 2,
+			attached_notifications: 0,
+			attached_files: 1,
+		})
+
+		expect(capSpy).toHaveBeenCalledWith('chat_message_sent', {
+			workspace_id: TEST_WORKSPACE_ID,
+			surface: 'pulse-bar',
+			target_agent_id: 'agent-42',
+			attached_objects: 2,
+			attached_notifications: 0,
+			attached_files: 1,
+		})
+	})
+
+	it('trackChatActiveUserSession fires once per 24h per workspace then debounces', () => {
+		const capSpy = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+		const start = new Date('2026-06-18T00:00:00Z').getTime()
+		vi.useFakeTimers({ now: start })
+
+		trackChatActiveUserSession({ workspace_id: TEST_WORKSPACE_ID })
+		const firstCount = capSpy.mock.calls.filter((c) => c[0] === 'chat_active_user_session').length
+		expect(firstCount).toBe(1)
+
+		// Within 24h — debounced.
+		vi.setSystemTime(start + 23 * 60 * 60 * 1000)
+		trackChatActiveUserSession({ workspace_id: TEST_WORKSPACE_ID })
+		expect(capSpy.mock.calls.filter((c) => c[0] === 'chat_active_user_session').length).toBe(1)
+
+		// After 24h — fires again.
+		vi.setSystemTime(start + 25 * 60 * 60 * 1000)
+		trackChatActiveUserSession({ workspace_id: TEST_WORKSPACE_ID })
+		expect(capSpy.mock.calls.filter((c) => c[0] === 'chat_active_user_session').length).toBe(2)
+	})
+
+	it('trackChatActiveUserSession debounces per workspace independently', () => {
+		const capSpy = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+		__clearChatActiveUserSessionForTesting('ws-other')
+
+		trackChatActiveUserSession({ workspace_id: TEST_WORKSPACE_ID })
+		trackChatActiveUserSession({ workspace_id: 'ws-other' })
+
+		const calls = capSpy.mock.calls.filter((c) => c[0] === 'chat_active_user_session')
+		expect(calls).toHaveLength(2)
+		expect(calls[0][1]).toEqual({ workspace_id: TEST_WORKSPACE_ID })
+		expect(calls[1][1]).toEqual({ workspace_id: 'ws-other' })
+
+		__clearChatActiveUserSessionForTesting('ws-other')
+	})
+
+	it('chat helpers are no-ops before posthog initialises', () => {
+		const capSpy = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackChatSessionOpened({ workspace_id: TEST_WORKSPACE_ID, surface: 'sheet' })
+		trackChatMessageSent({
+			workspace_id: TEST_WORKSPACE_ID,
+			surface: 'sheet',
+			target_agent_id: null,
+			attached_objects: 0,
+			attached_notifications: 0,
+			attached_files: 0,
+		})
+		trackChatActiveUserSession({ workspace_id: TEST_WORKSPACE_ID })
+
+		expect(capSpy).not.toHaveBeenCalled()
+	})
+
+	it('trackChatActiveUserSession swallows localStorage errors', () => {
+		vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+		const original = window.localStorage.getItem
+		// Force a throw path inside the try/catch.
+		const getSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+			throw new Error('quota exceeded')
+		})
+
+		expect(() => trackChatActiveUserSession({ workspace_id: TEST_WORKSPACE_ID })).not.toThrow()
+
+		getSpy.mockRestore()
+		void original
 	})
 })
