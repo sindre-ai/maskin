@@ -185,6 +185,33 @@ describe('localStorageRepository', () => {
 		if (agent?.role === 'agent') expect(agent.status).toBe('cancelled')
 	})
 
+	it('persists a successful postUserMessage as sent (no sending marker survives the write)', async () => {
+		const conv = await localStorageRepository.createConversation(WS, {})
+		// The hook flips the optimistic copy to `status: 'sending'` immediately
+		// before calling postUserMessage. A successful local write must not
+		// persist that in-flight marker — otherwise the next hydrate would
+		// revive it as `error` with a Retry button on a message that was
+		// actually delivered.
+		await localStorageRepository.postUserMessage(WS, conv.id, {
+			id: 'msg_1',
+			role: 'user',
+			senderId: 'u',
+			senderName: 'Me',
+			text: 'hi',
+			createdAt: Date.now(),
+			status: 'sending',
+			errorText: 'stale',
+		})
+		const loaded = await localStorageRepository.list(WS)
+		const user = loaded[0].messages.find((m) => m.role === 'user')
+		expect(user?.role).toBe('user')
+		if (user?.role === 'user') {
+			expect(user.status).toBeUndefined()
+			expect(user.errorText).toBeUndefined()
+			expect(user.text).toBe('hi')
+		}
+	})
+
 	it('downgrades a stranded sending user message to error on hydrate', async () => {
 		const conv = await localStorageRepository.createConversation(WS, {})
 		await localStorageRepository.postUserMessage(WS, conv.id, {
@@ -194,14 +221,30 @@ describe('localStorageRepository', () => {
 			senderName: 'Me',
 			text: 'hi',
 			createdAt: Date.now(),
+		})
+		// Synthesise a stranded sending message directly in storage (the tab
+		// closed mid-write before postUserMessage settled). Mirrors the
+		// streaming-agent revive test above — the in-memory write site no
+		// longer persists `sending`, so we have to hand-craft the state.
+		const raw = window.localStorage.getItem(`maskin.chat.v1.${WS}`)
+		expect(raw).not.toBeNull()
+		const parsed = JSON.parse(raw as string)
+		parsed[0].messages.push({
+			id: 'msg_2',
+			role: 'user',
+			senderId: 'u',
+			senderName: 'Me',
+			text: 'stranded',
+			createdAt: Date.now(),
 			status: 'sending',
 		})
+		window.localStorage.setItem(`maskin.chat.v1.${WS}`, JSON.stringify(parsed))
 		const loaded = await localStorageRepository.list(WS)
-		const user = loaded[0].messages.find((m) => m.role === 'user')
-		expect(user?.role).toBe('user')
-		if (user?.role === 'user') {
-			expect(user.status).toBe('error')
-			expect(user.errorText).toBe("Couldn't send")
+		const stranded = loaded[0].messages.find((m) => m.role === 'user' && m.id === 'msg_2')
+		expect(stranded?.role).toBe('user')
+		if (stranded?.role === 'user') {
+			expect(stranded.status).toBe('error')
+			expect(stranded.errorText).toBe("Couldn't send")
 		}
 	})
 
