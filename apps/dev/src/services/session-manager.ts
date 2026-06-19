@@ -36,19 +36,14 @@ import {
 	trackLoopActiveDay,
 	utcDayString,
 } from '../lib/analytics/catalog-events'
+import { getValidOAuthToken } from '../lib/claude-oauth'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
-import {
-	FallbackQuotaExceededError,
-	type LlmRoute,
-	checkPlanCap,
-	resolveLlmRoute,
-} from '../lib/llm-routing'
-import { getValidOAuthToken } from '../lib/claude-oauth'
+import { type LlmRoute, checkPlanCap, resolveLlmRoute } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { AgentServerClient } from './agent-server-client'
@@ -900,31 +895,18 @@ export class SessionManager extends EventEmitter {
 		const wsLlmKeys = wsSettings.llm_keys ?? {}
 
 		let routeTaken: LlmRoute | null = null
-		try {
-			const resolved = await resolveLlmRoute({
-				db: this.db,
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				wsSettings,
-				agent: {
-					provider: agent.llmProvider,
-					apiKey: (llmConfig.api_key as string | undefined) ?? null,
-				},
-			})
-			if (resolved) {
-				routeTaken = resolved.route
-				Object.assign(envVars, resolved.envVars)
-			}
-		} catch (err) {
-			if (err instanceof FallbackQuotaExceededError) {
-				logger.warn('System LLM fallback quota exceeded', {
-					sessionId: session.id,
-					actorId: session.actorId,
-					used: err.used,
-					limit: err.limit,
-				})
-			}
-			throw err
+		const resolved = await resolveLlmRoute({
+			db: this.db,
+			workspaceId: session.workspaceId,
+			wsSettings,
+			agent: {
+				provider: agent.llmProvider,
+				apiKey: (llmConfig.api_key as string | undefined) ?? null,
+			},
+		})
+		if (resolved) {
+			routeTaken = resolved.route
+			Object.assign(envVars, resolved.envVars)
 		}
 
 		// Non-anthropic agent override (OpenAI native via OPENAI_API_KEY).

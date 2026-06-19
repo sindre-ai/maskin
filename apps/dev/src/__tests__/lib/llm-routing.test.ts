@@ -11,16 +11,13 @@ vi.mock('../../lib/claude-oauth', () => ({
 }))
 
 import {
-	FallbackQuotaExceededError,
 	LLM_ROUTE_AGENT,
 	LLM_ROUTE_API_KEY,
 	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
-	LLM_ROUTE_SYSTEM_FALLBACK,
 	PlanCapExceededError,
 	checkPlanCap,
-	getActorFallbackTokenUsage24h,
 	getWorkspacePlanTokenUsage,
 	readFallbackConfig,
 	resolveLlmRoute,
@@ -33,7 +30,6 @@ const FALLBACK_ENV_KEYS = [
 	'MASKIN_FALLBACK_BASE_URL',
 	'MASKIN_FALLBACK_MODEL',
 	'MASKIN_FALLBACK_SMALL_MODEL',
-	'MASKIN_FALLBACK_DAILY_TOKEN_LIMIT',
 ] as const
 
 beforeEach(() => {
@@ -75,7 +71,6 @@ describe('readFallbackConfig', () => {
 	it('returns undefined apiKey when env not set', () => {
 		const cfg = readFallbackConfig({})
 		expect(cfg.apiKey).toBeUndefined()
-		expect(cfg.dailyTokenLimit).toBe(550_000)
 	})
 
 	it('falls back to default model when small model not set', () => {
@@ -85,54 +80,12 @@ describe('readFallbackConfig', () => {
 		})
 		expect(cfg.smallModel).toBe('foo/bar')
 	})
-
-	it('uses default 550k limit on invalid input', () => {
-		const cfg = readFallbackConfig({ MASKIN_FALLBACK_DAILY_TOKEN_LIMIT: 'not-a-number' })
-		expect(cfg.dailyTokenLimit).toBe(550_000)
-	})
-
-	it('rejects negative limits and falls back to default', () => {
-		const cfg = readFallbackConfig({ MASKIN_FALLBACK_DAILY_TOKEN_LIMIT: '-100' })
-		expect(cfg.dailyTokenLimit).toBe(550_000)
-	})
-
-	// Pins the strict-digit-string semantics introduced by the
-	// `parsePositiveIntEnv` migration. The prior `Number()`-based path silently
-	// accepted these inputs (`1e6` → 1_000_000, `500000.5` → 500_000) — a
-	// future revert of the parser swap must fail this file.
-	it('rejects scientific notation (`1e6`) and falls back to default', () => {
-		const cfg = readFallbackConfig({ MASKIN_FALLBACK_DAILY_TOKEN_LIMIT: '1e6' })
-		expect(cfg.dailyTokenLimit).toBe(550_000)
-	})
-
-	it('rejects decimal notation (`500000.5`) and falls back to default', () => {
-		const cfg = readFallbackConfig({ MASKIN_FALLBACK_DAILY_TOKEN_LIMIT: '500000.5' })
-		expect(cfg.dailyTokenLimit).toBe(550_000)
-	})
-})
-
-describe('getActorFallbackTokenUsage24h', () => {
-	it('sums input + output tokens, treating null as 0', async () => {
-		const db = dbWithFallbackUsage([
-			{ inputTokens: 1000, outputTokens: 200 },
-			{ inputTokens: 0, outputTokens: 50 },
-			// biome-ignore lint/suspicious/noExplicitAny: simulating null DB columns
-			{ inputTokens: null as any, outputTokens: 75 },
-		])
-		expect(await getActorFallbackTokenUsage24h(db, 'actor-1')).toBe(1325)
-	})
-
-	it('returns 0 when actor has no fallback sessions', async () => {
-		const db = dbWithFallbackUsage([])
-		expect(await getActorFallbackTokenUsage24h(db, 'actor-2')).toBe(0)
-	})
 })
 
 describe('resolveLlmRoute priority order', () => {
 	const baseParams = {
 		db: dbWithFallbackUsage([]),
 		workspaceId: 'ws-1',
-		actorId: 'actor-1',
 	}
 
 	it('1. agent anthropic api_key wins over everything', async () => {
@@ -256,27 +209,6 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
 	})
 
-	it('6. system fallback when byollm plan and no BYO credentials set', async () => {
-		getValidOAuthTokenMock.mockResolvedValue(null)
-		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
-		process.env.MASKIN_FALLBACK_BASE_URL = 'https://openrouter.ai/api'
-		process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
-		const settings = emptySettings()
-		settings.billing = { plan: 'byollm' }
-		const result = await resolveLlmRoute({
-			...baseParams,
-			wsSettings: settings,
-			agent: {},
-		})
-		expect(result?.route).toBe(LLM_ROUTE_SYSTEM_FALLBACK)
-		expect(result?.envVars).toMatchObject({
-			ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
-			ANTHROPIC_AUTH_TOKEN: 'sk-or-system',
-			ANTHROPIC_API_KEY: '',
-			ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
-		})
-	})
-
 	it('returns null when nothing is configured', async () => {
 		getValidOAuthTokenMock.mockResolvedValue(null)
 		const result = await resolveLlmRoute({
@@ -285,26 +217,6 @@ describe('resolveLlmRoute priority order', () => {
 			agent: {},
 		})
 		expect(result).toBeNull()
-	})
-
-	it('throws FallbackQuotaExceededError when byollm plan and over the daily limit', async () => {
-		getValidOAuthTokenMock.mockResolvedValue(null)
-		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
-		process.env.MASKIN_FALLBACK_DAILY_TOKEN_LIMIT = '1000'
-		const db = dbWithFallbackUsage([
-			{ inputTokens: 800, outputTokens: 250 }, // 1050 > 1000
-		])
-		const settings = emptySettings()
-		settings.billing = { plan: 'byollm' }
-		await expect(
-			resolveLlmRoute({
-				db,
-				workspaceId: 'ws-1',
-				actorId: 'actor-1',
-				wsSettings: settings,
-				agent: {},
-			}),
-		).rejects.toBeInstanceOf(FallbackQuotaExceededError)
 	})
 
 	describe('maskin_plan route', () => {
@@ -370,7 +282,12 @@ describe('resolveLlmRoute priority order', () => {
 			getValidOAuthTokenMock.mockResolvedValue(null)
 			const settings = emptySettings()
 			settings.billing = { plan: 'pro' }
-			settings.custom_llm = { enabled: true, base_url: 'https://example.com', api_key: 'sk-cust', model: 'mod' }
+			settings.custom_llm = {
+				enabled: true,
+				base_url: 'https://example.com',
+				api_key: 'sk-cust',
+				model: 'mod',
+			}
 			const result = await resolveLlmRoute({
 				...baseParams,
 				db: dbWithSessionUsage([]),
@@ -443,24 +360,6 @@ describe('resolveLlmRoute priority order', () => {
 			})
 			expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
 		})
-	})
-
-	it('does NOT consume the fallback when byollm plan and usage is exactly at the limit', async () => {
-		getValidOAuthTokenMock.mockResolvedValue(null)
-		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
-		process.env.MASKIN_FALLBACK_DAILY_TOKEN_LIMIT = '1000'
-		const db = dbWithFallbackUsage([{ inputTokens: 1000, outputTokens: 0 }])
-		const settings = emptySettings()
-		settings.billing = { plan: 'byollm' }
-		await expect(
-			resolveLlmRoute({
-				db,
-				workspaceId: 'ws-1',
-				actorId: 'actor-1',
-				wsSettings: settings,
-				agent: {},
-			}),
-		).rejects.toBeInstanceOf(FallbackQuotaExceededError)
 	})
 })
 

@@ -359,9 +359,7 @@ function CustomLlmEditor({
 						onCheckedChange={setEnabled}
 						disabled={!canEnable && !enabled}
 					/>
-					<span className="text-sm text-foreground">
-						{enabled ? 'Enabled — used for all sessions' : 'Disabled'}
-					</span>
+					<span className="text-sm text-foreground">{enabled ? 'Enabled' : 'Disabled'}</span>
 				</div>
 
 				<div>

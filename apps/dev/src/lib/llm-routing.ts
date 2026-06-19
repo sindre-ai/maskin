@@ -9,11 +9,6 @@ import {
 import { getValidOAuthToken } from './claude-oauth'
 import type { WorkspaceSettings } from './types'
 
-/**
- * Tag persisted on `sessions.config.llm_route` so we can later attribute usage
- * (and enforce per-actor quotas) for sessions that ran on the system fallback.
- */
-export const LLM_ROUTE_SYSTEM_FALLBACK = 'system_fallback'
 export const LLM_ROUTE_CUSTOM = 'workspace_custom'
 export const LLM_ROUTE_OAUTH = 'claude_oauth'
 export const LLM_ROUTE_API_KEY = 'workspace_api_key'
@@ -21,7 +16,6 @@ export const LLM_ROUTE_AGENT = 'agent_api_key'
 export const LLM_ROUTE_MASKIN_PLAN = 'maskin_plan'
 
 export type LlmRoute =
-	| typeof LLM_ROUTE_SYSTEM_FALLBACK
 	| typeof LLM_ROUTE_CUSTOM
 	| typeof LLM_ROUTE_OAUTH
 	| typeof LLM_ROUTE_API_KEY
@@ -46,7 +40,6 @@ export interface FallbackConfig {
 	baseUrl?: string
 	model?: string
 	smallModel?: string
-	dailyTokenLimit: number
 }
 
 export interface AgentLlmConfig {
@@ -55,13 +48,11 @@ export interface AgentLlmConfig {
 }
 
 /**
- * Reads MASKIN_FALLBACK_* env vars once. The fallback is only "available" when
- * the operator has set MASKIN_FALLBACK_OPENROUTER_KEY — otherwise we skip the
- * fallback path and let the session fail with a clearer "no credentials" error
- * upstream.
+ * Reads MASKIN_FALLBACK_* env vars that configure the operator's OpenRouter
+ * account used for the maskin_plan route. Only "available" when
+ * MASKIN_FALLBACK_OPENROUTER_KEY is set.
  */
 export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): FallbackConfig {
-	const dailyTokenLimit = parsePositiveIntEnv('MASKIN_FALLBACK_DAILY_TOKEN_LIMIT', env) ?? 550_000
 	return {
 		apiKey: env.MASKIN_FALLBACK_OPENROUTER_KEY?.trim() || undefined,
 		baseUrl: env.MASKIN_FALLBACK_BASE_URL?.trim() || 'https://openrouter.ai/api',
@@ -70,41 +61,7 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 			env.MASKIN_FALLBACK_SMALL_MODEL?.trim() ||
 			env.MASKIN_FALLBACK_MODEL?.trim() ||
 			'deepseek/deepseek-v4-flash',
-		dailyTokenLimit,
 	}
-}
-
-/**
- * Sums input+output tokens across the actor's last-24h sessions that ran on
- * the system fallback route. Used to enforce MASKIN_FALLBACK_DAILY_TOKEN_LIMIT.
- *
- * `null` means "we couldn't measure" — caller should treat conservatively.
- */
-export async function getActorFallbackTokenUsage24h(
-	db: Database,
-	actorId: string,
-): Promise<number> {
-	const since = new Date(Date.now() - 24 * 60 * 60 * 1000)
-	const rows = await db
-		.select({
-			inputTokens: sessions.inputTokens,
-			outputTokens: sessions.outputTokens,
-		})
-		.from(sessions)
-		.where(
-			and(
-				eq(sessions.actorId, actorId),
-				gte(sessions.createdAt, since),
-				sql`${sessions.config}->>'llm_route' = ${LLM_ROUTE_SYSTEM_FALLBACK}`,
-			),
-		)
-
-	let total = 0
-	for (const row of rows) {
-		total += row.inputTokens ?? 0
-		total += row.outputTokens ?? 0
-	}
-	return total
 }
 
 /**
@@ -219,7 +176,11 @@ export async function checkPlanCap(params: {
 	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_tokens)
 	if (cap === null) return
 
-	const used = await getWorkspacePlanTokenUsage(params.db, params.workspaceId, billing?.period_start)
+	const used = await getWorkspacePlanTokenUsage(
+		params.db,
+		params.workspaceId,
+		billing?.period_start,
+	)
 	if (used < cap) return
 
 	throw new PlanCapExceededError({
@@ -228,18 +189,6 @@ export async function checkPlanCap(params: {
 		cap,
 		periodEnd: effectivePeriodEnd(billing?.period_start, billing?.period_end),
 	})
-}
-
-export class FallbackQuotaExceededError extends Error {
-	constructor(
-		readonly used: number,
-		readonly limit: number,
-	) {
-		super(
-			`Free fallback quota exceeded: ${used.toLocaleString()} of ${limit.toLocaleString()} tokens used in the last 24 hours. Add a Claude subscription, an Anthropic API key, or a custom model endpoint in workspace settings → keys.`,
-		)
-		this.name = 'FallbackQuotaExceededError'
-	}
 }
 
 /**
@@ -269,11 +218,9 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
 }
 
 /**
- * Builds the env vars for the Maskin-funded OpenRouter route — same shape as
- * the system fallback (we reuse the operator's MASKIN_FALLBACK_* config so a
- * single OR account underwrites both the trial bucket and paid plans). Returns
- * null when the workspace is not on a paid plan or the operator hasn't
- * configured the OR key.
+ * Builds the env vars for the Maskin-funded OpenRouter route. Returns null
+ * when the workspace is not on a maskin-plan-routed plan or the operator
+ * hasn't configured the OR key.
  */
 function buildMaskinPlanEnv(
 	billing: WorkspaceSettings['billing'],
@@ -300,14 +247,11 @@ function buildMaskinPlanEnv(
  *   3. Workspace custom_llm (BYO endpoint — OpenRouter, Ollama, vLLM, …)
  *   4. Workspace anthropic api_key (`settings.llm_keys.anthropic`)
  *   5. Maskin plan (starter/pro/trial) — Maskin's funded OR account, counts against cap
- *   6. System fallback (MASKIN_FALLBACK_OPENROUTER_KEY) with daily quota
  *
  * BYO credentials (2-4) always take precedence over the Maskin-funded route so
  * a connected Claude subscription or custom endpoint is never bypassed and never
- * counts against the workspace's token cap.
- *
- * Throws FallbackQuotaExceededError if route #6 is selected and the actor has
- * already burned through their 24h budget.
+ * counts against the workspace's token cap. Returns null when no credentials are
+ * available (session fails to start rather than silently consuming Maskin tokens).
  *
  * Returns null if the agent uses a non-anthropic provider (e.g. OpenAI native);
  * caller continues to handle OPENAI_API_KEY injection itself.
@@ -315,11 +259,10 @@ function buildMaskinPlanEnv(
 export async function resolveLlmRoute(params: {
 	db: Database
 	workspaceId: string
-	actorId: string
 	wsSettings: WorkspaceSettings
 	agent: AgentLlmConfig
 }): Promise<LlmRoutingResult | null> {
-	const { db, workspaceId, actorId, wsSettings, agent } = params
+	const { db, workspaceId, wsSettings, agent } = params
 
 	// 1. Agent-level override — only handled here for anthropic; non-anthropic
 	//    providers fall through to caller (matches existing behavior).
@@ -373,35 +316,17 @@ export async function resolveLlmRoute(params: {
 		}
 	}
 
-	// Read once and share between the maskin_plan and system-fallback branches.
-	const fallback = readFallbackConfig()
-
 	// 5. Maskin plan (starter/pro/trial) — routed through Maskin's funded OR
 	//    account. Only reached when no BYO credentials are present so tokens are
 	//    never counted against the cap when the user has their own LLM configured.
 	//    The cap check here is defense-in-depth; the pre-flight in `createSession`
 	//    is what surfaces 402 to the user before a session row is created.
+	const fallback = readFallbackConfig()
 	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback)
 	if (maskinPlanEnv) {
 		await checkPlanCap({ db, workspaceId, wsSettings })
 		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
 	}
 
-	// 6. System fallback (re-uses the `fallback` config already read above)
-	if (!fallback.apiKey) return null
-	const used = await getActorFallbackTokenUsage24h(db, actorId)
-	if (used >= fallback.dailyTokenLimit) {
-		throw new FallbackQuotaExceededError(used, fallback.dailyTokenLimit)
-	}
-	return {
-		route: LLM_ROUTE_SYSTEM_FALLBACK,
-		envVars: {
-			ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
-			ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
-			ANTHROPIC_API_KEY: '',
-			ANTHROPIC_MODEL: fallback.model ?? 'deepseek/deepseek-v4-flash',
-			ANTHROPIC_SMALL_FAST_MODEL:
-				fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4-flash',
-		},
-	}
+	return null
 }
