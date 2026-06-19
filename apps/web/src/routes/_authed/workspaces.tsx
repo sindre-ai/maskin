@@ -17,7 +17,13 @@ function WorkspacePicker() {
 		)
 	}
 
-	// If only one workspace, redirect to it
+	// Authenticated users with no workspaces have nothing to access
+	if (workspaces?.length === 0) {
+		return <Navigate to="/signup" />
+	}
+
+	// Defensive guard for direct navigation: IndexRedirect normally skips /workspaces
+	// for single-workspace users, but someone can arrive here directly via URL or link
 	if (workspaces?.length === 1) {
 		return <Navigate to="/$workspaceId" params={{ workspaceId: workspaces[0].id }} />
 	}

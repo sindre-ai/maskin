@@ -42,6 +42,13 @@ describe('WorkspacePicker', () => {
 		expect(screen.queryByText('Choose workspace')).not.toBeInTheDocument()
 	})
 
+	it('redirects to /signup when user has no workspaces', () => {
+		mockUseWorkspaces.mockReturnValue({ data: [], isLoading: false })
+		render(<WorkspacePicker />)
+		const nav = screen.getByTestId('navigate')
+		expect(nav).toHaveAttribute('data-to', '/signup')
+	})
+
 	it('auto-redirects when exactly one workspace', () => {
 		mockUseWorkspaces.mockReturnValue({
 			data: [{ id: 'ws-1', name: 'My Workspace', role: 'admin' }],
