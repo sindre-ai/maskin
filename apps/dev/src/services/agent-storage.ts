@@ -364,6 +364,30 @@ export class AgentStorageManager {
 	}
 
 	/**
+	 * List every file under a folder skill's prefix as `(relativePath, key)`
+	 * pairs. Used by the download endpoint to rebuild the bundle zip from S3.
+	 * `relativePath` is the path the upload path would later receive again on
+	 * round-trip (i.e. `SKILL.md`, `reference/style.md`).
+	 */
+	async listWorkspaceSkillFiles(
+		workspaceId: string,
+		skillId: string,
+	): Promise<{ relativePath: string; key: string }[]> {
+		const prefix = workspaceSkillPrefix(workspaceId, skillId)
+		const keys = await this.storage.list(prefix)
+		return keys.map((key) => ({ relativePath: key.slice(prefix.length), key }))
+	}
+
+	/**
+	 * Fetch a single bundled file by its absolute storage key. Thin pass-through
+	 * to the storage provider so route handlers don't have to import the
+	 * provider directly.
+	 */
+	async getWorkspaceSkillFile(key: string): Promise<Buffer> {
+		return this.storage.get(key)
+	}
+
+	/**
 	 * Remove every object under a folder skill's prefix. Used by the replace
 	 * flow so the prior bundle's files don't survive into the new bundle.
 	 */
