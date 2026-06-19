@@ -71,6 +71,56 @@ import {
 	DEV_PACKAGE_WORKSPACE_DRIVER_DESCRIPTION,
 	DEV_PACKAGE_WORKSPACE_DRIVER_NAME,
 	DEV_PACKAGE_WORKSPACE_DRIVER_SLUG,
+	DEV_TRIGGER_ACCEPTANCE_VALIDATOR_TASK_TESTING,
+	DEV_TRIGGER_ARCHITECT_TASK_IN_PROGRESS,
+	DEV_TRIGGER_AUTO_MERGE_BOT_TASK_DONE,
+	DEV_TRIGGER_CODE_REVIEWER_PR_SYNCHRONIZE,
+	DEV_TRIGGER_CODE_REVIEWER_TASK_IN_REVIEW,
+	DEV_TRIGGER_DESIGNER_TASK_IN_PROGRESS,
+	DEV_TRIGGER_DEVELOPER_TASK_IN_PROGRESS,
+	DEV_TRIGGER_PLANNER_BET_ACTIVE,
+	DEV_TRIGGER_PLANNER_BET_DEFINE,
+	DEV_TRIGGER_PRODUCT_ANALYST_DAILY_MEASUREMENT,
+	DEV_TRIGGER_PRODUCT_ANALYST_WEEKLY_DISCOVERY,
+	DEV_TRIGGER_PRODUCT_MARKETER_TASK_IN_PROGRESS,
+	DEV_TRIGGER_RESEARCH_AGENT_DAILY_INFLUENCER_CONTENT,
+	DEV_TRIGGER_RESEARCH_AGENT_DAILY_LIVE_BET_EVIDENCE,
+	DEV_TRIGGER_RESEARCH_AGENT_DAILY_MEETING_INSIGHTS,
+	DEV_TRIGGER_RESEARCH_AGENT_INSPIRATION_RESOURCES,
+	DEV_TRIGGER_RESEARCH_AGENT_SLACK_DM,
+	DEV_TRIGGER_RESEARCH_AGENT_WEEKLY_COMPETITOR,
+	DEV_TRIGGER_RESEARCH_AGENT_WEEKLY_MARKET_RESEARCH,
+	DEV_TRIGGER_RETRO_KNOWLEDGE_AUTHOR_BET_FAILED,
+	DEV_TRIGGER_RETRO_KNOWLEDGE_AUTHOR_BET_PAUSED,
+	DEV_TRIGGER_RETRO_KNOWLEDGE_AUTHOR_BET_SUCCEEDED,
+	DEV_TRIGGER_RETRO_KNOWLEDGE_AUTHOR_DAILY_FEEDBACK,
+	DEV_TRIGGER_RETRO_KNOWLEDGE_AUTHOR_INSIGHT_CLUSTERED,
+	DEV_TRIGGER_RETRO_KNOWLEDGE_AUTHOR_WEEKLY_REVISION,
+	DEV_TRIGGER_STRATEGIST_BET_ACTIVE,
+	DEV_TRIGGER_STRATEGIST_BET_CREATED,
+	DEV_TRIGGER_STRATEGIST_BET_DEFINE,
+	DEV_TRIGGER_STRATEGIST_BET_LIVE,
+	DEV_TRIGGER_STRATEGIST_BIWEEKLY_BET_COUNCIL,
+	DEV_TRIGGER_STRATEGIST_BIWEEKLY_SCORING_PASS,
+	DEV_TRIGGER_STRATEGIST_DESIGN_ARCH_IN_REVIEW,
+	DEV_TRIGGER_STRATEGIST_INFORMS_EDGE,
+	DEV_TRIGGER_STRATEGIST_INSIGHT_STATUS_CHANGED,
+	DEV_TRIGGER_SUMMARIZATION_AGENT_MEETING_DONE,
+	DEV_TRIGGER_WORKSPACE_COACH_DAILY_ACCEPTANCE_ANALYSIS,
+	DEV_TRIGGER_WORKSPACE_COACH_DAILY_CODE_REVIEW_ANALYSIS,
+	DEV_TRIGGER_WORKSPACE_COACH_DAILY_HANDBOOK_DRIFT,
+	DEV_TRIGGER_WORKSPACE_COACH_DAILY_HUMAN_ACTIONS_DIGEST,
+	DEV_TRIGGER_WORKSPACE_COACH_DAILY_OBSERVATION,
+	DEV_TRIGGER_WORKSPACE_COACH_WEEKLY_INSIGHT_PATTERN,
+	DEV_TRIGGER_WORKSPACE_DRIVER_BET_ACTIVATED,
+	DEV_TRIGGER_WORKSPACE_DRIVER_DAILY_BET_SWEEP,
+	DEV_TRIGGER_WORKSPACE_DRIVER_DAILY_MENTION_AUDIT,
+	DEV_TRIGGER_WORKSPACE_DRIVER_LIVENESS_WATCHDOG,
+	DEV_TRIGGER_WORKSPACE_DRIVER_PIPELINE_WATCHDOG,
+	DEV_TRIGGER_WORKSPACE_DRIVER_PR_MERGED,
+	DEV_TRIGGER_WORKSPACE_DRIVER_PR_OPENED,
+	DEV_TRIGGER_WORKSPACE_DRIVER_TASK_CREATED,
+	DEV_TRIGGER_WORKSPACE_DRIVER_TASK_DONE,
 	KNOWLEDGE_NUDGES,
 } from '@maskin/shared'
 import { createDb } from './connection'
@@ -703,7 +753,7 @@ if (ccdPkg) {
 
 // ── Dev Workspace Catalog Packages (1-5) ────────────────────────────────────
 
-const [pkgPlannerPkg] = await db
+const [plannerPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_PLANNER_SLUG,
@@ -714,10 +764,10 @@ const [pkgPlannerPkg] = await db
 	})
 	.returning()
 
-if (pkgPlannerPkg) {
+if (plannerPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgPlannerPkg.id,
+			packageId: plannerPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_PLANNER,
 			itemSnapshot: {
@@ -893,9 +943,9 @@ After planning, post a comment on the bet (do NOT @mention anyone) summarising: 
 			},
 		},
 		{
-			packageId: pkgPlannerPkg.id,
+			packageId: plannerPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '5d6db16c-278a-4831-a5ff-12be6d200726',
+			sourceItemId: DEV_TRIGGER_PLANNER_BET_DEFINE,
 			itemSnapshot: {
 				name: 'Bet Define → Plan Tasks',
 				description:
@@ -926,9 +976,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgPlannerPkg.id,
+			packageId: plannerPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '2dc018de-574f-4510-b846-d4f4f306d40b',
+			sourceItemId: DEV_TRIGGER_PLANNER_BET_ACTIVE,
 			itemSnapshot: {
 				name: 'Bet Active → Plan Tasks (if no coding tasks yet)',
 				description:
@@ -961,7 +1011,7 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [pkgDeveloperPkg] = await db
+const [developerPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_DEVELOPER_SLUG,
@@ -972,10 +1022,10 @@ const [pkgDeveloperPkg] = await db
 	})
 	.returning()
 
-if (pkgDeveloperPkg) {
+if (developerPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgDeveloperPkg.id,
+			packageId: developerPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_DEVELOPER,
 			itemSnapshot: {
@@ -1072,9 +1122,9 @@ Move the task to \`in_review\`. The Code Reviewer trigger fires automatically.
 			},
 		},
 		{
-			packageId: pkgDeveloperPkg.id,
+			packageId: developerPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '13a76463-7d57-4332-b37d-a5a8174ccad7',
+			sourceItemId: DEV_TRIGGER_DEVELOPER_TASK_IN_PROGRESS,
 			itemSnapshot: {
 				name: 'Task In Progress → Develop (coding tasks)',
 				description:
@@ -1121,7 +1171,7 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [pkgArchitectPkg] = await db
+const [architectPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_ARCHITECT_SLUG,
@@ -1132,10 +1182,10 @@ const [pkgArchitectPkg] = await db
 	})
 	.returning()
 
-if (pkgArchitectPkg) {
+if (architectPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgArchitectPkg.id,
+			packageId: architectPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_ARCHITECT,
 			itemSnapshot: {
@@ -1217,9 +1267,9 @@ Do NOT move the task to any other status. The human approves by replying. The Wo
 			},
 		},
 		{
-			packageId: pkgArchitectPkg.id,
+			packageId: architectPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '6b84d265-8684-4078-b90b-e5b4e3c6700c',
+			sourceItemId: DEV_TRIGGER_ARCHITECT_TASK_IN_PROGRESS,
 			itemSnapshot: {
 				name: 'Task In Progress → Tech Lead',
 				description:
@@ -1249,7 +1299,7 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [pkgDesignerPkg] = await db
+const [designerPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_DESIGNER_SLUG,
@@ -1260,10 +1310,10 @@ const [pkgDesignerPkg] = await db
 	})
 	.returning()
 
-if (pkgDesignerPkg) {
+if (designerPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgDesignerPkg.id,
+			packageId: designerPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_DESIGNER,
 			itemSnapshot: {
@@ -1350,9 +1400,9 @@ Do NOT move the task to any other status.
 			},
 		},
 		{
-			packageId: pkgDesignerPkg.id,
+			packageId: designerPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '5395a818-2ff8-4db1-95fe-37cc48a06b18',
+			sourceItemId: DEV_TRIGGER_DESIGNER_TASK_IN_PROGRESS,
 			itemSnapshot: {
 				name: 'Task In Progress → Product Designer',
 				description:
@@ -1382,7 +1432,7 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [pkgProductMarketerPkg] = await db
+const [productMarketerPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_PRODUCT_MARKETER_SLUG,
@@ -1393,10 +1443,10 @@ const [pkgProductMarketerPkg] = await db
 	})
 	.returning()
 
-if (pkgProductMarketerPkg) {
+if (productMarketerPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgProductMarketerPkg.id,
+			packageId: productMarketerPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_PRODUCT_MARKETER,
 			itemSnapshot: {
@@ -1478,9 +1528,9 @@ Do NOT move the task to any other status.
 			},
 		},
 		{
-			packageId: pkgProductMarketerPkg.id,
+			packageId: productMarketerPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '7110b6ae-095a-4aef-9cdc-ad8a1191fb17',
+			sourceItemId: DEV_TRIGGER_PRODUCT_MARKETER_TASK_IN_PROGRESS,
 			itemSnapshot: {
 				name: 'Task In Progress → Product Marketer',
 				description:
@@ -1512,7 +1562,7 @@ Triggering event: {triggering_event}`,
 
 // ── Dev Workspace Catalog Packages (6-10) ────────────────────────────────────
 
-const [pkgCodeReviewerPkg] = await db
+const [codeReviewerPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_CODE_REVIEWER_SLUG,
@@ -1523,10 +1573,10 @@ const [pkgCodeReviewerPkg] = await db
 	})
 	.returning()
 
-if (pkgCodeReviewerPkg) {
+if (codeReviewerPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgCodeReviewerPkg.id,
+			packageId: codeReviewerPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_CODE_REVIEWER,
 			itemSnapshot: {
@@ -1622,9 +1672,9 @@ If checks cannot be fixed (e.g. requires domain knowledge you don't have): post 
 			},
 		},
 		{
-			packageId: pkgCodeReviewerPkg.id,
+			packageId: codeReviewerPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '2a8f9709-c239-4f92-9ebf-6e21022d4b80',
+			sourceItemId: DEV_TRIGGER_CODE_REVIEWER_TASK_IN_REVIEW,
 			itemSnapshot: {
 				name: 'Task In Review → Code Review',
 				description:
@@ -1660,9 +1710,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgCodeReviewerPkg.id,
+			packageId: codeReviewerPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'a7dead80-190e-4da0-86bf-e5500994716b',
+			sourceItemId: DEV_TRIGGER_CODE_REVIEWER_PR_SYNCHRONIZE,
 			itemSnapshot: {
 				name: 'GitHub PR Synchronize → Re-score Risk',
 				description:
@@ -1706,7 +1756,7 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [pkgAcceptanceValidatorPkg] = await db
+const [acceptanceValidatorPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_ACCEPTANCE_VALIDATOR_SLUG,
@@ -1717,10 +1767,10 @@ const [pkgAcceptanceValidatorPkg] = await db
 	})
 	.returning()
 
-if (pkgAcceptanceValidatorPkg) {
+if (acceptanceValidatorPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgAcceptanceValidatorPkg.id,
+			packageId: acceptanceValidatorPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_ACCEPTANCE_VALIDATOR,
 			itemSnapshot: {
@@ -1807,9 +1857,9 @@ If an architecture was approved: does the implementation follow the chosen ADR?
 			},
 		},
 		{
-			packageId: pkgAcceptanceValidatorPkg.id,
+			packageId: acceptanceValidatorPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '89bd7d2a-2256-4aef-8960-4c5669307e9c',
+			sourceItemId: DEV_TRIGGER_ACCEPTANCE_VALIDATOR_TASK_TESTING,
 			itemSnapshot: {
 				name: 'Task Testing → Acceptance Validation',
 				description:
@@ -1856,7 +1906,7 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [pkgAutoMergeBotPkg] = await db
+const [autoMergeBotPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_AUTO_MERGE_BOT_SLUG,
@@ -1867,10 +1917,10 @@ const [pkgAutoMergeBotPkg] = await db
 	})
 	.returning()
 
-if (pkgAutoMergeBotPkg) {
+if (autoMergeBotPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgAutoMergeBotPkg.id,
+			packageId: autoMergeBotPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_AUTO_MERGE_BOT,
 			itemSnapshot: {
@@ -1947,9 +1997,9 @@ If all tasks are done:
 			},
 		},
 		{
-			packageId: pkgAutoMergeBotPkg.id,
+			packageId: autoMergeBotPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'a941beb1-78af-4ac9-b079-b198f8e9c92a',
+			sourceItemId: DEV_TRIGGER_AUTO_MERGE_BOT_TASK_DONE,
 			itemSnapshot: {
 				name: 'Task Done → Auto-Merge',
 				description:
@@ -1986,7 +2036,7 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [pkgStrategistPkg] = await db
+const [strategistPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_STRATEGIST_SLUG,
@@ -1997,10 +2047,10 @@ const [pkgStrategistPkg] = await db
 	})
 	.returning()
 
-if (pkgStrategistPkg) {
+if (strategistPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgStrategistPkg.id,
+			packageId: strategistPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_STRATEGIST,
 			itemSnapshot: {
@@ -2098,9 +2148,9 @@ When a \`decision_type: ux\` or \`decision_type: architecture\` task moves to \`
 			},
 		},
 		{
-			packageId: pkgStrategistPkg.id,
+			packageId: strategistPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '34b43df6-a012-49f3-bdf3-de1b5017612b',
+			sourceItemId: DEV_TRIGGER_STRATEGIST_BET_CREATED,
 			itemSnapshot: {
 				name: 'Bet Created → Strategist Intake',
 				description: 'Fires when a bet is created; runs the intake gate to check completeness.',
@@ -2130,9 +2180,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgStrategistPkg.id,
+			packageId: strategistPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'd02d5e55-c1c3-4091-b344-fea157579095',
+			sourceItemId: DEV_TRIGGER_STRATEGIST_BET_DEFINE,
 			itemSnapshot: {
 				name: 'Bet → Define: Strategist Intake',
 				description:
@@ -2165,9 +2215,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgStrategistPkg.id,
+			packageId: strategistPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'af9b6afc-67d2-481b-8b28-0df09a6e7c76',
+			sourceItemId: DEV_TRIGGER_STRATEGIST_BET_ACTIVE,
 			itemSnapshot: {
 				name: 'Bet → Active: Shaper Gate Check',
 				description:
@@ -2214,9 +2264,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgStrategistPkg.id,
+			packageId: strategistPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '11ee9406-254b-4621-be03-487565f250a0',
+			sourceItemId: DEV_TRIGGER_STRATEGIST_BET_LIVE,
 			itemSnapshot: {
 				name: 'Bet → Live: Shaper Measurement Gate Check',
 				description:
@@ -2297,9 +2347,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgStrategistPkg.id,
+			packageId: strategistPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'f5ab2e5b-cd2c-4ff2-85fb-5d5f8470b6f0',
+			sourceItemId: DEV_TRIGGER_STRATEGIST_INSIGHT_STATUS_CHANGED,
 			itemSnapshot: {
 				name: 'Insight status_changed → Fast-track Bet Council',
 				description:
@@ -2364,9 +2414,9 @@ Re-fetch the bet and the source insight. Confirm all fields are set correctly. I
 			},
 		},
 		{
-			packageId: pkgStrategistPkg.id,
+			packageId: strategistPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '6310ae18-d8ff-435a-93ce-13a92bd71b7a',
+			sourceItemId: DEV_TRIGGER_STRATEGIST_INFORMS_EDGE,
 			itemSnapshot: {
 				name: 'Informs edge on active/live bet → Strategist disposition',
 				description:
@@ -2393,9 +2443,9 @@ Idempotency: if you already posted a disposition comment for this same insight o
 			},
 		},
 		{
-			packageId: pkgStrategistPkg.id,
+			packageId: strategistPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '731af1d4-4eb3-4a74-98c3-8a59b671183e',
+			sourceItemId: DEV_TRIGGER_STRATEGIST_DESIGN_ARCH_IN_REVIEW,
 			itemSnapshot: {
 				name: 'Design/Arch Task → In Review: Ping Strategist for Direction',
 				description:
@@ -2424,9 +2474,9 @@ Do NOT route every design or architecture in_review to Sebastian or Magnus. You 
 			},
 		},
 		{
-			packageId: pkgStrategistPkg.id,
+			packageId: strategistPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '2cfdf16d-87ee-4bae-b909-574ddc42add3',
+			sourceItemId: DEV_TRIGGER_STRATEGIST_BIWEEKLY_BET_COUNCIL,
 			itemSnapshot: {
 				name: 'Bi-weekly Bet Council — Strategist',
 				description:
@@ -2484,9 +2534,9 @@ Hard rules — refuse to violate:
 			},
 		},
 		{
-			packageId: pkgStrategistPkg.id,
+			packageId: strategistPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '0d4fd8a7-9c93-4f3b-981a-dfd285804d6b',
+			sourceItemId: DEV_TRIGGER_STRATEGIST_BIWEEKLY_SCORING_PASS,
 			itemSnapshot: {
 				name: 'Bi-weekly Bet Council Scoring Pass (Strategist)',
 				description:
@@ -2547,7 +2597,7 @@ Triggering event: cron Monday and Thursday 08:00 UTC.`,
 	])
 }
 
-const [pkgWorkspaceDriverPkg] = await db
+const [workspaceDriverPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_WORKSPACE_DRIVER_SLUG,
@@ -2558,10 +2608,10 @@ const [pkgWorkspaceDriverPkg] = await db
 	})
 	.returning()
 
-if (pkgWorkspaceDriverPkg) {
+if (workspaceDriverPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgWorkspaceDriverPkg.id,
+			packageId: workspaceDriverPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_WORKSPACE_DRIVER,
 			itemSnapshot: {
@@ -2662,9 +2712,9 @@ Check all @mention comments in the last 24h. Flag any where an agent @mentioned 
 			},
 		},
 		{
-			packageId: pkgWorkspaceDriverPkg.id,
+			packageId: workspaceDriverPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '66fddb79-f49f-4f77-b4f2-28da1e022765',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_DRIVER_TASK_DONE,
 			itemSnapshot: {
 				name: 'Task Done → Drive Next',
 				description:
@@ -2727,9 +2777,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgWorkspaceDriverPkg.id,
+			packageId: workspaceDriverPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '243d019f-f012-419e-9128-7fa20406b6e8',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_DRIVER_BET_ACTIVATED,
 			itemSnapshot: {
 				name: 'Bet Activated → Start Work',
 				description:
@@ -2762,9 +2812,9 @@ Do NOT call create_notification.`,
 			},
 		},
 		{
-			packageId: pkgWorkspaceDriverPkg.id,
+			packageId: workspaceDriverPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '88b1e6bc-cb4f-4963-896a-4ea1d5fc2f9f',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_DRIVER_PR_OPENED,
 			itemSnapshot: {
 				name: 'GitHub PR Opened → Triage',
 				description:
@@ -2790,9 +2840,9 @@ IMPORTANT: Do NOT send Slack messages or notifications for this. The Code Review
 			},
 		},
 		{
-			packageId: pkgWorkspaceDriverPkg.id,
+			packageId: workspaceDriverPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '530dceac-4e83-4b98-a3da-f0af9138a222',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_DRIVER_PR_MERGED,
 			itemSnapshot: {
 				name: 'GitHub PR Merged → Update Task + Advance Bet to Live',
 				description:
@@ -2863,9 +2913,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgWorkspaceDriverPkg.id,
+			packageId: workspaceDriverPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '506dc2c1-8567-4d1a-9ebd-992b7e1620a3',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_DRIVER_TASK_CREATED,
 			itemSnapshot: {
 				name: 'Task Created → Duplicate Detection',
 				description:
@@ -2902,9 +2952,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgWorkspaceDriverPkg.id,
+			packageId: workspaceDriverPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'f3442d78-b02b-4f42-b12b-3a8467a71d92',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_DRIVER_LIVENESS_WATCHDOG,
 			itemSnapshot: {
 				name: 'Active-Bet Liveness Watchdog (30-min)',
 				description:
@@ -2918,9 +2968,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgWorkspaceDriverPkg.id,
+			packageId: workspaceDriverPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '7fc5b39f-d27d-4786-b194-d2105fc32dbf',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_DRIVER_PIPELINE_WATCHDOG,
 			itemSnapshot: {
 				name: 'Universal Pipeline Watchdog',
 				description: 'Every 4 hours, scans all active bets for stalls and advances where possible.',
@@ -2956,9 +3006,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgWorkspaceDriverPkg.id,
+			packageId: workspaceDriverPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'd8a7671e-c68b-4a8f-b933-6d4a98756b74',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_DRIVER_DAILY_BET_SWEEP,
 			itemSnapshot: {
 				name: 'Daily Bet Sweep → Unstick Stalled Work',
 				description:
@@ -2994,9 +3044,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgWorkspaceDriverPkg.id,
+			packageId: workspaceDriverPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '35b21a0e-2b16-4b5d-9e31-74156d13e4f3',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_DRIVER_DAILY_MENTION_AUDIT,
 			itemSnapshot: {
 				name: 'Daily wrong-founder @mention audit',
 				description:
@@ -3033,7 +3083,7 @@ Triggering event: {triggering_event}`,
 
 // ── Dev Workspace Catalog Packages (11-15) ───────────────────────────────────
 
-const [pkgResearchAgentPkg] = await db
+const [researchAgentPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_RESEARCH_AGENT_SLUG,
@@ -3044,10 +3094,10 @@ const [pkgResearchAgentPkg] = await db
 	})
 	.returning()
 
-if (pkgResearchAgentPkg) {
+if (researchAgentPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgResearchAgentPkg.id,
+			packageId: researchAgentPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_RESEARCH_AGENT,
 			itemSnapshot: {
@@ -3127,9 +3177,9 @@ Use Exa for web search. Use Supadata for YouTube/social content extraction. Use 
 			},
 		},
 		{
-			packageId: pkgResearchAgentPkg.id,
+			packageId: researchAgentPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '79fecd6f-e8fa-4ac8-b0b0-5e238a534786',
+			sourceItemId: DEV_TRIGGER_RESEARCH_AGENT_SLACK_DM,
 			itemSnapshot: {
 				name: 'Slack DM → Research Agent',
 				description:
@@ -3155,9 +3205,9 @@ Ignore bot messages, channel messages, and already-processed URLs (dedup via sea
 			},
 		},
 		{
-			packageId: pkgResearchAgentPkg.id,
+			packageId: researchAgentPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'df3dbfb9-0aa7-4b89-ad99-10d606ae4068',
+			sourceItemId: DEV_TRIGGER_RESEARCH_AGENT_INSPIRATION_RESOURCES,
 			itemSnapshot: {
 				name: 'Inspiration Resources → Insight Harvester',
 				description:
@@ -3201,9 +3251,9 @@ If nothing was harvested (all URLs already seen or failed), reply: "Already trac
 			},
 		},
 		{
-			packageId: pkgResearchAgentPkg.id,
+			packageId: researchAgentPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'ecc87493-64f9-4bb6-8aa3-639b10b2821a',
+			sourceItemId: DEV_TRIGGER_RESEARCH_AGENT_DAILY_MEETING_INSIGHTS,
 			itemSnapshot: {
 				name: 'Daily meeting insights sweep',
 				description:
@@ -3239,9 +3289,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgResearchAgentPkg.id,
+			packageId: researchAgentPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'b1f9a467-9fc7-4377-a50a-95735fed1e92',
+			sourceItemId: DEV_TRIGGER_RESEARCH_AGENT_DAILY_LIVE_BET_EVIDENCE,
 			itemSnapshot: {
 				name: 'Daily Live Bet Evidence Pull',
 				description: 'Daily 6:30 AM sweep to pull external evidence for all active and live bets.',
@@ -3265,9 +3315,9 @@ Triggering event: cron daily 06:30 UTC.`,
 			},
 		},
 		{
-			packageId: pkgResearchAgentPkg.id,
+			packageId: researchAgentPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'a6c1ec67-23f5-4fbb-aff6-78c8c883995f',
+			sourceItemId: DEV_TRIGGER_RESEARCH_AGENT_DAILY_INFLUENCER_CONTENT,
 			itemSnapshot: {
 				name: 'Daily Influencer Content Sweep',
 				description: 'Daily 2:00 AM sweep of key product/startup influencers for relevant content.',
@@ -3327,9 +3377,9 @@ Triggering event: cron daily 08:00 UTC.`,
 			},
 		},
 		{
-			packageId: pkgResearchAgentPkg.id,
+			packageId: researchAgentPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '9e0a4be4-cfa9-40e3-a187-8241648827b9',
+			sourceItemId: DEV_TRIGGER_RESEARCH_AGENT_WEEKLY_MARKET_RESEARCH,
 			itemSnapshot: {
 				name: 'Weekly Market Research Sweep',
 				description:
@@ -3346,9 +3396,9 @@ Cite source URLs in every insight. Deduplicate against existing insights before 
 			},
 		},
 		{
-			packageId: pkgResearchAgentPkg.id,
+			packageId: researchAgentPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'd95ef32a-0371-40b2-8fd3-4e7a60db9de5',
+			sourceItemId: DEV_TRIGGER_RESEARCH_AGENT_WEEKLY_COMPETITOR,
 			itemSnapshot: {
 				name: 'Weekly Competitor Sweep',
 				description:
@@ -3363,7 +3413,7 @@ Cite source URLs in every insight. Deduplicate against existing insights before 
 	])
 }
 
-const [pkgWorkspaceCoachPkg] = await db
+const [workspaceCoachPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_WORKSPACE_COACH_SLUG,
@@ -3374,10 +3424,10 @@ const [pkgWorkspaceCoachPkg] = await db
 	})
 	.returning()
 
-if (pkgWorkspaceCoachPkg) {
+if (workspaceCoachPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgWorkspaceCoachPkg.id,
+			packageId: workspaceCoachPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_WORKSPACE_COACH,
 			itemSnapshot: {
@@ -3431,9 +3481,9 @@ if (pkgWorkspaceCoachPkg) {
 			},
 		},
 		{
-			packageId: pkgWorkspaceCoachPkg.id,
+			packageId: workspaceCoachPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '2e39b3b0-f923-4b46-99d8-168e495fc834',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_COACH_DAILY_OBSERVATION,
 			itemSnapshot: {
 				name: 'Daily Workspace Observation',
 				description:
@@ -3480,9 +3530,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgWorkspaceCoachPkg.id,
+			packageId: workspaceCoachPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '9bd7d1be-4f83-4143-8f97-9a5f3f21cf0f',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_COACH_DAILY_CODE_REVIEW_ANALYSIS,
 			itemSnapshot: {
 				name: 'Daily Code Review Analysis',
 				description:
@@ -3534,9 +3584,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgWorkspaceCoachPkg.id,
+			packageId: workspaceCoachPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '9123be90-f1b0-46c0-823a-3885bbe94a73',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_COACH_DAILY_ACCEPTANCE_ANALYSIS,
 			itemSnapshot: {
 				name: 'Daily Acceptance Validation Analysis',
 				description:
@@ -3590,9 +3640,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgWorkspaceCoachPkg.id,
+			packageId: workspaceCoachPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '9309764c-d5fa-4558-b1cc-a273ca4ad64c',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_COACH_DAILY_HANDBOOK_DRIFT,
 			itemSnapshot: {
 				name: 'Daily Handbook Drift Sweep',
 				description:
@@ -3635,9 +3685,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgWorkspaceCoachPkg.id,
+			packageId: workspaceCoachPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '17b7f5b9-2b56-4c82-a6ef-1378e1c5b9f3',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_COACH_WEEKLY_INSIGHT_PATTERN,
 			itemSnapshot: {
 				name: 'Weekly Insight Pattern Review',
 				description:
@@ -3685,9 +3735,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgWorkspaceCoachPkg.id,
+			packageId: workspaceCoachPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'dc380444-ac71-4b89-8634-ce73c664fa0b',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_COACH_DAILY_HUMAN_ACTIONS_DIGEST,
 			itemSnapshot: {
 				name: 'Daily human-actions digest → @Sebk',
 				description:
@@ -3747,7 +3797,7 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [pkgRetroKnowledgeAuthorPkg] = await db
+const [retroKnowledgeAuthorPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_SLUG,
@@ -3758,10 +3808,10 @@ const [pkgRetroKnowledgeAuthorPkg] = await db
 	})
 	.returning()
 
-if (pkgRetroKnowledgeAuthorPkg) {
+if (retroKnowledgeAuthorPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgRetroKnowledgeAuthorPkg.id,
+			packageId: retroKnowledgeAuthorPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR,
 			itemSnapshot: {
@@ -3826,9 +3876,9 @@ Review all \`knowledge\` objects created in the last 30 days. Check: is the know
 			},
 		},
 		{
-			packageId: pkgRetroKnowledgeAuthorPkg.id,
+			packageId: retroKnowledgeAuthorPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'e54bb3bf-818e-423a-8c49-d1009528a006',
+			sourceItemId: DEV_TRIGGER_RETRO_KNOWLEDGE_AUTHOR_INSIGHT_CLUSTERED,
 			itemSnapshot: {
 				name: 'Insight Clustered → Write Knowledge',
 				description:
@@ -3884,9 +3934,9 @@ Exit silently if the quality gate fails. A cluster that doesn't meet the bar doe
 			},
 		},
 		{
-			packageId: pkgRetroKnowledgeAuthorPkg.id,
+			packageId: retroKnowledgeAuthorPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '8e9deb8f-1941-4271-9da7-f696c2fb1490',
+			sourceItemId: DEV_TRIGGER_RETRO_KNOWLEDGE_AUTHOR_BET_SUCCEEDED,
 			itemSnapshot: {
 				name: 'Bet Succeeded → Write Knowledge',
 				description: 'Fires when a bet reaches succeeded status; triggers a full retrospective.',
@@ -3949,9 +3999,9 @@ Do NOT call create_notification.`,
 			},
 		},
 		{
-			packageId: pkgRetroKnowledgeAuthorPkg.id,
+			packageId: retroKnowledgeAuthorPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '4b30f54f-ff12-4208-9cd6-147e603aa2d2',
+			sourceItemId: DEV_TRIGGER_RETRO_KNOWLEDGE_AUTHOR_BET_FAILED,
 			itemSnapshot: {
 				name: 'Bet Failed → Write Knowledge',
 				description: 'Fires when a bet reaches failed status; triggers a failure retrospective.',
@@ -4011,9 +4061,9 @@ Do NOT call create_notification.`,
 			},
 		},
 		{
-			packageId: pkgRetroKnowledgeAuthorPkg.id,
+			packageId: retroKnowledgeAuthorPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '9e93df5a-63d9-49ee-bead-d7b25de45cfb',
+			sourceItemId: DEV_TRIGGER_RETRO_KNOWLEDGE_AUTHOR_BET_PAUSED,
 			itemSnapshot: {
 				name: 'Bet Paused → Retro Draft',
 				description: 'Fires when a bet is paused; writes a mid-flight retrospective draft.',
@@ -4061,9 +4111,9 @@ Do NOT create knowledge objects. Do NOT call create_notification.`,
 			},
 		},
 		{
-			packageId: pkgRetroKnowledgeAuthorPkg.id,
+			packageId: retroKnowledgeAuthorPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '3578d807-78cc-48dc-a12b-5028eb973103',
+			sourceItemId: DEV_TRIGGER_RETRO_KNOWLEDGE_AUTHOR_DAILY_FEEDBACK,
 			itemSnapshot: {
 				name: 'Daily Feedback → Knowledge Sweep',
 				description:
@@ -4111,9 +4161,9 @@ Triggering event: {triggering_event}`,
 			},
 		},
 		{
-			packageId: pkgRetroKnowledgeAuthorPkg.id,
+			packageId: retroKnowledgeAuthorPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'ae20bd9c-c039-4786-b6eb-e8e70ef7926e',
+			sourceItemId: DEV_TRIGGER_RETRO_KNOWLEDGE_AUTHOR_WEEKLY_REVISION,
 			itemSnapshot: {
 				name: 'Weekly Knowledge Revision Sweep',
 				description:
@@ -4140,7 +4190,7 @@ Source actor: 3322def3-7d6b-4615-beaf-b43b291f95a8. Do NOT call create_notificat
 	])
 }
 
-const [pkgProductAnalystPkg] = await db
+const [productAnalystPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_PRODUCT_ANALYST_SLUG,
@@ -4151,10 +4201,10 @@ const [pkgProductAnalystPkg] = await db
 	})
 	.returning()
 
-if (pkgProductAnalystPkg) {
+if (productAnalystPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgProductAnalystPkg.id,
+			packageId: productAnalystPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_PRODUCT_ANALYST,
 			itemSnapshot: {
@@ -4218,9 +4268,9 @@ For each \`live\` bet that has a \`metadata.posthog_query\` or \`## Validation e
 			},
 		},
 		{
-			packageId: pkgProductAnalystPkg.id,
+			packageId: productAnalystPkg.id,
 			itemType: 'trigger',
-			sourceItemId: 'fe28005d-f465-49b9-a73d-2dc599036345',
+			sourceItemId: DEV_TRIGGER_PRODUCT_ANALYST_DAILY_MEASUREMENT,
 			itemSnapshot: {
 				name: 'Daily Live Bet Measurement Sweep',
 				description:
@@ -4247,9 +4297,9 @@ Triggering event: cron daily 05:45 UTC.`,
 			},
 		},
 		{
-			packageId: pkgProductAnalystPkg.id,
+			packageId: productAnalystPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '665c1b46-23bf-4666-98a2-a6902a0d1dc5',
+			sourceItemId: DEV_TRIGGER_PRODUCT_ANALYST_WEEKLY_DISCOVERY,
 			itemSnapshot: {
 				name: 'Weekly PostHog Discovery Sweep',
 				description:
@@ -4272,7 +4322,7 @@ Triggering event: cron Sunday 20:00 UTC.`,
 	])
 }
 
-const [pkgSummarizationAgentPkg] = await db
+const [summarizationAgentPkg] = await db
 	.insert(catalogPackages)
 	.values({
 		slug: DEV_PACKAGE_SUMMARIZATION_AGENT_SLUG,
@@ -4283,10 +4333,10 @@ const [pkgSummarizationAgentPkg] = await db
 	})
 	.returning()
 
-if (pkgSummarizationAgentPkg) {
+if (summarizationAgentPkg) {
 	await db.insert(catalogPackageItems).values([
 		{
-			packageId: pkgSummarizationAgentPkg.id,
+			packageId: summarizationAgentPkg.id,
 			itemType: 'actor',
 			sourceItemId: DEV_ACTOR_SUMMARIZATION_AGENT,
 			itemSnapshot: {
@@ -4342,9 +4392,9 @@ From every finished meeting:
 			},
 		},
 		{
-			packageId: pkgSummarizationAgentPkg.id,
+			packageId: summarizationAgentPkg.id,
 			itemType: 'trigger',
-			sourceItemId: '5eefd3e7-396b-4de1-9fdf-a22ccfc0d120',
+			sourceItemId: DEV_TRIGGER_SUMMARIZATION_AGENT_MEETING_DONE,
 			itemSnapshot: {
 				name: 'Meeting Done → Summarize',
 				description:
