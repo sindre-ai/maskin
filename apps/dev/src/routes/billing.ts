@@ -12,9 +12,15 @@ import {
 } from '../lib/billing-defaults'
 import { createApiError } from '../lib/errors'
 import { getWorkspacePlanTokenUsage } from '../lib/llm-routing'
+import {
+	billingAfterByoTransition,
+	cancelActivePaidSubscription,
+	hasActivePaidPlan,
+} from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { createCheckoutSession, getStripeClient, readStripeEnv } from '../lib/stripe'
+import type { WorkspaceSettings } from '../lib/types'
 
 /**
  * Fallback hard caps for paid plans when `billing.hard_cap_tokens` hasn't been
@@ -260,6 +266,71 @@ app.openapi(checkoutRoute, async (c) => {
 		})
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create checkout session'), 500)
 	}
+})
+
+const cancelRoute = createRoute({
+	method: 'post',
+	path: '/cancel',
+	tags: ['billing'],
+	summary: 'Downgrade to Free by cancelling the active Maskin subscription',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Subscription cancelled, plan set to Free',
+			content: { 'application/json': { schema: z.object({ ok: z.literal(true) }) } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: { description: 'Stripe error', content: { 'application/json': { schema: errorSchema } } },
+	},
+})
+
+app.openapi(cancelRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [workspace] = await db
+		.select({ id: workspaces.id, settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (!workspace) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	const settings = (workspace.settings ?? {}) as WorkspaceSettings
+	const billing = settings.billing
+
+	if (hasActivePaidPlan({ billing })) {
+		let stripeEnv: ReturnType<typeof readStripeEnv>
+		try {
+			stripeEnv = readStripeEnv()
+		} catch {
+			return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
+		}
+		try {
+			// biome-ignore lint/style/noNonNullAssertion: hasActivePaidPlan guarantees this
+			await cancelActivePaidSubscription(
+				getStripeClient(stripeEnv),
+				billing!.stripe_subscription_id!,
+			)
+		} catch (err) {
+			logger.error('Stripe cancel failed', { workspaceId, error: String(err) })
+			return c.json(createApiError('INTERNAL_ERROR', 'Failed to cancel subscription'), 500)
+		}
+	}
+
+	const downgraded = billingAfterByoTransition(billing)
+	if (downgraded) {
+		await db
+			.update(workspaces)
+			.set({ settings: { ...settings, billing: downgraded } })
+			.where(eq(workspaces.id, workspaceId))
+	}
+
+	logger.info('Plan downgraded to Free', { workspaceId })
+	return c.json({ ok: true as const }, 200)
 })
 
 export default app

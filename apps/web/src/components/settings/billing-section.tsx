@@ -8,7 +8,7 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
+import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
 import type { BillingPlan, BillingStatus } from '@/lib/api'
 import { ExternalLink } from 'lucide-react'
 import { useState } from 'react'
@@ -196,32 +196,45 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 				)}
 			</div>
 
-			<SwitchToByoDialog open={switchOpen} onOpenChange={setSwitchOpen} />
+			<DowngradeDialog open={switchOpen} onOpenChange={setSwitchOpen} workspaceId={workspaceId} />
 		</div>
 	)
 }
 
-function SwitchToByoDialog({
+function DowngradeDialog({
 	open,
 	onOpenChange,
+	workspaceId,
 }: {
 	open: boolean
 	onOpenChange: (open: boolean) => void
+	workspaceId: string
 }) {
+	const cancel = useBillingCancel(workspaceId)
+
+	const handleConfirm = () => {
+		cancel.mutate(undefined, { onSuccess: () => onOpenChange(false) })
+	}
+
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>Downgrade to Free?</DialogTitle>
 					<DialogDescription>
-						To cancel your paid plan, connect your own LLM below — Claude subscription, Anthropic
-						API key, or a custom model endpoint. Saving any of them cancels your active Maskin
-						subscription atomically (you won't be charged again).
+						You'll lose access to Maskin's hosted LLM and your remaining token credits for this
+						period. You won't be charged again.
 					</DialogDescription>
 				</DialogHeader>
+				{cancel.isError && (
+					<p className="text-xs text-error">{cancel.error?.message ?? 'Something went wrong.'}</p>
+				)}
 				<DialogFooter>
-					<Button variant="outline" onClick={() => onOpenChange(false)}>
-						Got it
+					<Button variant="outline" onClick={() => onOpenChange(false)} disabled={cancel.isPending}>
+						Cancel
+					</Button>
+					<Button variant="destructive" onClick={handleConfirm} disabled={cancel.isPending}>
+						{cancel.isPending ? 'Downgrading…' : 'Confirm downgrade'}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

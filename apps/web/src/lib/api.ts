@@ -462,6 +462,8 @@ export const api = {
 			}),
 		usage: (workspaceId: string) =>
 			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
+		cancel: (workspaceId: string) =>
+			request<{ ok: true }>('/billing/cancel', { method: 'POST', workspaceId }),
 	},
 
 	catalogPackages: {

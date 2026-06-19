@@ -34,6 +34,7 @@ export function hasActivePaidPlan(settings: Pick<WorkspaceSettings, 'billing'>):
 	const billing = settings.billing
 	if (!billing) return false
 	if (!billing.stripe_subscription_id) return false
+	if (!billing.status) return false
 	return ACTIVE_PAID_STATUSES.has(billing.status)
 }
 

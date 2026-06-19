@@ -1,6 +1,6 @@
 import { type BillingCheckoutInput, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 /**
  * Subscription state + tokens used this period for a workspace.
@@ -22,5 +22,14 @@ export function useBillingUsage(workspaceId: string) {
 export function useStripeCheckout(workspaceId: string) {
 	return useMutation({
 		mutationFn: (input: BillingCheckoutInput) => api.billing.checkout(workspaceId, input),
+	})
+}
+
+export function useBillingCancel(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: () => api.billing.cancel(workspaceId),
+		onSuccess: () =>
+			queryClient.invalidateQueries({ queryKey: queryKeys.billing.usage(workspaceId) }),
 	})
 }
