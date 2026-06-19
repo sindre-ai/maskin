@@ -262,14 +262,16 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
 	})
 
-	it('5. system fallback when nothing else set and env configured', async () => {
+	it('6. system fallback when byollm plan and no BYO credentials set', async () => {
 		getValidOAuthTokenMock.mockResolvedValue(null)
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
 		process.env.MASKIN_FALLBACK_BASE_URL = 'https://openrouter.ai/api'
 		process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
+		const settings = emptySettings()
+		settings.billing = { plan: 'byollm' }
 		const result = await resolveLlmRoute({
 			...baseParams,
-			wsSettings: emptySettings(),
+			wsSettings: settings,
 			agent: {},
 		})
 		expect(result?.route).toBe(LLM_ROUTE_SYSTEM_FALLBACK)
@@ -291,19 +293,21 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result).toBeNull()
 	})
 
-	it('throws FallbackQuotaExceededError when over the daily limit', async () => {
+	it('throws FallbackQuotaExceededError when byollm plan and over the daily limit', async () => {
 		getValidOAuthTokenMock.mockResolvedValue(null)
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
 		process.env.MASKIN_FALLBACK_DAILY_TOKEN_LIMIT = '1000'
 		const db = dbWithFallbackUsage([
 			{ inputTokens: 800, outputTokens: 250 }, // 1050 > 1000
 		])
+		const settings = emptySettings()
+		settings.billing = { plan: 'byollm' }
 		await expect(
 			resolveLlmRoute({
 				db,
 				workspaceId: 'ws-1',
 				actorId: 'actor-1',
-				wsSettings: emptySettings(),
+				wsSettings: settings,
 				agent: {},
 			}),
 		).rejects.toBeInstanceOf(FallbackQuotaExceededError)
@@ -405,30 +409,33 @@ describe('resolveLlmRoute priority order', () => {
 			expect(result?.route).toBe(LLM_ROUTE_API_KEY)
 		})
 
-		it('workspace with no billing block behaves like before this change', async () => {
+		it('no billing block defaults to trial and routes through maskin_plan', async () => {
 			getValidOAuthTokenMock.mockResolvedValue(null)
 			const settings = emptySettings()
 			settings.llm_keys = { anthropic: 'sk-ant-untouched' }
 			const result = await resolveLlmRoute({
 				...baseParams,
+				db: dbWithSessionUsage([]),
 				wsSettings: settings,
 				agent: {},
 			})
-			expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+			expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
 		})
 	})
 
-	it('does NOT consume the fallback when usage is exactly at the limit', async () => {
+	it('does NOT consume the fallback when byollm plan and usage is exactly at the limit', async () => {
 		getValidOAuthTokenMock.mockResolvedValue(null)
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
 		process.env.MASKIN_FALLBACK_DAILY_TOKEN_LIMIT = '1000'
 		const db = dbWithFallbackUsage([{ inputTokens: 1000, outputTokens: 0 }])
+		const settings = emptySettings()
+		settings.billing = { plan: 'byollm' }
 		await expect(
 			resolveLlmRoute({
 				db,
 				workspaceId: 'ws-1',
 				actorId: 'actor-1',
-				wsSettings: emptySettings(),
+				wsSettings: settings,
 				agent: {},
 			}),
 		).rejects.toBeInstanceOf(FallbackQuotaExceededError)
@@ -460,11 +467,16 @@ describe('checkPlanCap', () => {
 		else process.env.MASKIN_TRIAL_HARD_CAP_TOKENS = ORIG_TRIAL_CAP
 	})
 
-	it('is a no-op when billing is not set', async () => {
+	it('treats missing billing as trial — enforces cap when over limit', async () => {
 		const db = dbWithSessionUsage([{ inputTokens: 999_999, outputTokens: 0 }])
-		await expect(
-			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: emptySettings() }),
-		).resolves.toBeUndefined()
+		const err = await checkPlanCap({
+			db,
+			workspaceId: 'ws-1',
+			wsSettings: emptySettings(),
+		}).catch((e) => e)
+		expect(err).toBeInstanceOf(PlanCapExceededError)
+		expect(err.plan).toBe('trial')
+		expect(err.cap).toBe(100_000)
 	})
 
 	it('is a no-op for byollm — explicit opt-out', async () => {

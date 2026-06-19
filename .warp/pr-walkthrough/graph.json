@@ -1,0 +1,998 @@
+{
+	"meta": {
+		"title": "Native Maskin LLM Subscription — OpenRouter Routing, Billing Data Model, Usage Tracking",
+		"prUrl": "https://github.com/sindre-ai/maskin/pull/518",
+		"baseRef": "main",
+		"headRef": "bet/native-llm-subscription",
+		"summary": "Adds a Maskin-funded LLM tier so workspaces can run agents without supplying their own Anthropic credentials. Introduces a billing data model (plan/Stripe/caps stored in workspace.settings.billing), routes paid/trial plans through Maskin's OpenRouter account, enforces hard-cap limits before session creation (HTTP 402 on breach), implements Stripe checkout + webhook lifecycle, and adds a mutual-exclusion layer that auto-cancels a paid subscription when the user adds a BYO key."
+	},
+	"graphs": [
+		{
+			"id": "system-overview",
+			"label": "System overview",
+			"color": "#c0872a",
+			"summary": "Stable architecture for the LLM routing and billing subsystem. Shows the five stable components a reviewer needs to understand before reading the diff.",
+			"nodes": [
+				{
+					"id": "llm-routing",
+					"title": "LLM Routing",
+					"kind": "component",
+					"x": 60,
+					"y": 60,
+					"width": 360,
+					"height": 200,
+					"summaryLines": 6,
+					"summary": "apps/dev/src/lib/llm-routing.ts — Priority chain that resolves which LLM credentials to inject into an agent container session. Six tiers in descending priority: (1) agent-level API key override, (2) Maskin-funded plan (trial/starter/pro via OpenRouter), (3) workspace custom_llm endpoint, (4) Claude OAuth subscription, (5) workspace Anthropic API key, (6) system fallback (shared OpenRouter key, daily quota). The chosen route tag ('maskin_plan', 'system_fallback', etc.) is persisted on sessions.config.llm_route so usage attribution and cap enforcement can query it cheaply.",
+					"details": [
+						"resolveLlmRoute() runs on every POST /api/sessions call via session-manager.ts.",
+						"buildMaskinPlanEnv() returns the OpenRouter env block for plans in {trial, starter, pro}.",
+						"checkPlanCap() sums maskin_plan session tokens for the workspace since period_start and throws PlanCapExceededError (HTTP 402) when the sum >= hard_cap_tokens.",
+						"getWorkspacePlanTokenUsage() is also used by GET /api/billing/usage to power the progress bar in Settings.",
+						"The fallback tier shares the same MASKIN_FALLBACK_OPENROUTER_KEY — the operator's single OR account underwrites both."
+					],
+					"files": [],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "workspace-settings",
+					"title": "Workspace Settings Schema",
+					"kind": "component",
+					"x": 480,
+					"y": 60,
+					"width": 360,
+					"height": 200,
+					"summaryLines": 6,
+					"summary": "packages/shared/src/schemas/workspaces.ts — Zod schema that governs every per-workspace configuration field stored in the workspaces.settings jsonb column. Relevant sub-schemas: billing (plan enum, Stripe IDs, period timestamps, hard_cap_tokens, status), llm_keys (anthropic / openai), custom_llm (enabled, base_url, api_key, model), claude_oauth (encrypted tokens). The schema is the single source of truth consumed by both the backend (Drizzle queries, route validation) and the frontend (type inference).",
+					"details": [
+						"plan enum: trial | starter | pro | byollm. Trial routes through Maskin OR; byollm means BYO is active.",
+						"hard_cap_tokens written by the Stripe webhook when a subscription activates.",
+						"period_start / period_end are Stripe current_period_start / current_period_end in Unix seconds.",
+						"Partial Zod parse (.partial().safeParse()) is used defensively at read time to avoid crashing on legacy rows."
+					],
+					"files": [],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "session-manager",
+					"title": "Session Manager",
+					"kind": "component",
+					"x": 60,
+					"y": 310,
+					"width": 360,
+					"height": 200,
+					"summaryLines": 6,
+					"summary": "apps/dev/src/services/session-manager.ts — Orchestrates Docker container creation for agent sessions. Before inserting the session row, it calls resolveLlmRoute() to determine LLM credentials and checkPlanCap() for a pre-flight cap check. If the cap is exceeded, the caller gets HTTP 402 before any row is created. The resolved route is stored on sessions.config.llm_route so billing attribution and usage queries can filter by route without touching container logs.",
+					"details": [
+						"checkPlanCap() runs before the DB INSERT — a 402 response leaves the sessions table untouched.",
+						"resolveLlmRoute() result's envVars are merged into the container environment at startup.",
+						"sessions.inputTokens / outputTokens are written by parseUsageFromLogChunks() when the container finishes, making token sums cheap to query."
+					],
+					"files": [],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "billing-routes",
+					"title": "Billing API Routes",
+					"kind": "component",
+					"x": 480,
+					"y": 310,
+					"width": 360,
+					"height": 200,
+					"summaryLines": 6,
+					"summary": "apps/dev/src/routes/billing.ts + stripe-webhook.ts — Two route files that form the billing API surface. billing.ts exposes GET /api/billing/usage (current plan + tokens_used + resets_in) and POST /api/billing/checkout (creates a Stripe Checkout session and returns the hosted URL). stripe-webhook.ts handles inbound Stripe events: verifies signature, deduplicates via a webhookDeliveries table, and writes billing fields (plan, hard_cap_tokens, period_start/end, status) back to workspace.settings.",
+					"details": [
+						"POST /api/billing/checkout reads the existing stripe_customer_id to reuse the Stripe Customer across plan upgrades.",
+						"Stripe events handled: checkout.session.completed, customer.subscription.created/updated/deleted, invoice.paid/payment_failed.",
+						"Webhook deduplication: webhookDeliveries table with a unique (provider, external_event_id) index prevents double-processing.",
+						"On paid plan activation (checkout.session.completed), settingsAfterPaidPlanActivation() strips BYO keys from settings atomically."
+					],
+					"files": [],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "billing-ui",
+					"title": "Billing Settings UI",
+					"kind": "component",
+					"x": 270,
+					"y": 560,
+					"width": 360,
+					"height": 200,
+					"summaryLines": 6,
+					"summary": "apps/web/src/components/settings/billing-section.tsx — Settings panel rendered under Settings → Keys. Shows the active plan label, a status badge (Active/Past due/Canceled), a token-usage progress bar (X / Y tokens · resets in Nd), and upgrade/downgrade CTAs. useBillingUsage() polls GET /api/billing/usage; useStripeCheckout() calls POST /api/billing/checkout and redirects to the returned Stripe URL. A 'Switch to bring-your-own' dialog explains that saving any BYO credential will atomically cancel the paid subscription.",
+					"details": [
+						"Progress bar turns warning-colored at 85% and error-colored at 100%.",
+						"formatTokens() renders large token counts as '32M', '96M' etc.",
+						"The Stripe billing portal link (manage subscription, invoices) is shown only for paid plans with a stripe_customer_id."
+					],
+					"files": [],
+					"comments": [],
+					"links": []
+				}
+			],
+			"edges": [],
+			"tour": [
+				{
+					"nodeId": "workspace-settings",
+					"title": "Start with the data model",
+					"body": "The billing field in workspaces.settings is the central state that every other component reads. Understanding its shape — plan enum, Stripe IDs, period timestamps, hard_cap_tokens — is the prerequisite for following the rest of the change."
+				},
+				{
+					"nodeId": "llm-routing",
+					"title": "LLM routing priority chain",
+					"body": "resolveLlmRoute() is the function that decides which credentials land in the agent container. The new 'maskin_plan' tier sits at priority #2, above BYO sources. The route tag persisted on sessions.config.llm_route is what makes token attribution cheap — it's a filter, not a join."
+				},
+				{
+					"nodeId": "session-manager",
+					"title": "Pre-flight cap check at session creation",
+					"body": "The cap check runs before the DB INSERT for a session, so an over-cap workspace gets HTTP 402 without creating a half-formed row. This is the contract the over-cap banner UI task (dcfe3afe) depends on."
+				},
+				{
+					"nodeId": "billing-routes",
+					"title": "Stripe checkout and webhook lifecycle",
+					"body": "billing.ts initiates checkout; stripe-webhook.ts closes the loop by writing plan/cap/period back to workspace.settings when Stripe fires events. The mutual-exclusion stripping (BYO keys removed on paid plan activation) also happens here."
+				},
+				{
+					"nodeId": "billing-ui",
+					"title": "The user-visible surface",
+					"body": "BillingSection in Settings → Keys is the only UI surface this PR adds. It's wired to the same /api/billing/usage endpoint that the cap enforcement reads, so the progress bar and the 402 logic share a single usage number."
+				}
+			]
+		},
+		{
+			"id": "data-flow",
+			"label": "Data flow graph",
+			"color": "#34895c",
+			"summary": "How billing state, Stripe events, token counts, and cap decisions move through the system.",
+			"nodes": [
+				{
+					"id": "user-checkout",
+					"title": "User: start checkout",
+					"kind": "input",
+					"x": 80,
+					"y": 60,
+					"summary": "User clicks 'Upgrade to Starter/Pro' in Settings → Keys. Frontend calls POST /api/billing/checkout.",
+					"details": [
+						"useStripeCheckout() mutation in apps/web/src/hooks/use-billing.ts fires POST /api/billing/checkout with {plan, success_url, cancel_url}.",
+						"On success, window.location.href is set to the returned Stripe hosted checkout URL."
+					],
+					"files": [
+						{
+							"path": "apps/web/src/hooks/use-billing.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-7d01115bfef07c3f151315561135ceb994f062f980df9aeafbf1d2d2867f3525"
+						}
+					],
+					"comments": [],
+					"links": [{ "label": "PR", "url": "https://github.com/sindre-ai/maskin/pull/518" }]
+				},
+				{
+					"id": "stripe-checkout-api",
+					"title": "POST /api/billing/checkout",
+					"kind": "api",
+					"x": 280,
+					"y": 60,
+					"summary": "Creates a Stripe Checkout session and returns the hosted URL. Reuses existing stripe_customer_id if present.",
+					"details": [
+						"Reads workspace settings to find existing stripe_customer_id — ensures the same Stripe Customer is reused across plan changes.",
+						"Calls createCheckoutSession() which embeds workspaceId in client_reference_id and subscription metadata for webhook resolution.",
+						"readStripeEnv() at request time throws 500 if Stripe vars are missing — fails clearly rather than silently."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/routes/billing.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-fa040542c73dee4e1952474080423923e472d6a4da5d7bfa6fcb9c0988b9c841"
+						},
+						{
+							"path": "apps/dev/src/lib/stripe.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-1e9af5f7786c294e59798cb4a4242bb34b55d5c913ec33920f99853eec3f2690"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "stripe-webhook",
+					"title": "POST /api/webhooks/stripe",
+					"kind": "api",
+					"x": 500,
+					"y": 60,
+					"summary": "Verifies Stripe signature, deduplicates via webhookDeliveries table, and writes billing fields back to workspace.settings.",
+					"details": [
+						"Event types handled: checkout.session.completed, customer.subscription.{created,updated,deleted}, invoice.{paid,payment_failed}.",
+						"resolveWorkspaceIdFromEvent() tries client_reference_id first, then object.metadata.workspace_id.",
+						"On checkout.session.completed: writes billing.plan, billing.hard_cap_tokens, billing.period_start, billing.status = 'active' and strips BYO keys via settingsAfterPaidPlanActivation().",
+						"On invoice.paid: updates period_start, period_end, resets hard_cap_tokens from env for the renewal period.",
+						"Dedup: INSERT INTO webhook_deliveries ON CONFLICT DO NOTHING — if already processed, returns {ok:true, skipped:true, reason:'already_processed'}."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/routes/stripe-webhook.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-866d7665a1c4eccbecfe8d6e359cecaf3f7709ea65f66ab57f1a3aa5fe091ba8"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "workspace-billing",
+					"title": "workspaces.settings.billing",
+					"kind": "state",
+					"x": 500,
+					"y": 240,
+					"summary": "Jsonb field on the workspaces row. Ground truth for plan, Stripe IDs, period dates, cap, and subscription status.",
+					"details": [
+						"plan: 'trial' | 'starter' | 'pro' | 'byollm'",
+						"hard_cap_tokens: written by webhook on activation; falls back to env defaults (MASKIN_STARTER_HARD_CAP_TOKENS etc.) when null.",
+						"period_start / period_end: Stripe current_period_start / current_period_end in Unix seconds.",
+						"status: 'active' | 'past_due' | 'canceled' | 'incomplete' — mirrors Stripe subscription status."
+					],
+					"files": [
+						{
+							"path": "packages/shared/src/schemas/workspaces.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-8abb06139fe48c697eb1b92c6f90942d162836744c176de29198f98db059f4bb"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "session-creation",
+					"title": "POST /api/sessions → pre-flight cap check",
+					"kind": "logic",
+					"x": 80,
+					"y": 380,
+					"summary": "session-manager.createSession() runs checkPlanCap() then resolveLlmRoute() before inserting the session row. A cap breach surfaces as HTTP 402 with no row created.",
+					"details": [
+						"checkPlanCap() sums maskin_plan tokens since period_start for the workspace. Throws PlanCapExceededError({ plan, used, cap, period_end }) if used >= cap.",
+						"resolveLlmRoute() returns {route: 'maskin_plan', envVars: {ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL}} for paid/trial plans.",
+						"app.onError in app-factory.ts catches PlanCapExceededError and returns HTTP 402 with {error:{code:'PLAN_CAP_EXCEEDED', plan, used, cap, period_end}}.",
+						"trial plan uses MASKIN_TRIAL_HARD_CAP_TOKENS (default 100k) as its cap."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/services/session-manager.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-023f945ec7c4d49b259cf7c04bc17f52185f9adc89ab9865c2bd59ffbc3b177a"
+						},
+						{
+							"path": "apps/dev/src/lib/llm-routing.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-1f6c25b09f0a9d9a19ebd5016f8c122ac4eeb8aed3c983811b3039fc52d05d8b"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "sessions-table",
+					"title": "sessions.config.llm_route",
+					"kind": "state",
+					"x": 280,
+					"y": 380,
+					"summary": "Each session row records llm_route='maskin_plan'. This tag is the filter used by token-usage queries — no need to join logs or decode container env.",
+					"details": [
+						"Existing behavior — session-manager already persisted llm_route in config. No schema change needed.",
+						"inputTokens + outputTokens columns accumulate as the container runs; parsed from Claude Code usage output at session end.",
+						"getWorkspacePlanTokenUsage() queries sessions WHERE workspaceId AND llm_route='maskin_plan' AND createdAt >= period_start."
+					],
+					"files": [],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "token-usage-query",
+					"title": "getWorkspacePlanTokenUsage()",
+					"kind": "logic",
+					"x": 500,
+					"y": 380,
+					"summary": "Sums input+output tokens across maskin_plan sessions for a workspace since period_start. Used by both the cap check and the billing usage API.",
+					"details": [
+						"A single Drizzle query: SELECT inputTokens, outputTokens FROM sessions WHERE workspaceId = ? AND config->>'llm_route' = 'maskin_plan' AND createdAt >= periodStart.",
+						"Null tokens treated as 0 — safe for sessions that haven't finished yet.",
+						"periodStartMs defaults to all-time (no date filter) for trial workspaces without a Stripe period."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/lib/llm-routing.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-1f6c25b09f0a9d9a19ebd5016f8c122ac4eeb8aed3c983811b3039fc52d05d8b"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "billing-usage-api",
+					"title": "GET /api/billing/usage",
+					"kind": "api",
+					"x": 280,
+					"y": 540,
+					"summary": "Returns {plan, status, tokens_used, hard_cap_tokens, period_start, period_resets_in_ms, stripe_customer_id, stripe_subscription_id} for the BillingSection progress bar.",
+					"details": [
+						"Reads workspace.settings.billing; if missing, treats workspace as trial.",
+						"Calls getWorkspacePlanTokenUsage() — same query path as the cap check.",
+						"period_resets_in_ms = max(0, periodEndMs - Date.now()) — the frontend formats this as 'resets in 14d'.",
+						"byollm plan: tokens_used returns 0 and period_resets_in_ms returns null."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/routes/billing.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-fa040542c73dee4e1952474080423923e472d6a4da5d7bfa6fcb9c0988b9c841"
+						}
+					],
+					"comments": [],
+					"links": []
+				}
+			],
+			"edges": [
+				{
+					"source": "user-checkout",
+					"target": "stripe-checkout-api",
+					"label": "POST /api/billing/checkout"
+				},
+				{
+					"source": "stripe-checkout-api",
+					"target": "stripe-webhook",
+					"label": "Stripe fires subscription events"
+				},
+				{
+					"source": "stripe-webhook",
+					"target": "workspace-billing",
+					"label": "writes plan / cap / period / status"
+				},
+				{
+					"source": "workspace-billing",
+					"target": "session-creation",
+					"label": "routing decision + cap parameters"
+				},
+				{
+					"source": "session-creation",
+					"target": "sessions-table",
+					"label": "persists llm_route='maskin_plan'"
+				},
+				{
+					"source": "sessions-table",
+					"target": "token-usage-query",
+					"label": "aggregates input+output tokens"
+				},
+				{
+					"source": "token-usage-query",
+					"target": "session-creation",
+					"label": "used >= cap → 402 PlanCapExceeded"
+				},
+				{
+					"source": "token-usage-query",
+					"target": "billing-usage-api",
+					"label": "tokens_used for progress bar"
+				},
+				{
+					"source": "workspace-billing",
+					"target": "billing-usage-api",
+					"label": "plan / cap / period_resets_in_ms"
+				}
+			],
+			"tour": [
+				{
+					"nodeId": "user-checkout",
+					"title": "User initiates upgrade",
+					"body": "The flow starts in Settings → Keys. The user clicks 'Upgrade to Starter' and the frontend POSTs to /api/billing/checkout. Knowing this is the entry point helps orient the rest of the Stripe lifecycle."
+				},
+				{
+					"nodeId": "stripe-checkout-api",
+					"title": "Checkout session creation",
+					"body": "The backend creates a Stripe Checkout session with workspaceId embedded in both client_reference_id and subscription metadata. This dual embedding is what lets the webhook handler resolve the workspace even if only one field survives across Stripe event types."
+				},
+				{
+					"nodeId": "stripe-webhook",
+					"title": "Stripe event closes the loop",
+					"body": "On checkout.session.completed, the webhook writes billing fields to workspace.settings and strips any leftover BYO credentials via settingsAfterPaidPlanActivation(). Idempotent via webhookDeliveries dedup — safe to retry."
+				},
+				{
+					"nodeId": "workspace-billing",
+					"title": "Central state: workspace.settings.billing",
+					"body": "After the webhook runs, hard_cap_tokens and period_start are set. These two fields drive everything downstream — the cap check on session creation and the usage progress bar in Settings."
+				},
+				{
+					"nodeId": "session-creation",
+					"title": "Pre-flight cap check",
+					"body": "Before inserting a session row, checkPlanCap() runs. If the workspace has consumed >= hard_cap_tokens, the caller gets HTTP 402 with {code:'PLAN_CAP_EXCEEDED', used, cap, period_end}. No partial row is created. This is the contract the over-cap banner UI (future task) depends on."
+				},
+				{
+					"nodeId": "sessions-table",
+					"title": "llm_route tag enables cheap attribution",
+					"body": "Recording llm_route='maskin_plan' on each session row means token usage can be aggregated with a simple WHERE filter — no log parsing needed. This is the key design decision that makes per-period usage queries O(sessions) rather than O(log-lines)."
+				},
+				{
+					"nodeId": "token-usage-query",
+					"title": "Shared usage query path",
+					"body": "getWorkspacePlanTokenUsage() is called from both the cap enforcement path and the billing usage API. The progress bar in Settings shows the same number the cap check enforces — they cannot drift."
+				},
+				{
+					"nodeId": "billing-usage-api",
+					"title": "Usage API feeds the UI",
+					"body": "GET /api/billing/usage returns the full snapshot the BillingSection needs. period_resets_in_ms lets the UI show 'resets in 14d' without any date arithmetic in the component."
+				}
+			]
+		},
+		{
+			"id": "code-dependency",
+			"label": "Code dependency graph",
+			"color": "#2e5d9e",
+			"summary": "Which files depend on which. Entry points at left, shared libs at center, tests at right.",
+			"nodes": [
+				{
+					"id": "shared-schema",
+					"title": "packages/shared: workspaces.ts",
+					"kind": "schema",
+					"x": 80,
+					"y": 80,
+					"summary": "Zod schema for WorkspaceSettings including the new billing sub-schema. Imported by every layer that reads or writes billing state.",
+					"details": [
+						"billing.plan enum: 'trial' | 'starter' | 'pro' | 'byollm'",
+						"Adds billing.period_end (for cap error ETA display).",
+						"workspaceSettingsSchema.partial().safeParse() is the standard defensive read pattern used by billing.ts and stripe-webhook.ts."
+					],
+					"files": [
+						{
+							"path": "packages/shared/src/schemas/workspaces.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-8abb06139fe48c697eb1b92c6f90942d162836744c176de29198f98db059f4bb"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "billing-defaults",
+					"title": "lib/billing-defaults.ts",
+					"kind": "lib",
+					"x": 300,
+					"y": 40,
+					"summary": "Single source of truth for cap literals (TRIAL_HARD_CAP_DEFAULT_TOKENS=100k, STARTER=32M, PRO=96M) and the parsePositiveIntEnv() helper.",
+					"details": [
+						"parsePositiveIntEnv() uses a /^\\d+$/ shape check before Number() to reject scientific notation, decimals, and underscores.",
+						"Clamps to Number.MAX_SAFE_INTEGER to guard against pathological inputs like '1e308'.",
+						"A CI script (scripts/verify-billing-cap-literals.mjs) checks that .env.example and billing-section tests reference the same literal values — bump here and CI fails until all three are in sync."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/lib/billing-defaults.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-c9ebb627ac52c549494f4da553a7d34da07e1c43830474210e63caa8553bedc0"
+						},
+						{
+							"path": "scripts/verify-billing-cap-literals.mjs",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-5f5aa50d2edd7f4c8acafcf543ee3c360a1085a667ef51a03e686cf165a8e8ac"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "stripe-lib",
+					"title": "lib/stripe.ts",
+					"kind": "lib",
+					"x": 300,
+					"y": 200,
+					"summary": "Stripe SDK wrapper: readStripeEnv(), getStripeClient(), createCheckoutSession(), verifyStripeWebhook(), and event helpers (resolveWorkspaceIdFromEvent, planForPriceId, hardCapForPlan, mapSubscriptionStatus).",
+					"details": [
+						"readStripeEnv() throws at first-request if any required var is missing — no silent failures.",
+						"getStripeClient() is a module-level singleton; resetStripeClientForTests() drops the cache for test isolation.",
+						"resolveWorkspaceIdFromEvent(): tries client_reference_id (checkout), then metadata.workspace_id (subscription/invoice events)."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/lib/stripe.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-1e9af5f7786c294e59798cb4a4242bb34b55d5c913ec33920f99853eec3f2690"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "llm-routing-lib",
+					"title": "lib/llm-routing.ts",
+					"kind": "lib",
+					"x": 300,
+					"y": 360,
+					"summary": "Core routing logic: resolveLlmRoute(), checkPlanCap(), PlanCapExceededError, getWorkspacePlanTokenUsage(). Central dependency for session creation and the billing usage API.",
+					"details": [
+						"New in this PR: LLM_ROUTE_MASKIN_PLAN constant, buildMaskinPlanEnv(), checkPlanCap(), getWorkspacePlanTokenUsage(), PlanCapExceededError.",
+						"maskin_plan sits at priority #2 — below agent override, above custom_llm. trial is in MASKIN_PLAN_ROUTED_PLANS alongside starter/pro."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/lib/llm-routing.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-1f6c25b09f0a9d9a19ebd5016f8c122ac4eeb8aed3c983811b3039fc52d05d8b"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "mutex-lib",
+					"title": "lib/llm-source-mutex.ts",
+					"kind": "lib",
+					"x": 300,
+					"y": 520,
+					"summary": "Pure functions implementing the BYOLLM ↔ paid plan mutual exclusion. hasActivePaidPlan(), cancelActivePaidSubscription(), billingAfterByoTransition(), settingsAfterPaidPlanActivation(), patchAddsByoSource().",
+					"details": [
+						"Cancel-before-write order: Stripe cancel runs first; if it throws, the DB write is skipped so the workspace isn't stuck in byollm without actually canceling.",
+						"settingsAfterPaidPlanActivation() strips llm_keys.anthropic, custom_llm, and claude_oauth from settings in one immutable merge.",
+						"patchAddsByoSource() checks that the incoming PATCH is actually adding a key (not null/deleting) before triggering the mutex."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/lib/llm-source-mutex.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-b59940d9014b3b0741a62769241c599d21bcf37a9f6fe05bc314d573b8d61996"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "billing-route",
+					"title": "routes/billing.ts",
+					"kind": "route",
+					"x": 560,
+					"y": 120,
+					"summary": "Hono route handler for GET /api/billing/usage and POST /api/billing/checkout.",
+					"details": [
+						"Imports: billing-defaults (fallback caps), llm-routing (getWorkspacePlanTokenUsage), stripe (createCheckoutSession).",
+						"planHardCapFallback() — defensive read that won't throw if Stripe isn't configured, so /billing/usage works even for non-Stripe deployments."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/routes/billing.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-fa040542c73dee4e1952474080423923e472d6a4da5d7bfa6fcb9c0988b9c841"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "webhook-route",
+					"title": "routes/stripe-webhook.ts",
+					"kind": "route",
+					"x": 560,
+					"y": 300,
+					"summary": "Handles inbound Stripe webhook events. Imports stripe.ts for verification/helpers and llm-source-mutex.ts for the paid-plan activation clearing logic.",
+					"details": [
+						"Raw body read before Hono JSON parsing (required for Stripe signature verification).",
+						"Uses sql`ON CONFLICT DO NOTHING` for idempotent delivery via webhookDeliveries table."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/routes/stripe-webhook.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-866d7665a1c4eccbecfe8d6e359cecaf3f7709ea65f66ab57f1a3aa5fe091ba8"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "workspaces-route",
+					"title": "routes/workspaces.ts (PATCH)",
+					"kind": "route",
+					"x": 560,
+					"y": 460,
+					"summary": "PATCH /api/workspaces/:id is extended with BYOLLM mutex logic: if the patch adds a BYO key and there's an active paid plan, cancel Stripe and rewrite billing.",
+					"details": [
+						"Imports llm-source-mutex.ts (patchAddsByoSource, hasActivePaidPlan, cancelActivePaidSubscription, billingAfterByoTransition).",
+						"Stripe cancel runs before DB update — failure surfaces as 5xx and leaves the row unchanged.",
+						"github-code-quality bot flagged an unused 'calls' destructuring in byollm-mutex.test.ts (line 190) — minor cleanup needed."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/routes/workspaces.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-f0d6e58971f522527793a62392d977776dc3d2820102f92fcbcc9f34158901c9"
+						}
+					],
+					"comments": [
+						{
+							"author": "github-code-quality[bot]",
+							"body": "Unused variable 'calls' in byollm-mutex.test.ts line 190. Remove from destructuring in the 'skips Stripe call when there is no live subscription' test case.",
+							"url": "https://github.com/sindre-ai/maskin/pull/518#discussion_r3373226734"
+						}
+					],
+					"links": []
+				},
+				{
+					"id": "session-manager-dep",
+					"title": "services/session-manager.ts",
+					"kind": "service",
+					"x": 560,
+					"y": 620,
+					"summary": "Imports checkPlanCap and resolveLlmRoute from llm-routing.ts. Runs the pre-flight check before createSession's DB INSERT.",
+					"details": [
+						"PlanCapExceededError propagates up to app.onError (app-factory.ts) which maps it to HTTP 402.",
+						"No schema changes to sessions table — llm_route was already persisted in config jsonb."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/services/session-manager.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-023f945ec7c4d49b259cf7c04bc17f52185f9adc89ab9865c2bd59ffbc3b177a"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "tests",
+					"title": "Test suite (1498 new lines)",
+					"kind": "test",
+					"x": 820,
+					"y": 360,
+					"summary": "llm-routing.test.ts (281 lines), billing.test.ts (560), stripe-webhook.test.ts (426), byollm-mutex.test.ts (455), error-handling.test.ts (58). Covers all routing precedence cases, cap enforcement, webhook event handling, mutex transitions, and 402 error shape.",
+					"details": [
+						"llm-routing.test.ts: 11 new maskin_plan precedence cases + 25 total routing tests.",
+						"stripe-webhook.test.ts: checkout.session.completed writes correct fields; subscription.deleted clears plan; invoice.paid resets period.",
+						"byollm-mutex.test.ts: BYO key → Stripe cancel → plan=byollm; paid plan activation → BYO keys stripped.",
+						"error-handling.test.ts: 402 PlanCapExceededError body shape matches the frontend contract."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/__tests__/lib/llm-routing.test.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-cf22c1a5f018c2b4c1450e35575639fbf316b524b13770c6e1d308cd05976383"
+						},
+						{
+							"path": "apps/dev/src/__tests__/routes/billing.test.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-3ce4fe736d29a615e3caab7905aa9cedb396df0e06b1d2e0475fa3bc970aeac9"
+						},
+						{
+							"path": "apps/dev/src/__tests__/routes/stripe-webhook.test.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-15b28a82a540fde89dc037d33035c2771fe92bf5ab8f84c1a29a966bf86dcee4"
+						},
+						{
+							"path": "apps/dev/src/__tests__/routes/byollm-mutex.test.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-9727238ca29e061d4ef0eeb565098ece865c2ed1914ecf3efbd90f19dcb260cd"
+						}
+					],
+					"comments": [
+						{
+							"author": "github-code-quality[bot]",
+							"body": "Unused variable 'calls' in byollm-mutex.test.ts line 190. Remove the 'calls' binding from destructuring in the 'skips Stripe call when there is no live subscription to cancel' test.",
+							"url": "https://github.com/sindre-ai/maskin/pull/518#discussion_r3436149060"
+						}
+					],
+					"links": []
+				}
+			],
+			"edges": [
+				{
+					"source": "billing-defaults",
+					"target": "llm-routing-lib",
+					"label": "TRIAL_HARD_CAP_DEFAULT_TOKENS, parsePositiveIntEnv"
+				},
+				{
+					"source": "billing-defaults",
+					"target": "billing-route",
+					"label": "cap fallbacks + parsePositiveIntEnv"
+				},
+				{ "source": "shared-schema", "target": "stripe-lib", "label": "MaskinPlan type" },
+				{
+					"source": "shared-schema",
+					"target": "billing-route",
+					"label": "workspaceSettingsSchema"
+				},
+				{
+					"source": "shared-schema",
+					"target": "webhook-route",
+					"label": "workspaceSettingsSchema"
+				},
+				{
+					"source": "stripe-lib",
+					"target": "billing-route",
+					"label": "createCheckoutSession, getStripeClient"
+				},
+				{ "source": "stripe-lib", "target": "webhook-route", "label": "verify + event helpers" },
+				{
+					"source": "mutex-lib",
+					"target": "webhook-route",
+					"label": "settingsAfterPaidPlanActivation"
+				},
+				{
+					"source": "mutex-lib",
+					"target": "workspaces-route",
+					"label": "patchAddsByoSource, cancelActivePaidSubscription"
+				},
+				{
+					"source": "llm-routing-lib",
+					"target": "billing-route",
+					"label": "getWorkspacePlanTokenUsage"
+				},
+				{
+					"source": "llm-routing-lib",
+					"target": "session-manager-dep",
+					"label": "checkPlanCap, resolveLlmRoute"
+				},
+				{ "source": "billing-route", "target": "tests", "label": "tested by billing.test.ts" },
+				{
+					"source": "webhook-route",
+					"target": "tests",
+					"label": "tested by stripe-webhook.test.ts"
+				},
+				{
+					"source": "workspaces-route",
+					"target": "tests",
+					"label": "tested by byollm-mutex.test.ts"
+				},
+				{ "source": "llm-routing-lib", "target": "tests", "label": "tested by llm-routing.test.ts" }
+			],
+			"tour": [
+				{
+					"nodeId": "shared-schema",
+					"title": "Schema is the root dependency",
+					"body": "Everything that reads or writes billing state imports the WorkspaceSettings type from packages/shared. Start here to understand what 'billing' means as a data shape before following the routes that read it."
+				},
+				{
+					"nodeId": "billing-defaults",
+					"title": "Cap literals are centralized",
+					"body": "billing-defaults.ts is the single source for TRIAL/STARTER/PRO hard cap defaults and the env parser. A CI script (verify-billing-cap-literals.mjs) enforces that .env.example and the frontend tests agree with these literals — change one, CI fails on the others."
+				},
+				{
+					"nodeId": "stripe-lib",
+					"title": "Stripe helpers are pure and testable",
+					"body": "stripe.ts wraps the Stripe SDK with pure helper functions (no route handlers). This makes billing.ts and stripe-webhook.ts easy to unit test by mocking just getStripeClient and verifyStripeWebhook."
+				},
+				{
+					"nodeId": "llm-routing-lib",
+					"title": "The new maskin_plan tier in routing",
+					"body": "llm-routing.ts is extended with buildMaskinPlanEnv(), checkPlanCap(), and PlanCapExceededError. This is the core of the bet — everything else is the billing lifecycle that keeps this routing tier in the right state."
+				},
+				{
+					"nodeId": "mutex-lib",
+					"title": "BYOLLM mutex is a pure module",
+					"body": "llm-source-mutex.ts has no side-effects — all pure functions. The Stripe cancel call happens in the route handler (workspaces.ts) before invoking billingAfterByoTransition(). This makes the mutex logic independently testable."
+				},
+				{
+					"nodeId": "billing-route",
+					"title": "Billing routes: checkout + usage",
+					"body": "billing.ts is a small two-endpoint file. The interesting detail is planHardCapFallback() — it reads env defensively (won't throw if Stripe is unconfigured) so /api/billing/usage keeps serving non-Stripe deployments."
+				},
+				{
+					"nodeId": "webhook-route",
+					"title": "Webhook handler closes the Stripe loop",
+					"body": "stripe-webhook.ts is the most stateful piece — it writes billing fields on checkout completion and subscription events, and idempotently deduplicates via webhookDeliveries. Read the event dispatch table carefully."
+				},
+				{
+					"nodeId": "tests",
+					"title": "~1500 lines of tests cover the new paths",
+					"body": "The test suite covers all routing precedence cases, all Stripe event types, mutex transitions in both directions, and the 402 error body shape. The github-code-quality bot flagged an unused 'calls' variable in byollm-mutex.test.ts line 190 — a minor cleanup."
+				}
+			]
+		},
+		{
+			"id": "user-action",
+			"label": "User action graph",
+			"color": "#754dac",
+			"summary": "What the user does and how each action flows through the implementation.",
+			"nodes": [
+				{
+					"id": "open-settings",
+					"title": "Navigate to Settings → Keys",
+					"kind": "surface",
+					"x": 80,
+					"y": 80,
+					"summary": "User opens the workspace settings keys page. The BillingSection component is rendered as the first section, above the BYO key inputs.",
+					"details": [
+						"Route: apps/web/src/routes/_authed/$workspaceId/settings/keys.tsx",
+						"BillingSection is mounted with the workspaceId prop; useBillingUsage() fires GET /api/billing/usage immediately.",
+						"While loading: 'Loading…' placeholder. On error: error message. On success: plan card renders."
+					],
+					"files": [
+						{
+							"path": "apps/web/src/routes/_authed/$workspaceId/settings/keys.tsx",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-df56802d04c715d080213b4f1e455395c980e6790c1ac2b1546cad9d3c36868e"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "view-billing-section",
+					"title": "See plan card + usage bar",
+					"kind": "surface",
+					"x": 80,
+					"y": 240,
+					"summary": "BillingSection renders: plan label ('Trial', 'Starter — $20/mo', 'Pro — $60/mo', 'Bring-your-own'), status badge, token progress bar, and action buttons.",
+					"details": [
+						"Progress bar: width = (tokens_used / hard_cap_tokens) * 100%. Turns warning at 85%, error at 100%.",
+						"formatTokens() renders 32000000 as '32M', 100000 as '100k'.",
+						"formatResetsIn() renders remaining ms as 'resets in 14d' / 'resets in 3h' / 'resets soon'.",
+						"For byollm: progress bar hidden, descriptive text shown instead.",
+						"Plan is 'trial' by default — no billing row needed."
+					],
+					"files": [
+						{
+							"path": "apps/web/src/components/settings/billing-section.tsx",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-df56802d04c715d080213b4f1e455395c980e6790c1ac2b1546cad9d3c36868e"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "click-upgrade",
+					"title": "Click 'Upgrade to Starter/Pro'",
+					"kind": "action",
+					"x": 80,
+					"y": 400,
+					"summary": "User clicks an upgrade button. useStripeCheckout() fires POST /api/billing/checkout. On success, browser navigates to the Stripe hosted checkout URL.",
+					"details": [
+						"Button is disabled while checkout.isPending to prevent double-submit.",
+						"success_url = current page + '?billing=success'; cancel_url = current page + '?billing=cancel'.",
+						"On checkout error: inline error message below the button row."
+					],
+					"files": [
+						{
+							"path": "apps/web/src/hooks/use-billing.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-7d01115bfef07c3f151315561135ceb994f062f980df9aeafbf1d2d2867f3525"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "stripe-payment",
+					"title": "Complete payment on Stripe",
+					"kind": "external",
+					"x": 340,
+					"y": 400,
+					"summary": "User completes the Stripe hosted checkout form. Stripe fires checkout.session.completed webhook and redirects back to success_url.",
+					"details": [
+						"Stripe fires the webhook before the redirect — by the time the user lands on ?billing=success, billing fields may already be written.",
+						"The success_url redirect returns to settings/keys — BillingSection re-fetches /api/billing/usage and shows the new paid plan."
+					],
+					"files": [],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "switch-to-byo",
+					"title": "Click 'Switch to bring-your-own'",
+					"kind": "action",
+					"x": 340,
+					"y": 80,
+					"summary": "For paid plan users: opens SwitchToByoDialog explaining that saving a BYO key will atomically cancel the Stripe subscription.",
+					"details": [
+						"Dialog text: 'To cancel your paid plan, set up one of the bring-your-own options below — Claude subscription, Anthropic API key, or a custom model endpoint. Saving any of them cancels your active Maskin subscription atomically.'",
+						"Only shows for users on starter/pro with status=active.",
+						"After dismissing the dialog, user saves a BYO key in the rows below — that PATCH triggers the mutex."
+					],
+					"files": [
+						{
+							"path": "apps/web/src/components/settings/billing-section.tsx",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-df56802d04c715d080213b4f1e455395c980e6790c1ac2b1546cad9d3c36868e"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "save-byo-key",
+					"title": "Save a BYO key or endpoint",
+					"kind": "action",
+					"x": 600,
+					"y": 80,
+					"summary": "User saves an Anthropic API key, custom endpoint, or Claude OAuth. PATCH /api/workspaces/:id triggers the mutex: Stripe subscription is canceled, billing.plan flips to 'byollm'.",
+					"details": [
+						"patchAddsByoSource() detects the incoming key is non-null before triggering the mutex.",
+						"cancelActivePaidSubscription() tolerates 'resource_missing' (already canceled) so stale Stripe state can't block the transition.",
+						"After the workspace update, BillingSection re-fetches and shows plan='Bring-your-own', status='Inactive'."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/routes/workspaces.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-f0d6e58971f522527793a62392d977776dc3d2820102f92fcbcc9f34158901c9"
+						},
+						{
+							"path": "apps/dev/src/lib/llm-source-mutex.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-b59940d9014b3b0741a62769241c599d21bcf37a9f6fe05bc314d573b8d61996"
+						}
+					],
+					"comments": [],
+					"links": []
+				},
+				{
+					"id": "start-session-capped",
+					"title": "Start session (cap exceeded → 402)",
+					"kind": "error",
+					"x": 600,
+					"y": 400,
+					"summary": "User starts an agent session after consuming all plan tokens. checkPlanCap() throws PlanCapExceededError; the API returns HTTP 402 with {code:'PLAN_CAP_EXCEEDED', plan, used, cap, period_end}.",
+					"details": [
+						"The 402 body is the contract for the over-cap banner UI (future task dcfe3afe) — period_end enables showing a reset ETA.",
+						"No session row is created — the pre-flight check runs before the DB INSERT.",
+						"trial plan: default cap is 100k tokens (MASKIN_TRIAL_HARD_CAP_TOKENS env, default 100k)."
+					],
+					"files": [
+						{
+							"path": "apps/dev/src/lib/llm-routing.ts",
+							"url": "https://github.com/sindre-ai/maskin/pull/518/files#diff-1f6c25b09f0a9d9a19ebd5016f8c122ac4eeb8aed3c983811b3039fc52d05d8b"
+						}
+					],
+					"comments": [],
+					"links": []
+				}
+			],
+			"edges": [
+				{
+					"source": "open-settings",
+					"target": "view-billing-section",
+					"label": "renders BillingSection, polls /api/billing/usage"
+				},
+				{
+					"source": "view-billing-section",
+					"target": "click-upgrade",
+					"label": "upgrade buttons shown for trial/non-active"
+				},
+				{
+					"source": "view-billing-section",
+					"target": "switch-to-byo",
+					"label": "switch button shown for active paid plan"
+				},
+				{
+					"source": "click-upgrade",
+					"target": "stripe-payment",
+					"label": "POST /api/billing/checkout → redirect to Stripe"
+				},
+				{
+					"source": "stripe-payment",
+					"target": "view-billing-section",
+					"label": "redirect back → re-fetches usage, shows paid plan"
+				},
+				{
+					"source": "switch-to-byo",
+					"target": "save-byo-key",
+					"label": "user adds BYO key → PATCH /api/workspaces/:id"
+				},
+				{
+					"source": "save-byo-key",
+					"target": "view-billing-section",
+					"label": "plan flips to byollm → re-fetches usage"
+				},
+				{
+					"source": "view-billing-section",
+					"target": "start-session-capped",
+					"label": "100% bar → next session attempt → 402"
+				}
+			],
+			"tour": [
+				{
+					"nodeId": "open-settings",
+					"title": "Entry point: Settings → Keys",
+					"body": "The BillingSection is mounted here. On load it fetches /api/billing/usage — the first network request in the user journey. No billing row → trial plan shown by default."
+				},
+				{
+					"nodeId": "view-billing-section",
+					"title": "The plan card is the user's billing dashboard",
+					"body": "This component shows everything the user needs at a glance: plan, status, token consumption, and time until reset. It's driven entirely by GET /api/billing/usage — no client-side state."
+				},
+				{
+					"nodeId": "click-upgrade",
+					"title": "Upgrade initiates a Stripe redirect",
+					"body": "The upgrade button calls POST /api/billing/checkout and immediately navigates to the returned URL. This is a hard navigation (window.location.href), not a React route change — the user leaves the app briefly."
+				},
+				{
+					"nodeId": "stripe-payment",
+					"title": "Stripe fires the webhook before the redirect",
+					"body": "Stripe's webhook is typically delivered before the user is redirected back to success_url. The billing fields should already be written by the time BillingSection re-renders on the success URL."
+				},
+				{
+					"nodeId": "switch-to-byo",
+					"title": "Switching to BYO cancels the Stripe sub",
+					"body": "The dialog surfaces the atomicity guarantee to the user: saving any BYO key cancels the paid plan in the same backend write. This prevents a workspace from being charged while running on a BYO key."
+				},
+				{
+					"nodeId": "save-byo-key",
+					"title": "The mutex runs in the PATCH handler",
+					"body": "PATCH /api/workspaces/:id is the trigger. patchAddsByoSource() detects the incoming key, cancelActivePaidSubscription() runs first (Stripe-side), then billingAfterByoTransition() writes the local state. Order matters: Stripe failure surfaces as 5xx and leaves the row unchanged."
+				},
+				{
+					"nodeId": "start-session-capped",
+					"title": "Over-cap: 402 before any row is created",
+					"body": "When tokens_used >= hard_cap_tokens, checkPlanCap() throws PlanCapExceededError. app.onError maps it to HTTP 402 with {code, plan, used, cap, period_end}. The period_end field lets the future over-cap banner show 'resets in Xd' without a separate API call."
+				}
+			]
+		}
+	]
+}

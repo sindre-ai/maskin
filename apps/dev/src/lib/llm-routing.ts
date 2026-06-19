@@ -212,20 +212,21 @@ export async function checkPlanCap(params: {
 	wsSettings: WorkspaceSettings
 }): Promise<void> {
 	const billing = params.wsSettings.billing
-	if (!billing || !MASKIN_PLAN_ROUTED_PLANS.has(billing.plan)) return
+	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'byollm'
+	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return
 
-	const plan = billing.plan as MaskinPlan
-	const cap = effectivePlanCap(plan, billing.hard_cap_tokens)
+	const maskinPlan = plan as MaskinPlan
+	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_tokens)
 	if (cap === null) return
 
-	const used = await getWorkspacePlanTokenUsage(params.db, params.workspaceId, billing.period_start)
+	const used = await getWorkspacePlanTokenUsage(params.db, params.workspaceId, billing?.period_start)
 	if (used < cap) return
 
 	throw new PlanCapExceededError({
-		plan,
+		plan: maskinPlan,
 		used,
 		cap,
-		periodEnd: effectivePeriodEnd(billing.period_start, billing.period_end),
+		periodEnd: effectivePeriodEnd(billing?.period_start, billing?.period_end),
 	})
 }
 
@@ -278,7 +279,8 @@ function buildMaskinPlanEnv(
 	billing: WorkspaceSettings['billing'],
 	fallback: FallbackConfig,
 ): Record<string, string> | null {
-	if (!billing || !MASKIN_PLAN_ROUTED_PLANS.has(billing.plan)) return null
+	const plan = billing?.plan ?? 'trial'
+	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return null
 	if (!fallback.apiKey) return null
 	return {
 		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',

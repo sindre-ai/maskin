@@ -133,7 +133,7 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 						</div>
 						<div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
 							<div
-								className={`h-full transition-all ${pct >= 100 ? 'bg-error' : pct >= 85 ? 'bg-warning' : 'bg-accent'}`}
+								className={`h-full transition-all ${pct >= 100 ? 'bg-error' : pct >= 85 ? 'bg-warning' : 'bg-primary'}`}
 								style={{ width: `${pct}%` }}
 								role="progressbar"
 								aria-valuenow={pct}
