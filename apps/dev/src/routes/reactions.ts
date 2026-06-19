@@ -191,14 +191,18 @@ app.openapi(removeReactionRoute, (async (c) => {
 	return c.json({ removed: true as const }, 200)
 }) as RouteHandler<typeof removeReactionRoute, Env>)
 
-// GET /api/reactions?object_id=… — bulk fetch reactions on every commented
-// event under one object, returned as a map keyed by event_id so the client
-// renders chip-rows in O(1) per comment.
+// GET /api/reactions — bulk fetch reactions. Two opt-in shapes:
+//   ?object_id=…              → every event under one object (activity feed)
+//   ?event_ids=10,11,12       → windowed: only the events the client lists
+//                               (chat transcripts where the visible window is
+//                               a tiny slice of the full thread).
+// Either shape is capped by ?limit=N (default 500, max 1000) so a long-lived
+// thread can't produce a 1MB+ response on a single round-trip.
 const listReactionsRoute = createRoute({
 	method: 'get',
 	path: '/',
 	tags: ['Reactions'],
-	summary: 'List reactions for every event under an object',
+	summary: 'List reactions for the events under an object or a given window',
 	request: {
 		headers: workspaceIdHeader,
 		query: reactionsByObjectQuerySchema,
@@ -218,44 +222,56 @@ const listReactionsRoute = createRoute({
 app.openapi(listReactionsRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { object_id: objectId } = c.req.valid('query')
+	const { object_id: objectId, event_ids: eventIds, limit } = c.req.valid('query')
 
-	// Verify the object belongs to the caller's workspace before exposing its
-	// reaction list — same defence-in-depth as the subscriptions route, because
-	// reactions carry actor ids that an attacker could otherwise probe by
-	// guessing object ids from other workspaces.
-	const [object] = await db
-		.select({ id: objects.id })
-		.from(objects)
-		.where(and(eq(objects.id, objectId), eq(objects.workspaceId, workspaceId)))
-		.limit(1)
-	if (!object) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	// Resolve the set of event ids the response covers, applying the workspace
+	// boundary in both shapes. The reactions query then keys off this set
+	// without re-checking workspaces row by row.
+	let scopedEventIds: number[]
 
-	// Find every event id scoped to this object and its workspace; reactions
-	// can only live on events that pass this check, so the second query inherits
-	// the workspace boundary without re-applying it.
-	const objectEvents = await db
-		.select({ id: events.id })
-		.from(events)
-		.where(and(eq(events.workspaceId, workspaceId), eq(events.entityId, objectId)))
+	if (eventIds && eventIds.length > 0) {
+		// Windowed shape — confirm every event lives in the caller's workspace.
+		// Events outside the workspace silently drop, matching the object_id path
+		// where non-existent objects 404 and unreachable events are absent.
+		const verified = await db
+			.select({ id: events.id })
+			.from(events)
+			.where(and(eq(events.workspaceId, workspaceId), inArray(events.id, eventIds)))
+		scopedEventIds = verified.map((e) => e.id)
+	} else if (objectId) {
+		// Object shape — verify the object belongs to the caller's workspace
+		// before exposing its reaction list. Same defence-in-depth as the
+		// subscriptions route: reactions carry actor ids that an attacker could
+		// otherwise probe by guessing object ids from other workspaces.
+		const [object] = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(and(eq(objects.id, objectId), eq(objects.workspaceId, workspaceId)))
+			.limit(1)
+		if (!object) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 
-	if (objectEvents.length === 0) {
+		// Find every event id scoped to this object and its workspace.
+		const objectEvents = await db
+			.select({ id: events.id })
+			.from(events)
+			.where(and(eq(events.workspaceId, workspaceId), eq(events.entityId, objectId)))
+		scopedEventIds = objectEvents.map((e) => e.id)
+	} else {
+		// Schema-level refine() blocks this combination, but keep an explicit
+		// guard so future schema changes can't quietly leak an unscoped fetch.
+		return c.json({ reactionsByEventId: {} })
+	}
+
+	if (scopedEventIds.length === 0) {
 		return c.json({ reactionsByEventId: {} })
 	}
 
 	const rows = await db
 		.select()
 		.from(reactions)
-		.where(
-			and(
-				eq(reactions.workspaceId, workspaceId),
-				inArray(
-					reactions.eventId,
-					objectEvents.map((e) => e.id),
-				),
-			),
-		)
+		.where(and(eq(reactions.workspaceId, workspaceId), inArray(reactions.eventId, scopedEventIds)))
 		.orderBy(asc(reactions.createdAt))
+		.limit(limit)
 
 	const reactionsByEventId: Record<
 		string,

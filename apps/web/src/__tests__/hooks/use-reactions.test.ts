@@ -50,7 +50,9 @@ describe('useReactionsByObject', () => {
 		})
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(api.reactions.listByObject).toHaveBeenCalledWith(workspaceId, objectId)
+		expect(api.reactions.listByObject).toHaveBeenCalledWith(workspaceId, objectId, {
+			eventIds: undefined,
+		})
 		expect(result.current.data?.reactionsByEventId['42']).toHaveLength(1)
 	})
 
@@ -59,6 +61,20 @@ describe('useReactionsByObject', () => {
 			wrapper: TestWrapper,
 		})
 		expect(api.reactions.listByObject).not.toHaveBeenCalled()
+	})
+
+	it('passes eventIds through to the API and scopes the cache key', async () => {
+		vi.mocked(api.reactions.listByObject).mockResolvedValue({ reactionsByEventId: {} })
+
+		const { result } = renderHook(
+			() => useReactionsByObject(workspaceId, objectId, { eventIds: [11, 10, 12] }),
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.reactions.listByObject).toHaveBeenCalledWith(workspaceId, objectId, {
+			eventIds: [11, 10, 12],
+		})
 	})
 })
 

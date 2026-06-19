@@ -98,7 +98,13 @@ export const queryKeys = {
 			['subscriptions', 'unread', workspaceId, entityType ?? 'all'] as const,
 	},
 	reactions: {
-		byObject: (objectId: string) => ['reactions', 'by-object', objectId] as const,
+		// When `eventIds` is supplied (windowed chat-style fetch), the cache key
+		// includes the sorted id list so two windows on the same object don't
+		// stomp each other. Caller deduplicates upstream; we just sort here.
+		byObject: (objectId: string, eventIds?: number[]) =>
+			eventIds && eventIds.length > 0
+				? (['reactions', 'by-object', objectId, [...eventIds].sort((a, b) => a - b)] as const)
+				: (['reactions', 'by-object', objectId] as const),
 	},
 	userDisplaySettings: {
 		list: (workspaceId: string) => ['user-display-settings', workspaceId, 'list'] as const,

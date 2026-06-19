@@ -4,18 +4,28 @@ import { getStoredActor } from '../lib/auth'
 import { queryKeys } from '../lib/query-keys'
 
 /**
- * Fetches reactions for every event under a given object in one round-trip,
- * returned as a Record keyed by stringified event id. The activity feed calls
- * this once per object and each `ActivityComment` looks up its own row.
+ * Fetches reactions for events under a given object in one round-trip,
+ * returned as a Record keyed by stringified event id. Two modes:
+ *
+ *  - Activity-feed (default): omit `eventIds`. Server returns every event under
+ *    the object, capped server-side at 500 rows (1000 max).
+ *  - Windowed (chat transcript): pass the ids of the messages currently on
+ *    screen as `eventIds`. The server only ships reactions for those events,
+ *    avoiding the 1MB+ payload risk on long-lived threads.
+ *
+ * The cache key changes when `eventIds` is present so two windows on the same
+ * object don't stomp each other; invalidation from `useToggleReaction` and
+ * SSE-driven cache busting both prefix-match `['reactions','by-object',objectId]`,
+ * so they refresh both modes.
  */
 export function useReactionsByObject(
 	workspaceId: string,
 	objectId: string,
-	{ enabled = true }: { enabled?: boolean } = {},
+	{ enabled = true, eventIds }: { enabled?: boolean; eventIds?: number[] } = {},
 ) {
 	return useQuery({
-		queryKey: queryKeys.reactions.byObject(objectId),
-		queryFn: () => api.reactions.listByObject(workspaceId, objectId),
+		queryKey: queryKeys.reactions.byObject(objectId, eventIds),
+		queryFn: () => api.reactions.listByObject(workspaceId, objectId, { eventIds }),
 		enabled: enabled && !!objectId,
 	})
 }

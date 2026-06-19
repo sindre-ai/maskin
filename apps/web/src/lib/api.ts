@@ -483,9 +483,23 @@ export const api = {
 	},
 
 	reactions: {
-		listByObject: (workspaceId: string, objectId: string) => {
-			const qs = new URLSearchParams({ object_id: objectId }).toString()
-			return request<ReactionsByObjectResponse>(`/reactions?${qs}`, { workspaceId })
+		// `eventIds` is the windowed shape — chat surfaces pass the ids of the
+		// messages currently on screen so the server only ships their reactions.
+		// When omitted, the server returns reactions for every event under the
+		// object (activity-feed shape, capped by `limit`).
+		listByObject: (
+			workspaceId: string,
+			objectId: string,
+			opts?: { eventIds?: number[]; limit?: number },
+		) => {
+			const params = new URLSearchParams()
+			if (opts?.eventIds && opts.eventIds.length > 0) {
+				params.set('event_ids', opts.eventIds.join(','))
+			} else {
+				params.set('object_id', objectId)
+			}
+			if (opts?.limit !== undefined) params.set('limit', String(opts.limit))
+			return request<ReactionsByObjectResponse>(`/reactions?${params.toString()}`, { workspaceId })
 		},
 		add: (workspaceId: string, eventId: number, emoji: string) =>
 			request<{ added: true }>('/reactions', {

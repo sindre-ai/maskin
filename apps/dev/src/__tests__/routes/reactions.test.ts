@@ -268,5 +268,137 @@ describe('Reactions Routes', () => {
 
 			expect(res.status).toBe(400)
 		})
+
+		it('accepts a custom limit within bounds', async () => {
+			const objectId = randomUUID()
+			const { app, mockResults } = createTestApp(reactionsRoutes, '/api/reactions')
+			mockResults.selectQueue = [
+				[{ id: objectId }],
+				[{ id: 1 }],
+				[
+					{
+						id: randomUUID(),
+						workspaceId: wsId,
+						eventId: 1,
+						actorId: randomUUID(),
+						emoji: '👍',
+						createdAt: new Date('2026-01-01T00:00:00Z'),
+					},
+				],
+			]
+
+			const res = await app.request(
+				jsonGet(`/api/reactions?object_id=${objectId}&limit=100`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+		})
+
+		it('returns 400 when limit exceeds the hard ceiling', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(
+				jsonGet(`/api/reactions?object_id=${randomUUID()}&limit=5000`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when neither object_id nor event_ids is provided', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(jsonGet('/api/reactions', { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when both object_id and event_ids are provided', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(
+				jsonGet(`/api/reactions?object_id=${randomUUID()}&event_ids=1,2`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when event_ids contains a non-integer value', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+
+			const res = await app.request(
+				jsonGet('/api/reactions?event_ids=1,abc,3', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns reactions for a windowed event_ids query without object lookup', async () => {
+			const ev1 = 10
+			const ev2 = 11
+			const a1 = randomUUID()
+			const { app, mockResults } = createTestApp(reactionsRoutes, '/api/reactions')
+			// event_ids path: first select verifies workspace boundary on events,
+			// second select returns reactions. No object lookup happens.
+			mockResults.selectQueue = [
+				[{ id: ev1 }, { id: ev2 }],
+				[
+					{
+						id: randomUUID(),
+						workspaceId: wsId,
+						eventId: ev1,
+						actorId: a1,
+						emoji: '👍',
+						createdAt: new Date('2026-01-01T00:00:00Z'),
+					},
+					{
+						id: randomUUID(),
+						workspaceId: wsId,
+						eventId: ev2,
+						actorId: a1,
+						emoji: '🎉',
+						createdAt: new Date('2026-01-01T00:00:01Z'),
+					},
+				],
+			]
+
+			const res = await app.request(
+				jsonGet(`/api/reactions?event_ids=${ev1},${ev2}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.reactionsByEventId[String(ev1)]).toHaveLength(1)
+			expect(body.reactionsByEventId[String(ev2)]).toHaveLength(1)
+		})
+
+		it('returns empty map when event_ids resolves to no events in the workspace', async () => {
+			const { app, mockResults } = createTestApp(reactionsRoutes, '/api/reactions')
+			// First select returns no matching events — request targets event ids
+			// that live in another workspace.
+			mockResults.selectQueue = [[]]
+
+			const res = await app.request(
+				jsonGet('/api/reactions?event_ids=99,100', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.reactionsByEventId).toEqual({})
+		})
+
+		it('returns 400 when event_ids exceeds the per-request cap', async () => {
+			const { app } = createTestApp(reactionsRoutes, '/api/reactions')
+			const ids = Array.from({ length: 201 }, (_, i) => i + 1).join(',')
+
+			const res = await app.request(
+				jsonGet(`/api/reactions?event_ids=${ids}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
 	})
 })
