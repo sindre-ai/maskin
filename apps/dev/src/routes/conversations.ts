@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, subscriptions } from '@maskin/db/schema'
+import { events, files, objects, subscriptions } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import {
 	addParticipantSchema,
@@ -10,7 +10,7 @@ import {
 	messagesQuerySchema,
 	participantIdParamSchema,
 } from '@maskin/shared'
-import { and, asc, desc, eq, lt } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -278,6 +278,10 @@ const postMessageRoute = createRoute({
 			description: 'Message appended',
 			content: { 'application/json': { schema: messageResponseSchema } },
 		},
+		400: {
+			description: 'Invalid request (e.g. attached files do not belong to this workspace)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Conversation not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -303,6 +307,35 @@ app.openapi(postMessageRoute, async (c) => {
 	}
 	if (!(await isActiveParticipant(db, id, actorId))) {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	// Validate any attached file IDs belong to the conversation's workspace
+	// before we commit them onto the event row. Without this check a
+	// participant could store IDs of files they cannot read, and the renderer
+	// would still resolve and link them for every other participant. The
+	// generic /api/events comment route applies the same check; the shared
+	// appendCommentEvent helper documents that this is the route's job.
+	if (body.attachment_file_ids?.length) {
+		const found = await db
+			.select({ id: files.id })
+			.from(files)
+			.where(
+				and(
+					eq(files.workspaceId, conversation.workspaceId),
+					inArray(files.id, body.attachment_file_ids),
+				),
+			)
+
+		if (found.length !== body.attachment_file_ids.length) {
+			const foundIds = new Set(found.map((f) => f.id))
+			const missing = body.attachment_file_ids.filter((fid) => !foundIds.has(fid))
+			return c.json(
+				createApiError('BAD_REQUEST', 'One or more attached files do not exist in this workspace', [
+					{ field: 'attachment_file_ids', message: `Unknown file ids: ${missing.join(', ')}` },
+				]),
+				400,
+			)
+		}
 	}
 
 	const comment = await appendCommentEvent({

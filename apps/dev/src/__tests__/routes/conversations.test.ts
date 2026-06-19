@@ -310,6 +310,71 @@ describe('Conversations Routes', () => {
 			expect(res.status).toBe(404)
 		})
 
+		it('persists attachment_file_ids when all files belong to the conversation workspace', async () => {
+			const conversation = buildConversation()
+			const fileA = randomUUID()
+			const fileB = randomUUID()
+			const commentEvent = buildEvent({
+				workspaceId: wsId,
+				actorId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: conversation.id,
+				data: { content: 'see attached', attachmentFileIds: [fileA, fileB] },
+			})
+			const { app, mockResults, calls } = createSessionTestApp(
+				conversationsRoutes,
+				'/api/conversations',
+			)
+			mockResults.selectQueue = [
+				[{ id: conversation.id, workspaceId: conversation.workspaceId }],
+				[buildWorkspaceMember({ actorId, workspaceId: wsId })],
+				[buildSubscription({ actorId, entityId: conversation.id })],
+				[{ id: fileA }, { id: fileB }],
+			]
+			mockResults.insertQueue = [[commentEvent], []]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/conversations/${conversation.id}/messages`, {
+					content: 'see attached',
+					attachment_file_ids: [fileA, fileB],
+				}),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as { data: { attachmentFileIds?: string[] } }
+			expect(inserted.data.attachmentFileIds).toEqual([fileA, fileB])
+		})
+
+		it('rejects attachment_file_ids that do not belong to the conversation workspace', async () => {
+			const conversation = buildConversation()
+			const fileA = randomUUID()
+			const fileB = randomUUID()
+			const { app, mockResults, calls, sessionManager } = createSessionTestApp(
+				conversationsRoutes,
+				'/api/conversations',
+			)
+			mockResults.selectQueue = [
+				[{ id: conversation.id, workspaceId: conversation.workspaceId }],
+				[buildWorkspaceMember({ actorId, workspaceId: wsId })],
+				[buildSubscription({ actorId, entityId: conversation.id })],
+				[{ id: fileA }],
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/conversations/${conversation.id}/messages`, {
+					content: 'see attached',
+					attachment_file_ids: [fileA, fileB],
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('attached files')
+			expect(calls.inserts).toEqual([])
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
 		it('rejects empty content', async () => {
 			const conversation = buildConversation()
 			const { app, mockResults } = createSessionTestApp(conversationsRoutes, '/api/conversations')
