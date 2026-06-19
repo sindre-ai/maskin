@@ -126,60 +126,30 @@
       .ot-t { color: #1E844A; background: rgba(39,174,96,.12); } .ot-src { color: #9B958F; border: 1px dashed #C9C3BA; } .ot-ar { color: #C9C3BA; }
       .mtile--c { background: #F0EDE7; border-top-color: #2563EB; }
 
-      /* integrations hub */
-      #integ-svg { position: absolute; inset: 0; }
-      .ichip { position: absolute; height: 50px; padding: 0 18px; background: #fff; border: 1.5px solid #E2DDD7; border-radius: 11px; box-shadow: 0 2px 6px rgba(17,17,16,0.05); display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; color: #111110; }
-      .ichip .gd { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
-      #ihub { position: absolute; left: 575px; top: 325px; width: 150px; height: 150px; border-radius: 26px; background: #111110; display: flex; align-items: center; justify-content: center; box-shadow: 0 20px 50px rgba(17,17,16,0.28); }
-      #ihub svg { width: 72px; height: 72px; }
-      #ihub-ring { position: absolute; left: 555px; top: 305px; width: 190px; height: 190px; border-radius: 34px; border: 2px solid rgba(37,99,235,.4); opacity: 0; }
-
       /* ---------- cursor ---------- */
       #cursor { position: absolute; left: 0; top: 0; z-index: 24; pointer-events: none; opacity: 0; }
       #cursor svg { display: block; filter: drop-shadow(0 2px 5px rgba(17,17,16,0.3)); }
       .ripple { position: absolute; left: 4px; top: 2px; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; border: 2px solid #2563EB; transform: scale(0); opacity: 0; }
 
-      /* ---------- centred scenes ---------- */
-      .cscene { position: absolute; inset: 0; z-index: 50; opacity: 0; }
+      /* ---------- noise / organize scene ---------- */
+      #noise { position: absolute; inset: 0; z-index: 50; opacity: 0; }
+      #ntitle { position: absolute; left: 0; right: 0; top: 92px; text-align: center; height: 120px; z-index: 6; }
+      .ntt { position: absolute; left: 50%; transform: translateX(-50%); top: 0; width: 1400px; font-size: 52px; line-height: 1.08; font-weight: 700; letter-spacing: -0.03em; color: #111110; opacity: 0; }
+      .ntt em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
+      #nfield { position: absolute; inset: 0; z-index: 2; }
+      .ndot-wrap { position: absolute; }
+      .ndot { border-radius: 4px; }
+      .nsrc { position: absolute; font-family: "JetBrains Mono", monospace; font-size: 13px; color: #7A756E; background: #FAFAF8; border: 1px solid #E2DDD7; border-radius: 8px; padding: 5px 11px; box-shadow: 0 1px 3px rgba(17,17,16,0.05); white-space: nowrap; opacity: 0; }
+      #ninsights { position: absolute; inset: 0; z-index: 4; }
+      .nicard { position: absolute; width: 230px; background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 13px; padding: 14px 16px; box-shadow: 0 10px 30px rgba(17,17,16,0.10); opacity: 0; }
+      .nicard .t { margin-top: 9px; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: #111110; }
+      #nbet { position: absolute; left: 845px; top: 392px; width: 230px; background: #FFFFFF; border: 1.5px solid rgba(230,126,34,.5); border-radius: 13px; padding: 14px 16px; box-shadow: 0 14px 36px rgba(230,126,34,0.16); opacity: 0; }
+      #nbet .t { margin-top: 9px; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: #111110; }
+      #npro { position: absolute; left: 905px; top: 494px; display: flex; flex-direction: column; align-items: center; gap: 2px; opacity: 0; z-index: 5; }
+      #npro .ar { font-size: 22px; color: #B45F12; line-height: 1; }
+      #npro .lb { font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #B45F12; font-weight: 700; }
 
-      /* promise: title + chat */
-      #ptitle { position: absolute; left: 0; right: 0; top: 118px; text-align: center; height: 96px; }
-      .ptt { position: absolute; left: 0; right: 0; top: 0; font-size: 58px; font-weight: 700; letter-spacing: -0.03em; color: #111110; opacity: 0; }
-      .ptt em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
-      #chatC { position: absolute; left: 50%; transform: translateX(-50%); top: 252px; width: 1080px; height: 700px; background: #FAFAF8; border-radius: 18px; overflow: hidden; box-shadow: 0 40px 90px rgba(17,17,16,0.16), 0 0 0 1px #E2DDD7; }
-      .chat-h { position: absolute; left: 0; top: 0; width: 100%; height: 48px; display: flex; align-items: center; padding: 0 22px; gap: 10px; border-bottom: 1px solid #ECE7DF; background: #F0EDE7; }
-      .chat-h .nt { font-size: 13.5px; font-weight: 600; color: #111110; } .chat-h .mp { margin-left: auto; font-size: 12px; color: #9B958F; border: 1px solid #E2DDD7; border-radius: 7px; padding: 3px 10px; }
-      .chat-body { position: absolute; left: 50%; transform: translateX(-50%); top: 78px; width: 800px; }
-      .crow { display: flex; margin-bottom: 20px; } .crow.u { justify-content: flex-end; }
-      .cu { max-width: 540px; background: #EEF3FD; border: 1px solid rgba(37,99,235,.16); border-radius: 14px 14px 4px 14px; padding: 13px 17px; font-size: 16px; color: #1f3a66; line-height: 1.45; }
-      .ca { display: flex; gap: 12px; max-width: 680px; }
-      .ca .dot { width: 30px; height: 30px; border-radius: 8px; background: #111110; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
-      .ca .dot span { width: 12px; height: 12px; border-radius: 50%; background: #FAFAF8; }
-      .ca .txt { font-size: 16px; color: #2c2a27; line-height: 1.55; }
-      .ca .txt b { color: #111110; font-weight: 600; }
-      .ca .txt.rsv { position: relative; min-height: 30px; }
-      .ca .txt .rep { display: block; opacity: 0; }
-      .ca .txt.rsv .typing { position: absolute; top: 2px; left: 0; }
-      .typing { display: inline-flex; gap: 6px; align-items: center; height: 30px; }
-      .typing i { width: 8px; height: 8px; border-radius: 50%; background: #C9C3BA; display: inline-block; }
-      .chat-in { position: absolute; left: 50%; transform: translateX(-50%); bottom: 30px; width: 800px; height: 54px; border: 1.5px solid #E2DDD7; border-radius: 14px; background: #fff; display: flex; align-items: center; padding: 0 8px 0 18px; }
-      .chat-in .ph { font-size: 15px; color: #B7B1A8; } .chat-in .snd { margin-left: auto; width: 38px; height: 38px; border-radius: 10px; background: #C9C3BA; display: flex; align-items: center; justify-content: center; color: #FAFAF8; font-size: 17px; }
-      .waitlbl { position: absolute; left: 50%; transform: translateX(-50%); bottom: 100px; font-size: 13px; color: #B7B1A8; font-family: "JetBrains Mono", monospace; opacity: 0; }
-
-      /* missing manifesto */
-      #missing { display: flex; flex-direction: column; align-items: center; justify-content: center; }
-      #ms-k { font-size: 14px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; color: #2563EB; opacity: 0; margin-bottom: 18px; }
-      #ms-h { font-size: 62px; font-weight: 700; letter-spacing: -0.03em; color: #111110; text-align: center; opacity: 0; }
-      #ms-h em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
-      #ms-list { margin-top: 40px; width: 880px; }
-      .ms-li { display: flex; align-items: center; gap: 16px; padding: 14px 0; font-size: 24px; color: #2c2a27; opacity: 0; border-bottom: 1px solid #E8E3DB; }
-      .ms-li .ck { width: 28px; height: 28px; border-radius: 8px; background: rgba(37,99,235,.12); color: #2563EB; display: flex; align-items: center; justify-content: center; font-size: 16px; flex: 0 0 auto; }
-      .ms-li b { color: #111110; font-weight: 600; }
-      #ms-chips { margin-top: 32px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; width: 820px; }
-      .ms-chip { font-size: 14.5px; font-weight: 500; color: #5A5751; background: #FAFAF8; border: 1.5px solid #E2DDD7; border-radius: 10px; padding: 8px 15px; opacity: 0; }
-      .ms-chip b { color: #111110; font-weight: 700; }
-
-      /* ---------- intro + close ---------- */
+      /* ---------- centred scenes (intro/close) ---------- */
       .endcap { position: absolute; inset: 0; z-index: 60; background: #F2EFE9; opacity: 0; }
       .ec-wrap { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; }
       .ec-lock { display: inline-flex; align-items: center; gap: 22px; }
@@ -194,10 +164,10 @@
     </style>
   </head>
   <body>
-    <div id="root" data-composition-id="main" data-width="1920" data-height="1080" data-start="0" data-duration="58">
+    <div id="root" data-composition-id="main" data-width="1920" data-height="1080" data-start="0" data-duration="54">
 
       <!-- backdrop -->
-      <div id="backdrop" class="clip" data-start="0" data-duration="58" data-track-index="0">
+      <div id="backdrop" class="clip" data-start="0" data-duration="54" data-track-index="0">
         <div id="grain" data-layout-allow-overflow></div>
         <div id="glow" data-layout-allow-overflow></div>
         <div id="brandbar"><svg class="lg" viewBox="0 0 80 80"><rect width="80" height="80" rx="14" fill="#111110"/><path d="M17 60 L17 20 L40 46 L63 20 L63 60" stroke="#FAFAF8" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg><span class="wd">Maskin</span></div>
@@ -206,11 +176,8 @@
 
       <!-- left captions -->
       <div id="cap">
-        <div class="cap" data-layout-allow-overlap id="cap4"><div class="ck">your stack</div><div class="ch">Connect the services you already run.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap5"><div class="ck">no friction</div><div class="ch">No new stack. No bespoke connectors.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap6"><div class="ck">always on</div><div class="ch">Agents monitor everything — and detect the <em>insights</em> that matter.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap7"><div class="ck">signal</div><div class="ch">Cut through the noise — surface what you must respond to.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap8"><div class="ck">conviction</div><div class="ch">Signals become <em>bets</em> — what your org believes in.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap7"><div class="ck">signal</div><div class="ch">The insight that matters, surfaced for you.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap8"><div class="ck">conviction</div><div class="ch">Promoted to a <em>bet</em> — what your org believes in.</div></div>
         <div class="cap" data-layout-allow-overlap id="cap9"><div class="ck">execution</div><div class="ch">Agents do the work — and ship it.</div></div>
         <div class="cap" data-layout-allow-overlap id="cap10"><div class="ck">validated</div><div class="ch">Live in production, agents <em>validate the value</em>.</div></div>
         <div class="cap" data-layout-allow-overlap id="capM1"><div class="ck">the marketplace</div><div class="ch">One closed loop of <em>many</em>.</div></div>
@@ -218,24 +185,7 @@
       </div>
 
       <!-- right stage (product) -->
-      <div id="stage" class="clip" data-start="0" data-duration="58" data-track-index="1">
-
-        <!-- integrations hub -->
-        <div class="rcard" id="integ">
-          <svg id="integ-svg" viewBox="0 0 1300 872" preserveAspectRatio="none">
-            <g stroke="#C9C3BA" stroke-width="1.6" fill="none" id="ilines"></g>
-          </svg>
-          <div id="ihub-ring"></div>
-          <div id="ihub"><svg viewBox="0 0 80 80"><rect width="80" height="80" rx="14" fill="#FAFAF8"/><path d="M17 60 L17 20 L40 46 L63 20 L63 60" stroke="#111110" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg></div>
-          <div class="ichip" id="ic0" style="left:90px;  top:120px"><span class="gd" style="background:#4A154B"></span>Slack</div>
-          <div class="ichip" id="ic1" style="left:90px;  top:268px"><span class="gd" style="background:#181717"></span>GitHub</div>
-          <div class="ichip" id="ic2" style="left:90px;  top:416px"><span class="gd" style="background:#5E6AD2"></span>Linear</div>
-          <div class="ichip" id="ic3" style="left:90px;  top:564px"><span class="gd" style="background:#1F8DED"></span>Intercom</div>
-          <div class="ichip" id="ic4" style="left:1010px; top:120px"><span class="gd" style="background:#F54E00"></span>PostHog</div>
-          <div class="ichip" id="ic5" style="left:1010px; top:268px"><span class="gd" style="background:#FF7A59"></span>HubSpot</div>
-          <div class="ichip" id="ic6" style="left:982px;  top:416px"><span class="gd" style="background:#00A1E0"></span>Salesforce</div>
-          <div class="ichip" id="ic7" style="left:952px;  top:564px"><span class="gd" style="background:#E37400"></span>Google Analytics</div>
-        </div>
+      <div id="stage" class="clip" data-start="0" data-duration="54" data-track-index="1">
 
         <!-- maskin app -->
         <div class="rcard" id="app">
@@ -247,7 +197,7 @@
                 <div id="wnav-active"></div><div id="wnav-rail"></div>
                 <div class="wnav-i on" id="wn-fy"><div class="wnav-ico"></div>For You<div class="wnav-badge" id="wn-fyb">2</div></div>
                 <div class="wnav-i"><div class="wnav-ico"></div>Objects</div>
-                <div class="wnav-i" id="wn-int"><div class="wnav-ico"></div>Integrations</div>
+                <div class="wnav-i"><div class="wnav-ico"></div>Integrations</div>
                 <div class="wnav-i" id="wn-ag"><div class="wnav-ico"></div>Agents</div>
                 <div class="wnav-i" id="wn-mk"><div class="wnav-ico"></div>Marketplace</div>
               </div>
@@ -341,37 +291,31 @@
           <svg width="28" height="28" viewBox="0 0 24 24"><path d="M5 3L19 12L12 13L9 20L5 3Z" fill="#ffffff" stroke="#111110" stroke-width="1.4" stroke-linejoin="round"/></svg></div>
       </div>
 
-      <!-- PROMISE scene (centred title + chat) -->
-      <div class="cscene" id="promise">
-        <div id="ptitle">
-          <div class="ptt" id="ptt1">AI made your individuals faster.</div>
-          <div class="ptt" id="ptt2">But your organisation <em>hasn’t</em> felt it.</div>
+      <!-- NOISE / ORGANIZE scene -->
+      <div id="noise">
+        <div id="ntitle">
+          <div class="ntt" id="ntt1">AI made individuals more productive.</div>
+          <div class="ntt" id="ntt2">But a company shouldn’t be a <em>feature factory</em>.</div>
+          <div class="ntt" id="ntt3">When creating is almost free, telling <em>signal from noise</em> is everything.</div>
+          <div class="ntt" id="ntt4" style="font-size:46px">Maskin’s agents &amp; integrations turn the noise into <em>insights</em>.</div>
+          <div class="ntt" id="ntt5" style="font-size:46px">…and promote the ones that matter into <em>bets</em>.</div>
         </div>
-        <div id="chatC">
-          <div class="chat-h"><span class="nt">New chat</span><span class="mp">Assistant</span></div>
-          <div class="chat-body">
-            <div class="crow u" id="cm1"><div class="cu">Summarise last week’s 312 support tickets and find the top issues.</div></div>
-            <div class="crow" id="cm2"><div class="ca"><div class="dot"><span></span></div><div class="txt rsv"><span class="typing" id="typ1"><i></i><i></i><i></i></span><span class="rep" id="rep1">Top three: <b>onboarding confusion</b>, <b>billing surprises</b>, and <b>mobile crashes</b>. Onboarding drives ~40% of week-1 complaints.</span></div></div></div>
-            <div class="crow u" id="cm3"><div class="cu">Draft a fix plan for onboarding.</div></div>
-            <div class="crow" id="cm4"><div class="ca"><div class="dot"><span></span></div><div class="txt"><span class="typing" id="typ2"><i></i><i></i><i></i></span></div></div></div>
-          </div>
-          <div class="waitlbl" id="waitlbl">waiting for the assistant…</div>
-          <div class="chat-in"><span class="ph">Reply to assistant…</span><span class="snd">↑</span></div>
+        <div id="nfield">
+          <div class="nsrc" id="ns0" style="left:240px;  top:300px">Intercom</div>
+          <div class="nsrc" id="ns1" style="left:1470px; top:318px">Slack</div>
+          <div class="nsrc" id="ns2" style="left:330px;  top:820px">HubSpot</div>
+          <div class="nsrc" id="ns3" style="left:1360px; top:806px">PostHog</div>
+          <div class="nsrc" id="ns4" style="left:806px;  top:286px">Salesforce</div>
+          <div class="nsrc" id="ns5" style="left:1120px; top:868px">Zendesk</div>
+          <div class="nsrc" id="ns6" style="left:1560px; top:560px">GitHub</div>
+          <div class="nsrc" id="ns7" style="left:286px;  top:560px">Reviews · NPS</div>
         </div>
-      </div>
-
-      <!-- MISSING manifesto -->
-      <div class="cscene" id="missing">
-        <div id="ms-k">what’s missing</div>
-        <div id="ms-h">Humans &amp; agents — <em>first-class citizens</em>.</div>
-        <div id="ms-list">
-          <div class="ms-li" id="msl0"><span class="ck">✓</span><div><b>One shared workspace</b> — every human &amp; agent has a role.</div></div>
-          <div class="ms-li" id="msl1"><span class="ck">✓</span><div><b>Persistent memory</b> — insights, bets &amp; tasks live across sessions.</div></div>
-          <div class="ms-li" id="msl2"><span class="ck">✓</span><div>Agents work <b>autonomously</b>. Humans decide what matters.</div></div>
-        </div>
-        <div id="ms-chips">
-          <div class="ms-chip"><b>MCP-native</b></div><div class="ms-chip">Agents</div><div class="ms-chip">Triggers</div>
-          <div class="ms-chip">Bring your own model</div><div class="ms-chip">Apache 2.0</div>
+        <div id="ninsights">
+          <div class="nicard" id="ni0" style="left:525px;  top:518px"><span class="badge b-insight">insight</span><div class="t">Billing confusion</div></div>
+          <div class="nicard" id="ni1" style="left:845px;  top:518px"><span class="badge b-insight">insight</span><div class="t">Week-1 churn ▲</div></div>
+          <div class="nicard" id="ni2" style="left:1165px; top:518px"><span class="badge b-insight">insight</span><div class="t">Mobile crashes</div></div>
+          <div id="npro"><span class="ar">↑</span><span class="lb">promote</span></div>
+          <div id="nbet"><span class="badge b-bet">bet</span><div class="t">A longer onboarding</div></div>
         </div>
       </div>
 
@@ -399,30 +343,42 @@
       const tl = gsap.timeline({ paused: true });
       const R = (dur, cycle) => Math.max(0, Math.floor(dur / cycle) - 1);
 
-      gsap.set("#stage", { transformOrigin: "1210px 540px", scale: 1, x: 0, y: 0, opacity: 0 });
+      gsap.set("#stage", { transformOrigin: "560px 540px", scale: 1, x: 0, y: 0, opacity: 0 });
+      gsap.set("#cap", { opacity: 0 });
       gsap.set("#cursor", { x: 1100, y: 520 });
 
-      /* integration hub lines */
+      /* build the noise field (deterministic) */
+      const wraps = [];
       (function () {
-        const g = document.getElementById("ilines");
-        const tips = [[230,145],[230,293],[230,441],[230,589],[1075,145],[1075,293],[1075,441],[1090,589]];
-        tips.forEach(([x, y], i) => {
-          const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
-          l.setAttribute("x1", 650); l.setAttribute("y1", 400); l.setAttribute("x2", x); l.setAttribute("y2", y);
-          l.setAttribute("id", "il" + i); g.appendChild(l);
-        });
+        const F = { x0: 200, y0: 250, w: 1520, h: 700 };
+        const cols = ["#5B8DD9", "#E67E22", "#27AE60", "#7C3AED", "#2563EB", "#9B958F"];
+        const CC = [[640, 560], [960, 560], [1280, 560]];
+        let s = 20240611; const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+        const field = document.getElementById("nfield");
+        for (let i = 0; i < 46; i++) {
+          const sx = F.x0 + rnd() * F.w, sy = F.y0 + rnd() * F.h;
+          const c = i % 3, col = cols[Math.floor(rnd() * cols.length)], sz = 8 + Math.floor(rnd() * 8);
+          const w = document.createElement("div"); w.className = "ndot-wrap"; w.style.left = sx + "px"; w.style.top = sy + "px";
+          const d = document.createElement("div"); d.className = "ndot"; d.style.width = sz + "px"; d.style.height = sz + "px"; d.style.background = col; d.style.opacity = 0.85;
+          w.appendChild(d); field.appendChild(w);
+          wraps.push({ el: w, sx, sy, tx: CC[c][0] + (rnd() - 0.5) * 150, ty: CC[c][1] + (rnd() - 0.5) * 110 });
+          const jx = (rnd() - 0.5) * 18, jy = (rnd() - 0.5) * 18, jd = 2.2 + rnd() * 1.3;
+          tl.to(d, { x: jx, y: jy, duration: jd, ease: "sine.inOut", yoyo: true, repeat: R(6.2, jd) }, 2.6);
+        }
       })();
 
       /* ambient */
-      tl.to("#glow", { scale: 1.12, duration: 9, ease: "sine.inOut", yoyo: true, repeat: R(58, 9) }, 0);
-      tl.to("#grain", { x: 24, y: 16, duration: 18, ease: "sine.inOut", yoyo: true, repeat: R(58, 18) }, 0);
-      tl.to(".spinner", { rotation: 360, duration: 0.9, ease: "none", repeat: R(58, 0.9), transformOrigin: "50% 50%" }, 0);
+      tl.to("#glow", { scale: 1.12, duration: 9, ease: "sine.inOut", yoyo: true, repeat: R(54, 9) }, 0);
+      tl.to("#grain", { x: 24, y: 16, duration: 18, ease: "sine.inOut", yoyo: true, repeat: R(54, 18) }, 0);
+      tl.to(".spinner", { rotation: 360, duration: 0.9, ease: "none", repeat: R(54, 0.9), transformOrigin: "50% 50%" }, 0);
 
       /* helpers */
       function cam(t, dur, S, ty) { tl.to("#stage", { scale: S, x: 0, y: (540 - ty) * S, duration: dur, ease: "power2.inOut" }, t); }
       function camReset(t, dur) { tl.to("#stage", { scale: 1, x: 0, y: 0, duration: dur, ease: "power2.inOut" }, t); }
       const capIn = (s, t) => { tl.fromTo(s + " .ck", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.45, ease: "power3.out" }, t); tl.set(s, { opacity: 1 }, t); tl.fromTo(s + " .ch", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, t + 0.06); };
       const capOut = (s, t) => tl.to(s, { opacity: 0, y: -12, duration: 0.4, ease: "power2.in" }, t);
+      const ntIn = (s, t) => tl.fromTo(s, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, t);
+      const ntOut = (s, t) => tl.to(s, { opacity: 0, y: -14, duration: 0.4, ease: "power2.in" }, t);
       const show = (s, t, d) => tl.fromTo(s, { opacity: 0 }, { opacity: 1, duration: d || 0.5, ease: "power2.inOut" }, t);
       const hide = (s, t, d) => tl.to(s, { opacity: 0, duration: d || 0.45, ease: "power2.inOut" }, t);
       function panelSwap(oldSel, newSel, T) { hide(oldSel, T, 0.4); show(newSel, T + 0.05, 0.45); }
@@ -431,7 +387,6 @@
         tl.set(["#rip1", "#rip2"], { opacity: 1, scale: 0 }, t);
         tl.to(["#rip1", "#rip2"], { scale: 4, opacity: 0, duration: 0.7, ease: "power2.out", stagger: 0.09, immediateRender: false }, t);
       }
-      const dots = (s, t, dur) => tl.to(s + " i", { y: -5, duration: 0.34, ease: "sine.inOut", yoyo: true, repeat: R(dur, 0.34), stagger: 0.11 }, t);
 
       /* ===== 0–1.6 intro ===== */
       tl.from("#intro-mark", { opacity: 0, scale: 0.6, rotation: -12, duration: 0.6, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 0.15);
@@ -440,122 +395,104 @@
       tl.to("#intro", { opacity: 0, duration: 0.55, ease: "power2.inOut" }, 1.5);
       tl.to(["#brandbar", "#kicker-tr"], { opacity: 1, duration: 0.5 }, 1.8);
 
-      /* ===== 1.9–10.4 promise: centred title + slow chat ===== */
-      show("#promise", 1.9, 0.5);
-      tl.from("#chatC", { y: 24, duration: 0.6, ease: "power3.out" }, 2.0);
-      tl.fromTo("#ptt1", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 2.3);
-      tl.from("#cm1", { opacity: 0, y: 14, duration: 0.4, ease: "power3.out" }, 2.9);
-      tl.from("#cm2", { opacity: 0, y: 10, duration: 0.4 }, 3.5);
-      dots("#typ1", 3.6, 2.2);                              // wait
-      tl.to("#waitlbl", { opacity: 1, duration: 0.4 }, 4.1); tl.to("#waitlbl", { opacity: 0, duration: 0.4 }, 5.5);
-      tl.to("#typ1", { opacity: 0, duration: 0.3 }, 5.7);
-      tl.fromTo("#rep1", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.out" }, 5.9);
-      tl.to("#ptt1", { opacity: 0, y: -16, duration: 0.45, ease: "power2.in" }, 6.6);
-      tl.fromTo("#ptt2", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 6.8);
-      tl.from("#cm3", { opacity: 0, y: 14, duration: 0.4, ease: "power3.out" }, 7.3);
-      tl.from("#cm4", { opacity: 0, y: 10, duration: 0.4 }, 7.9);
-      dots("#typ2", 8.0, 2.2);
-      tl.to("#waitlbl", { opacity: 1, duration: 0.4 }, 8.5); tl.to("#waitlbl", { opacity: 0, duration: 0.4 }, 10.0);
-      hide("#promise", 10.3, 0.55);
+      /* ===== 1.8–9 noise: the signal-from-noise problem ===== */
+      show("#noise", 1.8, 0.5);
+      tl.fromTo(".ndot-wrap", { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: 0.5, ease: "back.out(1.5)", stagger: 0.012, transformOrigin: "50% 50%" }, 2.1);
+      tl.fromTo(".nsrc", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out", stagger: 0.07 }, 2.4);
+      tl.to(".nsrc", { opacity: 0.65, duration: 2.4, ease: "sine.inOut", yoyo: true, repeat: R(6, 2.4), stagger: 0.22 }, 2.9);
+      ntIn("#ntt1", 2.3); ntOut("#ntt1", 4.1);
+      ntIn("#ntt2", 4.3); ntOut("#ntt2", 6.3);
+      ntIn("#ntt3", 6.5); ntOut("#ntt3", 8.9);
 
-      /* ===== 10.6–16 what's missing manifesto (3 points) ===== */
-      show("#missing", 10.6, 0.5);
-      tl.fromTo("#ms-k", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 10.9);
-      tl.fromTo("#ms-h", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 11.1);
-      ["#msl0", "#msl1", "#msl2"].forEach((s, i) =>
-        tl.fromTo(s, { opacity: 0, x: -18 }, { opacity: 1, x: 0, duration: 0.45, ease: "power3.out" }, 11.9 + i * 0.52));
-      tl.fromTo(".ms-chip", { opacity: 0, y: 12, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.4, ease: "back.out(1.5)", stagger: 0.07, transformOrigin: "50% 50%" }, 13.7);
-      hide("#missing", 15.9, 0.55);
+      /* ===== 9–14.4 organize: cluster → insights → bet ===== */
+      ntIn("#ntt4", 9.2);
+      tl.to(".ndot", { x: 0, y: 0, duration: 0.4, ease: "power1.inOut" }, 8.8);   // stop jitter
+      wraps.forEach((w, i) => tl.to(w.el, { x: w.tx - w.sx, y: w.ty - w.sy, duration: 1.2, ease: "power3.inOut" }, 9.2 + (i % 8) * 0.03));
+      tl.to(".nsrc", { opacity: 0, scale: 0.8, duration: 0.5, ease: "power2.in", stagger: 0.03, transformOrigin: "50% 50%" }, 9.2);
+      tl.to(".ndot-wrap", { opacity: 0.22, duration: 0.6, ease: "power2.inOut" }, 10.7);
+      tl.fromTo(["#ni0", "#ni1", "#ni2"], { opacity: 0, y: 16, scale: 0.92 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.4)", stagger: 0.16, transformOrigin: "50% 50%" }, 10.8);
+      ntOut("#ntt4", 11.9); ntIn("#ntt5", 12.1);
+      // promote the middle insight to a bet
+      tl.to("#ni1", { boxShadow: "0 0 0 3px rgba(37,99,235,0.32)", duration: 0.5, ease: "power2.out" }, 12.4);
+      tl.fromTo("#npro", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 12.5);
+      tl.fromTo("#nbet", { opacity: 0, y: 16, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.55, ease: "back.out(1.5)", transformOrigin: "50% 100%" }, 12.7);
+      hide("#noise", 14.4, 0.6);
 
-      /* ===== 16.4–23 integrations ===== */
-      tl.set("#stage", { opacity: 1 }, 16.3);
-      show("#integ", 16.5, 0.5);
-      capIn("#cap4", 16.8);
-      tl.from("#ihub", { opacity: 0, scale: 0.6, duration: 0.5, ease: "back.out(1.7)", transformOrigin: "50% 50%" }, 17.0);
-      tl.from(["#ic0","#ic1","#ic2","#ic3","#ic4","#ic5","#ic6","#ic7"], { opacity: 0, scale: 0.85, duration: 0.38, ease: "back.out(1.5)", stagger: 0.07, transformOrigin: "50% 50%" }, 17.4);
-      tl.fromTo("#ilines line", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out", stagger: 0.06 }, 17.6);
-      capOut("#cap4", 18.9); capIn("#cap5", 19.2);
-      tl.to("#ilines", { opacity: 0.5, duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: R(3.5, 0.9) }, 19.5);
-      tl.to("#ihub-ring", { opacity: 1, scale: 1.25, duration: 1.4, ease: "sine.out", yoyo: true, repeat: R(3.5, 1.4), transformOrigin: "50% 50%" }, 19.7);
-      capOut("#cap5", 20.6); capIn("#cap6", 20.9);          // hold ~2.6s
-      tl.fromTo("#ihub", { boxShadow: "0 20px 50px rgba(17,17,16,0.28)" }, { boxShadow: "0 0 0 10px rgba(37,99,235,0.18)", duration: 0.8, ease: "sine.inOut", yoyo: true, repeat: 2 }, 21.1);
-      capOut("#cap6", 23.0);
-      hide("#integ", 23.1, 0.5);
+      /* ===== 14.6–20.5 For You: the surfaced insight ===== */
+      tl.set("#stage", { opacity: 1 }, 14.5);
+      tl.set("#cap", { opacity: 1 }, 14.5);
+      show("#app", 14.7, 0.5);
+      tl.from("#app", { y: 16, duration: 0.5, ease: "power3.out" }, 14.7);
+      capIn("#cap7", 15.0);
+      cam(15.1, 2.0, 1.12, 320);
+      tl.from("#wpA-ins", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 15.3);
+      tl.fromTo(".ins-bar", { scaleY: 0 }, { scaleY: 1, duration: 0.5, ease: "power3.out", stagger: 0.06 }, 15.7);
+      tl.fromTo("#wpA-ins", { boxShadow: "0 1px 3px rgba(17,17,16,0.05)" }, { boxShadow: "0 0 0 3px rgba(91,141,217,0.35)", duration: 1.0, ease: "sine.inOut", yoyo: true, repeat: 1 }, 16.3);
+      tl.from("#wpA-bet", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 17.6);
 
-      /* ===== 23.4–28 For You: insight stands out ===== */
-      show("#app", 23.4, 0.5);
-      tl.from("#app", { y: 16, duration: 0.5, ease: "power3.out" }, 23.4);
-      capIn("#cap7", 23.7);
-      cam(23.8, 2.0, 1.16, 320);
-      tl.from("#wpA-ins", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 24.0);
-      tl.fromTo(".ins-bar", { scaleY: 0 }, { scaleY: 1, duration: 0.5, ease: "power3.out", stagger: 0.06 }, 24.4);
-      tl.fromTo("#wpA-ins", { boxShadow: "0 1px 3px rgba(17,17,16,0.05)" }, { boxShadow: "0 0 0 3px rgba(91,141,217,0.35)", duration: 1.0, ease: "sine.inOut", yoyo: true, repeat: 1 }, 25.0);
-      tl.from("#wpA-bet", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 26.2);
+      /* ===== 19.3–25 bet + approve ===== */
+      capOut("#cap7", 19.1); capIn("#cap8", 19.4);
+      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 19.4);
+      tl.to("#cursor", { x: 1000, y: 470, duration: 0.8, ease: "power3.inOut" }, 19.5);
+      cursorClick(20.4);
+      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 20.9);
+      panelSwap("#wpA", "#wpB", 21.0);
+      tl.to("#wcv1", { opacity: 0, duration: 0.35 }, 21.0); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 21.2);
+      camReset(21.0, 1.0);
+      cam(22.2, 1.4, 1.13, 540);
+      tl.fromTo("#wpB-c2", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 22.8);
+      tl.to("#wpB-st1", { opacity: 0, duration: 0.3 }, 23.4);
+      tl.fromTo("#wpB-st2", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 23.5);
+      tl.fromTo("#wpB-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 23.9);
 
-      /* ===== 27.8–33 bet + approve ===== */
-      capOut("#cap7", 27.6); capIn("#cap8", 27.9);
-      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 27.9);
-      tl.to("#cursor", { x: 1000, y: 470, duration: 0.8, ease: "power3.inOut" }, 28.0);
-      cursorClick(28.9);
-      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 29.4);
-      panelSwap("#wpA", "#wpB", 29.5);
-      tl.to("#wcv1", { opacity: 0, duration: 0.35 }, 29.5); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 29.7);
-      camReset(29.5, 1.0);
-      cam(30.7, 1.4, 1.13, 540);
-      tl.fromTo("#wpB-c2", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 31.3);
-      tl.to("#wpB-st1", { opacity: 0, duration: 0.3 }, 31.9);
-      tl.fromTo("#wpB-st2", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 32.0);
-      tl.fromTo("#wpB-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 32.4);
+      /* ===== 25–29 agents ===== */
+      capOut("#cap8", 25.0); capIn("#cap9", 25.3);
+      camReset(24.8, 0.9);
+      tl.to("#wp-idle", { opacity: 0, duration: 0.3 }, 25.0); tl.to("#wp-on", { opacity: 1, duration: 0.3 }, 25.2);
+      tl.to(".wpdot", { opacity: 0.3, duration: 0.7, ease: "sine.inOut", yoyo: true, repeat: R(8, 0.7) }, 25.2);
+      panelSwap("#wpB", "#wpC", 25.6);
+      tl.to("#wcv2", { opacity: 0, duration: 0.35 }, 25.6); tl.to("#wcv3", { opacity: 1, duration: 0.35 }, 25.8);
+      tl.to(["#wnav-active", "#wnav-rail"], { y: 114, duration: 0.4, ease: "power3.inOut" }, 25.6);
+      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 25.6);
+      tl.to("#wn-ag", { color: "#111110", fontWeight: 600, duration: 0.3 }, 25.6);
+      tl.fromTo(["#agc1", "#agc2", "#agc3", "#agc4"], { opacity: 0, y: 16, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "power3.out", stagger: 0.1, transformOrigin: "50% 50%" }, 26.0);
+      tl.to(["#agc1", "#agc2", "#agc3"], { boxShadow: "0 0 0 3px rgba(37,99,235,0.12)", duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(3, 1.3), stagger: 0.2 }, 26.8);
 
-      /* ===== 33–37 agents ===== */
-      capOut("#cap8", 33.0); capIn("#cap9", 33.3);
-      camReset(32.8, 0.9);
-      tl.to("#wp-idle", { opacity: 0, duration: 0.3 }, 33.0); tl.to("#wp-on", { opacity: 1, duration: 0.3 }, 33.2);
-      tl.to(".wpdot", { opacity: 0.3, duration: 0.7, ease: "sine.inOut", yoyo: true, repeat: R(8, 0.7) }, 33.2);
-      panelSwap("#wpB", "#wpC", 33.6);
-      tl.to("#wcv2", { opacity: 0, duration: 0.35 }, 33.6); tl.to("#wcv3", { opacity: 1, duration: 0.35 }, 33.8);
-      tl.to(["#wnav-active","#wnav-rail"], { y: 114, duration: 0.4, ease: "power3.inOut" }, 33.6);
-      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 33.6);
-      tl.to("#wn-ag", { color: "#111110", fontWeight: 600, duration: 0.3 }, 33.6);
-      tl.fromTo(["#agc1","#agc2","#agc3","#agc4"], { opacity: 0, y: 16, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "power3.out", stagger: 0.1, transformOrigin: "50% 50%" }, 34.0);
-      tl.to(["#agc1","#agc2","#agc3"], { boxShadow: "0 0 0 3px rgba(37,99,235,0.12)", duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(3, 1.3), stagger: 0.2 }, 34.8);
+      /* ===== 29–33.5 outcome ===== */
+      capOut("#cap9", 29.0); capIn("#cap10", 29.3);
+      panelSwap("#wpC", "#wpD", 29.6);
+      tl.to("#wcv3", { opacity: 0, duration: 0.35 }, 29.6); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 29.8);
+      tl.to(["#wnav-active", "#wnav-rail"], { y: 0, duration: 0.4, ease: "power3.inOut" }, 29.6);
+      tl.to("#wn-ag", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 29.6);
+      tl.to("#wn-fy", { color: "#111110", fontWeight: 600, duration: 0.3 }, 29.6);
+      cam(30.0, 1.7, 1.12, 330);
+      tl.fromTo("#wpD-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.45, ease: "back.out(1.4)" }, 30.4);
 
-      /* ===== 37–41 outcome ===== */
-      capOut("#cap9", 37.0); capIn("#cap10", 37.3);
-      panelSwap("#wpC", "#wpD", 37.6);
-      tl.to("#wcv3", { opacity: 0, duration: 0.35 }, 37.6); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 37.8);
-      tl.to(["#wnav-active","#wnav-rail"], { y: 0, duration: 0.4, ease: "power3.inOut" }, 37.6);
-      tl.to("#wn-ag", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 37.6);
-      tl.to("#wn-fy", { color: "#111110", fontWeight: 600, duration: 0.3 }, 37.6);
-      cam(38.0, 1.7, 1.16, 330);
-      tl.fromTo("#wpD-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.45, ease: "back.out(1.4)" }, 38.4);
+      /* ===== 33.5–45 marketplace (loops for every team) ===== */
+      capOut("#cap10", 33.4);
+      camReset(33.2, 1.1);
+      capIn("#capM1", 33.8);
+      panelSwap("#wpD", "#wpE", 33.7);
+      tl.to("#wcv2", { opacity: 0, duration: 0.3 }, 33.7); tl.to("#wcv4", { opacity: 1, duration: 0.3 }, 33.9);
+      tl.to(["#wnav-active", "#wnav-rail"], { y: 152, duration: 0.4, ease: "power3.inOut" }, 33.7);
+      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 33.7);
+      tl.to("#wn-mk", { color: "#111110", fontWeight: 600, duration: 0.3 }, 33.7);
+      tl.fromTo(".mtile", { opacity: 0, y: 20, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.3)", stagger: 0.06, transformOrigin: "50% 50%" }, 34.1);
+      cam(34.5, 8.5, 1.06, 470);
+      capOut("#capM1", 37.0); capIn("#capM2", 37.3);
+      tl.to("#mt-sales", { boxShadow: "0 0 0 3px rgba(230,126,34,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 37.8);
+      tl.to("#mt-growth", { boxShadow: "0 0 0 3px rgba(37,99,235,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 39.0);
+      tl.to("#mt-prod", { boxShadow: "0 0 0 3px rgba(39,174,96,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 40.2);
 
-      /* ===== 41–52 marketplace (loops for every team) ===== */
-      capOut("#cap10", 40.9);
-      camReset(40.7, 1.1);
-      capIn("#capM1", 41.3);
-      panelSwap("#wpD", "#wpE", 41.2);
-      tl.to("#wcv2", { opacity: 0, duration: 0.3 }, 41.2); tl.to("#wcv4", { opacity: 1, duration: 0.3 }, 41.4);
-      tl.to(["#wnav-active","#wnav-rail"], { y: 152, duration: 0.4, ease: "power3.inOut" }, 41.2);
-      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 41.2);
-      tl.to("#wn-mk", { color: "#111110", fontWeight: 600, duration: 0.3 }, 41.2);
-      tl.fromTo(".mtile", { opacity: 0, y: 20, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.3)", stagger: 0.06, transformOrigin: "50% 50%" }, 41.6);
-      cam(42.0, 8.0, 1.06, 470);
-      // swap to the per-team caption + highlight Sales / Growth / Product in turn
-      capOut("#capM1", 44.6); capIn("#capM2", 44.9);
-      tl.to("#mt-sales", { boxShadow: "0 0 0 3px rgba(230,126,34,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 45.4);
-      tl.to("#mt-growth", { boxShadow: "0 0 0 3px rgba(37,99,235,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 46.6);
-      tl.to("#mt-prod", { boxShadow: "0 0 0 3px rgba(39,174,96,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 47.8);
-
-      /* ===== 51.5–58 close ===== */
-      capOut("#capM2", 51.2);
-      tl.to(["#stage","#cap","#backdrop"], { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 51.5);
-      tl.to("#close", { opacity: 1, duration: 0.6, ease: "power2.inOut" }, 51.7);
-      tl.from("#close-mark", { opacity: 0, scale: 0.6, rotation: -10, duration: 0.65, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 52.2);
-      tl.from("#close .ec-word", { opacity: 0, x: -22, duration: 0.55, ease: "power3.out" }, 52.4);
-      tl.from("#close-tag", { opacity: 0, y: 14, duration: 0.5, ease: "power2.out" }, 53.0);
-      tl.fromTo("#close-row", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "back.out(1.4)" }, 53.4);
-      tl.to("#close-cta", { scale: 1.04, duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(3.5, 1.3), transformOrigin: "50% 50%" }, 54.3);
+      /* ===== 44–54 close ===== */
+      capOut("#capM2", 43.8);
+      tl.to(["#stage", "#cap", "#backdrop"], { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 44.0);
+      tl.to("#close", { opacity: 1, duration: 0.6, ease: "power2.inOut" }, 44.2);
+      tl.from("#close-mark", { opacity: 0, scale: 0.6, rotation: -10, duration: 0.65, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 44.7);
+      tl.from("#close .ec-word", { opacity: 0, x: -22, duration: 0.55, ease: "power3.out" }, 44.9);
+      tl.from("#close-tag", { opacity: 0, y: 14, duration: 0.5, ease: "power2.out" }, 45.5);
+      tl.fromTo("#close-row", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "back.out(1.4)" }, 45.9);
+      tl.to("#close-cta", { scale: 1.04, duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(6, 1.3), transformOrigin: "50% 50%" }, 46.8);
 
       window.__timelines["main"] = tl;
     </script>
