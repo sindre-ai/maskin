@@ -233,3 +233,44 @@ export const notificationResponseSchema = z.object({
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 })
+
+// Conversation = `objects` row with `type='conversation'`. Shape is the
+// object row trimmed to the fields the chat surface needs; the full graph is
+// reachable via `/api/objects/:id`.
+export const conversationResponseSchema = z.object({
+	id: z.string().uuid(),
+	workspaceId: z.string().uuid(),
+	title: z.string().nullable(),
+	metadata: jsonbField,
+	createdBy: z.string().uuid(),
+	createdAt: z.string().nullable(),
+	updatedAt: z.string().nullable(),
+})
+
+// Message = `events` row with `action='commented'` against the conversation
+// object. `id` is the events bigserial; `conversationId` is the event's
+// entityId. Content / mentions / parentEventId / attachmentFileIds live on
+// `events.data`.
+export const messageResponseSchema = z.object({
+	id: z.number(),
+	workspaceId: z.string().uuid(),
+	conversationId: z.string().uuid(),
+	actorId: z.string().uuid(),
+	content: z.string(),
+	mentions: z.array(z.string().uuid()).nullable(),
+	parentEventId: z.number().nullable(),
+	attachmentFileIds: z.array(z.string().uuid()).nullable(),
+	metadata: jsonbField,
+	createdAt: z.string().nullable(),
+})
+
+// Participant = a `subscriptions` row on the conversation object. `source`
+// is the existing subscription provenance enum — `author` (creator),
+// `commenter` (auto-attached on first message), `mentioned` (auto-attached
+// when @mentioned), `manual` (explicit add).
+export const conversationParticipantResponseSchema = z.object({
+	conversationId: z.string().uuid(),
+	actorId: z.string().uuid(),
+	source: z.string(),
+	createdAt: z.string().nullable(),
+})
