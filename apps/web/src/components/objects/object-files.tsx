@@ -22,6 +22,7 @@ import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
+import { trackEvent } from '@/lib/analytics'
 import type { RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatSize, readFileAsBase64 } from '@/lib/file-utils'
@@ -174,6 +175,9 @@ export function ObjectFiles({
 
 	const toggleColumn = useCallback((id: ToggleableColumn, visible: boolean) => {
 		setVisibleColumns((prev) => ({ ...prev, [id]: visible }))
+		// Defaults are OFF for both properties, so `enabled = true` is the
+		// non-default state the bet's PostHog query counts.
+		trackEvent('files_display_property_toggled', { property: id, enabled: visible })
 	}, [])
 
 	const hasFiles = files.length > 0

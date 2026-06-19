@@ -5,6 +5,11 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
+const trackEventMock = vi.fn()
+vi.mock('@/lib/analytics', () => ({
+	trackEvent: (...args: unknown[]) => trackEventMock(...args),
+}))
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return mockTanStackRouter()
@@ -91,6 +96,7 @@ describe('ObjectFiles', () => {
 		useUserDisplaySettingsMock.mockReset()
 		useUserDisplaySettingsMock.mockReturnValue(noPersistedSettings())
 		updateMutateMock.mockReset()
+		trackEventMock.mockReset()
 	})
 
 	it('renders attached files in a table with Name + Size by default', () => {
@@ -251,5 +257,76 @@ describe('ObjectFiles', () => {
 		// Wait long enough that any debounced write would have fired (>500ms).
 		await new Promise((resolve) => setTimeout(resolve, 700))
 		expect(updateMutateMock).not.toHaveBeenCalled()
+	})
+
+	it('emits files_display_property_toggled with property + enabled=true on toggle-on', async () => {
+		const user = userEvent.setup()
+		const file = buildFile()
+		useFilesMock.mockReturnValue({ data: [file] })
+
+		render(
+			<ObjectFiles
+				{...baseProps}
+				relationships={{ asSource: [buildAttachedRelationship(file.id)], asTarget: [] }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await user.click(screen.getByRole('button', { name: 'File properties' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Created' }))
+
+		expect(trackEventMock).toHaveBeenCalledWith('files_display_property_toggled', {
+			property: 'created_at',
+			enabled: true,
+		})
+	})
+
+	it('emits files_display_property_toggled with enabled=false on toggle-off', async () => {
+		const user = userEvent.setup()
+		const file = buildFile()
+		useFilesMock.mockReturnValue({ data: [file] })
+
+		render(
+			<ObjectFiles
+				{...baseProps}
+				relationships={{ asSource: [buildAttachedRelationship(file.id)], asTarget: [] }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await user.click(screen.getByRole('button', { name: 'File properties' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Modified' }))
+		await user.click(screen.getByRole('button', { name: 'File properties' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Modified' }))
+
+		expect(trackEventMock).toHaveBeenNthCalledWith(1, 'files_display_property_toggled', {
+			property: 'modified_at',
+			enabled: true,
+		})
+		expect(trackEventMock).toHaveBeenNthCalledWith(2, 'files_display_property_toggled', {
+			property: 'modified_at',
+			enabled: false,
+		})
+	})
+
+	it('does not emit files_display_property_toggled when hydrating from persisted settings', async () => {
+		const file = buildFile()
+		useFilesMock.mockReturnValue({ data: [file] })
+		useUserDisplaySettingsMock.mockReturnValue(
+			withPersisted({ created_at: true, modified_at: true }),
+		)
+
+		render(
+			<ObjectFiles
+				{...baseProps}
+				relationships={{ asSource: [buildAttachedRelationship(file.id)], asTarget: [] }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => {
+			expect(screen.getByRole('columnheader', { name: 'Created' })).toBeInTheDocument()
+		})
+		expect(trackEventMock).not.toHaveBeenCalled()
 	})
 })
