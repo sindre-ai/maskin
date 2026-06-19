@@ -482,6 +482,25 @@ export const api = {
 		},
 	},
 
+	reactions: {
+		listByObject: (workspaceId: string, objectId: string) => {
+			const qs = new URLSearchParams({ object_id: objectId }).toString()
+			return request<ReactionsByObjectResponse>(`/reactions?${qs}`, { workspaceId })
+		},
+		add: (workspaceId: string, eventId: number, emoji: string) =>
+			request<{ added: true }>('/reactions', {
+				method: 'POST',
+				body: { event_id: eventId, emoji },
+				workspaceId,
+			}),
+		remove: (workspaceId: string, eventId: number, emoji: string) =>
+			request<{ removed: true }>('/reactions', {
+				method: 'DELETE',
+				body: { event_id: eventId, emoji },
+				workspaceId,
+			}),
+	},
+
 	userDisplaySettings: {
 		list: (workspaceId: string) =>
 			request<UserDisplaySettingsListResponse>('/user-display-settings', { workspaceId }),
@@ -748,6 +767,18 @@ export interface UnreadItem {
 
 export interface UnreadResponse {
 	items: UnreadItem[]
+}
+
+export interface ReactionItem {
+	id: string
+	eventId: number
+	actorId: string
+	emoji: string
+	createdAt: string
+}
+
+export interface ReactionsByObjectResponse {
+	reactionsByEventId: Record<string, ReactionItem[]>
 }
 
 export interface UserDisplaySettingsResponse {

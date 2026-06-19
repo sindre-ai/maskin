@@ -97,6 +97,9 @@ export const queryKeys = {
 		unread: (workspaceId: string, entityType?: string) =>
 			['subscriptions', 'unread', workspaceId, entityType ?? 'all'] as const,
 	},
+	reactions: {
+		byObject: (objectId: string) => ['reactions', 'by-object', objectId] as const,
+	},
 	userDisplaySettings: {
 		list: (workspaceId: string) => ['user-display-settings', workspaceId, 'list'] as const,
 		detail: (workspaceId: string, objectType: string) =>

@@ -43,6 +43,7 @@ export function ConversationView({
 	const currentUserId = useMemo(() => getStoredActor()?.id ?? 'you', [])
 
 	const {
+		activeId,
 		messages,
 		participants,
 		allAgents,
@@ -133,6 +134,8 @@ export function ConversationView({
 					currentUserId={currentUserId}
 					onRegenerate={regenerate}
 					onEditUserMessage={setDraft}
+					workspaceId={workspaceId}
+					conversationId={activeId}
 					className="min-h-0 flex-1"
 				/>
 			)}
