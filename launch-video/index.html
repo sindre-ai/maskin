@@ -21,7 +21,7 @@
 
       /* ---------- backdrop ---------- */
       #backdrop { position: absolute; inset: 0; background: #F2EFE9; overflow: hidden; }
-      #glow { position: absolute; left: 64%; top: 14%; width: 1500px; height: 1500px; margin-left: -750px; margin-top: -750px; border-radius: 50%;
+      #glow { position: absolute; left: 50%; top: 12%; width: 1500px; height: 1500px; margin-left: -750px; margin-top: -750px; border-radius: 50%;
         background: radial-gradient(circle, rgba(37,99,235,0.10) 0%, rgba(37,99,235,0.04) 38%, rgba(37,99,235,0) 66%); }
       #grain { position: absolute; inset: -80px;
         background-image: linear-gradient(rgba(17,17,16,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(17,17,16,0.02) 1px, transparent 1px); background-size: 74px 74px; }
@@ -30,21 +30,19 @@
       #brandbar .wd { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; color: #111110; }
       #kicker-tr { position: absolute; right: 54px; top: 46px; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: #9B958F; z-index: 40; opacity: 0; }
 
-      /* ---------- left caption column ---------- */
+      /* ---------- left captions (product beats) ---------- */
       #cap { position: absolute; left: 96px; top: 0; width: 418px; height: 1080px; z-index: 30; }
       .cap { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 418px; opacity: 0; }
       .cap .ck { display: inline-flex; align-items: center; gap: 9px; font-size: 13px; letter-spacing: 0.15em; text-transform: uppercase; font-weight: 700; color: #2563EB; margin-bottom: 18px; }
       .cap .ck::before { content: ""; width: 22px; height: 2px; background: #2563EB; }
-      .cap .ch { font-size: 47px; line-height: 1.08; font-weight: 700; letter-spacing: -0.025em; color: #111110; }
+      .cap .ch { font-size: 47px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; color: #111110; }
       .cap .ch em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
-      .cap .cs { margin-top: 20px; font-size: 19px; line-height: 1.5; color: #5A5751; }
 
       /* ---------- right stage (camera) ---------- */
       #stage { position: absolute; inset: 0; transform-origin: 1210px 540px; }
       .rcard { position: absolute; left: 560px; top: 104px; width: 1300px; height: 872px; background: #FAFAF8; border-radius: 18px; overflow: hidden;
         box-shadow: 0 46px 100px rgba(17,17,16,0.18), 0 0 0 1px #E2DDD7; opacity: 0; }
 
-      /* window chrome (shared) */
       .wtitle { position: absolute; left: 0; top: 0; width: 100%; height: 36px; background: #F0EDE7; border-bottom: 1px solid #E2DDD7; display: flex; align-items: center; padding: 0 14px; gap: 7px; }
       .tld { width: 10px; height: 10px; border-radius: 50%; }
       .upill { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); height: 20px; padding: 0 14px; border-radius: 6px; background: #FAFAF8; border: 1px solid #E2DDD7; font-size: 11.5px; color: #5A5751; display: flex; align-items: center; }
@@ -86,13 +84,22 @@
       .b-proposed { background: rgba(37,99,235,.12); color: #1E50C8; }
       .b-active { background: rgba(39,174,96,.14); color: #1E844A; }
       .b-done { background: rgba(39,174,96,.16); color: #1E844A; }
-      .thead { display: flex; align-items: center; gap: 11px; padding: 14px 17px; border-bottom: 1px solid #E2DDD7; }
+      .thead { display: flex; align-items: center; gap: 11px; padding: 14px 17px; }
       .ttl { font-size: 15.5px; font-weight: 600; color: #111110; } .ttime { font-size: 12px; color: #9B958F; }
       .unread { min-width: 19px; height: 19px; padding: 0 6px; border-radius: 10px; background: #2563EB; color: #fff; font-size: 11.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
       .tbody { padding: 15px 17px; }
       .cmt { display: flex; gap: 11px; padding: 5px 0; } .cb { flex: 1; min-width: 0; }
       .cn { font-size: 14px; font-weight: 600; color: #111110; } .cn.link { color: #2563EB; } .ct { font-size: 12px; color: #9B958F; margin-left: 8px; }
       .cx { margin-top: 3px; font-size: 14px; line-height: 1.5; color: #5A5751; }
+
+      /* insight viz */
+      .ins-viz { display: flex; align-items: flex-end; gap: 18px; padding: 4px 18px 18px; border-top: 1px solid #EFEBE3; margin-top: 2px; }
+      .ins-chart { display: flex; align-items: flex-end; gap: 7px; height: 88px; }
+      .ins-bar { width: 26px; border-radius: 4px 4px 0 0; background: #CFE0F5; transform-origin: 50% 100%; }
+      .ins-bar.drop { background: #E67E22; }
+      .ins-note { font-size: 13px; line-height: 1.5; color: #5A5751; } .ins-note b { color: #B45F12; font-weight: 700; }
+      .ins-kpi { font-family: "JetBrains Mono", monospace; font-size: 12px; color: #9B958F; margin-top: 4px; }
+
       .doc-title { font-size: 27px; font-weight: 700; letter-spacing: -0.025em; color: #111110; }
       .doc-meta { display: flex; align-items: center; gap: 10px; margin-top: 13px; flex-wrap: wrap; }
       .mdrv { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: #5A5751; }
@@ -107,7 +114,6 @@
       .ag-ds { font-size: 11.5px; color: #9B958F; margin: 7px 0 9px; margin-left: 35px; } .ag-ac { font-size: 12.5px; color: #5A5751; margin-left: 35px; }
       .idot { width: 7px; height: 7px; border-radius: 50%; background: #9B958F; }
 
-      /* marketplace tiles (2 cols) */
       .mkgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 17px; }
       .mtile { background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 12px; border-top-width: 3px; padding: 15px 16px; }
       .mtile .r { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #9B958F; }
@@ -117,29 +123,6 @@
       .ot-i { color: #3F6CA8; background: rgba(91,141,217,.12); } .ot-b { color: #B45F12; background: rgba(230,126,34,.12); }
       .ot-t { color: #1E844A; background: rgba(39,174,96,.12); } .ot-src { color: #9B958F; border: 1px dashed #C9C3BA; } .ot-ar { color: #C9C3BA; }
       .mtile--c { background: #F0EDE7; border-top-color: #2563EB; }
-
-      /* ---------- chat (Claude-like, no logos) ---------- */
-      .chat-h { position: absolute; left: 0; top: 36px; width: 100%; height: 46px; display: flex; align-items: center; padding: 0 22px; gap: 10px; border-bottom: 1px solid #ECE7DF; }
-      .chat-h .nt { font-size: 13.5px; font-weight: 600; color: #111110; } .chat-h .mp { margin-left: auto; font-size: 12px; color: #9B958F; border: 1px solid #E2DDD7; border-radius: 7px; padding: 3px 10px; }
-      .chat-body { position: absolute; left: 50%; transform: translateX(-50%); top: 100px; width: 880px; }
-      .crow { display: flex; margin-bottom: 18px; } .crow.u { justify-content: flex-end; }
-      .cu { max-width: 560px; background: #EEF3FD; border: 1px solid rgba(37,99,235,.16); border-radius: 14px 14px 4px 14px; padding: 12px 16px; font-size: 15px; color: #1f3a66; line-height: 1.45; }
-      .ca { display: flex; gap: 12px; max-width: 720px; }
-      .ca .dot { width: 28px; height: 28px; border-radius: 8px; background: #111110; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
-      .ca .dot span { width: 11px; height: 11px; border-radius: 50%; background: #FAFAF8; }
-      .ca .txt { font-size: 15px; color: #2c2a27; line-height: 1.55; }
-      .ca .txt b { color: #111110; font-weight: 600; }
-      .typing { display: inline-flex; gap: 5px; align-items: center; height: 22px; }
-      .typing i { width: 7px; height: 7px; border-radius: 50%; background: #C9C3BA; display: inline-block; }
-      .chat-in { position: absolute; left: 50%; transform: translateX(-50%); bottom: 30px; width: 880px; height: 52px; border: 1.5px solid #E2DDD7; border-radius: 14px; background: #fff; display: flex; align-items: center; padding: 0 8px 0 18px; }
-      .chat-in .ph { font-size: 14.5px; color: #B7B1A8; } .chat-in .snd { margin-left: auto; width: 36px; height: 36px; border-radius: 10px; background: #111110; display: flex; align-items: center; justify-content: center; color: #FAFAF8; font-size: 16px; }
-
-      /* siloed chat grid */
-      #chatgrid { padding: 30px; }
-      .gwrap { position: absolute; inset: 30px; display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; gap: 18px; }
-      .mini { background: #fff; border: 1.5px solid #E2DDD7; border-radius: 12px; padding: 13px; overflow: hidden; }
-      .mini .mh { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; } .mini .md { width: 16px; height: 16px; border-radius: 5px; background: #111110; } .mini .mn { font-size: 11px; color: #9B958F; }
-      .mb { height: 9px; border-radius: 5px; background: #EDE9E2; margin-bottom: 7px; } .mb.u { background: #EEF3FD; margin-left: auto; } .mb.s { width: 60%; }
 
       /* integrations hub */
       #integ-svg { position: absolute; inset: 0; }
@@ -154,6 +137,46 @@
       #cursor svg { display: block; filter: drop-shadow(0 2px 5px rgba(17,17,16,0.3)); }
       .ripple { position: absolute; left: 4px; top: 2px; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; border: 2px solid #2563EB; transform: scale(0); opacity: 0; }
 
+      /* ---------- centred scenes ---------- */
+      .cscene { position: absolute; inset: 0; z-index: 50; opacity: 0; }
+
+      /* promise: title + chat */
+      #ptitle { position: absolute; left: 0; right: 0; top: 118px; text-align: center; height: 96px; }
+      .ptt { position: absolute; left: 0; right: 0; top: 0; font-size: 58px; font-weight: 700; letter-spacing: -0.03em; color: #111110; opacity: 0; }
+      .ptt em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
+      #chatC { position: absolute; left: 50%; transform: translateX(-50%); top: 252px; width: 1080px; height: 700px; background: #FAFAF8; border-radius: 18px; overflow: hidden; box-shadow: 0 40px 90px rgba(17,17,16,0.16), 0 0 0 1px #E2DDD7; }
+      .chat-h { position: absolute; left: 0; top: 0; width: 100%; height: 48px; display: flex; align-items: center; padding: 0 22px; gap: 10px; border-bottom: 1px solid #ECE7DF; background: #F0EDE7; }
+      .chat-h .nt { font-size: 13.5px; font-weight: 600; color: #111110; } .chat-h .mp { margin-left: auto; font-size: 12px; color: #9B958F; border: 1px solid #E2DDD7; border-radius: 7px; padding: 3px 10px; }
+      .chat-body { position: absolute; left: 50%; transform: translateX(-50%); top: 78px; width: 800px; }
+      .crow { display: flex; margin-bottom: 20px; } .crow.u { justify-content: flex-end; }
+      .cu { max-width: 540px; background: #EEF3FD; border: 1px solid rgba(37,99,235,.16); border-radius: 14px 14px 4px 14px; padding: 13px 17px; font-size: 16px; color: #1f3a66; line-height: 1.45; }
+      .ca { display: flex; gap: 12px; max-width: 680px; }
+      .ca .dot { width: 30px; height: 30px; border-radius: 8px; background: #111110; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+      .ca .dot span { width: 12px; height: 12px; border-radius: 50%; background: #FAFAF8; }
+      .ca .txt { font-size: 16px; color: #2c2a27; line-height: 1.55; }
+      .ca .txt b { color: #111110; font-weight: 600; }
+      .ca .txt.rsv { position: relative; min-height: 30px; }
+      .ca .txt .rep { display: block; opacity: 0; }
+      .ca .txt.rsv .typing { position: absolute; top: 2px; left: 0; }
+      .typing { display: inline-flex; gap: 6px; align-items: center; height: 30px; }
+      .typing i { width: 8px; height: 8px; border-radius: 50%; background: #C9C3BA; display: inline-block; }
+      .chat-in { position: absolute; left: 50%; transform: translateX(-50%); bottom: 30px; width: 800px; height: 54px; border: 1.5px solid #E2DDD7; border-radius: 14px; background: #fff; display: flex; align-items: center; padding: 0 8px 0 18px; }
+      .chat-in .ph { font-size: 15px; color: #B7B1A8; } .chat-in .snd { margin-left: auto; width: 38px; height: 38px; border-radius: 10px; background: #C9C3BA; display: flex; align-items: center; justify-content: center; color: #FAFAF8; font-size: 17px; }
+      .waitlbl { position: absolute; left: 50%; transform: translateX(-50%); bottom: 100px; font-size: 13px; color: #B7B1A8; font-family: "JetBrains Mono", monospace; opacity: 0; }
+
+      /* missing manifesto */
+      #missing { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+      #ms-k { font-size: 14px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; color: #2563EB; opacity: 0; margin-bottom: 18px; }
+      #ms-h { font-size: 60px; font-weight: 700; letter-spacing: -0.03em; color: #111110; text-align: center; opacity: 0; }
+      #ms-h em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
+      #ms-list { margin-top: 40px; width: 880px; }
+      .ms-li { display: flex; align-items: center; gap: 16px; padding: 12px 0; font-size: 23px; color: #2c2a27; opacity: 0; border-bottom: 1px solid #E8E3DB; }
+      .ms-li .ck { width: 26px; height: 26px; border-radius: 8px; background: rgba(37,99,235,.12); color: #2563EB; display: flex; align-items: center; justify-content: center; font-size: 15px; flex: 0 0 auto; }
+      .ms-li b { color: #111110; font-weight: 600; }
+      #ms-chips { margin-top: 34px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; width: 920px; }
+      .ms-chip { font-size: 14.5px; font-weight: 500; color: #5A5751; background: #FAFAF8; border: 1.5px solid #E2DDD7; border-radius: 10px; padding: 8px 15px; opacity: 0; }
+      .ms-chip b { color: #111110; font-weight: 700; }
+
       /* ---------- intro + close ---------- */
       .endcap { position: absolute; inset: 0; z-index: 60; background: #F2EFE9; opacity: 0; }
       .ec-wrap { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; }
@@ -166,20 +189,13 @@
       #close-row { margin-top: 32px; display: inline-flex; align-items: center; gap: 16px; }
       #close-cta { display: inline-flex; align-items: center; gap: 9px; height: 52px; padding: 0 30px; border-radius: 11px; background: #111110; color: #FAFAF8; font-size: 20px; font-weight: 600; }
       #close-oss { font-size: 15px; color: #9B958F; }
-
-      /* centered statement (one loop of many) */
-      #cscrim { position: absolute; inset: 0; background: #F2EFE9; opacity: 0; z-index: 35; }
-      #cstmt { position: absolute; inset: 0; z-index: 36; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0; }
-      #cstmt .ch { font-size: 62px; font-weight: 700; letter-spacing: -0.03em; color: #111110; }
-      #cstmt .ch em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
-      #cstmt .cs { margin-top: 14px; font-size: 21px; color: #5A5751; }
     </style>
   </head>
   <body>
-    <div id="root" data-composition-id="main" data-width="1920" data-height="1080" data-start="0" data-duration="62">
+    <div id="root" data-composition-id="main" data-width="1920" data-height="1080" data-start="0" data-duration="63">
 
       <!-- backdrop -->
-      <div id="backdrop" class="clip" data-start="0" data-duration="62" data-track-index="0">
+      <div id="backdrop" class="clip" data-start="0" data-duration="63" data-track-index="0">
         <div id="grain" data-layout-allow-overflow></div>
         <div id="glow" data-layout-allow-overflow></div>
         <div id="brandbar"><svg class="lg" viewBox="0 0 80 80"><rect width="80" height="80" rx="14" fill="#111110"/><path d="M17 60 L17 20 L40 46 L63 20 L63 60" stroke="#FAFAF8" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg><span class="wd">Maskin</span></div>
@@ -188,39 +204,18 @@
 
       <!-- left captions -->
       <div id="cap">
-        <div class="cap" data-layout-allow-overlap id="cap1"><div class="ck">the promise</div><div class="ch">AI made your individuals faster.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap2"><div class="ck">the gap</div><div class="ch">But your organization <em>hasn’t</em> felt it.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap3"><div class="ck">what’s missing</div><div class="ch">True AI + human collaboration.</div><div class="cs">An AI-native workspace — where the whole organization compounds, not just the individual.</div></div>
         <div class="cap" data-layout-allow-overlap id="cap4"><div class="ck">your stack</div><div class="ch">Connect the services you already run.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap5"><div class="ck">no friction</div><div class="ch">No new stack. No bespoke connectors.</div><div class="cs">Slack, GitHub, Linear, Intercom, PostHog, HubSpot, Salesforce &amp; more.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap6"><div class="ck">always on</div><div class="ch">Agents monitor them — and detect the <em>insights</em> that matter.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap7"><div class="ck">signal</div><div class="ch">Agents cut through the noise — surfacing what you must respond to.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap8"><div class="ck">conviction</div><div class="ch">Signals become <em>bets</em> — what your org decides to believe in.</div><div class="cs">You approve. Humans set direction; agents do the rest.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap9"><div class="ck">execution</div><div class="ch">Agents take care of the work — and ship it.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap10"><div class="ck">validated</div><div class="ch">Live in production, agents <em>validate the business value</em>.</div></div>
-        <div class="cap" data-layout-allow-overlap id="capM"><div class="ck">the marketplace</div><div class="ch">Pick a loop — or build your <em>own</em>.</div><div class="cs">Every loop turns AI spend into business outcomes.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap5"><div class="ck">no friction</div><div class="ch">No new stack. No bespoke connectors.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap6"><div class="ck">always on</div><div class="ch">Agents monitor everything — and detect the <em>insights</em> that matter.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap7"><div class="ck">signal</div><div class="ch">Cut through the noise — surface what you must respond to.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap8"><div class="ck">conviction</div><div class="ch">Signals become <em>bets</em> — what your org believes in.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap9"><div class="ck">execution</div><div class="ch">Agents do the work — and ship it.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap10"><div class="ck">validated</div><div class="ch">Live in production, agents <em>validate the value</em>.</div></div>
+        <div class="cap" data-layout-allow-overlap id="capM"><div class="ck">the marketplace</div><div class="ch">One closed loop of <em>many</em>.</div></div>
       </div>
 
-      <!-- right stage -->
-      <div id="stage" class="clip" data-start="0" data-duration="62" data-track-index="1">
-
-        <!-- chat (big) -->
-        <div class="rcard" id="chatbig">
-          <div class="wtitle"><div class="tld" style="background:#ff5f57"></div><div class="tld" style="background:#febc2e"></div><div class="tld" style="background:#28c840"></div></div>
-          <div class="chat-h"><span class="nt">New chat</span><span class="mp">Assistant</span></div>
-          <div class="chat-body">
-            <div class="crow u" id="cm1"><div class="cu">Summarize last week’s 312 support tickets and find the top issues.</div></div>
-            <div class="crow" id="cm2"><div class="ca"><div class="dot"><span></span></div><div class="txt">Top three: <b>onboarding confusion</b>, <b>billing surprises</b>, and <b>mobile crashes</b>. Onboarding drives ~40% of week-1 complaints.</div></div></div>
-            <div class="crow u" id="cm3"><div class="cu">Draft a fix plan for onboarding.</div></div>
-            <div class="crow" id="cm4"><div class="ca"><div class="dot"><span></span></div><div class="txt"><span class="typing"><i></i><i></i><i></i></span></div></div></div>
-          </div>
-          <div class="chat-in"><span class="ph">Reply to assistant…</span><span class="snd">↑</span></div>
-        </div>
-
-        <!-- chat grid (siloed) -->
-        <div class="rcard" id="chatgrid">
-          <div class="gwrap" id="gwrap"></div>
-        </div>
+      <!-- right stage (product) -->
+      <div id="stage" class="clip" data-start="0" data-duration="63" data-track-index="1">
 
         <!-- integrations hub -->
         <div class="rcard" id="integ">
@@ -270,10 +265,20 @@
               <!-- For You -->
               <div class="wpanel" id="wpA" style="opacity:1">
                 <div class="page-h">For You</div><div class="page-sub">Unread threads on things you follow</div>
-                <div class="card" id="wpA-ins" style="margin-top:18px"><div class="thead"><span class="badge b-insight">insight</span><span class="ttl">Most new users churn after week 1</span><span class="ttime">just now</span><span class="unread">3</span></div></div>
+                <div class="card" id="wpA-ins" style="margin-top:18px">
+                  <div class="thead"><span class="badge b-insight">insight</span><span class="ttl">Most new users churn after week 1</span><span class="ttime">just now</span><span class="unread">3</span></div>
+                  <div class="ins-viz">
+                    <div class="ins-chart" id="insChart">
+                      <div class="ins-bar" style="height:84px"></div><div class="ins-bar" style="height:80px"></div>
+                      <div class="ins-bar" style="height:72px"></div><div class="ins-bar" style="height:60px"></div>
+                      <div class="ins-bar drop" style="height:34px"></div><div class="ins-bar drop" style="height:22px"></div>
+                      <div class="ins-bar drop" style="height:14px"></div>
+                    </div>
+                    <div><div class="ins-note">Retention falls off a cliff after <b>day 5</b>. 142 signals from HubSpot, Intercom &amp; Slack agree.</div><div class="ins-kpi">week-1 retention · 38% ▼</div></div>
+                  </div>
+                </div>
                 <div class="card" id="wpA-bet" style="margin-top:14px">
                   <div class="thead"><span class="badge b-bet">bet</span><span class="ttl">A longer onboarding cuts week-1 churn</span><span class="ttime">just now</span><span class="unread">1</span></div>
-                  <div class="tbody"><div class="cmt"><div class="avatar av-a">⚡</div><div class="cb"><div><span class="cn link">Feedback Monitor</span><span class="ct">just now</span></div><div class="cx">Clustered 142 signals from HubSpot, Intercom &amp; Slack into one insight — and proposed a bet to fix it.</div></div></div></div>
                 </div>
               </div>
               <!-- bet detail -->
@@ -333,9 +338,42 @@
           <svg width="28" height="28" viewBox="0 0 24 24"><path d="M5 3L19 12L12 13L9 20L5 3Z" fill="#ffffff" stroke="#111110" stroke-width="1.4" stroke-linejoin="round"/></svg></div>
       </div>
 
-      <!-- centred 'one loop of many' -->
-      <div id="cscrim"></div>
-      <div id="cstmt" data-layout-allow-overlap><div class="ch">One closed loop of <em>many</em>.</div><div class="cs">A marketplace of loops, ready to run.</div></div>
+      <!-- PROMISE scene (centred title + chat) -->
+      <div class="cscene" id="promise">
+        <div id="ptitle">
+          <div class="ptt" id="ptt1">AI made your individuals faster.</div>
+          <div class="ptt" id="ptt2">But your organisation <em>hasn’t</em> felt it.</div>
+        </div>
+        <div id="chatC">
+          <div class="chat-h"><span class="nt">New chat</span><span class="mp">Assistant</span></div>
+          <div class="chat-body">
+            <div class="crow u" id="cm1"><div class="cu">Summarise last week’s 312 support tickets and find the top issues.</div></div>
+            <div class="crow" id="cm2"><div class="ca"><div class="dot"><span></span></div><div class="txt rsv"><span class="typing" id="typ1"><i></i><i></i><i></i></span><span class="rep" id="rep1">Top three: <b>onboarding confusion</b>, <b>billing surprises</b>, and <b>mobile crashes</b>. Onboarding drives ~40% of week-1 complaints.</span></div></div></div>
+            <div class="crow u" id="cm3"><div class="cu">Draft a fix plan for onboarding.</div></div>
+            <div class="crow" id="cm4"><div class="ca"><div class="dot"><span></span></div><div class="txt"><span class="typing" id="typ2"><i></i><i></i><i></i></span></div></div></div>
+          </div>
+          <div class="waitlbl" id="waitlbl">waiting for the assistant…</div>
+          <div class="chat-in"><span class="ph">Reply to assistant…</span><span class="snd">↑</span></div>
+        </div>
+      </div>
+
+      <!-- MISSING manifesto -->
+      <div class="cscene" id="missing">
+        <div id="ms-k">what’s missing</div>
+        <div id="ms-h">Humans &amp; agents — <em>first-class citizens</em>.</div>
+        <div id="ms-list">
+          <div class="ms-li" id="msl0"><span class="ck">✓</span><div>Work as <b>equals</b> — toward outcomes, not output.</div></div>
+          <div class="ms-li" id="msl1"><span class="ck">✓</span><div><b>One shared workspace</b> — every human &amp; agent has a role.</div></div>
+          <div class="ms-li" id="msl2"><span class="ck">✓</span><div><b>Persistent memory</b> — insights, bets &amp; tasks live across sessions.</div></div>
+          <div class="ms-li" id="msl3"><span class="ck">✓</span><div>Agents work <b>autonomously</b>. Humans decide what matters.</div></div>
+          <div class="ms-li" id="msl4"><span class="ck">✓</span><div>The loop <b>closes itself</b> — ship, learn, repeat.</div></div>
+        </div>
+        <div id="ms-chips">
+          <div class="ms-chip"><b>MCP-native</b></div><div class="ms-chip">Agents</div><div class="ms-chip">Triggers</div>
+          <div class="ms-chip">Bring your own model</div><div class="ms-chip">Apache 2.0</div><div class="ms-chip">Self-host or managed</div>
+          <div class="ms-chip">Integrations as MCP tools</div>
+        </div>
+      </div>
 
       <!-- intro -->
       <div class="endcap" id="intro" style="opacity:1">
@@ -361,20 +399,10 @@
       const tl = gsap.timeline({ paused: true });
       const R = (dur, cycle) => Math.max(0, Math.floor(dur / cycle) - 1);
 
-      gsap.set("#stage", { transformOrigin: "1210px 540px", scale: 1, x: 0, y: 0 });
+      gsap.set("#stage", { transformOrigin: "1210px 540px", scale: 1, x: 0, y: 0, opacity: 0 });
       gsap.set("#cursor", { x: 1100, y: 520 });
 
-      /* build siloed chat-grid minis */
-      (function () {
-        const w = document.getElementById("gwrap");
-        for (let i = 0; i < 9; i++) {
-          const d = document.createElement("div"); d.className = "mini";
-          d.innerHTML = '<div class="mh"><div class="md"></div><div class="mn">teammate</div></div>' +
-            '<div class="mb u s"></div><div class="mb"></div><div class="mb s"></div><div class="mb u"></div><div class="mb s"></div>';
-          w.appendChild(d);
-        }
-      })();
-      /* build integration hub lines (hub centre 650,400 in 1300x872 space) */
+      /* integration hub lines */
       (function () {
         const g = document.getElementById("ilines");
         const tips = [[230,145],[230,293],[230,441],[230,589],[1075,145],[1075,293],[1075,441],[1090,589]];
@@ -386,14 +414,14 @@
       })();
 
       /* ambient */
-      tl.to("#glow", { scale: 1.12, duration: 9, ease: "sine.inOut", yoyo: true, repeat: R(62, 9) }, 0);
-      tl.to("#grain", { x: 24, y: 16, duration: 18, ease: "sine.inOut", yoyo: true, repeat: R(62, 18) }, 0);
-      tl.to(".spinner", { rotation: 360, duration: 0.9, ease: "none", repeat: R(62, 0.9), transformOrigin: "50% 50%" }, 0);
+      tl.to("#glow", { scale: 1.12, duration: 9, ease: "sine.inOut", yoyo: true, repeat: R(63, 9) }, 0);
+      tl.to("#grain", { x: 24, y: 16, duration: 18, ease: "sine.inOut", yoyo: true, repeat: R(63, 18) }, 0);
+      tl.to(".spinner", { rotation: 360, duration: 0.9, ease: "none", repeat: R(63, 0.9), transformOrigin: "50% 50%" }, 0);
 
       /* helpers */
       function cam(t, dur, S, ty) { tl.to("#stage", { scale: S, x: 0, y: (540 - ty) * S, duration: dur, ease: "power2.inOut" }, t); }
       function camReset(t, dur) { tl.to("#stage", { scale: 1, x: 0, y: 0, duration: dur, ease: "power2.inOut" }, t); }
-      const capIn = (s, t) => { tl.fromTo(s + " .ck", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.45, ease: "power3.out" }, t); tl.set(s, { opacity: 1 }, t); tl.fromTo(s + " .ch", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, t + 0.06); tl.fromTo(s + " .cs", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, t + 0.22); };
+      const capIn = (s, t) => { tl.fromTo(s + " .ck", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.45, ease: "power3.out" }, t); tl.set(s, { opacity: 1 }, t); tl.fromTo(s + " .ch", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, t + 0.06); };
       const capOut = (s, t) => tl.to(s, { opacity: 0, y: -12, duration: 0.4, ease: "power2.in" }, t);
       const show = (s, t, d) => tl.fromTo(s, { opacity: 0 }, { opacity: 1, duration: d || 0.5, ease: "power2.inOut" }, t);
       const hide = (s, t, d) => tl.to(s, { opacity: 0, duration: d || 0.45, ease: "power2.inOut" }, t);
@@ -403,135 +431,130 @@
         tl.set(["#rip1", "#rip2"], { opacity: 1, scale: 0 }, t);
         tl.to(["#rip1", "#rip2"], { scale: 4, opacity: 0, duration: 0.7, ease: "power2.out", stagger: 0.09, immediateRender: false }, t);
       }
+      const dots = (s, t, dur) => tl.to(s + " i", { y: -5, duration: 0.34, ease: "sine.inOut", yoyo: true, repeat: R(dur, 0.34), stagger: 0.11 }, t);
 
-      /* ===== 0–3 intro logo ===== */
+      /* ===== 0–2.6 intro ===== */
       tl.from("#intro-mark", { opacity: 0, scale: 0.6, rotation: -12, duration: 0.7, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 0.2);
       tl.from("#intro-word", { opacity: 0, x: -24, duration: 0.6, ease: "power3.out" }, 0.45);
       tl.from("#intro-tag", { opacity: 0, y: 12, duration: 0.5, ease: "power2.out" }, 0.9);
-      tl.to("#intro", { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 2.6);
-      tl.to(["#brandbar", "#kicker-tr"], { opacity: 1, duration: 0.5 }, 2.9);
+      tl.to("#intro", { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 2.4);
+      tl.to(["#brandbar", "#kicker-tr"], { opacity: 1, duration: 0.5 }, 2.7);
 
-      /* ===== 3–6.4 promise + chat ===== */
-      show("#chatbig", 3.0, 0.6);
-      tl.from("#chatbig", { y: 22, duration: 0.6, ease: "power3.out" }, 3.0);
-      capIn("#cap1", 3.3);
-      tl.from("#cm1", { opacity: 0, y: 14, duration: 0.4, ease: "power3.out" }, 3.7);
-      tl.from("#cm2", { opacity: 0, y: 14, duration: 0.4, ease: "power3.out" }, 4.3);
-      tl.from("#cm3", { opacity: 0, y: 14, duration: 0.4, ease: "power3.out" }, 5.0);
-      tl.from("#cm4", { opacity: 0, y: 14, duration: 0.4, ease: "power3.out" }, 5.5);
-      tl.to(".typing i", { y: -4, duration: 0.32, ease: "sine.inOut", yoyo: true, repeat: R(3.5, 0.32), stagger: 0.1 }, 5.8);
+      /* ===== 2.7–14.5 promise: centred title + slow chat ===== */
+      show("#promise", 2.7, 0.6);
+      tl.from("#chatC", { y: 26, duration: 0.7, ease: "power3.out" }, 2.8);
+      tl.fromTo("#ptt1", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 3.1);
+      // exchange 1 — slow
+      tl.from("#cm1", { opacity: 0, y: 14, duration: 0.45, ease: "power3.out" }, 3.9);
+      tl.from("#cm2", { opacity: 0, y: 10, duration: 0.4 }, 4.7);
+      dots("#typ1", 4.8, 3.4);                              // long wait
+      tl.to("#waitlbl", { opacity: 1, duration: 0.4 }, 5.8); tl.to("#waitlbl", { opacity: 0, duration: 0.4 }, 7.8);
+      tl.to("#typ1", { opacity: 0, duration: 0.3 }, 8.0);
+      tl.fromTo("#rep1", { opacity: 0 }, { opacity: 1, duration: 0.55, ease: "power2.out" }, 8.2);
+      // title swap mid-conversation
+      tl.to("#ptt1", { opacity: 0, y: -16, duration: 0.5, ease: "power2.in" }, 9.0);
+      tl.fromTo("#ptt2", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 9.3);
+      // exchange 2 — slow again (single-player, still waiting)
+      tl.from("#cm3", { opacity: 0, y: 14, duration: 0.45, ease: "power3.out" }, 9.9);
+      tl.from("#cm4", { opacity: 0, y: 10, duration: 0.4 }, 10.7);
+      dots("#typ2", 10.8, 3.4);
+      tl.to("#waitlbl", { opacity: 1, duration: 0.4 }, 11.8); tl.to("#waitlbl", { opacity: 0, duration: 0.4 }, 13.6);
+      hide("#promise", 14.0, 0.6);
 
-      /* ===== 6.4–10 gap: siloed grid ===== */
-      capOut("#cap1", 6.5); capIn("#cap2", 6.8);
-      hide("#chatbig", 6.6, 0.4); show("#chatgrid", 6.9, 0.5);
-      tl.from(".mini", { opacity: 0, scale: 0.9, duration: 0.4, ease: "power2.out", stagger: 0.05, transformOrigin: "50% 50%" }, 7.0);
-      tl.to("#chatgrid", { filter: "saturate(0.6)", opacity: 0.82, duration: 0.8, ease: "power2.inOut" }, 8.4);
+      /* ===== 14.4–24 what's missing manifesto ===== */
+      show("#missing", 14.4, 0.6);
+      tl.fromTo("#ms-k", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 14.7);
+      tl.fromTo("#ms-h", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 14.9);
+      ["#msl0", "#msl1", "#msl2", "#msl3", "#msl4"].forEach((s, i) =>
+        tl.fromTo(s, { opacity: 0, x: -18 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, 15.8 + i * 0.62));
+      tl.fromTo(".ms-chip", { opacity: 0, y: 12, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.4, ease: "back.out(1.5)", stagger: 0.08, transformOrigin: "50% 50%" }, 19.4);
+      hide("#missing", 23.4, 0.6);
 
-      /* ===== 10–14.5 what's missing → reveal app ===== */
-      capOut("#cap2", 9.9); capIn("#cap3", 10.2);
-      hide("#chatgrid", 10.2, 0.5); show("#app", 10.6, 0.6);
-      tl.from("#app", { y: 22, duration: 0.6, ease: "power3.out" }, 10.6);
-      tl.from("#wpA-ins", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 11.2);
-      tl.from("#wpA-bet", { opacity: 0, y: 14, duration: 0.5, ease: "power3.out" }, 11.5);
+      /* ===== 23.8–31 integrations ===== */
+      tl.set("#stage", { opacity: 1 }, 23.7);
+      show("#integ", 23.9, 0.5);
+      capIn("#cap4", 24.2);
+      tl.from("#ihub", { opacity: 0, scale: 0.6, duration: 0.55, ease: "back.out(1.7)", transformOrigin: "50% 50%" }, 24.4);
+      tl.from(["#ic0","#ic1","#ic2","#ic3","#ic4","#ic5","#ic6","#ic7"], { opacity: 0, scale: 0.85, duration: 0.4, ease: "back.out(1.5)", stagger: 0.08, transformOrigin: "50% 50%" }, 24.8);
+      tl.fromTo("#ilines line", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out", stagger: 0.07 }, 25.0);
+      capOut("#cap4", 26.6); capIn("#cap5", 26.9);
+      tl.to("#ilines", { opacity: 0.5, duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: R(4, 0.9) }, 27.2);
+      tl.to("#ihub-ring", { opacity: 1, scale: 1.25, duration: 1.4, ease: "sine.out", yoyo: true, repeat: R(4, 1.4), transformOrigin: "50% 50%" }, 27.4);
+      capOut("#cap5", 28.4); capIn("#cap6", 28.7);          // hold cap6 ~3.6s — slower
+      // a detected-insight pings out of the hub
+      tl.fromTo("#ihub", { boxShadow: "0 20px 50px rgba(17,17,16,0.28)" }, { boxShadow: "0 0 0 10px rgba(37,99,235,0.18)", duration: 0.8, ease: "sine.inOut", yoyo: true, repeat: 3 }, 29.0);
+      hide("#integ", 31.6, 0.5);
 
-      /* ===== 14.5–23 connect services: integrations ===== */
-      capOut("#cap3", 14.2); capIn("#cap4", 14.6);
-      // nav to Integrations
-      tl.to(["#wnav-active", "#wnav-rail"], { y: 76, duration: 0.4, ease: "power3.inOut" }, 14.6);
-      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 14.6);
-      tl.to("#wn-int", { color: "#111110", fontWeight: 600, duration: 0.3 }, 14.6);
-      tl.to("#wn-fyb", { opacity: 0, duration: 0.3 }, 14.6);
-      hide("#app", 14.9, 0.4); show("#integ", 15.0, 0.5);
-      // hub + chips + lines
-      tl.from("#ihub", { opacity: 0, scale: 0.6, duration: 0.55, ease: "back.out(1.7)", transformOrigin: "50% 50%" }, 15.2);
-      tl.from(["#ic0", "#ic1", "#ic2", "#ic3", "#ic4", "#ic5", "#ic6", "#ic7"], { opacity: 0, scale: 0.85, duration: 0.4, ease: "back.out(1.5)", stagger: 0.08, transformOrigin: "50% 50%" }, 15.6);
-      tl.fromTo("#ilines line", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out", stagger: 0.07 }, 15.7);
-      capOut("#cap4", 17.8); capIn("#cap5", 18.1);
-      // pulse lines (monitoring)
-      tl.to("#ilines", { opacity: 0.55, duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: R(5, 0.9) }, 18.4);
-      tl.to("#ihub-ring", { opacity: 1, scale: 1.25, duration: 1.4, ease: "sine.out", yoyo: true, repeat: R(5, 1.4), transformOrigin: "50% 50%" }, 18.6);
-      capOut("#cap5", 20.4); capIn("#cap6", 20.7);
-      // back to For You with the surfaced insight
-      hide("#integ", 22.3, 0.45); show("#app", 22.5, 0.5);
-      tl.to(["#wnav-active", "#wnav-rail"], { y: 0, duration: 0.4, ease: "power3.inOut" }, 22.5);
-      tl.to("#wn-int", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 22.5);
-      tl.to("#wn-fy", { color: "#111110", fontWeight: 600, duration: 0.3 }, 22.5);
-      tl.set("#wpA", { opacity: 1 }, 22.5);
+      /* ===== 32–37.5 For You: insight stands out ===== */
+      capOut("#cap6", 31.9);
+      show("#app", 31.9, 0.5);
+      tl.from("#app", { y: 18, duration: 0.5, ease: "power3.out" }, 31.9);
+      capIn("#cap7", 32.3);
+      cam(32.4, 2.2, 1.16, 320);
+      tl.from("#wpA-ins", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 32.6);
+      tl.fromTo(".ins-bar", { scaleY: 0 }, { scaleY: 1, duration: 0.5, ease: "power3.out", stagger: 0.06 }, 33.0);
+      tl.fromTo("#wpA-ins", { boxShadow: "0 1px 3px rgba(17,17,16,0.05)" }, { boxShadow: "0 0 0 3px rgba(91,141,217,0.35)", duration: 1.1, ease: "sine.inOut", yoyo: true, repeat: 1 }, 33.6);
+      tl.from("#wpA-bet", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 35.0);
 
-      /* ===== 23–47 the loop ===== */
-      capOut("#cap6", 23.0); capIn("#cap7", 23.3);
-      cam(23.5, 2.0, 1.16, 320);                       // push to the insight
-      tl.fromTo("#wpA-ins", { boxShadow: "0 1px 3px rgba(17,17,16,0.05)" }, { boxShadow: "0 0 0 3px rgba(91,141,217,0.3)", duration: 1.0, ease: "sine.inOut", yoyo: true, repeat: 1 }, 24.0);
+      /* ===== 37.5–42 bet + approve ===== */
+      capOut("#cap7", 36.6); capIn("#cap8", 36.9);
+      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 36.9);
+      tl.to("#cursor", { x: 1000, y: 470, duration: 0.8, ease: "power3.inOut" }, 37.0);
+      cursorClick(37.9);
+      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 38.4);
+      panelSwap("#wpA", "#wpB", 38.5);
+      tl.to("#wcv1", { opacity: 0, duration: 0.35 }, 38.5); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 38.7);
+      camReset(38.5, 1.0);
+      cam(39.7, 1.4, 1.13, 540);
+      tl.fromTo("#wpB-c2", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 40.4);
+      tl.to("#wpB-st1", { opacity: 0, duration: 0.3 }, 41.0);
+      tl.fromTo("#wpB-st2", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 41.1);
+      tl.fromTo("#wpB-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 41.5);
 
-      // → bet detail (conviction + approve)
-      capOut("#cap7", 26.6); capIn("#cap8", 26.9);
-      cam(26.4, 1.4, 1.18, 430);
-      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 27.0);
-      tl.to("#cursor", { x: 1000, y: 470, duration: 0.8, ease: "power3.inOut" }, 27.1);
-      cursorClick(28.0);
-      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 28.5);
-      panelSwap("#wpA", "#wpB", 28.6);
-      tl.to("#wcv1", { opacity: 0, duration: 0.35 }, 28.6); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 28.8);
-      camReset(28.6, 1.0);
-      cam(29.8, 1.6, 1.14, 540);                       // hypothesis
-      tl.fromTo("#wpB-c2", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 31.6);
-      tl.to("#wpB-st1", { opacity: 0, duration: 0.3 }, 32.3);
-      tl.fromTo("#wpB-st2", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 32.4);
-      tl.fromTo("#wpB-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 32.8);
+      /* ===== 42–46.5 agents ===== */
+      capOut("#cap8", 42.2); capIn("#cap9", 42.5);
+      camReset(42.0, 0.9);
+      tl.to("#wp-idle", { opacity: 0, duration: 0.3 }, 42.2); tl.to("#wp-on", { opacity: 1, duration: 0.3 }, 42.4);
+      tl.to(".wpdot", { opacity: 0.3, duration: 0.7, ease: "sine.inOut", yoyo: true, repeat: R(9, 0.7) }, 42.4);
+      panelSwap("#wpB", "#wpC", 42.8);
+      tl.to("#wcv2", { opacity: 0, duration: 0.35 }, 42.8); tl.to("#wcv3", { opacity: 1, duration: 0.35 }, 43.0);
+      tl.to(["#wnav-active","#wnav-rail"], { y: 114, duration: 0.4, ease: "power3.inOut" }, 42.8);
+      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 42.8);
+      tl.to("#wn-ag", { color: "#111110", fontWeight: 600, duration: 0.3 }, 42.8);
+      tl.fromTo(["#agc1","#agc2","#agc3","#agc4"], { opacity: 0, y: 16, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "power3.out", stagger: 0.1, transformOrigin: "50% 50%" }, 43.2);
+      tl.to(["#agc1","#agc2","#agc3"], { boxShadow: "0 0 0 3px rgba(37,99,235,0.12)", duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(3.5, 1.3), stagger: 0.2 }, 44.0);
 
-      // → agents (execution)
-      capOut("#cap8", 33.6); capIn("#cap9", 33.9);
-      camReset(33.4, 0.9);
-      tl.to("#wp-idle", { opacity: 0, duration: 0.3 }, 33.6); tl.to("#wp-on", { opacity: 1, duration: 0.3 }, 33.8);
-      tl.to(".wpdot", { opacity: 0.3, duration: 0.7, ease: "sine.inOut", yoyo: true, repeat: R(12, 0.7) }, 33.8);
-      panelSwap("#wpB", "#wpC", 34.2);
-      tl.to("#wcv2", { opacity: 0, duration: 0.35 }, 34.2); tl.to("#wcv3", { opacity: 1, duration: 0.35 }, 34.4);
-      tl.to(["#wnav-active", "#wnav-rail"], { y: 114, duration: 0.4, ease: "power3.inOut" }, 34.2);
-      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 34.2);
-      tl.to("#wn-ag", { color: "#111110", fontWeight: 600, duration: 0.3 }, 34.2);
-      tl.fromTo(["#agc1", "#agc2", "#agc3", "#agc4"], { opacity: 0, y: 16, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "power3.out", stagger: 0.1, transformOrigin: "50% 50%" }, 34.6);
-      tl.to(["#agc1", "#agc2", "#agc3"], { boxShadow: "0 0 0 3px rgba(37,99,235,0.12)", duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(5, 1.3), stagger: 0.2 }, 35.4);
+      /* ===== 46.5–51 outcome ===== */
+      capOut("#cap9", 46.4); capIn("#cap10", 46.7);
+      panelSwap("#wpC", "#wpD", 47.0);
+      tl.to("#wcv3", { opacity: 0, duration: 0.35 }, 47.0); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 47.2);
+      tl.to(["#wnav-active","#wnav-rail"], { y: 0, duration: 0.4, ease: "power3.inOut" }, 47.0);
+      tl.to("#wn-ag", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 47.0);
+      tl.to("#wn-fy", { color: "#111110", fontWeight: 600, duration: 0.3 }, 47.0);
+      cam(47.4, 1.8, 1.16, 330);
+      tl.fromTo("#wpD-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.45, ease: "back.out(1.4)" }, 47.8);
 
-      // → outcome (validated)
-      capOut("#cap9", 39.4); capIn("#cap10", 39.7);
-      panelSwap("#wpC", "#wpD", 40.0);
-      tl.to("#wcv3", { opacity: 0, duration: 0.35 }, 40.0); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 40.2);
-      tl.to(["#wnav-active", "#wnav-rail"], { y: 0, duration: 0.4, ease: "power3.inOut" }, 40.0);
-      tl.to("#wn-ag", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 40.0);
-      tl.to("#wn-fy", { color: "#111110", fontWeight: 600, duration: 0.3 }, 40.0);
-      cam(40.4, 1.8, 1.16, 330);
-      tl.fromTo("#wpD-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.45, ease: "back.out(1.4)" }, 40.8);
+      /* ===== 51.5–56.5 marketplace ===== */
+      capOut("#cap10", 51.4);
+      camReset(51.2, 1.1);
+      capIn("#capM", 51.8);
+      panelSwap("#wpD", "#wpE", 51.7);
+      tl.to("#wcv2", { opacity: 0, duration: 0.3 }, 51.7); tl.to("#wcv4", { opacity: 1, duration: 0.3 }, 51.9);
+      tl.to(["#wnav-active","#wnav-rail"], { y: 152, duration: 0.4, ease: "power3.inOut" }, 51.7);
+      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 51.7);
+      tl.to("#wn-mk", { color: "#111110", fontWeight: 600, duration: 0.3 }, 51.7);
+      tl.fromTo(".mtile", { opacity: 0, y: 20, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.3)", stagger: 0.07, transformOrigin: "50% 50%" }, 52.1);
+      cam(52.4, 4.0, 1.05, 540);
 
-      /* ===== 47–55 marketplace ===== */
-      capOut("#cap10", 45.4);
-      camReset(45.2, 1.2);
-      // one loop of many over scrim
-      tl.to("#cscrim", { opacity: 0.92, duration: 0.5, ease: "power2.inOut" }, 45.8);
-      tl.fromTo("#cstmt .ch", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 46.0);
-      tl.fromTo("#cstmt .cs", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 46.3);
-      tl.to("#cstmt", { opacity: 1, duration: 0.01 }, 46.0);
-      // swap content to marketplace under scrim
-      panelSwap("#wpD", "#wpE", 46.6);
-      tl.to("#wcv2", { opacity: 0, duration: 0.3 }, 46.6); tl.to("#wcv4", { opacity: 1, duration: 0.3 }, 46.8);
-      tl.to(["#wnav-active", "#wnav-rail"], { y: 152, duration: 0.4, ease: "power3.inOut" }, 46.6);
-      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 46.6);
-      tl.to("#wn-mk", { color: "#111110", fontWeight: 600, duration: 0.3 }, 46.6);
-      // reveal
-      tl.to("#cstmt", { opacity: 0, duration: 0.45, ease: "power2.in" }, 48.4);
-      tl.to("#cscrim", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 48.5);
-      capIn("#capM", 48.7);
-      tl.fromTo(".mtile", { opacity: 0, y: 20, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.3)", stagger: 0.07, transformOrigin: "50% 50%" }, 48.8);
-      cam(49.2, 5.0, 1.05, 540);
-
-      /* ===== 55–62 close ===== */
-      capOut("#capM", 53.6);
-      tl.to(["#stage", "#cap", "#backdrop"], { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 53.8);
-      tl.to("#close", { opacity: 1, duration: 0.6, ease: "power2.inOut" }, 54.0);
-      tl.from("#close-mark", { opacity: 0, scale: 0.6, rotation: -10, duration: 0.65, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 54.5);
-      tl.from(".endcap#close .ec-word", { opacity: 0, x: -22, duration: 0.55, ease: "power3.out" }, 54.7);
-      tl.from("#close-tag", { opacity: 0, y: 14, duration: 0.5, ease: "power2.out" }, 55.3);
-      tl.fromTo("#close-row", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "back.out(1.4)" }, 55.7);
-      tl.to("#close-cta", { scale: 1.04, duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(5, 1.3), transformOrigin: "50% 50%" }, 56.6);
+      /* ===== 56.5–63 close ===== */
+      capOut("#capM", 56.2);
+      tl.to(["#stage","#cap","#backdrop"], { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 56.5);
+      tl.to("#close", { opacity: 1, duration: 0.6, ease: "power2.inOut" }, 56.7);
+      tl.from("#close-mark", { opacity: 0, scale: 0.6, rotation: -10, duration: 0.65, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 57.2);
+      tl.from("#close .ec-word", { opacity: 0, x: -22, duration: 0.55, ease: "power3.out" }, 57.4);
+      tl.from("#close-tag", { opacity: 0, y: 14, duration: 0.5, ease: "power2.out" }, 58.0);
+      tl.fromTo("#close-row", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "back.out(1.4)" }, 58.4);
+      tl.to("#close-cta", { scale: 1.04, duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(3, 1.3), transformOrigin: "50% 50%" }, 59.3);
 
       window.__timelines["main"] = tl;
     </script>
