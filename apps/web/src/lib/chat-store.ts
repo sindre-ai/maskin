@@ -14,6 +14,15 @@ import type { SindreEvent, UserAttachmentView } from '@/lib/sindre-stream'
 
 export type ChatMessageStatus = 'streaming' | 'complete' | 'error' | 'cancelled'
 
+/**
+ * Delivery state of a user message's optimistic write to
+ * `/api/conversations/:id/messages`. Undefined means the message was hydrated
+ * from storage and is therefore implicitly `sent`. `sending` covers the
+ * in-flight retry window; `error` is what the transcript surfaces with a
+ * Retry affordance.
+ */
+export type UserMessageStatus = 'sending' | 'sent' | 'error'
+
 export interface UserChatMessage {
 	id: string
 	role: 'user'
@@ -27,6 +36,8 @@ export interface UserChatMessage {
 	 * `/api/conversations/:id/messages`. Local-only messages omit this.
 	 */
 	remoteId?: number
+	status?: UserMessageStatus
+	errorText?: string
 }
 
 export interface AgentChatMessage {
@@ -88,17 +99,23 @@ function storageKey(workspaceId: string): string {
 }
 
 /**
- * Revive a conversation loaded from storage: any agent message left
- * `streaming` (the tab closed mid-reply) can never resume — its in-flight SSE
- * is gone — so we down-grade it to `cancelled` so the UI doesn't show a
- * forever-spinning bubble.
+ * Revive a conversation loaded from storage:
+ * - An agent message left `streaming` (the tab closed mid-reply) can never
+ *   resume — its in-flight SSE is gone — so we down-grade it to `cancelled`.
+ * - A user message left `sending` lost its postUserMessage promise when the
+ *   tab unloaded, so we flip it to `error` with a generic copy. The user gets
+ *   the Retry affordance on the next render instead of a frozen "Sending…".
  */
 function reviveConversation(conversation: Conversation): Conversation {
-	const messages = conversation.messages.map((message) =>
-		message.role === 'agent' && message.status === 'streaming'
-			? { ...message, status: 'cancelled' as const }
-			: message,
-	)
+	const messages = conversation.messages.map((message) => {
+		if (message.role === 'agent' && message.status === 'streaming') {
+			return { ...message, status: 'cancelled' as const }
+		}
+		if (message.role === 'user' && message.status === 'sending') {
+			return { ...message, status: 'error' as const, errorText: "Couldn't send" }
+		}
+		return message
+	})
 	return { ...conversation, messages }
 }
 

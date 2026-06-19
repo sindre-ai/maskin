@@ -3,7 +3,7 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { MessageActions } from '@/components/sindre/message-actions'
 import { Button } from '@/components/ui/button'
-import type { AgentChatMessage, ChatMessage } from '@/lib/chat-store'
+import type { AgentChatMessage, ChatMessage, UserChatMessage } from '@/lib/chat-store'
 import { cn } from '@/lib/cn'
 import type { SindreEvent, UserAttachmentView } from '@/lib/sindre-stream'
 import {
@@ -22,6 +22,7 @@ interface ConversationTranscriptProps {
 	messages: ChatMessage[]
 	currentUserId: string
 	onRegenerate: (messageId: string) => void
+	onRetryUserMessage: (messageId: string) => void
 	onEditUserMessage: (text: string) => void
 	className?: string
 }
@@ -42,6 +43,7 @@ export function ConversationTranscript({
 	messages,
 	currentUserId,
 	onRegenerate,
+	onRetryUserMessage,
 	onEditUserMessage,
 	className,
 }: ConversationTranscriptProps) {
@@ -110,6 +112,7 @@ export function ConversationTranscript({
 								grouped={grouped}
 								isSelf={message.role === 'user' && message.senderId === currentUserId}
 								onRegenerate={() => onRegenerate(message.id)}
+								onRetry={message.role === 'user' ? () => onRetryUserMessage(message.id) : undefined}
 								onEdit={message.role === 'user' ? () => onEditUserMessage(message.text) : undefined}
 							/>
 						)
@@ -139,12 +142,14 @@ function MessageRow({
 	grouped,
 	isSelf,
 	onRegenerate,
+	onRetry,
 	onEdit,
 }: {
 	message: ChatMessage
 	grouped: boolean
 	isSelf: boolean
 	onRegenerate: () => void
+	onRetry?: () => void
 	onEdit?: () => void
 }) {
 	const copyText = message.role === 'user' ? message.text : agentPlainText(message.events)
@@ -178,7 +183,7 @@ function MessageRow({
 				)}
 				<div className="mt-0.5 text-sm">
 					{message.role === 'user' ? (
-						<UserBody text={message.text} attachments={message.attachments} />
+						<UserBody message={message} onRetry={onRetry} />
 					) : (
 						<AgentBody message={message} onRegenerate={onRegenerate} />
 					)}
@@ -197,7 +202,8 @@ function MessageRow({
 	)
 }
 
-function UserBody({ text, attachments }: { text: string; attachments?: UserAttachmentView[] }) {
+function UserBody({ message, onRetry }: { message: UserChatMessage; onRetry?: () => void }) {
+	const { text, attachments, status, errorText } = message
 	return (
 		<div className="flex flex-col gap-1">
 			{attachments && attachments.length > 0 ? (
@@ -214,6 +220,25 @@ function UserBody({ text, attachments }: { text: string; attachments?: UserAttac
 				</ul>
 			) : null}
 			<span className="whitespace-pre-wrap text-foreground">{text}</span>
+			{status === 'error' ? (
+				<div className="mt-0.5 flex items-center gap-2">
+					<p className="text-error text-xs">{errorText ?? "Couldn't send."}</p>
+					{onRetry ? (
+						<Button
+							type="button"
+							size="sm"
+							variant="outline"
+							className="h-6 gap-1.5 px-2 text-xs"
+							onClick={onRetry}
+						>
+							<RotateCcw size={12} />
+							Retry
+						</Button>
+					) : null}
+				</div>
+			) : status === 'sending' ? (
+				<p className="text-text-muted text-xs italic">Sending…</p>
+			) : null}
 		</div>
 	)
 }
