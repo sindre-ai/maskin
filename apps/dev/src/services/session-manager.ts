@@ -1131,6 +1131,11 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
+		// entrypoint.sh waits for this file before running agent-run.sh (two-phase
+		// startup for microsandbox). The local Docker path must write it here so
+		// the container doesn't sleep forever.
+		await writeFile(join(tempDir, '.exec-trigger'), '1', { mode: 0o644 })
+
 		const containerId = await this.containers.create({
 			image: spec.image,
 			name,
