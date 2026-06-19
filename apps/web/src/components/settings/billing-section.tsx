@@ -17,7 +17,7 @@ const PLAN_LABEL: Record<BillingPlan, string> = {
 	trial: 'Trial',
 	starter: 'Starter — $20/mo',
 	pro: 'Pro — $60/mo',
-	byollm: 'Bring-your-own',
+	byollm: 'Free',
 }
 
 const STRIPE_BILLING_PORTAL = 'https://billing.stripe.com/p/login/maskin'
