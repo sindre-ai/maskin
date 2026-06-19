@@ -185,6 +185,26 @@ describe('localStorageRepository', () => {
 		if (agent?.role === 'agent') expect(agent.status).toBe('cancelled')
 	})
 
+	it('downgrades a stranded sending user message to error on hydrate', async () => {
+		const conv = await localStorageRepository.createConversation(WS, {})
+		await localStorageRepository.postUserMessage(WS, conv.id, {
+			id: 'msg_1',
+			role: 'user',
+			senderId: 'u',
+			senderName: 'Me',
+			text: 'hi',
+			createdAt: Date.now(),
+			status: 'sending',
+		})
+		const loaded = await localStorageRepository.list(WS)
+		const user = loaded[0].messages.find((m) => m.role === 'user')
+		expect(user?.role).toBe('user')
+		if (user?.role === 'user') {
+			expect(user.status).toBe('error')
+			expect(user.errorText).toBe("Couldn't send")
+		}
+	})
+
 	it('adds and removes participants', async () => {
 		const conv = await localStorageRepository.createConversation(WS, {})
 		await localStorageRepository.addParticipant(WS, conv.id, 'agent-1')

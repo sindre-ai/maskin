@@ -49,6 +49,7 @@ export function ConversationView({
 		workingAgentIds,
 		isBusy,
 		send,
+		retrySend,
 		stop,
 		regenerate,
 		addParticipant,
@@ -132,6 +133,7 @@ export function ConversationView({
 					messages={messages}
 					currentUserId={currentUserId}
 					onRegenerate={regenerate}
+					onRetryUserMessage={retrySend}
 					onEditUserMessage={setDraft}
 					className="min-h-0 flex-1"
 				/>

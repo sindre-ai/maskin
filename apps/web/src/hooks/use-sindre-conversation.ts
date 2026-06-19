@@ -7,6 +7,7 @@ import {
 	type ChatMessage,
 	type Conversation,
 	type ConversationRepository,
+	type UserChatMessage,
 	apiConversationRepository,
 	createConversation,
 	createId,
@@ -64,6 +65,7 @@ export interface UseSindreConversationResult {
 	ready: boolean
 	currentUserName: string
 	send: (args: SendArgs) => void
+	retrySend: (messageId: string) => void
 	stop: (messageId?: string) => void
 	regenerate: (messageId: string) => void
 	newConversation: () => void
@@ -304,6 +306,37 @@ export function useSindreConversation({
 		[workspaceId, appendEvents, patchMessage],
 	)
 
+	// Persist a user message and reflect the API outcome on the optimistic copy:
+	// failures flip `status: 'error'` so the transcript can show a Retry; success
+	// clears any prior error and stamps the server `remoteId`.
+	const persistUserMessage = useCallback(
+		(conversationId: string, message: UserChatMessage, mentionedIds: string[]) => {
+			patchMessage(conversationId, message.id, {
+				status: 'sending',
+				errorText: undefined,
+			})
+			void repository
+				.postUserMessage(workspaceId, conversationId, message, {
+					mentions: mentionedIds.length > 0 ? mentionedIds : undefined,
+				})
+				.then((res) => {
+					patchMessage(conversationId, message.id, {
+						status: 'sent',
+						errorText: undefined,
+						...(res.remoteId !== undefined ? { remoteId: res.remoteId } : {}),
+					})
+				})
+				.catch((err) => {
+					console.error('[sindre-conversation] postUserMessage failed', err)
+					patchMessage(conversationId, message.id, {
+						status: 'error',
+						errorText: err instanceof Error ? err.message : "Couldn't send",
+					})
+				})
+		},
+		[repository, workspaceId, patchMessage],
+	)
+
 	// ---- public actions ---------------------------------------------------
 
 	const send = useCallback(
@@ -328,7 +361,7 @@ export function useSindreConversation({
 				.filter((t) => !t.isDefault && !(active.participantIds ?? []).includes(t.id))
 				.map((t) => t.id)
 
-			const userMessage: ChatMessage = {
+			const userMessage: UserChatMessage = {
 				id: createId('msg'),
 				role: 'user',
 				senderId: currentUser.id,
@@ -338,6 +371,7 @@ export function useSindreConversation({
 					? { attachments: args.displayAttachments }
 					: {}),
 				createdAt: Date.now(),
+				status: 'sending',
 			}
 
 			const history = active.messages
@@ -372,17 +406,10 @@ export function useSindreConversation({
 				attached_files: args.files?.length ?? 0,
 			})
 
-			// Persist server-side. Failures are logged but don't roll back the
-			// optimistic UI commit — the user already sees their message.
-			void repository
-				.postUserMessage(workspaceId, conversationId, userMessage, {
-					mentions: mentionedIds.length > 0 ? mentionedIds : undefined,
-				})
-				.then((res) => {
-					if (res.remoteId === undefined) return
-					patchMessage(conversationId, userMessage.id, { remoteId: res.remoteId })
-				})
-				.catch((err) => console.error('[sindre-conversation] postUserMessage failed', err))
+			// Persist server-side. Failures don't roll back the optimistic commit;
+			// `persistUserMessage` records the outcome on the message itself so the
+			// transcript can surface a Retry affordance.
+			persistUserMessage(conversationId, userMessage, mentionedIds)
 
 			for (const actorId of newParticipantIds) {
 				void repository.addParticipant(workspaceId, conversationId, actorId).catch((err) => {
@@ -423,11 +450,26 @@ export function useSindreConversation({
 			currentUser,
 			workspaceId,
 			repository,
+			persistUserMessage,
 			patchConversation,
-			patchMessage,
 			appendMessage,
 			runAgentTurn,
 		],
+	)
+
+	const retrySend = useCallback(
+		(messageId: string) => {
+			if (!active) return
+			const conversationId = active.id
+			const target = active.messages.find((m) => m.id === messageId)
+			if (!target || target.role !== 'user') return
+			const mentionedIds = parseMentionIds(
+				target.text,
+				agentList.map((a) => ({ id: a.id, name: a.name })),
+			)
+			persistUserMessage(conversationId, target, mentionedIds)
+		},
+		[active, agentList, persistUserMessage],
 	)
 
 	const stop = useCallback(
@@ -596,6 +638,7 @@ export function useSindreConversation({
 		ready: !!workspaceId,
 		currentUserName: currentUser.name,
 		send,
+		retrySend,
 		stop,
 		regenerate,
 		newConversation,
