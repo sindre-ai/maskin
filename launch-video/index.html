@@ -114,12 +114,14 @@
       .ag-ds { font-size: 11.5px; color: #9B958F; margin: 7px 0 9px; margin-left: 35px; } .ag-ac { font-size: 12.5px; color: #5A5751; margin-left: 35px; }
       .idot { width: 7px; height: 7px; border-radius: 50%; background: #9B958F; }
 
-      .mkgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 17px; }
-      .mtile { background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 12px; border-top-width: 3px; padding: 15px 16px; }
-      .mtile .r { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #9B958F; }
-      .mtile .t { margin-top: 7px; font-size: 15.5px; font-weight: 700; letter-spacing: -0.01em; color: #111110; line-height: 1.2; }
-      .mtile .f { margin-top: 10px; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-      .ot { font-family: "JetBrains Mono", monospace; font-size: 10.5px; font-weight: 500; padding: 2px 6px; border-radius: 5px; }
+      /* marketplace tiles */
+      #wpE { padding: 28px 38px; }
+      .mkgrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-top: 16px; }
+      .mtile { background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 12px; border-top-width: 3px; padding: 14px 15px; }
+      .mtile .r { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+      .mtile .t { margin-top: 8px; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: #111110; line-height: 1.25; min-height: 38px; }
+      .mtile .f { margin-top: 11px; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+      .ot { font-family: "JetBrains Mono", monospace; font-size: 10px; font-weight: 500; padding: 2px 6px; border-radius: 5px; }
       .ot-i { color: #3F6CA8; background: rgba(91,141,217,.12); } .ot-b { color: #B45F12; background: rgba(230,126,34,.12); }
       .ot-t { color: #1E844A; background: rgba(39,174,96,.12); } .ot-src { color: #9B958F; border: 1px dashed #C9C3BA; } .ot-ar { color: #C9C3BA; }
       .mtile--c { background: #F0EDE7; border-top-color: #2563EB; }
@@ -167,13 +169,13 @@
       /* missing manifesto */
       #missing { display: flex; flex-direction: column; align-items: center; justify-content: center; }
       #ms-k { font-size: 14px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; color: #2563EB; opacity: 0; margin-bottom: 18px; }
-      #ms-h { font-size: 60px; font-weight: 700; letter-spacing: -0.03em; color: #111110; text-align: center; opacity: 0; }
+      #ms-h { font-size: 62px; font-weight: 700; letter-spacing: -0.03em; color: #111110; text-align: center; opacity: 0; }
       #ms-h em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
       #ms-list { margin-top: 40px; width: 880px; }
-      .ms-li { display: flex; align-items: center; gap: 16px; padding: 12px 0; font-size: 23px; color: #2c2a27; opacity: 0; border-bottom: 1px solid #E8E3DB; }
-      .ms-li .ck { width: 26px; height: 26px; border-radius: 8px; background: rgba(37,99,235,.12); color: #2563EB; display: flex; align-items: center; justify-content: center; font-size: 15px; flex: 0 0 auto; }
+      .ms-li { display: flex; align-items: center; gap: 16px; padding: 14px 0; font-size: 24px; color: #2c2a27; opacity: 0; border-bottom: 1px solid #E8E3DB; }
+      .ms-li .ck { width: 28px; height: 28px; border-radius: 8px; background: rgba(37,99,235,.12); color: #2563EB; display: flex; align-items: center; justify-content: center; font-size: 16px; flex: 0 0 auto; }
       .ms-li b { color: #111110; font-weight: 600; }
-      #ms-chips { margin-top: 34px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; width: 920px; }
+      #ms-chips { margin-top: 32px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; width: 820px; }
       .ms-chip { font-size: 14.5px; font-weight: 500; color: #5A5751; background: #FAFAF8; border: 1.5px solid #E2DDD7; border-radius: 10px; padding: 8px 15px; opacity: 0; }
       .ms-chip b { color: #111110; font-weight: 700; }
 
@@ -192,10 +194,10 @@
     </style>
   </head>
   <body>
-    <div id="root" data-composition-id="main" data-width="1920" data-height="1080" data-start="0" data-duration="63">
+    <div id="root" data-composition-id="main" data-width="1920" data-height="1080" data-start="0" data-duration="58">
 
       <!-- backdrop -->
-      <div id="backdrop" class="clip" data-start="0" data-duration="63" data-track-index="0">
+      <div id="backdrop" class="clip" data-start="0" data-duration="58" data-track-index="0">
         <div id="grain" data-layout-allow-overflow></div>
         <div id="glow" data-layout-allow-overflow></div>
         <div id="brandbar"><svg class="lg" viewBox="0 0 80 80"><rect width="80" height="80" rx="14" fill="#111110"/><path d="M17 60 L17 20 L40 46 L63 20 L63 60" stroke="#FAFAF8" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg><span class="wd">Maskin</span></div>
@@ -211,11 +213,12 @@
         <div class="cap" data-layout-allow-overlap id="cap8"><div class="ck">conviction</div><div class="ch">Signals become <em>bets</em> — what your org believes in.</div></div>
         <div class="cap" data-layout-allow-overlap id="cap9"><div class="ck">execution</div><div class="ch">Agents do the work — and ship it.</div></div>
         <div class="cap" data-layout-allow-overlap id="cap10"><div class="ck">validated</div><div class="ch">Live in production, agents <em>validate the value</em>.</div></div>
-        <div class="cap" data-layout-allow-overlap id="capM"><div class="ck">the marketplace</div><div class="ch">One closed loop of <em>many</em>.</div></div>
+        <div class="cap" data-layout-allow-overlap id="capM1"><div class="ck">the marketplace</div><div class="ch">One closed loop of <em>many</em>.</div></div>
+        <div class="cap" data-layout-allow-overlap id="capM2"><div class="ck">every team</div><div class="ch">A loop for <em>sales</em>, <em>growth</em> &amp; <em>product</em>.</div></div>
       </div>
 
       <!-- right stage (product) -->
-      <div id="stage" class="clip" data-start="0" data-duration="63" data-track-index="1">
+      <div id="stage" class="clip" data-start="0" data-duration="58" data-track-index="1">
 
         <!-- integrations hub -->
         <div class="rcard" id="integ">
@@ -319,14 +322,14 @@
               </div>
               <!-- marketplace -->
               <div class="wpanel" id="wpE" style="opacity:0">
-                <div class="page-h">Marketplace</div><div class="page-sub">Pre-built closed loops — turn AI spend into business outcomes</div>
+                <div class="page-h">Marketplace</div><div class="page-sub">Pre-built closed loops for every team — turn AI spend into business outcomes</div>
                 <div class="mkgrid">
-                  <div class="mtile" style="border-top-color:#27AE60"><div class="r">Continuous feedback</div><div class="t">The product loop you just saw</div><div class="f"><span class="ot ot-src">Intercom</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insight</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bet</span><span class="ot ot-ar">→</span><span class="ot ot-t">Outcome</span></div></div>
-                  <div class="mtile" style="border-top-color:#5B8DD9"><div class="r">Customer feedback</div><div class="t">Request in Slack → shipped → customer notified</div><div class="f"><span class="ot ot-src">Slack</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insight</span><span class="ot ot-ar">→</span><span class="ot ot-t">Shipped</span></div></div>
-                  <div class="mtile" style="border-top-color:#7C3AED"><div class="r">Signal radar</div><div class="t">Track competitors &amp; market, auto-create bets</div><div class="f"><span class="ot ot-src">X · Reddit</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insights</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bets</span></div></div>
-                  <div class="mtile" style="border-top-color:#E67E22"><div class="r">Lost deals → roadmap</div><div class="t">Turn every lost deal into a bet</div><div class="f"><span class="ot ot-src">HubSpot</span><span class="ot ot-ar">→</span><span class="ot ot-i">Loss patterns</span><span class="ot ot-ar">→</span><span class="ot ot-b">Roadmap bet</span></div></div>
-                  <div class="mtile" style="border-top-color:#2563EB"><div class="r">Churn &amp; expansion</div><div class="t">Catch at-risk accounts early</div><div class="f"><span class="ot ot-src">PostHog</span><span class="ot ot-ar">→</span><span class="ot ot-i">Risk signal</span><span class="ot ot-ar">→</span><span class="ot ot-b">CSM bet</span></div></div>
-                  <div class="mtile mtile--c"><div class="r">Custom</div><div class="t">Any workflow your team runs</div><div class="f"><span class="ot ot-src">your agents</span><span class="ot ot-ar">→</span><span class="ot ot-src">your objects</span></div></div>
+                  <div class="mtile" id="mt-sales" style="border-top-color:#E67E22"><div class="r" style="color:#B45F12">Sales</div><div class="t">Lost deals become roadmap bets</div><div class="f"><span class="ot ot-src">HubSpot</span><span class="ot ot-ar">→</span><span class="ot ot-i">Loss patterns</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bet</span></div></div>
+                  <div class="mtile" id="mt-growth" style="border-top-color:#2563EB"><div class="r" style="color:#1E50C8">Growth</div><div class="t">Catch at-risk users, lift activation</div><div class="f"><span class="ot ot-src">PostHog</span><span class="ot ot-ar">→</span><span class="ot ot-i">Risk signal</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bet</span></div></div>
+                  <div class="mtile" id="mt-prod" style="border-top-color:#27AE60"><div class="r" style="color:#1E844A">Product</div><div class="t">Feedback → bet → shipped → measured</div><div class="f"><span class="ot ot-src">Intercom</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insight</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bet</span><span class="ot ot-ar">→</span><span class="ot ot-t">Outcome</span></div></div>
+                  <div class="mtile" style="border-top-color:#7C3AED"><div class="r" style="color:#6D28D9">Marketing</div><div class="t">Signal radar — track the market</div><div class="f"><span class="ot ot-src">X · Reddit</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insights</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bets</span></div></div>
+                  <div class="mtile" style="border-top-color:#5B8DD9"><div class="r" style="color:#3F6CA8">Support</div><div class="t">Slack request → shipped → notified</div><div class="f"><span class="ot ot-src">Slack</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insight</span><span class="ot ot-ar">→</span><span class="ot ot-t">Shipped</span></div></div>
+                  <div class="mtile mtile--c"><div class="r" style="color:#1E50C8">Custom</div><div class="t">Any workflow your team runs</div><div class="f"><span class="ot ot-src">your agents</span><span class="ot ot-ar">→</span><span class="ot ot-src">your objects</span></div></div>
                 </div>
               </div>
             </div>
@@ -362,16 +365,13 @@
         <div id="ms-k">what’s missing</div>
         <div id="ms-h">Humans &amp; agents — <em>first-class citizens</em>.</div>
         <div id="ms-list">
-          <div class="ms-li" id="msl0"><span class="ck">✓</span><div>Work as <b>equals</b> — toward outcomes, not output.</div></div>
-          <div class="ms-li" id="msl1"><span class="ck">✓</span><div><b>One shared workspace</b> — every human &amp; agent has a role.</div></div>
-          <div class="ms-li" id="msl2"><span class="ck">✓</span><div><b>Persistent memory</b> — insights, bets &amp; tasks live across sessions.</div></div>
-          <div class="ms-li" id="msl3"><span class="ck">✓</span><div>Agents work <b>autonomously</b>. Humans decide what matters.</div></div>
-          <div class="ms-li" id="msl4"><span class="ck">✓</span><div>The loop <b>closes itself</b> — ship, learn, repeat.</div></div>
+          <div class="ms-li" id="msl0"><span class="ck">✓</span><div><b>One shared workspace</b> — every human &amp; agent has a role.</div></div>
+          <div class="ms-li" id="msl1"><span class="ck">✓</span><div><b>Persistent memory</b> — insights, bets &amp; tasks live across sessions.</div></div>
+          <div class="ms-li" id="msl2"><span class="ck">✓</span><div>Agents work <b>autonomously</b>. Humans decide what matters.</div></div>
         </div>
         <div id="ms-chips">
           <div class="ms-chip"><b>MCP-native</b></div><div class="ms-chip">Agents</div><div class="ms-chip">Triggers</div>
-          <div class="ms-chip">Bring your own model</div><div class="ms-chip">Apache 2.0</div><div class="ms-chip">Self-host or managed</div>
-          <div class="ms-chip">Integrations as MCP tools</div>
+          <div class="ms-chip">Bring your own model</div><div class="ms-chip">Apache 2.0</div>
         </div>
       </div>
 
@@ -414,9 +414,9 @@
       })();
 
       /* ambient */
-      tl.to("#glow", { scale: 1.12, duration: 9, ease: "sine.inOut", yoyo: true, repeat: R(63, 9) }, 0);
-      tl.to("#grain", { x: 24, y: 16, duration: 18, ease: "sine.inOut", yoyo: true, repeat: R(63, 18) }, 0);
-      tl.to(".spinner", { rotation: 360, duration: 0.9, ease: "none", repeat: R(63, 0.9), transformOrigin: "50% 50%" }, 0);
+      tl.to("#glow", { scale: 1.12, duration: 9, ease: "sine.inOut", yoyo: true, repeat: R(58, 9) }, 0);
+      tl.to("#grain", { x: 24, y: 16, duration: 18, ease: "sine.inOut", yoyo: true, repeat: R(58, 18) }, 0);
+      tl.to(".spinner", { rotation: 360, duration: 0.9, ease: "none", repeat: R(58, 0.9), transformOrigin: "50% 50%" }, 0);
 
       /* helpers */
       function cam(t, dur, S, ty) { tl.to("#stage", { scale: S, x: 0, y: (540 - ty) * S, duration: dur, ease: "power2.inOut" }, t); }
@@ -433,128 +433,129 @@
       }
       const dots = (s, t, dur) => tl.to(s + " i", { y: -5, duration: 0.34, ease: "sine.inOut", yoyo: true, repeat: R(dur, 0.34), stagger: 0.11 }, t);
 
-      /* ===== 0–2.6 intro ===== */
-      tl.from("#intro-mark", { opacity: 0, scale: 0.6, rotation: -12, duration: 0.7, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 0.2);
-      tl.from("#intro-word", { opacity: 0, x: -24, duration: 0.6, ease: "power3.out" }, 0.45);
-      tl.from("#intro-tag", { opacity: 0, y: 12, duration: 0.5, ease: "power2.out" }, 0.9);
-      tl.to("#intro", { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 2.4);
-      tl.to(["#brandbar", "#kicker-tr"], { opacity: 1, duration: 0.5 }, 2.7);
+      /* ===== 0–1.6 intro ===== */
+      tl.from("#intro-mark", { opacity: 0, scale: 0.6, rotation: -12, duration: 0.6, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 0.15);
+      tl.from("#intro-word", { opacity: 0, x: -22, duration: 0.5, ease: "power3.out" }, 0.35);
+      tl.from("#intro-tag", { opacity: 0, y: 12, duration: 0.45, ease: "power2.out" }, 0.62);
+      tl.to("#intro", { opacity: 0, duration: 0.55, ease: "power2.inOut" }, 1.5);
+      tl.to(["#brandbar", "#kicker-tr"], { opacity: 1, duration: 0.5 }, 1.8);
 
-      /* ===== 2.7–14.5 promise: centred title + slow chat ===== */
-      show("#promise", 2.7, 0.6);
-      tl.from("#chatC", { y: 26, duration: 0.7, ease: "power3.out" }, 2.8);
-      tl.fromTo("#ptt1", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 3.1);
-      // exchange 1 — slow
-      tl.from("#cm1", { opacity: 0, y: 14, duration: 0.45, ease: "power3.out" }, 3.9);
-      tl.from("#cm2", { opacity: 0, y: 10, duration: 0.4 }, 4.7);
-      dots("#typ1", 4.8, 3.4);                              // long wait
-      tl.to("#waitlbl", { opacity: 1, duration: 0.4 }, 5.8); tl.to("#waitlbl", { opacity: 0, duration: 0.4 }, 7.8);
-      tl.to("#typ1", { opacity: 0, duration: 0.3 }, 8.0);
-      tl.fromTo("#rep1", { opacity: 0 }, { opacity: 1, duration: 0.55, ease: "power2.out" }, 8.2);
-      // title swap mid-conversation
-      tl.to("#ptt1", { opacity: 0, y: -16, duration: 0.5, ease: "power2.in" }, 9.0);
-      tl.fromTo("#ptt2", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 9.3);
-      // exchange 2 — slow again (single-player, still waiting)
-      tl.from("#cm3", { opacity: 0, y: 14, duration: 0.45, ease: "power3.out" }, 9.9);
-      tl.from("#cm4", { opacity: 0, y: 10, duration: 0.4 }, 10.7);
-      dots("#typ2", 10.8, 3.4);
-      tl.to("#waitlbl", { opacity: 1, duration: 0.4 }, 11.8); tl.to("#waitlbl", { opacity: 0, duration: 0.4 }, 13.6);
-      hide("#promise", 14.0, 0.6);
+      /* ===== 1.9–10.4 promise: centred title + slow chat ===== */
+      show("#promise", 1.9, 0.5);
+      tl.from("#chatC", { y: 24, duration: 0.6, ease: "power3.out" }, 2.0);
+      tl.fromTo("#ptt1", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 2.3);
+      tl.from("#cm1", { opacity: 0, y: 14, duration: 0.4, ease: "power3.out" }, 2.9);
+      tl.from("#cm2", { opacity: 0, y: 10, duration: 0.4 }, 3.5);
+      dots("#typ1", 3.6, 2.2);                              // wait
+      tl.to("#waitlbl", { opacity: 1, duration: 0.4 }, 4.1); tl.to("#waitlbl", { opacity: 0, duration: 0.4 }, 5.5);
+      tl.to("#typ1", { opacity: 0, duration: 0.3 }, 5.7);
+      tl.fromTo("#rep1", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.out" }, 5.9);
+      tl.to("#ptt1", { opacity: 0, y: -16, duration: 0.45, ease: "power2.in" }, 6.6);
+      tl.fromTo("#ptt2", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 6.8);
+      tl.from("#cm3", { opacity: 0, y: 14, duration: 0.4, ease: "power3.out" }, 7.3);
+      tl.from("#cm4", { opacity: 0, y: 10, duration: 0.4 }, 7.9);
+      dots("#typ2", 8.0, 2.2);
+      tl.to("#waitlbl", { opacity: 1, duration: 0.4 }, 8.5); tl.to("#waitlbl", { opacity: 0, duration: 0.4 }, 10.0);
+      hide("#promise", 10.3, 0.55);
 
-      /* ===== 14.4–24 what's missing manifesto ===== */
-      show("#missing", 14.4, 0.6);
-      tl.fromTo("#ms-k", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 14.7);
-      tl.fromTo("#ms-h", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 14.9);
-      ["#msl0", "#msl1", "#msl2", "#msl3", "#msl4"].forEach((s, i) =>
-        tl.fromTo(s, { opacity: 0, x: -18 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, 15.8 + i * 0.62));
-      tl.fromTo(".ms-chip", { opacity: 0, y: 12, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.4, ease: "back.out(1.5)", stagger: 0.08, transformOrigin: "50% 50%" }, 19.4);
-      hide("#missing", 23.4, 0.6);
+      /* ===== 10.6–16 what's missing manifesto (3 points) ===== */
+      show("#missing", 10.6, 0.5);
+      tl.fromTo("#ms-k", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 10.9);
+      tl.fromTo("#ms-h", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 11.1);
+      ["#msl0", "#msl1", "#msl2"].forEach((s, i) =>
+        tl.fromTo(s, { opacity: 0, x: -18 }, { opacity: 1, x: 0, duration: 0.45, ease: "power3.out" }, 11.9 + i * 0.52));
+      tl.fromTo(".ms-chip", { opacity: 0, y: 12, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.4, ease: "back.out(1.5)", stagger: 0.07, transformOrigin: "50% 50%" }, 13.7);
+      hide("#missing", 15.9, 0.55);
 
-      /* ===== 23.8–31 integrations ===== */
-      tl.set("#stage", { opacity: 1 }, 23.7);
-      show("#integ", 23.9, 0.5);
-      capIn("#cap4", 24.2);
-      tl.from("#ihub", { opacity: 0, scale: 0.6, duration: 0.55, ease: "back.out(1.7)", transformOrigin: "50% 50%" }, 24.4);
-      tl.from(["#ic0","#ic1","#ic2","#ic3","#ic4","#ic5","#ic6","#ic7"], { opacity: 0, scale: 0.85, duration: 0.4, ease: "back.out(1.5)", stagger: 0.08, transformOrigin: "50% 50%" }, 24.8);
-      tl.fromTo("#ilines line", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out", stagger: 0.07 }, 25.0);
-      capOut("#cap4", 26.6); capIn("#cap5", 26.9);
-      tl.to("#ilines", { opacity: 0.5, duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: R(4, 0.9) }, 27.2);
-      tl.to("#ihub-ring", { opacity: 1, scale: 1.25, duration: 1.4, ease: "sine.out", yoyo: true, repeat: R(4, 1.4), transformOrigin: "50% 50%" }, 27.4);
-      capOut("#cap5", 28.4); capIn("#cap6", 28.7);          // hold cap6 ~3.6s — slower
-      // a detected-insight pings out of the hub
-      tl.fromTo("#ihub", { boxShadow: "0 20px 50px rgba(17,17,16,0.28)" }, { boxShadow: "0 0 0 10px rgba(37,99,235,0.18)", duration: 0.8, ease: "sine.inOut", yoyo: true, repeat: 3 }, 29.0);
-      hide("#integ", 31.6, 0.5);
+      /* ===== 16.4–23 integrations ===== */
+      tl.set("#stage", { opacity: 1 }, 16.3);
+      show("#integ", 16.5, 0.5);
+      capIn("#cap4", 16.8);
+      tl.from("#ihub", { opacity: 0, scale: 0.6, duration: 0.5, ease: "back.out(1.7)", transformOrigin: "50% 50%" }, 17.0);
+      tl.from(["#ic0","#ic1","#ic2","#ic3","#ic4","#ic5","#ic6","#ic7"], { opacity: 0, scale: 0.85, duration: 0.38, ease: "back.out(1.5)", stagger: 0.07, transformOrigin: "50% 50%" }, 17.4);
+      tl.fromTo("#ilines line", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out", stagger: 0.06 }, 17.6);
+      capOut("#cap4", 18.9); capIn("#cap5", 19.2);
+      tl.to("#ilines", { opacity: 0.5, duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: R(3.5, 0.9) }, 19.5);
+      tl.to("#ihub-ring", { opacity: 1, scale: 1.25, duration: 1.4, ease: "sine.out", yoyo: true, repeat: R(3.5, 1.4), transformOrigin: "50% 50%" }, 19.7);
+      capOut("#cap5", 20.6); capIn("#cap6", 20.9);          // hold ~2.6s
+      tl.fromTo("#ihub", { boxShadow: "0 20px 50px rgba(17,17,16,0.28)" }, { boxShadow: "0 0 0 10px rgba(37,99,235,0.18)", duration: 0.8, ease: "sine.inOut", yoyo: true, repeat: 2 }, 21.1);
+      capOut("#cap6", 23.0);
+      hide("#integ", 23.1, 0.5);
 
-      /* ===== 32–37.5 For You: insight stands out ===== */
-      capOut("#cap6", 31.9);
-      show("#app", 31.9, 0.5);
-      tl.from("#app", { y: 18, duration: 0.5, ease: "power3.out" }, 31.9);
-      capIn("#cap7", 32.3);
-      cam(32.4, 2.2, 1.16, 320);
-      tl.from("#wpA-ins", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 32.6);
-      tl.fromTo(".ins-bar", { scaleY: 0 }, { scaleY: 1, duration: 0.5, ease: "power3.out", stagger: 0.06 }, 33.0);
-      tl.fromTo("#wpA-ins", { boxShadow: "0 1px 3px rgba(17,17,16,0.05)" }, { boxShadow: "0 0 0 3px rgba(91,141,217,0.35)", duration: 1.1, ease: "sine.inOut", yoyo: true, repeat: 1 }, 33.6);
-      tl.from("#wpA-bet", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 35.0);
+      /* ===== 23.4–28 For You: insight stands out ===== */
+      show("#app", 23.4, 0.5);
+      tl.from("#app", { y: 16, duration: 0.5, ease: "power3.out" }, 23.4);
+      capIn("#cap7", 23.7);
+      cam(23.8, 2.0, 1.16, 320);
+      tl.from("#wpA-ins", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 24.0);
+      tl.fromTo(".ins-bar", { scaleY: 0 }, { scaleY: 1, duration: 0.5, ease: "power3.out", stagger: 0.06 }, 24.4);
+      tl.fromTo("#wpA-ins", { boxShadow: "0 1px 3px rgba(17,17,16,0.05)" }, { boxShadow: "0 0 0 3px rgba(91,141,217,0.35)", duration: 1.0, ease: "sine.inOut", yoyo: true, repeat: 1 }, 25.0);
+      tl.from("#wpA-bet", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 26.2);
 
-      /* ===== 37.5–42 bet + approve ===== */
-      capOut("#cap7", 36.6); capIn("#cap8", 36.9);
-      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 36.9);
-      tl.to("#cursor", { x: 1000, y: 470, duration: 0.8, ease: "power3.inOut" }, 37.0);
-      cursorClick(37.9);
-      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 38.4);
-      panelSwap("#wpA", "#wpB", 38.5);
-      tl.to("#wcv1", { opacity: 0, duration: 0.35 }, 38.5); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 38.7);
-      camReset(38.5, 1.0);
-      cam(39.7, 1.4, 1.13, 540);
-      tl.fromTo("#wpB-c2", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 40.4);
-      tl.to("#wpB-st1", { opacity: 0, duration: 0.3 }, 41.0);
-      tl.fromTo("#wpB-st2", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 41.1);
-      tl.fromTo("#wpB-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 41.5);
+      /* ===== 27.8–33 bet + approve ===== */
+      capOut("#cap7", 27.6); capIn("#cap8", 27.9);
+      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 27.9);
+      tl.to("#cursor", { x: 1000, y: 470, duration: 0.8, ease: "power3.inOut" }, 28.0);
+      cursorClick(28.9);
+      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 29.4);
+      panelSwap("#wpA", "#wpB", 29.5);
+      tl.to("#wcv1", { opacity: 0, duration: 0.35 }, 29.5); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 29.7);
+      camReset(29.5, 1.0);
+      cam(30.7, 1.4, 1.13, 540);
+      tl.fromTo("#wpB-c2", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 31.3);
+      tl.to("#wpB-st1", { opacity: 0, duration: 0.3 }, 31.9);
+      tl.fromTo("#wpB-st2", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 32.0);
+      tl.fromTo("#wpB-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 32.4);
 
-      /* ===== 42–46.5 agents ===== */
-      capOut("#cap8", 42.2); capIn("#cap9", 42.5);
-      camReset(42.0, 0.9);
-      tl.to("#wp-idle", { opacity: 0, duration: 0.3 }, 42.2); tl.to("#wp-on", { opacity: 1, duration: 0.3 }, 42.4);
-      tl.to(".wpdot", { opacity: 0.3, duration: 0.7, ease: "sine.inOut", yoyo: true, repeat: R(9, 0.7) }, 42.4);
-      panelSwap("#wpB", "#wpC", 42.8);
-      tl.to("#wcv2", { opacity: 0, duration: 0.35 }, 42.8); tl.to("#wcv3", { opacity: 1, duration: 0.35 }, 43.0);
-      tl.to(["#wnav-active","#wnav-rail"], { y: 114, duration: 0.4, ease: "power3.inOut" }, 42.8);
-      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 42.8);
-      tl.to("#wn-ag", { color: "#111110", fontWeight: 600, duration: 0.3 }, 42.8);
-      tl.fromTo(["#agc1","#agc2","#agc3","#agc4"], { opacity: 0, y: 16, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "power3.out", stagger: 0.1, transformOrigin: "50% 50%" }, 43.2);
-      tl.to(["#agc1","#agc2","#agc3"], { boxShadow: "0 0 0 3px rgba(37,99,235,0.12)", duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(3.5, 1.3), stagger: 0.2 }, 44.0);
+      /* ===== 33–37 agents ===== */
+      capOut("#cap8", 33.0); capIn("#cap9", 33.3);
+      camReset(32.8, 0.9);
+      tl.to("#wp-idle", { opacity: 0, duration: 0.3 }, 33.0); tl.to("#wp-on", { opacity: 1, duration: 0.3 }, 33.2);
+      tl.to(".wpdot", { opacity: 0.3, duration: 0.7, ease: "sine.inOut", yoyo: true, repeat: R(8, 0.7) }, 33.2);
+      panelSwap("#wpB", "#wpC", 33.6);
+      tl.to("#wcv2", { opacity: 0, duration: 0.35 }, 33.6); tl.to("#wcv3", { opacity: 1, duration: 0.35 }, 33.8);
+      tl.to(["#wnav-active","#wnav-rail"], { y: 114, duration: 0.4, ease: "power3.inOut" }, 33.6);
+      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 33.6);
+      tl.to("#wn-ag", { color: "#111110", fontWeight: 600, duration: 0.3 }, 33.6);
+      tl.fromTo(["#agc1","#agc2","#agc3","#agc4"], { opacity: 0, y: 16, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "power3.out", stagger: 0.1, transformOrigin: "50% 50%" }, 34.0);
+      tl.to(["#agc1","#agc2","#agc3"], { boxShadow: "0 0 0 3px rgba(37,99,235,0.12)", duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(3, 1.3), stagger: 0.2 }, 34.8);
 
-      /* ===== 46.5–51 outcome ===== */
-      capOut("#cap9", 46.4); capIn("#cap10", 46.7);
-      panelSwap("#wpC", "#wpD", 47.0);
-      tl.to("#wcv3", { opacity: 0, duration: 0.35 }, 47.0); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 47.2);
-      tl.to(["#wnav-active","#wnav-rail"], { y: 0, duration: 0.4, ease: "power3.inOut" }, 47.0);
-      tl.to("#wn-ag", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 47.0);
-      tl.to("#wn-fy", { color: "#111110", fontWeight: 600, duration: 0.3 }, 47.0);
-      cam(47.4, 1.8, 1.16, 330);
-      tl.fromTo("#wpD-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.45, ease: "back.out(1.4)" }, 47.8);
+      /* ===== 37–41 outcome ===== */
+      capOut("#cap9", 37.0); capIn("#cap10", 37.3);
+      panelSwap("#wpC", "#wpD", 37.6);
+      tl.to("#wcv3", { opacity: 0, duration: 0.35 }, 37.6); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 37.8);
+      tl.to(["#wnav-active","#wnav-rail"], { y: 0, duration: 0.4, ease: "power3.inOut" }, 37.6);
+      tl.to("#wn-ag", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 37.6);
+      tl.to("#wn-fy", { color: "#111110", fontWeight: 600, duration: 0.3 }, 37.6);
+      cam(38.0, 1.7, 1.16, 330);
+      tl.fromTo("#wpD-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.45, ease: "back.out(1.4)" }, 38.4);
 
-      /* ===== 51.5–56.5 marketplace ===== */
-      capOut("#cap10", 51.4);
-      camReset(51.2, 1.1);
-      capIn("#capM", 51.8);
-      panelSwap("#wpD", "#wpE", 51.7);
-      tl.to("#wcv2", { opacity: 0, duration: 0.3 }, 51.7); tl.to("#wcv4", { opacity: 1, duration: 0.3 }, 51.9);
-      tl.to(["#wnav-active","#wnav-rail"], { y: 152, duration: 0.4, ease: "power3.inOut" }, 51.7);
-      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 51.7);
-      tl.to("#wn-mk", { color: "#111110", fontWeight: 600, duration: 0.3 }, 51.7);
-      tl.fromTo(".mtile", { opacity: 0, y: 20, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.3)", stagger: 0.07, transformOrigin: "50% 50%" }, 52.1);
-      cam(52.4, 4.0, 1.05, 540);
+      /* ===== 41–52 marketplace (loops for every team) ===== */
+      capOut("#cap10", 40.9);
+      camReset(40.7, 1.1);
+      capIn("#capM1", 41.3);
+      panelSwap("#wpD", "#wpE", 41.2);
+      tl.to("#wcv2", { opacity: 0, duration: 0.3 }, 41.2); tl.to("#wcv4", { opacity: 1, duration: 0.3 }, 41.4);
+      tl.to(["#wnav-active","#wnav-rail"], { y: 152, duration: 0.4, ease: "power3.inOut" }, 41.2);
+      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 41.2);
+      tl.to("#wn-mk", { color: "#111110", fontWeight: 600, duration: 0.3 }, 41.2);
+      tl.fromTo(".mtile", { opacity: 0, y: 20, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.3)", stagger: 0.06, transformOrigin: "50% 50%" }, 41.6);
+      cam(42.0, 8.0, 1.06, 470);
+      // swap to the per-team caption + highlight Sales / Growth / Product in turn
+      capOut("#capM1", 44.6); capIn("#capM2", 44.9);
+      tl.to("#mt-sales", { boxShadow: "0 0 0 3px rgba(230,126,34,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 45.4);
+      tl.to("#mt-growth", { boxShadow: "0 0 0 3px rgba(37,99,235,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 46.6);
+      tl.to("#mt-prod", { boxShadow: "0 0 0 3px rgba(39,174,96,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 47.8);
 
-      /* ===== 56.5–63 close ===== */
-      capOut("#capM", 56.2);
-      tl.to(["#stage","#cap","#backdrop"], { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 56.5);
-      tl.to("#close", { opacity: 1, duration: 0.6, ease: "power2.inOut" }, 56.7);
-      tl.from("#close-mark", { opacity: 0, scale: 0.6, rotation: -10, duration: 0.65, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 57.2);
-      tl.from("#close .ec-word", { opacity: 0, x: -22, duration: 0.55, ease: "power3.out" }, 57.4);
-      tl.from("#close-tag", { opacity: 0, y: 14, duration: 0.5, ease: "power2.out" }, 58.0);
-      tl.fromTo("#close-row", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "back.out(1.4)" }, 58.4);
-      tl.to("#close-cta", { scale: 1.04, duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(3, 1.3), transformOrigin: "50% 50%" }, 59.3);
+      /* ===== 51.5–58 close ===== */
+      capOut("#capM2", 51.2);
+      tl.to(["#stage","#cap","#backdrop"], { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 51.5);
+      tl.to("#close", { opacity: 1, duration: 0.6, ease: "power2.inOut" }, 51.7);
+      tl.from("#close-mark", { opacity: 0, scale: 0.6, rotation: -10, duration: 0.65, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 52.2);
+      tl.from("#close .ec-word", { opacity: 0, x: -22, duration: 0.55, ease: "power3.out" }, 52.4);
+      tl.from("#close-tag", { opacity: 0, y: 14, duration: 0.5, ease: "power2.out" }, 53.0);
+      tl.fromTo("#close-row", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "back.out(1.4)" }, 53.4);
+      tl.to("#close-cta", { scale: 1.04, duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(3.5, 1.3), transformOrigin: "50% 50%" }, 54.3);
 
       window.__timelines["main"] = tl;
     </script>
