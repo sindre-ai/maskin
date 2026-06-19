@@ -118,32 +118,42 @@ function PlanExpiredDialog({
 				</DialogHeader>
 
 				<div className="flex flex-col gap-2">
-					{plan !== 'starter' && (
-						<Button
-							className="w-full justify-start"
-							onClick={() => handleUpgrade('starter')}
-							disabled={isPending}
-						>
-							{plan === 'trial' ? 'Continue with Starter' : 'Switch to Starter'} — $20/mo
-						</Button>
-					)}
-					<Button
-						className="w-full justify-start"
-						variant={plan === 'pro' ? 'default' : 'outline'}
-						onClick={() => handleUpgrade('pro')}
-						disabled={isPending}
-					>
-						{plan === 'pro' ? 'Renew Pro' : 'Upgrade to Pro'} — $60/mo
-					</Button>
-					{plan === 'starter' && (
-						<Button
-							className="w-full justify-start"
-							variant="outline"
-							onClick={() => handleUpgrade('pro')}
-							disabled={isPending}
-						>
-							Upgrade to Pro — $60/mo
-						</Button>
+					{plan === 'pro' ? (
+						<>
+							<Button
+								className="w-full justify-start"
+								onClick={() => handleUpgrade('pro')}
+								disabled={isPending}
+							>
+								Renew Pro — $60/mo
+							</Button>
+							<Button
+								className="w-full justify-start"
+								variant="outline"
+								onClick={() => handleUpgrade('starter')}
+								disabled={isPending}
+							>
+								Downgrade to Starter — $20/mo
+							</Button>
+						</>
+					) : (
+						<>
+							<Button
+								className="w-full justify-start"
+								onClick={() => handleUpgrade('starter')}
+								disabled={isPending}
+							>
+								Renew Starter — $20/mo
+							</Button>
+							<Button
+								className="w-full justify-start"
+								variant="outline"
+								onClick={() => handleUpgrade('pro')}
+								disabled={isPending}
+							>
+								Upgrade to Pro — $60/mo
+							</Button>
+						</>
 					)}
 					<Button
 						className="w-full justify-start"
