@@ -22,6 +22,10 @@ describe('Reactions Routes', () => {
 			})
 			const { app, mockResults, calls } = createTestApp(reactionsRoutes, '/api/reactions')
 			mockResults.select = [lookup]
+			// First insert (reactions) returns one row → state changed → events row
+			// is emitted as the second insert. Second insert's returning value is
+			// irrelevant; default `[]` is fine.
+			mockResults.insertQueue = [[{ id: randomUUID() }]]
 
 			const res = await app.request(
 				jsonRequest(
@@ -43,6 +47,38 @@ describe('Reactions Routes', () => {
 			expect(eventInsert.action).toBe('reacted')
 			expect(eventInsert.entityType).toBe('object')
 			expect(eventInsert.entityId).toBe(objectId)
+		})
+
+		it('skips the events row on a duplicate add (onConflictDoNothing returned no rows)', async () => {
+			const objectId = randomUUID()
+			const eventId = 4242
+			const lookup = buildEvent({
+				workspaceId: wsId,
+				id: eventId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+			})
+			const { app, mockResults, calls } = createTestApp(reactionsRoutes, '/api/reactions')
+			mockResults.select = [lookup]
+			// onConflictDoNothing suppressed the row → returning is empty → we
+			// short-circuit so a retrying client cannot inflate the activity stream.
+			mockResults.insertQueue = [[]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/reactions',
+					{ event_id: eventId, emoji: '👍' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			expect(calls.inserts.length).toBe(1)
+			const reactionInsert = calls.inserts[0] as Record<string, unknown>
+			expect(reactionInsert.emoji).toBe('👍')
+			expect(reactionInsert.eventId).toBe(eventId)
 		})
 
 		it('returns 404 when target event does not exist', async () => {
@@ -146,6 +182,8 @@ describe('Reactions Routes', () => {
 			})
 			const { app, mockResults, calls } = createTestApp(reactionsRoutes, '/api/reactions')
 			mockResults.select = [lookup]
+			// Delete returning a row → state changed → events row is emitted.
+			mockResults.delete = [{ id: randomUUID() }]
 
 			const res = await app.request(
 				jsonRequest(
@@ -163,6 +201,35 @@ describe('Reactions Routes', () => {
 			const eventInsert = calls.inserts[0] as Record<string, unknown>
 			expect(eventInsert.action).toBe('unreacted')
 			expect(eventInsert.entityId).toBe(objectId)
+		})
+
+		it('skips the events row on a duplicate delete (no matching row to remove)', async () => {
+			const objectId = randomUUID()
+			const eventId = 99
+			const lookup = buildEvent({
+				workspaceId: wsId,
+				id: eventId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+			})
+			const { app, mockResults, calls } = createTestApp(reactionsRoutes, '/api/reactions')
+			mockResults.select = [lookup]
+			// Delete with no matching row → returning is empty → we short-circuit
+			// so a retrying client cannot inflate the activity stream.
+			mockResults.delete = []
+
+			const res = await app.request(
+				jsonRequest(
+					'DELETE',
+					'/api/reactions',
+					{ event_id: eventId, emoji: '🎉' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			expect(calls.inserts.length).toBe(0)
 		})
 
 		it('returns 404 when target event missing', async () => {
