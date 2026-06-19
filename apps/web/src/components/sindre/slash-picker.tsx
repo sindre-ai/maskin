@@ -10,7 +10,7 @@ import type {
 } from '@/lib/sindre-selection'
 import { type QueryClient, useQueryClient } from '@tanstack/react-query'
 import { Command } from 'cmdk'
-import { Bell, Bot, Box, Check } from 'lucide-react'
+import { Bell, Bot, Box, Check, MessageSquare, Pencil, RotateCcw, UserPlus } from 'lucide-react'
 import {
 	type KeyboardEvent,
 	type ReactNode,
@@ -29,6 +29,12 @@ import {
  *   - `agent`  (single-select) — reroutes the next send to that agent
  *   - `object` (multi-select)  — attaches the objects as context
  *
+ * Alongside the search-and-select kinds, the picker also surfaces a flat
+ * `SLASH_COMMANDS` row at the top level — verbs the user invokes against the
+ * current conversation (summarize, clear, rename, invite). Picking a command
+ * emits `{ kind: 'command'; id }` so the parent can run the action without
+ * the picker knowing what each command does.
+ *
  * The component is fully controlled: callers own the `open` state, the
  * `selected` snapshot (to draw checkmarks for multi-select kinds), and the
  * selection reducer invoked via `onSelect`. The wiring of `/`-in-textarea,
@@ -38,10 +44,13 @@ import {
 
 export type SlashKindId = 'agent' | 'item'
 
+export type SlashCommandId = 'summarize' | 'clear' | 'rename' | 'invite'
+
 export type SlashPickerResult =
 	| { kind: 'agent'; ref: SindreSelectionAgent }
 	| { kind: 'object'; ref: SindreSelectionObject }
 	| { kind: 'notification'; ref: SindreSelectionNotification }
+	| { kind: 'command'; id: SlashCommandId }
 
 /**
  * Discriminated union surfaced by the "item" kind — combines workspace objects
@@ -208,6 +217,46 @@ function fetchNotificationPage(
 export const SLASH_KINDS: ReadonlyArray<SlashKindDef<any>> = [agentKind, itemKind]
 
 // ---------------------------------------------------------------------------
+// Slash commands — flat verbs invoked against the current conversation. Unlike
+// kinds they have no search step; picking one fires the command and closes
+// the picker. The parent decides what each id does.
+// ---------------------------------------------------------------------------
+
+export interface SlashCommandDef {
+	id: SlashCommandId
+	label: string
+	hint: string
+	icon: ReactNode
+}
+
+export const SLASH_COMMANDS: ReadonlyArray<SlashCommandDef> = [
+	{
+		id: 'summarize',
+		label: '/summarize',
+		hint: 'Summarize this conversation',
+		icon: <MessageSquare size={14} aria-hidden />,
+	},
+	{
+		id: 'clear',
+		label: '/clear',
+		hint: 'Start a fresh conversation',
+		icon: <RotateCcw size={14} aria-hidden />,
+	},
+	{
+		id: 'rename',
+		label: '/rename',
+		hint: 'Rename this conversation',
+		icon: <Pencil size={14} aria-hidden />,
+	},
+	{
+		id: 'invite',
+		label: '/invite',
+		hint: 'Invite people into this conversation',
+		icon: <UserPlus size={14} aria-hidden />,
+	},
+]
+
+// ---------------------------------------------------------------------------
 // Public component
 // ---------------------------------------------------------------------------
 
@@ -237,6 +286,12 @@ export interface SlashPickerProps {
 	initialKindId?: SlashKindId | null
 	// biome-ignore lint/suspicious/noExplicitAny: subset of the heterogeneous registry
 	kinds?: ReadonlyArray<SlashKindDef<any>>
+	/**
+	 * Flat command list rendered alongside kinds at the top level. Defaults to
+	 * `SLASH_COMMANDS`. Pass an empty array to hide commands entirely (e.g.
+	 * surfaces that drive the picker for context-only flows).
+	 */
+	commands?: ReadonlyArray<SlashCommandDef>
 	/** Optional trigger — rendered as `<PopoverTrigger asChild>{children}</PopoverTrigger>`. */
 	children?: ReactNode
 	/**
@@ -256,6 +311,7 @@ export function SlashPicker({
 	selected,
 	initialKindId = null,
 	kinds = SLASH_KINDS,
+	commands = SLASH_COMMANDS,
 	children,
 	anchor,
 }: SlashPickerProps) {
@@ -289,12 +345,17 @@ export function SlashPicker({
 				<SlashPickerBody
 					workspaceId={workspaceId}
 					kinds={kinds}
+					commands={commands}
 					activeKindId={activeKindId}
 					onActiveKindChange={setActiveKindId}
 					selected={selected}
 					onPick={(result, kind) => {
 						onSelect(result)
 						if (!kind.multi) handleOpenChange(false)
+					}}
+					onPickCommand={(command) => {
+						onSelect({ kind: 'command', id: command.id })
+						handleOpenChange(false)
 					}}
 					onRequestClose={() => handleOpenChange(false)}
 				/>
@@ -311,21 +372,25 @@ interface SlashPickerBodyProps {
 	workspaceId: string
 	// biome-ignore lint/suspicious/noExplicitAny: heterogeneous registry
 	kinds: ReadonlyArray<SlashKindDef<any>>
+	commands: ReadonlyArray<SlashCommandDef>
 	activeKindId: SlashKindId | null
 	onActiveKindChange: (id: SlashKindId | null) => void
 	selected?: SlashPickerSelection
 	// biome-ignore lint/suspicious/noExplicitAny: matches registry type
 	onPick: (result: SlashPickerResult, kind: SlashKindDef<any>) => void
+	onPickCommand: (command: SlashCommandDef) => void
 	onRequestClose: () => void
 }
 
 function SlashPickerBody({
 	workspaceId,
 	kinds,
+	commands,
 	activeKindId,
 	onActiveKindChange,
 	selected,
 	onPick,
+	onPickCommand,
 	onRequestClose,
 }: SlashPickerBodyProps) {
 	const queryClient = useQueryClient()
@@ -441,7 +506,13 @@ function SlashPickerBody({
 						onPick={(item) => onPick(activeKind.toResult(item), activeKind)}
 					/>
 				) : (
-					<KindMenu kinds={kinds} query={query} onPick={onActiveKindChange} />
+					<KindMenu
+						kinds={kinds}
+						commands={commands}
+						query={query}
+						onPick={onActiveKindChange}
+						onPickCommand={onPickCommand}
+					/>
 				)}
 			</Command.List>
 		</Command>
@@ -455,37 +526,74 @@ function SlashPickerBody({
 interface KindMenuProps {
 	// biome-ignore lint/suspicious/noExplicitAny: heterogeneous registry
 	kinds: ReadonlyArray<SlashKindDef<any>>
+	commands: ReadonlyArray<SlashCommandDef>
 	query: string
 	onPick: (id: SlashKindId) => void
+	onPickCommand: (command: SlashCommandDef) => void
 }
 
-function KindMenu({ kinds, query, onPick }: KindMenuProps) {
+function KindMenu({ kinds, commands, query, onPick, onPickCommand }: KindMenuProps) {
 	const needle = query.trim().toLowerCase()
-	const visible = needle ? kinds.filter((k) => k.label.toLowerCase().includes(needle)) : kinds
-	if (visible.length === 0) {
-		return <div className="px-3 py-3 text-sm text-muted-foreground">No kinds match “{query}”.</div>
+	const visibleKinds = needle ? kinds.filter((k) => k.label.toLowerCase().includes(needle)) : kinds
+	const visibleCommands = needle
+		? commands.filter(
+				(c) => c.label.toLowerCase().includes(needle) || c.hint.toLowerCase().includes(needle),
+			)
+		: commands
+	if (visibleKinds.length === 0 && visibleCommands.length === 0) {
+		return <div className="px-3 py-3 text-sm text-muted-foreground">No matches for “{query}”.</div>
 	}
 	return (
-		<Command.Group
-			heading="Pick a kind"
-			className={cn(
-				'px-1 py-1 text-xs text-muted-foreground',
-				'[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1',
-			)}
-		>
-			{visible.map((kind) => (
-				<Command.Item
-					key={kind.id}
-					value={kind.id}
-					onSelect={() => onPick(kind.id)}
-					className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+		<>
+			{visibleKinds.length > 0 ? (
+				<Command.Group
+					heading="Pick a kind"
+					className={cn(
+						'px-1 py-1 text-xs text-muted-foreground',
+						'[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1',
+					)}
 				>
-					<span className="text-muted-foreground">{kind.icon}</span>
-					<span className="flex-1 truncate">{kind.label}</span>
-					<span className="text-xs text-muted-foreground">{kind.multi ? 'multi' : 'single'}</span>
-				</Command.Item>
-			))}
-		</Command.Group>
+					{visibleKinds.map((kind) => (
+						<Command.Item
+							key={kind.id}
+							value={`kind:${kind.id}`}
+							onSelect={() => onPick(kind.id)}
+							className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+						>
+							<span className="text-muted-foreground">{kind.icon}</span>
+							<span className="flex-1 truncate">{kind.label}</span>
+							<span className="text-xs text-muted-foreground">
+								{kind.multi ? 'multi' : 'single'}
+							</span>
+						</Command.Item>
+					))}
+				</Command.Group>
+			) : null}
+			{visibleCommands.length > 0 ? (
+				<Command.Group
+					heading="Commands"
+					className={cn(
+						'px-1 py-1 text-xs text-muted-foreground',
+						'[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1',
+					)}
+				>
+					{visibleCommands.map((command) => (
+						<Command.Item
+							key={command.id}
+							value={`command:${command.id}`}
+							onSelect={() => onPickCommand(command)}
+							className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+						>
+							<span className="text-muted-foreground">{command.icon}</span>
+							<span className="min-w-0 flex-1">
+								<span className="block truncate font-mono">{command.label}</span>
+								<span className="block truncate text-xs text-muted-foreground">{command.hint}</span>
+							</span>
+						</Command.Item>
+					))}
+				</Command.Group>
+			) : null}
+		</>
 	)
 }
 

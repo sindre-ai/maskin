@@ -1,6 +1,7 @@
 import { SelectionChips } from '@/components/sindre/selection-chips'
 import { SindreTranscript } from '@/components/sindre/sindre-transcript'
 import {
+	type SlashCommandId,
 	type SlashKindId,
 	SlashPicker,
 	type SlashPickerResult,
@@ -88,8 +89,30 @@ export interface SindreChatProps {
 	 * session hooks out of this component.
 	 */
 	onEventsChange?: (events: SindreEvent[]) => void
+	/**
+	 * Fired when the user picks `/rename` from the slash picker. The parent
+	 * owns the rename UX (modal, inline edit) and the call to the conversation
+	 * update endpoint — the chat surface just surfaces the command. Omitted →
+	 * the picker still shows the command and a friendly inline error appears
+	 * if the user runs it without a wired handler.
+	 */
+	onRenameConversation?: () => void
+	/**
+	 * Fired when the user picks `/invite` from the slash picker. The parent
+	 * owns opening the people picker (T6's component) and the participants
+	 * API call. Omitted → same fallback behaviour as `onRenameConversation`.
+	 */
+	onInvitePeople?: () => void
 	className?: string
 }
+
+/**
+ * Default prompt sent when the user picks `/summarize`. Routed through the
+ * normal send path so it reaches whichever agent is currently selected (or
+ * Sindre itself by default) and shows up in the transcript like any other
+ * user turn.
+ */
+const SUMMARIZE_PROMPT = 'Please summarize this conversation so far.'
 
 /**
  * Shared chat surface for Sindre. Composes `<Transcript />`, `<Composer />`,
@@ -115,6 +138,8 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 		autoSendMessage,
 		onAutoSendConsumed,
 		onEventsChange,
+		onRenameConversation,
+		onInvitePeople,
 		className,
 	},
 	ref,
@@ -289,6 +314,49 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 		onAutoSendConsumed?.()
 	}, [autoSendMessage, handleSend, onAutoSendConsumed])
 
+	const handleCommand = useCallback(
+		(command: SlashCommandId): { handled: boolean; error?: string } => {
+			switch (command) {
+				case 'summarize': {
+					void handleSend(SUMMARIZE_PROMPT).catch((err) => {
+						console.error('[sindre] /summarize send failed', err)
+					})
+					return { handled: true }
+				}
+				case 'clear': {
+					// Same reset path as the panel's "+" button — the previous Sindre
+					// container keeps running so any in-flight work completes in the
+					// background; the watchdog pauses it once it goes idle.
+					sindre.reset()
+					oneShot.clear()
+					onDispatchSelection?.({ type: 'clear_all' })
+					return { handled: true }
+				}
+				case 'rename': {
+					if (!onRenameConversation) {
+						return {
+							handled: false,
+							error: 'Rename isn’t available on this surface yet.',
+						}
+					}
+					onRenameConversation()
+					return { handled: true }
+				}
+				case 'invite': {
+					if (!onInvitePeople) {
+						return {
+							handled: false,
+							error: 'Invite isn’t available on this surface yet.',
+						}
+					}
+					onInvitePeople()
+					return { handled: true }
+				}
+			}
+		},
+		[handleSend, sindre, oneShot, onDispatchSelection, onRenameConversation, onInvitePeople],
+	)
+
 	const handleRemoveAgent = useCallback(() => {
 		onDispatchSelection?.({ type: 'remove_agent' })
 	}, [onDispatchSelection])
@@ -336,6 +404,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 			<Composer
 				workspaceId={workspaceId}
 				onSend={handleSend}
+				onCommand={handleCommand}
 				disabled={disabled}
 				pending={pendingTurn}
 				surface={surface}
@@ -464,6 +533,13 @@ function computePlaceholder(
 interface ComposerProps {
 	workspaceId: string
 	onSend: (content: string) => Promise<void>
+	/**
+	 * Invoked when a `/summarize` | `/clear` | `/rename` | `/invite` is picked
+	 * from the slash picker. Returns `{ handled: true }` when the parent ran
+	 * the command, or `{ handled: false, error }` when the parent doesn't
+	 * support this surface yet — the Composer surfaces the error inline.
+	 */
+	onCommand: (command: SlashCommandId) => { handled: boolean; error?: string }
 	disabled: boolean
 	pending: boolean
 	surface: SindreChatSurface
@@ -498,6 +574,7 @@ interface ComposerProps {
 function Composer({
 	workspaceId,
 	onSend,
+	onCommand,
 	disabled,
 	pending,
 	surface,
@@ -596,15 +673,34 @@ function Composer({
 				onDispatchSelection?.({ type: 'add_agent', agent: result.ref })
 			} else if (result.kind === 'object') {
 				onDispatchSelection?.({ type: 'add_object', object: result.ref })
-			} else {
+			} else if (result.kind === 'notification') {
 				onDispatchSelection?.({ type: 'add_notification', notification: result.ref })
+			} else {
+				// Slash commands run against the conversation rather than appending
+				// chips. The parent decides what each id does; if it doesn't yet
+				// support a command we surface that inline instead of dropping
+				// the click silently.
+				const outcome = onCommand(result.id)
+				if (!outcome.handled && outcome.error) {
+					setSendError(outcome.error)
+				} else {
+					setSendError(null)
+				}
+				if (result.id === 'clear') {
+					// `/clear` resets the whole conversation, so the in-progress
+					// draft goes too. `/summarize` leaves the draft alone — the
+					// user may have been mid-sentence; `consumeSlashTrigger`
+					// already drops the `/` that opened the picker. `/rename` and
+					// `/invite` open separate UIs and don't touch the draft.
+					setValue('')
+				}
 			}
 			// The `/` that triggered the picker (if any) is dropped as soon as
 			// the user commits a pick — keeping the rest of the in-progress
 			// message intact.
 			consumeSlashTrigger()
 		},
-		[onDispatchSelection, consumeSlashTrigger],
+		[onDispatchSelection, onCommand, consumeSlashTrigger],
 	)
 
 	const handlePickerOpenChange = useCallback((next: boolean) => {

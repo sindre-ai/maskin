@@ -800,4 +800,95 @@ describe('SindreChat', () => {
 		expect(screen.getByText('Hi from Sindre')).toBeInTheDocument()
 		expect(screen.getByText('Hi from Code Reviewer')).toBeInTheDocument()
 	})
+
+	describe('slash commands', () => {
+		async function openPickerAndPick(label: string) {
+			const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+			fireEvent.change(textarea, { target: { value: '/' } })
+			const user = userEvent.setup()
+			await user.click(await screen.findByRole('option', { name: new RegExp(label) }))
+		}
+
+		it('/clear resets the session, clears one-shot state, and clears the chip selection', async () => {
+			const reset = vi.fn()
+			const oneShotClear = vi.fn()
+			const onDispatch = vi.fn<(action: SindreSelectionAction) => void>()
+			setHookResult({ status: 'ready', reset })
+			setOneShotResult({ status: 'idle', clear: oneShotClear })
+
+			render(
+				<WithQueryClient>
+					<SindreChat
+						workspaceId="ws-1"
+						sindreActorId="actor-sindre"
+						surface="sheet"
+						onDispatchSelection={onDispatch}
+					/>
+				</WithQueryClient>,
+			)
+
+			await openPickerAndPick('/clear')
+
+			await waitFor(() => expect(reset).toHaveBeenCalledTimes(1))
+			expect(oneShotClear).toHaveBeenCalledTimes(1)
+			expect(onDispatch).toHaveBeenCalledWith({ type: 'clear_all' })
+			expect((screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement).value).toBe('')
+		})
+
+		it('/summarize fires a send with the canned summarize prompt', async () => {
+			mockSend.mockClear()
+			setHookResult({ status: 'ready' })
+
+			render(
+				<WithQueryClient>
+					<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />
+				</WithQueryClient>,
+			)
+
+			await openPickerAndPick('/summarize')
+
+			await waitFor(() =>
+				expect(mockSend).toHaveBeenCalledWith(
+					'Please summarize this conversation so far.',
+					undefined,
+					'Please summarize this conversation so far.',
+					undefined,
+				),
+			)
+		})
+
+		it('/rename calls onRenameConversation when wired', async () => {
+			const onRename = vi.fn()
+			setHookResult({ status: 'ready' })
+
+			render(
+				<WithQueryClient>
+					<SindreChat
+						workspaceId="ws-1"
+						sindreActorId="actor-sindre"
+						surface="sheet"
+						onRenameConversation={onRename}
+					/>
+				</WithQueryClient>,
+			)
+
+			await openPickerAndPick('/rename')
+
+			await waitFor(() => expect(onRename).toHaveBeenCalledTimes(1))
+		})
+
+		it('/invite surfaces an inline error when no handler is wired', async () => {
+			setHookResult({ status: 'ready' })
+
+			render(
+				<WithQueryClient>
+					<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />
+				</WithQueryClient>,
+			)
+
+			await openPickerAndPick('/invite')
+
+			expect(await screen.findByRole('alert')).toHaveTextContent(/Invite isn’t available/)
+		})
+	})
 })
