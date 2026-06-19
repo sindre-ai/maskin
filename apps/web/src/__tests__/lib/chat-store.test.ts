@@ -339,6 +339,7 @@ describe('apiConversationRepository', () => {
 		if (second.role === 'agent') {
 			expect(second.status).toBe('complete')
 			expect(second.events).toEqual([{ kind: 'text', text: 'hello human' }])
+			expect(second.remoteId).toBe(11)
 		}
 	})
 

@@ -39,6 +39,12 @@ export interface AgentChatMessage {
 	status: ChatMessageStatus
 	errorText?: string
 	createdAt: number
+	/**
+	 * Event id (`events.id` bigserial) once the agent reply has been persisted
+	 * as a `commented` event on the conversation object. Live-streamed in-memory
+	 * messages omit this until the hydration refresh after session-complete.
+	 */
+	remoteId?: number
 }
 
 export type ChatMessage = UserChatMessage | AgentChatMessage
@@ -340,6 +346,7 @@ function hydrateConversation({
 			events: [{ kind: 'text', text: m.content }],
 			status: 'complete',
 			createdAt,
+			remoteId: m.id,
 		} satisfies AgentChatMessage
 	})
 	return {
