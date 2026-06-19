@@ -145,6 +145,13 @@ function effectivePlanCap(plan: MaskinPlan, hardCap: number | undefined): number
 	return null
 }
 
+export function getWorkspacePlanCap(wsSettings: WorkspaceSettings): number | null {
+	const billing = wsSettings.billing
+	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'byollm'
+	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return null
+	return effectivePlanCap(plan as MaskinPlan, billing?.hard_cap_tokens ?? undefined)
+}
+
 function effectivePeriodEnd(
 	periodStartMs: number | undefined,
 	periodEndMs: number | undefined,
@@ -173,13 +180,13 @@ export async function checkPlanCap(params: {
 	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return
 
 	const maskinPlan = plan as MaskinPlan
-	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_tokens)
+	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_tokens ?? undefined)
 	if (cap === null) return
 
 	const used = await getWorkspacePlanTokenUsage(
 		params.db,
 		params.workspaceId,
-		billing?.period_start,
+		billing?.period_start ?? undefined,
 	)
 	if (used < cap) return
 
@@ -187,7 +194,10 @@ export async function checkPlanCap(params: {
 		plan: maskinPlan,
 		used,
 		cap,
-		periodEnd: effectivePeriodEnd(billing?.period_start, billing?.period_end),
+		periodEnd: effectivePeriodEnd(
+			billing?.period_start ?? undefined,
+			billing?.period_end ?? undefined,
+		),
 	})
 }
 
