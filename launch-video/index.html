@@ -149,6 +149,20 @@
       #npro .ar { font-size: 22px; color: #B45F12; line-height: 1; }
       #npro .lb { font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #B45F12; font-weight: 700; }
 
+      /* promise chat (explodes into the noise) */
+      #nchat { position: absolute; left: 50%; top: 266px; transform: translateX(-50%); width: 760px; height: 524px; background: #FAFAF8; border-radius: 18px; overflow: hidden; box-shadow: 0 40px 90px rgba(17,17,16,0.16), 0 0 0 1px #E2DDD7; z-index: 5; opacity: 0; }
+      #nchat .ch { position: absolute; left: 0; top: 0; width: 100%; height: 46px; background: #F0EDE7; border-bottom: 1px solid #ECE7DF; display: flex; align-items: center; padding: 0 20px; gap: 8px; }
+      #nchat .ch .nt { font-size: 13px; font-weight: 600; color: #111110; } #nchat .ch .mp { margin-left: auto; font-size: 11.5px; color: #9B958F; border: 1px solid #E2DDD7; border-radius: 7px; padding: 3px 9px; }
+      #nchat .body { position: absolute; left: 0; right: 0; top: 72px; padding: 0 40px; }
+      #nchat .row { display: flex; margin-bottom: 16px; } #nchat .row.u { justify-content: flex-end; }
+      #nchat .u-b { max-width: 470px; background: #EEF3FD; border: 1px solid rgba(37,99,235,.16); border-radius: 13px 13px 4px 13px; padding: 11px 15px; font-size: 15px; color: #1f3a66; line-height: 1.45; }
+      #nchat .a-b { display: flex; gap: 11px; max-width: 600px; }
+      #nchat .a-b .adot { width: 28px; height: 28px; border-radius: 8px; background: #111110; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+      #nchat .a-b .adot span { width: 11px; height: 11px; border-radius: 50%; background: #FAFAF8; }
+      #nchat .a-b .tx { font-size: 15px; color: #2c2a27; line-height: 1.5; } #nchat .a-b .tx b { color: #111110; font-weight: 600; }
+      #nchat .in { position: absolute; left: 40px; right: 40px; bottom: 26px; height: 50px; border: 1.5px solid #E2DDD7; border-radius: 13px; background: #fff; display: flex; align-items: center; padding: 0 8px 0 16px; }
+      #nchat .in .ph { font-size: 14px; color: #B7B1A8; } #nchat .in .snd { margin-left: auto; width: 34px; height: 34px; border-radius: 9px; background: #111110; display: flex; align-items: center; justify-content: center; color: #FAFAF8; font-size: 15px; }
+
       /* ---------- centred scenes (intro/close) ---------- */
       .endcap { position: absolute; inset: 0; z-index: 60; background: #F2EFE9; opacity: 0; }
       .ec-wrap { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; }
@@ -294,28 +308,37 @@
       <!-- NOISE / ORGANIZE scene -->
       <div id="noise">
         <div id="ntitle">
-          <div class="ntt" id="ntt1">AI made individuals more productive.</div>
-          <div class="ntt" id="ntt2">But a company shouldn’t be a <em>feature factory</em>.</div>
-          <div class="ntt" id="ntt3">When creating is almost free, telling <em>signal from noise</em> is everything.</div>
-          <div class="ntt" id="ntt4" style="font-size:46px">Maskin’s agents &amp; integrations turn the noise into <em>insights</em>.</div>
-          <div class="ntt" id="ntt5" style="font-size:46px">…and promote the ones that matter into <em>bets</em>.</div>
+          <div class="ntt" data-layout-allow-overlap id="ntt1">AI made individuals more productive.</div>
+          <div class="ntt" data-layout-allow-overlap id="ntt2">But a company shouldn’t be a <em>feature factory</em>.</div>
+          <div class="ntt" data-layout-allow-overlap id="ntt3">When creating is almost free, telling <em>signal from noise</em> is everything.</div>
+          <div class="ntt" data-layout-allow-overlap id="ntt4" style="font-size:46px">Maskin’s agents &amp; integrations turn the noise into <em>insights</em>.</div>
+          <div class="ntt" data-layout-allow-overlap id="ntt5" style="font-size:46px">…and promote the ones that matter into <em>bets</em>.</div>
         </div>
-        <div id="nfield">
-          <div class="nsrc" id="ns0" style="left:240px;  top:300px">Intercom</div>
-          <div class="nsrc" id="ns1" style="left:1470px; top:318px">Slack</div>
-          <div class="nsrc" id="ns2" style="left:330px;  top:820px">HubSpot</div>
-          <div class="nsrc" id="ns3" style="left:1360px; top:806px">PostHog</div>
-          <div class="nsrc" id="ns4" style="left:806px;  top:286px">Salesforce</div>
-          <div class="nsrc" id="ns5" style="left:1120px; top:868px">Zendesk</div>
-          <div class="nsrc" id="ns6" style="left:1560px; top:560px">GitHub</div>
-          <div class="nsrc" id="ns7" style="left:286px;  top:560px">Reviews · NPS</div>
+        <div id="nchat" data-layout-allow-overlap>
+          <div class="ch"><span class="nt">New chat</span><span class="mp">Assistant</span></div>
+          <div class="body">
+            <div class="row u"><div class="u-b">Summarise last week’s 312 support tickets.</div></div>
+            <div class="row"><div class="a-b"><div class="adot"><span></span></div><div class="tx">Top issues: <b>onboarding confusion</b>, <b>billing surprises</b> and <b>mobile crashes</b>.</div></div></div>
+            <div class="row u"><div class="u-b">Draft a fix plan for onboarding.</div></div>
+          </div>
+          <div class="in"><span class="ph">Reply to assistant…</span><span class="snd">↑</span></div>
         </div>
-        <div id="ninsights">
-          <div class="nicard" id="ni0" style="left:525px;  top:518px"><span class="badge b-insight">insight</span><div class="t">Billing confusion</div></div>
-          <div class="nicard" id="ni1" style="left:845px;  top:518px"><span class="badge b-insight">insight</span><div class="t">Week-1 churn ▲</div></div>
-          <div class="nicard" id="ni2" style="left:1165px; top:518px"><span class="badge b-insight">insight</span><div class="t">Mobile crashes</div></div>
-          <div id="npro"><span class="ar">↑</span><span class="lb">promote</span></div>
-          <div id="nbet"><span class="badge b-bet">bet</span><div class="t">A longer onboarding</div></div>
+        <div id="nfield" data-layout-allow-overlap>
+          <div class="nsrc" data-layout-allow-overlap id="ns0" style="left:240px;  top:300px">Intercom</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns1" style="left:1470px; top:318px">Slack</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns2" style="left:330px;  top:820px">HubSpot</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns3" style="left:1360px; top:806px">PostHog</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns4" style="left:600px;  top:884px">Salesforce</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns5" style="left:1120px; top:868px">Zendesk</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns6" style="left:1560px; top:560px">GitHub</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns7" style="left:286px;  top:560px">Reviews · NPS</div>
+        </div>
+        <div id="ninsights" data-layout-allow-overlap>
+          <div class="nicard" data-layout-allow-overlap id="ni0" style="left:525px;  top:518px"><span class="badge b-insight">insight</span><div class="t">Billing confusion</div></div>
+          <div class="nicard" data-layout-allow-overlap id="ni1" style="left:845px;  top:518px"><span class="badge b-insight">insight</span><div class="t">Week-1 churn ▲</div></div>
+          <div class="nicard" data-layout-allow-overlap id="ni2" style="left:1165px; top:518px"><span class="badge b-insight">insight</span><div class="t">Mobile crashes</div></div>
+          <div id="npro" data-layout-allow-overlap><span class="ar">↑</span><span class="lb">promote</span></div>
+          <div id="nbet" data-layout-allow-overlap><span class="badge b-bet">bet</span><div class="t">A longer onboarding</div></div>
         </div>
       </div>
 
@@ -361,9 +384,10 @@
           const w = document.createElement("div"); w.className = "ndot-wrap"; w.style.left = sx + "px"; w.style.top = sy + "px";
           const d = document.createElement("div"); d.className = "ndot"; d.style.width = sz + "px"; d.style.height = sz + "px"; d.style.background = col; d.style.opacity = 0.85;
           w.appendChild(d); field.appendChild(w);
+          gsap.set(w, { x: 960 - sx, y: 528 - sy, scale: 0.35, opacity: 0 });   // start packed inside the chat
           wraps.push({ el: w, sx, sy, tx: CC[c][0] + (rnd() - 0.5) * 150, ty: CC[c][1] + (rnd() - 0.5) * 110 });
           const jx = (rnd() - 0.5) * 18, jy = (rnd() - 0.5) * 18, jd = 2.2 + rnd() * 1.3;
-          tl.to(d, { x: jx, y: jy, duration: jd, ease: "sine.inOut", yoyo: true, repeat: R(6.2, jd) }, 2.6);
+          tl.to(d, { x: jx, y: jy, duration: jd, ease: "sine.inOut", yoyo: true, repeat: R(3.6, jd) }, 5.2);
         }
       })();
 
@@ -395,14 +419,17 @@
       tl.to("#intro", { opacity: 0, duration: 0.55, ease: "power2.inOut" }, 1.5);
       tl.to(["#brandbar", "#kicker-tr"], { opacity: 1, duration: 0.5 }, 1.8);
 
-      /* ===== 1.8–9 noise: the signal-from-noise problem ===== */
+      /* ===== 1.8–9 promise chat → explodes into the noise ===== */
       show("#noise", 1.8, 0.5);
-      tl.fromTo(".ndot-wrap", { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: 0.5, ease: "back.out(1.5)", stagger: 0.012, transformOrigin: "50% 50%" }, 2.1);
-      tl.fromTo(".nsrc", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out", stagger: 0.07 }, 2.4);
-      tl.to(".nsrc", { opacity: 0.65, duration: 2.4, ease: "sine.inOut", yoyo: true, repeat: R(6, 2.4), stagger: 0.22 }, 2.9);
-      ntIn("#ntt1", 2.3); ntOut("#ntt1", 4.1);
-      ntIn("#ntt2", 4.3); ntOut("#ntt2", 6.3);
-      ntIn("#ntt3", 6.5); ntOut("#ntt3", 8.9);
+      tl.fromTo("#nchat", { opacity: 0, y: 22, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.6, ease: "power3.out", transformOrigin: "50% 50%" }, 2.0);
+      ntIn("#ntt1", 2.3); ntOut("#ntt1", 4.0);
+      // explode the chat into the data points
+      tl.to("#nchat", { scale: 1.16, opacity: 0, duration: 0.55, ease: "power2.in", transformOrigin: "50% 50%" }, 4.0);
+      tl.to(".ndot-wrap", { x: 0, y: 0, scale: 1, opacity: 1, duration: 1.0, ease: "power3.out", stagger: { each: 0.011, from: "center" } }, 4.15);
+      tl.fromTo(".nsrc", { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 0.45, ease: "power2.out", stagger: 0.06, transformOrigin: "50% 50%" }, 4.8);
+      tl.to(".nsrc", { opacity: 0.65, duration: 2.4, ease: "sine.inOut", yoyo: true, repeat: R(3.4, 2.4), stagger: 0.2 }, 5.3);
+      ntIn("#ntt2", 4.5); ntOut("#ntt2", 6.5);
+      ntIn("#ntt3", 6.7); ntOut("#ntt3", 8.9);
 
       /* ===== 9–14.4 organize: cluster → insights → bet ===== */
       ntIn("#ntt4", 9.2);
