@@ -7,7 +7,7 @@ const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		it('creates a workspace and seeds Sindre + default trio, returning 201', async () => {
+		it('creates a workspace and seeds Sindre + default trio + signup trigger, returning 201', async () => {
 			const ws = buildWorkspace()
 			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
 			const driver = buildActor({ type: 'agent', name: 'Driver', isSystem: true })
@@ -25,6 +25,7 @@ describe('Workspaces Routes', () => {
 				[{}], // Coach workspaceMembers insert
 				[strategist], // Strategist actor insert
 				[{}], // Strategist workspaceMembers insert
+				[{ id: 'trigger-id' }], // Strategist signup-research trigger insert
 			]
 
 			const res = await app.request(
@@ -55,6 +56,7 @@ describe('Workspaces Routes', () => {
 				[{}],
 				[strategist],
 				[{}],
+				[{ id: 'trigger-id' }],
 			]
 
 			const res = await app.request(
@@ -87,6 +89,7 @@ describe('Workspaces Routes', () => {
 				[{}],
 				[strategist],
 				[{}],
+				[{ id: 'trigger-id' }],
 			]
 
 			const res = await app.request(
@@ -114,9 +117,15 @@ describe('Workspaces Routes', () => {
 			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
 			const strategist = buildActor({ type: 'agent', name: 'Strategist', isSystem: true })
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
-			// The seeder's pre-insert select for existing names returns Driver + Coach
-			// already a member, so only Strategist gets inserted.
-			mockResults.selectQueue = [[{ name: 'Driver' }, { name: 'Coach' }]]
+			// First select = existing trio (Driver + Coach already seated → only
+			// Strategist needs seeding). Second select = existing trigger (none yet).
+			mockResults.selectQueue = [
+				[
+					{ id: 'driver-id', name: 'Driver' },
+					{ id: 'coach-id', name: 'Coach' },
+				],
+				[],
+			]
 			mockResults.insertQueue = [
 				[ws],
 				[{}],
@@ -124,6 +133,7 @@ describe('Workspaces Routes', () => {
 				[{}],
 				[strategist], // Strategist actor insert
 				[{}], // Strategist workspaceMembers insert
+				[{ id: 'trigger-id' }], // signup-research trigger insert
 			]
 
 			const res = await app.request(
@@ -131,10 +141,50 @@ describe('Workspaces Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
-			// inserts: [workspace, owner-member, sindre-actor, sindre-member, strategist-actor, strategist-member]
-			expect(calls.inserts).toHaveLength(6)
+			// inserts: workspace, owner-member, sindre-actor, sindre-member,
+			//          strategist-actor, strategist-member, trigger.
+			expect(calls.inserts).toHaveLength(7)
 			const strategistInsert = calls.inserts[4] as { name?: string }
 			expect(strategistInsert.name).toBe('Strategist')
+		})
+
+		it('seeds the Strategist research-on-signup trigger targeting the Strategist actor', async () => {
+			const ws = buildWorkspace()
+			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const driver = buildActor({ type: 'agent', name: 'Driver', isSystem: true })
+			const coach = buildActor({ type: 'agent', name: 'Coach', isSystem: true })
+			const strategist = buildActor({ type: 'agent', name: 'Strategist', isSystem: true })
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.insertQueue = [
+				[ws],
+				[{}],
+				[sindre],
+				[{}],
+				[driver],
+				[{}],
+				[coach],
+				[{}],
+				[strategist],
+				[{}],
+				[{ id: 'trigger-id' }],
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+			)
+
+			expect(res.status).toBe(201)
+			// Trigger insert is the last in the seeder's sequence (index 10).
+			const trigger = calls.inserts[10] as {
+				name?: string
+				type?: string
+				targetActorId?: string
+				config?: { entity_type?: string; conditions?: unknown }
+			}
+			expect(trigger.name).toBe('Strategist research on signup')
+			expect(trigger.type).toBe('event')
+			expect(trigger.targetActorId).toBe(strategist.id)
+			expect(trigger.config?.entity_type).toBe('knowledge')
 		})
 
 		it('returns 500 when workspace insert returns empty', async () => {

@@ -16,7 +16,11 @@
  * never agent-less.
  */
 
+import { SIGNUP_CAPTURE_SOURCE } from '../schemas/signup-capture'
 import { PLATFORM_MCP_PRESET } from './sindre-agent'
+
+/** Tag the Strategist's research-on-signup output knowledge objects carry. */
+export const SIGNUP_RESEARCH_SOURCE = 'signup_research' as const
 
 export const DRIVER_SYSTEM_PROMPT = `You are the Driver — the always-on execution agent shipped with every Maskin workspace.
 
@@ -127,3 +131,64 @@ export const STRATEGIST_DEFAULT = {
 export const DEFAULT_AGENTS = [DRIVER_DEFAULT, COACH_DEFAULT, STRATEGIST_DEFAULT] as const
 
 export type DefaultAgent = (typeof DEFAULT_AGENTS)[number]
+
+/**
+ * Event trigger seated on every workspace: fires the Strategist when a
+ * signup-capture knowledge object lands so the Strategist can research the
+ * user's organization and persist the findings as knowledge objects tagged
+ * `metadata.source = '${SIGNUP_RESEARCH_SOURCE}'`.
+ *
+ * The trigger reads as an event-trigger config matching the shape the
+ * trigger-runner expects (`eventConfigSchema` in `@maskin/shared`):
+ *
+ * - entity_type: 'knowledge' — events for object creates carry the object's
+ *   own `type` as the event's `entityType`, so a knowledge object insert
+ *   produces an event with `entity_type='knowledge'`.
+ * - action: 'created' — only fire once, on insert; updates and deletes never
+ *   re-trigger research.
+ * - conditions: `metadata.source equals signup_capture` — the trigger-runner's
+ *   condition resolver falls back to `metadata[field]` when the literal path
+ *   misses, so the bare `source` field matches `metadata.source` on the object
+ *   row that the event data carries.
+ *
+ * The action prompt is the Strategist's standing instruction for the
+ * research-on-signup pass. The trigger-runner appends the source event JSON,
+ * so the prompt can reference "the triggering event" without templating.
+ */
+export const STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER_NAME = 'Strategist research on signup' as const
+
+export const STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER = {
+	name: STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER_NAME,
+	type: 'event' as const,
+	config: {
+		entity_type: 'knowledge',
+		action: 'created',
+		conditions: [{ field: 'source', operator: 'equals' as const, value: SIGNUP_CAPTURE_SOURCE }],
+	},
+	enabled: true,
+	actionPrompt: `A new signup-capture knowledge object just landed in this workspace. The triggering event carries the full object — read it for the user's name, organization, and role under \`data.metadata\`.
+
+Your job: produce 1–3 knowledge objects that capture what the workspace should know about this user's organization to give the rest of the agents real context.
+
+Do the work in this order:
+
+1. Read the triggering event. The object id is in \`data.id\`; the structured user context is in \`data.metadata.name\`, \`data.metadata.organization\`, and \`data.metadata.role\`.
+2. Before writing anything, call \`search_objects\` for the organization name. If a knowledge object covering the same ground already exists, extend or supersede it rather than writing a duplicate.
+3. Research the organization on the public web — what they do, who they sell to, the stack they use, named competitors, anything that would shape how the Coach or Driver helps this user. Stop when you have enough to fill 1–3 short, useful knowledge objects. Useful, not exhaustive.
+4. For each finding, create a knowledge object with \`create_objects\`:
+   - \`type: 'knowledge'\`
+   - \`status: 'validated'\`
+   - \`title\`: short, specific (e.g. "Acme — focus on B2B onboarding analytics")
+   - \`content\`: short markdown with sources cited inline
+   - \`metadata.source: '${SIGNUP_RESEARCH_SOURCE}'\` — this tag is the ship-metric the bet measures usefulness on; do not skip it
+   - \`metadata.confidence\`: 'high' | 'medium' | 'low' — be honest
+   - \`metadata.tags\`: include 'context:company' so downstream readers find it
+5. Link each new knowledge object back to the source signup-capture object via an \`about\` relationship (\`create_relationships\` with \`type: 'about'\`, source = your new knowledge id, target = \`data.id\`).
+6. Stop. Do not write a status comment, do not @mention humans, do not create bets. The Coach surfaces this context to the user on their next session — your job ends at the knowledge objects.
+
+If web research turns up nothing usable (very small or unindexed organization), write one knowledge object naming that fact so downstream agents stop searching, then stop.
+
+The 24h ship-metric clock starts at the trigger fire — finish in one session.`,
+} as const
+
+export type StrategistResearchOnSignupTrigger = typeof STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER
