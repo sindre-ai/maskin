@@ -59,9 +59,7 @@ const DEFAULT_HOST = 'https://eu.i.posthog.com'
 const DEFAULT_GAUGE_INTERVAL_MS = 60_000
 
 /**
- * Emits the four ship-metric events for the bet
- * [Scalable Agent Session Infrastructure](https://maskin.sindre.ai/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/8b88c5bc-8767-42e4-8efd-68a074de7dee):
- *
+ * Emits the four ship-metric events for agent session telemetry:
  * - `runtime_session_started`
  * - `runtime_session_ended`
  * - `runtime_concurrent_sessions_gauge`

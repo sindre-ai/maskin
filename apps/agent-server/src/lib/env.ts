@@ -46,7 +46,7 @@ const envSchema = z.object({
 	S3_REGION: z.string().optional().default('us-east-1'),
 	// Maskin backend base URL for log-ingest and session-complete callbacks.
 	// When set, monitorSession streams msb logs back to the backend so the UI
-	// can show live output. Example: https://maskin.sindre.ai
+	// can show live output. Example: https://maskin.io
 	MASKIN_BASE_URL: z.string().url().optional(),
 	// Image to keep present in libkrun's host cache so session spawns can skip
 	// the network pull. Unset disables warming entirely.

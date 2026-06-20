@@ -31,7 +31,7 @@ const HOST_RULE_HOST = 'host'
 
 // When any explicit --net-rule is present msb drops the implicit allow@public
 // fallback, so sessions lose access to public internet. Re-add it so sessions
-// can reach the Maskin API (maskin.sindre.ai), external MCP servers, etc.
+// can reach the Maskin API (maskin.io), external MCP servers, etc.
 // Private addresses remain blocked by default (msb's "public" group covers
 // only globally-routable IPs).
 const PUBLIC_EGRESS_RULE = 'allow@public'
