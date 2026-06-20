@@ -24,7 +24,11 @@ export function InlineObjectChip({
 	workspaceId: string
 	className?: string
 }) {
-	const query = useObject(objectId)
+	// Skip TanStack's default retry chain: a missing UUID (deleted or bogus)
+	// should flip to the "deleted object" placeholder on the first round-trip
+	// rather than holding the loading skeleton through ~7s of exponential
+	// backoff. Other useObject call-sites keep the default retry behaviour.
+	const query = useObject(objectId, { retry: false })
 	const object = query.data
 	const isLoading = query.isLoading
 	const isMissing = !query.isLoading && !query.data
