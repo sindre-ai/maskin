@@ -1568,7 +1568,13 @@ export function createMcpServer(config: McpConfig) {
 				structuredContent: {
 					heroCard,
 					results: enrichedResults,
-					objects: successful.map((r) => r.result),
+					objects: (enrichedResults as typeof results)
+						.filter(
+							(r): r is { id: string; success: true; result: { object: RawObject } } =>
+								r.success === true &&
+								(r.result as { object?: unknown } | null)?.object != null,
+						)
+						.map((r) => r.result),
 				},
 			}
 		},
