@@ -17,6 +17,7 @@ vi.mock('node:fs', () => ({
 }))
 
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import {
 	HERO_CARD_TYPE_DEFAULTS,
 	type HeroCardTypeAnnotation,
@@ -2981,6 +2982,363 @@ describe('tool handlers', () => {
 			await expect(
 				handler({ id: actorId, attach_skill_ids: [skillId1], detach_skill_ids: [skillId1] }),
 			).rejects.toThrow(/attach_skill_ids and detach_skill_ids/)
+		})
+	})
+})
+
+describe('url field injection', () => {
+	const testUuid = '550e8400-e29b-41d4-a716-446655440000'
+
+	let urlHandlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
+
+	const configWithUrl = {
+		...config,
+		webAppBaseUrl: 'https://maskin.example.com',
+	}
+
+	function getUrlHandler(name: string) {
+		const handler = urlHandlers.get(name)
+		if (!handler) throw new Error(`Handler ${name} not registered`)
+		return handler
+	}
+
+	beforeEach(() => {
+		vi.mocked(McpServer).mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() }))
+		vi.mocked(registerAppTool).mockReset()
+		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+			urlHandlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+		})
+		urlHandlers = new Map()
+		createMcpServer(configWithUrl)
+	})
+
+	afterEach(() => {
+		vi.useRealTimers()
+		vi.restoreAllMocks()
+	})
+
+	it('omits url when webAppBaseUrl is not configured', async () => {
+		const noUrlHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+		vi.mocked(registerAppTool).mockReset()
+		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+			noUrlHandlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+		})
+		createMcpServer(config)
+
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve([{ id: 'obj-1', type: 'bet' }]),
+		} as Response)
+
+		const handler = noUrlHandlers.get('list_objects')!
+		const result = (await handler({})) as { content: Array<{ text: string }> }
+		const parsed = JSON.parse(result.content[0].text) as Array<Record<string, unknown>>
+		expect(parsed[0].url).toBeUndefined()
+	})
+
+	it('normalizes trailing slash in webAppBaseUrl', async () => {
+		const trailingHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+		vi.mocked(registerAppTool).mockReset()
+		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+			trailingHandlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+		})
+		createMcpServer({ ...config, webAppBaseUrl: 'https://maskin.example.com/' })
+
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve([{ id: 'obj-1', type: 'bet' }]),
+		} as Response)
+
+		const handler = trailingHandlers.get('list_objects')!
+		const result = (await handler({})) as { content: Array<{ text: string }> }
+		const parsed = JSON.parse(result.content[0].text) as Array<{ url: string }>
+		expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/objects/obj-1')
+	})
+
+	describe('object url', () => {
+		it('list_objects — content and structuredContent.objects include url', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve([{ id: 'obj-1', type: 'bet' }]),
+			} as Response)
+
+			const handler = getUrlHandler('list_objects')
+			const result = (await handler({})) as {
+				content: Array<{ text: string }>
+				structuredContent: { objects: Array<{ id: string; url?: string }> }
+			}
+
+			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
+			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/objects/obj-1')
+			expect(result.structuredContent.objects[0].url).toBe(
+				'https://maskin.example.com/ws-default-123/objects/obj-1',
+			)
+		})
+
+		it('get_objects — url added inside result.object in content and structuredContent', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () =>
+					Promise.resolve({
+						object: { id: 'obj-2', type: 'insight', title: 'Test' },
+						relationships: [],
+						connected_objects: [],
+					}),
+			} as Response)
+
+			const handler = getUrlHandler('get_objects')
+			const result = (await handler({ ids: ['obj-2'] })) as {
+				content: Array<{ text: string }>
+				structuredContent: { objects: Array<{ object: { id: string; url?: string } }> }
+			}
+
+			const text = JSON.parse(result.content[0].text) as Array<{
+				success: boolean
+				result: { object: { id: string; url: string } }
+			}>
+			expect(text[0].result.object.url).toBe(
+				'https://maskin.example.com/ws-default-123/objects/obj-2',
+			)
+			expect(result.structuredContent.objects[0].object.url).toBe(
+				'https://maskin.example.com/ws-default-123/objects/obj-2',
+			)
+		})
+
+		it('create_objects — url added to each graph node', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () =>
+					Promise.resolve({
+						nodes: [{ $id: 'bet-1', id: 'obj-3', type: 'bet' }],
+						edges: [],
+					}),
+			} as Response)
+
+			const handler = getUrlHandler('create_objects')
+			const result = (await handler({
+				nodes: [{ $id: 'bet-1', type: 'bet', status: 'active' }],
+				edges: [],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as {
+				nodes: Array<{ id: string; url: string }>
+			}
+			expect(parsed.nodes[0].url).toBe(
+				'https://maskin.example.com/ws-default-123/objects/obj-3',
+			)
+		})
+
+		it('update_objects — url added to patched object result', async () => {
+			const objectId = '11111111-1111-1111-1111-111111111111'
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: objectId, type: 'task', title: 'Updated' }),
+			} as Response)
+
+			const handler = getUrlHandler('update_objects')
+			const result = (await handler({
+				updates: [{ id: objectId, title: 'Updated' }],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as Array<{
+				type: string
+				success: boolean
+				result: { url: string }
+			}>
+			const objectEntry = parsed.find((e) => e.type === 'object' && e.success)
+			expect(objectEntry?.result.url).toBe(
+				`https://maskin.example.com/ws-default-123/objects/${objectId}`,
+			)
+		})
+	})
+
+	describe('actor url', () => {
+		it('create_actor — url added to result', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: 'actor-1', type: 'agent', name: 'Bot' }),
+			} as Response)
+
+			const handler = getUrlHandler('create_actor')
+			const result = (await handler({ type: 'agent', name: 'Bot' })) as {
+				content: Array<{ text: string }>
+			}
+
+			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-1')
+		})
+
+		it('get_actor — url added to result', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: testUuid, type: 'human', name: 'Alice' }),
+			} as Response)
+
+			const handler = getUrlHandler('get_actor')
+			const result = (await handler({ id: testUuid })) as {
+				content: Array<{ text: string }>
+			}
+
+			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
+			expect(parsed.url).toBe(`https://maskin.example.com/ws-default-123/agents/${testUuid}`)
+		})
+
+		it('list_actors — url added to each actor in content', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve([{ id: 'actor-2', type: 'agent', name: 'Worker' }]),
+			} as Response)
+
+			const handler = getUrlHandler('list_actors')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
+			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/agents/actor-2')
+		})
+	})
+
+	describe('trigger url', () => {
+		it('create_trigger — url added to result', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () =>
+					Promise.resolve({ id: 'trig-1', name: 'Daily', workspaceId: 'ws-default-123' }),
+			} as Response)
+
+			const handler = getUrlHandler('create_trigger')
+			const result = (await handler({
+				name: 'Daily',
+				type: 'cron',
+				config: { expression: '0 0 * * *' },
+				action_prompt: 'Check',
+				target_actor_id: testUuid,
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/triggers/trig-1')
+		})
+
+		it('list_triggers — url added to each trigger in content', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () =>
+					Promise.resolve([{ id: 'trig-2', name: 'Weekly', workspaceId: 'ws-default-123' }]),
+			} as Response)
+
+			const handler = getUrlHandler('list_triggers')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
+			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/triggers/trig-2')
+		})
+	})
+
+	describe('session url', () => {
+		it('create_session — url links to actor page when actorId present', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () =>
+					Promise.resolve({ id: 'sess-1', actorId: 'actor-9', status: 'pending' }),
+			} as Response)
+
+			const handler = getUrlHandler('create_session')
+			const result = (await handler({
+				actor_id: testUuid,
+				action_prompt: 'Fix bugs',
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-9')
+		})
+
+		it('create_session — url falls back to activity when actorId absent', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: 'sess-2', status: 'pending' }),
+			} as Response)
+
+			const handler = getUrlHandler('create_session')
+			const result = (await handler({
+				actor_id: testUuid,
+				action_prompt: 'Fix bugs',
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/activity')
+		})
+
+		it('list_sessions — url added to each session', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () =>
+						Promise.resolve([{ id: 'sess-3', actorId: 'actor-8', status: 'running' }]),
+				} as Response)
+				.mockResolvedValue({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve([]),
+				} as Response)
+
+			const handler = getUrlHandler('list_sessions')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
+			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/agents/actor-8')
+		})
+
+		it('run_agent — url added to session in response', async () => {
+			vi.useFakeTimers()
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () =>
+						Promise.resolve({ id: 'sess-4', actorId: 'actor-7', status: 'pending' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () =>
+						Promise.resolve({ id: 'sess-4', actorId: 'actor-7', status: 'completed' }),
+				} as Response)
+				.mockResolvedValue({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve([]),
+				} as Response)
+
+			const handler = getUrlHandler('run_agent')
+			const resultPromise = handler({
+				actor_id: testUuid,
+				action_prompt: 'Deploy',
+				poll_interval_seconds: 5,
+				timeout_seconds: 60,
+			})
+
+			await vi.advanceTimersByTimeAsync(5000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text) as {
+				session: { id: string; url: string }
+			}
+			expect(parsed.session.url).toBe(
+				'https://maskin.example.com/ws-default-123/agents/actor-7',
+			)
 		})
 	})
 })
