@@ -71,6 +71,7 @@ import { ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useRef } from 'react'
 import type { ObjectsTableMeta } from './columns'
 import { ObjectCard } from './object-card'
+import { useDragSelect } from './use-drag-select'
 
 interface DataTableProps {
 	data: ObjectResponse[]
@@ -136,6 +137,8 @@ export function DataTable({
 
 	const { rows } = table.getRowModel()
 
+	const { mode: dragMode } = useDragSelect({ scrollRef: parentRef, table })
+
 	const virtualizer = useVirtualizer({
 		count: rows.length,
 		getScrollElement: () => parentRef.current,
@@ -187,7 +190,13 @@ export function DataTable({
 
 	if (isMobile) {
 		return (
-			<div ref={parentRef} className="flex-1 min-h-0 overflow-auto rounded-md border">
+			<div
+				ref={parentRef}
+				className={cn(
+					'flex-1 min-h-0 overflow-auto rounded-md border',
+					dragMode === 'drag' ? 'touch-none' : 'touch-pan-y',
+				)}
+			>
 				{virtualItems.length === 0 ? (
 					<div className="h-24 flex items-center justify-center text-sm text-muted-foreground">
 						No results.
@@ -236,6 +245,7 @@ export function DataTable({
 								<li
 									key={row.id}
 									data-index={virtualItem.index}
+									data-drag-row={row.id}
 									ref={virtualizer.measureElement}
 									className="absolute left-0 right-0"
 									style={{ transform: `translateY(${virtualItem.start}px)` }}
@@ -264,7 +274,13 @@ export function DataTable({
 	}
 
 	return (
-		<div ref={parentRef} className="flex-1 min-h-0 overflow-auto rounded-md border">
+		<div
+			ref={parentRef}
+			className={cn(
+				'flex-1 min-h-0 overflow-auto rounded-md border',
+				dragMode === 'drag' ? 'touch-none' : 'touch-pan-y',
+			)}
+		>
 			<Table>
 				<TableHeader className="sticky top-0 z-10 bg-background">
 					{table.getHeaderGroups().map((headerGroup) => (
@@ -340,9 +356,18 @@ export function DataTable({
 									<TableRow
 										key={row.id}
 										data-index={virtualItem.index}
+										data-drag-row={row.id}
 										ref={virtualizer.measureElement}
 										data-state={row.getIsSelected() && 'selected'}
-										className="cursor-pointer"
+										className={cn(
+											'cursor-pointer relative',
+											'data-[drag-active-end=true]:before:content-[""]',
+											'data-[drag-active-end=true]:before:absolute',
+											'data-[drag-active-end=true]:before:inset-y-0',
+											'data-[drag-active-end=true]:before:left-0',
+											'data-[drag-active-end=true]:before:w-[3px]',
+											'data-[drag-active-end=true]:before:bg-primary',
+										)}
 										onClick={() => handleRowClick(row.original.id)}
 									>
 										{row.getVisibleCells().map((cell) => (
