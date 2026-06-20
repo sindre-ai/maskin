@@ -6,6 +6,11 @@ import { logger } from '../../../logger'
 const SLACK_API_BASE = 'https://slack.com/api'
 const REQUEST_TIMEOUT_MS = 10_000
 
+// Constant bot identity — every chat.postMessage posts as this, never as the
+// calling agent. T2's approved spec; per-agent attribution rides in a Block Kit
+// context block on the message body instead.
+const MACHINE_USERNAME = 'Machine'
+
 export interface SlackPostContext {
 	/**
 	 * Bot token (`xoxb-...`) used to call chat.postMessage. Resolution is
@@ -14,10 +19,14 @@ export interface SlackPostContext {
 	 */
 	botToken: string
 	/**
-	 * Subscript shown next to the bot — combines the calling agent's name
-	 * with the workspace name, e.g. `Synthesizer · in mesh-firm`.
+	 * Calling agent's display title (e.g. `Synthesizer`). Rendered in the
+	 * per-message context block as `*<agentTitle>* · in <workspaceName>`.
+	 * When blank we omit the context block rather than ship a placeholder —
+	 * T2's no-fallback rule. Caller logs the missing-title condition.
 	 */
-	agentLabel: string
+	agentTitle: string
+	/** Workspace display name (e.g. `mesh-firm`). Pairs with `agentTitle`. */
+	workspaceName: string
 	/** PNG URL for the shared Machine avatar; omitted when unset. */
 	machineIconUrl?: string
 	/** For logs only — tells us which workspace the post came from. */
@@ -32,6 +41,12 @@ export interface SlackPostContext {
 	 * stash and `resolveExternalId` hasn't backfilled yet.
 	 */
 	slackTeamId?: string
+}
+
+interface SlackBlock {
+	type: string
+	text?: { type: string; text: string }
+	elements?: Array<{ type: string; text: string }>
 }
 
 interface SlackPostMessageResponse {
@@ -54,6 +69,19 @@ export function isSlackBotToken(token: string | undefined | null): boolean {
 	return typeof token === 'string' && token.startsWith('xoxb-')
 }
 
+function buildMessageBlocks(text: string, agentTitle: string, workspaceName: string): SlackBlock[] {
+	const blocks: SlackBlock[] = [{ type: 'section', text: { type: 'mrkdwn', text } }]
+	const trimmedTitle = agentTitle.trim()
+	const trimmedWorkspace = workspaceName.trim()
+	if (trimmedTitle && trimmedWorkspace) {
+		blocks.push({
+			type: 'context',
+			elements: [{ type: 'mrkdwn', text: `*${trimmedTitle}* · in ${trimmedWorkspace}` }],
+		})
+	}
+	return blocks
+}
+
 async function slackPostMessage(
 	ctx: SlackPostContext,
 	args: { channel: string; text: string; thread_ts?: string },
@@ -64,10 +92,21 @@ async function slackPostMessage(
 		)
 	}
 
+	if (!ctx.agentTitle.trim()) {
+		// T2's no-fallback rule: every agent must have a title set; a missing
+		// title surfaces as an error log (and erodes the bet's ≥80% subscript
+		// rate) rather than rendering `Unknown agent · in <workspace>`.
+		logger.error('Slack post missing agent title — context block will be omitted', {
+			workspaceId: ctx.workspaceId,
+			actorId: ctx.actorId,
+		})
+	}
+
 	const body: Record<string, unknown> = {
 		channel: args.channel,
 		text: args.text,
-		username: ctx.agentLabel,
+		username: MACHINE_USERNAME,
+		blocks: buildMessageBlocks(args.text, ctx.agentTitle, ctx.workspaceName),
 	}
 	if (ctx.machineIconUrl) body.icon_url = ctx.machineIconUrl
 	if (args.thread_ts) body.thread_ts = args.thread_ts
@@ -132,9 +171,9 @@ const sendMessageInput = {
 /**
  * Build a fresh MCP server per request. The server exposes one tool —
  * `slack_send_message` — that posts to Slack as Machine with the calling
- * agent's subscript. Identity (`agentLabel`, `machineIconUrl`) is bound at
- * server-construction time so a single connection can't be reused across
- * workspaces by mistake.
+ * agent's subscript. Identity (`agentTitle`, `workspaceName`, `machineIconUrl`)
+ * is bound at server-construction time so a single connection can't be reused
+ * across workspaces by mistake.
  */
 export function createSlackMcpServer(ctx: SlackPostContext): McpServer {
 	const server = new McpServer({ name: 'maskin-slack', version: '0.1.0' })
@@ -143,7 +182,7 @@ export function createSlackMcpServer(ctx: SlackPostContext): McpServer {
 		'slack_send_message',
 		{
 			description:
-				'Post a message to Slack as Machine. The calling agent\'s name and the workspace name are appended automatically as the `username` subscript (e.g. "Synthesizer · in mesh-firm") — do not prefix the message text with your own identity.',
+				'Post a message to Slack as Machine. The calling agent\'s name and the workspace name are rendered automatically as a context block beneath the message (e.g. "Synthesizer · in mesh-firm") — do not prefix the message text with your own identity.',
 			inputSchema: sendMessageInput,
 		},
 		async (args) => {
@@ -153,7 +192,8 @@ export function createSlackMcpServer(ctx: SlackPostContext): McpServer {
 				actorId: ctx.actorId,
 				channel: result.channel ?? args.channel,
 				ts: result.ts,
-				agentLabel: ctx.agentLabel,
+				agentTitle: ctx.agentTitle,
+				workspaceName: ctx.workspaceName,
 			})
 			// Drives the bet's ≥80% ship metric — we only get here on a 2xx +
 			// `ok: true` Slack response, so a successful send maps 1:1 to an event.
@@ -161,7 +201,7 @@ export function createSlackMcpServer(ctx: SlackPostContext): McpServer {
 				workspace_id: ctx.workspaceId,
 				slack_team_id: ctx.slackTeamId ?? null,
 				posted_as_machine: isSlackBotToken(ctx.botToken),
-				has_agent_subscript: Boolean(ctx.agentLabel?.trim()),
+				has_agent_subscript: Boolean(ctx.agentTitle?.trim() && ctx.workspaceName?.trim()),
 				agent_actor_id: ctx.actorId,
 			})
 			return {

@@ -169,7 +169,8 @@ describe('POST /api/integrations/slack/mcp', () => {
 		expect(mockCreateSlackMcpServer).toHaveBeenCalledWith(
 			expect.objectContaining({
 				botToken: 'xoxb-real-bot-token',
-				agentLabel: 'Synthesizer · in mesh-firm',
+				agentTitle: 'Synthesizer',
+				workspaceName: 'mesh-firm',
 				workspaceId: workspace.id,
 				actorId,
 			}),
