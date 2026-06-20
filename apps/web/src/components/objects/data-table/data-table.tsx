@@ -131,6 +131,10 @@ export function DataTable({
 		getExpandedRowModel: grouping?.length ? getExpandedRowModel() : undefined,
 		groupedColumnMode: 'remove',
 		enableRowSelection: true,
+		// Keep groups expanded when a row is selected — the parent route passes
+		// a fresh grouping array on every render, which triggers TanStack's
+		// default auto-reset of expanded state.
+		autoResetExpanded: false,
 		getRowId: (row) => row.id,
 	})
 
