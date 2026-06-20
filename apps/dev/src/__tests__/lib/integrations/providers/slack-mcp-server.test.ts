@@ -7,11 +7,11 @@ vi.mock('../../../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
 }))
 
-import { logger } from '../../../../lib/logger'
 import {
 	createSlackMcpServer,
 	isSlackBotToken,
 } from '../../../../lib/integrations/providers/slack/mcp-server'
+import { logger } from '../../../../lib/logger'
 
 describe('isSlackBotToken', () => {
 	it('accepts xoxb- prefixed tokens', () => {
