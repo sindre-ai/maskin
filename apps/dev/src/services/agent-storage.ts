@@ -1,9 +1,10 @@
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { Database } from '@maskin/db'
 import { agentFiles, agentSkills, workspaceSkills } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { logger } from '../lib/logger'
 import { appendToLedger } from './workspace-briefing'
 
@@ -423,8 +424,10 @@ export class AgentStorageManager {
 	): Promise<PullWorkspaceSkillsResult> {
 		const rows = await this.db
 			.select({
+				id: workspaceSkills.id,
 				name: workspaceSkills.name,
 				storageKey: workspaceSkills.storageKey,
+				isFolder: workspaceSkills.isFolder,
 			})
 			.from(agentSkills)
 			.innerJoin(workspaceSkills, eq(workspaceSkills.id, agentSkills.workspaceSkillId))
@@ -448,7 +451,7 @@ export class AgentStorageManager {
 		let skipped = 0
 		const failures: { name: string; storageKey: string; error: string }[] = []
 
-		for (const { name, storageKey } of rows) {
+		for (const { id: skillId, name, storageKey, isFolder } of rows) {
 			const skillFolder = join(skillsDir, name)
 			if (!options.overwrite && (await folderExists(skillFolder))) {
 				skipped++
@@ -461,12 +464,33 @@ export class AgentStorageManager {
 			}
 
 			try {
-				const data = await this.storage.get(storageKey)
 				if (options.overwrite) {
 					await rm(skillFolder, { recursive: true, force: true })
 				}
 				await mkdir(skillFolder, { recursive: true })
-				await writeFile(join(skillFolder, 'SKILL.md'), data)
+
+				if (isFolder) {
+					await this.hydrateFolderSkill({
+						actorId,
+						workspaceId,
+						skillId,
+						name,
+						skillFolder,
+					})
+				} else {
+					const data = await this.storage.get(storageKey)
+					await writeFile(join(skillFolder, 'SKILL.md'), data)
+					// Ship-metric event — fires on every successful read so the
+					// dashboard can split single-file vs folder. Fire-and-forget so
+					// an analytics outage cannot fail the pull.
+					void capturePosthogEvent('agent_skill_file_read', actorId, {
+						workspace_id: workspaceId,
+						actor_id: actorId,
+						skill_id: skillId,
+						is_folder: false,
+						file_path: 'SKILL.md',
+					})
+				}
 				pulled++
 			} catch (err) {
 				logger.error('Failed to pull workspace skill', {
@@ -489,6 +513,52 @@ export class AgentStorageManager {
 		})
 
 		return { pulled, skipped, failures }
+	}
+
+	// Hydrate a folder skill by listing every entry under its S3 prefix and
+	// writing each one under `skills/<name>/<relativePath>` on agent disk,
+	// preserving the upload-time directory layout. Throws on any per-entry
+	// failure so the caller's per-skill try/catch records the whole skill as a
+	// failure — partial hydration would leave the skill broken on disk.
+	private async hydrateFolderSkill(args: {
+		actorId: string
+		workspaceId: string
+		skillId: string
+		name: string
+		skillFolder: string
+	}): Promise<void> {
+		const { actorId, workspaceId, skillId, name, skillFolder } = args
+		const entries = await this.listWorkspaceSkillFiles(workspaceId, skillId)
+		if (entries.length === 0) {
+			// A folder skill row with an empty prefix is a partial-write artefact
+			// (e.g. T2's replace flow deleted the prior bundle but the new upload
+			// crashed mid-flight). Surface as a per-skill failure so operators
+			// see the divergence instead of the agent silently booting with an
+			// empty skill folder.
+			throw new Error(`Folder skill has no files at prefix (skillId=${skillId})`)
+		}
+		for (const { relativePath, key } of entries) {
+			const destPath = join(skillFolder, relativePath)
+			await mkdir(dirname(destPath), { recursive: true })
+			const data = await this.getWorkspaceSkillFile(key)
+			await writeFile(destPath, data)
+			// One event per bundled file so the dashboard can see which files
+			// inside a bundle are actually read by agents (vs. dead weight).
+			void capturePosthogEvent('agent_skill_file_read', actorId, {
+				workspace_id: workspaceId,
+				actor_id: actorId,
+				skill_id: skillId,
+				is_folder: true,
+				file_path: relativePath,
+			})
+		}
+		logger.info('Hydrated folder skill onto agent disk', {
+			actorId,
+			workspaceId,
+			skillId,
+			name,
+			fileCount: entries.length,
+		})
 	}
 
 	private async upsertFileRecord(
