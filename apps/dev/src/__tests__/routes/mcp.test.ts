@@ -228,7 +228,7 @@ describe('MCP Routes', () => {
 				await app.request(jsonPostRequest('/mcp', body), undefined, env)
 
 				expect(mockCreateMcpServer).toHaveBeenCalledWith(
-					expect.objectContaining({ webAppBaseUrl: 'https://maskin.sindre.ai' }),
+					expect.objectContaining({ webAppBaseUrl: 'https://maskin.io' }),
 				)
 			} finally {
 				vi.unstubAllEnvs()

@@ -130,7 +130,7 @@ export type WebAppTarget =
  * inventing URLs (`https://app.maskin.ai/objects/<id>`) from training-data
  * priors. A real production default keeps every link surface honest.
  */
-export const DEFAULT_WEB_APP_BASE_URL = 'https://maskin.sindre.ai'
+export const DEFAULT_WEB_APP_BASE_URL = 'https://maskin.io'
 
 /**
  * Remove a single trailing `/` from `s` if present. The single source of truth
