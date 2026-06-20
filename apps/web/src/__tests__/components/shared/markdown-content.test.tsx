@@ -1,7 +1,7 @@
 import { MarkdownContent } from '@/components/shared/markdown-content'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('MarkdownContent', () => {
 	it('renders markdown content', () => {
@@ -65,6 +65,55 @@ describe('MarkdownContent', () => {
 		expect(container.querySelector('h1')).toBeNull()
 		expect(screen.getByText('Heading text')).toBeInTheDocument()
 		expect(screen.getByText('body')).toBeInTheDocument()
+	})
+
+	describe('fenced code blocks', () => {
+		const writeText = vi.fn(() => Promise.resolve())
+		const originalClipboard = navigator.clipboard
+
+		beforeEach(() => {
+			writeText.mockClear()
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText },
+				configurable: true,
+			})
+		})
+
+		afterEach(() => {
+			if (originalClipboard) {
+				Object.defineProperty(navigator, 'clipboard', {
+					value: originalClipboard,
+					configurable: true,
+				})
+			} else {
+				Reflect.deleteProperty(navigator, 'clipboard')
+			}
+		})
+
+		it('renders a fenced code block with a per-block copy button', () => {
+			render(<MarkdownContent content={'```ts\nconst hello = "world"\n```'} />)
+			expect(screen.getByRole('button', { name: /copy code/i })).toBeInTheDocument()
+			// The block keeps the language label so the reader can tell at a
+			// glance what's being highlighted.
+			expect(screen.getByText('ts')).toBeInTheDocument()
+		})
+
+		it('copies the code (without trailing newline) when the copy button is clicked', async () => {
+			render(<MarkdownContent content={'```ts\nconst hello = "world"\n```'} />)
+			// Drive the click via fireEvent so userEvent's own clipboard mock
+			// doesn't override the one this test installs.
+			fireEvent.click(screen.getByRole('button', { name: /copy code/i }))
+			await waitFor(() => expect(writeText).toHaveBeenCalledWith('const hello = "world"'))
+			await waitFor(() =>
+				expect(screen.getByRole('button', { name: /copied/i })).toBeInTheDocument(),
+			)
+		})
+
+		it('still renders inline `code` spans unchanged when they appear in prose', () => {
+			render(<MarkdownContent content={'Use `useEffect` for side effects.'} />)
+			const inline = screen.getByText('useEffect')
+			expect(inline.tagName).toBe('CODE')
+		})
 	})
 
 	it('renders @mentions as chips inside formatted markdown', () => {

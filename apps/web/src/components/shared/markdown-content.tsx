@@ -1,7 +1,17 @@
 import { Textarea } from '@/components/ui/textarea'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Check, Copy } from 'lucide-react'
+import { Highlight, themes } from 'prism-react-renderer'
+import {
+	type ReactNode,
+	isValidElement,
+	useCallback,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
@@ -102,10 +112,23 @@ export function MarkdownContent({
 			return <code className={className}>{children}</code>
 		}
 
-		if (!mentionActors) return { code }
+		// Fenced code blocks (` ```ts ... ``` `) come through ReactMarkdown as a
+		// `<pre>` wrapping a `<code class="language-…">`. Replace `pre` so we can
+		// render the highlighted output via prism-react-renderer with a per-block
+		// copy button — without losing the inline `code` behaviour above.
+		const pre: Components['pre'] = ({ children }) => {
+			const extracted = extractCodeBlock(children)
+			if (!extracted) {
+				return <pre>{children}</pre>
+			}
+			return <CodeBlock language={extracted.language} code={extracted.code} />
+		}
+
+		if (!mentionActors) return { code, pre }
 		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors, onMentionClick)
 		return {
 			code,
+			pre,
 			p: ({ children }) => <p>{wrap(children)}</p>,
 			li: ({ children }) => <li>{wrap(children)}</li>,
 			em: ({ children }) => <em>{wrap(children)}</em>,
@@ -174,6 +197,90 @@ export function MarkdownContent({
 					{content}
 				</ReactMarkdown>
 			</div>
+		</div>
+	)
+}
+
+function extractCodeBlock(children: ReactNode): { language: string; code: string } | null {
+	if (!isValidElement(children)) return null
+	const props = children.props as { className?: string; children?: ReactNode } | undefined
+	if (!props) return null
+	const language = parseLanguage(props.className) ?? 'text'
+	const code = extractText(props.children)
+	if (code.length === 0) return null
+	return { language, code }
+}
+
+function parseLanguage(className: string | undefined): string | null {
+	if (!className) return null
+	const match = /language-([\w-]+)/.exec(className)
+	return match ? match[1] : null
+}
+
+function extractText(node: ReactNode): string {
+	if (node == null || typeof node === 'boolean') return ''
+	if (typeof node === 'string') return node
+	if (typeof node === 'number') return String(node)
+	if (Array.isArray(node)) return node.map(extractText).join('')
+	if (isValidElement(node)) {
+		const props = node.props as { children?: ReactNode } | undefined
+		return extractText(props?.children)
+	}
+	return ''
+}
+
+function CodeBlock({ language, code }: { language: string; code: string }) {
+	const [copied, setCopied] = useState(false)
+	const trimmed = code.replace(/\n$/, '')
+
+	const handleCopy = useCallback(async () => {
+		if (typeof navigator === 'undefined' || !navigator.clipboard) return
+		try {
+			await navigator.clipboard.writeText(trimmed)
+			setCopied(true)
+			setTimeout(() => setCopied(false), 1500)
+		} catch {
+			// Clipboard write can reject in headless / unfocused contexts. Leave
+			// the button in its idle state so the user can retry.
+		}
+	}, [trimmed])
+
+	return (
+		<div className="group relative not-prose my-3 overflow-hidden rounded-md border border-border bg-bg">
+			<div className="flex items-center justify-between border-b border-border px-3 py-1 text-[10px] uppercase tracking-wide text-text-muted">
+				<span>{language === 'text' ? '' : language}</span>
+				<button
+					type="button"
+					onClick={handleCopy}
+					className="flex items-center gap-1 rounded px-1.5 py-0.5 text-text-secondary opacity-0 transition-opacity hover:bg-bg-hover focus:opacity-100 group-hover:opacity-100"
+					aria-label={copied ? 'Copied' : 'Copy code'}
+				>
+					{copied ? <Check size={12} /> : <Copy size={12} />}
+					<span>{copied ? 'Copied' : 'Copy'}</span>
+				</button>
+			</div>
+			<Highlight code={trimmed} language={language} theme={themes.vsDark}>
+				{({ className: prismClassName, style, tokens, getLineProps, getTokenProps }) => (
+					<pre
+						className={cn(prismClassName, 'overflow-x-auto px-3 py-2 text-xs leading-relaxed')}
+						style={style}
+					>
+						{tokens.map((line, lineIndex) => {
+							const lineProps = getLineProps({ line })
+							return (
+								// biome-ignore lint/suspicious/noArrayIndexKey: token line index is stable for a given code string
+								<div key={lineIndex} {...lineProps}>
+									{line.map((token, tokenIndex) => {
+										const tokenProps = getTokenProps({ token })
+										// biome-ignore lint/suspicious/noArrayIndexKey: token position within a line is stable for a given code string
+										return <span key={tokenIndex} {...tokenProps} />
+									})}
+								</div>
+							)
+						})}
+					</pre>
+				)}
+			</Highlight>
 		</div>
 	)
 }

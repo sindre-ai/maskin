@@ -72,6 +72,58 @@ describe('SindreTranscript', () => {
 		expect(screen.getByText(/Let me inspect the workspace members/)).toBeInTheDocument()
 	})
 
+	it('renders tool_result as a collapsible block (closed by default) showing a preview of the output', () => {
+		const events: SindreEvent[] = [
+			{
+				kind: 'tool_result',
+				toolUseId: 'tool-1',
+				isError: false,
+				content: '[{"id":"bet-1","title":"Sindre rollout"}]',
+			},
+		]
+		render(<SindreTranscript events={events} starting={false} error={null} />)
+
+		const trigger = screen.getByRole('button', { name: /Tool result for tool tool-1/i })
+		expect(trigger).toHaveAttribute('aria-expanded', 'false')
+		// Preview is rendered collapsed so the user can see what came back.
+		expect(screen.getByText(/Sindre rollout/)).toBeInTheDocument()
+	})
+
+	it('expands tool_result to show the full content when clicked', () => {
+		const events: SindreEvent[] = [
+			{
+				kind: 'tool_result',
+				toolUseId: 'tool-1',
+				isError: false,
+				content: 'line one\nline two',
+			},
+		]
+		render(<SindreTranscript events={events} starting={false} error={null} />)
+
+		fireEvent.click(screen.getByRole('button', { name: /Tool result for tool tool-1/i }))
+
+		const trigger = screen.getByRole('button', { name: /Tool result for tool tool-1/i })
+		expect(trigger).toHaveAttribute('aria-expanded', 'true')
+		expect(screen.getByText(/line one/)).toBeInTheDocument()
+		expect(screen.getByText(/line two/)).toBeInTheDocument()
+	})
+
+	it('renders errored tool_result with the "Tool errored" label', () => {
+		const events: SindreEvent[] = [
+			{
+				kind: 'tool_result',
+				toolUseId: 'tool-err',
+				isError: true,
+				content: 'permission denied',
+			},
+		]
+		render(<SindreTranscript events={events} starting={false} error={null} />)
+
+		expect(
+			screen.getByRole('button', { name: /Tool errored for tool tool-err/i }),
+		).toBeInTheDocument()
+	})
+
 	it('renders the empty state when there are no events', () => {
 		render(<SindreTranscript events={[]} starting={false} error={null} />)
 		expect(screen.getByText(/Ask Sindre about your workspace/i)).toBeInTheDocument()

@@ -2,7 +2,17 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/cn'
 import type { SindreEvent, UserAttachmentView } from '@/lib/sindre-stream'
-import { Bell, Bot, Box, ChevronDown, ChevronRight, FileText, Wrench } from 'lucide-react'
+import {
+	Bell,
+	Bot,
+	Box,
+	ChevronDown,
+	ChevronRight,
+	FileText,
+	Terminal,
+	TriangleAlert,
+	Wrench,
+} from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 interface SindreTranscriptProps {
@@ -80,6 +90,14 @@ function TranscriptRow({ event }: { event: SindreEvent }) {
 			return <ThinkingBlock text={event.text} redacted={event.redacted} />
 		case 'tool_use':
 			return <ToolUseBlock name={event.name} input={event.input} />
+		case 'tool_result':
+			return (
+				<ToolResultBlock
+					toolUseId={event.toolUseId}
+					isError={event.isError}
+					content={event.content}
+				/>
+			)
 		case 'result':
 			if (event.isError) {
 				return (
@@ -180,6 +198,54 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 			{open && (
 				<pre className="overflow-x-auto border-t border-border px-3 py-2 font-mono text-text-secondary text-xs">
 					{formatToolInput(input)}
+				</pre>
+			)}
+		</div>
+	)
+}
+
+function ToolResultBlock({
+	toolUseId,
+	isError,
+	content,
+}: {
+	toolUseId: string
+	isError: boolean
+	content: string
+}) {
+	const [open, setOpen] = useState(false)
+	const preview = content.replace(/\s+/g, ' ').trim()
+	const label = isError ? 'Tool errored' : 'Tool result'
+	const Icon = isError ? TriangleAlert : Terminal
+	return (
+		<div
+			className={cn(
+				'rounded-md border bg-bg text-xs',
+				isError ? 'border-error/40' : 'border-border',
+			)}
+			data-tool-use-id={toolUseId}
+		>
+			<button
+				type="button"
+				onClick={() => setOpen((v) => !v)}
+				className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-text-secondary hover:bg-bg-hover"
+				aria-expanded={open}
+				aria-label={`${label} for tool ${toolUseId}`}
+			>
+				{open ? (
+					<ChevronDown size={14} className="shrink-0 text-text-muted" />
+				) : (
+					<ChevronRight size={14} className="shrink-0 text-text-muted" />
+				)}
+				<Icon size={12} className={cn('shrink-0', isError ? 'text-error' : 'text-text-muted')} />
+				<span className={cn(isError && 'text-error')}>{label}</span>
+				{preview.length > 0 && !open && (
+					<span className="truncate font-mono text-text-muted">{preview}</span>
+				)}
+			</button>
+			{open && (
+				<pre className="overflow-x-auto whitespace-pre-wrap break-words border-t border-border px-3 py-2 font-mono text-text-secondary text-xs">
+					{content || '(empty result)'}
 				</pre>
 			)}
 		</div>

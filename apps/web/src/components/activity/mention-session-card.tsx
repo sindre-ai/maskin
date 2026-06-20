@@ -185,6 +185,10 @@ function eventToSemanticActivity(event: SindreEvent): Omit<SemanticActivity, 'id
 			return { label: 'Thinking', kind: 'thinking' }
 		case 'tool_use':
 			return { label: friendlyToolName(event.name), kind: 'tool' }
+		case 'tool_result':
+			// The preceding tool_use already gave a label; skip results so the
+			// activity strip doesn't double up every step.
+			return null
 		case 'text':
 			return event.text.trim() ? { label: 'Writing response', kind: 'text' } : null
 		case 'result':
