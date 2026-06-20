@@ -85,6 +85,7 @@ function setOneShotResult(overrides: Partial<UseSindreOneShotResult>) {
 }
 
 beforeEach(() => {
+	localStorage.clear()
 	mockSend.mockClear()
 	mockOneShotSend.mockClear()
 	mockOneShotClear.mockClear()
@@ -150,6 +151,70 @@ describe('SindreChat', () => {
 			expect(mockSend).toHaveBeenCalledWith('hello sindre', undefined, 'hello sindre', undefined),
 		)
 		await waitFor(() => expect(textarea.value).toBe(''))
+	})
+
+	it('restores the persisted draft for the current workspace on mount', () => {
+		localStorage.setItem('maskin-composer-draft:ws-1:new', 'unfinished thought')
+		setHookResult({ status: 'ready', sessionId: null })
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		expect(textarea.value).toBe('unfinished thought')
+	})
+
+	it('persists each keystroke to localStorage under the workspace + conversation key', () => {
+		setHookResult({ status: 'ready', sessionId: null })
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'partial' } })
+
+		expect(localStorage.getItem('maskin-composer-draft:ws-1:new')).toBe('partial')
+	})
+
+	it('clears the persisted draft after a successful send', async () => {
+		mockSend.mockClear()
+		setHookResult({ status: 'ready', sessionId: null })
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'send me' } })
+		expect(localStorage.getItem('maskin-composer-draft:ws-1:new')).toBe('send me')
+
+		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+		await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1))
+		await waitFor(() => expect(textarea.value).toBe(''))
+		expect(localStorage.getItem('maskin-composer-draft:ws-1:new')).toBeNull()
+	})
+
+	it('keeps the persisted draft when send fails so the user can retry', async () => {
+		mockSend.mockClear()
+		mockSend.mockRejectedValueOnce(new Error('flaky'))
+		setHookResult({ status: 'ready', sessionId: null })
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'retry me' } })
+		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+		await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1))
+		expect(textarea.value).toBe('retry me')
+		expect(localStorage.getItem('maskin-composer-draft:ws-1:new')).toBe('retry me')
+	})
+
+	it('swaps to the workspace-specific draft when workspaceId changes', () => {
+		localStorage.setItem('maskin-composer-draft:ws-1:new', 'draft for one')
+		localStorage.setItem('maskin-composer-draft:ws-2:new', 'draft for two')
+		setHookResult({ status: 'ready', sessionId: null })
+		const { rerender } = render(
+			<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />,
+		)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		expect(textarea.value).toBe('draft for one')
+
+		rerender(<SindreChat workspaceId="ws-2" sindreActorId="actor-sindre" surface="sheet" />)
+		expect(textarea.value).toBe('draft for two')
 	})
 
 	it('preserves the draft and surfaces an error when send fails', async () => {

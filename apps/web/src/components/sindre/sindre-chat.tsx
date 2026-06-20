@@ -12,6 +12,7 @@ import { useSindreOneShot } from '@/hooks/use-sindre-one-shot'
 import { useSindreSession } from '@/hooks/use-sindre-session'
 import type { SessionInputAttachment } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { clearComposerDraft, getComposerDraft, setComposerDraft } from '@/lib/composer-drafts'
 import {
 	EMPTY_SINDRE_SELECTION,
 	type SindreSelection,
@@ -335,6 +336,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 			)}
 			<Composer
 				workspaceId={workspaceId}
+				conversationId={sindre.sessionId ?? 'new'}
 				onSend={handleSend}
 				disabled={disabled}
 				pending={pendingTurn}
@@ -463,6 +465,13 @@ function computePlaceholder(
 
 interface ComposerProps {
 	workspaceId: string
+	/**
+	 * Stable handle for the active conversation. Used as the localStorage key
+	 * for the in-progress draft so it survives reload, workspace switch, or
+	 * the panel being closed. `'new'` covers the pre-first-send state before
+	 * a session id exists.
+	 */
+	conversationId: string
 	onSend: (content: string) => Promise<void>
 	disabled: boolean
 	pending: boolean
@@ -497,6 +506,7 @@ interface ComposerProps {
  */
 function Composer({
 	workspaceId,
+	conversationId,
 	onSend,
 	disabled,
 	pending,
@@ -511,21 +521,51 @@ function Composer({
 	externalError,
 	onDismissExternalError,
 }: ComposerProps) {
-	const [value, setValue] = useState('')
+	// Seed from localStorage so the draft is visible on the very first render
+	// instead of flashing empty then jumping. The conversation-switching effect
+	// below handles subsequent (workspace, conversation) changes.
+	const [value, setValue] = useState(() => getComposerDraft(workspaceId, conversationId))
 	const [sending, setSending] = useState(false)
 	const [sendError, setSendError] = useState<string | null>(null)
 	const [pickerOpen, setPickerOpen] = useState(false)
 	const [pickerKind, setPickerKind] = useState<SlashKindId | null>(null)
 	const slashPosRef = useRef<number | null>(null)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
+	// Tracks the (workspace, conversation) the current `value` represents so
+	// the persist effect skips writes between the switch and the restore — see
+	// the two effects below.
+	const draftKeyRef = useRef<string>(`${workspaceId}:${conversationId}`)
 	const canSend = value.trim().length > 0 && !disabled && !sending && !pending
 	const showSpinner = sending || pending
+
+	// Switch the live draft when the user moves between workspaces or
+	// conversations (incl. session id arriving after the first send). Reading
+	// from localStorage on the new key restores the prior draft, if any.
+	useEffect(() => {
+		const nextKey = `${workspaceId}:${conversationId}`
+		if (draftKeyRef.current === nextKey) return
+		draftKeyRef.current = nextKey
+		setValue(getComposerDraft(workspaceId, conversationId))
+	}, [workspaceId, conversationId])
+
+	// Persist on every change, but only once `draftKeyRef` matches the current
+	// key — otherwise the post-switch render would write the previous
+	// conversation's value under the new key before the restore effect fires.
+	useEffect(() => {
+		const currentKey = `${workspaceId}:${conversationId}`
+		if (draftKeyRef.current !== currentKey) return
+		setComposerDraft(workspaceId, conversationId, value)
+	}, [workspaceId, conversationId, value])
 
 	const handleSubmit = useCallback(
 		async (e?: FormEvent<HTMLFormElement>) => {
 			e?.preventDefault()
 			if (!canSend) return
 			const content = value.trim()
+			// Capture the conversation we're sending from — if it flips mid-send
+			// (e.g. first send creates a session id) we still want to clear the
+			// draft slot the user actually typed in, not the new one.
+			const sentConversationId = conversationId
 			setSending(true)
 			setSendError(null)
 			onDismissExternalError?.()
@@ -541,9 +581,12 @@ function Composer({
 			// Only clear the composer after the send actually resolved without
 			// error — a rejected send keeps the draft so the user can retry
 			// without losing a carefully crafted prompt.
-			if (sent) setValue('')
+			if (sent) {
+				clearComposerDraft(workspaceId, sentConversationId)
+				setValue('')
+			}
 		},
-		[canSend, onDismissExternalError, onSend, value],
+		[canSend, conversationId, onDismissExternalError, onSend, value, workspaceId],
 	)
 
 	const handleKeyDown = useCallback(
