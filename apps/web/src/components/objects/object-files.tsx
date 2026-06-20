@@ -1,21 +1,11 @@
-import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import {
-	DropdownMenu,
-	DropdownMenuCheckboxItem,
-	DropdownMenuContent,
-	DropdownMenuLabel,
-	DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from '@/components/ui/table'
+	ResponsivePopover,
+	ResponsivePopoverContent,
+	ResponsivePopoverTrigger,
+} from '@/components/ui/responsive-popover'
+import { useActors } from '@/hooks/use-actors'
 import { useCreateFile, useFiles } from '@/hooks/use-files'
 import { useCreateRelationship } from '@/hooks/use-relationships'
 import {
@@ -23,10 +13,11 @@ import {
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
 import { trackEvent } from '@/lib/analytics'
-import type { RelationshipResponse } from '@/lib/api'
+import type { FileListItem, RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatSize, readFileAsBase64 } from '@/lib/file-utils'
-import { Loader2, Plus, SlidersHorizontal, Upload } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import { Check, Columns3, File as FileIcon, Loader2, Plus, Upload } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -37,16 +28,37 @@ const ATTACHED_REL_TYPE = 'attached'
 // (/^[a-z][a-z0-9_]*$/) accepts it as a scope name.
 const FILES_SETTINGS_SCOPE = 'files'
 
-type ToggleableColumn = 'created_at' | 'modified_at'
+type ToggleableProperty = 'size' | 'created_at' | 'modified_at' | 'kind' | 'uploaded_by'
 
-const TOGGLEABLE_COLUMNS: { id: ToggleableColumn; label: string }[] = [
+const TOGGLEABLE_PROPERTIES: { id: ToggleableProperty; label: string }[] = [
+	{ id: 'size', label: 'Size' },
 	{ id: 'created_at', label: 'Created' },
 	{ id: 'modified_at', label: 'Modified' },
+	{ id: 'kind', label: 'Kind' },
+	{ id: 'uploaded_by', label: 'Uploaded by' },
 ]
 
-const DEFAULT_VISIBLE_COLUMNS: Record<ToggleableColumn, boolean> = {
+// Per T1's design: Filename is locked-on. Size defaults ON; everything else
+// defaults OFF — only non-default toggles count toward the bet's PostHog ship
+// metric, so any default-ON property is invisible to the measurement.
+const DEFAULT_VISIBLE: Record<ToggleableProperty, boolean> = {
+	size: true,
 	created_at: false,
 	modified_at: false,
+	kind: false,
+	uploaded_by: false,
+}
+
+function deriveKind(file: Pick<FileListItem, 'name' | 'mimeType'>): string {
+	const mime = file.mimeType?.toLowerCase() ?? ''
+	if (mime.startsWith('image/')) return 'Image'
+	if (mime === 'application/pdf') return 'PDF'
+	if (mime === 'text/markdown') return 'Markdown'
+	if (mime === 'text/html') return 'HTML'
+	if (mime === 'text/csv') return 'CSV'
+	if (mime === 'application/json') return 'JSON'
+	const ext = file.name.split('.').pop()
+	return ext && ext !== file.name ? ext.toUpperCase() : 'File'
 }
 
 interface ObjectFilesProps {
@@ -94,12 +106,11 @@ export function ObjectFiles({
 	const inputRef = useRef<HTMLInputElement>(null)
 	const [isDragging, setIsDragging] = useState(false)
 	const [isUploading, setIsUploading] = useState(false)
-	const [visibleColumns, setVisibleColumns] =
-		useState<Record<ToggleableColumn, boolean>>(DEFAULT_VISIBLE_COLUMNS)
+	const [visible, setVisible] = useState<Record<ToggleableProperty, boolean>>(DEFAULT_VISIBLE)
 
-	// Per-actor column-visibility persistence under `object_type = "files"`.
-	// Reuses the display-settings store from PR #486; `columnVisibility` is the
-	// only field we write here.
+	// Per-actor visibility persistence under `object_type = "files"`. Reuses the
+	// display-settings store from PR #486; `columnVisibility` is the only field
+	// we write here.
 	const displaySettingsQuery = useUserDisplaySettings(workspaceId, FILES_SETTINGS_SCOPE)
 	const updateDisplaySettings = useUpdateUserDisplaySettings(workspaceId)
 	// Pinning the stable mutate fn into a ref keeps the write-through effect's
@@ -116,12 +127,15 @@ export function ObjectFiles({
 		const persisted = displaySettingsQuery.data
 		const vis = persisted?.settings.columnVisibility
 		if (!vis) return
-		// Apply only the keys we own; ignore anything else stored under this
-		// scope so a stray entry can't poison local state.
-		setVisibleColumns((prev) => ({
-			...prev,
+		// Apply only the keys we own; fall back to current state for any property
+		// not in the persisted blob so older saves (which only had created_at /
+		// modified_at) still rehydrate cleanly without zeroing the new keys.
+		setVisible((prev) => ({
+			size: vis.size ?? prev.size,
 			created_at: vis.created_at ?? prev.created_at,
 			modified_at: vis.modified_at ?? prev.modified_at,
+			kind: vis.kind ?? prev.kind,
+			uploaded_by: vis.uploaded_by ?? prev.uploaded_by,
 		}))
 	}, [displaySettingsQuery.isSuccess, displaySettingsQuery.data])
 
@@ -130,11 +144,11 @@ export function ObjectFiles({
 		const handle = setTimeout(() => {
 			updateMutateRef.current({
 				objectType: FILES_SETTINGS_SCOPE,
-				settings: { columnVisibility: visibleColumns },
+				settings: { columnVisibility: visible },
 			})
 		}, 500)
 		return () => clearTimeout(handle)
-	}, [visibleColumns])
+	}, [visible])
 
 	const handleUpload = useCallback(
 		async (incoming: File[]) => {
@@ -185,12 +199,31 @@ export function ObjectFiles({
 		[handleUpload],
 	)
 
-	const toggleColumn = useCallback((id: ToggleableColumn, visible: boolean) => {
-		setVisibleColumns((prev) => ({ ...prev, [id]: visible }))
-		// Defaults are OFF for both properties, so `enabled = true` is the
-		// non-default state the bet's PostHog query counts.
-		trackEvent('files_display_property_toggled', { property: id, enabled: visible })
+	const toggleProperty = useCallback((id: ToggleableProperty, next: boolean) => {
+		setVisible((prev) => ({ ...prev, [id]: next }))
+		trackEvent('files_display_property_toggled', { property: id, enabled: next })
 	}, [])
+
+	const resetDefaults = useCallback(() => {
+		setVisible(DEFAULT_VISIBLE)
+	}, [])
+
+	// Active = any toggleable property differs from its default. Powers the dot
+	// indicator on the trigger so the operator can tell at a glance whether the
+	// current view is the stock one.
+	const hasActiveOverrides = useMemo(
+		() => TOGGLEABLE_PROPERTIES.some(({ id }) => visible[id] !== DEFAULT_VISIBLE[id]),
+		[visible],
+	)
+
+	// Resolve uploader actor IDs to display names. Only fetched while the column
+	// is on so we don't churn the actors query for an off-by-default property.
+	const actorsQuery = useActors(workspaceId, { enabled: visible.uploaded_by })
+	const actorNameById = useMemo(() => {
+		const map = new Map<string, string>()
+		for (const a of actorsQuery.data ?? []) map.set(a.id, a.name)
+		return map
+	}, [actorsQuery.data])
 
 	const hasFiles = files.length > 0
 	const totalCount = files.length
@@ -210,33 +243,56 @@ export function ObjectFiles({
 					Files ({totalCount})
 				</h3>
 				<div className="flex-1" />
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
+				<ResponsivePopover>
+					<ResponsivePopoverTrigger asChild>
 						<Button
 							variant="ghost"
 							size="icon"
-							className="h-8 w-8"
+							className="h-8 w-8 relative"
 							title="File properties"
 							aria-label="File properties"
 						>
-							<SlidersHorizontal size={14} />
+							<Columns3 size={14} />
+							{hasActiveOverrides && (
+								<span
+									aria-hidden="true"
+									className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary"
+								/>
+							)}
 						</Button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end" className="w-48">
-						<DropdownMenuLabel className="text-[11px] font-medium uppercase tracking-wide text-text-secondary">
-							Properties
-						</DropdownMenuLabel>
-						{TOGGLEABLE_COLUMNS.map((col) => (
-							<DropdownMenuCheckboxItem
-								key={col.id}
-								checked={visibleColumns[col.id]}
-								onCheckedChange={(checked) => toggleColumn(col.id, checked === true)}
+					</ResponsivePopoverTrigger>
+					<ResponsivePopoverContent
+						align="end"
+						accessibleTitle="File properties"
+						className="w-60 p-0"
+					>
+						<div className="px-3 pt-2.5 pb-1.5">
+							<span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+								Show properties
+							</span>
+						</div>
+						<div className="flex flex-col gap-px p-1" role="menu">
+							<MenuRow checked label="Filename" hint="Always" locked />
+							{TOGGLEABLE_PROPERTIES.map((prop) => (
+								<MenuRow
+									key={prop.id}
+									checked={visible[prop.id]}
+									label={prop.label}
+									onToggle={(next) => toggleProperty(prop.id, next)}
+								/>
+							))}
+						</div>
+						<div className="border-t border-border mt-1 p-1.5">
+							<button
+								type="button"
+								onClick={resetDefaults}
+								className="rounded-sm px-1.5 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
 							>
-								{col.label}
-							</DropdownMenuCheckboxItem>
-						))}
-					</DropdownMenuContent>
-				</DropdownMenu>
+								Reset to defaults
+							</button>
+						</div>
+					</ResponsivePopoverContent>
+				</ResponsivePopover>
 				<Button
 					variant="ghost"
 					size="icon"
@@ -253,46 +309,17 @@ export function ObjectFiles({
 			<input ref={inputRef} type="file" multiple className="hidden" onChange={handleFileChange} />
 
 			{hasFiles ? (
-				<Table>
-					<TableHeader>
-						<TableRow>
-							<TableHead className="h-8 px-2 text-xs">Name</TableHead>
-							<TableHead className="h-8 px-2 text-xs w-24 text-right">Size</TableHead>
-							{visibleColumns.created_at && (
-								<TableHead className="h-8 px-2 text-xs w-28">Created</TableHead>
-							)}
-							{visibleColumns.modified_at && (
-								<TableHead className="h-8 px-2 text-xs w-28">Modified</TableHead>
-							)}
-						</TableRow>
-					</TableHeader>
-					<TableBody>
-						{files.map((file) => (
-							<TableRow key={file.id}>
-								<TableCell className="p-1">
-									<AttachedFileCard
-										workspaceId={workspaceId}
-										file={file}
-										className="border-0 bg-transparent px-2 py-1"
-									/>
-								</TableCell>
-								<TableCell className="px-2 py-1 text-right text-xs text-muted-foreground font-mono">
-									{formatSize(file.sizeBytes)}
-								</TableCell>
-								{visibleColumns.created_at && (
-									<TableCell className="px-2 py-1 text-xs text-muted-foreground">
-										<RelativeTime date={file.createdAt} />
-									</TableCell>
-								)}
-								{visibleColumns.modified_at && (
-									<TableCell className="px-2 py-1 text-xs text-muted-foreground">
-										<RelativeTime date={file.updatedAt} />
-									</TableCell>
-								)}
-							</TableRow>
-						))}
-					</TableBody>
-				</Table>
+				<ul className="flex flex-col gap-1 m-0 p-0 list-none">
+					{files.map((file) => (
+						<FileRow
+							key={file.id}
+							workspaceId={workspaceId}
+							file={file}
+							visible={visible}
+							uploaderName={actorNameById.get(file.createdBy)}
+						/>
+					))}
+				</ul>
 			) : (
 				<button
 					type="button"
@@ -309,5 +336,123 @@ export function ObjectFiles({
 				</button>
 			)}
 		</div>
+	)
+}
+
+interface MenuRowProps {
+	checked: boolean
+	label: string
+	hint?: string
+	locked?: boolean
+	onToggle?: (next: boolean) => void
+}
+
+function MenuRow({ checked, label, hint, locked, onToggle }: MenuRowProps) {
+	const interactive = !locked && onToggle
+	return (
+		<button
+			type="button"
+			role="menuitemcheckbox"
+			aria-checked={checked}
+			aria-disabled={locked ? true : undefined}
+			onClick={interactive ? () => onToggle(!checked) : undefined}
+			className={cn(
+				'flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-left min-h-8 transition-colors',
+				interactive ? 'hover:bg-accent cursor-pointer' : 'cursor-default opacity-90',
+			)}
+		>
+			<span
+				className={cn(
+					'inline-flex h-3.5 w-3.5 items-center justify-center shrink-0',
+					checked ? 'text-foreground' : 'text-muted-foreground',
+				)}
+			>
+				{checked ? <Check size={14} /> : null}
+			</span>
+			<span className="flex-1">{label}</span>
+			{hint && <span className="text-[11px] text-muted-foreground">{hint}</span>}
+		</button>
+	)
+}
+
+interface FileRowProps {
+	workspaceId: string
+	file: FileListItem
+	visible: Record<ToggleableProperty, boolean>
+	uploaderName: string | undefined
+}
+
+function FileRow({ workspaceId, file, visible, uploaderName }: FileRowProps) {
+	const metaCells: { key: ToggleableProperty; node: React.ReactNode }[] = []
+	if (visible.size) {
+		metaCells.push({
+			key: 'size',
+			node: (
+				<span className="font-mono tabular-nums whitespace-nowrap">
+					{formatSize(file.sizeBytes)}
+				</span>
+			),
+		})
+	}
+	if (visible.created_at) {
+		metaCells.push({
+			key: 'created_at',
+			node: (
+				<span className="tabular-nums whitespace-nowrap">
+					Created <RelativeTime date={file.createdAt} />
+				</span>
+			),
+		})
+	}
+	if (visible.modified_at) {
+		metaCells.push({
+			key: 'modified_at',
+			node: (
+				<span className="tabular-nums whitespace-nowrap">
+					Modified <RelativeTime date={file.updatedAt} />
+				</span>
+			),
+		})
+	}
+	if (visible.kind) {
+		metaCells.push({
+			key: 'kind',
+			node: <span className="whitespace-nowrap">{deriveKind(file)}</span>,
+		})
+	}
+	if (visible.uploaded_by) {
+		metaCells.push({
+			key: 'uploaded_by',
+			node: <span className="whitespace-nowrap">{uploaderName ?? '—'}</span>,
+		})
+	}
+
+	return (
+		<li>
+			<Link
+				to="/$workspaceId/files/$fileId"
+				params={{ workspaceId, fileId: file.id }}
+				target="_blank"
+				rel="noopener noreferrer"
+				className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-bg-hover"
+			>
+				<FileIcon size={14} className="text-muted-foreground shrink-0" />
+				<span className="flex-1 min-w-0 truncate">{file.name}</span>
+				{metaCells.length > 0 && (
+					<span className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+						{metaCells.map((cell, i) => (
+							<span key={cell.key} className="inline-flex items-center gap-1.5">
+								{i > 0 && (
+									<span aria-hidden="true" className="opacity-50">
+										·
+									</span>
+								)}
+								{cell.node}
+							</span>
+						))}
+					</span>
+				)}
+			</Link>
+		</li>
 	)
 }
