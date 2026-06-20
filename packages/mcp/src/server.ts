@@ -90,11 +90,15 @@ function addUrl(
 	workspaceId: string,
 	target: WebAppTarget,
 ): Record<string, unknown> {
-	if (!config.webAppBaseUrl) return entity
-	return {
-		...entity,
-		url: buildWebAppHref(stripTrailingSlash(config.webAppBaseUrl), workspaceId, target),
+	const { title, name, ...rest } = entity
+	const ordered: Record<string, unknown> = {}
+	if (title !== undefined) ordered.title = title
+	if (name !== undefined) ordered.name = name
+	Object.assign(ordered, rest)
+	if (config.webAppBaseUrl) {
+		ordered.url = buildWebAppHref(stripTrailingSlash(config.webAppBaseUrl), workspaceId, target)
 	}
+	return ordered
 }
 
 function authSetupHint(config: McpConfig): string {
