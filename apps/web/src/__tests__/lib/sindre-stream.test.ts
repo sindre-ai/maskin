@@ -78,9 +78,66 @@ describe('parseSindreLine', () => {
 		expect(toolUse.input).toEqual({ query: 'sindre' })
 	})
 
-	it('emits no events for user echoes so tool results are not duplicated', () => {
+	it('emits a tool_result event for the SDK echo of a tool call so the UI can show what the tool returned', () => {
 		const events = parseSindreLine(loadFixtureAsLine('user-tool-result'))
-		expect(events).toEqual([])
+		expect(events).toEqual([
+			{
+				kind: 'tool_result',
+				toolUseId: 'toolu_01xyz',
+				isError: false,
+				content: '[{"id":"bet-1","title":"Sindre rollout"}]',
+			},
+		])
+	})
+
+	it('flattens array-shaped tool_result content into a single string', () => {
+		const line = JSON.stringify({
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [
+					{
+						type: 'tool_result',
+						tool_use_id: 'toolu_02',
+						content: [
+							{ type: 'text', text: 'first line' },
+							{ type: 'text', text: 'second line' },
+						],
+					},
+				],
+			},
+		})
+		expect(parseSindreLine(line)).toEqual([
+			{
+				kind: 'tool_result',
+				toolUseId: 'toolu_02',
+				isError: false,
+				content: 'first line\nsecond line',
+			},
+		])
+	})
+
+	it('marks tool_result events as errored when is_error is set', () => {
+		const line = JSON.stringify({
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [
+					{
+						type: 'tool_result',
+						tool_use_id: 'toolu_03',
+						is_error: true,
+						content: 'boom: file not found',
+					},
+				],
+			},
+		})
+		const events = parseSindreLine(line)
+		expect(events).toHaveLength(1)
+		const [event] = events
+		if (event.kind !== 'tool_result') throw new Error('unreachable')
+		expect(event.isError).toBe(true)
+		expect(event.content).toBe('boom: file not found')
 	})
 
 	it('emits a user event when includeUser is set and content is a string', () => {
@@ -103,9 +160,16 @@ describe('parseSindreLine', () => {
 		])
 	})
 
-	it('still skips tool_result-only user echoes when includeUser is set', () => {
+	it('still emits a single tool_result for tool_result-only echoes when includeUser is set', () => {
 		const events = parseSindreLine(loadFixtureAsLine('user-tool-result'), { includeUser: true })
-		expect(events).toEqual([])
+		expect(events).toEqual([
+			{
+				kind: 'tool_result',
+				toolUseId: 'toolu_01xyz',
+				isError: false,
+				content: '[{"id":"bet-1","title":"Sindre rollout"}]',
+			},
+		])
 	})
 
 	it('parses a successful result envelope into a result event', () => {
@@ -184,7 +248,14 @@ describe('parseSindreStream', () => {
 			.join('\n')
 
 		const events = parseSindreStream(transcript)
-		expect(events.map((e) => e.kind)).toEqual(['system', 'thinking', 'tool_use', 'text', 'result'])
+		expect(events.map((e) => e.kind)).toEqual([
+			'system',
+			'thinking',
+			'tool_use',
+			'tool_result',
+			'text',
+			'result',
+		])
 	})
 
 	it('surfaces malformed interleaved lines as debug events without dropping neighbours', () => {

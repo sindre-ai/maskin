@@ -9,8 +9,9 @@
  *   - `{ type: 'assistant', message: { content: Block[], id }, session_id }`
  *     where each content block is `text`, `tool_use`, or `thinking`
  *   - `{ type: 'user', message: { content: [{ type: 'tool_result', ... }] } }`
- *     echoing the tool result back into the conversation (no event emitted —
- *     the UI already has the matching `tool_use`)
+ *     echoing the tool result back into the conversation — emitted as
+ *     `kind: 'tool_result'` linked to its `tool_use` by id so the UI can show
+ *     what the tool returned underneath the call
  *   - `{ type: 'result', subtype, is_error, result, duration_ms, ... }`
  *   - `{ type: 'error', message, ... }`
  *
@@ -42,6 +43,12 @@ export type SindreEvent =
 			redacted?: boolean
 			sessionId?: string
 			messageId?: string
+	  }
+	| {
+			kind: 'tool_result'
+			toolUseId: string
+			isError: boolean
+			content: string
 	  }
 	| {
 			kind: 'result'
@@ -144,49 +151,84 @@ function parseError(envelope: Record<string, unknown>): SindreEvent {
 }
 
 /**
- * Extract a real user message (typed input) from a `type: 'user'` envelope.
- * The CLI emits two flavours of user envelope: the user's own input echoed
- * back into the conversation (`message.content` is a string, or an array of
- * `text` blocks), and tool-result echoes the SDK injects after each
- * `tool_use` (`message.content` is an array of `tool_result` blocks). Only
- * the former should surface in the transcript — the latter would just
- * duplicate work the matching `tool_use` event already represents.
+ * Parse a `type: 'user'` envelope. The CLI emits two flavours: the user's own
+ * input echoed back (`message.content` is a string, or an array of `text`
+ * blocks) and tool-result echoes the SDK injects after each `tool_use`
+ * (`message.content` is an array of `tool_result` blocks).
+ *
+ * `tool_result` blocks always emit a `kind: 'tool_result'` event so the UI
+ * can show what each tool returned. `text` user input is emitted as
+ * `kind: 'user'` only when `includeUser` is set — the live Sindre chat adds
+ * user events client-side on send and would double up otherwise.
  */
-function parseUserMessage(envelope: Record<string, unknown>): SindreEvent[] {
+function parseUserEnvelope(
+	envelope: Record<string, unknown>,
+	options: ParseSindreOptions,
+): SindreEvent[] {
 	const message = envelope.message
 	if (!isRecord(message)) return []
 	const content = message.content
 
 	if (typeof content === 'string') {
-		const trimmed = content.trim()
-		if (trimmed.length === 0) return []
+		if (!options.includeUser) return []
+		if (content.trim().length === 0) return []
 		return [{ kind: 'user', text: content }]
 	}
 
-	if (Array.isArray(content)) {
-		const texts: string[] = []
-		for (const block of content) {
-			if (!isRecord(block)) continue
-			if (block.type === 'text') {
-				const text = asString(block.text)
-				if (text !== undefined) texts.push(text)
-			}
-			// `tool_result` blocks are intentionally skipped — the matching
-			// `tool_use` event is already in the transcript.
-		}
-		if (texts.length === 0) return []
-		return [{ kind: 'user', text: texts.join('\n') }]
-	}
+	if (!Array.isArray(content)) return []
 
-	return []
+	const events: SindreEvent[] = []
+	const userTexts: string[] = []
+	for (const block of content) {
+		if (!isRecord(block)) continue
+		if (block.type === 'text') {
+			if (!options.includeUser) continue
+			const text = asString(block.text)
+			if (text !== undefined) userTexts.push(text)
+		} else if (block.type === 'tool_result') {
+			const toolUseId = asString(block.tool_use_id)
+			if (toolUseId === undefined) continue
+			events.push({
+				kind: 'tool_result',
+				toolUseId,
+				isError: block.is_error === true,
+				content: normalizeToolResultContent(block.content),
+			})
+		}
+	}
+	if (userTexts.length > 0) {
+		events.unshift({ kind: 'user', text: userTexts.join('\n') })
+	}
+	return events
+}
+
+/**
+ * `tool_result.content` can be a plain string or an array of typed blocks
+ * (mostly `{ type: 'text', text }`). Flatten both into a single string the UI
+ * can render as monospace output. Non-text blocks are skipped quietly —
+ * Anthropic supports image blocks here, but Sindre's tools don't emit them.
+ */
+function normalizeToolResultContent(content: unknown): string {
+	if (typeof content === 'string') return content
+	if (!Array.isArray(content)) return ''
+	const parts: string[] = []
+	for (const block of content) {
+		if (!isRecord(block)) continue
+		if (block.type === 'text') {
+			const text = asString(block.text)
+			if (text !== undefined) parts.push(text)
+		}
+	}
+	return parts.join('\n')
 }
 
 export interface ParseSindreOptions {
 	/**
-	 * When true, `type: 'user'` envelopes that carry actual user text (not
-	 * just tool-result echoes) emit a `kind: 'user'` event. Off by default so
-	 * the live Sindre chat — which adds user events client-side on send —
-	 * doesn't double up when the CLI echoes the same text back.
+	 * When true, `type: 'user'` envelopes that carry actual user text emit a
+	 * `kind: 'user'` event. Off by default so the live Sindre chat — which
+	 * adds user events client-side on send — doesn't double up when the CLI
+	 * echoes the same text back. Note: `tool_result` blocks inside a user
+	 * envelope are always emitted regardless of this flag.
 	 */
 	includeUser?: boolean
 }
@@ -220,7 +262,7 @@ export function parseSindreLine(line: string, options: ParseSindreOptions = {}):
 			return events
 		}
 		case 'user':
-			return options.includeUser ? parseUserMessage(envelope) : []
+			return parseUserEnvelope(envelope, options)
 		case 'result':
 			return [parseResult(envelope)]
 		case 'system':
