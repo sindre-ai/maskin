@@ -1,5 +1,11 @@
 import type { createObjectSchema, updateObjectSchema } from '@maskin/shared'
-import { type InfiniteData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+	type InfiniteData,
+	type UseQueryOptions,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { z } from 'zod'
 import { trackBetArchived, trackBetCreated, trackBetStatusChanged } from '../lib/analytics'
@@ -22,11 +28,14 @@ export function useObjects(workspaceId: string, filters?: Record<string, string>
 	})
 }
 
-export function useObject(id: string) {
+type ObjectQueryOptions = Pick<UseQueryOptions<ObjectResponse, Error>, 'retry'>
+
+export function useObject(id: string, options?: ObjectQueryOptions) {
 	return useQuery({
 		queryKey: queryKeys.objects.detail(id),
 		queryFn: () => api.objects.get(id),
 		enabled: !!id,
+		...(options ?? {}),
 	})
 }
 
