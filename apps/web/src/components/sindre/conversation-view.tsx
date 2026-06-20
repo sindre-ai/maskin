@@ -46,6 +46,7 @@ export function ConversationView({
 		messages,
 		participants,
 		allAgents,
+		allActors,
 		workingAgentIds,
 		isBusy,
 		send,
@@ -119,7 +120,7 @@ export function ConversationView({
 		<div className="flex h-full min-h-0 flex-col gap-2">
 			<ParticipantBar
 				participants={participants}
-				allAgents={allAgents}
+				allActors={allActors}
 				workingAgentIds={workingAgentIds}
 				onAdd={addParticipant}
 				onRemove={removeParticipant}
@@ -139,6 +140,9 @@ export function ConversationView({
 			<ConversationComposer
 				workspaceId={workspaceId}
 				agents={allAgents}
+				allActors={allActors}
+				participants={participants}
+				onAddParticipant={addParticipant}
 				value={draft}
 				onValueChange={setDraft}
 				onSend={handleSend}

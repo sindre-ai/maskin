@@ -23,7 +23,14 @@ vi.mock('@/lib/auth', () => ({
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
-	useActors: vi.fn(() => ({ data: [{ id: 'sindre-1', type: 'agent', name: 'Sindre' }] })),
+	useActors: vi.fn(() => ({
+		data: [
+			{ id: 'sindre-1', type: 'agent', name: 'Sindre', description: 'Default chat agent' },
+			{ id: 'strategist-1', type: 'agent', name: 'Strategist', description: 'Bet shaping' },
+			{ id: 'human-2', type: 'human', name: 'Noor', role: 'PM' },
+			{ id: 'human-3', type: 'human', name: 'Jules', role: 'Design lead' },
+		],
+	})),
 }))
 
 vi.mock('@/lib/posthog', () => ({
@@ -66,6 +73,16 @@ beforeEach(() => {
 		},
 	])
 	mockRepository.postUserMessage.mockResolvedValue({ remoteId: 12345 })
+	mockRepository.addParticipant.mockResolvedValue(undefined)
+	mockRepository.removeParticipant.mockResolvedValue(undefined)
+	mockRepository.createConversation.mockResolvedValue({
+		id: 'conv-new',
+		title: 'New conversation',
+		messages: [],
+		participantIds: [],
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+	})
 	vi.mocked(api.sessions.create).mockResolvedValue({
 		id: 'session-1',
 		// the hook only reads .id; the rest can be anything-shaped
@@ -95,5 +112,108 @@ describe('useSindreConversation send() — chat_reply config', () => {
 		const [, body] = vi.mocked(api.sessions.create).mock.calls[0]
 		expect(body.actor_id).toBe('sindre-1')
 		expect(body.config?.chat_reply).toEqual({ conversation_id: 'conv-7' })
+	})
+})
+
+describe('useSindreConversation — humans + agents in the room', () => {
+	it('exposes humans alongside agents in allActors so the people picker can render them', async () => {
+		const { result } = renderHook(
+			() => useSindreConversation({ workspaceId: 'ws-1', sindreActorId: 'sindre-1' }),
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(result.current.activeId).toBe('conv-7'))
+
+		const agents = result.current.allAgents
+		const allActors = result.current.allActors
+
+		expect(agents.every((a) => a.kind === 'agent')).toBe(true)
+		expect(allActors.find((a) => a.id === 'human-2')?.kind).toBe('human')
+		expect(allActors.find((a) => a.id === 'human-3')?.role).toBe('Design lead')
+		// Agents stay first so the picker lists them with role labels intact.
+		expect(allActors.length).toBe(agents.length + 2)
+	})
+
+	it('resolves an invited human into the participants list as kind: human', async () => {
+		mockRepository.list.mockResolvedValueOnce([
+			{
+				id: 'conv-9',
+				title: 'Q3 planning',
+				messages: [],
+				participantIds: ['human-2'],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			},
+		])
+
+		const { result } = renderHook(
+			() => useSindreConversation({ workspaceId: 'ws-1', sindreActorId: 'sindre-1' }),
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(result.current.activeId).toBe('conv-9'))
+
+		const noor = result.current.participants.find((p) => p.id === 'human-2')
+		expect(noor).toBeDefined()
+		expect(noor?.kind).toBe('human')
+		expect(noor?.name).toBe('Noor')
+	})
+
+	it('addParticipant pushes a human and calls the repository', async () => {
+		mockRepository.list.mockResolvedValueOnce([
+			{
+				id: 'conv-10',
+				title: 'New conversation',
+				messages: [],
+				participantIds: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			},
+		])
+
+		const { result } = renderHook(
+			() => useSindreConversation({ workspaceId: 'ws-1', sindreActorId: 'sindre-1' }),
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(result.current.activeId).toBe('conv-10'))
+
+		act(() => {
+			result.current.addParticipant('human-2')
+		})
+
+		await waitFor(() =>
+			expect(mockRepository.addParticipant).toHaveBeenCalledWith('ws-1', 'conv-10', 'human-2'),
+		)
+
+		expect(result.current.participants.some((p) => p.id === 'human-2' && p.kind === 'human')).toBe(
+			true,
+		)
+	})
+
+	it('addParticipant is a no-op (no API call) if the actor is already in the room', async () => {
+		mockRepository.list.mockResolvedValueOnce([
+			{
+				id: 'conv-11',
+				title: 'Q3 planning',
+				messages: [],
+				participantIds: ['human-2'],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			},
+		])
+
+		const { result } = renderHook(
+			() => useSindreConversation({ workspaceId: 'ws-1', sindreActorId: 'sindre-1' }),
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(result.current.activeId).toBe('conv-11'))
+
+		act(() => {
+			result.current.addParticipant('human-2')
+		})
+
+		expect(mockRepository.addParticipant).not.toHaveBeenCalled()
 	})
 })

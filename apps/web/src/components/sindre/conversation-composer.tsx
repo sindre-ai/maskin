@@ -1,4 +1,5 @@
 import { MentionTypeahead } from '@/components/sindre/mention-typeahead'
+import { PeoplePicker } from '@/components/sindre/people-picker'
 import { SelectionChips } from '@/components/sindre/selection-chips'
 import {
 	type SlashKindId,
@@ -11,7 +12,7 @@ import type { ConversationParticipant } from '@/hooks/use-sindre-conversation'
 import { applyMention, getActiveMention } from '@/lib/chat-mentions'
 import { cn } from '@/lib/cn'
 import type { SindreSelection, SindreSelectionAction } from '@/lib/sindre-selection'
-import { AtSign, Box, Paperclip, Send, Square } from 'lucide-react'
+import { AtSign, Box, Paperclip, Send, Square, UserPlus } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type FormEvent,
@@ -28,6 +29,11 @@ const FILE_MAX_BYTES = 1024 * 1024 // 1 MB per upload
 interface ConversationComposerProps {
 	workspaceId: string
 	agents: ConversationParticipant[]
+	/** Humans + agents in the workspace; powers the inline People picker. */
+	allActors: ConversationParticipant[]
+	/** Current participants of the conversation; the picker disables present rows. */
+	participants: ConversationParticipant[]
+	onAddParticipant: (id: string) => void
 	value: string
 	onValueChange: (value: string) => void
 	onSend: () => void
@@ -48,6 +54,9 @@ interface ConversationComposerProps {
 export function ConversationComposer({
 	workspaceId,
 	agents,
+	allActors,
+	participants,
+	onAddParticipant,
 	value,
 	onValueChange,
 	onSend,
@@ -319,6 +328,26 @@ export function ConversationComposer({
 						<Box size={14} aria-hidden />
 						Items
 					</Button>
+					<PeoplePicker
+						participants={participants}
+						allActors={allActors}
+						onAdd={onAddParticipant}
+						defaultTab="people"
+						align="start"
+						trigger={
+							<Button
+								type="button"
+								size="sm"
+								variant="ghost"
+								className="h-7 gap-1 px-2 text-text-secondary text-xs"
+								disabled={disabled}
+								aria-label="Invite people or agents to this conversation"
+							>
+								<UserPlus size={14} aria-hidden />
+								People
+							</Button>
+						}
+					/>
 					<Button
 						type="button"
 						size="sm"

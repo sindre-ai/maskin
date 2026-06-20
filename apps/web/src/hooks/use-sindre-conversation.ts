@@ -28,6 +28,11 @@ const DEFAULT_AGENT_NAME = 'Sindre'
 export interface ConversationParticipant {
 	id: string
 	name: string
+	/** Whether this participant is an agent or a human. Determines whether
+	 *  mentioning them spawns a session and which picker section they land in. */
+	kind: 'human' | 'agent'
+	/** Optional role label (e.g. "CTO", "Strategist") shown in the picker. */
+	role?: string | null
 	/** The always-present default agent (Sindre); cannot be removed. */
 	isDefault: boolean
 }
@@ -59,6 +64,8 @@ export interface UseSindreConversationResult {
 	messages: ChatMessage[]
 	participants: ConversationParticipant[]
 	allAgents: ConversationParticipant[]
+	/** Humans + agents in the workspace, used by the People & Agents picker. */
+	allActors: ConversationParticipant[]
 	workingAgentIds: string[]
 	isBusy: boolean
 	ready: boolean
@@ -147,19 +154,48 @@ export function useSindreConversation({
 	const agentList = useMemo<ConversationParticipant[]>(() => {
 		const fromActors = (actors ?? [])
 			.filter((a) => a.type === 'agent')
-			.map((a) => ({ id: a.id, name: a.name, isDefault: a.id === sindreActorId }))
+			.map((a) => ({
+				id: a.id,
+				name: a.name,
+				kind: 'agent' as const,
+				role: a.description,
+				isDefault: a.id === sindreActorId,
+			}))
 		// Guarantee the default agent is present even if the actors list hasn't
 		// loaded yet or doesn't include it.
 		if (sindreActorId && !fromActors.some((a) => a.id === sindreActorId)) {
-			fromActors.unshift({ id: sindreActorId, name: DEFAULT_AGENT_NAME, isDefault: true })
+			fromActors.unshift({
+				id: sindreActorId,
+				name: DEFAULT_AGENT_NAME,
+				kind: 'agent' as const,
+				role: null,
+				isDefault: true,
+			})
 		}
 		return fromActors
 	}, [actors, sindreActorId])
 
+	const humanList = useMemo<ConversationParticipant[]>(() => {
+		return (actors ?? [])
+			.filter((a) => a.type === 'human')
+			.map((a) => ({
+				id: a.id,
+				name: a.name,
+				kind: 'human' as const,
+				role: a.role ?? null,
+				isDefault: false,
+			}))
+	}, [actors])
+
+	const allActors = useMemo<ConversationParticipant[]>(
+		() => [...agentList, ...humanList],
+		[agentList, humanList],
+	)
+
 	const defaultParticipant = useMemo<ConversationParticipant | null>(() => {
 		if (!sindreActorId) return null
 		const found = agentList.find((a) => a.id === sindreActorId)
-		return found ?? { id: sindreActorId, name: DEFAULT_AGENT_NAME, isDefault: true }
+		return found ?? { id: sindreActorId, name: DEFAULT_AGENT_NAME, kind: 'agent', isDefault: true }
 	}, [agentList, sindreActorId])
 
 	const active = useMemo(
@@ -172,11 +208,14 @@ export function useSindreConversation({
 		if (defaultParticipant) out.push(defaultParticipant)
 		for (const id of active?.participantIds ?? []) {
 			if (id === sindreActorId) continue
-			const agent = agentList.find((a) => a.id === id)
-			out.push(agent ?? { id, name: shortId(id), isDefault: false })
+			const resolved = allActors.find((a) => a.id === id)
+			// Unknown IDs fall back to a human chip — agents always come from
+			// `useActors`, so an unresolved id is almost always a workspace member
+			// the actor list hasn't loaded yet, not a hidden bot.
+			out.push(resolved ?? { id, name: shortId(id), kind: 'human', isDefault: false })
 		}
 		return out
-	}, [defaultParticipant, active?.participantIds, agentList, sindreActorId])
+	}, [defaultParticipant, active?.participantIds, allActors, sindreActorId])
 
 	const workingAgentIds = useMemo(() => {
 		const ids = new Set<string>()
@@ -468,6 +507,7 @@ export function useSindreConversation({
 			const agent = agentList.find((a) => a.id === target.senderId) ?? {
 				id: target.senderId,
 				name: target.senderName,
+				kind: 'agent' as const,
 				isDefault: target.senderId === sindreActorId,
 			}
 			// Nearest preceding user message drives the regenerated turn.
@@ -551,6 +591,11 @@ export function useSindreConversation({
 	const addParticipant = useCallback(
 		(id: string) => {
 			if (!active || id === sindreActorId) return
+			// Idempotency at the UI layer — `repository.addParticipant` is also
+			// idempotent server-side via `onConflictDoNothing`, but skipping the
+			// network round-trip here avoids needless work when the picker click
+			// races a participant-bar refresh.
+			if ((active.participantIds ?? []).includes(id)) return
 			const conversationId = active.id
 			patchConversation(conversationId, (c) => ({
 				...c,
@@ -597,6 +642,7 @@ export function useSindreConversation({
 		messages: active?.messages ?? [],
 		participants,
 		allAgents: agentList,
+		allActors,
 		workingAgentIds,
 		isBusy: workingAgentIds.length > 0,
 		ready: !!workspaceId,
