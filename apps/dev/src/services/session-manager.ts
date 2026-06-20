@@ -29,6 +29,7 @@ import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../l
 import { logger } from '../lib/logger'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
+import { persistAgentChatReply } from './chat-reply'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
 import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
@@ -1297,6 +1298,35 @@ export class SessionManager extends EventEmitter {
 				status,
 				error: String(err),
 			})
+		}
+
+		// If this session was spawned to answer a chat conversation, persist
+		// the agent's final reply as a `commented` event on the conversation
+		// object. T3 made events the storage model for chat messages; this
+		// closes the loop so agent turns get a stable events.id (for
+		// reactions, threads, hydration on reload) instead of only existing
+		// in the SSE log replay. Best-effort: a failure here must not block
+		// the terminal system log or the rest of cleanup.
+		const sessionConfig = (session.config as Record<string, unknown> | null) ?? {}
+		const chatReply = sessionConfig.chat_reply as { conversation_id?: string } | undefined
+		if (chatReply?.conversation_id) {
+			const tail = this.activeSessions.get(sessionId)?.stdoutTail
+			try {
+				await persistAgentChatReply({
+					db: this.db,
+					sessionManager: this,
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					conversationId: chatReply.conversation_id,
+					logChunks: tail ? [tail] : [],
+				})
+			} catch (err) {
+				logger.error('Failed to persist agent chat reply', {
+					sessionId,
+					conversationId: chatReply.conversation_id,
+					error: String(err),
+				})
+			}
 		}
 
 		try {

@@ -1,4 +1,5 @@
 import { cn } from '@/lib/cn'
+import { Bot } from 'lucide-react'
 
 export function ActorAvatar({
 	name,
@@ -21,7 +22,11 @@ export function ActorAvatar({
 		sizeClasses,
 		className,
 	)
-	const content = isAgent ? '⚡' : name.charAt(0).toUpperCase()
+	const content = isAgent ? (
+		<Bot size={size === 'sm' ? 12 : 16} aria-hidden />
+	) : (
+		name.charAt(0).toUpperCase()
+	)
 
 	if (onClick) {
 		return (
