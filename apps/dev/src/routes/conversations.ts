@@ -22,7 +22,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { filterWorkspaceMembers, isWorkspaceMember } from '../lib/workspace-auth'
 import { appendCommentEvent } from '../services/comments'
 import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe, isSubscribed } from '../services/subscriptions'
@@ -81,6 +81,10 @@ const createConversationRoute = createRoute({
 			description: 'Conversation created',
 			content: { 'application/json': { schema: conversationResponseSchema } },
 		},
+		400: {
+			description: 'Invalid request (e.g. participant_actor_ids contain non-workspace members)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		500: {
 			description: 'Internal server error',
 			content: { 'application/json': { schema: errorSchema } },
@@ -93,6 +97,37 @@ app.openapi(createConversationRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
+
+	// Validate caller-supplied participant IDs against workspace membership
+	// before we write anything. Without this check a caller could seat any
+	// actor UUID — including agents from other workspaces — who would then
+	// be eligible for thread-reply auto-spawn here via the shared comment
+	// helper. Reject the whole request on any non-member so we never produce
+	// a partially-seated conversation. The caller themselves is already a
+	// member (authMiddleware validated X-Workspace-Id) and skips this check.
+	const requestedParticipants = Array.from(new Set(body.participant_actor_ids ?? [])).filter(
+		(id) => id !== actorId,
+	)
+	if (requestedParticipants.length > 0) {
+		const members = await filterWorkspaceMembers(db, requestedParticipants, workspaceId)
+		if (members.length !== requestedParticipants.length) {
+			const memberSet = new Set(members)
+			const nonMembers = requestedParticipants.filter((id) => !memberSet.has(id))
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'One or more participants are not members of this workspace',
+					[
+						{
+							field: 'participant_actor_ids',
+							message: `Non-member actor ids: ${nonMembers.join(', ')}`,
+						},
+					],
+				),
+				400,
+			)
+		}
+	}
 
 	// `objects.metadata` shape for conversation objects (see
 	// `conversationMetadataSchema` in @maskin/shared and T2 docs): kind +
@@ -140,13 +175,10 @@ app.openapi(createConversationRoute, async (c) => {
 		source: 'author',
 	})
 
-	// Seat extra participants as `manual` subscriptions; dedup against the
-	// caller (whose 'author' row would lose nothing on conflict but we skip
-	// the redundant write).
-	const coParticipants = Array.from(new Set(body.participant_actor_ids ?? [])).filter(
-		(id) => id !== actorId,
-	)
-	for (const participantActorId of coParticipants) {
+	// Seat extra participants as `manual` subscriptions. The list is already
+	// deduped and stripped of the caller (who lands as 'author' above) and
+	// has been validated against workspace membership upstream.
+	for (const participantActorId of requestedParticipants) {
 		await autoSubscribe(db, {
 			workspaceId,
 			actorId: participantActorId,
@@ -160,7 +192,7 @@ app.openapi(createConversationRoute, async (c) => {
 		conversationId: created.id,
 		workspaceId,
 		actorId,
-		coParticipantCount: coParticipants.length,
+		coParticipantCount: requestedParticipants.length,
 	})
 
 	return c.json(serialize(created) as z.infer<typeof conversationResponseSchema>, 201)
@@ -442,6 +474,10 @@ const addParticipantRoute = createRoute({
 			description: 'Participant added',
 			content: { 'application/json': { schema: conversationParticipantResponseSchema } },
 		},
+		400: {
+			description: 'Invalid request (e.g. actor_id is not a member of this workspace)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Conversation not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -466,6 +502,19 @@ app.openapi(addParticipantRoute, async (c) => {
 	}
 	if (!(await isActiveParticipant(db, id, actorId))) {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	// Gate the new participant against workspace membership. Without this a
+	// caller could seat any actor UUID — including agents from other
+	// workspaces — who would become eligible for thread-reply auto-spawn
+	// here via the shared comment helper.
+	if (!(await isWorkspaceMember(db, body.actor_id, conversation.workspaceId))) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Participant is not a member of this workspace', [
+				{ field: 'actor_id', message: `Non-member actor id: ${body.actor_id}` },
+			]),
+			400,
+		)
 	}
 
 	await autoSubscribe(db, {

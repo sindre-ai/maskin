@@ -109,6 +109,8 @@ describe('Conversations Routes', () => {
 				'/api/conversations',
 				callerUuid,
 			)
+			// workspace member check for `co` (caller is filtered out before the check)
+			mockResults.selectQueue = [[{ actorId: co }]]
 			// object insert, event insert, author subscription, manual subscription for `co`
 			mockResults.insertQueue = [[conversation], [], [], []]
 
@@ -136,6 +138,36 @@ describe('Conversations Routes', () => {
 
 			// No 4th subscription insert — caller was deduped out.
 			expect(calls.inserts.length).toBe(4)
+		})
+
+		it('rejects when participant_actor_ids includes a non-workspace member', async () => {
+			const callerUuid = randomUUID()
+			const member = randomUUID()
+			const outsider = randomUUID()
+			const { app, mockResults, calls } = createTestApp(
+				conversationsRoutes,
+				'/api/conversations',
+				callerUuid,
+			)
+			// filterWorkspaceMembers returns only the in-workspace actor.
+			mockResults.selectQueue = [[{ actorId: member }]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ participant_actor_ids: [member, outsider] },
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(body.error.details[0].field).toBe('participant_actor_ids')
+			expect(body.error.details[0].message).toContain(outsider)
+			// Nothing was inserted — request failed atomically before any write.
+			expect(calls.inserts.length).toBe(0)
 		})
 
 		it('rejects bodies with unparseable metadata', async () => {
@@ -450,6 +482,7 @@ describe('Conversations Routes', () => {
 				[{ workspaceId: conversation.workspaceId }],
 				[buildWorkspaceMember({ actorId, workspaceId: wsId })],
 				[buildSubscription({ actorId, entityId: conversation.id })],
+				[buildWorkspaceMember({ actorId: newActorId, workspaceId: wsId })],
 				[newSubscription], // lookup after insert
 			]
 			mockResults.insertQueue = [[]]
@@ -476,6 +509,32 @@ describe('Conversations Routes', () => {
 			expect(subInsert.entityType).toBe('object')
 			expect(subInsert.entityId).toBe(conversation.id)
 			expect(subInsert.source).toBe('manual')
+		})
+
+		it('returns 400 when the target actor is not a workspace member', async () => {
+			const conversation = buildConversation()
+			const outsider = randomUUID()
+			const { app, mockResults, calls } = createTestApp(conversationsRoutes, '/api/conversations')
+			mockResults.selectQueue = [
+				[{ workspaceId: conversation.workspaceId }],
+				[buildWorkspaceMember({ actorId, workspaceId: wsId })],
+				[buildSubscription({ actorId, entityId: conversation.id })],
+				[], // isWorkspaceMember(outsider) → no row
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/conversations/${conversation.id}/participants`, {
+					actor_id: outsider,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(body.error.details[0].field).toBe('actor_id')
+			expect(body.error.details[0].message).toContain(outsider)
+			// No subscription was inserted.
+			expect(calls.inserts.length).toBe(0)
 		})
 
 		it('returns 404 when the caller is not subscribed', async () => {
