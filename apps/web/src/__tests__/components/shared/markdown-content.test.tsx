@@ -1,7 +1,23 @@
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const highlightSpy = vi.fn()
+
+vi.mock('prism-react-renderer', async () => {
+	const actual =
+		await vi.importActual<typeof import('prism-react-renderer')>('prism-react-renderer')
+	return {
+		...actual,
+		// biome-ignore lint/suspicious/noExplicitAny: forward whatever the inner Highlight accepts
+		Highlight: (props: any) => {
+			highlightSpy(props.code, props.language)
+			return createElement(actual.Highlight, props)
+		},
+	}
+})
 
 describe('MarkdownContent', () => {
 	it('renders markdown content', () => {
@@ -113,6 +129,33 @@ describe('MarkdownContent', () => {
 			render(<MarkdownContent content={'Use `useEffect` for side effects.'} />)
 			const inline = screen.getByText('useEffect')
 			expect(inline.tagName).toBe('CODE')
+		})
+
+		describe('memoised highlight', () => {
+			beforeEach(() => {
+				highlightSpy.mockClear()
+			})
+
+			it('skips Prism tokenisation when the parent re-renders with the same code', () => {
+				const md = '```ts\nconst hello = "world"\n```'
+				const { rerender } = render(<MarkdownContent content={md} />)
+				expect(highlightSpy).toHaveBeenCalledTimes(1)
+
+				rerender(<MarkdownContent content={md} />)
+				rerender(<MarkdownContent content={md} />)
+				expect(highlightSpy).toHaveBeenCalledTimes(1)
+			})
+
+			it('re-tokenises when the code changes', () => {
+				const a = '```ts\nconst answer = 1\n```'
+				const b = '```ts\nconst answer = 2\n```'
+				const { rerender } = render(<MarkdownContent content={a} />)
+				expect(highlightSpy).toHaveBeenCalledTimes(1)
+
+				rerender(<MarkdownContent content={b} />)
+				expect(highlightSpy).toHaveBeenCalledTimes(2)
+				expect(highlightSpy).toHaveBeenLastCalledWith('const answer = 2', 'ts')
+			})
 		})
 	})
 

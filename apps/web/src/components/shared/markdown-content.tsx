@@ -6,6 +6,7 @@ import { Highlight, themes } from 'prism-react-renderer'
 import {
 	type ReactNode,
 	isValidElement,
+	memo,
 	useCallback,
 	useLayoutEffect,
 	useMemo,
@@ -259,28 +260,44 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
 					<span>{copied ? 'Copied' : 'Copy'}</span>
 				</button>
 			</div>
-			<Highlight code={trimmed} language={language} theme={themes.vsDark}>
-				{({ className: prismClassName, style, tokens, getLineProps, getTokenProps }) => (
-					<pre
-						className={cn(prismClassName, 'overflow-x-auto px-3 py-2 text-xs leading-relaxed')}
-						style={style}
-					>
-						{tokens.map((line, lineIndex) => {
-							const lineProps = getLineProps({ line })
-							return (
-								// biome-ignore lint/suspicious/noArrayIndexKey: token line index is stable for a given code string
-								<div key={lineIndex} {...lineProps}>
-									{line.map((token, tokenIndex) => {
-										const tokenProps = getTokenProps({ token })
-										// biome-ignore lint/suspicious/noArrayIndexKey: token position within a line is stable for a given code string
-										return <span key={tokenIndex} {...tokenProps} />
-									})}
-								</div>
-							)
-						})}
-					</pre>
-				)}
-			</Highlight>
+			<HighlightedCode language={language} code={trimmed} />
 		</div>
 	)
 }
+
+// Prism's render-prop reconstructs every token span on each call. Long
+// transcripts repaint constantly (SSE ticks, reactions, theme toggles), so
+// without memoisation a multi-kLOC tool-result block re-runs the mapping on
+// every parent render. React.memo skips it when (language, code) are stable.
+const HighlightedCode = memo(function HighlightedCode({
+	language,
+	code,
+}: {
+	language: string
+	code: string
+}) {
+	return (
+		<Highlight code={code} language={language} theme={themes.vsDark}>
+			{({ className: prismClassName, style, tokens, getLineProps, getTokenProps }) => (
+				<pre
+					className={cn(prismClassName, 'overflow-x-auto px-3 py-2 text-xs leading-relaxed')}
+					style={style}
+				>
+					{tokens.map((line, lineIndex) => {
+						const lineProps = getLineProps({ line })
+						return (
+							// biome-ignore lint/suspicious/noArrayIndexKey: token line index is stable for a given code string
+							<div key={lineIndex} {...lineProps}>
+								{line.map((token, tokenIndex) => {
+									const tokenProps = getTokenProps({ token })
+									// biome-ignore lint/suspicious/noArrayIndexKey: token position within a line is stable for a given code string
+									return <span key={tokenIndex} {...tokenProps} />
+								})}
+							</div>
+						)
+					})}
+				</pre>
+			)}
+		</Highlight>
+	)
+})
