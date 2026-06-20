@@ -91,7 +91,10 @@ function addUrl(
 	target: WebAppTarget,
 ): Record<string, unknown> {
 	if (!config.webAppBaseUrl) return entity
-	return { ...entity, url: buildWebAppHref(stripTrailingSlash(config.webAppBaseUrl), workspaceId, target) }
+	return {
+		...entity,
+		url: buildWebAppHref(stripTrailingSlash(config.webAppBaseUrl), workspaceId, target),
+	}
 }
 
 function authSetupHint(config: McpConfig): string {
@@ -1476,7 +1479,10 @@ export function createMcpServer(config: McpConfig) {
 			const enrichedNodes =
 				wsId && Array.isArray(graphResult.nodes)
 					? graphResult.nodes.map((node) =>
-							addUrl(node as Record<string, unknown>, config, wsId, { kind: 'object', id: node.id }),
+							addUrl(node as Record<string, unknown>, config, wsId, {
+								kind: 'object',
+								id: node.id,
+							}),
 						)
 					: graphResult.nodes
 			const enrichedResult = { ...graphResult, nodes: enrichedNodes }
@@ -1571,8 +1577,7 @@ export function createMcpServer(config: McpConfig) {
 					objects: (enrichedResults as typeof results)
 						.filter(
 							(r): r is { id: string; success: true; result: { object: RawObject } } =>
-								r.success === true &&
-								(r.result as { object?: unknown } | null)?.object != null,
+								r.success === true && (r.result as { object?: unknown } | null)?.object != null,
 						)
 						.map((r) => r.result),
 				},
@@ -1629,7 +1634,10 @@ export function createMcpServer(config: McpConfig) {
 									id,
 									success: true,
 									result: urlWsId
-										? addUrl(result as Record<string, unknown>, config, urlWsId, { kind: 'object', id })
+										? addUrl(result as Record<string, unknown>, config, urlWsId, {
+												kind: 'object',
+												id,
+											})
 										: result,
 								})
 							} catch (error) {
@@ -1879,7 +1887,10 @@ export function createMcpServer(config: McpConfig) {
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
 			const enriched = wsId
 				? result.map((obj) =>
-						addUrl(obj as unknown as Record<string, unknown>, config, wsId, { kind: 'object', id: obj.id }),
+						addUrl(obj as unknown as Record<string, unknown>, config, wsId, {
+							kind: 'object',
+							id: obj.id,
+						}),
 					)
 				: result
 			return {
@@ -1929,7 +1940,10 @@ export function createMcpServer(config: McpConfig) {
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
 			const enriched = wsId
 				? result.map((obj) =>
-						addUrl(obj as unknown as Record<string, unknown>, config, wsId, { kind: 'object', id: obj.id }),
+						addUrl(obj as unknown as Record<string, unknown>, config, wsId, {
+							kind: 'object',
+							id: obj.id,
+						}),
 					)
 				: result
 			return {
@@ -2029,9 +2043,13 @@ export function createMcpServer(config: McpConfig) {
 			}
 
 			const wsId = targetWorkspace ?? config.defaultWorkspaceId
-			const withUrl = wsId && result.id
-				? addUrl(result as unknown as Record<string, unknown>, config, wsId, { kind: 'actor', id: result.id })
-				: result
+			const withUrl =
+				wsId && result.id
+					? addUrl(result as unknown as Record<string, unknown>, config, wsId, {
+							kind: 'actor',
+							id: result.id,
+						})
+					: result
 			return {
 				_meta: meta('create_actor', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
@@ -2079,11 +2097,12 @@ export function createMcpServer(config: McpConfig) {
 								},
 							}
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const enriched = wsId && Array.isArray(data)
-				? (data as Array<Record<string, unknown>>).map((a) =>
-						addUrl(a, config, wsId, { kind: 'actor', id: a.id as string }),
-					)
-				: data
+			const enriched =
+				wsId && Array.isArray(data)
+					? (data as Array<Record<string, unknown>>).map((a) =>
+							addUrl(a, config, wsId, { kind: 'actor', id: a.id as string }),
+						)
+					: data
 			return {
 				_meta: uiMeta(
 					'list_actors',
@@ -2117,7 +2136,10 @@ export function createMcpServer(config: McpConfig) {
 			const workspaceId = (args as { workspace_id?: string }).workspace_id
 			const wsId = workspaceId ?? config.defaultWorkspaceId
 			const withUrl = wsId
-				? addUrl(result as unknown as Record<string, unknown>, config, wsId, { kind: 'actor', id: result.id })
+				? addUrl(result as unknown as Record<string, unknown>, config, wsId, {
+						kind: 'actor',
+						id: result.id,
+					})
 				: result
 			return {
 				_meta: uiMeta('get_actor', config, workspaceId, UI_RESOURCES.heroCard),
@@ -2156,9 +2178,10 @@ export function createMcpServer(config: McpConfig) {
 			if (!hasSkillOps) {
 				const wsId = (args as { workspace_id?: string }).workspace_id ?? config.defaultWorkspaceId
 				const actorId = (actor as { id?: string }).id
-				const withUrl = wsId && actorId
-					? addUrl(actor as Record<string, unknown>, config, wsId, { kind: 'actor', id: actorId })
-					: actor
+				const withUrl =
+					wsId && actorId
+						? addUrl(actor as Record<string, unknown>, config, wsId, { kind: 'actor', id: actorId })
+						: actor
 				return {
 					_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
@@ -2198,9 +2221,10 @@ export function createMcpServer(config: McpConfig) {
 			const attachCount = attachIds.length
 			const wsId2 = (args as { workspace_id?: string }).workspace_id ?? config.defaultWorkspaceId
 			const actorId = (actor as { id?: string }).id
-			const actorWithUrl = wsId2 && actorId
-				? addUrl(actor as Record<string, unknown>, config, wsId2, { kind: 'actor', id: actorId })
-				: actor
+			const actorWithUrl =
+				wsId2 && actorId
+					? addUrl(actor as Record<string, unknown>, config, wsId2, { kind: 'actor', id: actorId })
+					: actor
 			const output: Record<string, unknown> = { actor: actorWithUrl }
 			if (attachIds.length) {
 				output.attached_skills = skillSettled
@@ -3078,11 +3102,18 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'POST', '/api/triggers', body, {
 				workspaceId: workspace_id,
 			})
-			const wsId = (result as { workspaceId?: string }).workspaceId ?? workspace_id ?? config.defaultWorkspaceId
+			const wsId =
+				(result as { workspaceId?: string }).workspaceId ??
+				workspace_id ??
+				config.defaultWorkspaceId
 			const triggerId = (result as { id?: string }).id
-			const withUrl = wsId && triggerId
-				? addUrl(result as Record<string, unknown>, config, wsId, { kind: 'trigger', id: triggerId })
-				: result
+			const withUrl =
+				wsId && triggerId
+					? addUrl(result as Record<string, unknown>, config, wsId, {
+							kind: 'trigger',
+							id: triggerId,
+						})
+					: result
 			return {
 				_meta: meta('create_trigger', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
@@ -3139,14 +3170,15 @@ export function createMcpServer(config: McpConfig) {
 								},
 							}
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const enriched = wsId && Array.isArray(data)
-				? (data as Array<Record<string, unknown>>).map((t) =>
-						addUrl(t, config, (t.workspaceId as string | undefined) ?? wsId, {
-							kind: 'trigger',
-							id: t.id as string,
-						}),
-					)
-				: data
+			const enriched =
+				wsId && Array.isArray(data)
+					? (data as Array<Record<string, unknown>>).map((t) =>
+							addUrl(t, config, (t.workspaceId as string | undefined) ?? wsId, {
+								kind: 'trigger',
+								id: t.id as string,
+							}),
+						)
+					: data
 			return {
 				_meta: uiMeta(
 					'list_triggers',
@@ -3173,7 +3205,10 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'PATCH', `/api/triggers/${id}`, body, {
 				workspaceId: workspace_id,
 			})
-			const wsId = (result as { workspaceId?: string }).workspaceId ?? workspace_id ?? config.defaultWorkspaceId
+			const wsId =
+				(result as { workspaceId?: string }).workspaceId ??
+				workspace_id ??
+				config.defaultWorkspaceId
 			const withUrl = wsId
 				? addUrl(result as Record<string, unknown>, config, wsId, { kind: 'trigger', id })
 				: result
@@ -3564,7 +3599,10 @@ export function createMcpServer(config: McpConfig) {
 				return {
 					_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
 					content: [
-						{ type: 'text' as const, text: JSON.stringify({ session: sessionWithUrl, logs }, null, 2) },
+						{
+							type: 'text' as const,
+							text: JSON.stringify({ session: sessionWithUrl, logs }, null, 2),
+						},
 					],
 				}
 			}
@@ -3727,7 +3765,10 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: meta('run_agent', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
-					{ type: 'text' as const, text: JSON.stringify({ session: currentWithUrl, logs }, null, 2) },
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ session: currentWithUrl, logs }, null, 2),
+					},
 				],
 			}
 		},

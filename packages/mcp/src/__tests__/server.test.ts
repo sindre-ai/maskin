@@ -3006,7 +3006,10 @@ describe('url field injection', () => {
 		vi.mocked(McpServer).mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() }))
 		vi.mocked(registerAppTool).mockReset()
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
-			urlHandlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+			urlHandlers.set(
+				name as string,
+				handler as (args: Record<string, unknown>) => Promise<unknown>,
+			)
 		})
 		urlHandlers = new Map()
 		createMcpServer(configWithUrl)
@@ -3021,7 +3024,10 @@ describe('url field injection', () => {
 		const noUrlHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
 		vi.mocked(registerAppTool).mockReset()
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
-			noUrlHandlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+			noUrlHandlers.set(
+				name as string,
+				handler as (args: Record<string, unknown>) => Promise<unknown>,
+			)
 		})
 		createMcpServer(config)
 
@@ -3031,7 +3037,8 @@ describe('url field injection', () => {
 			json: () => Promise.resolve([{ id: 'obj-1', type: 'bet' }]),
 		} as Response)
 
-		const handler = noUrlHandlers.get('list_objects')!
+		const handler = noUrlHandlers.get('list_objects')
+		if (!handler) throw new Error('list_objects handler not registered')
 		const result = (await handler({})) as { content: Array<{ text: string }> }
 		const parsed = JSON.parse(result.content[0].text) as Array<Record<string, unknown>>
 		expect(parsed[0].url).toBeUndefined()
@@ -3041,7 +3048,10 @@ describe('url field injection', () => {
 		const trailingHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
 		vi.mocked(registerAppTool).mockReset()
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
-			trailingHandlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+			trailingHandlers.set(
+				name as string,
+				handler as (args: Record<string, unknown>) => Promise<unknown>,
+			)
 		})
 		createMcpServer({ ...config, webAppBaseUrl: 'https://maskin.example.com/' })
 
@@ -3051,7 +3061,8 @@ describe('url field injection', () => {
 			json: () => Promise.resolve([{ id: 'obj-1', type: 'bet' }]),
 		} as Response)
 
-		const handler = trailingHandlers.get('list_objects')!
+		const handler = trailingHandlers.get('list_objects')
+		if (!handler) throw new Error('list_objects handler not registered')
 		const result = (await handler({})) as { content: Array<{ text: string }> }
 		const parsed = JSON.parse(result.content[0].text) as Array<{ url: string }>
 		expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/objects/obj-1')
@@ -3128,9 +3139,7 @@ describe('url field injection', () => {
 			const parsed = JSON.parse(result.content[0].text) as {
 				nodes: Array<{ id: string; url: string }>
 			}
-			expect(parsed.nodes[0].url).toBe(
-				'https://maskin.example.com/ws-default-123/objects/obj-3',
-			)
+			expect(parsed.nodes[0].url).toBe('https://maskin.example.com/ws-default-123/objects/obj-3')
 		})
 
 		it('update_objects — url added to patched object result', async () => {
@@ -3211,8 +3220,7 @@ describe('url field injection', () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
 				headers: new Headers(),
-				json: () =>
-					Promise.resolve({ id: 'trig-1', name: 'Daily', workspaceId: 'ws-default-123' }),
+				json: () => Promise.resolve({ id: 'trig-1', name: 'Daily', workspaceId: 'ws-default-123' }),
 			} as Response)
 
 			const handler = getUrlHandler('create_trigger')
@@ -3249,8 +3257,7 @@ describe('url field injection', () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
 				headers: new Headers(),
-				json: () =>
-					Promise.resolve({ id: 'sess-1', actorId: 'actor-9', status: 'pending' }),
+				json: () => Promise.resolve({ id: 'sess-1', actorId: 'actor-9', status: 'pending' }),
 			} as Response)
 
 			const handler = getUrlHandler('create_session')
@@ -3285,8 +3292,7 @@ describe('url field injection', () => {
 				.mockResolvedValueOnce({
 					ok: true,
 					headers: new Headers(),
-					json: () =>
-						Promise.resolve([{ id: 'sess-3', actorId: 'actor-8', status: 'running' }]),
+					json: () => Promise.resolve([{ id: 'sess-3', actorId: 'actor-8', status: 'running' }]),
 				} as Response)
 				.mockResolvedValue({
 					ok: true,
@@ -3307,14 +3313,12 @@ describe('url field injection', () => {
 				.mockResolvedValueOnce({
 					ok: true,
 					headers: new Headers(),
-					json: () =>
-						Promise.resolve({ id: 'sess-4', actorId: 'actor-7', status: 'pending' }),
+					json: () => Promise.resolve({ id: 'sess-4', actorId: 'actor-7', status: 'pending' }),
 				} as Response)
 				.mockResolvedValueOnce({
 					ok: true,
 					headers: new Headers(),
-					json: () =>
-						Promise.resolve({ id: 'sess-4', actorId: 'actor-7', status: 'completed' }),
+					json: () => Promise.resolve({ id: 'sess-4', actorId: 'actor-7', status: 'completed' }),
 				} as Response)
 				.mockResolvedValue({
 					ok: true,
@@ -3336,9 +3340,7 @@ describe('url field injection', () => {
 			const parsed = JSON.parse(result.content[0].text) as {
 				session: { id: string; url: string }
 			}
-			expect(parsed.session.url).toBe(
-				'https://maskin.example.com/ws-default-123/agents/actor-7',
-			)
+			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-7')
 		})
 	})
 })
