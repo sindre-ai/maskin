@@ -331,6 +331,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 					starting={starting}
 					error={error}
 					className="min-h-0 flex-1"
+					workspaceId={workspaceId}
 				/>
 			)}
 			<Composer

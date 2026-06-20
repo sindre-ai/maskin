@@ -1,26 +1,78 @@
 import { Textarea } from '@/components/ui/textarea'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { splitTextByUuids } from '@/lib/object-id-detection'
+import {
+	Fragment,
+	type ReactNode,
+	useCallback,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
+import { InlineObjectChip } from './inline-object-chip'
 import { MentionedText } from './mentioned-text'
 
-function wrapWithMentions(
-	children: ReactNode,
-	actors: ActorListItem[],
-	onMentionClick?: (actor: ActorListItem) => void,
-): ReactNode {
+interface TextWrapOptions {
+	mentionActors?: ActorListItem[]
+	onMentionClick?: (actor: ActorListItem) => void
+	linkifyObjectIds?: boolean
+	workspaceId?: string
+}
+
+function wrapString(content: string, opts: TextWrapOptions, keyPrefix: string): ReactNode {
+	const { mentionActors, onMentionClick, linkifyObjectIds, workspaceId } = opts
+	// Object-id linkification runs first so UUIDs are replaced with chip nodes;
+	// mention highlighting then runs on the remaining text segments. Without
+	// this order, the mention scanner would walk over UUID substrings and the
+	// chip renderer would have to dig into mention spans.
+	if (linkifyObjectIds && workspaceId) {
+		const parts = splitTextByUuids(content)
+		if (parts.some((p) => p.type === 'uuid')) {
+			return (
+				<>
+					{parts.map((part, idx) => {
+						const key = `${keyPrefix}-${idx}`
+						if (part.type === 'uuid') {
+							return <InlineObjectChip key={key} objectId={part.value} workspaceId={workspaceId} />
+						}
+						if (mentionActors) {
+							return (
+								<MentionedText
+									key={key}
+									content={part.value}
+									actors={mentionActors}
+									onMentionClick={onMentionClick}
+								/>
+							)
+						}
+						return <Fragment key={key}>{part.value}</Fragment>
+					})}
+				</>
+			)
+		}
+	}
+	if (mentionActors) {
+		return (
+			<MentionedText content={content} actors={mentionActors} onMentionClick={onMentionClick} />
+		)
+	}
+	return content
+}
+
+function wrapText(children: ReactNode, opts: TextWrapOptions): ReactNode {
 	if (typeof children === 'string') {
-		return <MentionedText content={children} actors={actors} onMentionClick={onMentionClick} />
+		return wrapString(children, opts, 'w')
 	}
 	if (Array.isArray(children)) {
-		const mentionProps = { actors, onMentionClick }
 		return children.map((child, idx) =>
 			typeof child === 'string' ? (
 				// biome-ignore lint/suspicious/noArrayIndexKey: children come from a deterministic markdown AST; order is stable across renders
-				<MentionedText key={`m-${idx}`} content={child} {...mentionProps} />
+				<Fragment key={`w-${idx}`}>{wrapString(child, opts, `w-${idx}`)}</Fragment>
 			) : (
 				child
 			),
@@ -38,6 +90,8 @@ export function MarkdownContent({
 	disallowedElements,
 	mentionActors,
 	onMentionClick,
+	linkifyObjectIds = false,
+	workspaceId,
 }: {
 	content: string
 	onChange?: (value: string) => void
@@ -47,6 +101,12 @@ export function MarkdownContent({
 	disallowedElements?: string[]
 	mentionActors?: ActorListItem[]
 	onMentionClick?: (actor: ActorListItem) => void
+	/**
+	 * When true, bare object UUIDs in the text are replaced with inline
+	 * ObjectReference chips that deep-link to the object. Requires `workspaceId`.
+	 */
+	linkifyObjectIds?: boolean
+	workspaceId?: string
 }) {
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState(content)
@@ -102,8 +162,15 @@ export function MarkdownContent({
 			return <code className={className}>{children}</code>
 		}
 
-		if (!mentionActors) return { code }
-		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors, onMentionClick)
+		const needsWrap = Boolean(mentionActors) || (linkifyObjectIds && Boolean(workspaceId))
+		if (!needsWrap) return { code }
+		const wrapOpts: TextWrapOptions = {
+			mentionActors,
+			onMentionClick,
+			linkifyObjectIds,
+			workspaceId,
+		}
+		const wrap = (children: ReactNode) => wrapText(children, wrapOpts)
 		return {
 			code,
 			p: ({ children }) => <p>{wrap(children)}</p>,
@@ -116,7 +183,7 @@ export function MarkdownContent({
 			td: ({ children, ...rest }) => <td {...rest}>{wrap(children)}</td>,
 			th: ({ children, ...rest }) => <th {...rest}>{wrap(children)}</th>,
 		}
-	}, [mentionActors, onMentionClick])
+	}, [mentionActors, onMentionClick, linkifyObjectIds, workspaceId])
 
 	if (editable && editing) {
 		return (
