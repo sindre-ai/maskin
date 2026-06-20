@@ -1,6 +1,11 @@
 import { ObjectFiles } from '@/components/objects/object-files'
-import type { FileListItem, RelationshipResponse, UserDisplaySettingsResponse } from '@/lib/api'
-import { render, screen, waitFor } from '@testing-library/react'
+import type {
+	ActorListItem,
+	FileListItem,
+	RelationshipResponse,
+	UserDisplaySettingsResponse,
+} from '@/lib/api'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
@@ -34,6 +39,11 @@ const updateMutateMock = vi.fn()
 vi.mock('@/hooks/use-user-display-settings', () => ({
 	useUserDisplaySettings: (...args: unknown[]) => useUserDisplaySettingsMock(...args),
 	useUpdateUserDisplaySettings: () => ({ mutate: updateMutateMock }),
+}))
+
+const useActorsMock = vi.fn()
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: (...args: unknown[]) => useActorsMock(...args),
 }))
 
 function persistedSettings(columnVisibility: Record<string, boolean>): UserDisplaySettingsResponse {
@@ -82,10 +92,27 @@ function buildAttachedRelationship(fileId: string): RelationshipResponse {
 	}
 }
 
+function buildActor(overrides: Partial<ActorListItem> = {}): ActorListItem {
+	return {
+		id: 'actor-1',
+		type: 'human',
+		name: 'Sebk',
+		email: null,
+		description: null,
+		isSystem: false,
+		agentState: 'idle',
+		...overrides,
+	}
+}
+
 const baseProps = {
 	workspaceId: 'ws-1',
 	objectId: 'obj-1',
 	objectType: 'bet',
+}
+
+function getFileRow(name: string) {
+	return screen.getByText(name).closest('a') as HTMLElement
 }
 
 describe('ObjectFiles', () => {
@@ -97,9 +124,11 @@ describe('ObjectFiles', () => {
 		useUserDisplaySettingsMock.mockReturnValue(noPersistedSettings())
 		updateMutateMock.mockReset()
 		trackEventMock.mockReset()
+		useActorsMock.mockReset()
+		useActorsMock.mockReturnValue({ data: [buildActor()] })
 	})
 
-	it('renders attached files in a table with Name + Size by default', () => {
+	it('renders attached files as inline rows with Size shown by default', () => {
 		const file = buildFile()
 		useFilesMock.mockReturnValue({ data: [file] })
 
@@ -111,14 +140,13 @@ describe('ObjectFiles', () => {
 			{ wrapper: TestWrapper },
 		)
 
-		expect(screen.getByRole('columnheader', { name: 'Name' })).toBeInTheDocument()
-		expect(screen.getByRole('columnheader', { name: 'Size' })).toBeInTheDocument()
-		expect(screen.queryByRole('columnheader', { name: 'Created' })).not.toBeInTheDocument()
-		expect(screen.queryByRole('columnheader', { name: 'Modified' })).not.toBeInTheDocument()
-		expect(screen.getByText('spec.md')).toBeInTheDocument()
+		const row = getFileRow('spec.md')
+		expect(within(row).getByText('2.0 KB')).toBeInTheDocument()
+		expect(within(row).queryByText(/^Created/)).not.toBeInTheDocument()
+		expect(within(row).queryByText(/^Modified/)).not.toBeInTheDocument()
 	})
 
-	it('toggling Created in the property menu shows the Created column for files in the same session', async () => {
+	it('toggling Created in the property menu appends Created to the file row in the same session', async () => {
 		const user = userEvent.setup()
 		const file = buildFile()
 		useFilesMock.mockReturnValue({ data: [file] })
@@ -131,15 +159,15 @@ describe('ObjectFiles', () => {
 			{ wrapper: TestWrapper },
 		)
 
-		expect(screen.queryByRole('columnheader', { name: 'Created' })).not.toBeInTheDocument()
+		expect(within(getFileRow('spec.md')).queryByText(/^Created/)).not.toBeInTheDocument()
 
 		await user.click(screen.getByRole('button', { name: 'File properties' }))
-		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Created' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Created/ }))
 
-		expect(screen.getByRole('columnheader', { name: 'Created' })).toBeInTheDocument()
+		expect(within(getFileRow('spec.md')).getByText(/^Created/)).toBeInTheDocument()
 	})
 
-	it('toggling Modified off after on hides the Modified column again', async () => {
+	it('toggling Modified off after on hides the Modified metadata again', async () => {
 		const user = userEvent.setup()
 		const file = buildFile()
 		useFilesMock.mockReturnValue({ data: [file] })
@@ -153,12 +181,93 @@ describe('ObjectFiles', () => {
 		)
 
 		await user.click(screen.getByRole('button', { name: 'File properties' }))
-		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Modified' }))
-		expect(screen.getByRole('columnheader', { name: 'Modified' })).toBeInTheDocument()
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Modified/ }))
+		expect(within(getFileRow('spec.md')).getByText(/^Modified/)).toBeInTheDocument()
+
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Modified/ }))
+		expect(within(getFileRow('spec.md')).queryByText(/^Modified/)).not.toBeInTheDocument()
+	})
+
+	it('toggling Kind appends the derived kind label to the row', async () => {
+		const user = userEvent.setup()
+		const file = buildFile({ mimeType: 'application/pdf', name: 'brief.pdf' })
+		useFilesMock.mockReturnValue({ data: [file] })
+
+		render(
+			<ObjectFiles
+				{...baseProps}
+				relationships={{ asSource: [buildAttachedRelationship(file.id)], asTarget: [] }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
 
 		await user.click(screen.getByRole('button', { name: 'File properties' }))
-		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Modified' }))
-		expect(screen.queryByRole('columnheader', { name: 'Modified' })).not.toBeInTheDocument()
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Kind/ }))
+
+		expect(within(getFileRow('brief.pdf')).getByText('PDF')).toBeInTheDocument()
+	})
+
+	it('toggling Uploaded by shows the resolved actor name from useActors', async () => {
+		const user = userEvent.setup()
+		const file = buildFile({ createdBy: 'actor-42' })
+		useFilesMock.mockReturnValue({ data: [file] })
+		useActorsMock.mockReturnValue({ data: [buildActor({ id: 'actor-42', name: 'Magnus' })] })
+
+		render(
+			<ObjectFiles
+				{...baseProps}
+				relationships={{ asSource: [buildAttachedRelationship(file.id)], asTarget: [] }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await user.click(screen.getByRole('button', { name: 'File properties' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Uploaded by/ }))
+
+		expect(within(getFileRow('spec.md')).getByText('Magnus')).toBeInTheDocument()
+	})
+
+	it('filename is always present and locked in the property menu', async () => {
+		const user = userEvent.setup()
+		useFilesMock.mockReturnValue({ data: [buildFile()] })
+
+		render(<ObjectFiles {...baseProps} relationships={{ asSource: [], asTarget: [] }} />, {
+			wrapper: TestWrapper,
+		})
+
+		await user.click(screen.getByRole('button', { name: 'File properties' }))
+
+		const filenameRow = screen.getByRole('menuitemcheckbox', { name: /Filename/ })
+		expect(filenameRow).toHaveAttribute('aria-checked', 'true')
+		expect(filenameRow).toHaveAttribute('aria-disabled', 'true')
+	})
+
+	it('Reset to defaults clears all non-default toggles', async () => {
+		const user = userEvent.setup()
+		const file = buildFile()
+		useFilesMock.mockReturnValue({ data: [file] })
+
+		render(
+			<ObjectFiles
+				{...baseProps}
+				relationships={{ asSource: [buildAttachedRelationship(file.id)], asTarget: [] }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await user.click(screen.getByRole('button', { name: 'File properties' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Created/ }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Kind/ }))
+
+		const row = getFileRow('spec.md')
+		expect(within(row).getByText(/^Created/)).toBeInTheDocument()
+		expect(within(row).getByText('Markdown')).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Reset to defaults' }))
+
+		expect(within(getFileRow('spec.md')).queryByText(/^Created/)).not.toBeInTheDocument()
+		expect(within(getFileRow('spec.md')).queryByText('Markdown')).not.toBeInTheDocument()
+		expect(within(getFileRow('spec.md')).getByText('2.0 KB')).toBeInTheDocument()
 	})
 
 	it('shows the empty-state uploader when no files are attached', () => {
@@ -187,13 +296,34 @@ describe('ObjectFiles', () => {
 		)
 
 		await waitFor(() => {
-			expect(screen.getByRole('columnheader', { name: 'Created' })).toBeInTheDocument()
+			expect(within(getFileRow('spec.md')).getByText(/^Created/)).toBeInTheDocument()
 		})
-		expect(screen.getByRole('columnheader', { name: 'Modified' })).toBeInTheDocument()
+		expect(within(getFileRow('spec.md')).getByText(/^Modified/)).toBeInTheDocument()
 		expect(useUserDisplaySettingsMock).toHaveBeenCalledWith('ws-1', 'files')
 	})
 
-	it('falls back to default-OFF columns when no persisted settings exist', async () => {
+	it('older persisted settings (only created/modified) leave Size at its default-on state', async () => {
+		const file = buildFile()
+		useFilesMock.mockReturnValue({ data: [file] })
+		useUserDisplaySettingsMock.mockReturnValue(
+			withPersisted({ created_at: true, modified_at: false }),
+		)
+
+		render(
+			<ObjectFiles
+				{...baseProps}
+				relationships={{ asSource: [buildAttachedRelationship(file.id)], asTarget: [] }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => {
+			expect(within(getFileRow('spec.md')).getByText(/^Created/)).toBeInTheDocument()
+		})
+		expect(within(getFileRow('spec.md')).getByText('2.0 KB')).toBeInTheDocument()
+	})
+
+	it('falls back to defaults (Size on, others off) when no persisted settings exist', async () => {
 		const file = buildFile()
 		useFilesMock.mockReturnValue({ data: [file] })
 		useUserDisplaySettingsMock.mockReturnValue(noPersistedSettings())
@@ -206,11 +336,13 @@ describe('ObjectFiles', () => {
 			{ wrapper: TestWrapper },
 		)
 
-		expect(screen.queryByRole('columnheader', { name: 'Created' })).not.toBeInTheDocument()
-		expect(screen.queryByRole('columnheader', { name: 'Modified' })).not.toBeInTheDocument()
+		const row = getFileRow('spec.md')
+		expect(within(row).getByText('2.0 KB')).toBeInTheDocument()
+		expect(within(row).queryByText(/^Created/)).not.toBeInTheDocument()
+		expect(within(row).queryByText(/^Modified/)).not.toBeInTheDocument()
 	})
 
-	it('debounces a write-through to upsert under object_type "files" when a column is toggled', async () => {
+	it('debounces a write-through to upsert under object_type "files" when a property is toggled', async () => {
 		const user = userEvent.setup()
 		const file = buildFile()
 		useFilesMock.mockReturnValue({ data: [file] })
@@ -224,20 +356,25 @@ describe('ObjectFiles', () => {
 		)
 
 		await user.click(screen.getByRole('button', { name: 'File properties' }))
-		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Created' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Created/ }))
 
 		await waitFor(() => {
 			expect(updateMutateMock).toHaveBeenCalledWith({
 				objectType: 'files',
-				settings: { columnVisibility: { created_at: true, modified_at: false } },
+				settings: {
+					columnVisibility: {
+						size: true,
+						created_at: true,
+						modified_at: false,
+						kind: false,
+						uploaded_by: false,
+					},
+				},
 			})
 		})
 	})
 
 	it('does not write through before the persisted-settings query has resolved', async () => {
-		// Loading state — no row yet, query still pending. Toggling should not
-		// trigger an upsert until hydration finishes; otherwise the user's
-		// transient state would overwrite a not-yet-loaded saved view.
 		useUserDisplaySettingsMock.mockReturnValue({ isSuccess: false, data: undefined })
 		const user = userEvent.setup()
 		const file = buildFile()
@@ -252,9 +389,8 @@ describe('ObjectFiles', () => {
 		)
 
 		await user.click(screen.getByRole('button', { name: 'File properties' }))
-		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Created' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Created/ }))
 
-		// Wait long enough that any debounced write would have fired (>500ms).
 		await new Promise((resolve) => setTimeout(resolve, 700))
 		expect(updateMutateMock).not.toHaveBeenCalled()
 	})
@@ -273,7 +409,7 @@ describe('ObjectFiles', () => {
 		)
 
 		await user.click(screen.getByRole('button', { name: 'File properties' }))
-		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Created' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Created/ }))
 
 		expect(trackEventMock).toHaveBeenCalledWith('files_display_property_toggled', {
 			property: 'created_at',
@@ -295,9 +431,8 @@ describe('ObjectFiles', () => {
 		)
 
 		await user.click(screen.getByRole('button', { name: 'File properties' }))
-		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Modified' }))
-		await user.click(screen.getByRole('button', { name: 'File properties' }))
-		await user.click(screen.getByRole('menuitemcheckbox', { name: 'Modified' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Modified/ }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Modified/ }))
 
 		expect(trackEventMock).toHaveBeenNthCalledWith(1, 'files_display_property_toggled', {
 			property: 'modified_at',
@@ -307,6 +442,29 @@ describe('ObjectFiles', () => {
 			property: 'modified_at',
 			enabled: false,
 		})
+	})
+
+	it('emits files_display_property_toggled with enabled=false when turning Size off', async () => {
+		const user = userEvent.setup()
+		const file = buildFile()
+		useFilesMock.mockReturnValue({ data: [file] })
+
+		render(
+			<ObjectFiles
+				{...baseProps}
+				relationships={{ asSource: [buildAttachedRelationship(file.id)], asTarget: [] }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await user.click(screen.getByRole('button', { name: 'File properties' }))
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Size/ }))
+
+		expect(trackEventMock).toHaveBeenCalledWith('files_display_property_toggled', {
+			property: 'size',
+			enabled: false,
+		})
+		expect(within(getFileRow('spec.md')).queryByText('2.0 KB')).not.toBeInTheDocument()
 	})
 
 	it('does not emit files_display_property_toggled when hydrating from persisted settings', async () => {
@@ -325,7 +483,7 @@ describe('ObjectFiles', () => {
 		)
 
 		await waitFor(() => {
-			expect(screen.getByRole('columnheader', { name: 'Created' })).toBeInTheDocument()
+			expect(within(getFileRow('spec.md')).getByText(/^Created/)).toBeInTheDocument()
 		})
 		expect(trackEventMock).not.toHaveBeenCalled()
 	})
