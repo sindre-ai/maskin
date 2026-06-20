@@ -68,6 +68,16 @@ export const sessionThreadReplyContextSchema = z.object({
 })
 export type SessionThreadReplyContext = z.infer<typeof sessionThreadReplyContextSchema>
 
+// Set by the chat surface (e.g. /api/sessions create from use-sindre-conversation)
+// when an agent turn is spawned to answer a message in a conversation. When
+// present, session-manager persists the agent's final reply as a `commented`
+// event on the conversation object after the session completes — giving every
+// agent message a stable events.id for reactions, threads, and hydration.
+export const sessionChatReplyContextSchema = z.object({
+	conversation_id: z.string().uuid(),
+})
+export type SessionChatReplyContext = z.infer<typeof sessionChatReplyContextSchema>
+
 export const sessionConfigSchema = z.object({
 	base_image: z.string().default('agent-base:latest'),
 	runtime: sessionRuntimeSchema.default('claude-code'),
@@ -80,6 +90,7 @@ export const sessionConfigSchema = z.object({
 	interactive: z.boolean().default(false),
 	mention: sessionMentionContextSchema.optional(),
 	thread_reply: sessionThreadReplyContextSchema.optional(),
+	chat_reply: sessionChatReplyContextSchema.optional(),
 })
 
 export const createSessionSchema = z.object({
