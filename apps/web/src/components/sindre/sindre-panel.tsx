@@ -71,8 +71,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 		const actor = getStoredActor()
 		return formatSindreMarkdown(events, {
 			workspaceId,
-			frontendUrl:
-				typeof window !== 'undefined' ? window.location.origin : 'https://maskin.io',
+			frontendUrl: typeof window !== 'undefined' ? window.location.origin : 'https://maskin.io',
 			userName: actor?.name?.trim() || 'You',
 			agentName: SINDRE_AGENT_NAME,
 		})

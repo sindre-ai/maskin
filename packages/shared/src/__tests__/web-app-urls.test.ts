@@ -214,9 +214,7 @@ describe('resolveWebAppBaseUrl', () => {
 	it('treats empty strings as unset', () => {
 		// An env injection that produces `WEB_APP_URL=""` shouldn't silently
 		// shadow the FRONTEND_URL fallback or the production default.
-		expect(resolveWebAppBaseUrl({ WEB_APP_URL: '', FRONTEND_URL: '' })).toBe(
-			'https://maskin.io',
-		)
+		expect(resolveWebAppBaseUrl({ WEB_APP_URL: '', FRONTEND_URL: '' })).toBe('https://maskin.io')
 		expect(
 			resolveWebAppBaseUrl({ WEB_APP_URL: '', FRONTEND_URL: 'https://other.example.com' }),
 		).toBe('https://other.example.com')
