@@ -434,6 +434,43 @@ describe('Conversations Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it('scopes results to thread replies when parent_id is provided', async () => {
+			const conversation = buildConversation()
+			const replyEvent = buildEvent({
+				action: 'commented',
+				entityType: 'object',
+				entityId: conversation.id,
+				data: { content: 'in thread', parentEventId: 100 },
+			})
+			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
+			mockResults.selectQueue = [
+				[{ workspaceId: conversation.workspaceId }],
+				[buildWorkspaceMember({ actorId, workspaceId: wsId })],
+				[buildSubscription({ actorId, entityId: conversation.id })],
+				[replyEvent],
+			]
+
+			const res = await app.request(
+				jsonGet(`/api/conversations/${conversation.id}/messages?parent_id=100`),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			expect(body[0].parentEventId).toBe(100)
+		})
+
+		it('rejects parent_id that is not a positive integer', async () => {
+			const conversation = buildConversation()
+			const { app } = createTestApp(conversationsRoutes, '/api/conversations')
+
+			const res = await app.request(
+				jsonGet(`/api/conversations/${conversation.id}/messages?parent_id=-1`),
+			)
+
+			expect(res.status).toBe(400)
+		})
 	})
 
 	describe('POST /api/conversations/:id/participants', () => {

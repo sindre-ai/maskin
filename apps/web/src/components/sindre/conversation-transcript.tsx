@@ -3,7 +3,7 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { MessageActions } from '@/components/sindre/message-actions'
 import { Button } from '@/components/ui/button'
-import type { AgentChatMessage, ChatMessage } from '@/lib/chat-store'
+import { type AgentChatMessage, type ChatMessage, getReplyCount } from '@/lib/chat-store'
 import { cn } from '@/lib/cn'
 import type { SindreEvent, UserAttachmentView } from '@/lib/sindre-stream'
 import {
@@ -13,16 +13,30 @@ import {
 	ChevronDown,
 	ChevronRight,
 	FileText,
+	MessageSquare,
 	RotateCcw,
 	Wrench,
 } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 interface ConversationTranscriptProps {
 	messages: ChatMessage[]
 	currentUserId: string
 	onRegenerate: (messageId: string) => void
 	onEditUserMessage: (text: string) => void
+	/**
+	 * Open the side-thread panel rooted at this local message id. The transcript
+	 * surfaces a "N replies" chip below every message that has at least one
+	 * reply; clicking it fires this callback.
+	 */
+	onOpenThread?: (messageId: string) => void
+	/**
+	 * When `true` (default), messages with a `parentRemoteId` are dropped from
+	 * the main transcript — they belong inside the thread panel. The thread
+	 * panel itself renders the same transcript with this set to `false` so the
+	 * replies show up.
+	 */
+	hideReplies?: boolean
 	className?: string
 }
 
@@ -43,13 +57,23 @@ export function ConversationTranscript({
 	currentUserId,
 	onRegenerate,
 	onEditUserMessage,
+	onOpenThread,
+	hideReplies = true,
 	className,
 }: ConversationTranscriptProps) {
+	// Thread replies are rendered inside the thread panel, never in the main
+	// transcript — Slack-canon thread = thread, no broadcast-to-main. When the
+	// thread panel itself reuses the transcript, it disables this filter so the
+	// replies actually render.
+	const rootMessages = useMemo(
+		() => (hideReplies ? messages.filter((m) => m.parentRemoteId === undefined) : messages),
+		[messages, hideReplies],
+	)
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const stickRef = useRef(true)
 	const [showJump, setShowJump] = useState(false)
 	const [unseen, setUnseen] = useState(0)
-	const prevCountRef = useRef(messages.length)
+	const prevCountRef = useRef(rootMessages.length)
 
 	const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
 		const el = scrollerRef.current
@@ -78,17 +102,17 @@ export function ConversationTranscript({
 	useLayoutEffect(() => {
 		const el = scrollerRef.current
 		if (!el) return
-		const added = messages.length - prevCountRef.current
-		prevCountRef.current = messages.length
+		const added = rootMessages.length - prevCountRef.current
+		prevCountRef.current = rootMessages.length
 		if (stickRef.current) {
 			el.scrollTop = el.scrollHeight
 		} else if (added > 0) {
 			setShowJump(true)
 			setUnseen((n) => n + added)
 		}
-	}, [messages])
+	}, [rootMessages])
 
-	if (messages.length === 0) {
+	if (rootMessages.length === 0) {
 		return <div className={cn('min-h-0 flex-1', className)} />
 	}
 
@@ -96,13 +120,15 @@ export function ConversationTranscript({
 		<div className={cn('relative min-h-0 flex-1', className)}>
 			<div ref={scrollerRef} onScroll={handleScroll} className="h-full overflow-y-auto px-1 py-2">
 				<ol className="flex flex-col gap-0.5">
-					{messages.map((message, index) => {
-						const prev = messages[index - 1]
+					{rootMessages.map((message, index) => {
+						const prev = rootMessages[index - 1]
 						const grouped =
 							prev != null &&
 							prev.senderId === message.senderId &&
 							prev.role === message.role &&
 							message.createdAt - prev.createdAt < GROUP_WINDOW_MS
+						const replyCount =
+							message.remoteId !== undefined ? getReplyCount(messages, message.remoteId) : 0
 						return (
 							<MessageRow
 								key={message.id}
@@ -111,6 +137,8 @@ export function ConversationTranscript({
 								isSelf={message.role === 'user' && message.senderId === currentUserId}
 								onRegenerate={() => onRegenerate(message.id)}
 								onEdit={message.role === 'user' ? () => onEditUserMessage(message.text) : undefined}
+								replyCount={replyCount}
+								onOpenThread={onOpenThread ? () => onOpenThread(message.id) : undefined}
 							/>
 						)
 					})}
@@ -140,12 +168,16 @@ function MessageRow({
 	isSelf,
 	onRegenerate,
 	onEdit,
+	replyCount,
+	onOpenThread,
 }: {
 	message: ChatMessage
 	grouped: boolean
 	isSelf: boolean
 	onRegenerate: () => void
 	onEdit?: () => void
+	replyCount: number
+	onOpenThread?: () => void
 }) {
 	const copyText = message.role === 'user' ? message.text : agentPlainText(message.events)
 	return (
@@ -183,9 +215,24 @@ function MessageRow({
 						<AgentBody message={message} onRegenerate={onRegenerate} />
 					)}
 				</div>
+				{replyCount > 0 && onOpenThread ? (
+					<ReplyCountChip count={replyCount} onClick={onOpenThread} />
+				) : null}
 			</div>
 			{copyText.trim().length > 0 ? (
-				<div className="absolute top-0 right-2 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+				<div className="absolute top-0 right-2 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+					{onOpenThread ? (
+						<Button
+							type="button"
+							size="icon"
+							variant="ghost"
+							className="h-6 w-6 text-text-secondary"
+							onClick={onOpenThread}
+							aria-label="Reply in thread"
+						>
+							<MessageSquare size={13} />
+						</Button>
+					) : null}
 					<MessageActions
 						copyText={copyText}
 						onEdit={onEdit}
@@ -194,6 +241,22 @@ function MessageRow({
 				</div>
 			) : null}
 		</li>
+	)
+}
+
+function ReplyCountChip({ count, onClick }: { count: number; onClick: () => void }) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className="mt-1 inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-bg-surface px-2 text-text-secondary text-xs hover:bg-bg-hover hover:text-foreground"
+			aria-label={`Open thread with ${count} ${count === 1 ? 'reply' : 'replies'}`}
+		>
+			<MessageSquare size={12} aria-hidden />
+			<span>
+				{count} {count === 1 ? 'reply' : 'replies'}
+			</span>
+		</button>
 	)
 }
 

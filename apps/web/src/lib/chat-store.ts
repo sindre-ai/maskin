@@ -27,6 +27,12 @@ export interface UserChatMessage {
 	 * `/api/conversations/:id/messages`. Local-only messages omit this.
 	 */
 	remoteId?: number
+	/**
+	 * Thread-root events.id when this message is a reply. The conversations
+	 * route collapses multi-level replies to the root, so this is always the
+	 * top of the thread, not the immediate parent.
+	 */
+	parentRemoteId?: number
 }
 
 export interface AgentChatMessage {
@@ -45,6 +51,8 @@ export interface AgentChatMessage {
 	 * messages omit this until the hydration refresh after session-complete.
 	 */
 	remoteId?: number
+	/** Thread-root events.id when this agent reply lives inside a thread. */
+	parentRemoteId?: number
 }
 
 export type ChatMessage = UserChatMessage | AgentChatMessage
@@ -66,6 +74,8 @@ export interface CreateConversationDraft {
 
 export interface PostUserMessageOpts {
 	mentions?: string[]
+	/** When set, persist the message as a threaded reply under this events.id. */
+	parentRemoteId?: number
 }
 
 export interface ConversationRepository {
@@ -278,6 +288,7 @@ export const apiConversationRepository: ConversationRepository = {
 		const created = await api.conversations.messages.create(workspaceId, conversationId, {
 			content: message.text,
 			...(opts?.mentions && opts.mentions.length > 0 ? { mentions: opts.mentions } : {}),
+			...(opts?.parentRemoteId ? { parent_event_id: opts.parentRemoteId } : {}),
 		})
 		return { remoteId: created.id }
 	},
@@ -307,6 +318,7 @@ interface HydrateInput {
 		actorId: string
 		content: string
 		createdAt: string | null
+		parentEventId?: number | null
 	}>
 	participants: Array<{ actorId: string }>
 	currentUserId: string | null
@@ -327,6 +339,7 @@ function hydrateConversation({
 }: HydrateInput): Conversation {
 	const chatMessages: ChatMessage[] = messages.map((m) => {
 		const createdAt = parseIsoOrNow(m.createdAt)
+		const parentRemoteId = m.parentEventId ?? undefined
 		if (currentUserId && m.actorId === currentUserId) {
 			return {
 				id: `evt_${m.id}`,
@@ -336,6 +349,7 @@ function hydrateConversation({
 				text: m.content,
 				createdAt,
 				remoteId: m.id,
+				...(parentRemoteId !== undefined ? { parentRemoteId } : {}),
 			} satisfies UserChatMessage
 		}
 		return {
@@ -347,6 +361,7 @@ function hydrateConversation({
 			status: 'complete',
 			createdAt,
 			remoteId: m.id,
+			...(parentRemoteId !== undefined ? { parentRemoteId } : {}),
 		} satisfies AgentChatMessage
 	})
 	return {
@@ -406,6 +421,25 @@ export function conversationToMarkdown(messages: ChatMessage[]): string {
 		lines.push(`**${speaker}**`, '', body, '')
 	}
 	return lines.join('\n').trim()
+}
+
+/** Messages that live at the top level of the conversation — i.e. not in a thread. */
+export function getRootMessages(messages: ChatMessage[]): ChatMessage[] {
+	return messages.filter((m) => m.parentRemoteId === undefined)
+}
+
+/** Replies whose `parentRemoteId` matches the supplied thread root events.id. */
+export function getThreadReplies(messages: ChatMessage[], parentRemoteId: number): ChatMessage[] {
+	return messages.filter((m) => m.parentRemoteId === parentRemoteId)
+}
+
+/** Reply count for a given root message — keyed on the message's `remoteId`. */
+export function getReplyCount(messages: ChatMessage[], rootRemoteId: number): number {
+	let count = 0
+	for (const m of messages) {
+		if (m.parentRemoteId === rootRemoteId) count += 1
+	}
+	return count
 }
 
 /** Derives a human title from the first user message — mirrors v0/Claude. */

@@ -1,8 +1,10 @@
 import { ConversationComposer } from '@/components/sindre/conversation-composer'
 import { ConversationTranscript } from '@/components/sindre/conversation-transcript'
 import { ParticipantBar } from '@/components/sindre/participant-bar'
+import { ThreadPanel } from '@/components/sindre/thread-panel'
 import type { UseSindreConversationResult } from '@/hooks/use-sindre-conversation'
 import { getStoredActor } from '@/lib/auth'
+import { getThreadReplies } from '@/lib/chat-store'
 import { cn } from '@/lib/cn'
 import type { SindreAttachment } from '@/lib/sindre-context'
 import {
@@ -40,6 +42,11 @@ export function ConversationView({
 }: ConversationViewProps) {
 	const [selection, dispatch] = useReducer(sindreSelectionReducer, EMPTY_SINDRE_SELECTION)
 	const [draft, setDraft] = useState('')
+	const [threadSelection, threadDispatch] = useReducer(
+		sindreSelectionReducer,
+		EMPTY_SINDRE_SELECTION,
+	)
+	const [threadDraft, setThreadDraft] = useState('')
 	const currentUserId = useMemo(() => getStoredActor()?.id ?? 'you', [])
 
 	const {
@@ -53,7 +60,23 @@ export function ConversationView({
 		regenerate,
 		addParticipant,
 		removeParticipant,
+		activeThreadParentMessageId,
+		openThread,
+		closeThread,
 	} = conversation
+
+	const threadParent = useMemo(
+		() =>
+			activeThreadParentMessageId
+				? (messages.find((m) => m.id === activeThreadParentMessageId) ?? null)
+				: null,
+		[messages, activeThreadParentMessageId],
+	)
+	const threadReplies = useMemo(
+		() =>
+			threadParent?.remoteId !== undefined ? getThreadReplies(messages, threadParent.remoteId) : [],
+		[messages, threadParent?.remoteId],
+	)
 
 	const handleSend = useCallback(() => {
 		const text = draft.trim()
@@ -68,6 +91,30 @@ export function ConversationView({
 		dispatch({ type: 'clear_all' })
 		setDraft('')
 	}, [draft, selection, send])
+
+	const handleThreadSend = useCallback(() => {
+		const text = threadDraft.trim()
+		if (text.length === 0 || !threadParent) return
+		send({
+			text,
+			objects: threadSelection.objects,
+			notifications: threadSelection.notifications,
+			files: threadSelection.files,
+			displayAttachments: buildDisplayAttachments(threadSelection),
+			parentMessageId: threadParent.id,
+		})
+		threadDispatch({ type: 'clear_all' })
+		setThreadDraft('')
+	}, [threadDraft, threadSelection, threadParent, send])
+
+	// Reset the thread composer when the active thread closes so reopening a
+	// different thread doesn't inherit stale draft state.
+	useEffect(() => {
+		if (activeThreadParentMessageId === null) {
+			setThreadDraft('')
+			threadDispatch({ type: 'clear_all' })
+		}
+	}, [activeThreadParentMessageId])
 
 	// Auto-send a message forwarded from another surface (the Pulse input bar
 	// opens the panel and hands off the user's first message + any context).
@@ -113,10 +160,14 @@ export function ConversationView({
 		clearPendingAttachments()
 	}, [pendingMessage, pendingAttachments, addParticipant, clearPendingAttachments])
 
-	const isEmpty = messages.length === 0
+	const rootCount = useMemo(
+		() => messages.reduce((n, m) => (m.parentRemoteId === undefined ? n + 1 : n), 0),
+		[messages],
+	)
+	const isEmpty = rootCount === 0
 
 	return (
-		<div className="flex h-full min-h-0 flex-col gap-2">
+		<div className="relative flex h-full min-h-0 flex-col gap-2">
 			<ParticipantBar
 				participants={participants}
 				allAgents={allAgents}
@@ -133,6 +184,7 @@ export function ConversationView({
 					currentUserId={currentUserId}
 					onRegenerate={regenerate}
 					onEditUserMessage={setDraft}
+					onOpenThread={openThread}
 					className="min-h-0 flex-1"
 				/>
 			)}
@@ -147,6 +199,25 @@ export function ConversationView({
 				selection={selection}
 				onDispatchSelection={dispatch}
 			/>
+			{threadParent ? (
+				<ThreadPanel
+					workspaceId={workspaceId}
+					parent={threadParent}
+					replies={threadReplies}
+					currentUserId={currentUserId}
+					agents={allAgents}
+					draft={threadDraft}
+					onDraftChange={setThreadDraft}
+					onSend={handleThreadSend}
+					onStop={() => stop()}
+					isBusy={isBusy}
+					selection={threadSelection}
+					onDispatchSelection={threadDispatch}
+					onRegenerate={regenerate}
+					onEditUserMessage={setThreadDraft}
+					onClose={closeThread}
+				/>
+			) : null}
 		</div>
 	)
 }

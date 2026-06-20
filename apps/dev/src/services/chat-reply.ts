@@ -82,6 +82,14 @@ export interface PersistAgentChatReplyInput {
 	actorId: string
 	conversationId: string
 	logChunks: string[]
+	/**
+	 * Optional thread-root events.id. When set, the appended reply is written
+	 * as a threaded `commented` event under this parent — same path the
+	 * conversation route uses for user-authored thread replies. `appendCommentEvent`
+	 * collapses multi-level parents to the root, so passing any reply event in
+	 * the thread is safe.
+	 */
+	parentEventId?: number
 }
 
 /**
@@ -98,7 +106,8 @@ export interface PersistAgentChatReplyInput {
 export async function persistAgentChatReply(
 	input: PersistAgentChatReplyInput,
 ): Promise<AppendedComment | null> {
-	const { db, sessionManager, workspaceId, actorId, conversationId, logChunks } = input
+	const { db, sessionManager, workspaceId, actorId, conversationId, logChunks, parentEventId } =
+		input
 
 	const replyText = parseAgentReplyFromLogChunks(logChunks)
 	if (replyText === null) {
@@ -117,6 +126,7 @@ export async function persistAgentChatReply(
 		entityType: 'object',
 		entityId: conversationId,
 		content: replyText,
+		...(parentEventId !== undefined ? { parentEventId } : {}),
 	})
 
 	logger.info('Persisted agent chat reply as commented event', {
@@ -124,6 +134,7 @@ export async function persistAgentChatReply(
 		actorId,
 		commentEventId: comment.id,
 		replyLength: replyText.length,
+		...(parentEventId ? { parentEventId } : {}),
 	})
 
 	return comment

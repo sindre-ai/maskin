@@ -1308,7 +1308,9 @@ export class SessionManager extends EventEmitter {
 		// in the SSE log replay. Best-effort: a failure here must not block
 		// the terminal system log or the rest of cleanup.
 		const sessionConfig = (session.config as Record<string, unknown> | null) ?? {}
-		const chatReply = sessionConfig.chat_reply as { conversation_id?: string } | undefined
+		const chatReply = sessionConfig.chat_reply as
+			| { conversation_id?: string; parent_event_id?: number }
+			| undefined
 		if (chatReply?.conversation_id) {
 			const tail = this.activeSessions.get(sessionId)?.stdoutTail
 			try {
@@ -1319,6 +1321,9 @@ export class SessionManager extends EventEmitter {
 					actorId: session.actorId,
 					conversationId: chatReply.conversation_id,
 					logChunks: tail ? [tail] : [],
+					...(typeof chatReply.parent_event_id === 'number'
+						? { parentEventId: chatReply.parent_event_id }
+						: {}),
 				})
 			} catch (err) {
 				logger.error('Failed to persist agent chat reply', {

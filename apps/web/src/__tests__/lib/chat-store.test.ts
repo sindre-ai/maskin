@@ -1,9 +1,13 @@
 import {
+	type ChatMessage,
 	apiConversationRepository,
 	conversationToMarkdown,
 	createConversation,
 	createId,
 	deriveConversationTitle,
+	getReplyCount,
+	getRootMessages,
+	getThreadReplies,
 	localStorageRepository,
 } from '@/lib/chat-store'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -229,6 +233,42 @@ describe('apiConversationRepository', () => {
 		expect(body).toEqual({ title: 'Stand-up', participant_actor_ids: ['agent-1'] })
 	})
 
+	it('postUserMessage forwards parent_event_id when posting a thread reply', async () => {
+		fetchSpy.mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					id: 4243,
+					workspaceId: WS,
+					conversationId: 'conv-1',
+					actorId: 'user-1',
+					content: 'in-thread',
+					mentions: null,
+					parentEventId: 100,
+					attachmentFileIds: null,
+					metadata: null,
+					createdAt: null,
+				}),
+				{ status: 201 },
+			),
+		)
+		await apiConversationRepository.postUserMessage(
+			WS,
+			'conv-1',
+			{
+				id: 'msg_reply',
+				role: 'user',
+				senderId: 'user-1',
+				senderName: 'Me',
+				text: 'in-thread',
+				createdAt: Date.now(),
+			},
+			{ parentRemoteId: 100 },
+		)
+		const init = fetchSpy.mock.calls[0][1] as RequestInit
+		const body = JSON.parse(String(init.body))
+		expect(body).toEqual({ content: 'in-thread', parent_event_id: 100 })
+	})
+
 	it('postUserMessage POSTs /api/conversations/:id/messages and returns the event id', async () => {
 		fetchSpy.mockResolvedValue(
 			new Response(
@@ -371,5 +411,125 @@ describe('apiConversationRepository', () => {
 		await apiConversationRepository.updateConversation(WS, 'conv-1', { title: 'x' })
 		await apiConversationRepository.deleteConversation(WS, 'conv-1')
 		expect(fetchSpy).not.toHaveBeenCalled()
+	})
+
+	it('list threads parentEventId through hydration as parentRemoteId', async () => {
+		fetchSpy.mockImplementation(async (url: string) => {
+			if (url === '/api/conversations') {
+				return new Response(
+					JSON.stringify([
+						{
+							id: 'conv-2',
+							workspaceId: WS,
+							title: 'With thread',
+							metadata: {},
+							createdBy: 'user-1',
+							createdAt: '2026-06-19T10:00:00.000Z',
+							updatedAt: '2026-06-19T10:05:00.000Z',
+						},
+					]),
+					{ status: 200 },
+				)
+			}
+			if (url === '/api/conversations/conv-2/messages?limit=200') {
+				return new Response(
+					JSON.stringify([
+						{
+							id: 20,
+							workspaceId: WS,
+							conversationId: 'conv-2',
+							actorId: 'user-1',
+							content: 'root',
+							mentions: null,
+							parentEventId: null,
+							attachmentFileIds: null,
+							metadata: null,
+							createdAt: '2026-06-19T10:00:01.000Z',
+						},
+						{
+							id: 21,
+							workspaceId: WS,
+							conversationId: 'conv-2',
+							actorId: 'agent-1',
+							content: 'thread reply',
+							mentions: null,
+							parentEventId: 20,
+							attachmentFileIds: null,
+							metadata: null,
+							createdAt: '2026-06-19T10:00:02.000Z',
+						},
+					]),
+					{ status: 200 },
+				)
+			}
+			if (url === '/api/conversations/conv-2/participants') {
+				return new Response(JSON.stringify([]), { status: 200 })
+			}
+			throw new Error(`unexpected fetch: ${url}`)
+		})
+		const loaded = await apiConversationRepository.list(WS)
+		expect(loaded[0].messages).toHaveLength(2)
+		expect(loaded[0].messages[0].parentRemoteId).toBeUndefined()
+		expect(loaded[0].messages[1].parentRemoteId).toBe(20)
+	})
+})
+
+describe('thread helpers', () => {
+	const messages: ChatMessage[] = [
+		{
+			id: 'm-root',
+			role: 'user',
+			senderId: 'u',
+			senderName: 'You',
+			text: 'root',
+			createdAt: 0,
+			remoteId: 1,
+		},
+		{
+			id: 'm-other-root',
+			role: 'user',
+			senderId: 'u',
+			senderName: 'You',
+			text: 'other root',
+			createdAt: 0,
+			remoteId: 2,
+		},
+		{
+			id: 'm-reply-1',
+			role: 'agent',
+			senderId: 'a',
+			senderName: 'Sindre',
+			events: [{ kind: 'text', text: 'reply 1' }],
+			status: 'complete',
+			createdAt: 0,
+			remoteId: 3,
+			parentRemoteId: 1,
+		},
+		{
+			id: 'm-reply-2',
+			role: 'agent',
+			senderId: 'a',
+			senderName: 'Sindre',
+			events: [{ kind: 'text', text: 'reply 2' }],
+			status: 'complete',
+			createdAt: 0,
+			remoteId: 4,
+			parentRemoteId: 1,
+		},
+	]
+
+	it('getRootMessages returns messages without a parent', () => {
+		const roots = getRootMessages(messages)
+		expect(roots.map((m) => m.id)).toEqual(['m-root', 'm-other-root'])
+	})
+
+	it('getThreadReplies returns only replies for the requested root', () => {
+		const replies = getThreadReplies(messages, 1)
+		expect(replies.map((m) => m.id)).toEqual(['m-reply-1', 'm-reply-2'])
+	})
+
+	it('getReplyCount counts replies for the requested root', () => {
+		expect(getReplyCount(messages, 1)).toBe(2)
+		expect(getReplyCount(messages, 2)).toBe(0)
 	})
 })

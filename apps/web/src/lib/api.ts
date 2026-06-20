@@ -590,7 +590,7 @@ export const api = {
 			list: (
 				workspaceId: string,
 				conversationId: string,
-				params?: { limit?: number; offset?: number; before_id?: number },
+				params?: { limit?: number; offset?: number; before_id?: number; parent_id?: number },
 			) => {
 				const qs = params
 					? `?${new URLSearchParams(

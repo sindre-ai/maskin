@@ -52,6 +52,11 @@ export const messagesQuerySchema = z.object({
 	offset: z.coerce.number().int().min(0).default(0),
 	// before_id pages backwards through history using `events.id` (bigserial).
 	before_id: z.coerce.number().int().positive().optional(),
+	// parent_id scopes the list to replies of a single thread root. When set,
+	// only `commented` events whose `data.parentEventId` equals this value are
+	// returned. When omitted, every message (roots + replies) is returned so
+	// the transcript can compute reply counts in a single fetch.
+	parent_id: z.coerce.number().int().positive().optional(),
 })
 
 export const addParticipantSchema = z.object({

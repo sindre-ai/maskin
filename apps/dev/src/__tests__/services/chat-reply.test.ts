@@ -169,4 +169,23 @@ describe('persistAgentChatReply', () => {
 			expect.objectContaining({ content: 'Partial.', entityId: conversationId }),
 		)
 	})
+
+	it('forwards parentEventId so the reply lands inside the thread', async () => {
+		mockAppendCommentEvent.mockResolvedValue({ id: 101 })
+		const log = `${SUCCESS_RESULT('threaded')}\n`
+
+		await persistAgentChatReply({
+			db,
+			sessionManager,
+			workspaceId,
+			actorId,
+			conversationId,
+			logChunks: [log],
+			parentEventId: 200,
+		})
+
+		expect(mockAppendCommentEvent).toHaveBeenCalledWith(
+			expect.objectContaining({ content: 'threaded', parentEventId: 200 }),
+		)
+	})
 })

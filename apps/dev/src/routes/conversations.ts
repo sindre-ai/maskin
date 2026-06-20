@@ -10,7 +10,7 @@ import {
 	messagesQuerySchema,
 	participantIdParamSchema,
 } from '@maskin/shared'
-import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, lt, sql } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -390,7 +390,7 @@ app.openapi(listMessagesRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
-	const { limit, offset, before_id } = c.req.valid('query')
+	const { limit, offset, before_id, parent_id } = c.req.valid('query')
 
 	const [conversation] = await db
 		.select({ workspaceId: objects.workspaceId })
@@ -412,6 +412,13 @@ app.openapi(listMessagesRoute, (async (c) => {
 	]
 	if (before_id) {
 		conditions.push(lt(events.id, before_id))
+	}
+	if (parent_id) {
+		// Thread replies key on `events.data.parentEventId` (jsonb). Cast to text
+		// so the equality compares string-to-string; appendCommentEvent collapses
+		// multi-level replies to the root event id, so this matches every reply
+		// under the thread without recursion.
+		conditions.push(sql`${events.data}->>'parentEventId' = ${String(parent_id)}`)
 	}
 
 	const rows = await db

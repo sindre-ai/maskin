@@ -45,6 +45,14 @@ export interface SendArgs {
 	notifications?: SindreSelectionNotification[]
 	files?: SindreSelectionFile[]
 	displayAttachments?: UserAttachmentView[]
+	/**
+	 * When set, the message is posted as a threaded reply under this local
+	 * message id. The orchestrator looks up the parent's `remoteId` and forwards
+	 * it as `parent_event_id` for both `postUserMessage` and the agent reply's
+	 * `chat_reply.parent_event_id`. Replies are hidden from the main transcript
+	 * and only render inside the thread panel.
+	 */
+	parentMessageId?: string
 }
 
 export interface UseSindreConversationArgs {
@@ -72,6 +80,10 @@ export interface UseSindreConversationResult {
 	renameConversation: (id: string, title: string) => void
 	addParticipant: (id: string) => void
 	removeParticipant: (id: string) => void
+	/** Local id of the message whose thread is currently open, or null. */
+	activeThreadParentMessageId: string | null
+	openThread: (messageId: string) => void
+	closeThread: () => void
 }
 
 /**
@@ -91,6 +103,9 @@ export function useSindreConversation({
 	const { data: actors } = useActors(workspaceId, { enabled: !!workspaceId })
 	const [conversations, setConversations] = useState<Conversation[]>([])
 	const [activeId, setActiveId] = useState<string | null>(null)
+	const [activeThreadParentMessageId, setActiveThreadParentMessageId] = useState<string | null>(
+		null,
+	)
 	const controllersRef = useRef<Map<string, AbortController>>(new Map())
 	const hydratedRef = useRef<string | null>(null)
 
@@ -242,8 +257,9 @@ export function useSindreConversation({
 			messageId: string
 			agent: ConversationParticipant
 			prompt: string
+			parentEventId?: number
 		}) => {
-			const { conversationId, messageId, agent, prompt } = params
+			const { conversationId, messageId, agent, prompt, parentEventId } = params
 			const controller = new AbortController()
 			controllersRef.current.set(messageId, controller)
 
@@ -258,7 +274,13 @@ export function useSindreConversation({
 					// conversation object once the session completes. Without this
 					// the agent message only lives in the SSE log replay and has no
 					// stable events.id for reactions / threading / reload hydration.
-					config: { chat_reply: { conversation_id: conversationId } },
+					// `parent_event_id` lands the reply inside the thread when set.
+					config: {
+						chat_reply: {
+							conversation_id: conversationId,
+							...(parentEventId !== undefined ? { parent_event_id: parentEventId } : {}),
+						},
+					},
 				})
 			} catch (err) {
 				controllersRef.current.delete(messageId)
@@ -318,6 +340,16 @@ export function useSindreConversation({
 			if (text.length === 0 || !active) return
 			const conversationId = active.id
 
+			// Thread-reply mode: resolve the local parent message to its persisted
+			// events.id. We only persist (and route the agent reply through) when
+			// the parent has a `remoteId`; an unsaved parent has nothing for the
+			// `parent_event_id` foreign key to point at, so the reply degrades to
+			// a top-level message in that edge case.
+			const parentMessage = args.parentMessageId
+				? active.messages.find((m) => m.id === args.parentMessageId)
+				: undefined
+			const parentRemoteId = parentMessage?.remoteId
+
 			// Resolve @mentions against the full agent roster so mentioning an
 			// agent that isn't in the room yet also adds it as a participant.
 			const mentionedIds = parseMentionIds(
@@ -344,6 +376,7 @@ export function useSindreConversation({
 					? { attachments: args.displayAttachments }
 					: {}),
 				createdAt: Date.now(),
+				...(parentRemoteId !== undefined ? { parentRemoteId } : {}),
 			}
 
 			const history = active.messages
@@ -383,6 +416,7 @@ export function useSindreConversation({
 			void repository
 				.postUserMessage(workspaceId, conversationId, userMessage, {
 					mentions: mentionedIds.length > 0 ? mentionedIds : undefined,
+					...(parentRemoteId !== undefined ? { parentRemoteId } : {}),
 				})
 				.then((res) => {
 					if (res.remoteId === undefined) return
@@ -406,6 +440,7 @@ export function useSindreConversation({
 					events: [],
 					status: 'streaming',
 					createdAt: Date.now(),
+					...(parentRemoteId !== undefined ? { parentRemoteId } : {}),
 				}
 				appendMessage(conversationId, placeholder)
 				const prompt = buildChatTurnPrompt({
@@ -418,7 +453,13 @@ export function useSindreConversation({
 					notifications: args.notifications,
 					files: args.files,
 				})
-				void runAgentTurn({ conversationId, messageId: placeholder.id, agent, prompt })
+				void runAgentTurn({
+					conversationId,
+					messageId: placeholder.id,
+					agent,
+					prompt,
+					...(parentRemoteId !== undefined ? { parentEventId: parentRemoteId } : {}),
+				})
 			}
 		},
 		[
@@ -494,6 +535,7 @@ export function useSindreConversation({
 	)
 
 	const newConversation = useCallback(() => {
+		setActiveThreadParentMessageId(null)
 		const empty = conversations.find((c) => c.messages.length === 0)
 		if (empty) {
 			setActiveId(empty.id)
@@ -512,7 +554,10 @@ export function useSindreConversation({
 		})()
 	}, [conversations, repository, workspaceId])
 
-	const selectConversation = useCallback((id: string) => setActiveId(id), [])
+	const selectConversation = useCallback((id: string) => {
+		setActiveThreadParentMessageId(null)
+		setActiveId(id)
+	}, [])
 
 	const deleteConversation = useCallback(
 		(id: string) => {
@@ -578,6 +623,14 @@ export function useSindreConversation({
 		[active, patchConversation, repository, workspaceId],
 	)
 
+	const openThread = useCallback((messageId: string) => {
+		setActiveThreadParentMessageId(messageId)
+	}, [])
+
+	const closeThread = useCallback(() => {
+		setActiveThreadParentMessageId(null)
+	}, [])
+
 	const summaries = useMemo<ConversationSummary[]>(
 		() =>
 			conversations
@@ -610,6 +663,9 @@ export function useSindreConversation({
 		renameConversation,
 		addParticipant,
 		removeParticipant,
+		activeThreadParentMessageId,
+		openThread,
+		closeThread,
 	}
 }
 
