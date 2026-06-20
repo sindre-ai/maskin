@@ -15,7 +15,7 @@ export function useBillingUsage(workspaceId: string) {
 		queryKey: queryKeys.billing.usage(workspaceId),
 		queryFn: () => api.billing.usage(workspaceId),
 		enabled: Boolean(workspaceId),
-		staleTime: 30_000,
+		staleTime: 10_000,
 	})
 }
 

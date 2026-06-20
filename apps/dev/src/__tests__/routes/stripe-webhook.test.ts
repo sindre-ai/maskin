@@ -161,6 +161,102 @@ describe('POST /api/webhooks/stripe', () => {
 		})
 	})
 
+	it('clears stale period_end on checkout.session.completed so the re-subscribe banner does not show', async () => {
+		// Re-subscriber: their previous Starter period ended (period_end in the past).
+		// checkout.session.completed arrives before customer.subscription.created; the
+		// stale period bounds must be cleared so the billing route falls back to a
+		// future estimate rather than returning period_resets_in_ms=0.
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-stale' }]]
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'starter',
+							status: 'canceled',
+							period_start: 1_700_000_000,
+							period_end: 1_702_592_000, // past timestamp
+							stripe_subscription_id: 'sub_old',
+						},
+					},
+				},
+			],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_checkout_restarter',
+			type: 'checkout.session.completed',
+			data: {
+				object: {
+					client_reference_id: workspaceId,
+					customer: 'cus_new',
+					subscription: 'sub_new',
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({
+			stripe_customer_id: 'cus_new',
+			stripe_subscription_id: 'sub_new',
+			status: 'active',
+			period_start: null,
+			period_end: null,
+		})
+	})
+
+	it('preserves a future period_end from an out-of-order customer.subscription.created on checkout.session.completed', async () => {
+		// Out-of-order delivery: customer.subscription.created arrived before
+		// checkout.session.completed and already set a future period_end. The
+		// checkout handler must NOT clear valid future period data.
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		// A future period_end (year 2099 in Unix seconds)
+		const futurePeriodEnd = 4_070_908_800
+		mockResults.insertQueue = [[{ id: 'claim-future' }]]
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'starter',
+							status: 'active',
+							period_start: 1_700_000_000,
+							period_end: futurePeriodEnd,
+							stripe_subscription_id: 'sub_42',
+						},
+					},
+				},
+			],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_checkout_oo',
+			type: 'checkout.session.completed',
+			data: {
+				object: {
+					client_reference_id: workspaceId,
+					customer: 'cus_42',
+					subscription: 'sub_42',
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({
+			status: 'active',
+			period_end: futurePeriodEnd,
+		})
+	})
+
 	it('writes plan + cap on customer.subscription.updated', async () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()

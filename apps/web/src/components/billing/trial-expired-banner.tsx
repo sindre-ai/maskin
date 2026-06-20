@@ -30,7 +30,6 @@ export function TrialExpiredBanner({ workspaceId }: { workspaceId: string }) {
 	const [expiredPlan, setExpiredPlan] = useState<BillingPlan | null>(null)
 	const [dialogOpen, setDialogOpen] = useState(false)
 
-	// Sticky per-plan: once a plan's period hits 0, keep showing until plan changes
 	useEffect(() => {
 		if (!usage) return
 		if (!EXPIRED_PLANS.has(usage.plan)) {
@@ -38,7 +37,17 @@ export function TrialExpiredBanner({ workspaceId }: { workspaceId: string }) {
 			return
 		}
 		if (usage.period_resets_in_ms === 0) {
+			// For paid plans (starter/pro), suppress the banner while the subscription
+			// is still marked active. After checkout, Stripe webhooks can take several
+			// seconds to update period_end — showing "period ended" during this window
+			// is a false positive. Trial users always have status='active' locally, so
+			// we can't use status to distinguish trial expiry; check plan instead.
+			if (usage.plan !== 'trial' && usage.status === 'active') return
 			setExpiredPlan(usage.plan)
+		} else {
+			// Period has a future reset — clear any stale banner so it dismisses
+			// once Stripe webhooks update period_end, without requiring a page refresh.
+			setExpiredPlan(null)
 		}
 	}, [usage])
 

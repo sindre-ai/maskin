@@ -122,8 +122,6 @@ export async function createCheckoutSession(
 	}
 	if (inputs.existingCustomerId) {
 		params.customer = inputs.existingCustomerId
-	} else {
-		params.customer_creation = 'always'
 	}
 	const session = await stripe.checkout.sessions.create(params)
 	logger.info('Stripe checkout session created', {

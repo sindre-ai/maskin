@@ -240,11 +240,21 @@ async function applyEvent(
 						: (session.subscription?.id ?? null)
 				const customerId =
 					typeof session.customer === 'string' ? session.customer : (session.customer?.id ?? null)
+				// Clear stale period bounds so the billing route's fallback shows a
+				// future reset time while we wait for customer.subscription.created to
+				// arrive with the real Stripe period. Only clear when period_end is
+				// already in the past — a future period_end means an out-of-order
+				// customer.subscription.created already wrote real data and we must not
+				// clobber it.
+				const nowSec = Math.floor(Date.now() / 1000)
+				const periodEndIsStale =
+					typeof next.period_end === 'number' && next.period_end <= nowSec
 				next = {
 					...next,
 					stripe_customer_id: customerId ?? next.stripe_customer_id,
 					stripe_subscription_id: subscriptionId ?? next.stripe_subscription_id,
 					status: 'active',
+					...(periodEndIsStale ? { period_start: null, period_end: null } : {}),
 				}
 				break
 			}
