@@ -357,6 +357,7 @@ function isTurnProgressEvent(event: SindreEvent): boolean {
 	return (
 		event.kind === 'text' ||
 		event.kind === 'tool_use' ||
+		event.kind === 'tool_result' ||
 		event.kind === 'thinking' ||
 		event.kind === 'result'
 	)

@@ -51,12 +51,18 @@ describe('buildSessionTranscript', () => {
 		])
 	})
 
-	it('skips user envelopes (tool result echoes) so they do not duplicate the tool_use', () => {
+	it('surfaces user envelopes that carry tool_result echoes as tool_result events', () => {
 		const userEnvelope = JSON.stringify({
 			type: 'user',
 			message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: [] }] },
 		})
-		expect(buildSessionTranscript([log(1, 'stdout', userEnvelope)])).toEqual([])
+		expect(buildSessionTranscript([log(1, 'stdout', userEnvelope)])).toEqual([
+			{
+				kind: 'event',
+				event: { kind: 'tool_result', toolUseId: 'tu1', isError: false, content: '' },
+				logId: 1,
+			},
+		])
 	})
 
 	it('surfaces real user messages from interactive sessions', () => {

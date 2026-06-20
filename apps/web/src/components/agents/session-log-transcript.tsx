@@ -2,7 +2,15 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import type { SessionLogResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { type SindreEvent, parseSindreLine } from '@/lib/sindre-stream'
-import { ChevronDown, ChevronRight, Settings, User, Wrench } from 'lucide-react'
+import {
+	ChevronDown,
+	ChevronRight,
+	Settings,
+	Terminal,
+	TriangleAlert,
+	User,
+	Wrench,
+} from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 type TranscriptItem =
@@ -101,6 +109,11 @@ function describeEvent(event: SindreEvent): string | null {
 			return truncate(event.text.replace(/\s+/g, ' ').trim(), 80) || null
 		case 'tool_use':
 			return `Using ${event.name}`
+		case 'tool_result':
+			// The matching tool_use already named the step in the preview, so
+			// suppress these here unless they errored — surfacing every result
+			// would just push the active step out of view.
+			return event.isError ? 'Tool errored' : null
 		case 'thinking':
 			return event.redacted ? 'Thinking (redacted)…' : 'Thinking…'
 		case 'user':
@@ -160,6 +173,14 @@ function EventBlock({ event }: { event: SindreEvent }) {
 			return <ThinkingBlock text={event.text} redacted={event.redacted} />
 		case 'tool_use':
 			return <ToolUseBlock name={event.name} input={event.input} />
+		case 'tool_result':
+			return (
+				<ToolResultBlock
+					toolUseId={event.toolUseId}
+					isError={event.isError}
+					content={event.content}
+				/>
+			)
 		case 'user':
 			return <UserMessageBlock text={event.text} />
 		case 'system':
@@ -243,6 +264,54 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 			{open && (
 				<pre className="overflow-x-auto border-t border-border px-3 py-2 font-mono text-text-secondary text-xs whitespace-pre-wrap break-words">
 					{formatToolInput(input)}
+				</pre>
+			)}
+		</div>
+	)
+}
+
+function ToolResultBlock({
+	toolUseId,
+	isError,
+	content,
+}: {
+	toolUseId: string
+	isError: boolean
+	content: string
+}) {
+	const [open, setOpen] = useState(false)
+	const preview = content.replace(/\s+/g, ' ').trim()
+	const label = isError ? 'Tool errored' : 'Tool result'
+	const Icon = isError ? TriangleAlert : Terminal
+	return (
+		<div
+			className={cn(
+				'rounded-md border bg-bg text-xs',
+				isError ? 'border-error/40' : 'border-border',
+			)}
+			data-tool-use-id={toolUseId}
+		>
+			<button
+				type="button"
+				onClick={() => setOpen((v) => !v)}
+				className="flex w-full items-center gap-1.5 px-2 py-1.5 min-w-0 text-left text-text-secondary hover:bg-bg-hover cursor-pointer"
+				aria-expanded={open}
+				aria-label={`${label} for tool ${toolUseId}`}
+			>
+				{open ? (
+					<ChevronDown size={14} className="shrink-0 text-text-muted" />
+				) : (
+					<ChevronRight size={14} className="shrink-0 text-text-muted" />
+				)}
+				<Icon size={12} className={cn('shrink-0', isError ? 'text-error' : 'text-text-muted')} />
+				<span className={cn('shrink-0', isError && 'text-error')}>{label}</span>
+				{preview.length > 0 && !open && (
+					<span className="truncate font-mono text-text-muted min-w-0 flex-1">{preview}</span>
+				)}
+			</button>
+			{open && (
+				<pre className="overflow-x-auto whitespace-pre-wrap break-words border-t border-border px-3 py-2 font-mono text-text-secondary text-xs">
+					{content || '(empty result)'}
 				</pre>
 			)}
 		</div>
