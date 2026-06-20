@@ -109,8 +109,8 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 	const prevWorkspaceIdRef = useRef(workspaceId)
 
 	// Reset transient UI state so attachments and open state don't leak across
-	// workspaces. Session id is tab-local (owned by useSindreSession) and
-	// resets itself on workspaceId change.
+	// workspaces. Conversation history is persisted per-workspace by the chat
+	// store (keyed on workspaceId), so it rehydrates itself on workspace change.
 	useEffect(() => {
 		if (prevWorkspaceIdRef.current === workspaceId) return
 		prevWorkspaceIdRef.current = workspaceId
