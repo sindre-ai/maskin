@@ -247,7 +247,15 @@ export function DataTable({
 									data-index={virtualItem.index}
 									data-drag-row={row.id}
 									ref={virtualizer.measureElement}
-									className="absolute left-0 right-0"
+									className={cn(
+										'absolute left-0 right-0',
+										'data-[drag-active-end=true]:before:content-[""]',
+										'data-[drag-active-end=true]:before:absolute',
+										'data-[drag-active-end=true]:before:inset-y-0',
+										'data-[drag-active-end=true]:before:left-0',
+										'data-[drag-active-end=true]:before:w-[3px]',
+										'data-[drag-active-end=true]:before:bg-primary',
+									)}
 									style={{ transform: `translateY(${virtualItem.start}px)` }}
 								>
 									<ObjectCard

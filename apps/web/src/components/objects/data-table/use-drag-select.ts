@@ -382,9 +382,12 @@ export function useDragSelect<T>({ scrollRef, table }: UseDragSelectArgs<T>) {
 			}
 		}
 
-		// Scrolling while armed is the user's "let me scroll instead" signal.
-		// Once activated, our autoscroll loop is the only scroll source, so we
-		// must not cancel ourselves.
+		// During the arm window the container still has `touch-pan-y`, so a
+		// native scroll can legitimately fire — that's the user's "let me
+		// scroll instead" signal and we cancel the arm. After activation the
+		// container flips to `touch-action: none`, so the only remaining
+		// scroll source is our own autoscroll RAF in `startAutoscroll`; we
+		// must not let it cancel itself.
 		const onScroll = () => {
 			if (sessionRef.current.drag) return
 			clearArm()
