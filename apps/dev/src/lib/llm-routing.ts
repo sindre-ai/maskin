@@ -183,21 +183,22 @@ export async function checkPlanCap(params: {
 	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_tokens ?? undefined)
 	if (cap === null) return
 
-	const used = await getWorkspacePlanTokenUsage(
-		params.db,
-		params.workspaceId,
-		billing?.period_start ?? undefined,
-	)
+	// billing.period_start / period_end are Unix SECONDS (Stripe writes them
+	// straight from current_period_start/end). Convert to ms before passing to
+	// getWorkspacePlanTokenUsage (which feeds new Date()) and effectivePeriodEnd.
+	const periodStartMs =
+		typeof billing?.period_start === 'number' ? billing.period_start * 1000 : undefined
+	const periodEndMs =
+		typeof billing?.period_end === 'number' ? billing.period_end * 1000 : undefined
+
+	const used = await getWorkspacePlanTokenUsage(params.db, params.workspaceId, periodStartMs)
 	if (used < cap) return
 
 	throw new PlanCapExceededError({
 		plan: maskinPlan,
 		used,
 		cap,
-		periodEnd: effectivePeriodEnd(
-			billing?.period_start ?? undefined,
-			billing?.period_end ?? undefined,
-		),
+		periodEnd: effectivePeriodEnd(periodStartMs, periodEndMs),
 	})
 }
 

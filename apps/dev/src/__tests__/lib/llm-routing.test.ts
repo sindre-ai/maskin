@@ -413,7 +413,7 @@ describe('checkPlanCap', () => {
 		'is a no-op for %s when Stripe has not written hard_cap_tokens (fail-open pre-Task 5)',
 		async (plan) => {
 			const settings = emptySettings()
-			settings.billing = { plan, period_start: Date.now() - 60_000 }
+			settings.billing = { plan, period_start: Math.floor(Date.now() / 1000) - 60 }
 			const db = dbWithSessionUsage([{ inputTokens: 50_000_000, outputTokens: 0 }])
 			await expect(
 				checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
@@ -422,12 +422,13 @@ describe('checkPlanCap', () => {
 	)
 
 	it('throws PlanCapExceededError when usage equals hard_cap_tokens', async () => {
-		const periodStart = Date.now() - 60_000
+		// period_start is stored in Unix SECONDS (Stripe format).
+		const periodStartSec = Math.floor(Date.now() / 1000) - 60
 		const settings = emptySettings()
 		settings.billing = {
 			plan: 'starter',
 			hard_cap_tokens: 1_000_000,
-			period_start: periodStart,
+			period_start: periodStartSec,
 		}
 		const db = dbWithSessionUsage([
 			{ inputTokens: 600_000, outputTokens: 400_000 }, // exactly at cap
@@ -441,11 +442,12 @@ describe('checkPlanCap', () => {
 		expect(err.plan).toBe('starter')
 		expect(err.used).toBe(1_000_000)
 		expect(err.cap).toBe(1_000_000)
-		// period_end defaults to period_start + 30 days when Stripe has not written one.
-		expect(err.periodEnd).toBe(periodStart + 30 * 24 * 60 * 60 * 1000)
+		// period_end is in ms: period_start (seconds → ms) + 30 days.
+		expect(err.periodEnd).toBe(periodStartSec * 1000 + 30 * 24 * 60 * 60 * 1000)
 	})
 
 	it('honors explicit period_end on the error payload', async () => {
+		// period_start / period_end are Unix SECONDS; periodEnd on the error is MS.
 		const settings = emptySettings()
 		settings.billing = {
 			plan: 'pro',
@@ -460,7 +462,7 @@ describe('checkPlanCap', () => {
 			wsSettings: settings,
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
-		expect(err.periodEnd).toBe(999_999)
+		expect(err.periodEnd).toBe(999_999 * 1000)
 	})
 
 	it('uses MASKIN_TRIAL_HARD_CAP_TOKENS when trial has no explicit cap', async () => {
@@ -510,7 +512,6 @@ describe('checkPlanCap', () => {
 			resolveLlmRoute({
 				db,
 				workspaceId: 'ws-1',
-				actorId: 'actor-1',
 				wsSettings: settings,
 				agent: {},
 			}),
