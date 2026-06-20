@@ -90,6 +90,7 @@ function addUrl(
 	workspaceId: string,
 	target: WebAppTarget,
 ): Record<string, unknown> {
+	// Hoist title/name to the front so they appear before id/url in JSON output.
 	const { title, name, ...rest } = entity
 	const ordered: Record<string, unknown> = {}
 	if (title !== undefined) ordered.title = title
