@@ -61,8 +61,14 @@ export function createTestContext() {
 	const errorQueues: Record<string, (Error | undefined)[]> = {}
 	// Captures the most recent argument passed to chain methods like .values() and .set(),
 	// keyed by the top-level operation ('insert' → values, 'update' → set). Lets tests
-	// assert what the route actually wrote, not just what the mock returned.
-	const calls: { inserts: unknown[]; updates: unknown[] } = { inserts: [], updates: [] }
+	// assert what the route actually wrote, not just what the mock returned. `orderBys`
+	// records every .orderBy() arg so tests can pin the sort direction (asc/desc), which
+	// the returned row order alone cannot prove when results are mocked.
+	const calls: { inserts: unknown[]; updates: unknown[]; orderBys: unknown[] } = {
+		inserts: [],
+		updates: [],
+		orderBys: [],
+	}
 
 	const db = new Proxy({} as Database, {
 		get: (_target, prop) => {
@@ -149,7 +155,7 @@ function createChain(
 	returnValue?: unknown,
 	error?: Error,
 	captureKey?: 'inserts' | 'updates',
-	calls?: { inserts: unknown[]; updates: unknown[] },
+	calls?: { inserts: unknown[]; updates: unknown[]; orderBys: unknown[] },
 ): Record<string, unknown> {
 	const chain: Record<string, unknown> = {}
 	const methods = [
@@ -177,6 +183,7 @@ function createChain(
 		chain[m] = (arg?: unknown) => {
 			if (calls && captureKey === 'inserts' && m === 'values') calls.inserts.push(arg)
 			if (calls && captureKey === 'updates' && m === 'set') calls.updates.push(arg)
+			if (calls && m === 'orderBy') calls.orderBys.push(arg)
 			return chain
 		}
 	}

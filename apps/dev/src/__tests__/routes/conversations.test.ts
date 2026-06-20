@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { events } from '@maskin/db/schema'
+import { desc } from 'drizzle-orm'
 import { buildEvent, buildObject, buildSubscription, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp, createTestApp } from '../setup'
@@ -433,6 +435,51 @@ describe('Conversations Routes', () => {
 			const res = await app.request(jsonGet(`/api/conversations/${conversation.id}/messages`))
 
 			expect(res.status).toBe(404)
+		})
+
+		it('pages backwards from before_id and returns the older window in ASC order', async () => {
+			const conversation = buildConversation()
+			// The DB query the route should issue: `lt(events.id, before_id)` +
+			// `orderBy(desc(events.id))` + `limit(50)`. Simulate the result the DB
+			// would hand back for that query — the 50 events immediately older than
+			// id=1000, in DESC order [999, 998, …, 950]. The handler is responsible
+			// for reversing that into ASC chronological order before responding.
+			const olderWindowDesc = Array.from({ length: 50 }, (_, idx) =>
+				buildEvent({
+					id: 999 - idx,
+					action: 'commented',
+					entityType: 'object',
+					entityId: conversation.id,
+					data: { content: `msg ${999 - idx}` },
+				}),
+			)
+			const { app, mockResults, calls } = createTestApp(conversationsRoutes, '/api/conversations')
+			mockResults.selectQueue = [
+				[{ workspaceId: conversation.workspaceId }],
+				[buildWorkspaceMember({ actorId, workspaceId: wsId })],
+				[buildSubscription({ actorId, entityId: conversation.id })],
+				olderWindowDesc,
+			]
+
+			const res = await app.request(
+				jsonGet(`/api/conversations/${conversation.id}/messages?before_id=1000&limit=50`),
+			)
+
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: number; content: string }>
+			expect(body).toHaveLength(50)
+			// The window is the 50 events *immediately older* than 1000, not the
+			// oldest 50 events of the whole conversation (the original asc/lt bug).
+			expect(body[0].id).toBe(950)
+			expect(body[49].id).toBe(999)
+			// Returned in ASC chronological order so callers can render top-to-bottom
+			// without a second sort.
+			const ids = body.map((m) => m.id)
+			expect(ids).toEqual([...ids].sort((a, b) => a - b))
+			// Pin the sort direction at the query level: ASC would silently regress
+			// the window even if the post-query reverse stayed in place.
+			const messagesOrderBy = calls.orderBys.at(-1)
+			expect(messagesOrderBy).toEqual(desc(events.id))
 		})
 	})
 

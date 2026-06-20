@@ -10,7 +10,7 @@ import {
 	messagesQuerySchema,
 	participantIdParamSchema,
 } from '@maskin/shared'
-import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm'
+import { and, desc, eq, inArray, lt } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -414,15 +414,19 @@ app.openapi(listMessagesRoute, (async (c) => {
 		conditions.push(lt(events.id, before_id))
 	}
 
+	// `before_id` pages backwards through history (older than the cursor),
+	// so the query takes the newest matching rows first and we reverse them
+	// to hand callers back the conventional ASC chronological order.
 	const rows = await db
 		.select()
 		.from(events)
 		.where(and(...conditions))
-		.orderBy(asc(events.id))
+		.orderBy(desc(events.id))
 		.limit(limit)
 		.offset(offset)
 
-	return c.json(rows.map((row) => toMessageResponse(row, id)))
+	const chronological = rows.slice().reverse()
+	return c.json(chronological.map((row) => toMessageResponse(row, id)))
 }) as RouteHandler<typeof listMessagesRoute, Env>)
 
 // POST /api/conversations/:id/participants — seat a participant by inserting
