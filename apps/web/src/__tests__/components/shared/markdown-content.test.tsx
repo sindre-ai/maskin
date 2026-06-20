@@ -2,6 +2,23 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import { buildObjectResponse } from '../../factories'
+import { TestWrapper } from '../../setup'
+
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
+
+vi.mock('@/lib/api', () => ({
+	api: {
+		objects: {
+			get: vi.fn(),
+		},
+	},
+}))
+
+import { api } from '@/lib/api'
 
 describe('MarkdownContent', () => {
 	it('renders markdown content', () => {
@@ -84,5 +101,62 @@ describe('MarkdownContent', () => {
 		expect(chip.tagName).toBe('SPAN')
 		const strong = screen.getByText('important')
 		expect(strong.tagName).toBe('STRONG')
+	})
+
+	describe('linkifyObjectIds', () => {
+		beforeEach(() => {
+			vi.mocked(api.objects.get).mockReset()
+		})
+
+		it('renders a bare object UUID as an inline ObjectReference chip', () => {
+			const obj = buildObjectResponse({
+				id: 'cf6545dc-74dd-4cba-ab27-16d808112bee',
+				title: 'Inline Bet',
+				type: 'bet',
+				status: 'active',
+			})
+			vi.mocked(api.objects.get).mockResolvedValue(obj)
+
+			render(
+				<MarkdownContent
+					content={`See ${obj.id} for context`}
+					linkifyObjectIds
+					workspaceId="ws-1"
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			// The chip starts in its loading skeleton state before useObject resolves.
+			expect(document.querySelector('[aria-busy="true"]')).toBeInTheDocument()
+			// Surrounding text still renders as plain text.
+			expect(screen.getByText(/See/)).toBeInTheDocument()
+			expect(screen.getByText(/for context/)).toBeInTheDocument()
+			// The raw UUID does NOT appear as visible text — the chip swaps it out.
+			expect(screen.queryByText(obj.id)).not.toBeInTheDocument()
+		})
+
+		it('leaves text alone when no UUID is present', () => {
+			render(
+				<MarkdownContent
+					content="No object id here, just words."
+					linkifyObjectIds
+					workspaceId="ws-1"
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(screen.getByText('No object id here, just words.')).toBeInTheDocument()
+			expect(api.objects.get).not.toHaveBeenCalled()
+		})
+
+		it('no-ops when workspaceId is missing even if the flag is set', () => {
+			const uuid = 'cf6545dc-74dd-4cba-ab27-16d808112bee'
+			render(<MarkdownContent content={`See ${uuid} here`} linkifyObjectIds />, {
+				wrapper: TestWrapper,
+			})
+			// Without a workspace id we can't build a deep-link, so the UUID stays
+			// inline as plain text and no fetch fires.
+			expect(screen.getByText(/See/)).toBeInTheDocument()
+			expect(api.objects.get).not.toHaveBeenCalled()
+		})
 	})
 })

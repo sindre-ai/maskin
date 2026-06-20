@@ -10,6 +10,8 @@ interface SindreTranscriptProps {
 	starting: boolean
 	error: Error | null
 	className?: string
+	/** Workspace id used to deep-link inline object-reference chips in agent text. */
+	workspaceId?: string
 }
 
 /**
@@ -18,7 +20,13 @@ interface SindreTranscriptProps {
  * as a collapsed expander. Non-renderable envelopes (user echoes, success
  * results, system, debug) fall through to nothing so the surface stays quiet.
  */
-export function SindreTranscript({ events, starting, error, className }: SindreTranscriptProps) {
+export function SindreTranscript({
+	events,
+	starting,
+	error,
+	className,
+	workspaceId,
+}: SindreTranscriptProps) {
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: pin scroll to bottom on every new event
@@ -37,7 +45,7 @@ export function SindreTranscript({ events, starting, error, className }: SindreT
 			) : (
 				<div className="flex flex-col gap-3">
 					{events.map((event, index) => (
-						<TranscriptRow key={`${event.kind}-${index}`} event={event} />
+						<TranscriptRow key={`${event.kind}-${index}`} event={event} workspaceId={workspaceId} />
 					))}
 					{error && <TranscriptError error={error} />}
 				</div>
@@ -70,12 +78,12 @@ function TranscriptError({ error }: { error: Error }) {
 	)
 }
 
-function TranscriptRow({ event }: { event: SindreEvent }) {
+function TranscriptRow({ event, workspaceId }: { event: SindreEvent; workspaceId?: string }) {
 	switch (event.kind) {
 		case 'user':
 			return <UserMessageBlock text={event.text} attachments={event.attachments} />
 		case 'text':
-			return <AssistantTextBlock text={event.text} />
+			return <AssistantTextBlock text={event.text} workspaceId={workspaceId} />
 		case 'thinking':
 			return <ThinkingBlock text={event.text} redacted={event.redacted} />
 		case 'tool_use':
@@ -143,7 +151,7 @@ function userAttachmentLabel(a: UserAttachmentView): string {
 	return a.title?.trim() || a.id
 }
 
-function AssistantTextBlock({ text }: { text: string }) {
+function AssistantTextBlock({ text, workspaceId }: { text: string; workspaceId?: string }) {
 	// MarkdownContent applies `prose-p:text-muted-foreground` internally, which
 	// overrides plain text-color classes on the outer wrapper. Target the
 	// rendered <p>/<li> nodes directly so the body text matches the user
@@ -153,6 +161,8 @@ function AssistantTextBlock({ text }: { text: string }) {
 			content={text}
 			className="[&_li]:!text-accent-foreground [&_p]:!text-accent-foreground"
 			size="sm"
+			linkifyObjectIds={Boolean(workspaceId)}
+			workspaceId={workspaceId}
 		/>
 	)
 }
