@@ -114,6 +114,21 @@ describe('MarkdownContent', () => {
 			const inline = screen.getByText('useEffect')
 			expect(inline.tagName).toBe('CODE')
 		})
+
+		it('keeps the copy button visible by default on touch (hover-revealed only on hover-capable devices)', () => {
+			// The copy button used to be `opacity-0 group-hover:opacity-100` —
+			// invisible on touch devices that have no `:hover` and no way to
+			// focus a hidden button. The contract is: visible by default;
+			// fades behind hover only on devices that actually have hover
+			// (the `can-hover` variant maps to `@media (hover: hover)`).
+			render(<MarkdownContent content={'```ts\nconst hello = "world"\n```'} />)
+			const copy = screen.getByRole('button', { name: /copy code/i })
+			expect(copy.className).toMatch(/(^|\s)opacity-100($|\s)/)
+			expect(copy.className).toMatch(/can-hover:opacity-0/)
+			expect(copy.className).toMatch(/can-hover:group-hover:opacity-100/)
+			expect(copy.className).not.toMatch(/\bsm:opacity-0\b/)
+			expect(copy.className).not.toMatch(/\bmd:opacity-0\b/)
+		})
 	})
 
 	it('renders @mentions as chips inside formatted markdown', () => {
