@@ -56,6 +56,14 @@ vi.mock('@/hooks/use-conversations', () => ({
 	useMarkConversationRead: () => mockMarkRead,
 	useUpdateConversationTitle: () => mockUpdateTitle,
 	useConversationMessages: () => ({ data: null }),
+	useSendMessage: () => ({
+		mutateAsync: vi.fn().mockResolvedValue(undefined),
+		isPending: false,
+	}),
+}))
+
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({ data: [] }),
 }))
 
 vi.mock('@/hooks/use-sindre-session', () => ({

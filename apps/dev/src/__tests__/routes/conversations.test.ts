@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { vi } from 'vitest'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp, createTestApp } from '../setup'
 
@@ -276,6 +277,162 @@ describe('Conversations Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+
+		it('auto-adds a @mentioned human and creates a notification', async () => {
+			const convId = randomUUID()
+			const humanId = randomUUID()
+			const conv = buildConversation({ id: convId, title: 'Room A' })
+			const participant = buildParticipant({ conversationId: convId, actorId })
+			const msg = buildMessage({ conversationId: convId, actorId, content: 'hey @Alice' })
+			const { app, mockResults, calls } = createSessionTestApp(
+				conversationsRoutes,
+				'/api/conversations',
+				actorId,
+			)
+			mockResults.selectQueue = [
+				[conv], // loadConversationWithAuth
+				[participant], // caller participant check
+				[{ id: humanId, type: 'human', name: 'Alice' }], // mentioned actors
+				[], // existing human participants — none, so auto-add
+			]
+			mockResults.insert = [msg]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${convId}/messages`,
+					{ content: 'hey @Alice', mentions: [humanId] },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+
+			// Inserts captured in order: message, message_sent event,
+			// conversation_participants (auto-add), notifications.
+			const participantInsert = calls.inserts.find(
+				(args) =>
+					Array.isArray(args) &&
+					args.length > 0 &&
+					(args[0] as Record<string, unknown>)?.actorId === humanId &&
+					(args[0] as Record<string, unknown>)?.conversationId === convId,
+			)
+			expect(participantInsert).toBeDefined()
+
+			const notificationInsert = calls.inserts.find(
+				(args) =>
+					Array.isArray(args) &&
+					args.length > 0 &&
+					(args[0] as Record<string, unknown>)?.type === 'needs_input' &&
+					(args[0] as Record<string, unknown>)?.targetActorId === humanId,
+			) as Array<Record<string, unknown>> | undefined
+			expect(notificationInsert).toBeDefined()
+			const first = notificationInsert?.[0] as Record<string, unknown>
+			expect(first.workspaceId).toBe(wsId)
+			expect(first.title).toContain('Room A')
+			expect(first.content).toBe('hey @Alice')
+			expect(first.sourceActorId).toBe(actorId)
+			expect((first.metadata as Record<string, unknown>).conversation_id).toBe(convId)
+			expect((first.metadata as Record<string, unknown>).auto_added).toBe(true)
+		})
+
+		it('does not duplicate participant when @mentioned human is already in the conversation', async () => {
+			const convId = randomUUID()
+			const humanId = randomUUID()
+			const conv = buildConversation({ id: convId })
+			const participant = buildParticipant({ conversationId: convId, actorId })
+			const msg = buildMessage({ conversationId: convId, actorId })
+			const { app, mockResults, calls } = createSessionTestApp(
+				conversationsRoutes,
+				'/api/conversations',
+				actorId,
+			)
+			mockResults.selectQueue = [
+				[conv],
+				[participant],
+				[{ id: humanId, type: 'human', name: 'Bob' }],
+				[{ actorId: humanId }], // already a participant
+			]
+			mockResults.insert = [msg]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${convId}/messages`,
+					{ content: 'ping', mentions: [humanId] },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+
+			const participantInsert = calls.inserts.find(
+				(args) =>
+					Array.isArray(args) &&
+					args.length > 0 &&
+					(args[0] as Record<string, unknown>)?.actorId === humanId &&
+					(args[0] as Record<string, unknown>)?.conversationId === convId,
+			)
+			expect(participantInsert).toBeUndefined()
+
+			const notificationInsert = calls.inserts.find(
+				(args) =>
+					Array.isArray(args) &&
+					args.length > 0 &&
+					(args[0] as Record<string, unknown>)?.type === 'needs_input' &&
+					(args[0] as Record<string, unknown>)?.targetActorId === humanId,
+			) as Array<Record<string, unknown>> | undefined
+			expect(notificationInsert).toBeDefined()
+			const meta = (notificationInsert?.[0] as Record<string, unknown>)?.metadata as Record<
+				string,
+				unknown
+			>
+			expect(meta.auto_added).toBe(false)
+		})
+
+		it('still dispatches a session for @mentioned agents alongside human mentions', async () => {
+			const convId = randomUUID()
+			const humanId = randomUUID()
+			const agentActorId = randomUUID()
+			const conv = buildConversation({ id: convId })
+			const participant = buildParticipant({ conversationId: convId, actorId })
+			const msg = buildMessage({ conversationId: convId, actorId })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				conversationsRoutes,
+				'/api/conversations',
+				actorId,
+			)
+			vi.mocked(sessionManager.createSession).mockResolvedValue({
+				id: randomUUID(),
+			} as never)
+			mockResults.selectQueue = [
+				[conv],
+				[participant],
+				[
+					{ id: agentActorId, type: 'agent', name: 'Codex' },
+					{ id: humanId, type: 'human', name: 'Alice' },
+				],
+				[], // no existing humans
+			]
+			mockResults.insert = [msg]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${convId}/messages`,
+					{ content: 'hey team', mentions: [agentActorId, humanId] },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			// One createSession call per @mentioned agent. Humans never spawn a session.
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			expect(sessionManager.createSession).toHaveBeenCalledWith(
+				wsId,
+				expect.objectContaining({ actorId: agentActorId }),
+			)
 		})
 	})
 

@@ -35,6 +35,14 @@ let mockOneShotResult: UseSindreOneShotResult = {
 
 vi.mock('@/hooks/use-conversations', () => ({
 	useConversationMessages: () => ({ data: null }),
+	useSendMessage: () => ({
+		mutateAsync: vi.fn().mockResolvedValue(undefined),
+		isPending: false,
+	}),
+}))
+
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({ data: [] }),
 }))
 
 vi.mock('@/hooks/use-sindre-session', () => ({
