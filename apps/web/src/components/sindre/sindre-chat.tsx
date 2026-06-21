@@ -1,3 +1,4 @@
+import { MentionTypeahead } from '@/components/chat/mention-typeahead'
 import { SelectionChips } from '@/components/sindre/selection-chips'
 import { SindreTranscript } from '@/components/sindre/sindre-transcript'
 import {
@@ -8,10 +9,11 @@ import {
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useConversationMessages } from '@/hooks/use-conversations'
+import { useActors } from '@/hooks/use-actors'
+import { useConversationMessages, useSendMessage } from '@/hooks/use-conversations'
 import { useSindreOneShot } from '@/hooks/use-sindre-one-shot'
 import { useSindreSession } from '@/hooks/use-sindre-session'
-import type { MessageResponse, SessionInputAttachment } from '@/lib/api'
+import type { ActorListItem, MessageResponse, SessionInputAttachment } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
 	EMPTY_SINDRE_SELECTION,
@@ -131,6 +133,8 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 
 	const sindre = useSindreSession({ workspaceId, sindreActorId, conversationId })
 	const oneShot = useSindreOneShot()
+	const sendMessage = useSendMessage(workspaceId, conversationId ?? '')
+	const { data: actors } = useActors(workspaceId, { enabled: !!conversationId })
 
 	// Pre-load historical messages from the conversations API so the transcript
 	// shows past turns when the user resumes a conversation. Convert each message
@@ -216,12 +220,30 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 	}, [pendingTurn, activeStatus])
 
 	const handleSend = useCallback(
-		async (content: string) => {
+		async (content: string, mentions: string[] = []) => {
 			if (onSubmitOverride) {
 				// Intercept path: caller takes ownership of what happens next
 				// (e.g. the Pulse bar forwards to the sheet). Skip pendingTurn
 				// tracking — no session turn is in flight from this surface.
 				await onSubmitOverride(content, activeSelection)
+				return
+			}
+			// Mention-bearing sends in an active conversation go through the
+			// conversation messages endpoint so the backend can auto-add humans
+			// and emit `needs_input` notifications in a single transaction. The
+			// Sindre interactive path persists messages via the session input
+			// route which has no mentions plumbing — routing on mentions.length
+			// keeps a single owner for participant changes per turn.
+			if (mentions.length > 0 && conversationId) {
+				setPendingTurn(true)
+				try {
+					await sendMessage.mutateAsync({ content, mentions })
+				} catch (err) {
+					setPendingTurn(false)
+					throw err
+				}
+				setPendingTurn(false)
+				onDispatchSelection?.({ type: 'clear_all' })
 				return
 			}
 			pendingBaselineRef.current = events.length
@@ -272,10 +294,12 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 		},
 		[
 			activeSelection,
+			conversationId,
 			events.length,
 			oneShot,
 			onSubmitOverride,
 			onDispatchSelection,
+			sendMessage,
 			sindre,
 			selectedAgent,
 			selectedObjects,
@@ -369,6 +393,8 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 				onRemoveFile={handleRemoveFile}
 				externalError={autoSendError}
 				onDismissExternalError={() => setAutoSendError(null)}
+				conversationId={conversationId ?? null}
+				mentionableActors={actors ?? []}
 			/>
 		</div>
 	)
@@ -505,7 +531,7 @@ function computePlaceholder(
 
 interface ComposerProps {
 	workspaceId: string
-	onSend: (content: string) => Promise<void>
+	onSend: (content: string, mentions?: string[]) => Promise<void>
 	disabled: boolean
 	pending: boolean
 	surface: SindreChatSurface
@@ -518,6 +544,14 @@ interface ComposerProps {
 	onRemoveFile: (name: string) => void
 	externalError?: string | null
 	onDismissExternalError?: () => void
+	/**
+	 * When set, the composer renders the @mention typeahead so users can pull
+	 * humans and agents into the conversation. Picks are tracked locally and
+	 * forwarded to `onSend(content, mentions)` on submit; the parent decides
+	 * how to route mention-bearing sends.
+	 */
+	conversationId?: string | null
+	mentionableActors?: ActorListItem[]
 }
 
 /**
@@ -552,6 +586,8 @@ function Composer({
 	onRemoveFile,
 	externalError,
 	onDismissExternalError,
+	conversationId,
+	mentionableActors,
 }: ComposerProps) {
 	const [value, setValue] = useState('')
 	const [sending, setSending] = useState(false)
@@ -560,20 +596,47 @@ function Composer({
 	const [pickerKind, setPickerKind] = useState<SlashKindId | null>(null)
 	const slashPosRef = useRef<number | null>(null)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
+	const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+	const [mentionIds, setMentionIds] = useState<string[]>([])
+	const [mentionOpen, setMentionOpen] = useState(false)
+	const [mentionFilter, setMentionFilter] = useState('')
+	const [mentionIndex, setMentionIndex] = useState(0)
+	const mentionsEnabled = !!conversationId && (mentionableActors?.length ?? 0) > 0
 	const canSend = value.trim().length > 0 && !disabled && !sending && !pending
 	const showSpinner = sending || pending
+
+	const mentionCandidates = useMemo(() => {
+		if (!mentionsEnabled || !mentionableActors) return []
+		const needle = mentionFilter.trim().toLowerCase()
+		return mentionableActors
+			.filter((a) => !a.isSystem)
+			.filter((a) => (needle ? a.name.toLowerCase().includes(needle) : true))
+	}, [mentionsEnabled, mentionableActors, mentionFilter])
+
+	const closeMentionMenu = useCallback(() => {
+		setMentionOpen(false)
+		setMentionFilter('')
+		setMentionIndex(0)
+	}, [])
 
 	const handleSubmit = useCallback(
 		async (e?: FormEvent<HTMLFormElement>) => {
 			e?.preventDefault()
 			if (!canSend) return
 			const content = value.trim()
+			// Only forward mention ids that still match an `@Name` token in the
+			// final content. Reuses the comment-input reconciliation pattern so
+			// stale picks don't silently pull humans in.
+			const activeMentions = mentionIds.filter((id) => {
+				const a = mentionableActors?.find((x) => x.id === id)
+				return a ? content.includes(`@${a.name}`) : false
+			})
 			setSending(true)
 			setSendError(null)
 			onDismissExternalError?.()
 			let sent = false
 			try {
-				await onSend(content)
+				await onSend(content, activeMentions)
 				sent = true
 			} catch (err) {
 				setSendError(err instanceof Error ? err.message : 'Failed to send')
@@ -583,38 +646,124 @@ function Composer({
 			// Only clear the composer after the send actually resolved without
 			// error — a rejected send keeps the draft so the user can retry
 			// without losing a carefully crafted prompt.
-			if (sent) setValue('')
+			if (sent) {
+				setValue('')
+				setMentionIds([])
+				closeMentionMenu()
+			}
 		},
-		[canSend, onDismissExternalError, onSend, value],
+		[
+			canSend,
+			closeMentionMenu,
+			mentionIds,
+			mentionableActors,
+			onDismissExternalError,
+			onSend,
+			value,
+		],
+	)
+
+	const insertMention = useCallback(
+		(actor: { id: string; name: string }) => {
+			const textarea = textareaRef.current
+			if (!textarea) return
+			const cursor = textarea.selectionStart ?? value.length
+			const before = value.slice(0, cursor)
+			const atIndex = before.lastIndexOf('@')
+			if (atIndex === -1) return
+			const after = value.slice(cursor)
+			const next = `${value.slice(0, atIndex)}@${actor.name} ${after}`
+			setValue(next)
+			if (!mentionIds.includes(actor.id)) {
+				setMentionIds((prev) => [...prev, actor.id])
+			}
+			closeMentionMenu()
+			requestAnimationFrame(() => {
+				textarea.focus()
+				const nextPos = atIndex + actor.name.length + 2
+				textarea.setSelectionRange(nextPos, nextPos)
+			})
+		},
+		[closeMentionMenu, mentionIds, value],
 	)
 
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent<HTMLTextAreaElement>) => {
+			// Mention typeahead steals navigation keys when open so arrow keys
+			// move through the list and Enter/Tab commit the pick instead of
+			// submitting the message or moving the cursor.
+			if (mentionOpen && mentionCandidates.length > 0) {
+				if (e.key === 'ArrowDown') {
+					e.preventDefault()
+					setMentionIndex((i) => Math.min(i + 1, mentionCandidates.length - 1))
+					return
+				}
+				if (e.key === 'ArrowUp') {
+					e.preventDefault()
+					setMentionIndex((i) => Math.max(i - 1, 0))
+					return
+				}
+				if (e.key === 'Enter' || e.key === 'Tab') {
+					e.preventDefault()
+					const pick = mentionCandidates[mentionIndex]
+					if (pick) insertMention({ id: pick.id, name: pick.name })
+					return
+				}
+				if (e.key === 'Escape') {
+					e.preventDefault()
+					closeMentionMenu()
+					return
+				}
+			}
 			if (e.key !== 'Enter') return
 			if (e.shiftKey) return
 			if (e.nativeEvent.isComposing) return
 			e.preventDefault()
 			void handleSubmit()
 		},
-		[handleSubmit],
+		[closeMentionMenu, handleSubmit, insertMention, mentionCandidates, mentionIndex, mentionOpen],
 	)
 
-	const handleChange = useCallback((e: ChangeEvent<HTMLTextAreaElement>) => {
-		const next = e.target.value
-		setValue(next)
-		// Open the picker when the user just typed a `/` at a qualifying
-		// position: either at the very start of the input or immediately
-		// after whitespace. Anything else (middle of a URL, inside a word,
-		// etc.) is left alone so `/` remains a regular character.
-		const pos = e.target.selectionStart
-		if (typeof pos !== 'number' || pos <= 0) return
-		if (next[pos - 1] !== '/') return
-		const prev = pos >= 2 ? next[pos - 2] : ''
-		if (prev !== '' && !/\s/.test(prev)) return
-		slashPosRef.current = pos - 1
-		setPickerKind(null)
-		setPickerOpen(true)
-	}, [])
+	const handleChange = useCallback(
+		(e: ChangeEvent<HTMLTextAreaElement>) => {
+			const next = e.target.value
+			setValue(next)
+			const pos = e.target.selectionStart
+			if (typeof pos !== 'number' || pos <= 0) {
+				closeMentionMenu()
+				return
+			}
+			// `@` opens the mention typeahead when in an active conversation,
+			// at the start of input or immediately after whitespace, with no
+			// space yet in the filter. Mirrors the comment-input pattern.
+			if (mentionsEnabled) {
+				const before = next.slice(0, pos)
+				const at = before.lastIndexOf('@')
+				if (at !== -1) {
+					const charBefore = at > 0 ? before[at - 1] : ' '
+					const afterAt = before.slice(at + 1)
+					if ((charBefore === ' ' || charBefore === '\n' || at === 0) && !afterAt.includes(' ')) {
+						setMentionOpen(true)
+						setMentionFilter(afterAt)
+						setMentionIndex(0)
+						return
+					}
+				}
+				closeMentionMenu()
+			}
+			// Open the slash picker when the user just typed a `/` at a qualifying
+			// position: either at the very start of the input or immediately
+			// after whitespace. Anything else (middle of a URL, inside a word,
+			// etc.) is left alone so `/` remains a regular character.
+			if (next[pos - 1] !== '/') return
+			const prev = pos >= 2 ? next[pos - 2] : ''
+			if (prev !== '' && !/\s/.test(prev)) return
+			slashPosRef.current = pos - 1
+			setPickerKind(null)
+			setPickerOpen(true)
+		},
+		[closeMentionMenu, mentionsEnabled],
+	)
 
 	const openPickerForKind = useCallback((kind: SlashKindId) => {
 		slashPosRef.current = null
@@ -720,15 +869,30 @@ function Composer({
 			/>
 			<form onSubmit={handleSubmit}>
 				<Textarea
+					ref={textareaRef}
 					autoResize
 					value={value}
 					onChange={handleChange}
 					onKeyDown={handleKeyDown}
+					onBlur={() => {
+						// Defer close so the typeahead's onMouseDown commits the pick
+						// before the menu unmounts.
+						window.setTimeout(closeMentionMenu, 100)
+					}}
 					placeholder={placeholder}
 					className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
 					disabled={disabled}
 					rows={1}
 				/>
+				{mentionsEnabled && mentionOpen ? (
+					<MentionTypeahead
+						actors={mentionableActors ?? []}
+						filter={mentionFilter}
+						selectedIndex={mentionIndex}
+						onSelect={insertMention}
+						onHoverIndex={setMentionIndex}
+					/>
+				) : null}
 				{sendError || externalError ? (
 					<p role="alert" className="px-1 text-error text-xs" aria-live="polite">
 						{sendError ?? externalError} — your message is preserved; try again.

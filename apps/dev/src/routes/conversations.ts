@@ -6,6 +6,7 @@ import {
 	conversationParticipants,
 	conversations,
 	messages,
+	notifications,
 	sessions,
 	workspaceMembers,
 } from '@maskin/db/schema'
@@ -393,7 +394,7 @@ app.openapi(sendMessageRoute, (async (c) => {
 
 	const preview = body.content.length > 100 ? `${body.content.slice(0, 100)}…` : body.content
 
-	const { message, agentMentions } = await db.transaction(async (tx) => {
+	const { message, agentMentions, addedHumans } = await db.transaction(async (tx) => {
 		const [msg] = await tx
 			.insert(messages)
 			.values({ conversationId: id, actorId, content: body.content })
@@ -427,8 +428,12 @@ app.openapi(sendMessageRoute, (async (c) => {
 			entityId: id,
 		})
 
-		// Resolve @mentioned agent actors for session dispatch — scoped to workspace members only
+		// Resolve @mentioned actors — scoped to workspace members so off-workspace
+		// UUIDs are silently dropped. Agents → spawn a session below. Humans →
+		// auto-add to the conversation and emit a `needs_input` notification so
+		// the @mention pulls them into the thread the next time they open Maskin.
 		const mentions: Array<{ agentId: string; name: string }> = []
+		const addedHumans: string[] = []
 		if (body.mentions?.length) {
 			const mentionedActors = await tx
 				.select({ id: actors.id, type: actors.type, name: actors.name })
@@ -442,17 +447,83 @@ app.openapi(sendMessageRoute, (async (c) => {
 				)
 				.where(inArray(actors.id, body.mentions))
 
+			const humanIds: string[] = []
 			for (const actor of mentionedActors) {
 				if (actor.type === 'agent') {
 					mentions.push({ agentId: actor.id, name: actor.name })
+				} else if (actor.type === 'human') {
+					humanIds.push(actor.id)
+				}
+			}
+
+			if (humanIds.length > 0) {
+				const existing = await tx
+					.select({ actorId: conversationParticipants.actorId })
+					.from(conversationParticipants)
+					.where(
+						and(
+							eq(conversationParticipants.conversationId, id),
+							inArray(conversationParticipants.actorId, humanIds),
+						),
+					)
+				const existingIds = new Set(existing.map((p) => p.actorId))
+				const toAdd = humanIds.filter((hid) => !existingIds.has(hid))
+
+				if (toAdd.length > 0) {
+					await tx
+						.insert(conversationParticipants)
+						.values(toAdd.map((hid) => ({ conversationId: id, actorId: hid })))
+						.onConflictDoNothing({
+							target: [conversationParticipants.conversationId, conversationParticipants.actorId],
+						})
+					addedHumans.push(...toAdd)
+				}
+
+				const conversationLabel = conversation.title ?? 'a conversation'
+				const createdNotifications = await tx
+					.insert(notifications)
+					.values(
+						humanIds.map((hid) => ({
+							workspaceId,
+							type: 'needs_input' as const,
+							title: `@mentioned in ${conversationLabel}`,
+							content: body.content,
+							sourceActorId: actorId,
+							targetActorId: hid,
+							status: 'pending' as const,
+							metadata: {
+								conversation_id: id,
+								message_id: msg.id,
+								auto_added: !existingIds.has(hid),
+							},
+						})),
+					)
+					.returning()
+
+				if (createdNotifications.length > 0) {
+					await tx.insert(events).values(
+						createdNotifications.map((n) => ({
+							workspaceId,
+							actorId,
+							action: 'created',
+							entityType: 'notification',
+							entityId: n.id,
+							data: n,
+						})),
+					)
 				}
 			}
 		}
 
-		return { message: msg, agentMentions: mentions }
+		return { message: msg, agentMentions: mentions, addedHumans }
 	})
 
-	logger.info('message sent', { conversationId: id, messageId: message.id, workspaceId })
+	logger.info('message sent', {
+		conversationId: id,
+		messageId: message.id,
+		workspaceId,
+		humansAdded: addedHumans.length,
+	})
 
 	// Fire-and-forget: spawn a session per @mentioned agent in the room context
 	for (const mention of agentMentions) {
