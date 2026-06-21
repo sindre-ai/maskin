@@ -2983,4 +2983,322 @@ describe('tool handlers', () => {
 			).rejects.toThrow(/attach_skill_ids and detach_skill_ids/)
 		})
 	})
+
+	describe('marketplace handlers', () => {
+		const pkgId = '770e8400-e29b-41d4-a716-446655440001'
+		const pkgId2 = '770e8400-e29b-41d4-a716-446655440099'
+		const itemId = '770e8400-e29b-41d4-a716-446655440002'
+		const unknownId = '770e8400-e29b-41d4-a716-446655440099'
+		const installRowId = '770e8400-e29b-41d4-a716-446655440003'
+		const workspaceId = 'ws-default-123'
+
+		const pkgSummary = {
+			id: pkgId,
+			name: 'Bug Triage',
+			slug: 'bug-triage',
+			description: 'Reports → fix loop',
+			category: 'job-loop',
+			item_types: ['integration'],
+		}
+		const pkgDetail = {
+			package: pkgSummary,
+			items: [
+				{
+					id: itemId,
+					item_type: 'integration',
+					source_item_id: 'source-1',
+					item_snapshot: { name: 'GitHub', description: 'Issues + PRs' },
+				},
+			],
+		}
+
+		// Queue successive fetch responses by status + body. Each call to the
+		// mocked fetch shifts the next handler off the queue, mirroring how the
+		// real apiCall chain calls fetch once per HTTP round-trip.
+		function queueResponses(
+			responses: Array<
+				| { ok: true; body: unknown; headers?: Record<string, string> }
+				| { ok: false; status: number; body: string }
+			>,
+		) {
+			const spy = vi.spyOn(globalThis, 'fetch')
+			for (const r of responses) {
+				if (r.ok) {
+					spy.mockResolvedValueOnce({
+						ok: true,
+						headers: new Headers(r.headers ?? {}),
+						json: () => Promise.resolve(r.body),
+					} as Response)
+				} else {
+					spy.mockResolvedValueOnce({
+						ok: false,
+						status: r.status,
+						text: () => Promise.resolve(r.body),
+					} as Response)
+				}
+			}
+			return spy
+		}
+
+		describe('list_marketplace_items', () => {
+			it('lists packages and flattens their items', async () => {
+				queueResponses([
+					{ ok: true, body: { packages: [pkgSummary] } },
+					{ ok: true, body: pkgDetail },
+				])
+
+				const handler = getHandler('list_marketplace_items')
+				const result = (await handler({})) as { content: Array<{ text: string }> }
+				const parsed = JSON.parse(result.content[0].text)
+
+				expect(parsed.total).toBe(2)
+				expect(parsed.items[0]).toMatchObject({ id: pkgId, type: 'package', name: 'Bug Triage' })
+				expect(parsed.items[1]).toMatchObject({
+					id: itemId,
+					type: 'integration',
+					name: 'GitHub',
+					package_id: pkgId,
+				})
+			})
+
+			it('passes through the q query parameter url-encoded', async () => {
+				queueResponses([{ ok: true, body: { packages: [] } }])
+
+				const handler = getHandler('list_marketplace_items')
+				await handler({ q: 'bug triage' })
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/catalog/packages?q=bug%20triage',
+					expect.objectContaining({ method: 'GET' }),
+				)
+			})
+		})
+
+		describe('get_marketplace_items', () => {
+			it('returns full package detail for a package id', async () => {
+				queueResponses([
+					{ ok: true, body: { packages: [pkgSummary] } },
+					{ ok: true, body: pkgDetail },
+				])
+
+				const handler = getHandler('get_marketplace_items')
+				const result = (await handler({ ids: [pkgId] })) as { content: Array<{ text: string }> }
+				const parsed = JSON.parse(result.content[0].text)
+
+				expect(parsed.items).toHaveLength(1)
+				expect(parsed.items[0]).toMatchObject({ id: pkgId, type: 'package' })
+				expect(parsed.items[0].items).toHaveLength(1)
+				expect(parsed.not_found).toEqual([])
+			})
+
+			it('returns the snapshot for an item id and lists unknown ids in not_found', async () => {
+				queueResponses([
+					{ ok: true, body: { packages: [pkgSummary] } },
+					{ ok: true, body: pkgDetail },
+				])
+
+				const handler = getHandler('get_marketplace_items')
+				const result = (await handler({ ids: [itemId, unknownId] })) as {
+					content: Array<{ text: string }>
+				}
+				const parsed = JSON.parse(result.content[0].text)
+
+				expect(parsed.items).toHaveLength(1)
+				expect(parsed.items[0]).toMatchObject({
+					id: itemId,
+					type: 'integration',
+					snapshot: { name: 'GitHub', description: 'Issues + PRs' },
+				})
+				expect(parsed.not_found).toEqual([unknownId])
+			})
+
+			it('accepts a single id (not just an array)', async () => {
+				queueResponses([
+					{ ok: true, body: { packages: [pkgSummary] } },
+					{ ok: true, body: pkgDetail },
+				])
+
+				const handler = getHandler('get_marketplace_items')
+				const result = (await handler({ ids: pkgId })) as { content: Array<{ text: string }> }
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.items).toHaveLength(1)
+			})
+		})
+
+		describe('install_marketplace_items', () => {
+			it('installs a package via /api/installed-packages when the id is a package', async () => {
+				queueResponses([
+					{ ok: true, body: pkgDetail }, // resolve as package
+					{ ok: true, body: { id: installRowId, sourcePackageId: pkgId } },
+				])
+
+				const handler = getHandler('install_marketplace_items')
+				const result = (await handler({ ids: [pkgId] })) as {
+					content: Array<{ text: string }>
+				}
+				const parsed = JSON.parse(result.content[0].text)
+
+				expect(parsed.results[0]).toMatchObject({
+					id: pkgId,
+					type: 'package',
+					status: 'installed',
+				})
+				const installCall = vi.mocked(fetch).mock.calls[1]
+				expect(installCall[0]).toBe('http://localhost:3000/api/installed-packages')
+				expect(installCall[1]?.method).toBe('POST')
+				expect(JSON.parse(installCall[1]?.body as string)).toEqual({
+					packageId: pkgId,
+					workspaceId,
+				})
+			})
+
+			it('returns already_installed on a 409 from the package install path', async () => {
+				queueResponses([
+					{ ok: true, body: pkgDetail },
+					{
+						ok: false,
+						status: 409,
+						body: '{"error":{"message":"Package is already installed in this workspace"}}',
+					},
+				])
+
+				const handler = getHandler('install_marketplace_items')
+				const result = (await handler({ ids: [pkgId] })) as {
+					content: Array<{ text: string }>
+				}
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.results[0].status).toBe('already_installed')
+			})
+
+			it('falls back to the single-item install when the catalog has no such package', async () => {
+				queueResponses([
+					{
+						ok: false,
+						status: 404,
+						body: '{"error":{"message":"Catalog package not found"}}',
+					},
+					{ ok: true, body: { id: 'new-entity', item_type: 'integration', name: 'GitHub' } },
+				])
+
+				const handler = getHandler('install_marketplace_items')
+				const result = (await handler({ ids: [itemId] })) as {
+					content: Array<{ text: string }>
+				}
+				const parsed = JSON.parse(result.content[0].text)
+
+				expect(parsed.results[0]).toMatchObject({
+					id: itemId,
+					type: 'item',
+					status: 'installed',
+				})
+				const installCall = vi.mocked(fetch).mock.calls[1]
+				expect(installCall[0]).toBe(`http://localhost:3000/api/catalog/items/${itemId}/install`)
+				expect(installCall[1]?.method).toBe('POST')
+			})
+
+			it('returns not_found when neither package nor item exist', async () => {
+				queueResponses([
+					{
+						ok: false,
+						status: 404,
+						body: '{"error":{"message":"Catalog package not found"}}',
+					},
+					{
+						ok: false,
+						status: 404,
+						body: '{"error":{"message":"Catalog item not found"}}',
+					},
+				])
+
+				const handler = getHandler('install_marketplace_items')
+				const result = (await handler({ ids: [unknownId] })) as {
+					content: Array<{ text: string }>
+				}
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.results[0]).toMatchObject({ id: unknownId, status: 'not_found' })
+			})
+		})
+
+		describe('remove_marketplace_items', () => {
+			it('removes a package by mapping catalog id to installed-packages row id', async () => {
+				queueResponses([
+					{ ok: true, body: { installs: [{ id: installRowId, sourcePackageId: pkgId }] } },
+					{ ok: true, body: pkgDetail }, // resolve as package
+					{ ok: true, body: { deleted: true } },
+				])
+
+				const handler = getHandler('remove_marketplace_items')
+				const result = (await handler({ ids: [pkgId] })) as {
+					content: Array<{ text: string }>
+				}
+				const parsed = JSON.parse(result.content[0].text)
+
+				expect(parsed.results[0]).toMatchObject({
+					id: pkgId,
+					type: 'package',
+					status: 'removed',
+				})
+				const deleteCall = vi.mocked(fetch).mock.calls[2]
+				expect(deleteCall[0]).toBe(`http://localhost:3000/api/installed-packages/${installRowId}`)
+				expect(deleteCall[1]?.method).toBe('DELETE')
+				expect(JSON.parse(deleteCall[1]?.body as string)).toEqual({
+					keepProvisionedItems: false,
+				})
+			})
+
+			it('returns not_installed for a package that has no install row', async () => {
+				queueResponses([
+					{ ok: true, body: { installs: [] } },
+					{ ok: true, body: pkgDetail },
+				])
+
+				const handler = getHandler('remove_marketplace_items')
+				const result = (await handler({ ids: [pkgId] })) as {
+					content: Array<{ text: string }>
+				}
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.results[0]).toMatchObject({ id: pkgId, status: 'not_installed' })
+			})
+
+			it('returns not_installed when single-item uninstall surfaces 404', async () => {
+				queueResponses([
+					{ ok: true, body: { installs: [] } },
+					{
+						ok: false,
+						status: 404,
+						body: '{"error":{"message":"Catalog package not found"}}',
+					},
+					{
+						ok: false,
+						status: 404,
+						body: '{"error":{"message":"This catalog item is not installed in the workspace"}}',
+					},
+				])
+
+				const handler = getHandler('remove_marketplace_items')
+				const result = (await handler({ ids: [itemId] })) as {
+					content: Array<{ text: string }>
+				}
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.results[0]).toMatchObject({
+					id: itemId,
+					type: 'item',
+					status: 'not_installed',
+				})
+			})
+
+			it('forwards keep_provisioned_items to both code paths', async () => {
+				queueResponses([
+					{ ok: true, body: { installs: [{ id: installRowId, sourcePackageId: pkgId2 }] } },
+					{ ok: true, body: { ...pkgDetail, package: { ...pkgSummary, id: pkgId2 } } },
+					{ ok: true, body: { deleted: true } },
+				])
+
+				const handler = getHandler('remove_marketplace_items')
+				await handler({ ids: [pkgId2], keep_provisioned_items: true })
+				const deleteCall = vi.mocked(fetch).mock.calls[2]
+				expect(JSON.parse(deleteCall[1]?.body as string)).toEqual({ keepProvisionedItems: true })
+			})
+		})
+	})
 })

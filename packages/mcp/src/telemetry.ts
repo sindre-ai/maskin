@@ -227,6 +227,9 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Integrations
 	connect_integration: 'integration_connect',
 	disconnect_integration: 'integration_disconnect',
+	// Marketplace
+	install_marketplace_items: 'marketplace_install',
+	remove_marketplace_items: 'marketplace_remove',
 	// Sessions
 	create_session: 'session_create',
 	stop_session: 'session_stop',
