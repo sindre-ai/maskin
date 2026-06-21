@@ -1,5 +1,6 @@
 import type { ResolvedProvider } from './types'
 
+import { config as coolifyConfig } from './providers/coolify/config'
 import { githubAuth } from './providers/github/auth'
 // Import provider configs
 import { config as githubConfig } from './providers/github/config'
@@ -65,6 +66,10 @@ providers.set('gmail', {
 
 providers.set('posthog', {
 	config: posthogConfig,
+})
+
+providers.set('coolify', {
+	config: coolifyConfig,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────
