@@ -375,10 +375,10 @@ describe('Settings > Skills', () => {
 		const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
 		const zipFile = new File(['PK fake-zip-bytes'], 'docx.zip', { type: 'application/zip' })
 
-		// applyAccept: false skips user-event's MIME-vs-accept filter so the
-		// assertion exercises the component's own handleFiles routing instead
-		// of the OS-level file-type filter.
-		await user.upload(fileInput, [zipFile], { applyAccept: false })
+		// The drop-zone's `accept` includes `application/zip`, so the file's
+		// MIME passes user-event's filter — handleFiles runs as it would in
+		// the browser.
+		await user.upload(fileInput, [zipFile])
 
 		await waitFor(() => expect(mockUploadMutateAsync).toHaveBeenCalledTimes(1))
 		const [zipPayload] = mockUploadMutateAsync.mock.calls[0]
@@ -390,9 +390,7 @@ describe('Settings > Skills', () => {
 	it('passes skillId through the upload mutation when Replace bundle is used', async () => {
 		const user = userEvent.setup()
 		mockUseWorkspaceSkills.mockReturnValue({
-			data: [
-				buildSkill({ id: 'skill-42', name: 'docx', isFolder: true, fileCount: 3 }),
-			],
+			data: [buildSkill({ id: 'skill-42', name: 'docx', isFolder: true, fileCount: 3 })],
 			isLoading: false,
 		})
 		renderPage()
@@ -415,7 +413,7 @@ describe('Settings > Skills', () => {
 		expect(replaceInput).toBeTruthy()
 
 		const newZip = new File(['PK new'], 'docx-v2.zip', { type: 'application/zip' })
-		await user.upload(replaceInput, [newZip], { applyAccept: false })
+		await user.upload(replaceInput, [newZip])
 
 		await waitFor(() => expect(mockUploadMutateAsync).toHaveBeenCalledTimes(1))
 		const [payload] = mockUploadMutateAsync.mock.calls[0]
