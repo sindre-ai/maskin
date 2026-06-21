@@ -36,6 +36,7 @@ import {
 	trackLoopActiveDay,
 	utcDayString,
 } from '../lib/analytics/catalog-events'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
@@ -43,7 +44,12 @@ import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
-import { type LlmRoute, checkPlanCap, resolveLlmRoute } from '../lib/llm-routing'
+import {
+	LLM_ROUTE_MASKIN_PLAN,
+	type LlmRoute,
+	checkPlanCap,
+	resolveLlmRoute,
+} from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { AgentServerClient } from './agent-server-client'
@@ -1526,6 +1532,24 @@ export class SessionManager extends EventEmitter {
 		await this.maybeEmitLoopActiveDay(session.actorId, session.workspaceId).catch((err) => {
 			logger.warn('Failed loop_active_day emit', { sessionId, error: String(err) })
 		})
+
+		const llmRoute = (session.config as Record<string, unknown>)?.llm_route
+		if (llmRoute === LLM_ROUTE_MASKIN_PLAN && usage) {
+			capturePosthogEvent('maskin_plan_session_completed', session.workspaceId, {
+				actor_id: session.actorId,
+				session_id: sessionId,
+				input_tokens: usage.inputTokens ?? 0,
+				output_tokens: usage.outputTokens ?? 0,
+				total_cost_usd: usage.totalCostUsd ?? 0,
+				duration_ms: usage.durationMs ?? 0,
+				status,
+			}).catch((err) => {
+				logger.warn('Failed maskin_plan_session_completed PostHog emit', {
+					sessionId,
+					error: String(err),
+				})
+			})
+		}
 
 		try {
 			await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
