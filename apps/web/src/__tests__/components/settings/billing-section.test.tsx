@@ -47,8 +47,8 @@ describe('formatResetsIn', () => {
 	it('returns days when more than 24h remain', () => {
 		expect(formatResetsIn(5 * 24 * 60 * 60 * 1000)).toBe('resets in 5d')
 	})
-	it('returns hours when under a day', () => {
-		expect(formatResetsIn(3 * 60 * 60 * 1000)).toBe('resets in 3h')
+	it('returns empty when under a day (sub-day uses PeriodCountdown instead)', () => {
+		expect(formatResetsIn(3 * 60 * 60 * 1000)).toBe('')
 	})
 	it('returns empty when null or zero', () => {
 		expect(formatResetsIn(null)).toBe('')
@@ -106,7 +106,7 @@ describe('BillingSection', () => {
 		expect(screen.getByText(/12M \/ 32M tokens/)).toBeInTheDocument()
 		expect(screen.getByText(/resets in 23d/)).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Switch to bring-your-own/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Downgrade to Free' })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /Manage in Stripe/ })).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
 	})
@@ -130,7 +130,7 @@ describe('BillingSection', () => {
 
 		await screen.findByText('Pro — $60/mo')
 		expect(screen.queryByRole('button', { name: /Upgrade/ })).not.toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Switch to bring-your-own/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Downgrade to Free' })).toBeInTheDocument()
 	})
 
 	it('renders BYO plan with the upgrade options + no usage bar', async () => {
@@ -148,7 +148,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Bring-your-own')
+		await screen.findAllByText('Free')
 		expect(screen.getByText(/Using your own Claude subscription/)).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Upgrade to Starter' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
@@ -208,8 +208,8 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await user.click(await screen.findByRole('button', { name: /Switch to bring-your-own/ }))
+		await user.click(await screen.findByRole('button', { name: 'Downgrade to Free' }))
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
-		expect(screen.getByText(/cancels your active Maskin subscription/)).toBeInTheDocument()
+		expect(screen.getByText(/lose access to Maskin's hosted LLM/)).toBeInTheDocument()
 	})
 })
