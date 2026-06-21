@@ -373,4 +373,92 @@ describe('Skills — Workspace Skills section', () => {
 
 		expect(mockDetach).toHaveBeenCalledWith('skill-abc')
 	})
+
+	it('renders a folder badge with file count on a folder-skill row', () => {
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildWorkspaceSkill({ id: 'skill-docx', name: 'docx' })],
+			isLoading: false,
+		})
+		mockUseAgentSkillAttachments.mockReturnValue({
+			data: [
+				buildAttachedSkill({
+					id: 'skill-docx',
+					name: 'docx',
+					description: 'Generate Word documents',
+					isFolder: true,
+					fileCount: 3,
+				}),
+			],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		expect(screen.getByLabelText('Folder skill with 3 files')).toBeInTheDocument()
+		expect(screen.getByText('3 files')).toBeInTheDocument()
+		// Single-file affordances are still present — folder rows reuse the row, no extra editor.
+		expect(screen.getByRole('button', { name: 'Remove docx' })).toBeInTheDocument()
+	})
+
+	it('uses singular "file" wording when a folder skill has exactly one bundled file', () => {
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildWorkspaceSkill({ id: 'skill-one', name: 'one-shot' })],
+			isLoading: false,
+		})
+		mockUseAgentSkillAttachments.mockReturnValue({
+			data: [
+				buildAttachedSkill({
+					id: 'skill-one',
+					name: 'one-shot',
+					isFolder: true,
+					fileCount: 1,
+				}),
+			],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		expect(screen.getByLabelText('Folder skill with 1 file')).toBeInTheDocument()
+		expect(screen.getByText('1 file')).toBeInTheDocument()
+	})
+
+	it('does not render a folder badge on a single-file (isFolder=false) attached row', () => {
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildWorkspaceSkill({ id: 'skill-md', name: 'deploy' })],
+			isLoading: false,
+		})
+		mockUseAgentSkillAttachments.mockReturnValue({
+			data: [
+				buildAttachedSkill({
+					id: 'skill-md',
+					name: 'deploy',
+					description: 'Ship it',
+					isFolder: false,
+					fileCount: null,
+				}),
+			],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		expect(screen.queryByText(/file(s)?$/)).not.toBeInTheDocument()
+		expect(screen.queryByLabelText(/Folder skill with/)).not.toBeInTheDocument()
+		// The row keeps its original shape — name, description, Remove.
+		expect(screen.getByRole('button', { name: 'Remove deploy' })).toBeInTheDocument()
+		expect(screen.getByText('Ship it')).toBeInTheDocument()
+	})
 })
