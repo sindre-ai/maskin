@@ -380,6 +380,23 @@ export class AgentStorageManager {
 	}
 
 	/**
+	 * Same as `listWorkspaceSkillFiles` but carries the object size for each
+	 * entry. Used by the settings page's inline file tree, where each row
+	 * displays a per-file size next to its relative path.
+	 */
+	async listWorkspaceSkillFilesWithSize(
+		workspaceId: string,
+		skillId: string,
+	): Promise<{ relativePath: string; sizeBytes: number }[]> {
+		const prefix = workspaceSkillPrefix(workspaceId, skillId)
+		const entries = await this.storage.listWithMetadata(prefix)
+		return entries.map(({ key, size }) => ({
+			relativePath: key.slice(prefix.length),
+			sizeBytes: size,
+		}))
+	}
+
+	/**
 	 * Fetch a single bundled file by its absolute storage key. Thin pass-through
 	 * to the storage provider so route handlers don't have to import the
 	 * provider directly.

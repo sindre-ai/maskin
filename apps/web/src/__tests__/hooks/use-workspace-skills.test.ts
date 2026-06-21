@@ -9,6 +9,8 @@ vi.mock('@/lib/api', () => ({
 			create: vi.fn(),
 			update: vi.fn(),
 			delete: vi.fn(),
+			upload: vi.fn(),
+			listFiles: vi.fn(),
 		},
 	},
 }))
@@ -17,7 +19,9 @@ import {
 	useCreateWorkspaceSkill,
 	useDeleteWorkspaceSkill,
 	useUpdateWorkspaceSkill,
+	useUploadWorkspaceSkill,
 	useWorkspaceSkill,
+	useWorkspaceSkillFiles,
 	useWorkspaceSkills,
 } from '@/hooks/use-workspace-skills'
 import { api } from '@/lib/api'
@@ -31,6 +35,8 @@ const skillListItem = {
 	storageKey: 'workspaces/ws-1/skills/my-skill/SKILL.md',
 	sizeBytes: 128,
 	isValid: true,
+	isFolder: false,
+	fileCount: null,
 	createdBy: '22222222-2222-2222-2222-222222222222',
 	createdAt: '2026-04-23T00:00:00Z',
 	updatedAt: '2026-04-23T00:00:00Z',
@@ -181,6 +187,67 @@ describe('use-workspace-skills', () => {
 
 			await waitFor(() => expect(result.current.isSuccess).toBe(true))
 			expect(api.workspaceSkills.delete).toHaveBeenCalledWith('ws-1', 'my-skill')
+		})
+	})
+
+	describe('useUploadWorkspaceSkill', () => {
+		it('forwards the file without a skillId on first upload', async () => {
+			const result = { ...skillListItem, isFolder: true, fileCount: 3, content: '', error: null }
+			vi.mocked(api.workspaceSkills.upload).mockResolvedValue(result)
+
+			const { result: hook } = renderHook(() => useUploadWorkspaceSkill('ws-1'), {
+				wrapper: TestWrapper,
+			})
+
+			const file = new File(['zip'], 'docx.zip', { type: 'application/zip' })
+			hook.current.mutate({ file })
+
+			await waitFor(() => expect(hook.current.isSuccess).toBe(true))
+			expect(api.workspaceSkills.upload).toHaveBeenCalledWith('ws-1', file, undefined)
+		})
+
+		it('passes skillId through as a replace flow', async () => {
+			const result = { ...skillListItem, isFolder: true, fileCount: 3, content: '', error: null }
+			vi.mocked(api.workspaceSkills.upload).mockResolvedValue(result)
+
+			const { result: hook } = renderHook(() => useUploadWorkspaceSkill('ws-1'), {
+				wrapper: TestWrapper,
+			})
+
+			const file = new File(['zip'], 'docx.zip', { type: 'application/zip' })
+			hook.current.mutate({ file, skillId: 'skill-42' })
+
+			await waitFor(() => expect(hook.current.isSuccess).toBe(true))
+			expect(api.workspaceSkills.upload).toHaveBeenCalledWith('ws-1', file, { skillId: 'skill-42' })
+		})
+	})
+
+	describe('useWorkspaceSkillFiles', () => {
+		it('fetches files when enabled and skillId are set', async () => {
+			const entries = [{ relativePath: 'SKILL.md', sizeBytes: 100 }]
+			vi.mocked(api.workspaceSkills.listFiles).mockResolvedValue(entries)
+
+			const { result } = renderHook(() => useWorkspaceSkillFiles('ws-1', 'skill-42', true), {
+				wrapper: TestWrapper,
+			})
+
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(result.current.data).toEqual(entries)
+			expect(api.workspaceSkills.listFiles).toHaveBeenCalledWith('ws-1', 'skill-42')
+		})
+
+		it('does not fetch when disabled', () => {
+			renderHook(() => useWorkspaceSkillFiles('ws-1', 'skill-42', false), {
+				wrapper: TestWrapper,
+			})
+
+			expect(api.workspaceSkills.listFiles).not.toHaveBeenCalled()
+		})
+
+		it('does not fetch when skillId is null', () => {
+			renderHook(() => useWorkspaceSkillFiles('ws-1', null, true), { wrapper: TestWrapper })
+
+			expect(api.workspaceSkills.listFiles).not.toHaveBeenCalled()
 		})
 	})
 })
