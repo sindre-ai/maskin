@@ -26,6 +26,9 @@ const mockContainerManager = {
 	start: vi.fn().mockResolvedValue(undefined),
 	stop: vi.fn().mockResolvedValue(undefined),
 	remove: vi.fn().mockResolvedValue(undefined),
+	pullImage: vi.fn().mockResolvedValue(undefined),
+	createNetwork: vi.fn().mockResolvedValue('anko-net-test'),
+	removeNetwork: vi.fn().mockResolvedValue(undefined),
 	exec: vi.fn().mockResolvedValue({ exitCode: 0, output: '' }),
 	copyTo: vi.fn().mockResolvedValue(undefined),
 	copyFrom: vi.fn().mockResolvedValue({}),
@@ -344,6 +347,112 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.INTERACTIVE).toBeUndefined()
+		})
+	})
+
+
+	describe('startSession() — browser sidecar provisioning', () => {
+		function buildTestSession(overrides: Record<string, unknown> = {}) {
+			return buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+				...overrides,
+			})
+		}
+
+		function buildTestAgent(actorId: string) {
+			return {
+				id: actorId,
+				type: 'agent' as const,
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+		}
+
+		function buildTestWorkspace(workspaceId: string) {
+			return { id: workspaceId, settings: {} }
+		}
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+		})
+
+		it('provisions a browser sidecar when bet_qa_required is true (AC-T1 Docker leg)', async () => {
+			const session = buildTestSession({ config: { bet_qa_required: true } })
+			const agent = buildTestAgent(session.actorId)
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace llm keys
+				[], // launchContainer: integrations
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.pullImage).toHaveBeenCalledWith('chromedp/headless-shell:latest')
+			expect(mockContainerManager.createNetwork).toHaveBeenCalled()
+
+			const browserCreateCall = mockContainerManager.create.mock.calls[0]?.[0] as Record<string, unknown>
+			expect(browserCreateCall.image).toBe('chromedp/headless-shell:latest')
+			expect(browserCreateCall.name).toMatch(/^anko-browser-/)
+			expect(browserCreateCall.networkMode).toMatch(/^anko-net-/)
+			expect(browserCreateCall.memoryMb).toBe(512)
+			expect(browserCreateCall.cpuShares).toBe(512)
+
+			const agentCreateCall = mockContainerManager.create.mock.calls[1]?.[0] as {
+				env: Record<string, string>
+				networkMode?: string
+			}
+			expect(agentCreateCall.env.BROWSER_CDP_URL).toMatch(/^ws:\/\/anko-browser-.+:9222$/)
+			expect(agentCreateCall.networkMode).toMatch(/^anko-net-/)
+		})
+
+		it('does not provision a sidecar when bet_qa_required is absent (AC-T6 Docker leg)', async () => {
+			const session = buildTestSession({ config: {} })
+			const agent = buildTestAgent(session.actorId)
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace llm keys
+				[], // launchContainer: integrations
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.pullImage).not.toHaveBeenCalled()
+			expect(mockContainerManager.createNetwork).not.toHaveBeenCalled()
+
+			const agentCreateCall = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+				networkMode?: string
+			}
+			expect(agentCreateCall.env.BROWSER_CDP_URL).toBeUndefined()
+			expect(agentCreateCall.networkMode).toBeUndefined()
 		})
 	})
 

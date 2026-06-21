@@ -125,8 +125,8 @@ build_context() {
 MCP_CONFIG_FILE=""
 
 setup_mcps() {
-  # Skip if no MCP config provided
-  if [ -z "$AGENT_MCP_JSON" ] && [ -z "$MCP_SERVERS_JSON" ]; then
+  # Skip if no MCP config provided and no browser CDP endpoint
+  if [ -z "$AGENT_MCP_JSON" ] && [ -z "$MCP_SERVERS_JSON" ] && [ -z "$BROWSER_CDP_URL" ]; then
     return
   fi
 
@@ -140,6 +140,13 @@ setup_mcps() {
   merged=$(printf '%s\n%s' "$agent_config" "$session_config" | jq -s '
     { mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }
   ')
+
+  # Add browser MCP server if CDP endpoint is configured
+  if [ -n "$BROWSER_CDP_URL" ]; then
+    local browser_entry
+    browser_entry=$(printf '{"mcpServers":{"@playwright/mcp":{"command":"npx","args":["@playwright/mcp","--cdp-endpoint","%s"]}}}' "$BROWSER_CDP_URL")
+    merged=$(echo "$merged" "$browser_entry" | jq -s '{ mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }')
+  fi
 
   # Only write if there are actual servers configured
   local server_count

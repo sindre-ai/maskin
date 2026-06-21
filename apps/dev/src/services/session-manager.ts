@@ -1103,9 +1103,10 @@ export class SessionManager extends EventEmitter {
 			await this.containers.ensureImage(spec.image, this.agentBaseBuildContext)
 		}
 
-		// Provision browser sidecar if Playwright MCP is configured
+		// Provision browser sidecar when the bet_qa_required flag is set
 		let networkMode: string | undefined
-		if (this.needsBrowserSidecar(envVars)) {
+		const sessionConfig = session.config as Record<string, unknown> | null
+		if (sessionConfig?.bet_qa_required === true) {
 			const prefix = session.id.slice(0, 8)
 			const result = await this.provisionBrowserSidecar(session.id, prefix)
 			if (result) {
