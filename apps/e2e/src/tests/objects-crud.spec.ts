@@ -56,18 +56,15 @@ test.describe('Objects CRUD', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
-		await expect(page.getByText('Original Title')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByPlaceholder('Untitled')).toBeVisible({ timeout: 10000 })
 
-		// Click the title to start editing
-		await page.getByText('Original Title').click()
-
-		// The title should now be an input — clear and type new value
-		const titleInput = page.locator('input[type="text"]').first()
+		// The title textbox is always editable — clear and type new value
+		const titleInput = page.getByPlaceholder('Untitled')
 		await titleInput.fill('Updated Title')
-		await titleInput.press('Enter')
+		await titleInput.press('Tab')
 
 		// Verify the title was updated
-		await expect(page.getByText('Updated Title')).toBeVisible()
+		await expect(page.getByPlaceholder('Untitled')).toHaveValue('Updated Title')
 	})
 
 	test('can delete an object', async ({ page, account }) => {
@@ -80,8 +77,9 @@ test.describe('Objects CRUD', () => {
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
 		await expect(page.getByText('Object To Delete')).toBeVisible({ timeout: 10000 })
 
-		// Click Delete, then Confirm
-		await page.getByRole('button', { name: 'Delete', exact: true }).click()
+		// Delete is inside the "More actions" dropdown
+		await page.getByRole('button', { name: 'More actions' }).click()
+		await page.getByRole('menuitem', { name: 'Delete' }).click()
 		await expect(page.getByText('Delete this insight?')).toBeVisible()
 		await page.getByRole('button', { name: 'Confirm' }).click()
 

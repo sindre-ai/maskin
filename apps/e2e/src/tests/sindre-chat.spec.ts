@@ -90,10 +90,8 @@ test.describe('Sindre chat surfaces', () => {
 		const sheet = page.locator('[data-surface="sheet"]')
 		await expect(sheet).toBeVisible()
 
-		// Picker buttons unlock once the sheet's Sindre session reaches
-		// `ready`/`connecting`; wait explicitly so the first click doesn't
-		// race the session bootstrap.
-		const objectsBtn = sheet.getByRole('button', { name: 'Attach objects' })
+		// Picker buttons are always visible in the input toolbar.
+		const objectsBtn = sheet.getByRole('button', { name: 'Attach items' })
 		const agentBtn = sheet.getByRole('button', { name: 'Pick an agent' })
 		await expect(objectsBtn).toBeEnabled({ timeout: 10_000 })
 
@@ -149,14 +147,20 @@ test.describe('Sindre chat surfaces', () => {
 		await page.goto(`/${account.workspaceId}`)
 		await openSheetFromSidebar(page)
 
+		// Sessions are bootstrapped lazily on the first user turn — send a
+		// message to trigger session creation + SSE stream subscription.
+		const input = page.getByPlaceholder('Message Sindre')
+		await expect(input).toBeEnabled({ timeout: 10_000 })
+		await input.fill('Hello')
+		await input.press('Enter')
+
 		await expect.poll(() => mocks.sessionsCreated, { timeout: 10_000 }).toBeGreaterThanOrEqual(1)
 		await expect
 			.poll(() => mocks.streamSubscriptions, { timeout: 10_000 })
 			.toBeGreaterThanOrEqual(1)
 
 		// Session id is tab-scoped React state — no localStorage persistence.
-		// Refreshing the page bootstraps a new interactive session and the
-		// watchdog pauses the old one on idle.
+		// Refreshing the page bootstraps a new interactive session.
 		const storedSessionId = await page.evaluate(
 			(ws) => localStorage.getItem(`maskin-sindre-session-${ws}`),
 			account.workspaceId,
@@ -168,6 +172,12 @@ test.describe('Sindre chat surfaces', () => {
 
 		await page.reload()
 		await openSheetFromSidebar(page)
+
+		// Send a second message to trigger a fresh session bootstrap.
+		const input2 = page.getByPlaceholder('Message Sindre')
+		await expect(input2).toBeEnabled({ timeout: 10_000 })
+		await input2.fill('After reload')
+		await input2.press('Enter')
 
 		// A fresh session is bootstrapped and the SSE stream resubscribes on
 		// the new page instance.
@@ -183,6 +193,10 @@ test.describe('Sindre chat surfaces', () => {
 		page,
 		account,
 	}) => {
+		// PulseCard / Notifications tab was retired in PR #428. The backend
+		// notification surface still exists but there is no "Talk to Sindre"
+		// entry point on the For You page. Skip until re-implemented.
+		test.skip(true, 'PulseCard / Notifications tab retired in PR #428')
 		const notification = buildNotificationFixture({
 			id: 'e2e-notif-1',
 			workspaceId: account.workspaceId,

@@ -48,21 +48,21 @@ test.describe('Visual — Objects list', () => {
 	test('light mode', async ({ page, account }) => {
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}/objects`)
-		await expect(page.getByRole('heading', { name: 'Objects' })).toBeVisible()
+		await waitForApp(page)
 		await argosScreenshot(page, 'objects-list-light')
 	})
 
 	test('dark mode', async ({ page, account }) => {
 		await setTheme(page, 'dark')
 		await page.goto(`/${account.workspaceId}/objects`)
-		await expect(page.getByRole('heading', { name: 'Objects' })).toBeVisible()
+		await waitForApp(page)
 		await argosScreenshot(page, 'objects-list-dark')
 	})
 
 	test('mobile 375px', async ({ page, account }) => {
 		await page.setViewportSize({ width: 375, height: 812 })
 		await page.goto(`/${account.workspaceId}/objects`)
-		await expect(page.getByRole('heading', { name: 'Objects' })).toBeVisible()
+		await waitForApp(page)
 		await argosScreenshot(page, 'objects-list-mobile-375')
 	})
 })
