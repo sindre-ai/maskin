@@ -3,14 +3,12 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { buildNotificationFixture, installSindreMocks } from '../helpers/sindre.helper'
 
 /**
- * E2E coverage for the Sindre chat surfaces (task 45):
- *   1. Pulse input bar forwards the message to the overlay sheet and the
- *      transcript shows a streamed reply.
+ * E2E coverage for the Sindre chat surfaces:
+ *   1. Opening the Sindre panel via the header button and sending a message
+ *      that the persistent session receives; the transcript shows a streamed reply.
  *   2. Slash picker multi-selects two objects, single-selects one agent,
  *      and a second agent pick replaces the first (single-agent rule).
- *   3. Refresh preserves the conversation — the persisted session id in
- *      localStorage is reused and the stream resubscribes, no new session
- *      is created.
+ *   3. Refresh bootstraps a new session and the stream resubscribes.
  *   4. A PulseCard's "Talk to Sindre" action opens the sheet with the
  *      originating notification seeded as a selection chip.
  *
@@ -21,12 +19,12 @@ import { buildNotificationFixture, installSindreMocks } from '../helpers/sindre.
  */
 
 async function openSheetFromSidebar(page: Page) {
-	await page.getByRole('button', { name: 'Sindre', exact: true }).click()
+	await page.getByRole('button', { name: 'Open Sindre' }).click()
 	await expect(page.getByRole('heading', { name: 'Sindre' })).toBeVisible()
 }
 
 test.describe('Sindre chat surfaces', () => {
-	test('pulse input bar forwards to the sheet and streams the reply', async ({ page, account }) => {
+	test('header button opens sindre panel and streams reply', async ({ page, account }) => {
 		const mocks = await installSindreMocks(page, {
 			workspaceId: account.workspaceId,
 			humanActorId: account.actorId,
@@ -44,24 +42,25 @@ test.describe('Sindre chat surfaces', () => {
 
 		await page.goto(`/${account.workspaceId}`)
 
-		const pulseBar = page.locator('[data-surface="pulse-bar"]')
-		const pulseInput = pulseBar.getByPlaceholder('Ask Sindre anything…')
-		await expect(pulseInput).toBeEnabled({ timeout: 10_000 })
-
-		await pulseInput.fill('What is going on?')
-		await pulseInput.press('Enter')
-
-		// Overlay sheet opens.
+		// Open the Sindre panel via the header button
+		await page.getByRole('button', { name: 'Open Sindre' }).click()
 		await expect(page.getByRole('heading', { name: 'Sindre' })).toBeVisible({
 			timeout: 10_000,
 		})
 
-		// The sheet auto-sends the forwarded message to the persistent session.
+		// Wait for the session to bootstrap and the input to become usable
+		const input = page.getByPlaceholder('Message Sindre')
+		await expect(input).toBeEnabled({ timeout: 10_000 })
+
+		await input.fill('What is going on?')
+		await input.press('Enter')
+
+		// The persistent session receives the forwarded message.
 		await expect
 			.poll(() => mocks.inputCalls.map((c) => c.content), { timeout: 10_000 })
 			.toContain('What is going on?')
 
-		// Streaming reply renders in the sheet transcript.
+		// Streaming reply renders in the transcript.
 		await expect(page.getByText('Hi from Sindre E2E')).toBeVisible({
 			timeout: 10_000,
 		})
