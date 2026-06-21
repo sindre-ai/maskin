@@ -97,7 +97,7 @@ export async function upsertContactByEmail(
 			.values({
 				workspaceId,
 				type: CONTACT_TYPE,
-				status: 'new',
+				status: 'new_lead',
 				title: name || email,
 				createdBy: sourceActorId,
 				metadata,

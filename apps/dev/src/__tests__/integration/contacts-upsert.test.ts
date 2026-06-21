@@ -59,7 +59,7 @@ describe('POST /api/contacts/upsert', () => {
 		// Contact stored with lowercased email in metadata.
 		const [contact] = await db.select().from(objects).where(eq(objects.id, body.contact_id))
 		expect(contact.type).toBe('contact')
-		expect(contact.status).toBe('new')
+		expect(contact.status).toBe('new_lead')
 		expect(contact.title).toBe('Alice')
 		expect((contact.metadata as Record<string, unknown>).email).toBe('alice@example.com')
 
