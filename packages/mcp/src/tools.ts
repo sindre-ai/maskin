@@ -1174,4 +1174,55 @@ export const tools = {
 			object_id: z.string().optional().describe('Object id when card_kind=single.'),
 		}),
 	},
+
+	// ─── Marketplace ──────────────────────────────────────────
+	list_marketplace_items: {
+		description:
+			'Browse the curated marketplace catalog. Returns a flat list mixing packages (multi-item bundles like job loops) and their constituent items (agents, triggers, skills, integrations). Each entry carries { id, type, name, description, package_id? } where type is "package" | "actor" | "trigger" | "skill" | "integration". Use the optional `q` filter for free-text search across names, descriptions, and slugs; omit it to browse the full catalog. Call get_marketplace_items with the ids you care about to inspect full contents (snapshots, system prompts, trigger configs) before installing.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			q: z
+				.string()
+				.optional()
+				.describe(
+					'Free-text search across package name, slug, and description. Omit to list everything.',
+				),
+		}),
+	},
+	get_marketplace_items: {
+		description:
+			'Fetch full details for one or more marketplace items by id. Each id may reference a package or an individual item (agent, trigger, skill, integration) as returned by list_marketplace_items. Packages come back with their frozen item snapshots; items come back with the snapshot field that holds the executable contents (e.g. agent system prompt, trigger cron, integration provider config). Unknown ids appear in `not_found` rather than raising.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			ids: z
+				.union([z.string().uuid(), z.array(z.string().uuid()).min(1).max(50)])
+				.describe('A single marketplace item id, or an array of up to 50 ids.'),
+		}),
+	},
+	install_marketplace_items: {
+		description:
+			'Install one or more marketplace items (packages or individual agents/triggers/skills/integrations) into a workspace. Accepts a single id or a list; auto-detects whether each id is a package or a single item and routes to the right install path. Idempotent: re-installing an already-installed item returns status "already_installed" instead of erroring. Returns per-id outcomes so a partial failure does not mask the successes.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			ids: z
+				.union([z.string().uuid(), z.array(z.string().uuid()).min(1).max(50)])
+				.describe('A single marketplace item id, or an array of up to 50 ids.'),
+		}),
+	},
+	remove_marketplace_items: {
+		description:
+			'Remove one or more installed marketplace items from a workspace. Accepts a single id or a list; auto-detects whether each id is a package or a single item. Idempotent: removing an item that is not installed returns status "not_installed" instead of erroring. By default the provisioned actors/triggers/skills/integrations are deleted; pass keep_provisioned_items: true to detach them into plain workspace resources instead.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			ids: z
+				.union([z.string().uuid(), z.array(z.string().uuid()).min(1).max(50)])
+				.describe('A single marketplace item id, or an array of up to 50 ids.'),
+			keep_provisioned_items: z
+				.boolean()
+				.optional()
+				.describe(
+					'When true, strip catalog tracking from the provisioned entities (they stay in the workspace as plain resources). Defaults to false (hard-delete).',
+				),
+		}),
+	},
 } as const

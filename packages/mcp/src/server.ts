@@ -217,6 +217,12 @@ async function apiCallWithResponse(
 	return { data: await response.json(), response }
 }
 
+/** Extract the HTTP status from an error thrown by apiCall, if present. */
+function statusFromApiError(err: unknown): number | undefined {
+	const match = /^API error (\d+):/.exec(err instanceof Error ? err.message : String(err))
+	return match ? Number(match[1]) : undefined
+}
+
 /** Parse an `X-Total-Count`-style header, falling back to a default. */
 function parseTotalCountHeader(response: Response, fallback: number): number {
 	const raw = response.headers.get('x-total-count')
@@ -4893,6 +4899,377 @@ INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, 
   2. The workspace URL above as a clickable link.
   3. ${claudeOauthConnected ? 'A "How to get the machine moving" section — see the template-specific guidance below.' : 'A "Connect your Claude subscription" section (see guidance below) BEFORE the "How to get the machine moving" section.'}${claudeCredsBlock}${devPipelineGuidance}`,
 			)
+		},
+	)
+
+	// ─── Marketplace ─────────────────────────────────────────
+	// Wrappers around /api/catalog and /api/installed-packages. Items here are a
+	// flat union of catalog packages and the items inside them; install/remove
+	// auto-routes between the two endpoint families so callers don't have to
+	// know the difference. All write paths are idempotent — a duplicate install
+	// becomes "already_installed", a missing remove becomes "not_installed".
+
+	type CatalogItemKind = 'actor' | 'trigger' | 'skill' | 'integration'
+	type MarketplaceEntry = {
+		id: string
+		type: 'package' | CatalogItemKind
+		name: string
+		description: string | null
+		package_id?: string
+		package_name?: string
+	}
+
+	type PackageSummary = {
+		id: string
+		name: string
+		slug: string
+		description: string
+		category: string | null
+		item_types: string[]
+	}
+	type PackageItem = {
+		id: string
+		item_type: CatalogItemKind
+		source_item_id: string
+		item_snapshot: Record<string, unknown>
+	}
+	type PackageDetail = { package: PackageSummary; items: PackageItem[] }
+
+	const itemDisplayName = (item: PackageItem): string => {
+		const snapshot = item.item_snapshot ?? {}
+		return (
+			(snapshot.name as string | undefined) ??
+			(snapshot.provider as string | undefined) ??
+			item.source_item_id
+		)
+	}
+
+	const itemDescription = (item: PackageItem): string | null => {
+		const snapshot = item.item_snapshot ?? {}
+		return (
+			(snapshot.description as string | null | undefined) ??
+			(snapshot.summary as string | null | undefined) ??
+			null
+		)
+	}
+
+	const normalizeIds = (ids: string | string[]): string[] => (Array.isArray(ids) ? ids : [ids])
+
+	registerAppTool(
+		server,
+		'list_marketplace_items',
+		{
+			description: tools.list_marketplace_items.description,
+			inputSchema: tools.list_marketplace_items.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const query = args.q ? `?q=${encodeURIComponent(args.q)}` : ''
+			const listResult = (await apiCall(config, 'GET', `/api/catalog/packages${query}`, undefined, {
+				workspaceId: args.workspace_id,
+			})) as { packages: PackageSummary[] }
+
+			// Pull the items per package in parallel — the catalog has few packages
+			// (single-digit) so an N+1 here is cheap and avoids a new HTTP route.
+			const details = await Promise.all(
+				listResult.packages.map(
+					(pkg) =>
+						apiCall(config, 'GET', `/api/catalog/packages/${pkg.id}`, undefined, {
+							workspaceId: args.workspace_id,
+						}) as Promise<PackageDetail>,
+				),
+			)
+
+			const entries: MarketplaceEntry[] = []
+			for (const detail of details) {
+				entries.push({
+					id: detail.package.id,
+					type: 'package',
+					name: detail.package.name,
+					description: detail.package.description,
+				})
+				for (const item of detail.items) {
+					entries.push({
+						id: item.id,
+						type: item.item_type,
+						name: itemDisplayName(item),
+						description: itemDescription(item),
+						package_id: detail.package.id,
+						package_name: detail.package.name,
+					})
+				}
+			}
+
+			return {
+				_meta: meta(
+					'list_marketplace_items',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ items: entries, total: entries.length }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_marketplace_items',
+		{
+			description: tools.get_marketplace_items.description,
+			inputSchema: tools.get_marketplace_items.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const ids = normalizeIds(args.ids)
+			const wsOpts = { workspaceId: args.workspace_id }
+
+			// Resolve every id in parallel: try as package first, fall back to a
+			// package-item lookup via the parent package's detail endpoint. We
+			// search across packages because catalog items don't have a direct
+			// "get by item id" route — the package detail is the only place the
+			// item snapshot is exposed.
+			const packagesList = (await apiCall(
+				config,
+				'GET',
+				'/api/catalog/packages',
+				undefined,
+				wsOpts,
+			)) as { packages: PackageSummary[] }
+
+			const allDetails = await Promise.all(
+				packagesList.packages.map(
+					(pkg) =>
+						apiCall(
+							config,
+							'GET',
+							`/api/catalog/packages/${pkg.id}`,
+							undefined,
+							wsOpts,
+						) as Promise<PackageDetail>,
+				),
+			)
+
+			const packagesById = new Map<string, PackageDetail>()
+			const itemsById = new Map<string, { item: PackageItem; packageDetail: PackageDetail }>()
+			for (const detail of allDetails) {
+				packagesById.set(detail.package.id, detail)
+				for (const item of detail.items) {
+					itemsById.set(item.id, { item, packageDetail: detail })
+				}
+			}
+
+			const found: Array<Record<string, unknown>> = []
+			const notFound: string[] = []
+			for (const id of ids) {
+				const pkg = packagesById.get(id)
+				if (pkg) {
+					found.push({ id, type: 'package', package: pkg.package, items: pkg.items })
+					continue
+				}
+				const itemHit = itemsById.get(id)
+				if (itemHit) {
+					found.push({
+						id,
+						type: itemHit.item.item_type,
+						package_id: itemHit.packageDetail.package.id,
+						package_name: itemHit.packageDetail.package.name,
+						source_item_id: itemHit.item.source_item_id,
+						snapshot: itemHit.item.item_snapshot,
+					})
+					continue
+				}
+				notFound.push(id)
+			}
+
+			return {
+				_meta: meta(
+					'get_marketplace_items',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ items: found, not_found: notFound }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'install_marketplace_items',
+		{
+			description: tools.install_marketplace_items.description,
+			inputSchema: tools.install_marketplace_items.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const ids = normalizeIds(args.ids)
+			const workspaceId = args.workspace_id ?? config.defaultWorkspaceId
+			if (!workspaceId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+			const wsOpts = { workspaceId }
+
+			const results = await Promise.all(
+				ids.map(async (id) => {
+					// Try as package first. If the catalog returns 404, fall through
+					// to the single-item install path; any other error surfaces.
+					let isPackage = false
+					try {
+						await apiCall(config, 'GET', `/api/catalog/packages/${id}`, undefined, wsOpts)
+						isPackage = true
+					} catch (err) {
+						if (statusFromApiError(err) !== 404) throw err
+					}
+
+					if (isPackage) {
+						try {
+							const result = await apiCall(
+								config,
+								'POST',
+								'/api/installed-packages',
+								{ packageId: id, workspaceId },
+								wsOpts,
+							)
+							return { id, type: 'package' as const, status: 'installed' as const, result }
+						} catch (err) {
+							if (statusFromApiError(err) === 409) {
+								return { id, type: 'package' as const, status: 'already_installed' as const }
+							}
+							throw err
+						}
+					}
+
+					try {
+						const result = await apiCall(
+							config,
+							'POST',
+							`/api/catalog/items/${id}/install`,
+							{ workspaceId },
+							wsOpts,
+						)
+						return { id, type: 'item' as const, status: 'installed' as const, result }
+					} catch (err) {
+						const status = statusFromApiError(err)
+						if (status === 409) {
+							return { id, type: 'item' as const, status: 'already_installed' as const }
+						}
+						if (status === 404) {
+							return { id, type: 'unknown' as const, status: 'not_found' as const }
+						}
+						throw err
+					}
+				}),
+			)
+
+			return {
+				_meta: meta('install_marketplace_items', config, workspaceId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ results }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'remove_marketplace_items',
+		{
+			description: tools.remove_marketplace_items.description,
+			inputSchema: tools.remove_marketplace_items.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const ids = normalizeIds(args.ids)
+			const workspaceId = args.workspace_id ?? config.defaultWorkspaceId
+			if (!workspaceId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+			const keepProvisioned = args.keep_provisioned_items ?? false
+			const wsOpts = { workspaceId }
+
+			// One round-trip apiece for the install index so we can map catalog
+			// package ids → the workspace-scoped install row id that uninstall
+			// expects in its path parameter. Fetched once, reused across ids.
+			const installs = (await apiCall(
+				config,
+				'GET',
+				`/api/installed-packages?workspaceId=${encodeURIComponent(workspaceId)}`,
+				undefined,
+				wsOpts,
+			)) as { installs: Array<{ id: string; sourcePackageId: string }> }
+			const installByPackageId = new Map(
+				installs.installs.map((row) => [row.sourcePackageId, row.id] as const),
+			)
+
+			const results = await Promise.all(
+				ids.map(async (id) => {
+					// Detect whether the id is a package — same logic as install.
+					let isPackage = false
+					try {
+						await apiCall(config, 'GET', `/api/catalog/packages/${id}`, undefined, wsOpts)
+						isPackage = true
+					} catch (err) {
+						if (statusFromApiError(err) !== 404) throw err
+					}
+
+					if (isPackage) {
+						const installId = installByPackageId.get(id)
+						if (!installId) {
+							return { id, type: 'package' as const, status: 'not_installed' as const }
+						}
+						try {
+							await apiCall(
+								config,
+								'DELETE',
+								`/api/installed-packages/${installId}`,
+								{ keepProvisionedItems: keepProvisioned },
+								wsOpts,
+							)
+							return { id, type: 'package' as const, status: 'removed' as const }
+						} catch (err) {
+							if (statusFromApiError(err) === 404) {
+								return { id, type: 'package' as const, status: 'not_installed' as const }
+							}
+							throw err
+						}
+					}
+
+					try {
+						await apiCall(
+							config,
+							'DELETE',
+							`/api/catalog/items/${id}/uninstall`,
+							{ workspaceId, keepProvisionedItems: keepProvisioned },
+							wsOpts,
+						)
+						return { id, type: 'item' as const, status: 'removed' as const }
+					} catch (err) {
+						const status = statusFromApiError(err)
+						if (status === 404) {
+							return { id, type: 'item' as const, status: 'not_installed' as const }
+						}
+						throw err
+					}
+				}),
+			)
+
+			return {
+				_meta: meta('remove_marketplace_items', config, workspaceId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ results }, null, 2),
+					},
+				],
+			}
 		},
 	)
 

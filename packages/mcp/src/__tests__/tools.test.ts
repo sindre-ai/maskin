@@ -96,6 +96,10 @@ const ALL_TOOL_NAMES = [
 	'delete_extension',
 	'record_widget_event',
 	'get_bet_widget_metrics',
+	'list_marketplace_items',
+	'get_marketplace_items',
+	'install_marketplace_items',
+	'remove_marketplace_items',
 ]
 
 describe('tool definitions', () => {
