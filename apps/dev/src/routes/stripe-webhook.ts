@@ -247,8 +247,7 @@ async function applyEvent(
 				// customer.subscription.created already wrote real data and we must not
 				// clobber it.
 				const nowSec = Math.floor(Date.now() / 1000)
-				const periodEndIsStale =
-					typeof next.period_end === 'number' && next.period_end <= nowSec
+				const periodEndIsStale = typeof next.period_end === 'number' && next.period_end <= nowSec
 				next = {
 					...next,
 					stripe_customer_id: customerId ?? next.stripe_customer_id,
