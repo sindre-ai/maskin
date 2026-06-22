@@ -22,6 +22,8 @@ export function useInstallCatalogItem(workspaceId: string) {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.workspaceSkills.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.catalogItems.installed(workspaceId) })
 		},
 	})
@@ -45,6 +47,8 @@ export function useUninstallCatalogItem(workspaceId: string) {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.workspaceSkills.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.catalogItems.installed(workspaceId) })
 		},
 	})
