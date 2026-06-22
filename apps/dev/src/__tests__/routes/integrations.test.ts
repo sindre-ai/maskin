@@ -696,49 +696,6 @@ describe('Integrations Routes', () => {
 			)
 			expect(activateCalls).toHaveLength(0)
 		})
-
-		it('redirects with error when fetchInstallationOwnerLogin fails during github callback', async () => {
-			const { encrypt } = await import('../../lib/crypto')
-			const nonce = 'owner-fail-nonce'
-			const state = encrypt(
-				JSON.stringify({
-					workspaceId: wsId,
-					actorId: 'test-actor-id',
-					ts: Date.now(),
-					nonce,
-				}),
-			)
-			const pendingIntegration = buildIntegration({
-				workspaceId: wsId,
-				status: 'pending',
-				externalId: nonce,
-			})
-			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
-			const systemActor = { id: 'system-actor-id', type: 'system', name: 'GitHub' }
-			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
-			mockResults.selectQueue = [
-				[pendingIntegration], // pending integration lookup
-				[member], // membership check
-				[systemActor], // system actor lookup
-				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
-			]
-
-			vi.mocked(fetchInstallationOwnerLogin).mockRejectedValueOnce(
-				new Error('GitHub API unavailable'),
-			)
-
-			const res = await app.request(
-				jsonGet(
-					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=99`,
-				),
-			)
-
-			// Should redirect with a user-visible error rather than silently creating a
-			// half-configured integration that will fail silently at session launch time.
-			expect(res.status).toBe(302)
-			const location = res.headers.get('location') ?? ''
-			expect(location).toContain('error=github_owner_resolution_failed')
-		})
 	})
 
 	describe('DELETE /api/integrations/:id', () => {

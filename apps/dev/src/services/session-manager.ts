@@ -969,7 +969,6 @@ export class SessionManager extends EventEmitter {
 		// config (github-{owner} key). The env var is available for envsubst
 		// substitution when the container resolves the agent's configured entry.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
-		const resolvedGithubTokens: string[] = []
 		for (const integration of activeIntegrations) {
 			try {
 				const resolved = getProvider(integration.provider)
@@ -977,24 +976,9 @@ export class SessionManager extends EventEmitter {
 
 				if (integration.provider === 'github') {
 					const ownerLogin = await this.resolveGithubOwnerLogin(integration)
-					if (!ownerLogin) {
-						logger.error(
-							'GitHub integration token injection skipped — owner_login unresolvable',
-							{
-								sessionId: session.id,
-								workspaceId: session.workspaceId,
-								integrationId: integration.id,
-							},
-						)
-						await this.insertSystemLog(
-							session.id,
-							`GitHub integration (id: ${integration.id}) has no resolvable owner — GITHUB_TOKEN will not be injected. Reconnect the GitHub integration or verify GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY are set on the server.`,
-						)
-						continue
-					}
+					if (!ownerLogin) continue
 
 					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
-					resolvedGithubTokens.push(accessToken)
 				} else {
 					// Slack: only inject the bot token. A user token (xoxp-) here means
 					// the install granted user scopes instead of bot scopes — posting
@@ -1035,14 +1019,6 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// When exactly one GitHub installation resolved, inject a bare GITHUB_TOKEN so
-		// the generic `github` MCP server config (which uses ${GITHUB_TOKEN}) works
-		// without needing org-specific resolution. Skipped when multiple installations
-		// are connected to avoid ambiguity.
-		if (resolvedGithubTokens.length === 1 && resolvedGithubTokens[0]) {
-			envVars['GITHUB_TOKEN'] = resolvedGithubTokens[0]
-		}
-
 		// Merge user-provided env vars, filtering out reserved keys
 		const RESERVED_ENV_KEYS = new Set([
 			'SESSION_ID',
@@ -1070,7 +1046,6 @@ export class SessionManager extends EventEmitter {
 			'CLAUDE_OAUTH_SCOPES',
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
 			'BROWSER_CDP_URL',
-			'GITHUB_TOKEN',
 		])
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {
@@ -1173,7 +1148,7 @@ export class SessionManager extends EventEmitter {
 
 		const installationId = integration.externalId
 		if (!installationId) {
-			logger.error('GitHub integration has no externalId; cannot backfill owner_login', {
+			logger.warn('GitHub integration has no externalId; cannot backfill owner_login', {
 				integrationId: integration.id,
 			})
 			return undefined
@@ -1194,7 +1169,7 @@ export class SessionManager extends EventEmitter {
 			})
 			return ownerLogin
 		} catch (err) {
-			logger.error('Failed to backfill owner_login for GitHub integration; skipping', {
+			logger.warn('Failed to backfill owner_login for GitHub integration; skipping', {
 				integrationId: integration.id,
 				installationId,
 				error: err instanceof Error ? err.message : String(err),
