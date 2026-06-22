@@ -31,15 +31,15 @@
       #kicker-tr { position: absolute; right: 54px; top: 46px; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: #9B958F; z-index: 40; opacity: 0; }
 
       /* ---------- left captions (product beats) ---------- */
-      #cap { position: absolute; left: 96px; top: 0; width: 418px; height: 1080px; z-index: 30; }
-      .cap { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 418px; opacity: 0; }
+      #cap { position: absolute; left: 96px; top: 0; width: 430px; height: 1080px; z-index: 30; }
+      .cap { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 430px; opacity: 0; }
       .cap .ck { display: inline-flex; align-items: center; gap: 9px; font-size: 13px; letter-spacing: 0.15em; text-transform: uppercase; font-weight: 700; color: #2563EB; margin-bottom: 18px; }
       .cap .ck::before { content: ""; width: 22px; height: 2px; background: #2563EB; }
-      .cap .ch { font-size: 47px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; color: #111110; }
+      .cap .ch { font-size: 48px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; color: #111110; }
       .cap .ch em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
 
       /* ---------- right stage (camera) ---------- */
-      #stage { position: absolute; inset: 0; transform-origin: 1210px 540px; }
+      #stage { position: absolute; inset: 0; transform-origin: 560px 540px; }
       .rcard { position: absolute; left: 560px; top: 104px; width: 1300px; height: 872px; background: #FAFAF8; border-radius: 18px; overflow: hidden;
         box-shadow: 0 46px 100px rgba(17,17,16,0.18), 0 0 0 1px #E2DDD7; opacity: 0; }
 
@@ -77,51 +77,70 @@
       .page-h { font-size: 22px; font-weight: 700; letter-spacing: -0.015em; color: #111110; }
       .page-sub { margin-top: 4px; font-size: 13.5px; color: #5A5751; }
       .card { background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 13px; box-shadow: 0 1px 3px rgba(17,17,16,0.05); }
-      .badge { display: inline-flex; align-items: center; height: 22px; padding: 0 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+      .badge { display: inline-flex; align-items: center; height: 23px; padding: 0 11px; border-radius: 12px; font-size: 12.5px; font-weight: 600; }
       .b-type { background: transparent; color: #5A5751; font-weight: 500; border: 1px solid #E2DDD7; }
       .b-insight { background: rgba(91,141,217,.14); color: #3F6CA8; }
       .b-bet { background: rgba(230,126,34,.14); color: #B45F12; }
       .b-proposed { background: rgba(37,99,235,.12); color: #1E50C8; }
       .b-active { background: rgba(39,174,96,.14); color: #1E844A; }
       .b-done { background: rgba(39,174,96,.16); color: #1E844A; }
-      .thead { display: flex; align-items: center; gap: 11px; padding: 14px 17px; }
-      .ttl { font-size: 15.5px; font-weight: 600; color: #111110; } .ttime { font-size: 12px; color: #9B958F; }
-      .unread { min-width: 19px; height: 19px; padding: 0 6px; border-radius: 10px; background: #2563EB; color: #fff; font-size: 11.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
-      .tbody { padding: 15px 17px; }
-      .cmt { display: flex; gap: 11px; padding: 5px 0; } .cb { flex: 1; min-width: 0; }
-      .cn { font-size: 14px; font-weight: 600; color: #111110; } .cn.link { color: #2563EB; } .ct { font-size: 12px; color: #9B958F; margin-left: 8px; }
-      .cx { margin-top: 3px; font-size: 14px; line-height: 1.5; color: #5A5751; }
 
-      /* insight viz */
-      .ins-viz { display: flex; align-items: flex-end; gap: 18px; padding: 4px 18px 18px; border-top: 1px solid #EFEBE3; margin-top: 2px; }
-      .ins-chart { display: flex; align-items: flex-end; gap: 7px; height: 88px; }
-      .ins-bar { width: 26px; border-radius: 4px 4px 0 0; background: #CFE0F5; transform-origin: 50% 100%; }
+      /* For You insight card (conversational) */
+      .thead { display: flex; align-items: center; gap: 12px; padding: 16px 20px; }
+      .ttl { font-size: 17px; font-weight: 600; color: #111110; } .ttime { font-size: 12.5px; color: #9B958F; }
+      .unread { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #2563EB; color: #fff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+      .ins-viz { display: flex; align-items: flex-end; gap: 22px; padding: 4px 20px 18px; }
+      .ins-chart { display: flex; align-items: flex-end; gap: 9px; height: 104px; }
+      .ins-bar { width: 30px; border-radius: 4px 4px 0 0; background: #CFE0F5; transform-origin: 50% 100%; }
       .ins-bar.drop { background: #E67E22; }
-      .ins-note { font-size: 13px; line-height: 1.5; color: #5A5751; } .ins-note b { color: #B45F12; font-weight: 700; }
-      .ins-kpi { font-family: "JetBrains Mono", monospace; font-size: 12px; color: #9B958F; margin-top: 4px; }
+      .ins-note { font-size: 14.5px; line-height: 1.5; color: #5A5751; } .ins-note b { color: #B45F12; font-weight: 700; }
+      .ins-kpi { font-family: "JetBrains Mono", monospace; font-size: 13px; color: #9B958F; margin-top: 5px; }
+      .ins-concl { display: flex; gap: 13px; padding: 16px 20px; border-top: 1px solid #EFEBE3; opacity: 0; }
+      .ins-concl .tx { font-size: 15.5px; line-height: 1.5; color: #2c2a27; } .ins-concl .tx b { color: #111110; font-weight: 600; }
+      .ins-concl .nm { font-size: 13.5px; font-weight: 600; color: #2563EB; margin-bottom: 3px; }
+      .ins-actions { display: flex; justify-content: flex-end; padding: 0 20px 18px; opacity: 0; }
+      .promote-btn { display: inline-flex; align-items: center; gap: 9px; height: 46px; padding: 0 22px; border-radius: 11px; background: #111110; color: #FAFAF8; font-size: 16px; font-weight: 600; }
 
-      .doc-title { font-size: 27px; font-weight: 700; letter-spacing: -0.025em; color: #111110; }
-      .doc-meta { display: flex; align-items: center; gap: 10px; margin-top: 13px; flex-wrap: wrap; }
-      .mdrv { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: #5A5751; }
-      .wbanner { display: flex; align-items: center; gap: 10px; margin-top: 15px; padding: 11px 14px; border-radius: 11px; background: rgba(37,99,235,.08); border: 1px solid rgba(37,99,235,.22); font-size: 13.5px; color: #1E50C8; font-weight: 500; }
-      .wbanner.ok { background: rgba(39,174,96,.1); border-color: rgba(39,174,96,.28); color: #1E844A; }
-      .dsec { font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #9B958F; }
-      .dp { font-size: 14.5px; line-height: 1.6; color: #5A5751; }
+      .doc-title { font-size: 28px; font-weight: 700; letter-spacing: -0.025em; color: #111110; }
+      .doc-meta { display: flex; align-items: center; gap: 11px; margin-top: 14px; flex-wrap: wrap; }
+      .mdrv { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: #5A5751; }
+      .dsec { font-size: 12.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #9B958F; }
+      .dp { font-size: 15px; line-height: 1.6; color: #5A5751; }
+
+      /* bet timeline */
+      .tl-wrap { position: relative; margin-top: 12px; }
+      .tli { position: relative; display: flex; gap: 15px; padding-bottom: 18px; opacity: 0; }
+      .tli::before { content: ""; position: absolute; left: 17px; top: 36px; height: calc(100% - 30px); width: 2px; background: #E2DDD7; }
+      .tli.nl::before { display: none; }
+      .tli .av { width: 36px; height: 36px; border-radius: 50%; flex: 0 0 auto; z-index: 1; font-size: 15px; }
+      .tli .cnt { flex: 1; padding-top: 2px; }
+      .tli .nm { font-size: 15px; font-weight: 600; color: #111110; } .tli .nm.link { color: #2563EB; } .tli .tm { font-size: 12px; color: #9B958F; margin-left: 8px; }
+      .tli .ms { margin-top: 4px; font-size: 15px; color: #45413c; line-height: 1.5; }
+      .tasks { margin-top: 12px; display: flex; flex-direction: column; gap: 9px; }
+      .task { display: flex; align-items: center; gap: 12px; font-size: 15px; color: #45413c; background: #FAFAF8; border: 1.5px solid #E2DDD7; border-radius: 10px; padding: 11px 15px; }
+      .task .box { width: 20px; height: 20px; border-radius: 6px; border: 2px solid #C9C3BA; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+      .task .box .chk { color: #fff; font-size: 13px; opacity: 0; line-height: 1; }
+      .task .who { margin-left: auto; font-size: 12.5px; color: #9B958F; }
+      .val { margin-top: 12px; display: flex; align-items: center; gap: 22px; background: rgba(39,174,96,.08); border: 1.5px solid rgba(39,174,96,.28); border-radius: 12px; padding: 15px 20px; }
+      .val .vchart { display: flex; align-items: flex-end; gap: 6px; height: 60px; }
+      .val .vbar { width: 16px; border-radius: 3px 3px 0 0; background: #B7DCC4; transform-origin: 50% 100%; }
+      .val .vbar.up { background: #27AE60; }
+      .val .vt { font-size: 15px; color: #1E844A; line-height: 1.5; } .val .vt b { font-weight: 700; }
       .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(37,99,235,.3); border-top-color: #2563EB; flex: 0 0 auto; }
-      .ag-card { padding: 16px; } .ag-card.working { border-color: rgba(37,99,235,.4); background: rgba(37,99,235,.05); }
-      .ag-h { display: flex; align-items: center; gap: 10px; } .ag-nm { font-size: 14px; font-weight: 600; color: #111110; }
-      .ag-st { margin-left: auto; font-size: 12.5px; font-weight: 600; } .ag-st.working { color: #2563EB; } .ag-st.idle { color: #9B958F; }
-      .ag-ds { font-size: 11.5px; color: #9B958F; margin: 7px 0 9px; margin-left: 35px; } .ag-ac { font-size: 12.5px; color: #5A5751; margin-left: 35px; }
+      .ag-card { padding: 17px; } .ag-card.working { border-color: rgba(37,99,235,.4); background: rgba(37,99,235,.05); }
+      .ag-h { display: flex; align-items: center; gap: 11px; } .ag-nm { font-size: 15px; font-weight: 600; color: #111110; }
+      .ag-st { margin-left: auto; font-size: 13px; font-weight: 600; } .ag-st.working { color: #2563EB; } .ag-st.idle { color: #9B958F; }
+      .ag-ds { font-size: 12px; color: #9B958F; margin: 8px 0 9px; margin-left: 37px; } .ag-ac { font-size: 13px; color: #5A5751; margin-left: 37px; }
       .idot { width: 7px; height: 7px; border-radius: 50%; background: #9B958F; }
 
       /* marketplace tiles */
       #wpE { padding: 28px 38px; }
       .mkgrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-top: 16px; }
-      .mtile { background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 12px; border-top-width: 3px; padding: 14px 15px; }
-      .mtile .r { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-      .mtile .t { margin-top: 8px; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: #111110; line-height: 1.25; min-height: 38px; }
+      .mtile { background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 12px; border-top-width: 3px; padding: 15px 16px; }
+      .mtile .r { font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+      .mtile .t { margin-top: 8px; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: #111110; line-height: 1.25; min-height: 40px; }
       .mtile .f { margin-top: 11px; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-      .ot { font-family: "JetBrains Mono", monospace; font-size: 10px; font-weight: 500; padding: 2px 6px; border-radius: 5px; }
+      .ot { font-family: "JetBrains Mono", monospace; font-size: 10.5px; font-weight: 500; padding: 2px 6px; border-radius: 5px; }
       .ot-i { color: #3F6CA8; background: rgba(91,141,217,.12); } .ot-b { color: #B45F12; background: rgba(230,126,34,.12); }
       .ot-t { color: #1E844A; background: rgba(39,174,96,.12); } .ot-src { color: #9B958F; border: 1px dashed #C9C3BA; } .ot-ar { color: #C9C3BA; }
       .mtile--c { background: #F0EDE7; border-top-color: #2563EB; }
@@ -133,55 +152,57 @@
 
       /* ---------- noise / organize scene ---------- */
       #noise { position: absolute; inset: 0; z-index: 50; opacity: 0; }
-      #ntitle { position: absolute; left: 0; right: 0; top: 92px; text-align: center; height: 120px; z-index: 6; }
-      .ntt { position: absolute; left: 50%; transform: translateX(-50%); top: 0; width: 1400px; font-size: 52px; line-height: 1.08; font-weight: 700; letter-spacing: -0.03em; color: #111110; opacity: 0; }
+      #ntitle { position: absolute; left: 0; right: 0; top: 86px; text-align: center; height: 140px; z-index: 6; }
+      .ntt { position: absolute; left: 50%; transform: translateX(-50%); top: 0; width: 1500px; font-size: 52px; line-height: 1.08; font-weight: 700; letter-spacing: -0.03em; color: #111110; opacity: 0; }
       .ntt em { font-style: italic; font-weight: 400; font-family: "Newsreader", serif; color: #2563EB; }
+      #nflash { position: absolute; inset: 0; background: #FFFFFF; opacity: 0; z-index: 7; }
+      #nshock { position: absolute; left: 960px; top: 528px; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; border: 3px solid rgba(37,99,235,0.5); opacity: 0; z-index: 3; }
       #nfield { position: absolute; inset: 0; z-index: 2; }
       .ndot-wrap { position: absolute; }
       .ndot { border-radius: 4px; }
-      .nsrc { position: absolute; font-family: "JetBrains Mono", monospace; font-size: 13px; color: #7A756E; background: #FAFAF8; border: 1px solid #E2DDD7; border-radius: 8px; padding: 5px 11px; box-shadow: 0 1px 3px rgba(17,17,16,0.05); white-space: nowrap; opacity: 0; }
+      .nsrc { position: absolute; font-family: "JetBrains Mono", monospace; font-size: 16px; color: #6E6962; background: #FAFAF8; border: 1.5px solid #E2DDD7; border-radius: 9px; padding: 7px 14px; box-shadow: 0 2px 6px rgba(17,17,16,0.06); white-space: nowrap; opacity: 0; }
       #ninsights { position: absolute; inset: 0; z-index: 4; }
-      .nicard { position: absolute; width: 230px; background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 13px; padding: 14px 16px; box-shadow: 0 10px 30px rgba(17,17,16,0.10); opacity: 0; }
-      .nicard .t { margin-top: 9px; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: #111110; }
-      #nbet { position: absolute; left: 845px; top: 392px; width: 230px; background: #FFFFFF; border: 1.5px solid rgba(230,126,34,.5); border-radius: 13px; padding: 14px 16px; box-shadow: 0 14px 36px rgba(230,126,34,0.16); opacity: 0; }
-      #nbet .t { margin-top: 9px; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: #111110; }
-      #npro { position: absolute; left: 905px; top: 494px; display: flex; flex-direction: column; align-items: center; gap: 2px; opacity: 0; z-index: 5; }
-      #npro .ar { font-size: 22px; color: #B45F12; line-height: 1; }
-      #npro .lb { font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #B45F12; font-weight: 700; }
+      .nicard { position: absolute; width: 296px; background: #FFFFFF; border: 1.5px solid #E2DDD7; border-radius: 15px; padding: 18px 20px; box-shadow: 0 12px 34px rgba(17,17,16,0.10); opacity: 0; }
+      .nicard .t { margin-top: 11px; font-size: 19px; font-weight: 700; letter-spacing: -0.01em; color: #111110; }
+      #nbet { position: absolute; left: 832px; top: 372px; width: 296px; background: #FFFFFF; border: 1.5px solid rgba(230,126,34,.55); border-radius: 15px; padding: 18px 20px; box-shadow: 0 16px 40px rgba(230,126,34,0.18); opacity: 0; }
+      #nbet .t { margin-top: 11px; font-size: 19px; font-weight: 700; letter-spacing: -0.01em; color: #111110; }
+      #npro { position: absolute; left: 952px; top: 506px; display: flex; flex-direction: column; align-items: center; gap: 2px; opacity: 0; z-index: 5; }
+      #npro .ar { font-size: 26px; color: #B45F12; line-height: 1; }
+      #npro .lb { font-family: "JetBrains Mono", monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #B45F12; font-weight: 700; }
 
       /* promise chat (explodes into the noise) */
-      #nchat { position: absolute; left: 50%; top: 266px; transform: translateX(-50%); width: 760px; height: 524px; background: #FAFAF8; border-radius: 18px; overflow: hidden; box-shadow: 0 40px 90px rgba(17,17,16,0.16), 0 0 0 1px #E2DDD7; z-index: 5; opacity: 0; }
+      #nchat { position: absolute; left: 50%; top: 236px; transform: translateX(-50%); width: 820px; height: 590px; background: #FAFAF8; border-radius: 18px; overflow: hidden; box-shadow: 0 40px 90px rgba(17,17,16,0.16), 0 0 0 1px #E2DDD7; z-index: 5; opacity: 0; }
       #nchat .ch { position: absolute; left: 0; top: 0; width: 100%; height: 46px; background: #F0EDE7; border-bottom: 1px solid #ECE7DF; display: flex; align-items: center; padding: 0 20px; gap: 8px; }
       #nchat .ch .nt { font-size: 13px; font-weight: 600; color: #111110; } #nchat .ch .mp { margin-left: auto; font-size: 11.5px; color: #9B958F; border: 1px solid #E2DDD7; border-radius: 7px; padding: 3px 9px; }
-      #nchat .body { position: absolute; left: 0; right: 0; top: 72px; padding: 0 40px; }
-      #nchat .row { display: flex; margin-bottom: 16px; } #nchat .row.u { justify-content: flex-end; }
-      #nchat .u-b { max-width: 470px; background: #EEF3FD; border: 1px solid rgba(37,99,235,.16); border-radius: 13px 13px 4px 13px; padding: 11px 15px; font-size: 15px; color: #1f3a66; line-height: 1.45; }
-      #nchat .a-b { display: flex; gap: 11px; max-width: 600px; }
-      #nchat .a-b .adot { width: 28px; height: 28px; border-radius: 8px; background: #111110; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
-      #nchat .a-b .adot span { width: 11px; height: 11px; border-radius: 50%; background: #FAFAF8; }
-      #nchat .a-b .tx { font-size: 15px; color: #2c2a27; line-height: 1.5; } #nchat .a-b .tx b { color: #111110; font-weight: 600; }
-      #nchat .in { position: absolute; left: 40px; right: 40px; bottom: 26px; height: 50px; border: 1.5px solid #E2DDD7; border-radius: 13px; background: #fff; display: flex; align-items: center; padding: 0 8px 0 16px; }
-      #nchat .in .ph { font-size: 14px; color: #B7B1A8; } #nchat .in .snd { margin-left: auto; width: 34px; height: 34px; border-radius: 9px; background: #111110; display: flex; align-items: center; justify-content: center; color: #FAFAF8; font-size: 15px; }
+      #nchat .body { position: absolute; left: 0; right: 0; top: 64px; padding: 0 38px; }
+      #nchat .row { display: flex; margin-bottom: 14px; } #nchat .row.u { justify-content: flex-end; }
+      #nchat .u-b { max-width: 560px; background: #EEF3FD; border: 1px solid rgba(37,99,235,.16); border-radius: 13px 13px 4px 13px; padding: 11px 15px; font-size: 15px; color: #1f3a66; line-height: 1.45; }
+      #nchat .a-wrap { display: flex; gap: 12px; }
+      #nchat .a-wrap .adot { width: 30px; height: 30px; border-radius: 8px; background: #111110; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+      #nchat .a-wrap .adot span { width: 12px; height: 12px; border-radius: 50%; background: #FAFAF8; }
+      #nchat .wall { flex: 1; }
+      #nchat .wl { font-size: 15px; color: #2c2a27; line-height: 1.5; margin-bottom: 7px; opacity: 0; } #nchat .wl b { color: #111110; font-weight: 600; }
+      #nchat .wl.more { color: #9B958F; font-style: italic; }
 
-      /* ---------- centred scenes (intro/close) ---------- */
+      /* ---------- centred scenes (intro/close) — large lockups ---------- */
       .endcap { position: absolute; inset: 0; z-index: 60; background: #F2EFE9; opacity: 0; }
       .ec-wrap { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; }
-      .ec-lock { display: inline-flex; align-items: center; gap: 22px; }
-      .ec-mark { width: 84px; height: 84px; }
-      .ec-word { font-size: 86px; font-weight: 700; letter-spacing: -0.035em; color: #111110; }
-      #intro-tag { margin-top: 26px; font-size: 24px; font-weight: 400; color: #5A5751; letter-spacing: 0.01em; }
-      #close-tag { margin-top: 28px; font-size: 28px; font-weight: 400; color: #5A5751; letter-spacing: -0.01em; }
+      .ec-lock { display: inline-flex; align-items: center; gap: 30px; }
+      .ec-mark { width: 118px; height: 118px; }
+      .ec-word { font-size: 122px; font-weight: 700; letter-spacing: -0.04em; color: #111110; }
+      #intro-tag { margin-top: 34px; font-size: 31px; font-weight: 400; color: #5A5751; letter-spacing: 0.01em; }
+      #close-tag { margin-top: 40px; font-size: 36px; font-weight: 400; color: #5A5751; letter-spacing: -0.015em; }
       #close-tag em { font-style: italic; font-family: "Newsreader", serif; color: #2563EB; }
-      #close-row { margin-top: 32px; display: inline-flex; align-items: center; gap: 16px; }
-      #close-cta { display: inline-flex; align-items: center; gap: 9px; height: 52px; padding: 0 30px; border-radius: 11px; background: #111110; color: #FAFAF8; font-size: 20px; font-weight: 600; }
-      #close-oss { font-size: 15px; color: #9B958F; }
+      #close-row { margin-top: 44px; display: inline-flex; align-items: center; gap: 22px; }
+      #close-cta { display: inline-flex; align-items: center; gap: 10px; height: 66px; padding: 0 40px; border-radius: 13px; background: #111110; color: #FAFAF8; font-size: 27px; font-weight: 600; }
+      #close-oss { font-size: 19px; color: #9B958F; }
     </style>
   </head>
   <body>
-    <div id="root" data-composition-id="main" data-width="1920" data-height="1080" data-start="0" data-duration="54">
+    <div id="root" data-composition-id="main" data-width="1920" data-height="1080" data-start="0" data-duration="60">
 
       <!-- backdrop -->
-      <div id="backdrop" class="clip" data-start="0" data-duration="54" data-track-index="0">
+      <div id="backdrop" class="clip" data-start="0" data-duration="60" data-track-index="0">
         <div id="grain" data-layout-allow-overflow></div>
         <div id="glow" data-layout-allow-overflow></div>
         <div id="brandbar"><svg class="lg" viewBox="0 0 80 80"><rect width="80" height="80" rx="14" fill="#111110"/><path d="M17 60 L17 20 L40 46 L63 20 L63 60" stroke="#FAFAF8" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg><span class="wd">Maskin</span></div>
@@ -190,16 +211,16 @@
 
       <!-- left captions -->
       <div id="cap">
-        <div class="cap" data-layout-allow-overlap id="cap7"><div class="ck">signal</div><div class="ch">The insight that matters, surfaced for you.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap8"><div class="ck">conviction</div><div class="ch">Promoted to a <em>bet</em> — what your org believes in.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap9"><div class="ck">execution</div><div class="ch">Agents do the work — and ship it.</div></div>
-        <div class="cap" data-layout-allow-overlap id="cap10"><div class="ck">validated</div><div class="ch">Live in production, agents <em>validate the value</em>.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap7"><div class="ck">signal</div><div class="ch">Agents surface the insight — with a take.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap8"><div class="ck">conviction</div><div class="ch">Promote to a <em>bet</em> — agents define the work.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap9"><div class="ck">execution</div><div class="ch">Agents do the tasks — and ship.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap10"><div class="ck">validated</div><div class="ch">Production data <em>closes the loop</em>.</div></div>
         <div class="cap" data-layout-allow-overlap id="capM1"><div class="ck">the marketplace</div><div class="ch">One closed loop of <em>many</em>.</div></div>
-        <div class="cap" data-layout-allow-overlap id="capM2"><div class="ck">every team</div><div class="ch">A loop for <em>sales</em>, <em>growth</em> &amp; <em>product</em>.</div></div>
+        <div class="cap" data-layout-allow-overlap id="capM2"><div class="ck">every team</div><div class="ch"><em>Loops</em> for sales, growth &amp; product.</div></div>
       </div>
 
       <!-- right stage (product) -->
-      <div id="stage" class="clip" data-start="0" data-duration="54" data-track-index="1">
+      <div id="stage" class="clip" data-layout-allow-overflow data-start="0" data-duration="60" data-track-index="1">
 
         <!-- maskin app -->
         <div class="rcard" id="app">
@@ -236,32 +257,51 @@
                   <div class="thead"><span class="badge b-insight">insight</span><span class="ttl">Most new users churn after week 1</span><span class="ttime">just now</span><span class="unread">3</span></div>
                   <div class="ins-viz">
                     <div class="ins-chart" id="insChart">
-                      <div class="ins-bar" style="height:84px"></div><div class="ins-bar" style="height:80px"></div>
-                      <div class="ins-bar" style="height:72px"></div><div class="ins-bar" style="height:60px"></div>
-                      <div class="ins-bar drop" style="height:34px"></div><div class="ins-bar drop" style="height:22px"></div>
-                      <div class="ins-bar drop" style="height:14px"></div>
+                      <div class="ins-bar" style="height:98px"></div><div class="ins-bar" style="height:92px"></div>
+                      <div class="ins-bar" style="height:82px"></div><div class="ins-bar" style="height:66px"></div>
+                      <div class="ins-bar drop" style="height:40px"></div><div class="ins-bar drop" style="height:26px"></div>
+                      <div class="ins-bar drop" style="height:16px"></div>
                     </div>
                     <div><div class="ins-note">Retention falls off a cliff after <b>day 5</b>. 142 signals from HubSpot, Intercom &amp; Slack agree.</div><div class="ins-kpi">week-1 retention · 38% ▼</div></div>
                   </div>
-                </div>
-                <div class="card" id="wpA-bet" style="margin-top:14px">
-                  <div class="thead"><span class="badge b-bet">bet</span><span class="ttl">A longer onboarding cuts week-1 churn</span><span class="ttime">just now</span><span class="unread">1</span></div>
+                  <div class="ins-concl" id="insConcl"><div class="avatar av-a">⚡</div><div><div class="nm">Feedback Monitor</div><div class="tx">Week-1 onboarding is the bottleneck. My take: a longer, <b>guided onboarding</b> gets users to value and should lift retention ~15%.</div></div></div>
+                  <div class="ins-actions" id="insActions"><span class="promote-btn" id="promoteBtn">Promote to bet →</span></div>
                 </div>
               </div>
-              <!-- bet detail -->
+              <!-- bet detail (conversational timeline) -->
               <div class="wpanel" id="wpB" style="opacity:0">
-                <div class="doc-title">A longer onboarding cuts week-1 churn</div>
-                <div class="doc-meta">
-                  <span class="badge b-bet">bet</span>
-                  <span style="position:relative; display:inline-block"><span class="badge b-proposed" id="wpB-st1" style="position:relative">proposed</span><span class="badge b-active" id="wpB-st2" style="position:absolute; left:0; top:0; opacity:0">active</span></span>
-                  <span class="mdrv"><span class="avatar av-a" style="width:19px;height:19px;font-size:11px">⚡</span>Bet Strategist</span><span class="ttime">just now</span>
-                </div>
-                <div class="wbanner" id="wpB-banner" style="opacity:0"><span class="spinner"></span>Agents are building this bet…</div>
-                <div style="margin-top:18px"><div class="dsec">Hypothesis</div>
-                  <div class="dp" style="margin-top:8px">Most customers churn in week 1 — they leave before investing in the product. A longer, guided onboarding that gets them to real value should lift week-1 retention ~15%, so they stay attached.</div></div>
-                <div style="margin-top:18px"><div class="dsec">Activity</div>
-                  <div class="cmt" style="margin-top:9px"><div class="avatar av-a">⚡</div><div class="cb"><div><span class="cn link">Bet Strategist</span><span class="ct">now</span></div><div class="cx">Proposed this bet from the churn insight, with supporting research.</div></div></div>
-                  <div class="cmt" id="wpB-c2" style="opacity:0"><div class="avatar av-h">S</div><div class="cb"><div><span class="cn">Sebastian</span><span class="ct">now</span></div><div class="cx">Approved — let’s build it. 🚀</div></div></div>
+                <div id="wpB-scroll" data-layout-allow-overflow data-layout-allow-overlap>
+                  <div class="doc-title">A longer onboarding cuts week-1 churn</div>
+                  <div class="doc-meta">
+                    <span class="badge b-bet">bet</span>
+                    <span style="position:relative; display:inline-block; width:88px; height:23px">
+                      <span class="badge b-proposed" id="wpB-st1" style="position:absolute; left:0; top:0">proposed</span>
+                      <span class="badge b-active" id="wpB-st2" style="position:absolute; left:0; top:0; opacity:0">active</span>
+                      <span class="badge b-done" id="wpB-st3" style="position:absolute; left:0; top:0; opacity:0">succeeded</span>
+                    </span>
+                    <span class="mdrv"><span class="avatar av-a" style="width:20px;height:20px;font-size:11px">⚡</span>Bet Strategist</span>
+                  </div>
+                  <div style="margin-top:16px"><div class="dsec">Hypothesis</div>
+                    <div class="dp" style="margin-top:7px">Users churn in week 1 — they leave before reaching value. A longer, guided onboarding should lift week-1 retention ~15%.</div></div>
+                  <div style="margin-top:18px"><div class="dsec">Activity</div>
+                    <div class="tl-wrap">
+                      <div class="tli" id="tli1"><div class="avatar av-a av">⚡</div><div class="cnt"><div><span class="nm link">Bet Strategist</span><span class="tm">now</span></div><div class="ms">Customers churn before they reach value. I’m betting a longer, guided onboarding fixes it.</div></div></div>
+                      <div class="tli" id="tli2"><div class="avatar av-a av">⚡</div><div class="cnt"><div><span class="nm link">Bet Strategist</span><span class="tm">now</span></div><div class="ms">Breaking it into tasks and assigning the agents:</div>
+                        <div class="tasks">
+                          <div class="task" id="tsk1"><span class="box"><span class="chk">✓</span></span>Design the guided onboarding flow<span class="who">→ Designer</span></div>
+                          <div class="task" id="tsk2"><span class="box"><span class="chk">✓</span></span>Build the onboarding screens<span class="who">→ Developer</span></div>
+                          <div class="task" id="tsk3"><span class="box"><span class="chk">✓</span></span>Instrument activation analytics<span class="who">→ Developer</span></div>
+                          <div class="task" id="tsk4"><span class="box"><span class="chk">✓</span></span>Draft the in-app tips copy<span class="who">→ Designer</span></div>
+                        </div>
+                      </div></div>
+                      <div class="tli" id="tli3"><div class="avatar av-a av">⚡</div><div class="cnt"><div><span class="nm link">Designer</span><span class="tm">now</span></div><div class="ms">On it — designing the flow.</div></div></div>
+                      <div class="tli nl" id="tli4"><div class="avatar av-a av">⚡</div><div class="cnt"><div><span class="nm link">Developer</span><span class="tm">now</span></div><div class="ms">Starting the build.</div></div></div>
+                      <div class="tli" id="tli5" style="opacity:0"><div class="avatar av-a av">⚡</div><div class="cnt"><div><span class="nm link">Feedback Monitor</span><span class="tm">6d</span></div><div class="ms">Shipped 6 days ago. Production data is in:</div>
+                        <div class="val"><div class="vchart" id="valChart"><div class="vbar" style="height:24px"></div><div class="vbar" style="height:30px"></div><div class="vbar up" style="height:42px"></div><div class="vbar up" style="height:52px"></div><div class="vbar up" style="height:60px"></div></div><div class="vt">Week-1 retention <b>38% → 56% ▲</b><br/>Activation +22% · churn −18%</div></div>
+                      </div></div>
+                      <div class="tli nl" id="tli6" style="opacity:0"><div class="avatar av-a av">⚡</div><div class="cnt"><div><span class="nm link">Bet Strategist</span><span class="tm">6d</span></div><div class="ms">Outcome verified — the bet <b>succeeded</b>. Loop closed.</div></div></div>
+                    </div>
+                  </div>
                 </div>
               </div>
               <!-- agents -->
@@ -271,28 +311,19 @@
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-top:16px">
                   <div class="card ag-card working" id="agc1"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Designer</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Design agent</div><div class="ag-ac">Designing the onboarding flow · 0:48</div></div>
                   <div class="card ag-card working" id="agc2"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Developer</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Coding agent</div><div class="ag-ac">Building onboarding screens · 1:12</div></div>
-                  <div class="card ag-card working" id="agc3"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Feedback Monitor</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Signal agent</div><div class="ag-ac">Watching Intercom · PostHog · live</div></div>
-                  <div class="card ag-card" id="agc4"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Bet Strategist</div><span class="idot"></span><div class="ag-st idle">idle</div></div><div class="ag-ds">Strategy agent</div><div class="ag-ac">Proposed the bet · 2m ago</div></div>
-                </div>
-              </div>
-              <!-- outcome -->
-              <div class="wpanel" id="wpD" style="opacity:0">
-                <div class="doc-title">A longer onboarding cuts week-1 churn</div>
-                <div class="doc-meta"><span class="badge b-bet">bet</span><span class="badge b-done">succeeded</span><span class="mdrv"><span class="avatar av-a" style="width:19px;height:19px;font-size:11px">⚡</span>Bet Strategist</span><span class="ttime">shipped · 6 days ago</span></div>
-                <div class="wbanner ok" id="wpD-banner" style="opacity:0"><span style="font-size:15px">✓</span>Outcome verified — week-1 retention up 18%. Loop closed.</div>
-                <div style="margin-top:18px"><div class="dsec">Post-launch insight</div>
-                  <div class="cmt" style="margin-top:9px"><div class="avatar av-a">⚡</div><div class="cb"><div><span class="cn link">Feedback Monitor</span><span class="ct">6d</span></div><div class="cx">PostHog &amp; Intercom show retention climbing. Marked the bet a success — did we build the right thing? Yes.</div></div></div>
+                  <div class="card ag-card working" id="agc3"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Developer</div><div class="spinner"></div><div class="ag-st working">working</div></div><div class="ag-ds">Coding agent</div><div class="ag-ac">Instrumenting activation analytics · 0:36</div></div>
+                  <div class="card ag-card" id="agc4"><div class="ag-h"><div class="avatar av-a">⚡</div><div class="ag-nm">Feedback Monitor</div><span class="idot"></span><div class="ag-st idle">watching</div></div><div class="ag-ds">Signal agent</div><div class="ag-ac">Watching Intercom · PostHog · live</div></div>
                 </div>
               </div>
               <!-- marketplace -->
               <div class="wpanel" id="wpE" style="opacity:0">
                 <div class="page-h">Marketplace</div><div class="page-sub">Pre-built closed loops for every team — turn AI spend into business outcomes</div>
                 <div class="mkgrid">
-                  <div class="mtile" id="mt-sales" style="border-top-color:#E67E22"><div class="r" style="color:#B45F12">Sales</div><div class="t">Lost deals become roadmap bets</div><div class="f"><span class="ot ot-src">HubSpot</span><span class="ot ot-ar">→</span><span class="ot ot-i">Loss patterns</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bet</span></div></div>
-                  <div class="mtile" id="mt-growth" style="border-top-color:#2563EB"><div class="r" style="color:#1E50C8">Growth</div><div class="t">Catch at-risk users, lift activation</div><div class="f"><span class="ot ot-src">PostHog</span><span class="ot ot-ar">→</span><span class="ot ot-i">Risk signal</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bet</span></div></div>
+                  <div class="mtile" id="mt-sales" style="border-top-color:#E67E22"><div class="r" style="color:#B45F12">Sales</div><div class="t">Lost deals become roadmap bets</div><div class="f"><span class="ot ot-src">HubSpot · Gong</span><span class="ot ot-ar">→</span><span class="ot ot-i">Loss patterns</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bet</span></div></div>
+                  <div class="mtile" id="mt-growth" style="border-top-color:#2563EB"><div class="r" style="color:#1E50C8">Growth</div><div class="t">Catch at-risk users, lift activation</div><div class="f"><span class="ot ot-src">PostHog · GA</span><span class="ot ot-ar">→</span><span class="ot ot-i">Risk signal</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bet</span></div></div>
                   <div class="mtile" id="mt-prod" style="border-top-color:#27AE60"><div class="r" style="color:#1E844A">Product</div><div class="t">Feedback → bet → shipped → measured</div><div class="f"><span class="ot ot-src">Intercom</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insight</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bet</span><span class="ot ot-ar">→</span><span class="ot ot-t">Outcome</span></div></div>
-                  <div class="mtile" style="border-top-color:#7C3AED"><div class="r" style="color:#6D28D9">Marketing</div><div class="t">Signal radar — track the market</div><div class="f"><span class="ot ot-src">X · Reddit</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insights</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bets</span></div></div>
-                  <div class="mtile" style="border-top-color:#5B8DD9"><div class="r" style="color:#3F6CA8">Support</div><div class="t">Slack request → shipped → notified</div><div class="f"><span class="ot ot-src">Slack</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insight</span><span class="ot ot-ar">→</span><span class="ot ot-t">Shipped</span></div></div>
+                  <div class="mtile" style="border-top-color:#7C3AED"><div class="r" style="color:#6D28D9">Marketing</div><div class="t">Signal radar — track the market</div><div class="f"><span class="ot ot-src">X · Reddit · TikTok</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insights</span><span class="ot ot-ar">→</span><span class="ot ot-b">Bets</span></div></div>
+                  <div class="mtile" style="border-top-color:#5B8DD9"><div class="r" style="color:#3F6CA8">Support</div><div class="t">Slack request → shipped → notified</div><div class="f"><span class="ot ot-src">Slack · Zendesk</span><span class="ot ot-ar">→</span><span class="ot ot-i">Insight</span><span class="ot ot-ar">→</span><span class="ot ot-t">Shipped</span></div></div>
                   <div class="mtile mtile--c"><div class="r" style="color:#1E50C8">Custom</div><div class="t">Any workflow your team runs</div><div class="f"><span class="ot ot-src">your agents</span><span class="ot ot-ar">→</span><span class="ot ot-src">your objects</span></div></div>
                 </div>
               </div>
@@ -309,36 +340,55 @@
       <div id="noise">
         <div id="ntitle">
           <div class="ntt" data-layout-allow-overlap id="ntt1">AI made individuals more productive.</div>
-          <div class="ntt" data-layout-allow-overlap id="ntt2">But a company shouldn’t be a <em>feature factory</em>.</div>
-          <div class="ntt" data-layout-allow-overlap id="ntt3">When creating is almost free, telling <em>signal from noise</em> is everything.</div>
-          <div class="ntt" data-layout-allow-overlap id="ntt4" style="font-size:46px">Maskin’s agents &amp; integrations turn the noise into <em>insights</em>.</div>
-          <div class="ntt" data-layout-allow-overlap id="ntt5" style="font-size:46px">…and promote the ones that matter into <em>bets</em>.</div>
+          <div class="ntt" data-layout-allow-overlap id="ntt2" style="font-size:46px">Only feature factories ship without <em>continuous customer discovery</em>.</div>
+          <div class="ntt" data-layout-allow-overlap id="ntt3">Agents turn the noise into <em>insights</em>.</div>
+          <div class="ntt" data-layout-allow-overlap id="ntt4">…and promote the ones that matter into <em>bets</em>.</div>
+        </div>
+        <div id="nflash"></div>
+        <div id="nshock"></div>
+        <div id="nfield" data-layout-allow-overlap>
+          <div class="nsrc" data-layout-allow-overlap id="ns0"  style="left:170px;  top:286px">Intercom</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns1"  style="left:470px;  top:300px">Slack</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns2"  style="left:778px;  top:284px">HubSpot</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns3"  style="left:1066px; top:298px">Salesforce</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns4"  style="left:1378px; top:286px">Gong</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns5"  style="left:1620px; top:300px">Zendesk</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns6"  style="left:150px;  top:556px">PostHog</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns7"  style="left:420px;  top:568px">Google Analytics</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns8"  style="left:760px;  top:556px">Trustpilot</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns9"  style="left:1086px; top:568px">G2</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns10" style="left:1300px; top:556px">Granola</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns11" style="left:1560px; top:568px">GitHub</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns12" style="left:190px;  top:830px">Meta Ads</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns13" style="left:470px;  top:842px">TikTok</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns14" style="left:760px;  top:830px">Instagram</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns15" style="left:1066px; top:842px">Linear</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns16" style="left:1340px; top:830px">Reddit</div>
+          <div class="nsrc" data-layout-allow-overlap id="ns17" style="left:1580px; top:842px">Teams</div>
+        </div>
+        <div id="ninsights" data-layout-allow-overlap>
+          <div class="nicard" data-layout-allow-overlap id="ni0" style="left:486px;  top:520px"><span class="badge b-insight">insight</span><div class="t">Billing confusion</div></div>
+          <div class="nicard" data-layout-allow-overlap id="ni1" style="left:832px;  top:520px"><span class="badge b-insight">insight</span><div class="t">Week-1 churn ▲</div></div>
+          <div class="nicard" data-layout-allow-overlap id="ni2" style="left:1178px; top:520px"><span class="badge b-insight">insight</span><div class="t">Mobile crashes</div></div>
+          <div id="npro" data-layout-allow-overlap><span class="ar">↑</span><span class="lb">promote</span></div>
+          <div id="nbet" data-layout-allow-overlap><span class="badge b-bet">bet</span><div class="t">A longer onboarding</div></div>
         </div>
         <div id="nchat" data-layout-allow-overlap>
           <div class="ch"><span class="nt">New chat</span><span class="mp">Assistant</span></div>
           <div class="body">
-            <div class="row u"><div class="u-b">Summarise last week’s 312 support tickets.</div></div>
-            <div class="row"><div class="a-b"><div class="adot"><span></span></div><div class="tx">Top issues: <b>onboarding confusion</b>, <b>billing surprises</b> and <b>mobile crashes</b>.</div></div></div>
-            <div class="row u"><div class="u-b">Draft a fix plan for onboarding.</div></div>
+            <div class="row u" id="nch-u"><div class="u-b">Summarise everything customers told us last week and tell me what to build.</div></div>
+            <div class="row"><div class="a-wrap"><div class="adot"><span></span></div><div class="wall">
+              <div class="wl" id="wl0">Here’s everything from last week’s feedback:</div>
+              <div class="wl" id="wl1">• Onboarding is confusing — many users drop off before activating.</div>
+              <div class="wl" id="wl2">• Billing caused 23 tickets — surprise overage charges.</div>
+              <div class="wl" id="wl3">• Mobile app crashes on Android 14 during upload.</div>
+              <div class="wl" id="wl4">• Enterprise accounts asked about SSO &amp; SCIM provisioning.</div>
+              <div class="wl" id="wl5">• Sales flagged 3 lost deals citing missing reporting.</div>
+              <div class="wl" id="wl6">• 12 users requested dark mode; NPS dipped to 31.</div>
+              <div class="wl" id="wl7">• Multiple asks for Slack, HubSpot &amp; Linear integrations.</div>
+              <div class="wl more" id="wl8">…and 134 more signals across 11 sources.</div>
+            </div></div></div>
           </div>
-          <div class="in"><span class="ph">Reply to assistant…</span><span class="snd">↑</span></div>
-        </div>
-        <div id="nfield" data-layout-allow-overlap>
-          <div class="nsrc" data-layout-allow-overlap id="ns0" style="left:240px;  top:300px">Intercom</div>
-          <div class="nsrc" data-layout-allow-overlap id="ns1" style="left:1470px; top:318px">Slack</div>
-          <div class="nsrc" data-layout-allow-overlap id="ns2" style="left:330px;  top:820px">HubSpot</div>
-          <div class="nsrc" data-layout-allow-overlap id="ns3" style="left:1360px; top:806px">PostHog</div>
-          <div class="nsrc" data-layout-allow-overlap id="ns4" style="left:600px;  top:884px">Salesforce</div>
-          <div class="nsrc" data-layout-allow-overlap id="ns5" style="left:1120px; top:868px">Zendesk</div>
-          <div class="nsrc" data-layout-allow-overlap id="ns6" style="left:1560px; top:560px">GitHub</div>
-          <div class="nsrc" data-layout-allow-overlap id="ns7" style="left:286px;  top:560px">Reviews · NPS</div>
-        </div>
-        <div id="ninsights" data-layout-allow-overlap>
-          <div class="nicard" data-layout-allow-overlap id="ni0" style="left:525px;  top:518px"><span class="badge b-insight">insight</span><div class="t">Billing confusion</div></div>
-          <div class="nicard" data-layout-allow-overlap id="ni1" style="left:845px;  top:518px"><span class="badge b-insight">insight</span><div class="t">Week-1 churn ▲</div></div>
-          <div class="nicard" data-layout-allow-overlap id="ni2" style="left:1165px; top:518px"><span class="badge b-insight">insight</span><div class="t">Mobile crashes</div></div>
-          <div id="npro" data-layout-allow-overlap><span class="ar">↑</span><span class="lb">promote</span></div>
-          <div id="nbet" data-layout-allow-overlap><span class="badge b-bet">bet</span><div class="t">A longer onboarding</div></div>
         </div>
       </div>
 
@@ -370,31 +420,31 @@
       gsap.set("#cap", { opacity: 0 });
       gsap.set("#cursor", { x: 1100, y: 520 });
 
-      /* build the noise field (deterministic) */
+      /* build the noise field (deterministic) — dots packed inside the chat, ready to explode */
       const wraps = [];
       (function () {
-        const F = { x0: 200, y0: 250, w: 1520, h: 700 };
+        const F = { x0: 150, y0: 240, w: 1620, h: 740 };
         const cols = ["#5B8DD9", "#E67E22", "#27AE60", "#7C3AED", "#2563EB", "#9B958F"];
-        const CC = [[640, 560], [960, 560], [1280, 560]];
+        const CC = [[634, 560], [980, 560], [1326, 560]];
         let s = 20240611; const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
         const field = document.getElementById("nfield");
-        for (let i = 0; i < 46; i++) {
+        for (let i = 0; i < 52; i++) {
           const sx = F.x0 + rnd() * F.w, sy = F.y0 + rnd() * F.h;
-          const c = i % 3, col = cols[Math.floor(rnd() * cols.length)], sz = 8 + Math.floor(rnd() * 8);
+          const c = i % 3, col = cols[Math.floor(rnd() * cols.length)], sz = 9 + Math.floor(rnd() * 9);
           const w = document.createElement("div"); w.className = "ndot-wrap"; w.style.left = sx + "px"; w.style.top = sy + "px";
           const d = document.createElement("div"); d.className = "ndot"; d.style.width = sz + "px"; d.style.height = sz + "px"; d.style.background = col; d.style.opacity = 0.85;
           w.appendChild(d); field.appendChild(w);
-          gsap.set(w, { x: 960 - sx, y: 528 - sy, scale: 0.35, opacity: 0 });   // start packed inside the chat
-          wraps.push({ el: w, sx, sy, tx: CC[c][0] + (rnd() - 0.5) * 150, ty: CC[c][1] + (rnd() - 0.5) * 110 });
-          const jx = (rnd() - 0.5) * 18, jy = (rnd() - 0.5) * 18, jd = 2.2 + rnd() * 1.3;
-          tl.to(d, { x: jx, y: jy, duration: jd, ease: "sine.inOut", yoyo: true, repeat: R(3.6, jd) }, 5.2);
+          gsap.set(w, { x: 960 - sx, y: 520 - sy, scale: 0.3, opacity: 0 });
+          wraps.push({ el: w, sx, sy, tx: CC[c][0] + (rnd() - 0.5) * 170, ty: CC[c][1] + (rnd() - 0.5) * 120 });
+          const jx = (rnd() - 0.5) * 18, jy = (rnd() - 0.5) * 18, jd = 2.0 + rnd() * 1.3;
+          tl.to(d, { x: jx, y: jy, duration: jd, ease: "sine.inOut", yoyo: true, repeat: R(3.2, jd) }, 8.4);
         }
       })();
 
       /* ambient */
-      tl.to("#glow", { scale: 1.12, duration: 9, ease: "sine.inOut", yoyo: true, repeat: R(54, 9) }, 0);
-      tl.to("#grain", { x: 24, y: 16, duration: 18, ease: "sine.inOut", yoyo: true, repeat: R(54, 18) }, 0);
-      tl.to(".spinner", { rotation: 360, duration: 0.9, ease: "none", repeat: R(54, 0.9), transformOrigin: "50% 50%" }, 0);
+      tl.to("#glow", { scale: 1.12, duration: 9, ease: "sine.inOut", yoyo: true, repeat: R(60, 9) }, 0);
+      tl.to("#grain", { x: 24, y: 16, duration: 18, ease: "sine.inOut", yoyo: true, repeat: R(60, 18) }, 0);
+      tl.to(".spinner", { rotation: 360, duration: 0.9, ease: "none", repeat: R(60, 0.9), transformOrigin: "50% 50%" }, 0);
 
       /* helpers */
       function cam(t, dur, S, ty) { tl.to("#stage", { scale: S, x: 0, y: (540 - ty) * S, duration: dur, ease: "power2.inOut" }, t); }
@@ -411,115 +461,135 @@
         tl.set(["#rip1", "#rip2"], { opacity: 1, scale: 0 }, t);
         tl.to(["#rip1", "#rip2"], { scale: 4, opacity: 0, duration: 0.7, ease: "power2.out", stagger: 0.09, immediateRender: false }, t);
       }
+      const tliIn = (s, t) => tl.fromTo(s, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, t);
 
-      /* ===== 0–1.6 intro ===== */
-      tl.from("#intro-mark", { opacity: 0, scale: 0.6, rotation: -12, duration: 0.6, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 0.15);
-      tl.from("#intro-word", { opacity: 0, x: -22, duration: 0.5, ease: "power3.out" }, 0.35);
-      tl.from("#intro-tag", { opacity: 0, y: 12, duration: 0.45, ease: "power2.out" }, 0.62);
-      tl.to("#intro", { opacity: 0, duration: 0.55, ease: "power2.inOut" }, 1.5);
-      tl.to(["#brandbar", "#kicker-tr"], { opacity: 1, duration: 0.5 }, 1.8);
+      /* ===== 0–2 intro (big lockup) ===== */
+      tl.from("#intro-mark", { opacity: 0, scale: 0.6, rotation: -12, duration: 0.7, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 0.15);
+      tl.from("#intro-word", { opacity: 0, x: -28, duration: 0.6, ease: "power3.out" }, 0.4);
+      tl.from("#intro-tag", { opacity: 0, y: 14, duration: 0.5, ease: "power2.out" }, 0.75);
+      tl.to("#intro", { opacity: 0, duration: 0.55, ease: "power2.inOut" }, 1.7);
+      tl.to(["#brandbar", "#kicker-tr"], { opacity: 1, duration: 0.5 }, 2.0);
 
-      /* ===== 1.8–9 promise chat → explodes into the noise ===== */
-      show("#noise", 1.8, 0.5);
-      tl.fromTo("#nchat", { opacity: 0, y: 22, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.6, ease: "power3.out", transformOrigin: "50% 50%" }, 2.0);
-      ntIn("#ntt1", 2.3); ntOut("#ntt1", 4.0);
-      // explode the chat into the data points
-      tl.to("#nchat", { scale: 1.16, opacity: 0, duration: 0.55, ease: "power2.in", transformOrigin: "50% 50%" }, 4.0);
-      tl.to(".ndot-wrap", { x: 0, y: 0, scale: 1, opacity: 1, duration: 1.0, ease: "power3.out", stagger: { each: 0.011, from: "center" } }, 4.15);
-      tl.fromTo(".nsrc", { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 0.45, ease: "power2.out", stagger: 0.06, transformOrigin: "50% 50%" }, 4.8);
-      tl.to(".nsrc", { opacity: 0.65, duration: 2.4, ease: "sine.inOut", yoyo: true, repeat: R(3.4, 2.4), stagger: 0.2 }, 5.3);
-      ntIn("#ntt2", 4.5); ntOut("#ntt2", 6.5);
-      ntIn("#ntt3", 6.7); ntOut("#ntt3", 8.9);
+      /* ===== 2–8.6 promise chat: a frustrating wall of text → explode ===== */
+      show("#noise", 2.0, 0.5);
+      tl.fromTo("#nchat", { opacity: 0, y: 24, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.6, ease: "power3.out", transformOrigin: "50% 50%" }, 2.1);
+      ntIn("#ntt1", 2.4);
+      tl.from("#nch-u", { opacity: 0, y: 12, duration: 0.4, ease: "power3.out" }, 2.9);
+      // the LLM types out a wall of text (no human reply — just keeps going)
+      ["#wl0","#wl1","#wl2","#wl3","#wl4","#wl5","#wl6","#wl7","#wl8"].forEach((s, i) =>
+        tl.fromTo(s, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.32, ease: "power2.out" }, 3.5 + i * 0.34));
+      ntOut("#ntt1", 6.9);
+      // dramatic explosion
+      tl.to("#nchat", { scale: 1.28, rotation: 2, opacity: 0, duration: 0.5, ease: "power2.in", transformOrigin: "50% 50%" }, 7.0);
+      tl.fromTo("#nflash", { opacity: 0 }, { opacity: 0.55, duration: 0.12, ease: "power2.out" }, 7.05);
+      tl.to("#nflash", { opacity: 0, duration: 0.5, ease: "power2.in" }, 7.2);
+      tl.fromTo("#nshock", { opacity: 0.7, scale: 0 }, { opacity: 0, scale: 34, duration: 0.85, ease: "power2.out" }, 7.05);
+      tl.to(".ndot-wrap", { x: 0, y: 0, scale: 1, opacity: 1, duration: 1.05, ease: "power4.out", stagger: { each: 0.008, from: "center" } }, 7.05);
+      tl.fromTo(".nsrc", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.45, ease: "back.out(1.4)", stagger: 0.04, transformOrigin: "50% 50%" }, 7.6);
+      tl.to(".nsrc", { opacity: 0.7, duration: 2.4, ease: "sine.inOut", yoyo: true, repeat: R(3, 2.4), stagger: 0.18 }, 8.4);
+      ntIn("#ntt2", 7.7); ntOut("#ntt2", 10.7);
 
-      /* ===== 9–14.4 organize: cluster → insights → bet ===== */
-      ntIn("#ntt4", 9.2);
-      tl.to(".ndot", { x: 0, y: 0, duration: 0.4, ease: "power1.inOut" }, 8.8);   // stop jitter
-      wraps.forEach((w, i) => tl.to(w.el, { x: w.tx - w.sx, y: w.ty - w.sy, duration: 1.2, ease: "power3.inOut" }, 9.2 + (i % 8) * 0.03));
-      tl.to(".nsrc", { opacity: 0, scale: 0.8, duration: 0.5, ease: "power2.in", stagger: 0.03, transformOrigin: "50% 50%" }, 9.2);
-      tl.to(".ndot-wrap", { opacity: 0.22, duration: 0.6, ease: "power2.inOut" }, 10.7);
-      tl.fromTo(["#ni0", "#ni1", "#ni2"], { opacity: 0, y: 16, scale: 0.92 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.4)", stagger: 0.16, transformOrigin: "50% 50%" }, 10.8);
-      ntOut("#ntt4", 11.9); ntIn("#ntt5", 12.1);
-      // promote the middle insight to a bet
-      tl.to("#ni1", { boxShadow: "0 0 0 3px rgba(37,99,235,0.32)", duration: 0.5, ease: "power2.out" }, 12.4);
-      tl.fromTo("#npro", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 12.5);
-      tl.fromTo("#nbet", { opacity: 0, y: 16, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.55, ease: "back.out(1.5)", transformOrigin: "50% 100%" }, 12.7);
-      hide("#noise", 14.4, 0.6);
+      /* ===== 10.8–15.6 organize: cluster → insights → bet ===== */
+      ntIn("#ntt3", 10.9);
+      tl.to(".ndot", { x: 0, y: 0, duration: 0.4, ease: "power1.inOut" }, 10.5);
+      wraps.forEach((w, i) => tl.to(w.el, { x: w.tx - w.sx, y: w.ty - w.sy, duration: 1.2, ease: "power3.inOut" }, 10.9 + (i % 8) * 0.025));
+      tl.to(".nsrc", { opacity: 0, scale: 0.8, duration: 0.5, ease: "power2.in", stagger: 0.025, transformOrigin: "50% 50%" }, 10.9);
+      tl.to(".ndot-wrap", { opacity: 0.2, duration: 0.6, ease: "power2.inOut" }, 12.4);
+      tl.fromTo(["#ni0", "#ni1", "#ni2"], { opacity: 0, y: 18, scale: 0.92 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.4)", stagger: 0.16, transformOrigin: "50% 50%" }, 12.5);
+      ntOut("#ntt3", 13.7); ntIn("#ntt4", 13.9);
+      tl.to("#ni1", { boxShadow: "0 0 0 3px rgba(37,99,235,0.32)", duration: 0.5, ease: "power2.out" }, 14.3);
+      tl.fromTo("#npro", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 14.4);
+      tl.fromTo("#nbet", { opacity: 0, y: 18, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.55, ease: "back.out(1.5)", transformOrigin: "50% 100%" }, 14.6);
+      hide("#noise", 16.2, 0.6);
 
-      /* ===== 14.6–20.5 For You: the surfaced insight ===== */
-      tl.set("#stage", { opacity: 1 }, 14.5);
-      tl.set("#cap", { opacity: 1 }, 14.5);
-      show("#app", 14.7, 0.5);
-      tl.from("#app", { y: 16, duration: 0.5, ease: "power3.out" }, 14.7);
-      capIn("#cap7", 15.0);
-      cam(15.1, 2.0, 1.12, 320);
-      tl.from("#wpA-ins", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 15.3);
-      tl.fromTo(".ins-bar", { scaleY: 0 }, { scaleY: 1, duration: 0.5, ease: "power3.out", stagger: 0.06 }, 15.7);
-      tl.fromTo("#wpA-ins", { boxShadow: "0 1px 3px rgba(17,17,16,0.05)" }, { boxShadow: "0 0 0 3px rgba(91,141,217,0.35)", duration: 1.0, ease: "sine.inOut", yoyo: true, repeat: 1 }, 16.3);
-      tl.from("#wpA-bet", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 17.6);
+      /* ===== 16.4–22.6 For You: insight + agent take + promote button ===== */
+      tl.set("#stage", { opacity: 1 }, 16.3);
+      tl.set("#cap", { opacity: 1 }, 16.3);
+      show("#app", 16.6, 0.5);
+      tl.from("#app", { y: 16, duration: 0.5, ease: "power3.out" }, 16.6);
+      capIn("#cap7", 16.9);
+      cam(17.0, 2.0, 1.05, 540);
+      tl.from("#wpA-ins", { opacity: 0, y: 12, duration: 0.45, ease: "power3.out" }, 17.2);
+      tl.fromTo(".ins-bar", { scaleY: 0 }, { scaleY: 1, duration: 0.5, ease: "power3.out", stagger: 0.05 }, 17.6);
+      tl.fromTo("#wpA-ins", { boxShadow: "0 1px 3px rgba(17,17,16,0.05)" }, { boxShadow: "0 0 0 3px rgba(91,141,217,0.3)", duration: 1.0, ease: "sine.inOut", yoyo: true, repeat: 1 }, 18.2);
+      tl.fromTo("#insConcl", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" }, 18.9);   // agent types a conclusion
+      tl.fromTo("#insActions", { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.45, ease: "back.out(1.4)" }, 20.2);
+      // human clicks "Promote to bet"
+      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 20.5);
+      tl.to("#cursor", { x: 1330, y: 470, duration: 0.85, ease: "power3.inOut" }, 20.6);
+      tl.to("#promoteBtn", { scale: 1.05, duration: 0.5, ease: "sine.inOut", yoyo: true, repeat: 1, transformOrigin: "50% 50%" }, 20.8);
+      cursorClick(21.6);
+      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 22.1);
 
-      /* ===== 19.3–25 bet + approve ===== */
-      capOut("#cap7", 19.1); capIn("#cap8", 19.4);
-      tl.to("#cursor", { opacity: 1, duration: 0.3 }, 19.4);
-      tl.to("#cursor", { x: 1000, y: 470, duration: 0.8, ease: "power3.inOut" }, 19.5);
-      cursorClick(20.4);
-      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 20.9);
-      panelSwap("#wpA", "#wpB", 21.0);
-      tl.to("#wcv1", { opacity: 0, duration: 0.35 }, 21.0); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 21.2);
-      camReset(21.0, 1.0);
-      cam(22.2, 1.4, 1.13, 540);
-      tl.fromTo("#wpB-c2", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 22.8);
-      tl.to("#wpB-st1", { opacity: 0, duration: 0.3 }, 23.4);
-      tl.fromTo("#wpB-st2", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 23.5);
-      tl.fromTo("#wpB-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 23.9);
+      /* ===== 22.2–30 bet detail: conversational timeline + tasks ===== */
+      capOut("#cap7", 21.9); capIn("#cap8", 22.2);
+      panelSwap("#wpA", "#wpB", 22.2);
+      tl.to("#wcv1", { opacity: 0, duration: 0.35 }, 22.2); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 22.4);
+      camReset(22.2, 0.9);
+      gsap.set("#wpB-scroll", { y: 0 });
+      tliIn("#tli1", 23.0);
+      tliIn("#tli2", 23.9);
+      tl.fromTo(["#tsk1", "#tsk2", "#tsk3", "#tsk4"], { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.4, ease: "power3.out", stagger: 0.22 }, 24.4);
+      // status proposed -> active as the work starts
+      tl.to("#wpB-st1", { opacity: 0, duration: 0.3 }, 25.6);
+      tl.fromTo("#wpB-st2", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)", transformOrigin: "50% 50%" }, 25.7);
+      tliIn("#tli3", 26.4);
+      tliIn("#tli4", 27.3);
+      tl.to("#wp-idle", { opacity: 0, duration: 0.3 }, 27.6); tl.to("#wp-on", { opacity: 1, duration: 0.3 }, 27.8);
+      tl.to(".wpdot", { opacity: 0.3, duration: 0.7, ease: "sine.inOut", yoyo: true, repeat: R(11, 0.7) }, 27.8);
 
-      /* ===== 25–29 agents ===== */
-      capOut("#cap8", 25.0); capIn("#cap9", 25.3);
-      camReset(24.8, 0.9);
-      tl.to("#wp-idle", { opacity: 0, duration: 0.3 }, 25.0); tl.to("#wp-on", { opacity: 1, duration: 0.3 }, 25.2);
-      tl.to(".wpdot", { opacity: 0.3, duration: 0.7, ease: "sine.inOut", yoyo: true, repeat: R(8, 0.7) }, 25.2);
-      panelSwap("#wpB", "#wpC", 25.6);
-      tl.to("#wcv2", { opacity: 0, duration: 0.35 }, 25.6); tl.to("#wcv3", { opacity: 1, duration: 0.35 }, 25.8);
-      tl.to(["#wnav-active", "#wnav-rail"], { y: 114, duration: 0.4, ease: "power3.inOut" }, 25.6);
-      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 25.6);
-      tl.to("#wn-ag", { color: "#111110", fontWeight: 600, duration: 0.3 }, 25.6);
-      tl.fromTo(["#agc1", "#agc2", "#agc3", "#agc4"], { opacity: 0, y: 16, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "power3.out", stagger: 0.1, transformOrigin: "50% 50%" }, 26.0);
-      tl.to(["#agc1", "#agc2", "#agc3"], { boxShadow: "0 0 0 3px rgba(37,99,235,0.12)", duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(3, 1.3), stagger: 0.2 }, 26.8);
+      /* ===== 29.6–33.6 agents working ===== */
+      capOut("#cap8", 29.4); capIn("#cap9", 29.7);
+      panelSwap("#wpB", "#wpC", 30.0);
+      tl.to("#wcv2", { opacity: 0, duration: 0.35 }, 30.0); tl.to("#wcv3", { opacity: 1, duration: 0.35 }, 30.2);
+      tl.to(["#wnav-active", "#wnav-rail"], { y: 114, duration: 0.4, ease: "power3.inOut" }, 30.0);
+      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 30.0);
+      tl.to("#wn-ag", { color: "#111110", fontWeight: 600, duration: 0.3 }, 30.0);
+      tl.fromTo(["#agc1", "#agc2", "#agc3", "#agc4"], { opacity: 0, y: 16, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "power3.out", stagger: 0.1, transformOrigin: "50% 50%" }, 30.4);
+      tl.to(["#agc1", "#agc2", "#agc3"], { boxShadow: "0 0 0 3px rgba(37,99,235,0.12)", duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(3, 1.3), stagger: 0.2 }, 31.2);
 
-      /* ===== 29–33.5 outcome ===== */
-      capOut("#cap9", 29.0); capIn("#cap10", 29.3);
-      panelSwap("#wpC", "#wpD", 29.6);
-      tl.to("#wcv3", { opacity: 0, duration: 0.35 }, 29.6); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 29.8);
-      tl.to(["#wnav-active", "#wnav-rail"], { y: 0, duration: 0.4, ease: "power3.inOut" }, 29.6);
-      tl.to("#wn-ag", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 29.6);
-      tl.to("#wn-fy", { color: "#111110", fontWeight: 600, duration: 0.3 }, 29.6);
-      cam(30.0, 1.7, 1.12, 330);
-      tl.fromTo("#wpD-banner", { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.45, ease: "back.out(1.4)" }, 30.4);
+      /* ===== 33.6–40 back to bet detail: production data validates the bet ===== */
+      capOut("#cap9", 33.4); capIn("#cap10", 33.7);
+      panelSwap("#wpC", "#wpB", 33.9);
+      tl.to("#wcv3", { opacity: 0, duration: 0.35 }, 33.9); tl.to("#wcv2", { opacity: 1, duration: 0.35 }, 34.1);
+      tl.to(["#wnav-active", "#wnav-rail"], { y: 0, duration: 0.4, ease: "power3.inOut" }, 33.9);
+      tl.to("#wn-ag", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 33.9);
+      tl.to("#wn-fy", { color: "#111110", fontWeight: 600, duration: 0.3 }, 33.9);
+      // check off the tasks
+      tl.to(".task .box", { backgroundColor: "#27AE60", borderColor: "#27AE60", duration: 0.3, stagger: 0.12 }, 34.4);
+      tl.to(".task .chk", { opacity: 1, duration: 0.2, stagger: 0.12 }, 34.5);
+      // scroll the timeline to reveal the production result
+      tl.to("#wpB-scroll", { y: -300, duration: 1.1, ease: "power2.inOut" }, 35.2);
+      tliIn("#tli5", 36.0);
+      tl.fromTo(".val .vbar", { scaleY: 0 }, { scaleY: 1, duration: 0.5, ease: "power3.out", stagger: 0.07 }, 36.5);
+      tliIn("#tli6", 37.3);
+      tl.to("#wpB-st2", { opacity: 0, duration: 0.3 }, 37.6);
+      tl.fromTo("#wpB-st3", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.45, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 37.7);
 
-      /* ===== 33.5–45 marketplace (loops for every team) ===== */
-      capOut("#cap10", 33.4);
-      camReset(33.2, 1.1);
-      capIn("#capM1", 33.8);
-      panelSwap("#wpD", "#wpE", 33.7);
-      tl.to("#wcv2", { opacity: 0, duration: 0.3 }, 33.7); tl.to("#wcv4", { opacity: 1, duration: 0.3 }, 33.9);
-      tl.to(["#wnav-active", "#wnav-rail"], { y: 152, duration: 0.4, ease: "power3.inOut" }, 33.7);
-      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 33.7);
-      tl.to("#wn-mk", { color: "#111110", fontWeight: 600, duration: 0.3 }, 33.7);
-      tl.fromTo(".mtile", { opacity: 0, y: 20, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.3)", stagger: 0.06, transformOrigin: "50% 50%" }, 34.1);
-      cam(34.5, 8.5, 1.06, 470);
-      capOut("#capM1", 37.0); capIn("#capM2", 37.3);
-      tl.to("#mt-sales", { boxShadow: "0 0 0 3px rgba(230,126,34,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 37.8);
-      tl.to("#mt-growth", { boxShadow: "0 0 0 3px rgba(37,99,235,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 39.0);
-      tl.to("#mt-prod", { boxShadow: "0 0 0 3px rgba(39,174,96,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 40.2);
+      /* ===== 40–51 marketplace (loops for every team) ===== */
+      capOut("#cap10", 39.8);
+      capIn("#capM1", 40.3);
+      panelSwap("#wpB", "#wpE", 40.2);
+      tl.to("#wcv2", { opacity: 0, duration: 0.3 }, 40.2); tl.to("#wcv4", { opacity: 1, duration: 0.3 }, 40.4);
+      tl.to(["#wnav-active", "#wnav-rail"], { y: 152, duration: 0.4, ease: "power3.inOut" }, 40.2);
+      tl.to("#wn-fy", { color: "#5A5751", fontWeight: 500, duration: 0.3 }, 40.2);
+      tl.to("#wn-mk", { color: "#111110", fontWeight: 600, duration: 0.3 }, 40.2);
+      tl.fromTo(".mtile", { opacity: 0, y: 20, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.3)", stagger: 0.06, transformOrigin: "50% 50%" }, 40.6);
+      cam(41.0, 8.5, 1.04, 540);
+      capOut("#capM1", 43.6); capIn("#capM2", 43.9);
+      tl.to("#mt-sales", { boxShadow: "0 0 0 3px rgba(230,126,34,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 44.4);
+      tl.to("#mt-growth", { boxShadow: "0 0 0 3px rgba(37,99,235,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 45.6);
+      tl.to("#mt-prod", { boxShadow: "0 0 0 3px rgba(39,174,96,0.4)", duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 46.8);
 
-      /* ===== 44–54 close ===== */
-      capOut("#capM2", 43.8);
-      tl.to(["#stage", "#cap", "#backdrop"], { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 44.0);
-      tl.to("#close", { opacity: 1, duration: 0.6, ease: "power2.inOut" }, 44.2);
-      tl.from("#close-mark", { opacity: 0, scale: 0.6, rotation: -10, duration: 0.65, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 44.7);
-      tl.from("#close .ec-word", { opacity: 0, x: -22, duration: 0.55, ease: "power3.out" }, 44.9);
-      tl.from("#close-tag", { opacity: 0, y: 14, duration: 0.5, ease: "power2.out" }, 45.5);
-      tl.fromTo("#close-row", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "back.out(1.4)" }, 45.9);
-      tl.to("#close-cta", { scale: 1.04, duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(6, 1.3), transformOrigin: "50% 50%" }, 46.8);
+      /* ===== 50–60 close (big lockup) ===== */
+      capOut("#capM2", 50.0);
+      tl.to(["#stage", "#cap", "#backdrop"], { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 50.2);
+      tl.to("#close", { opacity: 1, duration: 0.6, ease: "power2.inOut" }, 50.4);
+      tl.from("#close-mark", { opacity: 0, scale: 0.6, rotation: -10, duration: 0.7, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 50.9);
+      tl.from("#close .ec-word", { opacity: 0, x: -28, duration: 0.6, ease: "power3.out" }, 51.1);
+      tl.from("#close-tag", { opacity: 0, y: 16, duration: 0.55, ease: "power2.out" }, 51.8);
+      tl.fromTo("#close-row", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: "back.out(1.4)" }, 52.3);
+      tl.to("#close-cta", { scale: 1.04, duration: 1.3, ease: "sine.inOut", yoyo: true, repeat: R(5, 1.3), transformOrigin: "50% 50%" }, 53.3);
 
       window.__timelines["main"] = tl;
     </script>
