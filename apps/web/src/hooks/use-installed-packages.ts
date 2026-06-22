@@ -21,6 +21,8 @@ export function useInstallPackage(workspaceId: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.installedPackages.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.workspaceSkills.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 		},
 	})
 }
@@ -35,6 +37,8 @@ export function useForkInstalledPackage(workspaceId: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.installedPackages.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.workspaceSkills.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 		},
 	})
 }
@@ -54,6 +58,8 @@ export function useUninstallPackage(workspaceId: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.installedPackages.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.workspaceSkills.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 		},
 	})
 }
