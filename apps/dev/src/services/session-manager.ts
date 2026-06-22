@@ -36,20 +36,13 @@ import {
 	trackLoopActiveDay,
 	utcDayString,
 } from '../lib/analytics/catalog-events'
-import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { getValidOAuthToken } from '../lib/claude-oauth'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
-import {
-	LLM_ROUTE_MASKIN_PLAN,
-	type LlmRoute,
-	checkPlanCap,
-	resolveLlmRoute,
-} from '../lib/llm-routing'
+import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { AgentServerClient } from './agent-server-client'
@@ -225,25 +218,6 @@ export class SessionManager extends EventEmitter {
 	): Promise<typeof sessions.$inferSelect> {
 		const config = params.config ?? {}
 		const interactive = config.interactive === true
-
-		// Pre-flight billing cap. Only enforced when no BYO credentials are
-		// present — BYO routes (OAuth, custom_llm, api_key) take precedence over
-		// the maskin_plan route and never count against the cap. Checking OAuth
-		// here mirrors the route-resolution priority so the 402 surfaces before
-		// a session row is created rather than failing silently at container start.
-		const [ws] = await this.db
-			.select()
-			.from(workspaces)
-			.where(eq(workspaces.id, workspaceId))
-			.limit(1)
-		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
-		const hasByoCredentials =
-			(wsSettings.custom_llm?.enabled && !!wsSettings.custom_llm?.base_url) ||
-			!!wsSettings.llm_keys?.anthropic ||
-			!!(await getValidOAuthToken(this.db, workspaceId).catch(() => null))
-		if (!hasByoCredentials) {
-			await checkPlanCap({ db: this.db, workspaceId, wsSettings })
-		}
 
 		const [session] = await this.db
 			.insert(sessions)
@@ -901,18 +875,31 @@ export class SessionManager extends EventEmitter {
 		const wsLlmKeys = wsSettings.llm_keys ?? {}
 
 		let routeTaken: LlmRoute | null = null
-		const resolved = await resolveLlmRoute({
-			db: this.db,
-			workspaceId: session.workspaceId,
-			wsSettings,
-			agent: {
-				provider: agent.llmProvider,
-				apiKey: (llmConfig.api_key as string | undefined) ?? null,
-			},
-		})
-		if (resolved) {
-			routeTaken = resolved.route
-			Object.assign(envVars, resolved.envVars)
+		try {
+			const resolved = await resolveLlmRoute({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				wsSettings,
+				agent: {
+					provider: agent.llmProvider,
+					apiKey: (llmConfig.api_key as string | undefined) ?? null,
+				},
+			})
+			if (resolved) {
+				routeTaken = resolved.route
+				Object.assign(envVars, resolved.envVars)
+			}
+		} catch (err) {
+			if (err instanceof FallbackQuotaExceededError) {
+				logger.warn('System LLM fallback quota exceeded', {
+					sessionId: session.id,
+					actorId: session.actorId,
+					used: err.used,
+					limit: err.limit,
+				})
+			}
+			throw err
 		}
 
 		// Non-anthropic agent override (OpenAI native via OPENAI_API_KEY).
@@ -1126,11 +1113,6 @@ export class SessionManager extends EventEmitter {
 				networkMode = result.networkName
 			}
 		}
-
-		// entrypoint.sh waits for this file before running agent-run.sh (two-phase
-		// startup for microsandbox). The local Docker path must write it here so
-		// the container doesn't sleep forever.
-		await writeFile(join(tempDir, '.exec-trigger'), '1', { mode: 0o644 })
 
 		const containerId = await this.containers.create({
 			image: spec.image,
@@ -1532,24 +1514,6 @@ export class SessionManager extends EventEmitter {
 		await this.maybeEmitLoopActiveDay(session.actorId, session.workspaceId).catch((err) => {
 			logger.warn('Failed loop_active_day emit', { sessionId, error: String(err) })
 		})
-
-		const llmRoute = (session.config as Record<string, unknown>)?.llm_route
-		if (llmRoute === LLM_ROUTE_MASKIN_PLAN && usage) {
-			capturePosthogEvent('maskin_plan_session_completed', session.workspaceId, {
-				actor_id: session.actorId,
-				session_id: sessionId,
-				input_tokens: usage.inputTokens ?? 0,
-				output_tokens: usage.outputTokens ?? 0,
-				total_cost_usd: usage.totalCostUsd ?? 0,
-				duration_ms: usage.durationMs ?? 0,
-				status,
-			}).catch((err) => {
-				logger.warn('Failed maskin_plan_session_completed PostHog emit', {
-					sessionId,
-					error: String(err),
-				})
-			})
-		}
 
 		try {
 			await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)

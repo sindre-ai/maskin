@@ -1,4 +1,3 @@
-import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
 import { AppSidebar } from '@/components/layout/sidebar'
@@ -122,7 +121,6 @@ function WorkspaceLayout() {
 								<AppSidebar />
 								<SidebarInset className="min-w-0">
 									<Header />
-									<TrialExpiredBanner workspaceId={workspaceId} />
 									<div className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8">
 										<Outlet />
 									</div>

@@ -1,4 +1,3 @@
-import { BillingSection } from '@/components/settings/billing-section'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -24,11 +23,7 @@ function KeysPage() {
 
 	return (
 		<div className="max-w-lg space-y-6">
-			<BillingSection workspaceId={workspaceId} />
-
-			<div className="border-t border-border pt-6">
-				<ClaudeOAuthSection workspaceId={workspaceId} />
-			</div>
+			<ClaudeOAuthSection workspaceId={workspaceId} />
 
 			<div className="border-t border-border pt-6">
 				<LLMKeysEditor workspace={workspace} workspaceId={workspaceId} />
@@ -359,7 +354,9 @@ function CustomLlmEditor({
 						onCheckedChange={setEnabled}
 						disabled={!canEnable && !enabled}
 					/>
-					<span className="text-sm text-foreground">{enabled ? 'Enabled' : 'Disabled'}</span>
+					<span className="text-sm text-foreground">
+						{enabled ? 'Enabled — used for all sessions' : 'Disabled'}
+					</span>
 				</div>
 
 				<div>

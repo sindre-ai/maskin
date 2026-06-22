@@ -11,14 +11,13 @@ vi.mock('../../lib/claude-oauth', () => ({
 }))
 
 import {
+	FallbackQuotaExceededError,
 	LLM_ROUTE_AGENT,
 	LLM_ROUTE_API_KEY,
 	LLM_ROUTE_CUSTOM,
-	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
-	PlanCapExceededError,
-	checkPlanCap,
-	getWorkspacePlanTokenUsage,
+	LLM_ROUTE_SYSTEM_FALLBACK,
+	getActorFallbackTokenUsage24h,
 	readFallbackConfig,
 	resolveLlmRoute,
 } from '../../lib/llm-routing'
@@ -30,6 +29,7 @@ const FALLBACK_ENV_KEYS = [
 	'MASKIN_FALLBACK_BASE_URL',
 	'MASKIN_FALLBACK_MODEL',
 	'MASKIN_FALLBACK_SMALL_MODEL',
+	'MASKIN_FALLBACK_DAILY_TOKEN_LIMIT',
 ] as const
 
 beforeEach(() => {
@@ -63,14 +63,11 @@ function dbWithFallbackUsage(rows: Array<{ inputTokens: number; outputTokens: nu
 	} as unknown as Database
 }
 
-// Same shape as dbWithFallbackUsage — the workspace-plan query has the same
-// drizzle call chain (select → from → where). Aliased for readability.
-const dbWithSessionUsage = dbWithFallbackUsage
-
 describe('readFallbackConfig', () => {
 	it('returns undefined apiKey when env not set', () => {
 		const cfg = readFallbackConfig({})
 		expect(cfg.apiKey).toBeUndefined()
+		expect(cfg.dailyTokenLimit).toBe(550_000)
 	})
 
 	it('falls back to default model when small model not set', () => {
@@ -80,12 +77,40 @@ describe('readFallbackConfig', () => {
 		})
 		expect(cfg.smallModel).toBe('foo/bar')
 	})
+
+	it('uses default 550k limit on invalid input', () => {
+		const cfg = readFallbackConfig({ MASKIN_FALLBACK_DAILY_TOKEN_LIMIT: 'not-a-number' })
+		expect(cfg.dailyTokenLimit).toBe(550_000)
+	})
+
+	it('rejects negative limits and falls back to default', () => {
+		const cfg = readFallbackConfig({ MASKIN_FALLBACK_DAILY_TOKEN_LIMIT: '-100' })
+		expect(cfg.dailyTokenLimit).toBe(550_000)
+	})
+})
+
+describe('getActorFallbackTokenUsage24h', () => {
+	it('sums input + output tokens, treating null as 0', async () => {
+		const db = dbWithFallbackUsage([
+			{ inputTokens: 1000, outputTokens: 200 },
+			{ inputTokens: 0, outputTokens: 50 },
+			// biome-ignore lint/suspicious/noExplicitAny: simulating null DB columns
+			{ inputTokens: null as any, outputTokens: 75 },
+		])
+		expect(await getActorFallbackTokenUsage24h(db, 'actor-1')).toBe(1325)
+	})
+
+	it('returns 0 when actor has no fallback sessions', async () => {
+		const db = dbWithFallbackUsage([])
+		expect(await getActorFallbackTokenUsage24h(db, 'actor-2')).toBe(0)
+	})
 })
 
 describe('resolveLlmRoute priority order', () => {
 	const baseParams = {
 		db: dbWithFallbackUsage([]),
 		workspaceId: 'ws-1',
+		actorId: 'actor-1',
 	}
 
 	it('1. agent anthropic api_key wins over everything', async () => {
@@ -116,7 +141,7 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result).toBeNull()
 	})
 
-	it('2. Claude OAuth overrides custom_llm', async () => {
+	it('2. workspace custom_llm overrides Claude OAuth', async () => {
 		getValidOAuthTokenMock.mockResolvedValue({
 			tokens: {
 				accessToken: 'oauth-access',
@@ -136,10 +161,16 @@ describe('resolveLlmRoute priority order', () => {
 			wsSettings: settings,
 			agent: {},
 		})
-		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
-		expect(result?.envVars.CLAUDE_OAUTH_ACCESS_TOKEN).toBe('oauth-access')
-		// custom_llm env vars should NOT be set when OAuth wins.
-		expect(result?.envVars.ANTHROPIC_BASE_URL).toBeUndefined()
+		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
+		expect(result?.envVars).toMatchObject({
+			ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+			ANTHROPIC_AUTH_TOKEN: 'sk-or-test',
+			ANTHROPIC_API_KEY: '',
+			ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
+			ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
+		})
+		// OAuth env vars should NOT be set when custom_llm wins.
+		expect(result?.envVars.CLAUDE_OAUTH_ACCESS_TOKEN).toBeUndefined()
 	})
 
 	it('skips custom_llm when enabled but missing fields', async () => {
@@ -209,6 +240,25 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
 	})
 
+	it('5. system fallback when nothing else set and env configured', async () => {
+		getValidOAuthTokenMock.mockResolvedValue(null)
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
+		process.env.MASKIN_FALLBACK_BASE_URL = 'https://openrouter.ai/api'
+		process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: emptySettings(),
+			agent: {},
+		})
+		expect(result?.route).toBe(LLM_ROUTE_SYSTEM_FALLBACK)
+		expect(result?.envVars).toMatchObject({
+			ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+			ANTHROPIC_AUTH_TOKEN: 'sk-or-system',
+			ANTHROPIC_API_KEY: '',
+			ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
+		})
+	})
+
 	it('returns null when nothing is configured', async () => {
 		getValidOAuthTokenMock.mockResolvedValue(null)
 		const result = await resolveLlmRoute({
@@ -219,302 +269,37 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result).toBeNull()
 	})
 
-	describe('maskin_plan route', () => {
-		beforeEach(() => {
-			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
-			process.env.MASKIN_FALLBACK_BASE_URL = 'https://openrouter.ai/api'
-			process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
-		})
-
-		it.each(['starter', 'pro', 'trial'] as const)(
-			'%s plan routes through Maskin OR + Deepseek v4 Flash',
-			async (plan) => {
-				getValidOAuthTokenMock.mockResolvedValue(null)
-				const settings = emptySettings()
-				settings.billing = { plan }
-				const result = await resolveLlmRoute({
-					...baseParams,
-					db: dbWithSessionUsage([]),
-					wsSettings: settings,
-					agent: {},
-				})
-				expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
-				expect(result?.envVars).toMatchObject({
-					ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
-					ANTHROPIC_AUTH_TOKEN: 'sk-or-maskin',
-					ANTHROPIC_API_KEY: '',
-					ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
-					ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
-				})
-			},
-		)
-
-		it('maskin_plan is only used when no BYO credentials are present', async () => {
-			getValidOAuthTokenMock.mockResolvedValue(null)
-			const settings = emptySettings()
-			settings.billing = { plan: 'pro' }
-			const result = await resolveLlmRoute({
-				...baseParams,
-				db: dbWithSessionUsage([]),
-				wsSettings: settings,
-				agent: {},
-			})
-			expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
-			expect(result?.envVars.ANTHROPIC_AUTH_TOKEN).toBe('sk-or-maskin')
-		})
-
-		it('OAuth wins over maskin_plan — never counts against cap', async () => {
-			getValidOAuthTokenMock.mockResolvedValue({
-				tokens: { accessToken: 'oauth-access', refreshToken: 'r', expiresAt: 9999 },
-			})
-			const settings = emptySettings()
-			settings.billing = { plan: 'pro' }
-			const result = await resolveLlmRoute({
-				...baseParams,
-				db: dbWithSessionUsage([]),
-				wsSettings: settings,
-				agent: {},
-			})
-			expect(result?.route).toBe(LLM_ROUTE_OAUTH)
-		})
-
-		it('custom_llm wins over maskin_plan', async () => {
-			getValidOAuthTokenMock.mockResolvedValue(null)
-			const settings = emptySettings()
-			settings.billing = { plan: 'pro' }
-			settings.custom_llm = {
-				enabled: true,
-				base_url: 'https://example.com',
-				api_key: 'sk-cust',
-				model: 'mod',
-			}
-			const result = await resolveLlmRoute({
-				...baseParams,
-				db: dbWithSessionUsage([]),
-				wsSettings: settings,
-				agent: {},
-			})
-			expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
-		})
-
-		it('workspace api_key wins over maskin_plan', async () => {
-			getValidOAuthTokenMock.mockResolvedValue(null)
-			const settings = emptySettings()
-			settings.billing = { plan: 'pro' }
-			settings.llm_keys = { anthropic: 'sk-ant-x' }
-			const result = await resolveLlmRoute({
-				...baseParams,
-				db: dbWithSessionUsage([]),
-				wsSettings: settings,
-				agent: {},
-			})
-			expect(result?.route).toBe(LLM_ROUTE_API_KEY)
-		})
-
-		it('agent anthropic api_key still wins over paid plan', async () => {
-			const settings = emptySettings()
-			settings.billing = { plan: 'pro' }
-			const result = await resolveLlmRoute({
-				...baseParams,
-				wsSettings: settings,
-				agent: { provider: 'anthropic', apiKey: 'sk-agent' },
-			})
-			expect(result?.route).toBe(LLM_ROUTE_AGENT)
-		})
-
-		it('byollm plan does NOT route through maskin_plan', async () => {
-			getValidOAuthTokenMock.mockResolvedValue(null)
-			const settings = emptySettings()
-			settings.billing = { plan: 'byollm' }
-			settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
-			const result = await resolveLlmRoute({
-				...baseParams,
-				wsSettings: settings,
-				agent: {},
-			})
-			expect(result?.route).toBe(LLM_ROUTE_API_KEY)
-			expect(result?.envVars.ANTHROPIC_API_KEY).toBe('sk-ant-from-ws')
-		})
-
-		it('falls through when paid plan is set but operator OR key is missing', async () => {
-			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = ''
-			getValidOAuthTokenMock.mockResolvedValue(null)
-			const settings = emptySettings()
-			settings.billing = { plan: 'starter' }
-			settings.llm_keys = { anthropic: 'sk-ant-recover' }
-			const result = await resolveLlmRoute({
-				...baseParams,
-				wsSettings: settings,
-				agent: {},
-			})
-			expect(result?.route).toBe(LLM_ROUTE_API_KEY)
-		})
-
-		it('no billing block defaults to trial and routes through maskin_plan when no BYO set', async () => {
-			getValidOAuthTokenMock.mockResolvedValue(null)
-			const result = await resolveLlmRoute({
-				...baseParams,
-				db: dbWithSessionUsage([]),
-				wsSettings: emptySettings(),
-				agent: {},
-			})
-			expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
-		})
-	})
-})
-
-describe('getWorkspacePlanTokenUsage', () => {
-	it('sums input + output across maskin_plan sessions, treating null as 0', async () => {
-		const db = dbWithSessionUsage([
-			{ inputTokens: 5000, outputTokens: 1000 },
-			// biome-ignore lint/suspicious/noExplicitAny: simulating null DB columns
-			{ inputTokens: null as any, outputTokens: 250 },
-			{ inputTokens: 750, outputTokens: 0 },
+	it('throws FallbackQuotaExceededError when over the daily limit', async () => {
+		getValidOAuthTokenMock.mockResolvedValue(null)
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
+		process.env.MASKIN_FALLBACK_DAILY_TOKEN_LIMIT = '1000'
+		const db = dbWithFallbackUsage([
+			{ inputTokens: 800, outputTokens: 250 }, // 1050 > 1000
 		])
-		expect(await getWorkspacePlanTokenUsage(db, 'ws-1', 0)).toBe(7000)
-	})
-
-	it('returns 0 when the workspace has no maskin_plan sessions', async () => {
-		const db = dbWithSessionUsage([])
-		expect(await getWorkspacePlanTokenUsage(db, 'ws-2')).toBe(0)
-	})
-})
-
-describe('checkPlanCap', () => {
-	const ORIG_TRIAL_CAP = process.env.MASKIN_TRIAL_HARD_CAP_TOKENS
-
-	afterEach(() => {
-		if (ORIG_TRIAL_CAP === undefined) process.env.MASKIN_TRIAL_HARD_CAP_TOKENS = undefined
-		else process.env.MASKIN_TRIAL_HARD_CAP_TOKENS = ORIG_TRIAL_CAP
-	})
-
-	it('treats missing billing as trial — enforces cap when over limit', async () => {
-		const db = dbWithSessionUsage([{ inputTokens: 999_999, outputTokens: 0 }])
-		const err = await checkPlanCap({
-			db,
-			workspaceId: 'ws-1',
-			wsSettings: emptySettings(),
-		}).catch((e) => e)
-		expect(err).toBeInstanceOf(PlanCapExceededError)
-		expect(err.plan).toBe('trial')
-		expect(err.cap).toBe(100_000)
-	})
-
-	it('is a no-op for byollm — explicit opt-out', async () => {
-		const settings = emptySettings()
-		settings.billing = { plan: 'byollm', hard_cap_tokens: 100, period_start: 0 }
-		const db = dbWithSessionUsage([{ inputTokens: 9999, outputTokens: 0 }])
-		await expect(
-			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
-		).resolves.toBeUndefined()
-	})
-
-	it.each(['starter', 'pro'] as const)(
-		'is a no-op for %s when Stripe has not written hard_cap_tokens (fail-open pre-Task 5)',
-		async (plan) => {
-			const settings = emptySettings()
-			settings.billing = { plan, period_start: Math.floor(Date.now() / 1000) - 60 }
-			const db = dbWithSessionUsage([{ inputTokens: 50_000_000, outputTokens: 0 }])
-			await expect(
-				checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
-			).resolves.toBeUndefined()
-		},
-	)
-
-	it('throws PlanCapExceededError when usage equals hard_cap_tokens', async () => {
-		// period_start is stored in Unix SECONDS (Stripe format).
-		const periodStartSec = Math.floor(Date.now() / 1000) - 60
-		const settings = emptySettings()
-		settings.billing = {
-			plan: 'starter',
-			hard_cap_tokens: 1_000_000,
-			period_start: periodStartSec,
-		}
-		const db = dbWithSessionUsage([
-			{ inputTokens: 600_000, outputTokens: 400_000 }, // exactly at cap
-		])
-		const err = await checkPlanCap({
-			db,
-			workspaceId: 'ws-1',
-			wsSettings: settings,
-		}).catch((e) => e)
-		expect(err).toBeInstanceOf(PlanCapExceededError)
-		expect(err.plan).toBe('starter')
-		expect(err.used).toBe(1_000_000)
-		expect(err.cap).toBe(1_000_000)
-		// period_end is in ms: period_start (seconds → ms) + 30 days.
-		expect(err.periodEnd).toBe(periodStartSec * 1000 + 30 * 24 * 60 * 60 * 1000)
-	})
-
-	it('honors explicit period_end on the error payload', async () => {
-		// period_start / period_end are Unix SECONDS; periodEnd on the error is MS.
-		const settings = emptySettings()
-		settings.billing = {
-			plan: 'pro',
-			hard_cap_tokens: 100,
-			period_start: 1,
-			period_end: 999_999,
-		}
-		const db = dbWithSessionUsage([{ inputTokens: 100, outputTokens: 0 }])
-		const err = await checkPlanCap({
-			db,
-			workspaceId: 'ws-1',
-			wsSettings: settings,
-		}).catch((e) => e)
-		expect(err).toBeInstanceOf(PlanCapExceededError)
-		expect(err.periodEnd).toBe(999_999 * 1000)
-	})
-
-	it('uses MASKIN_TRIAL_HARD_CAP_TOKENS when trial has no explicit cap', async () => {
-		process.env.MASKIN_TRIAL_HARD_CAP_TOKENS = '50000'
-		const settings = emptySettings()
-		settings.billing = { plan: 'trial' }
-		const db = dbWithSessionUsage([{ inputTokens: 50_000, outputTokens: 0 }])
-		const err = await checkPlanCap({
-			db,
-			workspaceId: 'ws-1',
-			wsSettings: settings,
-		}).catch((e) => e)
-		expect(err).toBeInstanceOf(PlanCapExceededError)
-		expect(err.plan).toBe('trial')
-		expect(err.cap).toBe(50_000)
-		// Trial with no period_start has periodEnd: null — frontend handles it.
-		expect(err.periodEnd).toBeNull()
-	})
-
-	it('falls back to 100k trial default when env var is unset/invalid', async () => {
-		process.env.MASKIN_TRIAL_HARD_CAP_TOKENS = undefined
-		const settings = emptySettings()
-		settings.billing = { plan: 'trial' }
-		const db = dbWithSessionUsage([{ inputTokens: 100_000, outputTokens: 0 }])
-		await expect(
-			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
-		).rejects.toBeInstanceOf(PlanCapExceededError)
-	})
-
-	it('explicit billing.hard_cap_tokens overrides the trial default', async () => {
-		process.env.MASKIN_TRIAL_HARD_CAP_TOKENS = '50000'
-		const settings = emptySettings()
-		settings.billing = { plan: 'trial', hard_cap_tokens: 200_000 }
-		const db = dbWithSessionUsage([{ inputTokens: 60_000, outputTokens: 0 }])
-		// Used (60k) is below explicit cap (200k) even though it exceeds env default (50k).
-		await expect(
-			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
-		).resolves.toBeUndefined()
-	})
-
-	it('resolveLlmRoute rejects with PlanCapExceededError when over the cap', async () => {
-		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
-		const settings = emptySettings()
-		settings.billing = { plan: 'pro', hard_cap_tokens: 100, period_start: 0 }
-		const db = dbWithSessionUsage([{ inputTokens: 200, outputTokens: 0 }])
 		await expect(
 			resolveLlmRoute({
 				db,
 				workspaceId: 'ws-1',
-				wsSettings: settings,
+				actorId: 'actor-1',
+				wsSettings: emptySettings(),
 				agent: {},
 			}),
-		).rejects.toBeInstanceOf(PlanCapExceededError)
+		).rejects.toBeInstanceOf(FallbackQuotaExceededError)
+	})
+
+	it('does NOT consume the fallback when usage is exactly at the limit', async () => {
+		getValidOAuthTokenMock.mockResolvedValue(null)
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
+		process.env.MASKIN_FALLBACK_DAILY_TOKEN_LIMIT = '1000'
+		const db = dbWithFallbackUsage([{ inputTokens: 1000, outputTokens: 0 }])
+		await expect(
+			resolveLlmRoute({
+				db,
+				workspaceId: 'ws-1',
+				actorId: 'actor-1',
+				wsSettings: emptySettings(),
+				agent: {},
+			}),
+		).rejects.toBeInstanceOf(FallbackQuotaExceededError)
 	})
 })

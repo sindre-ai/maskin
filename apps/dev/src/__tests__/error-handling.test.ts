@@ -6,7 +6,6 @@ import {
 	formatZodError,
 	mapStatusToCode,
 } from '../lib/errors'
-import { PlanCapExceededError } from '../lib/llm-routing'
 
 // Create a test app with the same defaultHook and onError as index.ts
 function createErrorTestApp() {
@@ -27,21 +26,6 @@ function createErrorTestApp() {
 	})
 
 	app.onError((err, c) => {
-		if (err instanceof PlanCapExceededError) {
-			return c.json(
-				{
-					error: {
-						code: ApiErrorCode.PLAN_CAP_EXCEEDED,
-						message: err.message,
-						plan: err.plan,
-						used: err.used,
-						cap: err.cap,
-						period_end: err.periodEnd,
-					},
-				},
-				402,
-			)
-		}
 		if ('status' in err && typeof err.status === 'number') {
 			return c.json(createApiError(mapStatusToCode(err.status), err.message), err.status as 400)
 		}
@@ -86,26 +70,6 @@ function createErrorTestApp() {
 		const err = new Error('Not Found') as Error & { status: number }
 		err.status = 404
 		throw err
-	})
-
-	// Route that throws a plan-cap-exceeded error
-	app.get('/plan-cap', () => {
-		throw new PlanCapExceededError({
-			plan: 'starter',
-			used: 1_500_000,
-			cap: 1_000_000,
-			periodEnd: 1_700_000_000_000,
-		})
-	})
-
-	// Trial without an explicit period_end — frontend handles null.
-	app.get('/plan-cap-trial', () => {
-		throw new PlanCapExceededError({
-			plan: 'trial',
-			used: 100_000,
-			cap: 100_000,
-			periodEnd: null,
-		})
 	})
 
 	return app
@@ -201,28 +165,6 @@ describe('Error Handling', () => {
 			expect(res.status).toBe(404)
 			const body = await res.json()
 			expect(body.error.code).toBe('NOT_FOUND')
-		})
-
-		it('returns 402 with structured plan-cap payload', async () => {
-			const res = await app.request('/plan-cap')
-			expect(res.status).toBe(402)
-			const body = await res.json()
-			expect(body.error).toMatchObject({
-				code: 'PLAN_CAP_EXCEEDED',
-				plan: 'starter',
-				used: 1_500_000,
-				cap: 1_000_000,
-				period_end: 1_700_000_000_000,
-			})
-		})
-
-		it('preserves period_end: null for trial-bucket over-cap responses', async () => {
-			const res = await app.request('/plan-cap-trial')
-			expect(res.status).toBe(402)
-			const body = await res.json()
-			expect(body.error.code).toBe('PLAN_CAP_EXCEEDED')
-			expect(body.error.plan).toBe('trial')
-			expect(body.error.period_end).toBeNull()
 		})
 	})
 
