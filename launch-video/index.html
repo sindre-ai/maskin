@@ -213,7 +213,7 @@
 
       <!-- left captions -->
       <div id="cap">
-        <div class="cap" data-layout-allow-overlap id="cap7"><div class="ck">signal</div><div class="ch">Agents surface the insight — with a take.</div></div>
+        <div class="cap" data-layout-allow-overlap id="cap7"><div class="ck">signal</div><div class="ch">Agents surface the insight, <em>and their take</em>.</div></div>
         <div class="cap" data-layout-allow-overlap id="cap8"><div class="ck">conviction</div><div class="ch">Promote to a <em>bet</em> — agents define the work.</div></div>
         <div class="cap" data-layout-allow-overlap id="cap9"><div class="ck">execution</div><div class="ch">Agents do the tasks — and ship.</div></div>
         <div class="cap" data-layout-allow-overlap id="cap10"><div class="ck">validated</div><div class="ch">Production data <em>closes the loop</em>.</div></div>
@@ -300,7 +300,7 @@
                       <div class="tli" id="tli5" style="opacity:0"><div class="avatar av-a av">⚡</div><div class="cnt"><div><span class="nm link">Feedback Monitor</span><span class="tm">6d</span></div><div class="ms">Shipped 6 days ago. Production data is in:</div>
                         <div class="val"><div class="vchart" id="valChart"><div class="vbar" style="height:24px"></div><div class="vbar" style="height:30px"></div><div class="vbar up" style="height:42px"></div><div class="vbar up" style="height:52px"></div><div class="vbar up" style="height:60px"></div></div><div class="vt">Week-1 retention <b>38% → 56% ▲</b><br/>Activation +22% · churn −18%</div></div>
                       </div></div>
-                      <div class="tli nl" id="tli6" style="opacity:0"><div class="avatar av-a av">⚡</div><div class="cnt"><div><span class="nm link">Bet Strategist</span><span class="tm">6d</span></div><div class="ms">Outcome verified — the bet <b>succeeded</b>. Loop closed.</div></div></div>
+                      <div class="tli nl" id="tli6" style="opacity:0"><div class="avatar av-a av">⚡</div><div class="cnt"><div><span class="nm link">Bet Strategist</span><span class="tm">6d</span></div><div class="ms">Outcome verified: week-1 retention climbed from 38% to 56% and activation is up 22%. We built the right thing — the bet <b>succeeded</b>. I’ve logged the result as a new insight, so the next bet starts smarter. Loop closed.</div></div></div>
                     </div>
                   </div>
                 </div>
@@ -411,6 +411,19 @@
         </div>
       </div>
 
+      <!-- audio: soft music bed + narration (placed to follow each beat) -->
+      <audio class="clip" data-track-index="5" data-start="0"     data-duration="60"       data-volume="0.6" id="aud-music" src="./audio/music.wav"></audio>
+      <audio class="clip" data-track-index="6" data-start="0.5"   data-duration="3.370667" data-volume="1" id="aud-vo01" src="./audio/vo01.wav"></audio>
+      <audio class="clip" data-track-index="6" data-start="3.99"  data-duration="4.394667" data-volume="1" id="aud-vo02" src="./audio/vo02.wav"></audio>
+      <audio class="clip" data-track-index="6" data-start="8.5"   data-duration="4.010667" data-volume="1" id="aud-vo03" src="./audio/vo03.wav"></audio>
+      <audio class="clip" data-track-index="6" data-start="12.63" data-duration="5.184"    data-volume="1" id="aud-vo04" src="./audio/vo04.wav"></audio>
+      <audio class="clip" data-track-index="6" data-start="17.93" data-duration="4.245333" data-volume="1" id="aud-vo05" src="./audio/vo05.wav"></audio>
+      <audio class="clip" data-track-index="6" data-start="23"    data-duration="4.906667" data-volume="1" id="aud-vo06" src="./audio/vo06.wav"></audio>
+      <audio class="clip" data-track-index="6" data-start="29.7"  data-duration="3.157333" data-volume="1" id="aud-vo07" src="./audio/vo07.wav"></audio>
+      <audio class="clip" data-track-index="6" data-start="33.7"  data-duration="4.842667" data-volume="1" id="aud-vo08" src="./audio/vo08.wav"></audio>
+      <audio class="clip" data-track-index="6" data-start="40.3"  data-duration="4.757333" data-volume="1" id="aud-vo09" src="./audio/vo09.wav"></audio>
+      <audio class="clip" data-track-index="6" data-start="50.4"  data-duration="3.626667" data-volume="1" id="aud-vo10" src="./audio/vo10.wav"></audio>
+
     </div>
 
     <script>
@@ -462,6 +475,7 @@
         tl.to("#cursor", { scale: 0.82, duration: 0.09, ease: "power2.in", yoyo: true, repeat: 1, transformOrigin: "0% 0%" }, t);
         tl.set(["#rip1", "#rip2"], { opacity: 1, scale: 0 }, t);
         tl.to(["#rip1", "#rip2"], { scale: 4, opacity: 0, duration: 0.7, ease: "power2.out", stagger: 0.09, immediateRender: false }, t);
+        tl.set(["#rip1", "#rip2"], { opacity: 0, scale: 0 }, t + 0.95);
       }
       const tliIn = (s, t) => tl.fromTo(s, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, t);
 
@@ -469,8 +483,8 @@
       tl.from("#intro-mark", { opacity: 0, scale: 0.6, rotation: -12, duration: 0.7, ease: "back.out(1.8)", transformOrigin: "50% 50%" }, 0.15);
       tl.from("#intro-word", { opacity: 0, x: -28, duration: 0.6, ease: "power3.out" }, 0.4);
       tl.from("#intro-tag", { opacity: 0, y: 14, duration: 0.5, ease: "power2.out" }, 0.75);
-      tl.to("#intro", { opacity: 0, duration: 0.55, ease: "power2.inOut" }, 1.7);
-      tl.to(["#brandbar", "#kicker-tr"], { opacity: 1, duration: 0.5 }, 2.0);
+      tl.to("#intro", { opacity: 0, duration: 0.55, ease: "power2.inOut" }, 2.9);
+      tl.to(["#brandbar", "#kicker-tr"], { opacity: 1, duration: 0.5 }, 3.1);
 
       /* ===== 2–8.6 promise chat: a frustrating wall of text → explode ===== */
       show("#noise", 2.0, 0.5);
@@ -517,7 +531,7 @@
       tl.fromTo("#insActions", { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.45, ease: "back.out(1.4)" }, 20.2);
       // human clicks "Promote to bet"
       tl.to("#cursor", { opacity: 1, duration: 0.3 }, 20.5);
-      tl.to("#cursor", { x: 1318, y: 600, duration: 0.85, ease: "power3.inOut" }, 20.6);
+      tl.to("#cursor", { x: 1314, y: 558, duration: 0.85, ease: "power3.inOut" }, 20.6);
       tl.to("#promoteBtn", { scale: 1.05, duration: 0.5, ease: "sine.inOut", yoyo: true, repeat: 1, transformOrigin: "50% 50%" }, 20.8);
       cursorClick(21.6);
       tl.to("#cursor", { opacity: 0, duration: 0.3 }, 22.1);
