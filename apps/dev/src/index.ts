@@ -172,7 +172,7 @@ logger.info(`Starting server on port ${port}`)
 
 let bootstrap: DevBootstrapResult | null = null
 try {
-	bootstrap = await maybeBootstrapDev(db)
+	bootstrap = await maybeBootstrapDev(db, agentStorage)
 	if (bootstrap) {
 		logger.info('Dev bootstrap created default actor + workspace', {
 			actorEmail: bootstrap.actorEmail,

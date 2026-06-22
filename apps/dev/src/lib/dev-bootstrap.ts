@@ -20,6 +20,9 @@ import {
 	WORKSPACE_COACH_DEFAULT,
 } from '@maskin/shared'
 import { and, count, eq, isNotNull } from 'drizzle-orm'
+import { logger } from './logger'
+import type { AgentStorageManager } from '../services/agent-storage'
+import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
 
 /**
  * Seeds the global catalog with the Customer Continuous Discovery package if
@@ -285,7 +288,10 @@ export interface DevBootstrapResult {
  *
  * Skipped in production or when MASKIN_AUTO_BOOTSTRAP=false.
  */
-export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResult | null> {
+export async function maybeBootstrapDev(
+	db: Database,
+	agentStorage?: AgentStorageManager,
+): Promise<DevBootstrapResult | null> {
 	if (process.env.NODE_ENV === 'production') return null
 	if (process.env.MASKIN_AUTO_BOOTSTRAP === 'false') return null
 
@@ -352,6 +358,14 @@ export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResul
 	})
 
 	if (!workspace) throw new Error('dev bootstrap: failed to create workspace')
+
+	// Seed Driver and Strategist async (Workspace Coach was already seeded above).
+	// bootstrapDefaultAgents is idempotent — it skips Workspace Coach by name.
+	if (agentStorage) {
+		bootstrapDefaultAgents(db, agentStorage, workspace.id, actor.id).catch((err) =>
+			logger.error('dev bootstrap: default agent seeding failed', { workspaceId: workspace.id, err }),
+		)
+	}
 
 	return {
 		apiKey: key,

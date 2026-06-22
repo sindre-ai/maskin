@@ -2,6 +2,21 @@ import { expect, test } from '../fixtures/auth.fixture'
 import type { TestAPI } from '../helpers/api.helper'
 
 test.describe('Workspace Coach: workspace bootstrap + delete guard + reset', () => {
+	test('fresh workspace seeds all three default agents (Coach, Driver, Strategist)', async ({
+		account,
+	}) => {
+		const workspace = await account.api.createWorkspace(
+			`Default Agents E2E Bootstrap ${Date.now()}`,
+		)
+
+		// Driver and Strategist are seeded async — poll until they appear.
+		const driver = await findAgentWithRetry(account.api, workspace.id, 'Workspace Driver')
+		const strategist = await findAgentWithRetry(account.api, workspace.id, 'Strategist')
+
+		expect(driver).toBeDefined()
+		expect(strategist).toBeDefined()
+	})
+
 	test('fresh workspace seeds Workspace Coach with isSystem=true and Maskin MCP', async ({
 		account,
 	}) => {
@@ -86,4 +101,23 @@ async function findWorkspaceCoach(
 		)
 	}
 	return coach
+}
+
+// Driver and Strategist are seeded async after workspace creation — poll until they appear.
+async function findAgentWithRetry(
+	api: TestAPI,
+	workspaceId: string,
+	name: string,
+	{ attempts = 10, delayMs = 500 } = {},
+): Promise<{ id: string; name: string; type: string }> {
+	for (let i = 0; i < attempts; i++) {
+		const members = await api.listWorkspaceActors(workspaceId)
+		const agent = members.find((m) => m.name === name)
+		if (agent) return agent
+		await new Promise((r) => setTimeout(r, delayMs))
+	}
+	const members = await api.listWorkspaceActors(workspaceId)
+	throw new Error(
+		`Agent "${name}" not found in workspace ${workspaceId} after ${attempts} attempts; members: ${members.map((m) => m.name).join(', ')}`,
+	)
 }
