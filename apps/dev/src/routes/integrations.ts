@@ -12,6 +12,8 @@ import {
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
+import { trackSlackMentionReceived } from '../lib/analytics/catalog-events'
+import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
@@ -25,7 +27,11 @@ import {
 	listSlackUsers,
 } from '../lib/integrations/providers/slack/client'
 import { getProvider, listProviders } from '../lib/integrations/registry'
-import type { ResolvedProvider, StoredCredentials } from '../lib/integrations/types'
+import type {
+	NormalizedEvent,
+	ResolvedProvider,
+	StoredCredentials,
+} from '../lib/integrations/types'
 import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
 import { logger } from '../lib/logger'
@@ -856,6 +862,77 @@ export default app
 
 // ── Webhook handler (mounted separately at /api/webhooks) ──────────────────
 
+// Slack entity types the normalizer emits for inbound user-to-agent traffic.
+// `slack.app_mention` covers `@Maskin` in any channel; `slack.direct_message`
+// covers DMs to the bot. Anything else (channel/group messages without an
+// app_mention, reactions, channel events) is not what the ship metric is
+// counting and stays untagged.
+const SLACK_MENTION_ENTITY_TYPES = new Set(['slack.app_mention', 'slack.direct_message'])
+
+function slackChannelType(entityType: string): 'channel' | 'group' | 'im' {
+	if (entityType === 'slack.direct_message') return 'im'
+	if (entityType === 'slack.group_message') return 'group'
+	return 'channel'
+}
+
+function extractSlackTeamId(data: unknown): string | null {
+	if (!data || typeof data !== 'object') return null
+	const teamId = (data as Record<string, unknown>).team_id
+	return typeof teamId === 'string' && teamId.length > 0 ? teamId : null
+}
+
+// Tag every Slack mention/DM event in `events` with `source: 'slack_mention'`,
+// open the attribution window for the workspace, and emit the ship metric.
+// Pure on non-Slack providers — returns the input unchanged so the cost on the
+// rest of the webhook traffic stays zero.
+function tagSlackMentionEventsAndEmit(
+	providerName: string,
+	normalizedEvents: NormalizedEvent[],
+	workspaceId: string,
+	systemActorId: string,
+): NormalizedEvent[] {
+	if (providerName !== 'slack') return normalizedEvents
+
+	let emittedOnce = false
+	return normalizedEvents.map((e) => {
+		if (!SLACK_MENTION_ENTITY_TYPES.has(e.entityType)) return e
+
+		// Open the in-memory attribution window once per delivery so T4's reply
+		// path and T6's interactive edit handler can attach `source: 'slack_mention'`
+		// to the object change they write inside the next 4h, without each call
+		// site having to plumb the mention through.
+		markSlackMention(workspaceId)
+
+		// Emit the bet's ship metric exactly once per delivery — even if Slack
+		// somehow delivered two mention events in one envelope, the ship metric
+		// counts distinct deliveries, not distinct events. The PostHog capture is
+		// fire-and-forget by contract (see `posthog.ts`), so failures here never
+		// stall webhook ingest.
+		if (!emittedOnce) {
+			emittedOnce = true
+			const slackTeamId = extractSlackTeamId(e.data)
+			if (slackTeamId) {
+				void trackSlackMentionReceived({
+					workspaceId,
+					actorId: systemActorId,
+					channelType: slackChannelType(e.entityType),
+					slackTeamId,
+				})
+			} else {
+				logger.warn('Slack mention webhook missing team_id; skipping metric emit', {
+					workspaceId,
+					entityType: e.entityType,
+				})
+			}
+		}
+
+		return {
+			...e,
+			data: { ...(e.data as Record<string, unknown>), source: 'slack_mention' },
+		}
+	})
+}
+
 const webhookHandler = new WebhookHandler()
 
 export const webhookApp = new OpenAPIHono<Env>()
@@ -1062,6 +1139,20 @@ webhookApp.post('/:provider', async (c) => {
 				}
 
 				if (toInsert.length === 0) return { kind: 'inserted', count: 0 }
+
+				// Slack-app ship metric (T8 of bet/slack-app). Tag every inbound mention/DM
+				// event with `source: 'slack_mention'` so downstream attribution joins can
+				// be computed off the events table, open the in-memory attribution window
+				// so T4's reply path and T6's interactive edit can carry the same tag, and
+				// fire the PostHog ship metric once per dedup'd delivery. Skipped silently
+				// when the event isn't a mention or the provider isn't Slack — keeps every
+				// other webhook path byte-for-byte unchanged.
+				toInsert = tagSlackMentionEventsAndEmit(
+					providerName,
+					toInsert,
+					integration.workspaceId,
+					systemActorId,
+				)
 
 				// Mark the claim processed in the SAME transaction as the events insert,
 				// gated on the claim row still existing and being unprocessed. Without
