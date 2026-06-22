@@ -137,9 +137,27 @@ export class TestAPI {
 		if (!res.ok) throw new Error(`deleteObject failed: ${res.status}`)
 	}
 
+	async updateObject(
+		id: string,
+		patch: { status?: string; title?: string; content?: string },
+	): Promise<ObjectResponse> {
+		const res = await fetch(`${this.baseURL}/api/objects/${id}`, {
+			method: 'PATCH',
+			headers: this.headers(),
+			body: JSON.stringify(patch),
+		})
+		if (!res.ok) throw new Error(`updateObject failed: ${res.status}`)
+		return res.json()
+	}
+
 	async createComment(
 		workspaceId: string,
-		data: { entity_id: string; content: string; parent_event_id?: number },
+		data: {
+			entity_id: string
+			content: string
+			parent_event_id?: number
+			metadata?: Record<string, unknown>
+		},
 	): Promise<EventResponse> {
 		const res = await fetch(`${this.baseURL}/api/events`, {
 			method: 'POST',

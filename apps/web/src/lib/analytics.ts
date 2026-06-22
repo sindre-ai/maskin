@@ -91,6 +91,29 @@ export function trackCommentPosted(
 	})
 }
 
+// Fires on every comment post — server-side filters on the registered
+// super-property `actor_type = 'agent'` to compute the bet's reply-length and
+// visual-share metrics. `has_visual` is true when the rendered comment will
+// show a ```chart block, a `metadata.tasks` checklist, or both.
+export function trackAgentCommentPosted(
+	p: BaseProps & {
+		char_count: number
+		has_visual: boolean
+		has_chart: boolean
+		has_task_list: boolean
+		is_reply: boolean
+	},
+): void {
+	trackEvent('agent_comment_posted', {
+		...fillBase(p),
+		char_count: p.char_count,
+		has_visual: p.has_visual,
+		has_chart: p.has_chart,
+		has_task_list: p.has_task_list,
+		is_reply: p.is_reply,
+	})
+}
+
 export function trackTriggerFired(p: BaseProps & { entity_type: 'trigger' }): void {
 	trackEvent('trigger_fired', { ...fillBase(p), source: 'trigger' })
 }

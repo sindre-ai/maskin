@@ -1120,6 +1120,10 @@ export interface CreateCommentInput {
 	mentions?: string[]
 	parent_event_id?: number
 	attachment_file_ids?: string[]
+	// Structured payload that travels with the comment. Renderers read keys off
+	// this object: `chips` (decision chips), `tasks` (live checklist). Persisted
+	// as-is on the event row and round-tripped intact via SSE.
+	metadata?: SafeMetadata
 }
 
 // Imports
