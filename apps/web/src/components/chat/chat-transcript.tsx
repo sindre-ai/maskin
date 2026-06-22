@@ -190,7 +190,7 @@ function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean })
 	const [open, setOpen] = useState(false)
 	const label = redacted ? 'Thinking (redacted)' : 'Thinking'
 	const body = redacted
-		? 'Anthropic withheld the internal reasoning for this turn. The agent still thought about the problem — the content just isn't available here.'
+		? 'Anthropic withheld the internal reasoning for this turn. The agent still thought about the problem — the content just isn’t available here.'
 		: text
 	return (
 		<div className="rounded-md border border-border bg-bg text-xs">
