@@ -81,7 +81,7 @@ test.describe('Objects CRUD', () => {
 		await page.getByRole('button', { name: 'More actions' }).click()
 		await page.getByRole('menuitem', { name: 'Delete' }).click()
 		await expect(page.getByText('Delete this insight?')).toBeVisible()
-		await page.getByRole('button', { name: 'Confirm' }).click()
+		await page.getByRole('button', { name: 'Delete' }).last().click()
 
 		// Should redirect back to workspace
 		await expect(page).not.toHaveURL(/objects\//, { timeout: 10000 })
