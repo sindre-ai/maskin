@@ -208,3 +208,10 @@ export const DEV_TRIGGER_PRODUCT_ANALYST_WEEKLY_DISCOVERY = '665c1b46-23bf-4666-
 
 // Summarization Agent
 export const DEV_TRIGGER_SUMMARIZATION_AGENT_MEETING_DONE = '5eefd3e7-396b-4de1-9fdf-a22ccfc0d120'
+
+// ── Development Pipeline bundle ───────────────────────────────────────────────
+
+export const DEV_PACKAGE_DEVELOPMENT_PIPELINE_SLUG = 'development-pipeline'
+export const DEV_PACKAGE_DEVELOPMENT_PIPELINE_NAME = 'Development Pipeline'
+export const DEV_PACKAGE_DEVELOPMENT_PIPELINE_DESCRIPTION =
+	'Implements tasks, reviews PRs for quality and risk, and validates that implementations deliver their stated goals before marking work done.'
