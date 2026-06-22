@@ -6,10 +6,7 @@ import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
-	WORKSPACE_TEMPLATES,
 	type WebAppTarget,
-	type WorkspaceTemplate,
-	type WorkspaceTemplateId,
 	buildWebAppHref,
 	resolveWebAppBaseUrl,
 	stripTrailingSlash,
@@ -372,59 +369,6 @@ function buildEnableModuleSettings(
 	}
 
 	return updatedSettings
-}
-
-/**
- * Merge default settings from all enabled modules into the given settings.
- * Existing keys win — module defaults only fill in types not already specified.
- * Used when applying a template so that module-provided types (e.g. CRM contact/company)
- * pick up their statuses/display_names/field_definitions without inline duplication.
- */
-export function mergeEnabledModuleDefaults(
-	settings: Record<string, unknown>,
-): Record<string, unknown> {
-	const enabledModules = Array.isArray(settings.enabled_modules)
-		? (settings.enabled_modules as string[])
-		: ['work']
-
-	const displayNames = { ...((settings.display_names ?? {}) as Record<string, string>) }
-	const statuses = { ...((settings.statuses ?? {}) as Record<string, string[]>) }
-	const fieldDefs = { ...((settings.field_definitions ?? {}) as Record<string, unknown[]>) }
-	const relTypes = new Set<string>(
-		Array.isArray(settings.relationship_types) ? (settings.relationship_types as string[]) : [],
-	)
-
-	for (const moduleId of enabledModules) {
-		const defaults = getModuleDefaultSettings(moduleId)
-		if (!defaults) continue
-
-		if (defaults.display_names) {
-			for (const [type, name] of Object.entries(defaults.display_names)) {
-				if (!(type in displayNames)) displayNames[type] = name
-			}
-		}
-		if (defaults.statuses) {
-			for (const [type, sts] of Object.entries(defaults.statuses)) {
-				if (!(type in statuses)) statuses[type] = sts
-			}
-		}
-		if (defaults.field_definitions) {
-			for (const [type, fields] of Object.entries(defaults.field_definitions)) {
-				if (!(type in fieldDefs)) fieldDefs[type] = fields
-			}
-		}
-		if (defaults.relationship_types) {
-			for (const rt of defaults.relationship_types) relTypes.add(rt)
-		}
-	}
-
-	return {
-		...settings,
-		display_names: displayNames,
-		statuses: statuses,
-		field_definitions: fieldDefs,
-		relationship_types: [...relTypes],
-	}
 }
 
 /** Compute the set of relationship types still referenced by remaining extensions. */
@@ -4698,11 +4642,11 @@ export function createMcpServer(config: McpConfig) {
 			})
 
 			// Resolve workspace
-			let workspace: { id: string; name: string; settings: Record<string, unknown> } | undefined
+			let workspace: { id: string; name: string } | undefined
 			try {
 				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 					skipWorkspace: true,
-				})) as Array<{ id: string; name: string; settings: Record<string, unknown> }>
+				})) as Array<{ id: string; name: string }>
 				const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
 				workspace =
 					(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
@@ -4710,7 +4654,7 @@ export function createMcpServer(config: McpConfig) {
 			} catch {
 				const setupSteps =
 					config.transport === 'http'
-						? "  1. Sign in at https://maskin.io and create a workspace\n  2. Copy your Maskin API key from Settings → API keys and your Workspace ID from Settings → Workspace\n  3. Reconnect Claude with `claude mcp add maskin --transport http --url https://maskin.io/mcp --header 'Authorization: Bearer <YOUR_MASKIN_API_KEY>' --header 'X-Workspace-Id: <YOUR_WORKSPACE_ID>'`\n  4. Run /reload-plugins, then call get_started again\n\nFull guide: https://sindre.ai/docs/get-started/"
+						? "  1. Sign in at https://maskin.io and create a workspace\n  2. Copy your Maskin API key from Settings → API keys and your Workspace ID from Settings → Workspace\n  3. Reconnect Claude with `claude mcp add maskin --transport http --url https://maskin.io/mcp --header 'Authorization: Bearer <YOUR_MASKIN_API_KEY>' --header 'X-Workspace-Id: <YOUR_WORKSPACE_ID>'`\n  4. Run /reload-plugins, then call get_started again"
 						: '  1. Call create_actor to get an API key\n  2. Restart with API_KEY set\n  3. Call get_started again'
 				return textResponse(
 					`👋 Welcome to Maskin!\n\nI can't reach your workspace yet. To finish setup:\n${setupSteps}\n\nOr pass a workspace_id directly if you have one.`,
@@ -4719,116 +4663,54 @@ export function createMcpServer(config: McpConfig) {
 
 			if (!workspace) {
 				return textResponse(
-					'👋 Welcome to Maskin!\n\nNo workspace found on this account. Call create_workspace first with a name, then run get_started again to apply a template.',
+					'👋 Welcome to Maskin!\n\nNo workspace found on this account. Call create_workspace first with a name, then run get_started again.',
 				)
 			}
 
-			// Pick template
-			const pickTemplate = (): WorkspaceTemplateId | 'custom' | null => {
-				if (args.template) return args.template
-				const hint = (args.use_case ?? '').toLowerCase()
-				if (!hint) return null
-				if (/growth|launch|market|sales|outreach|pipeline|crm|lead/.test(hint)) return 'growth'
-				if (/dev|engineering|product|build|ship|feature|spec|sprint|backlog/.test(hint))
-					return 'development'
-				return null
-			}
-
-			const chosen = pickTemplate()
-
-			if (chosen === null) {
-				return textResponse(
-					`👋 Welcome to Maskin, let's set up "${workspace.name}".\n\nPick a starting template by calling get_started again with one of:\n\n  • template: "development" — for product teams shipping software (bets, tasks, insights with dev statuses)\n  • template: "growth" — for founders running a pipeline (adds contact + company with a light CRM)\n  • template: "custom" — I'll ask a few questions and tailor the workspace\n\nOr just tell me the use_case in your own words and I'll pick for you.`,
-				)
-			}
-
-			if (chosen === 'custom') {
-				if (!args.custom_settings) {
-					return textResponse(
-						`🧵 Custom workspace setup for "${workspace.name}"\n\nTell me a bit about how you work and I'll tailor the settings:\n\n  1. What kinds of things do you want to track? (e.g. bets, tasks, insights, contacts, campaigns, experiments…)\n  2. For each one, what are the statuses it moves through?\n  3. Are there any custom fields that matter? (e.g. deadline, priority, impact/effort, source)\n  4. Any common relationship types? (default: informs, breaks_into, blocks, relates_to)\n\nWhen you have answers, call get_started again with:\n  template: "custom"\n  custom_settings: { display_names, statuses, field_definitions, relationship_types, custom_extensions }\n  confirm: true\n\nReference shape: call get_workspace_schema to see the current settings object.`,
-					)
-				}
-				// custom settings provided — apply on confirm
-				if (!args.confirm) {
-					return textResponse(
-						`📋 Preview — custom settings for "${workspace.name}"\n\n${JSON.stringify(args.custom_settings, null, 2)}\n\nCall get_started again with the same args plus confirm: true to apply.`,
-					)
-				}
+			// PREVIEW: list marketplace packages so the user can pick one.
+			if (!args.package_id || !args.confirm) {
+				let packages: Array<{
+					id: string
+					name: string
+					description: string
+					use_case: string | null
+					item_types: string[]
+				}> = []
 				try {
-					await apiCall(
-						config,
-						'PATCH',
-						`/api/workspaces/${workspace.id}`,
-						{ settings: args.custom_settings },
-						{ workspaceId: workspace.id },
-					)
-					return textResponse(
-						`✅ Custom settings applied to "${workspace.name}".\n\nNext steps:\n  1. Call get_workspace_schema to verify\n  2. Use create_objects to add your first items\n  3. Call list_objects to see what's in the workspace`,
-					)
-				} catch (err) {
-					return textResponse(`❌ Failed to apply custom settings: ${String(err)}`)
-				}
-			}
-
-			// dev or growth template
-			const template: WorkspaceTemplate = WORKSPACE_TEMPLATES[chosen]
-			const mergedSettings = mergeEnabledModuleDefaults(
-				template.settings as Record<string, unknown>,
-			)
-
-			if (!args.confirm) {
-				const previewLines: string[] = []
-				const statuses = (mergedSettings.statuses ?? {}) as Record<string, string[]>
-				const fields = (mergedSettings.field_definitions ?? {}) as Record<
-					string,
-					Array<{ name: string; type: string; values?: string[] }>
-				>
-				const displayNames = (mergedSettings.display_names ?? {}) as Record<string, string>
-				for (const [type, typeStatuses] of Object.entries(statuses)) {
-					const name = displayNames[type] ?? type
-					const line = `  • ${name} (${type}): ${typeStatuses.join(' → ')}`
-					const typeFields = fields[type]
-					if (typeFields && typeFields.length > 0) {
-						const fieldDesc = typeFields
-							.map((f) =>
-								f.values && f.values.length > 0
-									? `${f.name} [${f.values.join('|')}]`
-									: `${f.name} (${f.type})`,
-							)
-							.join(', ')
-						previewLines.push(`${line}\n      Fields: ${fieldDesc}`)
-					} else {
-						previewLines.push(line)
+					const result = (await apiCall(config, 'GET', '/api/catalog/packages', undefined, {
+						skipWorkspace: true,
+					})) as {
+						packages: Array<{
+							id: string
+							name: string
+							description: string
+							use_case: string | null
+							item_types: string[]
+						}>
 					}
+					packages = result.packages ?? []
+				} catch (err) {
+					return textResponse(`❌ Failed to fetch marketplace packages: ${String(err)}`)
 				}
-				const extLines = Object.entries(template.settings.custom_extensions ?? {}).map(
-					([id, ext]) => `  • ${ext.name} (${id}): types [${ext.types.join(', ')}]`,
-				)
-				const seedLines = template.seedNodes.map(
-					(n) => `  • [${n.$id}] ${displayNames[n.type] ?? n.type}: ${n.title}`,
-				)
+
+				if (packages.length === 0) {
+					return textResponse(
+						`👋 Welcome to Maskin!\n\nThe marketplace has no packages yet. Once packages are published you'll be able to install them here.\n\nIn the meantime, use the marketplace UI in the app to browse and install packages as they become available.`,
+					)
+				}
+
+				const packageLines = packages.map((p) => {
+					const types = p.item_types.length > 0 ? ` [${p.item_types.join(', ')}]` : ''
+					const useCase = p.use_case ? ` · ${p.use_case}` : ''
+					return `  • ${p.name}${useCase}${types}\n    ${p.description}\n    id: ${p.id}`
+				})
 
 				return textResponse(
-					`📋 Preview — "${template.name}" template for workspace "${workspace.name}"
-
-${template.description}
-
-Object types & statuses:
-${previewLines.join('\n')}
-${extLines.length > 0 ? `\nCustom extensions:\n${extLines.join('\n')}\n` : ''}
-Seed examples (${template.seedNodes.length} objects + ${template.seedEdges.length} relationships):
-${seedLines.join('\n')}
-
-Before applying, ASK THE USER these questions in one message so we can tailor the workspace. They can answer any, all, or none:
-  1. What should I name the workspace? (currently "${workspace.name}")
-  2. What are you building or working on?
-  3. Any near-term goal or milestone I should reflect in the starter examples?
-
-Then call get_started again with confirm: true, and (if the user told you anything) pass workspace_name and/or seed_overrides keyed by the [$id] shown above. If the user said "just apply it" or gave nothing, call with only { template: "${template.id}", confirm: true }.`,
+					`👋 Welcome to Maskin! Let's set up "${workspace.name}".\n\nAvailable packages:\n\n${packageLines.join('\n\n')}\n\nAsk the user:\n  1. Which package would they like to install?\n  2. What should the workspace be named? (currently "${workspace.name}")\n\nThen call get_started again with:\n  package_id: "<id from above>"\n  confirm: true\n  workspace_name: "<name if they want to rename>"`,
 				)
 			}
 
-			// Apply: optional rename → merge settings → seed objects via /api/graph
+			// INSTALL: rename workspace (if requested), then install the package.
 			if (args.workspace_name && args.workspace_name.trim() !== workspace.name) {
 				try {
 					await apiCall(
@@ -4846,198 +4728,31 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 				}
 			}
 
+			let installSummary = ''
 			try {
-				await apiCall(
-					config,
-					'PATCH',
-					`/api/workspaces/${workspace.id}`,
-					{ settings: mergedSettings },
-					{ workspaceId: workspace.id },
-				)
-			} catch (err) {
-				return textResponse(
-					`❌ Failed to apply template settings: ${String(err)}\n\nNothing was seeded. You can retry or run create_workspace-specific tools manually.`,
-				)
-			}
-
-			const overrides = args.seed_overrides ?? {}
-			const tailoredNodes = template.seedNodes.map((n) => {
-				const o = overrides[n.$id]
-				if (!o) return n
-				return {
-					...n,
-					title: o.title ?? n.title,
-					content: o.content ?? n.content,
-					metadata: o.metadata ? { ...n.metadata, ...o.metadata } : n.metadata,
-				}
-			})
-
-			let seedSummary = ''
-			try {
-				const graphResult = (await apiCall(
+				const result = (await apiCall(
 					config,
 					'POST',
-					'/api/graph',
-					{ nodes: tailoredNodes, edges: template.seedEdges },
+					'/api/installed-packages',
+					{ packageId: args.package_id, workspaceId: workspace.id },
 					{ workspaceId: workspace.id },
-				)) as { objects?: Array<{ id: string }>; relationships?: Array<{ id: string }> }
-				const createdObjects = graphResult.objects?.length ?? tailoredNodes.length
-				const createdEdges = graphResult.relationships?.length ?? template.seedEdges.length
-				seedSummary = `Seeded ${createdObjects} example objects and ${createdEdges} relationships.`
+				)) as { provisioned?: { actors: number; triggers: number; skills: number } }
+				const p = result.provisioned
+				if (p) {
+					const parts = [
+						p.actors > 0 ? `${p.actors} agent${p.actors === 1 ? '' : 's'}` : '',
+						p.triggers > 0 ? `${p.triggers} trigger${p.triggers === 1 ? '' : 's'}` : '',
+						p.skills > 0 ? `${p.skills} skill${p.skills === 1 ? '' : 's'}` : '',
+					].filter(Boolean)
+					installSummary =
+						parts.length > 0 ? `Installed: ${parts.join(', ')}.` : 'Package installed.'
+				}
 			} catch (err) {
-				seedSummary = `Settings applied, but seeding examples failed: ${String(err)}. You can re-run get_started or add objects manually.`
+				return textResponse(`❌ Failed to install package: ${String(err)}`)
 			}
 
-			// Create seed agents (if any). Track $id → real UUID so triggers can resolve
-			// their target actor, and so {{self_id}} placeholders in system prompts can
-			// be substituted with the real actor id in a second PATCH.
-			const actorIdMap: Record<string, string> = {}
-			let agentsCreated = 0
-			if (template.seedAgents && template.seedAgents.length > 0) {
-				// Pre-fetch existing workspace members so we can skip agents that
-				// were already seeded (e.g. by the automatic workspace bootstrap).
-				// Best-effort: if the fetch fails, dedup is skipped and agents may
-				// be re-created (non-fatal).
-				let existingActorsByName = new Map<string, string>()
-				try {
-					const existingMembers = (await apiCall(
-						config,
-						'GET',
-						`/api/workspaces/${workspace.id}/members`,
-						undefined,
-						{ workspaceId: workspace.id },
-					)) as Array<{ actorId: string; name: string }>
-					existingActorsByName = new Map(existingMembers.map((m) => [m.name, m.actorId]))
-				} catch {
-					// dedup unavailable — proceed without it
-				}
-
-				for (const agent of template.seedAgents) {
-					// If this agent already exists as a workspace member, record its id
-					// and skip all creation steps.
-					const existingId = existingActorsByName.get(agent.name)
-					if (existingId) {
-						actorIdMap[agent.$id] = existingId
-						continue
-					}
-					try {
-						const created = (await apiCall(
-							config,
-							'POST',
-							'/api/actors',
-							{
-								type: 'agent',
-								name: agent.name,
-								system_prompt: agent.systemPrompt,
-								tools: agent.tools,
-							},
-							{ workspaceId: workspace.id },
-						)) as { id: string }
-						actorIdMap[agent.$id] = created.id
-						// Add the agent to the workspace so it shows up in the UI's
-						// agents page (which inner-joins workspace_members) and can be
-						// invoked as a workspace member by triggers and humans.
-						// Non-fatal: if this fails, the agent still exists and triggers
-						// (which FK to actors only) can still fire it.
-						try {
-							await apiCall(
-								config,
-								'POST',
-								`/api/workspaces/${workspace.id}/members`,
-								{ actor_id: created.id, role: 'member' },
-								{ workspaceId: workspace.id },
-							)
-						} catch (err) {
-							seedSummary += ` Failed to add agent "${agent.name}" to workspace members: ${String(err)}.`
-						}
-						// Second pass: substitute {{self_id}} in the system prompt.
-						if (agent.systemPrompt.includes('{{self_id}}')) {
-							const substituted = agent.systemPrompt.replaceAll('{{self_id}}', created.id)
-							await apiCall(
-								config,
-								'PATCH',
-								`/api/actors/${created.id}`,
-								{ system_prompt: substituted },
-								{ workspaceId: workspace.id },
-							)
-						}
-						// Create and attach seed skills for this agent.
-						for (const skill of agent.skills ?? []) {
-							try {
-								const createdSkill = (await apiCall(
-									config,
-									'POST',
-									`/api/workspaces/${workspace.id}/skills`,
-									{ name: skill.name, content: skill.content },
-									{ workspaceId: workspace.id },
-								)) as { id: string }
-								await apiCall(
-									config,
-									'POST',
-									`/api/actors/${created.id}/workspace-skills`,
-									{ workspaceSkillId: createdSkill.id },
-									{ workspaceId: workspace.id },
-								)
-							} catch (err) {
-								seedSummary += ` Failed to create/attach skill "${skill.name}" for agent "${agent.name}": ${String(err)}.`
-							}
-						}
-						agentsCreated++
-					} catch (err) {
-						seedSummary += ` Failed to create agent "${agent.name}": ${String(err)}.`
-					}
-				}
-			}
-
-			// Create seed triggers, resolving targetActor$id to a real UUID.
-			let triggersCreated = 0
-			if (template.seedTriggers && template.seedTriggers.length > 0) {
-				// Pre-fetch existing triggers to skip any already seeded. Best-effort.
-				let existingTriggerNames = new Set<string>()
-				try {
-					const existingTriggers = (await apiCall(config, 'GET', '/api/triggers', undefined, {
-						workspaceId: workspace.id,
-					})) as Array<{ name: string }>
-					existingTriggerNames = new Set(existingTriggers.map((t) => t.name))
-				} catch {
-					// dedup unavailable — proceed without it
-				}
-
-				for (const trigger of template.seedTriggers) {
-					if (existingTriggerNames.has(trigger.name)) continue
-					const targetActorId = actorIdMap[trigger.targetActor$id] ?? trigger.targetActor$id
-					try {
-						const substitutedPrompt = trigger.actionPrompt.replaceAll('{{self_id}}', targetActorId)
-						await apiCall(
-							config,
-							'POST',
-							'/api/triggers',
-							{
-								name: trigger.name,
-								type: trigger.type,
-								config: trigger.config,
-								action_prompt: substitutedPrompt,
-								target_actor_id: targetActorId,
-								enabled: trigger.enabled,
-							},
-							{ workspaceId: workspace.id },
-						)
-						triggersCreated++
-					} catch (err) {
-						seedSummary += ` Failed to create trigger "${trigger.name}": ${String(err)}.`
-					}
-				}
-			}
-
-			if (agentsCreated > 0 || triggersCreated > 0) {
-				seedSummary += ` Created ${agentsCreated} agents and ${triggersCreated} triggers that drive the pipeline.`
-			}
-
+			// Build magic login link (only safe on localhost).
 			const frontendUrl = stripTrailingSlash(process.env.FRONTEND_URL ?? 'http://localhost:5173')
-			// Magic-link auto-auth is only safe on localhost: the URL carries the raw
-			// API key in its fragment, so it must not end up in shared browser history,
-			// agent transcripts, or forwarded links. For any non-local frontend, emit a
-			// plain URL and let the user sign in normally.
 			const isLocalFrontend = (() => {
 				try {
 					const host = new URL(frontendUrl).hostname
@@ -5056,12 +4771,7 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 						`/api/workspaces/${workspace.id}/members`,
 						undefined,
 						{ workspaceId: workspace.id },
-					)) as Array<{
-						actorId: string
-						name: string | null
-						email: string | null
-						type: string
-					}>
+					)) as Array<{ actorId: string; name: string | null; email: string | null; type: string }>
 					const human = members.find((m) => m.type === 'human') ?? members[0]
 					if (human) {
 						magicParams.set('actor_id', human.actorId)
@@ -5077,9 +4787,8 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 			const workspaceUrl = `${frontendUrl}/${workspace.id}${magicSuffix}`
 			const keysUrl = `${frontendUrl}/${workspace.id}/settings/keys${magicSuffix}`
 
-			// Check whether the user has already imported Claude subscription credentials.
-			// Agent sessions can't run without them, so onboarding should ask the user to
-			// add them before the pipeline kicks off. Best-effort — ignore failures.
+			// Check Claude subscription credentials. Agent sessions can't run without
+			// them, so onboarding should prompt the user to add them. Best-effort.
 			let claudeOauthConnected = false
 			try {
 				const oauthStatus = (await apiCall(config, 'GET', '/api/claude-oauth/status', undefined, {
@@ -5094,50 +4803,18 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 				? ''
 				: `
 
-INSTRUCTIONS FOR THE "Connect your Claude subscription" SECTION — render this BEFORE "How to get the machine moving". The agents in this workspace run Claude sessions, which need the user's Claude subscription credentials (you can't import them via MCP — the user has to paste them). Render EXACTLY this format:
+INSTRUCTIONS FOR THE "Connect your Claude subscription" SECTION — render this BEFORE anything else. The agents in this workspace run Claude sessions, which need the user's Claude subscription credentials (you can't import them via MCP — the user has to paste them). Render EXACTLY this format:
 
   🔑 Connect your Claude subscription
      Open ${keysUrl} → "Import credentials" and paste the output of the terminal command shown there. Agents can't run until this is done.
 
-Then on a NEW line, ask: "Let me know once that's done and I'll kick things off." Do NOT proceed to the "How to get the machine moving" steps until the user confirms credentials are imported (or explicitly says to skip). If they skip, flag that agent sessions will fail until credentials are added.`
-
-			const devPipelineGuidance =
-				chosen === 'development'
-					? `
-
-The development pipeline is wired up end-to-end: Bet Planner → Senior Developer → Code Reviewer → CTO → Development Driver. The user steers; the agents build.
-
-INSTRUCTIONS FOR THE "How to get the machine moving" SECTION — do NOT print this block verbatim. Render EXACTLY this format (no extra prose, no per-step explanations):
-
-  How to get the machine moving — just say yes and I'll:
-    1. Connect GitHub
-    2. Sharpen the starter tasks
-    3. Kick off task 1 (Senior Developer picks it up)
-    4. Hand off to Code Reviewer + CTO for review and merge
-
-  Should I start now?
-
-Then STOP. Do not explain each step — one line each, nothing more. Wait for the user to say yes/go/start before taking any action.
-
-When the user confirms (yes / go / start / do it / sure), execute the steps in order: (a) call connect_integration for provider "github" — ask only for the repo URL if needed; (b) set the seed bet's \`github_link\` metadata to that repo URL; (c) use update_objects to rewrite task1 + task2 into concrete tickets with specific files/areas, acceptance criteria, and dependencies, tailored to what the user told you earlier; (d) move task1 to "in_progress"; (e) briefly confirm each step as you go ("✅ GitHub connected", "✅ Repo attached to bet", etc.). After step (d), tell the user the pipeline is running and they'll be pinged when the PR needs review — then on a NEW line, offer to use the wait time productively with something like: "Want to set up anything else while the agents work? A couple of options: connect Slack so you can drop feedback/insights into the workspace and chat with agents from where you already are, or wire up another integration. Or we can just wait." Keep this offer short (one short paragraph, not a bulleted list).
-
-If the user says "not now" or steers elsewhere, follow their direction.`
-					: `
-
-INSTRUCTIONS FOR THE "How to get the machine moving" SECTION — do NOT print verbatim. Render a terse list of 2–3 one-line items (a few words each) tailored to what the user told you earlier. End with "Should I start now?" on its own line. Do not explain each item. Wait for the user to confirm before acting.`
+Then on a NEW line, ask: "Let me know once that's done and I'll kick things off." Do NOT proceed to next steps until the user confirms credentials are imported (or explicitly says to skip). If they skip, flag that agent sessions will fail until credentials are added.`
 
 			return textResponse(
-				`✅ "${template.name}" template applied to workspace "${workspace.name}". ${seedSummary}
+				`✅ Package installed in workspace "${workspace.name}". ${installSummary}
 
-🌐 Open the workspace in your browser: ${workspaceUrl}
-
-Template pitch (use to describe what the user just got — rephrase in your own voice, don't quote verbatim):
-${template.pitch}
-
-INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, excited message with these parts in order:
-  1. An enthusiastic opener grounded in the template pitch above. Frame it as "you now have your own [AI team / execution machine / growth engine]" — make it feel like a capability unlock, not a config change. 2–3 sentences.
-  2. The workspace URL above as a clickable link.
-  3. ${claudeOauthConnected ? 'A "How to get the machine moving" section — see the template-specific guidance below.' : 'A "Connect your Claude subscription" section (see guidance below) BEFORE the "How to get the machine moving" section.'}${claudeCredsBlock}${devPipelineGuidance}`,
+🌐 Open the workspace: ${workspaceUrl}
+${claudeCredsBlock}`,
 			)
 		},
 	)

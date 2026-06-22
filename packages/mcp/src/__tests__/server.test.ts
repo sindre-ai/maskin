@@ -792,83 +792,94 @@ describe('tool handlers', () => {
 	})
 
 	describe('get_started handler', () => {
-		const workspace = { id: 'ws-1', name: 'My Workspace', settings: {} }
+		const workspace = { id: 'ws-1', name: 'My Workspace' }
+		const packages = [
+			{
+				id: 'pkg-dev-1',
+				name: 'Development',
+				description: 'Product team shipping software',
+				use_case: 'development',
+				item_types: ['actor', 'trigger'],
+			},
+			{
+				id: 'pkg-growth-1',
+				name: 'Growth',
+				description: 'Founder running a launch pipeline',
+				use_case: 'growth',
+				item_types: ['actor'],
+			},
+		]
 
-		it('asks the user to pick when no use_case or template is given', async () => {
-			mockFetchSuccess([workspace])
+		it('lists marketplace packages when no package_id is given', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ packages }),
+				} as Response)
 
 			const handler = getHandler('get_started')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 			const text = result.content[0].text
 
 			expect(text).toContain('My Workspace')
-			expect(text).toContain('development')
-			expect(text).toContain('growth')
-			expect(text).toContain('custom')
-		})
-
-		it('maps use_case keywords to growth template', async () => {
-			mockFetchSuccess([workspace])
-
-			const handler = getHandler('get_started')
-			const result = (await handler({ use_case: 'planning our launch pipeline' })) as {
-				content: Array<{ text: string }>
-			}
-			const text = result.content[0].text
-
-			expect(text).toContain('Preview')
-			expect(text).toContain('Growth')
-			expect(text).toContain('contact')
-		})
-
-		it('previews development template and prompts for tailoring questions', async () => {
-			mockFetchSuccess([workspace])
-
-			const handler = getHandler('get_started')
-			const result = (await handler({ template: 'development' })) as {
-				content: Array<{ text: string }>
-			}
-			const text = result.content[0].text
-
-			expect(text).toContain('Preview')
 			expect(text).toContain('Development')
+			expect(text).toContain('Growth')
+			expect(text).toContain('pkg-dev-1')
+			expect(text).toContain('package_id')
 			expect(text).toContain('confirm: true')
-			expect(text).toContain('ASK THE USER')
-			expect(text).toContain('workspace_name')
-			expect(text).toContain('seed_overrides')
 		})
 
-		it('applies template with confirm: true — PATCH settings and POST graph', async () => {
+		it('returns empty-marketplace message when catalog has no packages', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ packages: [] }),
+				} as Response)
+
+			const handler = getHandler('get_started')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const text = result.content[0].text
+
+			expect(text).toContain('marketplace')
+			expect(text).not.toContain('package_id')
+		})
+
+		it('installs package when package_id and confirm: true are provided', async () => {
 			const fetchSpy = vi
 				.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ id: 'ws-1' }),
+					json: () => Promise.resolve({ provisioned: { actors: 3, triggers: 5, skills: 2 } }),
 				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ objects: [{ id: 'o1' }], relationships: [{ id: 'r1' }] }),
+					json: () => Promise.resolve({ connected: false }),
 				} as Response)
 
 			const handler = getHandler('get_started')
 			const result = (await handler({
-				template: 'development',
+				package_id: 'pkg-dev-1',
 				confirm: true,
 			})) as { content: Array<{ text: string }> }
 			const text = result.content[0].text
 
-			expect(text).toContain('Development')
-			expect(text).toContain('template applied')
+			expect(text).toContain('installed')
+			expect(text).toContain('My Workspace')
 
-			const calls = fetchSpy.mock.calls
-			expect(calls[1][0]).toBe('http://localhost:3000/api/workspaces/ws-1')
-			expect((calls[1][1] as RequestInit).method).toBe('PATCH')
-			expect(calls[2][0]).toBe('http://localhost:3000/api/graph')
-			expect((calls[2][1] as RequestInit).method).toBe('POST')
+			const installCall = fetchSpy.mock.calls.find(
+				([, opts]) => (opts as RequestInit)?.method === 'POST',
+			)
+			if (!installCall) throw new Error('install call not found')
+			const installBody = JSON.parse((installCall[1] as RequestInit).body as string)
+			expect(installBody.packageId).toBe('pkg-dev-1')
+			expect(installBody.workspaceId).toBe('ws-1')
 		})
 
-		it('renames workspace and applies seed_overrides on confirm', async () => {
+		it('renames workspace before installing when workspace_name is provided', async () => {
 			const fetchSpy = vi
 				.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
@@ -878,43 +889,25 @@ describe('tool handlers', () => {
 				} as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ id: 'ws-1' }),
+					json: () => Promise.resolve({ provisioned: { actors: 2, triggers: 3, skills: 0 } }),
 				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ objects: [{ id: 'o1' }], relationships: [] }),
+					json: () => Promise.resolve({ connected: false }),
 				} as Response)
 
 			const handler = getHandler('get_started')
-			await handler({
-				template: 'development',
-				confirm: true,
-				workspace_name: 'Acme',
-				seed_overrides: {
-					bet1: { title: 'Ship MVP by June' },
-				},
-			})
+			await handler({ package_id: 'pkg-dev-1', confirm: true, workspace_name: 'Acme' })
 
-			const calls = fetchSpy.mock.calls
-			// 1st: GET workspaces; 2nd: PATCH rename; 3rd: PATCH settings; 4th: POST graph
-			const renameBody = JSON.parse((calls[1][1] as RequestInit).body as string)
-			expect(renameBody).toEqual({ name: 'Acme' })
-			const graphBody = JSON.parse((calls[3][1] as RequestInit).body as string)
-			const bet1 = graphBody.nodes.find((n: { $id: string }) => n.$id === 'bet1')
-			expect(bet1.title).toBe('Ship MVP by June')
-		})
-
-		it('asks a questionnaire when template is custom and no custom_settings', async () => {
-			mockFetchSuccess([workspace])
-
-			const handler = getHandler('get_started')
-			const result = (await handler({ template: 'custom' })) as {
-				content: Array<{ text: string }>
-			}
-			const text = result.content[0].text
-
-			expect(text).toContain('Custom workspace')
-			expect(text).toContain('custom_settings')
+			const patchCall = fetchSpy.mock.calls.find(
+				([u, opts]) =>
+					(opts as RequestInit)?.method === 'PATCH' &&
+					(u as string).includes('/api/workspaces/ws-1'),
+			)
+			if (!patchCall) throw new Error('patch call not found')
+			const patchBody = JSON.parse((patchCall[1] as RequestInit).body as string)
+			expect(patchBody).toEqual({ name: 'Acme' })
 		})
 
 		it('degrades gracefully when workspaces fetch fails', async () => {
@@ -926,79 +919,6 @@ describe('tool handlers', () => {
 
 			expect(text).toContain("can't reach your workspace")
 			expect(text).toContain('create_actor')
-		})
-
-		it('creates and attaches seed skills to the Workspace Observer on confirm', async () => {
-			const workspace = { id: 'ws-1', name: 'My Workspace', settings: {} }
-			const observerActorId = 'actor-workspace-observer'
-			const onboardingSkillId = 'skill-onboarding-1'
-
-			const fetchSpy = vi
-				.spyOn(globalThis, 'fetch')
-				.mockImplementation(async (url: unknown, options?: unknown): Promise<Response> => {
-					const u = url as string
-					const opts = options as RequestInit | undefined
-					const method = opts?.method ?? 'GET'
-					const body = opts?.body ? JSON.parse(opts.body as string) : {}
-
-					if (method === 'GET') {
-						return { ok: true, json: () => Promise.resolve([workspace]) } as Response
-					}
-					// PATCH workspace settings (URL ends with the workspace id, no trailing path)
-					if (method === 'PATCH' && /\/api\/workspaces\/[^/]+$/.test(u)) {
-						return { ok: true, json: () => Promise.resolve({ id: 'ws-1' }) } as Response
-					}
-					if (method === 'POST' && u.endsWith('/api/graph')) {
-						return {
-							ok: true,
-							json: () => Promise.resolve({ objects: [], relationships: [] }),
-						} as Response
-					}
-					// POST /api/actors — return predictable id for Workspace Observer
-					if (method === 'POST' && u.endsWith('/api/actors')) {
-						const id =
-							body.name === 'Workspace Observer' ? observerActorId : `actor-${body.name ?? 'x'}`
-						return { ok: true, json: () => Promise.resolve({ id }) } as Response
-					}
-					// POST /api/workspaces/:id/skills — skill creation
-					if (method === 'POST' && /\/api\/workspaces\/[^/]+\/skills$/.test(u)) {
-						return {
-							ok: true,
-							json: () => Promise.resolve({ id: onboardingSkillId }),
-						} as Response
-					}
-					// Everything else (members, PATCH actors, workspace-skills, triggers)
-					return { ok: true, json: () => Promise.resolve({ id: 'generic-id' }) } as Response
-				})
-
-			const handler = getHandler('get_started')
-			const result = (await handler({ template: 'development', confirm: true })) as {
-				content: Array<{ text: string }>
-			}
-
-			expect(result.content[0].text).toContain('Development')
-			expect(result.content[0].text).toContain('template applied')
-
-			// Skill creation: POST /api/workspaces/ws-1/skills with correct payload
-			const skillCreateCall = fetchSpy.mock.calls.find(
-				([u, opts]) =>
-					(u as string).includes('/api/workspaces/ws-1/skills') &&
-					(opts as RequestInit)?.method === 'POST',
-			)
-			if (!skillCreateCall) throw new Error('skill create call not found')
-			const skillBody = JSON.parse((skillCreateCall[1] as RequestInit).body as string)
-			expect(skillBody.name).toBe('workspace-observer-onboarding')
-			expect(skillBody.content).toContain('workspace-observer-onboarding')
-
-			// Skill attachment: POST /api/actors/:observerActorId/workspace-skills
-			const skillAttachCall = fetchSpy.mock.calls.find(
-				([u, opts]) =>
-					(u as string).endsWith(`/api/actors/${observerActorId}/workspace-skills`) &&
-					(opts as RequestInit)?.method === 'POST',
-			)
-			if (!skillAttachCall) throw new Error('skill attach call not found')
-			const attachBody = JSON.parse((skillAttachCall[1] as RequestInit).body as string)
-			expect(attachBody.workspaceSkillId).toBe(onboardingSkillId)
 		})
 	})
 
