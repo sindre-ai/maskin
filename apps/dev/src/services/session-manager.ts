@@ -4,6 +4,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { createGzip } from 'node:zlib'
 
 const execFileAsync = promisify(execFileCb)
 import type { Database } from '@maskin/db'
@@ -88,6 +89,8 @@ export interface CreateSessionParams {
 	triggerId?: string
 	createdBy: string
 	autoStart?: boolean
+	/** ID of a prior session whose workspace snapshot should be restored at startup. */
+	sourceSessionId?: string
 }
 
 /**
@@ -230,6 +233,7 @@ export class SessionManager extends EventEmitter {
 				config,
 				interactive,
 				createdBy: params.createdBy,
+				sourceSessionId: params.sourceSessionId,
 			})
 			.returning()
 
@@ -339,6 +343,61 @@ export class SessionManager extends EventEmitter {
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
+
+			// Restore workspace from a prior session if requested. Overwrites
+			// the staged agent files with the prior session's full /agent/ snapshot,
+			// so the agent picks up exactly where the previous session left off.
+			if (session.sourceSessionId) {
+				// Verify the source session belongs to the same workspace before
+				// restoring its snapshot — prevents cross-workspace data leakage.
+				const [sourceSession] = await this.db
+					.select({ id: sessions.id })
+					.from(sessions)
+					.where(
+						and(
+							eq(sessions.id, session.sourceSessionId),
+							eq(sessions.workspaceId, session.workspaceId),
+						),
+					)
+				if (!sourceSession) {
+					logger.warn('sourceSessionId does not belong to this workspace — skipping restore', {
+						sessionId,
+						sourceSessionId: session.sourceSessionId,
+						workspaceId: session.workspaceId,
+					})
+				} else {
+					const snapshotKey = `session-workspaces/${session.sourceSessionId}.tar.gz`
+					if (await this.storage.exists(snapshotKey)) {
+						const buf = await this.storage.get(snapshotKey)
+						const archivePath = join(tempDir, '_source_snapshot.tar.gz')
+						await writeFile(archivePath, buf)
+						try {
+							await execFileAsync('tar', [
+								'-xzf',
+								archivePath,
+								'-C',
+								tempDir,
+								'--strip-components=1',
+							])
+						} finally {
+							await rm(archivePath, { force: true })
+						}
+						await this.insertSystemLog(
+							sessionId,
+							`Workspace restored from session ${session.sourceSessionId}`,
+						)
+						logger.info('Workspace restored from source session', {
+							sessionId,
+							sourceSessionId: session.sourceSessionId,
+						})
+					} else {
+						logger.warn('Source session workspace snapshot not found — starting fresh', {
+							sessionId,
+							sourceSessionId: session.sourceSessionId,
+						})
+					}
+				}
+			}
 
 			// Build env vars and launch container. Let launchContainer derive
 			// the container name from session.id so re-entry (e.g. a watchdog
@@ -484,6 +543,17 @@ export class SessionManager extends EventEmitter {
 		this.containers.detachStdin(sessionId)
 		await this.containers.stop(session.containerId)
 		// handleCompletion will be called by the exit watcher
+	}
+
+	/**
+	 * Copy the container's /agent/ directory to S3 as session-workspaces/{sessionId}.tar.gz
+	 * so continuation sessions can restore from it via sourceSessionId. Works on stopped
+	 * containers (before docker rm). Called non-fatally from handleCompletion.
+	 */
+	private async snapshotWorkspaceAfterExit(sessionId: string, containerId: string): Promise<void> {
+		const tarStream = await this.containers.copyFrom(containerId, '/agent/')
+		await this.storage.put(`session-workspaces/${sessionId}.tar.gz`, tarStream.pipe(createGzip()))
+		logger.info('Workspace snapshot saved', { sessionId })
 	}
 
 	async pauseSession(sessionId: string): Promise<void> {
@@ -1551,6 +1621,16 @@ export class SessionManager extends EventEmitter {
 
 		// Clear active session link on object
 		await this.clearActiveSession(sessionId)
+
+		// Snapshot the full /agent/ workspace before removing the container so a
+		// continuation session can restore it via sourceSessionId. Non-fatal.
+		await this.snapshotWorkspaceAfterExit(sessionId, containerId).catch((err) =>
+			logger.warn('Failed to snapshot workspace after exit', {
+				sessionId,
+				containerId,
+				error: String(err),
+			}),
+		)
 
 		// Cleanup
 		this.containers.detachStdin(sessionId)

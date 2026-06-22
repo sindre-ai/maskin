@@ -149,6 +149,7 @@ if (process.env.NODE_ENV === 'production') {
 				env: spec.env,
 				memoryMib: spec.memoryMib,
 				cpus: spec.cpus,
+				sourceSessionId: session.sourceSessionId ?? undefined,
 			}
 		},
 	})
