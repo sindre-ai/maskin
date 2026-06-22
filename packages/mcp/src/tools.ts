@@ -732,6 +732,13 @@ export const tools = {
 				.describe('Container configuration overrides'),
 			trigger_id: z.string().uuid().optional().describe('Trigger that initiated this session'),
 			auto_start: z.boolean().default(true).describe('Start the session immediately'),
+			source_session_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'ID of a prior session whose workspace should be restored at startup. Use this when continuing a task that a previous session started but could not finish (e.g. code was written but could not be pushed).',
+				),
 		}),
 	},
 	list_sessions: {

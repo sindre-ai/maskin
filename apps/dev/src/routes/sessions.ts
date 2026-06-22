@@ -95,6 +95,7 @@ app.openapi(createSessionRoute, (async (c) => {
 		triggerId: body.trigger_id,
 		createdBy: actorId,
 		autoStart: body.auto_start,
+		sourceSessionId: body.source_session_id,
 	})
 
 	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>, 201)

@@ -224,6 +224,7 @@ export const sessions = pgTable(
 		interactive: boolean('interactive').notNull().default(false),
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
+		sourceSessionId: uuid('source_session_id'),
 		startedAt: timestamp('started_at', { withTimezone: true }),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
 		timeoutAt: timestamp('timeout_at', { withTimezone: true }),

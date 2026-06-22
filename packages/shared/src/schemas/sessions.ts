@@ -88,6 +88,7 @@ export const createSessionSchema = z.object({
 	config: sessionConfigSchema.partial().default({}),
 	trigger_id: z.string().uuid().optional(),
 	auto_start: z.boolean().default(true),
+	source_session_id: z.string().uuid().optional(),
 })
 
 export const sessionQuerySchema = z.object({

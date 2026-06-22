@@ -45,6 +45,10 @@ const SESSION_REQUEST_SCHEMA = z.object({
 		.default({}),
 	memoryMib: z.number().int().positive().optional(),
 	cpus: z.number().int().positive().optional(),
+	sourceSessionId: z
+		.string()
+		.regex(SESSION_ID_RE)
+		.optional(),
 })
 
 export type AppDeps = {
@@ -391,6 +395,7 @@ export function buildApp(deps: AppDeps): Hono {
 					deps.storage,
 					body.sessionId,
 					sessionDir,
+					body.sourceSessionId,
 				)
 				logger.info('session workspace pulled', {
 					sessionId: body.sessionId,

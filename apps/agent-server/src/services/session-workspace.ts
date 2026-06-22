@@ -7,7 +7,8 @@ import type { StorageProvider } from '@maskin/storage'
 
 const execFile = promisify(execFileCb)
 
-const SESSION_WORKSPACE_PREFIX = 'agent-workspaces'
+const SESSION_WORKSPACE_PREFIX = 'session-workspaces'
+const LEGACY_SESSION_WORKSPACE_PREFIX = 'agent-workspaces'
 
 export const SESSION_SKELETON_DIRS = ['workspace', 'skills', 'learnings', 'memory'] as const
 
@@ -42,9 +43,11 @@ export type PullSessionWorkspaceResult = {
  * Prepare sessionDir to be bind-mounted as `/agent` into a microVM.
  *
  * Behaviour:
- * - If `agent-workspaces/<sessionId>.tar.gz` exists in S3, extract it into
- *   sessionDir (restoring prior session state).
- * - If it does not exist, leave sessionDir empty (this is a fresh session).
+ * - If a workspace snapshot exists in S3 for the source or own session, extract
+ *   it into sessionDir (restoring prior session state).
+ * - Key priority: session-workspaces/{sourceSessionId} → session-workspaces/{sessionId}
+ *   → agent-workspaces/{sessionId} (legacy backward-compat path).
+ * - If no snapshot is found, leave sessionDir empty (fresh session).
  * - In both cases, guarantee `workspace/`, `skills/`, `learnings/`, `memory/`
  *   exist before returning.
  */
@@ -52,15 +55,31 @@ export async function pullSessionWorkspace(
 	storage: StorageProvider,
 	sessionId: string,
 	sessionDir: string,
+	sourceSessionId?: string,
 ): Promise<PullSessionWorkspaceResult> {
-	const key = sessionWorkspaceKey(sessionId)
 	await mkdir(sessionDir, { recursive: true })
 
 	let restored = false
 	let archiveBytes = 0
 
-	if (await storage.exists(key)) {
-		const buf = await storage.get(key)
+	// Try keys in priority order: source session first (continuation), then own
+	// session (retry), then legacy path (backward compat for old deployments).
+	const candidates: string[] = [
+		...(sourceSessionId ? [`${SESSION_WORKSPACE_PREFIX}/${sourceSessionId}.tar.gz`] : []),
+		sessionWorkspaceKey(sessionId),
+		`${LEGACY_SESSION_WORKSPACE_PREFIX}/${sessionId}.tar.gz`,
+	]
+
+	let resolvedKey: string | null = null
+	for (const candidate of candidates) {
+		if (await storage.exists(candidate)) {
+			resolvedKey = candidate
+			break
+		}
+	}
+
+	if (resolvedKey) {
+		const buf = await storage.get(resolvedKey)
 		archiveBytes = buf.length
 		const stage = await mkdtemp(join(tmpdir(), 'maskin-agent-pull-'))
 		const archivePath = join(stage, 'workspace.tar.gz')
@@ -90,7 +109,7 @@ export type PushSessionWorkspaceResult = {
 }
 
 /**
- * Pack `sessionDir` into `agent-workspaces/<sessionId>.tar.gz` and upload.
+ * Pack `sessionDir` into `session-workspaces/<sessionId>.tar.gz` and upload.
  *
  * Pairs with `pullSessionWorkspace` — `pull → run microVM → push` round-trips
  * the workspace through S3 between sessions. Last writer wins on the S3 key.
