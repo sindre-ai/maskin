@@ -47,9 +47,11 @@ export const messagesQuerySchema = z.object({
 })
 export type MessagesQuery = z.infer<typeof messagesQuerySchema>
 
+export const MAX_MESSAGE_MENTIONS = 20
+
 export const sendMessageSchema = z.object({
 	content: z.string().min(1).max(10000),
-	mentions: z.array(z.string().uuid()).optional(),
+	mentions: z.array(z.string().uuid()).max(MAX_MESSAGE_MENTIONS).optional(),
 })
 export type SendMessageInput = z.infer<typeof sendMessageSchema>
 
