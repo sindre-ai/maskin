@@ -9,7 +9,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import {
-	SINDRE_DEFAULT,
+	WORKSPACE_COACH_DEFAULT,
 	createWorkspaceSchema,
 	updateWorkspaceAdminSchema,
 	updateWorkspaceSchema,
@@ -22,7 +22,7 @@ import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/open
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
-import { bootstrapWorkspaceObserver } from '../services/workspace-bootstrap'
+import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
@@ -105,29 +105,29 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			role: 'owner',
 		})
 
-		// Seed Sindre — the built-in meta-agent shipped with every workspace.
-		// apiKey is required (see comment in actors.ts) — without it the agent's
-		// container has no identity to authenticate MCP writes with.
-		const [sindre] = await tx
+		// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
+		// apiKey is required — without it the agent's container has no identity to
+		// authenticate MCP writes with.
+		const [coach] = await tx
 			.insert(actors)
 			.values({
-				type: SINDRE_DEFAULT.type,
-				name: SINDRE_DEFAULT.name,
-				isSystem: SINDRE_DEFAULT.isSystem,
-				systemPrompt: SINDRE_DEFAULT.systemPrompt,
-				llmProvider: SINDRE_DEFAULT.llmProvider,
-				llmConfig: SINDRE_DEFAULT.llmConfig,
-				tools: SINDRE_DEFAULT.tools,
+				type: WORKSPACE_COACH_DEFAULT.type,
+				name: WORKSPACE_COACH_DEFAULT.name,
+				isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
+				systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+				llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
+				llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
+				tools: WORKSPACE_COACH_DEFAULT.tools,
 				apiKey: generateApiKey().key,
 				createdBy: actorId,
 			})
 			.returning()
 
-		if (!sindre) throw new Error('Failed to seed Sindre actor')
+		if (!coach) throw new Error('Failed to seed Workspace Coach actor')
 
 		await tx.insert(workspaceMembers).values({
 			workspaceId: ws.id,
-			actorId: sindre.id,
+			actorId: coach.id,
 			role: 'member',
 		})
 
@@ -140,7 +140,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 
 	const agentStorage = c.get('agentStorage')
 	if (agentStorage) {
-		bootstrapWorkspaceObserver(c.get('db'), agentStorage, workspace.id, actorId).catch((err) =>
+		bootstrapDefaultAgents(c.get('db'), agentStorage, workspace.id, actorId).catch((err) =>
 			logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
 		)
 	}

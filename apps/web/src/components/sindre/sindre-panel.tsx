@@ -29,7 +29,7 @@ import { Copy, Download, MoreHorizontal, Pin, PinOff, Plus, X } from 'lucide-rea
 import { type PointerEvent, useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
-const SINDRE_AGENT_NAME = 'Sindre'
+const SINDRE_AGENT_NAME = 'Workspace Coach'
 
 interface SindrePanelProps {
 	workspaceId: string
@@ -153,7 +153,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 				/>
 				<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
 					<div className="flex items-center gap-1">
-						<h2 className="font-semibold text-base">Sindre</h2>
+						<h2 className="font-semibold text-base">Workspace Coach</h2>
 						<DropdownMenu>
 							<DropdownMenuTrigger asChild>
 								<Button

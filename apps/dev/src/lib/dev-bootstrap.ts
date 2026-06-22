@@ -17,7 +17,7 @@ import {
 	CCD_PACKAGE_SLUG,
 	CCD_PACKAGE_USE_CASE,
 	CCD_PACKAGE_VERSION,
-	SINDRE_DEFAULT,
+	WORKSPACE_COACH_DEFAULT,
 } from '@maskin/shared'
 import { and, count, eq, isNotNull } from 'drizzle-orm'
 
@@ -328,13 +328,13 @@ export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResul
 		const [sindre] = await tx
 			.insert(actors)
 			.values({
-				type: SINDRE_DEFAULT.type,
-				name: SINDRE_DEFAULT.name,
-				isSystem: SINDRE_DEFAULT.isSystem,
-				systemPrompt: SINDRE_DEFAULT.systemPrompt,
-				llmProvider: SINDRE_DEFAULT.llmProvider,
-				llmConfig: SINDRE_DEFAULT.llmConfig,
-				tools: SINDRE_DEFAULT.tools,
+				type: WORKSPACE_COACH_DEFAULT.type,
+				name: WORKSPACE_COACH_DEFAULT.name,
+				isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
+				systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+				llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
+				llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
+				tools: WORKSPACE_COACH_DEFAULT.tools,
 				apiKey: generateApiKey().key,
 				createdBy: actor.id,
 			})

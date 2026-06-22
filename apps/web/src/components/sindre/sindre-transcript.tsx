@@ -51,13 +51,14 @@ function EmptyTranscript({ starting }: { starting: boolean }) {
 		return (
 			<div className="flex h-full items-center justify-center gap-2 text-text-muted">
 				<Spinner />
-				<span>Connecting to Sindre…</span>
+				<span>Connecting to Workspace Coach…</span>
 			</div>
 		)
 	}
 	return (
 		<div className="flex h-full items-center justify-center text-center text-text-muted">
-			Ask Sindre about your workspace — notifications, objects, bets, or how to get started.
+			Ask Workspace Coach about your workspace — notifications, objects, bets, or how to get
+			started.
 		</div>
 	)
 }
@@ -190,7 +191,7 @@ function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean })
 	const [open, setOpen] = useState(false)
 	const label = redacted ? 'Thinking (redacted)' : 'Thinking'
 	const body = redacted
-		? 'Anthropic withheld the internal reasoning for this turn. Sindre still thought about the problem — the content just isn’t available here.'
+		? 'Anthropic withheld the internal reasoning for this turn. Workspace Coach still thought about the problem — the content just isn’t available here.'
 		: text
 	return (
 		<div className="rounded-md border border-border bg-bg text-xs">

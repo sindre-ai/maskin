@@ -458,7 +458,7 @@ function computePlaceholder(
 	if (agentName && agentName.trim().length > 0) {
 		return `Message ${agentName.trim()}`
 	}
-	return surface === 'pulse-bar' ? 'Ask Sindre anything…' : 'Message Sindre'
+	return surface === 'pulse-bar' ? 'Ask Workspace Coach anything…' : 'Message Workspace Coach'
 }
 
 interface ComposerProps {
