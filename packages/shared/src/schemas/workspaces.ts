@@ -37,6 +37,34 @@ const customExtensionEntrySchema = z.object({
 
 export type CustomExtensionEntry = z.infer<typeof customExtensionEntrySchema>
 
+const claudeOAuthLegacySlotSchema = z
+	.object({
+		encryptedAccessToken: z.string(),
+		encryptedRefreshToken: z.string(),
+		expiresAt: z.number(),
+		subscriptionType: z.string().optional(),
+		scopes: z.array(z.string()).optional(),
+	})
+	.strict()
+
+const claudeOAuthFailoverStateSchema = z
+	.object({
+		last_primary_failure_at: z.number().optional(),
+		active_slot: z.enum(['primary', 'backup']),
+		last_classified_reason: z.string().optional(),
+	})
+	.strict()
+
+// Strict so malformed-legacy values (e.g. encryptedAccessToken alone) don't
+// silently parse as an empty new-shape object — they fail both union branches.
+const claudeOAuthSlotStorageSchema = z
+	.object({
+		primary: claudeOAuthLegacySlotSchema.optional(),
+		backup: claudeOAuthLegacySlotSchema.optional(),
+		failover: claudeOAuthFailoverStateSchema.optional(),
+	})
+	.strict()
+
 export const workspaceSettingsSchema = z.object({
 	display_names: z.record(z.string()).default({
 		insight: 'Insight',
@@ -64,15 +92,11 @@ export const workspaceSettingsSchema = z.object({
 			openai: z.string().nullable().optional(),
 		})
 		.default({}),
-	claude_oauth: z
-		.object({
-			encryptedAccessToken: z.string(),
-			encryptedRefreshToken: z.string(),
-			expiresAt: z.number(),
-			subscriptionType: z.string().optional(),
-			scopes: z.array(z.string()).optional(),
-		})
-		.optional(),
+	// claude_oauth has two valid on-disk shapes — legacy single-slot (kept for
+	// back-compat per AC-T1 of the subscription-failover bet, no migration of
+	// existing rows) and the new primary/backup/failover shape introduced by
+	// T1. Resolver lives in apps/dev/src/lib/claude-oauth-slots.ts.
+	claude_oauth: z.union([claudeOAuthLegacySlotSchema, claudeOAuthSlotStorageSchema]).optional(),
 	// Privacy & data block surfaced in workspace Settings → General.
 	// `share_usage` toggles posthog opt-in capturing; `anonymize_workspace` swaps
 	// the distinct_id for a SHA-256 hash before identify so the Synthesizer's
