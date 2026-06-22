@@ -85,7 +85,11 @@ export async function pullSessionWorkspace(
 		const archivePath = join(stage, 'workspace.tar.gz')
 		try {
 			await writeFile(archivePath, buf)
-			await execFile('tar', ['-xzf', archivePath, '-C', sessionDir])
+			// --strip-components=1 normalises two archive formats:
+			// - agent-server snapshots: entries rooted at `.` (e.g. `./workspace/…`)
+			// - Docker copyFrom snapshots: entries rooted at `agent` (e.g. `agent/workspace/…`)
+			// In both cases stripping one component lands files at `sessionDir/workspace/…`.
+			await execFile('tar', ['-xzf', archivePath, '-C', sessionDir, '--strip-components=1'])
 			restored = true
 		} finally {
 			await rm(stage, { recursive: true, force: true })
@@ -128,9 +132,9 @@ export async function pushSessionWorkspace(
 	const stage = await mkdtemp(join(tmpdir(), 'maskin-agent-push-'))
 	const archivePath = join(stage, 'workspace.tar.gz')
 	try {
-		// `-C sessionDir` + `.` packs entries relative to sessionDir, so a later
-		// `tar -xzf -C newDir` lands them at newDir/* — no --strip-components
-		// dance needed on the pull side.
+		// `-C sessionDir` + `.` packs entries relative to sessionDir with a leading
+		// `.` component (e.g. `./workspace/…`). pullSessionWorkspace uses
+		// --strip-components=1 which strips that `.`, landing files at newDir/*.
 		await execFile('tar', ['-C', sessionDir, '-czf', archivePath, '.'])
 		const buf = await readFile(archivePath)
 		await storage.put(key, buf)
