@@ -348,26 +348,45 @@ export class SessionManager extends EventEmitter {
 			// the staged agent files with the prior session's full /agent/ snapshot,
 			// so the agent picks up exactly where the previous session left off.
 			if (session.sourceSessionId) {
-				const snapshotKey = `session-workspaces/${session.sourceSessionId}.tar.gz`
-				if (await this.storage.exists(snapshotKey)) {
-					const buf = await this.storage.get(snapshotKey)
-					const archivePath = join(tempDir, '_source_snapshot.tar.gz')
-					await writeFile(archivePath, buf)
-					await execFileAsync('tar', ['-xzf', archivePath, '-C', tempDir, '--strip-components=1'])
-					await rm(archivePath)
-					await this.insertSystemLog(
-						sessionId,
-						`Workspace restored from session ${session.sourceSessionId}`,
+				// Verify the source session belongs to the same workspace before
+				// restoring its snapshot — prevents cross-workspace data leakage.
+				const [sourceSession] = await this.db
+					.select({ id: sessions.id })
+					.from(sessions)
+					.where(
+						and(
+							eq(sessions.id, session.sourceSessionId),
+							eq(sessions.workspaceId, session.workspaceId),
+						),
 					)
-					logger.info('Workspace restored from source session', {
+				if (!sourceSession) {
+					logger.warn('sourceSessionId does not belong to this workspace — skipping restore', {
 						sessionId,
 						sourceSessionId: session.sourceSessionId,
+						workspaceId: session.workspaceId,
 					})
 				} else {
-					logger.warn('Source session workspace snapshot not found — starting fresh', {
-						sessionId,
-						sourceSessionId: session.sourceSessionId,
-					})
+					const snapshotKey = `session-workspaces/${session.sourceSessionId}.tar.gz`
+					if (await this.storage.exists(snapshotKey)) {
+						const buf = await this.storage.get(snapshotKey)
+						const archivePath = join(tempDir, '_source_snapshot.tar.gz')
+						await writeFile(archivePath, buf)
+						await execFileAsync('tar', ['-xzf', archivePath, '-C', tempDir, '--strip-components=1'])
+						await rm(archivePath)
+						await this.insertSystemLog(
+							sessionId,
+							`Workspace restored from session ${session.sourceSessionId}`,
+						)
+						logger.info('Workspace restored from source session', {
+							sessionId,
+							sourceSessionId: session.sourceSessionId,
+						})
+					} else {
+						logger.warn('Source session workspace snapshot not found — starting fresh', {
+							sessionId,
+							sourceSessionId: session.sourceSessionId,
+						})
+					}
 				}
 			}
 
