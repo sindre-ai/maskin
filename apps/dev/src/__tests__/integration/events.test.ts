@@ -164,6 +164,49 @@ describe('Events Integration — reply chain collapse', () => {
 		expect(reply.data.parentEventId ?? null).toBeNull()
 	})
 
+	it('round-trips metadata.tasks and a ```chart fenced block through DB → row', async () => {
+		const app = createEventsApp()
+		const taskIdA = '11111111-1111-1111-1111-111111111111'
+		const taskIdB = '22222222-2222-2222-2222-222222222222'
+		const chartSpec = JSON.stringify({
+			type: 'bar',
+			x: 'day',
+			series: ['retention'],
+			data: [{ day: 'Mon', retention: 38 }],
+			caption: 'week-1',
+		})
+		const content = `Tracking progress.\n\n\`\`\`chart\n${chartSpec}\n\`\`\``
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{
+					entity_id: objectId,
+					content,
+					metadata: { tasks: [taskIdA, taskIdB] },
+				},
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(201)
+		const created = (await res.json()) as {
+			id: number
+			data: { content: string; metadata?: { tasks?: string[] } }
+		}
+
+		const [row] = await db.select().from(events).where(eq(events.id, created.id))
+		const data = row.data as {
+			content: string
+			metadata?: { tasks?: string[] }
+		}
+		// Both halves of the rich-reply contract must round-trip intact: the
+		// ```chart fenced block in `content` and the `metadata.tasks` array.
+		expect(data.content).toContain('```chart')
+		expect(data.content).toContain('week-1')
+		expect(data.metadata?.tasks).toEqual([taskIdA, taskIdB])
+	})
+
 	it('persists the rewritten parentEventId in the events row', async () => {
 		const app = createEventsApp()
 		const root = await postComment(app, workspaceId, {

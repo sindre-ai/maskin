@@ -1,7 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { trackCommentPosted } from '../lib/analytics'
+import { trackAgentCommentPosted, trackCommentPosted } from '../lib/analytics'
 import { type CreateCommentInput, type EventResponse, type ObjectResponse, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
+
+// Matches a fenced ```chart block — same shape the renderer dispatches on.
+// Detected on the raw input so the event fires regardless of whether the
+// comment renders successfully on the poster's screen (e.g. an agent posting
+// via MCP would never render anything on a frontend at all).
+const CHART_FENCE = /(^|\n)```chart\b/
+
+function detectChart(content: string): boolean {
+	return CHART_FENCE.test(content)
+}
+
+function detectTaskList(data: CreateCommentInput): boolean {
+	const tasks = (data.metadata as Record<string, unknown> | undefined)?.tasks
+	return Array.isArray(tasks) && tasks.some((t) => typeof t === 'string' && t.length > 0)
+}
 
 export function useEvents(workspaceId: string, filters?: Record<string, string>) {
 	return useQuery({
@@ -34,12 +49,25 @@ export function trackCommentPostedFor(
 	const cached = queryClient.getQueryData<ObjectResponse>(queryKeys.objects.detail(entityId))
 	const type = cached?.type
 	if (type !== 'bet' && type !== 'task' && type !== 'insight' && type !== 'knowledge') return
+	const isReply = data.parent_event_id !== undefined
 	trackCommentPosted({
 		entity_id: entityId,
 		entity_type: type,
-		is_reply: data.parent_event_id !== undefined,
+		is_reply: isReply,
 		attachment_count: data.attachment_file_ids?.length ?? 0,
 		flow_id: flowId,
+	})
+	const hasChart = detectChart(data.content)
+	const hasTaskList = detectTaskList(data)
+	trackAgentCommentPosted({
+		entity_id: entityId,
+		entity_type: type,
+		flow_id: flowId,
+		char_count: data.content.length,
+		has_chart: hasChart,
+		has_task_list: hasTaskList,
+		has_visual: hasChart || hasTaskList,
+		is_reply: isReply,
 	})
 }
 

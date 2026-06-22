@@ -10,10 +10,24 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
-import { useCreateComment, useEntityEvents, useEvents } from '@/hooks/use-events'
+const trackAgentCommentPosted = vi.fn()
+const trackCommentPosted = vi.fn()
+vi.mock('@/lib/analytics', () => ({
+	trackAgentCommentPosted: (...args: unknown[]) => trackAgentCommentPosted(...args),
+	trackCommentPosted: (...args: unknown[]) => trackCommentPosted(...args),
+}))
+
+import {
+	trackCommentPostedFor,
+	useCreateComment,
+	useEntityEvents,
+	useEvents,
+} from '@/hooks/use-events'
 import type { EventResponse } from '@/lib/api'
 import { api } from '@/lib/api'
-import { TestWrapper } from '../setup'
+import { queryKeys } from '@/lib/query-keys'
+import { buildObjectResponse } from '../factories'
+import { TestWrapper, createTestQueryClient } from '../setup'
 
 const workspaceId = 'ws-1'
 
@@ -124,6 +138,95 @@ describe('useCreateComment', () => {
 		expect(api.events.create).toHaveBeenCalledWith(workspaceId, {
 			entity_id: 'obj-1',
 			content: 'Nice work!',
+		})
+	})
+
+	describe('trackCommentPostedFor (agent_comment_posted)', () => {
+		it('emits has_chart=true when content includes a ```chart fenced block', () => {
+			const qc = createTestQueryClient()
+			const obj = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+			qc.setQueryData(queryKeys.objects.detail('obj-1'), obj)
+
+			trackCommentPostedFor(
+				qc,
+				'obj-1',
+				{
+					entity_id: 'obj-1',
+					content:
+						'header\n\n```chart\n{"type":"bar","x":"d","series":["v"],"data":[{"d":"1","v":1}]}\n```',
+				},
+				null,
+			)
+
+			expect(trackAgentCommentPosted).toHaveBeenCalledWith(
+				expect.objectContaining({
+					entity_id: 'obj-1',
+					entity_type: 'bet',
+					has_chart: true,
+					has_task_list: false,
+					has_visual: true,
+					is_reply: false,
+				}),
+			)
+		})
+
+		it('emits has_task_list=true when metadata.tasks has any string id', () => {
+			const qc = createTestQueryClient()
+			const obj = buildObjectResponse({ id: 'obj-1', type: 'task' })
+			qc.setQueryData(queryKeys.objects.detail('obj-1'), obj)
+
+			trackCommentPostedFor(
+				qc,
+				'obj-1',
+				{
+					entity_id: 'obj-1',
+					content: 'tracking',
+					metadata: { tasks: ['11111111-1111-1111-1111-111111111111'] },
+					parent_event_id: 99,
+				},
+				null,
+			)
+
+			expect(trackAgentCommentPosted).toHaveBeenCalledWith(
+				expect.objectContaining({
+					entity_type: 'task',
+					has_chart: false,
+					has_task_list: true,
+					has_visual: true,
+					is_reply: true,
+					char_count: 'tracking'.length,
+				}),
+			)
+		})
+
+		it('emits has_visual=false for plain text replies', () => {
+			const qc = createTestQueryClient()
+			const obj = buildObjectResponse({ id: 'obj-1', type: 'insight' })
+			qc.setQueryData(queryKeys.objects.detail('obj-1'), obj)
+
+			trackCommentPostedFor(
+				qc,
+				'obj-1',
+				{
+					entity_id: 'obj-1',
+					content: 'just words',
+				},
+				null,
+			)
+
+			expect(trackAgentCommentPosted).toHaveBeenCalledWith(
+				expect.objectContaining({
+					has_chart: false,
+					has_task_list: false,
+					has_visual: false,
+				}),
+			)
+		})
+
+		it('does not emit when the cached object type is not a comment-able object', () => {
+			const qc = createTestQueryClient()
+			trackCommentPostedFor(qc, 'obj-unknown', { entity_id: 'obj-unknown', content: 'plain' }, null)
+			expect(trackAgentCommentPosted).not.toHaveBeenCalled()
 		})
 	})
 

@@ -1,3 +1,4 @@
+import { CommentVisual, VISUAL_LANGUAGES } from '@/components/activity/comment-visual'
 import { Textarea } from '@/components/ui/textarea'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -6,6 +7,23 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
 import { MentionedText } from './mentioned-text'
+
+// Pulls the fenced-block language + raw source out of a ReactMarkdown <pre>
+// node. The actual <code> child carries className="language-<lang>" and the
+// text body in `children` — we surface the visual dispatcher off that without
+// the invalid <div>-in-<pre> nesting that happens if we override `code`.
+function extractFencedBlock(preChildren: ReactNode): { language: string; source: string } | null {
+	if (!preChildren || typeof preChildren !== 'object') return null
+	const child = Array.isArray(preChildren) ? preChildren[0] : preChildren
+	if (!child || typeof child !== 'object' || !('props' in child)) return null
+	const props = (child as { props?: { className?: string; children?: ReactNode } }).props
+	if (!props) return null
+	const match = /language-([\w-]+)/.exec(props.className ?? '')
+	if (!match) return null
+	const language = match[1]
+	const source = typeof props.children === 'string' ? props.children : String(props.children ?? '')
+	return { language, source: source.replace(/\n$/, '') }
+}
 
 function wrapWithMentions(
 	children: ReactNode,
@@ -38,6 +56,7 @@ export function MarkdownContent({
 	disallowedElements,
 	mentionActors,
 	onMentionClick,
+	renderVisuals = false,
 }: {
 	content: string
 	onChange?: (value: string) => void
@@ -47,6 +66,9 @@ export function MarkdownContent({
 	disallowedElements?: string[]
 	mentionActors?: ActorListItem[]
 	onMentionClick?: (actor: ActorListItem) => void
+	// Opt-in: dispatch fenced visual blocks (```chart, …) to <CommentVisual>.
+	// Off by default so object-document body markdown stays as plain code blocks.
+	renderVisuals?: boolean
 }) {
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState(content)
@@ -102,10 +124,25 @@ export function MarkdownContent({
 			return <code className={className}>{children}</code>
 		}
 
-		if (!mentionActors) return { code }
+		// Block-level fenced visuals are dispatched off `pre` (not `code`) so the
+		// dispatcher renders a sibling element rather than a forbidden <div>
+		// inside <pre>. `code` keeps its inline-URL behaviour for everything else.
+		const pre: Components['pre'] = renderVisuals
+			? ({ children, ...rest }) => {
+					const block = extractFencedBlock(children)
+					if (block && VISUAL_LANGUAGES.has(block.language)) {
+						return <CommentVisual language={block.language} source={block.source} />
+					}
+					return <pre {...rest}>{children}</pre>
+				}
+			: undefined
+
+		const base: Components = pre ? { code, pre } : { code }
+
+		if (!mentionActors) return base
 		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors, onMentionClick)
 		return {
-			code,
+			...base,
 			p: ({ children }) => <p>{wrap(children)}</p>,
 			li: ({ children }) => <li>{wrap(children)}</li>,
 			em: ({ children }) => <em>{wrap(children)}</em>,
@@ -116,7 +153,7 @@ export function MarkdownContent({
 			td: ({ children, ...rest }) => <td {...rest}>{wrap(children)}</td>,
 			th: ({ children, ...rest }) => <th {...rest}>{wrap(children)}</th>,
 		}
-	}, [mentionActors, onMentionClick])
+	}, [mentionActors, onMentionClick, renderVisuals])
 
 	if (editable && editing) {
 		return (
