@@ -94,7 +94,7 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 - Dark mode: zinc/neutral base, indigo accent, deep status badge colors, subtle shadows
 - Glassmorphism: `glass` and `glass-heavy` utility classes (frosted-white in light, dark translucent in dark)
 - Minimal, Linear-inspired aesthetic — clean lines, subtle borders, generous spacing
-- Fonts: Inter (sans), JetBrains Mono (mono)
+- Fonts: Schibsted Grotesk (sans), JetBrains Mono (mono) — see `src/styles/typography.md` for the full spec
 - Border radius: 6px (Linear-style) — `--radius: 0.375rem`
 - Subtle transitions: `transition-colors duration-150` on all elements (base layer)
 
