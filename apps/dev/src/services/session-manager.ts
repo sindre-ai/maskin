@@ -978,14 +978,11 @@ export class SessionManager extends EventEmitter {
 				if (integration.provider === 'github') {
 					const ownerLogin = await this.resolveGithubOwnerLogin(integration)
 					if (!ownerLogin) {
-						logger.error(
-							'GitHub integration token injection skipped — owner_login unresolvable',
-							{
-								sessionId: session.id,
-								workspaceId: session.workspaceId,
-								integrationId: integration.id,
-							},
-						)
+						logger.error('GitHub integration token injection skipped — owner_login unresolvable', {
+							sessionId: session.id,
+							workspaceId: session.workspaceId,
+							integrationId: integration.id,
+						})
 						await this.insertSystemLog(
 							session.id,
 							`GitHub integration (id: ${integration.id}) has no resolvable owner — GITHUB_TOKEN will not be injected. Reconnect the GitHub integration or verify GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY are set on the server.`,
@@ -1040,7 +1037,7 @@ export class SessionManager extends EventEmitter {
 		// without needing org-specific resolution. Skipped when multiple installations
 		// are connected to avoid ambiguity.
 		if (resolvedGithubTokens.length === 1 && resolvedGithubTokens[0]) {
-			envVars['GITHUB_TOKEN'] = resolvedGithubTokens[0]
+			envVars.GITHUB_TOKEN = resolvedGithubTokens[0]
 		}
 
 		// Merge user-provided env vars, filtering out reserved keys

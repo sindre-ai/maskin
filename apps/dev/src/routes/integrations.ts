@@ -507,7 +507,7 @@ app.openapi(callbackRoute, (async (c) => {
 			ownerLogin = await fetchInstallationOwnerLogin(String(credentials.installation_id))
 		} catch (err) {
 			logger.error(
-				`Failed to resolve owner_login for GitHub installation; integration will connect without it`,
+				'Failed to resolve owner_login for GitHub installation; integration will connect without it',
 				{
 					workspaceId: stateData.workspaceId,
 					installationId: String(credentials.installation_id),
