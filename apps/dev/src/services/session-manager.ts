@@ -371,8 +371,17 @@ export class SessionManager extends EventEmitter {
 						const buf = await this.storage.get(snapshotKey)
 						const archivePath = join(tempDir, '_source_snapshot.tar.gz')
 						await writeFile(archivePath, buf)
-						await execFileAsync('tar', ['-xzf', archivePath, '-C', tempDir, '--strip-components=1'])
-						await rm(archivePath)
+						try {
+							await execFileAsync('tar', [
+								'-xzf',
+								archivePath,
+								'-C',
+								tempDir,
+								'--strip-components=1',
+							])
+						} finally {
+							await rm(archivePath, { force: true })
+						}
 						await this.insertSystemLog(
 							sessionId,
 							`Workspace restored from session ${session.sourceSessionId}`,
