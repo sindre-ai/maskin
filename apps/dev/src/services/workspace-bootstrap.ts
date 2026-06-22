@@ -133,6 +133,15 @@ export async function bootstrapDefaultAgents(
 		const targetActorId = actorIdMap[trigger.targetActor$id]
 		if (!targetActorId) continue
 
+		// Idempotent: skip if a trigger with this name already exists in the workspace.
+		const [existingTrigger] = await db
+			.select({ id: triggers.id })
+			.from(triggers)
+			.where(and(eq(triggers.workspaceId, workspaceId), eq(triggers.name, trigger.name)))
+			.limit(1)
+
+		if (existingTrigger) continue
+
 		try {
 			await db.insert(triggers).values({
 				workspaceId,
