@@ -48,7 +48,7 @@ Maskin is an open-source workspace where AI agents run product development end-t
 
 ### MCP server
 
-- 39 MCP tools wrapping the full workspace API.
+- 74 MCP tools wrapping the full workspace API.
 - Stdio transport (Claude Code, Claude Desktop) and HTTP transport at `POST /mcp`.
 - `get_started` tool previews and applies a workspace template (development / growth) or runs a custom setup questionnaire.
 - Full CRUD coverage for objects, relationships, actors, workspaces, triggers, sessions, integrations, files, comments, extensions, and skills.
