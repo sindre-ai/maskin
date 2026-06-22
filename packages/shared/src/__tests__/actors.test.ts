@@ -189,7 +189,7 @@ describe('actorResponseSchema', () => {
 	const validResponse = {
 		id: uuid,
 		type: 'agent',
-		name: 'Sindre',
+		name: 'Workspace Coach',
 		email: null,
 		description: null,
 		system_prompt: 'You are a helper',

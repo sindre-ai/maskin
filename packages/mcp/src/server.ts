@@ -4643,7 +4643,7 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Bet success metrics (read-only) ─────────────────────
-	// Sindre-callable surface for the MCP widget UX bet's success/kill metrics.
+	// Agent-callable surface for the MCP widget UX bet's success/kill metrics.
 	// Wraps GET /api/telemetry/mcp/summary and returns only the bet-first widget
 	// window — kept narrow so agents pull evidence without reading unrelated
 	// rich-render / mutation aggregates they have no context for.

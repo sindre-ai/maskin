@@ -362,7 +362,7 @@ describe('Sessions Routes', () => {
 				jsonRequest(
 					'POST',
 					`/api/sessions/${session.id}/input`,
-					{ content: 'hello sindre' },
+					{ content: 'hello workspace coach' },
 					{ 'x-workspace-id': wsId },
 				),
 			)
@@ -372,7 +372,7 @@ describe('Sessions Routes', () => {
 			expect(body).toEqual({ ok: true })
 			expect(sessionManager.writeInput).toHaveBeenCalledWith(session.id, {
 				type: 'user',
-				message: { role: 'user', content: 'hello sindre' },
+				message: { role: 'user', content: 'hello workspace coach' },
 			})
 		})
 

@@ -2357,7 +2357,7 @@ describe('tool handlers', () => {
 						json: () =>
 							Promise.resolve([
 								{ id: 'a-1', type: 'human', name: 'Sebastian', email: 's@x.test' },
-								{ id: 'a-2', type: 'agent', name: 'Sindre', role: 'admin' },
+								{ id: 'a-2', type: 'agent', name: 'Workspace Coach', role: 'admin' },
 							]),
 					} as Response
 				}
@@ -2531,7 +2531,7 @@ describe('tool handlers', () => {
 				if (urlStr.includes('/api/actors')) {
 					return {
 						ok: true,
-						json: () => Promise.resolve([{ id: 'actor-1', name: 'Sindre' }]),
+						json: () => Promise.resolve([{ id: 'actor-1', name: 'Workspace Coach' }]),
 					} as Response
 				}
 				return { ok: true, json: () => Promise.resolve({}) } as Response
@@ -2558,7 +2558,7 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.totalCount).toBe(2)
 			expect(result.structuredContent.heroCard.objects?.[0]?.type).toBe('trigger')
 			expect(result.structuredContent.heroCard.objects?.[0]?.status).toBe('enabled')
-			expect(result.structuredContent.heroCard.objects?.[0]?.driver?.name).toBe('Sindre')
+			expect(result.structuredContent.heroCard.objects?.[0]?.driver?.name).toBe('Workspace Coach')
 			expect(result.structuredContent.heroCard.objects?.[1]?.status).toBe('disabled')
 		})
 

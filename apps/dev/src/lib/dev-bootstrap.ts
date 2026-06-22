@@ -322,10 +322,10 @@ export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResul
 			role: 'owner',
 		})
 
-		// Seed Sindre — the built-in meta-agent shipped with every workspace.
+		// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
 		// apiKey is required (see comment in actors.ts) — without it the agent's
 		// container has no identity to authenticate MCP writes with.
-		const [sindre] = await tx
+		const [coach] = await tx
 			.insert(actors)
 			.values({
 				type: WORKSPACE_COACH_DEFAULT.type,
@@ -340,11 +340,11 @@ export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResul
 			})
 			.returning()
 
-		if (!sindre) throw new Error('dev bootstrap: failed to seed Sindre actor')
+		if (!coach) throw new Error('dev bootstrap: failed to seed Workspace Coach actor')
 
 		await tx.insert(workspaceMembers).values({
 			workspaceId: ws.id,
-			actorId: sindre.id,
+			actorId: coach.id,
 			role: 'member',
 		})
 

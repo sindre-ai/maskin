@@ -3125,7 +3125,7 @@ Every insight must have:
 - Metadata: \`source: research_agent\`, \`url: [source URL]\`
 - For live-bet evidence: link via \`informs\` to the relevant bet
 
-Use Exa for web search. Use Supadata for YouTube/social content extraction. Use Playwright to read pages that require JS rendering. Use the Sindre orchestrator for complex multi-step research tasks.
+Use Exa for web search. Use Supadata for YouTube/social content extraction. Use Playwright to read pages that require JS rendering. Use the Workspace Coach for complex multi-step research tasks.
 
 ## Rules
 

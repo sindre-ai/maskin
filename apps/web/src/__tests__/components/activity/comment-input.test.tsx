@@ -88,7 +88,7 @@ describe('CommentInput', () => {
 		mockUseActors.mockReturnValue({
 			data: [
 				{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false },
-				{ id: 'actor-3', name: 'Sindre', type: 'agent', email: null, isSystem: true },
+				{ id: 'actor-3', name: 'Workspace Coach', type: 'agent', email: null, isSystem: true },
 			],
 		})
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
@@ -97,7 +97,7 @@ describe('CommentInput', () => {
 		await user.type(textarea, '@')
 
 		expect(screen.getByText('Bob')).toBeInTheDocument()
-		expect(screen.queryByText('Sindre')).not.toBeInTheDocument()
+		expect(screen.queryByText('Workspace Coach')).not.toBeInTheDocument()
 	})
 
 	it('renders an inline highlight chip for typed @mentions', async () => {

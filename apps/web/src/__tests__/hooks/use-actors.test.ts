@@ -201,7 +201,7 @@ describe('useUpdateActor', () => {
 
 describe('useResetActor', () => {
 	it('calls api.actors.reset with id and workspaceId and toasts success', async () => {
-		const reset = buildActorResponse({ id: 'actor-1', name: 'Sindre', isSystem: true })
+		const reset = buildActorResponse({ id: 'actor-1', name: 'Workspace Coach', isSystem: true })
 		vi.mocked(api.actors.reset).mockResolvedValue(reset)
 
 		const { result } = renderHook(() => useResetActor(workspaceId), { wrapper: TestWrapper })

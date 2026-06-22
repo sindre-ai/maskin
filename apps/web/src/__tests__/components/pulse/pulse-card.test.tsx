@@ -307,7 +307,7 @@ describe('PulseCard', () => {
 		expect(screen.queryByRole('button', { name: /View objects/ })).not.toBeInTheDocument()
 	})
 
-	it('shows Talk to Sindre button', () => {
+	it('shows Chat with agents button', () => {
 		const notification = buildNotificationResponse()
 		render(
 			<PulseCard
@@ -318,10 +318,10 @@ describe('PulseCard', () => {
 			/>,
 			{ wrapper },
 		)
-		expect(screen.getByRole('button', { name: /Talk to Sindre/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Chat with agents/ })).toBeInTheDocument()
 	})
 
-	it('hides Talk to Sindre button for resolved notifications', () => {
+	it('hides Chat with agents button for resolved notifications', () => {
 		const notification = buildNotificationResponse({ status: 'resolved' })
 		render(
 			<PulseCard
@@ -332,7 +332,7 @@ describe('PulseCard', () => {
 			/>,
 			{ wrapper },
 		)
-		expect(screen.queryByRole('button', { name: /Talk to Sindre/ })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Chat with agents/ })).not.toBeInTheDocument()
 	})
 })
 

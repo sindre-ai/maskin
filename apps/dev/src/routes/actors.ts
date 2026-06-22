@@ -729,7 +729,7 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 	return c.json({ api_key: key })
 }) as RouteHandler<typeof regenerateApiKeyRoute, Env>)
 
-// POST /:id/reset - Reset system actor to factory defaults (Sindre)
+// POST /:id/reset - Reset system actor to factory defaults (Workspace Coach)
 const resetActorRoute = createRoute({
 	method: 'post',
 	path: '/{id}/reset',

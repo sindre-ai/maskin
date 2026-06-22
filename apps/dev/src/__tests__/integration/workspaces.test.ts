@@ -138,7 +138,7 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + auto-seeded Sindre (member) + new member
+			// Creator (owner) + auto-seeded Workspace Coach (member) + new member
 			expect(members).toHaveLength(3)
 			expect(members.map((m: { role: string }) => m.role).sort()).toEqual([
 				'member',
