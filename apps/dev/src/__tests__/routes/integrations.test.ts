@@ -696,6 +696,56 @@ describe('Integrations Routes', () => {
 			)
 			expect(activateCalls).toHaveLength(0)
 		})
+
+		it('activates integration without owner_login when fetchInstallationOwnerLogin fails', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'owner-fail-nonce-1234'
+			const state = encrypt(
+				JSON.stringify({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					ts: Date.now(),
+					nonce,
+				}),
+			)
+			const pendingIntegration = buildIntegration({
+				workspaceId: wsId,
+				status: 'pending',
+				externalId: nonce,
+			})
+			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+			const systemActor = { id: 'system-actor-id', type: 'system', name: 'GitHub' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[pendingIntegration], // pending integration lookup
+				[member], // membership check
+				[systemActor], // system actor lookup
+				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
+				[], // existing-active-row lookup — first time seeing this installation
+			]
+
+			vi.mocked(fetchInstallationOwnerLogin).mockRejectedValueOnce(new Error('GitHub API 500'))
+
+			const res = await app.request(
+				jsonGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=99`,
+				),
+			)
+
+			// Callback still succeeds — no error redirect
+			expect(res.status).toBe(302)
+			const location = res.headers.get('Location') ?? ''
+			expect(location).not.toContain('error=')
+
+			// Integration is activated without owner_login in config
+			const activateCall = calls.updates.find(
+				(u): u is { status?: string; config?: Record<string, unknown> } =>
+					!!u && typeof u === 'object' && (u as { status?: string }).status === 'active',
+			)
+			expect(activateCall).toBeDefined()
+			expect(activateCall?.config).toEqual({ system_actor_id: 'system-actor-id' })
+			expect(activateCall?.config).not.toHaveProperty('owner_login')
+		})
 	})
 
 	describe('DELETE /api/integrations/:id', () => {
