@@ -63,7 +63,16 @@ const storageProvider = new S3StorageProvider({
 	region: process.env.S3_REGION ?? 'us-east-1',
 })
 
-await storageProvider.ensureBucket()
+try {
+	await storageProvider.ensureBucket()
+} catch (err) {
+	logger.error(
+		'Failed to initialize S3 bucket — agent file operations will fail until S3 is available',
+		{
+			error: err instanceof Error ? err.message : String(err),
+		},
+	)
+}
 
 const containers = new ContainerManager()
 try {
