@@ -497,27 +497,22 @@ app.openapi(callbackRoute, (async (c) => {
 	}
 
 	// GitHub-only: resolve the installation's owner login so the row can be
-	// disambiguated from other installations on the same workspace. A missing
-	// owner_login means token injection will be silently skipped at session start,
-	// so we treat this as a hard error and surface it to the user rather than
-	// creating a half-configured integration.
+	// disambiguated from other installations on the same workspace. If resolution
+	// fails, the integration is still created — the failure will be surfaced in the
+	// session logs when a session tries to use the integration and token injection
+	// is skipped.
 	let ownerLogin: string | undefined
 	if (credentials.installation_id) {
 		try {
 			ownerLogin = await fetchInstallationOwnerLogin(String(credentials.installation_id))
 		} catch (err) {
 			logger.error(
-				`Failed to resolve owner_login for GitHub installation; aborting connect`,
+				`Failed to resolve owner_login for GitHub installation; integration will connect without it`,
 				{
 					workspaceId: stateData.workspaceId,
 					installationId: String(credentials.installation_id),
 					error: err instanceof Error ? err.message : String(err),
 				},
-			)
-			await db.delete(integrations).where(eq(integrations.id, pendingIntegration.id))
-			const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
-			return c.redirect(
-				`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=github_owner_resolution_failed`,
 			)
 		}
 	}
