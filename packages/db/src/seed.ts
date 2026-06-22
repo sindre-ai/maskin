@@ -1920,6 +1920,7 @@ const [devPipelinePkg] = await db
 		version: DEV_PACKAGE_VERSION,
 		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
 	})
+	.onConflictDoNothing()
 	.returning()
 
 if (devPipelinePkg) {
