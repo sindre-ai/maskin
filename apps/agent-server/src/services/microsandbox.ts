@@ -44,6 +44,30 @@ const PUBLIC_EGRESS_RULE = 'allow@public'
 const DNS_UDP_RULE = 'allow@any:udp:53'
 const DNS_TCP_RULE = 'allow@any:tcp:53'
 
+// When a session needs to talk to a sibling msb microVM (the browser sidecar
+// for bet-qa runs), the target IP is on the msb bridge — a private RFC1918
+// range. `allow@private` opens that path without giving the session blanket
+// access to the host network. Only added when explicitly requested.
+const PRIVATE_NET_RULE = 'allow@private'
+
+// Image used for the Chromium CDP sidecar — same tag as T1's local Docker path
+// so the two halves of the bet stay in lockstep.
+const BROWSER_SIDECAR_IMAGE = 'chromedp/headless-shell:latest'
+
+// CDP listener inside the headless-shell container.
+const BROWSER_CDP_PORT = 9222
+
+// Brief settle before we hand the CDP URL to the agent — Chromium's listener
+// binds a beat after the VM reports Running.
+const BROWSER_SIDECAR_SETTLE_MS = 2_000
+
+// Bigger memory budget than a session VM: the headless-shell image is heavier
+// than the agent-base image and Chromium tabs eat into the budget fast.
+const BROWSER_SIDECAR_MEMORY_MIB = 1024
+const BROWSER_SIDECAR_CPUS = 1
+const BROWSER_SIDECAR_CREATE_TIMEOUT_MS = 90_000
+const BROWSER_SIDECAR_INSPECT_TIMEOUT_MS = 5_000
+
 const SESSION_GUEST_PATH = '/agent'
 const SKELETON_SUBDIRS = ['workspace', 'skills', 'learnings', 'memory'] as const
 
@@ -69,6 +93,10 @@ export type SpawnSessionInput = {
 	sessionDir: string
 	pullPolicy?: PullPolicy
 	maxDuration?: string
+	// When true, the session VM gets `--net-rule allow@private` so it can reach
+	// a sibling sidecar VM (the browser sidecar provisioned for bet-qa runs)
+	// over the msb bridge. Off by default — only flagged sessions pay for it.
+	allowPrivateNet?: boolean
 }
 
 export type SpawnSessionResult = {
@@ -150,6 +178,7 @@ export function buildMsbCreateArgs(input: {
 	sessionDir: string
 	pullPolicy?: PullPolicy
 	maxDuration?: string
+	allowPrivateNet?: boolean
 }): string[] {
 	const args: string[] = [
 		'create',
@@ -174,6 +203,9 @@ export function buildMsbCreateArgs(input: {
 		'-v',
 		`${input.sessionDir}:${SESSION_GUEST_PATH}`,
 	]
+	if (input.allowPrivateNet) {
+		args.push('--net-rule', PRIVATE_NET_RULE)
+	}
 	// Backstop only: a `create`d microVM is persistent and won't power off when its
 	// entrypoint exits, so without a cap a wedged/crashed session sits "running"
 	// forever. The normal teardown is the /sessions/:id/complete signal (see index.ts).
@@ -250,6 +282,7 @@ export async function spawnSession(
 		sessionDir: input.sessionDir,
 		...(input.pullPolicy !== undefined && { pullPolicy: input.pullPolicy }),
 		...(input.maxDuration !== undefined && { maxDuration: input.maxDuration }),
+		...(input.allowPrivateNet !== undefined && { allowPrivateNet: input.allowPrivateNet }),
 	})
 
 	logger.info('msb create starting', { sessionId: input.sessionId, image: input.image })
@@ -415,5 +448,158 @@ export async function readMsbVersion(deps: { msbBin: string; run?: CommandRunner
 		return m?.[1] ?? null
 	} catch {
 		return null
+	}
+}
+
+// IPv4 dotted-quad — what we expect to see in `msb inspect` output for a
+// microVM on the msb bridge network. Used to find the sidecar's address
+// without binding to a specific JSON shape (which has drifted between msb
+// versions and is not part of any stable contract).
+const IPV4_RE =
+	/\b(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b/
+
+// Loopback and link-local ranges that show up in `msb inspect` output but are
+// not the bridge-routable address we want for sidecar-to-session traffic.
+function isReachableBridgeIp(ip: string): boolean {
+	if (ip.startsWith('127.') || ip === '0.0.0.0') return false
+	if (ip.startsWith('169.254.')) return false
+	return true
+}
+
+export type SandboxInspection = {
+	ip: string
+}
+
+/**
+ * Resolve a running sandbox's bridge IP via `msb inspect <name>`. msb's
+ * inspect output is not a stable JSON contract across versions, so we scan
+ * for the first reachable IPv4 address rather than parsing a known shape —
+ * loopback (`127.x`) and link-local (`169.254.x`) addresses are skipped so we
+ * don't hand the session a self-pointing URL.
+ */
+export async function inspectSandbox(
+	name: string,
+	deps: MicrosandboxDeps,
+): Promise<SandboxInspection> {
+	assertValidSessionId(name)
+	const run = deps.run ?? defaultRunner()
+	const { stdout } = await run(deps.msbBin, ['inspect', name], {
+		timeoutMs: BROWSER_SIDECAR_INSPECT_TIMEOUT_MS,
+	})
+	const matches = stdout.match(new RegExp(IPV4_RE.source, 'g')) ?? []
+	const ip = matches.find(isReachableBridgeIp)
+	if (!ip) {
+		throw new Error(`msb inspect ${name}: no reachable bridge IP found`)
+	}
+	return { ip }
+}
+
+export type BrowserSidecar = {
+	name: string
+	cdpUrl: string
+}
+
+/**
+ * Provision a Chromium-only sidecar microVM running `chromedp/headless-shell`
+ * for bet-qa sessions. Returns the sidecar name and a `ws://<ip>:9222` CDP
+ * URL the session VM can hand to `@playwright/mcp`. The session VM must be
+ * spawned with `allowPrivateNet: true` for the bridge address to be reachable.
+ *
+ * Returns `null` on any failure — the caller falls back to a session without
+ * browser capability and reports the instrumentation gap. We never throw past
+ * the session boundary: a failed sidecar must not take down an otherwise-fine
+ * session, only the bet-qa step the agent would have run.
+ */
+export async function provisionBrowserSidecar(
+	prefix: string,
+	deps: MicrosandboxDeps,
+	options: { settleMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<BrowserSidecar | null> {
+	const name = `anko-browser-${prefix}`
+	assertValidSessionId(name)
+	const run = deps.run ?? defaultRunner()
+	const sleep = options.sleep ?? deps.sleep ?? defaultSleep
+	const now = deps.now ?? Date.now
+	const settleMs = options.settleMs ?? BROWSER_SIDECAR_SETTLE_MS
+
+	const createArgs: string[] = [
+		'create',
+		'--name',
+		name,
+		'--memory',
+		`${BROWSER_SIDECAR_MEMORY_MIB}M`,
+		'--cpus',
+		String(BROWSER_SIDECAR_CPUS),
+		'--replace',
+		'--pull',
+		'always',
+		'--quiet',
+		// Sidecar reaches public IPs (Chromium fetches its own assets in some
+		// flows) and DNS, but no other rules — it does NOT need allow@host.
+		'--net-rule',
+		PUBLIC_EGRESS_RULE,
+		'--net-rule',
+		DNS_UDP_RULE,
+		'--net-rule',
+		DNS_TCP_RULE,
+		BROWSER_SIDECAR_IMAGE,
+	]
+
+	try {
+		await run(deps.msbBin, createArgs, { timeoutMs: BROWSER_SIDECAR_CREATE_TIMEOUT_MS })
+	} catch (err) {
+		const e = err as { stderr?: unknown; message?: string }
+		const stderr = e.stderr ? String(e.stderr) : ''
+		logger.error('browser sidecar create failed', {
+			name,
+			stderr,
+			message: e.message ?? 'unknown',
+		})
+		await run(deps.msbBin, ['remove', '-f', '--quiet', name], { timeoutMs: 15_000 }).catch(() => {})
+		return null
+	}
+
+	try {
+		await waitForRunning(deps.msbBin, name, { run, sleep, now })
+	} catch (err) {
+		logger.error('browser sidecar did not reach Running', { name, error: String(err) })
+		await run(deps.msbBin, ['remove', '-f', '--quiet', name], { timeoutMs: 15_000 }).catch(() => {})
+		return null
+	}
+
+	// Chromium's CDP listener binds a beat after the VM reports Running.
+	await sleep(settleMs)
+
+	let inspection: SandboxInspection
+	try {
+		inspection = await inspectSandbox(name, deps)
+	} catch (err) {
+		logger.error('browser sidecar inspect failed', { name, error: String(err) })
+		await run(deps.msbBin, ['remove', '-f', '--quiet', name], { timeoutMs: 15_000 }).catch(() => {})
+		return null
+	}
+
+	const cdpUrl = `ws://${inspection.ip}:${BROWSER_CDP_PORT}`
+	logger.info('browser sidecar started', { name, cdpUrl })
+	return { name, cdpUrl }
+}
+
+/**
+ * Tear down a sidecar provisioned by `provisionBrowserSidecar`. Idempotent —
+ * a missing or already-removed sandbox returns cleanly. Called from
+ * `monitorSession` after the session VM exits so we don't leave Chromium VMs
+ * orphaned on the host.
+ */
+export async function cleanupBrowserSidecar(
+	sidecar: BrowserSidecar | null,
+	deps: MicrosandboxDeps,
+): Promise<void> {
+	if (!sidecar) return
+	const run = deps.run ?? defaultRunner()
+	try {
+		await run(deps.msbBin, ['remove', '-f', '--quiet', sidecar.name], { timeoutMs: 15_000 })
+		logger.info('browser sidecar removed', { name: sidecar.name })
+	} catch (err) {
+		logger.warn('browser sidecar removal failed', { name: sidecar.name, error: String(err) })
 	}
 }

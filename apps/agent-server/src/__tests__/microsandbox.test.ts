@@ -5,8 +5,11 @@ import { describe, expect, it } from 'vitest'
 import {
 	assertValidSessionId,
 	buildMsbCreateArgs,
+	cleanupBrowserSidecar,
 	ensureSessionSkeleton,
 	formatOverflowEnvFile,
+	inspectSandbox,
+	provisionBrowserSidecar,
 	removeSandbox,
 	sanitizeEnvForMicroVM,
 	spawnSession,
@@ -221,6 +224,41 @@ describe('buildMsbCreateArgs', () => {
 			...(maxDuration !== undefined && { maxDuration }),
 		})
 		expect(args).not.toContain('--max-duration')
+	})
+
+	it('omits allow@private by default (default firewall posture stays tight)', () => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+		})
+		const netRules: string[] = []
+		for (let i = 0; i < args.length - 1; i++) {
+			if (args[i] === '--net-rule') netRules.push(args[i + 1] as string)
+		}
+		expect(netRules).not.toContain('allow@private')
+	})
+
+	it('adds allow@private only when allowPrivateNet is true (sidecar reachability)', () => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+			allowPrivateNet: true,
+		})
+		const netRules: string[] = []
+		for (let i = 0; i < args.length - 1; i++) {
+			if (args[i] === '--net-rule') netRules.push(args[i + 1] as string)
+		}
+		expect(netRules).toContain('allow@private')
 	})
 })
 
@@ -532,5 +570,166 @@ describe('waitForCompletion', () => {
 			60_000,
 		)
 		expect(calls).toBe(3)
+	})
+})
+
+describe('inspectSandbox', () => {
+	const msbBin = '/usr/local/bin/msb'
+
+	it('returns the first reachable bridge IP from msb inspect output', async () => {
+		const run = async (): Promise<{ stdout: string; stderr: string }> => ({
+			// msb inspect's output shape isn't a stable contract — the parser scans
+			// for an IPv4, skipping loopback. This fixture mixes both so we know the
+			// scan picks the right one.
+			stdout: 'Name: anko-browser-abc12345\nLoopback: 127.0.0.1\nIP: 10.42.0.7\nStatus: Running\n',
+			stderr: '',
+		})
+		const result = await inspectSandbox('anko-browser-abc12345', { msbBin, run })
+		expect(result).toEqual({ ip: '10.42.0.7' })
+	})
+
+	it('throws when the inspect output exposes no reachable bridge IP', async () => {
+		const run = async (): Promise<{ stdout: string; stderr: string }> => ({
+			stdout: 'Name: anko-browser-empty\nLoopback: 127.0.0.1\nLinkLocal: 169.254.10.10\n',
+			stderr: '',
+		})
+		await expect(inspectSandbox('anko-browser-empty', { msbBin, run })).rejects.toThrow(
+			/no reachable bridge IP/,
+		)
+	})
+})
+
+describe('provisionBrowserSidecar', () => {
+	const msbBin = '/usr/local/bin/msb'
+
+	it('creates the sidecar VM, waits for Running, inspects the IP, returns the CDP URL', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			const verb = args[0]
+			if (verb === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-deadbeef', status: 'Running' }]),
+					stderr: '',
+				}
+			}
+			if (verb === 'inspect') {
+				return { stdout: 'IP: 10.42.0.42\n', stderr: '' }
+			}
+			return { stdout: '', stderr: '' }
+		}
+		const sidecar = await provisionBrowserSidecar(
+			'deadbeef',
+			{ msbBin, run, sleep: async () => {}, now: () => 0 },
+			{ settleMs: 0 },
+		)
+		expect(sidecar).toEqual({
+			name: 'anko-browser-deadbeef',
+			cdpUrl: 'ws://10.42.0.42:9222',
+		})
+		const verbs = calls.map((c) => c[0])
+		expect(verbs).toContain('create')
+		expect(verbs).toContain('list')
+		expect(verbs).toContain('inspect')
+		// The create args must reference the chromedp image as the trailing token.
+		const createCall = calls.find((c) => c[0] === 'create')
+		expect(createCall?.at(-1)).toBe('chromedp/headless-shell:latest')
+	})
+
+	it('returns null and removes the half-built VM when msb create fails', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'create') {
+				throw Object.assign(new Error('boom'), { stderr: 'libkrun: image pull failed' })
+			}
+			return { stdout: '', stderr: '' }
+		}
+		const sidecar = await provisionBrowserSidecar(
+			'failcre8',
+			{ msbBin, run, sleep: async () => {}, now: () => 0 },
+			{ settleMs: 0 },
+		)
+		expect(sidecar).toBeNull()
+		expect(calls.map((c) => c[0])).toEqual(['create', 'remove'])
+	})
+
+	it('returns null and removes the VM when the inspect step cannot find an IP', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-noip0000', status: 'Running' }]),
+					stderr: '',
+				}
+			}
+			if (args[0] === 'inspect') {
+				return { stdout: 'Loopback: 127.0.0.1\n', stderr: '' }
+			}
+			return { stdout: '', stderr: '' }
+		}
+		const sidecar = await provisionBrowserSidecar(
+			'noip0000',
+			{ msbBin, run, sleep: async () => {}, now: () => 0 },
+			{ settleMs: 0 },
+		)
+		expect(sidecar).toBeNull()
+		expect(calls.map((c) => c[0])).toContain('remove')
+	})
+})
+
+describe('cleanupBrowserSidecar', () => {
+	const msbBin = '/usr/local/bin/msb'
+
+	it('removes the sidecar VM via msb remove -f --quiet', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			return { stdout: '', stderr: '' }
+		}
+		await cleanupBrowserSidecar(
+			{ name: 'anko-browser-feed', cdpUrl: 'ws://10.0.0.5:9222' },
+			{ msbBin, run },
+		)
+		expect(calls.length).toBe(1)
+		expect(calls[0]).toEqual(['remove', '-f', '--quiet', 'anko-browser-feed'])
+	})
+
+	it('no-ops when no sidecar was provisioned (the common, non-bet-qa path)', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			return { stdout: '', stderr: '' }
+		}
+		await cleanupBrowserSidecar(null, { msbBin, run })
+		expect(calls.length).toBe(0)
+	})
+
+	it('swallows msb remove failures so a missing/stopped sandbox is idempotent', async () => {
+		const run = async (): Promise<{ stdout: string; stderr: string }> => {
+			throw new Error('No such sandbox')
+		}
+		await expect(
+			cleanupBrowserSidecar(
+				{ name: 'anko-browser-gone', cdpUrl: 'ws://10.0.0.6:9222' },
+				{ msbBin, run },
+			),
+		).resolves.toBeUndefined()
 	})
 })
