@@ -4,6 +4,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { createGzip } from 'node:zlib'
 
 const execFileAsync = promisify(execFileCb)
 import type { Database } from '@maskin/db'
@@ -347,12 +348,12 @@ export class SessionManager extends EventEmitter {
 			// the staged agent files with the prior session's full /agent/ snapshot,
 			// so the agent picks up exactly where the previous session left off.
 			if (session.sourceSessionId) {
-				const snapshotKey = `session-workspaces/${session.sourceSessionId}.tar`
+				const snapshotKey = `session-workspaces/${session.sourceSessionId}.tar.gz`
 				if (await this.storage.exists(snapshotKey)) {
 					const buf = await this.storage.get(snapshotKey)
-					const archivePath = join(tempDir, '_source_snapshot.tar')
+					const archivePath = join(tempDir, '_source_snapshot.tar.gz')
 					await writeFile(archivePath, buf)
-					await execFileAsync('tar', ['-xf', archivePath, '-C', tempDir, '--strip-components=1'])
+					await execFileAsync('tar', ['-xzf', archivePath, '-C', tempDir, '--strip-components=1'])
 					await rm(archivePath)
 					await this.insertSystemLog(
 						sessionId,
@@ -517,13 +518,13 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Copy the container's /agent/ directory to S3 as session-workspaces/{sessionId}.tar
+	 * Copy the container's /agent/ directory to S3 as session-workspaces/{sessionId}.tar.gz
 	 * so continuation sessions can restore from it via sourceSessionId. Works on stopped
 	 * containers (before docker rm). Called non-fatally from handleCompletion.
 	 */
 	private async snapshotWorkspaceAfterExit(sessionId: string, containerId: string): Promise<void> {
 		const tarStream = await this.containers.copyFrom(containerId, '/agent/')
-		await this.storage.put(`session-workspaces/${sessionId}.tar`, tarStream)
+		await this.storage.put(`session-workspaces/${sessionId}.tar.gz`, tarStream.pipe(createGzip()))
 		logger.info('Workspace snapshot saved', { sessionId })
 	}
 
