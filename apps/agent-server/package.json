@@ -14,13 +14,13 @@
 	"dependencies": {
 		"@hono/node-server": "^1.19.13",
 		"@maskin/storage": "workspace:*",
-		"hono": "^4.12.14",
+		"hono": "^4.12.26",
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {
 		"@types/node": "^25.6.0",
-		"esbuild": "^0.28.0",
-		"tsx": "^4.19.0",
+		"esbuild": "^0.28.1",
+		"tsx": "^4.22.4",
 		"typescript": "^5.7.0",
 		"vitest": "^3.0.0"
 	}
