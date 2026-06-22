@@ -9,8 +9,14 @@ import {
 	getValidOAuthToken,
 } from '../lib/claude-oauth'
 import { createApiError } from '../lib/errors'
+import {
+	billingAfterByoTransition,
+	cancelActivePaidSubscription,
+	hasActivePaidPlan,
+} from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { getStripeClient, readStripeEnv } from '../lib/stripe'
 import type { WorkspaceSettings } from '../lib/types'
 
 type Env = {
@@ -225,10 +231,52 @@ app.openapi(importRoute, (async (c) => {
 	}
 
 	const settings = (ws.settings as WorkspaceSettings) ?? {}
+
+	// BYOLLM ↔ paid plan mutex: importing Claude OAuth tokens is a BYOLLM
+	// selection. Cancel any live Stripe subscription via API first so the
+	// customer isn't charged for an inactive plan, then roll billing into
+	// the same update as the new OAuth blob.
+	const nextSettings: Record<string, unknown> = {
+		...settings,
+		claude_oauth: encryptOAuthTokens(tokens),
+	}
+	if (hasActivePaidPlan({ billing: settings.billing })) {
+		let stripeEnv: ReturnType<typeof readStripeEnv>
+		try {
+			stripeEnv = readStripeEnv()
+		} catch (err) {
+			logger.error('Cannot cancel paid plan for Claude OAuth import: Stripe is not configured', {
+				workspaceId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
+		}
+		try {
+			await cancelActivePaidSubscription(
+				getStripeClient(stripeEnv),
+				// biome-ignore lint/style/noNonNullAssertion: hasActivePaidPlan guarantees this
+				settings.billing!.stripe_subscription_id!,
+			)
+		} catch (err) {
+			logger.error('Stripe subscription cancel failed during Claude OAuth import', {
+				workspaceId,
+				subscriptionId: settings.billing?.stripe_subscription_id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return c.json(createApiError('INTERNAL_ERROR', 'Failed to cancel paid subscription'), 500)
+		}
+		const downgrade = billingAfterByoTransition(settings.billing)
+		if (downgrade) nextSettings.billing = downgrade
+		logger.info('Paid plan canceled during Claude OAuth import', {
+			workspaceId,
+			subscriptionId: settings.billing?.stripe_subscription_id,
+		})
+	}
+
 	await db
 		.update(workspaces)
 		.set({
-			settings: { ...settings, claude_oauth: encryptOAuthTokens(tokens) },
+			settings: nextSettings,
 			updatedAt: new Date(),
 		})
 		.where(eq(workspaces.id, workspaceId))

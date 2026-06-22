@@ -10,6 +10,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
+import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
@@ -18,6 +19,7 @@ import agentServerReconcileRoutes from './routes/agent-server-reconcile'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
+import billingRoutes from './routes/billing'
 import catalogPackagesRoutes from './routes/catalog-packages'
 import claudeOauthRoutes from './routes/claude-oauth'
 import eventsRoutes from './routes/events'
@@ -34,6 +36,7 @@ import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
+import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
 import triggersRoutes from './routes/triggers'
@@ -119,6 +122,27 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	})
 
 	app.onError((err, c) => {
+		if (err instanceof PlanCapExceededError) {
+			logger.warn('Plan cap exceeded', {
+				plan: err.plan,
+				used: err.used,
+				cap: err.cap,
+				periodEnd: err.periodEnd,
+			})
+			return c.json(
+				{
+					error: {
+						code: ApiErrorCode.PLAN_CAP_EXCEEDED,
+						message: err.message,
+						plan: err.plan,
+						used: err.used,
+						cap: err.cap,
+						period_end: err.periodEnd,
+					},
+				},
+				402,
+			)
+		}
 		if ('status' in err && typeof err.status === 'number') {
 			return c.json(createApiError(mapStatusToCode(err.status), err.message), err.status as 400)
 		}
@@ -217,7 +241,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	app.route('/api/catalog', catalogPackagesRoutes)
+	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
+	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.
+	// Stripe is billing, not an integration provider.
+	app.route('/api/webhooks/stripe', stripeWebhookRoutes)
 	app.route('/api/webhooks', webhookApp)
+	app.route('/api/billing', billingRoutes)
 	app.route('/api/internal/agent-servers', agentServerReconcileRoutes)
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/sessions', sessionsRoutes)

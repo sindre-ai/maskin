@@ -29,6 +29,12 @@ describe('rewriteWiring', () => {
 		expect(rewriteWiring(snap, new Map())).toEqual(snap)
 	})
 
+	it('rewrites top-level string values whose value is a known source id', () => {
+		const map = new Map([[SRC_1, LOCAL_1]])
+		const out = rewriteWiring({ targetActorId: SRC_1, name: 'unchanged' }, map)
+		expect(out).toEqual({ targetActorId: LOCAL_1, name: 'unchanged' })
+	})
+
 	it('rewrites recursively through nested objects and arrays', () => {
 		const map = new Map([
 			[SRC_1, LOCAL_1],
