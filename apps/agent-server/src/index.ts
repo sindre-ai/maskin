@@ -45,10 +45,7 @@ const SESSION_REQUEST_SCHEMA = z.object({
 		.default({}),
 	memoryMib: z.number().int().positive().optional(),
 	cpus: z.number().int().positive().optional(),
-	sourceSessionId: z
-		.string()
-		.regex(SESSION_ID_RE)
-		.optional(),
+	sourceSessionId: z.string().regex(SESSION_ID_RE).optional(),
 })
 
 export type AppDeps = {
