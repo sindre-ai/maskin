@@ -381,8 +381,8 @@ describe('SessionManager', () => {
 			vi.clearAllMocks()
 		})
 
-		it('provisions a browser sidecar when bet_qa_required is true (AC-T1 Docker leg)', async () => {
-			const session = buildTestSession({ config: { bet_qa_required: true } })
+		it('provisions a browser sidecar when browserRequired is true (AC-T1 Docker leg)', async () => {
+			const session = buildTestSession({ config: { browserRequired: true } })
 			const agent = buildTestAgent(session.actorId)
 			const workspace = buildTestWorkspace(session.workspaceId)
 
@@ -424,7 +424,7 @@ describe('SessionManager', () => {
 			expect(agentCreateCall.networkMode).toMatch(/^anko-net-/)
 		})
 
-		it('does not provision a sidecar when bet_qa_required is absent (AC-T6 Docker leg)', async () => {
+		it('does not provision a sidecar when browserRequired is absent (AC-T6 Docker leg)', async () => {
 			const session = buildTestSession({ config: {} })
 			const agent = buildTestAgent(session.actorId)
 			const workspace = buildTestWorkspace(session.workspaceId)

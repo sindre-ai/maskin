@@ -321,7 +321,7 @@ describe('POST /sessions validation', () => {
 	})
 })
 
-describe('POST /sessions bet_qa_required wiring', () => {
+describe('POST /sessions browserRequired wiring', () => {
 	function makeSidecarAwareRunner(opts: { sidecarIp?: string | null } = {}) {
 		const calls: Array<{ args: readonly string[] }> = []
 		const run = async (
@@ -350,7 +350,7 @@ describe('POST /sessions bet_qa_required wiring', () => {
 		return { run, calls }
 	}
 
-	it('provisions a sidecar, injects BROWSER_CDP_URL, and adds allow@private when bet_qa_required=true', async () => {
+	it('provisions a sidecar, injects BROWSER_CDP_URL, and adds allow@private when browserRequired=true', async () => {
 		const { run, calls } = makeSidecarAwareRunner({ sidecarIp: '10.42.0.7' })
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
@@ -369,7 +369,7 @@ describe('POST /sessions bet_qa_required wiring', () => {
 				sessionId: 'sess-betqa1',
 				image: 'maskin/agent-base:latest',
 				env: {},
-				bet_qa_required: true,
+				browserRequired: true,
 			}),
 		})
 		expect(res.status).toBe(201)
@@ -387,7 +387,7 @@ describe('POST /sessions bet_qa_required wiring', () => {
 		expect(envFlags).toContain('BROWSER_CDP_URL=ws://10.42.0.7:9222')
 	})
 
-	it('provisions no sidecar, injects no BROWSER_CDP_URL, and omits allow@private when bet_qa_required is absent', async () => {
+	it('provisions no sidecar, injects no BROWSER_CDP_URL, and omits allow@private when browserRequired is absent', async () => {
 		const { run, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
@@ -439,7 +439,7 @@ describe('POST /sessions bet_qa_required wiring', () => {
 				sessionId: 'sess-betqa2',
 				image: 'maskin/agent-base:latest',
 				env: {},
-				bet_qa_required: true,
+				browserRequired: true,
 			}),
 		})
 		expect(res.status).toBe(201)

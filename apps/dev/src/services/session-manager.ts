@@ -1111,10 +1111,10 @@ export class SessionManager extends EventEmitter {
 			await this.containers.ensureImage(spec.image, this.agentBaseBuildContext)
 		}
 
-		// Provision browser sidecar when the bet_qa_required flag is set
+		// Provision browser sidecar when the browserRequired flag is set
 		let networkMode: string | undefined
 		const sessionConfig = session.config as Record<string, unknown> | null
-		if (sessionConfig?.bet_qa_required === true) {
+		if (sessionConfig?.browserRequired === true) {
 			const prefix = session.id.slice(0, 8)
 			const result = await this.provisionBrowserSidecar(session.id, prefix)
 			if (result) {

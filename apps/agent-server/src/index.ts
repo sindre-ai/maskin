@@ -50,8 +50,8 @@ const SESSION_REQUEST_SCHEMA = z.object({
 	cpus: z.number().int().positive().optional(),
 	// When true, provision a Chromium CDP sidecar microVM alongside the session
 	// and inject `BROWSER_CDP_URL` so `@playwright/mcp` can attach. Absent or
-	// false → no sidecar, no env var, no MCP entry (T1 controls the merge).
-	bet_qa_required: z.boolean().optional(),
+	// false → no sidecar, no env var, no MCP entry.
+	browserRequired: z.boolean().optional(),
 })
 
 export type AppDeps = {
@@ -441,7 +441,7 @@ export function buildApp(deps: AppDeps): Hono {
 		// A failed sidecar must not take down the session — the agent falls back
 		// to an instrumentation-gap comment instead of fabricating a bet-qa pass.
 		let browserSidecar: BrowserSidecar | null = null
-		if (body.bet_qa_required === true) {
+		if (body.browserRequired === true) {
 			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 8), deps.msb)
 			if (browserSidecar) {
 				sessionEnv.BROWSER_CDP_URL = browserSidecar.cdpUrl
