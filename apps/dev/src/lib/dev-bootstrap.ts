@@ -20,9 +20,9 @@ import {
 	WORKSPACE_COACH_DEFAULT,
 } from '@maskin/shared'
 import { and, count, eq, isNotNull } from 'drizzle-orm'
-import { logger } from './logger'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
+import { logger } from './logger'
 
 /**
  * Seeds the global catalog with the Customer Continuous Discovery package if
@@ -363,7 +363,10 @@ export async function maybeBootstrapDev(
 	// bootstrapDefaultAgents is idempotent — it skips Workspace Coach by name.
 	if (agentStorage) {
 		bootstrapDefaultAgents(db, agentStorage, workspace.id, actor.id).catch((err) =>
-			logger.error('dev bootstrap: default agent seeding failed', { workspaceId: workspace.id, err }),
+			logger.error('dev bootstrap: default agent seeding failed', {
+				workspaceId: workspace.id,
+				err,
+			}),
 		)
 	}
 

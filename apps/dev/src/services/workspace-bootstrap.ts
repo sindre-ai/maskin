@@ -26,7 +26,7 @@ export async function bootstrapDefaultAgents(
 	const actorIdMap: Record<string, string> = {}
 
 	for (const agent of defaultAgents) {
-		// Idempotent: skip if an actor with this name already exists in the workspace.
+		// Idempotent: check if an actor with this name already exists in the workspace.
 		const [existing] = await db
 			.select({ actorId: workspaceMembers.actorId })
 			.from(workspaceMembers)
@@ -34,47 +34,52 @@ export async function bootstrapDefaultAgents(
 			.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, agent.name)))
 			.limit(1)
 
+		let actorId: string
+
 		if (existing) {
-			actorIdMap[agent.$id] = existing.actorId
-			continue
+			actorId = existing.actorId
+			actorIdMap[agent.$id] = actorId
+		} else {
+			const systemPrompt = agent.systemPrompt.replaceAll('{{self_id}}', '')
+
+			const [created] = await db
+				.insert(actors)
+				.values({
+					type: 'agent',
+					name: agent.name,
+					systemPrompt,
+					tools: (agent.tools ?? null) as Record<string, unknown> | null,
+					llmConfig: (agent.llmConfig ?? null) as Record<string, unknown> | null,
+					apiKey: generateApiKey().key,
+					createdBy,
+				})
+				.returning()
+
+			if (!created) {
+				logger.error('Failed to create agent during workspace bootstrap', {
+					workspaceId,
+					agentName: agent.name,
+				})
+				continue
+			}
+
+			actorId = created.id
+			actorIdMap[agent.$id] = actorId
+
+			// Patch own ID into the system prompt now that we have it.
+			if (agent.systemPrompt.includes('{{self_id}}')) {
+				await db
+					.update(actors)
+					.set({ systemPrompt: agent.systemPrompt.replaceAll('{{self_id}}', created.id) })
+					.where(eq(actors.id, created.id))
+			}
+
+			await db.insert(workspaceMembers).values({ workspaceId, actorId, role: 'member' })
 		}
 
-		const systemPrompt = agent.systemPrompt.replaceAll('{{self_id}}', '')
-
-		const [created] = await db
-			.insert(actors)
-			.values({
-				type: 'agent',
-				name: agent.name,
-				systemPrompt,
-				tools: (agent.tools ?? null) as Record<string, unknown> | null,
-				llmConfig: (agent.llmConfig ?? null) as Record<string, unknown> | null,
-				apiKey: generateApiKey().key,
-				createdBy,
-			})
-			.returning()
-
-		if (!created) {
-			logger.error('Failed to create agent during workspace bootstrap', {
-				workspaceId,
-				agentName: agent.name,
-			})
-			continue
-		}
-
-		actorIdMap[agent.$id] = created.id
-
-		// Patch own ID into the system prompt now that we have it.
-		if (agent.systemPrompt.includes('{{self_id}}')) {
-			await db
-				.update(actors)
-				.set({ systemPrompt: agent.systemPrompt.replaceAll('{{self_id}}', created.id) })
-				.where(eq(actors.id, created.id))
-		}
-
-		await db.insert(workspaceMembers).values({ workspaceId, actorId: created.id, role: 'member' })
-
-		// Create and attach each seed skill (DB row + S3 upload in one transaction).
+		// Seed skills for this agent. Runs for both newly-created and pre-existing actors so
+		// that Workspace Coach's skills (seeded synchronously in the workspace transaction)
+		// are still attached here. Both inserts use onConflictDoNothing so this is idempotent.
 		for (const skill of agent.skills ?? []) {
 			try {
 				let parsed: ReturnType<typeof parseSkillMd> | null = null
@@ -115,7 +120,7 @@ export async function bootstrapDefaultAgents(
 				if (createdSkill) {
 					await db
 						.insert(agentSkills)
-						.values({ actorId: created.id, workspaceSkillId: createdSkill.id })
+						.values({ actorId, workspaceSkillId: createdSkill.id })
 						.onConflictDoNothing()
 				}
 			} catch (err) {
