@@ -2089,7 +2089,8 @@ Do the work in this order:
    - \`metadata.confidence\`: 'high' | 'medium' | 'low' — be honest
    - \`metadata.tags\`: include 'context:company' so downstream readers find it
 5. Link each new knowledge object back to the source signup-capture object via an \`about\` relationship (\`create_relationships\` with \`type: 'about'\`, source = your new knowledge id, target = \`data.id\`).
-6. Stop. Do not write a status comment, do not @mention humans, do not create bets. The Coach surfaces this context to the user on their next session — your job ends at the knowledge objects.
+6. Based on your research, suggest one bet: create a bet object (\`type: 'bet'\`, \`status: 'signal'\`) with a clear title and a description grounded in what you found — the most impactful thing this workspace could focus on first. Link it to the signup-capture object via an \`about\` relationship (source = bet id, target = \`data.id\`).
+7. Post a comment on the bet using \`create_comment\`, @mentioning the workspace owner (actor id is \`data.created_by\`) to surface the suggestion. Then stop.
 
 If web research turns up nothing usable (very small or unindexed organization), write one knowledge object naming that fact so downstream agents stop searching, then stop.
 
