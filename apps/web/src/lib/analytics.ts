@@ -110,3 +110,16 @@ export function trackObjectAttachedFile(
 		parent_entity_type: p.parent_entity_type,
 	})
 }
+
+// For You sparse-state composer. `items_count` is the rendered item count on
+// the For You feed at the moment of the event (0–2 for the sparse range).
+// `workspace_id` rides via PostHog super-properties registered on workspace
+// mount — do not pass it explicitly.
+
+export function trackForyouSparseComposerShown(p: { items_count: number }): void {
+	trackEvent('foryou_sparse_composer_shown', { items_count: p.items_count })
+}
+
+export function trackForyouSparseComposerSubmit(p: { items_count: number }): void {
+	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
+}
