@@ -311,6 +311,67 @@ describe('publishAppHomeView', () => {
 		expect(_internal.formatAgentSubscript(null)).toBe('')
 	})
 
+	it('escapes mrkdwn metacharacters in row.title before <URL|text> interpolation', async () => {
+		const { publishAppHomeView } = await import(
+			'../../../../lib/integrations/providers/slack/webhooks'
+		)
+		// Adversarial title — `|` would close the link tag early and
+		// `<@U123|Sebastian>` would render as a fake user mention.
+		const linked: InboxRow = {
+			id: 'n1',
+			title: '<@U123|Sebastian> & friends > all',
+			content: null,
+			objectId: 'obj-1',
+			sourceActorName: 'Workspace Coach',
+			createdAt: '2026-06-22T20:00:00Z',
+			updatedAt: '2026-06-22T20:00:00Z',
+		}
+		// Same characters in a row without an objectId — exercises the
+		// non-link plain mrkdwn branch.
+		const unlinked: InboxRow = { ...linked, id: 'n2', objectId: null }
+		const db = makeFakeDb({
+			link: { actorId: 'actor-1', defaultWorkspaceId: 'ws-1' },
+			inbox: [linked, unlinked],
+		})
+
+		await publishAppHomeView({ db: db as never, teamId: 'T1', slackUserId: 'U1' })
+
+		const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as { body: string }).body) as {
+			view: { blocks: Array<Record<string, unknown>> }
+		}
+		const sections = body.view.blocks.filter((b) => b.type === 'section') as Array<{
+			text: { text: string }
+		}>
+		const linkedText = sections[0]?.text.text ?? ''
+		const unlinkedText = sections[1]?.text.text ?? ''
+
+		// Linked row: `<URL|text>` form. `<`/`>`/`&` are escaped, `|` is
+		// stripped from the link text so the tag closes where we expect.
+		expect(linkedText).toContain('|&lt;@U123Sebastian&gt; &amp; friends &gt; all>*')
+		expect(linkedText).not.toContain('<@U123|Sebastian>')
+
+		// Unlinked row: plain mrkdwn. Same three escapes, `|` is preserved
+		// (it has no special meaning outside link form).
+		expect(unlinkedText).toBe('*&lt;@U123|Sebastian&gt; &amp; friends &gt; all*')
+	})
+
+	it('escapeSlackMrkdwn helper: escapes & < > and strips | for link text', async () => {
+		const { escapeSlackMrkdwn } = await import(
+			'../../../../lib/integrations/providers/slack/webhooks'
+		)
+		// Order matters: `&` must be replaced first so an escaped `<`
+		// doesn't double-encode to `&amp;lt;`.
+		expect(escapeSlackMrkdwn('<a> & <b>')).toBe('&lt;a&gt; &amp; &lt;b&gt;')
+		// Plain mode keeps `|`.
+		expect(escapeSlackMrkdwn('a | b')).toBe('a | b')
+		// Link-text mode strips `|`.
+		expect(escapeSlackMrkdwn('a | b', { forLinkText: true })).toBe('a  b')
+		// All four together in link-text mode.
+		expect(escapeSlackMrkdwn('<x|y>&z', { forLinkText: true })).toBe('&lt;xy&gt;&amp;z')
+		// Empty string round-trips.
+		expect(escapeSlackMrkdwn('')).toBe('')
+	})
+
 	it('app_home_opened normalizer round-trip emits slack.app_home_opened', async () => {
 		const { slackEventNormalizer } = await import(
 			'../../../../lib/integrations/providers/slack/webhooks'
