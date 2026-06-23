@@ -18,9 +18,9 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
-const setSindreOpen = vi.fn()
-vi.mock('@/lib/sindre-context', () => ({
-	useSindre: () => ({ setOpen: setSindreOpen }),
+const setChatOpen = vi.fn()
+vi.mock('@/lib/chat-context', () => ({
+	useChat: () => ({ setOpen: setChatOpen }),
 }))
 
 vi.mock('@/components/ui/sidebar', () => ({
@@ -59,12 +59,12 @@ describe('Header', () => {
 		expect(screen.getByText('Members')).toBeInTheDocument()
 	})
 
-	it('renders a Sindre launcher that opens the panel without navigating', () => {
-		setSindreOpen.mockClear()
+	it('renders a chat launcher that opens the panel without navigating', () => {
+		setChatOpen.mockClear()
 		render(<Header />)
-		const launcher = screen.getByRole('button', { name: /open sindre/i })
+		const launcher = screen.getByRole('button', { name: /open chat/i })
 		fireEvent.click(launcher)
-		expect(setSindreOpen).toHaveBeenCalledWith(true)
+		expect(setChatOpen).toHaveBeenCalledWith(true)
 	})
 
 	it('renders page header actions from usePageHeader', () => {

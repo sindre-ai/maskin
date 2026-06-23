@@ -138,12 +138,11 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Owner + Sindre + Driver + Coach + Strategist (all auto-seeded) + new member
-			expect(members).toHaveLength(6)
+			// Creator (owner) + Workspace Coach (seeded synchronously in the transaction) + new member.
+			// Driver and Strategist are seeded async via bootstrapDefaultAgents (requires agentStorage),
+			// which is not wired in integration tests, so they are not present here.
+			expect(members).toHaveLength(3)
 			expect(members.map((m: { role: string }) => m.role).sort()).toEqual([
-				'member',
-				'member',
-				'member',
 				'member',
 				'member',
 				'owner',
