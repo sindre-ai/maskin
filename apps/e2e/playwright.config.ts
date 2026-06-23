@@ -5,7 +5,7 @@ export default defineConfig({
 	fullyParallel: false,
 	retries: process.env.CI ? 2 : 0,
 	workers: 1,
-	reporter: 'html',
+	reporter: process.env.CI ? [['html'], ['@argos-ci/playwright/reporter']] : [['html']],
 	use: {
 		baseURL: 'http://localhost:5173',
 		trace: 'on-first-retry',

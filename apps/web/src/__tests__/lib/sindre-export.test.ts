@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 const CTX = {
 	workspaceId: 'ws-1',
-	frontendUrl: 'https://maskin.sindre.ai',
+	frontendUrl: 'https://maskin.io',
 	userName: 'Magnus',
 	agentName: 'Sindre',
 }
@@ -26,7 +26,7 @@ describe('formatSindreMarkdown', () => {
 				'',
 				'## Magnus',
 				'',
-				'[Webhook retry backlog](https://maskin.sindre.ai/ws-1/objects/obj-1)',
+				'[Webhook retry backlog](https://maskin.io/ws-1/objects/obj-1)',
 				'',
 				'What does this object contain?',
 				'',
@@ -74,7 +74,7 @@ describe('formatSindreMarkdown', () => {
 		]
 
 		expect(formatSindreMarkdown(events, CTX)).toContain(
-			'[Untitled](https://maskin.sindre.ai/ws-1/objects/obj-x)',
+			'[Untitled](https://maskin.io/ws-1/objects/obj-x)',
 		)
 	})
 })

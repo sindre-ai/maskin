@@ -11,7 +11,7 @@ Machine identity:
 1. Open the [Slack app dashboard](https://api.slack.com/apps) and pick the Maskin/Machine app (one per environment — dev / prod).
 2. Go to **Features → App Manifest** (left sidebar).
 3. Switch the editor to **YAML**, paste the contents of `manifest.yml`, and **Save changes**.
-4. Before saving, replace **both** occurrences of `REPLACE_WITH_ENV_URL` — in `settings.event_subscriptions.request_url` and in `oauth_config.redirect_urls` — with the public hostname of the target environment. Production is `maskin.sindre.ai` (request URL → `/api/webhooks/slack`, redirect → `/api/integrations/slack/callback`).
+4. Before saving, replace **both** occurrences of `REPLACE_WITH_ENV_URL` — in `settings.event_subscriptions.request_url` and in `oauth_config.redirect_urls` — with the public hostname of the target environment. Production is `maskin.io` (request URL → `/api/webhooks/slack`, redirect → `/api/integrations/slack/callback`).
 5. Slack will show a diff against the current app state and list every change. **Read it.** Any change to scopes or events flips the app into a state where existing installations must re-authorise (see below).
 6. Go to **Settings → Basic Information → App Icon** and upload the icon. Use the T2 PNG when ready; until then use `icon-placeholder.svg` exported to PNG at 512×512.
 7. Go to **Settings → Install App** and re-install to every workspace that needs the new identity (mesh-firm first).
