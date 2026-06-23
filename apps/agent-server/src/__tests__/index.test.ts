@@ -382,7 +382,8 @@ describe('POST /sessions bet_qa_required wiring', () => {
 		// Session VM must carry --net-rule allow@private so it can reach the sidecar.
 		expect(sessionCreate?.args).toContain('allow@private')
 		// Session VM env must include BROWSER_CDP_URL pointing at the sidecar IP.
-		const envFlags = sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
+		const envFlags =
+			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
 		expect(envFlags).toContain('BROWSER_CDP_URL=ws://10.42.0.7:9222')
 	})
 
@@ -413,7 +414,8 @@ describe('POST /sessions bet_qa_required wiring', () => {
 		expect(creates.some((c) => c.args.some((a) => a.startsWith('anko-browser-')))).toBe(false)
 		const sessionCreate = creates.find((c) => c.args.includes('sess-plain'))
 		expect(sessionCreate?.args).not.toContain('allow@private')
-		const envFlags = sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
+		const envFlags =
+			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
 		expect(envFlags.some((e) => e.startsWith('BROWSER_CDP_URL='))).toBe(false)
 	})
 
@@ -448,7 +450,8 @@ describe('POST /sessions bet_qa_required wiring', () => {
 		expect(sessionCreate).toBeDefined()
 		// Sidecar failed → no allow@private rule, no BROWSER_CDP_URL injected.
 		expect(sessionCreate?.args).not.toContain('allow@private')
-		const envFlags = sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
+		const envFlags =
+			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
 		expect(envFlags.some((e) => e.startsWith('BROWSER_CDP_URL='))).toBe(false)
 	})
 })

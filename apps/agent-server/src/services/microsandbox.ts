@@ -68,6 +68,15 @@ const BROWSER_SIDECAR_CPUS = 1
 const BROWSER_SIDECAR_CREATE_TIMEOUT_MS = 90_000
 const BROWSER_SIDECAR_INSPECT_TIMEOUT_MS = 5_000
 
+// AC-T5: cap how long `cleanupBrowserSidecar` waits for `msb list` to stop
+// reporting the sidecar after `msb remove -f`. `remove -f` should be
+// synchronous, but a slow agentd can briefly keep the row visible; the SLA
+// bounds the leak window before we surface it as an error.
+const BROWSER_SIDECAR_TEARDOWN_SLA_MS = 60_000
+const BROWSER_SIDECAR_TEARDOWN_POLL_INTERVAL_MS = 1_000
+const BROWSER_SIDECAR_REMOVE_TIMEOUT_MS = 15_000
+const BROWSER_SIDECAR_LIST_TIMEOUT_MS = 5_000
+
 const SESSION_GUEST_PATH = '/agent'
 const SKELETON_SUBDIRS = ['workspace', 'skills', 'learnings', 'memory'] as const
 
@@ -589,6 +598,12 @@ export async function provisionBrowserSidecar(
  * a missing or already-removed sandbox returns cleanly. Called from
  * `monitorSession` after the session VM exits so we don't leave Chromium VMs
  * orphaned on the host.
+ *
+ * After firing `msb remove -f` this polls `msb list` until the sidecar row is
+ * gone or the AC-T5 SLA elapses. A `remove -f` that returns OK while the row
+ * lingers (we have seen this on a busy agentd) would otherwise leave a
+ * Chromium VM behind silently — the wait turns that into a logged error
+ * instead of a leak.
  */
 export async function cleanupBrowserSidecar(
 	sidecar: BrowserSidecar | null,
@@ -596,10 +611,61 @@ export async function cleanupBrowserSidecar(
 ): Promise<void> {
 	if (!sidecar) return
 	const run = deps.run ?? defaultRunner()
+	const sleep = deps.sleep ?? defaultSleep
+	const now = deps.now ?? Date.now
+	const start = now()
+
 	try {
-		await run(deps.msbBin, ['remove', '-f', '--quiet', sidecar.name], { timeoutMs: 15_000 })
-		logger.info('browser sidecar removed', { name: sidecar.name })
+		await run(deps.msbBin, ['remove', '-f', '--quiet', sidecar.name], {
+			timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS,
+		})
 	} catch (err) {
+		// The remove call may legitimately fail when the sandbox is already
+		// gone (idempotent retries, crash recovery). Don't return — fall
+		// through to the verification poll so a real leak still gets caught.
 		logger.warn('browser sidecar removal failed', { name: sidecar.name, error: String(err) })
+	}
+
+	const deadline = start + BROWSER_SIDECAR_TEARDOWN_SLA_MS
+	while (now() < deadline) {
+		if (await isSidecarAbsent(deps.msbBin, sidecar.name, run)) {
+			logger.info('browser sidecar teardown complete', {
+				name: sidecar.name,
+				elapsedMs: now() - start,
+			})
+			return
+		}
+		await sleep(BROWSER_SIDECAR_TEARDOWN_POLL_INTERVAL_MS)
+	}
+
+	if (await isSidecarAbsent(deps.msbBin, sidecar.name, run)) {
+		logger.info('browser sidecar teardown complete', {
+			name: sidecar.name,
+			elapsedMs: now() - start,
+		})
+		return
+	}
+
+	logger.error('browser sidecar still present after teardown SLA', {
+		name: sidecar.name,
+		elapsedMs: now() - start,
+		slaMs: BROWSER_SIDECAR_TEARDOWN_SLA_MS,
+	})
+}
+
+/**
+ * Returns true when `msb list` no longer reports the sidecar name. A failure
+ * of the list call itself is treated as "unknown" (not absent) so a transient
+ * msb hiccup doesn't trick the caller into declaring the sidecar gone.
+ */
+async function isSidecarAbsent(msbBin: string, name: string, run: CommandRunner): Promise<boolean> {
+	try {
+		const { stdout } = await run(msbBin, ['list', '--format', 'json'], {
+			timeoutMs: BROWSER_SIDECAR_LIST_TIMEOUT_MS,
+		})
+		const list = JSON.parse(stdout) as MsbStatusRow[]
+		return !list.some((s) => s.name === name)
+	} catch {
+		return false
 	}
 }

@@ -145,6 +145,14 @@ export class SessionManager extends EventEmitter {
 	 */
 	private static readonly LOG_STREAM_MAX_RECONNECTS = 5
 	private static readonly LOG_STREAM_RECONNECT_DELAY_MS = 2000
+	/**
+	 * AC-T5: cap how long `cleanupBrowserSidecar` waits for Docker to actually
+	 * surface a 404 on the sidecar container after `remove({ force: true })`.
+	 * `remove -f` is normally synchronous, but a slow daemon can briefly keep
+	 * the container row visible — the SLA bounds how long we tolerate that.
+	 */
+	private static readonly SIDECAR_TEARDOWN_SLA_MS = 60_000
+	private static readonly SIDECAR_TEARDOWN_POLL_INTERVAL_MS = 500
 	private agentBaseBuildContext: string | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 	private dispatchQueue: SessionDispatchQueue | null = null
@@ -1995,15 +2003,6 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Check if the MCP config references ${BROWSER_CDP_URL}, indicating a browser sidecar is needed.
-	 */
-	private needsBrowserSidecar(envVars: Record<string, string>): boolean {
-		const agentMcp = envVars.AGENT_MCP_JSON ?? ''
-		const sessionMcp = envVars.MCP_SERVERS_JSON ?? ''
-		return agentMcp.includes('${BROWSER_CDP_URL}') || sessionMcp.includes('${BROWSER_CDP_URL}')
-	}
-
-	/**
 	 * Provision a headless Chrome sidecar container on a per-session Docker network.
 	 * Returns the network name and browser container ID, or null if provisioning fails.
 	 * On failure, the agent session continues without browser capability.
@@ -2079,31 +2078,93 @@ export class SessionManager extends EventEmitter {
 
 	/**
 	 * Clean up browser sidecar container and its Docker network.
-	 * Called before cleanupSession() in all exit paths.
+	 * Called before cleanupSession() in all exit paths. After invoking
+	 * stop+remove this polls Docker until the container is actually gone so
+	 * the caller has a real teardown guarantee — `remove({ force: true })` is
+	 * normally synchronous but the Docker daemon can briefly keep the row
+	 * around, and an unrecoverable sidecar would otherwise leak a Chromium
+	 * process tree on the host (AC-T5: 60s SLA, container-count delta 0).
 	 */
 	private async cleanupBrowserSidecar(sessionId: string): Promise<void> {
 		const sessionData = this.activeSessions.get(sessionId)
 		if (!sessionData) return
+		if (!sessionData.browserContainerId && !sessionData.networkName) return
 
-		if (sessionData.browserContainerId) {
+		const start = Date.now()
+		const browserContainerId = sessionData.browserContainerId
+		const networkName = sessionData.networkName
+
+		if (browserContainerId) {
 			await this.containers
-				.stop(sessionData.browserContainerId)
+				.stop(browserContainerId)
 				.catch((err) =>
 					logger.warn('Failed to stop browser sidecar', { sessionId, error: String(err) }),
 				)
 			await this.containers
-				.remove(sessionData.browserContainerId)
+				.remove(browserContainerId)
 				.catch((err) =>
 					logger.warn('Failed to remove browser sidecar', { sessionId, error: String(err) }),
 				)
+
+			const gone = await this.waitForContainerGone(
+				browserContainerId,
+				SessionManager.SIDECAR_TEARDOWN_SLA_MS,
+			)
+			if (!gone) {
+				logger.error('Browser sidecar still present after teardown SLA', {
+					sessionId,
+					browserContainerId,
+					slaMs: SessionManager.SIDECAR_TEARDOWN_SLA_MS,
+				})
+			}
 		}
 
-		if (sessionData.networkName) {
+		if (networkName) {
 			await this.containers
-				.removeNetwork(sessionData.networkName)
+				.removeNetwork(networkName)
 				.catch((err) =>
 					logger.warn('Failed to remove session network', { sessionId, error: String(err) }),
 				)
+		}
+
+		// Idempotency: clear bookkeeping so a duplicate cleanup call is a no-op
+		// (the 7 session-end paths can fire close together — watchdog + handler).
+		sessionData.browserContainerId = undefined
+		sessionData.networkName = undefined
+
+		logger.info('Browser sidecar teardown complete', {
+			sessionId,
+			elapsedMs: Date.now() - start,
+		})
+	}
+
+	/**
+	 * Poll `containers.inspect` until the container returns 404 (gone) or the
+	 * deadline elapses. Returns true if the container was confirmed gone.
+	 * Treats only 404 / "No such container" as gone — a stopped-but-present
+	 * container still counts as a leak for the AC-T5 delta check.
+	 */
+	private async waitForContainerGone(containerId: string, deadlineMs: number): Promise<boolean> {
+		const deadline = Date.now() + deadlineMs
+		while (Date.now() < deadline) {
+			if (await this.isContainerGone(containerId)) return true
+			await new Promise((r) => setTimeout(r, SessionManager.SIDECAR_TEARDOWN_POLL_INTERVAL_MS))
+		}
+		return this.isContainerGone(containerId)
+	}
+
+	private async isContainerGone(containerId: string): Promise<boolean> {
+		try {
+			await this.containers.inspect(containerId)
+			return false
+		} catch (err) {
+			const statusCode = (err as { statusCode?: unknown }).statusCode
+			if (statusCode === 404) return true
+			const message = (err as { message?: unknown }).message
+			if (typeof message === 'string' && /No such container|HTTP code 404/.test(message)) {
+				return true
+			}
+			return false
 		}
 	}
 

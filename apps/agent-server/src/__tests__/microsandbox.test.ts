@@ -691,21 +691,45 @@ describe('provisionBrowserSidecar', () => {
 describe('cleanupBrowserSidecar', () => {
 	const msbBin = '/usr/local/bin/msb'
 
-	it('removes the sidecar VM via msb remove -f --quiet', async () => {
+	// Drive the SLA polling deterministically: a fake clock + sleep means the
+	// 60s deadline is reached in zero wall-clock time, so tests are fast.
+	function fakeClock(stepMs = 1_000): {
+		sleep: (ms: number) => Promise<void>
+		now: () => number
+	} {
+		let t = 0
+		return {
+			sleep: async (ms: number) => {
+				t += ms
+			},
+			now: () => {
+				const v = t
+				t += stepMs
+				return v
+			},
+		}
+	}
+
+	it('removes the sidecar VM via msb remove -f --quiet and confirms via msb list', async () => {
 		const calls: Array<readonly string[]> = []
 		const run = async (
 			_bin: string,
 			args: readonly string[],
 		): Promise<{ stdout: string; stderr: string }> => {
 			calls.push(args)
+			if (args[0] === 'list') {
+				// Sidecar already absent on the first list — happy path.
+				return { stdout: '[]', stderr: '' }
+			}
 			return { stdout: '', stderr: '' }
 		}
+		const clock = fakeClock()
 		await cleanupBrowserSidecar(
 			{ name: 'anko-browser-feed', cdpUrl: 'ws://10.0.0.5:9222' },
-			{ msbBin, run },
+			{ msbBin, run, sleep: clock.sleep, now: clock.now },
 		)
-		expect(calls.length).toBe(1)
 		expect(calls[0]).toEqual(['remove', '-f', '--quiet', 'anko-browser-feed'])
+		expect(calls[1]?.[0]).toBe('list')
 	})
 
 	it('no-ops when no sidecar was provisioned (the common, non-bet-qa path)', async () => {
@@ -722,13 +746,72 @@ describe('cleanupBrowserSidecar', () => {
 	})
 
 	it('swallows msb remove failures so a missing/stopped sandbox is idempotent', async () => {
-		const run = async (): Promise<{ stdout: string; stderr: string }> => {
-			throw new Error('No such sandbox')
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			if (args[0] === 'remove') throw new Error('No such sandbox')
+			// Confirm absence via msb list returning an empty roster.
+			return { stdout: '[]', stderr: '' }
 		}
+		const clock = fakeClock()
 		await expect(
 			cleanupBrowserSidecar(
 				{ name: 'anko-browser-gone', cdpUrl: 'ws://10.0.0.6:9222' },
-				{ msbBin, run },
+				{ msbBin, run, sleep: clock.sleep, now: clock.now },
+			),
+		).resolves.toBeUndefined()
+	})
+
+	it('polls msb list until the sidecar is absent — AC-T5 VM-count delta within 60s', async () => {
+		// Simulate a slow agentd: list reports the sidecar for two polls, then it
+		// drops out. The test asserts we keep polling and finish before the SLA.
+		let listCalls = 0
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			if (args[0] === 'list') {
+				listCalls += 1
+				const present = listCalls < 3
+				return {
+					stdout: JSON.stringify(
+						present ? [{ name: 'anko-browser-slow', status: 'Stopping' }] : [],
+					),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+		const clock = fakeClock()
+		await cleanupBrowserSidecar(
+			{ name: 'anko-browser-slow', cdpUrl: 'ws://10.0.0.7:9222' },
+			{ msbBin, run, sleep: clock.sleep, now: clock.now },
+		)
+		expect(listCalls).toBeGreaterThanOrEqual(3)
+	})
+
+	it('logs an error when the sidecar is still present after the 60s SLA', async () => {
+		// list never drops the sidecar — the function must exit (not hang) and
+		// the surrounding monitorSession code must not be blocked indefinitely.
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			if (args[0] === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-stuck', status: 'Running' }]),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+		// Tick the fake clock by 30s per `now()` read so the deadline is hit fast.
+		const clock = fakeClock(30_000)
+		await expect(
+			cleanupBrowserSidecar(
+				{ name: 'anko-browser-stuck', cdpUrl: 'ws://10.0.0.8:9222' },
+				{ msbBin, run, sleep: clock.sleep, now: clock.now },
 			),
 		).resolves.toBeUndefined()
 	})
