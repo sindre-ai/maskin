@@ -1046,6 +1046,7 @@ export class SessionManager extends EventEmitter {
 			'CLAUDE_OAUTH_SCOPES',
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
 			'BROWSER_CDP_URL',
+			'VERCEL_AUTOMATION_BYPASS_SECRET',
 		])
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {
@@ -1055,6 +1056,18 @@ export class SessionManager extends EventEmitter {
 				logger.warn(`Ignoring reserved env var from user config: ${key}`, {
 					sessionId: session.id,
 				})
+			}
+		}
+
+		// Bet-QA flow: when a session is flagged with `bet_qa_required`, the
+		// agent needs the Vercel preview's protection-bypass secret to drive the
+		// browser sidecar against a deployment that's still gated. The secret
+		// lives on the orchestrator host (out of session config + out of user
+		// input) so it stays inside the VPC — non-flagged sessions never see it.
+		if (sessionConfig.bet_qa_required === true) {
+			const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+			if (bypassSecret) {
+				envVars.VERCEL_AUTOMATION_BYPASS_SECRET = bypassSecret
 			}
 		}
 

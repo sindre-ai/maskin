@@ -442,6 +442,14 @@ export function buildApp(deps: AppDeps): Hono {
 		// to an instrumentation-gap comment instead of fabricating a bet-qa pass.
 		let browserSidecar: BrowserSidecar | null = null
 		if (body.bet_qa_required === true) {
+			// Source the Vercel preview-protection bypass from the agent-server
+			// host env, not from the request body — it stays inside the VPC and
+			// non-flagged sessions never see it. Absent secret is intentionally
+			// soft: T5 owns the structured error + bet-qa abort when it's missing.
+			const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+			if (bypassSecret) {
+				sessionEnv.VERCEL_AUTOMATION_BYPASS_SECRET = bypassSecret
+			}
 			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 8), deps.msb)
 			if (browserSidecar) {
 				sessionEnv.BROWSER_CDP_URL = browserSidecar.cdpUrl
