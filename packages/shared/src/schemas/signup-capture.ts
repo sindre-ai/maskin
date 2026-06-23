@@ -32,6 +32,14 @@ export const SIGNUP_CAPTURE_SOURCE = 'signup_capture' as const
 export const SIGNUP_CAPTURE_STATUS = 'validated' as const
 export const SIGNUP_CAPTURE_TAGS = ['context:user', 'context:company'] as const
 
+/**
+ * Tag stamped on every knowledge object written by the Strategist
+ * research-on-signup trigger. The bet measures ≥1 useful object with this
+ * source landing within 24h of signup as the ship metric, so the literal is
+ * load-bearing — keep it stable.
+ */
+export const SIGNUP_RESEARCH_SOURCE = 'signup_research' as const
+
 export const signupCaptureInputSchema = z.object({
 	name: z.string().trim().min(1).max(200),
 	organization: z.string().trim().min(1).max(200),
