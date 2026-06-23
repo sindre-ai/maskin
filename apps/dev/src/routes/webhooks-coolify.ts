@@ -2,13 +2,30 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, integrations, objects } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
+import {
+	type ObservabilitySource,
+	captureObservabilityInsightCreated,
+	captureObservabilitySignalReceived,
+	newSignalId,
+} from '../lib/analytics/observability-events'
 import { createApiError } from '../lib/errors'
 import {
+	type CoolifySource,
 	type CoolifyWebhookPayload,
 	buildInsightForPayload,
 	verifyCoolifySignature,
 } from '../lib/integrations/providers/coolify/webhooks'
 import { logger } from '../lib/logger'
+
+// Maps T1's stable insight `metadata.source` enum (which T3's immediate-triage
+// trigger keys on) to the bet's canonical `posthog_query` enum. The two diverge
+// on purpose — the longer form lives only inside the PostHog events so we don't
+// break T3's trigger by editing the metadata contract.
+const SOURCE_TO_POSTHOG: Record<Exclude<CoolifySource, 'coolify_silence'>, ObservabilitySource> = {
+	coolify_deployment: 'coolify_deployment_failed',
+	coolify_crash: 'coolify_application_crashed',
+	coolify_health: 'coolify_health_check_failed',
+}
 
 type Env = {
 	Variables: {
@@ -90,6 +107,18 @@ app.post('/', async (c) => {
 	let created = 0
 	let updated = 0
 	const receivedAt = new Date()
+	const signalId = newSignalId()
+	const posthogSource = SOURCE_TO_POSTHOG[built.source as Exclude<CoolifySource, 'coolify_silence'>]
+
+	// Fire-and-forget — `capturePosthogEvent` swallows its own errors so a PostHog
+	// outage cannot break webhook processing. We don't await here because the bet
+	// metric tolerates a small queue delay, and the route stays snappy.
+	void captureObservabilitySignalReceived({
+		signalId,
+		source: posthogSource,
+		receivedAt,
+		fingerprint: built.fingerprint,
+	})
 
 	for (const integration of activeIntegrations) {
 		try {
@@ -154,6 +183,13 @@ app.post('/', async (c) => {
 					source: built.source,
 					occurrence,
 				})
+				void captureObservabilityInsightCreated({
+					workspaceId: integration.workspaceId,
+					signalId,
+					source: posthogSource,
+					insightId: existing.id,
+					timeToInsightMs: Date.now() - receivedAt.getTime(),
+				})
 				updated += 1
 				continue
 			}
@@ -193,6 +229,13 @@ app.post('/', async (c) => {
 					insightId: row.id,
 					source: built.source,
 					fingerprint: built.fingerprint,
+				})
+				void captureObservabilityInsightCreated({
+					workspaceId: integration.workspaceId,
+					signalId,
+					source: posthogSource,
+					insightId: row.id,
+					timeToInsightMs: Date.now() - receivedAt.getTime(),
 				})
 				created += 1
 			}

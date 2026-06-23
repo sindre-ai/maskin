@@ -2,6 +2,11 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, integrations, objects } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
+import {
+	captureObservabilityInsightCreated,
+	captureObservabilitySignalReceived,
+	newSignalId,
+} from '../lib/analytics/observability-events'
 import { createApiError } from '../lib/errors'
 import {
 	type PosthogWebhookPayload,
@@ -88,6 +93,37 @@ app.post('/', async (c) => {
 	let created = 0
 	let updated = 0
 	const receivedAt = new Date()
+	const signalId = newSignalId()
+
+	// is_new_fingerprint = no live insight for this fingerprint across any active
+	// integration in the 14d window. The bet's HogQL filters
+	// is_new_fingerprint=true on the denominator so AC-T5 dedupe occurrences are
+	// excluded — a single PostHog $exception across N workspaces that have all
+	// already seen it must register as a NOT-new-fingerprint signal.
+	const isNewFingerprintCutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)
+	const [livePriorInsight] = await db
+		.select({ id: objects.id })
+		.from(objects)
+		.where(
+			and(
+				eq(objects.type, 'insight'),
+				sql`metadata->>'fingerprint' = ${built.fingerprint}`,
+				sql`created_at >= ${isNewFingerprintCutoff.toISOString()}`,
+			),
+		)
+		.limit(1)
+	const isNewFingerprint = !livePriorInsight
+
+	// Fire-and-forget — `capturePosthogEvent` swallows its own errors so a PostHog
+	// outage cannot break webhook processing. We don't await here because the bet
+	// metric tolerates a small queue delay, and the route stays snappy.
+	void captureObservabilitySignalReceived({
+		signalId,
+		source: 'posthog_exception',
+		receivedAt,
+		fingerprint: built.fingerprint,
+		isNewFingerprint,
+	})
 
 	for (const integration of activeIntegrations) {
 		try {
@@ -141,6 +177,13 @@ app.post('/', async (c) => {
 					source: built.source,
 					occurrence,
 				})
+				void captureObservabilityInsightCreated({
+					workspaceId: integration.workspaceId,
+					signalId,
+					source: 'posthog_exception',
+					insightId: existing.id,
+					timeToInsightMs: Date.now() - receivedAt.getTime(),
+				})
 				updated += 1
 				continue
 			}
@@ -180,6 +223,13 @@ app.post('/', async (c) => {
 					insightId: row.id,
 					source: built.source,
 					fingerprint: built.fingerprint,
+				})
+				void captureObservabilityInsightCreated({
+					workspaceId: integration.workspaceId,
+					signalId,
+					source: 'posthog_exception',
+					insightId: row.id,
+					timeToInsightMs: Date.now() - receivedAt.getTime(),
 				})
 				created += 1
 			}

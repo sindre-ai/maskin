@@ -87,8 +87,9 @@ describe('POST /api/webhooks/posthog', () => {
 			webhooksPosthogRoutes,
 			'/api/webhooks/posthog',
 		)
-		// 1. active integrations lookup, 2. existing-insight fingerprint lookup (none)
-		mockResults.selectQueue = [[integration], []]
+		// 1. active integrations, 2. is_new_fingerprint pre-loop check (none),
+		// 3. per-workspace existing-insight fingerprint lookup (none)
+		mockResults.selectQueue = [[integration], [], []]
 		mockResults.insert = [{ id: '00000000-0000-0000-0000-0000000000c1' }]
 
 		const res = await app.request(post(exceptionPayload()))
@@ -145,7 +146,9 @@ describe('POST /api/webhooks/posthog', () => {
 			webhooksPosthogRoutes,
 			'/api/webhooks/posthog',
 		)
-		mockResults.selectQueue = [[integration], [existingInsight]]
+		// 1. active integrations, 2. is_new_fingerprint pre-loop (prior insight exists),
+		// 3. per-workspace existing-insight lookup
+		mockResults.selectQueue = [[integration], [existingInsight], [existingInsight]]
 
 		const res = await app.request(post(exceptionPayload()))
 		expect(res.status).toBe(200)
@@ -219,5 +222,49 @@ describe('POST /api/webhooks/posthog', () => {
 		expect(res.status).toBe(200)
 		const body = await res.json()
 		expect(body.skipped).toBe('unhandled_event')
+	})
+
+	it('emits observability_signal_received with is_new_fingerprint=true and observability_insight_created on a fresh $exception', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as Response)
+		vi.stubGlobal('fetch', fetchMock)
+		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+		vi.stubEnv('POSTHOG_HOST', '')
+
+		try {
+			const integration = buildIntegration({
+				workspaceId: wsA,
+				provider: 'posthog',
+				status: 'active',
+				createdBy: actorA,
+				config: {},
+			})
+			const { app, mockResults } = createTestApp(webhooksPosthogRoutes, '/api/webhooks/posthog')
+			mockResults.selectQueue = [[integration], [], []]
+			mockResults.insert = [{ id: 'fresh-insight-id' }]
+
+			const res = await app.request(post(exceptionPayload()))
+			expect(res.status).toBe(200)
+
+			await new Promise((r) => setTimeout(r, 0))
+
+			const posthogCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/i/v0/e/'))
+			expect(posthogCalls.length).toBe(2)
+			const bodies = posthogCalls.map(([, init]) =>
+				JSON.parse((init as RequestInit).body as string),
+			)
+			const signalEvent = bodies.find((b) => b.event === 'observability_signal_received')
+			const insightEvent = bodies.find((b) => b.event === 'observability_insight_created')
+			expect(signalEvent).toBeDefined()
+			expect(insightEvent).toBeDefined()
+			expect(signalEvent.properties.source).toBe('posthog_exception')
+			expect(signalEvent.properties.is_new_fingerprint).toBe(true)
+			expect(signalEvent.properties.fingerprint).toBe('posthog_exception:fp-typeerror-1')
+			expect(insightEvent.properties.source).toBe('posthog_exception')
+			expect(insightEvent.properties.signal_id).toBe(signalEvent.properties.signal_id)
+			expect(insightEvent.properties.insight_id).toBe('fresh-insight-id')
+		} finally {
+			vi.unstubAllGlobals()
+			vi.unstubAllEnvs()
+		}
 	})
 })

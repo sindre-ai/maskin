@@ -273,4 +273,54 @@ describe('POST /api/webhooks-coolify', () => {
 		const body = await res.json()
 		expect(body.skipped).toBe('unhandled_event')
 	})
+
+	it('emits observability_signal_received and observability_insight_created on a fresh create, with the bet posthog_query canonical source enum', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as Response)
+		vi.stubGlobal('fetch', fetchMock)
+		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+		vi.stubEnv('POSTHOG_HOST', '')
+
+		try {
+			const integration = buildIntegration({
+				workspaceId: wsA,
+				provider: 'coolify',
+				status: 'active',
+				createdBy: actorA,
+				config: {},
+			})
+			const { app, mockResults } = createTestApp(webhooksCoolifyRoutes, '/api/webhooks-coolify')
+			mockResults.selectQueue = [[integration], []]
+			mockResults.insert = [{ id: 'created-insight-id' }]
+
+			const res = await app.request(
+				post({
+					event: 'deployment.failed',
+					deployment_id: 'dep-emit',
+					application_id: 'app-emit',
+				}),
+			)
+			expect(res.status).toBe(200)
+
+			// Allow fire-and-forget capture microtasks to drain.
+			await new Promise((r) => setTimeout(r, 0))
+
+			const posthogCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/i/v0/e/'))
+			expect(posthogCalls.length).toBe(2)
+			const bodies = posthogCalls.map(([, init]) =>
+				JSON.parse((init as RequestInit).body as string),
+			)
+			const signalEvent = bodies.find((b) => b.event === 'observability_signal_received')
+			const insightEvent = bodies.find((b) => b.event === 'observability_insight_created')
+			expect(signalEvent).toBeDefined()
+			expect(insightEvent).toBeDefined()
+			expect(signalEvent.properties.source).toBe('coolify_deployment_failed')
+			expect(insightEvent.properties.source).toBe('coolify_deployment_failed')
+			expect(insightEvent.properties.signal_id).toBe(signalEvent.properties.signal_id)
+			expect(insightEvent.properties.insight_id).toBe('created-insight-id')
+			expect(typeof insightEvent.properties.time_to_insight_ms).toBe('number')
+		} finally {
+			vi.unstubAllGlobals()
+			vi.unstubAllEnvs()
+		}
+	})
 })
