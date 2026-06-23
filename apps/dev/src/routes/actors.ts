@@ -98,6 +98,25 @@ const createActorRoute = createRoute({
 	},
 })
 
+function isEmailUniqueViolation(err: unknown): boolean {
+	for (let cur: unknown = err; cur && typeof cur === 'object'; ) {
+		const e = cur as {
+			code?: string
+			constraint_name?: string
+			constraint?: string
+			message?: string
+			cause?: unknown
+		}
+		if (e.code === '23505') {
+			const name = e.constraint_name ?? e.constraint
+			if (name === 'actors_email_unique') return true
+			if (typeof e.message === 'string' && e.message.includes('actors_email_unique')) return true
+		}
+		cur = e.cause
+	}
+	return false
+}
+
 app.openapi(createActorRoute, async (c) => {
 	const db = c.get('db')
 	const body = c.req.valid('json')
@@ -139,23 +158,36 @@ app.openapi(createActorRoute, async (c) => {
 				}
 			: body.tools
 
-	const [actor] = await db
-		.insert(actors)
-		.values({
-			...(body.id && { id: body.id }),
-			type: body.type,
-			name: body.name,
-			email: body.email,
-			apiKey: key,
-			passwordHash,
-			description: body.description,
-			systemPrompt: body.system_prompt,
-			tools,
-			llmProvider: body.llm_provider,
-			llmConfig: body.llm_config,
-		})
-		.onConflictDoNothing({ target: actors.id })
-		.returning()
+	let actor: typeof actors.$inferSelect | undefined
+	try {
+		;[actor] = await db
+			.insert(actors)
+			.values({
+				...(body.id && { id: body.id }),
+				type: body.type,
+				name: body.name,
+				email: body.email,
+				apiKey: key,
+				passwordHash,
+				description: body.description,
+				systemPrompt: body.system_prompt,
+				tools,
+				llmProvider: body.llm_provider,
+				llmConfig: body.llm_config,
+			})
+			.onConflictDoNothing({ target: actors.id })
+			.returning()
+	} catch (err) {
+		if (isEmailUniqueViolation(err)) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'Email already exists', [
+					{ field: 'email', message: 'An account with this email already exists' },
+				]),
+				409,
+			)
+		}
+		throw err
+	}
 
 	if (!actor) {
 		if (body.id) {

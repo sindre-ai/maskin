@@ -114,7 +114,9 @@ function SignupPage() {
 				console.warn('[maskin] no workspace_id returned from signup; skipping capture write')
 			}
 			if (!actorId) {
-				console.error('[maskin] signup succeeded but returned no actor id; skipping submitted event')
+				console.error(
+					'[maskin] signup succeeded but returned no actor id; skipping submitted event',
+				)
 			} else {
 				trackEvent('signup_form_submitted', {
 					user_id: actorId,
