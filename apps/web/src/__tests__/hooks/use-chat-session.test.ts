@@ -374,7 +374,7 @@ describe('useChatSession — reset & workspace switching', () => {
 			.mockResolvedValueOnce(buildSession('sess-new'))
 		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
 
-		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
 			wrapper: TestWrapper,
 		})
 
@@ -406,6 +406,6 @@ describe('useChatSession — reset & workspace switching', () => {
 			workspaceId,
 		)
 		// Transcript carries across the re-bootstrap.
-		expect(result.current.events.map((e) => e.kind)).toEqual(['user', 'user'])
+		expect(result.current.events.map((e: { kind: string }) => e.kind)).toEqual(['user', 'user'])
 	})
 })
