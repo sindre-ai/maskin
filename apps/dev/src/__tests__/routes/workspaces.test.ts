@@ -7,15 +7,25 @@ const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		it('creates a workspace and seeds Sindre, returning 201', async () => {
+		it('creates a workspace and seeds Sindre + default trio + signup trigger, returning 201', async () => {
 			const ws = buildWorkspace()
 			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const driver = buildActor({ type: 'agent', name: 'Driver', isSystem: true })
+			const coach = buildActor({ type: 'agent', name: 'Coach', isSystem: true })
+			const strategist = buildActor({ type: 'agent', name: 'Strategist', isSystem: true })
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insertQueue = [
 				[ws], // workspaces insert
 				[{}], // owner workspaceMembers insert
 				[sindre], // Sindre actor insert
 				[{}], // Sindre workspaceMembers insert
+				[driver], // Driver actor insert
+				[{}], // Driver workspaceMembers insert
+				[coach], // Coach actor insert
+				[{}], // Coach workspaceMembers insert
+				[strategist], // Strategist actor insert
+				[{}], // Strategist workspaceMembers insert
+				[{ id: 'trigger-id' }], // Strategist signup-research trigger insert
 			]
 
 			const res = await app.request(
@@ -31,19 +41,150 @@ describe('Workspaces Routes', () => {
 		it('seeds Sindre with a generated apiKey distinct from the creator', async () => {
 			const ws = buildWorkspace()
 			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const driver = buildActor({ type: 'agent', name: 'Driver', isSystem: true })
+			const coach = buildActor({ type: 'agent', name: 'Coach', isSystem: true })
+			const strategist = buildActor({ type: 'agent', name: 'Strategist', isSystem: true })
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
-			mockResults.insertQueue = [[ws], [{}], [sindre], [{}]]
+			mockResults.insertQueue = [
+				[ws],
+				[{}],
+				[sindre],
+				[{}],
+				[driver],
+				[{}],
+				[coach],
+				[{}],
+				[strategist],
+				[{}],
+				[{ id: 'trigger-id' }],
+			]
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
 			)
 
 			expect(res.status).toBe(201)
-			// inserts: [workspace, owner-member, sindre-actor, sindre-member]
+			// inserts: [workspace, owner-member, sindre-actor, sindre-member, ...trio actors + members]
 			const sindreInsert = calls.inserts[2] as { apiKey?: string; type?: string }
 			expect(sindreInsert.type).toBe('agent')
 			expect(sindreInsert.apiKey).toBeDefined()
 			expect(sindreInsert.apiKey).toMatch(/^ank_/)
+		})
+
+		it('seats Driver, Coach, Strategist each with isSystem and a distinct apiKey', async () => {
+			const ws = buildWorkspace()
+			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const driver = buildActor({ type: 'agent', name: 'Driver', isSystem: true })
+			const coach = buildActor({ type: 'agent', name: 'Coach', isSystem: true })
+			const strategist = buildActor({ type: 'agent', name: 'Strategist', isSystem: true })
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.insertQueue = [
+				[ws],
+				[{}],
+				[sindre],
+				[{}],
+				[driver],
+				[{}],
+				[coach],
+				[{}],
+				[strategist],
+				[{}],
+				[{ id: 'trigger-id' }],
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+			)
+
+			expect(res.status).toBe(201)
+			// Trio actor inserts: indexes 4, 6, 8.
+			const trioInserts = [calls.inserts[4], calls.inserts[6], calls.inserts[8]] as Array<{
+				name?: string
+				type?: string
+				isSystem?: boolean
+				apiKey?: string
+			}>
+			expect(trioInserts.map((i) => i.name)).toEqual(['Driver', 'Coach', 'Strategist'])
+			expect(trioInserts.every((i) => i.type === 'agent')).toBe(true)
+			expect(trioInserts.every((i) => i.isSystem === true)).toBe(true)
+			const apiKeys = trioInserts.map((i) => i.apiKey)
+			expect(apiKeys.every((k) => typeof k === 'string' && k.startsWith('ank_'))).toBe(true)
+			expect(new Set(apiKeys).size).toBe(3)
+		})
+
+		it('skips trio members already seated on the workspace (idempotent)', async () => {
+			const ws = buildWorkspace()
+			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const strategist = buildActor({ type: 'agent', name: 'Strategist', isSystem: true })
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			// First select = existing trio (Driver + Coach already seated → only
+			// Strategist needs seeding). Second select = existing trigger (none yet).
+			mockResults.selectQueue = [
+				[
+					{ id: 'driver-id', name: 'Driver' },
+					{ id: 'coach-id', name: 'Coach' },
+				],
+				[],
+			]
+			mockResults.insertQueue = [
+				[ws],
+				[{}],
+				[sindre],
+				[{}],
+				[strategist], // Strategist actor insert
+				[{}], // Strategist workspaceMembers insert
+				[{ id: 'trigger-id' }], // signup-research trigger insert
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+			)
+
+			expect(res.status).toBe(201)
+			// inserts: workspace, owner-member, sindre-actor, sindre-member,
+			//          strategist-actor, strategist-member, trigger.
+			expect(calls.inserts).toHaveLength(7)
+			const strategistInsert = calls.inserts[4] as { name?: string }
+			expect(strategistInsert.name).toBe('Strategist')
+		})
+
+		it('seeds the Strategist research-on-signup trigger targeting the Strategist actor', async () => {
+			const ws = buildWorkspace()
+			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const driver = buildActor({ type: 'agent', name: 'Driver', isSystem: true })
+			const coach = buildActor({ type: 'agent', name: 'Coach', isSystem: true })
+			const strategist = buildActor({ type: 'agent', name: 'Strategist', isSystem: true })
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.insertQueue = [
+				[ws],
+				[{}],
+				[sindre],
+				[{}],
+				[driver],
+				[{}],
+				[coach],
+				[{}],
+				[strategist],
+				[{}],
+				[{ id: 'trigger-id' }],
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+			)
+
+			expect(res.status).toBe(201)
+			// Trigger insert is the last in the seeder's sequence (index 10).
+			const trigger = calls.inserts[10] as {
+				name?: string
+				type?: string
+				targetActorId?: string
+				config?: { entity_type?: string; conditions?: unknown }
+			}
+			expect(trigger.name).toBe('Strategist research on signup')
+			expect(trigger.type).toBe('event')
+			expect(trigger.targetActorId).toBe(strategist.id)
+			expect(trigger.config?.entity_type).toBe('knowledge')
 		})
 
 		it('returns 500 when workspace insert returns empty', async () => {
@@ -67,6 +208,25 @@ describe('Workspaces Routes', () => {
 				[ws], // workspaces insert succeeds
 				[{}], // owner workspaceMembers insert succeeds
 				[], // Sindre actor insert fails — triggers rollback
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+			)
+
+			expect(res.status).toBe(500)
+		})
+
+		it('rolls back when a trio actor insert returns empty', async () => {
+			const ws = buildWorkspace()
+			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.insertQueue = [
+				[ws],
+				[{}],
+				[sindre],
+				[{}],
+				[], // Driver actor insert fails — should throw and roll back
 			]
 
 			const res = await app.request(
