@@ -113,10 +113,14 @@ function SignupPage() {
 			} else {
 				console.warn('[maskin] no workspace_id returned from signup; skipping capture write')
 			}
-			trackEvent('signup_form_submitted', {
-				user_id: actorId ?? null,
-				completed: true,
-			})
+			if (!actorId) {
+				console.error('[maskin] signup succeeded but returned no actor id; skipping submitted event')
+			} else {
+				trackEvent('signup_form_submitted', {
+					user_id: actorId,
+					completed: true,
+				})
+			}
 			if (anonId) {
 				api.landingEvents
 					.emit([{ name: 'signup_complete', anonId, props: { fromGuest: true } }])
