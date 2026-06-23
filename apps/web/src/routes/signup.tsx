@@ -168,7 +168,7 @@ function SignupPage() {
 								setOrganization(e.target.value)
 								setError('')
 							}}
-							placeholder="Company or team"
+							placeholder="Company name"
 						/>
 					</div>
 
