@@ -350,7 +350,6 @@ describe('SessionManager', () => {
 		})
 	})
 
-
 	describe('startSession() — browser sidecar provisioning', () => {
 		function buildTestSession(overrides: Record<string, unknown> = {}) {
 			return buildSession({
@@ -407,7 +406,10 @@ describe('SessionManager', () => {
 			expect(mockContainerManager.pullImage).toHaveBeenCalledWith('chromedp/headless-shell:latest')
 			expect(mockContainerManager.createNetwork).toHaveBeenCalled()
 
-			const browserCreateCall = mockContainerManager.create.mock.calls[0]?.[0] as Record<string, unknown>
+			const browserCreateCall = mockContainerManager.create.mock.calls[0]?.[0] as Record<
+				string,
+				unknown
+			>
 			expect(browserCreateCall.image).toBe('chromedp/headless-shell:latest')
 			expect(browserCreateCall.name).toMatch(/^anko-browser-/)
 			expect(browserCreateCall.networkMode).toMatch(/^anko-net-/)
@@ -453,6 +455,112 @@ describe('SessionManager', () => {
 			}
 			expect(agentCreateCall.env.BROWSER_CDP_URL).toBeUndefined()
 			expect(agentCreateCall.networkMode).toBeUndefined()
+		})
+	})
+
+	describe('cleanupBrowserSidecar() — teardown SLA (AC-T5)', () => {
+		// Access the private map + method through a structural cast so the test
+		// can exercise the orchestration without standing up the whole
+		// startSession flow. JS has no real private and this is the established
+		// pattern in this repo for poking at session-manager internals.
+		type Internals = {
+			activeSessions: Map<
+				string,
+				{
+					tempDir: string
+					browserContainerId?: string
+					networkName?: string
+				}
+			>
+			cleanupBrowserSidecar(sessionId: string): Promise<void>
+		}
+
+		function notFound404(): Error {
+			const err = new Error('(HTTP code 404) no such container - No such container: anko-browser-x')
+			;(err as { statusCode?: number }).statusCode = 404
+			return err
+		}
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+		})
+
+		it('stops + removes the sidecar and confirms the container is gone (delta 0)', async () => {
+			const internals = manager as unknown as Internals
+			const sessionId = 'sess-cleanup-fast'
+			internals.activeSessions.set(sessionId, {
+				tempDir: '/tmp/x',
+				browserContainerId: 'browser-fast',
+				networkName: 'anko-net-fast',
+			})
+			// First inspect after remove already 404s — the happy path.
+			mockContainerManager.inspect.mockRejectedValueOnce(notFound404())
+
+			const started = Date.now()
+			await internals.cleanupBrowserSidecar(sessionId)
+			const elapsed = Date.now() - started
+
+			expect(mockContainerManager.stop).toHaveBeenCalledWith('browser-fast')
+			expect(mockContainerManager.remove).toHaveBeenCalledWith('browser-fast')
+			expect(mockContainerManager.inspect).toHaveBeenCalledWith('browser-fast')
+			expect(mockContainerManager.removeNetwork).toHaveBeenCalledWith('anko-net-fast')
+			// Bookkeeping cleared so the next session-end signal is a no-op.
+			expect(internals.activeSessions.get(sessionId)?.browserContainerId).toBeUndefined()
+			expect(internals.activeSessions.get(sessionId)?.networkName).toBeUndefined()
+			// AC-T5: well inside the 60s budget.
+			expect(elapsed).toBeLessThan(60_000)
+		})
+
+		it('keeps polling until inspect returns 404 (slow Docker daemon)', async () => {
+			const internals = manager as unknown as Internals
+			const sessionId = 'sess-cleanup-slow'
+			internals.activeSessions.set(sessionId, {
+				tempDir: '/tmp/x',
+				browserContainerId: 'browser-slow',
+			})
+			// inspect reports the container alive twice, then 404 — wait loop must
+			// keep going across the early polls.
+			mockContainerManager.inspect
+				.mockResolvedValueOnce({ running: false, exitCode: 0 })
+				.mockResolvedValueOnce({ running: false, exitCode: 0 })
+				.mockRejectedValueOnce(notFound404())
+
+			await internals.cleanupBrowserSidecar(sessionId)
+
+			expect(mockContainerManager.inspect.mock.calls.length).toBeGreaterThanOrEqual(3)
+		})
+
+		it('no-ops when there is no sidecar to clean up (the non-bet-qa path)', async () => {
+			const internals = manager as unknown as Internals
+			const sessionId = 'sess-no-sidecar'
+			internals.activeSessions.set(sessionId, { tempDir: '/tmp/x' })
+
+			await internals.cleanupBrowserSidecar(sessionId)
+
+			expect(mockContainerManager.stop).not.toHaveBeenCalled()
+			expect(mockContainerManager.remove).not.toHaveBeenCalled()
+			expect(mockContainerManager.inspect).not.toHaveBeenCalled()
+			expect(mockContainerManager.removeNetwork).not.toHaveBeenCalled()
+		})
+
+		it('is idempotent — a second call after teardown does nothing', async () => {
+			const internals = manager as unknown as Internals
+			const sessionId = 'sess-cleanup-idempotent'
+			internals.activeSessions.set(sessionId, {
+				tempDir: '/tmp/x',
+				browserContainerId: 'browser-idem',
+				networkName: 'anko-net-idem',
+			})
+			mockContainerManager.inspect.mockRejectedValueOnce(notFound404())
+
+			await internals.cleanupBrowserSidecar(sessionId)
+			const stopCallsAfterFirst = mockContainerManager.stop.mock.calls.length
+			const removeCallsAfterFirst = mockContainerManager.remove.mock.calls.length
+
+			await internals.cleanupBrowserSidecar(sessionId)
+
+			expect(mockContainerManager.stop.mock.calls.length).toBe(stopCallsAfterFirst)
+			expect(mockContainerManager.remove.mock.calls.length).toBe(removeCallsAfterFirst)
 		})
 	})
 
