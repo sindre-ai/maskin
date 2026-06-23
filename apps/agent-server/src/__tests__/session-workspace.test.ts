@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -9,6 +9,7 @@ import {
 	pullSessionWorkspace,
 	pushSessionWorkspace,
 	sessionWorkspaceKey,
+	sweepSessionWorkspaces,
 } from '../services/session-workspace'
 
 class InMemoryStorage implements StorageProvider {
@@ -222,6 +223,114 @@ describe('pullSessionWorkspace — sourceSessionId continuation', () => {
 		expect((await readFile(join(restored, 'workspace', 'legacy.txt'))).toString()).toBe(
 			'legacy work',
 		)
+	})
+})
+
+describe('sweepSessionWorkspaces', () => {
+	// Materialise a session dir on disk with controllable mtime and payload size.
+	async function makeSessionDir(
+		root: string,
+		sessionId: string,
+		opts: { sizeBytes: number; ageMs: number; now: number },
+	): Promise<void> {
+		const dir = join(root, sessionId)
+		await mkdir(dir, { recursive: true })
+		await writeFile(join(dir, 'payload.bin'), Buffer.alloc(opts.sizeBytes, 0))
+		const mtimeSec = (opts.now - opts.ageMs) / 1000
+		await utimes(dir, mtimeSec, mtimeSec)
+	}
+
+	it('no-ops when total size is under threshold', async () => {
+		const root = join(tmpRoot, 'sweep-under')
+		await mkdir(root, { recursive: true })
+		const now = 10_000_000_000
+		await makeSessionDir(root, 's1', { sizeBytes: 100, ageMs: 7_200_000, now })
+		await makeSessionDir(root, 's2', { sizeBytes: 200, ageMs: 7_200_000, now })
+
+		const result = await sweepSessionWorkspaces(root, {
+			thresholdBytes: 10_000,
+			minAgeMs: 60_000,
+			now: () => now,
+		})
+
+		expect(result.evicted).toHaveLength(0)
+		expect(result.totalBytesBefore).toBeGreaterThanOrEqual(300)
+		expect(result.totalBytesAfter).toBe(result.totalBytesBefore)
+		expect((await stat(join(root, 's1'))).isDirectory()).toBe(true)
+		expect((await stat(join(root, 's2'))).isDirectory()).toBe(true)
+	})
+
+	it('evicts oldest-first until under threshold when over (AC-T8)', async () => {
+		const root = join(tmpRoot, 'sweep-over')
+		await mkdir(root, { recursive: true })
+		const now = 10_000_000_000
+		// Each dir ~600 bytes payload; threshold 800 means we must evict until ≤800.
+		await makeSessionDir(root, 'old-1', { sizeBytes: 600, ageMs: 9_000_000, now })
+		await makeSessionDir(root, 'old-2', { sizeBytes: 600, ageMs: 8_000_000, now })
+		await makeSessionDir(root, 'newer', { sizeBytes: 600, ageMs: 7_000_000, now })
+
+		const result = await sweepSessionWorkspaces(root, {
+			thresholdBytes: 800,
+			minAgeMs: 60_000,
+			now: () => now,
+		})
+
+		expect(result.evicted.length).toBeGreaterThan(0)
+		expect(result.totalBytesAfter).toBeLessThanOrEqual(800)
+		// Oldest goes first.
+		expect(result.evicted[0]?.sessionId).toBe('old-1')
+		await expect(stat(join(root, 'old-1'))).rejects.toThrow()
+		// Newer of the candidates survives if eviction stops below threshold.
+		expect((await stat(join(root, 'newer'))).isDirectory()).toBe(true)
+	})
+
+	it('never evicts dirs younger than minAgeMs even when over threshold', async () => {
+		const root = join(tmpRoot, 'sweep-min-age')
+		await mkdir(root, { recursive: true })
+		const now = 10_000_000_000
+		// Two large, fresh dirs — both protected by minAgeMs (presumed live).
+		await makeSessionDir(root, 'fresh-1', { sizeBytes: 500, ageMs: 1_000, now })
+		await makeSessionDir(root, 'fresh-2', { sizeBytes: 500, ageMs: 2_000, now })
+
+		const result = await sweepSessionWorkspaces(root, {
+			thresholdBytes: 100,
+			minAgeMs: 60_000,
+			now: () => now,
+		})
+
+		expect(result.evicted).toHaveLength(0)
+		expect(result.skippedActive).toBe(2)
+		expect((await stat(join(root, 'fresh-1'))).isDirectory()).toBe(true)
+		expect((await stat(join(root, 'fresh-2'))).isDirectory()).toBe(true)
+	})
+
+	it('never evicts session ids in keepSessionIds even when old and over threshold', async () => {
+		const root = join(tmpRoot, 'sweep-keep')
+		await mkdir(root, { recursive: true })
+		const now = 10_000_000_000
+		await makeSessionDir(root, 'keep-me', { sizeBytes: 600, ageMs: 9_000_000, now })
+		await makeSessionDir(root, 'evict-me', { sizeBytes: 600, ageMs: 8_000_000, now })
+
+		const result = await sweepSessionWorkspaces(root, {
+			thresholdBytes: 800,
+			minAgeMs: 60_000,
+			keepSessionIds: ['keep-me'],
+			now: () => now,
+		})
+
+		expect(result.evicted.map((e) => e.sessionId)).toEqual(['evict-me'])
+		expect((await stat(join(root, 'keep-me'))).isDirectory()).toBe(true)
+		await expect(stat(join(root, 'evict-me'))).rejects.toThrow()
+	})
+
+	it('treats a missing root as a no-op (empty result)', async () => {
+		const result = await sweepSessionWorkspaces(join(tmpRoot, 'does-not-exist'), {
+			thresholdBytes: 100,
+			minAgeMs: 60_000,
+		})
+		expect(result.evicted).toHaveLength(0)
+		expect(result.candidates).toBe(0)
+		expect(result.totalBytesBefore).toBe(0)
 	})
 })
 

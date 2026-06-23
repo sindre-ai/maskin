@@ -25,6 +25,7 @@ import {
 	deleteSessionDir,
 	pullSessionWorkspace,
 	pushSessionWorkspace,
+	sweepSessionWorkspaces,
 } from './services/session-workspace'
 
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
@@ -385,6 +386,37 @@ export function buildApp(deps: AppDeps): Hono {
 		const body = parsed.data
 
 		const sessionDir = join(deps.env.AGENT_SESSION_ROOT, body.sessionId)
+
+		// LRU sweep on the host's session-workspace root before pulling. Cheap
+		// when under threshold (size scan only) and bounded by minAgeMs so an
+		// in-flight session cannot be deleted out from under itself.
+		if (deps.env.SESSION_WORKSPACES_LRU_THRESHOLD_BYTES > 0) {
+			try {
+				const sweep = await sweepSessionWorkspaces(deps.env.AGENT_SESSION_ROOT, {
+					thresholdBytes: deps.env.SESSION_WORKSPACES_LRU_THRESHOLD_BYTES,
+					minAgeMs: deps.env.SESSION_WORKSPACES_MIN_AGE_MS,
+					keepSessionIds: [body.sessionId],
+				})
+				logger.info('session workspaces swept', {
+					sessionId: body.sessionId,
+					candidates: sweep.candidates,
+					evictedCount: sweep.evicted.length,
+					evictedBytes: sweep.evicted.reduce((s, e) => s + e.sizeBytes, 0),
+					totalBytesBefore: sweep.totalBytesBefore,
+					totalBytesAfter: sweep.totalBytesAfter,
+					thresholdBytes: sweep.thresholdBytes,
+					skippedActive: sweep.skippedActive,
+					scanErrors: sweep.scanErrors,
+				})
+			} catch (err) {
+				// Don't fail the spawn on a sweep error — the disk-full trap
+				// (T5) is the real safety net. Sweep is best-effort prevention.
+				logger.warn('session workspaces sweep failed', {
+					sessionId: body.sessionId,
+					error: String(err),
+				})
+			}
+		}
 
 		if (deps.storage) {
 			try {

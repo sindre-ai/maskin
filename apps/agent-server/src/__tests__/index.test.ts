@@ -12,6 +12,8 @@ function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 		AGENT_SERVER_SECRET: 'test-secret-thirty-two-chars-long',
 		MSB_BIN: '/usr/local/bin/msb',
 		AGENT_SESSION_ROOT: '/tmp/agent-server-test',
+		SESSION_WORKSPACES_LRU_THRESHOLD_BYTES: 20 * 1024 * 1024 * 1024,
+		SESSION_WORKSPACES_MIN_AGE_MS: 60 * 60 * 1000,
 		S3_REGION: 'us-east-1',
 		WARM_POOL_REFRESH_MINUTES: 0,
 		SESSION_MAX_DURATION: '8h',
