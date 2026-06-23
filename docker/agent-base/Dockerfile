@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Pre-install Claude Code CLI (avoids npm install on every session start)
 # Version is pinned because the stream-json I/O format is not stable across
-# Claude Code releases — the interactive Sindre session parses these lines
+# Claude Code releases — the interactive chat session parses these lines
 # verbatim, so a silent CLI bump can break parsing. Bump this deliberately
 # after re-validating the stream-json fixtures.
 RUN npm install -g @anthropic-ai/claude-code@2.1.112

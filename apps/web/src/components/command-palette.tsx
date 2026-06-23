@@ -1,5 +1,5 @@
 import { useObjects } from '@/hooks/use-objects'
-import { useSindre } from '@/lib/sindre-context'
+import { useChat } from '@/lib/chat-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Command } from 'cmdk'
@@ -9,7 +9,7 @@ export function CommandPalette() {
 	const [open, setOpen] = useState(false)
 	const { workspaceId } = useWorkspace()
 	const { data: objects } = useObjects(workspaceId)
-	const { setOpen: setSindreOpen } = useSindre()
+	const { setOpen: setChatOpen } = useChat()
 	const navigate = useNavigate()
 
 	const navigateTo = useCallback(
@@ -20,10 +20,10 @@ export function CommandPalette() {
 		[navigate],
 	)
 
-	const openSindre = useCallback(() => {
-		setSindreOpen(true)
+	const openChat = useCallback(() => {
+		setChatOpen(true)
 		setOpen(false)
-	}, [setSindreOpen])
+	}, [setChatOpen])
 
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
@@ -33,7 +33,7 @@ export function CommandPalette() {
 			}
 			if (e.key === 'j' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault()
-				setSindreOpen(true)
+				setChatOpen(true)
 				setOpen(false)
 			}
 			if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
@@ -46,7 +46,7 @@ export function CommandPalette() {
 		}
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
-	}, [navigateTo, workspaceId, setSindreOpen])
+	}, [navigateTo, workspaceId, setChatOpen])
 
 	if (!open) return null
 
@@ -76,9 +76,9 @@ export function CommandPalette() {
 						<Command.Group heading="Actions" className="text-xs text-muted-foreground px-2 py-1">
 							<Command.Item
 								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-accent data-[selected]:text-accent-foreground"
-								onSelect={openSindre}
+								onSelect={openChat}
 							>
-								Talk to Sindre…
+								Chat with agents…
 								<span className="ml-auto text-xs text-muted-foreground">⌘J</span>
 							</Command.Item>
 						</Command.Group>
@@ -137,7 +137,7 @@ export function CommandPalette() {
 							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘K</kbd> Toggle
 						</span>
 						<span>
-							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘J</kbd> Sindre
+							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘J</kbd> Chat
 						</span>
 						<span>
 							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘N</kbd> New

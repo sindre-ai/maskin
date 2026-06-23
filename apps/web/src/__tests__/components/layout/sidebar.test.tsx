@@ -20,9 +20,9 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
-const setSindreOpen = vi.fn()
-vi.mock('@/lib/sindre-context', () => ({
-	useSindre: () => ({ setOpen: setSindreOpen }),
+const setChatOpen = vi.fn()
+vi.mock('@/lib/chat-context', () => ({
+	useChat: () => ({ setOpen: setChatOpen }),
 }))
 
 vi.mock('@tanstack/react-router', async () => {
@@ -98,10 +98,10 @@ describe('AppSidebar', () => {
 		expect(screen.getByText('NavUser')).toBeInTheDocument()
 	})
 
-	it('does not render a Sindre launcher — lives in the app header now', () => {
+	it('does not render a chat launcher — lives in the app header now', () => {
 		vi.mocked(useEnabledModules).mockReturnValue(['work'])
 		render(<AppSidebar />)
-		expect(screen.queryByText('Sindre')).not.toBeInTheDocument()
+		expect(screen.queryByText('Chat')).not.toBeInTheDocument()
 	})
 
 	it('shows an unread count next to For You when there are unread threads', () => {
