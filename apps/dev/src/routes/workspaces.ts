@@ -335,7 +335,9 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 			.select({ id: actors.id })
 			.from(actors)
 			.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
-			.where(and(eq(workspaceMembers.workspaceId, id), eq(actors.name, WORKSPACE_COACH_DEFAULT.name)))
+			.where(
+				and(eq(workspaceMembers.workspaceId, id), eq(actors.name, WORKSPACE_COACH_DEFAULT.name)),
+			)
 			.limit(1)
 
 		if (coach) {
