@@ -20,6 +20,7 @@ export const DEV_ACTOR_WORKSPACE_COACH = '9b4820ab-3d00-4e15-b737-8adf7f94d15c'
 export const DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR = '3322def3-7d6b-4615-beaf-b43b291f95a8'
 export const DEV_ACTOR_PRODUCT_ANALYST = '21cce128-9c80-4ebe-982f-41c82820c6aa'
 export const DEV_ACTOR_SUMMARIZATION_AGENT = '29a22f4b-3d56-4377-a226-968b0192c39e'
+export const DEV_ACTOR_BUG_TRIAGE = 'a40e9a17-9d2c-4e6b-9c81-2f8b16fa57e2'
 
 // ── Package slugs ────────────────────────────────────────────────────────────
 
@@ -38,6 +39,7 @@ export const DEV_PACKAGE_WORKSPACE_COACH_SLUG = 'workspace-coach'
 export const DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_SLUG = 'retro-knowledge-author'
 export const DEV_PACKAGE_PRODUCT_ANALYST_SLUG = 'product-analyst'
 export const DEV_PACKAGE_SUMMARIZATION_AGENT_SLUG = 'summarization-agent'
+export const DEV_PACKAGE_BUG_TRIAGE_SLUG = 'bug-triage'
 
 // ── Package names ────────────────────────────────────────────────────────────
 
@@ -56,6 +58,7 @@ export const DEV_PACKAGE_WORKSPACE_COACH_NAME = 'Workspace Coach'
 export const DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME = 'Retro & Knowledge Author'
 export const DEV_PACKAGE_PRODUCT_ANALYST_NAME = 'Product Analyst'
 export const DEV_PACKAGE_SUMMARIZATION_AGENT_NAME = 'Summarization Agent'
+export const DEV_PACKAGE_BUG_TRIAGE_NAME = 'Bug Triage'
 
 // ── Shared version ────────────────────────────────────────────────────────────
 
@@ -111,6 +114,9 @@ export const DEV_PACKAGE_PRODUCT_ANALYST_DESCRIPTION =
 
 export const DEV_PACKAGE_SUMMARIZATION_AGENT_DESCRIPTION =
 	'Turns finished meetings into insights, tasks, and contact objects, wiring relationships so context flows into active bets automatically.'
+
+export const DEV_PACKAGE_BUG_TRIAGE_DESCRIPTION =
+	'Fast-tracks urgent observability insights (Coolify webhooks, PostHog exceptions) into signal-status bets with a pre-attached fix task within 60 seconds.'
 
 // ── Trigger IDs ───────────────────────────────────────────────────────────────
 
@@ -208,3 +214,6 @@ export const DEV_TRIGGER_PRODUCT_ANALYST_WEEKLY_DISCOVERY = '665c1b46-23bf-4666-
 
 // Summarization Agent
 export const DEV_TRIGGER_SUMMARIZATION_AGENT_MEETING_DONE = '5eefd3e7-396b-4de1-9fdf-a22ccfc0d120'
+
+// Bug Triage
+export const DEV_TRIGGER_BUG_TRIAGE_IMMEDIATE = '7a3c6d92-1f48-4b03-9e25-8d04c47e2a91'

@@ -12,6 +12,7 @@ import {
 	DEV_ACTOR_ACCEPTANCE_VALIDATOR,
 	DEV_ACTOR_ARCHITECT,
 	DEV_ACTOR_AUTO_MERGE_BOT,
+	DEV_ACTOR_BUG_TRIAGE,
 	DEV_ACTOR_CODE_REVIEWER,
 	DEV_ACTOR_DESIGNER,
 	DEV_ACTOR_DEVELOPER,
@@ -33,6 +34,9 @@ import {
 	DEV_PACKAGE_AUTO_MERGE_BOT_DESCRIPTION,
 	DEV_PACKAGE_AUTO_MERGE_BOT_NAME,
 	DEV_PACKAGE_AUTO_MERGE_BOT_SLUG,
+	DEV_PACKAGE_BUG_TRIAGE_DESCRIPTION,
+	DEV_PACKAGE_BUG_TRIAGE_NAME,
+	DEV_PACKAGE_BUG_TRIAGE_SLUG,
 	DEV_PACKAGE_CODE_REVIEWER_DESCRIPTION,
 	DEV_PACKAGE_CODE_REVIEWER_NAME,
 	DEV_PACKAGE_CODE_REVIEWER_SLUG,
@@ -74,6 +78,7 @@ import {
 	DEV_TRIGGER_ACCEPTANCE_VALIDATOR_TASK_TESTING,
 	DEV_TRIGGER_ARCHITECT_TASK_IN_PROGRESS,
 	DEV_TRIGGER_AUTO_MERGE_BOT_TASK_DONE,
+	DEV_TRIGGER_BUG_TRIAGE_IMMEDIATE,
 	DEV_TRIGGER_CODE_REVIEWER_PR_SYNCHRONIZE,
 	DEV_TRIGGER_CODE_REVIEWER_TASK_IN_REVIEW,
 	DEV_TRIGGER_DESIGNER_TASK_IN_PROGRESS,
@@ -4403,6 +4408,122 @@ From every finished meeting:
 				config: { action: 'status_changed', to_status: 'done', entity_type: 'meeting' },
 				actionPrompt: `A meeting object has just moved to 'done' — the transcript is now on the object. Read the meeting via get_objects (transcript is in \`content\`; fall back to \`metadata.transcriptUrl\` if empty), extract insights and tasks worth keeping, upsert attendees as \`contact\` objects matched by email, and wire the relationships (insight→meeting \`about\`, meeting→task \`produced\`, meeting→contact \`attended_by\`). Link insights/tasks to existing bets via \`relates_to\` where it fits. Post a one-comment summary on the meeting when done. Skip the obvious; lean toward fewer, higher-quality objects.`,
 				targetActorId: DEV_ACTOR_SUMMARIZATION_AGENT,
+				enabled: true,
+			},
+		},
+	])
+}
+
+const [bugTriagePkg] = await db
+	.insert(catalogPackages)
+	.values({
+		slug: DEV_PACKAGE_BUG_TRIAGE_SLUG,
+		name: DEV_PACKAGE_BUG_TRIAGE_NAME,
+		description: DEV_PACKAGE_BUG_TRIAGE_DESCRIPTION,
+		version: DEV_PACKAGE_VERSION,
+		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+	})
+	.returning()
+
+if (bugTriagePkg) {
+	await db.insert(catalogPackageItems).values([
+		{
+			packageId: bugTriagePkg.id,
+			itemType: 'actor',
+			sourceItemId: DEV_ACTOR_BUG_TRIAGE,
+			itemSnapshot: {
+				type: 'agent',
+				name: 'Bug Triage',
+				description: DEV_PACKAGE_BUG_TRIAGE_DESCRIPTION,
+				systemPrompt: `You are the Bug Triage agent. You fire when an urgent observability insight is created (Coolify deploy/crash/health-check failures, PostHog new-fingerprint exceptions). Your job is to convert that insight into a \`signal\`-status bet with a pre-attached fix task within 60 seconds, so a human can decide in one click whether to promote it.
+
+## What you receive
+
+The triggering event payload includes \`entity_id\` (the insight's object id) and \`data.source\` (one of \`coolify_deployment\`, \`coolify_crash\`, \`coolify_health\`, \`posthog_exception\`). Trust the event — do not poll for the insight to settle.
+
+## Step 0: Self-throttle (do this FIRST)
+
+Before creating anything, call list_objects with type=\`bet\`, status=\`signal\`, driver=\`${DEV_ACTOR_BUG_TRIAGE}\`, and a 24h window. Count the bets you created.
+
+- If count >= 10: STOP. The bet's exit-criteria pause threshold has tripped. Disable your own trigger by calling the workspace's triggers API — \`PATCH /api/triggers/${DEV_TRIGGER_BUG_TRIAGE_IMMEDIATE}\` with \`{ "enabled": false }\` — then post a flag comment on the originating insight: "⚠ Bug Triage self-paused — 10+ signal bets in the last 24h. Re-tune signal-to-noise before re-enabling. @Sebastian". Exit. Do not create a bet.
+
+- If count < 10: continue to Step 1. (Use \`list_actors\` to resolve Sebastian's UUID if you reach the pause path — never hardcode human UUIDs.)
+
+## Step 1: Read the insight
+
+Call \`get_objects\` on the event's \`entity_id\`. Confirm \`metadata.urgent === true\` and \`metadata.source\` is one of the four observability sources. If either is missing, exit silently — you were fired on something the trigger conditions shouldn't have matched, and you should not invent a bet from it.
+
+## Step 2: Create the signal bet + fix task
+
+Use a single \`create_objects\` batch with two nodes and two edges:
+
+- Node A (\`$id: "bet"\`): \`type: bet\`, \`status: signal\`, title \`"Bug — <insight.title>"\` (truncate to ~80 chars). Content: a 2–4 sentence summary of the regression naming the source, the affected app/component from the insight context, and a link to the originating insight using the canonical \`[title](https://maskin.io/<workspace_id>/objects/<insight_id>)\` format. Mark \`metadata.auto_bug = true\` (Strategist intake/live-gate triggers skip auto_bug bets) and \`metadata.observability_source = <source>\`.
+
+- Node B (\`$id: "task"\`): \`type: task\`, \`status: todo\`, title \`"T1. Investigate and fix — <short symptom>"\`, content one line: "Read the originating insight for stack trace / deployment context. Reproduce, fix, ship."
+
+- Edge: \`{ source: "bet", target: "task", type: "breaks_into" }\`.
+
+- Edge: \`{ source: "<insight_id>", target: "bet", type: "informs" }\`.
+
+Set both nodes' \`driver\` to your own actor id (\`${DEV_ACTOR_BUG_TRIAGE}\`) so the throttle in Step 0 can count them.
+
+## Step 3: One comment, then exit
+
+Post a single comment on the new bet: "Bug Triage routed \`<source>\` insight here within <duration> seconds — see linked insight for the full payload." That is the entire conversation. Do not post on the insight. Do not @mention anyone (the Strategist's intake trigger skips \`auto_bug\` bets and a human will pick this up from the signal-bet queue).
+
+## What you never do
+
+- Create a bet whose status is anything other than \`signal\`. Promotion to \`define\` is a human decision.
+- Skip the Step 0 throttle. The 10-bet/24h budget is the bet's hard exit criterion.
+- Fire on insights without \`metadata.urgent\`. The trigger conditions enforce this, but verify in Step 1.
+- Decide root cause. You route; the Developer fixes.
+- Hold the session open waiting for anything. From event to bet should be under 60 seconds.`,
+				llmProvider: 'anthropic',
+				llmConfig: {},
+				tools: {
+					mcpServers: {
+						maskin: {
+							url: '${MASKIN_API_URL}/mcp',
+							type: 'http' as const,
+							headers: {
+								Authorization: 'Bearer ${MASKIN_API_KEY}',
+								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			packageId: bugTriagePkg.id,
+			itemType: 'trigger',
+			sourceItemId: DEV_TRIGGER_BUG_TRIAGE_IMMEDIATE,
+			itemSnapshot: {
+				name: 'Urgent Observability Insight → Bug Triage',
+				description:
+					'Fires when an observability webhook (Coolify or PostHog) creates an urgent insight; routes to a signal bet with a pre-attached fix task within 60 seconds.',
+				type: 'event',
+				// The Coolify (`webhooks-coolify.ts`) and PostHog (`webhooks-posthog.ts`) routes both
+				// emit `entityType: 'object'` and a `data` payload of `{ source, fingerprint, urgent }`.
+				// `getObjectFromData` exposes that `data` directly as the condition root for `created`
+				// events, so `urgent`/`source` are top-level lookups (no `metadata.` prefix). The four
+				// source values mirror the enums exported from the Coolify (`CoolifySource`) and
+				// PostHog (`PosthogSource`) provider modules — keep them in lockstep.
+				config: {
+					entity_type: 'object',
+					action: 'created',
+					conditions: [
+						{ field: 'urgent', operator: 'equals', value: true },
+						{
+							field: 'source',
+							operator: 'in',
+							value: ['coolify_deployment', 'coolify_crash', 'coolify_health', 'posthog_exception'],
+						},
+					],
+				},
+				actionPrompt:
+					'An urgent observability insight was just created. Follow your system prompt: self-throttle (Step 0), read the insight (Step 1), create the signal bet + fix task in one batch (Step 2), post one comment (Step 3). From trigger fire to bet creation should be under 60 seconds. Triggering event: {triggering_event}',
+				targetActorId: DEV_ACTOR_BUG_TRIAGE,
 				enabled: true,
 			},
 		},

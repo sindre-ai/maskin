@@ -253,6 +253,109 @@ describe('TriggerRunner', () => {
 
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
+
+		// AC-T6: Given an observability-class insight created with metadata.urgent=true,
+		// when the dedicated immediate-triage trigger fires, then a session is created for
+		// the Bug Triage actor (which then creates the signal bet). The four observability
+		// sources mirror the CoolifySource + PosthogSource enums.
+		describe('AC-T6: immediate-triage trigger fan-out', () => {
+			const observabilityTriggerConfig = {
+				entity_type: 'object',
+				action: 'created',
+				conditions: [
+					{ field: 'urgent', operator: 'equals', value: true },
+					{
+						field: 'source',
+						operator: 'in',
+						value: ['coolify_deployment', 'coolify_crash', 'coolify_health', 'posthog_exception'],
+					},
+				],
+			} as const
+
+			const observabilityEvent: PgEvent = {
+				workspace_id: 'ws-1',
+				entity_type: 'object',
+				entity_id: 'insight-1',
+				action: 'created',
+				actor_id: 'integration-actor',
+				event_id: 'evt-obs-1',
+			}
+
+			it.each([
+				'coolify_deployment',
+				'coolify_crash',
+				'coolify_health',
+				'posthog_exception',
+			] as const)('fires for an urgent insight from source=%s', async (source) => {
+				const trigger = buildTrigger({
+					workspaceId: 'ws-1',
+					type: 'event',
+					config: observabilityTriggerConfig,
+					targetActorId: 'bug-triage-actor',
+				})
+				mockResults.selectQueue = [
+					[trigger],
+					[{ data: { source, fingerprint: 'fp-abc', urgent: true } }],
+				]
+				mockResults.insert = []
+
+				bridge.emit('event', observabilityEvent)
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).toHaveBeenCalledOnce()
+				const [, opts] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
+				expect(opts.actorId).toBe('bug-triage-actor')
+				expect(opts.triggerId).toBe(trigger.id)
+				expect(opts.actionPrompt).toContain(source)
+			})
+
+			it('does not fire when urgent flag is missing', async () => {
+				const trigger = buildTrigger({
+					workspaceId: 'ws-1',
+					type: 'event',
+					config: observabilityTriggerConfig,
+				})
+				mockResults.selectQueue = [
+					[trigger],
+					[{ data: { source: 'coolify_deployment', fingerprint: 'fp-x' } }],
+				]
+
+				bridge.emit('event', observabilityEvent)
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
+			it('does not fire when source is outside the observability allowlist', async () => {
+				const trigger = buildTrigger({
+					workspaceId: 'ws-1',
+					type: 'event',
+					config: observabilityTriggerConfig,
+				})
+				mockResults.selectQueue = [[trigger], [{ data: { source: 'slack_mention', urgent: true } }]]
+
+				bridge.emit('event', observabilityEvent)
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
+			it('does not fire on an updated event (dedup occurrence path)', async () => {
+				const trigger = buildTrigger({
+					workspaceId: 'ws-1',
+					type: 'event',
+					config: observabilityTriggerConfig,
+				})
+				mockResults.select = [trigger]
+
+				// PostHog dedup path emits action:'updated' to bump occurrence count —
+				// the trigger must skip it so we don't re-create a bet per occurrence.
+				bridge.emit('event', { ...observabilityEvent, action: 'updated' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+		})
 	})
 
 	describe('cron scheduling', () => {
