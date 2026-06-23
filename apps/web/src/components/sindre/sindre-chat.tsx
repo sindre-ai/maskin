@@ -158,8 +158,11 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 	// present — the first send() call creates the container. Only disable
 	// while the Sindre session is actively booting (post-create, pre-
 	// running), in an error state, or finished.
-	const sindreBlocked =
-		sindre.status === 'starting' || sindre.status === 'error' || sindre.status === 'closed'
+	// 'closed' is intentionally excluded: when the Sindre container exits the
+	// session is marked closed, but the user should still be able to send a new
+	// message — useSindreSession.send() will bootstrap a fresh session in that
+	// case so the conversation continues seamlessly.
+	const sindreBlocked = sindre.status === 'starting' || sindre.status === 'error'
 	const oneShotBusy = oneShot.status === 'starting'
 	const disabled = selectedAgent ? oneShotBusy : sindreBlocked || !sindreActorId
 	// Show the "Connecting to Sindre…" empty-state only while we're actively
