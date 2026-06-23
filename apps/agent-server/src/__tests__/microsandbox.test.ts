@@ -636,7 +636,7 @@ describe('provisionBrowserSidecar', () => {
 		expect(verbs).toContain('inspect')
 		// The create args must reference the chromedp image as the trailing token.
 		const createCall = calls.find((c) => c[0] === 'create')
-		expect(createCall?.at(-1)).toBe('chromedp/headless-shell:latest')
+		expect(createCall?.at(-1)).toBe('browser-sidecar:latest')
 	})
 
 	it('returns null and removes the half-built VM when msb create fails', async () => {

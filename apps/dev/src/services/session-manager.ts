@@ -2016,11 +2016,11 @@ export class SessionManager extends EventEmitter {
 		let browserContainerId: string | undefined
 
 		try {
-			await this.containers.pullImage('chromedp/headless-shell:latest')
+			await this.containers.pullImage('browser-sidecar:latest')
 			await this.containers.createNetwork(networkName)
 
 			browserContainerId = await this.containers.create({
-				image: 'chromedp/headless-shell:latest',
+				image: 'browser-sidecar:latest',
 				name: browserName,
 				env: {},
 				memoryMb: 512,

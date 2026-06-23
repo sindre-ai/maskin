@@ -403,14 +403,14 @@ describe('SessionManager', () => {
 
 			await manager.startSession(session.id)
 
-			expect(mockContainerManager.pullImage).toHaveBeenCalledWith('chromedp/headless-shell:latest')
+			expect(mockContainerManager.pullImage).toHaveBeenCalledWith('browser-sidecar:latest')
 			expect(mockContainerManager.createNetwork).toHaveBeenCalled()
 
 			const browserCreateCall = mockContainerManager.create.mock.calls[0]?.[0] as Record<
 				string,
 				unknown
 			>
-			expect(browserCreateCall.image).toBe('chromedp/headless-shell:latest')
+			expect(browserCreateCall.image).toBe('browser-sidecar:latest')
 			expect(browserCreateCall.name).toMatch(/^anko-browser-/)
 			expect(browserCreateCall.networkMode).toMatch(/^anko-net-/)
 			expect(browserCreateCall.memoryMb).toBe(512)

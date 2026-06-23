@@ -52,18 +52,18 @@ const PRIVATE_NET_RULE = 'allow@private'
 
 // Image used for the Chromium CDP sidecar — same tag as T1's local Docker path
 // so the two halves of the bet stay in lockstep.
-const BROWSER_SIDECAR_IMAGE = 'chromedp/headless-shell:latest'
+const BROWSER_SIDECAR_IMAGE = 'browser-sidecar:latest'
 
-// CDP listener inside the headless-shell container.
+// CDP listener inside the browser-sidecar container.
 const BROWSER_CDP_PORT = 9222
 
 // Brief settle before we hand the CDP URL to the agent — Chromium's listener
 // binds a beat after the VM reports Running.
 const BROWSER_SIDECAR_SETTLE_MS = 2_000
 
-// Bigger memory budget than a session VM: the headless-shell image is heavier
+// Bigger memory budget than a session VM: Xvfb + headed Chromium is heavier
 // than the agent-base image and Chromium tabs eat into the budget fast.
-const BROWSER_SIDECAR_MEMORY_MIB = 1024
+const BROWSER_SIDECAR_MEMORY_MIB = 1536
 const BROWSER_SIDECAR_CPUS = 1
 const BROWSER_SIDECAR_CREATE_TIMEOUT_MS = 90_000
 const BROWSER_SIDECAR_INSPECT_TIMEOUT_MS = 5_000
@@ -509,7 +509,7 @@ export type BrowserSidecar = {
 }
 
 /**
- * Provision a Chromium-only sidecar microVM running `chromedp/headless-shell`
+ * Provision a Chromium-only sidecar microVM running `browser-sidecar`
  * for bet-qa sessions. Returns the sidecar name and a `ws://<ip>:9222` CDP
  * URL the session VM can hand to `@playwright/mcp`. The session VM must be
  * spawned with `allowPrivateNet: true` for the bridge address to be reachable.
