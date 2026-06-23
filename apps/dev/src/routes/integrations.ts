@@ -14,6 +14,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { trackSlackMentionReceived } from '../lib/analytics/catalog-events'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
+import { shouldEmitSlackMentionMetric } from '../lib/analytics/slack-mention-dedup'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
@@ -869,8 +870,21 @@ export default app
 // counting and stays untagged.
 const SLACK_MENTION_ENTITY_TYPES = new Set(['slack.app_mention', 'slack.direct_message'])
 
-function slackChannelType(entityType: string): 'channel' | 'group' | 'im' {
+// Resolve the analytics-side channel type. `slack.direct_message` /
+// `slack.group_message` are produced by the normalizer; for `slack.app_mention`
+// the inner `event.channel` prefix is the only signal — Slack delivers
+// app_mention with no per-channel-type variant — so a DM containing `@Maskin`
+// arrives as `slack.app_mention` with a `D…` channel id alongside a paired
+// `message.im`. Reading the prefix lets the split stay clean regardless of
+// which of the two paired envelopes wins the dedup race.
+function slackChannelType(
+	entityType: string,
+	innerChannel: string | undefined,
+): 'channel' | 'group' | 'im' {
+	const prefix = innerChannel?.[0]
+	if (prefix === 'D') return 'im'
 	if (entityType === 'slack.direct_message') return 'im'
+	if (prefix === 'G') return 'group'
 	if (entityType === 'slack.group_message') return 'group'
 	return 'channel'
 }
@@ -879,6 +893,27 @@ function extractSlackTeamId(data: unknown): string | null {
 	if (!data || typeof data !== 'object') return null
 	const teamId = (data as Record<string, unknown>).team_id
 	return typeof teamId === 'string' && teamId.length > 0 ? teamId : null
+}
+
+// The Slack normalizer stores the entire `event_callback` envelope on
+// `NormalizedEvent.data`. Reach into `data.event` for the inner Slack
+// message fields — `client_msg_id` and `ts` (the dedup key for the paired
+// app_mention + message.im delivery), and `channel` (the analytics split).
+function readSlackInnerEvent(data: unknown): {
+	clientMsgId: string | null
+	ts: string | null
+	channel: string | undefined
+} {
+	if (!data || typeof data !== 'object') return { clientMsgId: null, ts: null, channel: undefined }
+	const event = (data as Record<string, unknown>).event
+	if (!event || typeof event !== 'object') {
+		return { clientMsgId: null, ts: null, channel: undefined }
+	}
+	const inner = event as Record<string, unknown>
+	const clientMsgId = typeof inner.client_msg_id === 'string' ? inner.client_msg_id : null
+	const ts = typeof inner.ts === 'string' ? inner.ts : null
+	const channel = typeof inner.channel === 'string' ? inner.channel : undefined
+	return { clientMsgId, ts, channel }
 }
 
 // Tag every Slack mention/DM event in `events` with `source: 'slack_mention'`,
@@ -903,21 +938,33 @@ function tagSlackMentionEventsAndEmit(
 		// site having to plumb the mention through.
 		markSlackMention(workspaceId)
 
-		// Emit the bet's ship metric exactly once per delivery — even if Slack
-		// somehow delivered two mention events in one envelope, the ship metric
-		// counts distinct deliveries, not distinct events. The PostHog capture is
-		// fire-and-forget by contract (see `posthog.ts`), so failures here never
-		// stall webhook ingest.
+		// Emit the bet's ship metric at most once per logical mention. The
+		// per-delivery `emittedOnce` guard covers the (rare) case of two
+		// mention events in one envelope; `shouldEmitSlackMentionMetric`
+		// covers the (common) case of Slack delivering both `app_mention`
+		// and `message.im` for the same DM as two separate envelopes. The
+		// PostHog capture is fire-and-forget (see `posthog.ts`), so
+		// failures here never stall webhook ingest.
 		if (!emittedOnce) {
 			emittedOnce = true
 			const slackTeamId = extractSlackTeamId(e.data)
+			const { clientMsgId, ts, channel } = readSlackInnerEvent(e.data)
 			if (slackTeamId) {
-				void trackSlackMentionReceived({
-					workspaceId,
-					actorId: systemActorId,
-					channelType: slackChannelType(e.entityType),
-					slackTeamId,
-				})
+				const messageId = clientMsgId ?? ts
+				if (shouldEmitSlackMentionMetric(workspaceId, slackTeamId, messageId)) {
+					void trackSlackMentionReceived({
+						workspaceId,
+						actorId: systemActorId,
+						channelType: slackChannelType(e.entityType, channel),
+						slackTeamId,
+					})
+				} else {
+					logger.debug('Slack mention metric deduped against paired envelope', {
+						workspaceId,
+						entityType: e.entityType,
+						messageId,
+					})
+				}
 			} else {
 				logger.warn('Slack mention webhook missing team_id; skipping metric emit', {
 					workspaceId,

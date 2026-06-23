@@ -20,6 +20,7 @@ import {
 	__resetSlackAttributionForTests,
 	consumeSlackAttribution,
 } from '../../lib/analytics/slack-attribution'
+import { __resetSlackMentionDedupForTests } from '../../lib/analytics/slack-mention-dedup'
 
 const SIGNING_SECRET = 'test-slack-signing-secret'
 
@@ -93,6 +94,7 @@ describe('Slack mention instrumentation — webhook round-trip', () => {
 
 	beforeEach(async () => {
 		__resetSlackAttributionForTests()
+		__resetSlackMentionDedupForTests()
 		capturePosthogMock.mockClear()
 
 		const actorId = getTestActorId()
@@ -190,6 +192,114 @@ describe('Slack mention instrumentation — webhook round-trip', () => {
 			'slack_mention_received',
 			workspaceId,
 			expect.objectContaining({ channel_type: 'im' }),
+		)
+	})
+
+	// Paired-envelope dedup: when a human DMs `@Maskin`, Slack delivers both
+	// `app_mention` and `message` (channel `D…`, normalized to
+	// `slack.direct_message`) with the same `client_msg_id`. Two distinct
+	// webhook envelopes, two distinct `event_id`s — the per-delivery
+	// `emittedOnce` guard can't see across them, so without this dedup
+	// DMs would double-count and bias the bet's downstream-conversion ratio.
+	it('emits the ship metric exactly once for paired app_mention + message.im envelopes', async () => {
+		const app = await createWebhookApp(createMockStorageProvider())
+		const clientMsgId = `cmid_${++nonce}`
+		const ts = `1700000000.0000${nonce}`
+
+		// First envelope: app_mention. Slack delivers this for any channel,
+		// including DMs — the channel prefix is the only DM tell.
+		const appMentionReq = await buildSignedSlackWebhook({
+			type: 'event_callback',
+			team_id: 'T_INTEGRATION',
+			event_id: `Ev_DEDUP_AM_${nonce}`,
+			event: {
+				type: 'app_mention',
+				channel: 'D_DM',
+				user: 'U_SLACK_USER',
+				text: '<@UMASKIN> please help',
+				client_msg_id: clientMsgId,
+				ts,
+			},
+		})
+		const res1 = await app.request(appMentionReq)
+		expect(res1.status).toBe(200)
+		await flushAsyncProcessing()
+
+		// Second envelope: the paired message.im, same client_msg_id.
+		const dmReq = await buildSignedSlackWebhook({
+			type: 'event_callback',
+			team_id: 'T_INTEGRATION',
+			event_id: `Ev_DEDUP_DM_${nonce}`,
+			event: {
+				type: 'message',
+				channel: 'D_DM',
+				user: 'U_SLACK_USER',
+				text: '<@UMASKIN> please help',
+				client_msg_id: clientMsgId,
+				ts,
+			},
+		})
+		const res2 = await app.request(dmReq)
+		expect(res2.status).toBe(200)
+		await flushAsyncProcessing()
+
+		// Both event rows land (the tag for downstream attribution belongs on
+		// each — only the metric emit is deduped).
+		const appMentionRows = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.workspaceId, workspaceId), eq(events.entityType, 'slack.app_mention')))
+		const dmRows = await db
+			.select()
+			.from(events)
+			.where(
+				and(eq(events.workspaceId, workspaceId), eq(events.entityType, 'slack.direct_message')),
+			)
+		expect(appMentionRows).toHaveLength(1)
+		expect(dmRows).toHaveLength(1)
+		expect((appMentionRows[0]?.data as Record<string, unknown>).source).toBe('slack_mention')
+		expect((dmRows[0]?.data as Record<string, unknown>).source).toBe('slack_mention')
+
+		// PostHog ship metric fired exactly once across the paired envelopes,
+		// and channel_type is `im` (the app_mention's channel prefix tells the
+		// split even when the entity type would otherwise say `channel`).
+		expect(capturePosthogMock).toHaveBeenCalledOnce()
+		expect(capturePosthogMock).toHaveBeenCalledWith(
+			'slack_mention_received',
+			workspaceId,
+			expect.objectContaining({ channel_type: 'im', slack_team_id: 'T_INTEGRATION' }),
+		)
+	})
+
+	// Public-channel @Maskin mentions arrive as a single `app_mention`
+	// envelope with no paired `message`. The dedup helper must not suppress
+	// these — they're the bet's primary signal.
+	it('emits exactly one metric for a public-channel app_mention with no paired DM', async () => {
+		const app = await createWebhookApp(createMockStorageProvider())
+		const clientMsgId = `cmid_pub_${++nonce}`
+		const req = await buildSignedSlackWebhook({
+			type: 'event_callback',
+			team_id: 'T_INTEGRATION',
+			event_id: `Ev_PUB_${nonce}`,
+			event: {
+				type: 'app_mention',
+				channel: 'C_PUBLIC',
+				user: 'U_SLACK_USER',
+				text: '<@UMASKIN> ship it',
+				client_msg_id: clientMsgId,
+				ts: `1700000001.0000${nonce}`,
+			},
+		})
+
+		const res = await app.request(req)
+		expect(res.status).toBe(200)
+		await flushAsyncProcessing()
+
+		expect(capturePosthogMock).toHaveBeenCalledOnce()
+		expect(capturePosthogMock).toHaveBeenCalledWith(
+			'slack_mention_received',
+			workspaceId,
+			expect.objectContaining({ channel_type: 'channel' }),
 		)
 	})
 
