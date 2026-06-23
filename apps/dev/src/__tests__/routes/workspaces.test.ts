@@ -75,7 +75,6 @@ describe('Workspaces Routes', () => {
 
 			expect(res.status).toBe(500)
 		})
-
 	})
 
 	describe('GET /api/workspaces', () => {
