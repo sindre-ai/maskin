@@ -11,6 +11,7 @@
  */
 
 import { KNOWLEDGE_NUDGES } from '../prompts'
+import { SIGNUP_CAPTURE_SOURCE } from '../schemas/signup-capture'
 
 export interface SeedSkill {
 	/** Skill name — lowercase letters, numbers, and hyphens only. */
@@ -129,8 +130,6 @@ const strategistTools = {
 		},
 	},
 }
-
-import { SIGNUP_CAPTURE_SOURCE } from '../schemas/signup-capture'
 
 export const DEVELOPMENT_AGENTS: SeedAgent[] = [
 	{
