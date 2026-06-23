@@ -179,7 +179,7 @@ app.openapi(createActorRoute, async (c) => {
 	} catch (err) {
 		if (isEmailUniqueViolation(err)) {
 			return c.json(
-				createApiError('BAD_REQUEST', 'Email already exists', [
+				createApiError('CONFLICT', 'Email already exists', [
 					{ field: 'email', message: 'An account with this email already exists' },
 				]),
 				409,
@@ -190,7 +190,7 @@ app.openapi(createActorRoute, async (c) => {
 
 	if (!actor) {
 		if (body.id) {
-			return c.json(createApiError('BAD_REQUEST', 'An actor with this ID already exists'), 409)
+			return c.json(createApiError('CONFLICT', 'An actor with this ID already exists'), 409)
 		}
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create actor'), 500)
 	}
