@@ -11,6 +11,7 @@
  */
 
 import { KNOWLEDGE_NUDGES } from '../prompts'
+import { SIGNUP_CAPTURE_SOURCE } from '../schemas/signup-capture'
 
 export interface SeedSkill {
 	/** Skill name — lowercase letters, numbers, and hyphens only. */
@@ -2061,16 +2062,37 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 			'Analyze CTO validation sessions from the past 7 days. When the CTO finds issues, both the Senior Developer (author) AND the Code Reviewer (reviewer) missed something — these sessions reveal systemic gaps.\n\n1. Find CTO sessions (last 7d). Read each and note: task, bet, verdict (PASS/FAIL/CONDITIONAL PASS), and specifically what was wrong (for FAIL/CONDITIONAL PASS).\n2. Classify failure types — unwired integrations, missing infrastructure, silent failures, version mismatches, incomplete flows, missing dependencies.\n3. Attribution — Senior Developer gap, Code Reviewer gap, systemic gap (neither could reasonably catch alone).\n4. Look for patterns across sessions and against prior analyses.\n5. Create insights for notable findings. Tag with metadata tags "cto-validation-pattern".\n6. If no notable patterns, exit silently.',
 	},
 	{
-		name: 'New Workspace Onboarding',
+		name: 'Strategist research on signup',
 		type: 'event',
 		config: {
-			entity_type: 'workspace',
-			action: 'updated',
-			conditions: [{ field: 'onboardingEnabled', operator: 'equals', value: true }],
+			entity_type: 'knowledge',
+			action: 'created',
+			conditions: [{ field: 'source', operator: 'equals', value: SIGNUP_CAPTURE_SOURCE }],
 		},
-		targetActor$id: 'workspace_coach',
+		targetActor$id: 'strategist',
 		enabled: true,
-		actionPrompt:
-			'A workspace has been enabled for onboarding (onboarding_enabled flipped to true). Run the workspace-observer-onboarding skill.\n\nBefore starting: check whether this workspace already has an onboarding_session object. If one exists, exit silently.\n\nIf none exists, follow the workspace-observer-onboarding skill to:\n1. Create the onboarding_session object.\n2. Subscribe the workspace owner.\n3. Post the five context prompts in sequence, waiting for each reply before the next.\n4. Capture each reply as a knowledge object.\n5. Close the session when all prompts are answered (or after 24h).',
+		actionPrompt: `A new signup-capture knowledge object just landed in this workspace. The triggering event carries the full object — read it for the user's name, organization, and role under \`data.metadata\`.
+
+Your job: produce 1–3 knowledge objects that capture what the workspace should know about this user's organization to give the rest of the agents real context.
+
+Do the work in this order:
+
+1. Read the triggering event. The object id is in \`data.id\`; the structured user context is in \`data.metadata.name\`, \`data.metadata.organization\`, and \`data.metadata.role\`.
+2. Before writing anything, call \`search_objects\` for the organization name. If a knowledge object covering the same ground already exists, extend or supersede it rather than writing a duplicate.
+3. Research the organization on the public web — what they do, who they sell to, the stack they use, named competitors, anything that would shape how the Coach or Driver helps this user. Stop when you have enough to fill 1–3 short, useful knowledge objects. Useful, not exhaustive.
+4. For each finding, create a knowledge object with \`create_objects\`:
+   - \`type: 'knowledge'\`
+   - \`status: 'validated'\`
+   - \`title\`: short, specific (e.g. "Acme — focus on B2B onboarding analytics")
+   - \`content\`: short markdown with sources cited inline
+   - \`metadata.source: 'signup_research'\` — this tag is the ship-metric the bet measures usefulness on; do not skip it
+   - \`metadata.confidence\`: 'high' | 'medium' | 'low' — be honest
+   - \`metadata.tags\`: include 'context:company' so downstream readers find it
+5. Link each new knowledge object back to the source signup-capture object via an \`about\` relationship (\`create_relationships\` with \`type: 'about'\`, source = your new knowledge id, target = \`data.id\`).
+6. Stop. Do not write a status comment, do not @mention humans, do not create bets. The Coach surfaces this context to the user on their next session — your job ends at the knowledge objects.
+
+If web research turns up nothing usable (very small or unindexed organization), write one knowledge object naming that fact so downstream agents stop searching, then stop.
+
+The 24h ship-metric clock starts at the trigger fire — finish in one session.`,
 	},
 ]

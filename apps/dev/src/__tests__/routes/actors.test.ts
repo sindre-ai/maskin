@@ -508,6 +508,24 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body.error.message).toContain('Password is required')
 		})
+
+		it('returns 409 with field error when email already exists', async () => {
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const emailError = Object.assign(
+				new Error('duplicate key value violates unique constraint "actors_email_unique"'),
+				{ code: '23505', constraint_name: 'actors_email_unique' },
+			)
+			mockResults.insertError = emailError
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors', buildCreateActorBody({ type: 'human' })),
+			)
+
+			expect(res.status).toBe(409)
+			const body = await res.json()
+			expect(body.error.message).toBe('Email already exists')
+			expect(body.error.details[0].field).toBe('email')
+		})
 	})
 
 	describe('GET /api/actors with X-Workspace-Id', () => {

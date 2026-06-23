@@ -97,6 +97,25 @@ const createActorRoute = createRoute({
 	},
 })
 
+function isEmailUniqueViolation(err: unknown): boolean {
+	for (let cur: unknown = err; cur && typeof cur === 'object'; ) {
+		const e = cur as {
+			code?: string
+			constraint_name?: string
+			constraint?: string
+			message?: string
+			cause?: unknown
+		}
+		if (e.code === '23505') {
+			const name = e.constraint_name ?? e.constraint
+			if (name === 'actors_email_unique') return true
+			if (typeof e.message === 'string' && e.message.includes('actors_email_unique')) return true
+		}
+		cur = e.cause
+	}
+	return false
+}
+
 app.openapi(createActorRoute, async (c) => {
 	const db = c.get('db')
 	const body = c.req.valid('json')
@@ -138,27 +157,40 @@ app.openapi(createActorRoute, async (c) => {
 				}
 			: body.tools
 
-	const [actor] = await db
-		.insert(actors)
-		.values({
-			...(body.id && { id: body.id }),
-			type: body.type,
-			name: body.name,
-			email: body.email,
-			apiKey: key,
-			passwordHash,
-			description: body.description,
-			systemPrompt: body.system_prompt,
-			tools,
-			llmProvider: body.llm_provider,
-			llmConfig: body.llm_config,
-		})
-		.onConflictDoNothing({ target: actors.id })
-		.returning()
+	let actor: typeof actors.$inferSelect | undefined
+	try {
+		;[actor] = await db
+			.insert(actors)
+			.values({
+				...(body.id && { id: body.id }),
+				type: body.type,
+				name: body.name,
+				email: body.email,
+				apiKey: key,
+				passwordHash,
+				description: body.description,
+				systemPrompt: body.system_prompt,
+				tools,
+				llmProvider: body.llm_provider,
+				llmConfig: body.llm_config,
+			})
+			.onConflictDoNothing({ target: actors.id })
+			.returning()
+	} catch (err) {
+		if (isEmailUniqueViolation(err)) {
+			return c.json(
+				createApiError('CONFLICT', 'Email already exists', [
+					{ field: 'email', message: 'An account with this email already exists' },
+				]),
+				409,
+			)
+		}
+		throw err
+	}
 
 	if (!actor) {
 		if (body.id) {
-			return c.json(createApiError('BAD_REQUEST', 'An actor with this ID already exists'), 409)
+			return c.json(createApiError('CONFLICT', 'An actor with this ID already exists'), 409)
 		}
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create actor'), 500)
 	}
@@ -168,7 +200,9 @@ app.openapi(createActorRoute, async (c) => {
 	let workspaceId: string | undefined
 
 	if (shouldCreateWorkspace) {
-		const defaultSettings = workspaceSettingsSchema.parse({})
+		const defaultSettings = workspaceSettingsSchema.parse({
+			enabled_modules: ['work', 'knowledge'],
+		})
 		const created = await db.transaction(async (tx) => {
 			const [workspace] = await tx
 				.insert(workspaces)
@@ -221,7 +255,7 @@ app.openapi(createActorRoute, async (c) => {
 			workspaceId = created.id
 			const agentStorage = c.get('agentStorage')
 			if (agentStorage) {
-				bootstrapDefaultAgents(db, agentStorage, created.id, actor.id).catch((err) =>
+				await bootstrapDefaultAgents(db, agentStorage, created.id, actor.id).catch((err) =>
 					logger.error('workspace bootstrap failed', { workspaceId: created.id, err }),
 				)
 			}
