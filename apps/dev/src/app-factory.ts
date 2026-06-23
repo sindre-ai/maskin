@@ -38,6 +38,8 @@ import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
+import webhooksCoolifyRoutes from './routes/webhooks-coolify'
+import webhooksPosthogRoutes from './routes/webhooks-posthog'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
 import type { AgentStorageManager } from './services/agent-storage'
@@ -191,6 +193,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/actors' && method === 'POST') return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
 		if (path.startsWith('/api/webhooks/')) return next()
+		if (path === '/api/webhooks-coolify') return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
@@ -217,7 +220,14 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	app.route('/api/catalog', catalogPackagesRoutes)
+	// /api/webhooks/posthog must mount BEFORE the generic /api/webhooks
+	// /:provider router — Hono dispatches to the first matching `app.route`,
+	// and the generic provider route would otherwise 400 (PostHog has no
+	// webhook config on its ProviderConfig; the dedicated route writes
+	// insights directly, not normalised events).
+	app.route('/api/webhooks/posthog', webhooksPosthogRoutes)
 	app.route('/api/webhooks', webhookApp)
+	app.route('/api/webhooks-coolify', webhooksCoolifyRoutes)
 	app.route('/api/internal/agent-servers', agentServerReconcileRoutes)
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/sessions', sessionsRoutes)
