@@ -49,6 +49,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+	vi.unstubAllEnvs()
 	await rm(sessionRoot, { recursive: true, force: true })
 })
 
@@ -382,7 +383,8 @@ describe('POST /sessions bet_qa_required wiring', () => {
 		// Session VM must carry --net-rule allow@private so it can reach the sidecar.
 		expect(sessionCreate?.args).toContain('allow@private')
 		// Session VM env must include BROWSER_CDP_URL pointing at the sidecar IP.
-		const envFlags = sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
+		const envFlags =
+			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
 		expect(envFlags).toContain('BROWSER_CDP_URL=ws://10.42.0.7:9222')
 	})
 
@@ -413,8 +415,111 @@ describe('POST /sessions bet_qa_required wiring', () => {
 		expect(creates.some((c) => c.args.some((a) => a.startsWith('anko-browser-')))).toBe(false)
 		const sessionCreate = creates.find((c) => c.args.includes('sess-plain'))
 		expect(sessionCreate?.args).not.toContain('allow@private')
-		const envFlags = sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
+		const envFlags =
+			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
 		expect(envFlags.some((e) => e.startsWith('BROWSER_CDP_URL='))).toBe(false)
+	})
+
+	it('injects VERCEL_AUTOMATION_BYPASS_SECRET into the session VM when bet_qa_required=true and host env has it (AC-T2 msb leg)', async () => {
+		vi.stubEnv('VERCEL_AUTOMATION_BYPASS_SECRET', 'host-vercel-bypass')
+		const { run, calls } = makeSidecarAwareRunner({ sidecarIp: '10.42.0.7' })
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-vbypass',
+				image: 'maskin/agent-base:latest',
+				env: {},
+				bet_qa_required: true,
+			}),
+		})
+		expect(res.status).toBe(201)
+
+		const sessionCreate = calls
+			.filter((c) => c.args[0] === 'create')
+			.find((c) => c.args.includes('sess-vbypass'))
+		expect(sessionCreate).toBeDefined()
+		const envFlags =
+			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
+		expect(envFlags).toContain('VERCEL_AUTOMATION_BYPASS_SECRET=host-vercel-bypass')
+	})
+
+	it('does not inject VERCEL_AUTOMATION_BYPASS_SECRET when bet_qa_required is absent (no echo to non-flagged sessions)', async () => {
+		vi.stubEnv('VERCEL_AUTOMATION_BYPASS_SECRET', 'host-vercel-bypass')
+		const { run, calls } = makeSidecarAwareRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-vquiet',
+				image: 'maskin/agent-base:latest',
+				env: {},
+			}),
+		})
+		expect(res.status).toBe(201)
+
+		const sessionCreate = calls
+			.filter((c) => c.args[0] === 'create')
+			.find((c) => c.args.includes('sess-vquiet'))
+		const envFlags =
+			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
+		expect(envFlags.some((e) => e.startsWith('VERCEL_AUTOMATION_BYPASS_SECRET='))).toBe(false)
+	})
+
+	it('does not inject VERCEL_AUTOMATION_BYPASS_SECRET when bet_qa_required=true but host env is unset', async () => {
+		// vi.stubEnv with undefined removes the key from process.env until
+		// unstubAllEnvs runs in afterEach — emulates a deployment whose host
+		// has the flag flipped on but the secret hasn't been provisioned yet.
+		vi.stubEnv('VERCEL_AUTOMATION_BYPASS_SECRET', undefined as unknown as string)
+		const { run, calls } = makeSidecarAwareRunner({ sidecarIp: '10.42.0.7' })
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-vmiss',
+				image: 'maskin/agent-base:latest',
+				env: {},
+				bet_qa_required: true,
+			}),
+		})
+		expect(res.status).toBe(201)
+
+		const sessionCreate = calls
+			.filter((c) => c.args[0] === 'create')
+			.find((c) => c.args.includes('sess-vmiss'))
+		const envFlags =
+			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
+		expect(envFlags.some((e) => e.startsWith('VERCEL_AUTOMATION_BYPASS_SECRET='))).toBe(false)
 	})
 
 	it('still spawns the session (without BROWSER_CDP_URL) when sidecar provisioning fails', async () => {
@@ -448,7 +553,8 @@ describe('POST /sessions bet_qa_required wiring', () => {
 		expect(sessionCreate).toBeDefined()
 		// Sidecar failed → no allow@private rule, no BROWSER_CDP_URL injected.
 		expect(sessionCreate?.args).not.toContain('allow@private')
-		const envFlags = sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
+		const envFlags =
+			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
 		expect(envFlags.some((e) => e.startsWith('BROWSER_CDP_URL='))).toBe(false)
 	})
 })
