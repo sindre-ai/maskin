@@ -11,10 +11,13 @@ import { logger } from './lib/logger'
 import { ImageWarmer } from './services/image-warmer'
 import { InputQueue } from './services/input-queue'
 import {
+	type BrowserSidecar,
 	type MicrosandboxDeps,
 	type PullPolicy,
+	cleanupBrowserSidecar,
 	defaultRunner,
 	launchSessionExec,
+	provisionBrowserSidecar,
 	readMsbVersion,
 	removeSandbox,
 	spawnSession,
@@ -45,6 +48,10 @@ const SESSION_REQUEST_SCHEMA = z.object({
 		.default({}),
 	memoryMib: z.number().int().positive().optional(),
 	cpus: z.number().int().positive().optional(),
+	// When true, provision a Chromium CDP sidecar microVM alongside the session
+	// and inject `BROWSER_CDP_URL` so `@playwright/mcp` can attach. Absent or
+	// false → no sidecar, no env var, no MCP entry (T1 controls the merge).
+	bet_qa_required: z.boolean().optional(),
 })
 
 export type AppDeps = {
@@ -84,6 +91,7 @@ async function monitorSession(
 	agentServerSecret?: string,
 	sessionLogRouters?: Map<string, (line: string) => void>,
 	sessionExitCodes?: Map<string, number>,
+	browserSidecar?: BrowserSidecar | null,
 ): Promise<void> {
 	const run = msb.run ?? defaultRunner()
 	const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -222,6 +230,13 @@ async function monitorSession(
 		logger.info('sandbox removed', { sessionId })
 	} catch (err) {
 		logger.warn('sandbox removal failed', { sessionId, error: String(err) })
+	}
+
+	// AC-T5: tear the sidecar down within 60s of session end so no orphaned
+	// Chromium VMs linger. `cleanupBrowserSidecar` is a no-op when no sidecar
+	// was provisioned (the common path).
+	if (browserSidecar) {
+		await cleanupBrowserSidecar(browserSidecar, msb)
 	}
 }
 
@@ -417,9 +432,29 @@ export function buildApp(deps: AppDeps): Hono {
 		// (written into the VM's /etc/hosts by microsandbox) on our own PORT.
 		const agentServerInternalHost =
 			deps.env.AGENT_SERVER_INTERNAL_HOST ?? 'host.microsandbox.internal'
-		const sessionEnv = {
+		const sessionEnv: Record<string, string> = {
 			...body.env,
 			AGENT_SERVER_URL: `http://${agentServerInternalHost}:${deps.env.PORT}`,
+		}
+
+		// AC-T1/AC-T6: provision a Chromium CDP sidecar only when the flag is on.
+		// A failed sidecar must not take down the session — the agent falls back
+		// to an instrumentation-gap comment instead of fabricating a bet-qa pass.
+		let browserSidecar: BrowserSidecar | null = null
+		if (body.bet_qa_required === true) {
+			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 8), deps.msb)
+			if (browserSidecar) {
+				sessionEnv.BROWSER_CDP_URL = browserSidecar.cdpUrl
+				logger.info('browser sidecar attached to session', {
+					sessionId: body.sessionId,
+					sidecarName: browserSidecar.name,
+					cdpUrl: browserSidecar.cdpUrl,
+				})
+			} else {
+				logger.warn('browser sidecar unavailable — session continues without browser', {
+					sessionId: body.sessionId,
+				})
+			}
 		}
 
 		try {
@@ -440,6 +475,9 @@ export function buildApp(deps: AppDeps): Hono {
 						deps.env.SESSION_MAX_DURATION !== '0' && {
 							maxDuration: deps.env.SESSION_MAX_DURATION,
 						}),
+					// Only opened when a sidecar was provisioned — keeps the default
+					// session firewall posture tight for the common (non-bet-qa) path.
+					...(browserSidecar !== null && { allowPrivateNet: true }),
 				},
 				deps.msb,
 			)
@@ -470,6 +508,7 @@ export function buildApp(deps: AppDeps): Hono {
 				deps.env.AGENT_SERVER_SECRET,
 				sessionLogRouters,
 				sessionExitCodes,
+				browserSidecar,
 			)
 				.catch((err) => {
 					logger.error('monitorSession crashed unexpectedly', {
@@ -499,6 +538,11 @@ export function buildApp(deps: AppDeps): Hono {
 			)
 		} catch (err) {
 			logger.error('session spawn failed', { sessionId: body.sessionId, error: String(err) })
+			// Don't orphan the sidecar — spawnSession failed before monitorSession
+			// would have torn it down. Best-effort, idempotent.
+			if (browserSidecar) {
+				await cleanupBrowserSidecar(browserSidecar, deps.msb).catch(() => {})
+			}
 			return c.json({ error: 'spawn_failed', message: String(err) }, 500)
 		}
 	})
