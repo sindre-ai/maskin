@@ -82,6 +82,10 @@ export function useChatSession({
 	const [error, setError] = useState<Error | null>(null)
 	const startingRef = useRef(false)
 	const prevWorkspaceIdRef = useRef(workspaceId)
+	// Always-current status for use inside the send callback (avoids adding
+	// status to the dependency array which would recreate send on every render).
+	const statusRef = useRef(status)
+	statusRef.current = status
 	// Monotonic counter bumped whenever the session is discarded (reset() or
 	// workspace switch). An in-flight send() captures the counter before
 	// bootstrap and bails out if it changed — otherwise a fast reset between
@@ -197,9 +201,10 @@ export function useChatSession({
 			if (!agentActorId) throw new Error('Chat agent not available')
 
 			// Lazy bootstrap — only create the container on the user's first
-			// turn, so opening the panel (or re-mounting the app) never spawns
-			// a session.
-			let currentSessionId = sessionId
+			// turn, or when the previous session ended (e.g. container exited or
+			// timed out). In the latter case we treat the closed session as gone
+			// and spin up a fresh one, preserving the transcript.
+			let currentSessionId = statusRef.current === 'closed' ? null : sessionId
 			const generation = generationRef.current
 			if (!currentSessionId) {
 				if (startingRef.current) throw new Error('Chat session is still starting')

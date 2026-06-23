@@ -95,6 +95,7 @@ app.openapi(createSessionRoute, (async (c) => {
 		triggerId: body.trigger_id,
 		createdBy: actorId,
 		autoStart: body.auto_start,
+		sourceSessionId: body.source_session_id,
 	})
 
 	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>, 201)
@@ -705,6 +706,16 @@ app.get('/:id/logs/stream', async (c) => {
 
 		// Subscribe to live log stream
 		let closed = false
+		// Resolved when the stream should stop — either the client disconnects
+		// (stream.onAbort) or the session reaches a terminal state. Used to make
+		// the keep-alive sleep abort-aware so we don't hold the SSE handler open
+		// after the client has gone (stream.sleep is a plain setTimeout and does
+		// not respond to stream abort on its own).
+		let resolveClose = () => {}
+		const closeSignal = new Promise<void>((resolve) => {
+			resolveClose = resolve
+		})
+
 		// Maps a system-log prefix to the `done` payload to emit when a session
 		// reaches that terminal state. Using prefix matching because log content
 		// may include trailing detail (e.g. "Session completed with exit code 0").
@@ -717,10 +728,9 @@ app.get('/:id/logs/stream', async (c) => {
 		const handler = (event: SessionLogEvent) => {
 			if (event.sessionId !== sessionId) return
 			// writeSSE returns a Promise. We're in an event listener (sync) so
-			// we can't await it — but we must attach an error handler to avoid
-			// unhandled rejections when the client disconnects mid-write or
-			// backpressure propagates a socket error. Dropped writes are not
-			// recoverable here; just log and detach so we stop trying.
+			// we can't await it. Note: Hono's stream.write() swallows write errors
+			// internally, so emit() never rejects in practice — the catch is
+			// defensive only.
 			const emit = async () => {
 				await stream.writeSSE({
 					id: String(event.logId),
@@ -732,12 +742,14 @@ app.get('/:id/logs/stream', async (c) => {
 					if (terminal) {
 						closed = true
 						await stream.writeSSE({ event: 'done', data: terminal.done })
+						resolveClose()
 					}
 				}
 			}
 			emit().catch((err) => {
 				closed = true
 				sessionManager.off('log', handler)
+				resolveClose()
 				logger.warn('SSE log write failed; detaching listener', {
 					err: err instanceof Error ? err.message : String(err),
 					sessionId,
@@ -746,13 +758,22 @@ app.get('/:id/logs/stream', async (c) => {
 		}
 
 		sessionManager.on('log', handler)
+		// When the client disconnects, exit the keep-alive loop immediately rather
+		// than waiting up to 30 s for the next sleep to complete. Without this,
+		// the zombie handler holds the HTTP connection open, preventing
+		// fetchEventSource from detecting the disconnect and reconnecting.
 		stream.onAbort(() => {
+			closed = true
 			sessionManager.off('log', handler)
+			resolveClose()
 		})
 
-		// Keep connection alive, but stop if session reached terminal state
+		// Keep connection alive, but stop if session reached terminal state or
+		// the client disconnected. Promise.race makes the sleep abort-aware:
+		// resolveClose() fires immediately on abort so we don't wait the full
+		// interval before discovering the client is gone.
 		while (!closed) {
-			await stream.sleep(30000)
+			await Promise.race([stream.sleep(20000), closeSignal])
 		}
 	})
 })

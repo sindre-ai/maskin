@@ -367,4 +367,45 @@ describe('useChatSession — reset & workspace switching', () => {
 		expect(result.current.sessionId).toBe('sess-ws2')
 		expect(api.sessions.create).toHaveBeenCalledTimes(2)
 	})
+
+	it('bootstraps a fresh session on the next send when the previous session closed, preserving the transcript', async () => {
+		vi.mocked(api.sessions.create)
+			.mockResolvedValueOnce(buildSession('sess-old'))
+			.mockResolvedValueOnce(buildSession('sess-new'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		await act(async () => {
+			await result.current.send('first')
+		})
+		expect(result.current.sessionId).toBe('sess-old')
+
+		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
+		await act(async () => {
+			await lastFesInit?.onopen()
+		})
+		// Server signals the session ended (idle timeout / container exit).
+		act(() => lastFesInit?.onmessage({ event: 'done', data: 'completed' }))
+		expect(result.current.status).toBe('closed')
+
+		// The composer is enabled while closed and the user keeps typing — the
+		// next send() must spin up a fresh session rather than POSTing to the
+		// dead one.
+		await act(async () => {
+			await result.current.send('second')
+		})
+
+		expect(api.sessions.create).toHaveBeenCalledTimes(2)
+		expect(result.current.sessionId).toBe('sess-new')
+		expect(api.sessions.input).toHaveBeenLastCalledWith(
+			'sess-new',
+			{ content: 'second' },
+			workspaceId,
+		)
+		// Transcript carries across the re-bootstrap.
+		expect(result.current.events.map((e) => e.kind)).toEqual(['user', 'user'])
+	})
 })

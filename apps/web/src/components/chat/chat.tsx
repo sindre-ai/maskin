@@ -158,8 +158,11 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	// present — the first send() call creates the container. Only disable
 	// while the session is actively booting (post-create, pre-
 	// running), in an error state, or finished.
-	const sessionBlocked =
-		session.status === 'starting' || session.status === 'error' || session.status === 'closed'
+	// 'closed' is intentionally excluded: when the container exits the session
+	// is marked closed, but the user should still be able to send a new message
+	// — session.send() will bootstrap a fresh session in that case so the
+	// conversation continues seamlessly.
+	const sessionBlocked = session.status === 'starting' || session.status === 'error'
 	const oneShotBusy = oneShot.status === 'starting'
 	const disabled = selectedAgent ? oneShotBusy : sessionBlocked || !agentActorId
 	// Show the "Connecting to agent…" empty-state only while we're actively
