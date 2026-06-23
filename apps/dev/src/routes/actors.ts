@@ -200,7 +200,9 @@ app.openapi(createActorRoute, async (c) => {
 	let workspaceId: string | undefined
 
 	if (shouldCreateWorkspace) {
-		const defaultSettings = workspaceSettingsSchema.parse({})
+		const defaultSettings = workspaceSettingsSchema.parse({
+			enabled_modules: ['work', 'knowledge'],
+		})
 		const created = await db.transaction(async (tx) => {
 			const [workspace] = await tx
 				.insert(workspaces)
