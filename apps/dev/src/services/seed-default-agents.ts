@@ -1,6 +1,10 @@
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { actors, triggers, workspaceMembers } from '@maskin/db/schema'
+import { actors, triggers, workspaceMembers, workspaces } from '@maskin/db/schema'
+import {
+	KNOWLEDGE_DEFAULT_SETTINGS,
+	MODULE_ID as KNOWLEDGE_MODULE_ID,
+} from '@maskin/ext-knowledge/shared'
 import {
 	DEFAULT_AGENTS,
 	STRATEGIST_DEFAULT,
@@ -88,16 +92,48 @@ export async function seedDefaultAgents(
 		)
 		.limit(1)
 
-	if (existingTrigger) return
+	if (!existingTrigger) {
+		await tx.insert(triggers).values({
+			workspaceId,
+			name: STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER.name,
+			type: STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER.type,
+			config: STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER.config,
+			actionPrompt: STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER.actionPrompt,
+			targetActorId: strategistActorId,
+			enabled: STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER.enabled,
+			createdBy,
+		})
+	}
 
-	await tx.insert(triggers).values({
-		workspaceId,
-		name: STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER.name,
-		type: STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER.type,
-		config: STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER.config,
-		actionPrompt: STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER.actionPrompt,
-		targetActorId: strategistActorId,
-		enabled: STRATEGIST_RESEARCH_ON_SIGNUP_TRIGGER.enabled,
-		createdBy,
-	})
+	// The Strategist writes knowledge objects, so the knowledge module must be
+	// enabled on this workspace. Mirror the frontend enableModule merge: add the
+	// module id and fold in its default statuses + display_names.
+	const [ws] = await tx
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (ws) {
+		const settings = (ws.settings ?? {}) as Record<string, unknown>
+		const enabledModules = Array.isArray(settings.enabled_modules)
+			? (settings.enabled_modules as string[])
+			: ['work']
+
+		if (!enabledModules.includes(KNOWLEDGE_MODULE_ID)) {
+			const merged = {
+				...settings,
+				enabled_modules: [...enabledModules, KNOWLEDGE_MODULE_ID],
+				display_names: {
+					...KNOWLEDGE_DEFAULT_SETTINGS.display_names,
+					...((settings.display_names as Record<string, string>) ?? {}),
+				},
+				statuses: {
+					...KNOWLEDGE_DEFAULT_SETTINGS.statuses,
+					...((settings.statuses as Record<string, string[]>) ?? {}),
+				},
+			}
+			await tx.update(workspaces).set({ settings: merged }).where(eq(workspaces.id, workspaceId))
+		}
+	}
 }

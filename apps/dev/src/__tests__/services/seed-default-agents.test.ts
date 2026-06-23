@@ -126,6 +126,66 @@ describe('seedDefaultAgents', () => {
 		expect(trigger.targetActorId).toBe('strategist-existing')
 	})
 
+	it('enables the knowledge module by updating workspace settings', async () => {
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.selectQueue = [
+			[], // existing trio: none
+			[], // existing trigger: none
+			[
+				{
+					settings: {
+						enabled_modules: ['work'],
+						statuses: { bet: ['signal'] },
+						display_names: { bet: 'Bet' },
+					},
+				},
+			], // workspace row
+		]
+		mockResults.insertQueue = [
+			[{ id: 'driver-id' }],
+			[{}],
+			[{ id: 'coach-id' }],
+			[{}],
+			[{ id: 'strategist-id' }],
+			[{}],
+			[{ id: 'trigger-id' }],
+		]
+
+		await seedDefaultAgents(db, 'ws-1', 'creator-1')
+
+		expect(calls.updates).toHaveLength(1)
+		const updatedSettings = calls.updates[0] as { settings: Record<string, unknown> }
+		const modules = updatedSettings.settings.enabled_modules as string[]
+		expect(modules).toContain('knowledge')
+		expect(modules).toContain('work')
+		// knowledge statuses merged in, existing statuses preserved
+		const statuses = updatedSettings.settings.statuses as Record<string, unknown>
+		expect(statuses.knowledge).toBeDefined()
+		expect(statuses.bet).toEqual(['signal'])
+	})
+
+	it('skips the workspace settings update when knowledge is already enabled', async () => {
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.selectQueue = [
+			[], // existing trio: none
+			[], // existing trigger: none
+			[{ settings: { enabled_modules: ['work', 'knowledge'], statuses: {}, display_names: {} } }],
+		]
+		mockResults.insertQueue = [
+			[{ id: 'driver-id' }],
+			[{}],
+			[{ id: 'coach-id' }],
+			[{}],
+			[{ id: 'strategist-id' }],
+			[{}],
+			[{ id: 'trigger-id' }],
+		]
+
+		await seedDefaultAgents(db, 'ws-1', 'creator-1')
+
+		expect(calls.updates).toHaveLength(0)
+	})
+
 	it('throws when an actor insert returns empty', async () => {
 		const { db, mockResults } = createTestContext()
 		mockResults.selectQueue = [[]]

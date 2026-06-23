@@ -1,4 +1,5 @@
-import { actors, triggers, workspaceMembers } from '@maskin/db/schema'
+import { actors, triggers, workspaceMembers, workspaces } from '@maskin/db/schema'
+import { MODULE_ID as KNOWLEDGE_MODULE_ID, KNOWLEDGE_STATUSES } from '@maskin/ext-knowledge/shared'
 import {
 	DEFAULT_AGENTS,
 	STRATEGIST_DEFAULT,
@@ -123,5 +124,35 @@ describe('seedDefaultAgents (integration)', () => {
 			.where(and(eq(workspaceMembers.workspaceId, ws.id), eq(actors.name, 'Driver')))
 
 		expect(driverMembers).toHaveLength(1)
+	})
+
+	it('enables the knowledge module in workspace settings so knowledge objects can be created', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		await seedDefaultAgents(db, ws.id, getTestActorId())
+
+		const [updated] = await db
+			.select({ settings: workspaces.settings })
+			.from(workspaces)
+			.where(eq(workspaces.id, ws.id))
+		const settings = updated.settings as Record<string, unknown>
+		const enabledModules = settings.enabled_modules as string[]
+
+		expect(enabledModules).toContain(KNOWLEDGE_MODULE_ID)
+		expect((settings.statuses as Record<string, unknown>).knowledge).toEqual(KNOWLEDGE_STATUSES)
+	})
+
+	it('does not duplicate the knowledge module on a second seedDefaultAgents call', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		await seedDefaultAgents(db, ws.id, getTestActorId())
+		await seedDefaultAgents(db, ws.id, getTestActorId())
+
+		const [updated] = await db
+			.select({ settings: workspaces.settings })
+			.from(workspaces)
+			.where(eq(workspaces.id, ws.id))
+		const settings = updated.settings as Record<string, unknown>
+		const enabledModules = settings.enabled_modules as string[]
+
+		expect(enabledModules.filter((m) => m === KNOWLEDGE_MODULE_ID)).toHaveLength(1)
 	})
 })
