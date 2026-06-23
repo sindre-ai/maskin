@@ -15,13 +15,14 @@ import {
 	updateWorkspaceSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
+import type { SessionManager } from '../services/session-manager'
 import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
 
 type Env = {
@@ -30,6 +31,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		agentStorage: AgentStorageManager
+		sessionManager: SessionManager
 	}
 }
 
@@ -328,6 +330,26 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 			.insert(workspaceOnboardingPrompts)
 			.values(ONBOARDING_PROMPT_TYPES.map((promptType) => ({ workspaceId: id, promptType })))
 			.onConflictDoNothing()
+
+		const [coach] = await db
+			.select({ id: actors.id })
+			.from(actors)
+			.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+			.where(and(eq(workspaceMembers.workspaceId, id), eq(actors.name, WORKSPACE_COACH_DEFAULT.name)))
+			.limit(1)
+
+		if (coach) {
+			c.get('sessionManager')
+				.createSession(id, {
+					actorId: coach.id,
+					actionPrompt:
+						'A workspace has been enabled for onboarding (onboarding_enabled flipped to true). Run the workspace-observer-onboarding skill.\n\nBefore starting: check whether this workspace already has an onboarding_session object. If one exists, exit silently.\n\nIf none exists, follow the workspace-observer-onboarding skill to:\n1. Create the onboarding_session object.\n2. Subscribe the workspace owner.\n3. Post the five context prompts in sequence, waiting for each reply before the next.\n4. Capture each reply as a knowledge object.\n5. Close the session when all prompts are answered (or after 24h).',
+					createdBy: actorId,
+				})
+				.catch((err) =>
+					logger.error('Failed to create onboarding session', { workspaceId: id, err }),
+				)
+		}
 	}
 
 	await db.insert(events).values({
