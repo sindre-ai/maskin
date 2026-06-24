@@ -4,7 +4,7 @@ import { trackForyouSparseComposerShown, trackForyouSparseComposerSubmit } from 
 import { type ChatAttachment, useChat } from '@/lib/chat-context'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
 import { useWorkspace } from '@/lib/workspace-context'
-import { useCallback, useEffect, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 const QUICK_START_CHIPS = [
 	'Help me plan a new bet',
@@ -30,6 +30,8 @@ export function SparseComposer({ itemsCount }: SparseComposerProps) {
 	// Snapshot at mount so the `_shown` event reflects the state that produced
 	// this composer, not whatever the feed mutates into later.
 	const mountedItemsCount = useRef(itemsCount)
+	const [chipSending, setChipSending] = useState(false)
+	const [chipError, setChipError] = useState<string | null>(null)
 
 	useEffect(() => {
 		trackForyouSparseComposerShown({ items_count: mountedItemsCount.current })
@@ -57,6 +59,21 @@ export function SparseComposer({ itemsCount }: SparseComposerProps) {
 		[itemsCount, openWithContext, selection],
 	)
 
+	const handleChipClick = useCallback(
+		async (text: string) => {
+			setChipSending(true)
+			setChipError(null)
+			try {
+				await onSend(text)
+			} catch (err) {
+				setChipError(err instanceof Error ? err.message : 'Something went wrong')
+			} finally {
+				setChipSending(false)
+			}
+		},
+		[onSend],
+	)
+
 	const showChips = itemsCount === 0
 
 	return (
@@ -70,7 +87,8 @@ export function SparseComposer({ itemsCount }: SparseComposerProps) {
 							size="sm"
 							variant="outline"
 							className="h-7 rounded-full px-3 text-xs"
-							onClick={() => void onSend(text)}
+							disabled={chipSending}
+							onClick={() => void handleChipClick(text)}
 						>
 							{text}
 						</Button>
@@ -81,7 +99,7 @@ export function SparseComposer({ itemsCount }: SparseComposerProps) {
 				<Composer
 					workspaceId={workspaceId}
 					onSend={onSend}
-					disabled={false}
+					disabled={chipSending}
 					pending={false}
 					surface="pulse-bar"
 					placeholder="Ask agents to start something…"
@@ -92,6 +110,8 @@ export function SparseComposer({ itemsCount }: SparseComposerProps) {
 					onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
 					onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
 					onRemoveFile={(name) => dispatchSelection({ type: 'remove_file', name })}
+					externalError={chipError}
+					onDismissExternalError={() => setChipError(null)}
 				/>
 			</div>
 		</div>
