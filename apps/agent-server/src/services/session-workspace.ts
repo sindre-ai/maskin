@@ -197,7 +197,6 @@ export async function sweepSessionWorkspaces(
 	}
 
 	type Candidate = { sessionId: string; path: string; mtimeMs: number; sizeBytes: number }
-	const live: Candidate[] = []
 	const candidates: Candidate[] = []
 
 	for (const entry of entries) {
@@ -219,7 +218,6 @@ export async function sweepSessionWorkspaces(
 		const isProtectedById = keepSet.has(sessionId)
 		const tooYoung = ageMs < options.minAgeMs
 		if (isProtectedById || tooYoung) {
-			live.push({ sessionId, path, mtimeMs: s.mtimeMs, sizeBytes })
 			result.skippedActive++
 		} else {
 			candidates.push({ sessionId, path, mtimeMs: s.mtimeMs, sizeBytes })
