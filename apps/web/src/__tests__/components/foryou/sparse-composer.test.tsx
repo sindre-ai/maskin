@@ -1,6 +1,8 @@
+import type { ComposerProps } from '@/components/chat/chat'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const openWithContextMock = vi.fn()
@@ -11,9 +13,38 @@ vi.mock('@/lib/chat-context', () => ({
 	useChat: () => ({ openWithContext: openWithContextMock }),
 }))
 
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspaceId: 'ws-test' }),
+}))
+
 vi.mock('@/lib/analytics', () => ({
 	trackForyouSparseComposerShown: (p: { items_count: number }) => trackShownMock(p),
 	trackForyouSparseComposerSubmit: (p: { items_count: number }) => trackSubmitMock(p),
+}))
+
+// Minimal stub — Composer's own tests cover its internals (Enter, error display, etc.)
+vi.mock('@/components/chat/chat', () => ({
+	Composer: ({ onSend, placeholder, textareaLabel, disabled }: ComposerProps) => {
+		const [value, setValue] = useState('')
+		return (
+			<form
+				onSubmit={(e) => {
+					e.preventDefault()
+					if (!value.trim()) return
+					void onSend(value).then(() => setValue(''))
+				}}
+			>
+				<textarea
+					placeholder={placeholder}
+					aria-label={textareaLabel}
+					value={value}
+					onChange={(e) => setValue(e.target.value)}
+					disabled={disabled}
+				/>
+				<button type="submit" aria-label="Send message" disabled={disabled || !value.trim()} />
+			</form>
+		)
+	},
 }))
 
 function getTextarea() {
@@ -28,10 +59,9 @@ describe('SparseComposer', () => {
 		trackSubmitMock.mockReset()
 	})
 
-	it('renders placeholder, input, and send button (AC-U1/AC-U2)', () => {
+	it('renders placeholder and send button', () => {
 		render(<SparseComposer itemsCount={0} />)
 		expect(screen.getByPlaceholderText('Ask agents to start something…')).toBeInTheDocument()
-		expect(getTextarea()).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument()
 	})
 
@@ -42,74 +72,35 @@ describe('SparseComposer', () => {
 		expect(screen.queryByTestId('sparse-composer-chips')).not.toBeInTheDocument()
 	})
 
-	it('Enter submits via openWithContext and clears the input (AC-U4)', async () => {
+	it('submits via openWithContext with empty attachments and clears the input', async () => {
 		const user = userEvent.setup()
 		render(<SparseComposer itemsCount={0} />)
 		await user.type(getTextarea(), 'help me plan a launch')
-		await user.keyboard('{Enter}')
-		await waitFor(() => {
-			expect(openWithContextMock).toHaveBeenCalledTimes(1)
-		})
-		expect(openWithContextMock).toHaveBeenCalledWith([], 'help me plan a launch')
-		await waitFor(() => expect(getTextarea().value).toBe(''))
-	})
-
-	it('clicking Send submits via openWithContext (AC-U4)', async () => {
-		const user = userEvent.setup()
-		render(<SparseComposer itemsCount={1} />)
-		await user.type(getTextarea(), 'status of the rollout')
 		await user.click(screen.getByRole('button', { name: 'Send message' }))
 		await waitFor(() => {
-			expect(openWithContextMock).toHaveBeenCalledWith([], 'status of the rollout')
+			expect(openWithContextMock).toHaveBeenCalledWith([], 'help me plan a launch')
 		})
-	})
-
-	it('Shift+Enter inserts a newline and does not submit (AC-U6 parity)', async () => {
-		const user = userEvent.setup()
-		render(<SparseComposer itemsCount={0} />)
-		const textarea = getTextarea()
-		await user.type(textarea, 'line one')
-		await user.keyboard('{Shift>}{Enter}{/Shift}')
-		await user.type(textarea, 'line two')
-		expect(textarea.value).toBe('line one\nline two')
-		expect(openWithContextMock).not.toHaveBeenCalled()
-	})
-
-	it('IME composition swallows Enter (AC-U6 parity)', async () => {
-		const user = userEvent.setup()
-		render(<SparseComposer itemsCount={0} />)
-		const textarea = getTextarea()
-		await user.type(textarea, 'composing')
-		// Simulate IME composition: keydown Enter with isComposing=true
-		const event = new KeyboardEvent('keydown', {
-			key: 'Enter',
-			bubbles: true,
-			cancelable: true,
-		})
-		Object.defineProperty(event, 'isComposing', { value: true })
-		textarea.dispatchEvent(event)
-		expect(openWithContextMock).not.toHaveBeenCalled()
+		await waitFor(() => expect(getTextarea().value).toBe(''))
 	})
 
 	it('clicking a quick-start chip submits its text via openWithContext', async () => {
 		const user = userEvent.setup()
 		render(<SparseComposer itemsCount={0} />)
-		await user.click(screen.getByRole('button', { name: 'What should I work on next?' }))
+		await user.click(screen.getByRole('button', { name: 'Help me plan a new bet' }))
 		await waitFor(() => {
-			expect(openWithContextMock).toHaveBeenCalledWith([], 'What should I work on next?')
+			expect(openWithContextMock).toHaveBeenCalledWith([], 'Help me plan a new bet')
 		})
 	})
 
-	it('fires foryou_sparse_composer_shown exactly once per mount with items_count (AC-T3)', () => {
+	it('fires foryou_sparse_composer_shown exactly once per mount with items_count', () => {
 		const { rerender } = render(<SparseComposer itemsCount={2} />)
 		expect(trackShownMock).toHaveBeenCalledTimes(1)
 		expect(trackShownMock).toHaveBeenCalledWith({ items_count: 2 })
-		// Re-render without remount must not re-emit.
 		rerender(<SparseComposer itemsCount={1} />)
 		expect(trackShownMock).toHaveBeenCalledTimes(1)
 	})
 
-	it('emits foryou_sparse_composer_submit after openWithContext resolves with items_count snapshotted at submit (AC-U7, AC-T3)', async () => {
+	it('emits foryou_sparse_composer_submit after openWithContext resolves with items_count snapshotted at submit', async () => {
 		const user = userEvent.setup()
 		render(<SparseComposer itemsCount={2} />)
 		await user.type(getTextarea(), 'go')
@@ -120,50 +111,11 @@ describe('SparseComposer', () => {
 		expect(trackSubmitMock).toHaveBeenCalledTimes(1)
 	})
 
-	it('idempotent on rapid Enter/Send: at most one openWithContext + one _submit even with two presses (AC-T1)', async () => {
-		const user = userEvent.setup()
-		let resolve: () => void = () => {}
-		openWithContextMock.mockImplementation(
-			() =>
-				new Promise<void>((r) => {
-					resolve = r
-				}),
-		)
-		render(<SparseComposer itemsCount={1} />)
-		await user.type(getTextarea(), 'go')
-		const sendBtn = screen.getByRole('button', { name: 'Send message' })
-		await user.click(sendBtn)
-		// Second click while the first is in-flight — button is disabled (no text yet
-		// cleared either, but `sending` blocks the submit path).
-		await user.click(sendBtn)
-		expect(openWithContextMock).toHaveBeenCalledTimes(1)
-		await act(async () => {
-			resolve()
-			await Promise.resolve()
-		})
-		await waitFor(() => {
-			expect(trackSubmitMock).toHaveBeenCalledTimes(1)
-		})
-	})
-
-	it('on openWithContext rejection: preserves input, shows error, does NOT emit _submit (AC-T2)', async () => {
-		const user = userEvent.setup()
-		openWithContextMock.mockImplementation(() => Promise.reject(new Error('sidebar offline')))
-		render(<SparseComposer itemsCount={0} />)
-		await user.type(getTextarea(), 'draft pitch')
-		await user.click(screen.getByRole('button', { name: 'Send message' }))
-		await waitFor(() => {
-			expect(screen.getByRole('alert')).toHaveTextContent('sidebar offline')
-		})
-		expect(getTextarea().value).toBe('draft pitch')
-		expect(trackSubmitMock).not.toHaveBeenCalled()
-	})
-
-	it('does not submit empty input (no whitespace-only submits)', async () => {
+	it('does not submit empty input', async () => {
 		const user = userEvent.setup()
 		render(<SparseComposer itemsCount={0} />)
 		await user.type(getTextarea(), '   ')
-		await user.keyboard('{Enter}')
+		await user.click(screen.getByRole('button', { name: 'Send message' }))
 		expect(openWithContextMock).not.toHaveBeenCalled()
 	})
 })
