@@ -71,10 +71,16 @@ export const signupResearchInputSchema = z
 		content: z.string().min(1),
 		tags: z.array(z.string().min(1)).optional(),
 	})
-	.refine((v) => v.validTo === null || v.validTo === undefined || v.validTo >= v.validFrom, {
-		message: 'valid_to must be on or after valid_from',
-		path: ['validTo'],
-	})
+	.refine(
+		(v) => {
+			if (v.validTo === null || v.validTo === undefined) return true
+			return Date.parse(v.validTo) >= Date.parse(v.validFrom)
+		},
+		{
+			message: 'valid_to must be on or after valid_from',
+			path: ['validTo'],
+		},
+	)
 export type SignupResearchInput = z.infer<typeof signupResearchInputSchema>
 
 export type SignupResearchKnowledge = z.infer<typeof createObjectSchema>
@@ -147,6 +153,11 @@ export function buildInvalidationPatch(
  *
  * A row is "valid at T" when:
  *   valid_from <= T  AND  (valid_to IS NULL OR valid_to > T)
+ *
+ * Instants are compared by parsed millisecond timestamp, never by string
+ * order — lex compare on ISO strings only agrees with real time when every
+ * input shares the same UTC offset, and a single `+02:00` row mixed with
+ * Zulu produces silently wrong answers.
  */
 export function isValidAt(
 	row: { metadata?: Record<string, unknown> | null | undefined },
@@ -156,8 +167,14 @@ export function isValidAt(
 	const validFrom = meta.valid_from as string | undefined
 	const validTo = (meta.valid_to as string | null | undefined) ?? null
 	if (!validFrom) return false
-	const t = typeof asOf === 'string' ? asOf : asOf.toISOString()
-	if (validFrom > t) return false
-	if (validTo !== null && validTo !== undefined && validTo <= t) return false
+	const t = typeof asOf === 'string' ? Date.parse(asOf) : asOf.getTime()
+	const from = Date.parse(validFrom)
+	if (Number.isNaN(t) || Number.isNaN(from)) return false
+	if (from > t) return false
+	if (validTo !== null && validTo !== undefined) {
+		const to = Date.parse(validTo)
+		if (Number.isNaN(to)) return false
+		if (to <= t) return false
+	}
 	return true
 }
