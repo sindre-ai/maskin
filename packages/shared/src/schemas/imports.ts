@@ -32,6 +32,11 @@ export const typeMappingSchema = z.object({
 	// import processor uses these to resolve matches before upsert; absent
 	// or empty means the user opted into the "create all as new" hatch.
 	dedupKeys: z.array(z.string()).optional(),
+	// Explicit opt-in to the "create all as new" escape hatch — the only way
+	// to confirm an import without any dedup key. Used by AC-U4 (frontend
+	// gate + server backstop): when no dedup keys are set, this must be
+	// true or both `/preview` and `/confirm` reject the request.
+	createAllAsNew: z.boolean().optional(),
 })
 
 export const relationshipMappingSchema = z.object({

@@ -219,6 +219,29 @@ export const importListItemSchema = importResponseSchema.omit({
 	mapping: true,
 })
 
+// Preview endpoint response — dry-run match counts + per-row diffs for the
+// first N matched rows. Powers AC-U2 (three counts + diff table). Diff rows
+// are intentionally limited to keep the payload bounded; the cap is set by
+// the route handler, not the schema.
+export const importPreviewResponseSchema = z.object({
+	matched: z.number(),
+	created: z.number(),
+	skipped: z.number(),
+	diffs: z.array(
+		z.object({
+			row_index: z.number(),
+			object_id: z.string().uuid(),
+			changes: z.array(
+				z.object({
+					column: z.string(),
+					old: z.unknown(),
+					new: z.unknown(),
+				}),
+			),
+		}),
+	),
+})
+
 export const notificationResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
