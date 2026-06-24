@@ -461,7 +461,7 @@ function computePlaceholder(surface: ChatSurface, agentName: string | null | und
 	return surface === 'pulse-bar' ? 'Ask anything…' : 'Message agents'
 }
 
-interface ComposerProps {
+export interface ComposerProps {
 	workspaceId: string
 	onSend: (content: string) => Promise<void>
 	disabled: boolean
@@ -476,6 +476,8 @@ interface ComposerProps {
 	onRemoveFile: (name: string) => void
 	externalError?: string | null
 	onDismissExternalError?: () => void
+	/** Forwarded as `aria-label` on the textarea. Defaults to the surface placeholder. */
+	textareaLabel?: string
 }
 
 /**
@@ -495,7 +497,7 @@ interface ComposerProps {
  * a pick is committed we delete only the `/` that triggered the picker (if
  * still present) so the rest of the user's in-progress message is preserved.
  */
-function Composer({
+export function Composer({
 	workspaceId,
 	onSend,
 	disabled,
@@ -510,6 +512,7 @@ function Composer({
 	onRemoveFile,
 	externalError,
 	onDismissExternalError,
+	textareaLabel,
 }: ComposerProps) {
 	const [value, setValue] = useState('')
 	const [sending, setSending] = useState(false)
@@ -686,6 +689,7 @@ function Composer({
 					className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
 					disabled={disabled}
 					rows={1}
+					aria-label={textareaLabel}
 				/>
 				{sendError || externalError ? (
 					<p role="alert" className="px-1 text-error text-xs" aria-live="polite">
