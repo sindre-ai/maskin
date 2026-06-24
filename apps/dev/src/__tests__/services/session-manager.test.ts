@@ -476,6 +476,8 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.GITHUB_TOKEN_ACME_ORG).toBe('ghs_token_acme')
+			// Single installation — bare GITHUB_TOKEN is also injected as a fallback
+			expect(createArgs.env.GITHUB_TOKEN).toBe('ghs_token_acme')
 			const mcpKeys = createArgs.env.MCP_SERVERS_JSON
 				? Object.keys(
 						(
@@ -508,6 +510,7 @@ describe('SessionManager', () => {
 			}
 			const githubKeys = Object.keys(createArgs.env).filter((k) => k.startsWith('GITHUB_TOKEN_'))
 			expect(githubKeys).toEqual([])
+			expect(createArgs.env.GITHUB_TOKEN).toBeUndefined()
 			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
 		})
 
@@ -619,6 +622,8 @@ describe('SessionManager', () => {
 
 			// Token env var is present for envsubst to substitute into the MCP config
 			expect(createArgs.env.GITHUB_TOKEN_SINDRE_AI).toBe('ghs_real_token')
+			// Single installation — bare GITHUB_TOKEN is also injected as a fallback
+			expect(createArgs.env.GITHUB_TOKEN).toBe('ghs_real_token')
 
 			// AGENT_MCP_JSON carries the MCP config with the placeholder intact —
 			// the container entrypoint runs envsubst to resolve it at startup

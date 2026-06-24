@@ -497,19 +497,23 @@ app.openapi(callbackRoute, (async (c) => {
 	}
 
 	// GitHub-only: resolve the installation's owner login so the row can be
-	// disambiguated from other installations on the same workspace. Failures fall
-	// back to an undefined owner_login rather than blocking the connect — the row
-	// is still useful for token/webhook routing.
+	// disambiguated from other installations on the same workspace. If resolution
+	// fails, the integration is still created — the failure will be surfaced in the
+	// session logs when a session tries to use the integration and token injection
+	// is skipped.
 	let ownerLogin: string | undefined
 	if (credentials.installation_id) {
 		try {
 			ownerLogin = await fetchInstallationOwnerLogin(String(credentials.installation_id))
 		} catch (err) {
-			logger.warn(`Failed to fetch installation owner_login for ${providerName}`, {
-				workspaceId: stateData.workspaceId,
-				installationId: String(credentials.installation_id),
-				error: err instanceof Error ? err.message : String(err),
-			})
+			logger.error(
+				'Failed to resolve owner_login for GitHub installation; integration will connect without it',
+				{
+					workspaceId: stateData.workspaceId,
+					installationId: String(credentials.installation_id),
+					error: err instanceof Error ? err.message : String(err),
+				},
+			)
 		}
 	}
 
