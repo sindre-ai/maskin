@@ -30,7 +30,7 @@ function ForYouDashboard() {
 
 	if (items.length === 0) {
 		return (
-			<div className="space-y-6">
+			<div className="space-y-2">
 				<EmptyState
 					title="All caught up"
 					description="New comments and replies on things you're subscribed to will appear here."
