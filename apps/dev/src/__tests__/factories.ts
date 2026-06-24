@@ -462,6 +462,8 @@ export function buildImport(overrides?: Record<string, unknown>) {
 		processedRows: 0,
 		successCount: 0,
 		errorCount: 0,
+		updatedCount: 0,
+		skippedCount: 0,
 		mapping: {
 			typeMappings: [
 				{

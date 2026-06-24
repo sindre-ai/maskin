@@ -1139,6 +1139,8 @@ export interface ImportResponse {
 	processedRows: number
 	successCount: number
 	errorCount: number
+	updatedCount: number
+	skippedCount: number
 	mapping: ImportMappingInput | null
 	preview: ImportPreview | null
 	errors: ImportError[] | null
@@ -1175,6 +1177,7 @@ export interface TypeMappingInput {
 	objectType: string
 	columns: ColumnMappingInput[]
 	defaultStatus?: string
+	dedupKeys?: string[]
 }
 
 export interface RelationshipMappingInput {

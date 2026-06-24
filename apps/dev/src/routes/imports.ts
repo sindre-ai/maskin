@@ -622,12 +622,17 @@ function runImportInBackground(opts: {
 		)
 
 		const totalErrors = result.errorCount + result.relationshipErrorCount
-		const finalStatus = result.successCount > 0 ? 'completed' : 'failed'
+		const totalResolved = result.successCount + result.updatedCount + result.skippedCount
+		// An import counts as completed if *any* row resolved cleanly (create,
+		// update, or skip) — a dedup re-run that only skips is still a success.
+		const finalStatus = totalResolved > 0 ? 'completed' : 'failed'
 		await db
 			.update(imports)
 			.set({
 				status: finalStatus,
 				successCount: result.successCount,
+				updatedCount: result.updatedCount,
+				skippedCount: result.skippedCount,
 				errorCount: totalErrors,
 				errors: result.errors.length > 0 ? result.errors : null,
 				processedRows: parsed.rows.length,
@@ -644,6 +649,8 @@ function runImportInBackground(opts: {
 			entityId: importId,
 			data: {
 				successCount: result.successCount,
+				updatedCount: result.updatedCount,
+				skippedCount: result.skippedCount,
 				errorCount: totalErrors,
 				relationshipCount: result.relationshipCount,
 			},
@@ -653,6 +660,8 @@ function runImportInBackground(opts: {
 			importId,
 			status: finalStatus,
 			successCount: result.successCount,
+			updatedCount: result.updatedCount,
+			skippedCount: result.skippedCount,
 			errorCount: result.errorCount,
 			relationshipCount: result.relationshipCount,
 			relationshipErrorCount: result.relationshipErrorCount,
@@ -906,6 +915,8 @@ app.openapi(listImportsRoute, async (c) => {
 			processedRows: imports.processedRows,
 			successCount: imports.successCount,
 			errorCount: imports.errorCount,
+			updatedCount: imports.updatedCount,
+			skippedCount: imports.skippedCount,
 			source: imports.source,
 			createdBy: imports.createdBy,
 			createdAt: imports.createdAt,

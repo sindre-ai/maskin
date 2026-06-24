@@ -63,7 +63,16 @@ export function useImportToast(workspaceId: string) {
 	useEffect(() => {
 		if (!importData || !activeImportId) return
 
-		const { status, totalRows, processedRows, successCount, errorCount, fileName } = importData
+		const {
+			status,
+			totalRows,
+			processedRows,
+			successCount,
+			errorCount,
+			updatedCount,
+			skippedCount,
+			fileName,
+		} = importData
 		const progress = totalRows ? Math.round((processedRows / totalRows) * 100) : 0
 
 		if (status === 'importing') {
@@ -83,8 +92,12 @@ export function useImportToast(workspaceId: string) {
 			}
 
 			if (status === 'completed') {
-				const parts = [`${successCount} objects created`]
+				const parts: string[] = []
+				if (successCount > 0) parts.push(`${successCount} created`)
+				if (updatedCount > 0) parts.push(`${updatedCount} updated`)
+				if (skippedCount > 0) parts.push(`${skippedCount} unchanged`)
 				if (errorCount > 0) parts.push(`${errorCount} failed`)
+				if (parts.length === 0) parts.push('no rows resolved')
 				toast.success(`Import complete: ${parts.join(', ')}`)
 			} else {
 				toast.error(`Import failed: ${errorCount} errors`)
