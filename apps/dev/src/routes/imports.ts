@@ -5,6 +5,7 @@ import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { type CsvOptions, importMappingSchema, importQuerySchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq } from 'drizzle-orm'
+import { trackBulkImportExecuted } from '../lib/analytics/import-events'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -666,6 +667,18 @@ function runImportInBackground(opts: {
 			relationshipCount: result.relationshipCount,
 			relationshipErrorCount: result.relationshipErrorCount,
 		})
+
+		if (finalStatus === 'completed') {
+			void trackBulkImportExecuted({
+				mapping,
+				matchedCount: result.updatedCount,
+				createdCount: result.successCount,
+				skippedCount: result.skippedCount,
+				totalRows: parsed.rows.length,
+				workspaceId,
+				actorId,
+			})
+		}
 	}
 
 	run().catch(async (err) => {
