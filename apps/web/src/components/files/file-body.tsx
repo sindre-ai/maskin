@@ -216,6 +216,7 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 						<AnnotationOverlay
 							html={text}
 							name={file.name}
+							artifactId={file.id}
 							annotations={annotations}
 							onAnnotationsChange={setAnnotations}
 						/>

@@ -1,4 +1,3 @@
-// @vitest-environment node
 import { injectScript } from '@/components/files/annotation-overlay'
 import { describe, expect, it } from 'vitest'
 

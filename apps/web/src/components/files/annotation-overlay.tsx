@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
+import { trackPinCreated } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
 import { Check, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -17,6 +18,7 @@ export interface Annotation {
 interface AnnotationOverlayProps {
 	html: string
 	name: string
+	artifactId: string
 	annotations: Annotation[]
 	onAnnotationsChange: (annotations: Annotation[]) => void
 }
@@ -73,6 +75,7 @@ export function injectScript(html: string): string {
 export function AnnotationOverlay({
 	html,
 	name,
+	artifactId,
 	annotations,
 	onAnnotationsChange,
 }: AnnotationOverlayProps) {
@@ -100,6 +103,15 @@ export function AnnotationOverlay({
 				selector: string
 				bounds: { x: number; y: number; w: number; h: number }
 			}
+			const target = annotations.find((a) => a.id === id)
+			if (target) {
+				trackPinCreated({
+					pin_id: id,
+					selector: selector ?? '',
+					artifact_id: artifactId,
+					pin_index: target.pinNumber,
+				})
+			}
 			onAnnotationsChange(
 				annotations.map((a) =>
 					a.id === id ? { ...a, selector: selector ?? '', bounds: bounds ?? a.bounds } : a,
@@ -108,7 +120,7 @@ export function AnnotationOverlay({
 		}
 		window.addEventListener('message', onMessage)
 		return () => window.removeEventListener('message', onMessage)
-	}, [annotations, onAnnotationsChange])
+	}, [annotations, onAnnotationsChange, artifactId])
 
 	const placePin = useCallback(
 		(clientX: number, clientY: number) => {
