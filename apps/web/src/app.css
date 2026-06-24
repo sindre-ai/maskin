@@ -278,9 +278,11 @@
 }
 
 @layer utilities {
-	/* Full-contrast prose for agent output — must be in @layer utilities (not
-	   components) so these rules outrank prose-p:text-muted-foreground, which
-	   the prose plugin emits in the utilities layer. */
+	/* Full-contrast prose: @tailwindcss/typography sets paragraph/list-item color
+	   to var(--tw-prose-body), which resolves to a muted tone inside .prose.
+	   The compound selector (.agent-output p/li) has higher specificity than the
+	   plugin's bare element rules, so it wins. Keep in @layer utilities (not base)
+	   so inline Tailwind utilities can still override if needed. */
 	.agent-output p,
 	.agent-output li {
 		color: var(--foreground);

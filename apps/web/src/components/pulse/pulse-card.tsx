@@ -1,4 +1,4 @@
-import { MarkdownContent } from '@/components/shared/markdown-content'
+import { AgentOutput } from '@/components/shared/agent-output'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -212,7 +212,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				</CardTitle>
 				{notification.content && (
 					<div className="text-sm text-muted-foreground">
-						<MarkdownContent content={notification.content} />
+						<AgentOutput content={notification.content} />
 					</div>
 				)}
 			</CardHeader>
@@ -220,7 +220,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				{/* Meta info */}
 				{metaText && (
 					<div className="text-xs text-muted-foreground">
-						<MarkdownContent content={metaText} size="xs" />
+						<AgentOutput content={metaText} size="xs" />
 					</div>
 				)}
 
@@ -263,7 +263,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				{/* Agent suggestion */}
 				{suggestion && (
 					<div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
-						<MarkdownContent content={suggestion} />
+						<AgentOutput content={suggestion} />
 					</div>
 				)}
 
