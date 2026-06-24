@@ -1,12 +1,12 @@
 import { AgentOutput } from '@/components/shared/agent-output'
 import type { SessionLogResponse } from '@/lib/api'
+import { type ChatEvent, parseChatLine } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
-import { type SindreEvent, parseSindreLine } from '@/lib/sindre-stream'
 import { ChevronDown, ChevronRight, Settings, User, Wrench } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 type TranscriptItem =
-	| { kind: 'event'; event: SindreEvent; logId: number }
+	| { kind: 'event'; event: ChatEvent; logId: number }
 	| { kind: 'system-line'; text: string; logId: number }
 	| { kind: 'stderr'; text: string; logId: number }
 	| { kind: 'plain-stdout'; text: string; logId: number }
@@ -22,7 +22,7 @@ export function buildSessionTranscript(logs: SessionLogResponse[]): TranscriptIt
 			items.push({ kind: 'system-line', text: log.content, logId: log.id })
 			continue
 		}
-		const events = parseSindreLine(log.content, { includeUser: true })
+		const events = parseChatLine(log.content, { includeUser: true })
 		if (events.length === 0) continue
 		for (const event of events) {
 			if (event.kind === 'debug') {
@@ -41,7 +41,7 @@ export function getSessionResultDisplay(
 	for (let i = logs.length - 1; i >= 0; i--) {
 		const log = logs[i]
 		if (log.stream !== 'stdout') continue
-		const events = parseSindreLine(log.content)
+		const events = parseChatLine(log.content)
 		for (const event of events) {
 			if (event.kind === 'result' && event.text) {
 				return { text: event.text, isError: event.isError }
@@ -64,7 +64,7 @@ export function isSessionIdleAwaitingInput(logs: SessionLogResponse[]): boolean 
 	for (let i = logs.length - 1; i >= 0; i--) {
 		const log = logs[i]
 		if (log.stream !== 'stdout') continue
-		const events = parseSindreLine(log.content, { includeUser: true })
+		const events = parseChatLine(log.content, { includeUser: true })
 		if (events.length === 0) continue
 		const last = events[events.length - 1]
 		return last.kind === 'result'
@@ -85,7 +85,7 @@ export function getLatestActivityPreview(logs: SessionLogResponse[]): string | n
 		const log = logs[i]
 		if (log.stream === 'stderr') return truncate(log.content, 80)
 		if (log.stream !== 'stdout') continue
-		const events = parseSindreLine(log.content, { includeUser: true })
+		const events = parseChatLine(log.content, { includeUser: true })
 		for (let j = events.length - 1; j >= 0; j--) {
 			const event = events[j]
 			const summary = describeEvent(event)
@@ -95,7 +95,7 @@ export function getLatestActivityPreview(logs: SessionLogResponse[]): string | n
 	return null
 }
 
-function describeEvent(event: SindreEvent): string | null {
+function describeEvent(event: ChatEvent): string | null {
 	switch (event.kind) {
 		case 'text':
 			return truncate(event.text.replace(/\s+/g, ' ').trim(), 80) || null
@@ -152,7 +152,7 @@ function TranscriptRow({ item }: { item: TranscriptItem }) {
 	return <EventBlock event={item.event} />
 }
 
-function EventBlock({ event }: { event: SindreEvent }) {
+function EventBlock({ event }: { event: ChatEvent }) {
 	switch (event.kind) {
 		case 'text':
 			return <AssistantTextBlock text={event.text} />

@@ -51,10 +51,10 @@ function ObjectsApp() {
 		[callTool],
 	)
 
-	const handleUpdateOwner = useCallback(
-		(obj: ObjectResponse) => async (owner: string | null) => {
-			setLocalObject({ ...obj, owner })
-			const result = await callTool('update_objects', { updates: [{ id: obj.id, owner }] })
+	const handleUpdateDriver = useCallback(
+		(obj: ObjectResponse) => async (driver: string | null) => {
+			setLocalObject({ ...obj, driver })
+			const result = await callTool('update_objects', { updates: [{ id: obj.id, driver }] })
 			const updated = extractFirstUpdatedObject(result)
 			if (updated) setLocalObject(updated)
 		},
@@ -96,7 +96,7 @@ function ObjectsApp() {
 		onUpdateTitle: handleUpdateTitle(obj),
 		onUpdateContent: handleUpdateContent(obj),
 		onUpdateStatus: handleUpdateStatus(obj),
-		onUpdateOwner: handleUpdateOwner(obj),
+		onUpdateDriver: handleUpdateDriver(obj),
 		onDelete: handleDelete(obj),
 	})
 
@@ -131,7 +131,7 @@ function ObjectDocument({
 		onUpdateTitle: (title: string) => Promise<void>
 		onUpdateContent: (content: string) => Promise<void>
 		onUpdateStatus: (status: string) => Promise<void>
-		onUpdateOwner: (owner: string | null) => Promise<void>
+		onUpdateDriver: (driver: string | null) => Promise<void>
 		onDelete: () => Promise<void>
 	}
 }) {
@@ -147,7 +147,7 @@ function ObjectDocument({
 				onUpdateTitle={handlers.onUpdateTitle}
 				onUpdateContent={handlers.onUpdateContent}
 				onUpdateStatus={handlers.onUpdateStatus}
-				onUpdateOwner={handlers.onUpdateOwner}
+				onUpdateDriver={handlers.onUpdateDriver}
 				onDelete={handlers.onDelete}
 			/>
 		</div>

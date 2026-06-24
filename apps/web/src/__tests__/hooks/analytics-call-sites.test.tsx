@@ -57,7 +57,7 @@ function buildObject(overrides: Partial<ObjectResponse> & { id: string }): Objec
 		content: null,
 		status: 'todo',
 		metadata: null,
-		owner: null,
+		driver: null,
 		activeSessionId: null,
 		createdBy: 'actor-1',
 		createdAt: null,
@@ -207,7 +207,7 @@ describe('useCreateSession — agent_session_started', () => {
 })
 
 describe('useCreateComment — comment_posted', () => {
-	it('emits comment_posted with is_reply and attachment_count derived from variables', async () => {
+	it('emits comment_posted with is_reply, attachment_count, and content derived from variables', async () => {
 		vi.mocked(api.events.create).mockResolvedValue({} as never)
 		const { Wrapper, queryClient } = makeWrapper()
 		queryClient.setQueryData(
@@ -218,7 +218,11 @@ describe('useCreateComment — comment_posted', () => {
 			wrapper: Wrapper,
 		})
 
-		result.current.mutate({ entity_id: 'bet-1', content: 'hi', parent_event_id: 42 })
+		result.current.mutate({
+			entity_id: 'bet-1',
+			content: 'first line\nsecond line',
+			parent_event_id: 42,
+		})
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
 		expect(trackCommentPosted).toHaveBeenCalledWith({
@@ -226,6 +230,7 @@ describe('useCreateComment — comment_posted', () => {
 			entity_type: 'bet',
 			is_reply: true,
 			attachment_count: 0,
+			content: 'first line\nsecond line',
 			flow_id: null,
 		})
 	})

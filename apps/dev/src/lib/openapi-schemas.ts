@@ -1,11 +1,11 @@
 import { z } from '@hono/zod-openapi'
-import { actorListItemSchema, triggerResponseSchema } from '@maskin/shared'
+import { actorListItemSchema, agentStateSchema, triggerResponseSchema } from '@maskin/shared'
 import { apiErrorSchema } from './errors'
 
 // Re-exported so existing route handlers keep their `from '../lib/openapi-schemas'`
 // import path; the canonical definitions live in `@maskin/shared` so the MCP
 // server and web client consume the same fields without redeclaring them.
-export { actorListItemSchema, triggerResponseSchema }
+export { actorListItemSchema, agentStateSchema, triggerResponseSchema }
 
 /**
  * JSON-compatible schema for JSONB fields in OpenAPI response schemas.
@@ -41,7 +41,7 @@ export const objectResponseSchema = z.object({
 	content: z.string().nullable(),
 	status: z.string(),
 	metadata: jsonbField,
-	owner: z.string().uuid().nullable(),
+	driver: z.string().uuid().nullable(),
 	activeSessionId: z.string().uuid().nullable(),
 	activeSessionCurrentActivity: z.string().nullable().optional(),
 	createdBy: z.string().uuid(),
@@ -67,8 +67,11 @@ export const actorResponseSchema = z.object({
 	llm_provider: z.string().nullable(),
 	llm_config: jsonbField,
 	isSystem: z.boolean(),
+	agentState: agentStateSchema,
+	agentStateUpdatedAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	installedPackageId: z.string().uuid().nullable().optional(),
 })
 
 export const actorWithKeySchema = actorResponseSchema.extend({
@@ -84,6 +87,7 @@ export const workspaceResponseSchema = z.object({
 	id: z.string().uuid(),
 	name: z.string(),
 	settings: jsonbField.transform((v) => v ?? {}),
+	onboardingEnabled: z.boolean(),
 	createdBy: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),

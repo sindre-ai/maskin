@@ -9,7 +9,7 @@ export const graphNodeSchema = z.object({
 	content: z.string().optional(),
 	status: z.string(),
 	metadata: safeMetadataSchema.optional(),
-	owner: z.string().uuid().optional(),
+	driver: z.string().uuid().optional(),
 })
 
 export const graphEdgeSchema = z.object({

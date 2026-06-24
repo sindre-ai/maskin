@@ -1,6 +1,18 @@
 import { z } from 'zod'
 import { objectTypeSchema } from './objects'
 
+// Sentinel slot for the Objects page's "All" tab, which has no concrete
+// object type but still needs a per-actor row to persist display-panel
+// state (column visibility, etc.). The double-underscore prefix is
+// unreachable through `objectTypeSchema` (which requires `[a-z]` start),
+// so this can never collide with a real workspace-defined type.
+export const ALL_TYPES_KEY = '__all__'
+
+// Accepts a real object type OR the All-tab sentinel. Used only on the
+// user-display-settings endpoint — the rest of the codebase keeps the
+// strict `objectTypeSchema`.
+export const displaySettingsTypeKeySchema = z.union([objectTypeSchema, z.literal(ALL_TYPES_KEY)])
+
 // Bounded shape the Display panel writes. Each field maps 1:1 to a panel
 // section (View, Ordering, Grouping, Filters, Properties). Constraining
 // `settings` to this shape caps the JSON payload size at the boundary —
@@ -24,7 +36,7 @@ export const displaySettingsBodySchema = z
 		filters: z
 			.object({
 				status: filterStringSchema.optional(),
-				owner: filterStringSchema.optional(),
+				driver: filterStringSchema.optional(),
 			})
 			.strict()
 			.optional(),
@@ -38,7 +50,7 @@ export const displaySettingsBodySchema = z
 	.strict()
 
 export const userDisplaySettingsParamsSchema = z.object({
-	object_type: objectTypeSchema,
+	object_type: displaySettingsTypeKeySchema,
 })
 
 export const upsertUserDisplaySettingsBodySchema = z.object({
@@ -46,7 +58,7 @@ export const upsertUserDisplaySettingsBodySchema = z.object({
 })
 
 export const userDisplaySettingsResponseSchema = z.object({
-	object_type: objectTypeSchema,
+	object_type: displaySettingsTypeKeySchema,
 	name: z.string(),
 	settings: displaySettingsBodySchema,
 	updated_at: z.string(),

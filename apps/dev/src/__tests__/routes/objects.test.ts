@@ -406,23 +406,23 @@ describe('Objects Routes', () => {
 			expect(body.events[1].description).toBe('proposed bet')
 		})
 
-		it('resolves actor names for owner-change events in description', async () => {
+		it('resolves actor names for driver-change events in description', async () => {
 			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
 			const alice = { id: '00000000-0000-0000-0000-0000000000a1', name: 'Alice' }
 			const bob = { id: '00000000-0000-0000-0000-0000000000b2', name: 'Bob' }
-			const ownerChange = buildEvent({
+			const driverChange = buildEvent({
 				workspaceId: wsId,
 				entityType: 'bet',
 				entityId: obj.id,
 				action: 'updated',
 				data: {
-					previous: { owner: alice.id },
-					updated: { owner: bob.id },
+					previous: { driver: alice.id },
+					updated: { driver: bob.id },
 				},
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
 			// 1: object, 2: relationships (empty → skips connected_objects fetch), 3: events, 4: actors
-			mockResults.selectQueue = [[obj], [], [ownerChange], [alice, bob]]
+			mockResults.selectQueue = [[obj], [], [driverChange], [alice, bob]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -431,7 +431,7 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.events).toHaveLength(1)
-			expect(body.events[0].description).toBe('changed owner from Alice to Bob')
+			expect(body.events[0].description).toBe('changed driver from Alice to Bob')
 		})
 
 		it('returns 404 when object not found', async () => {

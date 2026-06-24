@@ -127,7 +127,7 @@ describe('readLedgerTail', () => {
 describe('buildWorkspaceStartupBlock', () => {
 	const args = {
 		workspaceId: 'ws-abc',
-		frontendUrl: 'https://maskin.sindre.ai',
+		frontendUrl: 'https://maskin.io',
 	}
 
 	it('describes the workspace terrain: briefing file, bets, tools, verdict, learning', () => {
@@ -151,17 +151,17 @@ describe('buildWorkspaceStartupBlock', () => {
 		// no workspace segment). Pin the correct format into the briefing so
 		// agents don't have to guess.
 		const block = buildWorkspaceStartupBlock(args)
-		expect(block).toContain('[title](https://maskin.sindre.ai/ws-abc/objects/<id>)')
+		expect(block).toContain('[title](https://maskin.io/ws-abc/objects/<id>)')
 		expect(block).not.toContain('app.maskin.ai')
 	})
 
 	it('strips a trailing slash from the frontend URL before embedding it', () => {
 		const block = buildWorkspaceStartupBlock({
 			workspaceId: 'ws-abc',
-			frontendUrl: 'https://maskin.sindre.ai/',
+			frontendUrl: 'https://maskin.io/',
 		})
-		expect(block).toContain('https://maskin.sindre.ai/ws-abc/objects/<id>')
-		expect(block).not.toContain('maskin.sindre.ai//ws-abc')
+		expect(block).toContain('https://maskin.io/ws-abc/objects/<id>')
+		expect(block).not.toContain('maskin.io//ws-abc')
 	})
 })
 

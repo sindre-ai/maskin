@@ -118,6 +118,7 @@ describe('getStaticColumns', () => {
 					email: null,
 					description: null,
 					isSystem: false,
+					agentState: 'idle' as const,
 				},
 				{
 					id: 'actor-2',
@@ -126,17 +127,18 @@ describe('getStaticColumns', () => {
 					email: null,
 					description: null,
 					isSystem: false,
+					agentState: 'idle' as const,
 				},
 			],
 		})
-		const data = [buildObjectResponse({ owner: 'actor-2', createdBy: 'actor-1' })]
+		const data = [buildObjectResponse({ driver: 'actor-2', createdBy: 'actor-1' })]
 		render(<TestTable data={data} columns={columns} />)
 		expect(screen.getByText('Bob')).toBeInTheDocument()
 	})
 
 	it('shows dash when owner is null', () => {
 		const columns = getStaticColumns({ workspaceId: 'ws-1' })
-		const data = [buildObjectResponse({ owner: null })]
+		const data = [buildObjectResponse({ driver: null })]
 		render(<TestTable data={data} columns={columns} />)
 		// Owner cell renders a dash character
 		const dashes = screen.getAllByText('—')

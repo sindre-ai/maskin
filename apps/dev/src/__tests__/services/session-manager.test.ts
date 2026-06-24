@@ -198,7 +198,7 @@ describe('SessionManager', () => {
 			const agent = {
 				id: session.actorId,
 				type: 'agent',
-				systemPrompt: 'You are Sindre.',
+				systemPrompt: 'You are Workspace Coach.',
 				llmProvider: null,
 				llmConfig: null,
 				apiKey: 'ank_test_agent_key',
@@ -511,6 +511,83 @@ describe('SessionManager', () => {
 			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
 		})
 
+		describe('Slack auto-inject + xoxb- guard', () => {
+			const slackProviderConfig = {
+				config: {
+					name: 'slack',
+					mcp: {
+						envKey: 'SLACK_BOT_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+							headers: {
+								Authorization: 'Bearer ${MASKIN_API_KEY}',
+								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+							},
+						},
+					},
+				},
+			}
+
+			it('injects SLACK_BOT_TOKEN and the auto-inject MCP server when the stored token is a bot token', async () => {
+				const integration = buildIntegration({ provider: 'slack', externalId: 'T-abc' })
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('xoxb-real-bot-token')
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBe('xoxb-real-bot-token')
+				expect(createArgs.env.MCP_SERVERS_JSON).toBeDefined()
+				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, { type: string; url: string }>
+				}
+				expect(parsed.mcpServers['integration-slack']).toEqual({
+					type: 'http',
+					url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+					headers: {
+						Authorization: 'Bearer ${MASKIN_API_KEY}',
+						'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+					},
+				})
+			})
+
+			it('refuses to inject when the stored Slack token is not a bot (xoxb-) token — guards against posting as a user', async () => {
+				const integration = buildIntegration({ provider: 'slack', externalId: 'T-abc' })
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+				// The stored credential is a user token — wrong scopes, do not inject
+				mockGetValidToken.mockResolvedValueOnce('xoxp-user-token')
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBeUndefined()
+				const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+					? Object.keys(
+							(
+								JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+									mcpServers: Record<string, unknown>
+								}
+							).mcpServers,
+						)
+					: []
+				expect(mcpKeys).not.toContain('integration-slack')
+			})
+		})
+
 		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {
 			const integration = buildIntegration({
 				provider: 'github',
@@ -779,7 +856,7 @@ describe('SessionManager', () => {
 			const agent = {
 				id: session.actorId,
 				type: 'agent',
-				systemPrompt: 'You are Sindre.',
+				systemPrompt: 'You are Workspace Coach.',
 				llmProvider: null,
 				llmConfig: null,
 				apiKey: 'ank_test_agent_key',
@@ -1073,16 +1150,19 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[orphan], // 2. runningSessions (idle check)
-				[], // 3. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
+				[], // 2. stuckAgentSessions (no stuck sessions)
+				[orphan], // 3. runningSessions (idle check)
+				[], // 4. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
+				// markSessionFailedAfterContainerLoss → existing session select (new in this branch):
+				[], // 5. existing session lookup (undefined → skip telemetry, update still fires)
 				// markSessionFailedAfterContainerLoss → drainQueue → hasCapacity:
-				[{ settings: {} }], // 4. drainQueue > workspace lookup
-				[{ count: 0 }], // 5. drainQueue > running count
-				[], // 6. drainQueue > nextQueued (empty = break)
-				[], // 7. expiredPaused
-				[], // 8. stuckPending
-				[], // 9. stuckStarting
-				[], // 10. final queuedSessions
+				[{ settings: {} }], // 6. drainQueue > workspace lookup
+				[{ count: 0 }], // 7. drainQueue > running count
+				[], // 8. drainQueue > nextQueued (empty = break)
+				[], // 9. expiredPaused
+				[], // 10. stuckPending
+				[], // 11. stuckStarting
+				[], // 12. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
@@ -1096,14 +1176,15 @@ describe('SessionManager', () => {
 			expect(failedUpdate).toBeDefined()
 		})
 
-		it('skips auto-pause when inspect reports the container is no longer running', async () => {
-			// Container died but the exit watcher hasn't noticed yet (e.g., inspect was
-			// transiently failing). The watchdog should leave the session alone this tick
-			// instead of pausing — watchContainerExit / the timeout reaper will catch it.
+		it('skips auto-pause when inspect reports the container is no longer running (agent-server session)', async () => {
+			// For agent-server sessions the containerId is a remote msb sandbox name —
+			// local Docker inspect is meaningless. The watchdog must skip (continue)
+			// instead of marking failed; the agent-server's exit callback owns cleanup.
 			const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
 			const stale = buildSession({
 				status: 'running',
 				containerId: 'container-dead',
+				agentServerId: 'server-1',
 				startedAt: twentyMinutesAgo,
 				interactive: false,
 			})
@@ -1112,19 +1193,21 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[stale], // 2. runningSessions
-				[], // 3. lastLog (empty → falls back to startedAt, which is >10min old)
-				[], // 4. expiredPaused
-				[], // 5. stuckPending
-				[], // 6. stuckStarting
-				[], // 7. final queuedSessions
+				[], // 2. stuckAgentSessions (no stuck sessions)
+				[stale], // 3. runningSessions
+				[], // 4. lastLog (empty → falls back to startedAt, which is >10min old)
+				// isContainerAlive → inspect mock returns { running: false } (consumed here)
+				// stale.agentServerId is set → continue, no markSessionFailedAfterContainerLoss
+				[], // 5. expiredPaused
+				[], // 6. stuckPending
+				[], // 7. stuckStarting
+				[], // 8. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
 
 			expect(pauseSpy).not.toHaveBeenCalled()
-			// No 'failed' update should have happened either — we explicitly defer to
-			// watchContainerExit so the session isn't yanked out from under it.
+			// No 'failed' update — agent-server sessions are deferred to the server's exit callback.
 			const failedUpdate = calls.updates.find(
 				(u): u is { status: string } =>
 					typeof u === 'object' && u !== null && (u as { status?: string }).status === 'failed',
@@ -1219,6 +1302,93 @@ describe('SessionManager', () => {
 					(i as { content?: string }).content === 'recovered-chunk',
 			)
 			expect(recovered).toBeDefined()
+		})
+	})
+
+	describe('handleCompletion() — agentState sync', () => {
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(null)
+		})
+
+		it('sets agentState to idle when session completes (exitCode 0)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate?.agentState).toBe('idle')
+		})
+
+		it('sets agentState to failed when session fails (exitCode non-zero)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 1)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate?.agentState).toBe('failed')
+		})
+
+		it('does not touch agentState when the agent has another active session', async () => {
+			const session = buildSession({ status: 'running' })
+			const otherSession = buildSession({ actorId: session.actorId, status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[otherSession], // hasOtherActiveSessions: agent still has live work
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate).toBeUndefined()
 		})
 	})
 

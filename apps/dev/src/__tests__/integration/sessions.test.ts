@@ -44,6 +44,7 @@ function createMockSessionManager(database: Database) {
 				triggerId?: string
 				createdBy: string
 				autoStart?: boolean
+				sourceSessionId?: string
 			},
 		) {
 			const [session] = await database
@@ -56,6 +57,7 @@ function createMockSessionManager(database: Database) {
 					actionPrompt: params.actionPrompt,
 					config: params.config ?? {},
 					createdBy: params.createdBy,
+					sourceSessionId: params.sourceSessionId,
 				})
 				.returning()
 
@@ -500,6 +502,60 @@ describe('Sessions Integration', () => {
 
 			const res = await app.request(jsonGet(`/api/sessions/${randomUUID()}/logs`, headers))
 			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('sourceSessionId', () => {
+		it('stores source_session_id on the session row and returns it', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			// Create a source session directly in the DB.
+			const sourceSession = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+
+			const createRes = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions',
+					buildCreateSessionBody({
+						actor_id: agentActorId,
+						auto_start: false,
+						source_session_id: sourceSession.id,
+					}),
+					headers,
+				),
+			)
+			expect(createRes.status).toBe(201)
+			const created = await createRes.json()
+			expect(created.sourceSessionId).toBe(sourceSession.id)
+
+			// Confirm it's persisted in the DB row.
+			const [row] = await db
+				.select({ sourceSessionId: sessions.sourceSessionId })
+				.from(sessions)
+				.where(eq(sessions.id, created.id))
+			expect(row.sourceSessionId).toBe(sourceSession.id)
+		})
+
+		it('returns 400 when source_session_id is not a valid UUID', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions',
+					buildCreateSessionBody({
+						actor_id: agentActorId,
+						auto_start: false,
+						source_session_id: 'not-a-uuid',
+					}),
+					headers,
+				),
+			)
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('VALIDATION_ERROR')
 		})
 	})
 
