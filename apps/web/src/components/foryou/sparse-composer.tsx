@@ -39,6 +39,7 @@ export function SparseComposer({ itemsCount }: SparseComposerProps) {
 
 	const onSend = useCallback(
 		async (content: string) => {
+			setChipError(null)
 			const attachments: ChatAttachment[] = []
 			if (selection.agent) {
 				attachments.push({ kind: 'agent', id: selection.agent.id, name: selection.agent.name })

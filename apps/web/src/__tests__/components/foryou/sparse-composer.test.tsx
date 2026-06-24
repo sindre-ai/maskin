@@ -24,7 +24,7 @@ vi.mock('@/lib/analytics', () => ({
 
 // Minimal stub — Composer's own tests cover its internals (Enter, error display, etc.)
 vi.mock('@/components/chat/chat', () => ({
-	Composer: ({ onSend, placeholder, textareaLabel, disabled }: ComposerProps) => {
+	Composer: ({ onSend, placeholder, textareaLabel, disabled, externalError }: ComposerProps) => {
 		const [value, setValue] = useState('')
 		return (
 			<form
@@ -42,6 +42,7 @@ vi.mock('@/components/chat/chat', () => ({
 					disabled={disabled}
 				/>
 				<button type="submit" aria-label="Send message" disabled={disabled || !value.trim()} />
+				{externalError ? <p role="alert">{externalError}</p> : null}
 			</form>
 		)
 	},
@@ -151,5 +152,20 @@ describe('SparseComposer', () => {
 		await waitFor(() => expect(openWithContextMock).toHaveBeenCalled())
 		expect(trackSubmitMock).not.toHaveBeenCalled()
 		await waitFor(() => expect(chip).not.toBeDisabled())
+	})
+
+	it('clears chipError on successful text-input submit after a prior chip failure', async () => {
+		openWithContextMock.mockRejectedValueOnce(new Error('sidebar error'))
+		openWithContextMock.mockResolvedValue(undefined)
+		const user = userEvent.setup()
+		render(<SparseComposer itemsCount={0} />)
+		// Trigger a chip error.
+		await user.click(screen.getByRole('button', { name: 'Help me plan a new bet' }))
+		await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+		// Successful text-input submit should clear the error.
+		await user.type(getTextarea(), 'hello')
+		await user.click(screen.getByRole('button', { name: 'Send message' }))
+		await waitFor(() => expect(openWithContextMock).toHaveBeenCalledTimes(2))
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 	})
 })
