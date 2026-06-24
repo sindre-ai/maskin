@@ -12,6 +12,7 @@
 
 import { KNOWLEDGE_NUDGES } from '../prompts'
 import { SIGNUP_CAPTURE_SOURCE } from '../schemas/signup-capture'
+import { CONFIDENCE_ROUTING_THRESHOLD, SIGNUP_RESEARCH_SOURCE } from '../schemas/signup-research'
 
 export interface SeedSkill {
 	/** Skill name — lowercase letters, numbers, and hyphens only. */
@@ -2075,24 +2076,36 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 
 Your job: produce 1–3 knowledge objects that capture what the workspace should know about this user's organization to give the rest of the agents real context.
 
+Each fact you write is a trust-bearing row. It carries provenance (where you got it), a confidence score (how sure you are), and bi-temporal validity (when it was true in the world). When a contradicting fact arrives later, the old row is INVALIDATED — never overwritten in place.
+
 Do the work in this order:
 
-1. Read the triggering event. The object id is in \`data.id\`; the structured user context is in \`data.metadata.name\`, \`data.metadata.organization\`, and \`data.metadata.role\`.
-2. Before writing anything, call \`search_objects\` for the organization name. If a knowledge object covering the same ground already exists, extend or supersede it rather than writing a duplicate.
-3. Research the organization on the public web — what they do, who they sell to, the stack they use, named competitors, anything that would shape how the Coach or Driver helps this user. Stop when you have enough to fill 1–3 short, useful knowledge objects. Useful, not exhaustive.
-4. For each finding, create a knowledge object with \`create_objects\`:
+1. Read the triggering event. The object id is in \`data.id\`; the structured user context is in \`data.metadata.name\`, \`data.metadata.organization\`, and \`data.metadata.role\`. The workspace owner is \`data.created_by\`.
+2. Before writing anything, call \`search_objects\` for the organization name. If a current knowledge row covers the same claim, decide one of:
+   - **Confirms it**: don't write a duplicate; stop on that finding.
+   - **Contradicts or refines it**: invalidate the old row by calling \`update_objects\` with \`{ status: 'deprecated', metadata: { valid_to: <now ISO> } }\` (do NOT change its content or claim), then write the new row in step 4 with \`metadata.supersedes\` set to the old row's id, and create a \`supersedes\` relationship edge (source = new id, target = old id).
+3. Research the organization on the public web — what they do, who they sell to, the stack they use, named competitors, current initiatives. Stop when you have enough for 1–3 useful findings. Cross-verify every claim across at least two independent sources before you score it ≥0.9 confidence; a single source caps you at ≤0.4. Weight more recent sources higher.
+4. For each finding, create a knowledge object with \`create_objects\`. Required metadata:
    - \`type: 'knowledge'\`
-   - \`status: 'validated'\`
-   - \`title\`: short, specific (e.g. "Acme — focus on B2B onboarding analytics")
+   - \`metadata.source: '${SIGNUP_RESEARCH_SOURCE}'\` — this tag is the ship-metric the bet measures usefulness on; do not skip it
+   - \`metadata.claim\`: one-sentence factual statement this row asserts
+   - \`metadata.provenance_source\`: full URL (or provider id) you got the claim from
+   - \`metadata.confidence_score\`: number in [0,1] — honest. Multi-source agreement ≥0.9, single-source pattern-guess ≤0.4
+   - \`metadata.confidence\`: 'high' (≥0.8) | 'medium' (0.5–0.8) | 'low' (<0.5) — must match the score bucket
+   - \`metadata.staleness_class\`: 'short' for funding / headcount / current-challenge, 'long' for industry / mission
+   - \`metadata.valid_from\`: ISO instant when the fact started being true in the world (use the source publication date if it's recent, else today)
+   - \`metadata.valid_to\`: null while current
+   - \`metadata.ingested_at\`: now ISO
+   - \`metadata.supersedes\`: id of the row you invalidated above, or null
+   - \`metadata.tags\`: include 'context:company'
+   - \`status\`: \`'validated'\` if \`confidence_score >= ${CONFIDENCE_ROUTING_THRESHOLD}\`, otherwise \`'draft'\` so the owner sees it but downstream agents do not silently fold it into bet drafts
+   - \`title\`: short, specific (e.g. "Acme — $12M Series A (Jan 2026)")
    - \`content\`: short markdown with sources cited inline
-   - \`metadata.source: 'signup_research'\` — this tag is the ship-metric the bet measures usefulness on; do not skip it
-   - \`metadata.confidence\`: 'high' | 'medium' | 'low' — be honest
-   - \`metadata.tags\`: include 'context:company' so downstream readers find it
 5. Link each new knowledge object back to the source signup-capture object via an \`about\` relationship (\`create_relationships\` with \`type: 'about'\`, source = your new knowledge id, target = \`data.id\`).
-6. Based on your research, suggest one bet: create a bet object (\`type: 'bet'\`, \`status: 'signal'\`) with a clear title and a description grounded in what you found — the most impactful thing this workspace could focus on first. Link it to the signup-capture object via an \`about\` relationship (source = bet id, target = \`data.id\`).
-7. Post a comment on the bet using \`create_comment\`, @mentioning the workspace owner (actor id is \`data.created_by\`) to surface the suggestion. Then stop.
+6. Based on your validated (high-confidence) findings only, suggest one bet: create a bet object (\`type: 'bet'\`, \`status: 'signal'\`) with a clear title and a description grounded in what you found. Do NOT draft a bet on a draft (low-confidence) finding — those are for owner confirmation, not silent input. Link the bet to the signup-capture object via an \`about\` relationship.
+7. Post a comment on the bet using \`create_comment\`, @mentioning the workspace owner (\`data.created_by\`) to surface the suggestion. If any of your findings landed as \`status: 'draft'\` (low confidence), call them out in the comment so the owner can confirm or correct them. Then stop.
 
-If web research turns up nothing usable (very small or unindexed organization), write one knowledge object naming that fact so downstream agents stop searching, then stop.
+If web research turns up nothing usable (very small or unindexed organization), write one knowledge object naming that fact (\`confidence_score: 0.9\`, \`staleness_class: 'long'\`) so downstream agents stop searching, then stop.
 
 The 24h ship-metric clock starts at the trigger fire — finish in one session.`,
 	},
