@@ -14,6 +14,7 @@ import {
 } from './providers/linear/config'
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as posthogConfig } from './providers/posthog/config'
+import { reapSlackUserLinks } from './providers/slack/account-link'
 import {
 	config as slackConfig,
 	slackExtractDeliveryId,
@@ -48,6 +49,10 @@ providers.set('slack', {
 	webhookPreHandler: slackWebhookPreHandler,
 	extractDeliveryId: slackExtractDeliveryId,
 	webhookFanOut: slackWebhookFanOut,
+	// On disconnect, reap slack_user_links rows for this team/workspace pair so
+	// the next mention re-prompts (AC-T5). Best-effort — never blocks the
+	// disconnect even if the table read fails.
+	preDisconnect: reapSlackUserLinks,
 	// File downloads can blow past Slack's 3s ack budget; process them off the
 	// hot path. The delivery claim still happens sync so retries are deduped.
 	asyncProcessing: true,

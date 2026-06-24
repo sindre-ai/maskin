@@ -10,6 +10,7 @@ import type { IntegrationConfig } from '../../../types'
 import { TokenManager } from '../../oauth/token-manager'
 import { getProvider } from '../../registry'
 import type { NormalizedEvent, WebhookFanOutContext } from '../../types'
+import { maybePromptAccountLink } from './account-link'
 
 /**
  * Slack file object shape from Events API message payloads. Slack returns many
@@ -241,6 +242,57 @@ async function persistOne(
 }
 
 /**
+ * Trigger the account-link picker for `app_mention` and DM events from a Slack
+ * user we haven't linked yet. No-op for any other event type and for retries
+ * (the link table is the dedup contract). Pulls the integration row itself so
+ * the prompt path stays independent of the file-handling path below.
+ */
+async function maybePromptAccountLinkForMention(
+	ctx: WebhookFanOutContext,
+	db: Database,
+): Promise<void> {
+	const eventTypesThatPromptLink = new Set(['slack.app_mention', 'slack.direct_message'])
+	if (!eventTypesThatPromptLink.has(ctx.normalized.entityType)) return
+
+	const data = ctx.normalized.data as Record<string, unknown>
+	const eventEnvelope = data.event as Record<string, unknown> | undefined
+	if (!eventEnvelope) return
+	const slackUserId =
+		typeof eventEnvelope.user === 'string' ? (eventEnvelope.user as string) : undefined
+	const channelId =
+		typeof eventEnvelope.channel === 'string' ? (eventEnvelope.channel as string) : undefined
+	const slackTeamId = typeof data.team_id === 'string' ? (data.team_id as string) : undefined
+	const botId =
+		typeof eventEnvelope.bot_id === 'string' ? (eventEnvelope.bot_id as string) : undefined
+	const subtype = typeof eventEnvelope.subtype === 'string' ? eventEnvelope.subtype : undefined
+	// Skip the bot's own posts and edits / system messages — they cannot link.
+	if (botId) return
+	if (subtype && subtype !== 'file_share') return
+	if (!slackUserId || !channelId || !slackTeamId) return
+
+	const [integration] = await db
+		.select({
+			id: integrations.id,
+			credentials: integrations.credentials,
+		})
+		.from(integrations)
+		.where(eq(integrations.id, ctx.integrationId))
+		.limit(1)
+	if (!integration) return
+
+	const frontendUrl = process.env.FRONTEND_URL || 'https://maskin.io'
+	await maybePromptAccountLink({
+		db,
+		integrationId: integration.id,
+		integrationCredentials: integration.credentials,
+		slackTeamId,
+		slackUserId,
+		channelId,
+		frontendUrl,
+	})
+}
+
+/**
  * For Slack message events that include file attachments, download the files
  * from Slack with the bot token and persist them as Maskin file rows + S3 objects
  * before the event hits the trigger pipeline. The returned event carries a
@@ -252,10 +304,22 @@ async function persistOne(
  * unchanged — no behavior change for the vast majority of Slack events.
  */
 export async function slackWebhookFanOut(ctx: WebhookFanOutContext): Promise<NormalizedEvent[]> {
+	const db = ctx.db as Database
+
+	// First-touch account-link prompt: when an unlinked Slack user @mentions the
+	// bot or DMs it, post an ephemeral picker so the user can choose which
+	// Maskin workspace this Slack workspace should talk to (AC-U3, AC-U5).
+	// Best-effort — a failure here never drops the underlying event.
+	await maybePromptAccountLinkForMention(ctx, db).catch((err) => {
+		logger.warn('Slack fan-out: account-link prompt threw unexpectedly', {
+			integrationId: ctx.integrationId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	})
+
 	const slackFiles = extractSlackFiles(ctx.normalized.data)
 	if (!slackFiles) return [ctx.normalized]
 
-	const db = ctx.db as Database
 	const storage = ctx.storage as StorageProvider | undefined
 	if (!storage) {
 		logger.error('Slack fan-out missing storage provider; passing event through without files', {

@@ -28,6 +28,32 @@ describe('Slack provider config', () => {
 		}
 	})
 
+	// AC-T8: code-side scope alignment. The Marketplace listing is built from
+	// this array by a separate human follow-up; assert here that the brief's
+	// allow-list is satisfied and the `conversations.history`-equivalents are
+	// deliberately absent in phase 1.
+	it('requests every scope the bet brief calls out and excludes phase-1 history scopes', () => {
+		if (config.auth.type !== 'oauth2') throw new Error('unreachable')
+		const scopes = new Set(config.auth.config.scopes)
+		for (const required of [
+			'app_mentions:read',
+			'chat:write',
+			'chat:write.customize',
+			'commands',
+			'im:history',
+			'im:write',
+			'links:read',
+			'links:write',
+			'team:read',
+			'users:read',
+		]) {
+			expect(scopes.has(required)).toBe(true)
+		}
+		for (const excluded of ['channels:history', 'groups:history', 'mpim:history']) {
+			expect(scopes.has(excluded)).toBe(false)
+		}
+	})
+
 	it('has webhook config with timestamp scheme', () => {
 		const wh = config.webhook
 		expect(wh).toBeDefined()
