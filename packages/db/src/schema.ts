@@ -388,6 +388,47 @@ export const imports = pgTable(
 	],
 )
 
+// Per-row audit trail for bulk imports run with configurable dedup keys.
+// One row per CSV row resolved by the import processor — records the action
+// taken (created / updated / skipped / failed), the diff columns when an
+// existing object was updated, and the pre/post values for the diff. Powers
+// AC-U5 (per-import audit view) and AC-T4 (changed-column-only writes).
+//
+// Append-only by design: the FK to `imports` is `ON DELETE CASCADE` so the
+// audit trail follows the parent import's lifetime, and the table has no
+// `updated_at` — each row is the immutable record of a single attempted
+// upsert.
+export const importAuditRows = pgTable(
+	'import_audit_rows',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		importId: uuid('import_id')
+			.references(() => imports.id, { onDelete: 'cascade' })
+			.notNull(),
+		rowIndex: integer('row_index').notNull(),
+		// Nullable for `skipped` / `failed` outcomes where no object exists.
+		objectId: uuid('object_id'),
+		action: text('action').$type<'created' | 'updated' | 'skipped' | 'failed'>().notNull(),
+		// JSONB arrays / objects with sensible empty defaults so the writer
+		// can omit the field on `created` / `skipped` / `failed` outcomes
+		// without nullable juggling.
+		changedColumns: jsonb('changed_columns').notNull().default(sql`'[]'::jsonb`),
+		oldValues: jsonb('old_values').notNull().default(sql`'{}'::jsonb`),
+		newValues: jsonb('new_values').notNull().default(sql`'{}'::jsonb`),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('import_audit_rows_import_id_idx').on(t.importId),
+		check(
+			'import_audit_rows_action_check',
+			sql`${t.action} IN ('created', 'updated', 'skipped', 'failed')`,
+		),
+	],
+)
+
+export type ImportAuditRow = typeof importAuditRows.$inferSelect
+export type NewImportAuditRow = typeof importAuditRows.$inferInsert
+
 // ── MCP Telemetry ─────────────────────────────────────────────────────────
 //
 // Records the two events the MCP server emits on every response:

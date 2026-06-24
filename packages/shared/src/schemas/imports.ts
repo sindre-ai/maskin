@@ -26,6 +26,12 @@ export const typeMappingSchema = z.object({
 	objectType: z.string(),
 	columns: z.array(columnMappingSchema),
 	defaultStatus: z.string().optional(),
+	// Optional list of dedup keys used by the bulk-import matching engine.
+	// Each entry mirrors `columnMappingSchema.targetField` shape — either
+	// `title` (top-level column) or `metadata.<field>` (JSONB path). The
+	// import processor uses these to resolve matches before upsert; absent
+	// or empty means the user opted into the "create all as new" hatch.
+	dedupKeys: z.array(z.string()).optional(),
 })
 
 export const relationshipMappingSchema = z.object({
