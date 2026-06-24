@@ -176,3 +176,47 @@ describe('buildInvalidationPatch + supersede chain', () => {
 		expect(isValidAt({ metadata: {} }, '2026-06-23T00:00:00.000Z')).toBe(false)
 	})
 })
+
+describe('bi-temporal compare is offset-safe (regression for PR #847 CR follow-on)', () => {
+	// '2026-03-01T01:00:00+02:00' is the same real instant as '2026-02-28T23:00:00Z'.
+	// Lex-comparing the +02:00 string against a UTC asOf produces the wrong answer:
+	// the +02:00 string sorts AFTER any '2026-02-28T..Z' string, even though the
+	// real instant it represents is earlier. These tests pin the parse-and-compare
+	// behaviour so a later refactor can't silently regress to string compare.
+	const validFromPlus02 = '2026-03-01T01:00:00+02:00' // = 2026-02-28T23:00:00Z
+
+	it('isValidAt: a +02:00 row reads valid against a UTC asOf that is later in real time', () => {
+		const row = { metadata: { valid_from: validFromPlus02, valid_to: null } }
+		// asOf is 30 min after the real valid_from instant. Lex compare on the raw
+		// strings would say the +02:00 string is greater than '2026-02-28T23:30Z'
+		// and return false — Date.parse-based compare returns true.
+		expect(isValidAt(row, '2026-02-28T23:30:00.000Z')).toBe(true)
+	})
+
+	it('isValidAt: a +02:00 valid_to that has already elapsed in real time drops the row (lex compare would keep it)', () => {
+		// valid_to = 2026-02-28T22:00+02:00 = 2026-02-28T20:00Z (already past at asOf).
+		// As strings, '2026-02-28T22:00:00+02:00' sorts after '2026-02-28T21:00:00.000Z',
+		// so lex compare would say valid_to > asOf and keep the row "valid".
+		// Date.parse-based compare returns false — the row is past.
+		const row = {
+			metadata: {
+				valid_from: '2026-02-28T18:00:00.000Z',
+				valid_to: '2026-02-28T22:00:00+02:00',
+			},
+		}
+		expect(isValidAt(row, '2026-02-28T21:00:00.000Z')).toBe(false)
+	})
+
+	it('signupResearchInputSchema: rejects valid_to that is earlier in real time even when it lex-compares greater', () => {
+		// validFrom (Zulu) = 2026-02-28T23:30Z. validTo = 2026-03-01T01:00+02:00 = 2026-02-28T23:00Z.
+		// In real time validTo is BEFORE validFrom, so the schema must reject — even
+		// though string compare would put validTo after validFrom.
+		expect(() =>
+			signupResearchInputSchema.parse({
+				...baseInput,
+				validFrom: '2026-02-28T23:30:00.000Z',
+				validTo: validFromPlus02,
+			}),
+		).toThrow()
+	})
+})
