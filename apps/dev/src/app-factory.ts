@@ -28,6 +28,7 @@ import mcpRoutes from './routes/mcp'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
+import publicChangelogRoutes from './routes/public-changelog'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
@@ -154,6 +155,17 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// the configured-origin policy with credentials for the web app.
 	app.use('/mcp', cors())
 	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
+	// /v1/* is the public marketing-site contract. CORS is scoped to
+	// https://sindre.ai (and localhost for dev) — narrower than the wildcard
+	// /mcp policy because the only consumer in scope today is the marketing
+	// site. No credentials are passed, so wildcard + credentials safety
+	// concerns don't apply.
+	app.use(
+		'/v1/*',
+		cors({
+			origin: ['https://sindre.ai', 'http://localhost:5173', 'http://localhost:4321'],
+		}),
+	)
 	app.use('*', honoLogger())
 
 	app.use('*', async (c, next) => {
@@ -199,6 +211,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
 	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
+	app.route('/v1', publicChangelogRoutes)
 	app.route('/api/admin/landing-funnel', adminLandingFunnelRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
