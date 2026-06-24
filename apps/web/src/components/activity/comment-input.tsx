@@ -1,3 +1,4 @@
+import { MentionTypeahead } from '@/components/chat/mention-typeahead'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCreateComment } from '@/hooks/use-events'
@@ -82,11 +83,14 @@ export function CommentInput({
 		() => actors?.filter((a) => a.id !== actor?.id && !a.isSystem) ?? [],
 		[actors, actor?.id],
 	)
-	const filteredActors = useMemo(
-		() =>
-			mentionableActors.filter((a) => a.name.toLowerCase().includes(mentionFilter.toLowerCase())),
-		[mentionableActors, mentionFilter],
-	)
+	// Trim the needle to match MentionTypeahead's own .trim() so the parent's
+	// arrow-key cursor lines up with the rendered list.
+	const filteredActors = useMemo(() => {
+		const needle = mentionFilter.trim().toLowerCase()
+		return needle
+			? mentionableActors.filter((a) => a.name.toLowerCase().includes(needle))
+			: mentionableActors
+	}, [mentionableActors, mentionFilter])
 
 	const insertMention = useCallback(
 		(actorId: string, actorName: string) => {
@@ -402,29 +406,14 @@ export function CommentInput({
 				</Button>
 			</div>
 
-			{/* @mention autocomplete dropdown */}
-			{showMentions && filteredActors.length > 0 && (
-				<div className="absolute left-7 z-50 mt-1 max-h-48 w-56 overflow-auto rounded-md border border-border bg-popover p-1 shadow-md">
-					{filteredActors.map((a, i) => (
-						<button
-							key={a.id}
-							type="button"
-							className={cn(
-								'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm',
-								i === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
-							)}
-							onMouseDown={(e) => {
-								e.preventDefault()
-								insertMention(a.id, a.name)
-							}}
-							onMouseEnter={() => setSelectedIndex(i)}
-						>
-							<ActorAvatar name={a.name} type={a.type} size="sm" />
-							<span className="truncate">{a.name}</span>
-							<span className="ml-auto text-xs text-muted-foreground">{a.type}</span>
-						</button>
-					))}
-				</div>
+			{showMentions && (
+				<MentionTypeahead
+					actors={mentionableActors}
+					filter={mentionFilter}
+					selectedIndex={selectedIndex}
+					onSelect={(a) => insertMention(a.id, a.name)}
+					onHoverIndex={setSelectedIndex}
+				/>
 			)}
 		</div>
 	)
