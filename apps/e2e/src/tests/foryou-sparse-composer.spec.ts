@@ -69,8 +69,9 @@ test.describe('For You sparse composer', () => {
 		await mockUnreadCount(page, account.workspaceId, 0)
 		await page.goto(`/${account.workspaceId}`)
 		await expect(page.getByText('All caught up')).toBeVisible()
-		await expect(page.getByLabel(COMPOSER_LABEL)).toBeVisible()
-		await expect(page.getByRole('button', { name: 'Send message' })).toBeVisible()
+		const composer = page.getByTestId('sparse-composer')
+		await expect(composer.getByLabel(COMPOSER_LABEL)).toBeVisible()
+		await expect(composer.getByRole('button', { name: 'Send message' })).toBeVisible()
 		// AC-U7: quick-start chips only show on the 0-item branch.
 		await expect(page.getByTestId('sparse-composer-chips')).toBeVisible()
 	})
@@ -78,7 +79,7 @@ test.describe('For You sparse composer', () => {
 	test('renders below items when 1 ≤ items.length < 3 (AC-U2)', async ({ page, account }) => {
 		await mockUnreadCount(page, account.workspaceId, 2)
 		await page.goto(`/${account.workspaceId}`)
-		await expect(page.getByLabel(COMPOSER_LABEL)).toBeVisible()
+		await expect(page.getByTestId('sparse-composer').getByLabel(COMPOSER_LABEL)).toBeVisible()
 		// Chips are 0-item-only.
 		await expect(page.getByTestId('sparse-composer-chips')).toHaveCount(0)
 	})
@@ -87,13 +88,13 @@ test.describe('For You sparse composer', () => {
 		await mockUnreadCount(page, account.workspaceId, 3)
 		await page.goto(`/${account.workspaceId}`)
 		await expect(page.getByTestId('unread-thread-card').first()).toBeVisible()
-		await expect(page.getByLabel(COMPOSER_LABEL)).toHaveCount(0)
+		await expect(page.getByTestId('sparse-composer')).toHaveCount(0)
 	})
 
 	test('typing + Enter opens the chat panel (AC-U4)', async ({ page, account }) => {
 		await mockUnreadCount(page, account.workspaceId, 0)
 		await page.goto(`/${account.workspaceId}`)
-		const input = page.getByLabel(COMPOSER_LABEL)
+		const input = page.getByTestId('sparse-composer').getByLabel(COMPOSER_LABEL)
 		await input.fill('Plan a launch')
 		await input.press('Enter')
 		await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible({ timeout: 10_000 })
@@ -106,8 +107,9 @@ test.describe('For You sparse composer', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await mockUnreadCount(page, account.workspaceId, 0)
 			await page.goto(`/${account.workspaceId}`)
-			await expect(page.getByLabel(COMPOSER_LABEL)).toBeVisible()
-			await expect(page.getByRole('button', { name: 'Send message' })).toBeVisible()
+			const composer = page.getByTestId('sparse-composer')
+			await expect(composer.getByLabel(COMPOSER_LABEL)).toBeVisible()
+			await expect(composer.getByRole('button', { name: 'Send message' })).toBeVisible()
 		})
 	}
 })
