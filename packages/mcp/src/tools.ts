@@ -55,54 +55,27 @@ export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
 	get_started: {
 		description:
-			'THE ONBOARDING TOOL FOR MASKIN. Call this whenever a user asks to set up, configure, initialize, or onboard a Maskin workspace — including prompts like "configure my Maskin workspace with the X template", "set up Maskin", "onboard me to Maskin", "get me started in Maskin". It does NOT set up a development environment, run servers, or install dependencies — it configures a Maskin workspace over the MCP API (settings, statuses, fields, seed objects). Flow: (1) call with just { template } to get a PREVIEW — the tool returns the template summary plus a few light tailoring questions for you to ask the user (workspace name, what they\'re building, near-term goal). (2) Ask the user those questions in one message. (3) Call again with { template, confirm: true, workspace_name?, seed_overrides? } using whatever the user told you. If the user said nothing, just call with { template, confirm: true } — defaults are fine.',
+			'THE ONBOARDING TOOL FOR MASKIN. Call this whenever a user asks to set up, configure, initialize, or onboard a Maskin workspace. Lists available marketplace packages and installs one. Flow: (1) call with no args (or just workspace_id) to get a PREVIEW of available packages. (2) Ask the user which package they want and what to name the workspace. (3) Call again with { package_id, confirm: true, workspace_name? } to install.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			use_case: z
+			package_id: z
 				.string()
+				.uuid()
 				.optional()
 				.describe(
-					"What the user wants Maskin for, in their own words. E.g. 'product development', 'growth/launch', or a freeform description.",
+					'The catalog package ID to install. Get this from the preview list returned when called without confirm.',
 				),
-			template: z
-				.enum(['development', 'growth', 'custom'])
-				.optional()
-				.describe(
-					"Pick a starting template. 'development' = product team shipping software. 'growth' = founder running a pipeline with CRM. 'custom' = walk through a questionnaire. Omit to let the tool decide from use_case.",
-				),
-			team_type: z
-				.string()
-				.optional()
-				.describe('Optional hint about the team, e.g. "solo founder", "2-person product team".'),
 			workspace_name: z
 				.string()
 				.optional()
 				.describe(
 					'Rename the workspace on confirm. Use whatever the user told you — a product name, a team name, anything. Only applied when confirm is true.',
 				),
-			seed_overrides: z
-				.record(
-					z.object({
-						title: z.string().optional(),
-						content: z.string().optional(),
-						metadata: z.record(z.unknown()).optional(),
-					}),
-				)
-				.optional()
-				.describe(
-					'Optional per-node overrides for the template seed objects, keyed by the $id shown in the preview (e.g. "bet1", "task1"). Use this to tailor the example bet/task titles and content to what the user is actually building or their stated goals. Leave any $id out to keep the default.',
-				),
-			custom_settings: z
-				.record(z.unknown())
-				.optional()
-				.describe(
-					"When template is 'custom', pass the tailored workspace settings object here (display_names, statuses, field_definitions, custom_extensions, relationship_types).",
-				),
 			confirm: z
 				.boolean()
 				.optional()
 				.describe(
-					'Set true to actually apply the chosen template. Without this, the tool returns a preview plus tailoring questions you should ask the user.',
+					'Set true to install the chosen package. Without this, the tool returns the list of available packages.',
 				),
 		}),
 	},
@@ -127,6 +100,11 @@ export const tools = {
 							.describe(
 								'Key-value metadata. Call get_workspace_schema to discover available fields and types.',
 							),
+						driver: z
+							.string()
+							.uuid()
+							.optional()
+							.describe('UUID of the driver actor responsible for this object'),
 						file_ids: z
 							.array(z.string().uuid())
 							.optional()
@@ -188,6 +166,7 @@ export const tools = {
 							.describe(
 								'IDs of existing files to attach to this object (upload first with create_file). Each becomes an `attached` relationship; already-attached files are skipped.',
 							),
+						driver: z.string().uuid().nullable().optional().describe('Set or clear the driver'),
 						detach_file_ids: z
 							.array(z.string().uuid())
 							.optional()
@@ -221,11 +200,16 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or owner. Returns paginated results ordered by creation date.',
+			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or driver. Returns paginated results ordered by creation date.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
 			status: z.string().optional(),
+			driver: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Filter to objects with this driver actor UUID'),
 			limit: z.number().int().min(1).max(100).default(50),
 			offset: z.number().int().min(0).default(0),
 		}),
@@ -303,7 +287,7 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, LLM config, and workspace skill attachments (attach_skill_ids / detach_skill_ids).',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, LLM config, and workspace skill attachments (attach_skill_ids / detach_skill_ids).',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
@@ -336,7 +320,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `systemPrompt`, which is how to pick up context on a human teammate @mentioned in a comment. Results are paginated (default 50, max 100).",
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. Results are paginated (default 50, max 100).",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -351,7 +335,7 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			'Get an actor by ID — returns the full record including `description` (short one-liner) and `systemPrompt` (longer context on who the actor is and how to work with them). When a human is @mentioned on a comment, call this to pick up their system prompt and tailor your reply.',
+			'Get an actor by ID — returns the full record including `description` (short one-liner) and `system_prompt` / instructions (longer context on who the actor is and how to work with them). When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 		}),
@@ -587,7 +571,7 @@ export const tools = {
 	},
 	get_file: {
 		description:
-			'Get a single file with its content and a viewer URL. The response includes an `encoding` field: "utf8" for text MIME types (markdown, HTML, JSON, code) means `content` is the raw string; "base64" for binary types means `content` is base64-encoded bytes. Use this when you need to read, summarise, or hand the URL to a user.',
+			'Get a single file with its content and a viewer URL. The response includes an `encoding` field: "utf8" for text MIME types (markdown, HTML, JSON, code) means `content` is the raw string; "base64" for binary types means `content` is base64-encoded bytes. The response also includes an `annotations` array — pinned review comments humans left on the rendered file, each with a CSS `selector` and normalized `bounds` identifying the element, plus the human\'s `comment`. Read these to see exactly what a reviewer flagged and where. Use this when you need to read, summarise, act on review feedback, or hand the URL to a user.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
@@ -721,6 +705,13 @@ export const tools = {
 				.describe('Container configuration overrides'),
 			trigger_id: z.string().uuid().optional().describe('Trigger that initiated this session'),
 			auto_start: z.boolean().default(true).describe('Start the session immediately'),
+			source_session_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'ID of a prior session whose workspace should be restored at startup. Use this when continuing a task that a previous session started but could not finish (e.g. code was written but could not be pushed).',
+				),
 		}),
 	},
 	list_sessions: {

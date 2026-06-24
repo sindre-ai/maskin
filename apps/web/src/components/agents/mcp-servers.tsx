@@ -39,6 +39,7 @@ type McpServersMap = Record<string, McpServer>
 interface McpServersProps {
 	tools: Record<string, unknown> | null
 	onUpdate: (tools: Record<string, unknown>) => void
+	readOnly?: boolean
 }
 
 const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
@@ -48,10 +49,12 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' },
 	},
 	slack: {
-		type: 'stdio',
-		command: 'npx',
-		args: ['-y', '@modelcontextprotocol/server-slack'],
-		env: { SLACK_BOT_TOKEN: '${SLACK_TOKEN}' },
+		type: 'http',
+		url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+		headers: {
+			Authorization: 'Bearer ${MASKIN_API_KEY}',
+			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+		},
 	},
 	gmail: {
 		type: 'http',
@@ -90,7 +93,7 @@ function parseServers(tools: Record<string, unknown> | null): McpServersMap {
 	return servers ?? {}
 }
 
-export function McpServers({ tools, onUpdate }: McpServersProps) {
+export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProps) {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations } = useIntegrations(workspaceId)
 	const servers = parseServers(tools)
@@ -193,7 +196,7 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 			{serverEntries.length > 0 ? (
 				<div className="space-y-2 mb-3">
 					{serverEntries.map(([name, server]) =>
-						editingServer === name ? (
+						!readOnly && editingServer === name ? (
 							<ServerForm
 								key={name}
 								initialName={name}
@@ -208,70 +211,77 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 								server={server}
 								onEdit={() => setEditingServer(name)}
 								onDelete={() => handleDeleteServer(name)}
+								readOnly={readOnly}
 							/>
 						),
 					)}
 				</div>
 			) : (
 				<p className="text-xs text-muted-foreground mb-3">
-					No MCP servers configured. Add servers to give this agent access to external tools.
+					{readOnly
+						? 'No MCP servers configured.'
+						: 'No MCP servers configured. Add servers to give this agent access to external tools.'}
 				</p>
 			)}
 
-			{/* Add server form */}
-			{addingServer ? (
-				<ServerForm
-					onSave={(n, s) => handleSaveServer(n, s)}
-					onCancel={() => setAddingServer(false)}
-				/>
-			) : (
-				<div className="flex flex-wrap items-center gap-2">
-					{!hasMaskin && (
-						<Button size="sm" variant="outline" onClick={handleAddMaskin}>
-							<Globe className="h-3.5 w-3.5 mr-1" />
-							Add Maskin
-						</Button>
+			{/* Add server controls — hidden in read-only mode */}
+			{!readOnly && (
+				<>
+					{addingServer ? (
+						<ServerForm
+							onSave={(n, s) => handleSaveServer(n, s)}
+							onCancel={() => setAddingServer(false)}
+						/>
+					) : (
+						<div className="flex flex-wrap items-center gap-2">
+							{!hasMaskin && (
+								<Button size="sm" variant="outline" onClick={handleAddMaskin}>
+									<Globe className="h-3.5 w-3.5 mr-1" />
+									Add Maskin
+								</Button>
+							)}
+							{!hasBrowser && (
+								<Button size="sm" variant="outline" onClick={handleAddBrowser}>
+									<Globe className="h-3.5 w-3.5 mr-1" />
+									Add Browser
+								</Button>
+							)}
+							<Button size="sm" variant="outline" onClick={() => setAddingServer(true)}>
+								<Plus className="h-3.5 w-3.5 mr-1" />
+								Add Server
+							</Button>
+							<Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
+								<FileJson className="h-3.5 w-3.5 mr-1" />
+								Import .mcp.json
+							</Button>
+							{availableQuickAdds.map(({ id, name, label, preset }) => (
+								<Button
+									key={id}
+									size="sm"
+									variant="outline"
+									onClick={() => handleQuickAdd(name, preset)}
+								>
+									<Zap className="h-3.5 w-3.5 mr-1" />
+									Add {label}
+								</Button>
+							))}
+							{showAddGithub && (
+								<Button size="sm" variant="outline" onClick={handleAddGithub}>
+									<Zap className="h-3.5 w-3.5 mr-1" />
+									Add github
+								</Button>
+							)}
+						</div>
 					)}
-					{!hasBrowser && (
-						<Button size="sm" variant="outline" onClick={handleAddBrowser}>
-							<Globe className="h-3.5 w-3.5 mr-1" />
-							Add Browser
-						</Button>
-					)}
-					<Button size="sm" variant="outline" onClick={() => setAddingServer(true)}>
-						<Plus className="h-3.5 w-3.5 mr-1" />
-						Add Server
-					</Button>
-					<Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
-						<FileJson className="h-3.5 w-3.5 mr-1" />
-						Import .mcp.json
-					</Button>
-					{availableQuickAdds.map(({ id, name, label, preset }) => (
-						<Button
-							key={id}
-							size="sm"
-							variant="outline"
-							onClick={() => handleQuickAdd(name, preset)}
-						>
-							<Zap className="h-3.5 w-3.5 mr-1" />
-							Add {label}
-						</Button>
-					))}
-					{showAddGithub && (
-						<Button size="sm" variant="outline" onClick={handleAddGithub}>
-							<Zap className="h-3.5 w-3.5 mr-1" />
-							Add github
-						</Button>
-					)}
-				</div>
-			)}
 
-			{/* Import dialog */}
-			<ImportMcpDialog
-				open={importOpen}
-				onClose={() => setImportOpen(false)}
-				onImport={handleImport}
-			/>
+					{/* Import dialog */}
+					<ImportMcpDialog
+						open={importOpen}
+						onClose={() => setImportOpen(false)}
+						onImport={handleImport}
+					/>
+				</>
+			)}
 		</div>
 	)
 }
@@ -281,11 +291,13 @@ function ServerCard({
 	server,
 	onEdit,
 	onDelete,
+	readOnly = false,
 }: {
 	name: string
 	server: McpServer
 	onEdit: () => void
 	onDelete: () => void
+	readOnly?: boolean
 }) {
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const http = isHttpServer(server)
@@ -294,14 +306,14 @@ function ServerCard({
 		: Object.keys(server.env ?? {}).length
 
 	return (
-		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface px-3 py-2">
+		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-bg-surface px-3 py-2">
 			{http ? (
 				<Globe className="h-4 w-4 text-muted-foreground shrink-0" />
 			) : (
 				<Terminal className="h-4 w-4 text-muted-foreground shrink-0" />
 			)}
 			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground">{name}</p>
+				<p className="text-sm font-medium text-foreground truncate">{name}</p>
 				<p className="text-xs text-muted-foreground truncate">
 					{http ? server.url : `${server.command} ${server.args?.join(' ')}`}
 					{detailCount > 0 && (
@@ -312,37 +324,38 @@ function ServerCard({
 					)}
 				</p>
 			</div>
-			{confirmDelete ? (
-				<div className="flex items-center gap-1">
-					<Button size="sm" variant="destructive" onClick={onDelete}>
-						Delete
-					</Button>
-					<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
-						Cancel
-					</Button>
-				</div>
-			) : (
-				<div className="flex items-center gap-1">
-					<Button
-						size="icon"
-						variant="ghost"
-						className="text-muted-foreground"
-						onClick={onEdit}
-						aria-label="Edit server"
-					>
-						<Pencil className="h-3.5 w-3.5" />
-					</Button>
-					<Button
-						size="icon"
-						variant="ghost"
-						className="text-muted-foreground hover:text-error"
-						onClick={() => setConfirmDelete(true)}
-						aria-label="Delete server"
-					>
-						<Trash2 className="h-3.5 w-3.5" />
-					</Button>
-				</div>
-			)}
+			{!readOnly &&
+				(confirmDelete ? (
+					<div className="flex items-center gap-1 shrink-0">
+						<Button size="sm" variant="destructive" onClick={onDelete}>
+							Delete
+						</Button>
+						<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+							Cancel
+						</Button>
+					</div>
+				) : (
+					<div className="flex items-center gap-1 shrink-0">
+						<Button
+							size="icon"
+							variant="ghost"
+							className="text-muted-foreground"
+							onClick={onEdit}
+							aria-label="Edit server"
+						>
+							<Pencil className="h-3.5 w-3.5" />
+						</Button>
+						<Button
+							size="icon"
+							variant="ghost"
+							className="text-muted-foreground hover:text-error"
+							onClick={() => setConfirmDelete(true)}
+							aria-label="Delete server"
+						>
+							<Trash2 className="h-3.5 w-3.5" />
+						</Button>
+					</div>
+				))}
 		</div>
 	)
 }
@@ -542,7 +555,7 @@ function KeyValueEditor({
 							onChange(pairs.map((p) => (p.id === pair.id ? { ...p, key: e.target.value } : p)))
 						}
 						placeholder={keyPlaceholder}
-						className="h-7 text-xs font-mono flex-1"
+						className="h-7 text-xs font-mono flex-1 min-w-0"
 					/>
 					<Input
 						value={pair.value}
@@ -550,7 +563,7 @@ function KeyValueEditor({
 							onChange(pairs.map((p) => (p.id === pair.id ? { ...p, value: e.target.value } : p)))
 						}
 						placeholder={valuePlaceholder}
-						className="h-7 text-xs font-mono flex-1"
+						className="h-7 text-xs font-mono flex-1 min-w-0"
 					/>
 					<Button
 						size="icon"

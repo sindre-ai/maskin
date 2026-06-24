@@ -161,13 +161,13 @@ describe('formatEventDescription', () => {
 				action: 'updated',
 				entityType: 'bet',
 				data: {
-					previous: { owner: 'actor-alice' },
-					updated: { owner: 'actor-bob' },
+					previous: { driver: 'actor-alice' },
+					updated: { driver: 'actor-bob' },
 				},
 			})
 
 			expect(formatEventDescription(event, { actorsById: actorsMap([alice, bob]) })).toBe(
-				'changed owner from Alice to Bob',
+				'changed driver from Alice to Bob',
 			)
 		})
 
@@ -177,13 +177,13 @@ describe('formatEventDescription', () => {
 				action: 'updated',
 				entityType: 'bet',
 				data: {
-					previous: { owner: 'actor-alice' },
-					updated: { owner: null },
+					previous: { driver: 'actor-alice' },
+					updated: { driver: null },
 				},
 			})
 
 			expect(formatEventDescription(event, { actorsById: actorsMap([alice]) })).toBe(
-				'changed owner from Alice to no one',
+				'changed driver from Alice to no one',
 			)
 		})
 

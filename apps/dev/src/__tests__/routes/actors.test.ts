@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { PLATFORM_MCP_PRESET, SINDRE_DEFAULT } from '@maskin/shared'
-import { buildActor, buildCreateActorBody, buildWorkspaceMember } from '../factories'
+import { PLATFORM_MCP_PRESET, WORKSPACE_COACH_DEFAULT } from '@maskin/shared'
+import { buildActor, buildCreateActorBody, buildSession, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
-import { createTestApp } from '../setup'
+import { createSessionTestApp, createTestApp } from '../setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 
@@ -83,16 +83,16 @@ describe('Actors Routes', () => {
 			expect(inserted.tools?.mcpServers.maskin.url).toBe('https://custom/mcp')
 		})
 
-		it('seeds Sindre with a generated apiKey when auto-creating a workspace', async () => {
+		it('seeds Workspace Coach with a generated apiKey when auto-creating a workspace', async () => {
 			const actor = buildActor({ type: 'human' })
-			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
 			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.insertQueue = [
 				[actor], // human actor insert (already has apiKey via generateApiKey)
 				[{ id: randomUUID(), name: 'ws' }], // workspaces insert
 				[{}], // owner workspaceMembers insert
-				[sindre], // Sindre actor insert — must carry apiKey
-				[{}], // Sindre workspaceMembers insert
+				[coach], // Workspace Coach actor insert — must carry apiKey
+				[{}], // Workspace Coach workspaceMembers insert
 			]
 
 			const res = await app.request(
@@ -100,15 +100,15 @@ describe('Actors Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
-			// inserts: [actor, workspace, owner-member, sindre, sindre-member]
-			const sindreInsert = calls.inserts[3] as { apiKey?: string; isSystem?: boolean }
-			expect(sindreInsert.isSystem).toBe(true)
-			expect(sindreInsert.apiKey).toBeDefined()
-			expect(sindreInsert.apiKey).toMatch(/^ank_/)
+			// inserts: [actor, workspace, owner-member, coach, coach-member]
+			const coachInsert = calls.inserts[3] as { apiKey?: string; isSystem?: boolean }
+			expect(coachInsert.isSystem).toBe(true)
+			expect(coachInsert.apiKey).toBeDefined()
+			expect(coachInsert.apiKey).toMatch(/^ank_/)
 
 			// And it must NOT be the same key as the creator's key
 			const creatorInsert = calls.inserts[0] as { apiKey?: string }
-			expect(sindreInsert.apiKey).not.toBe(creatorInsert.apiKey)
+			expect(coachInsert.apiKey).not.toBe(creatorInsert.apiKey)
 		})
 
 		it('does not default tools when creating a human actor', async () => {
@@ -359,7 +359,7 @@ describe('Actors Routes', () => {
 		})
 
 		it('exposes is_system field on the response', async () => {
-			const systemActor = buildActor({ isSystem: true, type: 'agent', name: 'Sindre' })
+			const systemActor = buildActor({ isSystem: true, type: 'agent', name: 'Workspace Coach' })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.select = [systemActor]
 
@@ -507,6 +507,24 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(400)
 			const body = await res.json()
 			expect(body.error.message).toContain('Password is required')
+		})
+
+		it('returns 409 with field error when email already exists', async () => {
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const emailError = Object.assign(
+				new Error('duplicate key value violates unique constraint "actors_email_unique"'),
+				{ code: '23505', constraint_name: 'actors_email_unique' },
+			)
+			mockResults.insertError = emailError
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors', buildCreateActorBody({ type: 'human' })),
+			)
+
+			expect(res.status).toBe(409)
+			const body = await res.json()
+			expect(body.error.message).toBe('Email already exists')
+			expect(body.error.details[0].field).toBe('email')
 		})
 	})
 
@@ -661,10 +679,10 @@ describe('Actors Routes', () => {
 			// Matches the .returning({ system_prompt: actors.systemPrompt, ... }) shape.
 			const resetActor = {
 				...systemActor,
-				system_prompt: SINDRE_DEFAULT.systemPrompt,
-				llm_provider: SINDRE_DEFAULT.llmProvider,
-				llm_config: SINDRE_DEFAULT.llmConfig,
-				tools: SINDRE_DEFAULT.tools,
+				system_prompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+				llm_provider: WORKSPACE_COACH_DEFAULT.llmProvider,
+				llm_config: WORKSPACE_COACH_DEFAULT.llmConfig,
+				tools: WORKSPACE_COACH_DEFAULT.tools,
 			}
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.selectQueue = [
@@ -682,10 +700,10 @@ describe('Actors Routes', () => {
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.system_prompt).toBe(SINDRE_DEFAULT.systemPrompt)
-			expect(body.llm_provider).toBe(SINDRE_DEFAULT.llmProvider)
-			expect(body.llm_config).toEqual(SINDRE_DEFAULT.llmConfig)
-			expect(body.tools).toEqual(SINDRE_DEFAULT.tools)
+			expect(body.system_prompt).toBe(WORKSPACE_COACH_DEFAULT.systemPrompt)
+			expect(body.llm_provider).toBe(WORKSPACE_COACH_DEFAULT.llmProvider)
+			expect(body.llm_config).toEqual(WORKSPACE_COACH_DEFAULT.llmConfig)
+			expect(body.tools).toEqual(WORKSPACE_COACH_DEFAULT.tools)
 		})
 
 		it('returns 403 when the actor is not a system actor', async () => {
@@ -758,8 +776,8 @@ describe('Actors Routes', () => {
 		it('returns the full updated actor row with identity and memory fields preserved', async () => {
 			const systemActor = buildActor({
 				type: 'agent',
-				name: 'Sindre',
-				email: 'sindre@maskin',
+				name: 'Workspace Coach',
+				email: 'workspace-coach@maskin',
 				isSystem: true,
 				systemPrompt: 'edited prompt',
 				llmProvider: 'openai',
@@ -770,10 +788,10 @@ describe('Actors Routes', () => {
 			// Drizzle returns the post-update row in the .returning() shape (snake_case).
 			const resetActor = {
 				...systemActor,
-				system_prompt: SINDRE_DEFAULT.systemPrompt,
-				llm_provider: SINDRE_DEFAULT.llmProvider,
-				llm_config: SINDRE_DEFAULT.llmConfig,
-				tools: SINDRE_DEFAULT.tools,
+				system_prompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+				llm_provider: WORKSPACE_COACH_DEFAULT.llmProvider,
+				llm_config: WORKSPACE_COACH_DEFAULT.llmConfig,
+				tools: WORKSPACE_COACH_DEFAULT.tools,
 			}
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.selectQueue = [
@@ -793,9 +811,332 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body.id).toBe(systemActor.id)
 			expect(body.type).toBe('agent')
-			expect(body.name).toBe('Sindre')
-			expect(body.email).toBe('sindre@maskin')
+			expect(body.name).toBe('Workspace Coach')
+			expect(body.email).toBe('workspace-coach@maskin')
 			expect(body.memory).toEqual({ notes: 'user preference: concise replies' })
+		})
+	})
+
+	describe('POST /api/actors/:id/pause', () => {
+		const wsId = randomUUID()
+
+		it('pauses the agent and any running session', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'running' })
+			const runningSession = buildSession({
+				actorId: agent.id,
+				workspaceId: wsId,
+				status: 'running',
+			})
+			const updated = { ...agent, agentState: 'paused', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			// isWorkspaceMember (requester), actor lookup, isWorkspaceMember (target),
+			// live sessions select.
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[runningSession],
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.agentState).toBe('paused')
+			expect(sessionManager.pauseSession).toHaveBeenCalledWith(runningSession.id)
+		})
+
+		it('pauses the agent with no live session — just sets state', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'idle' })
+			const updated = { ...agent, agentState: 'paused', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[], // no live sessions
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.agentState).toBe('paused')
+			expect(sessionManager.pauseSession).not.toHaveBeenCalled()
+			expect(sessionManager.stopSession).not.toHaveBeenCalled()
+		})
+
+		it('stops a non-running live session (e.g. starting) instead of pausing it', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'running' })
+			const startingSession = buildSession({
+				actorId: agent.id,
+				workspaceId: wsId,
+				status: 'starting',
+			})
+			const updated = { ...agent, agentState: 'paused', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[startingSession],
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(sessionManager.stopSession).toHaveBeenCalledWith(startingSession.id)
+			expect(sessionManager.pauseSession).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 when requester is not a workspace member', async () => {
+			const { app } = createSessionTestApp(actorsRoutes, '/api/actors')
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${randomUUID()}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when target actor is not in the workspace', async () => {
+			const agent = buildActor({ type: 'agent' })
+			const { app, mockResults } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[], // target not a member
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('still pauses the agent even when sessionManager.pauseSession fails', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'running' })
+			const runningSession = buildSession({
+				actorId: agent.id,
+				workspaceId: wsId,
+				status: 'running',
+			})
+			const updated = { ...agent, agentState: 'paused', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[runningSession],
+			]
+			mockResults.update = [updated]
+			;(sessionManager.pauseSession as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+				new Error('snapshot failed'),
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.agentState).toBe('paused')
+		})
+
+		it('attempts all sessions and still pauses the agent when multiple sessions fail', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'running' })
+			const session1 = buildSession({ actorId: agent.id, workspaceId: wsId, status: 'running' })
+			const session2 = buildSession({ actorId: agent.id, workspaceId: wsId, status: 'running' })
+			const updated = { ...agent, agentState: 'paused', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[session1, session2],
+			]
+			mockResults.update = [updated]
+			;(sessionManager.pauseSession as ReturnType<typeof vi.fn>)
+				.mockRejectedValueOnce(new Error('first failed'))
+				.mockRejectedValueOnce(new Error('second failed'))
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			// Both sessions were attempted despite failures
+			expect(sessionManager.pauseSession).toHaveBeenCalledTimes(2)
+			// Actor is still marked paused
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.agentState).toBe('paused')
+		})
+	})
+
+	describe('POST /api/actors/:id/run', () => {
+		const wsId = randomUUID()
+
+		it('starts a fresh session when no paused or running session exists', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'idle' })
+			const updated = { ...agent, agentState: 'running', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[], // no live session
+				[], // no paused session
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/actors/${agent.id}/run`,
+					{ action_prompt: 'Pick up where you left off' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.agentState).toBe('running')
+			expect(sessionManager.createSession).toHaveBeenCalledWith(
+				wsId,
+				expect.objectContaining({
+					actorId: agent.id,
+					actionPrompt: 'Pick up where you left off',
+					createdBy: 'test-actor-id',
+				}),
+			)
+			expect(sessionManager.resumeSession).not.toHaveBeenCalled()
+		})
+
+		it('uses a default action_prompt when none provided', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'idle' })
+			const updated = { ...agent, agentState: 'running', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[],
+				[],
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/run`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const created = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0][1]
+			expect(typeof created.actionPrompt).toBe('string')
+			expect(created.actionPrompt.length).toBeGreaterThan(0)
+		})
+
+		it('resumes the most recent paused session', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'paused' })
+			const pausedSession = buildSession({
+				actorId: agent.id,
+				workspaceId: wsId,
+				status: 'paused',
+			})
+			const updated = { ...agent, agentState: 'running', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[], // no live session
+				[pausedSession],
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/run`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.agentState).toBe('running')
+			expect(sessionManager.resumeSession).toHaveBeenCalledWith(pausedSession.id)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('is a no-op for live sessions — does not create or resume', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'running' })
+			const liveSession = buildSession({
+				actorId: agent.id,
+				workspaceId: wsId,
+				status: 'running',
+			})
+			const updated = { ...agent, agentState: 'running', agentStateUpdatedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[liveSession],
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/run`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+			expect(sessionManager.resumeSession).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 when requester is not a workspace member', async () => {
+			const { app } = createSessionTestApp(actorsRoutes, '/api/actors')
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${randomUUID()}/run`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 400 with empty action_prompt', async () => {
+			const { app } = createSessionTestApp(actorsRoutes, '/api/actors')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/actors/${randomUUID()}/run`,
+					{ action_prompt: '' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
 		})
 	})
 })

@@ -59,10 +59,26 @@ export const config: ProviderConfig = {
 		],
 	},
 
+	// Auto-inject the Maskin-hosted Slack MCP server for every workspace with an
+	// active Slack integration. The HTTP MCP is on apps/dev itself, so requests
+	// are bot-token + identity (agent name, workspace name) resolved server-side
+	// and posted via chat.postMessage with `chat:write.customize` overrides —
+	// replacing @modelcontextprotocol/server-slack, which posted as whoever
+	// installed the app. `envKey` is kept so session-manager still injects
+	// SLACK_BOT_TOKEN for any agent that has a legacy stdio Slack MCP in their
+	// tools config; the xoxb- guard in session-manager refuses to inject when
+	// the stored token is a user token.
 	mcp: {
-		command: 'npx',
-		args: ['-y', '@modelcontextprotocol/server-slack'],
 		envKey: 'SLACK_BOT_TOKEN',
+		autoInject: true,
+		server: {
+			type: 'http',
+			url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+			headers: {
+				Authorization: 'Bearer ${MASKIN_API_KEY}',
+				'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+			},
+		},
 	},
 }
 

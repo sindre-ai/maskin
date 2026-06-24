@@ -10,6 +10,8 @@ test.describe('Attached image rendering', () => {
 		page,
 		account,
 	}) => {
+		// createFile requires S3/SeaweedFS — not provisioned in the verify-e2e CI job
+		test.skip(!!process.env.CI, 'S3/SeaweedFS not available in CI')
 		const obj = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Bet with image attachment',

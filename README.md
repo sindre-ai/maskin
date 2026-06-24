@@ -1,7 +1,8 @@
-# Maskin Workspace
+# Maskin
 
-<!-- badges placeholder -->
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/sindre-ai/maskin/ci.yml?label=CI)](https://github.com/sindre-ai/maskin/actions/workflows/ci.yml)
+[![GitHub Stars](https://img.shields.io/github/stars/sindre-ai/maskin?style=flat)](https://github.com/sindre-ai/maskin/stargazers)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-blue.svg)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D20-green.svg)](https://nodejs.org/)
 

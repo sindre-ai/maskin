@@ -61,6 +61,8 @@
 	--color-status-paused-text: var(--st-paused-text);
 	--color-status-discarded-bg: var(--st-discarded-bg);
 	--color-status-discarded-text: var(--st-discarded-text);
+	--color-status-in_review-bg: var(--st-in_review-bg);
+	--color-status-in_review-text: var(--st-in_review-text);
 
 	/* Type badge colors */
 	--color-type-insight-bg: var(--tp-insight-bg);
@@ -147,6 +149,8 @@
 	--st-paused-text: #71717a;
 	--st-discarded-bg: #f4f4f5;
 	--st-discarded-text: #a1a1aa;
+	--st-in_review-bg: #fff7ed;
+	--st-in_review-text: #c2410c;
 
 	/* Type badges */
 	--tp-insight-bg: #fef3c7;
@@ -222,6 +226,8 @@
 	--st-paused-text: #a1a1aa;
 	--st-discarded-bg: #27272a;
 	--st-discarded-text: #71717a;
+	--st-in_review-bg: #431407;
+	--st-in_review-text: #fdba74;
 
 	/* Type badges */
 	--tp-insight-bg: #422006;

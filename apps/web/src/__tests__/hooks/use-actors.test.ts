@@ -9,6 +9,8 @@ vi.mock('@/lib/api', () => ({
 			create: vi.fn(),
 			update: vi.fn(),
 			reset: vi.fn(),
+			pause: vi.fn(),
+			run: vi.fn(),
 		},
 	},
 }))
@@ -24,6 +26,8 @@ import {
 	useActor,
 	useActors,
 	useAgent,
+	useAgentPause,
+	useAgentRun,
 	useCreateActor,
 	useResetActor,
 	useUpdateActor,
@@ -42,6 +46,7 @@ function buildActorListItem(overrides: Partial<ActorListItem> & { id: string }):
 		email: null,
 		description: null,
 		isSystem: false,
+		agentState: 'idle',
 		...overrides,
 	}
 }
@@ -58,6 +63,8 @@ function buildActorResponse(overrides: Partial<ActorResponse> & { id: string }):
 		llm_provider: null,
 		llm_config: null,
 		isSystem: false,
+		agentState: 'idle',
+		agentStateUpdatedAt: null,
 		createdAt: null,
 		updatedAt: null,
 		...overrides,
@@ -194,7 +201,7 @@ describe('useUpdateActor', () => {
 
 describe('useResetActor', () => {
 	it('calls api.actors.reset with id and workspaceId and toasts success', async () => {
-		const reset = buildActorResponse({ id: 'actor-1', name: 'Sindre', isSystem: true })
+		const reset = buildActorResponse({ id: 'actor-1', name: 'Workspace Coach', isSystem: true })
 		vi.mocked(api.actors.reset).mockResolvedValue(reset)
 
 		const { result } = renderHook(() => useResetActor(workspaceId), { wrapper: TestWrapper })
@@ -213,5 +220,62 @@ describe('useResetActor', () => {
 		result.current.mutate('actor-1')
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(toast.error).toHaveBeenCalledWith('Failed to reset agent')
+	})
+})
+
+describe('useAgentPause', () => {
+	it('calls api.actors.pause with id and workspaceId', async () => {
+		const paused = buildActorResponse({ id: 'agent-1', agentState: 'paused' })
+		vi.mocked(api.actors.pause).mockResolvedValue(paused)
+
+		const { result } = renderHook(() => useAgentPause(workspaceId), { wrapper: TestWrapper })
+
+		result.current.mutate('agent-1')
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.actors.pause).toHaveBeenCalledWith('agent-1', workspaceId)
+	})
+
+	it('toasts error when pause fails', async () => {
+		vi.mocked(api.actors.pause).mockRejectedValue(new Error('Failed'))
+
+		const { result } = renderHook(() => useAgentPause(workspaceId), { wrapper: TestWrapper })
+
+		result.current.mutate('agent-1')
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		expect(toast.error).toHaveBeenCalledWith('Failed to pause agent')
+	})
+})
+
+describe('useAgentRun', () => {
+	it('calls api.actors.run with id, workspaceId, and body', async () => {
+		const running = buildActorResponse({ id: 'agent-1', agentState: 'running' })
+		vi.mocked(api.actors.run).mockResolvedValue(running)
+
+		const { result } = renderHook(() => useAgentRun(workspaceId), { wrapper: TestWrapper })
+
+		result.current.mutate({ id: 'agent-1', body: { action_prompt: 'go' } })
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.actors.run).toHaveBeenCalledWith('agent-1', workspaceId, { action_prompt: 'go' })
+	})
+
+	it('passes undefined body when not provided', async () => {
+		const running = buildActorResponse({ id: 'agent-1', agentState: 'running' })
+		vi.mocked(api.actors.run).mockResolvedValue(running)
+
+		const { result } = renderHook(() => useAgentRun(workspaceId), { wrapper: TestWrapper })
+
+		result.current.mutate({ id: 'agent-1' })
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.actors.run).toHaveBeenCalledWith('agent-1', workspaceId, undefined)
+	})
+
+	it('toasts error when run fails', async () => {
+		vi.mocked(api.actors.run).mockRejectedValue(new Error('Boom'))
+
+		const { result } = renderHook(() => useAgentRun(workspaceId), { wrapper: TestWrapper })
+
+		result.current.mutate({ id: 'agent-1' })
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		expect(toast.error).toHaveBeenCalledWith('Failed to run agent')
 	})
 })

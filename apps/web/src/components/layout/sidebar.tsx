@@ -17,7 +17,7 @@ import { useUnread } from '@/hooks/use-subscriptions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { Link, useMatchRoute } from '@tanstack/react-router'
-import { Activity, Bot, Layers, Zap } from 'lucide-react'
+import { Activity, Bot, Layers, Store, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 import { AgentPulse } from '../agents/agent-pulse'
 import { NavUser } from './nav-user'
@@ -29,6 +29,7 @@ const coreNavItems = [
 	{ label: 'Activity', to: '/$workspaceId/activity' as const, icon: Activity },
 	{ label: 'Agents', to: '/$workspaceId/agents' as const, icon: Bot },
 	{ label: 'Triggers', to: '/$workspaceId/triggers' as const, icon: Zap },
+	{ label: 'Marketplace', to: '/$workspaceId/marketplace' as const, icon: Store },
 ]
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {

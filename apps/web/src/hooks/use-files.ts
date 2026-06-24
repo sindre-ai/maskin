@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type CreateFileInput, type FileDetail, api } from '../lib/api'
+import { type CreateFileInput, type FileDetail, type UpdateFileInput, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useFile(workspaceId: string, fileId: string | null) {
@@ -31,6 +31,15 @@ export function useCreateFile(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (data: CreateFileInput) => api.files.create(workspaceId, data),
+		onSuccess: (file) => primeFileCaches(queryClient, file),
+	})
+}
+
+export function useUpdateFile(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, data }: { id: string; data: UpdateFileInput }) =>
+			api.files.update(workspaceId, id, data),
 		onSuccess: (file) => primeFileCaches(queryClient, file),
 	})
 }

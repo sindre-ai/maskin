@@ -522,7 +522,7 @@ describe('BoardView', () => {
 				objectType="task"
 				workspaceId="ws-1"
 				statusesByType={{ task: ['todo'] }}
-				groupBy="owner"
+				groupBy="driver"
 				actors={[buildActorListItem({ id: 'actor-1', name: 'Ada' })]}
 				objects={[
 					buildObjectResponse({
@@ -530,14 +530,14 @@ describe('BoardView', () => {
 						type: 'task',
 						status: 'todo',
 						title: 'Owned task',
-						owner: 'actor-1',
+						driver: 'actor-1',
 					}),
 					buildObjectResponse({
 						id: 'b',
 						type: 'task',
 						status: 'todo',
 						title: 'Unowned task',
-						owner: null,
+						driver: null,
 					}),
 				]}
 			/>,
