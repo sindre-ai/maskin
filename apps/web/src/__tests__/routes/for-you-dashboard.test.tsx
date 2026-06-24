@@ -28,6 +28,12 @@ vi.mock('@/components/foryou/unread-thread-card', () => ({
 	),
 }))
 
+vi.mock('@/components/foryou/sparse-composer', () => ({
+	SparseComposer: ({ itemsCount }: { itemsCount: number }) => (
+		<div data-testid="sparse-composer" data-items-count={itemsCount} />
+	),
+}))
+
 vi.mock('@/components/shared/empty-state', () => ({
 	EmptyState: ({ title }: { title: string }) => <div>{title}</div>,
 }))
@@ -85,5 +91,38 @@ describe('ForYouDashboard', () => {
 		expect(screen.getAllByTestId('unread-thread-card')).toHaveLength(2)
 		expect(screen.getByText('obj-1')).toBeInTheDocument()
 		expect(screen.getByText('obj-2')).toBeInTheDocument()
+	})
+
+	it('renders the sparse composer with items_count=0 on the empty state (AC-U1)', () => {
+		mockUseUnread.mockReturnValue({ data: { items: [] }, isLoading: false })
+		render(<ForYouDashboard />)
+		const composer = screen.getByTestId('sparse-composer')
+		expect(composer).toBeInTheDocument()
+		expect(composer).toHaveAttribute('data-items-count', '0')
+	})
+
+	it('renders the sparse composer below items when 1 ≤ items.length < 3 (AC-U2)', () => {
+		mockUseUnread.mockReturnValue({
+			data: { items: [buildUnreadItem({ entity_id: 'obj-1' })] },
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		const composer = screen.getByTestId('sparse-composer')
+		expect(composer).toHaveAttribute('data-items-count', '1')
+	})
+
+	it('hides the sparse composer when items.length >= 3 (AC-U3)', () => {
+		mockUseUnread.mockReturnValue({
+			data: {
+				items: [
+					buildUnreadItem({ entity_id: 'obj-1' }),
+					buildUnreadItem({ entity_id: 'obj-2' }),
+					buildUnreadItem({ entity_id: 'obj-3' }),
+				],
+			},
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		expect(screen.queryByTestId('sparse-composer')).not.toBeInTheDocument()
 	})
 })

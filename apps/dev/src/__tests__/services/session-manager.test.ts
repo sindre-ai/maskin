@@ -198,7 +198,7 @@ describe('SessionManager', () => {
 			const agent = {
 				id: session.actorId,
 				type: 'agent',
-				systemPrompt: 'You are Sindre.',
+				systemPrompt: 'You are Workspace Coach.',
 				llmProvider: null,
 				llmConfig: null,
 				apiKey: 'ank_test_agent_key',
@@ -856,7 +856,7 @@ describe('SessionManager', () => {
 			const agent = {
 				id: session.actorId,
 				type: 'agent',
-				systemPrompt: 'You are Sindre.',
+				systemPrompt: 'You are Workspace Coach.',
 				llmProvider: null,
 				llmConfig: null,
 				apiKey: 'ank_test_agent_key',
@@ -1150,16 +1150,19 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[orphan], // 2. runningSessions (idle check)
-				[], // 3. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
+				[], // 2. stuckAgentSessions (no stuck sessions)
+				[orphan], // 3. runningSessions (idle check)
+				[], // 4. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
+				// markSessionFailedAfterContainerLoss → existing session select (new in this branch):
+				[], // 5. existing session lookup (undefined → skip telemetry, update still fires)
 				// markSessionFailedAfterContainerLoss → drainQueue → hasCapacity:
-				[{ settings: {} }], // 4. drainQueue > workspace lookup
-				[{ count: 0 }], // 5. drainQueue > running count
-				[], // 6. drainQueue > nextQueued (empty = break)
-				[], // 7. expiredPaused
-				[], // 8. stuckPending
-				[], // 9. stuckStarting
-				[], // 10. final queuedSessions
+				[{ settings: {} }], // 6. drainQueue > workspace lookup
+				[{ count: 0 }], // 7. drainQueue > running count
+				[], // 8. drainQueue > nextQueued (empty = break)
+				[], // 9. expiredPaused
+				[], // 10. stuckPending
+				[], // 11. stuckStarting
+				[], // 12. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
@@ -1173,14 +1176,15 @@ describe('SessionManager', () => {
 			expect(failedUpdate).toBeDefined()
 		})
 
-		it('skips auto-pause when inspect reports the container is no longer running', async () => {
-			// Container died but the exit watcher hasn't noticed yet (e.g., inspect was
-			// transiently failing). The watchdog should leave the session alone this tick
-			// instead of pausing — watchContainerExit / the timeout reaper will catch it.
+		it('skips auto-pause when inspect reports the container is no longer running (agent-server session)', async () => {
+			// For agent-server sessions the containerId is a remote msb sandbox name —
+			// local Docker inspect is meaningless. The watchdog must skip (continue)
+			// instead of marking failed; the agent-server's exit callback owns cleanup.
 			const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
 			const stale = buildSession({
 				status: 'running',
 				containerId: 'container-dead',
+				agentServerId: 'server-1',
 				startedAt: twentyMinutesAgo,
 				interactive: false,
 			})
@@ -1189,19 +1193,21 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[stale], // 2. runningSessions
-				[], // 3. lastLog (empty → falls back to startedAt, which is >10min old)
-				[], // 4. expiredPaused
-				[], // 5. stuckPending
-				[], // 6. stuckStarting
-				[], // 7. final queuedSessions
+				[], // 2. stuckAgentSessions (no stuck sessions)
+				[stale], // 3. runningSessions
+				[], // 4. lastLog (empty → falls back to startedAt, which is >10min old)
+				// isContainerAlive → inspect mock returns { running: false } (consumed here)
+				// stale.agentServerId is set → continue, no markSessionFailedAfterContainerLoss
+				[], // 5. expiredPaused
+				[], // 6. stuckPending
+				[], // 7. stuckStarting
+				[], // 8. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
 
 			expect(pauseSpy).not.toHaveBeenCalled()
-			// No 'failed' update should have happened either — we explicitly defer to
-			// watchContainerExit so the session isn't yanked out from under it.
+			// No 'failed' update — agent-server sessions are deferred to the server's exit callback.
 			const failedUpdate = calls.updates.find(
 				(u): u is { status: string } =>
 					typeof u === 'object' && u !== null && (u as { status?: string }).status === 'failed',

@@ -24,7 +24,7 @@ function randomDraftId(): string {
 	return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-// ~6 lines at text-sm (line-height 20px) + py-1.5 (12px) + 2px border
+// ~5 lines at text-base (line-height 24px) + py-1.5 (12px) + 2px border
 const MAX_INPUT_HEIGHT_PX = 134
 
 // Show the live character counter once the draft reaches this fraction of the
@@ -260,6 +260,12 @@ export function CommentInput({
 			}
 
 			if (e.key === 'Enter' && !e.shiftKey) {
+				// On touch-primary devices (iOS, mobile), let Enter insert a newline —
+				// the soft keyboard's Enter is the source of accidental submits. The
+				// Send button is the only submit path on these devices.
+				if (typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches) {
+					return
+				}
 				e.preventDefault()
 				handleSubmit()
 			}
@@ -327,7 +333,7 @@ export function CommentInput({
 							<div
 								ref={overlayRef}
 								aria-hidden
-								className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-sm"
+								className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-base"
 								style={{ minHeight: '32px' }}
 							>
 								<MentionedText
@@ -347,7 +353,7 @@ export function CommentInput({
 								placeholder="Write a comment... Use @ to mention an agent"
 								rows={1}
 								aria-invalid={overLimit || undefined}
-								className="relative w-full resize-none overflow-y-hidden border-0 bg-transparent px-2 py-1.5 text-sm text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
+								className="relative w-full resize-none overflow-y-hidden border-0 bg-transparent px-2 py-1.5 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
 								style={{ minHeight: '32px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
 							/>
 						</div>

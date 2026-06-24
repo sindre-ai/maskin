@@ -7,9 +7,9 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { useActor } from '@/hooks/use-actors'
 import { useSessionLogs, useStopSession } from '@/hooks/use-sessions'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
+import { type ChatEvent, parseChatLine } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
-import { type SindreEvent, parseSindreLine } from '@/lib/sindre-stream'
 import {
 	CheckCircle2,
 	ChevronDown,
@@ -166,7 +166,7 @@ function extractSemanticActivities(logs: SessionLogResponse[]): SemanticActivity
 
 	for (const log of logs) {
 		if (log.stream !== 'stdout') continue
-		const events = parseSindreLine(log.content, { includeUser: true })
+		const events = parseChatLine(log.content, { includeUser: true })
 		for (const event of events) {
 			const activity = eventToSemanticActivity(event)
 			if (!activity) continue
@@ -179,7 +179,7 @@ function extractSemanticActivities(logs: SessionLogResponse[]): SemanticActivity
 	return activities.slice(-8)
 }
 
-function eventToSemanticActivity(event: SindreEvent): Omit<SemanticActivity, 'id'> | null {
+function eventToSemanticActivity(event: ChatEvent): Omit<SemanticActivity, 'id'> | null {
 	switch (event.kind) {
 		case 'thinking':
 			return { label: 'Thinking', kind: 'thinking' }
