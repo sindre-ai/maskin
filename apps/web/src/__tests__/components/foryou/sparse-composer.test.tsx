@@ -31,7 +31,10 @@ vi.mock('@/components/chat/chat', () => ({
 				onSubmit={(e) => {
 					e.preventDefault()
 					if (!value.trim()) return
-					void onSend(value).then(() => setValue(''), () => {})
+					void onSend(value).then(
+						() => setValue(''),
+						() => {},
+					)
 				}}
 			>
 				<textarea
@@ -133,7 +136,11 @@ describe('SparseComposer', () => {
 
 	it('chip double-tap is idempotent — second click ignored while first is in-flight (AC-T1)', async () => {
 		let resolve!: () => void
-		openWithContextMock.mockReturnValue(new Promise<void>((r) => { resolve = r }))
+		openWithContextMock.mockReturnValue(
+			new Promise<void>((r) => {
+				resolve = r
+			}),
+		)
 		const user = userEvent.setup()
 		render(<SparseComposer itemsCount={0} />)
 		const chip = screen.getByRole('button', { name: 'Help me plan a new bet' })
