@@ -1,5 +1,13 @@
 import { Button } from '@/components/ui/button'
 import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from '@/components/ui/dialog'
+import {
 	ResponsiveDialog,
 	ResponsiveDialogContent,
 	ResponsiveDialogDescription,
@@ -18,12 +26,14 @@ import {
 	useConfirmImport,
 	useCreateImport,
 	useImport,
+	useImportPreview,
 	useUpdateImportMapping,
 } from '@/hooks/use-imports'
 import type {
 	ColumnMappingInput,
 	CsvOptions,
 	ImportMappingInput,
+	ImportPreviewResponse,
 	ImportResponse,
 	RelationshipMappingInput,
 	TypeMappingInput,
@@ -32,8 +42,14 @@ import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { ChevronDown, ChevronRight, FileUp, Link2, Loader2, Plus, Upload, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type DedupKeyOption, ImportDedupPicker } from './import-dedup-picker'
+import { ImportDiffTable } from './import-diff-table'
 
-type Step = 'upload' | 'mapping'
+type Step = 'upload' | 'mapping' | 'preview'
+
+// Verbatim copy from bet AC-U4 — do not edit.
+const ESCAPE_HATCH_COPY =
+	"Importing without a dedup key creates duplicates for every row — pick at least one field, or confirm 'Create all as new'."
 
 const DELIMITER_OPTIONS = [
 	{ value: ',', label: 'Comma (,)' },
@@ -53,8 +69,18 @@ interface ImportDialogProps {
 	onImportStarted?: (importId: string) => void
 }
 
+// Read the dogfood feature flag from workspace.settings.flags.bulkImportDedup.
+// Default off; sibling task T1+T2+T3 backstops the server side so a UI-only
+// gate is enough for the first-test rollout.
+function useBulkImportDedupFlag() {
+	const { workspace } = useWorkspace()
+	const flags = (workspace.settings as { flags?: Record<string, unknown> })?.flags
+	return flags?.bulkImportDedup === true
+}
+
 export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDialogProps) {
 	const { workspaceId, workspace } = useWorkspace()
+	const dedupFlagEnabled = useBulkImportDedupFlag()
 	const [step, setStep] = useState<Step>('upload')
 	const [importId, setImportId] = useState<string | undefined>()
 
@@ -66,7 +92,6 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 	const createImportReset = createImport.reset
 	const confirmImportReset = confirmImport.reset
 
-	// Reset on close
 	useEffect(() => {
 		if (!open) {
 			setStep('upload')
@@ -91,6 +116,14 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 		onImportStarted?.(importId)
 		onOpenChange(false)
 	}, [importId, confirmImport, onImportStarted, onOpenChange])
+
+	const handleAdvanceToPreview = useCallback(() => {
+		setStep('preview')
+	}, [])
+
+	const handleBackToMapping = useCallback(() => {
+		setStep('mapping')
+	}, [])
 
 	const handleMappingUpdate = useCallback(
 		async (mapping: ImportMappingInput) => {
@@ -119,11 +152,15 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
 			<ResponsiveDialogContent className="overflow-y-auto md:max-w-2xl md:max-h-[80vh]">
 				<ResponsiveDialogHeader>
-					<ResponsiveDialogTitle>Import Objects</ResponsiveDialogTitle>
+					<ResponsiveDialogTitle>
+						{step === 'preview' ? 'Preview the import' : 'Import Objects'}
+					</ResponsiveDialogTitle>
 					<ResponsiveDialogDescription>
 						{step === 'upload' &&
 							'Upload a CSV or JSON file to import objects into your workspace.'}
 						{step === 'mapping' && 'Review and adjust how columns map to object fields.'}
+						{step === 'preview' &&
+							'Pick how to match existing records. Counts and diff update as you change keys.'}
 					</ResponsiveDialogDescription>
 				</ResponsiveDialogHeader>
 
@@ -137,9 +174,22 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 						importRecord={importRecord}
 						workspace={workspace}
 						onConfirm={handleConfirm}
+						onAdvanceToPreview={dedupFlagEnabled ? handleAdvanceToPreview : undefined}
 						onMappingUpdate={handleMappingUpdate}
 						onCsvOptionsChange={handleCsvOptionsChange}
 						isUpdating={updateMapping.isPending}
+					/>
+				)}
+
+				{step === 'preview' && importRecord && (
+					<PreviewStep
+						importRecord={importRecord}
+						workspace={workspace}
+						workspaceId={workspaceId}
+						onBack={handleBackToMapping}
+						onMappingUpdate={handleMappingUpdate}
+						onConfirm={handleConfirm}
+						isConfirming={confirmImport.isPending}
 					/>
 				)}
 			</ResponsiveDialogContent>
@@ -225,6 +275,7 @@ function MappingStep({
 	importRecord,
 	workspace,
 	onConfirm,
+	onAdvanceToPreview,
 	onMappingUpdate,
 	onCsvOptionsChange,
 	isUpdating,
@@ -232,6 +283,7 @@ function MappingStep({
 	importRecord: ImportResponse
 	workspace: { settings: Record<string, unknown> }
 	onConfirm: () => void
+	onAdvanceToPreview?: () => void
 	onMappingUpdate: (mapping: ImportMappingInput) => void
 	onCsvOptionsChange: (csvOptions: CsvOptions) => void
 	isUpdating: boolean
@@ -245,7 +297,6 @@ function MappingStep({
 		relationship_types?: string[]
 	}
 
-	// Valid object types from workspace settings
 	const validTypes = useMemo(() => {
 		const statuses = settings.statuses ?? {}
 		return Object.keys(statuses)
@@ -260,10 +311,8 @@ function MappingStep({
 		'duplicates',
 	]
 
-	// ── Local state for type mappings ─────────────────────────────────
 	const [typeMappings, setTypeMappings] = useState<TypeMappingInput[]>(mapping?.typeMappings ?? [])
 
-	// ── Local state for relationships ─────────────────────────────────
 	const [localRelationships, setLocalRelationships] = useState<RelationshipMappingInput[]>(
 		mapping?.relationships ?? [],
 	)
@@ -272,7 +321,6 @@ function MappingStep({
 	const isFirstRender = useRef(true)
 	const lastSentMapping = useRef('')
 
-	// Get target field options for a specific object type
 	const getTargetOptions = useCallback(
 		(objectType: string) => {
 			const options = [
@@ -364,7 +412,6 @@ function MappingStep({
 		setTypeMappings((prev) => prev.filter((_, i) => i !== index))
 	}, [])
 
-	// Build the full mapping object from local state
 	const buildMapping = useCallback(
 		(): ImportMappingInput => ({
 			typeMappings,
@@ -374,7 +421,6 @@ function MappingStep({
 		[typeMappings, localRelationships, mapping?.csvOptions],
 	)
 
-	// Save mapping on changes (skip initial render, deduplicate identical updates)
 	// biome-ignore lint/correctness/useExhaustiveDependencies: mapping is derived from buildMapping deps, adding it causes refetch loop
 	useEffect(() => {
 		if (!mapping) return
@@ -394,7 +440,6 @@ function MappingStep({
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally excluding `mapping` to avoid refetch loop
 	}, [buildMapping, onMappingUpdate])
 
-	// Relationship handlers
 	const configuredTypes = useMemo(() => typeMappings.map((tm) => tm.objectType), [typeMappings])
 
 	const handleAddRelationship = useCallback(() => {
@@ -425,11 +470,8 @@ function MappingStep({
 		setLocalRelationships((prev) => prev.filter((_, i) => i !== index))
 	}, [])
 
-	// Flush any pending mapping change before confirming. The mapping is debounced by 500 ms
-	// so a user who clicks Confirm immediately after picking the type would otherwise import
-	// against the previously-saved mapping.
 	const [isConfirming, setIsConfirming] = useState(false)
-	const handleConfirmClick = useCallback(async () => {
+	const handlePrimaryClick = useCallback(async () => {
 		setIsConfirming(true)
 		try {
 			const updated = buildMapping()
@@ -438,17 +480,20 @@ function MappingStep({
 				lastSentMapping.current = serialized
 				await onMappingUpdate(updated)
 			}
-			onConfirm()
+			if (onAdvanceToPreview) {
+				onAdvanceToPreview()
+			} else {
+				onConfirm()
+			}
 		} finally {
 			setIsConfirming(false)
 		}
-	}, [buildMapping, onMappingUpdate, onConfirm])
+	}, [buildMapping, onMappingUpdate, onConfirm, onAdvanceToPreview])
 
 	if (!mapping || !preview) return null
 
 	return (
 		<div className="space-y-4">
-			{/* Summary */}
 			<div className="flex gap-4 text-sm">
 				<div>
 					<span className="text-muted-foreground">Rows:</span>{' '}
@@ -460,7 +505,6 @@ function MappingStep({
 				</div>
 			</div>
 
-			{/* CSV format options */}
 			{importRecord.fileType === 'csv' && (
 				<div className="flex gap-3 items-center text-sm border rounded-lg px-3 py-2 bg-muted/30">
 					<div className="flex items-center gap-2">
@@ -512,7 +556,6 @@ function MappingStep({
 				</div>
 			)}
 
-			{/* Type mappings */}
 			<div className="space-y-3">
 				<div className="flex items-center justify-between">
 					<span className="text-sm font-medium">Object Types</span>
@@ -540,7 +583,6 @@ function MappingStep({
 				))}
 			</div>
 
-			{/* Relationships section */}
 			<div className="border rounded-lg">
 				<div className="flex items-center justify-between w-full px-3 py-2 text-sm font-medium">
 					<button
@@ -661,11 +703,14 @@ function MappingStep({
 			</p>
 
 			<ResponsiveDialogFooter>
-				<Button onClick={handleConfirmClick} disabled={isUpdating || isConfirming}>
+				<Button onClick={handlePrimaryClick} disabled={isUpdating || isConfirming}>
 					{isConfirming ? (
 						<>
-							<Loader2 size={14} className="animate-spin" /> Importing&hellip;
+							<Loader2 size={14} className="animate-spin" />{' '}
+							{onAdvanceToPreview ? 'Loading\u2026' : 'Importing\u2026'}
 						</>
+					) : onAdvanceToPreview ? (
+						<>Next: preview &amp; match</>
 					) : (
 						<>
 							Import {preview.totalRows} rows
@@ -706,7 +751,6 @@ function TypeMappingSection({
 }) {
 	return (
 		<div className="border rounded-lg overflow-x-auto">
-			{/* Type header */}
 			<div className="flex items-center gap-2 px-3 py-2 bg-muted/50">
 				<Select
 					value={typeMapping.objectType}
@@ -737,7 +781,6 @@ function TypeMappingSection({
 				)}
 			</div>
 
-			{/* Column mapping table */}
 			<table className="w-full text-sm min-w-[400px]">
 				<thead>
 					<tr className="bg-muted/30">
@@ -778,6 +821,302 @@ function TypeMappingSection({
 				</tbody>
 			</table>
 		</div>
+	)
+}
+
+// ── Preview Step (dedup picker + counts + diff + escape hatch) ─────────
+
+function PreviewStep({
+	importRecord,
+	workspace,
+	workspaceId,
+	onBack,
+	onMappingUpdate,
+	onConfirm,
+	isConfirming,
+}: {
+	importRecord: ImportResponse
+	workspace: { settings: Record<string, unknown> }
+	workspaceId: string
+	onBack: () => void
+	onMappingUpdate: (mapping: ImportMappingInput) => Promise<void> | void
+	onConfirm: () => void
+	isConfirming: boolean
+}) {
+	const settings = workspace.settings as {
+		field_definitions?: Record<string, { name: string; type: string }[]>
+	}
+	const mapping = importRecord.mapping
+	const totalRows = importRecord.preview?.totalRows ?? 0
+
+	const previewMutation = useImportPreview(workspaceId)
+	const diffTableRef = useRef<HTMLDivElement>(null)
+
+	// Selected dedup keys per typeMapping index. We keep them in local state so
+	// chip toggles feel instant; the parent mapping is updated on Run/Confirm.
+	const [selectedKeys, setSelectedKeys] = useState<string[][]>(() =>
+		(mapping?.typeMappings ?? []).map((tm) => tm.dedupKeys ?? []),
+	)
+	const [previewData, setPreviewData] = useState<ImportPreviewResponse | null>(null)
+	const [previewError, setPreviewError] = useState<string | null>(null)
+	const [escapeOpen, setEscapeOpen] = useState(false)
+
+	const typeMappings = mapping?.typeMappings ?? []
+
+	const allTypesHaveKey = useMemo(
+		() => typeMappings.length > 0 && selectedKeys.every((keys) => keys.length > 0),
+		[typeMappings.length, selectedKeys],
+	)
+
+	const buildPreviewMapping = useCallback((): ImportMappingInput | null => {
+		if (!mapping) return null
+		return {
+			...mapping,
+			typeMappings: mapping.typeMappings.map((tm, idx) => ({
+				...tm,
+				dedupKeys: selectedKeys[idx] ?? [],
+				createAllAsNew: false,
+			})),
+		}
+	}, [mapping, selectedKeys])
+
+	// Debounced preview re-run on dedup-key change (AC-U2 affordance).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: previewMutation.mutate is stable across renders; including it would re-run the effect on every render
+	useEffect(() => {
+		if (!allTypesHaveKey || !importRecord.id) {
+			setPreviewData(null)
+			setPreviewError(null)
+			return
+		}
+		const requestMapping = buildPreviewMapping()
+		if (!requestMapping) return
+
+		const timer = setTimeout(() => {
+			previewMutation.mutate(
+				{ id: importRecord.id, mapping: requestMapping },
+				{
+					onSuccess: (data) => {
+						setPreviewData(data)
+						setPreviewError(null)
+					},
+					onError: (err) => {
+						setPreviewError(err instanceof Error ? err.message : 'Preview failed')
+						setPreviewData(null)
+					},
+				},
+			)
+		}, 250)
+		return () => clearTimeout(timer)
+	}, [allTypesHaveKey, importRecord.id, buildPreviewMapping])
+
+	const handleToggleKey = useCallback((typeMappingIndex: number, keys: string[]) => {
+		setSelectedKeys((prev) => prev.map((k, i) => (i === typeMappingIndex ? keys : k)))
+	}, [])
+
+	const handleRunImport = useCallback(async () => {
+		const updated = buildPreviewMapping()
+		if (!updated || !allTypesHaveKey) return
+		await onMappingUpdate(updated)
+		onConfirm()
+	}, [buildPreviewMapping, allTypesHaveKey, onMappingUpdate, onConfirm])
+
+	const handleConfirmEscapeHatch = useCallback(async () => {
+		if (!mapping) return
+		const escapeMapping: ImportMappingInput = {
+			...mapping,
+			typeMappings: mapping.typeMappings.map((tm) => ({
+				...tm,
+				dedupKeys: [],
+				createAllAsNew: true,
+			})),
+		}
+		await onMappingUpdate(escapeMapping)
+		setEscapeOpen(false)
+		onConfirm()
+	}, [mapping, onMappingUpdate, onConfirm])
+
+	const handleJumpToBucket = useCallback(() => {
+		diffTableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+	}, [])
+
+	const dedupOptionsFor = useCallback(
+		(objectType: string): DedupKeyOption[] => {
+			const fieldDefs = settings.field_definitions ?? {}
+			const baseOptions: DedupKeyOption[] = [{ value: 'title', label: 'title' }]
+			const typeDefs = fieldDefs[objectType] ?? []
+			for (const fd of typeDefs) {
+				baseOptions.push({ value: `metadata.${fd.name}`, label: fd.name })
+			}
+			return baseOptions
+		},
+		[settings],
+	)
+
+	if (!mapping) return null
+
+	const counts = {
+		matched: allTypesHaveKey && previewData ? previewData.matched : null,
+		created: allTypesHaveKey && previewData ? previewData.created : null,
+		skipped: allTypesHaveKey && previewData ? previewData.skipped : null,
+	}
+
+	const previewing = previewMutation.isPending
+
+	return (
+		<>
+			<div className="space-y-4">
+				{typeMappings.map((tm, idx) => (
+					<div
+						// biome-ignore lint/suspicious/noArrayIndexKey: type mappings have no stable ID
+						key={idx}
+						className="space-y-2"
+					>
+						{typeMappings.length > 1 && (
+							<div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+								{tm.objectType}
+							</div>
+						)}
+						<ImportDedupPicker
+							options={dedupOptionsFor(tm.objectType)}
+							selectedKeys={selectedKeys[idx] ?? []}
+							onChange={(keys) => handleToggleKey(idx, keys)}
+							disabled={isConfirming}
+						/>
+					</div>
+				))}
+
+				<div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+					<CountCard
+						label="To update"
+						value={counts.matched}
+						tone="update"
+						loading={previewing}
+						onJump={handleJumpToBucket}
+					/>
+					<CountCard
+						label="New to create"
+						value={counts.created}
+						tone="create"
+						loading={previewing}
+						onJump={handleJumpToBucket}
+					/>
+					<CountCard
+						label="Unchanged · skip"
+						value={counts.skipped}
+						tone="skip"
+						loading={previewing}
+						onJump={handleJumpToBucket}
+					/>
+				</div>
+
+				<button
+					type="button"
+					onClick={() => setEscapeOpen(true)}
+					className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors"
+					disabled={isConfirming}
+				>
+					Skip matching — create all {totalRows} as new&hellip;
+				</button>
+
+				{previewError && <p className="text-xs text-destructive">Preview failed: {previewError}</p>}
+
+				<div className="space-y-2">
+					<div className="flex items-baseline justify-between">
+						<h3 className="text-sm font-semibold">Per-row diff</h3>
+						<span className="text-xs text-muted-foreground">first 25 matches</span>
+					</div>
+					{allTypesHaveKey && previewData && previewData.diffs.length > 0 ? (
+						<ImportDiffTable ref={diffTableRef} diffs={previewData.diffs} />
+					) : (
+						<div className="rounded-lg border bg-card p-6 text-center text-sm text-muted-foreground">
+							{allTypesHaveKey
+								? 'No matched rows to preview.'
+								: 'Pick at least one field above to see how rows will resolve.'}
+						</div>
+					)}
+				</div>
+			</div>
+
+			<ResponsiveDialogFooter>
+				<Button variant="outline" onClick={onBack} disabled={isConfirming}>
+					Back
+				</Button>
+				<Button onClick={handleRunImport} disabled={!allTypesHaveKey || previewing || isConfirming}>
+					{isConfirming ? (
+						<>
+							<Loader2 size={14} className="animate-spin" /> Importing&hellip;
+						</>
+					) : (
+						<>Run import</>
+					)}
+				</Button>
+			</ResponsiveDialogFooter>
+
+			<Dialog open={escapeOpen} onOpenChange={setEscapeOpen}>
+				<DialogContent className="max-w-md">
+					<DialogHeader>
+						<DialogTitle>Create all rows as new?</DialogTitle>
+						<DialogDescription>{ESCAPE_HATCH_COPY}</DialogDescription>
+					</DialogHeader>
+					<DialogFooter className="gap-2 sm:gap-0">
+						<Button variant="outline" onClick={() => setEscapeOpen(false)} disabled={isConfirming}>
+							Cancel
+						</Button>
+						<Button
+							variant="destructive"
+							onClick={handleConfirmEscapeHatch}
+							disabled={isConfirming}
+						>
+							{isConfirming ? (
+								<>
+									<Loader2 size={14} className="animate-spin" /> Importing&hellip;
+								</>
+							) : (
+								<>Create all as new</>
+							)}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+		</>
+	)
+}
+
+function CountCard({
+	label,
+	value,
+	tone,
+	loading,
+	onJump,
+}: {
+	label: string
+	value: number | null
+	tone: 'update' | 'create' | 'skip'
+	loading: boolean
+	onJump: () => void
+}) {
+	const toneClass =
+		tone === 'update'
+			? 'text-blue-700 dark:text-blue-300'
+			: tone === 'create'
+				? 'text-emerald-700 dark:text-emerald-300'
+				: 'text-muted-foreground'
+
+	const displayValue = value === null ? '—' : value
+	return (
+		<button
+			type="button"
+			onClick={onJump}
+			aria-label={`Jump to ${label}`}
+			className="rounded-lg border bg-card text-left p-3 sm:p-4 hover:bg-accent/30 transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
+		>
+			<div className={cn('text-2xl font-semibold tabular-nums leading-none', toneClass)}>
+				{loading ? <span className="opacity-50">…</span> : displayValue}
+			</div>
+			<div className="text-[11px] uppercase tracking-wide text-muted-foreground mt-2 font-medium">
+				{label}
+			</div>
+		</button>
 	)
 }
 

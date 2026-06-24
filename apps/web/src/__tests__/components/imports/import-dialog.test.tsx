@@ -10,7 +10,9 @@ const mockUpdateMappingMutateAsync = vi.fn()
 const mockConfirmImportMutateAsync = vi.fn()
 const mockCreateImportReset = vi.fn()
 const mockConfirmImportReset = vi.fn()
+const mockPreviewMutate = vi.fn()
 let mockImportData: ImportResponse | undefined
+let mockWorkspaceSettings: Record<string, unknown> = {}
 
 vi.mock('@/hooks/use-imports', () => ({
 	useCreateImport: () => ({
@@ -31,12 +33,16 @@ vi.mock('@/hooks/use-imports', () => ({
 	useImport: () => ({
 		data: mockImportData,
 	}),
+	useImportPreview: () => ({
+		mutate: mockPreviewMutate,
+		isPending: false,
+	}),
 }))
 
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({
 		workspaceId: 'ws-1',
-		workspace: { settings: {} },
+		workspace: { settings: mockWorkspaceSettings },
 	}),
 }))
 
@@ -63,6 +69,7 @@ describe('ImportDialog', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockImportData = undefined
+		mockWorkspaceSettings = {}
 	})
 
 	it('renders upload step when open=true', () => {
@@ -170,6 +177,107 @@ describe('ImportDialog', () => {
 			expect(mockConfirmImportMutateAsync).toHaveBeenCalledWith('imp-123')
 			expect(onImportStarted).toHaveBeenCalledWith('imp-123')
 			expect(onOpenChange).toHaveBeenCalledWith(false)
+		})
+	})
+
+	describe('Step 3 (preview) with dedup flag on', () => {
+		const dedupSettings = {
+			statuses: { bet: ['signal', 'shape'] },
+			field_definitions: { bet: [{ name: 'email', type: 'string' }] },
+			flags: { bulkImportDedup: true },
+		}
+
+		it('mapping step shows "Next: preview & match" instead of direct import', async () => {
+			mockWorkspaceSettings = dedupSettings
+			const importRecord = buildImportResponse({
+				totalRows: 10,
+				mapping: defaultMapping,
+				preview: defaultPreview,
+			})
+			mockCreateImportMutateAsync.mockResolvedValue(importRecord)
+			mockImportData = importRecord
+
+			render(<ImportDialog open={true} onOpenChange={vi.fn()} />, { wrapper: TestWrapper })
+			const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+			await userEvent.upload(fileInput, new File(['test'], 'data.csv', { type: 'text/csv' }))
+
+			await waitFor(() => {
+				expect(screen.getByRole('button', { name: /Next: preview & match/ })).toBeInTheDocument()
+			})
+			expect(screen.queryByText(/Import 10 rows/)).not.toBeInTheDocument()
+		})
+
+		it('renders dedup picker and three count cards on Step 3 (AC-U1, AC-U2)', async () => {
+			mockWorkspaceSettings = dedupSettings
+			const importRecord = buildImportResponse({
+				totalRows: 10,
+				mapping: defaultMapping,
+				preview: defaultPreview,
+			})
+			mockCreateImportMutateAsync.mockResolvedValue(importRecord)
+			mockImportData = importRecord
+
+			render(<ImportDialog open={true} onOpenChange={vi.fn()} />, { wrapper: TestWrapper })
+			const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+			await userEvent.upload(fileInput, new File(['test'], 'data.csv', { type: 'text/csv' }))
+
+			await userEvent.click(await screen.findByRole('button', { name: /Next: preview & match/ }))
+
+			expect(await screen.findByText('Match existing records by:')).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Dedup key title/ })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Dedup key email/ })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Jump to To update/ })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Jump to New to create/ })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Jump to Unchanged · skip/ })).toBeInTheDocument()
+		})
+
+		it('Run import is disabled until at least one dedup key is selected (AC-U4 frontend gate)', async () => {
+			mockWorkspaceSettings = dedupSettings
+			const importRecord = buildImportResponse({
+				totalRows: 10,
+				mapping: defaultMapping,
+				preview: defaultPreview,
+			})
+			mockCreateImportMutateAsync.mockResolvedValue(importRecord)
+			mockImportData = importRecord
+
+			render(<ImportDialog open={true} onOpenChange={vi.fn()} />, { wrapper: TestWrapper })
+			const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+			await userEvent.upload(fileInput, new File(['test'], 'data.csv', { type: 'text/csv' }))
+			await userEvent.click(await screen.findByRole('button', { name: /Next: preview & match/ }))
+
+			const runButton = await screen.findByRole('button', { name: /Run import/ })
+			expect(runButton).toBeDisabled()
+
+			await userEvent.click(screen.getByRole('button', { name: /Dedup key title/ }))
+			expect(screen.getByRole('button', { name: /Run import/ })).toBeEnabled()
+		})
+
+		it('escape-hatch dialog renders verbatim AC-U4 copy with destructive confirm', async () => {
+			mockWorkspaceSettings = dedupSettings
+			const importRecord = buildImportResponse({
+				totalRows: 847,
+				mapping: defaultMapping,
+				preview: { ...defaultPreview, totalRows: 847 },
+			})
+			mockCreateImportMutateAsync.mockResolvedValue(importRecord)
+			mockImportData = importRecord
+
+			render(<ImportDialog open={true} onOpenChange={vi.fn()} />, { wrapper: TestWrapper })
+			const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+			await userEvent.upload(fileInput, new File(['test'], 'data.csv', { type: 'text/csv' }))
+			await userEvent.click(await screen.findByRole('button', { name: /Next: preview & match/ }))
+
+			await userEvent.click(
+				await screen.findByRole('button', { name: /Skip matching — create all 847 as new/ }),
+			)
+
+			expect(
+				await screen.findByText(
+					"Importing without a dedup key creates duplicates for every row — pick at least one field, or confirm 'Create all as new'.",
+				),
+			).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Create all as new' })).toBeInTheDocument()
 		})
 	})
 

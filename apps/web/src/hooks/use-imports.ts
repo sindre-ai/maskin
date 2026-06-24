@@ -5,6 +5,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
+export function useImportPreview(workspaceId: string) {
+	return useMutation({
+		mutationFn: ({ id, mapping }: { id: string; mapping: ImportMappingInput }) =>
+			api.imports.preview(id, mapping, workspaceId),
+	})
+}
+
 export function useImport(id: string | undefined, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.imports.detail(id ?? ''),

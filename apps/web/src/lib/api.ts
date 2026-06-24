@@ -433,6 +433,12 @@ export const api = {
 				body: { mapping },
 				workspaceId,
 			}),
+		preview: (id: string, mapping: ImportMappingInput, workspaceId: string) =>
+			request<ImportPreviewResponse>(`/imports/${id}/preview`, {
+				method: 'POST',
+				body: { mapping },
+				workspaceId,
+			}),
 		confirm: (id: string, workspaceId: string) =>
 			request<ImportResponse>(`/imports/${id}/confirm`, { method: 'POST', workspaceId }),
 	},
@@ -1178,6 +1184,26 @@ export interface TypeMappingInput {
 	columns: ColumnMappingInput[]
 	defaultStatus?: string
 	dedupKeys?: string[]
+	createAllAsNew?: boolean
+}
+
+export interface ImportPreviewDiffChange {
+	column: string
+	old: unknown
+	new: unknown
+}
+
+export interface ImportPreviewDiffRow {
+	row_index: number
+	object_id: string
+	changes: ImportPreviewDiffChange[]
+}
+
+export interface ImportPreviewResponse {
+	matched: number
+	created: number
+	skipped: number
+	diffs: ImportPreviewDiffRow[]
 }
 
 export interface RelationshipMappingInput {
