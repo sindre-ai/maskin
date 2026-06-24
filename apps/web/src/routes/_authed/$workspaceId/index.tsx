@@ -34,6 +34,7 @@ function ForYouDashboard() {
 				<EmptyState
 					title="All caught up"
 					description="New comments and replies on things you're subscribed to will appear here."
+					className="py-8"
 				/>
 				<SparseComposer itemsCount={0} />
 			</div>
