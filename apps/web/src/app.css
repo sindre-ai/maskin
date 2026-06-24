@@ -271,9 +271,10 @@
 	}
 }
 
-@layer components {
-	/* Full-contrast prose for agent output — overrides the muted paragraph
-	   colour used in regular MarkdownContent so agent text reads clearly. */
+@layer utilities {
+	/* Full-contrast prose for agent output — must be in @layer utilities (not
+	   components) so these rules outrank prose-p:text-muted-foreground, which
+	   the prose plugin emits in the utilities layer. */
 	.agent-output p,
 	.agent-output li {
 		color: var(--foreground);
