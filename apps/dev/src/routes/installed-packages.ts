@@ -301,7 +301,7 @@ app.openapi(installPackageRoute, async (c) => {
 					// shows up in the workspace's agent list (those queries join through
 					// workspace_members) and its own MCP/API calls, which carry X-Workspace-Id,
 					// would 403 in authMiddleware, so a trigger targeting it couldn't run.
-					// Mirrors how the seeded Sindre agent is added on workspace creation.
+					// Mirrors how the seeded Workspace Coach agent is added on workspace creation.
 					await tx.insert(workspaceMembers).values({
 						workspaceId,
 						actorId: row.id,

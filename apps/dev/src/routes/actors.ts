@@ -23,7 +23,7 @@ import {
 import {
 	type AgentState,
 	PLATFORM_MCP_PRESET,
-	SINDRE_DEFAULT,
+	WORKSPACE_COACH_DEFAULT,
 	createActorSchema,
 	updateActorSchema,
 	workspaceSettingsSchema,
@@ -43,7 +43,7 @@ import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
-import { bootstrapWorkspaceObserver } from '../services/workspace-bootstrap'
+import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
@@ -97,6 +97,25 @@ const createActorRoute = createRoute({
 	},
 })
 
+function isEmailUniqueViolation(err: unknown): boolean {
+	for (let cur: unknown = err; cur && typeof cur === 'object'; ) {
+		const e = cur as {
+			code?: string
+			constraint_name?: string
+			constraint?: string
+			message?: string
+			cause?: unknown
+		}
+		if (e.code === '23505') {
+			const name = e.constraint_name ?? e.constraint
+			if (name === 'actors_email_unique') return true
+			if (typeof e.message === 'string' && e.message.includes('actors_email_unique')) return true
+		}
+		cur = e.cause
+	}
+	return false
+}
+
 app.openapi(createActorRoute, async (c) => {
 	const db = c.get('db')
 	const body = c.req.valid('json')
@@ -138,27 +157,40 @@ app.openapi(createActorRoute, async (c) => {
 				}
 			: body.tools
 
-	const [actor] = await db
-		.insert(actors)
-		.values({
-			...(body.id && { id: body.id }),
-			type: body.type,
-			name: body.name,
-			email: body.email,
-			apiKey: key,
-			passwordHash,
-			description: body.description,
-			systemPrompt: body.system_prompt,
-			tools,
-			llmProvider: body.llm_provider,
-			llmConfig: body.llm_config,
-		})
-		.onConflictDoNothing({ target: actors.id })
-		.returning()
+	let actor: typeof actors.$inferSelect | undefined
+	try {
+		;[actor] = await db
+			.insert(actors)
+			.values({
+				...(body.id && { id: body.id }),
+				type: body.type,
+				name: body.name,
+				email: body.email,
+				apiKey: key,
+				passwordHash,
+				description: body.description,
+				systemPrompt: body.system_prompt,
+				tools,
+				llmProvider: body.llm_provider,
+				llmConfig: body.llm_config,
+			})
+			.onConflictDoNothing({ target: actors.id })
+			.returning()
+	} catch (err) {
+		if (isEmailUniqueViolation(err)) {
+			return c.json(
+				createApiError('CONFLICT', 'Email already exists', [
+					{ field: 'email', message: 'An account with this email already exists' },
+				]),
+				409,
+			)
+		}
+		throw err
+	}
 
 	if (!actor) {
 		if (body.id) {
-			return c.json(createApiError('BAD_REQUEST', 'An actor with this ID already exists'), 409)
+			return c.json(createApiError('CONFLICT', 'An actor with this ID already exists'), 409)
 		}
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create actor'), 500)
 	}
@@ -168,7 +200,9 @@ app.openapi(createActorRoute, async (c) => {
 	let workspaceId: string | undefined
 
 	if (shouldCreateWorkspace) {
-		const defaultSettings = workspaceSettingsSchema.parse({})
+		const defaultSettings = workspaceSettingsSchema.parse({
+			enabled_modules: ['work', 'knowledge'],
+		})
 		const created = await db.transaction(async (tx) => {
 			const [workspace] = await tx
 				.insert(workspaces)
@@ -187,30 +221,30 @@ app.openapi(createActorRoute, async (c) => {
 				role: 'owner',
 			})
 
-			// Seed Sindre — the built-in meta-agent shipped with every workspace.
-			// apiKey is required: without it, Sindre's container boots with an empty
+			// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
+			// apiKey is required: without it, the agent's container boots with an empty
 			// Bearer token and MCP writes either 401 or — worse — fall back to a key
 			// that resolves to a different actor, misattributing every comment.
-			const [sindre] = await tx
+			const [coach] = await tx
 				.insert(actors)
 				.values({
-					type: SINDRE_DEFAULT.type,
-					name: SINDRE_DEFAULT.name,
-					isSystem: SINDRE_DEFAULT.isSystem,
-					systemPrompt: SINDRE_DEFAULT.systemPrompt,
-					llmProvider: SINDRE_DEFAULT.llmProvider,
-					llmConfig: SINDRE_DEFAULT.llmConfig,
-					tools: SINDRE_DEFAULT.tools,
+					type: WORKSPACE_COACH_DEFAULT.type,
+					name: WORKSPACE_COACH_DEFAULT.name,
+					isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
+					systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+					llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
+					llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
+					tools: WORKSPACE_COACH_DEFAULT.tools,
 					apiKey: generateApiKey().key,
 					createdBy: actor.id,
 				})
 				.returning()
 
-			if (!sindre) throw new Error('Failed to seed Sindre actor')
+			if (!coach) throw new Error('Failed to seed Workspace Coach actor')
 
 			await tx.insert(workspaceMembers).values({
 				workspaceId: workspace.id,
-				actorId: sindre.id,
+				actorId: coach.id,
 				role: 'member',
 			})
 
@@ -221,7 +255,7 @@ app.openapi(createActorRoute, async (c) => {
 			workspaceId = created.id
 			const agentStorage = c.get('agentStorage')
 			if (agentStorage) {
-				bootstrapWorkspaceObserver(db, agentStorage, created.id, actor.id).catch((err) =>
+				await bootstrapDefaultAgents(db, agentStorage, created.id, actor.id).catch((err) =>
 					logger.error('workspace bootstrap failed', { workspaceId: created.id, err }),
 				)
 			}
@@ -729,7 +763,7 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 	return c.json({ api_key: key })
 }) as RouteHandler<typeof regenerateApiKeyRoute, Env>)
 
-// POST /:id/reset - Reset system actor to factory defaults (Sindre)
+// POST /:id/reset - Reset system actor to factory defaults (Workspace Coach)
 const resetActorRoute = createRoute({
 	method: 'post',
 	path: '/{id}/reset',
@@ -782,12 +816,12 @@ app.openapi(resetActorRoute, (async (c) => {
 	const [updated] = await db
 		.update(actors)
 		.set({
-			name: SINDRE_DEFAULT.name,
+			name: WORKSPACE_COACH_DEFAULT.name,
 			description: null,
-			systemPrompt: SINDRE_DEFAULT.systemPrompt,
-			llmProvider: SINDRE_DEFAULT.llmProvider,
-			llmConfig: SINDRE_DEFAULT.llmConfig,
-			tools: SINDRE_DEFAULT.tools,
+			systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+			llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
+			llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
+			tools: WORKSPACE_COACH_DEFAULT.tools,
 			memory: null,
 			updatedAt: new Date(),
 		})

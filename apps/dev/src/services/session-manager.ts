@@ -1844,7 +1844,7 @@ export class SessionManager extends EventEmitter {
 		}
 
 		// 3. Auto-pause idle non-interactive sessions (no log output for >10 minutes).
-		// Interactive sessions (Sindre chat) are long-lived by design and naturally
+		// Interactive sessions (chat) are long-lived by design and naturally
 		// idle between user turns — pausing them silently breaks the next /input call.
 		const runningSessions = await this.db
 			.select()

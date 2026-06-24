@@ -1,7 +1,7 @@
 /// <reference types="vitest/globals" />
 import '@testing-library/jest-dom'
 import type { WorkspaceWithRole } from '@/lib/api'
-import { SindreProvider } from '@/lib/sindre-context'
+import { ChatProvider } from '@/lib/chat-context'
 import { WorkspaceContext, type WorkspaceContextValue } from '@/lib/workspace-context'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
@@ -120,7 +120,7 @@ export function createWorkspaceWrapper(overrides: Partial<WorkspaceWithRole> = {
 			React.createElement(
 				WorkspaceContext.Provider,
 				{ value: ctxValue },
-				React.createElement(SindreProvider, { workspaceId: workspace.id, children }),
+				React.createElement(ChatProvider, { workspaceId: workspace.id, children }),
 			),
 		)
 }

@@ -12,106 +12,158 @@ import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 
-const OBSERVER = DEVELOPMENT_AGENTS.find((a) => a.$id === 'workspace_observer')
-const ONBOARDING_TRIGGER = DEVELOPMENT_TRIGGERS.find((t) => t.name === 'New Workspace Onboarding')
+const DEFAULT_AGENT_IDS = ['workspace_coach', 'workspace_driver', 'strategist']
 
-export async function bootstrapWorkspaceObserver(
+const defaultAgents = DEVELOPMENT_AGENTS.filter((a) => DEFAULT_AGENT_IDS.includes(a.$id))
+
+export async function bootstrapDefaultAgents(
 	db: Database,
 	agentStorage: AgentStorageManager,
 	workspaceId: string,
 	createdBy: string,
 ): Promise<void> {
-	if (!OBSERVER || !ONBOARDING_TRIGGER) return
+	// Map from $id → created actor UUID — used to wire triggers after all agents are seeded.
+	const actorIdMap: Record<string, string> = {}
 
-	// Idempotent: bail out if the Workspace Observer is already a member.
-	const [existing] = await db
-		.select({ actorId: workspaceMembers.actorId })
-		.from(workspaceMembers)
-		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-		.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, OBSERVER.name)))
-		.limit(1)
+	for (const agent of defaultAgents) {
+		// Idempotent: check if an actor with this name already exists in the workspace.
+		const [existing] = await db
+			.select({ actorId: workspaceMembers.actorId })
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+			.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, agent.name)))
+			.limit(1)
 
-	if (existing) return
+		let actorId: string
 
-	// Create the Workspace Observer actor.
-	const [observer] = await db
-		.insert(actors)
-		.values({
-			type: 'agent',
-			name: OBSERVER.name,
-			systemPrompt: OBSERVER.systemPrompt,
-			tools: (OBSERVER.tools ?? null) as Record<string, unknown> | null,
-			apiKey: generateApiKey().key,
-			createdBy,
-		})
-		.returning()
+		if (existing) {
+			actorId = existing.actorId
+			actorIdMap[agent.$id] = actorId
+		} else {
+			const systemPrompt = agent.systemPrompt.replaceAll('{{self_id}}', '')
 
-	if (!observer) throw new Error('Failed to create Workspace Observer actor')
+			const [created] = await db
+				.insert(actors)
+				.values({
+					type: 'agent',
+					name: agent.name,
+					systemPrompt,
+					tools: (agent.tools ?? null) as Record<string, unknown> | null,
+					llmConfig: (agent.llmConfig ?? null) as Record<string, unknown> | null,
+					apiKey: generateApiKey().key,
+					createdBy,
+				})
+				.returning()
 
-	await db.insert(workspaceMembers).values({ workspaceId, actorId: observer.id, role: 'member' })
-
-	// Create and attach each seed skill (DB row + S3 upload in one transaction).
-	for (const skill of OBSERVER.skills ?? []) {
-		try {
-			let parsed: ReturnType<typeof parseSkillMd> | null = null
-			try {
-				parsed = parseSkillMd(skill.content)
-			} catch {
-				parsed = null
+			if (!created) {
+				logger.error('Failed to create agent during workspace bootstrap', {
+					workspaceId,
+					agentName: agent.name,
+				})
+				continue
 			}
-			const description = parsed?.description ?? null
-			const isValid = parsed !== null && skillNameSchema.safeParse(parsed.name).success
 
-			const skillId = randomUUID()
-			const storageKey = workspaceSkillKey(workspaceId, skillId)
-			const sizeBytes = Buffer.byteLength(skill.content, 'utf-8')
+			actorId = created.id
+			actorIdMap[agent.$id] = actorId
 
-			const createdSkill = await db.transaction(async (tx) => {
-				const [row] = await tx
-					.insert(workspaceSkills)
-					.values({
-						id: skillId,
-						workspaceId,
-						name: skill.name,
-						description,
-						content: skill.content,
-						storageKey,
-						sizeBytes,
-						isValid,
-						createdBy,
-					})
-					.onConflictDoNothing()
-					.returning()
-
-				if (!row) return null
-				await agentStorage.putWorkspaceSkill(workspaceId, skillId, skill.content)
-				return row
-			})
-
-			if (createdSkill) {
+			// Patch own ID into the system prompt now that we have it.
+			if (agent.systemPrompt.includes('{{self_id}}')) {
 				await db
-					.insert(agentSkills)
-					.values({ actorId: observer.id, workspaceSkillId: createdSkill.id })
-					.onConflictDoNothing()
+					.update(actors)
+					.set({ systemPrompt: agent.systemPrompt.replaceAll('{{self_id}}', created.id) })
+					.where(eq(actors.id, created.id))
 			}
-		} catch (err) {
-			logger.error('Failed to create/attach skill during workspace bootstrap', {
+
+			await db.insert(workspaceMembers).values({ workspaceId, actorId, role: 'member' })
+		}
+
+		// Seed skills for this agent. Runs for both newly-created and pre-existing actors so
+		// that Workspace Coach's skills (seeded synchronously in the workspace transaction)
+		// are still attached here. Both inserts use onConflictDoNothing so this is idempotent.
+		for (const skill of agent.skills ?? []) {
+			try {
+				let parsed: ReturnType<typeof parseSkillMd> | null = null
+				try {
+					parsed = parseSkillMd(skill.content)
+				} catch {
+					parsed = null
+				}
+				const description = parsed?.description ?? null
+				const isValid = parsed !== null && skillNameSchema.safeParse(parsed.name).success
+
+				const skillId = randomUUID()
+				const storageKey = workspaceSkillKey(workspaceId, skillId)
+				const sizeBytes = Buffer.byteLength(skill.content, 'utf-8')
+
+				const createdSkill = await db.transaction(async (tx) => {
+					const [row] = await tx
+						.insert(workspaceSkills)
+						.values({
+							id: skillId,
+							workspaceId,
+							name: skill.name,
+							description,
+							content: skill.content,
+							storageKey,
+							sizeBytes,
+							isValid,
+							createdBy,
+						})
+						.onConflictDoNothing()
+						.returning()
+
+					if (!row) return null
+					await agentStorage.putWorkspaceSkill(workspaceId, skillId, skill.content)
+					return row
+				})
+
+				if (createdSkill) {
+					await db
+						.insert(agentSkills)
+						.values({ actorId, workspaceSkillId: createdSkill.id })
+						.onConflictDoNothing()
+				}
+			} catch (err) {
+				logger.error('Failed to create/attach skill during workspace bootstrap', {
+					workspaceId,
+					skill: skill.name,
+					err,
+				})
+			}
+		}
+	}
+
+	// Create triggers for all seeded agents.
+	for (const trigger of DEVELOPMENT_TRIGGERS) {
+		const targetActorId = actorIdMap[trigger.targetActor$id]
+		if (!targetActorId) continue
+
+		// Idempotent: skip if a trigger with this name already exists in the workspace.
+		const [existingTrigger] = await db
+			.select({ id: triggers.id })
+			.from(triggers)
+			.where(and(eq(triggers.workspaceId, workspaceId), eq(triggers.name, trigger.name)))
+			.limit(1)
+
+		if (existingTrigger) continue
+
+		try {
+			await db.insert(triggers).values({
 				workspaceId,
-				skill: skill.name,
+				name: trigger.name,
+				type: trigger.type,
+				config: trigger.config as Record<string, unknown>,
+				actionPrompt: trigger.actionPrompt,
+				targetActorId,
+				enabled: trigger.enabled,
+				createdBy,
+			})
+		} catch (err) {
+			logger.error('Failed to create trigger during workspace bootstrap', {
+				workspaceId,
+				triggerName: trigger.name,
 				err,
 			})
 		}
 	}
-
-	// Create the onboarding trigger pointing at the new observer.
-	await db.insert(triggers).values({
-		workspaceId,
-		name: ONBOARDING_TRIGGER.name,
-		type: ONBOARDING_TRIGGER.type,
-		config: ONBOARDING_TRIGGER.config as Record<string, unknown>,
-		actionPrompt: ONBOARDING_TRIGGER.actionPrompt,
-		targetActorId: observer.id,
-		enabled: ONBOARDING_TRIGGER.enabled,
-		createdBy,
-	})
 }
