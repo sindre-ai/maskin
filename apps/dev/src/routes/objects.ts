@@ -857,40 +857,49 @@ app.openapi(updateObjectRoute, async (c) => {
 		}
 	}
 
-	const [updated] = await db.update(objects).set(updateData).where(eq(objects.id, id)).returning()
+	// All three writes (object update, status event, notification fan-out) run in
+	// one transaction so a fan-out failure cannot leave the bet updated but
+	// watchers un-notified.
+	const action = body.status && body.status !== existing.status ? 'status_changed' : 'updated'
+	let updated: typeof objects.$inferSelect | undefined
+
+	await db.transaction(async (tx) => {
+		const [row] = await tx.update(objects).set(updateData).where(eq(objects.id, id)).returning()
+		if (!row) return // object not found; 404 handled below
+
+		updated = row
+
+		await tx.insert(events).values({
+			workspaceId: existing.workspaceId,
+			actorId,
+			action,
+			entityType: existing.type,
+			entityId: id,
+			data: { previous: existing, updated: row },
+		})
+
+		// Fan out a notification row to every subscriber when a bet reaches a
+		// terminal state. The status_changed event itself surfaces the entity in
+		// the unread feed (see subscriptions.ts); the notification row drives the
+		// dedicated terminal-signal UI and is the canonical record for
+		// "watcher was told the bet ended". Author/manual/commenter/mentioned
+		// subscribers are all included; the actor making the change is excluded
+		// (you don't notify yourself about your own flip).
+		if (
+			action === 'status_changed' &&
+			existing.type === 'bet' &&
+			(row.status === 'succeeded' || row.status === 'failed')
+		) {
+			await fanOutBetTerminalNotifications(tx as unknown as Database, {
+				workspaceId: existing.workspaceId,
+				actorId,
+				bet: row,
+			})
+		}
+	})
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
-	}
-
-	// Log event
-	const action = body.status && body.status !== existing.status ? 'status_changed' : 'updated'
-	await db.insert(events).values({
-		workspaceId: existing.workspaceId,
-		actorId,
-		action,
-		entityType: existing.type,
-		entityId: id,
-		data: { previous: existing, updated },
-	})
-
-	// Fan out a notification row to every subscriber when a bet reaches a
-	// terminal state. The status_changed event itself surfaces the entity in
-	// the unread feed (see subscriptions.ts); the notification row drives the
-	// dedicated terminal-signal UI and is the canonical record for
-	// "watcher was told the bet ended". Author/manual/commenter/mentioned
-	// subscribers are all included; the actor making the change is excluded
-	// (you don't notify yourself about your own flip).
-	if (
-		action === 'status_changed' &&
-		existing.type === 'bet' &&
-		(updated.status === 'succeeded' || updated.status === 'failed')
-	) {
-		await fanOutBetTerminalNotifications(db, {
-			workspaceId: existing.workspaceId,
-			actorId,
-			bet: updated,
-		})
 	}
 
 	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
