@@ -31,7 +31,7 @@ vi.mock('@/components/chat/chat', () => ({
 				onSubmit={(e) => {
 					e.preventDefault()
 					if (!value.trim()) return
-					void onSend(value).then(() => setValue(''))
+					void onSend(value).then(() => setValue(''), () => {})
 				}}
 			>
 				<textarea
@@ -117,5 +117,39 @@ describe('SparseComposer', () => {
 		await user.type(getTextarea(), '   ')
 		await user.click(screen.getByRole('button', { name: 'Send message' }))
 		expect(openWithContextMock).not.toHaveBeenCalled()
+	})
+
+	it('does not emit _submit and preserves draft when openWithContext rejects via Composer submit (AC-T2/T3)', async () => {
+		openWithContextMock.mockRejectedValue(new Error('network error'))
+		const user = userEvent.setup()
+		render(<SparseComposer itemsCount={2} />)
+		await user.type(getTextarea(), 'test message')
+		await user.click(screen.getByRole('button', { name: 'Send message' }))
+		await waitFor(() => expect(openWithContextMock).toHaveBeenCalled())
+		expect(trackSubmitMock).not.toHaveBeenCalled()
+		expect(getTextarea().value).toBe('test message')
+	})
+
+	it('chip double-tap is idempotent — second click ignored while first is in-flight (AC-T1)', async () => {
+		let resolve!: () => void
+		openWithContextMock.mockReturnValue(new Promise<void>((r) => { resolve = r }))
+		const user = userEvent.setup()
+		render(<SparseComposer itemsCount={0} />)
+		const chip = screen.getByRole('button', { name: 'Help me plan a new bet' })
+		await user.click(chip)
+		await user.click(chip)
+		resolve()
+		await waitFor(() => expect(openWithContextMock).toHaveBeenCalledTimes(1))
+	})
+
+	it('does not emit _submit and re-enables chip when openWithContext rejects via chip click (AC-T2/T3)', async () => {
+		openWithContextMock.mockRejectedValue(new Error('sidebar error'))
+		const user = userEvent.setup()
+		render(<SparseComposer itemsCount={0} />)
+		const chip = screen.getByRole('button', { name: 'Help me plan a new bet' })
+		await user.click(chip)
+		await waitFor(() => expect(openWithContextMock).toHaveBeenCalled())
+		expect(trackSubmitMock).not.toHaveBeenCalled()
+		await waitFor(() => expect(chip).not.toBeDisabled())
 	})
 })
