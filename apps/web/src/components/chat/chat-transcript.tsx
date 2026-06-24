@@ -1,4 +1,4 @@
-import { MarkdownContent } from '@/components/shared/markdown-content'
+import { AgentOutput } from '@/components/shared/agent-output'
 import { Spinner } from '@/components/ui/spinner'
 import type { ChatEvent, UserAttachmentView } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
@@ -144,17 +144,7 @@ function userAttachmentLabel(a: UserAttachmentView): string {
 }
 
 function AssistantTextBlock({ text }: { text: string }) {
-	// MarkdownContent applies `prose-p:text-muted-foreground` internally, which
-	// overrides plain text-color classes on the outer wrapper. Target the
-	// rendered <p>/<li> nodes directly so the body text matches the user
-	// bubble's text-accent-foreground.
-	return (
-		<MarkdownContent
-			content={text}
-			className="[&_li]:!text-accent-foreground [&_p]:!text-accent-foreground"
-			size="sm"
-		/>
-	)
+	return <AgentOutput content={text} size="sm" />
 }
 
 function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
