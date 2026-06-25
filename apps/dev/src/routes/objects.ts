@@ -1,5 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
+
+type DbTransaction = Parameters<Parameters<Database['transaction']>[0]>[0]
 import {
 	events,
 	actors,
@@ -901,7 +903,7 @@ app.openapi(updateObjectRoute, async (c) => {
 			existing.status !== 'succeeded' &&
 			existing.status !== 'failed'
 		) {
-			await fanOutBetTerminalNotifications(tx as unknown as Database, {
+			await fanOutBetTerminalNotifications(tx, {
 				workspaceId: existing.workspaceId,
 				actorId,
 				bet: row,
@@ -917,7 +919,7 @@ app.openapi(updateObjectRoute, async (c) => {
 })
 
 async function fanOutBetTerminalNotifications(
-	db: Database,
+	db: DbTransaction,
 	args: { workspaceId: string; actorId: string; bet: typeof objects.$inferSelect },
 ): Promise<void> {
 	const { workspaceId, actorId, bet } = args
