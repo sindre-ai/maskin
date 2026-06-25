@@ -37,12 +37,17 @@ test.describe('Imports audit — AC-U5', () => {
 			.click()
 
 		// Upload: one row matches an existing bet (update), one is new (create).
+		// Scope the file-input lookup to the dialog — the page also mounts a
+		// markdown upload input that would otherwise match.
 		const csv = 'title,email\nExisting Bet,e@example.com\nBrand New Bet,n@example.com\n'
-		await page.locator('input[type="file"]').setInputFiles({
-			name: 'data.csv',
-			mimeType: 'text/csv',
-			buffer: Buffer.from(csv),
-		})
+		await page
+			.getByRole('dialog', { name: 'Import Objects' })
+			.locator('input[type="file"]')
+			.setInputFiles({
+				name: 'data.csv',
+				mimeType: 'text/csv',
+				buffer: Buffer.from(csv),
+			})
 
 		await page.getByRole('button', { name: /Next: preview & match/ }).click()
 		await page.getByRole('button', { name: /Dedup key title/ }).click()

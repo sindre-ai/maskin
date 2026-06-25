@@ -31,7 +31,9 @@ test.describe('Import — Step 3 dedup picker', () => {
 			.click()
 
 		// Upload a tiny CSV with a single column matching `title`.
-		const fileInput = page.locator('input[type="file"]')
+		const fileInput = page
+			.getByRole('dialog', { name: 'Import Objects' })
+			.locator('input[type="file"]')
 		await fileInput.setInputFiles({
 			name: 'data.csv',
 			mimeType: 'text/csv',
@@ -70,7 +72,9 @@ test.describe('Import — Step 3 dedup picker', () => {
 			.first()
 			.click()
 
-		const fileInput = page.locator('input[type="file"]')
+		const fileInput = page
+			.getByRole('dialog', { name: 'Import Objects' })
+			.locator('input[type="file"]')
 		await fileInput.setInputFiles({
 			name: 'data.csv',
 			mimeType: 'text/csv',
@@ -99,7 +103,9 @@ test.describe('Import — Step 3 dedup picker', () => {
 			.first()
 			.click()
 
-		const fileInput = page.locator('input[type="file"]')
+		const fileInput = page
+			.getByRole('dialog', { name: 'Import Objects' })
+			.locator('input[type="file"]')
 		await fileInput.setInputFiles({
 			name: 'data.csv',
 			mimeType: 'text/csv',
@@ -128,7 +134,9 @@ test.describe('Import — Step 3 dedup picker', () => {
 			.first()
 			.click()
 
-		const fileInput = page.locator('input[type="file"]')
+		const fileInput = page
+			.getByRole('dialog', { name: 'Import Objects' })
+			.locator('input[type="file"]')
 		await fileInput.setInputFiles({
 			name: 'data.csv',
 			mimeType: 'text/csv',
