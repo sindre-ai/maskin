@@ -1,4 +1,4 @@
-import { MarkdownContent } from '@/components/shared/markdown-content'
+import { AgentOutput } from '@/components/shared/agent-output'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -6,8 +6,8 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
+import { useChat } from '@/lib/chat-context'
 import { resolveNavigationTarget } from '@/lib/navigation'
-import { useSindre } from '@/lib/sindre-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ArrowUpRight, Bot, ExternalLink } from 'lucide-react'
@@ -133,7 +133,7 @@ interface PulseCardProps {
 export function PulseCard({ notification, actorsById, onAction, onDismiss }: PulseCardProps) {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
-	const { openWithContext } = useSindre()
+	const { openWithContext } = useChat()
 	const metadata = notification.metadata ?? {}
 	const metaText = metadata.meta_text as string | undefined
 	const rawTags = metadata.tags
@@ -175,7 +175,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 		setReplyOpen(false)
 	}
 
-	const handleTalkToSindre = () => {
+	const handleChatWithAgents = () => {
 		openWithContext([{ kind: 'notification', id: notification.id, title: notification.title }])
 	}
 
@@ -212,7 +212,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				</CardTitle>
 				{notification.content && (
 					<div className="text-sm text-muted-foreground">
-						<MarkdownContent content={notification.content} />
+						<AgentOutput content={notification.content} />
 					</div>
 				)}
 			</CardHeader>
@@ -220,7 +220,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				{/* Meta info */}
 				{metaText && (
 					<div className="text-xs text-muted-foreground">
-						<MarkdownContent content={metaText} size="xs" />
+						<AgentOutput content={metaText} size="xs" />
 					</div>
 				)}
 
@@ -263,7 +263,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				{/* Agent suggestion */}
 				{suggestion && (
 					<div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
-						<MarkdownContent content={suggestion} />
+						<AgentOutput content={suggestion} />
 					</div>
 				)}
 
@@ -281,9 +281,9 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 								{action.navigate && <ArrowUpRight className="ml-1 h-3 w-3" />}
 							</Button>
 						))}
-						<Button size="sm" variant="outline" onClick={handleTalkToSindre}>
+						<Button size="sm" variant="outline" onClick={handleChatWithAgents}>
 							<Bot className="mr-1 h-3 w-3" />
-							Talk to Sindre
+							Chat with agents
 						</Button>
 						<Separator orientation="vertical" className="h-4" />
 						<Button

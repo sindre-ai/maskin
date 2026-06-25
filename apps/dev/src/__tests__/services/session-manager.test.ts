@@ -201,7 +201,7 @@ describe('SessionManager', () => {
 			const agent = {
 				id: session.actorId,
 				type: 'agent',
-				systemPrompt: 'You are Sindre.',
+				systemPrompt: 'You are Workspace Coach.',
 				llmProvider: null,
 				llmConfig: null,
 				apiKey: 'ank_test_agent_key',
@@ -1073,7 +1073,7 @@ describe('SessionManager', () => {
 			const agent = {
 				id: session.actorId,
 				type: 'agent',
-				systemPrompt: 'You are Sindre.',
+				systemPrompt: 'You are Workspace Coach.',
 				llmProvider: null,
 				llmConfig: null,
 				apiKey: 'ank_test_agent_key',

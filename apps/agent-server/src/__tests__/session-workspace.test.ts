@@ -67,7 +67,7 @@ async function fileExists(path: string): Promise<boolean> {
 
 describe('sessionWorkspaceKey', () => {
 	it('produces a stable tar.gz key per session id', () => {
-		expect(sessionWorkspaceKey('abc-123')).toBe('agent-workspaces/abc-123.tar.gz')
+		expect(sessionWorkspaceKey('abc-123')).toBe('session-workspaces/abc-123.tar.gz')
 	})
 
 	it('rejects path-traversal-shaped session ids', () => {
@@ -118,7 +118,7 @@ describe('pull → push → pull round-trip', () => {
 		// Session pauses — push.
 		const push = await pushSessionWorkspace(storage, sessionId, original)
 		expect(push.archiveBytes).toBeGreaterThan(0)
-		expect(storage.keys()).toContain(`agent-workspaces/${sessionId}.tar.gz`)
+		expect(storage.keys()).toContain(`session-workspaces/${sessionId}.tar.gz`)
 
 		// Session resumes on a fresh host path — pull into a new dir.
 		const restored = join(tmpRoot, 'restored')
@@ -157,6 +157,71 @@ describe('pull → push → pull round-trip', () => {
 			expect(stat.isDirectory()).toBe(true)
 		}
 		expect((await readFile(join(fresh, 'workspace', 'only.txt'))).toString()).toBe('just workspace')
+	})
+})
+
+describe('pullSessionWorkspace — sourceSessionId continuation', () => {
+	it('restores from source session workspace when sourceSessionId is given', async () => {
+		const storage = new InMemoryStorage()
+		const sourceId = 'source-session-1'
+		const newId = 'new-session-1'
+
+		// Push a workspace as the "source" session.
+		const sourceDir = join(tmpRoot, 'source')
+		await pullSessionWorkspace(storage, sourceId, sourceDir)
+		await writeFile(join(sourceDir, 'workspace', 'work.txt'), 'source work')
+		await pushSessionWorkspace(storage, sourceId, sourceDir)
+
+		// Pull as the new session with sourceSessionId pointing to the source.
+		const newDir = join(tmpRoot, 'new')
+		const result = await pullSessionWorkspace(storage, newId, newDir, sourceId)
+
+		expect(result.restored).toBe(true)
+		expect((await readFile(join(newDir, 'workspace', 'work.txt'))).toString()).toBe('source work')
+	})
+
+	it('falls back to own session key when source session has no snapshot', async () => {
+		const storage = new InMemoryStorage()
+		const sourceId = 'source-missing'
+		const ownId = 'own-session-1'
+
+		// Push a workspace under the own session key.
+		const ownDir = join(tmpRoot, 'own')
+		await pullSessionWorkspace(storage, ownId, ownDir)
+		await writeFile(join(ownDir, 'workspace', 'own.txt'), 'own work')
+		await pushSessionWorkspace(storage, ownId, ownDir)
+
+		// Pull with a sourceSessionId that doesn't exist — should fall back to own.
+		const restored = join(tmpRoot, 'restored')
+		const result = await pullSessionWorkspace(storage, ownId, restored, sourceId)
+
+		expect(result.restored).toBe(true)
+		expect((await readFile(join(restored, 'workspace', 'own.txt'))).toString()).toBe('own work')
+	})
+
+	it('falls back to legacy agent-workspaces key', async () => {
+		const storage = new InMemoryStorage()
+		const sessionId = 'legacy-session-1'
+
+		// Manually put under the legacy prefix (simulating an old deployment).
+		const legacyDir = join(tmpRoot, 'legacy')
+		await pullSessionWorkspace(storage, sessionId, legacyDir)
+		await writeFile(join(legacyDir, 'workspace', 'legacy.txt'), 'legacy work')
+		// Push normally (now goes to session-workspaces/) then rename key to simulate legacy.
+		await pushSessionWorkspace(storage, sessionId, legacyDir)
+		const newKey = `session-workspaces/${sessionId}.tar.gz`
+		const legacyKey = `agent-workspaces/${sessionId}.tar.gz`
+		const buf = await storage.get(newKey)
+		await storage.delete(newKey)
+		await storage.put(legacyKey, buf)
+
+		const restored = join(tmpRoot, 'restored-legacy')
+		const result = await pullSessionWorkspace(storage, sessionId, restored)
+
+		expect(result.restored).toBe(true)
+		expect((await readFile(join(restored, 'workspace', 'legacy.txt'))).toString()).toBe(
+			'legacy work',
+		)
 	})
 })
 

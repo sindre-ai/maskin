@@ -148,7 +148,7 @@ Do not introduce custom breakpoints. The `useIsMobile()` hook in `src/hooks/use-
 - A `DropdownMenu` is fine on mobile — it auto-positions and doesn't claim too much space.
 - Any dialog/sheet with horizontally-scrolling content inside (like the import preview table) must wrap that content in `overflow-x-auto`, not extend the dialog body itself.
 
-**Sidebars are drawers on mobile.** The app sidebar (left) and the Sindre panel (right) both use the shadcn `Sidebar` primitive, which auto-becomes a Radix `Sheet` below 768px. Don't add a second mobile-only sidebar implementation — extend the primitive.
+**Sidebars are drawers on mobile.** The app sidebar (left) and the chat panel (right) both use the shadcn `Sidebar` primitive, which auto-becomes a Radix `Sheet` below 768px. Don't add a second mobile-only sidebar implementation — extend the primitive.
 
 **Headers, breadcrumbs, dense rows.** Breadcrumbs and other long-text rows are hidden below `md:` (see `header.tsx`); replace with a single-level page label if mobile needs context. Action button clusters in the header use the same `h-7 w-7` ghost-icon sizing — touch targets land at 28px which is borderline; pair them with `aria-label` and don't shrink further.
 
@@ -183,7 +183,7 @@ Do not introduce custom breakpoints. The `useIsMobile()` hook in `src/hooks/use-
 - A `DropdownMenu` is fine on mobile — it auto-positions and doesn't claim too much space.
 - Any dialog/sheet with horizontally-scrolling content inside (like the import preview table) must wrap that content in `overflow-x-auto`, not extend the dialog body itself.
 
-**Sidebars are drawers on mobile.** The app sidebar (left) and the Sindre panel (right) both use the shadcn `Sidebar` primitive, which auto-becomes a Radix `Sheet` below 768px. Don't add a second mobile-only sidebar implementation — extend the primitive.
+**Sidebars are drawers on mobile.** The app sidebar (left) and the chat panel (right) both use the shadcn `Sidebar` primitive, which auto-becomes a Radix `Sheet` below 768px. Don't add a second mobile-only sidebar implementation — extend the primitive.
 
 **Headers, breadcrumbs, dense rows.** Breadcrumbs and other long-text rows are hidden below `md:` (see `header.tsx`); replace with a single-level page label if mobile needs context. Action button clusters in the header use the same `h-7 w-7` ghost-icon sizing — touch targets land at 28px which is borderline; pair them with `aria-label` and don't shrink further.
 

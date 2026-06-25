@@ -52,6 +52,7 @@ const SESSION_REQUEST_SCHEMA = z.object({
 	// and inject `BROWSER_CDP_URL` so `@playwright/mcp` can attach. Absent or
 	// false → no sidecar, no env var, no MCP entry.
 	browserRequired: z.boolean().optional(),
+	sourceSessionId: z.string().regex(SESSION_ID_RE).optional(),
 })
 
 export type AppDeps = {
@@ -406,6 +407,7 @@ export function buildApp(deps: AppDeps): Hono {
 					deps.storage,
 					body.sessionId,
 					sessionDir,
+					body.sourceSessionId,
 				)
 				logger.info('session workspace pulled', {
 					sessionId: body.sessionId,

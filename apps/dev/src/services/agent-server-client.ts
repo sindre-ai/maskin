@@ -33,6 +33,7 @@ export type StartSessionRequest = {
 	env?: Record<string, string>
 	memoryMib?: number
 	cpus?: number
+	sourceSessionId?: string
 }
 
 export type StartSessionResponse = {

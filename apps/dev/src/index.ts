@@ -63,7 +63,16 @@ const storageProvider = new S3StorageProvider({
 	region: process.env.S3_REGION ?? 'us-east-1',
 })
 
-await storageProvider.ensureBucket()
+try {
+	await storageProvider.ensureBucket()
+} catch (err) {
+	logger.error(
+		'Failed to initialize S3 bucket — agent file operations will fail until S3 is available',
+		{
+			error: err instanceof Error ? err.message : String(err),
+		},
+	)
+}
 
 const containers = new ContainerManager()
 try {
@@ -140,6 +149,7 @@ if (process.env.NODE_ENV === 'production') {
 				env: spec.env,
 				memoryMib: spec.memoryMib,
 				cpus: spec.cpus,
+				sourceSessionId: session.sourceSessionId ?? undefined,
 			}
 		},
 	})
@@ -163,7 +173,7 @@ logger.info(`Starting server on port ${port}`)
 
 let bootstrap: DevBootstrapResult | null = null
 try {
-	bootstrap = await maybeBootstrapDev(db)
+	bootstrap = await maybeBootstrapDev(db, agentStorage)
 	if (bootstrap) {
 		logger.info('Dev bootstrap created default actor + workspace', {
 			actorEmail: bootstrap.actorEmail,

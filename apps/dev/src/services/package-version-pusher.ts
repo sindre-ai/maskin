@@ -528,7 +528,7 @@ export class PackageVersionPusher {
 	}
 
 	// Resolve an actor to attribute cron-side writes to (notification source,
-	// provisioned-row `created_by`). Prefers a system actor (e.g. Sindre) that is
+	// provisioned-row `created_by`). Prefers a system actor (e.g. Workspace Coach) that is
 	// a member of this workspace, then falls back to any member at all.
 	private async resolveWorkspaceActor(workspaceId: string): Promise<string | null> {
 		const systemMember = await this.db

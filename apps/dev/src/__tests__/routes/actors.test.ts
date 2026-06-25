@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { PLATFORM_MCP_PRESET, SINDRE_DEFAULT } from '@maskin/shared'
+import { PLATFORM_MCP_PRESET, WORKSPACE_COACH_DEFAULT } from '@maskin/shared'
 import { buildActor, buildCreateActorBody, buildSession, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp, createTestApp } from '../setup'
@@ -83,16 +83,16 @@ describe('Actors Routes', () => {
 			expect(inserted.tools?.mcpServers.maskin.url).toBe('https://custom/mcp')
 		})
 
-		it('seeds Sindre with a generated apiKey when auto-creating a workspace', async () => {
+		it('seeds Workspace Coach with a generated apiKey when auto-creating a workspace', async () => {
 			const actor = buildActor({ type: 'human' })
-			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
 			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.insertQueue = [
 				[actor], // human actor insert (already has apiKey via generateApiKey)
 				[{ id: randomUUID(), name: 'ws' }], // workspaces insert
 				[{}], // owner workspaceMembers insert
-				[sindre], // Sindre actor insert — must carry apiKey
-				[{}], // Sindre workspaceMembers insert
+				[coach], // Workspace Coach actor insert — must carry apiKey
+				[{}], // Workspace Coach workspaceMembers insert
 			]
 
 			const res = await app.request(
@@ -100,15 +100,15 @@ describe('Actors Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
-			// inserts: [actor, workspace, owner-member, sindre, sindre-member]
-			const sindreInsert = calls.inserts[3] as { apiKey?: string; isSystem?: boolean }
-			expect(sindreInsert.isSystem).toBe(true)
-			expect(sindreInsert.apiKey).toBeDefined()
-			expect(sindreInsert.apiKey).toMatch(/^ank_/)
+			// inserts: [actor, workspace, owner-member, coach, coach-member]
+			const coachInsert = calls.inserts[3] as { apiKey?: string; isSystem?: boolean }
+			expect(coachInsert.isSystem).toBe(true)
+			expect(coachInsert.apiKey).toBeDefined()
+			expect(coachInsert.apiKey).toMatch(/^ank_/)
 
 			// And it must NOT be the same key as the creator's key
 			const creatorInsert = calls.inserts[0] as { apiKey?: string }
-			expect(sindreInsert.apiKey).not.toBe(creatorInsert.apiKey)
+			expect(coachInsert.apiKey).not.toBe(creatorInsert.apiKey)
 		})
 
 		it('does not default tools when creating a human actor', async () => {
@@ -359,7 +359,7 @@ describe('Actors Routes', () => {
 		})
 
 		it('exposes is_system field on the response', async () => {
-			const systemActor = buildActor({ isSystem: true, type: 'agent', name: 'Sindre' })
+			const systemActor = buildActor({ isSystem: true, type: 'agent', name: 'Workspace Coach' })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.select = [systemActor]
 
@@ -507,6 +507,24 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(400)
 			const body = await res.json()
 			expect(body.error.message).toContain('Password is required')
+		})
+
+		it('returns 409 with field error when email already exists', async () => {
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const emailError = Object.assign(
+				new Error('duplicate key value violates unique constraint "actors_email_unique"'),
+				{ code: '23505', constraint_name: 'actors_email_unique' },
+			)
+			mockResults.insertError = emailError
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors', buildCreateActorBody({ type: 'human' })),
+			)
+
+			expect(res.status).toBe(409)
+			const body = await res.json()
+			expect(body.error.message).toBe('Email already exists')
+			expect(body.error.details[0].field).toBe('email')
 		})
 	})
 
@@ -661,10 +679,10 @@ describe('Actors Routes', () => {
 			// Matches the .returning({ system_prompt: actors.systemPrompt, ... }) shape.
 			const resetActor = {
 				...systemActor,
-				system_prompt: SINDRE_DEFAULT.systemPrompt,
-				llm_provider: SINDRE_DEFAULT.llmProvider,
-				llm_config: SINDRE_DEFAULT.llmConfig,
-				tools: SINDRE_DEFAULT.tools,
+				system_prompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+				llm_provider: WORKSPACE_COACH_DEFAULT.llmProvider,
+				llm_config: WORKSPACE_COACH_DEFAULT.llmConfig,
+				tools: WORKSPACE_COACH_DEFAULT.tools,
 			}
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.selectQueue = [
@@ -682,10 +700,10 @@ describe('Actors Routes', () => {
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.system_prompt).toBe(SINDRE_DEFAULT.systemPrompt)
-			expect(body.llm_provider).toBe(SINDRE_DEFAULT.llmProvider)
-			expect(body.llm_config).toEqual(SINDRE_DEFAULT.llmConfig)
-			expect(body.tools).toEqual(SINDRE_DEFAULT.tools)
+			expect(body.system_prompt).toBe(WORKSPACE_COACH_DEFAULT.systemPrompt)
+			expect(body.llm_provider).toBe(WORKSPACE_COACH_DEFAULT.llmProvider)
+			expect(body.llm_config).toEqual(WORKSPACE_COACH_DEFAULT.llmConfig)
+			expect(body.tools).toEqual(WORKSPACE_COACH_DEFAULT.tools)
 		})
 
 		it('returns 403 when the actor is not a system actor', async () => {
@@ -758,8 +776,8 @@ describe('Actors Routes', () => {
 		it('returns the full updated actor row with identity and memory fields preserved', async () => {
 			const systemActor = buildActor({
 				type: 'agent',
-				name: 'Sindre',
-				email: 'sindre@maskin',
+				name: 'Workspace Coach',
+				email: 'workspace-coach@maskin',
 				isSystem: true,
 				systemPrompt: 'edited prompt',
 				llmProvider: 'openai',
@@ -770,10 +788,10 @@ describe('Actors Routes', () => {
 			// Drizzle returns the post-update row in the .returning() shape (snake_case).
 			const resetActor = {
 				...systemActor,
-				system_prompt: SINDRE_DEFAULT.systemPrompt,
-				llm_provider: SINDRE_DEFAULT.llmProvider,
-				llm_config: SINDRE_DEFAULT.llmConfig,
-				tools: SINDRE_DEFAULT.tools,
+				system_prompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+				llm_provider: WORKSPACE_COACH_DEFAULT.llmProvider,
+				llm_config: WORKSPACE_COACH_DEFAULT.llmConfig,
+				tools: WORKSPACE_COACH_DEFAULT.tools,
 			}
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.selectQueue = [
@@ -793,8 +811,8 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body.id).toBe(systemActor.id)
 			expect(body.type).toBe('agent')
-			expect(body.name).toBe('Sindre')
-			expect(body.email).toBe('sindre@maskin')
+			expect(body.name).toBe('Workspace Coach')
+			expect(body.email).toBe('workspace-coach@maskin')
 			expect(body.memory).toEqual({ notes: 'user preference: concise replies' })
 		})
 	})
