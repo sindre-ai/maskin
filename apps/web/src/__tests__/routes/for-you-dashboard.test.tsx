@@ -5,6 +5,7 @@ import type { UnreadItem } from '@/lib/api'
 import { buildObjectResponse } from '../factories'
 
 const mockUseUnread = vi.fn()
+const mockComposerEnabled = vi.fn<(workspace: { id: string }) => boolean>(() => true)
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -15,7 +16,11 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 vi.mock('@/lib/workspace-context', () => ({
-	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { id: 'ws-1' } }),
+}))
+
+vi.mock('@/lib/feature-flags', () => ({
+	isForyouSparseComposerEnabled: (workspace: { id: string }) => mockComposerEnabled(workspace),
 }))
 
 vi.mock('@/hooks/use-subscriptions', () => ({
@@ -66,6 +71,7 @@ function buildUnreadItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 describe('ForYouDashboard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mockComposerEnabled.mockReturnValue(true)
 	})
 
 	it('shows loading skeletons while loading', () => {
@@ -124,5 +130,30 @@ describe('ForYouDashboard', () => {
 		})
 		render(<ForYouDashboard />)
 		expect(screen.queryByTestId('sparse-composer')).not.toBeInTheDocument()
+	})
+
+	it('does not render the composer on the empty state when the flag is off (AC-T4)', () => {
+		mockComposerEnabled.mockReturnValue(false)
+		mockUseUnread.mockReturnValue({ data: { items: [] }, isLoading: false })
+		render(<ForYouDashboard />)
+		// Empty state copy still renders; the composer does not.
+		expect(screen.getByText('All caught up')).toBeInTheDocument()
+		expect(screen.queryByTestId('sparse-composer')).not.toBeInTheDocument()
+	})
+
+	it('does not render the composer below items when the flag is off (AC-T4)', () => {
+		mockComposerEnabled.mockReturnValue(false)
+		mockUseUnread.mockReturnValue({
+			data: { items: [buildUnreadItem({ entity_id: 'obj-1' })] },
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		expect(screen.queryByTestId('sparse-composer')).not.toBeInTheDocument()
+	})
+
+	it('passes the current workspace to the feature-flag check (AC-T4)', () => {
+		mockUseUnread.mockReturnValue({ data: { items: [] }, isLoading: false })
+		render(<ForYouDashboard />)
+		expect(mockComposerEnabled).toHaveBeenCalledWith({ id: 'ws-1' })
 	})
 })
