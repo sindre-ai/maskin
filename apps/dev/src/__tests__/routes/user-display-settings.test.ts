@@ -127,5 +127,50 @@ describe('User Display Settings Routes', () => {
 
 			expect(res.status).toBe(400)
 		})
+
+		it('persists timelineView=table for a bet (AC-T7 round-trip)', async () => {
+			const row = buildUserDisplaySettings({
+				workspaceId: wsId,
+				actorId,
+				objectType: 'bet',
+				settings: { timelineView: 'table' },
+			})
+			const { app, mockResults } = createTestApp(
+				userDisplaySettingsRoutes,
+				'/api/user-display-settings',
+			)
+			mockResults.insert = [row]
+
+			const res = await app.request(
+				jsonRequest(
+					'PUT',
+					'/api/user-display-settings/bet',
+					{ settings: { timelineView: 'table' } },
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toMatchObject({
+				object_type: 'bet',
+				settings: { timelineView: 'table' },
+			})
+		})
+
+		it('rejects unknown timelineView values', async () => {
+			const { app } = createTestApp(userDisplaySettingsRoutes, '/api/user-display-settings')
+
+			const res = await app.request(
+				jsonRequest(
+					'PUT',
+					'/api/user-display-settings/bet',
+					{ settings: { timelineView: 'graph' } },
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
 	})
 })

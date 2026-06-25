@@ -2,7 +2,18 @@ import { useActors } from '@/hooks/use-actors'
 import { useEventVisible } from '@/hooks/use-event-visible'
 import { useMentionSessionsForObject } from '@/hooks/use-sessions'
 import { useMarkRead } from '@/hooks/use-subscriptions'
-import type { ActorListItem, EventResponse, ObjectResponse, SessionResponse } from '@/lib/api'
+import {
+	useUpdateUserDisplaySettings,
+	useUserDisplaySettings,
+} from '@/hooks/use-user-display-settings'
+import type {
+	ActorListItem,
+	EventResponse,
+	ObjectResponse,
+	RelationshipResponse,
+	SessionResponse,
+} from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { usePendingCommentsForObject } from '@/lib/pending-comments-context'
 import {
 	type SessionMentionContext,
@@ -20,18 +31,47 @@ import { buildPhases } from './build-phases'
 import { CommentInput } from './comment-input'
 import { PendingCommentRow } from './pending-comment-row'
 import { PhaseDivider } from './phase-divider'
+import { RelationshipNode } from './relationship-node'
+import { RelationshipsTable } from './relationships-table'
+
+export type TimelineView = 'timeline' | 'table'
+const DEFAULT_TIMELINE_VIEW: TimelineView = 'timeline'
 
 interface ObjectActivityProps {
 	workspaceId: string
 	object: ObjectResponse
 	events?: EventResponse[]
+	relationships?: RelationshipResponse[]
+	connectedObjects?: ObjectResponse[]
+	onDeleteRelationship?: (relationshipId: string) => void
 	activeSessionId?: string | null
+}
+
+/**
+ * A union node for the activity stream: either a real event row (comment,
+ * status_changed, etc.) or a relationship row projected at its `created_at`.
+ * Phases are still keyed off `status_changed` events; relationships flow
+ * into whichever phase's time window they belong to.
+ */
+type EventNode = { kind: 'event'; event: EventResponse }
+type RelationshipNodeItem = {
+	kind: 'relationship'
+	rel: RelationshipResponse
+	timestamp: string
+}
+type StreamNode = EventNode | RelationshipNodeItem
+
+function nodeTimestamp(node: StreamNode): string {
+	return node.kind === 'event' ? (node.event.createdAt ?? '') : node.timestamp
 }
 
 export function ObjectActivity({
 	workspaceId,
 	object,
 	events,
+	relationships,
+	connectedObjects,
+	onDeleteRelationship,
 	activeSessionId,
 }: ObjectActivityProps) {
 	const { data: actors } = useActors(workspaceId)
@@ -40,6 +80,32 @@ export function ObjectActivity({
 		for (const actor of actors ?? []) map.set(actor.id, actor)
 		return map
 	}, [actors])
+
+	const objectsById = useMemo(() => {
+		const map = new Map<string, ObjectResponse>()
+		for (const obj of connectedObjects ?? []) map.set(obj.id, obj)
+		return map
+	}, [connectedObjects])
+
+	// Persisted Timeline ↔ Table choice — keyed per-actor by object_type
+	// (e.g. 'bet'), so the choice survives a different browser. Falls back to
+	// 'timeline' until the row loads.
+	const { data: displaySettings } = useUserDisplaySettings(workspaceId, object.type)
+	const updateDisplaySettings = useUpdateUserDisplaySettings(workspaceId)
+	const view: TimelineView =
+		(displaySettings?.settings?.timelineView as TimelineView | undefined) ?? DEFAULT_TIMELINE_VIEW
+
+	const handleViewChange = useCallback(
+		(next: TimelineView) => {
+			if (next === view) return
+			const prevSettings = (displaySettings?.settings ?? {}) as Record<string, unknown>
+			updateDisplaySettings.mutate({
+				objectType: object.type,
+				settings: { ...prevSettings, timelineView: next },
+			})
+		},
+		[displaySettings, object.type, updateDisplaySettings, view],
+	)
 
 	// Latest commented-event id on this object — used as the high-water-mark
 	// when the user scrolls past the end of the activity list, and as the
@@ -113,10 +179,18 @@ export function ObjectActivity({
 
 	// Events arrive from the API sorted desc (newest first); reverse for chronological grouping.
 	// Then bucket replies under their parent comment so threads stay intact within phases.
+	// In Timeline view, relationships are interleaved by their `created_at` (AC-T6).
+	// In Table view, the phase walker runs on events only and relationships are
+	// rendered separately as a grouped table above the timeline.
+	const includeRelationshipsInTimeline = view === 'timeline'
 	const { phases, repliesByParent, totalTopLevel } = useMemo(() => {
 		if (!events) {
 			return {
-				phases: [] as ReturnType<typeof buildPhases>,
+				phases: [] as Array<{
+					status: string
+					startedAt: string | null
+					nodes: StreamNode[]
+				}>,
 				repliesByParent: new Map<number, EventResponse[]>(),
 				totalTopLevel: 0,
 			}
@@ -139,14 +213,64 @@ export function ObjectActivity({
 			topLevel.push(event)
 		}
 
-		const visiblePhases = buildPhases(topLevel, object).filter((p) => p.events.length > 0)
+		const rawPhases = buildPhases(topLevel, object)
+		const hasRelationships =
+			includeRelationshipsInTimeline && !!relationships && relationships.length > 0
+		// Empty phases are usually hidden, but when we have relationships to
+		// project we need at least one phase to host them (the object may have
+		// no comment/lifecycle events yet).
+		const eventPhases = rawPhases.filter(
+			(p, idx) => p.events.length > 0 || (hasRelationships && idx === rawPhases.length - 1),
+		)
+
+		// Convert each phase's events into stream nodes, then merge relationships
+		// into the right phase by `rel.created_at` (AC-T6). Phases retain their
+		// status order; within a phase, nodes are sorted chronologically.
+		const phaseNodes = eventPhases.map((phase) => ({
+			status: phase.status,
+			startedAt: phase.startedAt,
+			nodes: phase.events.map((event): StreamNode => ({ kind: 'event', event })),
+		}))
+
+		if (includeRelationshipsInTimeline && relationships && relationships.length > 0) {
+			const seen = new Set<string>()
+			for (const rel of relationships) {
+				if (seen.has(rel.id)) continue
+				seen.add(rel.id)
+				if (!rel.createdAt) continue
+				// Find the phase whose window contains rel.createdAt. Phases are
+				// ordered by startedAt asc; assign to the last phase whose
+				// startedAt is ≤ rel.createdAt, falling back to the first phase
+				// when nothing matches (relationships created before the first
+				// status_changed event).
+				let targetPhaseIdx = -1
+				for (let i = 0; i < phaseNodes.length; i++) {
+					const startedAt = phaseNodes[i].startedAt
+					if (!startedAt) {
+						if (targetPhaseIdx === -1) targetPhaseIdx = i
+						continue
+					}
+					if (rel.createdAt >= startedAt) targetPhaseIdx = i
+				}
+				if (targetPhaseIdx === -1 && phaseNodes.length > 0) targetPhaseIdx = 0
+				if (targetPhaseIdx === -1) continue
+				phaseNodes[targetPhaseIdx].nodes.push({
+					kind: 'relationship',
+					rel,
+					timestamp: rel.createdAt,
+				})
+			}
+			for (const phase of phaseNodes) {
+				phase.nodes.sort((a, b) => nodeTimestamp(a).localeCompare(nodeTimestamp(b)))
+			}
+		}
 
 		return {
-			phases: visiblePhases,
+			phases: phaseNodes,
 			repliesByParent: replies,
 			totalTopLevel: topLevel.length,
 		}
-	}, [events, object])
+	}, [events, object, relationships, includeRelationshipsInTimeline])
 
 	// Only the current (last) phase is expanded by default; users can toggle any other.
 	const [phaseOverrides, setPhaseOverrides] = useState<Record<number, boolean>>({})
@@ -156,24 +280,29 @@ export function ObjectActivity({
 		setPhaseOverrides((prev) => ({ ...prev, [index]: !isPhaseOpen(index) }))
 	}
 
+	const tableViewRelationships = relationships ?? []
+
 	return (
 		<div className="border-t border-border pt-6">
-			<div className="flex items-center justify-between mb-3">
+			<div className="flex items-center justify-between mb-3 gap-2">
 				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
 					Activity
 					<UnreadBadge count={unreadCount} className="ml-2 normal-case tracking-normal" />
 				</h3>
-				{unreadCount > 0 && (
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-7 px-2 text-xs"
-						onClick={handleMarkAllRead}
-						disabled={markRead.isPending}
-					>
-						Mark all as read
-					</Button>
-				)}
+				<div className="flex items-center gap-2">
+					{relationships && <TimelineViewToggle value={view} onChange={handleViewChange} />}
+					{unreadCount > 0 && (
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-7 px-2 text-xs"
+							onClick={handleMarkAllRead}
+							disabled={markRead.isPending}
+						>
+							Mark all as read
+						</Button>
+					)}
+				</div>
 			</div>
 
 			{activeSessionId && (
@@ -182,10 +311,24 @@ export function ObjectActivity({
 				</div>
 			)}
 
+			{view === 'table' && relationships && (
+				<div className="mb-6">
+					<RelationshipsTable
+						objectId={object.id}
+						relationships={tableViewRelationships}
+						objectsById={objectsById}
+						workspaceId={workspaceId}
+						onDelete={onDeleteRelationship}
+					/>
+				</div>
+			)}
+
 			<div>
-				{totalTopLevel === 0 && !activeSessionId && (
-					<p className="text-sm text-muted-foreground py-4 text-center">No activity yet</p>
-				)}
+				{totalTopLevel === 0 &&
+					!activeSessionId &&
+					phases.every((phase) => phase.nodes.length === 0) && (
+						<p className="text-sm text-muted-foreground py-4 text-center">No activity yet</p>
+					)}
 				{phases.map((phase, index) => {
 					const open = isPhaseOpen(index)
 					return (
@@ -195,13 +338,28 @@ export function ObjectActivity({
 									status={phase.status}
 									startedAt={phase.startedAt}
 									isOpen={open}
-									eventCount={phase.events.length}
+									eventCount={phase.nodes.length}
 									onToggle={() => togglePhase(index)}
 								/>
 								<CollapsibleContent>
 									<div className="space-y-1">
-										{phase.events.map((event) =>
-											event.action === 'commented' ? (
+										{phase.nodes.map((node) => {
+											if (node.kind === 'relationship') {
+												const linkedId =
+													node.rel.sourceId === object.id ? node.rel.targetId : node.rel.sourceId
+												return (
+													<RelationshipNode
+														key={`rel-${node.rel.id}`}
+														rel={node.rel}
+														linked={objectsById.get(linkedId) ?? null}
+														workspaceId={workspaceId}
+														direction={node.rel.sourceId === object.id ? 'outbound' : 'inbound'}
+														onDelete={onDeleteRelationship}
+													/>
+												)
+											}
+											const event = node.event
+											return event.action === 'commented' ? (
 												<ActivityComment
 													key={event.id}
 													event={event}
@@ -224,8 +382,8 @@ export function ObjectActivity({
 															: undefined
 													}
 												/>
-											),
-										)}
+											)
+										})}
 									</div>
 								</CollapsibleContent>
 							</section>
@@ -246,6 +404,44 @@ export function ObjectActivity({
 				<CommentInput workspaceId={workspaceId} objectId={object.id} />
 			</div>
 		</div>
+	)
+}
+
+function TimelineViewToggle({
+	value,
+	onChange,
+}: {
+	value: TimelineView
+	onChange: (next: TimelineView) => void
+}) {
+	return (
+		<fieldset className="inline-flex items-center rounded-md border border-border bg-background p-0.5 m-0 p-0.5">
+			<legend className="sr-only">Relationship view</legend>
+			{(['timeline', 'table'] as const).map((option) => {
+				const active = value === option
+				return (
+					<label
+						key={option}
+						className={cn(
+							'h-6 px-2 text-[11px] font-medium rounded-sm transition-colors capitalize cursor-pointer inline-flex items-center',
+							active
+								? 'bg-secondary text-foreground'
+								: 'text-muted-foreground hover:text-foreground',
+						)}
+					>
+						<input
+							type="radio"
+							name="timeline-view"
+							value={option}
+							checked={active}
+							onChange={() => onChange(option)}
+							className="sr-only"
+						/>
+						{option}
+					</label>
+				)
+			})}
+		</fieldset>
 	)
 }
 

@@ -1,7 +1,7 @@
 import { ObjectActivity } from '@/components/activity/object-activity'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { buildEventResponse, buildObjectResponse } from '../../factories'
+import { buildEventResponse, buildObjectResponse, buildRelationshipResponse } from '../../factories'
 
 vi.mock('@/hooks/use-actors', () => ({
 	useActor: () => ({ data: undefined }),
@@ -26,6 +26,11 @@ vi.mock('@/hooks/use-sessions', () => ({
 
 vi.mock('@/hooks/use-files', () => ({
 	useFiles: () => ({ data: [] }),
+}))
+
+vi.mock('@/hooks/use-user-display-settings', () => ({
+	useUserDisplaySettings: () => ({ data: null }),
+	useUpdateUserDisplaySettings: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/lib/auth', () => ({
@@ -121,6 +126,113 @@ describe('ObjectActivity', () => {
 		// Past (signal) phase content is collapsed and shows event count summary
 		expect(screen.queryByText('Comment in signal phase')).not.toBeInTheDocument()
 		expect(screen.getByText('· 1 event')).toBeInTheDocument()
+	})
+
+	describe('relationships projection (AC-U11)', () => {
+		// All three tests below pin the projection to relationships.created_at
+		// (AC-T6), not the linked object's createdAt — covers the "linked
+		// retroactively" case the Architect signed off on.
+		const bet = buildObjectResponse({ id: 'bet-1', status: 'active', type: 'bet' })
+
+		it('renders a linked object as a timeline row in Timeline view', () => {
+			const linked = buildObjectResponse({ id: 'obj-link', title: 'Linked Insight' })
+			const rel = buildRelationshipResponse({
+				id: 'rel-1',
+				sourceId: 'bet-1',
+				targetId: 'obj-link',
+				type: 'informs',
+				createdAt: '2026-06-23T10:00:00Z',
+			})
+			render(
+				<ObjectActivity
+					workspaceId="ws-1"
+					object={bet}
+					events={[]}
+					relationships={[rel]}
+					connectedObjects={[linked]}
+				/>,
+			)
+			expect(screen.getByText('Linked Insight')).toBeInTheDocument()
+		})
+
+		it('projects relationships at edge.createdAt, not linked.createdAt (AC-T6)', () => {
+			// The linked insight was created earlier than the bet, but linked
+			// later — the row must land at the link time, inside the current
+			// active phase, not before the bet exists.
+			const linked = buildObjectResponse({
+				id: 'obj-link',
+				title: 'Older Insight',
+				createdAt: '2020-01-01T00:00:00Z',
+			})
+			const events = [
+				buildEventResponse({
+					id: 2,
+					action: 'status_changed',
+					createdAt: '2026-06-22T00:00:00Z',
+					data: { previous: { status: 'signal' }, updated: { status: 'active' } },
+				}),
+			]
+			const rel = buildRelationshipResponse({
+				id: 'rel-late',
+				sourceId: 'bet-1',
+				targetId: 'obj-link',
+				type: 'informs',
+				createdAt: '2026-06-24T10:00:00Z',
+			})
+			render(
+				<ObjectActivity
+					workspaceId="ws-1"
+					object={bet}
+					events={events}
+					relationships={[rel]}
+					connectedObjects={[linked]}
+				/>,
+			)
+			// The current (active) phase is expanded by default, so the row
+			// should be visible without clicking anything.
+			expect(screen.getByText('Older Insight')).toBeInTheDocument()
+		})
+
+		it('renders a missing linked object without throwing (AC-U3 echo)', () => {
+			const rel = buildRelationshipResponse({
+				id: 'rel-deleted',
+				sourceId: 'bet-1',
+				targetId: 'obj-gone',
+				type: 'breaks_into',
+				createdAt: '2026-06-23T10:00:00Z',
+			})
+			render(
+				<ObjectActivity
+					workspaceId="ws-1"
+					object={bet}
+					events={[]}
+					relationships={[rel]}
+					connectedObjects={[]}
+				/>,
+			)
+			expect(screen.getByText(/unavailable/)).toBeInTheDocument()
+		})
+
+		it('shows the Timeline ↔ Table toggle when relationships are present', () => {
+			const rel = buildRelationshipResponse({
+				id: 'rel-toggle',
+				sourceId: 'bet-1',
+				targetId: 'obj-link',
+				type: 'informs',
+				createdAt: '2026-06-23T10:00:00Z',
+			})
+			render(
+				<ObjectActivity
+					workspaceId="ws-1"
+					object={bet}
+					events={[]}
+					relationships={[rel]}
+					connectedObjects={[]}
+				/>,
+			)
+			expect(screen.getByRole('radio', { name: /timeline/i })).toBeChecked()
+			expect(screen.getByRole('radio', { name: /table/i })).not.toBeChecked()
+		})
 	})
 
 	it('expands a past phase when its divider is clicked', async () => {

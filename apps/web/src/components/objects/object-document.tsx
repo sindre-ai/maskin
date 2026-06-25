@@ -17,6 +17,7 @@ import {
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useDeleteObject, useObjectGraph, useUpdateObject } from '@/hooks/use-objects'
+import { useDeleteRelationship } from '@/hooks/use-relationships'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { trackEvent } from '@/lib/analytics'
 import type {
@@ -42,7 +43,6 @@ import { StatusBadge } from '../shared/status-badge'
 import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
-import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
 import { ObjectFiles } from './object-files'
 
@@ -56,12 +56,14 @@ interface ObjectDocumentViewProps {
 		asSource: RelationshipResponse[]
 		asTarget: RelationshipResponse[]
 	}
+	allRelationships?: RelationshipResponse[]
 	connectedObjects?: ObjectResponse[]
 	events?: EventResponse[]
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
 	onUpdateStatus: (status: string) => void
 	onUpdateDriver: (driver: string | null) => void
+	onDeleteRelationship?: (relationshipId: string) => void
 	onDelete: () => void
 	isDeleting?: boolean
 	showSaved?: boolean
@@ -74,12 +76,14 @@ export function ObjectDocumentView({
 	creator,
 	members,
 	relationships,
+	allRelationships,
 	connectedObjects,
 	events,
 	onUpdateTitle,
 	onUpdateContent,
 	onUpdateStatus,
 	onUpdateDriver,
+	onDeleteRelationship,
 	onDelete,
 	isDeleting = false,
 	showSaved = false,
@@ -186,19 +190,6 @@ export function ObjectDocumentView({
 				<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
 			</div>
 
-			{/* Linked objects */}
-			{relationships && (
-				<div className="border-t border-border pt-6 mb-8">
-					<LinkedObjects
-						objectId={object.id}
-						objectType={object.type}
-						asSource={relationships.asSource}
-						asTarget={relationships.asTarget}
-						connectedObjects={connectedObjects}
-					/>
-				</div>
-			)}
-
 			{/* Files */}
 			<div className="border-t border-border pt-6 mb-8">
 				<ObjectFiles
@@ -209,11 +200,16 @@ export function ObjectDocumentView({
 				/>
 			</div>
 
-			{/* Activity */}
+			{/* Activity — relationships are projected inline (AC-U11) or rendered
+				as a grouped-by-edge-type table (AC-U12) depending on the persisted
+				Timeline ↔ Table choice. */}
 			<ObjectActivity
 				workspaceId={workspaceId}
 				object={object}
 				events={events}
+				relationships={allRelationships}
+				connectedObjects={connectedObjects}
+				onDeleteRelationship={onDeleteRelationship}
 				activeSessionId={object.activeSessionId}
 			/>
 		</div>
@@ -225,6 +221,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const navigate = useNavigate()
 	const updateObject = useUpdateObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
+	const deleteRelationship = useDeleteRelationship(workspaceId, object.id)
 	const { data: creator } = useActor(object.createdBy)
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
@@ -238,6 +235,25 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		}
 		return { asSource, asTarget }
 	}, [graph, object.id])
+	// Flat, deduped list for the activity surface (both projection and table
+	// view consume the same edge set — AC-U12).
+	const allRelationships = useMemo(() => {
+		if (!graph) return undefined
+		const seen = new Set<string>()
+		const list: RelationshipResponse[] = []
+		for (const rel of graph.relationships) {
+			if (seen.has(rel.id)) continue
+			seen.add(rel.id)
+			list.push(rel)
+		}
+		return list
+	}, [graph])
+	const handleDeleteRelationship = useCallback(
+		(relationshipId: string) => {
+			deleteRelationship.mutate(relationshipId)
+		},
+		[deleteRelationship],
+	)
 	const { data: events } = useEntityEvents(workspaceId, object.id)
 
 	const settings = workspace.settings as Record<string, unknown>
@@ -375,12 +391,14 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				creator={creator}
 				members={members}
 				relationships={relationships}
+				allRelationships={allRelationships}
 				connectedObjects={graph?.connected_objects}
 				events={events}
 				onUpdateTitle={handleUpdateTitle}
 				onUpdateContent={handleUpdateContent}
 				onUpdateStatus={handleUpdateStatus}
 				onUpdateDriver={handleUpdateDriver}
+				onDeleteRelationship={handleDeleteRelationship}
 				onDelete={handleDelete}
 				isDeleting={deleteObject.isPending}
 			/>
