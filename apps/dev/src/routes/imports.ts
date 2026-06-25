@@ -1014,10 +1014,7 @@ app.openapi(listImportAuditRowsRoute, async (c) => {
 		offset,
 	})
 
-	return c.json(
-		serializeArray(records) as z.infer<typeof importAuditRowResponseSchema>[],
-		200,
-	)
+	return c.json(serializeArray(records) as z.infer<typeof importAuditRowResponseSchema>[], 200)
 })
 
 export default app

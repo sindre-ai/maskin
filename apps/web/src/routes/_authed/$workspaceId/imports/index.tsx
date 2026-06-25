@@ -38,8 +38,8 @@ function ImportsIndexPage() {
 	return (
 		<div className="space-y-2">
 			<p className="text-xs text-muted-foreground mb-3">
-				A history of every bulk import, newest first. Click through for the per-row audit of
-				what was created vs updated.
+				A history of every bulk import, newest first. Click through for the per-row audit of what
+				was created vs updated.
 			</p>
 			<div className="space-y-2">
 				{imports.map((imp) => (

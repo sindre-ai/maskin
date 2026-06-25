@@ -156,7 +156,10 @@ function AuditRowCard({ row }: { row: ImportAuditRow }) {
 							className="grid grid-cols-[auto_1fr_auto_1fr] items-baseline gap-2 text-xs"
 						>
 							<dt className="font-medium text-foreground">{col}</dt>
-							<dd className="text-muted-foreground truncate" title={formatValue(row.oldValues[col])}>
+							<dd
+								className="text-muted-foreground truncate"
+								title={formatValue(row.oldValues[col])}
+							>
 								{formatValue(row.oldValues[col])}
 							</dd>
 							<span aria-hidden className="text-muted-foreground/60">
