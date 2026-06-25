@@ -415,7 +415,7 @@ function TimelineViewToggle({
 	onChange: (next: TimelineView) => void
 }) {
 	return (
-		<fieldset className="inline-flex items-center rounded-md border border-border bg-background p-0.5 m-0 p-0.5">
+		<fieldset className="inline-flex items-center rounded-md border border-border bg-background p-0.5 m-0">
 			<legend className="sr-only">Relationship view</legend>
 			{(['timeline', 'table'] as const).map((option) => {
 				const active = value === option

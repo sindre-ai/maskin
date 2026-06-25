@@ -16,6 +16,24 @@ interface RelationshipNodeProps {
 	onDelete?: (relationshipId: string) => void
 }
 
+// Past-participle inverses for the known relationship verbs. The naive
+// `${type}d by` suffix breaks on every type we ship today ("informsd by",
+// "breaks intod by", "relates tod by"), so map the known ones explicitly and
+// fall back to a "← {type}" marker for any future type.
+const INBOUND_VERB: Record<string, string> = {
+	informs: 'informed by',
+	breaks_into: 'part of',
+	blocks: 'blocked by',
+	relates_to: 'related to',
+	duplicates: 'duplicated by',
+	attached: 'attached to',
+}
+
+function relationshipVerb(type: string, direction: 'outbound' | 'inbound'): string {
+	if (direction === 'outbound') return type.replace(/_/g, ' ')
+	return INBOUND_VERB[type] ?? `← ${type.replace(/_/g, ' ')}`
+}
+
 /**
  * Renders one relationship as a "graph node" row inside the activity timeline.
  * The phrasing reads as a sentence: "{type} {linked-object-title}", followed
@@ -32,8 +50,7 @@ export function RelationshipNode({
 	direction,
 	onDelete,
 }: RelationshipNodeProps) {
-	const verb =
-		direction === 'outbound' ? rel.type.replace(/_/g, ' ') : `${rel.type.replace(/_/g, ' ')}d by`
+	const verb = relationshipVerb(rel.type, direction)
 	const linkedId = direction === 'outbound' ? rel.targetId : rel.sourceId
 	const title =
 		linked?.title ?? rel.targetTitle ?? rel.sourceTitle ?? `Unknown (${linkedId.slice(0, 8)})`
