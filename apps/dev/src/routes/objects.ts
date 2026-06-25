@@ -860,7 +860,6 @@ app.openapi(updateObjectRoute, async (c) => {
 	// All three writes (object update, status event, notification fan-out) run in
 	// one transaction so a fan-out failure cannot leave the bet updated but
 	// watchers un-notified.
-	const action = body.status && body.status !== existing.status ? 'status_changed' : 'updated'
 	let updated: typeof objects.$inferSelect | undefined
 
 	await db.transaction(async (tx) => {
@@ -868,6 +867,10 @@ app.openapi(updateObjectRoute, async (c) => {
 		if (!row) return // object not found; 404 handled below
 
 		updated = row
+
+		// Derive action inside the transaction from the actual pre/post states so
+		// the event record is accurate even under concurrent PATCHes.
+		const action = existing.status !== row.status ? 'status_changed' : 'updated'
 
 		await tx.insert(events).values({
 			workspaceId: existing.workspaceId,
@@ -885,10 +888,18 @@ app.openapi(updateObjectRoute, async (c) => {
 		// "watcher was told the bet ended". Author/manual/commenter/mentioned
 		// subscribers are all included; the actor making the change is excluded
 		// (you don't notify yourself about your own flip).
+		//
+		// Guard on existing.status not already being terminal: prevents a re-PATCH
+		// of an already-succeeded/failed bet from double-notifying subscribers.
+		// (A DB-level unique constraint on notifications(objectId, targetActorId,
+		// type) with ON CONFLICT DO NOTHING would be the backstop for the
+		// concurrent-PATCH race; that's a follow-up migration if needed.)
 		if (
 			action === 'status_changed' &&
 			existing.type === 'bet' &&
-			(row.status === 'succeeded' || row.status === 'failed')
+			(row.status === 'succeeded' || row.status === 'failed') &&
+			existing.status !== 'succeeded' &&
+			existing.status !== 'failed'
 		) {
 			await fanOutBetTerminalNotifications(tx as unknown as Database, {
 				workspaceId: existing.workspaceId,

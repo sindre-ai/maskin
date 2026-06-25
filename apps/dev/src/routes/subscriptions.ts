@@ -78,11 +78,15 @@ const subscribersResponseSchema = z.object({
 const unreadItemSchema = z.object({
 	entity_type: z.string(),
 	entity_id: z.string().uuid(),
+	// Total unread activity count. Includes both comments (action='commented') and
+	// terminal bet status transitions (action='status_changed', status in
+	// succeeded/failed). A bet with only a terminal transition and no comments will
+	// have unread_count=1 and mentioning_unread_count=0.
 	unread_count: z.number(),
-	// Count of unread comments on the entity that actually @-mention the current
-	// actor. Per-event grain — not a bool_or rollup — so a single buried mention
-	// among nine agent→agent comments yields 1, not "the whole object is
-	// mentioned". The For You card surfaces the "Mentioned" pill when > 0.
+	// Count of unread events that actually @-mention the current actor. Per-event
+	// grain — not a bool_or rollup — so a single buried mention among nine
+	// agent→agent comments yields 1. The For You card surfaces the "Mentioned"
+	// pill when > 0.
 	mentioning_unread_count: z.number(),
 	latest_event_id: z.number().nullable(),
 	latest_activity_at: z.string().nullable(),
@@ -323,12 +327,16 @@ app.openapi(listUnreadRoute, (async (c) => {
 				// (1) comments on the subscribed entity (events.entity_type matches the
 				//     subscription's polymorphic type, e.g. 'object'), and
 				// (2) the bet's own succeeded/failed transition (events.entity_type is
-				//     the object's `type`, e.g. 'bet', not the subscription's 'object').
+				//     the object's concrete type, e.g. 'bet', while the subscription's
+				//     entityType is 'object'). The entityType guard on this arm is
+				//     explicit to prevent other subscribable entity types from
+				//     accidentally matching bet terminal events via entityId alone.
 				// Without (2) a watcher misses the terminal signal — see T2 on
 				// bet/notif-cascade-fix.
 				or(
 					and(eq(events.entityType, subscriptions.entityType), eq(events.action, 'commented')),
 					and(
+						eq(subscriptions.entityType, 'object'),
 						eq(events.entityType, 'bet'),
 						eq(events.action, 'status_changed'),
 						sql`${events.data}->'updated'->>'status' in ('succeeded', 'failed')`,
