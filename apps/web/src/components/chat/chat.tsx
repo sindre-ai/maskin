@@ -10,6 +10,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useChatOneShot } from '@/hooks/use-chat-one-shot'
 import { useChatSession } from '@/hooks/use-chat-session'
+import { useUploadFile } from '@/hooks/use-files'
 import type { SessionInputAttachment } from '@/lib/api'
 import {
 	type ChatSelection,
@@ -21,9 +22,8 @@ import {
 } from '@/lib/chat-selection'
 import type { ChatEvent, UserAttachmentView } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
+import { readFileAsBase64 } from '@/lib/file-utils'
 import { Bot, Box, Paperclip, Send } from 'lucide-react'
-
-const FILE_MAX_BYTES = 1024 * 1024 // 1 MB per upload — plenty for markdown
 import {
 	type ChangeEvent,
 	type FormEvent,
@@ -311,8 +311,8 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	)
 
 	const handleRemoveFile = useCallback(
-		(name: string) => {
-			onDispatchSelection?.({ type: 'remove_file', name })
+		(fileId: string) => {
+			onDispatchSelection?.({ type: 'remove_file', fileId })
 		},
 		[onDispatchSelection],
 	)
@@ -473,7 +473,7 @@ export interface ComposerProps {
 	onRemoveAgent: () => void
 	onRemoveObject: (id: string) => void
 	onRemoveNotification: (id: string) => void
-	onRemoveFile: (name: string) => void
+	onRemoveFile: (fileId: string) => void
 	externalError?: string | null
 	onDismissExternalError?: () => void
 	/** Forwarded as `aria-label` on the textarea. Defaults to the surface placeholder. */
@@ -521,6 +521,7 @@ export function Composer({
 	const [pickerKind, setPickerKind] = useState<SlashKindId | null>(null)
 	const slashPosRef = useRef<number | null>(null)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
+	const uploadFile = useUploadFile(workspaceId)
 	const canSend = value.trim().length > 0 && !disabled && !sending && !pending
 	const showSpinner = sending || pending
 
@@ -618,31 +619,48 @@ export function Composer({
 		}
 	}, [])
 
+	const uploadPickedFile = useCallback(
+		async (file: File) => {
+			try {
+				const content = await readFileAsBase64(file)
+				const created = await uploadFile({
+					name: file.name,
+					mime_type: file.type || 'application/octet-stream',
+					content,
+					encoding: 'base64',
+				})
+				console.info(
+					'[chat] uploaded image attachment',
+					JSON.stringify({ fileId: created.id, name: file.name, sizeBytes: file.size }),
+				)
+				onDispatchSelection?.({
+					type: 'add_file',
+					file: {
+						fileId: created.id,
+						name: file.name,
+						sizeBytes: file.size,
+						mimeType: file.type || undefined,
+					},
+				})
+			} catch (err) {
+				console.error(`[chat] failed to upload ${file.name}`, err)
+				const message = err instanceof Error ? err.message : 'Upload failed'
+				setSendError(`Failed to upload ${file.name}: ${message}`)
+			}
+		},
+		[uploadFile, onDispatchSelection],
+	)
+
 	const handleFileSelection = useCallback(
-		async (event: ChangeEvent<HTMLInputElement>) => {
+		(event: ChangeEvent<HTMLInputElement>) => {
 			const input = event.target
 			const files = Array.from(input.files ?? [])
 			input.value = '' // allow re-picking the same file after removing it
-			const failures: string[] = []
 			for (const file of files) {
-				if (file.size > FILE_MAX_BYTES) {
-					failures.push(`${file.name} is larger than ${FILE_MAX_BYTES / 1024}KB`)
-					continue
-				}
-				try {
-					const content = await file.text()
-					onDispatchSelection?.({
-						type: 'add_file',
-						file: { name: file.name, content, sizeBytes: file.size },
-					})
-				} catch (err) {
-					console.error(`[chat] failed to read ${file.name}`, err)
-					failures.push(`Failed to read ${file.name}`)
-				}
+				void uploadPickedFile(file)
 			}
-			if (failures.length > 0) setSendError(failures.join('; '))
 		},
-		[onDispatchSelection],
+		[uploadPickedFile],
 	)
 
 	return (
@@ -672,10 +690,10 @@ export function Composer({
 			<input
 				ref={fileInputRef}
 				type="file"
-				accept=".md,.markdown,text/markdown,text/plain"
+				accept="image/*"
 				multiple
 				className="hidden"
-				onChange={(e) => void handleFileSelection(e)}
+				onChange={handleFileSelection}
 				aria-hidden
 				tabIndex={-1}
 			/>
@@ -728,10 +746,10 @@ export function Composer({
 						className="h-7 gap-1 px-2 text-xs text-text-secondary"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={disabled}
-						aria-label="Upload markdown file"
+						aria-label="Attach image"
 					>
 						<Paperclip size={14} aria-hidden />
-						Upload
+						Attach
 					</Button>
 					<div className="ml-auto">
 						<Button

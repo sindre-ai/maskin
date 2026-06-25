@@ -14,6 +14,7 @@ import { createTestQueryClient } from '../../setup'
 const mockSend = vi.fn(async () => {})
 const mockOneShotSend = vi.fn(async () => {})
 const mockOneShotClear = vi.fn()
+const mockUploadFile = vi.fn()
 
 let mockHookResult: UseChatSessionResult = {
 	sessionId: null,
@@ -39,6 +40,10 @@ vi.mock('@/hooks/use-chat-session', () => ({
 
 vi.mock('@/hooks/use-chat-one-shot', () => ({
 	useChatOneShot: () => mockOneShotResult,
+}))
+
+vi.mock('@/hooks/use-files', () => ({
+	useUploadFile: () => mockUploadFile,
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -88,6 +93,7 @@ beforeEach(() => {
 	mockSend.mockClear()
 	mockOneShotSend.mockClear()
 	mockOneShotClear.mockClear()
+	mockUploadFile.mockReset()
 	vi.mocked(api.actors.list).mockResolvedValue([
 		buildActorListItem({ id: 'actor-a', name: 'Reviewer', type: 'agent', email: null }),
 		buildActorListItem({ id: 'actor-b', name: 'Planner', type: 'agent', email: null }),
@@ -799,5 +805,54 @@ describe('Chat', () => {
 
 		expect(screen.getByText('Hi from Sindre')).toBeInTheDocument()
 		expect(screen.getByText('Hi from Code Reviewer')).toBeInTheDocument()
+	})
+
+	// AC-T1: image pick on the chat composer routes through useUploadFile —
+	// binary base64 POST to /files returning a fileId, not the old text-only
+	// file.text() path. The resolved fileId is dispatched into the selection.
+	it('uploads picked images via useUploadFile and dispatches add_file with the returned fileId', async () => {
+		mockUploadFile.mockResolvedValueOnce({ id: 'file-99', name: 'photo.png' })
+		const dispatch = vi.fn<(action: ChatSelectionAction) => void>()
+		render(
+			<Chat
+				workspaceId="ws-1"
+				agentActorId="actor-agent"
+				surface="sheet"
+				onDispatchSelection={dispatch}
+			/>,
+		)
+
+		// readFileAsBase64 reads the file via FileReader.readAsDataURL — jsdom's
+		// reader handles real Blob/File instances.
+		const file = new File([new Uint8Array([0xde, 0xad, 0xbe, 0xef])], 'photo.png', {
+			type: 'image/png',
+		})
+		const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+		expect(fileInput.accept).toBe('image/*')
+		Object.defineProperty(fileInput, 'files', { value: [file], configurable: true })
+		fireEvent.change(fileInput)
+
+		await waitFor(() => expect(mockUploadFile).toHaveBeenCalledTimes(1))
+		const [payload] = mockUploadFile.mock.calls[0]
+		expect(payload).toMatchObject({
+			name: 'photo.png',
+			mime_type: 'image/png',
+			encoding: 'base64',
+		})
+		// Base64 of [0xDE, 0xAD, 0xBE, 0xEF] is '3q2+7w==' — assert the binary
+		// payload was reached via base64 encoding (not file.text()).
+		expect(payload.content).toBe('3q2+7w==')
+
+		await waitFor(() =>
+			expect(dispatch).toHaveBeenCalledWith({
+				type: 'add_file',
+				file: {
+					fileId: 'file-99',
+					name: 'photo.png',
+					sizeBytes: file.size,
+					mimeType: 'image/png',
+				},
+			}),
+		)
 	})
 })

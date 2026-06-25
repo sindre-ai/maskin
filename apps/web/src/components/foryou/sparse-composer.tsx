@@ -110,7 +110,7 @@ export function SparseComposer({ itemsCount }: SparseComposerProps) {
 					onRemoveAgent={() => dispatchSelection({ type: 'remove_agent' })}
 					onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
 					onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
-					onRemoveFile={(name) => dispatchSelection({ type: 'remove_file', name })}
+					onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
 					externalError={chipError}
 					onDismissExternalError={() => setChipError(null)}
 				/>
