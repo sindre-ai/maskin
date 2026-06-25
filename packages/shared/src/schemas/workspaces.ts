@@ -49,6 +49,9 @@ export const workspaceSettingsSchema = z.object({
 		task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 	}),
 	field_definitions: z.record(z.array(fieldDefinitionSchema)).default({}),
+	// Dogfood / first-test feature flags. Keyed by camelCase flag name, value
+	// is a boolean. Defaults off — surfaces opt in via `settings.flags.<name>`.
+	flags: z.record(z.boolean()).default({}),
 	hero_card: z.record(heroCardTypeAnnotationSchema).default({}),
 	relationship_types: z
 		.array(z.string())
