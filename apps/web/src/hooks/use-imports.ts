@@ -26,6 +26,30 @@ export function useImport(id: string | undefined, workspaceId: string) {
 	})
 }
 
+// Workspace-scoped list of imports for the `/imports` index page. Pass `params`
+// to filter by status or paginate; the backend returns the same shape regardless.
+export function useImports(workspaceId: string, params?: Record<string, string>) {
+	return useQuery({
+		queryKey: queryKeys.imports.list(workspaceId, params),
+		queryFn: () => api.imports.list(workspaceId, params),
+	})
+}
+
+// Per-row audit entries for an import. Powers the AC-U5 detail view —
+// each entry carries `changedColumns` + `oldValues` / `newValues` so the
+// page can render `old → new` per changed attribute.
+export function useImportAuditRows(
+	id: string | undefined,
+	workspaceId: string,
+	params?: Record<string, string>,
+) {
+	return useQuery({
+		queryKey: queryKeys.imports.auditRows(id ?? '', params),
+		queryFn: () => api.imports.listAuditRows(id as string, workspaceId, params),
+		enabled: !!id,
+	})
+}
+
 export function useCreateImport(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({

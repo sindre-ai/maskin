@@ -928,3 +928,55 @@ describe('GET /api/imports (query params)', () => {
 		expect(Array.isArray(body)).toBe(true)
 	})
 })
+
+describe('GET /api/imports/:id/audit-rows', () => {
+	const auditRow = {
+		id: '11111111-1111-1111-1111-111111111111',
+		importId: '22222222-2222-2222-2222-222222222222',
+		rowIndex: 0,
+		objectId: '33333333-3333-3333-3333-333333333333',
+		action: 'updated' as const,
+		changedColumns: ['email'],
+		oldValues: { email: null },
+		newValues: { email: 'a@example.com' },
+		createdAt: new Date('2026-06-25T00:00:00Z'),
+	}
+
+	it('returns audit rows for a workspace-scoped import', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({ workspaceId: wsId, id: auditRow.importId })
+		// membership, findImport, list audit rows
+		mockResults.selectQueue = [[member], [imp], [auditRow]]
+
+		const res = await app.request(
+			jsonGet(`/api/imports/${imp.id}/audit-rows`, { 'x-workspace-id': wsId }),
+		)
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(Array.isArray(body)).toBe(true)
+		expect(body[0].action).toBe('updated')
+		expect(body[0].changedColumns).toEqual(['email'])
+		expect(body[0].newValues.email).toBe('a@example.com')
+	})
+
+	it('returns 404 when the parent import is missing — scopes audit rows by workspace', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		// membership ok, findImport returns nothing — no audit-row query is run.
+		mockResults.selectQueue = [[member], []]
+
+		const res = await app.request(
+			jsonGet(`/api/imports/${crypto.randomUUID()}/audit-rows`, { 'x-workspace-id': wsId }),
+		)
+		expect(res.status).toBe(404)
+	})
+
+	it('returns 403 for non-member', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		mockResults.selectQueue = [[]]
+
+		const res = await app.request(
+			jsonGet(`/api/imports/${crypto.randomUUID()}/audit-rows`, { 'x-workspace-id': wsId }),
+		)
+		expect(res.status).toBe(403)
+	})
+})

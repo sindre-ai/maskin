@@ -65,6 +65,15 @@ export const importParamsSchema = z.object({
 	id: z.string().uuid(),
 })
 
+export const importAuditRowActionSchema = z.enum(['created', 'updated', 'skipped', 'failed'])
+
+// Paginated by row_index asc — limit kept lower than the list endpoint
+// because each row carries per-column diff payloads.
+export const importAuditRowsQuerySchema = z.object({
+	limit: z.coerce.number().int().min(1).max(200).default(50),
+	offset: z.coerce.number().int().min(0).default(0),
+})
+
 export type ImportStatus = z.infer<typeof importStatusSchema>
 export type ImportFileType = z.infer<typeof importFileTypeSchema>
 export type ColumnMapping = z.infer<typeof columnMappingSchema>
@@ -72,3 +81,4 @@ export type TypeMapping = z.infer<typeof typeMappingSchema>
 export type RelationshipMapping = z.infer<typeof relationshipMappingSchema>
 export type ImportMapping = z.infer<typeof importMappingSchema>
 export type CsvOptions = z.infer<typeof csvOptionsSchema>
+export type ImportAuditRowAction = z.infer<typeof importAuditRowActionSchema>

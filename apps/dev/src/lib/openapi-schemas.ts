@@ -244,6 +244,21 @@ export const importPreviewResponseSchema = z.object({
 	),
 })
 
+// Per-row audit entry from `import_audit_rows`. Powers AC-U5 — the audit
+// detail page renders one of these per processed row, showing `old → new`
+// for each entry in `changedColumns`.
+export const importAuditRowResponseSchema = z.object({
+	id: z.string().uuid(),
+	importId: z.string().uuid(),
+	rowIndex: z.number(),
+	objectId: z.string().uuid().nullable(),
+	action: z.enum(['created', 'updated', 'skipped', 'failed']),
+	changedColumns: z.array(z.string()),
+	oldValues: jsonbField,
+	newValues: jsonbField,
+	createdAt: z.string().nullable(),
+})
+
 export const notificationResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),

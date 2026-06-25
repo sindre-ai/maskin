@@ -1,15 +1,21 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, imports, workspaces } from '@maskin/db/schema'
+import { events, importAuditRows, imports, workspaces } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
-import { type CsvOptions, importMappingSchema, importQuerySchema } from '@maskin/shared'
+import {
+	type CsvOptions,
+	importAuditRowsQuerySchema,
+	importMappingSchema,
+	importQuerySchema,
+} from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq } from 'drizzle-orm'
 import { trackBulkImportExecuted } from '../lib/analytics/import-events'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
+	importAuditRowResponseSchema,
 	importListItemSchema,
 	importPreviewResponseSchema,
 	importResponseSchema,
@@ -943,6 +949,75 @@ app.openapi(listImportsRoute, async (c) => {
 		.offset(query.offset)
 
 	return c.json(serializeArray(records) as z.infer<typeof importListItemSchema>[], 200)
+})
+
+// ── GET /:id/audit-rows — Per-row audit entries for an import ──────────
+//
+// Powers AC-U5: the audit detail page lists which rows were created vs
+// updated and which attributes changed on each updated row. The route
+// scopes by workspace via the parent import lookup so an audit row can't
+// leak across workspaces, then paginates by `row_index asc` to give the
+// detail page a deterministic top-down view of the import.
+
+const listImportAuditRowsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/audit-rows',
+	tags: ['Imports'],
+	summary: 'List per-row audit entries for an import (paginated by row_index asc)',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid() }),
+		query: importAuditRowsQuerySchema,
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.array(importAuditRowResponseSchema),
+				},
+			},
+			description: 'List of audit rows',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Import not found',
+		},
+	},
+})
+
+app.openapi(listImportAuditRowsRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+	const { limit, offset } = c.req.valid('query')
+
+	// Workspace-scope check via the parent import — keeps audit rows from
+	// leaking even if a caller knows an import id from another workspace.
+	const importRecord = await findImport(db, id, workspaceId)
+	if (!importRecord) {
+		return c.json(createApiError('NOT_FOUND', 'Import not found'), 404)
+	}
+
+	const records = await db
+		.select()
+		.from(importAuditRows)
+		.where(eq(importAuditRows.importId, id))
+		.orderBy(asc(importAuditRows.rowIndex))
+		.limit(limit)
+		.offset(offset)
+
+	logger.info('Listed import audit rows', {
+		importId: id,
+		workspaceId,
+		returned: records.length,
+		limit,
+		offset,
+	})
+
+	return c.json(
+		serializeArray(records) as z.infer<typeof importAuditRowResponseSchema>[],
+		200,
+	)
 })
 
 export default app

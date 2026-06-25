@@ -441,6 +441,10 @@ export const api = {
 			}),
 		confirm: (id: string, workspaceId: string) =>
 			request<ImportResponse>(`/imports/${id}/confirm`, { method: 'POST', workspaceId }),
+		listAuditRows: (id: string, workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<ImportAuditRow[]>(`/imports/${id}/audit-rows${qs}`, { workspaceId })
+		},
 	},
 
 	claudeOauth: {
@@ -1216,6 +1220,20 @@ export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
 	csvOptions?: CsvOptions
+}
+
+export type ImportAuditRowAction = 'created' | 'updated' | 'skipped' | 'failed'
+
+export interface ImportAuditRow {
+	id: string
+	importId: string
+	rowIndex: number
+	objectId: string | null
+	action: ImportAuditRowAction
+	changedColumns: string[]
+	oldValues: Record<string, unknown>
+	newValues: Record<string, unknown>
+	createdAt: string | null
 }
 
 export type CatalogItemType = 'actor' | 'trigger' | 'skill' | 'integration'
