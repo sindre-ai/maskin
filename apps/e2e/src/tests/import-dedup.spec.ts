@@ -13,7 +13,7 @@ test.describe('Import — Step 3 dedup picker', () => {
 			settings: {
 				flags: { bulkImportDedup: true },
 				statuses: { bet: ['signal', 'shape', 'active'] },
-				field_definitions: { bet: [{ name: 'email', type: 'string' }] },
+				field_definitions: { bet: [{ name: 'email', type: 'text' }] },
 				display_names: { bet: 'Bet' },
 			},
 		})
