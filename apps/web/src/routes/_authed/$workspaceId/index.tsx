@@ -5,6 +5,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { useUnread } from '@/hooks/use-subscriptions'
+import { isForyouSparseComposerEnabled } from '@/lib/feature-flags'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 
@@ -14,9 +15,10 @@ export const Route = createFileRoute('/_authed/$workspaceId/')({
 })
 
 function ForYouDashboard() {
-	const { workspaceId } = useWorkspace()
+	const { workspace, workspaceId } = useWorkspace()
 	const { data, isLoading } = useUnread(workspaceId)
 	const items = data?.items ?? []
+	const composerEnabled = isForyouSparseComposerEnabled(workspace)
 
 	if (isLoading) {
 		return (
@@ -36,7 +38,7 @@ function ForYouDashboard() {
 					description="New comments and replies on things you're subscribed to will appear here."
 					className="py-8"
 				/>
-				<SparseComposer itemsCount={0} />
+				{composerEnabled ? <SparseComposer itemsCount={0} /> : null}
 			</div>
 		)
 	}
@@ -61,7 +63,7 @@ function ForYouDashboard() {
 					item={item}
 				/>
 			))}
-			{isSparse ? <SparseComposer itemsCount={items.length} /> : null}
+			{composerEnabled && isSparse ? <SparseComposer itemsCount={items.length} /> : null}
 		</div>
 	)
 }
