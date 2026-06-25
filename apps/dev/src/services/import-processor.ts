@@ -390,6 +390,11 @@ interface MappedRow {
 	status: string
 	metadata: Record<string, unknown>
 	driver?: string
+	// Target fields the CSV row actually populated (non-empty source cell on a
+	// non-skipped column). Lets the diff and audit gate per-row provenance
+	// rather than per-typeMapping — empty cells must never overwrite stored
+	// values with `defaultStatus` or a fallback.
+	providedFields: Set<string>
 }
 
 function applyTransform(value: string, transform: string): string | number | boolean {
@@ -417,6 +422,7 @@ export function mapRowForType(
 	let status: string | undefined
 	let driver: string | undefined
 	const metadata: Record<string, unknown> = {}
+	const providedFields = new Set<string>()
 	let hasValue = false
 
 	for (const col of typeMapping.columns) {
@@ -425,6 +431,7 @@ export function mapRowForType(
 		if (value === undefined || value === '') continue
 
 		hasValue = true
+		providedFields.add(col.targetField)
 		if (col.targetField === 'title') {
 			titleParts.push(value)
 		} else if (col.targetField === 'content') {
@@ -462,7 +469,7 @@ export function mapRowForType(
 		status = typeMapping.defaultStatus ?? settings.statuses?.[type]?.[0] ?? 'new'
 	}
 
-	return { type, title, content, status, metadata, driver }
+	return { type, title, content, status, metadata, driver, providedFields }
 }
 
 // ── Dedup matching engine ────────────────────────────────────────────────
@@ -482,6 +489,13 @@ export function mapRowForType(
 type DedupKey = { kind: 'title' } | { kind: 'metadata'; field: string }
 
 const METADATA_FIELD_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
+
+// First slot of the two-int pg_advisory_xact_lock keyspace reserved for the
+// import-dedup serializer. Picked as the int32 representation of the ASCII
+// bytes "IMPD" so it's visually identifiable in pg_locks during debugging
+// and stays out of any single-int advisory-lock keyspace a future feature
+// might choose. Lower 32 bits = hashtext(workspaceId).
+const IMPORT_DEDUP_LOCK_NAMESPACE = 0x494d5044
 
 /** Parse `dedupKeys` strings into validated key descriptors. Throws on a malformed entry so the batch surfaces a clear error rather than silently matching the wrong field. */
 function parseDedupKeys(keys: readonly string[]): DedupKey[] {
@@ -588,40 +602,39 @@ interface DiffResult {
 }
 
 /** Compute the diff between a mapped CSV row and an existing object. Only mapped (non-skip) target fields are compared — columns the CSV omits stay untouched (AC-T4). The setPayload is the minimal patch to send to UPDATE objects SET. */
-function diffMappedRow(
-	mapped: MappedRow,
-	existing: ExistingRow,
-	typeMapping: TypeMapping,
-): DiffResult {
+function diffMappedRow(mapped: MappedRow, existing: ExistingRow): DiffResult {
 	const changedColumns: string[] = []
 	const oldValues: Record<string, unknown> = {}
 	const newValues: Record<string, unknown> = {}
 	const setPayload: DiffResult['setPayload'] = {}
 
-	const csvProvidesTitle = mapped.title !== undefined
-	const csvProvidesContent = mapped.content !== undefined
-	const csvProvidesStatus = typeMapping.columns.some((c) => !c.skip && c.targetField === 'status')
-	const csvProvidesDriver = mapped.driver !== undefined
+	// Gate every field on per-row provenance (mapped.providedFields) — a CSV
+	// row that left a mapped cell empty must never overwrite the stored value,
+	// even if the typeMapping defines that column. Status was the canonical
+	// silent-overwrite case: mapRowForType falls back to `defaultStatus` when
+	// the cell is empty, so gating on `typeMapping.columns.some(...)` would
+	// write that fallback to the DB and audit it as a real change.
+	const provided = mapped.providedFields
 
-	if (csvProvidesTitle && (mapped.title ?? null) !== (existing.title ?? null)) {
+	if (provided.has('title') && (mapped.title ?? null) !== (existing.title ?? null)) {
 		changedColumns.push('title')
 		oldValues.title = existing.title
 		newValues.title = mapped.title
 		setPayload.title = mapped.title ?? null
 	}
-	if (csvProvidesContent && (mapped.content ?? null) !== (existing.content ?? null)) {
+	if (provided.has('content') && (mapped.content ?? null) !== (existing.content ?? null)) {
 		changedColumns.push('content')
 		oldValues.content = existing.content
 		newValues.content = mapped.content
 		setPayload.content = mapped.content ?? null
 	}
-	if (csvProvidesStatus && mapped.status !== existing.status) {
+	if (provided.has('status') && mapped.status !== existing.status) {
 		changedColumns.push('status')
 		oldValues.status = existing.status
 		newValues.status = mapped.status
 		setPayload.status = mapped.status
 	}
-	if (csvProvidesDriver && (mapped.driver ?? null) !== (existing.driver ?? null)) {
+	if (provided.has('driver') && (mapped.driver ?? null) !== (existing.driver ?? null)) {
 		changedColumns.push('driver')
 		oldValues.driver = existing.driver
 		newValues.driver = mapped.driver
@@ -668,17 +681,22 @@ interface ClassifiedBuckets {
 	skips: { row: ValidRow; existing: ExistingRow }[]
 }
 
-/** Classify a batch of valid rows for one type mapping into create/update/skip buckets. Multi-match resolves to the lowest object_id deterministically. */
+/** Classify a batch of valid rows for one type mapping into create/update/skip buckets. Multi-match resolves to the lowest object_id deterministically. Duplicate-tuple CSV rows all bind to the same matched object — matching T3 preview's classifier — and are applied sequentially against a running view so each row's audit reflects the state it actually observed. */
 function classifyRows(
 	validRows: ValidRow[],
 	dedupKeys: DedupKey[],
 	existingByTuple: Map<string, ExistingRow>,
-	typeMapping: TypeMapping,
 ): ClassifiedBuckets {
 	const creates: ValidRow[] = []
 	const updates: ClassifiedBuckets['updates'] = []
 	const skips: ClassifiedBuckets['skips'] = []
-	const usedExistingIds = new Set<string>()
+	// Track the post-diff state of each existing object as we walk the batch.
+	// When two CSV rows share a dedup tuple they both target the same matched
+	// object; the second row must diff against the first row's pending state
+	// so its audit row reflects the field values it actually observed. The
+	// write pass then applies the per-row UPDATEs sequentially against the
+	// same row inside the transaction.
+	const runningState = new Map<string, ExistingRow>()
 
 	for (const row of validRows) {
 		if (dedupKeys.length === 0) {
@@ -696,24 +714,31 @@ function classifyRows(
 			creates.push(row)
 			continue
 		}
-		// Same existing object should not be updated/skipped by two CSV rows in
-		// the same batch — second row falls through to create-new so AC-T3's
-		// "every key clause must match the same stored row" semantics survive a
-		// batch with two identical dedup tuples.
-		if (usedExistingIds.has(existing.id)) {
-			creates.push(row)
-			continue
-		}
-		usedExistingIds.add(existing.id)
-		const diff = diffMappedRow(row.mapped, existing, typeMapping)
+		const current = runningState.get(existing.id) ?? existing
+		const diff = diffMappedRow(row.mapped, current)
 		if (diff.changedColumns.length === 0) {
 			skips.push({ row, existing })
 		} else {
 			updates.push({ row, existing, diff })
+			runningState.set(existing.id, applyDiffToExisting(current, diff))
 		}
 	}
 
 	return { creates, updates, skips }
+}
+
+/** Project a DiffResult onto an ExistingRow so the next same-target row diffs against the post-update state. Mirrors the SET payload semantics of the UPDATE issued in the write pass. */
+function applyDiffToExisting(existing: ExistingRow, diff: DiffResult): ExistingRow {
+	const next: ExistingRow = { ...existing }
+	const payload = diff.setPayload
+	if ('title' in payload) next.title = payload.title ?? null
+	if ('content' in payload) next.content = payload.content ?? null
+	if ('status' in payload && payload.status !== undefined) next.status = payload.status
+	if ('driver' in payload) next.driver = payload.driver ?? null
+	if ('metadata' in payload) {
+		next.metadata = (payload.metadata ?? null) as Record<string, unknown> | null
+	}
+	return next
 }
 
 export async function executeImport(
@@ -772,9 +797,14 @@ export async function executeImport(
 					// imports with overlapping dedup tuples cannot both
 					// match-select before either writes — the documented
 					// architecture fallback for AC-T7. The lock auto-releases
-					// at transaction commit/rollback.
+					// at transaction commit/rollback. Two-int form (namespace,
+					// hashtext(workspaceId)) so we only collide with other
+					// import-dedup locks, not with arbitrary single-int
+					// advisory locks future code might take elsewhere.
 					if (anyDedup) {
-						await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${workspaceId}))`)
+						await tx.execute(
+							sql`SELECT pg_advisory_xact_lock(${IMPORT_DEDUP_LOCK_NAMESPACE}, hashtext(${workspaceId}))`,
+						)
 					}
 
 					const allCreates: {
@@ -858,12 +888,7 @@ export async function executeImport(
 							}
 						}
 
-						const { creates, updates, skips } = classifyRows(
-							validRows,
-							dedupKeys,
-							existingByTuple,
-							typeMapping,
-						)
+						const { creates, updates, skips } = classifyRows(validRows, dedupKeys, existingByTuple)
 						for (const row of creates) allCreates.push({ typeMapping, typeMappingIdx, row })
 						for (const u of updates) allUpdates.push({ typeMapping, typeMappingIdx, ...u })
 						for (const s of skips) allSkips.push({ typeMapping, typeMappingIdx, ...s })

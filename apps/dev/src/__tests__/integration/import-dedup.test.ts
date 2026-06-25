@@ -59,7 +59,6 @@ describe('Import dedup engine — integration', () => {
 	it('AC-T2: two dedup keys are AND-composed across both fields (never OR)', async () => {
 		const { workspaceId, actorId, importId } = await setupImportFixture()
 
-		// Two existing tasks share `metadata.email` but differ on title.
 		await db.insert(objects).values([
 			{
 				workspaceId,
@@ -79,8 +78,6 @@ describe('Import dedup engine — integration', () => {
 			},
 		])
 
-		// CSV row with (title=Alice, email=other@example.com) — must NOT match
-		// "Alice" (email differs) even though title alone would. AND, not OR.
 		const result = await executeImport(
 			importId,
 			[{ name: 'Alice', email: 'other@example.com' }],
@@ -117,7 +114,7 @@ describe('Import dedup engine — integration', () => {
 			.select()
 			.from(objects)
 			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.title, 'Alice')))
-		expect(aliceRows, 'one original + one newly created Alice').toHaveLength(2)
+		expect(aliceRows).toHaveLength(2)
 
 		const audit = await fetchAuditForImport(importId)
 		expect(audit).toHaveLength(1)
@@ -127,7 +124,6 @@ describe('Import dedup engine — integration', () => {
 	it('AC-T3: empty/NULL dedup values never match (empty ≠ empty), CSV empty routes to create', async () => {
 		const { workspaceId, actorId, importId } = await setupImportFixture()
 
-		// Stored object with NULL `metadata.email`.
 		await db.insert(objects).values({
 			workspaceId,
 			type: 'task',
@@ -140,9 +136,7 @@ describe('Import dedup engine — integration', () => {
 		const result = await executeImport(
 			importId,
 			[
-				// Empty email on CSV side.
 				{ name: 'Has no email', email: '' },
-				// Both empty.
 				{ name: '', email: '' },
 			],
 			{
@@ -170,8 +164,6 @@ describe('Import dedup engine — integration', () => {
 			db,
 		)
 
-		// Row 1 (empty email) ≠ stored (NULL email) → create.
-		// Row 2 (empty title + empty email) → mapRowForType returns null, skipped entirely.
 		expect(result.successCount).toBe(1)
 		expect(result.updatedCount).toBe(0)
 		expect(result.skippedCount).toBe(0)
@@ -180,14 +172,12 @@ describe('Import dedup engine — integration', () => {
 			.select()
 			.from(objects)
 			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'task')))
-		expect(allTasks, 'one original + one created from row 1').toHaveLength(2)
+		expect(allTasks).toHaveLength(2)
 	})
 
 	it('AC-T4: matched rows update only changed columns; CSV-omitted columns stay untouched', async () => {
 		const { workspaceId, actorId, importId } = await setupImportFixture()
 
-		// Pre-seed an object with a status the CSV will NOT touch, and a stored
-		// metadata field the CSV will NOT mention.
 		const [stored] = await db
 			.insert(objects)
 			.values({
@@ -204,13 +194,7 @@ describe('Import dedup engine — integration', () => {
 
 		const result = await executeImport(
 			importId,
-			[
-				{
-					name: 'Refactor login',
-					email: 'login@example.com',
-					description: 'Updated description',
-				},
-			],
+			[{ name: 'Refactor login', email: 'login@example.com', description: 'Updated description' }],
 			{
 				typeMappings: [
 					{
@@ -248,16 +232,13 @@ describe('Import dedup engine — integration', () => {
 
 		const [updated] = await db.select().from(objects).where(eq(objects.id, stored.id))
 		expect(updated?.content).toBe('Updated description')
-		expect(updated?.status, 'CSV omitted status → stay at in_progress').toBe('in_progress')
-		expect(
-			(updated?.metadata as Record<string, unknown> | null)?.untouched,
-			'metadata field not in CSV → stays at "preserve-me"',
-		).toBe('preserve-me')
+		expect(updated?.status).toBe('in_progress')
+		expect((updated?.metadata as Record<string, unknown> | null)?.untouched).toBe('preserve-me')
 
 		const audit = await fetchAuditForImport(importId)
 		expect(audit).toHaveLength(1)
 		expect(audit[0]?.action).toBe('updated')
-		expect(audit[0]?.changedColumns, 'only content differed').toEqual(['content'])
+		expect(audit[0]?.changedColumns).toEqual(['content'])
 		expect(audit[0]?.oldValues).toEqual({ content: 'Old description' })
 		expect(audit[0]?.newValues).toEqual({ content: 'Updated description' })
 	})
@@ -295,13 +276,9 @@ describe('Import dedup engine — integration', () => {
 			relationships: [],
 		}
 
-		// First run on the original workspace + import row: both rows create.
 		const firstRun = await executeImport(importId, csv, mapping, workspaceId, actorId, SETTINGS, db)
 		expect(firstRun.successCount).toBe(2)
 
-		// Second run on the SAME workspace with a fresh import row: same CSV,
-		// same dedup keys. Every row must now resolve to "skipped" — the prior
-		// stored object equals every CSV-supplied column.
 		const [secondImport] = await db
 			.insert(imports)
 			.values(buildImport({ workspaceId, createdBy: actorId, status: 'importing' }))
@@ -317,9 +294,9 @@ describe('Import dedup engine — integration', () => {
 			db,
 		)
 
-		expect(secondRun.successCount, 'no new creates on re-run').toBe(0)
-		expect(secondRun.updatedCount, 'no updates — every column already matches').toBe(0)
-		expect(secondRun.skippedCount, 'every row resolves to skip').toBe(2)
+		expect(secondRun.successCount).toBe(0)
+		expect(secondRun.updatedCount).toBe(0)
+		expect(secondRun.skippedCount).toBe(2)
 
 		const audit = await fetchAuditForImport(secondImport.id)
 		expect(audit).toHaveLength(2)
@@ -353,10 +330,6 @@ describe('Import dedup engine — integration', () => {
 			relationships: [],
 		}
 
-		// Two parallel imports against the same workspace + overlapping dedup
-		// tuples. Per-batch atomicity means: at most one of them creates each
-		// dedup tuple — the later one observes the first commit and routes to
-		// update/skip. If the implementation isn't atomic, both create.
 		const importA = await db
 			.insert(imports)
 			.values(buildImport({ workspaceId, createdBy: actorId, status: 'importing' }))
@@ -374,35 +347,23 @@ describe('Import dedup engine — integration', () => {
 			executeImport(bId, sharedCsv, mapping, workspaceId, actorId, SETTINGS, db),
 		])
 
-		// Across both runs, each unique (title, email) tuple should resolve to
-		// exactly one stored object. The total creates across both runs should
-		// equal the number of unique tuples in the CSV.
 		const stored = await db
 			.select()
 			.from(objects)
 			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'task')))
-
 		const seenTuples = new Set<string>()
 		for (const obj of stored) {
 			const email = (obj.metadata as Record<string, unknown> | null)?.email
-			const tupleKey = `${obj.title ?? ''}\u0000${String(email ?? '')}`
-			seenTuples.add(tupleKey)
+			seenTuples.add(`${obj.title ?? ''}\u0000${String(email ?? '')}`)
 		}
-		expect(
-			stored.length,
-			`parallel imports must not double-create on overlapping dedup tuples; saw ${stored
-				.map((o) => `${o.title}/${(o.metadata as { email?: string } | null)?.email}`)
-				.join(', ')}`,
-		).toBe(seenTuples.size)
-		expect(seenTuples.size, 'two unique tuples in shared CSV').toBe(2)
+		expect(stored.length).toBe(seenTuples.size)
+		expect(seenTuples.size).toBe(2)
 		expect(resA.successCount + resB.successCount).toBe(2)
 	})
 
 	it('matches existing objects by metadata.<field> JSONB path (cross-checks AC-T1 correctness)', async () => {
 		const { workspaceId, actorId, importId } = await setupImportFixture()
 
-		// Seed many existing objects to confirm the JSONB lookup scopes
-		// correctly to workspace + type + key and doesn't over-match.
 		const seed: {
 			workspaceId: string
 			type: string
@@ -426,10 +387,8 @@ describe('Import dedup engine — integration', () => {
 		const result = await executeImport(
 			importId,
 			[
-				// First two should match by externalId only.
 				{ name: 'New name for 10', externalId: 'ext-10' },
 				{ name: 'New name for 25', externalId: 'ext-25' },
-				// Third has a non-existent externalId → create.
 				{ name: 'Brand new', externalId: 'ext-9999' },
 			],
 			{
@@ -465,5 +424,141 @@ describe('Import dedup engine — integration', () => {
 		expect(finalImport?.successCount).toBe(1)
 		expect(finalImport?.updatedCount).toBe(2)
 		expect(finalImport?.skippedCount).toBe(0)
+	})
+
+	// === NEW: regression for the per-row status provenance bug ===
+	it('mapped Status column with empty row cell never overwrites the existing status', async () => {
+		const { workspaceId, actorId, importId } = await setupImportFixture()
+
+		const [stored] = await db
+			.insert(objects)
+			.values({
+				workspaceId,
+				type: 'task',
+				title: 'Ship onboarding',
+				status: 'in_progress',
+				metadata: { email: 'lead@example.com' },
+				createdBy: actorId,
+			})
+			.returning()
+		if (!stored) throw new Error('seed insert failed')
+
+		const result = await executeImport(
+			importId,
+			[{ name: 'Ship onboarding', email: 'lead@example.com', state: '' }],
+			{
+				typeMappings: [
+					{
+						objectType: 'task',
+						defaultStatus: 'todo',
+						dedupKeys: ['title', 'metadata.email'],
+						columns: [
+							{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false },
+							{
+								sourceColumn: 'email',
+								targetField: 'metadata.email',
+								transform: 'none',
+								skip: false,
+							},
+							{ sourceColumn: 'state', targetField: 'status', transform: 'none', skip: false },
+						],
+					},
+				],
+				relationships: [],
+			},
+			workspaceId,
+			actorId,
+			SETTINGS,
+			db,
+		)
+
+		expect(result.successCount).toBe(0)
+		expect(result.updatedCount).toBe(0)
+		expect(result.skippedCount).toBe(1)
+
+		const [after] = await db.select().from(objects).where(eq(objects.id, stored.id))
+		expect(after?.status).toBe('in_progress')
+
+		const audit = await fetchAuditForImport(importId)
+		expect(audit).toHaveLength(1)
+		expect(audit[0]?.action).toBe('skipped')
+		expect(audit[0]?.changedColumns).toEqual([])
+	})
+
+	// === NEW: regression for duplicate-tuple binding ===
+	it('duplicate-tuple CSV rows bind to the same existing object (no second-row create)', async () => {
+		const { workspaceId, actorId, importId } = await setupImportFixture()
+
+		const [stored] = await db
+			.insert(objects)
+			.values({
+				workspaceId,
+				type: 'task',
+				title: 'Pick CRM',
+				content: 'old description',
+				status: 'todo',
+				metadata: { email: 'crm@example.com' },
+				createdBy: actorId,
+			})
+			.returning()
+		if (!stored) throw new Error('seed insert failed')
+
+		const result = await executeImport(
+			importId,
+			[
+				{ name: 'Pick CRM', email: 'crm@example.com', description: 'first edit' },
+				{ name: 'Pick CRM', email: 'crm@example.com', description: 'second edit' },
+			],
+			{
+				typeMappings: [
+					{
+						objectType: 'task',
+						defaultStatus: 'todo',
+						dedupKeys: ['title', 'metadata.email'],
+						columns: [
+							{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false },
+							{
+								sourceColumn: 'email',
+								targetField: 'metadata.email',
+								transform: 'none',
+								skip: false,
+							},
+							{
+								sourceColumn: 'description',
+								targetField: 'content',
+								transform: 'none',
+								skip: false,
+							},
+						],
+					},
+				],
+				relationships: [],
+			},
+			workspaceId,
+			actorId,
+			SETTINGS,
+			db,
+		)
+
+		expect(result.successCount).toBe(0)
+		expect(result.updatedCount).toBe(2)
+		expect(result.skippedCount).toBe(0)
+
+		const allTasks = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'task')))
+		expect(allTasks).toHaveLength(1)
+
+		const [after] = await db.select().from(objects).where(eq(objects.id, stored.id))
+		expect(after?.content).toBe('second edit')
+
+		const audit = await fetchAuditForImport(importId)
+		expect(audit).toHaveLength(2)
+		expect(audit.every((a) => a.action === 'updated')).toBe(true)
+		expect(audit[0]?.oldValues).toEqual({ content: 'old description' })
+		expect(audit[0]?.newValues).toEqual({ content: 'first edit' })
+		expect(audit[1]?.oldValues).toEqual({ content: 'first edit' })
+		expect(audit[1]?.newValues).toEqual({ content: 'second edit' })
 	})
 })
