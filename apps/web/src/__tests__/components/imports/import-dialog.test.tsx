@@ -5,6 +5,11 @@ import userEvent from '@testing-library/user-event'
 import { buildImportResponse } from '../../factories'
 import { TestWrapper } from '../../setup'
 
+const mockUseIsMobile = vi.fn(() => false)
+vi.mock('@/hooks/use-mobile', () => ({
+	useIsMobile: () => mockUseIsMobile(),
+}))
+
 const mockCreateImportMutateAsync = vi.fn()
 const mockUpdateMappingMutateAsync = vi.fn()
 const mockConfirmImportMutateAsync = vi.fn()
@@ -70,6 +75,7 @@ describe('ImportDialog', () => {
 		vi.clearAllMocks()
 		mockImportData = undefined
 		mockWorkspaceSettings = {}
+		mockUseIsMobile.mockReturnValue(false)
 	})
 
 	it('renders upload step when open=true', () => {
@@ -277,6 +283,36 @@ describe('ImportDialog', () => {
 					"Importing without a dedup key creates duplicates for every row — pick at least one field, or confirm 'Create all as new'.",
 				),
 			).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Create all as new' })).toBeInTheDocument()
+		})
+
+		it('escape-hatch confirm swaps to a bottom Sheet under 768px (ResponsiveDialog)', async () => {
+			mockUseIsMobile.mockReturnValue(true)
+			mockWorkspaceSettings = dedupSettings
+			const importRecord = buildImportResponse({
+				totalRows: 12,
+				mapping: defaultMapping,
+				preview: { ...defaultPreview, totalRows: 12 },
+			})
+			mockCreateImportMutateAsync.mockResolvedValue(importRecord)
+			mockImportData = importRecord
+
+			render(<ImportDialog open={true} onOpenChange={vi.fn()} />, { wrapper: TestWrapper })
+			const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+			await userEvent.upload(fileInput, new File(['test'], 'data.csv', { type: 'text/csv' }))
+			await userEvent.click(await screen.findByRole('button', { name: /Next: preview & match/ }))
+
+			await userEvent.click(
+				await screen.findByRole('button', { name: /Skip matching — create all 12 as new/ }),
+			)
+
+			// Two open dialogs: the outer import flow and the escape-hatch confirm.
+			// The confirm is the last-opened, and on mobile its content is the
+			// side="bottom" Sheet — assert that primitive's signature className.
+			const dialogs = await screen.findAllByRole('dialog')
+			const confirm = dialogs[dialogs.length - 1]
+			expect(confirm.className).toMatch(/bottom-0/)
+			expect(confirm.className).toMatch(/max-w-none/)
 			expect(screen.getByRole('button', { name: 'Create all as new' })).toBeInTheDocument()
 		})
 	})

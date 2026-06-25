@@ -116,4 +116,45 @@ test.describe('Import — Step 3 dedup picker', () => {
 			'true',
 		)
 	})
+
+	test('AC-U4 mobile (375px): escape-hatch confirm renders as a bottom sheet', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize(VIEWPORTS.mobile)
+		await page.goto(`/${account.workspaceId}/objects`)
+		await page
+			.getByRole('button', { name: /Import/ })
+			.first()
+			.click()
+
+		const fileInput = page.locator('input[type="file"]')
+		await fileInput.setInputFiles({
+			name: 'data.csv',
+			mimeType: 'text/csv',
+			buffer: Buffer.from('title,email\nNew Bet,a@example.com\n'),
+		})
+
+		await page.getByRole('button', { name: /Next: preview & match/ }).click()
+		await page.getByRole('button', { name: /Skip matching — create all/ }).click()
+
+		// Verbatim AC-U4 copy + destructive confirm reachable on mobile.
+		await expect(
+			page.getByText(
+				"Importing without a dedup key creates duplicates for every row — pick at least one field, or confirm 'Create all as new'.",
+			),
+		).toBeVisible()
+		const confirm = page.getByRole('button', { name: 'Create all as new' })
+		await expect(confirm).toBeVisible()
+
+		// ResponsiveDialog swaps to a side="bottom" Sheet under 768px — assert the
+		// confirm content anchors to the bottom edge (Sheet sets `bottom: 0`).
+		const sheetContent = page.locator('[role="dialog"][data-state="open"]').last()
+		await expect(sheetContent).toBeVisible()
+		const box = await sheetContent.boundingBox()
+		expect(box).not.toBeNull()
+		if (box) {
+			expect(Math.round(box.y + box.height)).toBe(VIEWPORTS.mobile.height)
+		}
+	})
 })

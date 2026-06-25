@@ -1,13 +1,5 @@
 import { Button } from '@/components/ui/button'
 import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from '@/components/ui/dialog'
-import {
 	ResponsiveDialog,
 	ResponsiveDialogContent,
 	ResponsiveDialogDescription,
@@ -1052,13 +1044,13 @@ function PreviewStep({
 				</Button>
 			</ResponsiveDialogFooter>
 
-			<Dialog open={escapeOpen} onOpenChange={setEscapeOpen}>
-				<DialogContent className="max-w-md">
-					<DialogHeader>
-						<DialogTitle>Create all rows as new?</DialogTitle>
-						<DialogDescription>{ESCAPE_HATCH_COPY}</DialogDescription>
-					</DialogHeader>
-					<DialogFooter className="gap-2 sm:gap-0">
+			<ResponsiveDialog open={escapeOpen} onOpenChange={setEscapeOpen}>
+				<ResponsiveDialogContent className="md:max-w-md">
+					<ResponsiveDialogHeader>
+						<ResponsiveDialogTitle>Create all rows as new?</ResponsiveDialogTitle>
+						<ResponsiveDialogDescription>{ESCAPE_HATCH_COPY}</ResponsiveDialogDescription>
+					</ResponsiveDialogHeader>
+					<ResponsiveDialogFooter className="gap-2 sm:gap-0">
 						<Button variant="outline" onClick={() => setEscapeOpen(false)} disabled={isConfirming}>
 							Cancel
 						</Button>
@@ -1075,9 +1067,9 @@ function PreviewStep({
 								<>Create all as new</>
 							)}
 						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
+					</ResponsiveDialogFooter>
+				</ResponsiveDialogContent>
+			</ResponsiveDialog>
 		</>
 	)
 }
