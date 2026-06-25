@@ -807,6 +807,63 @@ describe('Chat', () => {
 		expect(screen.getByText('Hi from Code Reviewer')).toBeInTheDocument()
 	})
 
+	// AC-T2: a file attachment on the user turn is forwarded to session.send as
+	// a `SessionInputAttachment` carrying kind:'file' + id + name + size_bytes
+	// + mime_type, AND surfaced on the displayAttachments so the user bubble
+	// can render an inline image card. The persistence + reload-from-/logs
+	// round trip is covered by chat-stream.test.ts (`maskin_attachments`) and
+	// use-chat-session.test.ts (hydrate replay).
+	it('forwards selected file attachments to session.send with id + mime + size metadata', async () => {
+		render(
+			<Chat
+				workspaceId="ws-1"
+				agentActorId="actor-agent"
+				surface="sheet"
+				selection={{
+					agent: null,
+					objects: [],
+					notifications: [],
+					files: [
+						{
+							fileId: 'file-99',
+							name: 'photo.png',
+							sizeBytes: 1234,
+							mimeType: 'image/png',
+						},
+					],
+				}}
+			/>,
+		)
+
+		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'look at this' } })
+		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+		await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1))
+		expect(mockSend).toHaveBeenCalledWith(
+			['look at this', '', '---', 'Attached files:', '- photo.png — file_id: file-99'].join('\n'),
+			[
+				{
+					kind: 'file',
+					id: 'file-99',
+					name: 'photo.png',
+					size_bytes: 1234,
+					mime_type: 'image/png',
+				},
+			],
+			'look at this',
+			[
+				{
+					kind: 'file',
+					id: 'file-99',
+					name: 'photo.png',
+					sizeBytes: 1234,
+					mimeType: 'image/png',
+				},
+			],
+		)
+	})
+
 	// AC-T1: image pick on the chat composer routes through useUploadFile —
 	// binary base64 POST to /files returning a fileId, not the old text-only
 	// file.text() path. The resolved fileId is dispatched into the selection.

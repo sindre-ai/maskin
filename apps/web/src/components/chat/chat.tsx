@@ -227,7 +227,11 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 						displayAttachments,
 					})
 				} else {
-					const attachments = selectionToAttachments(selectedObjects, selectedNotifications)
+					const attachments = selectionToAttachments(
+						selectedObjects,
+						selectedNotifications,
+						selectedFiles,
+					)
 					// The backend's interactive-session input endpoint currently
 					// forwards only `content` to the container's stdin (attachments
 					// are accepted by the schema for future first-class handling but
@@ -330,6 +334,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 		>
 			{showTranscript && (
 				<ChatTranscript
+					workspaceId={workspaceId}
 					events={events}
 					starting={starting}
 					error={error}
@@ -437,7 +442,13 @@ function buildDisplayAttachments(selection: ChatSelection): UserAttachmentView[]
 		out.push({ kind: 'notification', id: n.id, title: n.title ?? null })
 	}
 	for (const f of selection.files) {
-		out.push({ kind: 'file', name: f.name, sizeBytes: f.sizeBytes })
+		out.push({
+			kind: 'file',
+			id: f.fileId,
+			name: f.name,
+			sizeBytes: f.sizeBytes,
+			...(f.mimeType ? { mimeType: f.mimeType } : {}),
+		})
 	}
 	return out.length > 0 ? out : undefined
 }
@@ -445,11 +456,19 @@ function buildDisplayAttachments(selection: ChatSelection): UserAttachmentView[]
 function selectionToAttachments(
 	objects: ChatSelectionObject[],
 	notifications: ChatSelectionNotification[],
+	files: import('@/lib/chat-selection').ChatSelectionFile[],
 ): SessionInputAttachment[] | undefined {
-	if (objects.length === 0 && notifications.length === 0) return undefined
+	if (objects.length === 0 && notifications.length === 0 && files.length === 0) return undefined
 	const attachments: SessionInputAttachment[] = [
 		...objects.map((o) => ({ kind: 'object', id: o.id })),
 		...notifications.map((n) => ({ kind: 'notification', id: n.id })),
+		...files.map((f) => ({
+			kind: 'file',
+			id: f.fileId,
+			name: f.name,
+			size_bytes: f.sizeBytes,
+			...(f.mimeType ? { mime_type: f.mimeType } : {}),
+		})),
 	]
 	return attachments
 }

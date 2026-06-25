@@ -563,10 +563,14 @@ app.openapi(inputSessionRoute, (async (c) => {
 	}
 
 	try {
-		await sessionManager.writeInput(id, {
-			type: 'user',
-			message: { role: 'user', content: body.content },
-		})
+		await sessionManager.writeInput(
+			id,
+			{
+				type: 'user',
+				message: { role: 'user', content: body.content },
+			},
+			body.attachments,
+		)
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err)
 		return c.json(createApiError('BAD_REQUEST', message), 400)
