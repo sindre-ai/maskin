@@ -26,6 +26,7 @@ import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import installedPackagesRoutes from './routes/installed-packages'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import integrationsGoogleCalendarMcpRoutes from './routes/integrations-google-calendar-mcp'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import mcpRoutes from './routes/mcp'
 import notificationsRoutes from './routes/notifications'
@@ -216,6 +217,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
+	app.route('/api/integrations/google-calendar/mcp', integrationsGoogleCalendarMcpRoutes)
 	app.route('/api/catalog', catalogPackagesRoutes)
 	app.route('/api/webhooks', webhookApp)
 	app.route('/api/internal/agent-servers', agentServerReconcileRoutes)
