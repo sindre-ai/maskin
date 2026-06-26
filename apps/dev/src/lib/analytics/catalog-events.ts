@@ -93,6 +93,52 @@ export function utcDayString(now: Date = new Date()): string {
 	return now.toISOString().slice(0, 10)
 }
 
+interface ObjectCreatedProps {
+	entityId: string
+	entityType: string
+	driverActorId: string | null
+	workspaceId: string
+	actorId: string
+}
+
+// Emitted after a successful object insert so the "active objects" denominator
+// in the driver-coverage metric can be computed from PostHog alone instead of
+// a Maskin-DB snapshot. driver_actor_id carries the driver value at create
+// time so a single event represents the object's full driver state.
+export async function trackObjectCreated(p: ObjectCreatedProps): Promise<void> {
+	await capturePosthogEvent('object_created', p.workspaceId, {
+		entity_id: p.entityId,
+		entity_type: p.entityType,
+		driver_actor_id: p.driverActorId,
+		workspace_id: p.workspaceId,
+		actor_id: p.actorId,
+	})
+}
+
+interface ObjectDriverChangedProps {
+	entityId: string
+	entityType: string
+	driverActorId: string | null
+	previousDriverActorId: string | null
+	workspaceId: string
+	actorId: string
+}
+
+// Emitted whenever an object's driver is set, changed, or cleared. The bet
+// "Objects have no driver" measures '≥80% of active objects carry non-null
+// driver' off the latest emission of this event per entity_id via argMax —
+// callers must only fire when the value actually transitions.
+export async function trackObjectDriverChanged(p: ObjectDriverChangedProps): Promise<void> {
+	await capturePosthogEvent('object_driver_changed', p.workspaceId, {
+		entity_id: p.entityId,
+		entity_type: p.entityType,
+		driver_actor_id: p.driverActorId,
+		previous_driver_actor_id: p.previousDriverActorId,
+		workspace_id: p.workspaceId,
+		actor_id: p.actorId,
+	})
+}
+
 /**
  * Atomically claim "first activity today" on an installed package. Returns
  * the package context if the claim was won (caller should emit

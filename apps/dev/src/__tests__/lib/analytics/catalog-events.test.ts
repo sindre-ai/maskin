@@ -10,6 +10,8 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 import {
 	claimLoopActiveDay,
 	trackLoopActiveDay,
+	trackObjectCreated,
+	trackObjectDriverChanged,
 	trackPackageForked,
 	trackPackageInstalled,
 	utcDayString,
@@ -93,6 +95,86 @@ describe('trackLoopActiveDay', () => {
 			package_slug: 'customer-continuous-discovery',
 			workspace_id: 'ws-1',
 			utc_day: '2026-06-13',
+		})
+	})
+})
+
+describe('trackObjectCreated', () => {
+	it('emits object_created with workspace as distinct id and driver_actor_id', async () => {
+		await trackObjectCreated({
+			entityId: 'obj-1',
+			entityType: 'task',
+			driverActorId: 'actor-9',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith('object_created', 'ws-1', {
+			entity_id: 'obj-1',
+			entity_type: 'task',
+			driver_actor_id: 'actor-9',
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+		})
+	})
+
+	it('passes null driver_actor_id through unchanged', async () => {
+		await trackObjectCreated({
+			entityId: 'obj-2',
+			entityType: 'bet',
+			driverActorId: null,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith('object_created', 'ws-1', {
+			entity_id: 'obj-2',
+			entity_type: 'bet',
+			driver_actor_id: null,
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+		})
+	})
+})
+
+describe('trackObjectDriverChanged', () => {
+	it('emits object_driver_changed with previous and next driver', async () => {
+		await trackObjectDriverChanged({
+			entityId: 'obj-1',
+			entityType: 'task',
+			driverActorId: 'actor-9',
+			previousDriverActorId: 'actor-8',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith('object_driver_changed', 'ws-1', {
+			entity_id: 'obj-1',
+			entity_type: 'task',
+			driver_actor_id: 'actor-9',
+			previous_driver_actor_id: 'actor-8',
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+		})
+	})
+
+	it('carries null when driver is cleared', async () => {
+		await trackObjectDriverChanged({
+			entityId: 'obj-2',
+			entityType: 'bet',
+			driverActorId: null,
+			previousDriverActorId: 'actor-8',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith('object_driver_changed', 'ws-1', {
+			entity_id: 'obj-2',
+			entity_type: 'bet',
+			driver_actor_id: null,
+			previous_driver_actor_id: 'actor-8',
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
 		})
 	})
 })

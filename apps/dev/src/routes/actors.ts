@@ -29,6 +29,7 @@ import {
 	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { trackObjectDriverChanged } from '../lib/analytics/catalog-events'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -914,6 +915,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 	}
 
 	const existingData = { ...existing }
+	let drivenObjects: { id: string; workspaceId: string; type: string }[] = []
 	await db.transaction(async (tx) => {
 		// Delete session logs for sessions owned by this actor
 		const actorSessions = await tx
@@ -950,7 +952,13 @@ app.openapi(deleteActorRoute, (async (c) => {
 		await tx.delete(subscriptions).where(eq(subscriptions.actorId, id))
 		await tx.delete(readState).where(eq(readState.actorId, id))
 
-		// Reassign objects
+		// Reassign objects. Capture the driver-cleared set first so we can emit
+		// one `object_driver_changed` per row after commit (the bet's metric
+		// reads driver state from PostHog).
+		drivenObjects = await tx
+			.select({ id: objects.id, workspaceId: objects.workspaceId, type: objects.type })
+			.from(objects)
+			.where(eq(objects.driver, id))
 		await tx.update(objects).set({ driver: null }).where(eq(objects.driver, id))
 		await tx.update(objects).set({ createdBy: actorId }).where(eq(objects.createdBy, id))
 
@@ -980,6 +988,17 @@ app.openapi(deleteActorRoute, (async (c) => {
 		entityId: id,
 		data: existingData,
 	})
+
+	for (const obj of drivenObjects) {
+		void trackObjectDriverChanged({
+			entityId: obj.id,
+			entityType: obj.type,
+			driverActorId: null,
+			previousDriverActorId: id,
+			workspaceId: obj.workspaceId,
+			actorId,
+		})
+	}
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteActorRoute, Env>)

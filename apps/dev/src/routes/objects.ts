@@ -39,6 +39,7 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
+import { trackObjectCreated, trackObjectDriverChanged } from '../lib/analytics/catalog-events'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
@@ -293,6 +294,14 @@ app.openapi(createObjectRoute, async (c) => {
 		entityType: 'object',
 		entityId: created.id,
 		source: 'author',
+	})
+
+	void trackObjectCreated({
+		entityId: created.id,
+		entityType: created.type,
+		driverActorId: created.driver ?? null,
+		workspaceId,
+		actorId,
 	})
 
 	return c.json(serialize(created) as z.infer<typeof objectResponseSchema>, 201)
@@ -872,6 +881,17 @@ app.openapi(updateObjectRoute, async (c) => {
 		data: { previous: existing, updated },
 	})
 
+	if (body.driver !== undefined && (existing.driver ?? null) !== (updated.driver ?? null)) {
+		void trackObjectDriverChanged({
+			entityId: id,
+			entityType: existing.type,
+			driverActorId: updated.driver ?? null,
+			previousDriverActorId: existing.driver ?? null,
+			workspaceId: existing.workspaceId,
+			actorId,
+		})
+	}
+
 	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
 })
 
@@ -1170,6 +1190,15 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 		results.push(resultEntry)
 	}
 
+	type DriverTransition = {
+		entityId: string
+		entityType: string
+		previousDriverActorId: string | null
+		driverActorId: string | null
+		workspaceId: string
+	}
+	const driverTransitions: DriverTransition[] = []
+
 	if (plans.length > 0) {
 		await db.transaction(async (tx) => {
 			for (const plan of plans) {
@@ -1196,7 +1225,30 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 					entityId: plan.id,
 					data: { previous: plan.previous, updated },
 				})
+				if (
+					patch.driver !== undefined &&
+					(plan.previous.driver ?? null) !== (updated.driver ?? null)
+				) {
+					driverTransitions.push({
+						entityId: plan.id,
+						entityType: plan.previous.type,
+						previousDriverActorId: plan.previous.driver ?? null,
+						driverActorId: updated.driver ?? null,
+						workspaceId: plan.previous.workspaceId,
+					})
+				}
 			}
+		})
+	}
+
+	for (const t of driverTransitions) {
+		void trackObjectDriverChanged({
+			entityId: t.entityId,
+			entityType: t.entityType,
+			driverActorId: t.driverActorId,
+			previousDriverActorId: t.previousDriverActorId,
+			workspaceId: t.workspaceId,
+			actorId,
 		})
 	}
 
