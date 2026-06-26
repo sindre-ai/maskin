@@ -55,6 +55,66 @@ describe('RuntimeTelemetry', () => {
 				session_id: 'sess-2',
 				end_reason: 'irrecoverable',
 				duration_ms: 5000,
+				failure_reason: 'none',
+				agent_server_url: 'local-docker',
+				$process_person_profile: false,
+			},
+		})
+	})
+
+	it('emits failure_reason="credit_exhausted" when classifier returned a credit failure', () => {
+		const { client, capture } = makeFakeClient()
+		const telemetry = new RuntimeTelemetry({ apiKey: 'phc_x', client })
+
+		telemetry.recordSessionEnded({
+			sessionId: 'sess-credit',
+			endReason: 'irrecoverable',
+			durationMs: 5000,
+			agentServerUrl: 'local-docker',
+			failureReason: {
+				provider: 'anthropic',
+				reason_code: 'weekly_limit',
+				human_message: 'Claude weekly limit reached',
+				http_status: null,
+				reset_at: null,
+				verbatim_output: "You've hit your weekly limit",
+			},
+		})
+
+		expect(capture).toHaveBeenCalledWith({
+			distinctId: 'sess-credit',
+			event: 'runtime_session_ended',
+			properties: {
+				session_id: 'sess-credit',
+				end_reason: 'irrecoverable',
+				duration_ms: 5000,
+				failure_reason: 'credit_exhausted',
+				agent_server_url: 'local-docker',
+				$process_person_profile: false,
+			},
+		})
+	})
+
+	it('emits failure_reason="none" when classifier returned null', () => {
+		const { client, capture } = makeFakeClient()
+		const telemetry = new RuntimeTelemetry({ apiKey: 'phc_x', client })
+
+		telemetry.recordSessionEnded({
+			sessionId: 'sess-unclassified',
+			endReason: 'failed',
+			durationMs: 12,
+			agentServerUrl: 'local-docker',
+			failureReason: null,
+		})
+
+		expect(capture).toHaveBeenCalledWith({
+			distinctId: 'sess-unclassified',
+			event: 'runtime_session_ended',
+			properties: {
+				session_id: 'sess-unclassified',
+				end_reason: 'failed',
+				duration_ms: 12,
+				failure_reason: 'none',
 				agent_server_url: 'local-docker',
 				$process_person_profile: false,
 			},
@@ -226,6 +286,7 @@ describe('RuntimeTelemetry', () => {
 				session_id: 'sess-z',
 				end_reason: 'user_stopped',
 				duration_ms: 8,
+				failure_reason: 'none',
 				$process_person_profile: false,
 			},
 		})
