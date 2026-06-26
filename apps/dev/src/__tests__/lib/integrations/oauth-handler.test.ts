@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { OAuth2Handler } from '../../../lib/integrations/oauth/handler'
+import { OAuth2Handler, TokenRequestError } from '../../../lib/integrations/oauth/handler'
 import type { OAuth2Config } from '../../../lib/integrations/types'
 
 // Mock getEnvOrThrow
@@ -131,17 +131,37 @@ describe('OAuth2Handler', () => {
 			expect(body.get('code_verifier')).toBe('my-verifier')
 		})
 
-		it('throws on non-ok response', async () => {
+		it('throws TokenRequestError on non-ok response with parsed oauthError', async () => {
 			mockFetch.mockResolvedValue({
 				ok: false,
 				status: 400,
-				text: async () => 'Bad Request',
+				text: async () => '{"error":"invalid_grant"}',
 			})
 
 			const handler = new OAuth2Handler(baseConfig)
-			await expect(handler.exchangeCode('bad-code', 'https://app.com/callback')).rejects.toThrow(
-				'Token exchange failed: 400 Bad Request',
-			)
+			const err = await handler.exchangeCode('bad-code', 'https://app.com/callback').catch((e) => e)
+
+			expect(err).toBeInstanceOf(TokenRequestError)
+			expect(err).toBeInstanceOf(Error)
+			expect((err as TokenRequestError).status).toBe(400)
+			expect((err as TokenRequestError).oauthError).toBe('invalid_grant')
+			expect((err as TokenRequestError).responseBody).toBe('{"error":"invalid_grant"}')
+			expect((err as Error).message).toBe('Token exchange failed: 400 {"error":"invalid_grant"}')
+		})
+
+		it('TokenRequestError leaves oauthError undefined when body is not JSON', async () => {
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 502,
+				text: async () => 'Bad Gateway',
+			})
+
+			const handler = new OAuth2Handler(baseConfig)
+			const err = await handler.exchangeCode('code', 'https://app.com/callback').catch((e) => e)
+
+			expect(err).toBeInstanceOf(TokenRequestError)
+			expect((err as TokenRequestError).status).toBe(502)
+			expect((err as TokenRequestError).oauthError).toBeUndefined()
 		})
 
 		it('handles expires_at in seconds (converts to ms)', async () => {
