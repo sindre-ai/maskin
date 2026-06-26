@@ -9,7 +9,6 @@ import {
 	SidebarMenuButton,
 	SidebarMenuItem,
 	SidebarRail,
-	SidebarTrigger,
 	useSidebar,
 } from '@/components/ui/sidebar'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
@@ -21,6 +20,7 @@ import { Activity, Bot, Layers, Store, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 import { AgentPulse } from '../agents/agent-pulse'
 import { NavUser } from './nav-user'
+import { WorkspaceSwitcher } from './workspace-switcher'
 
 const FOR_YOU_ROUTE = '/$workspaceId' as const
 
@@ -52,11 +52,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	return (
 		<Sidebar collapsible="icon" {...props}>
 			<SidebarHeader className="h-11 justify-center">
-				<SidebarMenu>
-					<SidebarMenuItem>
-						<SidebarTrigger />
-					</SidebarMenuItem>
-				</SidebarMenu>
+				<WorkspaceSwitcher />
 			</SidebarHeader>
 			<SidebarContent>
 				<SidebarGroup>
