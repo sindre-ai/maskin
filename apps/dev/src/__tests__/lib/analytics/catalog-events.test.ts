@@ -9,6 +9,7 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 
 import {
 	claimLoopActiveDay,
+	computeConsecutiveDaysStreak,
 	trackLoopActiveDay,
 	trackPackageForked,
 	trackPackageInstalled,
@@ -58,19 +59,21 @@ describe('trackPackageInstalled', () => {
 })
 
 describe('trackPackageForked', () => {
-	it('emits package_forked with version_at_fork and the install id', async () => {
+	it('emits package_forked with package_slug, package_version, and source_install_id', async () => {
 		await trackPackageForked({
 			packageId: 'pkg-1',
-			installedPackageId: 'install-1',
-			versionAtFork: '1.2.0',
+			packageSlug: 'customer-continuous-discovery',
+			packageVersion: '1.2.0',
+			sourceInstallId: 'install-1',
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 		})
 
 		expect(capturePosthogEventMock).toHaveBeenCalledWith('package_forked', 'ws-1', {
 			package_id: 'pkg-1',
-			installed_package_id: 'install-1',
-			version_at_fork: '1.2.0',
+			package_slug: 'customer-continuous-discovery',
+			package_version: '1.2.0',
+			source_install_id: 'install-1',
 			workspace_id: 'ws-1',
 			actor_id: 'actor-1',
 		})
@@ -78,21 +81,21 @@ describe('trackPackageForked', () => {
 })
 
 describe('trackLoopActiveDay', () => {
-	it('emits loop_active_day with utc_day and slug', async () => {
+	it('emits loop_active_day with install_id, day, and consecutive_days', async () => {
 		await trackLoopActiveDay({
-			installedPackageId: 'install-1',
+			installId: 'install-1',
 			packageId: 'pkg-1',
-			packageSlug: 'customer-continuous-discovery',
 			workspaceId: 'ws-1',
-			utcDay: '2026-06-13',
+			day: '2026-06-13',
+			consecutiveDays: 7,
 		})
 
 		expect(capturePosthogEventMock).toHaveBeenCalledWith('loop_active_day', 'ws-1', {
-			installed_package_id: 'install-1',
+			install_id: 'install-1',
 			package_id: 'pkg-1',
-			package_slug: 'customer-continuous-discovery',
 			workspace_id: 'ws-1',
-			utc_day: '2026-06-13',
+			day: '2026-06-13',
+			consecutive_days: 7,
 		})
 	})
 })
@@ -105,7 +108,7 @@ describe('claimLoopActiveDay', () => {
 		const values = vi.fn().mockReturnValue({ onConflictDoNothing })
 		const insert = vi.fn().mockReturnValue({ values })
 
-		// select(...).from(...).where(...).limit(...) — chained twice
+		// select(...).from(...).where(...).limit(...)
 		const limit = vi.fn().mockImplementation(() => Promise.resolve(selectRowsQueue.shift() ?? []))
 		const where = vi.fn().mockReturnValue({ limit })
 		const from = vi.fn().mockReturnValue({ where })
@@ -128,10 +131,7 @@ describe('claimLoopActiveDay', () => {
 	it('returns the resolved package context when the claim is won', async () => {
 		const db = makeDb(
 			[{ installedPackageId: 'install-1' }],
-			[
-				[{ id: 'install-1', sourcePackageId: 'pkg-1', workspaceId: 'ws-1' }],
-				[{ slug: 'customer-continuous-discovery' }],
-			],
+			[[{ id: 'install-1', sourcePackageId: 'pkg-1', workspaceId: 'ws-1' }]],
 		)
 		const result = await claimLoopActiveDay(
 			db as unknown as Parameters<typeof claimLoopActiveDay>[0],
@@ -141,7 +141,6 @@ describe('claimLoopActiveDay', () => {
 		expect(result).toEqual({
 			installedPackageId: 'install-1',
 			packageId: 'pkg-1',
-			packageSlug: 'customer-continuous-discovery',
 			workspaceId: 'ws-1',
 		})
 	})
@@ -155,17 +154,81 @@ describe('claimLoopActiveDay', () => {
 		)
 		expect(result).toBeNull()
 	})
+})
 
-	it('returns null when the catalog package row is gone before the slug lookup', async () => {
-		const db = makeDb(
-			[{ installedPackageId: 'install-1' }],
-			[[{ id: 'install-1', sourcePackageId: 'pkg-1', workspaceId: 'ws-1' }], []],
-		)
-		const result = await claimLoopActiveDay(
-			db as unknown as Parameters<typeof claimLoopActiveDay>[0],
+describe('computeConsecutiveDaysStreak', () => {
+	function makeDb(rows: Array<{ utcDay: string }>) {
+		const limit = vi.fn().mockResolvedValue(rows)
+		const orderBy = vi.fn().mockReturnValue({ limit })
+		const where = vi.fn().mockReturnValue({ orderBy })
+		const from = vi.fn().mockReturnValue({ where })
+		const select = vi.fn().mockReturnValue({ from })
+		return { select }
+	}
+
+	it('returns 0 when today has not been claimed', async () => {
+		const db = makeDb([])
+		const result = await computeConsecutiveDaysStreak(
+			db as unknown as Parameters<typeof computeConsecutiveDaysStreak>[0],
 			'install-1',
 			'2026-06-13',
 		)
-		expect(result).toBeNull()
+		expect(result).toBe(0)
+	})
+
+	it('counts a single day when only today is claimed', async () => {
+		const db = makeDb([{ utcDay: '2026-06-13' }])
+		const result = await computeConsecutiveDaysStreak(
+			db as unknown as Parameters<typeof computeConsecutiveDaysStreak>[0],
+			'install-1',
+			'2026-06-13',
+		)
+		expect(result).toBe(1)
+	})
+
+	it('counts an unbroken streak ending at utcDay', async () => {
+		const db = makeDb([
+			{ utcDay: '2026-06-13' },
+			{ utcDay: '2026-06-12' },
+			{ utcDay: '2026-06-11' },
+			{ utcDay: '2026-06-10' },
+		])
+		const result = await computeConsecutiveDaysStreak(
+			db as unknown as Parameters<typeof computeConsecutiveDaysStreak>[0],
+			'install-1',
+			'2026-06-13',
+		)
+		expect(result).toBe(4)
+	})
+
+	it('stops at the first gap walking backwards', async () => {
+		// 2026-06-13, 2026-06-12 are consecutive; 2026-06-10 is a gap (no 06-11).
+		const db = makeDb([
+			{ utcDay: '2026-06-13' },
+			{ utcDay: '2026-06-12' },
+			{ utcDay: '2026-06-10' },
+			{ utcDay: '2026-06-09' },
+		])
+		const result = await computeConsecutiveDaysStreak(
+			db as unknown as Parameters<typeof computeConsecutiveDaysStreak>[0],
+			'install-1',
+			'2026-06-13',
+		)
+		expect(result).toBe(2)
+	})
+
+	it('crosses month boundaries correctly', async () => {
+		// 2026-07-01, 2026-06-30, 2026-06-29 — must still count as 3.
+		const db = makeDb([
+			{ utcDay: '2026-07-01' },
+			{ utcDay: '2026-06-30' },
+			{ utcDay: '2026-06-29' },
+		])
+		const result = await computeConsecutiveDaysStreak(
+			db as unknown as Parameters<typeof computeConsecutiveDaysStreak>[0],
+			'install-1',
+			'2026-07-01',
+		)
+		expect(result).toBe(3)
 	})
 })

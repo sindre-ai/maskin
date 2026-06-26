@@ -577,13 +577,30 @@ app.openapi(forkPackageRoute, async (c) => {
 		detached,
 	})
 
-	void trackPackageForked({
-		packageId: forked.sourcePackageId,
-		installedPackageId: forked.id,
-		versionAtFork: forked.installedVersion,
-		workspaceId: forked.workspaceId,
-		actorId,
-	})
+	// Look up the catalog slug for the event. Fork is by-id so we don't have
+	// it on the install row; one PK read is cheaper than carrying it through
+	// the fork transaction return shape.
+	const [forkedPkg] = await db
+		.select({ slug: catalogPackages.slug })
+		.from(catalogPackages)
+		.where(eq(catalogPackages.id, forked.sourcePackageId))
+		.limit(1)
+
+	if (forkedPkg) {
+		void trackPackageForked({
+			packageId: forked.sourcePackageId,
+			packageSlug: forkedPkg.slug,
+			packageVersion: forked.installedVersion,
+			sourceInstallId: forked.id,
+			workspaceId: forked.workspaceId,
+			actorId,
+		})
+	} else {
+		logger.warn('package_forked emit skipped — catalog package row missing', {
+			installedPackageId: forked.id,
+			sourcePackageId: forked.sourcePackageId,
+		})
+	}
 
 	return c.json(
 		{

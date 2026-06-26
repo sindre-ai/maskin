@@ -34,6 +34,7 @@ import {
 } from 'drizzle-orm'
 import {
 	claimLoopActiveDay,
+	computeConsecutiveDaysStreak,
 	trackLoopActiveDay,
 	utcDayString,
 } from '../lib/analytics/catalog-events'
@@ -1685,18 +1686,25 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// `consecutive_days` drives the bet's HogQL streak filter
+		// (`max(consecutive_days) >= 14`), so it has to be computed and
+		// included on every emit — read after the claim is committed so
+		// today is counted.
+		const consecutiveDays = await computeConsecutiveDaysStreak(this.db, installedPackageId, utcDay)
+
 		await trackLoopActiveDay({
-			installedPackageId: claim.installedPackageId,
+			installId: claim.installedPackageId,
 			packageId: claim.packageId,
-			packageSlug: claim.packageSlug,
 			workspaceId: claim.workspaceId,
-			utcDay,
+			day: utcDay,
+			consecutiveDays,
 		})
 
 		logger.info('loop_active_day emitted', {
-			installedPackageId: claim.installedPackageId,
+			installId: claim.installedPackageId,
 			workspaceId: claim.workspaceId,
-			utcDay,
+			day: utcDay,
+			consecutiveDays,
 		})
 	}
 
