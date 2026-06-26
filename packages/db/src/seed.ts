@@ -111,6 +111,7 @@ import {
 	DEV_TRIGGER_SUMMARIZATION_AGENT_MEETING_DONE,
 	DEV_TRIGGER_WORKSPACE_COACH_DAILY_ACCEPTANCE_ANALYSIS,
 	DEV_TRIGGER_WORKSPACE_COACH_DAILY_CODE_REVIEW_ANALYSIS,
+	DEV_TRIGGER_WORKSPACE_COACH_DAILY_GOOGLE_CALENDAR_MORNING_BRIEF,
 	DEV_TRIGGER_WORKSPACE_COACH_DAILY_HANDBOOK_DRIFT,
 	DEV_TRIGGER_WORKSPACE_COACH_DAILY_HUMAN_ACTIONS_DIGEST,
 	DEV_TRIGGER_WORKSPACE_COACH_DAILY_OBSERVATION,
@@ -4230,6 +4231,60 @@ Good morning, @Sebk 👋 Here's what happened yesterday:
 Keep it scannable — one line per item. Omit empty sections. If truly nothing happened in the last 24h, send: "Good morning, @Sebk 👋 Quiet day yesterday — no human actions recorded."
 
 Do NOT create an insight for this digest. The digest lives only in Slack.
+
+Triggering event: {triggering_event}`,
+				targetActorId: DEV_ACTOR_WORKSPACE_COACH,
+				enabled: true,
+			},
+		},
+		{
+			packageId: workspaceCoachPkg.id,
+			itemType: 'trigger',
+			sourceItemId: DEV_TRIGGER_WORKSPACE_COACH_DAILY_GOOGLE_CALENDAR_MORNING_BRIEF,
+			itemSnapshot: {
+				name: 'Google Calendar morning brief → founders',
+				description:
+					'Daily 8:00 AM Copenhagen-time Slack DM to each human workspace member with today’s calendar (meetings, attendees, free blocks). Dogfood surface for the Google Calendar integration.',
+				type: 'cron',
+				config: { expression: '0 6 * * *' },
+				actionPrompt: `Load the maskin-voice skill before writing anything. Every morning at 8:00am Copenhagen time, send each human workspace member (e.g. Sebk and Magnus in the founders’ workspace) a Slack DM with today’s calendar brief, using the Google Calendar read tools.
+
+**STEP 1 — Bail if the integration isn’t connected**
+
+Check the workspace’s integrations. If there is no \`google-calendar\` integration with status \`active\`, exit silently — nothing to brief.
+
+**STEP 2 — Resolve recipients**
+
+List workspace members and keep only human actors. For each human, capture their email (used for both calendar identity and Slack DM resolution). Do NOT hardcode actor UUIDs.
+
+**STEP 3 — Per recipient: pull today’s calendar**
+
+For each human member, call the auto-injected Google Calendar read tools:
+
+- \`list_calendar_events({ range: { start: <today 00:00 Copenhagen time>, end: <today 23:59 Copenhagen time> } })\` — events on the member’s primary calendar. Each event carries \`summary\`, \`start\`, \`end\`, \`attendees\`.
+- \`get_free_busy({ calendars: ['primary'], range: <same as above> })\` — busy intervals. Free blocks are the gaps between busy intervals between 09:00 and 18:00 local; skip gaps shorter than 30 minutes.
+
+If either call returns \`auth_revoked\` for a member, skip that member and continue with the rest — do NOT halt the whole brief.
+
+**STEP 4 — Send the brief as a Slack DM**
+
+Resolve each member’s Slack user ID via \`slack_search_users\` (by email). Send via \`slack_send_message\` with \`channel\` set to that Slack user ID. Message format:
+
+\`\`\`
+Good morning 👋 Here’s your calendar today:
+
+**Meetings**
+- 09:00–09:30 — Standup (with Alice, Bob)
+- 14:00–15:00 — Customer call (with Charlie)
+
+**Free blocks (09:00–18:00)**
+- 10:00–12:00 (2h)
+- 15:30–17:00 (1.5h)
+\`\`\`
+
+Keep it scannable. One line per meeting; attendee first names only (no emails); omit the attendee parenthetical when it’s only the member themselves. Omit the Free blocks block if there are none. If the calendar is entirely empty today, send: "Good morning 👋 No meetings today — your calendar is clear."
+
+Do NOT create an insight for this brief — it lives only in Slack.
 
 Triggering event: {triggering_event}`,
 				targetActorId: DEV_ACTOR_WORKSPACE_COACH,
