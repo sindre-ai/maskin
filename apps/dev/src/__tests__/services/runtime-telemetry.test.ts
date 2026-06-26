@@ -22,6 +22,7 @@ describe('RuntimeTelemetry', () => {
 			sessionId: 'sess-1',
 			agentServerUrl: 'local-docker',
 			sessionStartLatencyMs: 1234,
+			queueDepth: 7,
 		})
 
 		expect(capture).toHaveBeenCalledTimes(1)
@@ -32,6 +33,7 @@ describe('RuntimeTelemetry', () => {
 				session_id: 'sess-1',
 				agent_server_url: 'local-docker',
 				session_start_latency_ms: 1234,
+				queue_depth: 7,
 				$process_person_profile: false,
 			},
 		})
@@ -59,6 +61,48 @@ describe('RuntimeTelemetry', () => {
 				$process_person_profile: false,
 			},
 		})
+	})
+
+	it('adds stuck_in_starting=true to runtime_session_ended only when the watchdog flags it', () => {
+		const { client, capture } = makeFakeClient()
+		const telemetry = new RuntimeTelemetry({ apiKey: 'phc_x', client })
+
+		telemetry.recordSessionEnded({
+			sessionId: 'sess-zombie',
+			endReason: 'failed',
+			durationMs: 600_000,
+			agentServerUrl: 'local-docker',
+			stuckInStarting: true,
+		})
+
+		expect(capture).toHaveBeenCalledWith({
+			distinctId: 'sess-zombie',
+			event: 'runtime_session_ended',
+			properties: {
+				session_id: 'sess-zombie',
+				end_reason: 'failed',
+				duration_ms: 600_000,
+				agent_server_url: 'local-docker',
+				stuck_in_starting: true,
+				$process_person_profile: false,
+			},
+		})
+	})
+
+	it('omits stuck_in_starting from runtime_session_ended when not flagged', () => {
+		const { client, capture } = makeFakeClient()
+		const telemetry = new RuntimeTelemetry({ apiKey: 'phc_x', client })
+
+		telemetry.recordSessionEnded({
+			sessionId: 'sess-ok',
+			endReason: 'failed',
+			durationMs: 100,
+			agentServerUrl: 'local-docker',
+			stuckInStarting: false,
+		})
+
+		const props = capture.mock.calls[0]?.[0]?.properties as Record<string, unknown>
+		expect(props).not.toHaveProperty('stuck_in_starting')
 	})
 
 	it('captures runtime_cross_session_check with host_isolation_ok', () => {
@@ -111,6 +155,7 @@ describe('RuntimeTelemetry', () => {
 				sessionId: 'sess-1',
 				agentServerUrl: 'local-docker',
 				sessionStartLatencyMs: 1,
+				queueDepth: 0,
 			}),
 		).not.toThrow()
 	})

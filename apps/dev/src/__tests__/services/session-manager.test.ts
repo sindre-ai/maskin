@@ -1497,4 +1497,119 @@ describe('SessionManager', () => {
 			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
 		})
 	})
+
+	describe('telemetry — bet kill-metric instrumentation', () => {
+		// The dispatcher-concurrency-cap bet ships when no session is "stuck in
+		// starting" across a 14-day window. PostHog needs a marker on the
+		// runtime_session_ended emit to count those failures, and queue_depth on
+		// runtime_session_started to correlate spikes with bulk fan-outs.
+		it('flags watchdog zombie cleanup with stuck_in_starting=true on runtime_session_ended', async () => {
+			const recordSessionEnded = vi.fn()
+			const fakeTelemetry = {
+				recordSessionStarted: vi.fn(),
+				recordSessionEnded,
+				recordCrossSessionCheck: vi.fn(),
+				recordConcurrentSessionsGauge: vi.fn(),
+				startGaugeLoop: vi.fn(),
+				shutdown: vi.fn().mockResolvedValue(undefined),
+			}
+			const ctx = createTestContext()
+			const localManager = new SessionManager(
+				ctx.db,
+				storageProvider as StorageProvider,
+				fakeTelemetry as unknown as ConstructorParameters<typeof SessionManager>[2],
+			)
+
+			const stuckSession = buildSession({
+				status: 'starting',
+				containerId: null,
+				updatedAt: new Date(Date.now() - 20 * 60 * 1000),
+				startedAt: null,
+			})
+			ctx.mockResults.selectQueue = [
+				[], // 1. timedOut
+				[], // 2. stuckAgentSessions
+				[], // 3. runningSessions
+				[], // 4. expiredPaused
+				[], // 5. stuckPending
+				[stuckSession], // 6. stuckStarting
+				[{ settings: {} }], // 7. drainQueue > workspace
+				[{ count: 0 }], // 8. drainQueue > running count
+				[], // 9. drainQueue > nextQueued
+				[], // 10. final queuedSessions
+			]
+
+			await (localManager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+			expect(recordSessionEnded).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: stuckSession.id,
+					endReason: 'failed',
+					stuckInStarting: true,
+				}),
+			)
+			await localManager.stop()
+		})
+
+		it('emits runtime_session_started with the workspace queue_depth', async () => {
+			const recordSessionStarted = vi.fn()
+			const fakeTelemetry = {
+				recordSessionStarted,
+				recordSessionEnded: vi.fn(),
+				recordCrossSessionCheck: vi.fn(),
+				recordConcurrentSessionsGauge: vi.fn(),
+				startGaugeLoop: vi.fn(),
+				shutdown: vi.fn().mockResolvedValue(undefined),
+			}
+			const ctx = createTestContext()
+			const localManager = new SessionManager(
+				ctx.db,
+				storageProvider as StorageProvider,
+				fakeTelemetry as unknown as ConstructorParameters<typeof SessionManager>[2],
+			)
+
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			ctx.mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace lookup
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace lookup (llm keys)
+				[], // launchContainer: integrations lookup
+				[{ count: 5 }], // countQueuedSessions
+			]
+
+			await localManager.startSession(session.id)
+
+			expect(recordSessionStarted).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: session.id,
+					queueDepth: 5,
+				}),
+			)
+			await localManager.stop()
+		})
+	})
 })
