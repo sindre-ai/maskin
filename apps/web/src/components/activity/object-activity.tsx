@@ -214,56 +214,61 @@ export function ObjectActivity({
 		}
 
 		const rawPhases = buildPhases(topLevel, object)
-		const hasRelationships =
-			includeRelationshipsInTimeline && !!relationships && relationships.length > 0
-		// Empty phases are usually hidden, but when we have relationships to
-		// project we need at least one phase to host them (the object may have
-		// no comment/lifecycle events yet).
-		const eventPhases = rawPhases.filter(
-			(p, idx) => p.events.length > 0 || (hasRelationships && idx === rawPhases.length - 1),
-		)
+		const incomingRels = includeRelationshipsInTimeline && relationships ? relationships : []
 
-		// Convert each phase's events into stream nodes, then merge relationships
-		// into the right phase by `rel.created_at` (AC-T6). Phases retain their
-		// status order; within a phase, nodes are sorted chronologically.
-		const phaseNodes = eventPhases.map((phase) => ({
-			status: phase.status,
-			startedAt: phase.startedAt,
-			nodes: phase.events.map((event): StreamNode => ({ kind: 'event', event })),
-		}))
-
-		if (includeRelationshipsInTimeline && relationships && relationships.length > 0) {
-			const seen = new Set<string>()
-			for (const rel of relationships) {
-				if (seen.has(rel.id)) continue
-				seen.add(rel.id)
-				if (!rel.createdAt) continue
-				// Find the phase whose window contains rel.createdAt. Phases are
-				// ordered by startedAt asc; assign to the last phase whose
-				// startedAt is ≤ rel.createdAt, falling back to the first phase
-				// when nothing matches (relationships created before the first
-				// status_changed event).
-				let targetPhaseIdx = -1
-				for (let i = 0; i < phaseNodes.length; i++) {
-					const startedAt = phaseNodes[i].startedAt
-					if (!startedAt) {
-						if (targetPhaseIdx === -1) targetPhaseIdx = i
-						continue
-					}
-					if (rel.createdAt >= startedAt) targetPhaseIdx = i
+		// Bucket relationships against the *raw* (unfiltered) phases by
+		// `rel.created_at`. If we filtered empty phases first and then bucketed,
+		// a rel created during an empty non-terminal phase would index into the
+		// surviving phases and silently land in the wrong one.
+		const relsByRawIdx = new Map<number, RelationshipResponse[]>()
+		const seenRels = new Set<string>()
+		for (const rel of incomingRels) {
+			if (seenRels.has(rel.id)) continue
+			seenRels.add(rel.id)
+			if (!rel.createdAt) continue
+			// Phases are ordered by startedAt asc; assign to the last phase whose
+			// startedAt is ≤ rel.createdAt, falling back to the first phase when
+			// nothing matches (relationships created before the first
+			// status_changed event).
+			let targetRawIdx = -1
+			for (let i = 0; i < rawPhases.length; i++) {
+				const startedAt = rawPhases[i].startedAt
+				if (!startedAt) {
+					if (targetRawIdx === -1) targetRawIdx = i
+					continue
 				}
-				if (targetPhaseIdx === -1 && phaseNodes.length > 0) targetPhaseIdx = 0
-				if (targetPhaseIdx === -1) continue
-				phaseNodes[targetPhaseIdx].nodes.push({
-					kind: 'relationship',
-					rel,
-					timestamp: rel.createdAt,
-				})
+				if (rel.createdAt >= startedAt) targetRawIdx = i
 			}
-			for (const phase of phaseNodes) {
-				phase.nodes.sort((a, b) => nodeTimestamp(a).localeCompare(nodeTimestamp(b)))
-			}
+			if (targetRawIdx === -1 && rawPhases.length > 0) targetRawIdx = 0
+			if (targetRawIdx === -1) continue
+			const list = relsByRawIdx.get(targetRawIdx) ?? []
+			list.push(rel)
+			relsByRawIdx.set(targetRawIdx, list)
 		}
+
+		// Keep a raw phase if it hosts any events or any bucketed relationships.
+		// Special case: when there are incoming relationships but none bucketed
+		// into a kept phase (e.g. all rels lack createdAt), keep the terminal
+		// phase as a fallback host so the projection still has somewhere to land.
+		const phaseHasContent = (idx: number) =>
+			rawPhases[idx].events.length > 0 || (relsByRawIdx.get(idx)?.length ?? 0) > 0
+		const anyKept = rawPhases.some((_, idx) => phaseHasContent(idx))
+		const keepTerminalFallback = incomingRels.length > 0 && !anyKept && rawPhases.length > 0
+
+		const phaseNodes = rawPhases
+			.map((phase, rawIdx) => ({ phase, rawIdx }))
+			.filter(
+				({ rawIdx }) =>
+					phaseHasContent(rawIdx) || (keepTerminalFallback && rawIdx === rawPhases.length - 1),
+			)
+			.map(({ phase, rawIdx }) => {
+				const nodes: StreamNode[] = phase.events.map((event) => ({ kind: 'event', event }))
+				for (const rel of relsByRawIdx.get(rawIdx) ?? []) {
+					nodes.push({ kind: 'relationship', rel, timestamp: rel.createdAt ?? '' })
+				}
+				nodes.sort((a, b) => nodeTimestamp(a).localeCompare(nodeTimestamp(b)))
+				return { status: phase.status, startedAt: phase.startedAt, nodes }
+			})
 
 		return {
 			phases: phaseNodes,

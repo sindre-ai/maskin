@@ -213,6 +213,61 @@ describe('ObjectActivity', () => {
 			expect(screen.getByText(/unavailable/)).toBeInTheDocument()
 		})
 
+		it('buckets a relationship created during an empty non-terminal phase into that phase', async () => {
+			const user = userEvent.setup()
+			// Object created in 'signal' at T0, then signal→active at T1, then
+			// active→done at T2 — the signal phase carries no events of its own.
+			// A relationship created at T0.5 falls inside the signal window and
+			// must surface there, not in the next phase.
+			const betAt = buildObjectResponse({
+				id: 'bet-empty-phase',
+				type: 'bet',
+				status: 'done',
+				createdAt: '2026-06-20T00:00:00Z',
+			})
+			const events = [
+				buildEventResponse({
+					id: 2,
+					action: 'status_changed',
+					createdAt: '2026-06-22T00:00:00Z',
+					data: { previous: { status: 'active' }, updated: { status: 'done' } },
+				}),
+				buildEventResponse({
+					id: 1,
+					action: 'status_changed',
+					createdAt: '2026-06-21T00:00:00Z',
+					data: { previous: { status: 'signal' }, updated: { status: 'active' } },
+				}),
+			]
+			const linked = buildObjectResponse({ id: 'obj-signal-rel', title: 'Signal-era link' })
+			const rel = buildRelationshipResponse({
+				id: 'rel-signal',
+				sourceId: 'bet-empty-phase',
+				targetId: 'obj-signal-rel',
+				type: 'informs',
+				createdAt: '2026-06-20T12:00:00Z',
+			})
+			render(
+				<ObjectActivity
+					workspaceId="ws-1"
+					object={betAt}
+					events={events}
+					relationships={[rel]}
+					connectedObjects={[linked]}
+				/>,
+			)
+
+			// The current (done) phase is expanded by default, so the rel must
+			// NOT be visible yet — it belongs to the signal phase, which is
+			// collapsed.
+			expect(screen.queryByText('Signal-era link')).not.toBeInTheDocument()
+
+			// Expand the signal phase divider — the rel should appear inside.
+			const signalTrigger = screen.getByRole('button', { name: /signal/ })
+			await user.click(signalTrigger)
+			expect(screen.getByText('Signal-era link')).toBeInTheDocument()
+		})
+
 		it('shows the Timeline ↔ Table toggle when relationships are present', () => {
 			const rel = buildRelationshipResponse({
 				id: 'rel-toggle',
