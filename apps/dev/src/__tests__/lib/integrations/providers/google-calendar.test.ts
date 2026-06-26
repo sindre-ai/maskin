@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { config } from '../../../../lib/integrations/providers/google-calendar/config'
 import { resolveExternalId } from '../../../../lib/integrations/providers/google-calendar/resolve-id'
 import { getProvider, listProviders } from '../../../../lib/integrations/registry'
@@ -137,5 +137,153 @@ describe('Google Calendar provider registration', () => {
 	it('shows up in listProviders()', () => {
 		const names = listProviders().map((p) => p.config.name)
 		expect(names).toContain('google-calendar')
+	})
+
+	it('wires preDisconnect so the disconnect endpoint revokes the Google grant', () => {
+		const resolved = getProvider('google-calendar')
+		expect(resolved.preDisconnect).toBeDefined()
+	})
+})
+
+describe('revokeGoogleCalendarGrant', () => {
+	const ORIGINAL_CLIENT_ID = process.env.GOOGLE_CALENDAR_CLIENT_ID
+	const ORIGINAL_CLIENT_SECRET = process.env.GOOGLE_CALENDAR_CLIENT_SECRET
+	const ORIGINAL_KEY = process.env.INTEGRATION_ENCRYPTION_KEY
+
+	beforeAll(() => {
+		process.env.GOOGLE_CALENDAR_CLIENT_ID = 'test-client-id'
+		process.env.GOOGLE_CALENDAR_CLIENT_SECRET = 'test-client-secret'
+		// AES-256-GCM needs a 32-byte key; the crypto module expects 64 hex chars.
+		process.env.INTEGRATION_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('hex')
+	})
+
+	afterAll(() => {
+		process.env.GOOGLE_CALENDAR_CLIENT_ID = ORIGINAL_CLIENT_ID
+		process.env.GOOGLE_CALENDAR_CLIENT_SECRET = ORIGINAL_CLIENT_SECRET
+		process.env.INTEGRATION_ENCRYPTION_KEY = ORIGINAL_KEY
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	function makeFakeDb(row: { id: string; credentials: string } | null) {
+		return {
+			select: () => ({
+				from: () => ({
+					where: () => ({
+						limit: () => Promise.resolve(row ? [row] : []),
+					}),
+				}),
+			}),
+		}
+	}
+
+	async function encryptCredentials(creds: Record<string, unknown>): Promise<string> {
+		const { encrypt } = await import('../../../../lib/crypto')
+		return encrypt(JSON.stringify(creds))
+	}
+
+	it("POSTs the stored refresh token to Google's revoke endpoint", async () => {
+		const { revokeGoogleCalendarGrant } = await import(
+			'../../../../lib/integrations/providers/google-calendar/disconnect'
+		)
+
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			text: () => Promise.resolve(''),
+		} as Response)
+
+		const db = makeFakeDb({
+			id: 'int-1',
+			credentials: await encryptCredentials({
+				accessToken: 'ya29.access',
+				refreshToken: '1//refresh',
+			}),
+		})
+
+		await revokeGoogleCalendarGrant({
+			// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
+			db: db as any,
+			integrationId: 'int-1',
+			workspaceId: 'ws-1',
+		})
+
+		expect(fetchSpy).toHaveBeenCalledTimes(1)
+		const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+		expect(url).toBe('https://oauth2.googleapis.com/revoke')
+		expect(init.method).toBe('POST')
+		expect(String(init.body)).toBe('token=1%2F%2Frefresh')
+	})
+
+	it('falls back to the access token when no refresh token is stored', async () => {
+		const { revokeGoogleCalendarGrant } = await import(
+			'../../../../lib/integrations/providers/google-calendar/disconnect'
+		)
+
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			text: () => Promise.resolve(''),
+		} as Response)
+
+		const db = makeFakeDb({
+			id: 'int-2',
+			credentials: await encryptCredentials({ accessToken: 'ya29.access' }),
+		})
+
+		await revokeGoogleCalendarGrant({
+			// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
+			db: db as any,
+			integrationId: 'int-2',
+			workspaceId: 'ws-1',
+		})
+
+		expect(String(fetchSpy.mock.calls[0][1]?.body)).toBe('token=ya29.access')
+	})
+
+	it('swallows revoke errors so the disconnect flow always succeeds', async () => {
+		const { revokeGoogleCalendarGrant } = await import(
+			'../../../../lib/integrations/providers/google-calendar/disconnect'
+		)
+
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: false,
+			status: 500,
+			text: () => Promise.resolve('boom'),
+		} as Response)
+
+		const db = makeFakeDb({
+			id: 'int-3',
+			credentials: await encryptCredentials({ refreshToken: '1//refresh' }),
+		})
+
+		await expect(
+			revokeGoogleCalendarGrant({
+				// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
+				db: db as any,
+				integrationId: 'int-3',
+				workspaceId: 'ws-1',
+			}),
+		).resolves.toBeUndefined()
+	})
+
+	it('is a no-op when the integration row is missing', async () => {
+		const { revokeGoogleCalendarGrant } = await import(
+			'../../../../lib/integrations/providers/google-calendar/disconnect'
+		)
+
+		const fetchSpy = vi.spyOn(globalThis, 'fetch')
+		const db = makeFakeDb(null)
+
+		await revokeGoogleCalendarGrant({
+			// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
+			db: db as any,
+			integrationId: 'missing',
+			workspaceId: 'ws-1',
+		})
+
+		expect(fetchSpy).not.toHaveBeenCalled()
 	})
 })

@@ -121,6 +121,12 @@ function ProviderRow({
 		connect.mutate({ provider: provider.name })
 	}
 
+	const connectedLabel = isConnected
+		? provider.name === 'google-calendar' && integration.externalId
+			? `Connected as ${integration.externalId}`
+			: `Connected${integration.externalId ? ` · Installation ${integration.externalId}` : ''}`
+		: `${provider.events.length} event types available`
+
 	return (
 		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
 			<div
@@ -128,11 +134,7 @@ function ProviderRow({
 			/>
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground truncate">{provider.displayName}</p>
-				<p className="text-xs text-muted-foreground truncate">
-					{isConnected
-						? `Connected${integration.externalId ? ` · Installation ${integration.externalId}` : ''}`
-						: `${provider.events.length} event types available`}
-				</p>
+				<p className="text-xs text-muted-foreground truncate">{connectedLabel}</p>
 			</div>
 			{isConnected ? (
 				<Button
