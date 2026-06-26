@@ -89,6 +89,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			id: 'select',
 			header: ({ table }) => (
 				<Checkbox
+					size="touch"
 					checked={
 						table.getIsAllPageRowsSelected() ||
 						(table.getIsSomePageRowsSelected() && 'indeterminate')
@@ -99,6 +100,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			),
 			cell: ({ row }) => (
 				<Checkbox
+					size="touch"
 					checked={row.getIsSelected()}
 					onCheckedChange={(value) => row.toggleSelected(!!value)}
 					aria-label="Select row"
@@ -107,7 +109,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			),
 			enableSorting: false,
 			enableHiding: false,
-			size: 40,
+			size: 60,
 		},
 		{
 			accessorKey: 'title',
