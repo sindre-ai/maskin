@@ -124,3 +124,20 @@ export function trackForyouSparseComposerShown(p: { items_count: number }): void
 export function trackForyouSparseComposerSubmit(p: { items_count: number }): void {
 	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
 }
+
+// iPadOS 13+ reports `MacIntel` from `navigator.userAgent` / `navigator.platform`
+// and only the `maxTouchPoints > 1` signal distinguishes it from a real Mac, so
+// the touch-point check is load-bearing — not paranoia. Returning 'web' for
+// everything else (including Android) is deliberate: the bet's success metric
+// filters on `platform=ios`, and conflating Android into iOS would skew it.
+function detectPlatform(): 'ios' | 'web' {
+	if (typeof navigator === 'undefined') return 'web'
+	const ua = navigator.userAgent ?? ''
+	if (/iphone|ipad|ipod/i.test(ua)) return 'ios'
+	if (ua.includes('Macintosh') && (navigator.maxTouchPoints ?? 0) > 1) return 'ios'
+	return 'web'
+}
+
+export function trackChatImageUpload(p: { outcome: 'success' | 'failure' }): void {
+	trackEvent('chat_image_upload', { platform: detectPlatform(), outcome: p.outcome })
+}

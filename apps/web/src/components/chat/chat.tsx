@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useChatOneShot } from '@/hooks/use-chat-one-shot'
 import { useChatSession } from '@/hooks/use-chat-session'
 import { useUploadFile } from '@/hooks/use-files'
+import { trackChatImageUpload } from '@/lib/analytics'
 import type { SessionInputAttachment } from '@/lib/api'
 import {
 	type ChatSelection,
@@ -229,6 +230,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 			const displayAttachments = buildDisplayAttachments(activeSelection)
 			const hasContext =
 				selectedObjects.length > 0 || selectedNotifications.length > 0 || selectedFiles.length > 0
+			const hasImage = selectedFiles.some((f) => f.mimeType?.startsWith('image/'))
 			try {
 				if (selectedAgent) {
 					// The one-shot hook builds its own action_prompt — pass raw
@@ -265,11 +267,13 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 						: content
 					await session.send(enriched, attachments, content, displayAttachments)
 				}
+				if (hasImage) trackChatImageUpload({ outcome: 'success' })
 				// Confirmed sent — clear the composer's chips so the same agent /
 				// objects / notifications don't ride along on the next turn. The
 				// user message bubble already displays them as context.
 				onDispatchSelection?.({ type: 'clear_all' })
 			} catch (err) {
+				if (hasImage) trackChatImageUpload({ outcome: 'failure' })
 				setPendingTurn(false)
 				throw err
 			}

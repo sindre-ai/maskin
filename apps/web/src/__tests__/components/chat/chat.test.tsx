@@ -3,11 +3,13 @@ import type { UseChatOneShotResult } from '@/hooks/use-chat-one-shot'
 import type { UseChatSessionResult } from '@/hooks/use-chat-session'
 import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import type { ChatEvent } from '@/lib/chat-stream'
+import { __setInitializedForTesting } from '@/lib/posthog'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import posthog from 'posthog-js'
 import type { ReactNode } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorListItem, buildObjectResponse } from '../../factories'
 import { createTestQueryClient } from '../../setup'
 
@@ -1114,5 +1116,103 @@ describe('Chat', () => {
 		// And up to 100% just before resolve.
 		act(() => capturedOnProgress?.(1))
 		await waitFor(() => expect(screen.getByLabelText(/uploading: 100%/i)).toBeInTheDocument())
+	})
+
+	// AC-T5: emit the bet's ship-metric event on the send moment when at least
+	// one image attachment is present. iPhone UA → platform:ios. Send resolves
+	// → outcome:success; send rejects → outcome:failure.
+	describe('chat_image_upload PostHog event', () => {
+		const originalUserAgent = Object.getOwnPropertyDescriptor(navigator, 'userAgent')
+		let captureSpy = vi.spyOn(posthog, 'capture')
+
+		beforeEach(() => {
+			__setInitializedForTesting(true)
+			captureSpy = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+			Object.defineProperty(navigator, 'userAgent', {
+				value:
+					'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1',
+				configurable: true,
+			})
+		})
+
+		afterEach(() => {
+			if (originalUserAgent) {
+				Object.defineProperty(navigator, 'userAgent', originalUserAgent)
+			}
+			__setInitializedForTesting(false)
+			captureSpy.mockRestore()
+		})
+
+		function renderWithImage() {
+			return render(
+				<Chat
+					workspaceId="ws-1"
+					agentActorId="actor-agent"
+					surface="sheet"
+					selection={{
+						agent: null,
+						objects: [],
+						notifications: [],
+						files: [
+							{
+								fileId: 'file-99',
+								name: 'photo.png',
+								sizeBytes: 1234,
+								mimeType: 'image/png',
+							},
+						],
+					}}
+				/>,
+			)
+		}
+
+		it('captures outcome:success with platform:ios when the send resolves', async () => {
+			mockSend.mockClear()
+			mockSend.mockResolvedValueOnce(undefined)
+			renderWithImage()
+
+			const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+			fireEvent.change(textarea, { target: { value: 'look at this' } })
+			fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+			await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1))
+			await waitFor(() =>
+				expect(captureSpy).toHaveBeenCalledWith('chat_image_upload', {
+					platform: 'ios',
+					outcome: 'success',
+				}),
+			)
+		})
+
+		it('captures outcome:failure with platform:ios when the send rejects', async () => {
+			mockSend.mockClear()
+			mockSend.mockRejectedValueOnce(new Error('network down'))
+			renderWithImage()
+
+			const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+			fireEvent.change(textarea, { target: { value: 'look at this' } })
+			fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+			await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1))
+			await waitFor(() =>
+				expect(captureSpy).toHaveBeenCalledWith('chat_image_upload', {
+					platform: 'ios',
+					outcome: 'failure',
+				}),
+			)
+		})
+
+		it('does not capture chat_image_upload when no image is attached', async () => {
+			mockSend.mockClear()
+			mockSend.mockResolvedValueOnce(undefined)
+			render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
+
+			const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+			fireEvent.change(textarea, { target: { value: 'no image here' } })
+			fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+			await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1))
+			expect(captureSpy.mock.calls.filter(([name]) => name === 'chat_image_upload')).toHaveLength(0)
+		})
 	})
 })
