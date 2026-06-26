@@ -285,12 +285,15 @@ describe('POST /api/installed-packages/:id/fork', () => {
 		const { app, mockResults, calls } = setup()
 		const install = installRow({ isLocked: true, forkedAt: null })
 		const forked = { ...install, isLocked: false, forkedAt: new Date() }
+		const forkedPkg = pkg({ id: install.sourcePackageId })
 
 		mockResults.selectQueue = [
 			// installedPackages lookup
 			[install],
 			// isWorkspaceMember
 			[buildWorkspaceMember({ workspaceId: install.workspaceId, actorId: ACTOR_ID })],
+			// catalogPackages slug lookup for the package_forked emit
+			[forkedPkg],
 		]
 		mockResults.updateQueue = [
 			// installedPackages flip
@@ -324,8 +327,9 @@ describe('POST /api/installed-packages/:id/fork', () => {
 		expect(trackPackageForkedMock).toHaveBeenCalledOnce()
 		expect(trackPackageForkedMock).toHaveBeenCalledWith({
 			packageId: forked.sourcePackageId,
-			installedPackageId: forked.id,
-			versionAtFork: forked.installedVersion,
+			packageSlug: forkedPkg.slug,
+			packageVersion: forked.installedVersion,
+			sourceInstallId: forked.id,
 			workspaceId: forked.workspaceId,
 			actorId: ACTOR_ID,
 		})
