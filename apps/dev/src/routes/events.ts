@@ -5,7 +5,12 @@ import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
+import {
+	isInteractionIssueCategory,
+	trackDesignReviewInteractionIssueFlagged,
+} from '../lib/analytics/design-review-events'
 import { createApiError } from '../lib/errors'
+import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
@@ -164,9 +169,11 @@ app.openapi(createCommentRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
 
-	// Validate the target object exists and belongs to this workspace
+	// Validate the target object exists and belongs to this workspace.
+	// We also pull metadata so we can read `design_agent_run_id` for the
+	// interaction-issue emitter below without a second round-trip.
 	const [object] = await db
-		.select({ workspaceId: objects.workspaceId })
+		.select({ workspaceId: objects.workspaceId, metadata: objects.metadata })
 		.from(objects)
 		.where(eq(objects.id, body.entity_id))
 		.limit(1)
@@ -368,6 +375,43 @@ app.openapi(createCommentRoute, (async (c) => {
 			objectId: body.entity_id,
 			commentEventId: comment.id,
 			mentionedSubscriberCount,
+		})
+	}
+
+	// Ship-metric emit for the design-agent prototype review bet. When a
+	// reviewer posts a comment that explicitly tags an interaction-layer
+	// category, fire `design_review_interaction_issue_flagged` so the bet's
+	// HogQL count() can resolve. Fire-and-forget — `capturePosthogEvent` never
+	// throws, but we still don't `await` so the comment response is unaffected
+	// by analytics latency.
+	const issueCategory = body.metadata?.issue_category
+	if (isInteractionIssueCategory(issueCategory)) {
+		const objectMetadata =
+			object.metadata && typeof object.metadata === 'object'
+				? (object.metadata as Record<string, unknown>)
+				: null
+		const rawRunId = objectMetadata?.design_agent_run_id
+		const designAgentRunId = typeof rawRunId === 'string' ? rawRunId : null
+		const firstFileId = body.attachment_file_ids?.[0]
+		const prototypeArtifactUrl = firstFileId
+			? fileViewerUrl(frontendBaseUrl(), workspaceId, firstFileId)
+			: null
+
+		logger.info('Design review interaction issue flagged', {
+			objectId: body.entity_id,
+			commentEventId: comment.id,
+			issueCategory,
+			reviewerActorId: actorId,
+			hasPrototypeArtifact: prototypeArtifactUrl !== null,
+		})
+
+		trackDesignReviewInteractionIssueFlagged({
+			workspaceId,
+			taskId: body.entity_id,
+			designAgentRunId,
+			issueCategory,
+			reviewerActorId: actorId,
+			prototypeArtifactUrl,
 		})
 	}
 

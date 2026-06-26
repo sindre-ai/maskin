@@ -3,6 +3,13 @@ import { buildEvent } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp, createTestApp } from '../setup'
 
+const { capturePosthogEventMock } = vi.hoisted(() => ({
+	capturePosthogEventMock: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: capturePosthogEventMock,
+}))
+
 const { default: eventsRoutes } = await import('../../routes/events')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
@@ -755,6 +762,160 @@ describe('Events Routes', () => {
 			expect(res.status).toBe(201)
 			const inserted = calls.inserts[0] as { data: { parentEventId?: number } }
 			expect(inserted.data.parentEventId).toBeUndefined()
+		})
+
+		describe('design_review_interaction_issue_flagged emit', () => {
+			// Fire-and-forget — the route does not await the emitter, so the
+			// assertions need a macrotask boundary to let it resolve.
+			const flushMicrotasks = () => new Promise<void>((resolve) => setImmediate(resolve))
+
+			beforeEach(() => {
+				capturePosthogEventMock.mockClear()
+			})
+
+			it('emits with object metadata run id and the first attachment url when category is valid', async () => {
+				const objectId = randomUUID()
+				const fileId = randomUUID()
+				const commentEvent = buildEvent({
+					workspaceId: wsId,
+					action: 'commented',
+					entityType: 'object',
+					entityId: objectId,
+					data: { content: 'card drag broken' },
+				})
+				const { app, mockResults } = createSessionTestApp(eventsRoutes, '/api/events')
+				mockResults.selectQueue = [
+					[{ workspaceId: wsId, metadata: { design_agent_run_id: 'run-42' } }],
+					[{ id: fileId }],
+				]
+				mockResults.insert = [commentEvent]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{
+							entity_id: objectId,
+							content: 'card drag broken',
+							attachment_file_ids: [fileId],
+							metadata: { issue_category: 'drag' },
+						},
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+				await flushMicrotasks()
+				expect(capturePosthogEventMock).toHaveBeenCalledOnce()
+				expect(capturePosthogEventMock).toHaveBeenCalledWith(
+					'design_review_interaction_issue_flagged',
+					wsId,
+					{
+						task_id: objectId,
+						design_agent_run_id: 'run-42',
+						issue_category: 'drag',
+						reviewer_actor_id: 'test-actor-id',
+						prototype_artifact_url: `http://localhost:5173/${wsId}/files/${fileId}`,
+					},
+				)
+			})
+
+			it('emits with null run id and null artifact url when neither is present', async () => {
+				const objectId = randomUUID()
+				const commentEvent = buildEvent({
+					workspaceId: wsId,
+					action: 'commented',
+					entityType: 'object',
+					entityId: objectId,
+					data: { content: 'transition stutters' },
+				})
+				const { app, mockResults } = createSessionTestApp(eventsRoutes, '/api/events')
+				mockResults.selectQueue = [[{ workspaceId: wsId, metadata: null }]]
+				mockResults.insert = [commentEvent]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{
+							entity_id: objectId,
+							content: 'transition stutters',
+							metadata: { issue_category: 'transition' },
+						},
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+				await flushMicrotasks()
+				expect(capturePosthogEventMock).toHaveBeenCalledWith(
+					'design_review_interaction_issue_flagged',
+					wsId,
+					expect.objectContaining({
+						design_agent_run_id: null,
+						prototype_artifact_url: null,
+						issue_category: 'transition',
+					}),
+				)
+			})
+
+			it('does not emit when issue_category is missing', async () => {
+				const objectId = randomUUID()
+				const commentEvent = buildEvent({
+					workspaceId: wsId,
+					action: 'commented',
+					entityType: 'object',
+					entityId: objectId,
+					data: { content: 'nice work' },
+				})
+				const { app, mockResults } = createSessionTestApp(eventsRoutes, '/api/events')
+				mockResults.selectQueue = [[{ workspaceId: wsId, metadata: null }]]
+				mockResults.insert = [commentEvent]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{ entity_id: objectId, content: 'nice work' },
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+				await flushMicrotasks()
+				expect(capturePosthogEventMock).not.toHaveBeenCalled()
+			})
+
+			it('does not emit when issue_category is not one of the enum values', async () => {
+				const objectId = randomUUID()
+				const commentEvent = buildEvent({
+					workspaceId: wsId,
+					action: 'commented',
+					entityType: 'object',
+					entityId: objectId,
+					data: { content: 'something' },
+				})
+				const { app, mockResults } = createSessionTestApp(eventsRoutes, '/api/events')
+				mockResults.selectQueue = [[{ workspaceId: wsId, metadata: null }]]
+				mockResults.insert = [commentEvent]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{
+							entity_id: objectId,
+							content: 'something',
+							metadata: { issue_category: 'click' },
+						},
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+				await flushMicrotasks()
+				expect(capturePosthogEventMock).not.toHaveBeenCalled()
+			})
 		})
 
 		describe('thread-scoped auto-reply trigger', () => {
