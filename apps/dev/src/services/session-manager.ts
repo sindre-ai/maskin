@@ -1185,7 +1185,7 @@ export class SessionManager extends EventEmitter {
 		let networkMode: string | undefined
 		const sessionConfig = session.config as Record<string, unknown> | null
 		if (sessionConfig?.browserRequired === true) {
-			const prefix = session.id.slice(0, 8)
+			const prefix = session.id.slice(0, 16)
 			const result = await this.provisionBrowserSidecar(session.id, prefix)
 			if (result) {
 				envVars.BROWSER_CDP_URL = `ws://anko-browser-${prefix}:9222`
@@ -2173,6 +2173,7 @@ export class SessionManager extends EventEmitter {
 		const start = Date.now()
 		const browserContainerId = sessionData.browserContainerId
 		const networkName = sessionData.networkName
+		let slaViolation = false
 
 		if (browserContainerId) {
 			await this.containers
@@ -2191,6 +2192,7 @@ export class SessionManager extends EventEmitter {
 				SessionManager.SIDECAR_TEARDOWN_SLA_MS,
 			)
 			if (!gone) {
+				slaViolation = true
 				logger.error('Browser sidecar still present after teardown SLA', {
 					sessionId,
 					browserContainerId,
@@ -2212,10 +2214,12 @@ export class SessionManager extends EventEmitter {
 		sessionData.browserContainerId = undefined
 		sessionData.networkName = undefined
 
-		logger.info('Browser sidecar teardown complete', {
-			sessionId,
-			elapsedMs: Date.now() - start,
-		})
+		if (!slaViolation) {
+			logger.info('Browser sidecar teardown complete', {
+				sessionId,
+				elapsedMs: Date.now() - start,
+			})
+		}
 	}
 
 	/**

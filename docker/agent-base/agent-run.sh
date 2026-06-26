@@ -144,7 +144,8 @@ setup_mcps() {
   # Add browser MCP server if CDP endpoint is configured
   if [ -n "$BROWSER_CDP_URL" ]; then
     local browser_entry
-    browser_entry=$(printf '{"mcpServers":{"@playwright/mcp":{"command":"npx","args":["@playwright/mcp","--cdp-endpoint","%s"]}}}' "$BROWSER_CDP_URL")
+    browser_entry=$(jq -n --arg url "$BROWSER_CDP_URL" \
+      '{"mcpServers":{"@playwright/mcp":{"command":"npx","args":["@playwright/mcp","--cdp-endpoint",$url]}}}')
     merged=$(echo "$merged" "$browser_entry" | jq -s '{ mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }')
   fi
 

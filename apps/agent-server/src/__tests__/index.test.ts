@@ -375,7 +375,7 @@ describe('POST /sessions browserRequired wiring', () => {
 		expect(res.status).toBe(201)
 
 		const creates = calls.filter((c) => c.args[0] === 'create')
-		const sidecarCreate = creates.find((c) => c.args.includes('anko-browser-sess-bet'))
+		const sidecarCreate = creates.find((c) => c.args.includes('anko-browser-sess-betqa1'))
 		const sessionCreate = creates.find((c) => c.args.includes('sess-betqa1'))
 		expect(sidecarCreate).toBeDefined()
 		expect(sessionCreate).toBeDefined()

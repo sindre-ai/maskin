@@ -539,7 +539,6 @@ export async function provisionBrowserSidecar(
 		`${BROWSER_SIDECAR_MEMORY_MIB}M`,
 		'--cpus',
 		String(BROWSER_SIDECAR_CPUS),
-		'--replace',
 		'--pull',
 		'always',
 		'--quiet',
@@ -564,7 +563,7 @@ export async function provisionBrowserSidecar(
 			stderr,
 			message: e.message ?? 'unknown',
 		})
-		await run(deps.msbBin, ['remove', '-f', '--quiet', name], { timeoutMs: 15_000 }).catch(() => {})
+		await run(deps.msbBin, ['remove', '-f', '--quiet', name], { timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS }).catch(() => {})
 		return null
 	}
 
@@ -572,7 +571,7 @@ export async function provisionBrowserSidecar(
 		await waitForRunning(deps.msbBin, name, { run, sleep, now })
 	} catch (err) {
 		logger.error('browser sidecar did not reach Running', { name, error: String(err) })
-		await run(deps.msbBin, ['remove', '-f', '--quiet', name], { timeoutMs: 15_000 }).catch(() => {})
+		await run(deps.msbBin, ['remove', '-f', '--quiet', name], { timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS }).catch(() => {})
 		return null
 	}
 
@@ -584,7 +583,7 @@ export async function provisionBrowserSidecar(
 		inspection = await inspectSandbox(name, deps)
 	} catch (err) {
 		logger.error('browser sidecar inspect failed', { name, error: String(err) })
-		await run(deps.msbBin, ['remove', '-f', '--quiet', name], { timeoutMs: 15_000 }).catch(() => {})
+		await run(deps.msbBin, ['remove', '-f', '--quiet', name], { timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS }).catch(() => {})
 		return null
 	}
 

@@ -444,7 +444,7 @@ export function buildApp(deps: AppDeps): Hono {
 		// to an instrumentation-gap comment instead of fabricating a bet-qa pass.
 		let browserSidecar: BrowserSidecar | null = null
 		if (body.browserRequired === true) {
-			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 8), deps.msb)
+			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 16), deps.msb)
 			if (browserSidecar) {
 				sessionEnv.BROWSER_CDP_URL = browserSidecar.cdpUrl
 				logger.info('browser sidecar attached to session', {
@@ -517,6 +517,16 @@ export function buildApp(deps: AppDeps): Hono {
 						sessionId: body.sessionId,
 						error: String(err),
 					})
+					// monitorSession crashed before reaching its own cleanupBrowserSidecar
+					// block — clean up here so the sidecar VM isn't left orphaned.
+					if (browserSidecar) {
+						void cleanupBrowserSidecar(browserSidecar, deps.msb).catch((cleanupErr) => {
+							logger.warn('browser sidecar cleanup after monitorSession crash failed', {
+								sessionId: body.sessionId,
+								error: String(cleanupErr),
+							})
+						})
+					}
 				})
 				.finally(() => {
 					inputQueue.drainSession(body.sessionId)
