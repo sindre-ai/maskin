@@ -912,4 +912,62 @@ describe('Chat', () => {
 			}),
 		)
 	})
+
+	// AC-T4: removing an in-flight image attachment fires the AbortController
+	// passed to useUploadFile, never dispatches add_file, and removes the
+	// pending chip from the composer.
+	it('cancels in-flight upload via AbortController when the pending chip is removed', async () => {
+		// Capture the signal so we can assert it was aborted, and hold the
+		// upload promise open until we explicitly cancel.
+		let capturedSignal: AbortSignal | undefined
+		let rejectUpload: ((err: Error) => void) | undefined
+		mockUploadFile.mockImplementationOnce(
+			(_payload, opts?: { signal?: AbortSignal; onProgress?: (p: number) => void }) => {
+				capturedSignal = opts?.signal
+				return new Promise((_resolve, reject) => {
+					rejectUpload = reject
+					opts?.signal?.addEventListener('abort', () => reject(new Error('Upload aborted')))
+				})
+			},
+		)
+		const dispatch = vi.fn<(action: ChatSelectionAction) => void>()
+		render(
+			<Chat
+				workspaceId="ws-1"
+				agentActorId="actor-agent"
+				surface="sheet"
+				onDispatchSelection={dispatch}
+			/>,
+		)
+
+		const file = new File([new Uint8Array([0xde, 0xad, 0xbe, 0xef])], 'photo.png', {
+			type: 'image/png',
+		})
+		const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+		Object.defineProperty(fileInput, 'files', { value: [file], configurable: true })
+		fireEvent.change(fileInput)
+
+		// The pending chip renders the filename and a cancel button while the
+		// upload promise is still open.
+		const cancelButton = await screen.findByRole('button', { name: /cancel upload photo\.png/i })
+		await waitFor(() => expect(capturedSignal).toBeDefined())
+
+		fireEvent.click(cancelButton)
+
+		// Abort signal fires; pending chip disappears; add_file never dispatched.
+		expect(capturedSignal?.aborted).toBe(true)
+		await waitFor(() =>
+			expect(
+				screen.queryByRole('button', { name: /cancel upload photo\.png/i }),
+			).not.toBeInTheDocument(),
+		)
+		// Drain the rejection so the test doesn't trip on an unhandled rejection.
+		rejectUpload?.(new Error('Upload aborted'))
+		await waitFor(() => {
+			const fileDispatches = dispatch.mock.calls.filter(([a]) => a.type === 'add_file')
+			expect(fileDispatches).toHaveLength(0)
+		})
+		// No error banner — abort is a user-initiated cancel, not a failure.
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+	})
 })

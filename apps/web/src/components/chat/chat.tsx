@@ -23,7 +23,7 @@ import {
 import type { ChatEvent, UserAttachmentView } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
-import { Bot, Box, Paperclip, Send } from 'lucide-react'
+import { Bot, Box, Paperclip, Send, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type FormEvent,
@@ -46,6 +46,19 @@ export interface ChatHandle {
 }
 
 export type ChatSurface = 'sheet' | 'pulse-bar'
+
+interface PendingUpload {
+	tempId: string
+	name: string
+	sizeBytes: number
+	mimeType?: string
+}
+
+function makeTempId() {
+	return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+		? crypto.randomUUID()
+		: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
 
 export interface ChatProps {
 	workspaceId: string
@@ -538,9 +551,26 @@ export function Composer({
 	const [sendError, setSendError] = useState<string | null>(null)
 	const [pickerOpen, setPickerOpen] = useState(false)
 	const [pickerKind, setPickerKind] = useState<SlashKindId | null>(null)
+	// In-flight uploads. Only the resolved fileId enters `ChatSelection` (T1
+	// kept pending state out of the selection reducer so high-frequency upload
+	// events don't churn it); these are the chips shown while bytes are still
+	// transferring, removable to abort. T3 will layer progress + failure UI.
+	const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
 	const slashPosRef = useRef<number | null>(null)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
+	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
 	const uploadFile = useUploadFile(workspaceId)
+
+	// Abort every in-flight upload when the composer unmounts so a closed
+	// chat sheet doesn't leave XHRs hanging (and doesn't race-dispatch
+	// add_file into a selection state that's already been thrown away).
+	useEffect(() => {
+		const controllers = abortControllersRef.current
+		return () => {
+			for (const controller of controllers.values()) controller.abort()
+			controllers.clear()
+		}
+	}, [])
 	const canSend = value.trim().length > 0 && !disabled && !sending && !pending
 	const showSpinner = sending || pending
 
@@ -639,19 +669,25 @@ export function Composer({
 	}, [])
 
 	const uploadPickedFile = useCallback(
-		async (file: File) => {
+		async (tempId: string, file: File) => {
+			const controller = new AbortController()
+			abortControllersRef.current.set(tempId, controller)
 			try {
 				const content = await readFileAsBase64(file)
-				const created = await uploadFile({
-					name: file.name,
-					mime_type: file.type || 'application/octet-stream',
-					content,
-					encoding: 'base64',
-				})
+				const created = await uploadFile(
+					{
+						name: file.name,
+						mime_type: file.type || 'application/octet-stream',
+						content,
+						encoding: 'base64',
+					},
+					{ signal: controller.signal },
+				)
 				console.info(
 					'[chat] uploaded image attachment',
 					JSON.stringify({ fileId: created.id, name: file.name, sizeBytes: file.size }),
 				)
+				setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId))
 				onDispatchSelection?.({
 					type: 'add_file',
 					file: {
@@ -662,9 +698,16 @@ export function Composer({
 					},
 				})
 			} catch (err) {
+				// An aborted upload was a user-initiated cancel — the pending row
+				// has already been removed by handleRemovePending; nothing to
+				// surface and no error state to set.
+				if (controller.signal.aborted) return
 				console.error(`[chat] failed to upload ${file.name}`, err)
 				const message = err instanceof Error ? err.message : 'Upload failed'
+				setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId))
 				setSendError(`Failed to upload ${file.name}: ${message}`)
+			} finally {
+				abortControllersRef.current.delete(tempId)
 			}
 		},
 		[uploadFile, onDispatchSelection],
@@ -675,12 +718,30 @@ export function Composer({
 			const input = event.target
 			const files = Array.from(input.files ?? [])
 			input.value = '' // allow re-picking the same file after removing it
-			for (const file of files) {
-				void uploadPickedFile(file)
-			}
+			const additions: PendingUpload[] = files.map((file) => ({
+				tempId: makeTempId(),
+				name: file.name,
+				sizeBytes: file.size,
+				mimeType: file.type || undefined,
+			}))
+			if (additions.length === 0) return
+			setPendingUploads((prev) => [...prev, ...additions])
+			additions.forEach((p, idx) => {
+				void uploadPickedFile(p.tempId, files[idx])
+			})
 		},
 		[uploadPickedFile],
 	)
+
+	const handleRemovePending = useCallback((tempId: string) => {
+		// Abort first so the in-flight XHR is cancelled before the request can
+		// finish on the server. uploadPickedFile's catch branch sees
+		// signal.aborted=true and skips the error toast; the file row never
+		// gets created in the backend (AC-T4).
+		abortControllersRef.current.get(tempId)?.abort()
+		abortControllersRef.current.delete(tempId)
+		setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId))
+	}, [])
 
 	return (
 		<div
@@ -706,6 +767,30 @@ export function Composer({
 				onRemoveNotification={onRemoveNotification}
 				onRemoveFile={onRemoveFile}
 			/>
+			{pendingUploads.length > 0 && (
+				<ul
+					className="flex list-none flex-wrap items-center gap-1 p-0"
+					aria-label="Uploading attachments"
+				>
+					{pendingUploads.map((p) => (
+						<li
+							key={p.tempId}
+							className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-bg-surface px-2 py-0.5 text-xs text-foreground"
+						>
+							<Spinner className="h-3 w-3 text-muted-foreground" aria-hidden />
+							<span className="max-w-[12rem] truncate text-muted-foreground">{p.name}</span>
+							<button
+								type="button"
+								onClick={() => handleRemovePending(p.tempId)}
+								aria-label={`Cancel upload ${p.name}`}
+								className="-mr-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							>
+								<X size={10} aria-hidden />
+							</button>
+						</li>
+					))}
+				</ul>
+			)}
 			<input
 				ref={fileInputRef}
 				type="file"
