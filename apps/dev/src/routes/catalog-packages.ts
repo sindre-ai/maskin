@@ -24,6 +24,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
+import { trackObjectDriverChanged } from '../lib/analytics/catalog-events'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
@@ -599,6 +600,8 @@ app.openapi(uninstallItemRoute, (async (c) => {
 
 	const { entityId } = localEntity
 
+	let drivenObjects: { id: string; workspaceId: string; type: string; driver: string }[] = []
+
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {
 			// Strip catalog tracking keys so the entity becomes a plain workspace resource.
@@ -668,6 +671,18 @@ app.openapi(uninstallItemRoute, (async (c) => {
 					await tx.delete(relationships).where(eq(relationships.createdBy, entityId))
 					await tx.delete(subscriptions).where(eq(subscriptions.actorId, entityId))
 					await tx.delete(readState).where(eq(readState.actorId, entityId))
+					// Capture driver-cleared rows so `object_driver_changed` can be
+					// emitted per row after commit (the bet's metric reads from
+					// PostHog).
+					drivenObjects = (await tx
+						.select({
+							id: objects.id,
+							workspaceId: objects.workspaceId,
+							type: objects.type,
+							driver: objects.driver,
+						})
+						.from(objects)
+						.where(eq(objects.driver, entityId))) as typeof drivenObjects
 					await tx.update(objects).set({ driver: null }).where(eq(objects.driver, entityId))
 					await tx
 						.update(objects)
@@ -728,6 +743,18 @@ app.openapi(uninstallItemRoute, (async (c) => {
 		entityId,
 		keepProvisionedItems,
 	})
+
+	for (const obj of drivenObjects) {
+		void trackObjectDriverChanged({
+			entityId: obj.id,
+			entityType: obj.type,
+			driverActorId: null,
+			previousDriverActorId: obj.driver,
+			workspaceId: obj.workspaceId,
+			actorId,
+		})
+	}
+
 	return c.json({ deleted: true }, 200)
 }) as RouteHandler<typeof uninstallItemRoute, Env>)
 

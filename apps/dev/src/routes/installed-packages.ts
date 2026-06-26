@@ -24,6 +24,7 @@ import {
 } from '@maskin/db/schema'
 import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import {
+	trackObjectDriverChanged,
 	trackPackageForked,
 	trackPackageInstalled,
 	trackPackageUninstalled,
@@ -685,6 +686,7 @@ app.openapi(uninstallPackageRoute, async (c) => {
 	let removedElements:
 		| { actors: number; triggers: number; skills: number; integrations: number }
 		| undefined
+	let drivenObjects: { id: string; workspaceId: string; type: string; driver: string }[] = []
 
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {
@@ -804,6 +806,18 @@ app.openapi(uninstallPackageRoute, async (c) => {
 				await tx.delete(readState).where(inArray(readState.actorId, actorIds))
 
 				// Reassign objects/files/imports/skills/workspaces/integrations.
+				// Capture driver-cleared rows first so `object_driver_changed` can
+				// be emitted per row after commit (the bet's metric reads from
+				// PostHog).
+				drivenObjects = (await tx
+					.select({
+						id: objects.id,
+						workspaceId: objects.workspaceId,
+						type: objects.type,
+						driver: objects.driver,
+					})
+					.from(objects)
+					.where(inArray(objects.driver, actorIds))) as typeof drivenObjects
 				await tx.update(objects).set({ driver: null }).where(inArray(objects.driver, actorIds))
 				await tx
 					.update(objects)
@@ -876,6 +890,17 @@ app.openapi(uninstallPackageRoute, async (c) => {
 		actorId,
 		keptItems: keepProvisionedItems,
 	})
+
+	for (const obj of drivenObjects) {
+		void trackObjectDriverChanged({
+			entityId: obj.id,
+			entityType: obj.type,
+			driverActorId: null,
+			previousDriverActorId: obj.driver,
+			workspaceId: obj.workspaceId,
+			actorId,
+		})
+	}
 
 	return c.json({ deleted: true, removedElements }, 200)
 })
