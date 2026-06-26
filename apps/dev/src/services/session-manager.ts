@@ -2090,7 +2090,7 @@ export class SessionManager extends EventEmitter {
 	private async provisionBrowserSidecar(
 		sessionId: string,
 		prefix: string,
-	): Promise<{ networkName: string; browserContainerId: string } | null> {
+	): Promise<{ networkName: string } | null> {
 		const networkName = `anko-net-${prefix}`
 		const browserName = `anko-browser-${prefix}`
 		let browserContainerId: string | undefined
@@ -2127,7 +2127,7 @@ export class SessionManager extends EventEmitter {
 				'Browser sidecar started — Playwright MCP can connect via CDP',
 			)
 
-			return { networkName, browserContainerId }
+			return { networkName }
 		} catch (err) {
 			logger.error('Browser sidecar failed — agent will run without browser', {
 				sessionId,

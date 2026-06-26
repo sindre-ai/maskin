@@ -522,12 +522,12 @@ export type BrowserSidecar = {
 export async function provisionBrowserSidecar(
 	prefix: string,
 	deps: MicrosandboxDeps,
-	options: { settleMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+	options: { settleMs?: number } = {},
 ): Promise<BrowserSidecar | null> {
 	const name = `anko-browser-${prefix}`
 	assertValidSessionId(name)
 	const run = deps.run ?? defaultRunner()
-	const sleep = options.sleep ?? deps.sleep ?? defaultSleep
+	const sleep = deps.sleep ?? defaultSleep
 	const now = deps.now ?? Date.now
 	const settleMs = options.settleMs ?? BROWSER_SIDECAR_SETTLE_MS
 
