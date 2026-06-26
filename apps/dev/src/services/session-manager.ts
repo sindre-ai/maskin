@@ -1181,6 +1181,12 @@ export class SessionManager extends EventEmitter {
 			await this.containers.ensureImage(spec.image, this.agentBaseBuildContext)
 		}
 
+		// Write exec-trigger so the entrypoint starts the agent. The entrypoint
+		// checks for this file to distinguish local Docker (immediate start) from
+		// the microsandbox path (where the agent-server writes the file after
+		// the TCP proxy is active). On the local Docker path we write it here.
+		await writeFile(join(tempDir, '.exec-trigger'), '')
+
 		// Provision browser sidecar when the browserRequired flag is set
 		let networkMode: string | undefined
 		const sessionConfig = session.config as Record<string, unknown> | null
@@ -1188,7 +1194,7 @@ export class SessionManager extends EventEmitter {
 			const prefix = session.id.slice(0, 16)
 			const result = await this.provisionBrowserSidecar(session.id, prefix)
 			if (result) {
-				envVars.BROWSER_CDP_URL = `ws://anko-browser-${prefix}:9222`
+				envVars.BROWSER_CDP_URL = `http://${result.browserIp}:9222`
 				networkMode = result.networkName
 			}
 		}
@@ -2090,7 +2096,7 @@ export class SessionManager extends EventEmitter {
 	private async provisionBrowserSidecar(
 		sessionId: string,
 		prefix: string,
-	): Promise<{ networkName: string } | null> {
+	): Promise<{ networkName: string; browserIp: string } | null> {
 		const networkName = `anko-net-${prefix}`
 		const browserName = `anko-browser-${prefix}`
 		let browserContainerId: string | undefined
@@ -2114,6 +2120,14 @@ export class SessionManager extends EventEmitter {
 			// Brief wait for Chrome to initialize CDP listener
 			await new Promise((resolve) => setTimeout(resolve, 2000))
 
+			// Use the container's IP address on the session network so Chrome
+			// accepts the WebSocket connection — Chrome's CDP rejects Host headers
+			// that are hostnames, but accepts IP addresses and localhost.
+			const browserIp = await this.containers.getIpOnNetwork(browserContainerId, networkName)
+			if (!browserIp) {
+				throw new Error('Could not determine browser sidecar IP on session network')
+			}
+
 			// Track sidecar resources for cleanup
 			const sessionData = this.activeSessions.get(sessionId)
 			if (sessionData) {
@@ -2121,13 +2135,13 @@ export class SessionManager extends EventEmitter {
 				sessionData.networkName = networkName
 			}
 
-			logger.info('Browser sidecar started', { sessionId, browserName, networkName })
+			logger.info('Browser sidecar started', { sessionId, browserName, networkName, browserIp })
 			await this.insertSystemLog(
 				sessionId,
 				'Browser sidecar started — Playwright MCP can connect via CDP',
 			)
 
-			return { networkName }
+			return { networkName, browserIp }
 		} catch (err) {
 			logger.error('Browser sidecar failed — agent will run without browser', {
 				sessionId,

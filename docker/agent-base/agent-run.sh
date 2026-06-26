@@ -141,7 +141,11 @@ setup_mcps() {
     { mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }
   ')
 
-  # Add browser MCP server if CDP endpoint is configured
+  # Add browser MCP server if CDP endpoint is configured.
+  # BROWSER_CDP_URL is an http:// URL so Playwright MCP can fetch /json/version
+  # to discover the browser's WebSocket URL. Playwright substitutes the host and
+  # port from the HTTP URL into the discovered WebSocket URL automatically,
+  # handling the socat bridge (internal CDP port → external port) transparently.
   if [ -n "$BROWSER_CDP_URL" ]; then
     local browser_entry
     browser_entry=$(jq -n --arg url "$BROWSER_CDP_URL" \

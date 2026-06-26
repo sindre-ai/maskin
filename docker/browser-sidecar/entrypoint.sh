@@ -14,6 +14,7 @@ chromium \
   --disable-gpu \
   --disable-dev-shm-usage \
   --remote-debugging-port=9223 \
+  --remote-allow-origins=* \
   --no-first-run \
   --no-default-browser-check \
   --disable-extensions \

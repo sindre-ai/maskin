@@ -29,6 +29,7 @@ const mockContainerManager = {
 	pullImage: vi.fn().mockResolvedValue(undefined),
 	createNetwork: vi.fn().mockResolvedValue('anko-net-test'),
 	removeNetwork: vi.fn().mockResolvedValue(undefined),
+	getIpOnNetwork: vi.fn().mockResolvedValue('172.20.0.2'),
 	exec: vi.fn().mockResolvedValue({ exitCode: 0, output: '' }),
 	copyTo: vi.fn().mockResolvedValue(undefined),
 	copyFrom: vi.fn().mockResolvedValue({}),
@@ -420,7 +421,7 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 				networkMode?: string
 			}
-			expect(agentCreateCall.env.BROWSER_CDP_URL).toMatch(/^ws:\/\/anko-browser-.+:9222$/)
+			expect(agentCreateCall.env.BROWSER_CDP_URL).toBe('http://172.20.0.2:9222')
 			expect(agentCreateCall.networkMode).toMatch(/^anko-net-/)
 		})
 
