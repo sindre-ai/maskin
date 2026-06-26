@@ -5,6 +5,7 @@ import {
 	SlashPicker,
 	type SlashPickerResult,
 } from '@/components/chat/slash-picker'
+import { UploadProgress } from '@/components/shared/upload-progress'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
@@ -52,6 +53,9 @@ interface PendingUpload {
 	name: string
 	sizeBytes: number
 	mimeType?: string
+	status: 'uploading' | 'failed'
+	progress: number
+	error?: string
 }
 
 function makeTempId() {
@@ -551,10 +555,10 @@ export function Composer({
 	const [sendError, setSendError] = useState<string | null>(null)
 	const [pickerOpen, setPickerOpen] = useState(false)
 	const [pickerKind, setPickerKind] = useState<SlashKindId | null>(null)
-	// In-flight uploads. Only the resolved fileId enters `ChatSelection` (T1
-	// kept pending state out of the selection reducer so high-frequency upload
-	// events don't churn it); these are the chips shown while bytes are still
-	// transferring, removable to abort. T3 will layer progress + failure UI.
+	// In-flight + failed uploads. Only the resolved fileId enters `ChatSelection`
+	// (high-frequency upload events would otherwise churn the selection reducer);
+	// these are the chips shown while bytes are still transferring or after the
+	// upload failed, removable in either state.
 	const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
 	const slashPosRef = useRef<number | null>(null)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -571,7 +575,11 @@ export function Composer({
 			controllers.clear()
 		}
 	}, [])
-	const canSend = value.trim().length > 0 && !disabled && !sending && !pending
+	// Block send while any attachment is still uploading or has failed — the
+	// user must let it resolve or remove it (AC-T3). Mirrors the comment input's
+	// rule that send requires every chip to be in a final, sendable state.
+	const canSend =
+		value.trim().length > 0 && !disabled && !sending && !pending && pendingUploads.length === 0
 	const showSpinner = sending || pending
 
 	const handleSubmit = useCallback(
@@ -681,8 +689,20 @@ export function Composer({
 						content,
 						encoding: 'base64',
 					},
-					{ signal: controller.signal },
+					{
+						signal: controller.signal,
+						onProgress: (progress) => {
+							setPendingUploads((prev) =>
+								prev.map((p) => (p.tempId === tempId ? { ...p, progress } : p)),
+							)
+						},
+					},
 				)
+				// Cancel-vs-resolve race: if the user removed the chip between the
+				// XHR completing on the wire and this microtask firing, the chip is
+				// already gone and the abort fired — don't dispatch add_file so the
+				// user's intent is honoured (closes T4 reviewer SHOULD).
+				if (controller.signal.aborted) return
 				console.info(
 					'[chat] uploaded image attachment',
 					JSON.stringify({ fileId: created.id, name: file.name, sizeBytes: file.size }),
@@ -704,8 +724,12 @@ export function Composer({
 				if (controller.signal.aborted) return
 				console.error(`[chat] failed to upload ${file.name}`, err)
 				const message = err instanceof Error ? err.message : 'Upload failed'
-				setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId))
-				setSendError(`Failed to upload ${file.name}: ${message}`)
+				// Mirror the comment input: the failed chip stays put so the user
+				// can see which attachment broke and remove it. Send stays blocked
+				// (via canSend) until every pending row is resolved or removed.
+				setPendingUploads((prev) =>
+					prev.map((p) => (p.tempId === tempId ? { ...p, status: 'failed', error: message } : p)),
+				)
 			} finally {
 				abortControllersRef.current.delete(tempId)
 			}
@@ -723,6 +747,8 @@ export function Composer({
 				name: file.name,
 				sizeBytes: file.size,
 				mimeType: file.type || undefined,
+				status: 'uploading',
+				progress: 0,
 			}))
 			if (additions.length === 0) return
 			setPendingUploads((prev) => [...prev, ...additions])
@@ -775,14 +801,27 @@ export function Composer({
 					{pendingUploads.map((p) => (
 						<li
 							key={p.tempId}
-							className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-bg-surface px-2 py-0.5 text-xs text-foreground"
+							data-upload-status={p.status}
+							className={cn(
+								'inline-flex max-w-full items-center gap-1 rounded-full border bg-bg-surface px-2 py-0.5 text-xs text-foreground',
+								p.status === 'failed' ? 'border-error' : 'border-border',
+							)}
 						>
-							<Spinner className="h-3 w-3 text-muted-foreground" aria-hidden />
+							<UploadProgress
+								progress={p.progress}
+								status={p.status}
+								error={p.error}
+								className="shrink-0"
+							/>
 							<span className="max-w-[12rem] truncate text-muted-foreground">{p.name}</span>
 							<button
 								type="button"
 								onClick={() => handleRemovePending(p.tempId)}
-								aria-label={`Cancel upload ${p.name}`}
+								aria-label={
+									p.status === 'failed'
+										? `Remove failed upload ${p.name}`
+										: `Cancel upload ${p.name}`
+								}
 								className="-mr-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 							>
 								<X size={10} aria-hidden />
