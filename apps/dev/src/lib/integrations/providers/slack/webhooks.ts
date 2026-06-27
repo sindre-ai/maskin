@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { actors, notifications, slackUserLinks } from '@maskin/db/schema'
+import { actors, notifications, slackUserLinks, workspaces } from '@maskin/db/schema'
 import { and, desc, eq, ne } from 'drizzle-orm'
 import { frontendBaseUrl } from '../../../file-urls'
 import { logger } from '../../../logger'
@@ -84,20 +84,38 @@ const APP_HOME_FEED_LIMIT = 10
 const FALU_RED = '#7C1F1A'
 
 /**
- * Fixed agent labels — no variants, no shortenings (knowledge article rule 3).
- * Anything not in this map renders as the actor's literal name so we never
- * silently drop the subscript for a new agent role.
+ * Slack mrkdwn link tags (`<URL|text>`, `<#HEX|text>`) treat `|`, `<`, `>` as
+ * structural metacharacters. A `|` in the link `text` closes it early; a `<`
+ * inside the text can begin a sibling tag. Escape both names before they hit
+ * the `<#HEX|↳ name (workspace)>` form so user-controlled actor/workspace names
+ * can't break the colour wrapper or smuggle a fake user-mention tag.
  */
-const AGENT_LABELS: Record<string, string> = {
-	'Workspace Coach': 'Workspace Coach',
-	Architect: 'Architect',
-	Strategist: 'Strategist',
+function escapeMrkdwnText(value: string): string {
+	return value.replace(/[<|>]/g, (ch) => (ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : '&#124;'))
 }
 
-function formatAgentSubscript(actorName: string | null | undefined): string {
+/**
+ * `↳ <agent display name> (<workspace name>)` — the per-bot-message subscript
+ * shipped across all Slack surfaces (chat replies, unfurls, App Home). The
+ * agent name is the `actors.name` for the resolved Maskin actor; the workspace
+ * name is the linked Maskin workspace pulled from `slack_user_links` (or the
+ * per-session override from `/maskin workspace`). No fixed allow-list — any
+ * agent role surfaces by its real display name so we never silently drop the
+ * subscript for a new agent.
+ *
+ * Returns `''` when no actor is available (no slack_user_links → no caller).
+ * Workspace name is optional: if absent we render just `↳ <agent>` rather than
+ * a dangling `()` so the subscript stays meaningful when the link table is
+ * mid-migration or a workspace was deleted out from under the link row.
+ */
+function formatAgentSubscript(
+	actorName: string | null | undefined,
+	workspaceName?: string | null,
+): string {
 	if (!actorName) return ''
-	const label = AGENT_LABELS[actorName] ?? actorName
-	return `↳ ${label}`
+	const safeActor = escapeMrkdwnText(actorName)
+	if (!workspaceName) return `↳ ${safeActor}`
+	return `↳ ${safeActor} (${escapeMrkdwnText(workspaceName)})`
 }
 
 /**
@@ -197,6 +215,7 @@ function buildUnlinkedView(): UnlinkedView {
 
 interface LinkedViewArgs {
 	workspaceId: string
+	workspaceName: string | null
 	rows: InboxRow[]
 }
 
@@ -204,13 +223,14 @@ interface LinkedViewArgs {
  * Linked-state view shape:
  *  - header "For You — N unread"
  *  - primary CTA "Open For You in Maskin ↗"
- *  - one section per inbox row + a Falu-red `↳ <agent>` context block beneath
+ *  - one section per inbox row + a Falu-red `↳ <agent> (<workspace>)` context
+ *    block beneath
  *
  * `views.publish` requires a `home` view; sections > 100 blocks are rejected
  * by Slack, and APP_HOME_FEED_LIMIT * 3 (section + context + divider) keeps
  * us well under that.
  */
-function buildLinkedView({ workspaceId, rows }: LinkedViewArgs): UnlinkedView {
+function buildLinkedView({ workspaceId, workspaceName, rows }: LinkedViewArgs): UnlinkedView {
 	const inboxUrl = `${frontendBaseUrl()}/${workspaceId}/inbox`
 	const header = {
 		type: 'header',
@@ -255,7 +275,7 @@ function buildLinkedView({ workspaceId, rows }: LinkedViewArgs): UnlinkedView {
 			type: 'section',
 			text: { type: 'mrkdwn', text: `*${objectLink}*` },
 		})
-		const subscript = formatAgentSubscript(row.sourceActorName)
+		const subscript = formatAgentSubscript(row.sourceActorName, workspaceName)
 		if (subscript) {
 			blocks.push({
 				type: 'context',
@@ -332,8 +352,17 @@ export async function publishAppHomeView(args: PublishAppHomeArgs): Promise<bool
 	if (!link) {
 		view = buildUnlinkedView()
 	} else {
+		const [workspace] = await db
+			.select({ name: workspaces.name })
+			.from(workspaces)
+			.where(eq(workspaces.id, link.defaultWorkspaceId))
+			.limit(1)
 		const rows = await fetchInbox(db, link.defaultWorkspaceId, link.actorId)
-		view = buildLinkedView({ workspaceId: link.defaultWorkspaceId, rows })
+		view = buildLinkedView({
+			workspaceId: link.defaultWorkspaceId,
+			workspaceName: workspace?.name ?? null,
+			rows,
+		})
 	}
 
 	// Resolve a bot token. Caller-supplied tokens skip the integrations lookup.
