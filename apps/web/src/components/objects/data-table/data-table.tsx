@@ -226,7 +226,9 @@ export function DataTable({
 												className={cn('transition-transform', row.getIsExpanded() && 'rotate-90')}
 											/>
 											<span className="font-medium text-sm">{displayValue}</span>
-											<span className="text-muted-foreground text-xs">({row.subRows.length})</span>
+											<span className="text-muted-foreground text-xs tabular-nums">
+												({row.subRows.length})
+											</span>
 										</button>
 									</li>
 								)
@@ -327,7 +329,7 @@ export function DataTable({
 														)}
 													/>
 													<span className="font-medium text-sm">{displayValue}</span>
-													<span className="text-muted-foreground text-xs">
+													<span className="text-muted-foreground text-xs tabular-nums">
 														({row.subRows.length})
 													</span>
 												</div>
