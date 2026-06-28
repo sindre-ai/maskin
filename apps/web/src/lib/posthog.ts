@@ -96,6 +96,30 @@ export async function identifyForWorkspace(actorId: string, anonymize: boolean):
 	}
 }
 
+const DOCS_DISTINCT_ID_PARAM = 'ph_distinct_id'
+
+// The docs Get-started page decorates outbound maskin.sindre.ai links with
+// `?ph_distinct_id=<anon>`. Aliasing it to this browser's current distinct_id
+// lets the TTFMCP funnel join `docs_get_started_entered` to the workspace-side
+// `$mcp_tool_call` event on a single person, even when the actor later
+// identifies via `identifyForWorkspace`.
+export function inheritDistinctIdFromUrl(): void {
+	if (typeof window === 'undefined') return
+	try {
+		const url = new URL(window.location.href)
+		const docsId = url.searchParams.get(DOCS_DISTINCT_ID_PARAM)
+		if (!docsId) return
+
+		url.searchParams.delete(DOCS_DISTINCT_ID_PARAM)
+		window.history.replaceState({}, '', url.pathname + url.search + url.hash)
+
+		if (!initialized) return
+		posthog.alias(docsId)
+	} catch {
+		// Analytics must never break the UI.
+	}
+}
+
 // Test-only — lets the analytics test suite simulate the post-init state.
 export function __setInitializedForTesting(value: boolean): void {
 	initialized = value
