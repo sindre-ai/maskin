@@ -3,6 +3,7 @@ import {
 	capture,
 	hashDistinctId,
 	identifyForWorkspace,
+	inheritDistinctIdFromUrl,
 	isPosthogReady,
 	registerWorkspaceProperties,
 	setCapturingEnabled,
@@ -150,5 +151,58 @@ describe('posthog helper', () => {
 		__setInitializedForTesting(true)
 
 		await expect(identifyForWorkspace('actor-1', false)).resolves.toBeUndefined()
+	})
+
+	describe('inheritDistinctIdFromUrl', () => {
+		const originalHref = window.location.href
+
+		afterEach(() => {
+			window.history.replaceState({}, '', originalHref)
+		})
+
+		it('is a no-op when no ph_distinct_id param is present', () => {
+			const aliasSpy = vi.spyOn(posthog, 'alias').mockImplementation((() => {}) as never)
+			const replaceSpy = vi.spyOn(window.history, 'replaceState')
+			__setInitializedForTesting(true)
+			window.history.replaceState({}, '', '/workspace/abc?foo=bar')
+
+			inheritDistinctIdFromUrl()
+
+			expect(aliasSpy).not.toHaveBeenCalled()
+			expect(replaceSpy).toHaveBeenCalledTimes(1) // only the setup call above
+		})
+
+		it('aliases the docs distinct_id to the current browser distinct_id and strips the param', () => {
+			const aliasSpy = vi.spyOn(posthog, 'alias').mockImplementation((() => {}) as never)
+			__setInitializedForTesting(true)
+			window.history.replaceState({}, '', '/workspace/abc?ph_distinct_id=docs-anon-7&foo=bar')
+
+			inheritDistinctIdFromUrl()
+
+			expect(aliasSpy).toHaveBeenCalledTimes(1)
+			expect(aliasSpy).toHaveBeenCalledWith('docs-anon-7')
+			expect(window.location.search).toBe('?foo=bar')
+		})
+
+		it('strips the param even when posthog is not initialised so the URL stays clean', () => {
+			const aliasSpy = vi.spyOn(posthog, 'alias').mockImplementation((() => {}) as never)
+			window.history.replaceState({}, '', '/?ph_distinct_id=docs-anon-7')
+
+			inheritDistinctIdFromUrl()
+
+			expect(aliasSpy).not.toHaveBeenCalled()
+			expect(window.location.search).toBe('')
+		})
+
+		it('swallows posthog.alias errors', () => {
+			vi.spyOn(posthog, 'alias').mockImplementation(() => {
+				throw new Error('boom')
+			})
+			__setInitializedForTesting(true)
+			window.history.replaceState({}, '', '/?ph_distinct_id=docs-anon-7')
+
+			expect(() => inheritDistinctIdFromUrl()).not.toThrow()
+			expect(window.location.search).toBe('')
+		})
 	})
 })
