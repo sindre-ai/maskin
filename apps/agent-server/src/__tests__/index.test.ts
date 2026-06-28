@@ -1,6 +1,7 @@
 import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { StorageProvider } from '@maskin/storage'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildApp } from '../index'
 import type { AgentServerEnv } from '../lib/env'
@@ -177,6 +178,66 @@ describe('POST /sessions happy path', () => {
 
 		const skel = await readdir(join(sessionRoot, 'sess-happy'))
 		expect(skel.sort()).toEqual(['.exec-trigger', 'learnings', 'memory', 'skills', 'workspace'])
+	})
+})
+
+describe('POST /sessions sweep-before-pull ordering', () => {
+	it('logs "session workspaces swept" before "session workspace pulled" on every spawn', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+
+		// AC-T8 is an ordering claim — the LRU sweep must precede the workspace
+		// pull on every spawn, so a swap of the two calls would silently regress
+		// disk-pressure prevention. The two logger.info lines emitted by the
+		// handler are the observable contract; assert their order in the stream.
+		const fakeStorage: StorageProvider = {
+			put: async () => {},
+			get: async () => Buffer.alloc(0),
+			list: async () => [],
+			delete: async () => {},
+			exists: async () => false,
+			ensureBucket: async () => {},
+		}
+
+		const writes: string[] = []
+		const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
+			chunk: string | Uint8Array,
+		) => {
+			writes.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
+			return true
+		}) as typeof process.stdout.write)
+
+		try {
+			const app = buildApp({
+				env,
+				storage: fakeStorage,
+				msb: { msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+			})
+
+			const res = await app.request('/sessions', {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				},
+				body: JSON.stringify({
+					sessionId: 'sess-order',
+					image: 'maskin/agent-base:latest',
+					env: {},
+				}),
+			})
+
+			expect(res.status).toBe(201)
+		} finally {
+			writeSpy.mockRestore()
+		}
+
+		const stream = writes.join('')
+		const sweptIdx = stream.indexOf('"msg":"session workspaces swept"')
+		const pulledIdx = stream.indexOf('"msg":"session workspace pulled"')
+		expect(sweptIdx, 'sweep log line was not emitted').toBeGreaterThan(-1)
+		expect(pulledIdx, 'pull log line was not emitted').toBeGreaterThan(-1)
+		expect(sweptIdx).toBeLessThan(pulledIdx)
 	})
 })
 
