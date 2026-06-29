@@ -89,6 +89,21 @@ describe('UnreadThreadCard', () => {
 		expect(screen.getByLabelText('3 unread')).toBeInTheDocument()
 	})
 
+	it('renders the latest-activity timestamp in tabular-nums (AC-U2)', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ latest_activity_at: new Date(Date.now() - 5 * 60_000).toISOString() })}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const timeEl = screen.getByText(/ago|now/) as HTMLElement
+		expect(timeEl.tagName).toBe('TIME')
+		expect(timeEl).toHaveClass('font-mono')
+		expect(timeEl).toHaveClass('tabular-nums')
+	})
+
 	it('renders a "Mentioned" badge when the unread thread mentions the viewer', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		render(<UnreadThreadCard workspaceId="ws-1" item={buildItem({ mentions_you: true })} />, {

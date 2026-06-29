@@ -204,7 +204,7 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 					<Link
 						to="/$workspaceId/objects/$objectId"
 						params={{ workspaceId, objectId }}
-						className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
+						className="min-w-0 flex-1 truncate text-sm font-medium tracking-[-0.006em] hover:underline"
 						title={title}
 					>
 						{title}
@@ -213,7 +213,7 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 				{item.latest_activity_at && (
 					<RelativeTime
 						date={item.latest_activity_at}
-						className="shrink-0 text-xs text-muted-foreground"
+						className="shrink-0 text-xs font-mono tabular-nums text-muted-foreground"
 					/>
 				)}
 				{item.mentions_you && (
