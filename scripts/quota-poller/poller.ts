@@ -22,6 +22,7 @@
  */
 
 import { env } from 'node:process'
+import { sendAlerts } from './notifier'
 
 /* -------------------------------------------------------------------------- */
 /*  Logger                                                                    */
@@ -361,6 +362,12 @@ async function main(): Promise<PollResult> {
 		routes_checked: Object.keys(quotas).length,
 		any_exceeded,
 		errors: errors.length,
+	})
+
+	// Send Slack alerts and recovery messages asynchronously (errors are
+	// handled internally by the notifier so they never fail the poll).
+	await sendAlerts(result).catch((err) => {
+		logger.error('sendAlerts failed unexpectedly', { error: String(err) })
 	})
 
 	return result
