@@ -95,7 +95,7 @@ app.post('/', async (c) => {
 				'BAD_REQUEST',
 				'Google Calendar is not connected for this workspace',
 				undefined,
-				'Connect Google Calendar from Settings → Integrations before invoking the write tools.',
+				'Connect Google Calendar from Settings → Integrations before invoking calendar tools.',
 			),
 			400,
 		)

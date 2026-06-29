@@ -1,7 +1,7 @@
 import { ApiErrorCode } from '@maskin/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { GoogleCalendarError } from '../../../../lib/integrations/mcp/google-calendar/http'
 import {
-	GoogleCalendarError,
 	createEvent,
 	sendRsvp,
 	updateEvent,

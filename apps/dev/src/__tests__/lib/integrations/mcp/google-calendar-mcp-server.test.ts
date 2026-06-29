@@ -49,11 +49,18 @@ describe('createGoogleCalendarMcpServer — registered tools', () => {
 		capturePosthogEventMock.mockClear()
 	})
 
-	it('registers exactly create_event, update_event, and send_rsvp — no read tools (T3 owns those)', () => {
+	it('registers exactly the six locked tools — three reads + three writes (AC-T4)', () => {
 		const server = createGoogleCalendarMcpServer(baseCtx)
 		const tools = (server as unknown as { _registeredTools: Record<string, unknown> })
 			._registeredTools
-		expect(Object.keys(tools).sort()).toEqual(['create_event', 'send_rsvp', 'update_event'])
+		expect(Object.keys(tools).sort()).toEqual([
+			'create_event',
+			'get_free_busy',
+			'list_calendar_events',
+			'list_calendars',
+			'send_rsvp',
+			'update_event',
+		])
 	})
 })
 
@@ -306,5 +313,201 @@ describe('send_rsvp defaults attendeeEmail to the connected Google account', () 
 			email: 'magnus@example.com',
 			responseStatus: 'accepted',
 		})
+	})
+})
+
+describe('list_calendars tool — emits PostHog and surfaces auth_revoked (AC-U2 / AC-T3)', () => {
+	let fetchMock: ReturnType<typeof vi.fn>
+
+	beforeEach(() => {
+		fetchMock = vi.fn()
+		vi.stubGlobal('fetch', fetchMock)
+		capturePosthogEventMock.mockClear()
+	})
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	it('returns calendars and emits success on the workspace distinct_id', async () => {
+		fetchMock.mockResolvedValueOnce(
+			mockResponse({
+				items: [
+					{
+						id: 'primary',
+						summary: 'Magnus',
+						primary: true,
+						accessRole: 'owner',
+						timeZone: 'Europe/Oslo',
+					},
+				],
+			}),
+		)
+
+		const server = createGoogleCalendarMcpServer(baseCtx)
+		const tool = getTool(server, 'list_calendars')
+		const res = await tool.handler({}, {})
+
+		expect(res.isError).toBeFalsy()
+		const payload = JSON.parse(res.content[0].text)
+		expect(payload.ok).toBe(true)
+		expect(payload.calendars).toHaveLength(1)
+		expect(payload.calendars[0].id).toBe('primary')
+
+		expect(capturePosthogEventMock).toHaveBeenCalledOnce()
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'mcp_tool_invocation',
+			baseCtx.workspaceId,
+			expect.objectContaining({
+				tool_provider: 'google-calendar',
+				tool_name: 'list_calendars',
+				workspace_id: baseCtx.workspaceId,
+				actor_id: baseCtx.actorId,
+				outcome: 'success',
+			}),
+		)
+	})
+
+	it('maps Google 401 to AUTH_REVOKED and emits error with the code', async () => {
+		fetchMock.mockResolvedValueOnce(
+			mockResponse({ error: { code: 401 } }, { ok: false, status: 401 }),
+		)
+		const server = createGoogleCalendarMcpServer(baseCtx)
+		const tool = getTool(server, 'list_calendars')
+		const res = await tool.handler({}, {})
+
+		expect(res.isError).toBe(true)
+		const payload = JSON.parse(res.content[0].text)
+		expect(payload.code).toBe(ApiErrorCode.AUTH_REVOKED)
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'mcp_tool_invocation',
+			baseCtx.workspaceId,
+			expect.objectContaining({
+				tool_name: 'list_calendars',
+				outcome: 'error',
+				error_code: ApiErrorCode.AUTH_REVOKED,
+			}),
+		)
+	})
+})
+
+describe('list_calendar_events tool — projects AC-U2 fields and emits PostHog', () => {
+	let fetchMock: ReturnType<typeof vi.fn>
+
+	beforeEach(() => {
+		fetchMock = vi.fn()
+		vi.stubGlobal('fetch', fetchMock)
+		capturePosthogEventMock.mockClear()
+	})
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	it('returns events with summary/start/end/attendees/description and emits success', async () => {
+		fetchMock.mockResolvedValueOnce(
+			mockResponse({
+				items: [
+					{
+						id: 'evt-1',
+						summary: 'Strategy sync',
+						description: 'Quarterly review',
+						start: { dateTime: '2026-07-04T09:00:00Z' },
+						end: { dateTime: '2026-07-04T10:00:00Z' },
+						attendees: [{ email: 'sebastian@example.com', responseStatus: 'accepted' }],
+					},
+				],
+			}),
+		)
+
+		const server = createGoogleCalendarMcpServer(baseCtx)
+		const tool = getTool(server, 'list_calendar_events')
+		const res = await tool.handler(
+			{ timeMin: '2026-07-04T00:00:00Z', timeMax: '2026-07-05T00:00:00Z' },
+			{},
+		)
+
+		expect(res.isError).toBeFalsy()
+		const payload = JSON.parse(res.content[0].text)
+		expect(payload.ok).toBe(true)
+		expect(payload.events).toEqual([
+			{
+				id: 'evt-1',
+				summary: 'Strategy sync',
+				description: 'Quarterly review',
+				start: '2026-07-04T09:00:00Z',
+				end: '2026-07-04T10:00:00Z',
+				attendees: [{ email: 'sebastian@example.com', responseStatus: 'accepted' }],
+				htmlLink: null,
+			},
+		])
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'mcp_tool_invocation',
+			baseCtx.workspaceId,
+			expect.objectContaining({
+				tool_name: 'list_calendar_events',
+				outcome: 'success',
+			}),
+		)
+	})
+})
+
+describe('get_free_busy tool — preserves input order and emits PostHog (AC-U3)', () => {
+	let fetchMock: ReturnType<typeof vi.fn>
+
+	beforeEach(() => {
+		fetchMock = vi.fn()
+		vi.stubGlobal('fetch', fetchMock)
+		capturePosthogEventMock.mockClear()
+	})
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	it('returns busy intervals per requested calendar id', async () => {
+		fetchMock.mockResolvedValueOnce(
+			mockResponse({
+				calendars: {
+					primary: {
+						busy: [{ start: '2026-07-04T09:00:00Z', end: '2026-07-04T10:00:00Z' }],
+					},
+					'team@group.calendar.google.com': { busy: [] },
+				},
+			}),
+		)
+
+		const server = createGoogleCalendarMcpServer(baseCtx)
+		const tool = getTool(server, 'get_free_busy')
+		const res = await tool.handler(
+			{
+				calendarIds: ['primary', 'team@group.calendar.google.com'],
+				timeMin: '2026-07-04T00:00:00Z',
+				timeMax: '2026-07-05T00:00:00Z',
+			},
+			{},
+		)
+
+		expect(res.isError).toBeFalsy()
+		const payload = JSON.parse(res.content[0].text)
+		expect(payload.ok).toBe(true)
+		expect(payload.calendars).toEqual([
+			{
+				calendarId: 'primary',
+				busy: [{ start: '2026-07-04T09:00:00Z', end: '2026-07-04T10:00:00Z' }],
+			},
+			{ calendarId: 'team@group.calendar.google.com', busy: [] },
+		])
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'mcp_tool_invocation',
+			baseCtx.workspaceId,
+			expect.objectContaining({
+				tool_name: 'get_free_busy',
+				outcome: 'success',
+			}),
+		)
 	})
 })

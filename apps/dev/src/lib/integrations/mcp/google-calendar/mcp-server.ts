@@ -2,7 +2,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { capturePosthogEvent } from '../../../analytics/posthog'
 import { logger } from '../../../logger'
-import { GoogleCalendarError, createEvent, sendRsvp, updateEvent } from './write-tools'
+import { GoogleCalendarError } from './http'
+import { getFreeBusy, listCalendarEvents, listCalendars } from './read-tools'
+import { createEvent, sendRsvp, updateEvent } from './write-tools'
 
 export interface GoogleCalendarContext {
 	/**
@@ -89,6 +91,44 @@ const sendRsvpInput = {
 		),
 }
 
+const listCalendarsInput = {}
+
+const listCalendarEventsInput = {
+	calendarId: z
+		.string()
+		.min(1)
+		.optional()
+		.describe("Google calendar id. Defaults to `primary` — the connected user's main calendar."),
+	timeMin: z
+		.string()
+		.min(1)
+		.describe(
+			'Inclusive lower bound for event end time, as an ISO datetime (`2026-07-04T00:00:00Z`).',
+		),
+	timeMax: z
+		.string()
+		.min(1)
+		.describe('Exclusive upper bound for event start time, as an ISO datetime.'),
+	maxResults: z
+		.number()
+		.int()
+		.min(1)
+		.max(2500)
+		.optional()
+		.describe('Cap on returned events (Google enforces a hard ceiling of 2500).'),
+}
+
+const getFreeBusyInput = {
+	calendarIds: z
+		.array(z.string().min(1))
+		.min(1)
+		.describe(
+			'Calendar ids to query. Use `primary` for the connected user. Mix in shared calendar ids to compare availability.',
+		),
+	timeMin: z.string().min(1).describe('Start of the window to check, as an ISO datetime.'),
+	timeMax: z.string().min(1).describe('End of the window to check, as an ISO datetime.'),
+}
+
 function emitInvocation(
 	ctx: GoogleCalendarContext,
 	toolName: string,
@@ -107,7 +147,7 @@ function emitInvocation(
 
 function toolError(toolName: string, ctx: GoogleCalendarContext, err: unknown) {
 	if (err instanceof GoogleCalendarError) {
-		logger.warn('Google Calendar write tool returned mapped error', {
+		logger.warn('Google Calendar tool returned mapped error', {
 			toolName,
 			workspaceId: ctx.workspaceId,
 			actorId: ctx.actorId,
@@ -125,7 +165,7 @@ function toolError(toolName: string, ctx: GoogleCalendarContext, err: unknown) {
 			],
 		}
 	}
-	logger.error('Google Calendar write tool failed unexpectedly', {
+	logger.error('Google Calendar tool failed unexpectedly', {
 		toolName,
 		workspaceId: ctx.workspaceId,
 		actorId: ctx.actorId,
@@ -148,7 +188,9 @@ function toolError(toolName: string, ctx: GoogleCalendarContext, err: unknown) {
 }
 
 /**
- * Build a fresh MCP server per request. The three write tools are registered
+ * Build a fresh MCP server per request. The six locked tools — three reads
+ * (`list_calendars`, `list_calendar_events`, `get_free_busy`) and three
+ * writes (`create_event`, `update_event`, `send_rsvp`) — are registered
  * with the access token + workspace identity bound at construction time so a
  * connection cannot leak credentials between workspaces.
  */
@@ -219,6 +261,97 @@ export function createGoogleCalendarMcpServer(ctx: GoogleCalendarContext): McpSe
 				}
 			} catch (err) {
 				return toolError('update_event', ctx, err)
+			}
+		},
+	)
+
+	server.registerTool(
+		'list_calendars',
+		{
+			description:
+				"List the calendars the connected Google account has access to. Returns each calendar's id, summary, primary flag, access role, and time zone — agents pick from this list when deciding which calendar to read events from or write to.",
+			inputSchema: listCalendarsInput,
+		},
+		async () => {
+			try {
+				const calendars = await listCalendars(ctx.accessToken)
+				logger.info('Google Calendar list_calendars succeeded', {
+					workspaceId: ctx.workspaceId,
+					actorId: ctx.actorId,
+					count: calendars.length,
+				})
+				emitInvocation(ctx, 'list_calendars', 'success')
+				return {
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({ ok: true, calendars }),
+						},
+					],
+				}
+			} catch (err) {
+				return toolError('list_calendars', ctx, err)
+			}
+		},
+	)
+
+	server.registerTool(
+		'list_calendar_events',
+		{
+			description:
+				'List events on a calendar (defaults to `primary`) between `timeMin` and `timeMax`. Recurring events come back expanded into individual occurrences (`singleEvents=true`) and are ordered by start time. Each event carries summary, start, end, attendees, description, and a Google UI link.',
+			inputSchema: listCalendarEventsInput,
+		},
+		async (args) => {
+			try {
+				const events = await listCalendarEvents(ctx.accessToken, args)
+				logger.info('Google Calendar list_calendar_events succeeded', {
+					workspaceId: ctx.workspaceId,
+					actorId: ctx.actorId,
+					calendarId: args.calendarId ?? 'primary',
+					count: events.length,
+				})
+				emitInvocation(ctx, 'list_calendar_events', 'success')
+				return {
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({ ok: true, events }),
+						},
+					],
+				}
+			} catch (err) {
+				return toolError('list_calendar_events', ctx, err)
+			}
+		},
+	)
+
+	server.registerTool(
+		'get_free_busy',
+		{
+			description:
+				'Query busy intervals for one or more calendars over a time window via Google `freebusy.query`. Each returned entry mirrors the input calendar id with its busy intervals — calendars the user lost access to come back with an empty `busy` array rather than failing the whole call.',
+			inputSchema: getFreeBusyInput,
+		},
+		async (args) => {
+			try {
+				const calendars = await getFreeBusy(ctx.accessToken, args)
+				logger.info('Google Calendar get_free_busy succeeded', {
+					workspaceId: ctx.workspaceId,
+					actorId: ctx.actorId,
+					calendarCount: args.calendarIds.length,
+				})
+				emitInvocation(ctx, 'get_free_busy', 'success')
+				return {
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({ ok: true, calendars }),
+						},
+					],
+				}
+			} catch (err) {
+				return toolError('get_free_busy', ctx, err)
 			}
 		},
 	)
