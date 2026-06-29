@@ -121,7 +121,7 @@ export function ObjectDocumentView({
 					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Untitled"
 					rows={1}
-					className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
+					className="w-full text-2xl font-semibold tracking-[-0.022em] bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
 					ref={(el) => {
 						if (el) {
 							el.style.height = 'auto'
@@ -181,8 +181,8 @@ export function ObjectDocumentView({
 				<MetadataProperties object={object} />
 			</div>
 
-			{/* Content */}
-			<div className="mb-8">
+			{/* Content — long-form prose caps at 75ch on viewports ≥1280px (AC-U1, AC-U6). */}
+			<div className="mb-8 xl:max-w-[75ch]">
 				<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
 			</div>
 
