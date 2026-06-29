@@ -1,3 +1,4 @@
+# Browser sidecar: headful Chromium + Xvfb + socat CDP bridge
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
