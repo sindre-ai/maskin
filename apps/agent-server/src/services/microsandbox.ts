@@ -50,9 +50,9 @@ const DNS_TCP_RULE = 'allow@any:tcp:53'
 // the host network. Only added when explicitly requested.
 const PRIVATE_NET_RULE = 'allow@private'
 
-// Image used for the Chromium CDP sidecar — same tag as T1's local Docker path
-// so the two halves of the bet stay in lockstep.
-const BROWSER_SIDECAR_IMAGE = 'browser-sidecar:latest'
+// Default Chromium CDP sidecar image. Production can override this with the
+// registry tag published by the browser-sidecar Docker workflow.
+const DEFAULT_BROWSER_SIDECAR_IMAGE = 'browser-sidecar:latest'
 
 // CDP listener inside the browser-sidecar container.
 const BROWSER_CDP_PORT = 9222
@@ -522,7 +522,7 @@ export type BrowserSidecar = {
 export async function provisionBrowserSidecar(
 	prefix: string,
 	deps: MicrosandboxDeps,
-	options: { settleMs?: number } = {},
+	options: { settleMs?: number; image?: string } = {},
 ): Promise<BrowserSidecar | null> {
 	const name = `anko-browser-${prefix}`
 	assertValidSessionId(name)
@@ -530,6 +530,7 @@ export async function provisionBrowserSidecar(
 	const sleep = deps.sleep ?? defaultSleep
 	const now = deps.now ?? Date.now
 	const settleMs = options.settleMs ?? BROWSER_SIDECAR_SETTLE_MS
+	const image = options.image ?? DEFAULT_BROWSER_SIDECAR_IMAGE
 
 	const createArgs: string[] = [
 		'create',
@@ -550,7 +551,7 @@ export async function provisionBrowserSidecar(
 		DNS_UDP_RULE,
 		'--net-rule',
 		DNS_TCP_RULE,
-		BROWSER_SIDECAR_IMAGE,
+		image,
 	]
 
 	try {

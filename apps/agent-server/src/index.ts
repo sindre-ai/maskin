@@ -444,7 +444,9 @@ export function buildApp(deps: AppDeps): Hono {
 		// to an instrumentation-gap comment instead of fabricating a browser pass.
 		let browserSidecar: BrowserSidecar | null = null
 		if (body.browserRequired === true) {
-			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 16), deps.msb)
+			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 16), deps.msb, {
+				image: deps.env.BROWSER_SIDECAR_IMAGE,
+			})
 			if (browserSidecar) {
 				sessionEnv.BROWSER_CDP_URL = browserSidecar.cdpUrl
 				logger.info('browser sidecar attached to session', {

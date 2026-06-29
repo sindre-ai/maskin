@@ -634,9 +634,39 @@ describe('provisionBrowserSidecar', () => {
 		expect(verbs).toContain('create')
 		expect(verbs).toContain('list')
 		expect(verbs).toContain('inspect')
-		// The create args must reference the chromedp image as the trailing token.
+		// The create args must reference the default sidecar image as the trailing token.
 		const createCall = calls.find((c) => c[0] === 'create')
 		expect(createCall?.at(-1)).toBe('browser-sidecar:latest')
+	})
+
+	it('uses a configured sidecar image when provided', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-custom1', status: 'Running' }]),
+					stderr: '',
+				}
+			}
+			if (args[0] === 'inspect') {
+				return { stdout: 'IP: 10.42.0.43\n', stderr: '' }
+			}
+			return { stdout: '', stderr: '' }
+		}
+
+		const sidecar = await provisionBrowserSidecar(
+			'custom1',
+			{ msbBin, run, sleep: async () => {}, now: () => 0 },
+			{ settleMs: 0, image: 'maskin/browser-sidecar:latest' },
+		)
+
+		expect(sidecar?.cdpUrl).toBe('ws://10.42.0.43:9222')
+		const createCall = calls.find((c) => c[0] === 'create')
+		expect(createCall?.at(-1)).toBe('maskin/browser-sidecar:latest')
 	})
 
 	it('returns null and removes the half-built VM when msb create fails', async () => {

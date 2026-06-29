@@ -51,6 +51,9 @@ const envSchema = z.object({
 	// Image to keep present in libkrun's host cache so session spawns can skip
 	// the network pull. Unset disables warming entirely.
 	WARM_POOL_IMAGE: z.string().optional(),
+	// Chromium sidecar image used for browser-enabled sessions. Set this to the
+	// same repository/tag published by the browser-sidecar Docker workflow.
+	BROWSER_SIDECAR_IMAGE: z.string().optional().default('browser-sidecar:latest'),
 	// Minutes between cache re-warms. 0 warms once at startup only (zero ongoing
 	// overhead); a positive value lets a moving `:latest` reach sessions without
 	// a restart. Bounded so a typo can't schedule a sub-second pull loop.

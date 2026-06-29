@@ -362,7 +362,7 @@ describe('SessionManager', () => {
 			})
 		}
 
-		function buildTestAgent(actorId: string) {
+		function buildTestAgent(actorId: string, tools: Record<string, unknown> | null = null) {
 			return {
 				id: actorId,
 				type: 'agent' as const,
@@ -370,7 +370,7 @@ describe('SessionManager', () => {
 				llmProvider: null,
 				llmConfig: null,
 				apiKey: 'ank_test_agent_key',
-				tools: null,
+				tools,
 			}
 		}
 
@@ -456,6 +456,44 @@ describe('SessionManager', () => {
 			}
 			expect(agentCreateCall.env.BROWSER_CDP_URL).toBeUndefined()
 			expect(agentCreateCall.networkMode).toBeUndefined()
+		})
+
+		it('provisions a sidecar when MCP config references BROWSER_CDP_URL', async () => {
+			const session = buildTestSession({ config: {} })
+			const agent = buildTestAgent(session.actorId, {
+				mcpServers: {
+					playwright: {
+						command: 'npx',
+						args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
+					},
+				},
+			})
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace llm keys
+				[], // launchContainer: integrations
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.pullImage).toHaveBeenCalledWith('browser-sidecar:latest')
+			const agentCreateCall = mockContainerManager.create.mock.calls[1]?.[0] as {
+				env: Record<string, string>
+				networkMode?: string
+			}
+			expect(agentCreateCall.env.BROWSER_CDP_URL).toBe('http://172.20.0.2:9222')
+			expect(agentCreateCall.networkMode).toMatch(/^anko-net-/)
 		})
 	})
 

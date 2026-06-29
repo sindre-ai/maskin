@@ -14,6 +14,7 @@ function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 		AGENT_SESSION_ROOT: '/tmp/agent-server-test',
 		S3_REGION: 'us-east-1',
 		WARM_POOL_REFRESH_MINUTES: 0,
+		BROWSER_SIDECAR_IMAGE: 'browser-sidecar:latest',
 		SESSION_MAX_DURATION: '8h',
 		...overrides,
 	}

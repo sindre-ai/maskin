@@ -897,6 +897,7 @@ export class SessionManager extends EventEmitter {
 		memoryMib: number
 		cpus: number
 		cpuShares: number
+		browserRequired: boolean
 	}> {
 		const [agent] = await this.db
 			.select()
@@ -1150,6 +1151,9 @@ export class SessionManager extends EventEmitter {
 			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers })
 		}
 
+		const browserRequired =
+			sessionConfig.browserRequired === true || this.needsBrowserSidecar(envVars)
+
 		const image =
 			(sessionConfig.base_image as string) ?? process.env.AGENT_BASE_IMAGE ?? 'agent-base:latest'
 		// memory_mb / cpu_shares are the Docker-native units used historically;
@@ -1159,7 +1163,7 @@ export class SessionManager extends EventEmitter {
 		const cpuShares = (sessionConfig.cpu_shares as number) ?? 1024
 		const cpus = Math.max(1, Math.round(cpuShares / 1024))
 
-		return { image, env: envVars, memoryMib, cpus, cpuShares }
+		return { image, env: envVars, memoryMib, cpus, cpuShares, browserRequired }
 	}
 
 	/**
@@ -1189,8 +1193,7 @@ export class SessionManager extends EventEmitter {
 
 		// Provision browser sidecar when the browserRequired flag is set
 		let networkMode: string | undefined
-		const sessionConfig = session.config as Record<string, unknown> | null
-		if (sessionConfig?.browserRequired === true) {
+		if (spec.browserRequired) {
 			const prefix = session.id.slice(0, 16)
 			const result = await this.provisionBrowserSidecar(session.id, prefix)
 			if (result) {
@@ -1217,6 +1220,17 @@ export class SessionManager extends EventEmitter {
 		}
 
 		return containerId
+	}
+
+	/**
+	 * Existing seeded/template agents opt into browser access by referencing
+	 * ${BROWSER_CDP_URL} in their MCP config. Keep that contract while newer
+	 * callers can use config.browserRequired directly.
+	 */
+	private needsBrowserSidecar(envVars: Record<string, string>): boolean {
+		const agentMcp = envVars.AGENT_MCP_JSON ?? ''
+		const sessionMcp = envVars.MCP_SERVERS_JSON ?? ''
+		return agentMcp.includes('${BROWSER_CDP_URL}') || sessionMcp.includes('${BROWSER_CDP_URL}')
 	}
 
 	/**
@@ -2100,13 +2114,14 @@ export class SessionManager extends EventEmitter {
 		const networkName = `anko-net-${prefix}`
 		const browserName = `anko-browser-${prefix}`
 		let browserContainerId: string | undefined
+		const image = process.env.BROWSER_SIDECAR_IMAGE ?? 'browser-sidecar:latest'
 
 		try {
-			await this.containers.pullImage('browser-sidecar:latest')
+			await this.containers.pullImage(image)
 			await this.containers.createNetwork(networkName)
 
 			browserContainerId = await this.containers.create({
-				image: 'browser-sidecar:latest',
+				image,
 				name: browserName,
 				env: {},
 				memoryMb: 512,

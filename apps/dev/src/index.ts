@@ -85,6 +85,24 @@ try {
 		error: err instanceof Error ? err.message : String(err),
 	})
 }
+if (
+	!process.env.BROWSER_SIDECAR_IMAGE ||
+	process.env.BROWSER_SIDECAR_IMAGE === 'browser-sidecar:latest'
+) {
+	try {
+		await containers.ensureImage(
+			'browser-sidecar:latest',
+			path.resolve(import.meta.dirname ?? __dirname, '../../../docker/browser-sidecar'),
+		)
+	} catch (err) {
+		logger.error(
+			'Failed to build browser-sidecar image — browser sessions will run without browser',
+			{
+				error: err instanceof Error ? err.message : String(err),
+			},
+		)
+	}
+}
 
 const agentStorage = new AgentStorageManager(storageProvider, db)
 
@@ -149,6 +167,7 @@ if (process.env.NODE_ENV === 'production') {
 				env: spec.env,
 				memoryMib: spec.memoryMib,
 				cpus: spec.cpus,
+				...(spec.browserRequired && { browserRequired: true }),
 				sourceSessionId: session.sourceSessionId ?? undefined,
 			}
 		},
