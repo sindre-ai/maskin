@@ -5,6 +5,13 @@ on:
     branches: [main]
     paths:
       - 'docker/agent-base/**'
+      - 'pnpm-lock.yaml'
+  # Cross-repo lockfile bumps (skjald) and any human-initiated rebuilds
+  # land here too — see .github/workflows/agent-base-rebuild-dispatch.yml
+  # in sindre-ai/skjald for the upstream sender.
+  repository_dispatch:
+    types: [agent-base-rebuild]
+  workflow_dispatch:
 
 concurrency:
   group: agent-base-docker-${{ github.ref }}
