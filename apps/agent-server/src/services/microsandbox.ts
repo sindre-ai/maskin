@@ -44,10 +44,10 @@ const PUBLIC_EGRESS_RULE = 'allow@public'
 const DNS_UDP_RULE = 'allow@any:udp:53'
 const DNS_TCP_RULE = 'allow@any:tcp:53'
 
-// When a session needs to talk to a sibling msb microVM (the browser sidecar
-// for bet-qa runs), the target IP is on the msb bridge — a private RFC1918
-// range. `allow@private` opens that path without giving the session blanket
-// access to the host network. Only added when explicitly requested.
+// When a session needs to talk to a sibling msb microVM (the browser sidecar),
+// the target IP is on the msb bridge — a private RFC1918 range.
+// `allow@private` opens that path without giving the session blanket access to
+// the host network. Only added when explicitly requested.
 const PRIVATE_NET_RULE = 'allow@private'
 
 // Image used for the Chromium CDP sidecar — same tag as T1's local Docker path
@@ -103,8 +103,8 @@ export type SpawnSessionInput = {
 	pullPolicy?: PullPolicy
 	maxDuration?: string
 	// When true, the session VM gets `--net-rule allow@private` so it can reach
-	// a sibling sidecar VM (the browser sidecar provisioned for bet-qa runs)
-	// over the msb bridge. Off by default — only flagged sessions pay for it.
+	// a sibling sidecar VM (the browser sidecar) over the msb bridge. Off by
+	// default — only sessions that need browser access pay for it.
 	allowPrivateNet?: boolean
 }
 
@@ -510,14 +510,14 @@ export type BrowserSidecar = {
 
 /**
  * Provision a Chromium-only sidecar microVM running `browser-sidecar`
- * for bet-qa sessions. Returns the sidecar name and a `ws://<ip>:9222` CDP
+ * for browser-enabled sessions. Returns the sidecar name and a `ws://<ip>:9222` CDP
  * URL the session VM can hand to `@playwright/mcp`. The session VM must be
  * spawned with `allowPrivateNet: true` for the bridge address to be reachable.
  *
  * Returns `null` on any failure — the caller falls back to a session without
  * browser capability and reports the instrumentation gap. We never throw past
  * the session boundary: a failed sidecar must not take down an otherwise-fine
- * session, only the bet-qa step the agent would have run.
+ * session, only the browser step the agent would have run.
  */
 export async function provisionBrowserSidecar(
 	prefix: string,

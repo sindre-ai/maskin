@@ -732,7 +732,7 @@ describe('cleanupBrowserSidecar', () => {
 		expect(calls[1]?.[0]).toBe('list')
 	})
 
-	it('no-ops when no sidecar was provisioned (the common, non-bet-qa path)', async () => {
+	it('no-ops when no sidecar was provisioned (the common path)', async () => {
 		const calls: Array<readonly string[]> = []
 		const run = async (
 			_bin: string,

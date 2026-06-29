@@ -531,7 +531,7 @@ describe('SessionManager', () => {
 			expect(mockContainerManager.inspect.mock.calls.length).toBeGreaterThanOrEqual(3)
 		})
 
-		it('no-ops when there is no sidecar to clean up (the non-bet-qa path)', async () => {
+		it('no-ops when there is no sidecar to clean up (the common path)', async () => {
 			const internals = manager as unknown as Internals
 			const sessionId = 'sess-no-sidecar'
 			internals.activeSessions.set(sessionId, { tempDir: '/tmp/x' })

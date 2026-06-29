@@ -441,7 +441,7 @@ export function buildApp(deps: AppDeps): Hono {
 
 		// AC-T1/AC-T6: provision a Chromium CDP sidecar only when the flag is on.
 		// A failed sidecar must not take down the session — the agent falls back
-		// to an instrumentation-gap comment instead of fabricating a bet-qa pass.
+		// to an instrumentation-gap comment instead of fabricating a browser pass.
 		let browserSidecar: BrowserSidecar | null = null
 		if (body.browserRequired === true) {
 			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 16), deps.msb)
@@ -478,7 +478,7 @@ export function buildApp(deps: AppDeps): Hono {
 							maxDuration: deps.env.SESSION_MAX_DURATION,
 						}),
 					// Only opened when a sidecar was provisioned — keeps the default
-					// session firewall posture tight for the common (non-bet-qa) path.
+					// session firewall posture tight for the common path.
 					...(browserSidecar !== null && { allowPrivateNet: true }),
 				},
 				deps.msb,
