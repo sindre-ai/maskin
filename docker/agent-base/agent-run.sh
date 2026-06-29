@@ -135,10 +135,35 @@ setup_mcps() {
   local agent_config="${AGENT_MCP_JSON:-$empty}"
   local session_config="${MCP_SERVERS_JSON:-$empty}"
 
-  # Merge agent + session MCP configs (session overrides agent for same-named servers)
+  # Dedup MCP sources by canonical (transport, URL/command+args) tuple.
+  # Precedence is by input order: agent.tools beats session. When two entries
+  # canonicalise to the same tuple the higher-precedence one wins, the lower
+  # is dropped. This collapses cases like a Maskin server registered both via
+  # agent.tools and via MCP_SERVERS_JSON (e.g. session-injected) into a single
+  # entry instead of two parallel tool registrations.
+  # The fourth source — claude.ai-pulled MCPs that Claude Code loads from
+  # ~/.claude/.credentials.json — is suppressed separately in
+  # setup_claude_credentials when agent.tools.mcpServers.maskin is set.
   local merged
-  merged=$(printf '%s\n%s' "$agent_config" "$session_config" | jq -s '
-    { mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }
+  merged=$(jq -n \
+    --argjson agent "$agent_config" \
+    --argjson session "$session_config" '
+    def canonical(entry):
+      if (entry.type // "stdio") == "stdio" then
+        "stdio|" + (entry.command // "") + "|" + ((entry.args // []) | map(tostring) | join(" "))
+      else
+        (entry.type // "http") + "|" + (entry.url // "")
+      end;
+    def tagged(servers; src):
+      ((servers // {}) | to_entries
+        | map({name: .key, value: .value, source: src, canonical: canonical(.value)}));
+    ([tagged($agent.mcpServers; "agent"),
+      tagged($session.mcpServers; "session")] | add)
+      | group_by(.canonical)
+      | map(.[0])
+      | map({key: .name, value: .value})
+      | from_entries
+      | {mcpServers: .}
   ')
 
   # Add browser MCP server if CDP endpoint is configured.
@@ -168,6 +193,19 @@ setup_mcps() {
 # Claude Code reads auth from ~/.claude/.credentials.json, not env vars.
 setup_claude_credentials() {
   if [ -z "$CLAUDE_OAUTH_ACCESS_TOKEN" ]; then
+    return
+  fi
+
+  # Skip the write when the agent already declares its own Maskin MCP via
+  # agent.tools.mcpServers.maskin. Claude Code reads this credentials file at
+  # startup and re-pulls MCP servers (mcp__claude_ai_maskin__*) on top of the
+  # ones the agent already declared, doubling the Maskin registration and
+  # widening every cached turn. Human-driven sessions without Maskin in
+  # agent.tools still need the file, so the skip is gated on the maskin key
+  # specifically.
+  if [ -n "$AGENT_MCP_JSON" ] \
+      && echo "$AGENT_MCP_JSON" | jq -e '.mcpServers.maskin' >/dev/null 2>&1; then
+    echo "[system] Skipping Claude OAuth credentials write — agent.tools.mcpServers.maskin is set"
     return
   fi
 
@@ -355,12 +393,17 @@ run_agent() {
   esac
 }
 
-echo "[system] Starting agent session: ${SESSION_ID:-unknown}"
-echo "[system] Runtime: $RUNTIME"
+# Entrypoint — only run when executed directly. When the script is sourced
+# (e.g. by the bash integration test in __tests__/), the test driver invokes
+# specific functions in isolation and skips the agent-launch sequence below.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  echo "[system] Starting agent session: ${SESSION_ID:-unknown}"
+  echo "[system] Runtime: $RUNTIME"
 
-install_runtime
-build_context
-setup_mcps
-setup_claude_credentials
+  install_runtime
+  build_context
+  setup_mcps
+  setup_claude_credentials
 
-run_agent
+  run_agent
+fi
