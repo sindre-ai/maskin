@@ -136,8 +136,8 @@ export type MicrosandboxDeps = {
 	run?: CommandRunner
 	sleep?: (ms: number) => Promise<void>
 	now?: () => number
-	// Overrideable in tests: allocate a free host TCP port for sidecar forwarding.
-	findPort?: () => Promise<number>
+	// Overrideable in tests: allocate a free TCP port on the given bind address.
+	findPort?: (host: string) => Promise<number>
 	// Overrideable in tests: wait for the CDP endpoint to accept connections.
 	cdpPollReady?: (port: number) => Promise<void>
 }
@@ -472,14 +472,14 @@ export async function readMsbVersion(deps: { msbBin: string; run?: CommandRunner
 }
 
 /**
- * Allocate a free TCP port on the host loopback. Used to pick the host-side
- * port for `msb create -p 0.0.0.0:<port>:9222` so CDP is reachable from the
- * agent session VM via the bridge gateway.
+ * Allocate a free TCP port on a host bind address. Used to pick the host-side
+ * port for `msb create -p <bridgeGateway>:<port>:9222` so CDP is reachable
+ * from the agent session VM without publishing it on every host interface.
  */
-function findFreeHostPort(): Promise<number> {
+function findFreeHostPort(host: string): Promise<number> {
 	return new Promise((resolve, reject) => {
 		const srv = createServer()
-		srv.listen(0, '127.0.0.1', () => {
+		srv.listen(0, host, () => {
 			const addr = srv.address()
 			srv.close(() => {
 				if (addr && typeof addr === 'object') resolve(addr.port)
@@ -510,19 +510,20 @@ function launchSidecarExec(name: string, deps: MicrosandboxDeps): void {
 }
 
 /**
- * Poll `http://127.0.0.1:<port>/json/version` until Chrome's CDP endpoint
+ * Poll `http://<host>:<port>/json/version` until Chrome's CDP endpoint
  * responds with HTTP 200, or the timeout elapses. Called after `msb exec`
  * starts the sidecar entrypoint so we don't hand a CDP URL to the session
  * before socat is forwarding connections.
  */
 async function defaultPollCdpReady(
+	host: string,
 	port: number,
 	deps: { sleep: (ms: number) => Promise<void>; now: () => number },
 ): Promise<void> {
 	const deadline = deps.now() + BROWSER_SIDECAR_CDP_POLL_TIMEOUT_MS
 	while (deps.now() < deadline) {
 		const ready = await new Promise<boolean>((resolve) => {
-			const req = httpGet(`http://127.0.0.1:${port}/json/version`, (res) => {
+			const req = httpGet(`http://${host}:${port}/json/version`, (res) => {
 				res.on('error', () => resolve(false))
 				resolve(res.statusCode === 200)
 				res.resume()
@@ -537,7 +538,7 @@ async function defaultPollCdpReady(
 		await deps.sleep(BROWSER_SIDECAR_CDP_POLL_INTERVAL_MS)
 	}
 	throw new Error(
-		`CDP endpoint on port ${port} did not become ready within ${BROWSER_SIDECAR_CDP_POLL_TIMEOUT_MS}ms`,
+		`CDP endpoint on ${host}:${port} did not become ready within ${BROWSER_SIDECAR_CDP_POLL_TIMEOUT_MS}ms`,
 	)
 }
 
@@ -551,8 +552,8 @@ export type BrowserSidecar = {
  * browser-enabled sessions. Returns the sidecar name and a CDP URL the session
  * VM can hand to `@playwright/mcp`.
  *
- * Strategy: forward a free host TCP port to guest port 9222 (`-p 0.0.0.0:<port>:9222`),
- * then fire `msb exec` to start the entrypoint (Xvfb + Chromium + socat).
+ * Strategy: forward a bridge-only host TCP port to guest port 9222
+ * (`-p <bridgeGateway>:<port>:9222`), then fire `msb exec` to start the entrypoint.
  * `msb create` boots the VM but does NOT run CMD/ENTRYPOINT — `msb exec` is
  * required. The session VM reaches the CDP endpoint at `ws://<bridgeGateway>:<port>`
  * via `allow@private`, since the bridge gateway is a private RFC1918 address.
@@ -571,13 +572,14 @@ export async function provisionBrowserSidecar(
 	const sleep = deps.sleep ?? defaultSleep
 	const now = deps.now ?? Date.now
 	const findPort = deps.findPort ?? findFreeHostPort
-	const pollReady = deps.cdpPollReady ?? ((port) => defaultPollCdpReady(port, { sleep, now }))
 	const image = options.image ?? DEFAULT_BROWSER_SIDECAR_IMAGE
 	const bridgeGateway = options.bridgeGateway ?? DEFAULT_BRIDGE_GATEWAY
+	const pollReady =
+		deps.cdpPollReady ?? ((port) => defaultPollCdpReady(bridgeGateway, port, { sleep, now }))
 
 	let hostPort: number
 	try {
-		hostPort = await findPort()
+		hostPort = await findPort(bridgeGateway)
 	} catch (err) {
 		logger.error('browser sidecar: failed to allocate host port', { name, error: String(err) })
 		return null
@@ -594,10 +596,10 @@ export async function provisionBrowserSidecar(
 		'--pull',
 		'always',
 		'--quiet',
-		// Forward a host port to guest CDP port so the session VM can reach
-		// Chrome via the bridge gateway without needing the sidecar's IP.
+		// Forward a bridge-only host port to guest CDP port so the session VM can
+		// reach Chrome without exposing unauthenticated CDP on public interfaces.
 		'-p',
-		`0.0.0.0:${hostPort}:${BROWSER_CDP_GUEST_PORT}`,
+		`${bridgeGateway}:${hostPort}:${BROWSER_CDP_GUEST_PORT}`,
 		// Sidecar needs public egress (Chromium asset fetches) and DNS.
 		'--net-rule',
 		PUBLIC_EGRESS_RULE,

@@ -609,7 +609,7 @@ describe('provisionBrowserSidecar', () => {
 		// create args must include port forwarding and the default image.
 		const createCall = calls.find((c) => c[0] === 'create')
 		expect(createCall).toContain('-p')
-		expect(createCall).toContain('0.0.0.0:39222:9222')
+		expect(createCall).toContain('10.0.1.1:39222:9222')
 		expect(createCall?.at(-1)).toBe('browser-sidecar:latest')
 	})
 
@@ -648,10 +648,12 @@ describe('provisionBrowserSidecar', () => {
 	})
 
 	it('uses a configured bridge gateway when provided', async () => {
+		const calls: Array<readonly string[]> = []
 		const run = async (
 			_bin: string,
 			args: readonly string[],
 		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
 			if (args[0] === 'list')
 				return {
 					stdout: JSON.stringify([{ name: 'anko-browser-gw00001', status: 'Running' }]),
@@ -674,6 +676,8 @@ describe('provisionBrowserSidecar', () => {
 		)
 
 		expect(sidecar?.cdpUrl).toBe('ws://192.168.100.1:40000')
+		const createCall = calls.find((c) => c[0] === 'create')
+		expect(createCall).toContain('192.168.100.1:40000:9222')
 	})
 
 	it('returns null and removes the half-built VM when msb create fails', async () => {
