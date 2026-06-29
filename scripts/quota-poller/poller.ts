@@ -292,7 +292,12 @@ async function main(): Promise<PollResult> {
 	const quotas: PollResult['quotas'] = {}
 
 	if (!ANTHROPIC_ADMIN_API_KEY) {
-		logger.warn('ANTHROPIC_ADMIN_API_KEY not set — skipping Claude quotas')
+		logger.error("ANTHROPIC_ADMIN_API_KEY not set — cannot poll Claude quotas")
+		errors.push({
+			route: "claude",
+			message: "ANTHROPIC_ADMIN_API_KEY environment variable is not set",
+			code: "MISSING_API_KEY",
+		})
 	} else {
 		const result = await fetchAnthropicQuotas(
 			ANTHROPIC_ADMIN_API_KEY,
@@ -312,7 +317,12 @@ async function main(): Promise<PollResult> {
 	}
 
 	if (!OPENROUTER_API_KEY) {
-		logger.warn('OPENROUTER_API_KEY not set — skipping OpenRouter quotas')
+		logger.error("OPENROUTER_API_KEY not set — cannot poll OpenRouter quotas")
+		errors.push({
+			route: "openrouter",
+			message: "OPENROUTER_API_KEY environment variable is not set",
+			code: "MISSING_API_KEY",
+		})
 	} else {
 		const result = await fetchOpenRouterQuota(OPENROUTER_API_KEY)
 		if (result) {
@@ -371,7 +381,11 @@ const isMain =
 if (isMain) {
 	main()
 		.then((result) => {
-			process.stdout.write(`${JSON.stringify(result)}\n`)
+		const hasMissingKey = result.errors.some((e) => e.code === "MISSING_API_KEY")
+		if (hasMissingKey) {
+			process.exit(1)
+		}
+		process.stdout.write(JSON.stringify(result) + "\n")
 		})
 		.catch((err) => {
 			logger.error('Unhandled poller error', { error: String(err) })
