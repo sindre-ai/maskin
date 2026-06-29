@@ -1,5 +1,6 @@
 name: CI
 
+# verify workflows permission grant
 on:
   push:
     branches: [main]
