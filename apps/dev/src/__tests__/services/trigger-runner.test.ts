@@ -253,6 +253,132 @@ describe('TriggerRunner', () => {
 
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
+
+		it('fires status_changed trigger when filter matches data.updated', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'task', action: 'status_changed', filter: { driver: 'actor-abc' } },
+			})
+			mockResults.selectQueue = [
+				[trigger],
+				[
+					{
+						data: {
+							previous: { status: 'todo', driver: 'actor-abc' },
+							updated: { status: 'in_progress', driver: 'actor-abc' },
+						},
+					},
+				],
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('does not fire status_changed trigger when filter does not match data.updated', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'task', action: 'status_changed', filter: { driver: 'actor-abc' } },
+			})
+			mockResults.selectQueue = [
+				[trigger],
+				[
+					{
+						data: {
+							previous: { status: 'todo', driver: 'actor-xyz' },
+							updated: { status: 'in_progress', driver: 'actor-xyz' },
+						},
+					},
+				],
+			]
+
+			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('does not fire or throw when filter uses dotted path and intermediate is null', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'task',
+					action: 'status_changed',
+					filter: { 'metadata.decision_type': 'ux' },
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger],
+				[
+					{
+						data: {
+							previous: { status: 'todo', metadata: null },
+							updated: { status: 'in_progress', metadata: null },
+						},
+					},
+				],
+			]
+
+			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('fires created trigger with filter — regression guard', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'relationship', action: 'created', filter: { type: 'informs' } },
+			})
+			mockResults.selectQueue = [
+				[trigger],
+				[{ data: { id: 'rel-1', type: 'informs', sourceId: 'obj-1', targetId: 'obj-2' } }],
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', { ...baseEvent, action: 'created', entity_type: 'relationship' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('fires status_changed trigger only when both to_status and filter match', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'task',
+					action: 'status_changed',
+					to_status: 'in_progress',
+					filter: { driver: 'actor-abc' },
+				},
+			})
+			// Both conditions match
+			mockResults.selectQueue = [
+				[trigger],
+				[
+					{
+						data: {
+							previous: { status: 'todo', driver: 'actor-abc' },
+							updated: { status: 'in_progress', driver: 'actor-abc' },
+						},
+					},
+				],
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
 	})
 
 	describe('cron scheduling', () => {
