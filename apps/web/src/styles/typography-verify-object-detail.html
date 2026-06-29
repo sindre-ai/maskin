@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<!--
+  Object detail page typography verification harness — T4 First test.
+
+  Self-contained (double-click to render). Mirrors apps/web/src/app.css tokens
+  (light + dark) and the exact classes used on object-document.tsx after T4,
+  so Sebk + reviewer can confirm Schibsted Grotesk reads cleanly at
+  14 / 16 / 20 / 32px in both modes before T5/T6 touch the other surfaces.
+
+  Toggle theme with the button top-right; resize the window past 1280px to see
+  the 75ch long-form cap kick in.
+-->
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Typography verification — object detail (T4)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+  rel="stylesheet"
+/>
+<style>
+  /* Tokens lifted verbatim from apps/web/src/app.css. */
+  :root {
+    --font-sans: "Schibsted Grotesk", "Schibsted Grotesk Fallback", system-ui,
+      -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "JetBrains Mono", "JetBrains Mono Fallback", ui-monospace,
+      Menlo, Consolas, monospace;
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.145 0.005 285.823);
+    --muted-foreground: oklch(0.556 0.005 286.286);
+    --border: oklch(0.922 0.004 286.32);
+    --card: oklch(1 0 0);
+  }
+  .dark {
+    --background: oklch(0.145 0.005 285.823);
+    --foreground: oklch(0.985 0 0);
+    --muted-foreground: oklch(0.708 0.005 286.344);
+    --border: oklch(0.264 0.006 286.033);
+    --card: oklch(0.145 0.005 285.823);
+  }
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 48rem; /* matches max-w-3xl on object-document.tsx */
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+  }
+  .toolbar {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    display: flex;
+    gap: 8px;
+  }
+  .toolbar button {
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--foreground);
+    cursor: pointer;
+  }
+  .toolbar button:hover {
+    background: var(--card);
+  }
+
+  /* Roles — copied from object-document.tsx + LinkedObjects/ObjectFiles h3. */
+  .role-title {
+    font-size: 24px; /* text-2xl */
+    font-weight: 600; /* font-semibold (T4) */
+    letter-spacing: -0.025em; /* tracking-tight ≈ T2 -0.022em @24px */
+    color: var(--foreground);
+  }
+  .role-section {
+    font-size: 12px; /* text-xs */
+    font-weight: 500; /* font-medium */
+    text-transform: uppercase;
+    letter-spacing: 0.05em; /* tracking-wider */
+    color: var(--muted-foreground);
+    margin: 32px 0 12px;
+  }
+  .role-label {
+    font-size: 12px; /* text-xs */
+    font-weight: 500;
+    color: var(--muted-foreground);
+  }
+  .role-body {
+    font-size: 14px; /* text-sm — MarkdownContent prose-sm */
+    font-weight: 400;
+    line-height: 1.7142857;
+    color: var(--muted-foreground);
+  }
+  .role-caption {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--muted-foreground);
+  }
+
+  /* Size grid for the First-test (14 / 16 / 20 / 32px). */
+  .size-grid {
+    display: grid;
+    grid-template-columns: 72px 1fr;
+    column-gap: 16px;
+    row-gap: 12px;
+    align-items: baseline;
+    margin: 24px 0;
+    padding: 16px 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .size-grid .label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted-foreground);
+  }
+  .size-grid .sample-14 { font-size: 14px; font-weight: 400; }
+  .size-grid .sample-16 { font-size: 16px; font-weight: 400; }
+  .size-grid .sample-20 { font-size: 20px; font-weight: 500; letter-spacing: -0.012em; }
+  .size-grid .sample-32 { font-size: 32px; font-weight: 600; letter-spacing: -0.022em; line-height: 1.15; }
+
+  /* Long-form prose mock — same 75ch cap as object-document.tsx ≥1280px. */
+  .prose {
+    font-size: 14px;
+    line-height: 1.7142857;
+    color: var(--muted-foreground);
+  }
+  .prose p { margin: 0 0 1em; }
+  .prose-cap {
+    width: 100%;
+  }
+  @media (min-width: 1280px) {
+    .prose-cap { max-width: 75ch; }
+  }
+  .marker {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted-foreground);
+    border-top: 1px dashed var(--border);
+    margin-top: 32px;
+    padding-top: 12px;
+  }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button id="theme-toggle" type="button">Toggle dark</button>
+</div>
+<main class="page">
+  <h1 class="role-title">Bet · Typography system: utilitarian, Linear-calibre reading experience</h1>
+  <div style="margin-top: 8px;">
+    <span class="role-caption">created 2026-06-22 · agent · Strategist</span>
+  </div>
+
+  <h2 class="role-section">First-test sizes (Schibsted Grotesk)</h2>
+  <div class="size-grid">
+    <div class="label">14 / 400</div>
+    <div class="sample-14">
+      The quick brown fox jumps over the lazy dog. 0123456789. This is body
+      text at 14px — the size most prose, descriptions, and activity rows
+      use.
+    </div>
+    <div class="label">16 / 400</div>
+    <div class="sample-16">
+      The quick brown fox jumps over the lazy dog. 0123456789. Slightly
+      larger 16px for emphasis or breathing room.
+    </div>
+    <div class="label">20 / 500</div>
+    <div class="sample-20">
+      Section headline weight at 20px / 500.
+    </div>
+    <div class="label">32 / 600</div>
+    <div class="sample-32">
+      Display title at 32 / 600.
+    </div>
+  </div>
+
+  <h2 class="role-section">Long-form prose (75ch cap at ≥1280px)</h2>
+  <div class="prose prose-cap">
+    <p>
+      We believe replacing the current Inter+v0 typography pass with the
+      maskin.io family stack and shipping a documented weight ramp plus a
+      measure cap on the three primary reading surfaces will produce app
+      typography that feels visually continuous with the marketing surface
+      and reads like a well-crafted Linear issue at any viewport.
+    </p>
+    <p>
+      Below 1280px the prose fills the available width inside the
+      <code style="font-family: var(--font-mono);">max-w-3xl</code> column
+      that the detail page already uses. At 1280px and above, it caps at
+      75ch so the reader's eye does not have to jump across a wide line —
+      the single most defensible UX claim on the bet, per T2's design
+      proposal. Resize the window past the 1280px breakpoint to see the cap
+      engage.
+    </p>
+  </div>
+  <div class="marker">end of long-form sample · 75ch cap engages at viewport ≥1280px</div>
+
+  <h2 class="role-section">Linked objects</h2>
+  <div style="display: flex; gap: 16px; margin-top: 8px;">
+    <span class="role-label">Driver:</span>
+    <span class="role-body" style="font-size: 13px;">Developer</span>
+  </div>
+</main>
+<script>
+  const btn = document.getElementById('theme-toggle');
+  btn.addEventListener('click', () => {
+    document.documentElement.classList.toggle('dark');
+    btn.textContent = document.documentElement.classList.contains('dark')
+      ? 'Toggle light'
+      : 'Toggle dark';
+  });
+</script>
+</body>
+</html>
