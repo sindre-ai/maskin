@@ -262,7 +262,14 @@ describe('TriggerRunner', () => {
 			})
 			mockResults.selectQueue = [
 				[trigger],
-				[{ data: { previous: { status: 'todo', driver: 'actor-abc' }, updated: { status: 'in_progress', driver: 'actor-abc' } } }],
+				[
+					{
+						data: {
+							previous: { status: 'todo', driver: 'actor-abc' },
+							updated: { status: 'in_progress', driver: 'actor-abc' },
+						},
+					},
+				],
 			]
 			mockResults.insert = []
 
@@ -280,7 +287,14 @@ describe('TriggerRunner', () => {
 			})
 			mockResults.selectQueue = [
 				[trigger],
-				[{ data: { previous: { status: 'todo', driver: 'actor-xyz' }, updated: { status: 'in_progress', driver: 'actor-xyz' } } }],
+				[
+					{
+						data: {
+							previous: { status: 'todo', driver: 'actor-xyz' },
+							updated: { status: 'in_progress', driver: 'actor-xyz' },
+						},
+					},
+				],
 			]
 
 			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
@@ -293,11 +307,22 @@ describe('TriggerRunner', () => {
 			const trigger = buildTrigger({
 				workspaceId: 'ws-1',
 				type: 'event',
-				config: { entity_type: 'task', action: 'status_changed', filter: { 'metadata.decision_type': 'ux' } },
+				config: {
+					entity_type: 'task',
+					action: 'status_changed',
+					filter: { 'metadata.decision_type': 'ux' },
+				},
 			})
 			mockResults.selectQueue = [
 				[trigger],
-				[{ data: { previous: { status: 'todo', metadata: null }, updated: { status: 'in_progress', metadata: null } } }],
+				[
+					{
+						data: {
+							previous: { status: 'todo', metadata: null },
+							updated: { status: 'in_progress', metadata: null },
+						},
+					},
+				],
 			]
 
 			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
@@ -338,7 +363,14 @@ describe('TriggerRunner', () => {
 			// Both conditions match
 			mockResults.selectQueue = [
 				[trigger],
-				[{ data: { previous: { status: 'todo', driver: 'actor-abc' }, updated: { status: 'in_progress', driver: 'actor-abc' } } }],
+				[
+					{
+						data: {
+							previous: { status: 'todo', driver: 'actor-abc' },
+							updated: { status: 'in_progress', driver: 'actor-abc' },
+						},
+					},
+				],
 			]
 			mockResults.insert = []
 
