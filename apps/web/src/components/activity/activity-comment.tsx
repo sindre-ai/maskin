@@ -138,14 +138,19 @@ function CommentRow({
 					)}
 				</div>
 				<div className="flex-1 min-w-0">
-					<div className="flex items-baseline gap-1.5 flex-wrap">
-						{nameEl}
-						<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
-						{isDecisionPoint && (
-							<span className="text-[10px] font-medium leading-none px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground">
-								Needs you
-							</span>
-						)}
+					<div className="flex items-baseline gap-2">
+						<div className="flex-1 min-w-0 flex items-baseline gap-1.5 flex-wrap">
+							{nameEl}
+							{isDecisionPoint && (
+								<span className="text-[10px] font-medium leading-none px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground">
+									Needs you
+								</span>
+							)}
+						</div>
+						<RelativeTime
+							date={event.createdAt}
+							className="text-muted-foreground text-xs font-mono tabular-nums w-14 shrink-0 text-right"
+						/>
 					</div>
 					<MarkdownContent
 						content={content}
