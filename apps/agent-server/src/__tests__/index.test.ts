@@ -14,6 +14,7 @@ function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 		AGENT_SESSION_ROOT: '/tmp/agent-server-test',
 		S3_REGION: 'us-east-1',
 		WARM_POOL_REFRESH_MINUTES: 0,
+		BROWSER_SIDECAR_IMAGE: 'browser-sidecar:latest',
 		SESSION_MAX_DURATION: '8h',
 		...overrides,
 	}
@@ -318,6 +319,141 @@ describe('POST /sessions validation', () => {
 			}),
 		})
 		expect(res.status).toBe(400)
+	})
+})
+
+describe('POST /sessions browserRequired wiring', () => {
+	function makeSidecarAwareRunner(opts: { sidecarIp?: string | null } = {}) {
+		const calls: Array<{ args: readonly string[] }> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push({ args })
+			if (args[0] === '--version') return { stdout: 'microsandbox 0.5.4', stderr: '' }
+			if (args[0] === 'list') {
+				const sessionId = calls
+					.map((c) => (c.args[0] === 'create' ? c.args[c.args.indexOf('--name') + 1] : null))
+					.filter((x): x is string => x !== null)
+					.pop()
+				return {
+					stdout: JSON.stringify(sessionId ? [{ name: sessionId, status: 'Running' }] : []),
+					stderr: '',
+				}
+			}
+			if (args[0] === 'inspect') {
+				return opts.sidecarIp === null
+					? { stdout: 'Loopback: 127.0.0.1\n', stderr: '' }
+					: { stdout: `IP: ${opts.sidecarIp ?? '10.42.0.7'}\n`, stderr: '' }
+			}
+			return { stdout: '', stderr: '' }
+		}
+		return { run, calls }
+	}
+
+	it('provisions a sidecar, injects BROWSER_CDP_URL, and adds allow@private when browserRequired=true', async () => {
+		const { run, calls } = makeSidecarAwareRunner({ sidecarIp: '10.42.0.7' })
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-betqa1',
+				image: 'maskin/agent-base:latest',
+				env: {},
+				browserRequired: true,
+			}),
+		})
+		expect(res.status).toBe(201)
+
+		const creates = calls.filter((c) => c.args[0] === 'create')
+		const sidecarCreate = creates.find((c) => c.args.includes('anko-browser-sess-betqa1'))
+		const sessionCreate = creates.find((c) => c.args.includes('sess-betqa1'))
+		expect(sidecarCreate).toBeDefined()
+		expect(sessionCreate).toBeDefined()
+		// Session VM must carry --net-rule allow@private so it can reach the sidecar.
+		expect(sessionCreate?.args).toContain('allow@private')
+		// Session VM env must include BROWSER_CDP_URL pointing at the sidecar IP.
+		const envFlags =
+			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
+		expect(envFlags).toContain('BROWSER_CDP_URL=ws://10.42.0.7:9222')
+	})
+
+	it('provisions no sidecar, injects no BROWSER_CDP_URL, and omits allow@private when browserRequired is absent', async () => {
+		const { run, calls } = makeSidecarAwareRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-plain',
+				image: 'maskin/agent-base:latest',
+				env: {},
+			}),
+		})
+		expect(res.status).toBe(201)
+
+		const creates = calls.filter((c) => c.args[0] === 'create')
+		expect(creates.some((c) => c.args.some((a) => a.startsWith('anko-browser-')))).toBe(false)
+		const sessionCreate = creates.find((c) => c.args.includes('sess-plain'))
+		expect(sessionCreate?.args).not.toContain('allow@private')
+		const envFlags =
+			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
+		expect(envFlags.some((e) => e.startsWith('BROWSER_CDP_URL='))).toBe(false)
+	})
+
+	it('still spawns the session (without BROWSER_CDP_URL) when sidecar provisioning fails', async () => {
+		// Inspect returns no reachable IP → provisionBrowserSidecar returns null.
+		const { run, calls } = makeSidecarAwareRunner({ sidecarIp: null })
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-betqa2',
+				image: 'maskin/agent-base:latest',
+				env: {},
+				browserRequired: true,
+			}),
+		})
+		expect(res.status).toBe(201)
+
+		const sessionCreate = calls
+			.filter((c) => c.args[0] === 'create')
+			.find((c) => c.args.includes('sess-betqa2'))
+		expect(sessionCreate).toBeDefined()
+		// Sidecar failed → no allow@private rule, no BROWSER_CDP_URL injected.
+		expect(sessionCreate?.args).not.toContain('allow@private')
+		const envFlags =
+			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
+		expect(envFlags.some((e) => e.startsWith('BROWSER_CDP_URL='))).toBe(false)
 	})
 })
 
