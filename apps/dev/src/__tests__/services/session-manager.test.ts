@@ -380,6 +380,7 @@ describe('SessionManager', () => {
 
 		beforeEach(() => {
 			vi.clearAllMocks()
+			manager.setBrowserSidecarBuildContext('/repo/docker/browser-sidecar')
 		})
 
 		it('provisions a browser sidecar when browserRequired is true (AC-T1 Docker leg)', async () => {
@@ -404,7 +405,11 @@ describe('SessionManager', () => {
 
 			await manager.startSession(session.id)
 
-			expect(mockContainerManager.pullImage).toHaveBeenCalledWith('browser-sidecar:latest')
+			expect(mockContainerManager.ensureImage).toHaveBeenCalledWith(
+				'browser-sidecar:latest',
+				'/repo/docker/browser-sidecar',
+			)
+			expect(mockContainerManager.pullImage).not.toHaveBeenCalled()
 			expect(mockContainerManager.createNetwork).toHaveBeenCalled()
 
 			const browserCreateCall = mockContainerManager.create.mock.calls[0]?.[0] as Record<
@@ -447,6 +452,7 @@ describe('SessionManager', () => {
 
 			await manager.startSession(session.id)
 
+			expect(mockContainerManager.ensureImage).not.toHaveBeenCalled()
 			expect(mockContainerManager.pullImage).not.toHaveBeenCalled()
 			expect(mockContainerManager.createNetwork).not.toHaveBeenCalled()
 
@@ -487,7 +493,10 @@ describe('SessionManager', () => {
 
 			await manager.startSession(session.id)
 
-			expect(mockContainerManager.pullImage).toHaveBeenCalledWith('browser-sidecar:latest')
+			expect(mockContainerManager.ensureImage).toHaveBeenCalledWith(
+				'browser-sidecar:latest',
+				'/repo/docker/browser-sidecar',
+			)
 			const agentCreateCall = mockContainerManager.create.mock.calls[1]?.[0] as {
 				env: Record<string, string>
 				networkMode?: string

@@ -157,6 +157,8 @@ export class SessionManager extends EventEmitter {
 	private static readonly SIDECAR_TEARDOWN_SLA_MS = 60_000
 	private static readonly SIDECAR_TEARDOWN_POLL_INTERVAL_MS = 500
 	private agentBaseBuildContext: string | null = null
+	private browserSidecarBuildContext: string | null = null
+	private browserSidecarImageReady: Promise<void> | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 	private dispatchQueue: SessionDispatchQueue | null = null
 	/**
@@ -178,6 +180,14 @@ export class SessionManager extends EventEmitter {
 
 	setAgentBaseBuildContext(buildContext: string) {
 		this.agentBaseBuildContext = buildContext
+	}
+
+	setBrowserSidecarBuildContext(buildContext: string) {
+		this.browserSidecarBuildContext = buildContext
+	}
+
+	warmBrowserSidecarImage(): Promise<void> {
+		return this.prepareBrowserSidecarImage()
 	}
 
 	/**
@@ -2117,7 +2127,7 @@ export class SessionManager extends EventEmitter {
 		const image = process.env.BROWSER_SIDECAR_IMAGE ?? 'browser-sidecar:latest'
 
 		try {
-			await this.containers.pullImage(image)
+			await this.prepareBrowserSidecarImage()
 			await this.containers.createNetwork(networkName)
 
 			browserContainerId = await this.containers.create({
@@ -2183,6 +2193,25 @@ export class SessionManager extends EventEmitter {
 
 			return null
 		}
+	}
+
+	private prepareBrowserSidecarImage(): Promise<void> {
+		if (!this.browserSidecarImageReady) {
+			this.browserSidecarImageReady = this.buildOrPullBrowserSidecarImage().catch((err) => {
+				this.browserSidecarImageReady = null
+				throw err
+			})
+		}
+		return this.browserSidecarImageReady
+	}
+
+	private async buildOrPullBrowserSidecarImage(): Promise<void> {
+		const image = process.env.BROWSER_SIDECAR_IMAGE ?? 'browser-sidecar:latest'
+		if (image === 'browser-sidecar:latest' && this.browserSidecarBuildContext) {
+			await this.containers.ensureImage(image, this.browserSidecarBuildContext)
+			return
+		}
+		await this.containers.pullImage(image)
 	}
 
 	/**

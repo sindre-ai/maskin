@@ -85,25 +85,6 @@ try {
 		error: err instanceof Error ? err.message : String(err),
 	})
 }
-if (
-	!process.env.BROWSER_SIDECAR_IMAGE ||
-	process.env.BROWSER_SIDECAR_IMAGE === 'browser-sidecar:latest'
-) {
-	try {
-		await containers.ensureImage(
-			'browser-sidecar:latest',
-			path.resolve(import.meta.dirname ?? __dirname, '../../../docker/browser-sidecar'),
-		)
-	} catch (err) {
-		logger.error(
-			'Failed to build browser-sidecar image — browser sessions will run without browser',
-			{
-				error: err instanceof Error ? err.message : String(err),
-			},
-		)
-	}
-}
-
 const agentStorage = new AgentStorageManager(storageProvider, db)
 
 const runtimeTelemetry = new RuntimeTelemetry({
@@ -114,6 +95,9 @@ const runtimeTelemetry = new RuntimeTelemetry({
 const sessionManager = new SessionManager(db, storageProvider, runtimeTelemetry)
 sessionManager.setAgentBaseBuildContext(
 	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
+)
+sessionManager.setBrowserSidecarBuildContext(
+	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/browser-sidecar'),
 )
 runtimeTelemetry.startGaugeLoop(() => sessionManager.getConcurrencyByAgentServer())
 
@@ -245,6 +229,11 @@ ${mcpSetup}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `
 	process.stdout.write(banner)
+	sessionManager.warmBrowserSidecarImage().catch((err) => {
+		logger.error('Failed to prepare browser-sidecar image; browser sessions will retry on demand', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+	})
 })
 
 export default app
