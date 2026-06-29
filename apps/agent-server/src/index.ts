@@ -446,6 +446,7 @@ export function buildApp(deps: AppDeps): Hono {
 		if (body.browserRequired === true) {
 			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 16), deps.msb, {
 				image: deps.env.BROWSER_SIDECAR_IMAGE,
+				bridgeGateway: deps.env.MSB_BRIDGE_GATEWAY,
 			})
 			if (browserSidecar) {
 				sessionEnv.BROWSER_CDP_URL = browserSidecar.cdpUrl

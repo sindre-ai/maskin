@@ -1,5 +1,7 @@
 import { execFile as execFileCb, spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
+import { get as httpGet } from 'node:http'
+import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { logger } from '../lib/logger'
@@ -54,19 +56,24 @@ const PRIVATE_NET_RULE = 'allow@private'
 // registry tag published by the browser-sidecar Docker workflow.
 const DEFAULT_BROWSER_SIDECAR_IMAGE = 'browser-sidecar:latest'
 
-// CDP listener inside the browser-sidecar container.
-const BROWSER_CDP_PORT = 9222
+// CDP listener inside the browser-sidecar container (socat bridge target).
+const BROWSER_CDP_GUEST_PORT = 9222
 
-// Brief settle before we hand the CDP URL to the agent — Chromium's listener
-// binds a beat after the VM reports Running.
-const BROWSER_SIDECAR_SETTLE_MS = 2_000
+// Host-side bridge gateway that session VMs reach via allow@private.
+// msb assigns the bridge host 10.0.1.1 by default; override via env when
+// running a custom msb network config.
+const DEFAULT_BRIDGE_GATEWAY = '10.0.1.1'
 
 // Bigger memory budget than a session VM: Xvfb + headed Chromium is heavier
 // than the agent-base image and Chromium tabs eat into the budget fast.
 const BROWSER_SIDECAR_MEMORY_MIB = 1536
 const BROWSER_SIDECAR_CPUS = 1
 const BROWSER_SIDECAR_CREATE_TIMEOUT_MS = 90_000
-const BROWSER_SIDECAR_INSPECT_TIMEOUT_MS = 5_000
+
+// CDP polling: how long to wait for Chrome/socat to accept connections after
+// `msb exec` starts the sidecar entrypoint.
+const BROWSER_SIDECAR_CDP_POLL_TIMEOUT_MS = 30_000
+const BROWSER_SIDECAR_CDP_POLL_INTERVAL_MS = 500
 
 // AC-T5: cap how long `cleanupBrowserSidecar` waits for `msb list` to stop
 // reporting the sidecar after `msb remove -f`. `remove -f` should be
@@ -129,6 +136,10 @@ export type MicrosandboxDeps = {
 	run?: CommandRunner
 	sleep?: (ms: number) => Promise<void>
 	now?: () => number
+	// Overrideable in tests: allocate a free TCP port on the given bind address.
+	findPort?: (host: string) => Promise<number>
+	// Overrideable in tests: wait for the CDP endpoint to accept connections.
+	cdpPollReady?: (port: number) => Promise<void>
 }
 
 export function assertValidSessionId(sessionId: string): void {
@@ -460,47 +471,75 @@ export async function readMsbVersion(deps: { msbBin: string; run?: CommandRunner
 	}
 }
 
-// IPv4 dotted-quad — what we expect to see in `msb inspect` output for a
-// microVM on the msb bridge network. Used to find the sidecar's address
-// without binding to a specific JSON shape (which has drifted between msb
-// versions and is not part of any stable contract).
-const IPV4_RE =
-	/\b(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b/
-
-// Loopback and link-local ranges that show up in `msb inspect` output but are
-// not the bridge-routable address we want for sidecar-to-session traffic.
-function isReachableBridgeIp(ip: string): boolean {
-	if (ip.startsWith('127.') || ip === '0.0.0.0') return false
-	if (ip.startsWith('169.254.')) return false
-	return true
-}
-
-export type SandboxInspection = {
-	ip: string
+/**
+ * Allocate a free TCP port on a host bind address. Used to pick the host-side
+ * port for `msb create -p <bridgeGateway>:<port>:9222` so CDP is reachable
+ * from the agent session VM without publishing it on every host interface.
+ */
+function findFreeHostPort(host: string): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const srv = createServer()
+		srv.listen(0, host, () => {
+			const addr = srv.address()
+			srv.close(() => {
+				if (addr && typeof addr === 'object') resolve(addr.port)
+				else reject(new Error('could not determine free host port'))
+			})
+		})
+		srv.on('error', reject)
+	})
 }
 
 /**
- * Resolve a running sandbox's bridge IP via `msb inspect <name>`. msb's
- * inspect output is not a stable JSON contract across versions, so we scan
- * for the first reachable IPv4 address rather than parsing a known shape —
- * loopback (`127.x`) and link-local (`169.254.x`) addresses are skipped so we
- * don't hand the session a self-pointing URL.
+ * Fire-and-forget `msb exec <name>` to start the browser sidecar entrypoint
+ * (Xvfb + Chromium + socat). `msb create` boots the VM but does NOT execute
+ * CMD/ENTRYPOINT — `msb exec` is required. Mirrors `launchSessionExec`.
  */
-export async function inspectSandbox(
-	name: string,
-	deps: MicrosandboxDeps,
-): Promise<SandboxInspection> {
+function launchSidecarExec(name: string, deps: MicrosandboxDeps): void {
 	assertValidSessionId(name)
-	const run = deps.run ?? defaultRunner()
-	const { stdout } = await run(deps.msbBin, ['inspect', name], {
-		timeoutMs: BROWSER_SIDECAR_INSPECT_TIMEOUT_MS,
+	const proc = spawn(deps.msbBin, ['exec', name], {
+		stdio: 'ignore',
 	})
-	const matches = stdout.match(new RegExp(IPV4_RE.source, 'g')) ?? []
-	const ip = matches.find(isReachableBridgeIp)
-	if (!ip) {
-		throw new Error(`msb inspect ${name}: no reachable bridge IP found`)
+	proc.on('error', (err) => {
+		logger.error('browser sidecar exec spawn error', { name, error: String(err) })
+	})
+	proc.on('close', (code, sig) => {
+		logger.info('browser sidecar exec process exited', { name, code, signal: sig })
+	})
+	proc.unref()
+}
+
+/**
+ * Poll `http://<host>:<port>/json/version` until Chrome's CDP endpoint
+ * responds with HTTP 200, or the timeout elapses. Called after `msb exec`
+ * starts the sidecar entrypoint so we don't hand a CDP URL to the session
+ * before socat is forwarding connections.
+ */
+async function defaultPollCdpReady(
+	host: string,
+	port: number,
+	deps: { sleep: (ms: number) => Promise<void>; now: () => number },
+): Promise<void> {
+	const deadline = deps.now() + BROWSER_SIDECAR_CDP_POLL_TIMEOUT_MS
+	while (deps.now() < deadline) {
+		const ready = await new Promise<boolean>((resolve) => {
+			const req = httpGet(`http://${host}:${port}/json/version`, (res) => {
+				res.on('error', () => resolve(false))
+				resolve(res.statusCode === 200)
+				res.resume()
+			})
+			req.on('error', () => resolve(false))
+			req.setTimeout(1_000, () => {
+				req.destroy()
+				resolve(false)
+			})
+		})
+		if (ready) return
+		await deps.sleep(BROWSER_SIDECAR_CDP_POLL_INTERVAL_MS)
 	}
-	return { ip }
+	throw new Error(
+		`CDP endpoint on ${host}:${port} did not become ready within ${BROWSER_SIDECAR_CDP_POLL_TIMEOUT_MS}ms`,
+	)
 }
 
 export type BrowserSidecar = {
@@ -509,28 +548,42 @@ export type BrowserSidecar = {
 }
 
 /**
- * Provision a Chromium-only sidecar microVM running `browser-sidecar`
- * for browser-enabled sessions. Returns the sidecar name and a `ws://<ip>:9222` CDP
- * URL the session VM can hand to `@playwright/mcp`. The session VM must be
- * spawned with `allowPrivateNet: true` for the bridge address to be reachable.
+ * Provision a Chromium-only sidecar microVM running `browser-sidecar` for
+ * browser-enabled sessions. Returns the sidecar name and a CDP URL the session
+ * VM can hand to `@playwright/mcp`.
  *
- * Returns `null` on any failure — the caller falls back to a session without
- * browser capability and reports the instrumentation gap. We never throw past
- * the session boundary: a failed sidecar must not take down an otherwise-fine
- * session, only the browser step the agent would have run.
+ * Strategy: forward a bridge-only host TCP port to guest port 9222
+ * (`-p <bridgeGateway>:<port>:9222`), then fire `msb exec` to start the entrypoint.
+ * `msb create` boots the VM but does NOT run CMD/ENTRYPOINT — `msb exec` is
+ * required. The session VM reaches the CDP endpoint at `ws://<bridgeGateway>:<port>`
+ * via `allow@private`, since the bridge gateway is a private RFC1918 address.
+ *
+ * Returns `null` on any failure — the caller falls back without browser
+ * capability. We never throw past the session boundary.
  */
 export async function provisionBrowserSidecar(
 	prefix: string,
 	deps: MicrosandboxDeps,
-	options: { settleMs?: number; image?: string } = {},
+	options: { image?: string; bridgeGateway?: string } = {},
 ): Promise<BrowserSidecar | null> {
 	const name = `anko-browser-${prefix}`
 	assertValidSessionId(name)
 	const run = deps.run ?? defaultRunner()
 	const sleep = deps.sleep ?? defaultSleep
 	const now = deps.now ?? Date.now
-	const settleMs = options.settleMs ?? BROWSER_SIDECAR_SETTLE_MS
+	const findPort = deps.findPort ?? findFreeHostPort
 	const image = options.image ?? DEFAULT_BROWSER_SIDECAR_IMAGE
+	const bridgeGateway = options.bridgeGateway ?? DEFAULT_BRIDGE_GATEWAY
+	const pollReady =
+		deps.cdpPollReady ?? ((port) => defaultPollCdpReady(bridgeGateway, port, { sleep, now }))
+
+	let hostPort: number
+	try {
+		hostPort = await findPort(bridgeGateway)
+	} catch (err) {
+		logger.error('browser sidecar: failed to allocate host port', { name, error: String(err) })
+		return null
+	}
 
 	const createArgs: string[] = [
 		'create',
@@ -543,8 +596,11 @@ export async function provisionBrowserSidecar(
 		'--pull',
 		'always',
 		'--quiet',
-		// Sidecar reaches public IPs (Chromium fetches its own assets in some
-		// flows) and DNS, but no other rules — it does NOT need allow@host.
+		// Forward a bridge-only host port to guest CDP port so the session VM can
+		// reach Chrome without exposing unauthenticated CDP on public interfaces.
+		'-p',
+		`${bridgeGateway}:${hostPort}:${BROWSER_CDP_GUEST_PORT}`,
+		// Sidecar needs public egress (Chromium asset fetches) and DNS.
 		'--net-rule',
 		PUBLIC_EGRESS_RULE,
 		'--net-rule',
@@ -580,21 +636,25 @@ export async function provisionBrowserSidecar(
 		return null
 	}
 
-	// Chromium's CDP listener binds a beat after the VM reports Running.
-	await sleep(settleMs)
+	// Start the entrypoint (Xvfb + Chromium + socat). `msb create` boots the
+	// VM kernel but does NOT execute ENTRYPOINT/CMD — `msb exec` is required.
+	launchSidecarExec(name, deps)
 
-	let inspection: SandboxInspection
 	try {
-		inspection = await inspectSandbox(name, deps)
+		await pollReady(hostPort)
 	} catch (err) {
-		logger.error('browser sidecar inspect failed', { name, error: String(err) })
+		logger.error('browser sidecar CDP did not become ready', {
+			name,
+			port: hostPort,
+			error: String(err),
+		})
 		await run(deps.msbBin, ['remove', '-f', '--quiet', name], {
 			timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS,
 		}).catch(() => {})
 		return null
 	}
 
-	const cdpUrl = `ws://${inspection.ip}:${BROWSER_CDP_PORT}`
+	const cdpUrl = `ws://${bridgeGateway}:${hostPort}`
 	logger.info('browser sidecar started', { name, cdpUrl })
 	return { name, cdpUrl }
 }

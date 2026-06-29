@@ -8,7 +8,6 @@ import {
 	cleanupBrowserSidecar,
 	ensureSessionSkeleton,
 	formatOverflowEnvFile,
-	inspectSandbox,
 	provisionBrowserSidecar,
 	removeSandbox,
 	sanitizeEnvForMicroVM,
@@ -573,69 +572,44 @@ describe('waitForCompletion', () => {
 	})
 })
 
-describe('inspectSandbox', () => {
-	const msbBin = '/usr/local/bin/msb'
-
-	it('returns the first reachable bridge IP from msb inspect output', async () => {
-		const run = async (): Promise<{ stdout: string; stderr: string }> => ({
-			// msb inspect's output shape isn't a stable contract — the parser scans
-			// for an IPv4, skipping loopback. This fixture mixes both so we know the
-			// scan picks the right one.
-			stdout: 'Name: anko-browser-abc12345\nLoopback: 127.0.0.1\nIP: 10.42.0.7\nStatus: Running\n',
-			stderr: '',
-		})
-		const result = await inspectSandbox('anko-browser-abc12345', { msbBin, run })
-		expect(result).toEqual({ ip: '10.42.0.7' })
-	})
-
-	it('throws when the inspect output exposes no reachable bridge IP', async () => {
-		const run = async (): Promise<{ stdout: string; stderr: string }> => ({
-			stdout: 'Name: anko-browser-empty\nLoopback: 127.0.0.1\nLinkLocal: 169.254.10.10\n',
-			stderr: '',
-		})
-		await expect(inspectSandbox('anko-browser-empty', { msbBin, run })).rejects.toThrow(
-			/no reachable bridge IP/,
-		)
-	})
-})
-
 describe('provisionBrowserSidecar', () => {
 	const msbBin = '/usr/local/bin/msb'
 
-	it('creates the sidecar VM, waits for Running, inspects the IP, returns the CDP URL', async () => {
+	it('creates the sidecar VM, waits for Running, launches exec, polls CDP, returns the URL', async () => {
 		const calls: Array<readonly string[]> = []
 		const run = async (
 			_bin: string,
 			args: readonly string[],
 		): Promise<{ stdout: string; stderr: string }> => {
 			calls.push(args)
-			const verb = args[0]
-			if (verb === 'list') {
+			if (args[0] === 'list') {
 				return {
 					stdout: JSON.stringify([{ name: 'anko-browser-deadbeef', status: 'Running' }]),
 					stderr: '',
 				}
 			}
-			if (verb === 'inspect') {
-				return { stdout: 'IP: 10.42.0.42\n', stderr: '' }
-			}
 			return { stdout: '', stderr: '' }
 		}
-		const sidecar = await provisionBrowserSidecar(
-			'deadbeef',
-			{ msbBin, run, sleep: async () => {}, now: () => 0 },
-			{ settleMs: 0 },
-		)
+		const sidecar = await provisionBrowserSidecar('deadbeef', {
+			msbBin,
+			run,
+			sleep: async () => {},
+			now: () => 0,
+			findPort: async () => 39222,
+			cdpPollReady: async () => {},
+		})
 		expect(sidecar).toEqual({
 			name: 'anko-browser-deadbeef',
-			cdpUrl: 'ws://10.42.0.42:9222',
+			cdpUrl: 'ws://10.0.1.1:39222',
 		})
 		const verbs = calls.map((c) => c[0])
 		expect(verbs).toContain('create')
 		expect(verbs).toContain('list')
-		expect(verbs).toContain('inspect')
-		// The create args must reference the default sidecar image as the trailing token.
+		expect(verbs).not.toContain('inspect')
+		// create args must include port forwarding and the default image.
 		const createCall = calls.find((c) => c[0] === 'create')
+		expect(createCall).toContain('-p')
+		expect(createCall).toContain('10.0.1.1:39222:9222')
 		expect(createCall?.at(-1)).toBe('browser-sidecar:latest')
 	})
 
@@ -652,21 +626,58 @@ describe('provisionBrowserSidecar', () => {
 					stderr: '',
 				}
 			}
-			if (args[0] === 'inspect') {
-				return { stdout: 'IP: 10.42.0.43\n', stderr: '' }
-			}
 			return { stdout: '', stderr: '' }
 		}
 
 		const sidecar = await provisionBrowserSidecar(
 			'custom1',
-			{ msbBin, run, sleep: async () => {}, now: () => 0 },
-			{ settleMs: 0, image: 'maskin/browser-sidecar:latest' },
+			{
+				msbBin,
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: async () => 39222,
+				cdpPollReady: async () => {},
+			},
+			{ image: 'maskin/browser-sidecar:latest' },
 		)
 
-		expect(sidecar?.cdpUrl).toBe('ws://10.42.0.43:9222')
+		expect(sidecar?.cdpUrl).toBe('ws://10.0.1.1:39222')
 		const createCall = calls.find((c) => c[0] === 'create')
 		expect(createCall?.at(-1)).toBe('maskin/browser-sidecar:latest')
+	})
+
+	it('uses a configured bridge gateway when provided', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'list')
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-gw00001', status: 'Running' }]),
+					stderr: '',
+				}
+			return { stdout: '', stderr: '' }
+		}
+
+		const sidecar = await provisionBrowserSidecar(
+			'gw00001',
+			{
+				msbBin,
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: async () => 40000,
+				cdpPollReady: async () => {},
+			},
+			{ bridgeGateway: '192.168.100.1' },
+		)
+
+		expect(sidecar?.cdpUrl).toBe('ws://192.168.100.1:40000')
+		const createCall = calls.find((c) => c[0] === 'create')
+		expect(createCall).toContain('192.168.100.1:40000:9222')
 	})
 
 	it('returns null and removes the half-built VM when msb create fails', async () => {
@@ -681,16 +692,19 @@ describe('provisionBrowserSidecar', () => {
 			}
 			return { stdout: '', stderr: '' }
 		}
-		const sidecar = await provisionBrowserSidecar(
-			'failcre8',
-			{ msbBin, run, sleep: async () => {}, now: () => 0 },
-			{ settleMs: 0 },
-		)
+		const sidecar = await provisionBrowserSidecar('failcre8', {
+			msbBin,
+			run,
+			sleep: async () => {},
+			now: () => 0,
+			findPort: async () => 39222,
+			cdpPollReady: async () => {},
+		})
 		expect(sidecar).toBeNull()
 		expect(calls.map((c) => c[0])).toEqual(['create', 'remove'])
 	})
 
-	it('returns null and removes the VM when the inspect step cannot find an IP', async () => {
+	it('returns null and removes the VM when CDP polling times out', async () => {
 		const calls: Array<readonly string[]> = []
 		const run = async (
 			_bin: string,
@@ -699,20 +713,22 @@ describe('provisionBrowserSidecar', () => {
 			calls.push(args)
 			if (args[0] === 'list') {
 				return {
-					stdout: JSON.stringify([{ name: 'anko-browser-noip0000', status: 'Running' }]),
+					stdout: JSON.stringify([{ name: 'anko-browser-nocdp000', status: 'Running' }]),
 					stderr: '',
 				}
 			}
-			if (args[0] === 'inspect') {
-				return { stdout: 'Loopback: 127.0.0.1\n', stderr: '' }
-			}
 			return { stdout: '', stderr: '' }
 		}
-		const sidecar = await provisionBrowserSidecar(
-			'noip0000',
-			{ msbBin, run, sleep: async () => {}, now: () => 0 },
-			{ settleMs: 0 },
-		)
+		const sidecar = await provisionBrowserSidecar('nocdp000', {
+			msbBin,
+			run,
+			sleep: async () => {},
+			now: () => 0,
+			findPort: async () => 39222,
+			cdpPollReady: async () => {
+				throw new Error('CDP not ready within timeout')
+			},
+		})
 		expect(sidecar).toBeNull()
 		expect(calls.map((c) => c[0])).toContain('remove')
 	})

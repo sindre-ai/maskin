@@ -15,6 +15,7 @@ function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 		S3_REGION: 'us-east-1',
 		WARM_POOL_REFRESH_MINUTES: 0,
 		BROWSER_SIDECAR_IMAGE: 'browser-sidecar:latest',
+		MSB_BRIDGE_GATEWAY: '10.0.1.1',
 		SESSION_MAX_DURATION: '8h',
 		...overrides,
 	}
@@ -323,7 +324,7 @@ describe('POST /sessions validation', () => {
 })
 
 describe('POST /sessions browserRequired wiring', () => {
-	function makeSidecarAwareRunner(opts: { sidecarIp?: string | null } = {}) {
+	function makeSidecarAwareRunner(opts: { cdpFail?: boolean } = {}) {
 		const calls: Array<{ args: readonly string[] }> = []
 		const run = async (
 			_bin: string,
@@ -341,23 +342,30 @@ describe('POST /sessions browserRequired wiring', () => {
 					stderr: '',
 				}
 			}
-			if (args[0] === 'inspect') {
-				return opts.sidecarIp === null
-					? { stdout: 'Loopback: 127.0.0.1\n', stderr: '' }
-					: { stdout: `IP: ${opts.sidecarIp ?? '10.42.0.7'}\n`, stderr: '' }
-			}
 			return { stdout: '', stderr: '' }
 		}
-		return { run, calls }
+		const cdpPollReady = opts.cdpFail
+			? async () => {
+					throw new Error('CDP not ready')
+				}
+			: async () => {}
+		return { run, calls, cdpPollReady }
 	}
 
 	it('provisions a sidecar, injects BROWSER_CDP_URL, and adds allow@private when browserRequired=true', async () => {
-		const { run, calls } = makeSidecarAwareRunner({ sidecarIp: '10.42.0.7' })
+		const { run, cdpPollReady, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
 			env,
 			storage: null,
-			msb: { msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+			msb: {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: async () => 39222,
+				cdpPollReady,
+			},
 		})
 
 		const res = await app.request('/sessions', {
@@ -382,19 +390,26 @@ describe('POST /sessions browserRequired wiring', () => {
 		expect(sessionCreate).toBeDefined()
 		// Session VM must carry --net-rule allow@private so it can reach the sidecar.
 		expect(sessionCreate?.args).toContain('allow@private')
-		// Session VM env must include BROWSER_CDP_URL pointing at the sidecar IP.
+		// Session VM env must include BROWSER_CDP_URL using the bridge gateway + forwarded port.
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
-		expect(envFlags).toContain('BROWSER_CDP_URL=ws://10.42.0.7:9222')
+		expect(envFlags).toContain('BROWSER_CDP_URL=ws://10.0.1.1:39222')
 	})
 
 	it('provisions no sidecar, injects no BROWSER_CDP_URL, and omits allow@private when browserRequired is absent', async () => {
-		const { run, calls } = makeSidecarAwareRunner()
+		const { run, cdpPollReady, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
 			env,
 			storage: null,
-			msb: { msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+			msb: {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: async () => 39222,
+				cdpPollReady,
+			},
 		})
 
 		const res = await app.request('/sessions', {
@@ -421,13 +436,20 @@ describe('POST /sessions browserRequired wiring', () => {
 	})
 
 	it('still spawns the session (without BROWSER_CDP_URL) when sidecar provisioning fails', async () => {
-		// Inspect returns no reachable IP → provisionBrowserSidecar returns null.
-		const { run, calls } = makeSidecarAwareRunner({ sidecarIp: null })
+		// CDP poll times out → provisionBrowserSidecar returns null.
+		const { run, cdpPollReady, calls } = makeSidecarAwareRunner({ cdpFail: true })
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
 			env,
 			storage: null,
-			msb: { msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+			msb: {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: async () => 39222,
+				cdpPollReady,
+			},
 		})
 
 		const res = await app.request('/sessions', {
