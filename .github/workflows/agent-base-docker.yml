@@ -34,6 +34,39 @@ jobs:
             type=raw,value=latest
             type=sha,format=short
 
+      # Resolve the SHAs the image is pinned to. MASKIN_REF is the SHA that
+      # triggered this build (GITHUB_SHA on the push event to main). SKJALD_REF
+      # comes from the skjald repo's main HEAD at build time so the baked
+      # node_modules matches whatever a sibling skjald session would resolve to.
+      - name: Resolve repo refs
+        id: refs
+        env:
+          SKJALD_TOKEN: ${{ secrets.SKJALD_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          maskin_ref="${GITHUB_SHA}"
+          skjald_ref=$(curl -fsSL \
+            -H "Authorization: Bearer ${SKJALD_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/sindre-ai/skjald/branches/main \
+            | jq -r '.commit.sha')
+          if [ -z "$skjald_ref" ] || [ "$skjald_ref" = "null" ]; then
+            echo "Failed to resolve skjald main SHA" >&2
+            exit 1
+          fi
+          echo "maskin_ref=${maskin_ref}" >> "$GITHUB_OUTPUT"
+          echo "skjald_ref=${skjald_ref}" >> "$GITHUB_OUTPUT"
+
+      # The skjald clone is private — the token is mounted as a BuildKit
+      # secret so it never reaches an image layer or `.git/config`. The
+      # Dockerfile rewrites the auth-bearing remote URL back to the plain
+      # https form after each clone.
+      - name: Write build secret
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "${{ secrets.SKJALD_READ_TOKEN }}" > "$RUNNER_TEMP/github_token"
+
       - name: Build and push
         id: build
         uses: docker/build-push-action@v6
@@ -44,6 +77,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            MASKIN_REF=${{ steps.refs.outputs.maskin_ref }}
+            SKJALD_REF=${{ steps.refs.outputs.skjald_ref }}
+          secret-files: |
+            github_token=${{ runner.temp }}/github_token
 
       - name: Prune old SHA tags (keep latest 10)
         env:
