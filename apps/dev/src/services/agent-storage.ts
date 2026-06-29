@@ -17,6 +17,29 @@ export function workspaceSkillKey(workspaceId: string, skillId: string): string 
 	return `${WORKSPACE_SKILLS_PREFIX}/${workspaceId}/skills/${skillId}/SKILL.md`
 }
 
+// Internal contract — the dot prefix keeps the index out of casual
+// `ls /agent/skills` listings while still being a stable, well-known path the
+// container's `build_context()` reads verbatim. Renaming this file must move
+// in lockstep with docker/agent-base/agent-run.sh.
+export const WORKSPACE_SKILLS_INDEX_FILE = '.workspace-skills.md'
+
+export function renderWorkspaceSkillsIndex(
+	skills: readonly { name: string; description: string | null }[],
+): string {
+	const lines = [
+		'## Skills (on-demand)',
+		'',
+		'The workspace skills below are attached to this agent. Only their names and one-line descriptions are loaded into context. Call the `get_workspace_skill(name)` MCP tool to fetch the full SKILL.md body when you need it — the body is cached for the rest of this session, so repeat calls cost nothing.',
+		'',
+	]
+	for (const { name, description } of skills) {
+		const desc = description?.trim() || '(no description)'
+		lines.push(`- **${name}**: ${desc}`)
+	}
+	lines.push('')
+	return lines.join('\n')
+}
+
 export type PullWorkspaceSkillsResult = {
 	pulled: number
 	skipped: number
@@ -333,11 +356,21 @@ export class AgentStorageManager {
 	}
 
 	/**
-	 * Collision rule — agent-local wins unless `overwrite: true`. If a
-	 * `skills/<name>/` folder already exists on disk, the workspace skill for
-	 * that name is skipped so per-agent tweaks survive. On resume we pass
-	 * `overwrite: true` so updated workspace-skill content is re-pulled over
-	 * stale snapshot contents.
+	 * Write a single stub index for the workspace skills attached to this agent
+	 * instead of pulling every SKILL.md body. The full content is fetched
+	 * on-demand via the `get_workspace_skill(name)` MCP tool, which means
+	 * uncalled skills never enter the session's cache-read budget.
+	 *
+	 * Index file: `${localDir}/skills/${WORKSPACE_SKILLS_INDEX_FILE}` —
+	 * a markdown block consumed verbatim by `build_context()` in
+	 * docker/agent-base/agent-run.sh. The format is the internal contract
+	 * between this writer and that reader; both sides must move together.
+	 *
+	 * Collision rule — agent-local wins. If a `skills/<name>/` folder already
+	 * exists on disk (pulled by `pullAgentFiles`), that name is omitted from
+	 * the index so the local SKILL.md remains the canonical source. `overwrite`
+	 * is accepted for resume-path symmetry but no longer affects bodies (there
+	 * are none to overwrite); the index file itself is always rewritten.
 	 */
 	async pullWorkspaceSkillsForAgent(
 		actorId: string,
@@ -348,7 +381,7 @@ export class AgentStorageManager {
 		const rows = await this.db
 			.select({
 				name: workspaceSkills.name,
-				storageKey: workspaceSkills.storageKey,
+				description: workspaceSkills.description,
 			})
 			.from(agentSkills)
 			.innerJoin(workspaceSkills, eq(workspaceSkills.id, agentSkills.workspaceSkillId))
@@ -368,11 +401,10 @@ export class AgentStorageManager {
 		const skillsDir = join(localDir, 'skills')
 		await mkdir(skillsDir, { recursive: true })
 
-		let pulled = 0
+		const indexed: { name: string; description: string | null }[] = []
 		let skipped = 0
-		const failures: { name: string; storageKey: string; error: string }[] = []
 
-		for (const { name, storageKey } of rows) {
+		for (const { name, description } of rows) {
 			const skillFolder = join(skillsDir, name)
 			if (!options.overwrite && (await folderExists(skillFolder))) {
 				skipped++
@@ -383,36 +415,31 @@ export class AgentStorageManager {
 				})
 				continue
 			}
-
-			try {
-				const data = await this.storage.get(storageKey)
-				if (options.overwrite) {
-					await rm(skillFolder, { recursive: true, force: true })
-				}
-				await mkdir(skillFolder, { recursive: true })
-				await writeFile(join(skillFolder, 'SKILL.md'), data)
-				pulled++
-			} catch (err) {
-				logger.error('Failed to pull workspace skill', {
-					actorId,
-					workspaceId,
-					name,
-					storageKey,
-					error: String(err),
-				})
-				failures.push({ name, storageKey, error: String(err) })
-			}
+			indexed.push({ name, description })
 		}
 
-		logger.info('Pulled workspace skills for agent', {
+		// Sort for deterministic snapshot output — caller order from the DB is
+		// stable but explicit sort keeps fixtures readable and review noise low.
+		indexed.sort((a, b) => a.name.localeCompare(b.name))
+
+		const indexPath = join(skillsDir, WORKSPACE_SKILLS_INDEX_FILE)
+		if (indexed.length > 0) {
+			await writeFile(indexPath, renderWorkspaceSkillsIndex(indexed), 'utf-8')
+		} else {
+			// All attached skills had agent-local overrides — no stubs to write.
+			// Remove a stale index from a prior pull so build_context() doesn't
+			// surface withdrawn skills.
+			await rm(indexPath, { force: true })
+		}
+
+		logger.info('Wrote workspace-skill stubs for agent', {
 			actorId,
 			workspaceId,
-			pulled,
+			indexed: indexed.length,
 			skipped,
-			failed: failures.length,
 		})
 
-		return { pulled, skipped, failures }
+		return { pulled: indexed.length, skipped, failures: [] }
 	}
 
 	private async upsertFileRecord(

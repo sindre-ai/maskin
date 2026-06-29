@@ -5,6 +5,7 @@ vi.mock('node:fs/promises', () => ({
 	writeFile: vi.fn().mockResolvedValue(undefined),
 	readFile: vi.fn().mockResolvedValue(Buffer.from('file content')),
 	readdir: vi.fn().mockResolvedValue([]),
+	rm: vi.fn().mockResolvedValue(undefined),
 	stat: vi.fn().mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
 }))
 
@@ -305,72 +306,63 @@ describe('AgentStorageManager', () => {
 		})
 
 		describe('pullWorkspaceSkillsForAgent()', () => {
-			const deployCheckId = '22222222-2222-2222-2222-222222222222'
-			const prReviewId = '33333333-3333-3333-3333-333333333333'
-
-			it('downloads each attached skill into skills/<name>/SKILL.md', async () => {
+			it('writes a stub index containing every attached skill, no SKILL.md bodies', async () => {
+				// AC-T3: CLAUDE.md (via this index) carries N stubs with name +
+				// 1-line description and zero full bodies. We assert the on-disk
+				// index against a fixture and assert no S3 body fetch was issued.
 				mockResults.select = [
-					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, deployCheckId) },
-					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, prReviewId) },
+					{ name: 'deploy-check', description: 'Verify deploy went out cleanly.' },
+					{ name: 'pr-review', description: 'Review an open pull request.' },
 				]
-				storage.get.mockResolvedValue(Buffer.from('body', 'utf-8'))
+
+				const result = await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
+
+				expect(storage.get).not.toHaveBeenCalled()
+				expect(writeFile).toHaveBeenCalledTimes(1)
+				expect(writeFile).toHaveBeenCalledWith(
+					join('/tmp/agent/skills/.workspace-skills.md'),
+					expect.any(String),
+					'utf-8',
+				)
+				const written = vi.mocked(writeFile).mock.calls[0]?.[1] as string
+				expect(written).toMatchSnapshot()
+				// The index references the get_workspace_skill tool by name; the AC
+				// is that no full SKILL.md *body* is inlined. storage.get above is the
+				// authoritative check (no S3 fetch = no body), and we keep the file
+				// short (one bullet per skill) on top.
+				expect(written.length).toBeLessThan(1024)
+				expect(result.pulled).toBe(2)
+				expect(result.skipped).toBe(0)
+				expect(result.failures).toEqual([])
+			})
+
+			it('falls back to (no description) when the skill row has no description', async () => {
+				mockResults.select = [
+					{ name: 'orphan-skill', description: null },
+					{ name: 'blank-skill', description: '   ' },
+				]
 
 				await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
 
-				expect(storage.get).toHaveBeenCalledTimes(2)
-				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, deployCheckId))
-				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, prReviewId))
-				expect(writeFile).toHaveBeenCalledWith(
-					join('/tmp/agent/skills/deploy-check/SKILL.md'),
-					expect.any(Buffer),
-				)
-				expect(writeFile).toHaveBeenCalledWith(
-					join('/tmp/agent/skills/pr-review/SKILL.md'),
-					expect.any(Buffer),
-				)
+				const written = vi.mocked(writeFile).mock.calls[0]?.[1] as string
+				expect(written).toContain('- **blank-skill**: (no description)')
+				expect(written).toContain('- **orphan-skill**: (no description)')
 			})
 
 			it('is a no-op when the agent has no attached skills', async () => {
 				mockResults.select = []
 
-				await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
+				const result = await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
 
 				expect(storage.get).not.toHaveBeenCalled()
 				expect(writeFile).not.toHaveBeenCalled()
+				expect(result.pulled).toBe(0)
 			})
 
-			it('does not throw when an attached skill cannot be pulled from S3', async () => {
-				// A single missing/unreadable skill must NOT block agent startup.
-				// The session continues with whatever skills did load; operators see
-				// the divergence via the per-skill error log written by the manager.
+			it('omits skills whose folder already exists on disk (agent-local wins)', async () => {
 				mockResults.select = [
-					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, deployCheckId) },
-					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, prReviewId) },
-				]
-				storage.get.mockRejectedValueOnce(new Error('NoSuchKey'))
-				storage.get.mockResolvedValueOnce(Buffer.from('body', 'utf-8'))
-
-				const result = await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
-				expect(result.pulled).toBe(1)
-				expect(result.failures).toHaveLength(1)
-				expect(result.failures[0]?.name).toBe('deploy-check')
-
-				// pr-review still gets written
-				expect(writeFile).toHaveBeenCalledWith(
-					join('/tmp/agent/skills/pr-review/SKILL.md'),
-					expect.any(Buffer),
-				)
-				// deploy-check (the failing one) is not written
-				expect(writeFile).not.toHaveBeenCalledWith(
-					join('/tmp/agent/skills/deploy-check/SKILL.md'),
-					expect.any(Buffer),
-				)
-			})
-
-			it('skips skills whose folder already exists on disk (agent-local wins)', async () => {
-				mockResults.select = [
-					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, deployCheckId) },
-					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, prReviewId) },
+					{ name: 'deploy-check', description: 'Verify deploy.' },
+					{ name: 'pr-review', description: 'Review a PR.' },
 				]
 				// deploy-check exists locally, pr-review does not
 				const existingFolder = join('/tmp/agent/skills/deploy-check')
@@ -380,20 +372,14 @@ describe('AgentStorageManager', () => {
 					}
 					throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
 				})
-				storage.get.mockResolvedValue(Buffer.from('body', 'utf-8'))
 
-				await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
+				const result = await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
 
-				expect(storage.get).toHaveBeenCalledTimes(1)
-				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, prReviewId))
-				expect(writeFile).toHaveBeenCalledWith(
-					join('/tmp/agent/skills/pr-review/SKILL.md'),
-					expect.any(Buffer),
-				)
-				expect(writeFile).not.toHaveBeenCalledWith(
-					join('/tmp/agent/skills/deploy-check/SKILL.md'),
-					expect.any(Buffer),
-				)
+				const written = vi.mocked(writeFile).mock.calls[0]?.[1] as string
+				expect(written).toContain('- **pr-review**:')
+				expect(written).not.toContain('- **deploy-check**:')
+				expect(result.pulled).toBe(1)
+				expect(result.skipped).toBe(1)
 			})
 		})
 	})
