@@ -333,7 +333,7 @@ export function CommentInput({
 							<div
 								ref={overlayRef}
 								aria-hidden
-								className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-base"
+								className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-[16px] leading-6"
 								style={{ minHeight: '32px' }}
 							>
 								<MentionedText
@@ -353,7 +353,7 @@ export function CommentInput({
 								placeholder="Write a comment... Use @ to mention an agent"
 								rows={1}
 								aria-invalid={overLimit || undefined}
-								className="relative w-full resize-none overflow-y-hidden border-0 bg-transparent px-2 py-1.5 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
+								className="relative w-full resize-none overflow-y-hidden border-0 bg-transparent px-2 py-1.5 text-[16px] leading-6 text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
 								style={{ minHeight: '32px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
 							/>
 						</div>
