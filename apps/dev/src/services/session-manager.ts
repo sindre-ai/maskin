@@ -926,10 +926,20 @@ export class SessionManager extends EventEmitter {
 
 		// Persist the chosen route on the session config so cron-based quota
 		// queries (and later analytics) can find fallback sessions cheaply.
+		// For maskin_plan sessions we also snapshot the workspace's paid plan
+		// and the routed model so the `openrouter_call_completed` analytics
+		// emit at session-end can attribute usage without re-reading workspace
+		// settings (which may have changed mid-session).
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
-			if (existingConfig.llm_route !== routeTaken) {
-				const updatedConfig = { ...existingConfig, llm_route: routeTaken }
+			const snapshot: Record<string, unknown> = { llm_route: routeTaken }
+			if (routeTaken === LLM_ROUTE_MASKIN_PLAN) {
+				snapshot.llm_plan = wsSettings.billing?.plan ?? 'trial'
+				snapshot.llm_model = envVars.ANTHROPIC_MODEL
+			}
+			const needsWrite = Object.entries(snapshot).some(([k, v]) => existingConfig[k] !== v)
+			if (needsWrite) {
+				const updatedConfig = { ...existingConfig, ...snapshot }
 				await this.db
 					.update(sessions)
 					.set({ config: updatedConfig })
@@ -1533,18 +1543,22 @@ export class SessionManager extends EventEmitter {
 			logger.warn('Failed loop_active_day emit', { sessionId, error: String(err) })
 		})
 
-		const llmRoute = (session.config as Record<string, unknown>)?.llm_route
+		const sessionConfig = (session.config as Record<string, unknown>) ?? {}
+		const llmRoute = sessionConfig.llm_route
 		if (llmRoute === LLM_ROUTE_MASKIN_PLAN && usage) {
-			capturePosthogEvent('maskin_plan_session_completed', session.workspaceId, {
+			capturePosthogEvent('openrouter_call_completed', session.workspaceId, {
+				workspace_id: session.workspaceId,
+				plan: (sessionConfig.llm_plan as string | undefined) ?? null,
+				model: (sessionConfig.llm_model as string | undefined) ?? null,
+				tokens_in: usage.inputTokens ?? 0,
+				tokens_out: usage.outputTokens ?? 0,
+				cost_usd: usage.totalCostUsd ?? 0,
 				actor_id: session.actorId,
 				session_id: sessionId,
-				input_tokens: usage.inputTokens ?? 0,
-				output_tokens: usage.outputTokens ?? 0,
-				total_cost_usd: usage.totalCostUsd ?? 0,
 				duration_ms: usage.durationMs ?? 0,
 				status,
 			}).catch((err) => {
-				logger.warn('Failed maskin_plan_session_completed PostHog emit', {
+				logger.warn('Failed openrouter_call_completed PostHog emit', {
 					sessionId,
 					error: String(err),
 				})

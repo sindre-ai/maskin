@@ -11,6 +11,17 @@ vi.mock('../../lib/stripe', async () => {
 	}
 })
 
+vi.mock('../../lib/analytics/billing-events', async () => {
+	const actual = await vi.importActual<typeof import('../../lib/analytics/billing-events')>(
+		'../../lib/analytics/billing-events',
+	)
+	return {
+		...actual,
+		emitBillingEvent: vi.fn().mockResolvedValue(undefined),
+	}
+})
+
+import { emitBillingEvent } from '../../lib/analytics/billing-events'
 import { verifyStripeWebhook } from '../../lib/stripe'
 import stripeWebhookRoutes from '../../routes/stripe-webhook'
 import { createTestApp } from '../setup'
@@ -33,6 +44,7 @@ const clearEnv = () => {
 
 beforeEach(() => {
 	vi.mocked(verifyStripeWebhook).mockReset()
+	vi.mocked(emitBillingEvent).mockClear()
 	clearEnv()
 	setupEnv()
 })
@@ -498,6 +510,131 @@ describe('POST /api/webhooks/stripe', () => {
 			stripe_subscription_id: 'sub_42',
 			status: 'active',
 		})
+	})
+
+	it('emits subscription_started PostHog event on customer.subscription.created with active status', async () => {
+		const { app, mockResults } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-emit' }]]
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }]]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_emit_started',
+			type: 'customer.subscription.created',
+			data: {
+				object: {
+					id: 'sub_emit',
+					customer: 'cus_emit',
+					status: 'active',
+					current_period_start: 1_700_000_000,
+					current_period_end: 1_702_592_000,
+					metadata: { workspace_id: workspaceId },
+					items: { data: [{ price: { id: 'price_starter' } }] },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		expect(emitBillingEvent).toHaveBeenCalledWith(workspaceId, {
+			event: 'subscription_started',
+			plan: 'starter',
+			stripeSubscriptionId: 'sub_emit',
+		})
+	})
+
+	it('emits subscription_canceled PostHog event on customer.subscription.deleted using prev plan', async () => {
+		const { app, mockResults } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-emit-cancel' }]]
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: { plan: 'pro', status: 'active', stripe_subscription_id: 'sub_kill' },
+					},
+				},
+			],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_emit_canceled',
+			type: 'customer.subscription.deleted',
+			data: {
+				object: {
+					id: 'sub_kill',
+					customer: 'cus_kill',
+					status: 'canceled',
+					canceled_at: 1_700_001_000,
+					metadata: { workspace_id: workspaceId },
+					items: { data: [{ price: { id: 'price_pro' } }] },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		expect(emitBillingEvent).toHaveBeenCalledWith(workspaceId, {
+			event: 'subscription_canceled',
+			plan: 'pro',
+			stripeSubscriptionId: 'sub_kill',
+		})
+	})
+
+	it('emits subscription_past_due PostHog event on active -> past_due transition', async () => {
+		const { app, mockResults } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-emit-pastdue' }]]
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'starter',
+							status: 'active',
+							stripe_subscription_id: 'sub_late',
+						},
+					},
+				},
+			],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_emit_pastdue',
+			type: 'invoice.payment_failed',
+			data: { object: { customer: 'cus_late', metadata: { workspace_id: workspaceId } } },
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		expect(emitBillingEvent).toHaveBeenCalledWith(workspaceId, {
+			event: 'subscription_past_due',
+			plan: 'starter',
+			stripeSubscriptionId: 'sub_late',
+		})
+	})
+
+	it('does NOT emit a PostHog event when the transition is not lifecycle-relevant', async () => {
+		// invoice.paid for an already-active sub is bookkeeping, not a lifecycle
+		// transition — the ship-metric query shouldn't see a synthetic event here.
+		const { app, mockResults } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-noemit' }]]
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: { billing: { plan: 'starter', status: 'active' } } }],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_noemit',
+			type: 'invoice.paid',
+			data: { object: { metadata: { workspace_id: workspaceId } } },
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		expect(emitBillingEvent).not.toHaveBeenCalled()
 	})
 
 	it('short-circuits duplicate deliveries via webhook_deliveries dedup', async () => {
