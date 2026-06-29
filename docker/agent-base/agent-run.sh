@@ -157,8 +157,7 @@ setup_mcps() {
   #      expand it to an empty string, causing Playwright to try to launch
   #      Chrome locally instead of connecting to the CDP endpoint.
   if [ -n "$BROWSER_CDP_URL" ]; then
-    if ! echo "$merged" | jq -r '.mcpServers | to_entries[] | .value | tostring' \
-        | grep -q '\${BROWSER_CDP_URL}'; then
+    if ! echo "$merged" | jq -e '[.mcpServers | to_entries[] | .value | tostring] | any(contains("${BROWSER_CDP_URL}"))' > /dev/null 2>&1; then
       local browser_entry
       browser_entry=$(jq -n --arg url "$BROWSER_CDP_URL" \
         '{"mcpServers":{"@playwright/mcp":{"command":"npx","args":["@playwright/mcp","--cdp-endpoint",$url]}}}')

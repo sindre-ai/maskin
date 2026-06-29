@@ -498,10 +498,8 @@ function findFreeHostPort(): Promise<number> {
 function launchSidecarExec(name: string, deps: MicrosandboxDeps): void {
 	assertValidSessionId(name)
 	const proc = spawn(deps.msbBin, ['exec', name], {
-		stdio: ['ignore', 'pipe', 'pipe'],
+		stdio: 'ignore',
 	})
-	proc.stdout?.on('data', () => {})
-	proc.stderr?.on('data', () => {})
 	proc.on('error', (err) => {
 		logger.error('browser sidecar exec spawn error', { name, error: String(err) })
 	})
@@ -525,6 +523,7 @@ async function defaultPollCdpReady(
 	while (deps.now() < deadline) {
 		const ready = await new Promise<boolean>((resolve) => {
 			const req = httpGet(`http://127.0.0.1:${port}/json/version`, (res) => {
+				res.on('error', () => resolve(false))
 				resolve(res.statusCode === 200)
 				res.resume()
 			})
