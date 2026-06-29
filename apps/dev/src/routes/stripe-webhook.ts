@@ -4,6 +4,11 @@ import { webhookDeliveries, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
+import {
+	type BillingEmission,
+	classifyBillingEmission,
+	emitBillingEvent,
+} from '../lib/analytics/billing-events'
 import { createApiError } from '../lib/errors'
 import { settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
@@ -212,6 +217,7 @@ async function applyEvent(
 	// only the earlier writer touched. A row lock inside a transaction
 	// serializes them on the workspace row; a single delivery still completes
 	// in one round-trip per query so the lock window stays bounded.
+	let billingEmission: BillingEmission | null = null
 	await db.transaction(async (tx) => {
 		const [workspace] = await tx
 			.select({ id: workspaces.id, settings: workspaces.settings })
@@ -317,7 +323,26 @@ async function applyEvent(
 			.update(workspaces)
 			.set({ settings: merged, updatedAt: new Date() })
 			.where(eq(workspaces.id, workspaceId))
+
+		// Capture the analytics decision while we still hold prev/next in
+		// scope. The emit itself runs after the tx commits so a PostHog
+		// outage cannot roll back the billing mutation.
+		billingEmission = classifyBillingEmission(event.type, current, next)
 	})
+
+	if (billingEmission) {
+		// Fire-and-forget: capturePosthogEvent never throws, but guard anyway
+		// so a regression there can never bubble into a 5xx that triggers a
+		// Stripe retry of an already-applied event.
+		emitBillingEvent(workspaceId, billingEmission).catch((err) => {
+			logger.warn('Failed to emit billing PostHog event', {
+				eventId: event.id,
+				workspaceId,
+				billingEvent: billingEmission?.event,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		})
+	}
 }
 
 export default app

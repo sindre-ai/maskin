@@ -22,6 +22,7 @@ export async function capturePosthogEvent(
 	event: string,
 	distinctId: string,
 	properties: PosthogEventProps,
+	options: { timestamp?: Date } = {},
 ): Promise<void> {
 	const apiKey = process.env.POSTHOG_API_KEY?.trim()
 	if (!apiKey) {
@@ -35,7 +36,7 @@ export async function capturePosthogEvent(
 		event,
 		distinct_id: distinctId,
 		properties,
-		timestamp: new Date().toISOString(),
+		timestamp: (options.timestamp ?? new Date()).toISOString(),
 	}
 
 	try {
