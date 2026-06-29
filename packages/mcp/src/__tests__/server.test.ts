@@ -21,6 +21,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import {
 	HERO_CARD_TYPE_DEFAULTS,
 	type HeroCardTypeAnnotation,
+	__resetWorkspaceSkillCacheForTests,
 	buildContextLine,
 	buildHeroCardObject,
 	createMcpServer,
@@ -1137,6 +1138,12 @@ describe('tool handlers', () => {
 		})
 
 		describe('get_workspace_skill handler', () => {
+			beforeEach(() => {
+				// The cache is module-level so cross-test fetches would otherwise
+				// satisfy fresh-call expectations here.
+				__resetWorkspaceSkillCacheForTests()
+			})
+
 			it('GETs /api/workspaces/:id/skills/:name with the full skill', async () => {
 				mockFetchSuccess({ id: 's1', name: 'bug-fix', content: '# Bug fix skill' })
 
@@ -1167,8 +1174,8 @@ describe('tool handlers', () => {
 
 			it('serves the body from the in-session cache on a repeat call', async () => {
 				// AC-T4: first call delivers the SKILL.md body, second call for the
-				// same name within the same MCP server (=session) hits the cache and
-				// issues no second fetch.
+				// same name within the same agent session hits the cache and issues
+				// no second fetch.
 				mockFetchSuccess({ id: 's1', name: 'bug-fix', content: '# Bug fix skill' })
 
 				const handler = getHandler('get_workspace_skill')
@@ -1181,6 +1188,69 @@ describe('tool handlers', () => {
 
 				expect(fetch).toHaveBeenCalledTimes(1)
 				expect(JSON.parse(first.content[0].text)).toEqual(JSON.parse(second.content[0].text))
+			})
+
+			it('cache survives across createMcpServer calls — same apiKey/workspace/name hits on the new instance', async () => {
+				// Regression guard for the HTTP transport: apps/dev/src/routes/mcp.ts
+				// constructs a fresh McpServer per request, so a closure-scoped cache
+				// would never hit between two tool calls from the same agent session.
+				// Module-level + apiKey-keyed scope is what makes the second call
+				// hit-free.
+				mockFetchSuccess({ id: 's1', name: 'bug-fix', content: '# body' })
+				const first = (await getHandler('get_workspace_skill')({ name: 'bug-fix' })) as {
+					content: Array<{ text: string }>
+				}
+
+				// Simulate the per-request server reincarnation that the HTTP route does.
+				handlers = new Map()
+				vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+					handlers.set(
+						name as string,
+						handler as (args: Record<string, unknown>) => Promise<unknown>,
+					)
+				})
+				createMcpServer(config)
+
+				const second = (await getHandler('get_workspace_skill')({ name: 'bug-fix' })) as {
+					content: Array<{ text: string }>
+				}
+
+				expect(fetch).toHaveBeenCalledTimes(1)
+				expect(JSON.parse(first.content[0].text)).toEqual(JSON.parse(second.content[0].text))
+			})
+
+			it('does not leak cache entries across api keys (multi-tenant isolation)', async () => {
+				// Different agent sessions present different API keys, so the same
+				// (workspace, name) pair from a different apiKey must NOT read the
+				// previous session's cache entry.
+				const headers = new Headers()
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+					const auth =
+						(init as RequestInit | undefined)?.headers &&
+						((init as RequestInit).headers as Record<string, string>).Authorization
+					return {
+						ok: true,
+						headers,
+						json: () => Promise.resolve({ name: 'bug-fix', content: `# for ${auth}` }),
+					} as Response
+				})
+
+				await getHandler('get_workspace_skill')({ name: 'bug-fix' })
+
+				// Rebuild the server with a different apiKey — same workspace + name.
+				handlers = new Map()
+				vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+					handlers.set(
+						name as string,
+						handler as (args: Record<string, unknown>) => Promise<unknown>,
+					)
+				})
+				createMcpServer({ ...config, apiKey: 'ank_othertenant' })
+
+				await getHandler('get_workspace_skill')({ name: 'bug-fix' })
+
+				// Two distinct fetches — one per apiKey.
+				expect(fetch).toHaveBeenCalledTimes(2)
 			})
 
 			it('caches separately per (workspace_id, name) pair', async () => {

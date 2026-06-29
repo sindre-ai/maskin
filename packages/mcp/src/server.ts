@@ -1251,6 +1251,46 @@ function loadHtml(config: McpConfig, filename: string): string {
 	}
 }
 
+/**
+ * In-session cache for `get_workspace_skill` bodies.
+ *
+ * The maskin HTTP transport (`apps/dev/src/routes/mcp.ts`) calls
+ * `createMcpServer(...)` once per request, so a cache scoped to the
+ * server instance would never survive a second tool call from the same
+ * agent session. Anchoring it at module scope keeps the second-call path
+ * hit-free across the per-request server reincarnations; keying it by
+ * `(apiKey, workspaceId, name)` preserves multi-tenant isolation since
+ * different agent sessions present different API keys.
+ *
+ * Bounded by `WORKSPACE_SKILL_CACHE_MAX_ENTRIES` with FIFO eviction so a
+ * long-running multi-tenant process can't grow unbounded. Skill bodies
+ * are at most low tens of KB, so this cap covers many concurrent agents.
+ */
+const WORKSPACE_SKILL_CACHE_MAX_ENTRIES = 500
+const workspaceSkillBodyCache = new Map<string, unknown>()
+
+function workspaceSkillCacheKey(apiKey: string, workspaceId: string, name: string): string {
+	return `${apiKey}\u0000${workspaceId}\u0000${name}`
+}
+
+function rememberWorkspaceSkill(key: string, value: unknown): void {
+	if (workspaceSkillBodyCache.has(key)) {
+		workspaceSkillBodyCache.delete(key)
+	} else if (workspaceSkillBodyCache.size >= WORKSPACE_SKILL_CACHE_MAX_ENTRIES) {
+		const oldest = workspaceSkillBodyCache.keys().next().value
+		if (oldest !== undefined) workspaceSkillBodyCache.delete(oldest)
+	}
+	workspaceSkillBodyCache.set(key, value)
+}
+
+/**
+ * Test-only escape hatch — the cache is module-level so cross-test state
+ * leaks unless it's reset between cases. Not part of the public API.
+ */
+export function __resetWorkspaceSkillCacheForTests(): void {
+	workspaceSkillBodyCache.clear()
+}
+
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
 		name: 'maskin',
@@ -2732,14 +2772,6 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	// Per-server (= per-MCP-process = per-session) memo cache for skill bodies.
-	// Workspace-skill content is large and immutable for the duration of a
-	// session, so the first lookup pays the round-trip and every repeat call
-	// for the same (workspaceId, name) returns the previous JSON tool-result
-	// verbatim. Keyed on workspaceId too because args.workspace_id is optional
-	// and an agent could fetch the same skill name from two workspaces.
-	const skillBodyCache = new Map<string, unknown>()
-
 	registerAppTool(
 		server,
 		'get_workspace_skill',
@@ -2750,8 +2782,8 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const cacheKey = `${wsId}:${args.name}`
-			let result = skillBodyCache.get(cacheKey)
+			const cacheKey = workspaceSkillCacheKey(config.apiKey, wsId, args.name)
+			let result = workspaceSkillBodyCache.get(cacheKey)
 			if (result === undefined) {
 				result = await apiCall(
 					config,
@@ -2760,7 +2792,7 @@ export function createMcpServer(config: McpConfig) {
 					undefined,
 					{ workspaceId: wsId },
 				)
-				skillBodyCache.set(cacheKey, result)
+				rememberWorkspaceSkill(cacheKey, result)
 			}
 			return {
 				_meta: meta(
