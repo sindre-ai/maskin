@@ -1,0 +1,11 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`AgentStorageManager > workspace skills > pullWorkspaceSkillsForAgent() > writes a stub index containing every attached skill, no SKILL.md bodies 1`] = `
+"## Skills (on-demand)
+
+The workspace skills below are attached to this agent. Only their names and one-line descriptions are loaded into context. Call the \`get_workspace_skill(name)\` MCP tool to fetch the full SKILL.md body when you need it — the body is cached for the rest of this session, so repeat calls cost nothing.
+
+- **deploy-check**: Verify deploy went out cleanly.
+- **pr-review**: Review an open pull request.
+"
+`;

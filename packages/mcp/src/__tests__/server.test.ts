@@ -1164,6 +1164,47 @@ describe('tool handlers', () => {
 					expect.anything(),
 				)
 			})
+
+			it('serves the body from the in-session cache on a repeat call', async () => {
+				// AC-T4: first call delivers the SKILL.md body, second call for the
+				// same name within the same MCP server (=session) hits the cache and
+				// issues no second fetch.
+				mockFetchSuccess({ id: 's1', name: 'bug-fix', content: '# Bug fix skill' })
+
+				const handler = getHandler('get_workspace_skill')
+				const first = (await handler({ name: 'bug-fix' })) as {
+					content: Array<{ text: string }>
+				}
+				const second = (await handler({ name: 'bug-fix' })) as {
+					content: Array<{ text: string }>
+				}
+
+				expect(fetch).toHaveBeenCalledTimes(1)
+				expect(JSON.parse(first.content[0].text)).toEqual(JSON.parse(second.content[0].text))
+			})
+
+			it('caches separately per (workspace_id, name) pair', async () => {
+				vi.spyOn(globalThis, 'fetch')
+					.mockResolvedValueOnce({
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ name: 'bug-fix', content: '# default ws' }),
+					} as Response)
+					.mockResolvedValueOnce({
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ name: 'bug-fix', content: '# other ws' }),
+					} as Response)
+
+				const handler = getHandler('get_workspace_skill')
+				await handler({ name: 'bug-fix' })
+				await handler({ workspace_id: 'ws-other', name: 'bug-fix' })
+				await handler({ workspace_id: 'ws-other', name: 'bug-fix' })
+
+				// Two fetches total: one per distinct (workspace_id, name); the
+				// third call is the ws-other cache hit.
+				expect(fetch).toHaveBeenCalledTimes(2)
+			})
 		})
 
 		describe('create_workspace_skill handler', () => {

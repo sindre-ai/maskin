@@ -2732,6 +2732,14 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// Per-server (= per-MCP-process = per-session) memo cache for skill bodies.
+	// Workspace-skill content is large and immutable for the duration of a
+	// session, so the first lookup pays the round-trip and every repeat call
+	// for the same (workspaceId, name) returns the previous JSON tool-result
+	// verbatim. Keyed on workspaceId too because args.workspace_id is optional
+	// and an agent could fetch the same skill name from two workspaces.
+	const skillBodyCache = new Map<string, unknown>()
+
 	registerAppTool(
 		server,
 		'get_workspace_skill',
@@ -2742,13 +2750,18 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = await apiCall(
-				config,
-				'GET',
-				`/api/workspaces/${wsId}/skills/${encodeURIComponent(args.name)}`,
-				undefined,
-				{ workspaceId: wsId },
-			)
+			const cacheKey = `${wsId}:${args.name}`
+			let result = skillBodyCache.get(cacheKey)
+			if (result === undefined) {
+				result = await apiCall(
+					config,
+					'GET',
+					`/api/workspaces/${wsId}/skills/${encodeURIComponent(args.name)}`,
+					undefined,
+					{ workspaceId: wsId },
+				)
+				skillBodyCache.set(cacheKey, result)
+			}
 			return {
 				_meta: meta(
 					'get_workspace_skill',

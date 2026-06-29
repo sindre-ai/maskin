@@ -89,7 +89,12 @@ install_runtime() {
   esac
 }
 
-# Build CLAUDE.md from system prompt + skills
+# Build CLAUDE.md from system prompt + workspace-skill stub index + learnings.
+# Workspace skill BODIES are no longer inlined here — the dev backend writes a
+# stub index at /agent/skills/.workspace-skills.md (name + 1-line description
+# per attached skill) and the agent fetches each body on demand via the
+# `get_workspace_skill(name)` MCP tool. See the writer in
+# apps/dev/src/services/agent-storage.ts (renderWorkspaceSkillsIndex).
 build_context() {
   local context_file="/agent/workspace/CLAUDE.md"
 
@@ -98,16 +103,12 @@ build_context() {
     echo "" >> "$context_file"
   fi
 
-  # Append skills
-  if [ -d /agent/skills ] && [ "$(ls -A /agent/skills/*.md 2>/dev/null)" ]; then
-    echo "## Skills" >> "$context_file"
+  # Append the workspace-skill stub index produced by agent-storage. Falling
+  # through silently when the file is absent keeps offline/local runs working
+  # without the dev backend writing one.
+  if [ -f /agent/skills/.workspace-skills.md ]; then
+    cat /agent/skills/.workspace-skills.md >> "$context_file"
     echo "" >> "$context_file"
-    for f in /agent/skills/*.md; do
-      echo "### $(basename "$f" .md)" >> "$context_file"
-      echo "" >> "$context_file"
-      cat "$f" >> "$context_file"
-      echo "" >> "$context_file"
-    done
   fi
 
   # Append memory/learnings
