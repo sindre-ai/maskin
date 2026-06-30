@@ -4700,11 +4700,6 @@ For each \`live\` bet that has a \`metadata.posthog_query\` or \`## Validation e
 								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
 							},
 						},
-						posthog: {
-							url: 'https://mcp.posthog.com/mcp',
-							type: 'http' as const,
-							headers: { Authorization: 'Bearer ${POSTHOG_API_KEY}' },
-						},
 					},
 				},
 			},
