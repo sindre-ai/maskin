@@ -8,8 +8,9 @@ import type { ProviderConfig } from '../../types'
  * scope, so the consent screen shows exactly what we use and revoking write
  * access (or future audit) can dial blast-radius down to read-only.
  *
- * Webhook delivery (Calendar push channels) and MCP tool wiring land in
- * downstream tasks; T1 only stands up the OAuth connect surface.
+ * MCP wiring uses Google's hosted MCP server at calendarmcp.googleapis.com —
+ * same pattern as Gmail. The backend `mcp.envKey` tells session-manager which
+ * env var to inject the access token as; no second OAuth flow inside the container.
  */
 export const config: ProviderConfig = {
 	name: 'google-calendar',
@@ -39,6 +40,12 @@ export const config: ProviderConfig = {
 			clientIdEnv: 'GOOGLE_CALENDAR_CLIENT_ID',
 			clientSecretEnv: 'GOOGLE_CALENDAR_CLIENT_SECRET',
 		},
+	},
+
+	mcp: {
+		command: 'npx',
+		args: ['-y', 'mcp-remote', 'https://calendarmcp.googleapis.com/mcp/v1'],
+		envKey: 'GOOGLE_CALENDAR_TOKEN',
 	},
 
 	externalIdDisplay: 'email',
