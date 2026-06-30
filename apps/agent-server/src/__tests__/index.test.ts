@@ -516,4 +516,35 @@ describe('POST /sessions/:id/complete', () => {
 		await new Promise((r) => setTimeout(r, 0))
 		expect(calls.find((c) => c.args[0] === 'stop')).toBeUndefined()
 	})
+
+	// AC-T7 (bet/dev-agent-token-waste): agent-run.sh's ENOSPC trap reports
+	// exitCode=28 here. The endpoint must accept the body unchanged so the dev
+	// backend's `markRemoteSessionComplete` sees the same 28, which the
+	// trigger-runner then uses to skip recovery respawns.
+	it('accepts exitCode=28 (ENOSPC) and still defers the sandbox stop', async () => {
+		vi.useFakeTimers()
+		try {
+			const { run, calls } = makeRunner()
+			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+			const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
+
+			const res = await app.request('/sessions/sess-enospc/complete', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ exitCode: 28 }),
+			})
+
+			expect(res.status).toBe(200)
+			expect(await res.json()).toEqual({ ok: true })
+
+			// Same deferral guarantee as the exit-0 path — the {ok:true} must
+			// flush back to the VM before the network is torn down.
+			expect(calls.find((c) => c.args[0] === 'stop')).toBeUndefined()
+			await vi.advanceTimersByTimeAsync(2_000)
+			const stopCall = calls.find((c) => c.args[0] === 'stop')
+			expect(stopCall?.args).toEqual(['stop', 'sess-enospc'])
+		} finally {
+			vi.useRealTimers()
+		}
+	})
 })

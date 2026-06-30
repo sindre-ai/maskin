@@ -41,6 +41,68 @@ resolve_agent_server_url() {
 }
 resolve_agent_server_url
 
+RUNTIME="${AGENT_RUNTIME:-claude-code}"
+AGENT_EXIT_CODE=0
+
+# Terminal exit code reported to /sessions/:id/complete when the session failed
+# because the workspace disk filled (ENOSPC). Kept in sync with
+# apps/dev/src/lib/exit-codes.ts — downstream recovery/respawn paths gate on
+# this value to avoid burning a retry quota on a condition retry can't fix.
+ENOSPC_EXIT_CODE=28
+
+# Probe paths checked by is_disk_full. Overrideable from the synthetic test that
+# fakes a full disk without actually filling the VM mount — kept as a single
+# space-separated env var rather than an array so it survives the
+# `${VAR:-default}` expansion inside a `bash -c` test harness.
+ENOSPC_PROBE_PATHS="${ENOSPC_PROBE_PATHS:-/agent/workspace /tmp}"
+
+# Returns 0 (true) iff one of the session's writable mounts is out of space
+# right now. Two cheap signals:
+#   1. A create-and-unlink probe on each ENOSPC_PROBE_PATHS entry that exists.
+#      EROFS / EACCES on these paths also surface here, but in this image both
+#      are owned by the agent user, so a probe failure is effectively ENOSPC.
+#   2. `df -P` reporting zero available 1K-blocks on /agent/workspace.
+# Constant-cost; safe to call from the EXIT trap and after the agent process.
+# Deliberately does NOT write a tail log of agent output to disk — that would
+# worsen the very pressure we are trying to diagnose.
+is_disk_full() {
+  local probe path
+  for path in $ENOSPC_PROBE_PATHS; do
+    [ -d "$path" ] || continue
+    probe="${path}/.enospc-probe-$$"
+    if : > "$probe" 2>/dev/null; then
+      rm -f "$probe" 2>/dev/null
+    else
+      return 0
+    fi
+  done
+
+  local avail
+  avail=$(df -P /agent/workspace 2>/dev/null | awk 'NR==2 {print $4}')
+  if [ -n "$avail" ] && [ "$avail" = "0" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# Reclassify a non-zero agent exit as ENOSPC when the disk is full. Pass-through
+# on success or on a non-ENOSPC failure. Idempotent — re-classifying 28 stays 28.
+classify_exit_code() {
+  local code=$1
+  if [ "$code" -eq 0 ]; then
+    echo "$code"
+    return
+  fi
+  if [ "$code" -eq "$ENOSPC_EXIT_CODE" ] || is_disk_full; then
+    if [ "$code" -ne "$ENOSPC_EXIT_CODE" ]; then
+      echo "[system] ENOSPC detected at session exit - reclassifying exit ${code} -> ${ENOSPC_EXIT_CODE}" >&2
+    fi
+    echo "$ENOSPC_EXIT_CODE"
+    return
+  fi
+  echo "$code"
+}
+
 # Signal session completion so the agent-server tears down this microVM.
 # A microsandbox `create`d VM is PERSISTENT: it does NOT power off when this
 # script exits, because the guest's PID 1 is microsandbox's agentd, not us.
@@ -50,7 +112,19 @@ resolve_agent_server_url
 # Best-effort; --http1.0/--max-time stop a slow ingest from blocking VM exit.
 # Only meaningful on the remote microsandbox path (AGENT_SERVER_URL set); the
 # local Docker path manages container lifecycle itself.
+#
+# Final classification fires here so script-level ENOSPC (a failure inside
+# build_context, setup_mcps, install_runtime, etc., before run_agent could
+# set AGENT_EXIT_CODE itself) also reports exit 28 instead of bash's $?.
+# When the script aborts via `set -eo pipefail`, $? at trap entry holds the
+# failing command's code; promote it into AGENT_EXIT_CODE before classifying
+# so the dev-side handler sees the real cause, not a default 0.
 report_complete() {
+  local trap_status=$?
+  if [ "$AGENT_EXIT_CODE" -eq 0 ] && [ "$trap_status" -ne 0 ]; then
+    AGENT_EXIT_CODE=$trap_status
+  fi
+  AGENT_EXIT_CODE=$(classify_exit_code "$AGENT_EXIT_CODE")
   if [ -n "$AGENT_SERVER_URL" ] && [ -n "$SESSION_ID" ]; then
     curl -4 -s --http1.0 --max-time 10 -X POST \
       "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/complete" \
@@ -60,9 +134,6 @@ report_complete() {
   fi
 }
 trap report_complete EXIT
-
-RUNTIME="${AGENT_RUNTIME:-claude-code}"
-AGENT_EXIT_CODE=0
 
 # Install runtime if not already present
 install_runtime() {
@@ -135,10 +206,35 @@ setup_mcps() {
   local agent_config="${AGENT_MCP_JSON:-$empty}"
   local session_config="${MCP_SERVERS_JSON:-$empty}"
 
-  # Merge agent + session MCP configs (session overrides agent for same-named servers)
+  # Dedup MCP sources by canonical (transport, URL/command+args) tuple.
+  # Precedence is by input order: agent.tools beats session. When two entries
+  # canonicalise to the same tuple the higher-precedence one wins, the lower
+  # is dropped. This collapses cases like a Maskin server registered both via
+  # agent.tools and via MCP_SERVERS_JSON (e.g. session-injected) into a single
+  # entry instead of two parallel tool registrations.
+  # The fourth source — claude.ai-pulled MCPs that Claude Code loads from
+  # ~/.claude/.credentials.json — is suppressed separately in
+  # setup_claude_credentials when agent.tools.mcpServers.maskin is set.
   local merged
-  merged=$(printf '%s\n%s' "$agent_config" "$session_config" | jq -s '
-    { mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }
+  merged=$(jq -n \
+    --argjson agent "$agent_config" \
+    --argjson session "$session_config" '
+    def canonical(entry):
+      if (entry.type // "stdio") == "stdio" then
+        "stdio|" + (entry.command // "") + "|" + ((entry.args // []) | map(tostring) | join(" "))
+      else
+        (entry.type // "http") + "|" + (entry.url // "")
+      end;
+    def tagged(servers; src):
+      ((servers // {}) | to_entries
+        | map({name: .key, value: .value, source: src, canonical: canonical(.value)}));
+    ([tagged($agent.mcpServers; "agent"),
+      tagged($session.mcpServers; "session")] | add)
+      | group_by(.canonical)
+      | map(.[0])
+      | map({key: .name, value: .value})
+      | from_entries
+      | {mcpServers: .}
   ')
 
   # Handle the browser CDP endpoint.
@@ -186,6 +282,19 @@ setup_mcps() {
 # Claude Code reads auth from ~/.claude/.credentials.json, not env vars.
 setup_claude_credentials() {
   if [ -z "$CLAUDE_OAUTH_ACCESS_TOKEN" ]; then
+    return
+  fi
+
+  # Skip the write when the agent already declares its own Maskin MCP via
+  # agent.tools.mcpServers.maskin. Claude Code reads this credentials file at
+  # startup and re-pulls MCP servers (mcp__claude_ai_maskin__*) on top of the
+  # ones the agent already declared, doubling the Maskin registration and
+  # widening every cached turn. Human-driven sessions without Maskin in
+  # agent.tools still need the file, so the skip is gated on the maskin key
+  # specifically.
+  if [ -n "$AGENT_MCP_JSON" ] \
+      && echo "$AGENT_MCP_JSON" | jq -e '.mcpServers.maskin' >/dev/null 2>&1; then
+    echo "[system] Skipping Claude OAuth credentials write — agent.tools.mcpServers.maskin is set"
     return
   fi
 
@@ -373,12 +482,24 @@ run_agent() {
   esac
 }
 
-echo "[system] Starting agent session: ${SESSION_ID:-unknown}"
-echo "[system] Runtime: $RUNTIME"
+# Entrypoint — only run when executed directly. When the script is sourced
+# (e.g. by the bash integration test in __tests__/), the test driver invokes
+# specific functions in isolation and skips the agent-launch sequence below.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  echo "[system] Starting agent session: ${SESSION_ID:-unknown}"
+  echo "[system] Runtime: $RUNTIME"
 
-install_runtime
-build_context
-setup_mcps
-setup_claude_credentials
+  install_runtime
+  build_context
+  setup_mcps
+  setup_claude_credentials
 
-run_agent
+  run_agent
+
+  # Reclassify before the EXIT trap fires so this is the value `monitorSession`
+  # sees on the agent-server side via `/sessions/:id/complete`. report_complete
+  # also re-classifies (idempotent) for the path where the script aborts under
+  # `set -eo pipefail` before reaching this point.
+  AGENT_EXIT_CODE=$(classify_exit_code "$AGENT_EXIT_CODE")
+  exit "$AGENT_EXIT_CODE"
+fi
