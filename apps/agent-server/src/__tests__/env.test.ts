@@ -40,6 +40,7 @@ describe('parseEnv', () => {
 		const env = parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32) })
 		expect(env.WARM_POOL_REFRESH_MINUTES).toBe(0)
 		expect(env.WARM_POOL_IMAGE).toBeUndefined()
+		expect(env.BROWSER_SIDECAR_IMAGE).toBe('browser-sidecar:latest')
 	})
 
 	it('parses a positive WARM_POOL_REFRESH_MINUTES alongside an image', () => {
@@ -47,9 +48,11 @@ describe('parseEnv', () => {
 			AGENT_SERVER_SECRET: 'a'.repeat(32),
 			WARM_POOL_REFRESH_MINUTES: '30',
 			WARM_POOL_IMAGE: 'maskin/agent-base:latest',
+			BROWSER_SIDECAR_IMAGE: 'maskin/browser-sidecar:latest',
 		})
 		expect(env.WARM_POOL_REFRESH_MINUTES).toBe(30)
 		expect(env.WARM_POOL_IMAGE).toBe('maskin/agent-base:latest')
+		expect(env.BROWSER_SIDECAR_IMAGE).toBe('maskin/browser-sidecar:latest')
 	})
 
 	it('rejects WARM_POOL_REFRESH_MINUTES outside 0..1440 or non-integer', () => {

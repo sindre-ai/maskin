@@ -354,6 +354,12 @@ export class ContainerManager {
 		}
 	}
 
+	async getIpOnNetwork(containerId: string, networkName: string): Promise<string | null> {
+		const container = this.docker.getContainer(containerId)
+		const info = await container.inspect()
+		return info.NetworkSettings?.Networks?.[networkName]?.IPAddress ?? null
+	}
+
 	async exec(containerId: string, cmd: string[]): Promise<{ exitCode: number; output: string }> {
 		const container = this.docker.getContainer(containerId)
 		const exec = await container.exec({

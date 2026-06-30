@@ -183,12 +183,18 @@ export class TriggerRunner {
 			}
 			if (config.action && config.action !== event.action) continue
 
-			// Check filter conditions
+			// Check filter conditions — for status_changed events the entity lives at
+			// data.updated, not at the top level. Use getObjectFromData() + resolvePath()
+			// so dotted paths (e.g. "metadata.decision_type") also work correctly.
 			if (config.filter) {
 				const data = await getEventData()
 				if (!data) continue
+				const { current } = getObjectFromData(data)
+				const filterRoot = (current ?? data) as Record<string, unknown>
 				const filter = config.filter as Record<string, unknown>
-				const matches = Object.entries(filter).every(([key, value]) => data[key] === value)
+				const matches = Object.entries(filter).every(
+					([key, value]) => resolvePath(filterRoot, key) === value,
+				)
 				if (!matches) continue
 			}
 

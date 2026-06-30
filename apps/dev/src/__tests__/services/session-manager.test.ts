@@ -26,6 +26,10 @@ const mockContainerManager = {
 	start: vi.fn().mockResolvedValue(undefined),
 	stop: vi.fn().mockResolvedValue(undefined),
 	remove: vi.fn().mockResolvedValue(undefined),
+	pullImage: vi.fn().mockResolvedValue(undefined),
+	createNetwork: vi.fn().mockResolvedValue('anko-net-test'),
+	removeNetwork: vi.fn().mockResolvedValue(undefined),
+	getIpOnNetwork: vi.fn().mockResolvedValue('172.20.0.2'),
 	exec: vi.fn().mockResolvedValue({ exitCode: 0, output: '' }),
 	copyTo: vi.fn().mockResolvedValue(undefined),
 	copyFrom: vi.fn().mockResolvedValue({}),
@@ -344,6 +348,267 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.INTERACTIVE).toBeUndefined()
+		})
+	})
+
+	describe('startSession() — browser sidecar provisioning', () => {
+		function buildTestSession(overrides: Record<string, unknown> = {}) {
+			return buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+				...overrides,
+			})
+		}
+
+		function buildTestAgent(actorId: string, tools: Record<string, unknown> | null = null) {
+			return {
+				id: actorId,
+				type: 'agent' as const,
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools,
+			}
+		}
+
+		function buildTestWorkspace(workspaceId: string) {
+			return { id: workspaceId, settings: {} }
+		}
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+			manager.setBrowserSidecarBuildContext('/repo/docker/browser-sidecar')
+		})
+
+		it('provisions a browser sidecar when browserRequired is true (AC-T1 Docker leg)', async () => {
+			const session = buildTestSession({ config: { browserRequired: true } })
+			const agent = buildTestAgent(session.actorId)
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace llm keys
+				[], // launchContainer: integrations
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.ensureImage).toHaveBeenCalledWith(
+				'browser-sidecar:latest',
+				'/repo/docker/browser-sidecar',
+			)
+			expect(mockContainerManager.pullImage).not.toHaveBeenCalled()
+			expect(mockContainerManager.createNetwork).toHaveBeenCalled()
+
+			const browserCreateCall = mockContainerManager.create.mock.calls[0]?.[0] as Record<
+				string,
+				unknown
+			>
+			expect(browserCreateCall.image).toBe('browser-sidecar:latest')
+			expect(browserCreateCall.name).toMatch(/^anko-browser-/)
+			expect(browserCreateCall.networkMode).toMatch(/^anko-net-/)
+			expect(browserCreateCall.memoryMb).toBe(512)
+			expect(browserCreateCall.cpuShares).toBe(512)
+
+			const agentCreateCall = mockContainerManager.create.mock.calls[1]?.[0] as {
+				env: Record<string, string>
+				networkMode?: string
+			}
+			expect(agentCreateCall.env.BROWSER_CDP_URL).toBe('http://172.20.0.2:9222')
+			expect(agentCreateCall.networkMode).toMatch(/^anko-net-/)
+		})
+
+		it('does not provision a sidecar when browserRequired is absent (AC-T6 Docker leg)', async () => {
+			const session = buildTestSession({ config: {} })
+			const agent = buildTestAgent(session.actorId)
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace llm keys
+				[], // launchContainer: integrations
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.ensureImage).not.toHaveBeenCalled()
+			expect(mockContainerManager.pullImage).not.toHaveBeenCalled()
+			expect(mockContainerManager.createNetwork).not.toHaveBeenCalled()
+
+			const agentCreateCall = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+				networkMode?: string
+			}
+			expect(agentCreateCall.env.BROWSER_CDP_URL).toBeUndefined()
+			expect(agentCreateCall.networkMode).toBeUndefined()
+		})
+
+		it('provisions a sidecar when MCP config references BROWSER_CDP_URL', async () => {
+			const session = buildTestSession({ config: {} })
+			const agent = buildTestAgent(session.actorId, {
+				mcpServers: {
+					playwright: {
+						command: 'npx',
+						args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
+					},
+				},
+			})
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace llm keys
+				[], // launchContainer: integrations
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.ensureImage).toHaveBeenCalledWith(
+				'browser-sidecar:latest',
+				'/repo/docker/browser-sidecar',
+			)
+			const agentCreateCall = mockContainerManager.create.mock.calls[1]?.[0] as {
+				env: Record<string, string>
+				networkMode?: string
+			}
+			expect(agentCreateCall.env.BROWSER_CDP_URL).toBe('http://172.20.0.2:9222')
+			expect(agentCreateCall.networkMode).toMatch(/^anko-net-/)
+		})
+	})
+
+	describe('cleanupBrowserSidecar() — teardown SLA (AC-T5)', () => {
+		// Access the private map + method through a structural cast so the test
+		// can exercise the orchestration without standing up the whole
+		// startSession flow. JS has no real private and this is the established
+		// pattern in this repo for poking at session-manager internals.
+		type Internals = {
+			activeSessions: Map<
+				string,
+				{
+					tempDir: string
+					browserContainerId?: string
+					networkName?: string
+				}
+			>
+			cleanupBrowserSidecar(sessionId: string): Promise<void>
+		}
+
+		function notFound404(): Error {
+			const err = new Error('(HTTP code 404) no such container - No such container: anko-browser-x')
+			;(err as { statusCode?: number }).statusCode = 404
+			return err
+		}
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+		})
+
+		it('stops + removes the sidecar and confirms the container is gone (delta 0)', async () => {
+			const internals = manager as unknown as Internals
+			const sessionId = 'sess-cleanup-fast'
+			internals.activeSessions.set(sessionId, {
+				tempDir: '/tmp/x',
+				browserContainerId: 'browser-fast',
+				networkName: 'anko-net-fast',
+			})
+			// First inspect after remove already 404s — the happy path.
+			mockContainerManager.inspect.mockRejectedValueOnce(notFound404())
+
+			const started = Date.now()
+			await internals.cleanupBrowserSidecar(sessionId)
+			const elapsed = Date.now() - started
+
+			expect(mockContainerManager.stop).toHaveBeenCalledWith('browser-fast')
+			expect(mockContainerManager.remove).toHaveBeenCalledWith('browser-fast')
+			expect(mockContainerManager.inspect).toHaveBeenCalledWith('browser-fast')
+			expect(mockContainerManager.removeNetwork).toHaveBeenCalledWith('anko-net-fast')
+			// Bookkeeping cleared so the next session-end signal is a no-op.
+			expect(internals.activeSessions.get(sessionId)?.browserContainerId).toBeUndefined()
+			expect(internals.activeSessions.get(sessionId)?.networkName).toBeUndefined()
+			// AC-T5: well inside the 60s budget.
+			expect(elapsed).toBeLessThan(60_000)
+		})
+
+		it('keeps polling until inspect returns 404 (slow Docker daemon)', async () => {
+			const internals = manager as unknown as Internals
+			const sessionId = 'sess-cleanup-slow'
+			internals.activeSessions.set(sessionId, {
+				tempDir: '/tmp/x',
+				browserContainerId: 'browser-slow',
+			})
+			// inspect reports the container alive twice, then 404 — wait loop must
+			// keep going across the early polls.
+			mockContainerManager.inspect
+				.mockResolvedValueOnce({ running: false, exitCode: 0 })
+				.mockResolvedValueOnce({ running: false, exitCode: 0 })
+				.mockRejectedValueOnce(notFound404())
+
+			await internals.cleanupBrowserSidecar(sessionId)
+
+			expect(mockContainerManager.inspect.mock.calls.length).toBeGreaterThanOrEqual(3)
+		})
+
+		it('no-ops when there is no sidecar to clean up (the common path)', async () => {
+			const internals = manager as unknown as Internals
+			const sessionId = 'sess-no-sidecar'
+			internals.activeSessions.set(sessionId, { tempDir: '/tmp/x' })
+
+			await internals.cleanupBrowserSidecar(sessionId)
+
+			expect(mockContainerManager.stop).not.toHaveBeenCalled()
+			expect(mockContainerManager.remove).not.toHaveBeenCalled()
+			expect(mockContainerManager.inspect).not.toHaveBeenCalled()
+			expect(mockContainerManager.removeNetwork).not.toHaveBeenCalled()
+		})
+
+		it('is idempotent — a second call after teardown does nothing', async () => {
+			const internals = manager as unknown as Internals
+			const sessionId = 'sess-cleanup-idempotent'
+			internals.activeSessions.set(sessionId, {
+				tempDir: '/tmp/x',
+				browserContainerId: 'browser-idem',
+				networkName: 'anko-net-idem',
+			})
+			mockContainerManager.inspect.mockRejectedValueOnce(notFound404())
+
+			await internals.cleanupBrowserSidecar(sessionId)
+			const stopCallsAfterFirst = mockContainerManager.stop.mock.calls.length
+			const removeCallsAfterFirst = mockContainerManager.remove.mock.calls.length
+
+			await internals.cleanupBrowserSidecar(sessionId)
+
+			expect(mockContainerManager.stop.mock.calls.length).toBe(stopCallsAfterFirst)
+			expect(mockContainerManager.remove.mock.calls.length).toBe(removeCallsAfterFirst)
 		})
 	})
 
