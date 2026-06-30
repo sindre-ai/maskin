@@ -656,6 +656,7 @@ const deleteIntegrationRoute = createRoute({
 
 app.openapi(deleteIntegrationRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -693,6 +694,15 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		.update(integrations)
 		.set({ status: 'revoked', updatedAt: new Date() })
 		.where(eq(integrations.id, id))
+
+	await db.insert(events).values({
+		workspaceId: existing.workspaceId,
+		actorId,
+		action: 'updated',
+		entityType: 'integration',
+		entityId: id,
+		data: { status: 'revoked', reason: 'user_disconnected' },
+	})
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)

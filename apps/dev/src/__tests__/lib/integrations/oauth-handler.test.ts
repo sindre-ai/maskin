@@ -292,5 +292,37 @@ describe('OAuth2Handler', () => {
 
 			expect(mockFetch).not.toHaveBeenCalled()
 		})
+
+		it('throws TokenRequestError with parsed oauthError on non-ok response', async () => {
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 400,
+				text: async () => '{"error":"invalid_token"}',
+			})
+			const config: OAuth2Config = { ...baseConfig, revokeUrl: 'https://provider.com/revoke' }
+			const handler = new OAuth2Handler(config)
+			const err = await handler.revokeToken('bad-token').catch((e) => e)
+
+			expect(err).toBeInstanceOf(TokenRequestError)
+			expect((err as TokenRequestError).status).toBe(400)
+			expect((err as TokenRequestError).oauthError).toBe('invalid_token')
+			expect((err as TokenRequestError).responseBody).toBe('{"error":"invalid_token"}')
+			expect((err as Error).message).toBe('Token revocation failed: 400 {"error":"invalid_token"}')
+		})
+
+		it('TokenRequestError leaves oauthError undefined when revoke body is not JSON', async () => {
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 503,
+				text: async () => 'Service Unavailable',
+			})
+			const config: OAuth2Config = { ...baseConfig, revokeUrl: 'https://provider.com/revoke' }
+			const handler = new OAuth2Handler(config)
+			const err = await handler.revokeToken('token').catch((e) => e)
+
+			expect(err).toBeInstanceOf(TokenRequestError)
+			expect((err as TokenRequestError).status).toBe(503)
+			expect((err as TokenRequestError).oauthError).toBeUndefined()
+		})
 	})
 })

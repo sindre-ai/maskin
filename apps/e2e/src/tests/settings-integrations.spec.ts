@@ -26,9 +26,10 @@ test.describe('Settings — Integrations page', () => {
 			await page.waitForLoadState('networkidle')
 
 			// Google Calendar has no event types defined yet (T2/T3), so it should
-			// show "Available to connect" rather than "0 event types available"
-			const zeroEventsText = page.locator('text=0 event types available')
-			await expect(zeroEventsText).not.toBeVisible()
+			// show "Available to connect" rather than "0 event types available".
+			// Assert the positive side so a blank/crashed page doesn't pass vacuously.
+			await expect(page.getByText('Available to connect').first()).toBeVisible()
+			await expect(page.locator('text=0 event types available')).not.toBeVisible()
 		})
 	}
 
@@ -38,12 +39,10 @@ test.describe('Settings — Integrations page', () => {
 			await page.goto(`/${account.workspaceId}/settings/integrations`)
 			await page.waitForLoadState('networkidle')
 
-			// At least one Connect button should be visible and clickable
-			const connectButtons = page.getByRole('button', { name: 'Connect' })
-			const count = await connectButtons.count()
-			if (count > 0) {
-				await expect(connectButtons.first()).toBeVisible()
-			}
+			// At least one Connect button must be visible — a fresh test account has
+			// no connected integrations, so every provider shows a Connect button.
+			// Unconditional: if zero buttons are found, the test correctly fails.
+			await expect(page.getByRole('button', { name: 'Connect' }).first()).toBeVisible()
 		}
 	})
 })

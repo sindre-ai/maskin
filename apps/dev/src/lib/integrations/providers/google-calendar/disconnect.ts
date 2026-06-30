@@ -27,10 +27,11 @@ export async function revokeGoogleCalendarGrant(ctx: PreDisconnectContext): Prom
 			return
 		}
 
-		if (config.auth.type !== 'oauth2') return
-		const handler = new OAuth2Handler(config.auth.config)
-		await handler.revokeToken(token)
-		logger.info('Google Calendar grant revoked', { integrationId: ctx.integrationId })
+		if (config.auth.type === 'oauth2') {
+			const handler = new OAuth2Handler(config.auth.config)
+			await handler.revokeToken(token)
+			logger.info('Google Calendar grant revoked', { integrationId: ctx.integrationId })
+		}
 	} catch (err) {
 		logger.warn('Google Calendar revoke failed (continuing with disconnect)', {
 			integrationId: ctx.integrationId,

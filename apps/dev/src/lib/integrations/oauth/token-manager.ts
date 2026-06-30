@@ -23,14 +23,6 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000
  */
 const inflightRefreshes = new Map<string, Promise<string>>()
 
-/**
- * Process-local fallback for integrations whose revoked status could not be
- * persisted to the DB (transient write error during invalid_grant handling).
- * Prevents a retry storm where every subsequent getValidToken call re-hits the
- * provider, since the DB row still reads 'active'.
- */
-const knownRevokedIds = new Set<string>()
-
 export class TokenManager {
 	/**
 	 * Get a valid access token for an integration.
@@ -60,9 +52,9 @@ export class TokenManager {
 			throw new Error(`Integration ${integrationId} not found`)
 		}
 
-		// Short-circuit: a previous call already detected revocation. Don't re-hit
+		// Short-circuit: integration was already marked revoked. Don't re-hit
 		// the provider — the user must reconnect.
-		if (integration.status === 'revoked' || knownRevokedIds.has(integrationId)) {
+		if (integration.status === 'revoked') {
 			throw new IntegrationAuthRevokedError(integrationId)
 		}
 
@@ -214,9 +206,8 @@ export class TokenManager {
 				try {
 					await this.markRevoked(db, integrationId)
 				} catch (markErr) {
-					// Fallback: DB write failed, but we must not retry the provider on subsequent
-					// calls. Cache the revoked state in-process so getValidToken short-circuits.
-					knownRevokedIds.add(integrationId)
+					// DB write failed — log and continue. The caller still gets
+					// IntegrationAuthRevokedError; the next call will retry markRevoked.
 					logger.warn('Failed to persist revoked status for integration', {
 						integrationId,
 						error: String(markErr),
@@ -250,22 +241,24 @@ export class TokenManager {
 			)
 		}
 
-		// Store updated credentials
-		await db
-			.update(integrations)
-			.set({
-				credentials: encrypt(JSON.stringify(updated)),
-				updatedAt: new Date(),
-			})
-			.where(eq(integrations.id, integrationId))
+		// Store updated credentials and log the refresh event atomically so a
+		// transient events-insert failure doesn't leave credentials updated but
+		// the audit trail broken (mirrors the markRevoked transaction pattern).
+		const encryptedCredentials = encrypt(JSON.stringify(updated))
+		await db.transaction(async (tx) => {
+			await tx
+				.update(integrations)
+				.set({ credentials: encryptedCredentials, updatedAt: new Date() })
+				.where(eq(integrations.id, integrationId))
 
-		await db.insert(events).values({
-			workspaceId,
-			actorId,
-			action: 'updated',
-			entityType: 'integration',
-			entityId: integrationId,
-			data: { reason: 'token_refreshed', provider: provider.config.name },
+			await tx.insert(events).values({
+				workspaceId,
+				actorId,
+				action: 'updated',
+				entityType: 'integration',
+				entityId: integrationId,
+				data: { reason: 'token_refreshed', provider: provider.config.name },
+			})
 		})
 
 		logger.info('Refreshed OAuth2 access token', {
