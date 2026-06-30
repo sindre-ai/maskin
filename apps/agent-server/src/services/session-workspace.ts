@@ -1,5 +1,5 @@
 import { execFile as execFileCb } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -110,6 +110,147 @@ export async function deleteSessionDir(sessionDir: string): Promise<void> {
 
 export type PushSessionWorkspaceResult = {
 	archiveBytes: number
+}
+
+export type SweepEvictedEntry = {
+	sessionId: string
+	sizeBytes: number
+	mtimeMs: number
+}
+
+export type SweepResult = {
+	candidates: number
+	totalBytesBefore: number
+	totalBytesAfter: number
+	thresholdBytes: number
+	evicted: SweepEvictedEntry[]
+	skippedActive: number
+	scanErrors: number
+}
+
+export type SweepOptions = {
+	thresholdBytes: number
+	// Floor for eviction candidacy. Entries younger than this (mtime) are
+	// presumed live and skipped, so an in-flight session can never be deleted
+	// out from under itself.
+	minAgeMs: number
+	// Session ids the caller knows are live or about-to-be-live — always
+	// skipped regardless of mtime. The caller passes the session it is
+	// dispatching right now so it can never get evicted.
+	keepSessionIds?: ReadonlySet<string> | string[]
+	// `Date.now`-compatible clock for tests.
+	now?: () => number
+}
+
+async function dirSizeBytes(path: string): Promise<number> {
+	let total = 0
+	const entries = await readdir(path, { withFileTypes: true })
+	for (const entry of entries) {
+		const child = join(path, entry.name)
+		if (entry.isDirectory()) {
+			total += await dirSizeBytes(child)
+		} else if (entry.isFile() || entry.isSymbolicLink()) {
+			const s = await stat(child).catch(() => null)
+			if (s) total += s.size
+		}
+	}
+	return total
+}
+
+/**
+ * Sweep `rootDir` (the host's session-workspace root, typically
+ * `AGENT_SESSION_ROOT`) and evict abandoned session dirs in LRU order — oldest
+ * `mtime` first — until total size is below `thresholdBytes`. Entries younger
+ * than `minAgeMs` and entries whose session id is in `keepSessionIds` are
+ * never candidates, so a session currently being dispatched cannot be deleted
+ * out from under itself.
+ *
+ * Best-effort: missing root → no-op; per-entry failures are counted but do
+ * not throw. Returns metrics so the caller can log + alert.
+ */
+export async function sweepSessionWorkspaces(
+	rootDir: string,
+	options: SweepOptions,
+): Promise<SweepResult> {
+	const keepSet =
+		options.keepSessionIds instanceof Set
+			? options.keepSessionIds
+			: new Set(options.keepSessionIds ?? [])
+	const clock = options.now ?? Date.now
+	const result: SweepResult = {
+		candidates: 0,
+		totalBytesBefore: 0,
+		totalBytesAfter: 0,
+		thresholdBytes: options.thresholdBytes,
+		evicted: [],
+		skippedActive: 0,
+		scanErrors: 0,
+	}
+
+	let entries: Array<{ name: string; isDirectory(): boolean }>
+	try {
+		entries = await readdir(rootDir, { withFileTypes: true })
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code
+		if (code === 'ENOENT') return result
+		throw err
+	}
+
+	type Candidate = { sessionId: string; path: string; mtimeMs: number; sizeBytes: number }
+	const live: Candidate[] = []
+	const candidates: Candidate[] = []
+
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue
+		const sessionId = entry.name
+		const path = join(rootDir, sessionId)
+		const s = await stat(path).catch(() => null)
+		if (!s) {
+			result.scanErrors++
+			continue
+		}
+		const sizeBytes = await dirSizeBytes(path).catch(() => null)
+		if (sizeBytes === null) {
+			result.scanErrors++
+			continue
+		}
+		result.totalBytesBefore += sizeBytes
+		const ageMs = clock() - s.mtimeMs
+		const isProtectedById = keepSet.has(sessionId)
+		const tooYoung = ageMs < options.minAgeMs
+		if (isProtectedById || tooYoung) {
+			live.push({ sessionId, path, mtimeMs: s.mtimeMs, sizeBytes })
+			result.skippedActive++
+		} else {
+			candidates.push({ sessionId, path, mtimeMs: s.mtimeMs, sizeBytes })
+		}
+	}
+
+	result.candidates = candidates.length
+	result.totalBytesAfter = result.totalBytesBefore
+
+	if (result.totalBytesBefore <= options.thresholdBytes) return result
+
+	// LRU: oldest mtime evicts first.
+	candidates.sort((a, b) => a.mtimeMs - b.mtimeMs)
+
+	for (const candidate of candidates) {
+		if (result.totalBytesAfter <= options.thresholdBytes) break
+		try {
+			await rm(candidate.path, { recursive: true, force: true })
+		} catch {
+			result.scanErrors++
+			continue
+		}
+		result.evicted.push({
+			sessionId: candidate.sessionId,
+			sizeBytes: candidate.sizeBytes,
+			mtimeMs: candidate.mtimeMs,
+		})
+		result.totalBytesAfter -= candidate.sizeBytes
+	}
+
+	return result
 }
 
 /**
