@@ -59,7 +59,7 @@ describe('Development Pipeline package definition', () => {
 		expect(DEV_PIPELINE_PACKAGE.slug).toBe('development-pipeline')
 		expect(DEV_PIPELINE_PACKAGE.name).toBe('Development Pipeline')
 		expect(DEV_PIPELINE_PACKAGE.useCase).toBe('Development')
-		expect(DEV_PIPELINE_PACKAGE.version).toBe('1.0.0')
+		expect(DEV_PIPELINE_PACKAGE.version).toBe('1.1.0')
 		expect(DEV_PIPELINE_PACKAGE.description.length).toBeGreaterThan(0)
 	})
 
