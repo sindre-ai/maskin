@@ -1071,7 +1071,8 @@ export class SessionManager extends EventEmitter {
 					}
 
 					const envVarName =
-						resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
+						resolved.config.mcp?.envKey ??
+						`${integration.provider.toUpperCase().replace(/-/g, '_')}_TOKEN`
 					envVars[envVarName] = accessToken
 					if (resolved.config.mcp?.autoInject && resolved.config.mcp.server) {
 						autoInjectedMcpServers[`integration-${integration.provider}`] =

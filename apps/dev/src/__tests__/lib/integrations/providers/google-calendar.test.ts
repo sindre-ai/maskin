@@ -72,7 +72,12 @@ describe('Google Calendar provider config', () => {
 			expect(url.searchParams.get('code_challenge_method')).toBe('S256')
 			expect(url.searchParams.get('client_id')).toBe('test-client-id')
 		} finally {
-			process.env.GOOGLE_CALENDAR_CLIENT_ID = ORIGINAL_ID
+			if (ORIGINAL_ID === undefined) {
+				// biome-ignore lint/performance/noDelete: process.env assigns undefined as the string "undefined"; delete is required to truly unset the variable
+				delete process.env.GOOGLE_CALENDAR_CLIENT_ID
+			} else {
+				process.env.GOOGLE_CALENDAR_CLIENT_ID = ORIGINAL_ID
+			}
 		}
 	})
 
