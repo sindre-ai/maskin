@@ -59,7 +59,7 @@ export const DEV_PACKAGE_SUMMARIZATION_AGENT_NAME = 'Summarization Agent'
 
 // ── Shared version ────────────────────────────────────────────────────────────
 
-export const DEV_PACKAGE_VERSION = '1.0.0'
+export const DEV_PACKAGE_VERSION = '1.0.1'
 
 // ── Use cases ────────────────────────────────────────────────────────────────
 
