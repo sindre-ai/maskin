@@ -561,4 +561,87 @@ describe('Import dedup engine — integration', () => {
 		expect(audit[1]?.oldValues).toEqual({ content: 'first edit' })
 		expect(audit[1]?.newValues).toEqual({ content: 'second edit' })
 	})
+
+	// ── Latency benchmarks (independently runnable, test:integration) ──────────
+
+	describe('latency', () => {
+		const SEED_COUNT = 10000
+		const MATCH_COUNT = 50
+		const NEW_COUNT = 5
+
+		it('AC-T1: resolves matches against 10k seeded rows in ≤3s on top-level + metadata dedup keys', async () => {
+			const { workspaceId, actorId, importId } = await setupImportFixture()
+
+			// Seed 10k objects with both top-level title and metadata.externalId
+			const seed = Array.from({ length: SEED_COUNT }, (_, i) => ({
+				workspaceId,
+				type: 'task' as const,
+				title: `Task ${i}`,
+				status: 'todo' as const,
+				metadata: { externalId: `ext-${i}` },
+				createdBy: actorId,
+			}))
+			await db.insert(objects).values(seed)
+
+			// CSV rows: 50 that match on both title AND metadata.externalId (AND-composed),
+			// plus 5 new rows that match nothing → exercise both column paths.
+			const csvRows = [
+				...Array.from({ length: MATCH_COUNT }, (_, i) => ({
+					name: `Task ${i}`,
+					externalId: `ext-${i}`,
+					description: `Updated ${i}`,
+				})),
+				...Array.from({ length: NEW_COUNT }, (_, i) => ({
+					name: `Brand New ${i}`,
+					externalId: `new-ext-${i}`,
+				})),
+			]
+
+			const start = performance.now()
+			const result = await executeImport(
+				importId,
+				csvRows,
+				{
+					typeMappings: [
+						{
+							objectType: 'task',
+							defaultStatus: 'todo',
+							dedupKeys: ['title', 'metadata.externalId'],
+							columns: [
+								{
+									sourceColumn: 'name',
+									targetField: 'title',
+									transform: 'none',
+									skip: false,
+								},
+								{
+									sourceColumn: 'externalId',
+									targetField: 'metadata.externalId',
+									transform: 'none',
+									skip: false,
+								},
+								{
+									sourceColumn: 'description',
+									targetField: 'content',
+									transform: 'none',
+									skip: false,
+								},
+							],
+						},
+					],
+					relationships: [],
+				},
+				workspaceId,
+				actorId,
+				SETTINGS,
+				db,
+			)
+			const elapsed = performance.now() - start
+
+			expect(elapsed).toBeLessThan(3000)
+			expect(result.updatedCount).toBe(MATCH_COUNT)
+			expect(result.successCount).toBe(NEW_COUNT)
+			expect(result.skippedCount).toBe(0)
+		})
+	})
 })
