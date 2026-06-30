@@ -137,3 +137,48 @@ jobs:
           name: playwright-report
           path: apps/e2e/playwright-report/
           retention-days: 7
+
+  browser-access-tests:
+    needs: lint-typecheck-build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        leg:
+          - name: docker
+            package: '@maskin/dev'
+          - name: microsandbox
+            package: '@maskin/agent-server'
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: maskin_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter ${{ matrix.leg.package }} build
+      - name: Unit tests (${{ matrix.leg.name }} leg)
+        run: pnpm --filter ${{ matrix.leg.package }} test -- --run
+      - name: Integration tests (${{ matrix.leg.name }} leg)
+        run: pnpm --filter ${{ matrix.leg.package }} test:integration -- --run
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
+      - name: bet-qa abort contract (shared)
+        run: pnpm --filter @maskin/shared test -- --run
