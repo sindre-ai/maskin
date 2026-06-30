@@ -1058,6 +1058,7 @@ export class SessionManager extends EventEmitter {
 		// config (github-{owner} key). The env var is available for envsubst
 		// substitution when the container resolves the agent's configured entry.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
+		const resolvedGithubInstalls: Array<{ ownerLogin: string; token: string }> = []
 		for (const integration of activeIntegrations) {
 			try {
 				const resolved = getProvider(integration.provider)
@@ -1068,6 +1069,7 @@ export class SessionManager extends EventEmitter {
 					if (!ownerLogin) continue
 
 					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
+					resolvedGithubInstalls.push({ ownerLogin, token: accessToken })
 				} else {
 					// Slack: only inject the bot token. A user token (xoxp-) here means
 					// the install granted user scopes instead of bot scopes — posting
@@ -1108,6 +1110,24 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
+		// Inject per-org GitHub MCP server entries with literal tokens (no envsubst placeholder).
+		// Each installation gets its own named entry (e.g. github-sindre-ai) so agents in
+		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
+		// We also set bare GITHUB_TOKEN so existing agent configs using ${GITHUB_TOKEN}
+		// continue to work after envsubst expansion.
+		for (const { ownerLogin, token } of resolvedGithubInstalls) {
+			autoInjectedMcpServers[`github-${ownerLogin}`] = {
+				type: 'stdio',
+				command: 'npx',
+				args: ['-y', '@modelcontextprotocol/server-github'],
+				env: { GITHUB_TOKEN: token },
+			}
+		}
+		const primaryGithubToken = resolvedGithubInstalls[0]?.token
+		if (primaryGithubToken) {
+			envVars.GITHUB_TOKEN = primaryGithubToken
+		}
+
 		// Merge user-provided env vars, filtering out reserved keys
 		const RESERVED_ENV_KEYS = new Set([
 			'SESSION_ID',
@@ -1135,6 +1155,7 @@ export class SessionManager extends EventEmitter {
 			'CLAUDE_OAUTH_SCOPES',
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
 			'BROWSER_CDP_URL',
+			'GITHUB_TOKEN',
 		])
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {
@@ -1147,9 +1168,9 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Session-level MCP config (convert array → { mcpServers: { ... } } format),
-		// merged with any auto-injected workspace MCPs and GitHub installation MCPs.
-		// Keys are namespaced so the sources can't collide.
+		// Session-level MCP config (convert array → { mcpServers: { ... } } format), merged
+		// with auto-injected workspace MCPs and per-org GitHub MCPs. Keys are namespaced so
+		// the sources can't collide (github-<owner>, integration-<provider>, session-mcp-N).
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
 		const mcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
