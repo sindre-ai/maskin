@@ -18,7 +18,7 @@ import {
 	sessions,
 	workspaces,
 } from '@maskin/db/schema'
-import { githubOwnerLoginToEnvKey } from '@maskin/shared'
+import { type SessionResultFailureReason, githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import {
 	and,
@@ -61,6 +61,51 @@ import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace
  * stable group-by key from day one.
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
+
+/**
+ * Stable terminal exit code raised by `agent-run.sh` when the session
+ * filesystem fills up (ENOSPC or an equivalent disk-full-class failure).
+ *
+ * This code is a no-retry / no-recovery verdict: any code path that
+ * considers spawning a follow-up "recovery" session (a new session that
+ * resumes the previous workspace, retries the prompt, or otherwise picks
+ * up where this one left off) MUST consult `isDiskFullExitCode()` and
+ * skip the spawn when it matches. A recovery session that lands on the
+ * still-full host would just hit ENOSPC again, discarding the work the
+ * trap already captured and burning more spend (the very thing the
+ * parent bet — Cut Developer agent token waste — is trying to stop).
+ *
+ * Keep this constant in sync with `DISK_FULL_EXIT_CODE` in
+ * `docker/agent-base/agent-run.sh`.
+ */
+export const DISK_FULL_EXIT_CODE = 28
+
+/**
+ * Returns a `disk_full` failure-reason payload when the exit code matches
+ * the disk-full verdict, otherwise null. Conforms to the existing
+ * `SessionResultFailureReason` shape so the UI's `FailureCard` renders it
+ * the same way as credit-exhaustion failures (different `reason_code`, same
+ * fields). Callers attach the result to `sessions.result.failure_reason`
+ * and the `session_failed` event so any future recovery path can short-
+ * circuit on this verdict.
+ */
+export function classifyDiskFull(exitCode: number | null): SessionResultFailureReason | null {
+	if (exitCode !== DISK_FULL_EXIT_CODE) return null
+	return {
+		provider: 'agent-runtime',
+		reason_code: 'disk_full',
+		human_message:
+			'Session ran out of disk space (ENOSPC). Terminal — no retry, no recovery session.',
+		http_status: null,
+		reset_at: null,
+		verbatim_output: null,
+	}
+}
+
+/** True when the exit code is the disk-full verdict — read this from any future recovery-spawn gate. */
+export function isDiskFullExitCode(exitCode: number | null): boolean {
+	return exitCode === DISK_FULL_EXIT_CODE
+}
 
 /**
  * `sessions.startedAt`/`createdAt` are typed `Date | null` by Drizzle but
@@ -1526,11 +1571,24 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
-		const failureReason =
-			exitCode !== null && exitCode !== 0
+		// Prefer the disk-full verdict when the exit code matches — it's the
+		// stable terminal signal raised by `agent-run.sh`'s ENOSPC trap, and
+		// is what gates any future recovery-session spawn. Fall back to the
+		// credit-exhaustion classifier only when the exit code is non-zero
+		// AND doesn't match the disk-full code, so a disk-full session never
+		// gets mis-tagged as a billing failure (different recovery UX).
+		const diskFullReason = classifyDiskFull(exitCode)
+		const failureReason: SessionResultFailureReason | null =
+			diskFullReason ??
+			(exitCode !== null && exitCode !== 0
 				? classifyCreditExhaustion(this.activeSessions.get(sessionId)?.stdoutTail ?? '')
-				: null
-		if (failureReason) {
+				: null)
+		if (diskFullReason) {
+			logger.info(
+				'Session disk-full terminal verdict — no retry, no recovery session will be spawned',
+				{ sessionId, exitCode },
+			)
+		} else if (failureReason) {
 			logger.info('Session credit-exhaustion classified', {
 				sessionId,
 				reason_code: failureReason.reason_code,
@@ -2388,12 +2446,23 @@ export class SessionManager extends EventEmitter {
 
 		const status = exitCode === 0 ? 'completed' : 'failed'
 
+		const diskFullReason = classifyDiskFull(exitCode)
+		if (diskFullReason) {
+			logger.info(
+				'Remote session disk-full terminal verdict — no retry, no recovery session will be spawned',
+				{ sessionId, exitCode },
+			)
+		}
+
 		try {
 			await this.db
 				.update(sessions)
 				.set({
 					status,
-					result: { exit_code: exitCode },
+					result: {
+						exit_code: exitCode,
+						...(diskFullReason ? { failure_reason: diskFullReason } : {}),
+					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
 					currentActivity: null,
@@ -2429,7 +2498,10 @@ export class SessionManager extends EventEmitter {
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
-				data: { exit_code: exitCode },
+				data: {
+					exit_code: exitCode,
+					...(diskFullReason ? { failure_reason: diskFullReason } : {}),
+				},
 			})
 		} catch (err) {
 			logger.error('Failed to insert remote session completion event', {

@@ -1,11 +1,17 @@
 #!/bin/bash
 set -eo pipefail
 
-# Source overflow env vars (values >1500 chars spilled here by the agent-server)
-if [ -f /agent/.env-overflow.sh ]; then
-  # shellcheck source=/dev/null
-  source /agent/.env-overflow.sh
-fi
+# Stable terminal exit code for "this session failed because the filesystem
+# filled up (ENOSPC or an equivalent disk-full-class failure)". The receiving
+# side (`session-manager.ts` → `markRemoteSessionComplete`) treats this code
+# as a no-retry, no-recovery verdict: a recovery session that starts on a
+# still-full host would just hit ENOSPC again and discard the work already
+# captured before the trap fired. Keep this constant in sync with
+# `DISK_FULL_EXIT_CODE` in apps/dev/src/services/session-manager.ts.
+DISK_FULL_EXIT_CODE=28
+
+RUNTIME="${AGENT_RUNTIME:-claude-code}"
+AGENT_EXIT_CODE=0
 
 # Resolve a working URL for the agent-server (log ingest, input stream, completion
 # signal). The server injects AGENT_SERVER_URL as http://host.microsandbox.internal:<port>,
@@ -39,7 +45,6 @@ resolve_agent_server_url() {
   done
   echo "[system] WARNING: agent-server not reachable from VM (tried gateway + alias)" >&2
 }
-resolve_agent_server_url
 
 # Signal session completion so the agent-server tears down this microVM.
 # A microsandbox `create`d VM is PERSISTENT: it does NOT power off when this
@@ -59,10 +64,65 @@ report_complete() {
       -o /dev/null 2>/dev/null || true
   fi
 }
-trap report_complete EXIT
 
-RUNTIME="${AGENT_RUNTIME:-claude-code}"
-AGENT_EXIT_CODE=0
+# Detect a disk-full-class failure on the agent's primary working filesystem.
+# We can't intercept ENOSPC inside the child `claude`/`codex` process — they
+# return whatever generic non-zero code the underlying tool call surfaced —
+# but any ENOSPC-class failure leaves the workspace at or close to full at
+# session end. Two complementary checks:
+#
+#   1. Write probe — try to create an empty hidden file under the workspace.
+#      If `creat()` fails (ENOSPC, EDQUOT, or EROFS resulting from a remount
+#      after corruption), the agent's own tool calls would have failed the
+#      same way.
+#   2. df% threshold — catch the "nearly full" case where the probe slips
+#      through against a small reserved-blocks margin but the agent's next
+#      allocation would push past it. 98% is comfortably above the typical
+#      5% root reservation on ext4 and matches the conservative ENOSPC
+#      floor used by disk-pressure alerting elsewhere.
+#
+# Returns 0 when disk-full is detected, 1 otherwise. Either check alone is
+# sufficient — we want false positives over false negatives, since the cost
+# of a false positive (exiting 28 instead of the original code) is only a
+# slightly mis-labelled failure, while a false negative would let a recovery
+# session spawn on a still-full host and discard the agent's work.
+detect_disk_full() {
+  local workspace="${1:-/agent/workspace}"
+
+  # Workspace might not exist if setup failed before mkdir — that's a setup
+  # miss, not a disk-full signal, so don't flag it.
+  [ ! -d "$workspace" ] && return 1
+
+  # Write probe: `:` is the no-op builtin, `: > path` truncates/creates the
+  # file with zero bytes. The subshell isolates redirection failures so the
+  # caller's stderr stays untouched on success.
+  local probe="$workspace/.agent_run_disk_probe.$$"
+  if ! (: > "$probe") 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$probe" 2>/dev/null
+
+  # df -P forces POSIX columns so column 5 is always the Use% field.
+  # awk strips the trailing % and forces a numeric compare with `+0`.
+  local pct
+  pct=$(df -P "$workspace" 2>/dev/null | awk 'NR==2{gsub("%","",$5); print $5+0}')
+  if [ -n "$pct" ] && [ "$pct" -ge 98 ]; then
+    return 0
+  fi
+
+  return 1
+}
+
+# Single EXIT trap entry point. Runs before report_complete so an overridden
+# AGENT_EXIT_CODE flows through to the /complete POST. Keep this idempotent:
+# bash fires EXIT exactly once even when `set -e` triggered the exit.
+on_exit() {
+  if detect_disk_full; then
+    echo "[system] ENOSPC detected on /agent/workspace — overriding exit code to ${DISK_FULL_EXIT_CODE} (terminal, no recovery session will be spawned)" >&2
+    AGENT_EXIT_CODE=${DISK_FULL_EXIT_CODE}
+  fi
+  report_complete
+}
 
 # Install runtime if not already present
 install_runtime() {
@@ -373,12 +433,36 @@ run_agent() {
   esac
 }
 
-echo "[system] Starting agent session: ${SESSION_ID:-unknown}"
-echo "[system] Runtime: $RUNTIME"
+main() {
+  # Source overflow env vars (values >1500 chars spilled here by the agent-server).
+  if [ -f /agent/.env-overflow.sh ]; then
+    # shellcheck source=/dev/null
+    source /agent/.env-overflow.sh
+  fi
 
-install_runtime
-build_context
-setup_mcps
-setup_claude_credentials
+  # Register the EXIT trap before any work — once installed, it fires on
+  # `set -e` failure, on signal-driven exits, and on the normal end. Putting
+  # it inside main() (instead of top-level) keeps tests that `source` this
+  # file from inheriting a trap that would fire on every test teardown.
+  trap on_exit EXIT
 
-run_agent
+  resolve_agent_server_url
+
+  echo "[system] Starting agent session: ${SESSION_ID:-unknown}"
+  echo "[system] Runtime: $RUNTIME"
+
+  install_runtime
+  build_context
+  setup_mcps
+  setup_claude_credentials
+
+  run_agent
+}
+
+# Run main only when this script is executed directly, NOT when sourced.
+# Tests source the script to call detect_disk_full / report_complete in
+# isolation; running install_runtime in that path would touch /usr/local
+# and try to npm install Claude Code.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main
+fi

@@ -182,6 +182,12 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  * - agent_server_lost     The agent-server restarted and no longer holds
  *                         the microsandbox for this session — the work is
  *                         irrecoverable and the row is closed out.
+ * - disk_full             agent-run.sh's ENOSPC trap fired (exit code 28).
+ *                         Terminal verdict: no retry, no recovery session.
+ *                         Spawning a recovery session on the still-full host
+ *                         would just hit ENOSPC again and discard the work
+ *                         the trap already captured. See DISK_FULL_EXIT_CODE
+ *                         in apps/dev/src/services/session-manager.ts.
  */
 export const failureReasonCodeSchema = z.enum([
 	'session_limit',
@@ -196,6 +202,7 @@ export const failureReasonCodeSchema = z.enum([
 	'rate_limit_error',
 	'insufficient_credits',
 	'agent_server_lost',
+	'disk_full',
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 

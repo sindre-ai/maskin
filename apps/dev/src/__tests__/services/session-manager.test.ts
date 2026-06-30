@@ -1762,4 +1762,175 @@ describe('SessionManager', () => {
 			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
 		})
 	})
+
+	describe('handleCompletion() — disk-full terminal verdict (AC-T7)', () => {
+		// The ENOSPC trap in agent-run.sh raises exit code 28 — the agreed
+		// terminal verdict. handleCompletion must tag failure_reason as
+		// `disk_full` (and skip the credit-exhaustion classifier so a
+		// disk-full session doesn't end up mis-tagged as a billing failure
+		// against a coincidental tail string).
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(null)
+		})
+
+		it('tags failure_reason as disk_full on result + event when exitCode is 28', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 28)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: { exit_code: number; failure_reason: unknown } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'result' in (u as Record<string, unknown>) &&
+					typeof (u as Record<string, unknown>).result === 'object',
+			)
+			expect(sessionUpdate?.status).toBe('failed')
+			expect(sessionUpdate?.result).toMatchObject({
+				exit_code: 28,
+				failure_reason: {
+					provider: 'agent-runtime',
+					reason_code: 'disk_full',
+					http_status: null,
+				},
+			})
+
+			const eventInsert = calls.inserts.find(
+				(i): i is { action: string; data: { exit_code: number; failure_reason: unknown } } =>
+					typeof i === 'object' &&
+					i !== null &&
+					typeof (i as Record<string, unknown>).action === 'string' &&
+					(i as { action: string }).action === 'session_failed',
+			)
+			expect(eventInsert?.data).toMatchObject({
+				exit_code: 28,
+				failure_reason: { reason_code: 'disk_full' },
+			})
+		})
+
+		it('does not invoke the credit-exhaustion classifier when exitCode is 28', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				// Tail intentionally contains a credit-exhaustion-looking string to
+				// prove the disk-full short-circuit fires BEFORE the classifier.
+				stdoutTail: 'billing_error',
+			})
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 28)
+
+			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('markRemoteSessionComplete() — disk-full terminal verdict (AC-T7)', () => {
+		// `markRemoteSessionComplete` is the agent-server completion path —
+		// what `/sessions/:id/complete` ultimately drives via the reconcile
+		// route. AC-T7 requires exitCode=28 to be a terminal `failed` row
+		// tagged `disk_full`, with no retry/recovery work queued downstream.
+		it('marks status failed and tags failure_reason as disk_full on exitCode 28', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.selectQueue = [
+				[session], // markRemoteSessionComplete: load session
+				[{ count: 0 }], // hasOtherActiveSessions: no other actives
+			]
+
+			await manager.markRemoteSessionComplete(session.id, 28)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: { exit_code: number; failure_reason: unknown } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'result' in (u as Record<string, unknown>) &&
+					typeof (u as Record<string, unknown>).result === 'object',
+			)
+			expect(sessionUpdate?.status).toBe('failed')
+			expect(sessionUpdate?.result).toMatchObject({
+				exit_code: 28,
+				failure_reason: { reason_code: 'disk_full' },
+			})
+
+			const eventInsert = calls.inserts.find(
+				(i): i is { action: string; data: { exit_code: number; failure_reason: unknown } } =>
+					typeof i === 'object' &&
+					i !== null &&
+					typeof (i as Record<string, unknown>).action === 'string' &&
+					(i as { action: string }).action === 'session_failed',
+			)
+			expect(eventInsert?.data).toMatchObject({
+				exit_code: 28,
+				failure_reason: { reason_code: 'disk_full' },
+			})
+		})
+
+		it('omits failure_reason on a clean exitCode 0 completion', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.selectQueue = [[session], [{ count: 0 }]]
+
+			await manager.markRemoteSessionComplete(session.id, 0)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: Record<string, unknown> } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'result' in (u as Record<string, unknown>) &&
+					typeof (u as Record<string, unknown>).result === 'object',
+			)
+			expect(sessionUpdate?.status).toBe('completed')
+			expect(sessionUpdate?.result).not.toHaveProperty('failure_reason')
+		})
+
+		it('omits failure_reason on a generic non-zero exitCode (e.g. 1) that is not the disk-full code', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.selectQueue = [[session], [{ count: 0 }]]
+
+			await manager.markRemoteSessionComplete(session.id, 1)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: Record<string, unknown> } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'result' in (u as Record<string, unknown>) &&
+					typeof (u as Record<string, unknown>).result === 'object',
+			)
+			expect(sessionUpdate?.status).toBe('failed')
+			expect(sessionUpdate?.result).not.toHaveProperty('failure_reason')
+		})
+	})
+
+	describe('isDiskFullExitCode / classifyDiskFull', () => {
+		it('only matches exit code 28', async () => {
+			const { isDiskFullExitCode, classifyDiskFull, DISK_FULL_EXIT_CODE } = await import(
+				'../../services/session-manager'
+			)
+			expect(DISK_FULL_EXIT_CODE).toBe(28)
+			expect(isDiskFullExitCode(28)).toBe(true)
+			expect(isDiskFullExitCode(0)).toBe(false)
+			expect(isDiskFullExitCode(1)).toBe(false)
+			expect(isDiskFullExitCode(null)).toBe(false)
+			expect(classifyDiskFull(28)).toMatchObject({ reason_code: 'disk_full' })
+			expect(classifyDiskFull(1)).toBeNull()
+			expect(classifyDiskFull(null)).toBeNull()
+		})
+	})
 })
