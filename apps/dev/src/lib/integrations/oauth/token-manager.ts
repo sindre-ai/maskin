@@ -23,6 +23,14 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000
  */
 const inflightRefreshes = new Map<string, Promise<string>>()
 
+/**
+ * Process-local fallback for integrations whose revoked status could not be
+ * persisted to the DB (transient write error during invalid_grant handling).
+ * Prevents a retry storm where every subsequent getValidToken call re-hits the
+ * provider, since the DB row still reads 'active'.
+ */
+const knownRevokedIds = new Set<string>()
+
 export class TokenManager {
 	/**
 	 * Get a valid access token for an integration.
@@ -54,7 +62,7 @@ export class TokenManager {
 
 		// Short-circuit: a previous call already detected revocation. Don't re-hit
 		// the provider — the user must reconnect.
-		if (integration.status === 'revoked') {
+		if (integration.status === 'revoked' || knownRevokedIds.has(integrationId)) {
 			throw new IntegrationAuthRevokedError(integrationId)
 		}
 
@@ -99,7 +107,14 @@ export class TokenManager {
 			throw new Error(`Cannot refresh token for auth type: ${provider.config.auth.type}`)
 		}
 
-		return this.refreshWithDedup(db, integrationId, provider, credentials)
+		return this.refreshWithDedup(
+			db,
+			integrationId,
+			provider,
+			credentials,
+			integration.workspaceId,
+			integration.createdBy,
+		)
 	}
 
 	/**
@@ -111,27 +126,29 @@ export class TokenManager {
 	 * UPDATE, not an error.
 	 */
 	async markRevoked(db: Database, integrationId: string): Promise<void> {
-		const [row] = await db
-			.select({ workspaceId: integrations.workspaceId, createdBy: integrations.createdBy })
-			.from(integrations)
-			.where(eq(integrations.id, integrationId))
-			.limit(1)
+		await db.transaction(async (tx) => {
+			const [row] = await tx
+				.select({ workspaceId: integrations.workspaceId, createdBy: integrations.createdBy })
+				.from(integrations)
+				.where(eq(integrations.id, integrationId))
+				.limit(1)
 
-		await db
-			.update(integrations)
-			.set({ status: 'revoked', updatedAt: new Date() })
-			.where(eq(integrations.id, integrationId))
+			await tx
+				.update(integrations)
+				.set({ status: 'revoked', updatedAt: new Date() })
+				.where(eq(integrations.id, integrationId))
 
-		if (row) {
-			await db.insert(events).values({
-				workspaceId: row.workspaceId,
-				actorId: row.createdBy,
-				action: 'updated',
-				entityType: 'integration',
-				entityId: integrationId,
-				data: { status: 'revoked', reason: 'token_revoked' },
-			})
-		}
+			if (row) {
+				await tx.insert(events).values({
+					workspaceId: row.workspaceId,
+					actorId: row.createdBy,
+					action: 'updated',
+					entityType: 'integration',
+					entityId: integrationId,
+					data: { status: 'revoked', reason: 'token_revoked' },
+				})
+			}
+		})
 
 		logger.info('Integration marked as revoked', { integrationId })
 	}
@@ -141,13 +158,22 @@ export class TokenManager {
 		integrationId: string,
 		provider: ResolvedProvider,
 		credentials: StoredCredentials,
+		workspaceId: string,
+		actorId: string,
 	): Promise<string> {
 		const existing = inflightRefreshes.get(integrationId)
 		if (existing) {
 			return existing
 		}
 
-		const promise = this.doRefresh(db, integrationId, provider, credentials).finally(() => {
+		const promise = this.doRefresh(
+			db,
+			integrationId,
+			provider,
+			credentials,
+			workspaceId,
+			actorId,
+		).finally(() => {
 			inflightRefreshes.delete(integrationId)
 		})
 		inflightRefreshes.set(integrationId, promise)
@@ -159,6 +185,8 @@ export class TokenManager {
 		integrationId: string,
 		provider: ResolvedProvider,
 		credentials: StoredCredentials,
+		workspaceId: string,
+		actorId: string,
 	): Promise<string> {
 		// Type guards: getValidToken already enforces both before reaching doRefresh,
 		// but TypeScript requires them here to narrow the union types so the compiler
@@ -186,6 +214,9 @@ export class TokenManager {
 				try {
 					await this.markRevoked(db, integrationId)
 				} catch (markErr) {
+					// Fallback: DB write failed, but we must not retry the provider on subsequent
+					// calls. Cache the revoked state in-process so getValidToken short-circuits.
+					knownRevokedIds.add(integrationId)
 					logger.warn('Failed to persist revoked status for integration', {
 						integrationId,
 						error: String(markErr),
@@ -227,6 +258,15 @@ export class TokenManager {
 				updatedAt: new Date(),
 			})
 			.where(eq(integrations.id, integrationId))
+
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: integrationId,
+			data: { reason: 'token_refreshed', provider: provider.config.name },
+		})
 
 		logger.info('Refreshed OAuth2 access token', {
 			integrationId,

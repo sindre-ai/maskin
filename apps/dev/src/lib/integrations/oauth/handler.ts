@@ -15,8 +15,13 @@ export class TokenRequestError extends Error {
 	readonly oauthError?: string
 	readonly responseBody: string
 
-	constructor(status: number, responseBody: string, oauthError?: string) {
-		super(`Token exchange failed: ${status} ${responseBody}`)
+	constructor(
+		status: number,
+		responseBody: string,
+		oauthError?: string,
+		operation = 'Token exchange',
+	) {
+		super(`${operation} failed: ${status} ${responseBody}`)
 		this.name = 'TokenRequestError'
 		this.status = status
 		this.responseBody = responseBody
@@ -125,7 +130,12 @@ export class OAuth2Handler {
 
 		if (!response.ok) {
 			const text = await response.text()
-			throw new TokenRequestError(response.status, text, parseOAuthErrorField(text))
+			throw new TokenRequestError(
+				response.status,
+				text,
+				parseOAuthErrorField(text),
+				'Token revocation',
+			)
 		}
 	}
 

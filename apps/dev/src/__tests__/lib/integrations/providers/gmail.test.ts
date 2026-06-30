@@ -5,6 +5,7 @@ import {
 	gmailEventNormalizer,
 	gmailWebhookVerifier,
 } from '../../../../lib/integrations/providers/gmail/webhooks'
+import type { StoredCredentials } from '../../../../lib/integrations/types'
 
 describe('Gmail provider config', () => {
 	it('has correct name and display name', () => {
@@ -81,7 +82,7 @@ describe('resolveExternalId', () => {
 		} as Response)
 
 		await expect(resolveExternalId({ accessToken: 'tok' })).rejects.toThrow(
-			'Gmail userinfo response missing email',
+			'Google userinfo response missing email field',
 		)
 	})
 
@@ -93,7 +94,7 @@ describe('resolveExternalId', () => {
 		} as Response)
 
 		await expect(resolveExternalId({ accessToken: 'expired' })).rejects.toThrow(
-			'Failed to resolve Gmail email: HTTP 401',
+			'Failed to resolve Google account email: HTTP 401',
 		)
 	})
 })
@@ -459,6 +460,7 @@ describe('stopGmailWatch', () => {
 			db: db as any,
 			integrationId: 'int-3',
 			workspaceId: 'ws-1',
+			credentials: {} as StoredCredentials,
 		})
 
 		expect(fetchSpy).toHaveBeenCalledWith(
@@ -492,6 +494,7 @@ describe('stopGmailWatch', () => {
 				db: db as any,
 				integrationId: 'int-4',
 				workspaceId: 'ws-1',
+				credentials: {} as StoredCredentials,
 			}),
 		).resolves.toBeUndefined()
 	})
@@ -518,6 +521,7 @@ describe('stopGmailWatch', () => {
 				db: db as any,
 				integrationId: 'int-5',
 				workspaceId: 'ws-1',
+				credentials: {} as StoredCredentials,
 			}),
 		).resolves.toBeUndefined()
 	})
@@ -533,6 +537,7 @@ describe('stopGmailWatch', () => {
 			db: db as any,
 			integrationId: 'missing',
 			workspaceId: 'ws-1',
+			credentials: {} as StoredCredentials,
 		})
 
 		expect(fetchSpy).not.toHaveBeenCalled()

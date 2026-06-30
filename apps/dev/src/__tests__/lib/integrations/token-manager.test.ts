@@ -76,6 +76,12 @@ function createMockDb(
 				return Promise.resolve()
 			}),
 		}),
+		// Simulates a Drizzle transaction by passing the same mock as the `tx` context.
+		// The closure captures `db` by reference; by the time any test calls transaction(),
+		// `db` is fully initialised.
+		transaction: vi
+			.fn()
+			.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(db)),
 	} as unknown as Parameters<TokenManager['getValidToken']>[0]
 
 	return { db, mockUpdateWhere, updateSets, insertValues, selectCalls }

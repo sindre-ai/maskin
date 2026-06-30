@@ -14,6 +14,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
+import { isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
@@ -26,7 +27,6 @@ import {
 } from '../lib/integrations/providers/slack/client'
 import { getProvider, listProviders } from '../lib/integrations/registry'
 import type { ResolvedProvider, StoredCredentials } from '../lib/integrations/types'
-import { isAuthRevokedError } from '../lib/integrations/errors'
 import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
 import { logger } from '../lib/logger'
@@ -785,7 +785,13 @@ app.openapi(listSlackConversationsRoute, (async (c) => {
 		return c.json(conversations)
 	} catch (err) {
 		if (isAuthRevokedError(err)) {
-			return c.json(createApiError('AUTH_REVOKED', 'Slack integration authorization has been revoked — please reconnect'), 401)
+			return c.json(
+				createApiError(
+					'AUTH_REVOKED',
+					'Slack integration authorization has been revoked — please reconnect',
+				),
+				401,
+			)
 		}
 		logger.warn('Slack conversations.list failed', {
 			integrationId: integration.id,
@@ -860,7 +866,13 @@ app.openapi(listSlackUsersRoute, (async (c) => {
 		return c.json(users)
 	} catch (err) {
 		if (isAuthRevokedError(err)) {
-			return c.json(createApiError('AUTH_REVOKED', 'Slack integration authorization has been revoked — please reconnect'), 401)
+			return c.json(
+				createApiError(
+					'AUTH_REVOKED',
+					'Slack integration authorization has been revoked — please reconnect',
+				),
+				401,
+			)
 		}
 		logger.warn('Slack users.list failed', {
 			integrationId: integration.id,

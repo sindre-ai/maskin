@@ -81,8 +81,10 @@ describe('Google Calendar provider config', () => {
 		}
 	})
 
-	it('does not declare an MCP server — tool wiring lands in T3', () => {
-		expect(config.mcp).toBeUndefined()
+	it('wires Google Calendar to the hosted MCP endpoint via mcp-remote', () => {
+		expect(config.mcp).toBeDefined()
+		expect(config.mcp?.args).toContain('https://calendarmcp.googleapis.com/mcp/v1')
+		expect(config.mcp?.envKey).toBe('GOOGLE_CALENDAR_TOKEN')
 	})
 })
 

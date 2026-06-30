@@ -1086,10 +1086,13 @@ export class SessionManager extends EventEmitter {
 				}
 			} catch (err) {
 				if (isAuthRevokedError(err)) {
-					logger.warn(`Integration ${integration.provider} is revoked — skipping token injection; user must reconnect`, {
-						integrationId: integration.id,
-						provider: integration.provider,
-					})
+					logger.warn(
+						`Integration ${integration.provider} is revoked — skipping token injection; user must reconnect`,
+						{
+							integrationId: integration.id,
+							provider: integration.provider,
+						},
+					)
 				} else {
 					logger.warn(`Failed to load credentials for ${integration.provider}`, {
 						integrationId: integration.id,
