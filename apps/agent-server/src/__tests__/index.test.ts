@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -12,6 +12,8 @@ function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 		AGENT_SERVER_SECRET: 'test-secret-thirty-two-chars-long',
 		MSB_BIN: '/usr/local/bin/msb',
 		AGENT_SESSION_ROOT: '/tmp/agent-server-test',
+		SESSION_WORKSPACES_LRU_THRESHOLD_BYTES: 20 * 1024 * 1024 * 1024,
+		SESSION_WORKSPACES_MIN_AGE_MS: 60 * 60 * 1000,
 		S3_REGION: 'us-east-1',
 		WARM_POOL_REFRESH_MINUTES: 0,
 		BROWSER_SIDECAR_IMAGE: 'browser-sidecar:latest',
@@ -177,6 +179,51 @@ describe('POST /sessions happy path', () => {
 
 		const skel = await readdir(join(sessionRoot, 'sess-happy'))
 		expect(skel.sort()).toEqual(['.exec-trigger', 'learnings', 'memory', 'skills', 'workspace'])
+	})
+})
+
+describe('POST /sessions LRU sweep — concurrent live session protection', () => {
+	it('does not evict a stale-mtime dir whose id is in the active-session registry', async () => {
+		const { run } = makeRunner()
+		// Pre-seed the active-session registry as if a long-running session were
+		// already in flight when the new spawn arrives. The registry is shared with
+		// buildApp so the sweep call inside POST /sessions reads from it.
+		const activeSessionIds = new Set<string>(['sess-live'])
+
+		// Materialise the live session's dir with a stale mtime and enough payload
+		// that the LRU sweep would normally evict it (over threshold + past min age).
+		const liveDir = join(sessionRoot, 'sess-live')
+		await mkdir(liveDir, { recursive: true })
+		await writeFile(join(liveDir, 'payload.bin'), Buffer.alloc(2_000, 0))
+		const stalenessSec = (Date.now() - 7_200_000) / 1000 // 2h ago
+		await utimes(liveDir, stalenessSec, stalenessSec)
+
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			SESSION_WORKSPACES_LRU_THRESHOLD_BYTES: 500,
+			SESSION_WORKSPACES_MIN_AGE_MS: 60 * 60 * 1000,
+		})
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+			activeSessionIds,
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({ sessionId: 'sess-other', image: 'alpine:3.20', env: {} }),
+		})
+
+		expect(res.status).toBe(201)
+		// sess-live's dir must still be on disk — the sweep saw it in the
+		// active-session registry and protected it despite the stale mtime.
+		const liveStat = await stat(liveDir)
+		expect(liveStat.isDirectory()).toBe(true)
 	})
 })
 

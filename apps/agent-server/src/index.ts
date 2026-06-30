@@ -28,6 +28,7 @@ import {
 	deleteSessionDir,
 	pullSessionWorkspace,
 	pushSessionWorkspace,
+	sweepSessionWorkspaces,
 } from './services/session-workspace'
 
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
@@ -60,6 +61,9 @@ export type AppDeps = {
 	storage: StorageProvider | null
 	msb: MicrosandboxDeps
 	warmer?: ImageWarmer | null
+	// Optional override for the in-process active-session registry, exposed so
+	// tests can pre-seed live ids without spawning a real first session.
+	activeSessionIds?: Set<string>
 }
 
 const LOG_FLUSH_INTERVAL_MS = 2_000
@@ -248,6 +252,12 @@ export function buildApp(deps: AppDeps): Hono {
 	const sessionLogRouters = new Map<string, (line: string) => void>()
 	// Receives exit codes from the /sessions/:id/complete endpoint for monitorSession.
 	const sessionExitCodes = new Map<string, number>()
+	// Live-session registry consulted by sweepSessionWorkspaces. The spawn handler
+	// adds the new id before scheduling monitorSession and monitorSession's
+	// finally hook deletes it on exit — so a concurrent spawn's LRU sweep never
+	// evicts a session whose mtime has aged past SESSION_WORKSPACES_MIN_AGE_MS but
+	// is still alive.
+	const activeSessionIds = deps.activeSessionIds ?? new Set<string>()
 
 	app.get('/health', async (c) => {
 		// `ok` must track msb liveness — a box whose `msb` is missing or broken
@@ -401,6 +411,44 @@ export function buildApp(deps: AppDeps): Hono {
 
 		const sessionDir = join(deps.env.AGENT_SESSION_ROOT, body.sessionId)
 
+		// LRU sweep on the host's session-workspace root before pulling. Cheap
+		// when under threshold (size scan only) and bounded by minAgeMs so an
+		// in-flight session cannot be deleted out from under itself.
+		if (deps.env.SESSION_WORKSPACES_LRU_THRESHOLD_BYTES > 0) {
+			try {
+				// Protect every currently-monitored session in addition to the one
+				// we're dispatching right now. POSIX mtime semantics mean a healthy
+				// long-running session's dir mtime can age past minAgeMs while the
+				// session is still writing inside its subdirs, so without this it
+				// would become an eviction candidate of an unrelated spawn's sweep.
+				const protectedIds = new Set<string>(activeSessionIds)
+				protectedIds.add(body.sessionId)
+				const sweep = await sweepSessionWorkspaces(deps.env.AGENT_SESSION_ROOT, {
+					thresholdBytes: deps.env.SESSION_WORKSPACES_LRU_THRESHOLD_BYTES,
+					minAgeMs: deps.env.SESSION_WORKSPACES_MIN_AGE_MS,
+					keepSessionIds: protectedIds,
+				})
+				logger.info('session workspaces swept', {
+					sessionId: body.sessionId,
+					candidates: sweep.candidates,
+					evictedCount: sweep.evicted.length,
+					evictedBytes: sweep.evicted.reduce((s, e) => s + e.sizeBytes, 0),
+					totalBytesBefore: sweep.totalBytesBefore,
+					totalBytesAfter: sweep.totalBytesAfter,
+					thresholdBytes: sweep.thresholdBytes,
+					skippedActive: sweep.skippedActive,
+					scanErrors: sweep.scanErrors,
+				})
+			} catch (err) {
+				// Don't fail the spawn on a sweep error — the disk-full trap
+				// (T5) is the real safety net. Sweep is best-effort prevention.
+				logger.warn('session workspaces sweep failed', {
+					sessionId: body.sessionId,
+					error: String(err),
+				})
+			}
+		}
+
 		if (deps.storage) {
 			try {
 				const { restored, archiveBytes } = await pullSessionWorkspace(
@@ -503,7 +551,9 @@ export function buildApp(deps: AppDeps): Hono {
 			// Background: wait for VM exit → flush logs → report completion →
 			// push workspace to S3 → delete local dir → drain input queue.
 			// Register session in sessionLogRouters synchronously (before first await)
-			// so ingest calls from the forthcoming exec don't miss.
+			// so ingest calls from the forthcoming exec don't miss. Likewise add to
+			// activeSessionIds before yielding so a concurrent spawn's sweep sees it.
+			activeSessionIds.add(body.sessionId)
 			void monitorSession(
 				body.sessionId,
 				sessionDir,
@@ -532,6 +582,7 @@ export function buildApp(deps: AppDeps): Hono {
 					}
 				})
 				.finally(() => {
+					activeSessionIds.delete(body.sessionId)
 					inputQueue.drainSession(body.sessionId)
 				})
 
