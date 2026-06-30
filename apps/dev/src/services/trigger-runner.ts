@@ -3,8 +3,19 @@ import { events, objects, sessions, triggers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { Cron } from 'croner'
 import { and, eq } from 'drizzle-orm'
+import { isRecoverableExitCode } from '../lib/exit-codes'
 import { logger } from '../lib/logger'
 import type { SessionManager } from './session-manager'
+
+/**
+ * Event actions that, when fired by the dev backend, would let a user-configured
+ * event trigger spawn a brand-new agent session "in response to a failure".
+ * The session-manager already places the originating session's `exit_code`
+ * inside the event payload (`handleCompletion`, `markRemoteSessionComplete`),
+ * so we gate respawns at this entry point and never burn a retry on a
+ * non-recoverable verdict (e.g. ENOSPC=28).
+ */
+const RECOVERY_SPAWN_EVENT_ACTIONS = new Set<string>(['session_failed', 'session_timeout'])
 
 interface TriggerFailureState {
 	count: number
@@ -167,6 +178,35 @@ export class TriggerRunner {
 			return eventData
 		}
 
+		// Recovery-spawn gate: an event trigger configured for `session_failed`
+		// or `session_timeout` is the only path that respawns a new agent in
+		// response to a prior session's failure. For non-recoverable verdicts
+		// (currently ENOSPC=28) we drop those triggers on the floor so disk-full
+		// crashes don't burn retry quota — see ENOSPC trap in agent-run.sh and
+		// `isRecoverableExitCode` in lib/exit-codes.ts. Only fetches event data
+		// (one extra SELECT) when this workspace actually has a trigger that
+		// could spawn a recovery from this action, to avoid a per-failure read
+		// on workspaces that don't wire any.
+		let recoverySpawnBlocked = false
+		if (
+			RECOVERY_SPAWN_EVENT_ACTIONS.has(event.action) &&
+			matchingTriggers.some((t) => (t.config as Record<string, unknown>)?.action === event.action)
+		) {
+			const data = await getEventData()
+			const exitCode =
+				data && typeof data === 'object' && typeof data.exit_code === 'number'
+					? (data.exit_code as number)
+					: null
+			if (!isRecoverableExitCode(exitCode)) {
+				recoverySpawnBlocked = true
+				logger.info('Recovery spawn blocked - session ended with non-recoverable exit code', {
+					sessionId: event.entity_id,
+					action: event.action,
+					exitCode,
+				})
+			}
+		}
+
 		for (const trigger of matchingTriggers) {
 			const config = trigger.config as Record<string, unknown>
 
@@ -182,6 +222,16 @@ export class TriggerRunner {
 				}
 			}
 			if (config.action && config.action !== event.action) continue
+
+			// Skip triggers wired to a recovery-spawn action when the originating
+			// session ended with a non-recoverable exit code.
+			if (
+				recoverySpawnBlocked &&
+				typeof config.action === 'string' &&
+				RECOVERY_SPAWN_EVENT_ACTIONS.has(config.action)
+			) {
+				continue
+			}
 
 			// Check filter conditions — for status_changed events the entity lives at
 			// data.updated, not at the top level. Use getObjectFromData() + resolvePath()

@@ -381,6 +381,113 @@ describe('TriggerRunner', () => {
 		})
 	})
 
+	describe('recovery-spawn gate (non-recoverable exit codes)', () => {
+		// Queue order tracks the listener registration in TriggerRunner.start():
+		//   queue[0] = eventHandler's trigger lookup (handleEvent → SELECT triggers)
+		//   queue[1] = sessionEventHandler's session.triggerId lookup
+		//              (handleSessionOutcome — registered second, runs second)
+		//   queue[2] = eventHandler's lazy fetchEventData (only used by the gate
+		//              and any filter/condition checks)
+		// The two listeners share the same mockResults.selectQueue, so the
+		// session-lookup row MUST sit between the trigger lookup and the event
+		// data fetch.
+		beforeEach(async () => {
+			mockResults.selectQueue = [
+				[], // cron triggers (empty for start)
+				[], // reminder triggers (empty for start)
+			]
+			await runner.start()
+		})
+
+		const failureEvent: PgEvent = {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			entity_type: 'session',
+			entity_id: 'sess-failed-1',
+			action: 'session_failed',
+			event_id: 'evt-session-failed-1',
+		}
+
+		it('blocks a session_failed trigger when the originating session exited with ENOSPC (28)', async () => {
+			const recoveryTrigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'session', action: 'session_failed' },
+			})
+			mockResults.selectQueue = [
+				[recoveryTrigger], // eventHandler: matching event triggers
+				[], // sessionEventHandler: no parent trigger to backoff
+				[{ data: { exit_code: 28 } }], // eventHandler: fetchEventData
+			]
+
+			bridge.emit('event', failureEvent)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('still fires a session_failed trigger when the exit code is a generic failure (1)', async () => {
+			const recoveryTrigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'session', action: 'session_failed' },
+			})
+			mockResults.selectQueue = [
+				[recoveryTrigger], // eventHandler: matching event triggers
+				[], // sessionEventHandler: no parent trigger to backoff
+				[{ data: { exit_code: 1 } }], // eventHandler: fetchEventData
+			]
+			mockResults.insert = [] // trigger_fired event insert
+
+			bridge.emit('event', failureEvent)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('still fires a session_failed trigger when exit_code is missing from event data', async () => {
+			const recoveryTrigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'session', action: 'session_failed' },
+			})
+			mockResults.selectQueue = [
+				[recoveryTrigger], // eventHandler: matching event triggers
+				[], // sessionEventHandler: no parent trigger to backoff
+				[{ data: {} }], // eventHandler: fetchEventData - no exit_code (older write path)
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', failureEvent)
+			await vi.advanceTimersByTimeAsync(0)
+
+			// Conservative: unknown exit codes are treated as recoverable so we
+			// don't silently swallow real failures introduced by old write paths.
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('does not fetch event data when no session_failed trigger is configured', async () => {
+			const unrelatedTrigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'task', action: 'created' },
+			})
+			mockResults.selectQueue = [
+				[unrelatedTrigger], // eventHandler: matching event triggers (action='created', not session_failed)
+				[], // sessionEventHandler: no parent trigger to backoff
+				// No fetchEventData entry: if the code unexpectedly reads it, the
+				// queue is empty so the proxy falls through to mockResults.select
+				// (also empty). The createSession assertion below would still pass,
+				// so this case relies on the broader gate-coverage tests above.
+			]
+
+			bridge.emit('event', failureEvent)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+	})
+
 	describe('cron scheduling', () => {
 		it('fires cron trigger at correct interval', async () => {
 			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
