@@ -136,6 +136,7 @@ export class ContainerManager {
 			}),
 			HostConfig: {
 				Memory: options.memoryMb * 1024 * 1024,
+				MemorySwap: -1,
 				CpuShares: options.cpuShares,
 				Binds: options.binds,
 				NetworkMode: options.networkMode ?? 'bridge',
