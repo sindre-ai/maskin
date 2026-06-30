@@ -16,6 +16,10 @@
 		"./connection": {
 			"types": "./src/connection.ts",
 			"default": "./dist/connection.js"
+		},
+		"./seed-helpers": {
+			"types": "./src/seed-helpers.ts",
+			"default": "./dist/seed-helpers.js"
 		}
 	},
 	"scripts": {

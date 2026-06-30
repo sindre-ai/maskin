@@ -130,7 +130,6 @@ import { createDb } from './connection'
 import {
 	actors,
 	catalogPackageItems,
-	catalogPackages,
 	notifications,
 	objects,
 	relationships,
@@ -138,6 +137,7 @@ import {
 	workspaceMembers,
 	workspaces,
 } from './schema'
+import { upsertCatalogPackage as upsertCatalogPackageHelper } from './seed-helpers'
 
 // Inlined to avoid a circular dep with @maskin/auth (which depends on @maskin/db).
 // Mirrors generateApiKey() in packages/auth/src/api-keys.ts.
@@ -151,33 +151,10 @@ function unwrap<T>(value: T | undefined, label: string): T {
 	return value
 }
 
-// Upsert keyed on `slug` so re-running the seed against a pre-existing DB
-// advances `version` (and refreshes the other publish-time fields) instead of
-// no-op'ing. PackageVersionPusher reads `catalog_packages.version` to decide
-// which installs to re-provision, so a stale row blocks every workspace from
-// seeing a new package release.
-async function upsertCatalogPackage(values: {
-	slug: string
-	name: string
-	description: string
-	version: string
-	useCase: string
-}) {
-	return db
-		.insert(catalogPackages)
-		.values(values)
-		.onConflictDoUpdate({
-			target: catalogPackages.slug,
-			set: {
-				name: values.name,
-				description: values.description,
-				version: values.version,
-				useCase: values.useCase,
-				updatedAt: new Date(),
-			},
-		})
-		.returning()
-}
+// Bound to the seed's module-level `db` so the call sites stay one-liners.
+// Real implementation + rationale live in `./seed-helpers.ts`.
+const upsertCatalogPackage = (values: Parameters<typeof upsertCatalogPackageHelper>[1]) =>
+	upsertCatalogPackageHelper(db, values)
 
 // ── Actor ───────────────────────────────────────────────────────────────────
 
