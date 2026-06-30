@@ -1053,10 +1053,10 @@ export class SessionManager extends EventEmitter {
 		// (e.g. PostHog → Synthesizer) belong here; tools an agent opts into
 		// per-config still go through the agent/session MCP paths.
 		//
-		// GitHub installations only get a per-owner env var here; the MCP server
-		// entry is not auto-injected — agents opt in per their tools.mcpServers
-		// config (github-{owner} key). The env var is available for envsubst
-		// substitution when the container resolves the agent's configured entry.
+		// GitHub installations get both a per-owner env var (GITHUB_TOKEN_<OWNER>)
+		// and an auto-injected MCP server entry (github-<owner>) with the token
+		// baked in. The bare GITHUB_TOKEN is aliased from the first installation
+		// so existing agent configs using ${GITHUB_TOKEN} continue to work.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
 		const resolvedGithubInstalls: Array<{ ownerLogin: string; token: string }> = []
 		for (const integration of activeIntegrations) {
@@ -1116,7 +1116,7 @@ export class SessionManager extends EventEmitter {
 		// We also set bare GITHUB_TOKEN so existing agent configs using ${GITHUB_TOKEN}
 		// continue to work after envsubst expansion.
 		for (const { ownerLogin, token } of resolvedGithubInstalls) {
-			autoInjectedMcpServers[`github-${ownerLogin}`] = {
+			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = {
 				type: 'stdio',
 				command: 'npx',
 				args: ['-y', '@modelcontextprotocol/server-github'],
@@ -1155,11 +1155,15 @@ export class SessionManager extends EventEmitter {
 			'CLAUDE_OAUTH_SCOPES',
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
 			'BROWSER_CDP_URL',
-			'GITHUB_TOKEN',
 		])
+		// Only reserve GITHUB_TOKEN when we actually injected one; otherwise a
+		// user-supplied PAT (no GitHub integration configured) must pass through.
+		if (primaryGithubToken) {
+			RESERVED_ENV_KEYS.add('GITHUB_TOKEN')
+		}
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {
-			if (!RESERVED_ENV_KEYS.has(key)) {
+			if (!RESERVED_ENV_KEYS.has(key) && !key.startsWith('GITHUB_TOKEN_')) {
 				envVars[key] = value
 			} else {
 				logger.warn(`Ignoring reserved env var from user config: ${key}`, {
