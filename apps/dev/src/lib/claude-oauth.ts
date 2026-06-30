@@ -2,7 +2,7 @@ import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
 import { CLAUDE_OAUTH_CLIENT_ID, CLAUDE_TOKEN_URL } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
-import { resolveActiveSlot, writeSlot } from './claude-oauth-slots'
+import { type OAuthSlotKind, resolveActiveSlot, writeSlot } from './claude-oauth-slots'
 import { decrypt, encrypt } from './crypto'
 import { logger } from './logger'
 
@@ -106,6 +106,42 @@ export function encryptOAuthTokens(tokens: ClaudeOAuthTokens): EncryptedOAuthDat
 }
 
 /**
+ * Persist a freshly-refreshed encrypted token blob into the given slot on a
+ * workspace, without clobbering any other slot or failover state a concurrent
+ * refresh may have written. Wraps the read-modify-write in a transaction with
+ * `SELECT ... FOR UPDATE` so two parallel refreshes targeting different slots
+ * on the same workspace row serialize at the DB level — each one sees the
+ * other's fresh data on its locked re-read and merges its slot on top via
+ * `writeSlot`. The lock spans only the brief read+update; the network refresh
+ * happens beforehand.
+ */
+export async function persistRefreshedSlot(
+	db: Database,
+	workspaceId: string,
+	slot: OAuthSlotKind,
+	encrypted: EncryptedOAuthData,
+): Promise<void> {
+	await db.transaction(async (tx) => {
+		const [latest] = await tx
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!latest) return
+		const latestSettings = (latest.settings as Record<string, unknown>) ?? {}
+		const nextOAuth = writeSlot(latestSettings.claude_oauth, slot, encrypted)
+		await tx
+			.update(workspaces)
+			.set({
+				settings: { ...latestSettings, claude_oauth: nextOAuth },
+				updatedAt: new Date(),
+			})
+			.where(eq(workspaces.id, workspaceId))
+	})
+}
+
+/**
  * Load, refresh if needed, and persist OAuth tokens for a workspace.
  * Returns the fresh access token or null if no OAuth is configured.
  */
@@ -124,18 +160,7 @@ export async function getValidOAuthToken(
 	const { tokens: fresh, refreshed } = await refreshClaudeTokenIfNeeded(tokens, bufferMs)
 
 	if (refreshed) {
-		// Persist back into the same slot we read from. Legacy single-slot rows
-		// are upgraded to the new shape on first refresh — both are valid per
-		// workspaceSettingsSchema, and the data lands under `primary` so later
-		// reads (legacy callers gone) continue to resolve to the same tokens.
-		const nextOAuth = writeSlot(wsSettings.claude_oauth, active.slot, encryptOAuthTokens(fresh))
-		await db
-			.update(workspaces)
-			.set({
-				settings: { ...wsSettings, claude_oauth: nextOAuth },
-				updatedAt: new Date(),
-			})
-			.where(eq(workspaces.id, workspaceId))
+		await persistRefreshedSlot(db, workspaceId, active.slot, encryptOAuthTokens(fresh))
 		logger.info('Refreshed Claude OAuth token', { workspaceId, slot: active.slot })
 	}
 
