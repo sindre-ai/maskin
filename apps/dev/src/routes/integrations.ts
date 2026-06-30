@@ -26,6 +26,7 @@ import {
 } from '../lib/integrations/providers/slack/client'
 import { getProvider, listProviders } from '../lib/integrations/registry'
 import type { ResolvedProvider, StoredCredentials } from '../lib/integrations/types'
+import { isAuthRevokedError } from '../lib/integrations/errors'
 import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
 import { logger } from '../lib/logger'
@@ -730,6 +731,10 @@ const listSlackConversationsRoute = createRoute({
 			description: 'Bad request',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		401: {
+			description: 'Integration authorization revoked',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Integration not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -776,6 +781,9 @@ app.openapi(listSlackConversationsRoute, (async (c) => {
 		const conversations = await listSlackConversations(integration.id, accessToken, types)
 		return c.json(conversations)
 	} catch (err) {
+		if (isAuthRevokedError(err)) {
+			return c.json(createApiError('AUTH_REVOKED', 'Slack integration authorization has been revoked — please reconnect'), 401)
+		}
 		logger.warn('Slack conversations.list failed', {
 			integrationId: integration.id,
 			error: err instanceof Error ? err.message : String(err),
@@ -811,6 +819,10 @@ const listSlackUsersRoute = createRoute({
 			description: 'Bad request',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		401: {
+			description: 'Integration authorization revoked',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Integration not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -844,6 +856,9 @@ app.openapi(listSlackUsersRoute, (async (c) => {
 		const users = await listSlackUsers(integration.id, accessToken)
 		return c.json(users)
 	} catch (err) {
+		if (isAuthRevokedError(err)) {
+			return c.json(createApiError('AUTH_REVOKED', 'Slack integration authorization has been revoked — please reconnect'), 401)
+		}
 		logger.warn('Slack users.list failed', {
 			integrationId: integration.id,
 			error: err instanceof Error ? err.message : String(err),

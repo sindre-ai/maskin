@@ -125,7 +125,7 @@ export class OAuth2Handler {
 
 		if (!response.ok) {
 			const text = await response.text()
-			throw new Error(`Token revocation failed: ${response.status} ${text}`)
+			throw new TokenRequestError(response.status, text, parseOAuthErrorField(text))
 		}
 	}
 

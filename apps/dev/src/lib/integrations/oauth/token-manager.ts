@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { integrations } from '@maskin/db/schema'
+import { events, integrations } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { decrypt, encrypt } from '../../crypto'
 import { logger } from '../../logger'
@@ -111,10 +111,28 @@ export class TokenManager {
 	 * UPDATE, not an error.
 	 */
 	async markRevoked(db: Database, integrationId: string): Promise<void> {
+		const [row] = await db
+			.select({ workspaceId: integrations.workspaceId, createdBy: integrations.createdBy })
+			.from(integrations)
+			.where(eq(integrations.id, integrationId))
+			.limit(1)
+
 		await db
 			.update(integrations)
 			.set({ status: 'revoked', updatedAt: new Date() })
 			.where(eq(integrations.id, integrationId))
+
+		if (row) {
+			await db.insert(events).values({
+				workspaceId: row.workspaceId,
+				actorId: row.createdBy,
+				action: 'updated',
+				entityType: 'integration',
+				entityId: integrationId,
+				data: { status: 'revoked', reason: 'token_revoked' },
+			})
+		}
+
 		logger.info('Integration marked as revoked', { integrationId })
 	}
 
@@ -142,13 +160,14 @@ export class TokenManager {
 		provider: ResolvedProvider,
 		credentials: StoredCredentials,
 	): Promise<string> {
+		// Type guards: getValidToken already enforces both before reaching doRefresh,
+		// but TypeScript requires them here to narrow the union types so the compiler
+		// allows access to provider.config.auth.config and credentials.refreshToken.
 		if (provider.config.auth.type !== 'oauth2') {
 			throw new Error(`Cannot refresh token for auth type: ${provider.config.auth.type}`)
 		}
 		if (!credentials.refreshToken) {
-			throw new Error(
-				`Integration ${integrationId} access token expired and no refresh token available. User must reconnect.`,
-			)
+			throw new Error(`Integration ${integrationId} has no refresh token`)
 		}
 
 		const oauth2Config = provider.config.auth.config
@@ -162,7 +181,16 @@ export class TokenManager {
 				// User revoked the grant externally (Google Account → Security → Third-party
 				// access). Flip status so subsequent calls short-circuit without hitting
 				// the provider — see the `status === 'revoked'` branch in getValidToken.
-				await this.markRevoked(db, integrationId)
+				// markRevoked failure (transient DB error) must not suppress the revocation
+				// error — log and continue so the caller always gets IntegrationAuthRevokedError.
+				try {
+					await this.markRevoked(db, integrationId)
+				} catch (markErr) {
+					logger.warn('Failed to persist revoked status for integration', {
+						integrationId,
+						error: String(markErr),
+					})
+				}
 				throw new IntegrationAuthRevokedError(
 					integrationId,
 					`Integration ${integrationId} refresh rejected with invalid_grant — user must reconnect`,

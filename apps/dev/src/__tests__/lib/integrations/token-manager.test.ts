@@ -31,6 +31,7 @@ interface MockDb {
 	db: Parameters<TokenManager['getValidToken']>[0]
 	mockUpdateWhere: ReturnType<typeof vi.fn>
 	updateSets: Array<Record<string, unknown>>
+	insertValues: Array<Record<string, unknown>>
 	selectCalls: { count: number }
 }
 
@@ -48,6 +49,7 @@ function createMockDb(
 	const selectCalls = { count: 0 }
 
 	const updateSets: Array<Record<string, unknown>> = []
+	const insertValues: Array<Record<string, unknown>> = []
 	const mockUpdateWhere = vi.fn().mockResolvedValue(undefined)
 
 	const db = {
@@ -68,9 +70,15 @@ function createMockDb(
 				return { where: mockUpdateWhere }
 			}),
 		}),
+		insert: vi.fn().mockReturnValue({
+			values: vi.fn().mockImplementation((values: Record<string, unknown>) => {
+				insertValues.push(values)
+				return Promise.resolve()
+			}),
+		}),
 	} as unknown as Parameters<TokenManager['getValidToken']>[0]
 
-	return { db, mockUpdateWhere, updateSets, selectCalls }
+	return { db, mockUpdateWhere, updateSets, insertValues, selectCalls }
 }
 
 function makeCredentials(overrides?: Partial<StoredCredentials>): StoredCredentials {
@@ -301,13 +309,24 @@ describe('TokenManager', () => {
 			expect(mockRefreshToken).toHaveBeenCalledTimes(1)
 		})
 
-		it('markRevoked sets status to revoked on the integration row', async () => {
-			const { db, updateSets, mockUpdateWhere } = createMockDb(makeIntegration(makeCredentials()))
+		it('markRevoked sets status to revoked and logs an events row', async () => {
+			const { db, updateSets, mockUpdateWhere, insertValues } = createMockDb(
+				makeIntegration(makeCredentials()),
+			)
 
 			await manager.markRevoked(db, 'integration-1')
 
 			expect(updateSets).toEqual([expect.objectContaining({ status: 'revoked' })])
 			expect(mockUpdateWhere).toHaveBeenCalled()
+			expect(insertValues).toContainEqual(
+				expect.objectContaining({
+					workspaceId: 'ws-1',
+					actorId: 'actor-1',
+					action: 'updated',
+					entityType: 'integration',
+					entityId: 'integration-1',
+				}),
+			)
 		})
 	})
 
