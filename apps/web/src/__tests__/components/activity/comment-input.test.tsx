@@ -42,6 +42,29 @@ describe('CommentInput', () => {
 		expect(screen.getByRole('button', { name: /send/i })).toBeInTheDocument()
 	})
 
+	// Regression: long text in the textarea used to scroll horizontally instead
+	// of wrapping and growing the field vertically. The CSS contract that
+	// prevents that — flex parent allowed to shrink (min-w-0), textarea wraps
+	// on word boundaries (whitespace-pre-wrap + break-words), and no horizontal
+	// scrollbar inside the textarea (overflow-x-hidden) — is asserted here so a
+	// future style sweep can't quietly drop it.
+	it('renders the textarea with classes that wrap text and suppress horizontal scroll', () => {
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+		const textarea = screen.getByPlaceholderText(
+			'Write a comment... Use @ to mention an agent',
+		) as HTMLTextAreaElement
+		const className = textarea.className
+		expect(className).toContain('whitespace-pre-wrap')
+		expect(className).toContain('break-words')
+		expect(className).toContain('overflow-x-hidden')
+
+		// The textarea's nearest flex sibling of the avatar must opt out of the
+		// flex item's default `min-width: auto`, otherwise long unbroken text
+		// pushes the column wider than the available space.
+		const flexCol = textarea.closest('.flex-1')
+		expect(flexCol?.className).toContain('min-w-0')
+	})
+
 	it('disables send when content is empty', () => {
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
 		expect(screen.getByRole('button', { name: /send/i })).toBeDisabled()

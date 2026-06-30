@@ -294,7 +294,7 @@ export function CommentInput({
 		>
 			<div className="flex items-start gap-2">
 				<ActorAvatar name={actor.name} type={actor.type} size="sm" className="mt-1" />
-				<div className="flex-1">
+				<div className="min-w-0 flex-1">
 					<div
 						className={cn(
 							'rounded-md border transition-colors',
@@ -353,7 +353,7 @@ export function CommentInput({
 								placeholder="Write a comment... Use @ to mention an agent"
 								rows={1}
 								aria-invalid={overLimit || undefined}
-								className="relative w-full resize-none overflow-y-hidden border-0 bg-transparent px-2 py-1.5 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
+								className="relative block w-full resize-none overflow-x-hidden overflow-y-hidden whitespace-pre-wrap break-words border-0 bg-transparent px-2 py-1.5 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
 								style={{ minHeight: '32px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
 							/>
 						</div>
