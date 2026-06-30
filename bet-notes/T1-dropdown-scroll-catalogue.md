@@ -83,7 +83,19 @@ Static, no browser needed. I compiled the two bracket forms with `npx @tailwindc
 }
 ```
 
-This is the same major version pinned in `apps/web/package.json`. Browser repro at a 700px viewport was not possible from this container (no Docker → no Postgres → can't boot `pnpm dev`), but the compiled-CSS evidence is mechanism-level proof: every Select surface lacks an effective max-height in v4 builds.
+This is the same major version pinned in `apps/web/package.json`. The compiled-CSS evidence above is mechanism-level proof: every Select surface lacks an effective max-height in v4 builds.
+
+### Browser confirmation at 1280×700
+
+Live confirmation followed in a standalone Vite + Playwright harness that imports the verbatim primitive source from `apps/web/src/components/ui/{select,dropdown-menu,popover}.tsx`. Each surface rendered with a 60-item or 1500px-tall list and was opened in a real Chromium under a 700px viewport.
+
+| Surface | Computed `max-height` | `overflow-y` | Content rect bottom (viewport 700) | Scrolls? | Last item reachable? |
+|---|---|---|---|---|---|
+| Select | **`none`** (class on element, no effective value) | `auto` | **798** (overflows by 98px); `--radix-select-content-available-height` is correctly set to `626px` on the same element but ignored by the broken Tailwind class | NO | NO |
+| DropdownMenu | `645px` (matches Radix var) | `auto` | 700 (clamped) | YES | YES (after scroll) |
+| Popover | `none` | `visible` | **1589** (overflows by 889px) on 1500px-tall content | NO | NO |
+
+The Select element carries the inline style `--radix-select-content-available-height: 626px` set by Radix Popper — confirming that Radix's measurement is correct and the bug is purely in the Tailwind class on the primitive, not in Radix or in any parent `overflow: hidden`. DropdownMenu serves as the controlled counter-example: same Radix layer, same containment, but the corrected `[var(--…)]` form clamps the content to 645px and scrolls.
 
 ## Prior fix (import-dialog) revisited
 
