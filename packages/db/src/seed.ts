@@ -151,6 +151,34 @@ function unwrap<T>(value: T | undefined, label: string): T {
 	return value
 }
 
+// Upsert keyed on `slug` so re-running the seed against a pre-existing DB
+// advances `version` (and refreshes the other publish-time fields) instead of
+// no-op'ing. PackageVersionPusher reads `catalog_packages.version` to decide
+// which installs to re-provision, so a stale row blocks every workspace from
+// seeing a new package release.
+async function upsertCatalogPackage(values: {
+	slug: string
+	name: string
+	description: string
+	version: string
+	useCase: string
+}) {
+	return db
+		.insert(catalogPackages)
+		.values(values)
+		.onConflictDoUpdate({
+			target: catalogPackages.slug,
+			set: {
+				name: values.name,
+				description: values.description,
+				version: values.version,
+				useCase: values.useCase,
+				updatedAt: new Date(),
+			},
+		})
+		.returning()
+}
+
 // ── Actor ───────────────────────────────────────────────────────────────────
 
 const [rawDemoUser] = await db
@@ -517,16 +545,13 @@ await db.insert(notifications).values([
 // apps/dev/scripts/ccd-package.ts — the install provisioner uses them to
 // resolve intra-package wiring (trigger.targetActorId → installed actor).
 
-const [ccdPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: CCD_PACKAGE_SLUG,
-		name: CCD_PACKAGE_NAME,
-		description: CCD_PACKAGE_DESCRIPTION,
-		version: CCD_PACKAGE_VERSION,
-		useCase: CCD_PACKAGE_USE_CASE,
-	})
-	.returning()
+const [ccdPkg] = await upsertCatalogPackage({
+	slug: CCD_PACKAGE_SLUG,
+	name: CCD_PACKAGE_NAME,
+	description: CCD_PACKAGE_DESCRIPTION,
+	version: CCD_PACKAGE_VERSION,
+	useCase: CCD_PACKAGE_USE_CASE,
+})
 
 if (ccdPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -756,16 +781,13 @@ if (ccdPkg) {
 
 // ── Dev Workspace Catalog Packages (1-5) ────────────────────────────────────
 
-const [plannerPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_PLANNER_SLUG,
-		name: DEV_PACKAGE_PLANNER_NAME,
-		description: DEV_PACKAGE_PLANNER_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [plannerPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_PLANNER_SLUG,
+	name: DEV_PACKAGE_PLANNER_NAME,
+	description: DEV_PACKAGE_PLANNER_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (plannerPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -1014,16 +1036,13 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [developerPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_DEVELOPER_SLUG,
-		name: DEV_PACKAGE_DEVELOPER_NAME,
-		description: DEV_PACKAGE_DEVELOPER_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [developerPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_DEVELOPER_SLUG,
+	name: DEV_PACKAGE_DEVELOPER_NAME,
+	description: DEV_PACKAGE_DEVELOPER_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (developerPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -1174,16 +1193,13 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [architectPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_ARCHITECT_SLUG,
-		name: DEV_PACKAGE_ARCHITECT_NAME,
-		description: DEV_PACKAGE_ARCHITECT_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [architectPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_ARCHITECT_SLUG,
+	name: DEV_PACKAGE_ARCHITECT_NAME,
+	description: DEV_PACKAGE_ARCHITECT_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (architectPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -1302,16 +1318,13 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [designerPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_DESIGNER_SLUG,
-		name: DEV_PACKAGE_DESIGNER_NAME,
-		description: DEV_PACKAGE_DESIGNER_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [designerPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_DESIGNER_SLUG,
+	name: DEV_PACKAGE_DESIGNER_NAME,
+	description: DEV_PACKAGE_DESIGNER_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (designerPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -1435,16 +1448,13 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [productMarketerPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_PRODUCT_MARKETER_SLUG,
-		name: DEV_PACKAGE_PRODUCT_MARKETER_NAME,
-		description: DEV_PACKAGE_PRODUCT_MARKETER_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [productMarketerPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_PRODUCT_MARKETER_SLUG,
+	name: DEV_PACKAGE_PRODUCT_MARKETER_NAME,
+	description: DEV_PACKAGE_PRODUCT_MARKETER_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (productMarketerPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -1565,16 +1575,13 @@ Triggering event: {triggering_event}`,
 
 // ── Dev Workspace Catalog Packages (6-10) ────────────────────────────────────
 
-const [codeReviewerPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_CODE_REVIEWER_SLUG,
-		name: DEV_PACKAGE_CODE_REVIEWER_NAME,
-		description: DEV_PACKAGE_CODE_REVIEWER_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [codeReviewerPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_CODE_REVIEWER_SLUG,
+	name: DEV_PACKAGE_CODE_REVIEWER_NAME,
+	description: DEV_PACKAGE_CODE_REVIEWER_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (codeReviewerPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -1759,16 +1766,13 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [acceptanceValidatorPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_ACCEPTANCE_VALIDATOR_SLUG,
-		name: DEV_PACKAGE_ACCEPTANCE_VALIDATOR_NAME,
-		description: DEV_PACKAGE_ACCEPTANCE_VALIDATOR_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [acceptanceValidatorPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_ACCEPTANCE_VALIDATOR_SLUG,
+	name: DEV_PACKAGE_ACCEPTANCE_VALIDATOR_NAME,
+	description: DEV_PACKAGE_ACCEPTANCE_VALIDATOR_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (acceptanceValidatorPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -1911,17 +1915,13 @@ Triggering event: {triggering_event}`,
 
 // ── Development Pipeline bundle (Developer + Code Reviewer + Acceptance Validator) ──
 
-const [devPipelinePkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_DEVELOPMENT_PIPELINE_SLUG,
-		name: DEV_PACKAGE_DEVELOPMENT_PIPELINE_NAME,
-		description: DEV_PACKAGE_DEVELOPMENT_PIPELINE_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.onConflictDoNothing()
-	.returning()
+const [devPipelinePkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_DEVELOPMENT_PIPELINE_SLUG,
+	name: DEV_PACKAGE_DEVELOPMENT_PIPELINE_NAME,
+	description: DEV_PACKAGE_DEVELOPMENT_PIPELINE_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (devPipelinePkg) {
 	await db.insert(catalogPackageItems).values([
@@ -2348,16 +2348,13 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [autoMergeBotPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_AUTO_MERGE_BOT_SLUG,
-		name: DEV_PACKAGE_AUTO_MERGE_BOT_NAME,
-		description: DEV_PACKAGE_AUTO_MERGE_BOT_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [autoMergeBotPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_AUTO_MERGE_BOT_SLUG,
+	name: DEV_PACKAGE_AUTO_MERGE_BOT_NAME,
+	description: DEV_PACKAGE_AUTO_MERGE_BOT_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (autoMergeBotPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -2478,16 +2475,13 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [strategistPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_STRATEGIST_SLUG,
-		name: DEV_PACKAGE_STRATEGIST_NAME,
-		description: DEV_PACKAGE_STRATEGIST_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [strategistPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_STRATEGIST_SLUG,
+	name: DEV_PACKAGE_STRATEGIST_NAME,
+	description: DEV_PACKAGE_STRATEGIST_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (strategistPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -3039,16 +3033,13 @@ Triggering event: cron Monday and Thursday 08:00 UTC.`,
 	])
 }
 
-const [workspaceDriverPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_WORKSPACE_DRIVER_SLUG,
-		name: DEV_PACKAGE_WORKSPACE_DRIVER_NAME,
-		description: DEV_PACKAGE_WORKSPACE_DRIVER_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [workspaceDriverPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_WORKSPACE_DRIVER_SLUG,
+	name: DEV_PACKAGE_WORKSPACE_DRIVER_NAME,
+	description: DEV_PACKAGE_WORKSPACE_DRIVER_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (workspaceDriverPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -3525,16 +3516,13 @@ Triggering event: {triggering_event}`,
 
 // ── Dev Workspace Catalog Packages (11-15) ───────────────────────────────────
 
-const [researchAgentPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_RESEARCH_AGENT_SLUG,
-		name: DEV_PACKAGE_RESEARCH_AGENT_NAME,
-		description: DEV_PACKAGE_RESEARCH_AGENT_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [researchAgentPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_RESEARCH_AGENT_SLUG,
+	name: DEV_PACKAGE_RESEARCH_AGENT_NAME,
+	description: DEV_PACKAGE_RESEARCH_AGENT_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (researchAgentPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -3855,16 +3843,13 @@ Cite source URLs in every insight. Deduplicate against existing insights before 
 	])
 }
 
-const [workspaceCoachPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_WORKSPACE_COACH_SLUG,
-		name: DEV_PACKAGE_WORKSPACE_COACH_NAME,
-		description: DEV_PACKAGE_WORKSPACE_COACH_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [workspaceCoachPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_WORKSPACE_COACH_SLUG,
+	name: DEV_PACKAGE_WORKSPACE_COACH_NAME,
+	description: DEV_PACKAGE_WORKSPACE_COACH_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (workspaceCoachPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -4239,16 +4224,13 @@ Triggering event: {triggering_event}`,
 	])
 }
 
-const [retroKnowledgeAuthorPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_SLUG,
-		name: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME,
-		description: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [retroKnowledgeAuthorPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_SLUG,
+	name: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME,
+	description: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (retroKnowledgeAuthorPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -4632,16 +4614,13 @@ Source actor: 3322def3-7d6b-4615-beaf-b43b291f95a8. Do NOT call create_notificat
 	])
 }
 
-const [productAnalystPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_PRODUCT_ANALYST_SLUG,
-		name: DEV_PACKAGE_PRODUCT_ANALYST_NAME,
-		description: DEV_PACKAGE_PRODUCT_ANALYST_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [productAnalystPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_PRODUCT_ANALYST_SLUG,
+	name: DEV_PACKAGE_PRODUCT_ANALYST_NAME,
+	description: DEV_PACKAGE_PRODUCT_ANALYST_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (productAnalystPkg) {
 	await db.insert(catalogPackageItems).values([
@@ -4764,16 +4743,13 @@ Triggering event: cron Sunday 20:00 UTC.`,
 	])
 }
 
-const [summarizationAgentPkg] = await db
-	.insert(catalogPackages)
-	.values({
-		slug: DEV_PACKAGE_SUMMARIZATION_AGENT_SLUG,
-		name: DEV_PACKAGE_SUMMARIZATION_AGENT_NAME,
-		description: DEV_PACKAGE_SUMMARIZATION_AGENT_DESCRIPTION,
-		version: DEV_PACKAGE_VERSION,
-		useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
-	})
-	.returning()
+const [summarizationAgentPkg] = await upsertCatalogPackage({
+	slug: DEV_PACKAGE_SUMMARIZATION_AGENT_SLUG,
+	name: DEV_PACKAGE_SUMMARIZATION_AGENT_NAME,
+	description: DEV_PACKAGE_SUMMARIZATION_AGENT_DESCRIPTION,
+	version: DEV_PACKAGE_VERSION,
+	useCase: DEV_PACKAGE_USE_CASE_DEVELOPMENT,
+})
 
 if (summarizationAgentPkg) {
 	await db.insert(catalogPackageItems).values([
