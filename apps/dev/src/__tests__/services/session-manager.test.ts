@@ -351,6 +351,149 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('startSession() — developer_session_completed env vars (T12)', () => {
+		// agent-run.sh's EXIT-trap emitter reads these env vars to populate the
+		// PostHog event AC-U6 measures against. The injection must (a) always
+		// supply AGENT_NAME + RECOVERY_MODE so the event is non-empty even when
+		// POSTHOG_API_KEY is unset, (b) toggle RECOVERY_MODE on sourceSessionId,
+		// and (c) drop POSTHOG_API_KEY entirely when the backend isn't configured
+		// for analytics — the bash emitter no-ops on empty key.
+		const agent = (overrides: Record<string, unknown> = {}) => ({
+			id: randomUUID(),
+			type: 'agent',
+			name: 'Developer',
+			systemPrompt: 'You are a helpful AI agent.',
+			llmProvider: null,
+			llmConfig: null,
+			apiKey: 'ank_test_agent_key',
+			tools: null,
+			...overrides,
+		})
+
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+		})
+
+		it('injects AGENT_NAME and RECOVERY_MODE=false on a fresh session', async () => {
+			const ag = agent()
+			const session = buildSession({
+				status: 'pending',
+				actorId: ag.id,
+				containerId: null,
+			})
+			const workspace = { id: session.workspaceId, settings: {} }
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [ag], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const env = (
+				mockContainerManager.create.mock.calls[0]?.[0] as { env: Record<string, string> }
+			).env
+			expect(env.AGENT_NAME).toBe('Developer')
+			expect(env.RECOVERY_MODE).toBe('false')
+		})
+
+		it('sets RECOVERY_MODE=true when the session is a continuation of another', async () => {
+			const ag = agent()
+			const session = buildSession({
+				status: 'pending',
+				actorId: ag.id,
+				containerId: null,
+				sourceSessionId: randomUUID(),
+			})
+			const workspace = { id: session.workspaceId, settings: {} }
+			// sourceSessionId triggers an extra db.select to look up the source
+			// session for snapshot restore — returning [] makes the restore skip
+			// without affecting the env-var assertion this test cares about.
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [], [ag], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const env = (
+				mockContainerManager.create.mock.calls[0]?.[0] as { env: Record<string, string> }
+			).env
+			expect(env.RECOVERY_MODE).toBe('true')
+		})
+
+		it('forwards POSTHOG_API_KEY / POSTHOG_HOST when set, omits them when unset', async () => {
+			const ag = agent()
+			const sessionWithKey = buildSession({
+				status: 'pending',
+				actorId: ag.id,
+				containerId: null,
+			})
+			const workspace = { id: sessionWithKey.workspaceId, settings: {} }
+
+			vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+			vi.stubEnv('POSTHOG_HOST', 'https://custom.posthog.test')
+			mockResults.selectQueue = [
+				[sessionWithKey],
+				[workspace],
+				[{ count: 0 }],
+				[ag],
+				[workspace],
+				[],
+			]
+			await manager.startSession(sessionWithKey.id)
+			const envWith = (
+				mockContainerManager.create.mock.calls[0]?.[0] as { env: Record<string, string> }
+			).env
+			expect(envWith.POSTHOG_API_KEY).toBe('phc_test')
+			expect(envWith.POSTHOG_HOST).toBe('https://custom.posthog.test')
+
+			mockContainerManager.create.mockClear()
+			vi.stubEnv('POSTHOG_API_KEY', '')
+			vi.stubEnv('POSTHOG_HOST', '')
+			const sessionNoKey = buildSession({
+				status: 'pending',
+				actorId: ag.id,
+				containerId: null,
+			})
+			mockResults.selectQueue = [[sessionNoKey], [workspace], [{ count: 0 }], [ag], [workspace], []]
+			await manager.startSession(sessionNoKey.id)
+			const envWithout = (
+				mockContainerManager.create.mock.calls[0]?.[0] as { env: Record<string, string> }
+			).env
+			expect(envWithout.POSTHOG_API_KEY).toBeUndefined()
+			expect(envWithout.POSTHOG_HOST).toBeUndefined()
+		})
+
+		it('ignores user-provided AGENT_NAME / RECOVERY_MODE / POSTHOG_* overrides in session config', async () => {
+			const ag = agent()
+			const session = buildSession({
+				status: 'pending',
+				actorId: ag.id,
+				containerId: null,
+				config: {
+					env_vars: {
+						AGENT_NAME: 'spoofed',
+						RECOVERY_MODE: 'true',
+						POSTHOG_API_KEY: 'phc_spoofed',
+						POSTHOG_HOST: 'https://evil.example',
+					},
+				},
+			})
+			const workspace = { id: session.workspaceId, settings: {} }
+			vi.stubEnv('POSTHOG_API_KEY', '')
+			vi.stubEnv('POSTHOG_HOST', '')
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [ag], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const env = (
+				mockContainerManager.create.mock.calls[0]?.[0] as { env: Record<string, string> }
+			).env
+			expect(env.AGENT_NAME).toBe('Developer')
+			expect(env.RECOVERY_MODE).toBe('false')
+			expect(env.POSTHOG_API_KEY).toBeUndefined()
+			expect(env.POSTHOG_HOST).toBeUndefined()
+		})
+	})
+
 	describe('startSession() — browser sidecar provisioning', () => {
 		function buildTestSession(overrides: Record<string, unknown> = {}) {
 			return buildSession({

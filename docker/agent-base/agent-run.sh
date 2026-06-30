@@ -41,6 +41,94 @@ resolve_agent_server_url() {
 }
 resolve_agent_server_url
 
+# Mirror of the agent's stdout so the EXIT trap can pick the final stream-json
+# `result` line (cost_usd, cache_read_input_tokens) without re-reading from the
+# agent-server. Placed under /tmp so it lives in tmpfs and does NOT compete with
+# the workspace disk T5 protects against ENOSPC.
+AGENT_STREAM_TAIL="/tmp/agent-stream-tail.jsonl"
+
+# Best-effort PostHog capture of `developer_session_completed`. Mirrors the
+# shape of capturePosthogEvent in apps/dev/src/lib/analytics/posthog.ts so the
+# event lands on the same `/i/v0/e/` ingest endpoint. Fires on every exit
+# (clean and crash), so AC-U6's measurement gate can read median + p90 cost,
+# cache-read tokens, and recovery_mode across all Developer sessions —
+# including the ENOSPC exit-28 path T5 traps.
+#
+# Field sources:
+#   cost_usd, cache_read_tokens — last `{"type":"result"}` line in the tee'd
+#     stdout tail (parser mirrors usage-parser.ts:parseUsageFromLogChunks).
+#     On crash paths where claude never wrote a result, both fall back to 0.
+#   session_id, agent_name, recovery_mode — env vars injected by
+#     session-manager.ts:buildLaunchSpec.
+#   exit_code — script's AGENT_EXIT_CODE, set by run_agent's PIPESTATUS[0].
+#
+# Fail-open: no POSTHOG_API_KEY → skip silently (local dev / CI without
+# analytics). $process_person_profile:false mirrors runtime-telemetry.ts so
+# PostHog does NOT create a Person profile per session_id (unbounded growth).
+emit_developer_session_completed() {
+  if [ -z "$POSTHOG_API_KEY" ] || [ -z "$SESSION_ID" ]; then
+    return
+  fi
+
+  local cost_usd=0 cache_read_tokens=0
+  if [ -s "$AGENT_STREAM_TAIL" ]; then
+    # Scan only the last 64KiB — the result line is the final emission, and
+    # bounded reads keep this trap fast even on a 100MB+ session log.
+    local last_result
+    last_result=$(tail -c 65536 "$AGENT_STREAM_TAIL" 2>/dev/null \
+      | grep -F '"type":"result"' \
+      | tail -1)
+    if [ -n "$last_result" ]; then
+      local parsed_cost parsed_cache
+      parsed_cost=$(echo "$last_result" | jq -r '.total_cost_usd // 0' 2>/dev/null)
+      parsed_cache=$(echo "$last_result" | jq -r '.usage.cache_read_input_tokens // 0' 2>/dev/null)
+      # Defend against jq returning empty / "null" on a malformed line.
+      case "$parsed_cost" in ''|null) parsed_cost=0 ;; esac
+      case "$parsed_cache" in ''|null) parsed_cache=0 ;; esac
+      cost_usd="$parsed_cost"
+      cache_read_tokens="$parsed_cache"
+    fi
+  fi
+
+  local recovery="false"
+  case "$RECOVERY_MODE" in true|1|yes) recovery="true" ;; esac
+
+  local host="${POSTHOG_HOST:-https://eu.i.posthog.com}"
+  host="${host%/}"
+
+  local payload
+  payload=$(jq -n \
+    --arg api_key "$POSTHOG_API_KEY" \
+    --arg distinct_id "$SESSION_ID" \
+    --arg session_id "$SESSION_ID" \
+    --arg agent_name "${AGENT_NAME:-}" \
+    --argjson cost_usd "$cost_usd" \
+    --argjson cache_read_tokens "$cache_read_tokens" \
+    --argjson exit_code "${AGENT_EXIT_CODE:-0}" \
+    --argjson recovery_mode "$recovery" \
+    '{
+      api_key: $api_key,
+      event: "developer_session_completed",
+      distinct_id: $distinct_id,
+      properties: {
+        session_id: $session_id,
+        agent_name: $agent_name,
+        cost_usd: $cost_usd,
+        cache_read_tokens: $cache_read_tokens,
+        exit_code: $exit_code,
+        recovery_mode: $recovery_mode,
+        "$process_person_profile": false
+      }
+    }')
+
+  curl -4 -s --max-time 2 -X POST \
+    "${host}/i/v0/e/" \
+    -H "Content-Type: application/json" \
+    -d "$payload" \
+    -o /dev/null 2>/dev/null || true
+  echo "[system] developer_session_completed emitted (exit=${AGENT_EXIT_CODE:-0}, cost=${cost_usd}, cache_read=${cache_read_tokens}, recovery=${recovery})"
+}
+
 # Signal session completion so the agent-server tears down this microVM.
 # A microsandbox `create`d VM is PERSISTENT: it does NOT power off when this
 # script exits, because the guest's PID 1 is microsandbox's agentd, not us.
@@ -59,7 +147,16 @@ report_complete() {
       -o /dev/null 2>/dev/null || true
   fi
 }
-trap report_complete EXIT
+
+# Order: emit telemetry BEFORE signalling completion. Once /complete fires the
+# microVM may be torn down within milliseconds; the PostHog POST is bounded by
+# its own --max-time, but emitting first guarantees the event leaves the box
+# even if teardown races the HTTP response.
+on_exit() {
+  emit_developer_session_completed
+  report_complete
+}
+trap on_exit EXIT
 
 RUNTIME="${AGENT_RUNTIME:-claude-code}"
 AGENT_EXIT_CODE=0
@@ -285,6 +382,16 @@ run_agent() {
     done
   }
 
+  # Mirror agent stdout into AGENT_STREAM_TAIL so emit_developer_session_completed
+  # can parse the final stream-json `result` line at EXIT. Wrapping the runtime
+  # call lets every branch (claude-code interactive/non-interactive, codex,
+  # custom) feed the same tail without repeating the tee in each pipeline.
+  # `tee -a` failures are non-fatal: even on disk pressure log_tee still drains
+  # the stream so the agent never blocks on a broken pipe.
+  stream_to_log() {
+    tee -a "$AGENT_STREAM_TAIL" 2>/dev/null | log_tee
+  }
+
   case "$RUNTIME" in
     claude-code)
       local max_turns="${MAX_TURNS:-5000}"
@@ -308,7 +415,7 @@ run_agent() {
             2>&1 \
             < <(curl -4 -sN --no-buffer \
                 "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream") \
-            | log_tee
+            | stream_to_log
           AGENT_EXIT_CODE=${PIPESTATUS[0]}
           set -o pipefail
         else
@@ -320,7 +427,7 @@ run_agent() {
             --verbose \
             --dangerously-skip-permissions \
             "${mcp_args[@]}" \
-            2>&1 | log_tee
+            2>&1 | stream_to_log
           AGENT_EXIT_CODE=${PIPESTATUS[0]}
           set -o pipefail
         fi
@@ -333,7 +440,7 @@ run_agent() {
           --max-turns "$max_turns" \
           --dangerously-skip-permissions \
           "${mcp_args[@]}" \
-          2>&1 | log_tee
+          2>&1 | stream_to_log
         AGENT_EXIT_CODE=${PIPESTATUS[0]}
         set -o pipefail
       fi
@@ -344,7 +451,7 @@ run_agent() {
       codex \
         --approval-mode "$approval_mode" \
         --prompt "$ACTION_PROMPT" \
-        2>&1 | log_tee
+        2>&1 | stream_to_log
       AGENT_EXIT_CODE=${PIPESTATUS[0]}
       set -o pipefail
       ;;
@@ -366,7 +473,7 @@ run_agent() {
         exit 1
       fi
       set +o pipefail
-      "${custom_argv[@]}" 2>&1 | log_tee
+      "${custom_argv[@]}" 2>&1 | stream_to_log
       AGENT_EXIT_CODE=${PIPESTATUS[0]}
       set -o pipefail
       ;;

@@ -928,6 +928,20 @@ export class SessionManager extends EventEmitter {
 			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
 			MASKIN_API_URL: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
 			MASKIN_WORKSPACE_ID: session.workspaceId,
+			// Used by agent-run.sh's developer_session_completed PostHog emitter so
+			// the event payload can name the agent definition and flag continuation
+			// sessions distinctly from fresh ones — AC-U6 reads recovery_mode.
+			AGENT_NAME: agent.name ?? '',
+			RECOVERY_MODE: session.sourceSessionId ? 'true' : 'false',
+		}
+		// PostHog credentials for the in-container emitter. Empty values turn the
+		// emit into a no-op (mirrors `capturePosthogEvent`'s POSTHOG_API_KEY check),
+		// so local-dev containers without analytics keys stay quiet.
+		if (process.env.POSTHOG_API_KEY) {
+			envVars.POSTHOG_API_KEY = process.env.POSTHOG_API_KEY
+		}
+		if (process.env.POSTHOG_HOST) {
+			envVars.POSTHOG_HOST = process.env.POSTHOG_HOST
 		}
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
@@ -1112,6 +1126,8 @@ export class SessionManager extends EventEmitter {
 		const RESERVED_ENV_KEYS = new Set([
 			'SESSION_ID',
 			'AGENT_RUNTIME',
+			'AGENT_NAME',
+			'RECOVERY_MODE',
 			'SYSTEM_PROMPT',
 			'ACTION_PROMPT',
 			'INTERACTIVE',
@@ -1135,6 +1151,8 @@ export class SessionManager extends EventEmitter {
 			'CLAUDE_OAUTH_SCOPES',
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
 			'BROWSER_CDP_URL',
+			'POSTHOG_API_KEY',
+			'POSTHOG_HOST',
 		])
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {
