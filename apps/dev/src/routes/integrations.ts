@@ -109,6 +109,7 @@ app.openapi(listProvidersRoute, (async (c) => {
 		displayName: p.config.displayName,
 		authType: p.config.auth.type,
 		events: p.config.events?.definitions ?? [],
+		externalIdDisplay: p.config.externalIdDisplay,
 	}))
 
 	return c.json(providers as z.infer<typeof providerInfoSchema>[])
@@ -673,10 +674,12 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	try {
 		const resolved = getProvider(existing.provider)
 		if (resolved.preDisconnect) {
+			const credentials: StoredCredentials = JSON.parse(decrypt(existing.credentials))
 			await resolved.preDisconnect({
 				db,
 				integrationId: existing.id,
 				workspaceId: existing.workspaceId,
+				credentials,
 			})
 		}
 	} catch (err) {

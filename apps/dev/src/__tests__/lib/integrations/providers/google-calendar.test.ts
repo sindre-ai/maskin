@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { config } from '../../../../lib/integrations/providers/google-calendar/config'
 import { resolveExternalId } from '../../../../lib/integrations/providers/google-calendar/resolve-id'
 import { getProvider, listProviders } from '../../../../lib/integrations/registry'
@@ -115,7 +115,7 @@ describe('Google Calendar resolveExternalId', () => {
 		} as Response)
 
 		await expect(resolveExternalId({ accessToken: 'tok' })).rejects.toThrow(
-			'Google Calendar userinfo response missing email',
+			'Google userinfo response missing email field',
 		)
 	})
 
@@ -127,7 +127,7 @@ describe('Google Calendar resolveExternalId', () => {
 		} as Response)
 
 		await expect(resolveExternalId({ accessToken: 'expired' })).rejects.toThrow(
-			'Failed to resolve Google Calendar email: HTTP 401',
+			'Failed to resolve Google account email: HTTP 401',
 		)
 	})
 })
@@ -142,5 +142,105 @@ describe('Google Calendar provider registration', () => {
 	it('shows up in listProviders()', () => {
 		const names = listProviders().map((p) => p.config.name)
 		expect(names).toContain('google-calendar')
+	})
+
+	it('wires preDisconnect so the disconnect endpoint revokes the Google grant', () => {
+		const resolved = getProvider('google-calendar')
+		expect(resolved.preDisconnect).toBeDefined()
+	})
+})
+
+describe('revokeGoogleCalendarGrant', () => {
+	const ORIGINAL_CLIENT_ID = process.env.GOOGLE_CALENDAR_CLIENT_ID
+	const ORIGINAL_CLIENT_SECRET = process.env.GOOGLE_CALENDAR_CLIENT_SECRET
+
+	beforeAll(() => {
+		process.env.GOOGLE_CALENDAR_CLIENT_ID = 'test-client-id'
+		process.env.GOOGLE_CALENDAR_CLIENT_SECRET = 'test-client-secret'
+	})
+
+	afterAll(() => {
+		process.env.GOOGLE_CALENDAR_CLIENT_ID = ORIGINAL_CLIENT_ID
+		process.env.GOOGLE_CALENDAR_CLIENT_SECRET = ORIGINAL_CLIENT_SECRET
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	function makeCtx(credentials: Record<string, unknown>) {
+		return {
+			db: {} as unknown,
+			integrationId: 'int-1',
+			workspaceId: 'ws-1',
+			credentials,
+		}
+	}
+
+	it("POSTs the stored refresh token to Google's revoke endpoint", async () => {
+		const { revokeGoogleCalendarGrant } = await import(
+			'../../../../lib/integrations/providers/google-calendar/disconnect'
+		)
+
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			text: () => Promise.resolve(''),
+		} as Response)
+
+		await revokeGoogleCalendarGrant(
+			makeCtx({ accessToken: 'ya29.access', refreshToken: '1//refresh' }),
+		)
+
+		expect(fetchSpy).toHaveBeenCalledTimes(1)
+		const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+		expect(url).toBe('https://oauth2.googleapis.com/revoke')
+		expect(init.method).toBe('POST')
+		expect(String(init.body)).toBe('token=1%2F%2Frefresh')
+	})
+
+	it('falls back to the access token when no refresh token is stored', async () => {
+		const { revokeGoogleCalendarGrant } = await import(
+			'../../../../lib/integrations/providers/google-calendar/disconnect'
+		)
+
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			text: () => Promise.resolve(''),
+		} as Response)
+
+		await revokeGoogleCalendarGrant(makeCtx({ accessToken: 'ya29.access' }))
+
+		// biome-ignore lint/style/noNonNullAssertion: test asserts fetch was called above
+		expect(String(fetchSpy.mock.calls[0]![1]?.body)).toBe('token=ya29.access')
+	})
+
+	it('swallows revoke errors so the disconnect flow always succeeds', async () => {
+		const { revokeGoogleCalendarGrant } = await import(
+			'../../../../lib/integrations/providers/google-calendar/disconnect'
+		)
+
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: false,
+			status: 500,
+			text: () => Promise.resolve('boom'),
+		} as Response)
+
+		await expect(
+			revokeGoogleCalendarGrant(makeCtx({ refreshToken: '1//refresh' })),
+		).resolves.toBeUndefined()
+	})
+
+	it('is a no-op when credentials hold no usable token', async () => {
+		const { revokeGoogleCalendarGrant } = await import(
+			'../../../../lib/integrations/providers/google-calendar/disconnect'
+		)
+
+		const fetchSpy = vi.spyOn(globalThis, 'fetch')
+
+		await revokeGoogleCalendarGrant(makeCtx({}))
+
+		expect(fetchSpy).not.toHaveBeenCalled()
 	})
 })

@@ -1,5 +1,5 @@
-import { resolveGoogleEmail } from '../google/resolve-email'
 import type { StoredCredentials } from '../../types'
+import { resolveGoogleEmail } from '../_google/userinfo'
 
 /**
  * Resolve the Gmail user's email address as the integration's externalId.
@@ -8,5 +8,5 @@ import type { StoredCredentials } from '../../types'
  * webhook to an integration row requires `integrations.external_id === emailAddress`.
  */
 export const resolveExternalId = async (credentials: StoredCredentials): Promise<string> => {
-	return resolveGoogleEmail(credentials, 'Gmail')
+	return resolveGoogleEmail(credentials.accessToken ?? '')
 }
