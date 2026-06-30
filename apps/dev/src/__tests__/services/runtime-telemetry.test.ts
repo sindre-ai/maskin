@@ -61,6 +61,64 @@ describe('RuntimeTelemetry', () => {
 		})
 	})
 
+	it('captures runtime_session_ended with the AC-U6 payload when the success path supplies it', () => {
+		const { client, capture } = makeFakeClient()
+		const telemetry = new RuntimeTelemetry({ apiKey: 'phc_x', client })
+
+		telemetry.recordSessionEnded({
+			sessionId: 'sess-ok',
+			endReason: 'completed',
+			durationMs: 12_345,
+			agentServerUrl: 'local-docker',
+			agentName: 'Developer',
+			costUsd: 0.74,
+			cacheReadTokens: 1_234_567,
+			exitCode: 0,
+			recoveryMode: false,
+		})
+
+		expect(capture).toHaveBeenCalledWith({
+			distinctId: 'sess-ok',
+			event: 'runtime_session_ended',
+			properties: {
+				session_id: 'sess-ok',
+				end_reason: 'completed',
+				duration_ms: 12_345,
+				agent_server_url: 'local-docker',
+				agent_name: 'Developer',
+				cost_usd: 0.74,
+				cache_read_tokens: 1_234_567,
+				exit_code: 0,
+				recovery_mode: false,
+				$process_person_profile: false,
+			},
+		})
+	})
+
+	it('emits recovery_mode=true and null cost/exit_code on a pre-launch failure of a recovery session', () => {
+		const { client, capture } = makeFakeClient()
+		const telemetry = new RuntimeTelemetry({ apiKey: 'phc_x', client })
+
+		telemetry.recordSessionEnded({
+			sessionId: 'sess-recovery',
+			endReason: 'failed',
+			durationMs: 200,
+			agentServerUrl: 'local-docker',
+			costUsd: null,
+			cacheReadTokens: null,
+			exitCode: null,
+			recoveryMode: true,
+		})
+
+		const props = capture.mock.calls[0]?.[0].properties as Record<string, unknown>
+		expect(props.recovery_mode).toBe(true)
+		expect(props.cost_usd).toBeNull()
+		expect(props.cache_read_tokens).toBeNull()
+		expect(props.exit_code).toBeNull()
+		// agent_name was not passed; it must not appear in the captured payload
+		expect(props).not.toHaveProperty('agent_name')
+	})
+
 	it('captures runtime_cross_session_check with host_isolation_ok', () => {
 		const { client, capture } = makeFakeClient()
 		const telemetry = new RuntimeTelemetry({ apiKey: 'phc_x', client })

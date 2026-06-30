@@ -485,6 +485,7 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(null, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				recoveryMode: session.sourceSessionId !== null,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -671,7 +672,11 @@ export class SessionManager extends EventEmitter {
 		workspaceId: string,
 	): Promise<void> {
 		const [existing] = await this.db
-			.select({ startedAt: sessions.startedAt, createdAt: sessions.createdAt })
+			.select({
+				startedAt: sessions.startedAt,
+				createdAt: sessions.createdAt,
+				sourceSessionId: sessions.sourceSessionId,
+			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
@@ -703,6 +708,7 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(existing.startedAt, existing.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				recoveryMode: existing.sourceSessionId !== null,
 			})
 		}
 
@@ -816,6 +822,7 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				recoveryMode: session.sourceSessionId !== null,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -1651,11 +1658,33 @@ export class SessionManager extends EventEmitter {
 				: failureReason
 					? 'irrecoverable'
 					: 'failed'
+		// Best-effort actor name lookup so the bet's AC-U6 query can filter to
+		// `agent_name='Developer'`. Failure is non-fatal — analytics never blocks
+		// the completion path.
+		let agentName: string | undefined
+		try {
+			const [actor] = await this.db
+				.select({ name: actors.name })
+				.from(actors)
+				.where(eq(actors.id, session.actorId))
+				.limit(1)
+			agentName = actor?.name
+		} catch (err) {
+			logger.warn('Failed to look up actor name for runtime_session_ended emit', {
+				sessionId,
+				error: String(err),
+			})
+		}
 		this.telemetry.recordSessionEnded({
 			sessionId,
 			endReason,
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			agentName,
+			costUsd: usage?.totalCostUsd ?? null,
+			cacheReadTokens: usage?.cacheReadInputTokens ?? null,
+			exitCode,
+			recoveryMode: session.sourceSessionId !== null,
 		})
 
 		// Clear active session link on object
@@ -1824,6 +1853,7 @@ export class SessionManager extends EventEmitter {
 				endReason: 'irrecoverable',
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				recoveryMode: session.sourceSessionId !== null,
 			})
 
 			await this.insertSystemLog(session.id, 'Session timed out').catch((err) =>
@@ -2058,6 +2088,7 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				recoveryMode: session.sourceSessionId !== null,
 			})
 
 			await this.cleanupBrowserSidecar(session.id).catch(() => {})

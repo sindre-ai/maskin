@@ -42,6 +42,17 @@ interface SessionEndedEvent {
 	endReason: RuntimeEndReason
 	durationMs: number
 	agentServerUrl?: string
+	// AC-U6 payload. `agentName` lets the query filter to Developer sessions;
+	// `costUsd` / `cacheReadTokens` / `exitCode` feed the median/p90 aggregates;
+	// `recoveryMode` is the "discarded work" counter the bet drives to zero.
+	// Pre-launch failures emit with these unset — the query filters on
+	// `exit_code = 0` so unset values are correctly excluded from the
+	// success-path aggregates.
+	agentName?: string
+	costUsd?: number | null
+	cacheReadTokens?: number | null
+	exitCode?: number | null
+	recoveryMode?: boolean
 }
 
 interface CrossSessionCheckEvent {
@@ -109,6 +120,11 @@ export class RuntimeTelemetry {
 		endReason,
 		durationMs,
 		agentServerUrl,
+		agentName,
+		costUsd,
+		cacheReadTokens,
+		exitCode,
+		recoveryMode,
 	}: SessionEndedEvent): void {
 		this.capture({
 			distinctId: sessionId,
@@ -118,6 +134,11 @@ export class RuntimeTelemetry {
 				end_reason: endReason,
 				duration_ms: durationMs,
 				...(agentServerUrl ? { agent_server_url: agentServerUrl } : {}),
+				...(agentName !== undefined ? { agent_name: agentName } : {}),
+				...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
+				...(cacheReadTokens !== undefined ? { cache_read_tokens: cacheReadTokens } : {}),
+				...(exitCode !== undefined ? { exit_code: exitCode } : {}),
+				...(recoveryMode !== undefined ? { recovery_mode: recoveryMode } : {}),
 			},
 		})
 	}
