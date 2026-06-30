@@ -86,7 +86,13 @@ interface SlackBlock {
 	[key: string]: unknown
 }
 
-function buildAlertBlocks(route: string, headroomPct: number, threshold: number, used: number, limit: number): SlackBlock[] {
+function buildAlertBlocks(
+	route: string,
+	headroomPct: number,
+	threshold: number,
+	used: number,
+	limit: number,
+): SlackBlock[] {
 	return [
 		{
 			type: 'header',
@@ -108,7 +114,10 @@ function buildRecoveryBlocks(route: string, headroomPct: number, threshold: numb
 	return [
 		{
 			type: 'section',
-			text: { type: 'mrkdwn', text: `✅ *Recovered:* \`${route}\` back to ${headroomPct}% — below ${threshold}% threshold` },
+			text: {
+				type: 'mrkdwn',
+				text: `✅ *Recovered:* \`${route}\` back to ${headroomPct}% — below ${threshold}% threshold`,
+			},
 		},
 	]
 }
@@ -161,15 +170,23 @@ export async function sendAlerts(result: PollResult): Promise<void> {
 	// Send alerts for routes currently above threshold
 	for (const [route, entry] of quotaEntries) {
 		if (!entry.exceeded) continue
-		const blocks = buildAlertBlocks(route, entry.headroom_pct, result.threshold_pct, entry.used, entry.limit)
+		const blocks = buildAlertBlocks(
+			route,
+			entry.headroom_pct,
+			result.threshold_pct,
+			entry.used,
+			entry.limit,
+		)
 		await postToSlack({ blocks })
 		logger.info('Sent Slack alert', { route, headroom_pct: entry.headroom_pct })
 	}
 
-	// Send recovery messages for routes that were above threshold and are now below
+	// Send recovery messages for routes that were above threshold and are now below.
+	// Defensive access on `previous.quotas` — a state file written by an older schema
+	// (where `quotas` was named differently or missing) would otherwise crash the poll.
 	if (previous) {
 		for (const [route, entry] of quotaEntries) {
-			const prevEntry = previous.quotas[route]
+			const prevEntry = previous.quotas?.[route]
 			if (!prevEntry?.exceeded || entry.exceeded) continue
 			const blocks = buildRecoveryBlocks(route, entry.headroom_pct, result.threshold_pct)
 			await postToSlack({ blocks })
