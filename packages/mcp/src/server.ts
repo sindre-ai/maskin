@@ -25,6 +25,7 @@ import {
 	createDefaultSink,
 	recordMutation,
 	recordToolCall,
+	recordToolCallResponseSize,
 	recordWidgetEvent,
 } from './telemetry.js'
 import { tools } from './tools.js'
@@ -1302,6 +1303,23 @@ export function createMcpServer(config: McpConfig) {
 				tool_name: name,
 				has_rich_render: responseHasRichRender,
 				duration_ms: Date.now() - start,
+				workspace_id: extractWorkspaceId(args),
+			})
+
+			// Response-size baseline for the MCP response-scoping bet's First test.
+			// Measures the two channels MCP serializes onto the wire — `content`
+			// (always present) and `structuredContent` (optional). `truncated` is
+			// hard-coded `false` here and flips `true` once T4's token-cap wrapper
+			// lands. Fires uniformly for every tool because we sit inside the single
+			// `registerAppTool` integration point.
+			const responseShape = response as
+				| { content?: unknown; structuredContent?: unknown }
+				| undefined
+			recordToolCallResponseSize(telemetrySink, telemetryTarget, {
+				tool_name: name,
+				content: responseShape?.content,
+				structured_content: responseShape?.structuredContent,
+				truncated: false,
 				workspace_id: extractWorkspaceId(args),
 			})
 
