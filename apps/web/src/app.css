@@ -24,6 +24,8 @@
 	--color-border: var(--border);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
+	--color-accent-hover: var(--accent-hover);
+	--color-primary-hover: var(--primary-hover);
 
 	/* Semantic */
 	--color-success: var(--success);
@@ -91,6 +93,19 @@
 	--radius-md: calc(var(--radius) - 2px);
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 4px);
+
+	/* Spacing scale — 4pt base. Reference with var(--space-N) or arbitrary
+	   Tailwind utilities like p-[var(--space-3)]. Surface application is T2. */
+	--space-1: 0.25rem;
+	--space-2: 0.5rem;
+	--space-3: 0.75rem;
+	--space-4: 1rem;
+	--space-5: 1.25rem;
+	--space-6: 1.5rem;
+	--space-7: 2rem;
+	--space-8: 2.5rem;
+	--space-9: 3rem;
+	--space-10: 4rem;
 }
 
 :root {
@@ -114,6 +129,8 @@
 	--border: oklch(0.922 0.004 286.32);
 	--input: oklch(0.922 0.004 286.32);
 	--ring: oklch(0.708 0.005 286.344);
+	--accent-hover: color-mix(in oklch, var(--accent), var(--foreground) 8%);
+	--primary-hover: color-mix(in oklch, var(--primary), var(--muted-foreground) 20%);
 
 	/* Semantic */
 	--success: #16a34a;
@@ -193,6 +210,8 @@
 	--border: oklch(0.264 0.006 286.033);
 	--input: oklch(0.264 0.006 286.033);
 	--ring: oklch(0.556 0.005 286.286);
+	--accent-hover: color-mix(in oklch, var(--accent), var(--foreground) 12%);
+	--primary-hover: color-mix(in oklch, var(--primary), var(--muted-foreground) 20%);
 
 	/* Semantic */
 	--success: #22c55e;
