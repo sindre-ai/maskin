@@ -25,6 +25,36 @@ const envSchema = z.object({
 	// override only when deploying on a different hypervisor or custom network setup.
 	AGENT_SERVER_INTERNAL_HOST: z.string().optional(),
 	AGENT_SESSION_ROOT: z.string().optional().default('/agent/sessions'),
+	// LRU eviction threshold for the host-side AGENT_SESSION_ROOT. When total
+	// resident size exceeds this on session dispatch, the oldest abandoned
+	// session dirs are removed until under threshold. Headroom is intentional:
+	// the typical agent host runs well below the default so eviction stays
+	// rare. 0 disables the sweep.
+	SESSION_WORKSPACES_LRU_THRESHOLD_BYTES: z
+		.string()
+		.optional()
+		.default(String(20 * 1024 * 1024 * 1024))
+		.transform((v) => {
+			const n = Number(v)
+			if (!Number.isFinite(n) || n < 0) {
+				throw new Error(`Invalid SESSION_WORKSPACES_LRU_THRESHOLD_BYTES: ${v}`)
+			}
+			return n
+		}),
+	// Minimum age (ms since mtime) for a session dir to be a sweep candidate.
+	// Floors how recent a dir must be to count as "live" and stay untouched —
+	// the sweep can never delete a session that is mid-spawn or mid-run.
+	SESSION_WORKSPACES_MIN_AGE_MS: z
+		.string()
+		.optional()
+		.default(String(60 * 60 * 1000))
+		.transform((v) => {
+			const n = Number(v)
+			if (!Number.isFinite(n) || n < 0) {
+				throw new Error(`Invalid SESSION_WORKSPACES_MIN_AGE_MS: ${v}`)
+			}
+			return n
+		}),
 	// Hard cap on a session microVM's lifetime, passed to `msb create --max-duration`.
 	// A `create`d sandbox is persistent: microsandbox does NOT power it off when its
 	// entrypoint exits (the guest's PID 1 is msb's agentd, not agent-run.sh). The
