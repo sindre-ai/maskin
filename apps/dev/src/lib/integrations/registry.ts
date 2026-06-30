@@ -8,6 +8,8 @@ import { config as gmailConfig } from './providers/gmail/config'
 import { resolveExternalId as gmailResolveExternalId } from './providers/gmail/resolve-id'
 import { fanOutGmailHistory, setupGmailWatch, stopGmailWatch } from './providers/gmail/watch'
 import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/webhooks'
+import { config as googleCalendarConfig } from './providers/google-calendar/config'
+import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -61,6 +63,11 @@ providers.set('gmail', {
 	postInstall: setupGmailWatch,
 	webhookFanOut: fanOutGmailHistory,
 	preDisconnect: stopGmailWatch,
+})
+
+providers.set('google-calendar', {
+	config: googleCalendarConfig,
+	resolveExternalId: googleCalendarResolveExternalId,
 })
 
 providers.set('posthog', {
