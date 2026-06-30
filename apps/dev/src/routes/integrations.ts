@@ -668,6 +668,11 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		.limit(1)
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
 
+	// Decrypt credentials before the preDisconnect try/catch so a corrupt or
+	// missing credential blob propagates as a 500 rather than being silently
+	// swallowed by the provider-error handler below.
+	const credentials: StoredCredentials = JSON.parse(decrypt(existing.credentials))
+
 	// Provider-specific cleanup before flipping status to 'revoked'. Runs while
 	// credentials are still readable so the provider can call its remote API
 	// (e.g. Gmail's users.stop) with a valid token. Provider implementations
@@ -675,7 +680,6 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	try {
 		const resolved = getProvider(existing.provider)
 		if (resolved.preDisconnect) {
-			const credentials: StoredCredentials = JSON.parse(decrypt(existing.credentials))
 			await resolved.preDisconnect({
 				db,
 				integrationId: existing.id,
@@ -690,18 +694,20 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		})
 	}
 
-	await db
-		.update(integrations)
-		.set({ status: 'revoked', updatedAt: new Date() })
-		.where(eq(integrations.id, id))
+	await db.transaction(async (tx) => {
+		await tx
+			.update(integrations)
+			.set({ status: 'revoked', updatedAt: new Date() })
+			.where(eq(integrations.id, id))
 
-	await db.insert(events).values({
-		workspaceId: existing.workspaceId,
-		actorId,
-		action: 'updated',
-		entityType: 'integration',
-		entityId: id,
-		data: { status: 'revoked', reason: 'user_disconnected' },
+		await tx.insert(events).values({
+			workspaceId: existing.workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: { status: 'revoked', reason: 'user_disconnected' },
+		})
 	})
 
 	return c.json({ deleted: true })

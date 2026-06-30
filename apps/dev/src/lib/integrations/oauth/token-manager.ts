@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { events, integrations } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { decrypt, encrypt } from '../../crypto'
 import { logger } from '../../logger'
 import { IntegrationAuthRevokedError } from '../errors'
@@ -125,12 +125,16 @@ export class TokenManager {
 				.where(eq(integrations.id, integrationId))
 				.limit(1)
 
-			await tx
+			// Only update (and audit-log) when the row is not already revoked.
+			// Without this guard, two concurrent invalid_grant errors both pass the
+			// SELECT under READ COMMITTED and produce duplicate audit event rows.
+			const updated = await tx
 				.update(integrations)
 				.set({ status: 'revoked', updatedAt: new Date() })
-				.where(eq(integrations.id, integrationId))
+				.where(and(eq(integrations.id, integrationId), eq(integrations.status, 'active')))
+				.returning({ id: integrations.id })
 
-			if (row) {
+			if (updated.length > 0 && row) {
 				await tx.insert(events).values({
 					workspaceId: row.workspaceId,
 					actorId: row.createdBy,
