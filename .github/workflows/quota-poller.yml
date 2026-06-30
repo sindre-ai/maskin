@@ -1,0 +1,33 @@
+name: Quota Poller
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  poll-quotas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: npx tsx scripts/quota-poller/poller.ts
+        env:
+          ANTHROPIC_ADMIN_API_KEY: ${{ secrets.ANTHROPIC_ADMIN_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          SLACK_QUOTA_WEBHOOK_URL: ${{ secrets.SLACK_QUOTA_WEBHOOK_URL }}
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          ANTHROPIC_WEEKLY_CEILING: ${{ secrets.ANTHROPIC_WEEKLY_CEILING }}
+          ANTHROPIC_5H_CEILING: ${{ secrets.ANTHROPIC_5H_CEILING }}
+          THRESHOLD_PCT: ${{ secrets.THRESHOLD_PCT }}
