@@ -38,6 +38,12 @@ jobs:
       # triggered this build (GITHUB_SHA on the push event to main). SKJALD_REF
       # comes from the skjald repo's main HEAD at build time so the baked
       # node_modules matches whatever a sibling skjald session would resolve to.
+      #
+      # These two SHAs are sampled independently: a maskin build can race a
+      # skjald merge, so the baked skjald layer may briefly trail tip-of-main.
+      # T4 (CI rebuild on lockfile bump) owns refreshing the image whenever
+      # either pnpm-lock.yaml moves on main, which is the contract that keeps
+      # the baked store from drifting from the lockfile.
       - name: Resolve repo refs
         id: refs
         env:

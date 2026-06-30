@@ -61,6 +61,12 @@ WORKDIR /opt/agent-prefetch
 # `git fetch` by SHA depends on the remote allowing reachable-SHA fetches —
 # GitHub does, so we shallow-clone the default branch first to set up refs and
 # then fetch the exact pinned SHA.
+#
+# The secret-file scrub runs in this same RUN — before the layer is committed
+# — so any `.env*`/`*.pem`/`*.key` an upstream repo may have committed never
+# enters the image. Doing this in a later RUN would only hide the bytes at
+# the squashed filesystem level; the lower layer (downloadable from the
+# registry) would still carry them.
 RUN --mount=type=secret,id=github_token,uid=1000,mode=0400 \
     set -eu; \
     token="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
@@ -68,6 +74,9 @@ RUN --mount=type=secret,id=github_token,uid=1000,mode=0400 \
     if [ -n "$token" ]; then \
       auth_host="x-access-token:${token}@github.com"; \
     fi; \
+    # Entries are `<dir>:<owner/repo>:<ref>`. The repo segment may contain a
+    # slash but never a colon; refs are pinned SHAs which also never contain a
+    # colon — so `${rest%:*}` (repo) and `${rest##*:}` (ref) split cleanly.
     for entry in "maskin:${MASKIN_REPO}:${MASKIN_REF}" "skjald:${SKJALD_REPO}:${SKJALD_REF}"; do \
       dir="${entry%%:*}"; rest="${entry#*:}"; \
       repo="${rest%:*}"; ref="${rest##*:}"; \
@@ -77,7 +86,11 @@ RUN --mount=type=secret,id=github_token,uid=1000,mode=0400 \
         && git fetch --depth 1 origin "${ref}" \
         && git checkout --detach FETCH_HEAD \
         && git remote set-url origin "https://github.com/${repo}.git" ); \
-    done
+    done; \
+    echo "[prefetch] scrubbing any committed .env / key files before layer commit"; \
+    find /opt/agent-prefetch \
+      \( -name '.env' -o -name '.env.*' -o -name '*.pem' -o -name '*.key' \) \
+      -type f -print -delete || true
 
 # Install deps with a frozen lockfile so the pnpm CAS store + node_modules
 # match the lockfile that a session will resolve against. `pnpm install` is
@@ -87,11 +100,7 @@ RUN set -eu; \
     for dir in maskin skjald; do \
       echo "[prefetch] pnpm install --frozen-lockfile in ${dir}"; \
       ( cd "/opt/agent-prefetch/${dir}" && pnpm install --frozen-lockfile ); \
-    done; \
-    echo "[prefetch] scrubbing any committed .env files from the baked layer"; \
-    find /opt/agent-prefetch \
-      \( -name '.env' -o -name '.env.*' -o -name '*.pem' -o -name '*.key' \) \
-      -type f -print -delete || true
+    done
 
 USER root
 
