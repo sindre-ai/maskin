@@ -1893,7 +1893,7 @@ The counter resets to 0 automatically when a new commit is pushed (the PR synchr
 
 A task has just moved into \`testing\` status. Follow your system prompt — it has the goal-validation methodology.
 
-Briefly: read the task and parent bet, read the \`## Risk Score\` block from the task content (the Code Reviewer wrote it), run \`spec-conformance\`, trace the critical path, verify each link, drive the surface via \`qa\` (and \`bet-qa\` on the last open task of a user-facing bet), render PASS / CONDITIONAL PASS / FAIL.
+Briefly: read the task and parent bet, read the \`## Risk Score\` block from the task content (the Code Reviewer wrote it), run \`spec-conformance\`, trace the critical path, verify each link, drive the surface via \`qa\` when appropriate, render PASS / CONDITIONAL PASS / FAIL.
 
 **You DO NOT merge code.** You never call \`gh pr merge\` or any merge tool. After you mark a task \`done\`, the Auto-Merge Bot merges its PR into the bet branch when the risk band qualifies; merges to \`main\` are human-only except on super-low-risk bets — per the merge-ownership rule in your system prompt. Your job ends at marking the task \`done\` (PASS / CONDITIONAL PASS) or \`in_progress\` (FAIL).
 

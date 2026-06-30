@@ -125,8 +125,8 @@ build_context() {
 MCP_CONFIG_FILE=""
 
 setup_mcps() {
-  # Skip if no MCP config provided
-  if [ -z "$AGENT_MCP_JSON" ] && [ -z "$MCP_SERVERS_JSON" ]; then
+  # Skip if no MCP config provided and no browser CDP endpoint
+  if [ -z "$AGENT_MCP_JSON" ] && [ -z "$MCP_SERVERS_JSON" ] && [ -z "$BROWSER_CDP_URL" ]; then
     return
   fi
 
@@ -140,6 +140,36 @@ setup_mcps() {
   merged=$(printf '%s\n%s' "$agent_config" "$session_config" | jq -s '
     { mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }
   ')
+
+  # Handle the browser CDP endpoint.
+  #
+  # The actor's MCP config may reference ${BROWSER_CDP_URL} as a literal
+  # placeholder (e.g. Playwright MCP configured with --cdp-endpoint
+  # "${BROWSER_CDP_URL}"). envsubst at the end of this function expands it.
+  #
+  # Two cases:
+  #   1. BROWSER_CDP_URL is SET: if the merged config already references the
+  #      literal placeholder, envsubst handles it — no extra entry needed.
+  #      If no existing entry uses it, inject a default @playwright/mcp entry
+  #      so the browser is reachable even without a pre-configured actor MCP.
+  #   2. BROWSER_CDP_URL is UNSET: strip any entry that still contains the
+  #      literal ${BROWSER_CDP_URL} placeholder. Without this, envsubst would
+  #      expand it to an empty string, causing Playwright to try to launch
+  #      Chrome locally instead of connecting to the CDP endpoint.
+  if [ -n "$BROWSER_CDP_URL" ]; then
+    if ! echo "$merged" | jq -e '[.mcpServers | to_entries[] | .value | tostring] | any(contains("${BROWSER_CDP_URL}"))' > /dev/null 2>&1; then
+      local browser_entry
+      browser_entry=$(jq -n --arg url "$BROWSER_CDP_URL" \
+        '{"mcpServers":{"@playwright/mcp":{"command":"npx","args":["@playwright/mcp","--cdp-endpoint",$url]}}}')
+      merged=$(echo "$merged" "$browser_entry" | jq -s '{ mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }')
+    fi
+  else
+    merged=$(echo "$merged" | jq '
+      .mcpServers = (.mcpServers | with_entries(
+        select((.value | tostring | contains("${BROWSER_CDP_URL}")) | not)
+      ))
+    ')
+  fi
 
   # Only write if there are actual servers configured
   local server_count

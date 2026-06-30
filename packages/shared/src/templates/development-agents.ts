@@ -1695,13 +1695,13 @@ Both angles are numbered lines in the SAME block. No separate technical document
 A line counts as testable only if it has all three:
 1. Given/When/Then (or "Given … expect …") — never "the feature works".
 2. An observable — a value, UI state, status field, network call, or DB row. Not a feeling.
-3. An oracle in \`[ ]\`: \`[Playwright]\`, \`[integration test]\`, \`[migration test]\`, \`[bet-qa mobile pass]\`, or \`[human]\`. No nameable oracle ⇒ not testable ⇒ rewrite or cut.
+3. An oracle in \`[ ]\`: \`[Playwright]\`, \`[integration test]\`, \`[migration test]\`, \`[browser pass]\`, or \`[human]\`. No nameable oracle ⇒ not testable ⇒ rewrite or cut.
 
 3–12 lines. Fewer = under-specified. More = the bet is too big; split it.
 
 **Worked examples:**
 - \`AC-U1. Given a card in "Todo", When I drag it to "Doing" and reload, Then it is in "Doing" and its status field reads "doing". — [Playwright + reload]\`
-- \`AC-U2. Given a board on a 375px viewport, When I scroll a column, Then the scroll does not start a card drag. — [bet-qa mobile pass]\`
+- \`AC-U2. Given a board on a 375px viewport, When I scroll a column, Then the scroll does not start a card drag. — [browser pass]\`
 - \`AC-T1. Given existing cards, When the position migration runs, Then every card gets a deterministic non-NULL position. — [migration test on seeded DB]\`
 
 ## Convergence protocol
