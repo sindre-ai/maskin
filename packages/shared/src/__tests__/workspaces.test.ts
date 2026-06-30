@@ -26,7 +26,7 @@ describe('workspaceSettingsSchema', () => {
 			'todo',
 			'in_progress',
 			'in_review',
-			'testing',
+			'validated',
 			'done',
 			'blocked',
 		])
