@@ -40,4 +40,6 @@ export const config: ProviderConfig = {
 			clientSecretEnv: 'GOOGLE_CALENDAR_CLIENT_SECRET',
 		},
 	},
+
+	externalIdDisplay: 'email',
 }

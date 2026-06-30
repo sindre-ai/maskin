@@ -122,10 +122,12 @@ function ProviderRow({
 	}
 
 	const connectedLabel = isConnected
-		? provider.name === 'google-calendar' && integration.externalId
+		? provider.externalIdDisplay === 'email' && integration.externalId
 			? `Connected as ${integration.externalId}`
 			: `Connected${integration.externalId ? ` · Installation ${integration.externalId}` : ''}`
-		: `${provider.events.length} event types available`
+		: provider.events.length > 0
+			? `${provider.events.length} event types available`
+			: 'Available to connect'
 
 	return (
 		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
