@@ -1194,6 +1194,10 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
+		// Write the exec-trigger file before starting — the entrypoint checks for
+		// /agent/.exec-trigger and sleeps forever without it (microsandbox contract).
+		await writeFile(join(tempDir, '.exec-trigger'), '')
+
 		const containerId = await this.containers.create({
 			image: spec.image,
 			name,
