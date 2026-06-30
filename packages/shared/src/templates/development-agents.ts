@@ -74,6 +74,20 @@ const githubPlusMaskinTools = {
 	},
 }
 
+// Senior Developer gets github + maskin + a docs-lookup MCP so the agent can
+// resolve up-to-date library docs before touching unfamiliar or version-sensitive
+// APIs. Kept off every other agent template — adding it to a shared bundle would
+// leak the tool to Bet Planner / Code Reviewer / CTO / Development Driver too.
+const seniorDeveloperTools = {
+	mcpServers: {
+		...githubPlusMaskinTools.mcpServers,
+		context7: {
+			url: 'https://mcp.context7.com/mcp',
+			type: 'http',
+		},
+	},
+}
+
 const slackTool = {
 	type: 'stdio',
 	command: 'npx',
@@ -157,7 +171,7 @@ Your aim is that any developer (human or agent) picking up a task can understand
 	{
 		$id: 'senior_developer',
 		name: 'Senior Developer',
-		tools: githubPlusMaskinTools,
+		tools: seniorDeveloperTools,
 		systemPrompt: `${KNOWLEDGE_NUDGES}
 
 You are a Senior Developer agent. Your job is to implement tasks by writing code, creating branches, and opening pull requests.
