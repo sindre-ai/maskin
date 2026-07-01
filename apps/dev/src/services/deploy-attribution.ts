@@ -77,28 +77,53 @@ async function findBranchFromMergeEvent(
 	workspaceId: string,
 	sha: string,
 ): Promise<{ branch: string; reason: 'pass1_push' | 'pass1_pr_merge' } | null> {
-	const rows = await db
-		.select({ entityType: events.entityType, data: events.data })
+	// Try merged PR events first. A squash-merge to `main` writes BOTH a
+	// `github.push` (ref=refs/heads/main, head_commit_sha=M) AND a
+	// `github.pull_request` merged (merge_commit_sha=M, pr_head_ref=bet/foo)
+	// event for the same SHA M. `bet.metadata.branch` carries the source branch
+	// (`bet/foo`), so only the PR event resolves to a bet. Preferring PR avoids
+	// a non-deterministic OR-query that could pick the push row first and land
+	// on branch=`main`, which no bet holds — attribution would silently miss.
+	const prRows = await db
+		.select({ data: events.data })
 		.from(events)
 		.where(
 			and(
 				eq(events.workspaceId, workspaceId),
-				inArray(events.entityType, ['github.push', 'github.pull_request']),
-				sql`(${events.data}->>'head_commit_sha' = ${sha} OR ${events.data}->>'merge_commit_sha' = ${sha})`,
+				eq(events.entityType, 'github.pull_request'),
+				sql`${events.data}->>'merge_commit_sha' = ${sha}`,
 			),
 		)
 		.limit(1)
-	const row = rows[0]
-	if (!row) return null
-	const data = (row.data ?? {}) as Record<string, unknown>
-	if (row.entityType === 'github.push') {
-		const branch = stripRefsHeads(data.ref as string | undefined)
-		if (!branch) return null
-		return { branch, reason: 'pass1_push' }
+	const prRow = prRows[0]
+	if (prRow) {
+		const data = (prRow.data ?? {}) as Record<string, unknown>
+		const branch = stripRefsHeads(data.pr_head_ref as string | undefined)
+		if (branch) return { branch, reason: 'pass1_pr_merge' }
 	}
-	const branch = stripRefsHeads(data.pr_head_ref as string | undefined)
-	if (!branch) return null
-	return { branch, reason: 'pass1_pr_merge' }
+
+	// Fall back to push. This is the direct-branch case: a push to a feature
+	// branch (no PR yet, or a preview deploy) where head_commit_sha equals the
+	// deploy SHA and `ref` is the feature branch itself.
+	const pushRows = await db
+		.select({ data: events.data })
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, workspaceId),
+				eq(events.entityType, 'github.push'),
+				sql`${events.data}->>'head_commit_sha' = ${sha}`,
+			),
+		)
+		.limit(1)
+	const pushRow = pushRows[0]
+	if (pushRow) {
+		const data = (pushRow.data ?? {}) as Record<string, unknown>
+		const branch = stripRefsHeads(data.ref as string | undefined)
+		if (branch) return { branch, reason: 'pass1_push' }
+	}
+
+	return null
 }
 
 async function findBranchFromPrHeadSha(

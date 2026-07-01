@@ -143,6 +143,40 @@ describe('deploy-attribution (T3)', () => {
 		expect(metadata?.awaiting_deploy).toBe(false)
 	})
 
+	// Squash-merge to `main`: BOTH a `github.push` event (ref=refs/heads/main,
+	// head_commit_sha=M) AND a `github.pull_request` merged event
+	// (merge_commit_sha=M, pr_head_ref=bet/source) land for the same SHA.
+	// The bet holds the source branch, so only the PR event resolves — Pass 1
+	// must prefer the PR row over the push row. Seeding push first exercises
+	// the non-deterministic OR-query failure mode the earlier implementation had.
+	it('Pass 1 — prefers PR merged event over push when both share the deploy SHA', async () => {
+		const bet = await insertObject(db, workspaceId, actorId, {
+			type: 'bet',
+			title: 'squash-bet',
+			status: 'active',
+			metadata: { branch: 'bet/squash', awaiting_deploy: true },
+		})
+		const sha = shaOf('s')
+		await seedPushEvent(workspaceId, actorId, sha, 'refs/heads/main')
+		await seedMergedPrEvent(workspaceId, actorId, sha, 'bet/squash')
+
+		const result = await attributeDeploymentToObject({
+			db,
+			workspaceId,
+			sha,
+			deployedAt: '2026-07-01T18:00:00.000Z',
+			deploymentRef: 'refs/heads/main',
+		})
+
+		expect(result.matched).toBe(true)
+		expect(result.objectId).toBe(bet.id)
+		expect(result.reason).toBe('pass1_pr_merge')
+
+		const metadata = await readMetadata(bet.id)
+		expect(metadata?.deployed_at).toBe('2026-07-01T18:00:00.000Z')
+		expect(metadata?.awaiting_deploy).toBe(false)
+	})
+
 	// Pass 2(a) — when no `push`/`pull_request` event stores the SHA, fall back
 	// to matching the deployment payload's ref against `bet.metadata.branch`.
 	it('Pass 2 — falls back to bet.metadata.branch when no merge event stores the SHA', async () => {
