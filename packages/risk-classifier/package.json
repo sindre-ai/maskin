@@ -12,7 +12,8 @@
 		}
 	},
 	"bin": {
-		"risk-classifier": "./bin/risk-classifier.mjs"
+		"risk-classifier": "./bin/risk-classifier.mjs",
+		"assert-risk-config": "./bin/assert-risk-config.mjs"
 	},
 	"scripts": {
 		"build": "tsc",

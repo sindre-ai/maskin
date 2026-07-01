@@ -1,0 +1,71 @@
+name: Risk Score
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'bet/**'
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: risk-score-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  risk-score:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @maskin/risk-classifier build
+
+      # R4 (risk-gate skill): a floor file that's missing or fails to parse must
+      # fail the check loudly, not degrade to "no floors" silently. This is what
+      # both risk-classifier bets asked for — see .maskin/*.yml and
+      # packages/risk-classifier/src/lib/assert-config.ts.
+      - name: Assert risk-classifier floor configs resolve
+        run: node packages/risk-classifier/bin/assert-risk-config.mjs --repo .
+
+      - name: Run risk-classifier
+        run: |
+          node packages/risk-classifier/bin/risk-classifier.mjs \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}" \
+            --repo . \
+            --output check-run > risk-score-check-run.json
+          cat risk-score-check-run.json
+
+      - name: Post maskin/risk-score check run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            const result = JSON.parse(fs.readFileSync('risk-score-check-run.json', 'utf8'))
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: result.name,
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'completed',
+              conclusion: result.conclusion,
+              output: {
+                title: `Risk score: ${result.conclusion}`,
+                summary: result.summary,
+              },
+            })

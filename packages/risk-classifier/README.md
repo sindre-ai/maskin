@@ -43,13 +43,19 @@ The verdict carries a `deterministic_seed` derived from `(commit_sha, score, sor
 
 ## Configuration
 
-The adapter reads three optional YAML files at the repo root:
+The adapter reads three YAML files at the repo root — see the files themselves for the exact schema and rationale for each entry:
 
-- `.maskin/protected-paths.yml` — path-floor patterns (any match → score 100)
-- `.maskin/risk-floors.yml` — regex-floor patterns (any line match → score ≥60)
-- `.maskin/hot-tables.yml` — table allowlist that promotes squawk findings
+- [`.maskin/protected-paths.yml`](../../.maskin/protected-paths.yml) — path-floor patterns (any match → score 100)
+- [`.maskin/risk-floors.yml`](../../.maskin/risk-floors.yml) — regex-floor patterns (any line match → score ≥60)
+- [`.maskin/hot-tables.yml`](../../.maskin/hot-tables.yml) — table allowlist that promotes squawk findings
 
-Files are owned by Task 3 of the *Auto-merge low-risk PRs* bet (`bb682faa`). When they are missing, the adapter scores from signals alone.
+`loadMaskinConfig` (used by `bin/risk-classifier.mjs`) degrades a missing file to an empty floor so a scoring run always produces a verdict. That tolerance is intentional for the scorer, but a floor silently going empty is exactly the R4 gap the `risk-gate` skill calls out — so CI checks separately, with a hard failure instead of a silent degrade:
+
+```bash
+node packages/risk-classifier/bin/assert-risk-config.mjs --repo .
+```
+
+Exits `0` when all three files exist and match their schema; exits `1` with a per-file reason on stderr otherwise. Wired into `.github/workflows/risk-score.yml`, which runs ahead of the scoring step on every PR into `main` or a `bet/**` branch.
 
 ## Skill version
 
