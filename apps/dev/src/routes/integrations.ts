@@ -911,10 +911,15 @@ webhookApp.post('/:provider', async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON payload'), 400)
 	}
 
-	// Allow provider to short-circuit (e.g. Slack url_verification challenge)
+	// Allow provider to short-circuit (e.g. Slack url_verification challenge, or
+	// GitHub's deployment_status validation branch — the latter returns 400 for
+	// malformed payloads and 200 for filtered ones).
 	if (resolved.webhookPreHandler) {
 		const preResponse = resolved.webhookPreHandler(payload, headers)
-		if (preResponse) return c.json(preResponse.body, (preResponse.status ?? 200) as 200)
+		if (preResponse) {
+			if (preResponse.status === 400) return c.json(preResponse.body, 400)
+			return c.json(preResponse.body, 200)
+		}
 	}
 
 	const normalized = normalizeEvent(resolved, payload, headers)

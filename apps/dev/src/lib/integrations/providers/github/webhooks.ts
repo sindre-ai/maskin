@@ -6,6 +6,7 @@ const EVENT_TYPE_MAP: Record<string, string> = {
 	issues: 'github.issue',
 	push: 'github.push',
 	pull_request_review: 'github.review',
+	deployment_status: 'github.deployment_status',
 }
 
 export const githubEventNormalizer: CustomEventNormalizer = (
@@ -33,6 +34,10 @@ export const githubEventNormalizer: CustomEventNormalizer = (
 		(body.pull_request as Record<string, unknown>)?.merged
 	) {
 		action = 'merged'
+	} else if (githubEvent === 'deployment_status') {
+		// Pre-handler already filtered to state=success + environment=production,
+		// so the only shape that reaches normalization is a production success.
+		action = 'succeeded'
 	} else {
 		action = (body.action as string) || 'unknown'
 	}
@@ -78,6 +83,22 @@ export const githubEventNormalizer: CustomEventNormalizer = (
 		if (review) {
 			data.review_state = review.state
 			data.review_body = review.body
+		}
+	}
+
+	if (githubEvent === 'deployment_status') {
+		const deployment = body.deployment as Record<string, unknown> | undefined
+		const deploymentStatus = body.deployment_status as Record<string, unknown> | undefined
+		if (deployment) {
+			data.deployment_sha = deployment.sha
+			data.deployment_environment = deployment.environment
+			data.deployment_ref = deployment.ref
+		}
+		if (deploymentStatus) {
+			data.deployment_state = deploymentStatus.state
+			data.deployment_status_created_at = deploymentStatus.created_at
+			data.deployment_status_updated_at = deploymentStatus.updated_at
+			data.deployment_target_url = deploymentStatus.target_url ?? deploymentStatus.log_url
 		}
 	}
 

@@ -37,6 +37,11 @@ export const config: ProviderConfig = {
 				actions: ['submitted', 'dismissed'],
 				label: 'Pull Request Review',
 			},
+			{
+				entityType: 'github.deployment_status',
+				actions: ['succeeded'],
+				label: 'Deployment Status',
+			},
 		],
 	},
 

@@ -3,6 +3,11 @@ import type { ResolvedProvider } from './types'
 import { githubAuth } from './providers/github/auth'
 // Import provider configs
 import { config as githubConfig } from './providers/github/config'
+import {
+	githubExtractDeliveryId,
+	githubWebhookFanOut,
+	githubWebhookPreHandler,
+} from './providers/github/deployment-status'
 import { githubEventNormalizer } from './providers/github/webhooks'
 import { config as gmailConfig } from './providers/gmail/config'
 import { resolveExternalId as gmailResolveExternalId } from './providers/gmail/resolve-id'
@@ -32,6 +37,15 @@ providers.set('github', {
 	config: githubConfig,
 	customAuth: githubAuth,
 	customNormalizer: githubEventNormalizer,
+	// `deployment_status` needs SHA validation + prod-success filtering before
+	// the delivery-ID claim runs; the pre-handler short-circuits both cases so
+	// invalid payloads never reach the dedup ledger.
+	webhookPreHandler: githubWebhookPreHandler,
+	extractDeliveryId: githubExtractDeliveryId,
+	// Fan-out drains deployment_status events into attribution (T3 replaces the
+	// stub) and returns [] so no event row lands. Other GitHub events pass
+	// through unchanged.
+	webhookFanOut: githubWebhookFanOut,
 })
 
 providers.set('linear', {

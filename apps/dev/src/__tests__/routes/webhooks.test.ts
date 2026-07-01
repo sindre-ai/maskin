@@ -553,6 +553,226 @@ describe('Webhook Routes', () => {
 			expect(eventInsert[0]?.workspaceId).toBe(int1.workspaceId)
 		})
 
+		// ── deployment_status branch ────────────────────────────────────────────
+		//
+		// These cases exercise the shared receiver's pre-handler → dispatch path
+		// with a github provider that only differs from the standard one by the
+		// webhookPreHandler + extractDeliveryId + webhookFanOut hooks the
+		// registry wires up. The important assertion is that the STATUS the
+		// receiver returns matches the DoD:
+		//   - 400 for a malformed SHA
+		//   - 200 skipped for non-production or non-success
+		//   - 200 skipped=duplicate for redelivered X-GitHub-Delivery
+		//   - 200 with no crash for unattributed valid deploys
+
+		function githubProviderWithDeployHooks(overrides?: {
+			extractDeliveryId?: (payload: unknown, headers: Record<string, string>) => string | null
+			webhookFanOut?: () => Promise<unknown[]>
+			webhookPreHandler?: (
+				payload: unknown,
+				headers: Record<string, string>,
+			) => { body: unknown; status?: number } | null
+		}) {
+			return {
+				config: {
+					name: 'github',
+					webhook: {
+						signatureHeader: 'x-hub-signature-256',
+						signatureScheme: 'hmac-sha256',
+						signaturePrefix: 'sha256=',
+						secretEnv: 'GITHUB_APP_WEBHOOK_SECRET',
+					},
+				},
+				extractDeliveryId: overrides?.extractDeliveryId ?? (() => 'deliv-abc-1'),
+				webhookFanOut: overrides?.webhookFanOut,
+				webhookPreHandler: overrides?.webhookPreHandler,
+			}
+		}
+
+		it('returns 400 when the pre-handler rejects a deployment_status payload with a bad SHA', async () => {
+			mockGetProvider.mockReturnValue(
+				githubProviderWithDeployHooks({
+					webhookPreHandler: () => ({
+						status: 400,
+						body: {
+							error: {
+								code: 'BAD_REQUEST',
+								message: 'deployment_status payload has missing or invalid SHA',
+							},
+						},
+					}),
+				}),
+			)
+			mockVerify.mockReturnValue(true)
+			const { app } = createWebhookTestApp()
+
+			const res = await app.request(
+				new Request('http://localhost/api/webhooks/github', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'x-github-event': 'deployment_status',
+						'x-github-delivery': 'deliv-bad-sha',
+					},
+					body: JSON.stringify({ deployment_status: { state: 'success' } }),
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
+		})
+
+		it('returns 200 skipped=filtered when the pre-handler drops a non-production deploy', async () => {
+			mockGetProvider.mockReturnValue(
+				githubProviderWithDeployHooks({
+					webhookPreHandler: () => ({ status: 200, body: { ok: true, skipped: 'filtered' } }),
+				}),
+			)
+			mockVerify.mockReturnValue(true)
+			const { app, calls } = createWebhookTestApp()
+
+			const res = await app.request(
+				new Request('http://localhost/api/webhooks/github', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'x-github-event': 'deployment_status',
+						'x-github-delivery': 'deliv-staging-1',
+					},
+					body: JSON.stringify({ deployment: { environment: 'staging' } }),
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.skipped).toBe('filtered')
+			// Pre-handler short-circuits before the delivery claim, so no DB writes
+			// should hit the ledger for a filtered payload.
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('returns 200 skipped=filtered when the pre-handler drops a non-success state', async () => {
+			mockGetProvider.mockReturnValue(
+				githubProviderWithDeployHooks({
+					webhookPreHandler: () => ({ status: 200, body: { ok: true, skipped: 'filtered' } }),
+				}),
+			)
+			mockVerify.mockReturnValue(true)
+			const { app } = createWebhookTestApp()
+
+			const res = await app.request(
+				new Request('http://localhost/api/webhooks/github', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'x-github-event': 'deployment_status',
+						'x-github-delivery': 'deliv-failure-1',
+					},
+					body: JSON.stringify({
+						deployment: { environment: 'production' },
+						deployment_status: { state: 'failure' },
+					}),
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.skipped).toBe('filtered')
+		})
+
+		it('accepts a valid production success and drops it via fan-out (no event row lands)', async () => {
+			const integration = buildIntegration({
+				externalId: 'inst-deploy-happy',
+				config: { system_actor_id: 'actor-deploy' },
+			})
+			const fanOut = vi.fn(async () => [])
+			mockGetProvider.mockReturnValue(
+				githubProviderWithDeployHooks({
+					extractDeliveryId: () => 'deliv-happy-1',
+					webhookFanOut: fanOut,
+				}),
+			)
+			mockVerify.mockReturnValue(true)
+			mockNormalizeEvent.mockReturnValue({
+				action: 'succeeded',
+				entityType: 'github.deployment_status',
+				installationId: 'inst-deploy-happy',
+				data: { deployment_sha: 'a'.repeat(40) },
+			})
+			const { app, mockResults, calls } = createWebhookTestApp()
+			mockResults.select = [integration]
+			// Claim succeeds; fan-out returns []; no event insert follows.
+			mockResults.insertQueue = [[{ id: 'claim-happy' }]]
+
+			const res = await app.request(
+				new Request('http://localhost/api/webhooks/github', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'x-github-event': 'deployment_status',
+						'x-github-delivery': 'deliv-happy-1',
+					},
+					body: JSON.stringify({ deployment_status: { state: 'success' } }),
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			// Fan-out returned []; the aggregator reports 0 inserted → `skipped: true`
+			// per the shared receiver's `totalInserted === 0` branch. What matters is
+			// that fan-out ran (so attribution logging fires) and no downstream event
+			// row landed for the deploy.
+			expect(fanOut).toHaveBeenCalledTimes(1)
+			expect(body.skipped).toBe(true)
+			// One insert: the delivery claim. No event insert.
+			expect(calls.inserts).toHaveLength(1)
+		})
+
+		it('silently drops a redelivered X-GitHub-Delivery (claim conflict)', async () => {
+			const integration = buildIntegration({
+				externalId: 'inst-deploy-dup',
+				config: { system_actor_id: 'actor-deploy' },
+			})
+			const fanOut = vi.fn(async () => [])
+			mockGetProvider.mockReturnValue(
+				githubProviderWithDeployHooks({
+					extractDeliveryId: () => 'deliv-dup-1',
+					webhookFanOut: fanOut,
+				}),
+			)
+			mockVerify.mockReturnValue(true)
+			mockNormalizeEvent.mockReturnValue({
+				action: 'succeeded',
+				entityType: 'github.deployment_status',
+				installationId: 'inst-deploy-dup',
+				data: { deployment_sha: 'a'.repeat(40) },
+			})
+			const { app, mockResults } = createWebhookTestApp()
+			mockResults.select = [integration]
+			// Claim conflict (returning empty from onConflictDoNothing) — retry.
+			mockResults.insertQueue = [[]]
+
+			const res = await app.request(
+				new Request('http://localhost/api/webhooks/github', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'x-github-event': 'deployment_status',
+						'x-github-delivery': 'deliv-dup-1',
+					},
+					body: JSON.stringify({ deployment_status: { state: 'success' } }),
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.skipped).toBe('duplicate')
+			// Fan-out MUST NOT run for the duplicate — attribution stays a
+			// once-per-delivery side effect.
+			expect(fanOut).not.toHaveBeenCalled()
+		})
+
 		it('returns skipped=duplicate only when every workspace claim conflicts', async () => {
 			const externalId = 'shared-install-all-dup'
 			const int1 = buildIntegration({
