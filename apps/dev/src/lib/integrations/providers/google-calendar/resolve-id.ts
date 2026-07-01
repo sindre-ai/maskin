@@ -14,5 +14,8 @@ import { resolveGoogleEmail } from '../_google/userinfo'
  * production externalId past T1.
  */
 export const resolveExternalId = async (credentials: StoredCredentials): Promise<string> => {
-	return resolveGoogleEmail(credentials.accessToken ?? '')
+	if (!credentials.accessToken) {
+		throw new Error('Cannot resolve Google account email: no access token in credentials')
+	}
+	return resolveGoogleEmail(credentials.accessToken)
 }

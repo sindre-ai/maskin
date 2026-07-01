@@ -132,6 +132,15 @@ describe('Google Calendar resolveExternalId', () => {
 			'Failed to resolve Google account email: HTTP 401',
 		)
 	})
+
+	it('throws early without calling fetch when accessToken is absent', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch')
+
+		await expect(resolveExternalId({})).rejects.toThrow(
+			'Cannot resolve Google account email: no access token in credentials',
+		)
+		expect(fetchSpy).not.toHaveBeenCalled()
+	})
 })
 
 describe('Google Calendar provider registration', () => {

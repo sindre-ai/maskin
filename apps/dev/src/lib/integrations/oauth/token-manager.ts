@@ -225,11 +225,25 @@ export class TokenManager {
 			throw err
 		}
 
+		// A refresh response that omits access_token is malformed. The fallback
+		// `?? credentials.accessToken` would silently re-store the expired token
+		// because credentials.accessToken is always non-empty at this point (enforced
+		// at line 77), making the guard below dead. Throw explicitly instead.
+		if (!refreshed.accessToken) {
+			throw new Error(
+				`Integration ${integrationId} token refresh did not return an access token. User must reconnect.`,
+			)
+		}
+
 		// Merge: keep existing fields (like provider-specific data), override with refreshed tokens
 		const updated: StoredCredentials = {
 			...credentials,
-			accessToken: refreshed.accessToken ?? credentials.accessToken,
-			expiresAt: refreshed.expiresAt ?? credentials.expiresAt,
+			accessToken: refreshed.accessToken,
+			// Do NOT fall back to credentials.expiresAt: that timestamp is already in the
+			// past (it triggered this refresh), so inheriting it causes getValidToken to
+			// immediately re-refresh on every subsequent call. If the provider omits
+			// expires_in, the token is treated as non-expiring until proven otherwise.
+			expiresAt: refreshed.expiresAt,
 			scope: refreshed.scope ?? credentials.scope,
 			tokenType: refreshed.tokenType ?? credentials.tokenType,
 		}
@@ -239,23 +253,21 @@ export class TokenManager {
 			updated.refreshToken = refreshed.refreshToken
 		}
 
-		if (!updated.accessToken) {
-			throw new Error(
-				`Integration ${integrationId} token refresh did not return an access token. User must reconnect.`,
-			)
-		}
-
-		// Store updated credentials and log the refresh event atomically so a
-		// transient events-insert failure doesn't leave credentials updated but
-		// the audit trail broken (mirrors the markRevoked transaction pattern).
+		// Persist the new credentials. This MUST NOT be inside a transaction with the
+		// events INSERT: the Google token exchange above is not idempotent — it already
+		// consumed the old refresh token and issued a new one. If the events INSERT
+		// later fails and rolls back the UPDATE, the DB reverts to the now-invalid
+		// refresh token, causing the next refresh to return invalid_grant and
+		// permanently stranding the integration. Credentials go first, audit log
+		// is best-effort.
 		const encryptedCredentials = encrypt(JSON.stringify(updated))
-		await db.transaction(async (tx) => {
-			await tx
-				.update(integrations)
-				.set({ credentials: encryptedCredentials, updatedAt: new Date() })
-				.where(eq(integrations.id, integrationId))
+		await db
+			.update(integrations)
+			.set({ credentials: encryptedCredentials, updatedAt: new Date() })
+			.where(eq(integrations.id, integrationId))
 
-			await tx.insert(events).values({
+		try {
+			await db.insert(events).values({
 				workspaceId,
 				actorId,
 				action: 'updated',
@@ -263,13 +275,18 @@ export class TokenManager {
 				entityId: integrationId,
 				data: { reason: 'token_refreshed', provider: provider.config.name },
 			})
-		})
+		} catch (auditErr) {
+			logger.warn('Failed to insert token_refreshed audit event', {
+				integrationId,
+				error: String(auditErr),
+			})
+		}
 
 		logger.info('Refreshed OAuth2 access token', {
 			integrationId,
 			provider: provider.config.name,
 		})
 
-		return updated.accessToken
+		return refreshed.accessToken
 	}
 }

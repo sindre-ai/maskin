@@ -668,18 +668,18 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		.limit(1)
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
 
-	// Decrypt credentials before the preDisconnect try/catch so a corrupt or
-	// missing credential blob propagates as a 500 rather than being silently
-	// swallowed by the provider-error handler below.
-	const credentials: StoredCredentials = JSON.parse(decrypt(existing.credentials))
-
 	// Provider-specific cleanup before flipping status to 'revoked'. Runs while
 	// credentials are still readable so the provider can call its remote API
 	// (e.g. Gmail's users.stop) with a valid token. Provider implementations
 	// are responsible for swallowing errors so disconnect always proceeds.
+	//
+	// Credentials are decrypted lazily (only when a preDisconnect hook exists) and
+	// only for non-pending integrations — pending rows have credentials: '' because
+	// the OAuth flow was never completed and there is nothing to revoke at the provider.
 	try {
 		const resolved = getProvider(existing.provider)
-		if (resolved.preDisconnect) {
+		if (resolved.preDisconnect && existing.status !== 'pending') {
+			const credentials: StoredCredentials = JSON.parse(decrypt(existing.credentials))
 			await resolved.preDisconnect({
 				db,
 				integrationId: existing.id,

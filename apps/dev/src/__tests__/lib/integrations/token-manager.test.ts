@@ -50,7 +50,15 @@ function createMockDb(
 
 	const updateSets: Array<Record<string, unknown>> = []
 	const insertValues: Array<Record<string, unknown>> = []
-	const mockUpdateWhere = vi.fn().mockResolvedValue(undefined)
+	// mockUpdateWhere must support two call patterns:
+	//   await tx.update().set().where(...)                — used by doRefresh
+	//   await tx.update().set().where(...).returning(...) — used by markRevoked
+	// Attach .returning() directly onto the Promise so both patterns resolve correctly.
+	const mockUpdateWhere = vi.fn().mockImplementation(() =>
+		Object.assign(Promise.resolve(undefined), {
+			returning: vi.fn().mockResolvedValue([{ id: 'integration-1' }]),
+		}),
+	)
 
 	const db = {
 		select: vi.fn().mockReturnValue({
