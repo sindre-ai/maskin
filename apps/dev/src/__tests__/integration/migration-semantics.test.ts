@@ -121,7 +121,7 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 				${workspace.id},
 				'bet',
 				'live',
-				${JSON.stringify({ live_started_at: '2026-06-10', posthog_query: 'q1' })}::jsonb,
+				${sql.json({ live_started_at: '2026-06-10', posthog_query: 'q1' })},
 				${actorId}
 			)
 			RETURNING id
@@ -137,7 +137,7 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 				${workspace.id},
 				'bet',
 				'active',
-				${JSON.stringify({ awaiting_deploy: false })}::jsonb,
+				${sql.json({ awaiting_deploy: false })},
 				${actorId}
 			)
 			RETURNING id
