@@ -1,6 +1,7 @@
 import { ActivityFeed } from '@/components/activity/activity-feed'
 import { type CategoryFilter, FILTER_TABS } from '@/components/activity/activity-filters'
 import { PageHeader } from '@/components/layout/page-header'
+import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { RouteError } from '@/components/shared/route-error'
 import {
 	Select,
@@ -12,6 +13,7 @@ import {
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/activity')({
 	component: ActivityPage,
@@ -27,6 +29,17 @@ function ActivityPage() {
 	const { workspaceId } = useWorkspace()
 	const { filter } = useSearch({ from: '/_authed/$workspaceId/activity' })
 	const navigate = useNavigate()
+	const [createPickerOpen, setCreatePickerOpen] = useState(false)
+
+	useEffect(() => {
+		function onKeydown(event: KeyboardEvent) {
+			if (!isCreateShortcut(event)) return
+			event.preventDefault()
+			setCreatePickerOpen(true)
+		}
+		window.addEventListener('keydown', onKeydown)
+		return () => window.removeEventListener('keydown', onKeydown)
+	}, [])
 
 	const navigateFilter = (value: CategoryFilter | undefined) =>
 		navigate({
@@ -82,6 +95,7 @@ function ActivityPage() {
 			<div className="flex-1 min-h-0">
 				<ActivityFeed workspaceId={workspaceId} filter={filter} />
 			</div>
+			<CreatePicker open={createPickerOpen} onOpenChange={setCreatePickerOpen} />
 		</div>
 	)
 }

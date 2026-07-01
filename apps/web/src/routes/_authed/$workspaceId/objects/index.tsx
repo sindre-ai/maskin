@@ -8,6 +8,7 @@ import type { ColumnInfo } from '@/components/objects/data-table/data-table-cont
 import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
 import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
+import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { RouteError } from '@/components/shared/route-error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -78,6 +79,7 @@ function ObjectsPage() {
 	} = searchParams
 
 	const [importOpen, setImportOpen] = useState(false)
+	const [createPickerOpen, setCreatePickerOpen] = useState(false)
 	const { startTracking: trackImport } = useImportToast(workspaceId)
 	const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
@@ -110,6 +112,18 @@ function ObjectsPage() {
 	useEffect(() => {
 		setRowSelection({})
 	}, [workspaceId])
+
+	// Linear-style `C` shortcut opens the create picker with the active type
+	// tab pre-selected. Guarded so typing into filters/search never triggers it.
+	useEffect(() => {
+		function onKeydown(event: KeyboardEvent) {
+			if (!isCreateShortcut(event)) return
+			event.preventDefault()
+			setCreatePickerOpen(true)
+		}
+		window.addEventListener('keydown', onKeydown)
+		return () => window.removeEventListener('keydown', onKeydown)
+	}, [])
 
 	const searchParamsRef = useRef(searchParams)
 	searchParamsRef.current = searchParams
@@ -707,9 +721,16 @@ function ObjectsPage() {
 				}}
 				boardSupported={boardSupported}
 				onImportClick={() => setImportOpen(true)}
+				onNewClick={() => setCreatePickerOpen(true)}
 			/>
 
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
+			<CreatePicker
+				open={createPickerOpen}
+				onOpenChange={setCreatePickerOpen}
+				defaultType="object"
+				defaultObjectSubtype={typeFilter}
+			/>
 
 			{effectiveView === 'board' && typeFilter ? (
 				<div className="pb-4 flex-1 min-h-0 overflow-x-auto overflow-y-hidden md:px-6">

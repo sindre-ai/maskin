@@ -1,3 +1,4 @@
+import { CreatePicker } from '@/components/shared/create-picker'
 import {
 	Breadcrumb,
 	BreadcrumbItem,
@@ -7,19 +8,12 @@ import {
 	BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { useChat } from '@/lib/chat-context'
 import { usePageHeader } from '@/lib/page-header-context'
-import { useWorkspace } from '@/lib/workspace-context'
-import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
-import { ArrowLeft, Bot, Layers, Plus, Sparkles, Zap } from 'lucide-react'
-import { Fragment } from 'react'
+import { useMatches, useRouter } from '@tanstack/react-router'
+import { ArrowLeft, Plus, Sparkles } from 'lucide-react'
+import { Fragment, useState } from 'react'
 
 interface RouteConfig {
 	label: string
@@ -71,49 +65,12 @@ const routeConfig: Record<string, RouteConfig> = {
 
 const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$workspaceId'])
 
-type CreateItem = {
-	label: string
-	icon: typeof Layers
-	navigate: (nav: ReturnType<typeof useNavigate>, workspaceId: string) => void
-}
-
-const createItems: CreateItem[] = [
-	{
-		label: 'Object',
-		icon: Layers,
-		navigate: (nav, workspaceId) =>
-			nav({
-				to: '/$workspaceId/objects/$objectId',
-				params: { workspaceId, objectId: crypto.randomUUID() },
-			}),
-	},
-	{
-		label: 'Agent',
-		icon: Bot,
-		navigate: (nav, workspaceId) =>
-			nav({
-				to: '/$workspaceId/agents/$agentId',
-				params: { workspaceId, agentId: crypto.randomUUID() },
-			}),
-	},
-	{
-		label: 'Trigger',
-		icon: Zap,
-		navigate: (nav, workspaceId) =>
-			nav({
-				to: '/$workspaceId/triggers/$triggerId',
-				params: { workspaceId, triggerId: crypto.randomUUID() },
-			}),
-	},
-]
-
 export function Header() {
 	const matches = useMatches()
 	const { actions } = usePageHeader()
 	const { setOpen: setChatOpen } = useChat()
 	const router = useRouter()
-	const navigate = useNavigate()
-	const { workspaceId } = useWorkspace()
+	const [createOpen, setCreateOpen] = useState(false)
 
 	// Find the leaf (last non-hidden) match
 	const leafMatch = [...matches].reverse().find((m) => !hiddenRoutes.has(m.routeId))
@@ -192,28 +149,16 @@ export function Header() {
 				</div>
 				<div className="ml-auto flex shrink-0 items-center gap-2">
 					{actions}
-					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							<Button variant="ghost" size="icon" className="h-7 w-7">
-								<Plus size={15} />
-								<span className="sr-only">Create new</span>
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end">
-							{createItems.map((item) => {
-								const Icon = item.icon
-								return (
-									<DropdownMenuItem
-										key={item.label}
-										onClick={() => item.navigate(navigate, workspaceId)}
-									>
-										<Icon className="h-4 w-4" />
-										{item.label}
-									</DropdownMenuItem>
-								)
-							})}
-						</DropdownMenuContent>
-					</DropdownMenu>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="h-7 w-7"
+						onClick={() => setCreateOpen(true)}
+						aria-label="Create new"
+						title="Create new…"
+					>
+						<Plus size={15} />
+					</Button>
 					<Button
 						variant="ghost"
 						size="icon"
@@ -225,6 +170,7 @@ export function Header() {
 					</Button>
 				</div>
 			</div>
+			<CreatePicker open={createOpen} onOpenChange={setCreateOpen} />
 		</header>
 	)
 }

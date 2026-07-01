@@ -34,6 +34,7 @@ function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableT
 		groupBy: undefined,
 		onGroupByChange: vi.fn(),
 		onImportClick: vi.fn(),
+		onNewClick: vi.fn(),
 		...overrides,
 	}
 	return { ...render(<DataTableToolbar {...props} />), props }

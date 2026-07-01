@@ -29,6 +29,8 @@ export function trackEvent(name: string, props: AnalyticsProps = {}): void {
 // event-specific fields.
 
 type TaxonomyEntityType =
+	| 'object'
+	| 'agent'
 	| 'bet'
 	| 'task'
 	| 'insight'
@@ -59,6 +61,26 @@ function fillBase(p: BaseProps): AnalyticsProps {
 
 export function trackBetCreated(p: BaseProps & { entity_type: 'bet' }): void {
 	trackEvent('bet_created', fillBase(p))
+}
+
+// Fires on server-confirmed create for the three CreatePicker paths. Payload
+// shape mirrors `bet_created` so `object_create_completion_rate_60s` can pair
+// the create event with the first title/field edit against the same entity_id.
+// `object_subtype` carries the object's `type` column (bet/insight/…), since
+// entity_type is fixed to 'object' for the taxonomy row.
+
+export function trackObjectCreated(
+	p: BaseProps & { entity_type: 'object'; object_subtype: string },
+): void {
+	trackEvent('object_created', { ...fillBase(p), object_subtype: p.object_subtype })
+}
+
+export function trackAgentCreated(p: BaseProps & { entity_type: 'agent' }): void {
+	trackEvent('agent_created', fillBase(p))
+}
+
+export function trackTriggerCreated(p: BaseProps & { entity_type: 'trigger' }): void {
+	trackEvent('trigger_created', fillBase(p))
 }
 
 export function trackBetStatusChanged(

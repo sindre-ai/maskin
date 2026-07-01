@@ -1,8 +1,10 @@
 import { AgentCard, type AgentStatus } from '@/components/agents/agent-card'
 import { PageHeader } from '@/components/layout/page-header'
+import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
@@ -10,7 +12,8 @@ import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { Plus } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
 	component: AgentsPage,
@@ -24,6 +27,17 @@ function AgentsPage() {
 	const { data: actors, isLoading } = useActors(workspaceId)
 	const { data: sessions } = useWorkspaceSessions(workspaceId)
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+	const [createPickerOpen, setCreatePickerOpen] = useState(false)
+
+	useEffect(() => {
+		function onKeydown(event: KeyboardEvent) {
+			if (!isCreateShortcut(event)) return
+			event.preventDefault()
+			setCreatePickerOpen(true)
+		}
+		window.addEventListener('keydown', onKeydown)
+		return () => window.removeEventListener('keydown', onKeydown)
+	}, [])
 
 	const agents = useMemo(() => (actors ?? []).filter((a) => a.type === 'agent'), [actors])
 
@@ -63,21 +77,33 @@ function AgentsPage() {
 		{ label: 'Failed', value: 'failed' },
 	]
 
+	const newButton = (
+		<Button size="sm" className="gap-1.5" onClick={() => setCreatePickerOpen(true)}>
+			<Plus size={14} />
+			New
+		</Button>
+	)
+
 	if (isLoading) {
 		return (
 			<div>
-				<PageHeader title="Agents" />
+				<PageHeader title="Agents" actions={newButton} />
 				<div className="grid gap-4 md:grid-cols-2">
 					<CardSkeleton />
 					<CardSkeleton />
 				</div>
+				<CreatePicker
+					open={createPickerOpen}
+					onOpenChange={setCreatePickerOpen}
+					defaultType="agent"
+				/>
 			</div>
 		)
 	}
 
 	return (
 		<div>
-			<PageHeader title="Agents" />
+			<PageHeader title="Agents" actions={newButton} />
 
 			{agents.length === 0 ? (
 				<EmptyState
@@ -116,6 +142,11 @@ function AgentsPage() {
 					</div>
 				</>
 			)}
+			<CreatePicker
+				open={createPickerOpen}
+				onOpenChange={setCreatePickerOpen}
+				defaultType="agent"
+			/>
 		</div>
 	)
 }
