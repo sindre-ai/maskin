@@ -4,7 +4,6 @@ on:
   pull_request:
     branches:
       - main
-      - 'bet/**'
     types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
