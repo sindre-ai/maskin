@@ -7,11 +7,14 @@ test.describe('Settings — Integrations page', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/settings/integrations`)
 
-			// Page should load without error — at minimum the provider list is visible
+			// Page should load without error — at minimum the provider list is visible.
+			// `.first()` avoids a strict-mode violation now that both Gmail and Google
+			// Calendar providers render at once.
 			await expect(
 				page
 					.getByRole('heading', { name: 'Integrations' })
-					.or(page.locator('text=Google Calendar').or(page.locator('text=Gmail'))),
+					.or(page.locator('text=Google Calendar').or(page.locator('text=Gmail')))
+					.first(),
 			).toBeVisible({ timeout: 10000 })
 		})
 
@@ -22,8 +25,10 @@ test.describe('Settings — Integrations page', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/settings/integrations`)
 
-			// Wait for the providers to load
-			await page.waitForLoadState('networkidle')
+			// `load` instead of `networkidle` — the app holds an SSE connection to
+			// /api/events, so networkidle never fires. Brief settle after `load`.
+			await page.waitForLoadState('load')
+			await page.waitForTimeout(300)
 
 			// Google Calendar has no event types defined yet (T2/T3), so it should
 			// show "Available to connect" rather than "0 event types available".
@@ -37,7 +42,10 @@ test.describe('Settings — Integrations page', () => {
 		for (const viewport of SHIP_GATE_VIEWPORTS) {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/settings/integrations`)
-			await page.waitForLoadState('networkidle')
+			// `load` instead of `networkidle` — the app holds an SSE connection to
+			// /api/events, so networkidle never fires. Brief settle after `load`.
+			await page.waitForLoadState('load')
+			await page.waitForTimeout(300)
 
 			// At least one Connect button must be visible — a fresh test account has
 			// no connected integrations, so every provider shows a Connect button.

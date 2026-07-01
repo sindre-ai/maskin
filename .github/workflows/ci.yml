@@ -82,6 +82,7 @@ jobs:
       - run: pnpm test:integration -- --run
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
+          INTEGRATION_ENCRYPTION_KEY: ci-test-key-000000000000000000000000000000
 
   verify-e2e:
     needs: lint-typecheck-build
