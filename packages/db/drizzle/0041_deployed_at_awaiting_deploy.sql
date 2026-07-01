@@ -1,0 +1,41 @@
+-- Migration: seed `awaiting_deploy = true` on every existing bet / task row so
+-- the "waiting on production deploy" state is legible before the
+-- `deployment_status` webhook wiring lands (T2 receiver, T3 attribution, T4
+-- aging sweep). Architecture decision:
+--   https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/ec4180f0-32cb-4992-a0de-d88045435246
+--
+-- Two convention keys are introduced on `objects.metadata` for `type IN ('bet',
+-- 'task')`:
+--   metadata.deployed_at      -> ISO timestamp; set by T3 attribution on a
+--                                matching `deployment_status` webhook. Left
+--                                absent until then — absence means "no
+--                                production deploy observed yet," which is a
+--                                truer signal than a null placeholder.
+--   metadata.awaiting_deploy  -> boolean; true while the row is expecting a
+--                                production deploy, cleared by T3 when
+--                                `deployed_at` is written. Backfilled to true
+--                                below so every existing bet/task carries the
+--                                key after this migration — T4's aging sweep
+--                                can safely filter on `metadata->>'awaiting_deploy' = 'true'`
+--                                without special-casing absent keys.
+--
+-- `objects.metadata` is `jsonb` (schema.ts line 92) and every peer metadata
+-- key (`live_started_at`, `posthog_query`, `metric_baseline`, …) lives on it
+-- untyped — no column change is needed and no `$type<>()` inference is
+-- introduced, matching the existing pattern for these keys.
+--
+-- `objects` is NOT on the hot-tables list in `packages/db/MIGRATIONS.md` — only
+-- `webhook_deliveries` is — so plain `UPDATE` is fine, no `FOR UPDATE SKIP
+-- LOCKED` chunking. Row count at current scale fits one transaction.
+--
+-- The `WHERE ... NOT metadata ? 'awaiting_deploy'` guard makes the backfill
+-- idempotent: a partial-apply re-run (or a manual replay from the migration
+-- test harness) skips rows already carrying the key and never overwrites a
+-- value T3 has since cleared. `COALESCE(metadata, '{}'::jsonb)` handles rows
+-- whose `metadata` is NULL today; `||` concatenation preserves every existing
+-- key on rows whose `metadata` is already a jsonb object (notably
+-- `live_started_at`).
+UPDATE objects
+SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"awaiting_deploy": true}'::jsonb
+WHERE type IN ('bet', 'task')
+	AND (metadata IS NULL OR NOT metadata ? 'awaiting_deploy');

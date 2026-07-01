@@ -89,6 +89,15 @@ export const objects = pgTable(
 		title: text('title'),
 		content: text('content'),
 		status: text('status').notNull(),
+		// Free-form jsonb bag. Convention keys observed on bet / task rows:
+		//   live_started_at   -> ISO date; when the row transitioned to `live`.
+		//   awaiting_deploy   -> boolean; true while waiting on a production deploy,
+		//                        cleared by the deployment_status attribution path.
+		//   deployed_at       -> ISO timestamp; set by the deployment_status
+		//                        attribution path (2026-07 architecture decision).
+		//   posthog_query / metric_baseline / metric_target / kill_threshold /
+		//   review_date       -> ship-metric measurement fields read by the daily
+		//                        Product Analyst sweep.
 		metadata: jsonb('metadata'),
 		driver: uuid('driver').references(() => actors.id),
 		activeSessionId: uuid('active_session_id'),
