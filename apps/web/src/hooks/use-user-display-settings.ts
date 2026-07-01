@@ -46,12 +46,13 @@ export function useUpdateUserDisplaySettings(workspaceId: string) {
 			const detailKey = queryKeys.userDisplaySettings.detail(workspaceId, objectType)
 			await queryClient.cancelQueries({ queryKey: detailKey })
 			const previous = queryClient.getQueryData<UserDisplaySettingsResponse | null>(detailKey)
-			queryClient.setQueryData<UserDisplaySettingsResponse | null>(detailKey, {
+			const optimistic: UserDisplaySettingsResponse = {
 				object_type: objectType,
 				name: previous?.name ?? 'default',
 				settings,
 				updated_at: new Date().toISOString(),
-			})
+			}
+			queryClient.setQueryData<UserDisplaySettingsResponse | null>(detailKey, optimistic)
 			return { previous }
 		},
 		onError: (_err, { objectType }, context) => {
