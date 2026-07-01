@@ -372,18 +372,26 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 		})
 	}
 
-	it('list_objects: flag ON preserves the full enriched payload in structuredContent (AC-U2)', async () => {
+	it('list_objects: flag ON preserves the full enriched payload for the returned page in structuredContent (AC-U2)', async () => {
 		process.env[RESPONSE_SCOPING_ENV_VAR] = 'true'
+		// AC-U1 caps the default page at 25 (HERO_CARD_UI_PAGE_SIZE) and returns
+		// a continuation cursor when more rows exist. The API stub ignores the
+		// URL-side `limit` and hands back the whole fixture; the handler trims to
+		// the scoped default and emits `next_cursor`.
 		const fixture = Array.from({ length: 50 }, (_, i) => objectRow(i))
 		fetchStubFor(fixture)
 		const handler = getHandler('list_objects')
 		const result = (await handler({})) as {
 			structuredContent: {
 				objects: Array<{ id: string; url?: string }>
+				page: { next_cursor?: string }
+				next_cursor?: string
 			}
 		}
-		expect(result.structuredContent.objects).toHaveLength(50)
+		expect(result.structuredContent.objects).toHaveLength(25)
 		expect(result.structuredContent.objects[0].url).toContain('https://maskin.io')
+		expect(result.structuredContent.next_cursor).toBeTypeOf('string')
+		expect(result.structuredContent.page.next_cursor).toBe(result.structuredContent.next_cursor)
 	})
 
 	it('summary lines carry the deep link even when the enriched row has one', async () => {

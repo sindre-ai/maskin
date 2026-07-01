@@ -34,8 +34,11 @@ import {
 	count,
 	desc,
 	eq,
+	gt,
 	ilike,
 	inArray,
+	lt,
+	lte,
 	or,
 	sql,
 } from 'drizzle-orm'
@@ -107,6 +110,51 @@ function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
 	const sortExpr = resolveSortColumn(query.sort) ?? objects.createdAt
 	const primary = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 	return [primary, asc(objects.id)]
+}
+
+/**
+ * Snapshot-consistent cursor predicates for `objects` list/search endpoints.
+ *
+ * `snapshot_at` (upper bound on `created_at`) is the "freeze" — every hop
+ * of the same walk carries the same value so an insert on `objects` after
+ * the walk began cannot leak into the paginated stream.
+ *
+ * `cursor_created_at` + `cursor_id` is the keyset seek — the next page
+ * starts strictly past this `(created_at, id)` tuple in `createdAt` order.
+ * Callers must always pair the two; a lone `cursor_id` is ignored so a
+ * malformed cursor cannot silently degrade to unbounded seek.
+ *
+ * The keyset predicate matches the sort order the list handlers use
+ * (`createdAt` desc/asc, `id` asc tiebreaker — see `resolveOrderBy`).
+ */
+function buildCursorConditions(query: {
+	order?: string
+	snapshot_at?: string
+	cursor_created_at?: string
+	cursor_id?: string
+}): SQL[] {
+	const conditions: SQL[] = []
+	if (query.snapshot_at) {
+		conditions.push(lte(objects.createdAt, new Date(query.snapshot_at)))
+	}
+	if (query.cursor_created_at && query.cursor_id) {
+		const lastCa = new Date(query.cursor_created_at)
+		const lastId = query.cursor_id
+		if (query.order === 'asc') {
+			const seek = or(
+				gt(objects.createdAt, lastCa),
+				and(eq(objects.createdAt, lastCa), gt(objects.id, lastId)),
+			)
+			if (seek) conditions.push(seek)
+		} else {
+			const seek = or(
+				lt(objects.createdAt, lastCa),
+				and(eq(objects.createdAt, lastCa), gt(objects.id, lastId)),
+			)
+			if (seek) conditions.push(seek)
+		}
+	}
+	return conditions
 }
 
 function buildObjectListConditions(query: {
@@ -325,16 +373,24 @@ app.openapi(listObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
+	const conditions = [
+		eq(objects.workspaceId, workspaceId),
+		...buildObjectListConditions(query),
+		...buildCursorConditions(query),
+	]
 
 	const orderBy = resolveOrderBy(query)
 
+	// When the keyset seek is engaged, `offset` no longer makes sense — the
+	// predicate itself skips past the last-seen row. Ignoring it also keeps
+	// the walk snapshot-consistent when a caller accidentally forwards both.
+	const useKeyset = Boolean(query.cursor_created_at && query.cursor_id)
 	const results = await db
 		.select()
 		.from(objects)
 		.where(and(...conditions))
 		.limit(query.limit)
-		.offset(query.offset)
+		.offset(useKeyset ? 0 : query.offset)
 		.orderBy(...orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
@@ -485,16 +541,21 @@ app.openapi(searchObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
+	const conditions = [
+		eq(objects.workspaceId, workspaceId),
+		...buildObjectListConditions(query),
+		...buildCursorConditions(query),
+	]
 
 	const orderBy = resolveOrderBy(query)
 
+	const useKeyset = Boolean(query.cursor_created_at && query.cursor_id)
 	const results = await db
 		.select()
 		.from(objects)
 		.where(and(...conditions))
 		.limit(query.limit)
-		.offset(query.offset)
+		.offset(useKeyset ? 0 : query.offset)
 		.orderBy(...orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)

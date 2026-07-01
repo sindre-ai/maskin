@@ -477,4 +477,116 @@ describe('Objects Integration', () => {
 			expect(nextTodo.objects.map((obj: { title: string }) => obj.title)).toEqual(['High'])
 		})
 	})
+
+	// AC-T3 — snapshot-consistent cursor pagination.
+	//
+	// The cursor carries an `snapshot_at` upper bound plus a `(created_at, id)`
+	// keyset seek. Once the first page is fetched, every subsequent hop
+	// forwards that snapshot so a row inserted into `objects` between page 1
+	// and page 2 (via SQL, bypassing the API) cannot leak into the paginated
+	// stream — no row is skipped or duplicated against the snapshot taken at
+	// first call.
+	describe('cursor pagination — snapshot consistency (AC-T3)', () => {
+		it('excludes a mid-pagination insert from the same walk', async () => {
+			const app = createApp()
+			const actorId = getTestActorId()
+
+			// Seed 30 tasks with distinct, strictly increasing `createdAt`
+			// so the (createdAt, id) keyset seek has no ties to resolve.
+			// Sort order is `createdAt desc` (the API default), so newest first.
+			const baseMs = new Date('2026-01-01T00:00:00.000Z').getTime()
+			const seeded: Array<{ id: string; title: string; createdAt: Date }> = []
+			for (let i = 0; i < 30; i++) {
+				const created = await insertObject(db, workspaceId, actorId, {
+					type: 'task',
+					status: 'todo',
+					title: `Seed ${String(i).padStart(2, '0')}`,
+					createdAt: new Date(baseMs + i * 60_000),
+					updatedAt: new Date(baseMs + i * 60_000),
+				})
+				seeded.push({ id: created.id, title: created.title, createdAt: created.createdAt })
+			}
+
+			// Snapshot boundary: anchor to the newest seeded row so any row
+			// inserted after this point is provably outside the snapshot.
+			const snapshotAt = seeded[seeded.length - 1].createdAt.toISOString()
+
+			// Page 1 — 25 rows in `createdAt desc` order.
+			const page1Res = await app.request(
+				jsonGet(
+					`/api/objects?type=task&limit=25&order=desc&sort=createdAt&snapshot_at=${encodeURIComponent(snapshotAt)}`,
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(page1Res.status).toBe(200)
+			const page1 = (await page1Res.json()) as Array<{ id: string; createdAt: string }>
+			expect(page1).toHaveLength(25)
+
+			// Mid-pagination insert — SQL directly, with a `createdAt` after the
+			// snapshot boundary. In a naïve offset scheme this would either
+			// push all rows down by one (skip) or leave one row visible on both
+			// pages (dup). The upper-bound filter keeps it out entirely.
+			const intruder = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'todo',
+				title: 'Mid-pagination intruder',
+				createdAt: new Date(baseMs + 999 * 60_000),
+				updatedAt: new Date(baseMs + 999 * 60_000),
+			})
+
+			// Page 2 — carry the same snapshot + keyset seek from the last row
+			// of page 1. In desc order the seek predicate is
+			// `(created_at, id) < (last_ca, last_id)`.
+			const lastOfPage1 = page1[page1.length - 1]
+			const page2Url = `/api/objects?type=task&limit=25&order=desc&sort=createdAt&snapshot_at=${encodeURIComponent(snapshotAt)}&cursor_created_at=${encodeURIComponent(lastOfPage1.createdAt)}&cursor_id=${encodeURIComponent(lastOfPage1.id)}`
+			const page2Res = await app.request(jsonGet(page2Url, { 'x-workspace-id': workspaceId }))
+			expect(page2Res.status).toBe(200)
+			const page2 = (await page2Res.json()) as Array<{ id: string; createdAt: string }>
+
+			// Snapshot has 30 rows; page 1 returned 25, page 2 must return the
+			// remaining 5 and nothing else.
+			expect(page2).toHaveLength(5)
+
+			// No duplicate between page 1 and page 2.
+			const page1Ids = new Set(page1.map((row) => row.id))
+			for (const row of page2) {
+				expect(page1Ids.has(row.id)).toBe(false)
+			}
+
+			// Union equals the seeded set exactly — no skip, no leak.
+			const walked = [...page1.map((r) => r.id), ...page2.map((r) => r.id)]
+			const seededIds = seeded.map((r) => r.id).sort()
+			expect([...walked].sort()).toEqual(seededIds)
+
+			// The intruder — inserted after the snapshot — must NOT appear on
+			// either page. That's the whole snapshot guarantee.
+			expect(walked).not.toContain(intruder.id)
+		})
+
+		it('ignores the keyset seek when only cursor_id is passed without cursor_created_at', async () => {
+			// A malformed cursor (id without its sort partner) must not silently
+			// degrade to unbounded seek — the API treats it as "no cursor" and
+			// returns the first page from the snapshot.
+			const app = createApp()
+			const actorId = getTestActorId()
+			const baseMs = new Date('2026-02-01T00:00:00.000Z').getTime()
+			for (let i = 0; i < 3; i++) {
+				await insertObject(db, workspaceId, actorId, {
+					type: 'task',
+					status: 'todo',
+					title: `Row ${i}`,
+					createdAt: new Date(baseMs + i * 60_000),
+					updatedAt: new Date(baseMs + i * 60_000),
+				})
+			}
+			const snapshotAt = new Date(baseMs + 999 * 60_000).toISOString()
+
+			const nilId = '00000000-0000-0000-0000-000000000000'
+			const url = `/api/objects?type=task&limit=10&order=desc&sort=createdAt&snapshot_at=${encodeURIComponent(snapshotAt)}&cursor_id=${encodeURIComponent(nilId)}`
+			const res = await app.request(jsonGet(url, { 'x-workspace-id': workspaceId }))
+			expect(res.status).toBe(200)
+			const rows = (await res.json()) as Array<{ id: string }>
+			expect(rows).toHaveLength(3)
+		})
+	})
 })

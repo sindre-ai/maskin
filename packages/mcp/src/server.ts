@@ -19,6 +19,7 @@ import {
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
+import { type CursorState, decodeCursor, encodeCursor, toSnapshotAt } from './cursor.js'
 import {
 	type SummaryRow,
 	buildContentSummary,
@@ -123,6 +124,85 @@ function buildListContentText(
 		return buildContentSummary(rows, { emptyLabel })
 	}
 	return JSON.stringify(fullPayload, null, 2)
+}
+
+/** Default page size when response scoping is on and the caller did not
+ *  pass an explicit limit. Kept in sync with `HERO_CARD_UI_PAGE_SIZE` — the
+ *  UI has been paging at 25 for months, so an agent that opts into the flag
+ *  gets responses shaped like what a human sees in the widget. */
+const DEFAULT_SCOPED_PAGE_SIZE = 25
+
+/**
+ * Resolve the effective page size + cursor state for a list/search MCP
+ * tool call. When response scoping is on and the caller passes neither
+ * `limit` nor `cursor`, we cap the page at `DEFAULT_SCOPED_PAGE_SIZE`
+ * (AC-U1). When a cursor is present, its snapshot + last-seen keyset are
+ * threaded through to the API on every subsequent hop so an insert in
+ * the underlying table mid-walk cannot leak into the stream (AC-T3).
+ *
+ * `fallbackLimit` is the pre-scoping default — the value the tool used
+ * before the flag existed. Preserving it keeps the flag-off path
+ * byte-identical.
+ */
+interface ResolvedPagination {
+	/** Row cap forwarded to the API. */
+	limit: number
+	/** Decoded cursor when the caller passed one in; otherwise `null`. */
+	cursor: CursorState | null
+	/** Snapshot upper bound for the walk. On the first call this is the
+	 *  server's current time; on subsequent calls it is the value carried
+	 *  by the cursor so every hop shares one freeze. */
+	snapshotAt: string
+	/** Sort order the walk is opened in. Locked for the whole cursor
+	 *  chain so the keyset predicate stays consistent. */
+	order: 'asc' | 'desc'
+}
+
+function resolveListPagination(
+	args: {
+		limit?: number
+		cursor?: string
+	},
+	fallbackLimit: number,
+): ResolvedPagination {
+	const scoped = isResponseScopingEnabled()
+	const cursor = scoped ? decodeCursor(args.cursor) : null
+	const limit =
+		typeof args.limit === 'number' && Number.isFinite(args.limit) && args.limit > 0
+			? args.limit
+			: scoped
+				? DEFAULT_SCOPED_PAGE_SIZE
+				: fallbackLimit
+	const snapshotAt = cursor?.s ?? toSnapshotAt(new Date())
+	const order = cursor?.o ?? 'desc'
+	return { limit, cursor, snapshotAt, order }
+}
+
+/**
+ * Encode the next-cursor for a list tool response. Returns `null` when
+ * response scoping is off (the flag-off path must stay byte-identical) or
+ * when the caller already reached the end of the walk — `rows.length <
+ * limit + 1` means the API had nothing more to hand back.
+ *
+ * Reuses `snapshotAt` and `order` from `pagination`, so every hop of the
+ * same walk agrees on the freeze even if the underlying `objects` table
+ * accepts inserts between calls.
+ */
+function encodeNextCursor(
+	pagination: ResolvedPagination,
+	rows: Array<{ id: string; createdAt?: string | null }>,
+): { nextCursor: string | null; trimmed: Array<{ id: string; createdAt?: string | null }> } {
+	if (!isResponseScopingEnabled()) return { nextCursor: null, trimmed: rows }
+	if (rows.length <= pagination.limit) return { nextCursor: null, trimmed: rows }
+	const trimmed = rows.slice(0, pagination.limit)
+	const last = trimmed[trimmed.length - 1]
+	if (!last || !last.createdAt) return { nextCursor: null, trimmed }
+	const nextCursor = encodeCursor({
+		s: pagination.snapshotAt,
+		o: pagination.order,
+		k: { sortValue: last.createdAt, id: last.id },
+	})
+	return { nextCursor, trimmed }
 }
 
 /** Read `.url` off an enriched row without paying the TS cost each time. */
@@ -1865,15 +1945,31 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
+			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 50)
 			const params = new URLSearchParams()
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
 			if (args.driver) params.set('driver', args.driver)
-			if (args.limit) params.set('limit', String(args.limit))
+			// Fetch limit + 1 so we can decide "has more" without a second
+			// query — the extra row (if it exists) is dropped before returning
+			// and its `(createdAt, id)` seeds the next cursor.
+			const fetchCap = isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			params.set('limit', String(fetchCap))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
+			if (isResponseScopingEnabled()) {
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				params.set('sort', 'createdAt')
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			}
+			const raw = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as RawObject[]
+			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
+			const result = trimmed as RawObject[]
 			const offset = typeof args.offset === 'number' ? args.offset : 0
 			const heroCard = await buildCollectionHeroCard(
 				config,
@@ -1913,7 +2009,13 @@ export function createMcpServer(config: McpConfig) {
 				structuredContent: {
 					heroCard,
 					objects: enriched,
-					page: { limit: result.length, offset, returned: result.length },
+					page: {
+						limit: result.length,
+						offset,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
 			}
 		},
@@ -1928,15 +2030,28 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
+			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 20)
 			const params = new URLSearchParams()
 			params.set('q', args.q)
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
-			if (args.limit) params.set('limit', String(args.limit))
+			const fetchCap = isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			params.set('limit', String(fetchCap))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
+			if (isResponseScopingEnabled()) {
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				params.set('sort', 'createdAt')
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			}
+			const raw = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as RawObject[]
+			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
+			const result = trimmed as RawObject[]
 			const offset = typeof args.offset === 'number' ? args.offset : 0
 			const heroCard = await buildCollectionHeroCard(
 				config,
@@ -1976,7 +2091,13 @@ export function createMcpServer(config: McpConfig) {
 				structuredContent: {
 					heroCard,
 					objects: enriched,
-					page: { limit: result.length, offset, returned: result.length },
+					page: {
+						limit: result.length,
+						offset,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
 			}
 		},
