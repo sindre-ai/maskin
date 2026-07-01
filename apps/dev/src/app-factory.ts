@@ -22,6 +22,7 @@ import catalogPackagesRoutes from './routes/catalog-packages'
 import claudeOauthRoutes from './routes/claude-oauth'
 import eventsRoutes from './routes/events'
 import filesRoutes from './routes/files'
+import fleetHeartbeatRoutes from './routes/fleet-heartbeat'
 import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import installedPackagesRoutes from './routes/installed-packages'
@@ -183,6 +184,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//     (per-IP rate-limited inside the handler).
 	//   - /api/internal/agent-servers/*: authenticated via the shared bearer
 	//     secret enforced inside the handler, not our API key.
+	//   - GET /api/internal/fleet-heartbeat: polled by the off-fleet
+	//     Cloudflare Workers cron; authenticated via `X-Heartbeat-Secret`
+	//     enforced inside the handler.
 	const auth = authMiddleware(db)
 	app.use('/api/*', async (c, next) => {
 		const path = c.req.path
@@ -192,6 +196,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/auth/login' && method === 'POST') return next()
 		if (path.startsWith('/api/webhooks/')) return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
+		if (path === '/api/internal/fleet-heartbeat' && method === 'GET') return next()
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/claim' && method === 'POST') return next()
@@ -219,6 +224,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/catalog', catalogPackagesRoutes)
 	app.route('/api/webhooks', webhookApp)
 	app.route('/api/internal/agent-servers', agentServerReconcileRoutes)
+	app.route('/api/internal/fleet-heartbeat', fleetHeartbeatRoutes)
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
