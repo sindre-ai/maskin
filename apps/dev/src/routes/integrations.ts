@@ -14,6 +14,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
+import { isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
@@ -108,6 +109,7 @@ app.openapi(listProvidersRoute, (async (c) => {
 		displayName: p.config.displayName,
 		authType: p.config.auth.type,
 		events: p.config.events?.definitions ?? [],
+		externalIdDisplay: p.config.externalIdDisplay,
 	}))
 
 	return c.json(providers as z.infer<typeof providerInfoSchema>[])
@@ -517,29 +519,31 @@ app.openapi(callbackRoute, (async (c) => {
 	const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
 	if (ownerLogin) activeConfig.owner_login = ownerLogin
 
-	// Re-connecting an already-active installation: refresh the existing row in
+	// Re-connecting an already-active integration: refresh the existing row in
 	// place and drop the pending nonce row. Without this, we'd UPDATE the pending
-	// row to externalId=installation_id and hit the (workspace_id, provider,
-	// external_id) unique constraint at commit time. Only meaningful for providers
-	// whose externalId is stable across connects (GitHub installations); standard
-	// OAuth2 nonce-derived externalIds can't collide.
+	// row to the resolved externalId and hit the (workspace_id, provider,
+	// external_id) unique constraint at commit time whenever externalId is stable
+	// across connects — GitHub installation_id, or a resolveExternalId provider
+	// like Google Calendar's account email. Nonce-derived externalIds
+	// (`oauth-${nonce}`) are unique per attempt, so this lookup naturally finds
+	// nothing for them and falls through to the plain update below.
 	let integrationId = pendingIntegration.id
-	if (credentials.installation_id) {
-		const [existingActive] = await db
-			.select()
-			.from(integrations)
-			.where(
-				and(
-					eq(integrations.workspaceId, stateData.workspaceId),
-					eq(integrations.provider, providerName),
-					eq(integrations.externalId, externalId),
-					eq(integrations.status, 'active'),
-				),
-			)
-			.limit(1)
+	const [existingActive] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, stateData.workspaceId),
+				eq(integrations.provider, providerName),
+				eq(integrations.externalId, externalId),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
 
-		if (existingActive) {
-			await db
+	if (existingActive) {
+		await db.transaction(async (tx) => {
+			await tx
 				.update(integrations)
 				.set({
 					credentials: encryptedCredentials,
@@ -548,27 +552,16 @@ app.openapi(callbackRoute, (async (c) => {
 				})
 				.where(eq(integrations.id, existingActive.id))
 
-			await db.delete(integrations).where(eq(integrations.id, pendingIntegration.id))
+			await tx.delete(integrations).where(eq(integrations.id, pendingIntegration.id))
+		})
 
-			integrationId = existingActive.id
-			logger.info(`Refreshed existing ${providerName} installation`, {
-				integrationId,
-				workspaceId: stateData.workspaceId,
-				externalId,
-				ownerLogin,
-			})
-		} else {
-			await db
-				.update(integrations)
-				.set({
-					status: 'active',
-					externalId,
-					credentials: encryptedCredentials,
-					config: activeConfig,
-					updatedAt: new Date(),
-				})
-				.where(eq(integrations.id, integrationId))
-		}
+		integrationId = existingActive.id
+		logger.info(`Refreshed existing ${providerName} integration`, {
+			integrationId,
+			workspaceId: stateData.workspaceId,
+			externalId,
+			ownerLogin,
+		})
 	} else {
 		await db
 			.update(integrations)
@@ -654,6 +647,7 @@ const deleteIntegrationRoute = createRoute({
 
 app.openapi(deleteIntegrationRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -669,13 +663,19 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	// credentials are still readable so the provider can call its remote API
 	// (e.g. Gmail's users.stop) with a valid token. Provider implementations
 	// are responsible for swallowing errors so disconnect always proceeds.
+	//
+	// Credentials are decrypted lazily (only when a preDisconnect hook exists) and
+	// only for non-pending integrations — pending rows have credentials: '' because
+	// the OAuth flow was never completed and there is nothing to revoke at the provider.
 	try {
 		const resolved = getProvider(existing.provider)
-		if (resolved.preDisconnect) {
+		if (resolved.preDisconnect && existing.status !== 'pending') {
+			const credentials: StoredCredentials = JSON.parse(decrypt(existing.credentials))
 			await resolved.preDisconnect({
 				db,
 				integrationId: existing.id,
 				workspaceId: existing.workspaceId,
+				credentials,
 			})
 		}
 	} catch (err) {
@@ -685,10 +685,21 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		})
 	}
 
-	await db
-		.update(integrations)
-		.set({ status: 'revoked', updatedAt: new Date() })
-		.where(eq(integrations.id, id))
+	await db.transaction(async (tx) => {
+		await tx
+			.update(integrations)
+			.set({ status: 'revoked', updatedAt: new Date() })
+			.where(eq(integrations.id, id))
+
+		await tx.insert(events).values({
+			workspaceId: existing.workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: { status: 'revoked', reason: 'user_disconnected' },
+		})
+	})
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)
@@ -728,6 +739,10 @@ const listSlackConversationsRoute = createRoute({
 		},
 		400: {
 			description: 'Bad request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		401: {
+			description: 'Integration authorization revoked',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -776,6 +791,15 @@ app.openapi(listSlackConversationsRoute, (async (c) => {
 		const conversations = await listSlackConversations(integration.id, accessToken, types)
 		return c.json(conversations)
 	} catch (err) {
+		if (isAuthRevokedError(err)) {
+			return c.json(
+				createApiError(
+					'AUTH_REVOKED',
+					'Slack integration authorization has been revoked — please reconnect',
+				),
+				401,
+			)
+		}
 		logger.warn('Slack conversations.list failed', {
 			integrationId: integration.id,
 			error: err instanceof Error ? err.message : String(err),
@@ -811,6 +835,10 @@ const listSlackUsersRoute = createRoute({
 			description: 'Bad request',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		401: {
+			description: 'Integration authorization revoked',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Integration not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -844,6 +872,15 @@ app.openapi(listSlackUsersRoute, (async (c) => {
 		const users = await listSlackUsers(integration.id, accessToken)
 		return c.json(users)
 	} catch (err) {
+		if (isAuthRevokedError(err)) {
+			return c.json(
+				createApiError(
+					'AUTH_REVOKED',
+					'Slack integration authorization has been revoked — please reconnect',
+				),
+				401,
+			)
+		}
 		logger.warn('Slack users.list failed', {
 			integrationId: integration.id,
 			error: err instanceof Error ? err.message : String(err),
