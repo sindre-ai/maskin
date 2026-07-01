@@ -440,15 +440,11 @@ describe('renewGmailWatch', () => {
 })
 
 describe('stopGmailWatch', () => {
-	beforeEach(() => {
-		getValidTokenMock.mockReset().mockResolvedValue('ya29.access')
-	})
-
 	afterEach(() => {
 		vi.restoreAllMocks()
 	})
 
-	it('calls users.stop with a valid bearer token', async () => {
+	it('calls users.stop using the access token from ctx.credentials', async () => {
 		const { stopGmailWatch } = await import('../../../../lib/integrations/providers/gmail/watch')
 
 		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
@@ -457,19 +453,12 @@ describe('stopGmailWatch', () => {
 			text: () => Promise.resolve(''),
 		} as Response)
 
-		const { db } = makeFakeDb({
-			id: 'int-3',
-			provider: 'gmail',
-			workspaceId: 'ws-1',
-			config: { gmail: { historyId: '1', watchExpiresAt: 0, topicName: 't' } },
-		})
-
 		await stopGmailWatch({
-			// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
-			db: db as any,
+			// biome-ignore lint/suspicious/noExplicitAny: db is unused in stopGmailWatch
+			db: null as any,
 			integrationId: 'int-3',
 			workspaceId: 'ws-1',
-			credentials: {} as StoredCredentials,
+			credentials: { accessToken: 'ya29.access' } as StoredCredentials,
 		})
 
 		expect(fetchSpy).toHaveBeenCalledWith(
@@ -490,20 +479,13 @@ describe('stopGmailWatch', () => {
 			text: () => Promise.resolve('Not Found'),
 		} as Response)
 
-		const { db } = makeFakeDb({
-			id: 'int-4',
-			provider: 'gmail',
-			workspaceId: 'ws-1',
-			config: null,
-		})
-
 		await expect(
 			stopGmailWatch({
-				// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
-				db: db as any,
+				// biome-ignore lint/suspicious/noExplicitAny: db is unused in stopGmailWatch
+				db: null as any,
 				integrationId: 'int-4',
 				workspaceId: 'ws-1',
-				credentials: {} as StoredCredentials,
+				credentials: { accessToken: 'ya29.access' } as StoredCredentials,
 			}),
 		).resolves.toBeUndefined()
 	})
@@ -517,34 +499,26 @@ describe('stopGmailWatch', () => {
 			text: () => Promise.resolve('boom'),
 		} as Response)
 
-		const { db } = makeFakeDb({
-			id: 'int-5',
-			provider: 'gmail',
-			workspaceId: 'ws-1',
-			config: null,
-		})
-
 		await expect(
 			stopGmailWatch({
-				// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
-				db: db as any,
+				// biome-ignore lint/suspicious/noExplicitAny: db is unused in stopGmailWatch
+				db: null as any,
 				integrationId: 'int-5',
 				workspaceId: 'ws-1',
-				credentials: {} as StoredCredentials,
+				credentials: { accessToken: 'ya29.access' } as StoredCredentials,
 			}),
 		).resolves.toBeUndefined()
 	})
 
-	it('is a no-op when the integration row is missing', async () => {
+	it('is a no-op when credentials have no access token', async () => {
 		const { stopGmailWatch } = await import('../../../../lib/integrations/providers/gmail/watch')
 
 		const fetchSpy = vi.spyOn(globalThis, 'fetch')
-		const { db } = makeFakeDb(null)
 
 		await stopGmailWatch({
-			// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
-			db: db as any,
-			integrationId: 'missing',
+			// biome-ignore lint/suspicious/noExplicitAny: db is unused in stopGmailWatch
+			db: null as any,
+			integrationId: 'int-6',
 			workspaceId: 'ws-1',
 			credentials: {} as StoredCredentials,
 		})

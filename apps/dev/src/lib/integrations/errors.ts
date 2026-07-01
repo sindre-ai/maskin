@@ -10,6 +10,7 @@ import { ApiErrorCode } from '@maskin/shared'
  */
 export class IntegrationAuthRevokedError extends Error {
 	readonly code = ApiErrorCode.AUTH_REVOKED
+	readonly status = 401
 	readonly integrationId: string
 
 	constructor(integrationId: string, message?: string) {
