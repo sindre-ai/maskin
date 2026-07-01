@@ -1,3 +1,5 @@
+import type { Database } from '@maskin/db'
+import { attributeDeploymentToObject } from '../../../../services/deploy-attribution'
 import { logger } from '../../../logger'
 import type { NormalizedEvent, WebhookFanOutContext } from '../../types'
 
@@ -75,31 +77,38 @@ export const githubExtractDeliveryId = (
 }
 
 /**
- * Result of a deployment-status attribution pass. Kept in this module so T3
- * can slot its Pass 1 / Pass 2 SHA matching into `attributeDeployment` without
- * touching the receiver plumbing.
+ * Result of a deployment-status attribution pass. Kept in this module so the
+ * receiver plumbing can log unattributed deliveries without importing the
+ * service internals.
  */
 export interface DeploymentAttributionResult {
 	matched: boolean
 }
 
 /**
- * T2 stub for deployment-status attribution. Always returns `{ matched: false }`
- * so the receiver takes the unattributed-log branch. T3 replaces this with the
- * two-pass SHA match + atomic `bet.metadata.deployed_at` / `awaiting_deploy`
- * write described in the architecture decision.
- *
- * `db`, `workspaceId`, and the normalized event are typed loosely to avoid
- * dragging @maskin/db into the provider module.
+ * Runs the two-pass SHA match against stored `push` / `pull_request.merged`
+ * events, plus the branch and PR-head-SHA fallbacks, and writes the atomic
+ * `deployed_at` + `awaiting_deploy=false` update on a match. See
+ * `services/deploy-attribution.ts` for the passes in detail.
  */
-export async function attributeDeployment(_args: {
+export async function attributeDeployment(args: {
 	db: unknown
 	workspaceId: string
 	sha: string
 	deployedAt: string
 	installationId: string
+	deploymentRef?: string
+	deliveryId?: string | null
 }): Promise<DeploymentAttributionResult> {
-	return { matched: false }
+	const result = await attributeDeploymentToObject({
+		db: args.db as Database,
+		workspaceId: args.workspaceId,
+		sha: args.sha,
+		deployedAt: args.deployedAt,
+		deploymentRef: args.deploymentRef,
+		deliveryId: args.deliveryId,
+	})
+	return { matched: result.matched }
 }
 
 /**
@@ -133,6 +142,8 @@ export async function githubWebhookFanOut(ctx: WebhookFanOutContext): Promise<No
 		sha,
 		deployedAt,
 		installationId: ctx.normalized.installationId,
+		deploymentRef: data.deployment_ref as string | undefined,
+		deliveryId: (data.delivery_id as string | undefined) ?? null,
 	})
 
 	if (!result.matched) {

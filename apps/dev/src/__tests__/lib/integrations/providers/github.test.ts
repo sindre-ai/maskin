@@ -12,6 +12,7 @@ import {
 	githubWebhookPreHandler,
 } from '../../../../lib/integrations/providers/github/deployment-status'
 import { githubEventNormalizer } from '../../../../lib/integrations/providers/github/webhooks'
+import * as deployAttribution from '../../../../services/deploy-attribution'
 
 // Generate an RSA key pair for testing JWT signing
 const { privateKey: testPrivateKeyPem } = generateKeyPairSync('rsa', {
@@ -262,7 +263,7 @@ describe('githubEventNormalizer', () => {
 				title: 'Add feature',
 				html_url: 'https://github.com/owner/repo/pull/42',
 				diff_url: 'https://github.com/owner/repo/pull/42.diff',
-				head: { sha: 'abc123' },
+				head: { sha: 'abc123', ref: 'feature/foo' },
 				base: { ref: 'main' },
 			},
 		})
@@ -277,7 +278,30 @@ describe('githubEventNormalizer', () => {
 		expect(result?.data.pr_number).toBe(42)
 		expect(result?.data.pr_title).toBe('Add feature')
 		expect(result?.data.pr_head_sha).toBe('abc123')
+		expect(result?.data.pr_head_ref).toBe('feature/foo')
 		expect(result?.data.pr_base_branch).toBe('main')
+	})
+
+	it('stores merge_commit_sha on a merged pull_request so T3 can attribute the deploy', () => {
+		const mergeSha = 'f'.repeat(40)
+		const payload = makePayload({
+			action: 'closed',
+			pull_request: {
+				merged: true,
+				number: 7,
+				title: 'PR',
+				head: { sha: 'h'.repeat(40), ref: 'feature/bar' },
+				base: { ref: 'main' },
+				merge_commit_sha: mergeSha,
+			},
+		})
+		const headers = { 'x-github-event': 'pull_request' }
+
+		const result = githubEventNormalizer(payload, headers)
+
+		expect(result?.action).toBe('merged')
+		expect(result?.data.merge_commit_sha).toBe(mergeSha)
+		expect(result?.data.pr_head_ref).toBe('feature/bar')
 	})
 
 	it('maps closed+merged pull_request to merged action', () => {
@@ -303,10 +327,11 @@ describe('githubEventNormalizer', () => {
 	})
 
 	it('normalizes push event', () => {
+		const sha = 'e'.repeat(40)
 		const payload = makePayload({
 			ref: 'refs/heads/main',
 			commits: [{ id: '1' }, { id: '2' }],
-			head_commit: { message: 'Fix bug' },
+			head_commit: { id: sha, message: 'Fix bug' },
 		})
 		const headers = { 'x-github-event': 'push' }
 
@@ -317,6 +342,7 @@ describe('githubEventNormalizer', () => {
 		expect(result?.data.ref).toBe('refs/heads/main')
 		expect(result?.data.commits_count).toBe(2)
 		expect(result?.data.head_commit).toBe('Fix bug')
+		expect(result?.data.head_commit_sha).toBe(sha)
 	})
 
 	it('normalizes issues event', () => {
@@ -514,16 +540,55 @@ describe('githubExtractDeliveryId', () => {
 	})
 })
 
-describe('attributeDeployment (T2 stub)', () => {
-	it('always returns matched=false so the receiver takes the unattributed branch', async () => {
-		const res = await attributeDeployment({
-			db: {},
-			workspaceId: 'ws-1',
-			sha: 'c'.repeat(40),
-			deployedAt: '2026-07-01T08:00:00Z',
-			installationId: 'inst-1',
+describe('attributeDeployment', () => {
+	it('passes the deploy args through to the attribution service and returns matched=true on a hit', async () => {
+		const spy = vi.spyOn(deployAttribution, 'attributeDeploymentToObject').mockResolvedValueOnce({
+			matched: true,
+			objectId: 'bet-1',
+			objectType: 'bet',
+			reason: 'pass1_push',
 		})
-		expect(res).toEqual({ matched: false })
+		try {
+			const res = await attributeDeployment({
+				db: {},
+				workspaceId: 'ws-1',
+				sha: 'c'.repeat(40),
+				deployedAt: '2026-07-01T08:00:00Z',
+				installationId: 'inst-1',
+				deploymentRef: 'refs/heads/main',
+				deliveryId: 'del-1',
+			})
+			expect(res).toEqual({ matched: true })
+			expect(spy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					workspaceId: 'ws-1',
+					sha: 'c'.repeat(40),
+					deployedAt: '2026-07-01T08:00:00Z',
+					deploymentRef: 'refs/heads/main',
+					deliveryId: 'del-1',
+				}),
+			)
+		} finally {
+			spy.mockRestore()
+		}
+	})
+
+	it('returns matched=false when the service finds no match', async () => {
+		const spy = vi
+			.spyOn(deployAttribution, 'attributeDeploymentToObject')
+			.mockResolvedValueOnce({ matched: false })
+		try {
+			const res = await attributeDeployment({
+				db: {},
+				workspaceId: 'ws-1',
+				sha: 'c'.repeat(40),
+				deployedAt: '2026-07-01T08:00:00Z',
+				installationId: 'inst-1',
+			})
+			expect(res).toEqual({ matched: false })
+		} finally {
+			spy.mockRestore()
+		}
 	})
 })
 
@@ -556,11 +621,21 @@ describe('githubWebhookFanOut', () => {
 	}
 
 	it('returns [] for deployment_status so no event row lands', async () => {
-		const events = await githubWebhookFanOut(fanOutCtx(normalizedDeploymentStatus()))
-		expect(events).toEqual([])
+		const spy = vi
+			.spyOn(deployAttribution, 'attributeDeploymentToObject')
+			.mockResolvedValue({ matched: false })
+		try {
+			const events = await githubWebhookFanOut(fanOutCtx(normalizedDeploymentStatus()))
+			expect(events).toEqual([])
+		} finally {
+			spy.mockRestore()
+		}
 	})
 
 	it('logs an unattributed record when attribution finds no match', async () => {
+		const spy = vi
+			.spyOn(deployAttribution, 'attributeDeploymentToObject')
+			.mockResolvedValue({ matched: false })
 		const infoSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 		try {
 			await githubWebhookFanOut(fanOutCtx(normalizedDeploymentStatus()))
@@ -569,6 +644,22 @@ describe('githubWebhookFanOut', () => {
 			expect(logged).toContain('d'.repeat(40))
 		} finally {
 			infoSpy.mockRestore()
+			spy.mockRestore()
+		}
+	})
+
+	it('does not log unattributed when attribution matches', async () => {
+		const spy = vi
+			.spyOn(deployAttribution, 'attributeDeploymentToObject')
+			.mockResolvedValue({ matched: true, objectId: 'bet-1', objectType: 'bet' })
+		const infoSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+		try {
+			await githubWebhookFanOut(fanOutCtx(normalizedDeploymentStatus()))
+			const logged = infoSpy.mock.calls.map(([m]) => String(m)).join('\n')
+			expect(logged).not.toContain('deployment_status unattributed')
+		} finally {
+			infoSpy.mockRestore()
+			spy.mockRestore()
 		}
 	})
 
@@ -584,14 +675,21 @@ describe('githubWebhookFanOut', () => {
 	})
 
 	it('does not throw when timestamps are missing (falls back to now)', async () => {
-		const events = await githubWebhookFanOut(
-			fanOutCtx(
-				normalizedDeploymentStatus({
-					deployment_status_updated_at: undefined,
-					deployment_status_created_at: undefined,
-				}),
-			),
-		)
-		expect(events).toEqual([])
+		const spy = vi
+			.spyOn(deployAttribution, 'attributeDeploymentToObject')
+			.mockResolvedValue({ matched: false })
+		try {
+			const events = await githubWebhookFanOut(
+				fanOutCtx(
+					normalizedDeploymentStatus({
+						deployment_status_updated_at: undefined,
+						deployment_status_created_at: undefined,
+					}),
+				),
+			)
+			expect(events).toEqual([])
+		} finally {
+			spy.mockRestore()
+		}
 	})
 })

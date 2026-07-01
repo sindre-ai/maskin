@@ -59,7 +59,13 @@ export const githubEventNormalizer: CustomEventNormalizer = (
 			data.pr_url = pr.html_url
 			data.pr_diff_url = pr.diff_url
 			data.pr_head_sha = (pr.head as Record<string, unknown>)?.sha
+			data.pr_head_ref = (pr.head as Record<string, unknown>)?.ref
 			data.pr_base_branch = (pr.base as Record<string, unknown>)?.ref
+			// merge_commit_sha is populated by GitHub after the PR merges — this
+			// is the commit that lands on the base branch and matches what a
+			// downstream deployment_status webhook will carry as its SHA.
+			// deploy-attribution Pass 1 keys off this field.
+			data.merge_commit_sha = pr.merge_commit_sha
 		}
 	}
 
@@ -75,7 +81,13 @@ export const githubEventNormalizer: CustomEventNormalizer = (
 	if (githubEvent === 'push') {
 		data.ref = body.ref
 		data.commits_count = (body.commits as unknown[])?.length
-		data.head_commit = (body.head_commit as Record<string, unknown>)?.message
+		const headCommit = body.head_commit as Record<string, unknown> | undefined
+		data.head_commit = headCommit?.message
+		// head_commit_sha is the tip commit of the push — for a push to the
+		// default branch this equals the SHA a subsequent deployment_status
+		// webhook will attribute against. deploy-attribution Pass 1 keys off
+		// this field.
+		data.head_commit_sha = headCommit?.id
 	}
 
 	if (githubEvent === 'pull_request_review') {
