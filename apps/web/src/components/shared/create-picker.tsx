@@ -151,6 +151,8 @@ export function CreatePicker({
 			// We create the trigger disabled with placeholder config; the detail
 			// page's TriggerForm captures the remaining fields before the user
 			// enables it, so it never fires in the placeholder state.
+			// `action_prompt` must be non-empty (Zod `.min(1)`) — reuse the name so
+			// the trigger has a meaningful starting value the user can rewrite.
 			const currentActorId = getStoredActor()?.id
 			if (!currentActorId) {
 				toast.error('Sign in required to create a trigger')
@@ -160,7 +162,7 @@ export function CreatePicker({
 				name: trimmed,
 				type: 'cron',
 				config: { expression: '0 0 * * *' },
-				action_prompt: '',
+				action_prompt: trimmed,
 				target_actor_id: currentActorId,
 				enabled: false,
 			})
