@@ -287,7 +287,7 @@ export const agentFiles = pgTable(
 		path: text('path').notNull(),
 		storageKey: text('storage_key').notNull(),
 		sizeBytes: integer('size_bytes'),
-		sessionId: uuid('session_id').references(() => sessions.id),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},

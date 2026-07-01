@@ -42,6 +42,43 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 		expect(row?.confdeltype, 'sessions.trigger_id FK must be ON DELETE SET NULL').toBe('n')
 	})
 
+	it('notifications.session_id FK is ON DELETE SET NULL', async () => {
+		// Regression: without SET NULL, deleting a session (e.g. cascading from an
+		// actor delete) 500s with a FK violation for any notification that still
+		// references it. Migration 0041 fixed this.
+		const [row] = await sql`
+			SELECT c.confdeltype
+			FROM pg_constraint c
+			WHERE c.conrelid = 'public.notifications'::regclass
+				AND c.contype = 'f'
+				AND c.conkey = ARRAY[
+					(SELECT attnum FROM pg_attribute
+					 WHERE attrelid = 'public.notifications'::regclass AND attname = 'session_id')
+				]::int2[]
+		`
+		// 'n' = SET NULL; 'a' = NO ACTION; 'r' = RESTRICT; 'c' = CASCADE
+		expect(row?.confdeltype, 'notifications.session_id FK must be ON DELETE SET NULL').toBe('n')
+	})
+
+	it('agent_files.session_id FK is ON DELETE SET NULL', async () => {
+		// Regression: without SET NULL, deleting a session (e.g. cascading from an
+		// actor delete) 500s with a FK violation for any agent_files row that still
+		// references it — routinely true for any agent that has completed a session
+		// and pushed learnings/skills back to storage. Migration 0042 fixed this.
+		const [row] = await sql`
+			SELECT c.confdeltype
+			FROM pg_constraint c
+			WHERE c.conrelid = 'public.agent_files'::regclass
+				AND c.contype = 'f'
+				AND c.conkey = ARRAY[
+					(SELECT attnum FROM pg_attribute
+					 WHERE attrelid = 'public.agent_files'::regclass AND attname = 'session_id')
+				]::int2[]
+		`
+		// 'n' = SET NULL; 'a' = NO ACTION; 'r' = RESTRICT; 'c' = CASCADE
+		expect(row?.confdeltype, 'agent_files.session_id FK must be ON DELETE SET NULL').toBe('n')
+	})
+
 	it('notify_event() trigger body does not include the data column', async () => {
 		// Regression for the 8KB NOTIFY payload limit (migration 0006). If `data`
 		// is re-added to the NOTIFY payload, large event rows will silently roll back.

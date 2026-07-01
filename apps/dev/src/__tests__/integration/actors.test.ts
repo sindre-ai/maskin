@@ -1,5 +1,6 @@
 import {
 	actors,
+	agentFiles,
 	files,
 	imports,
 	notifications,
@@ -11,6 +12,7 @@ import {
 } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import {
+	buildAgentFile,
 	buildFile,
 	buildImport,
 	buildReadState,
@@ -72,6 +74,19 @@ describe('Actors Integration — DELETE', () => {
 			sessionId: ownSession.id,
 		})
 
+		// A file the agent pushed back to storage while running its own session
+		// (e.g. an updated memory/learnings file) — this is how every completed
+		// session's agent_files row ends up referencing sessions.id. It's owned
+		// by the same agent that's about to be deleted, so it's cleaned up by
+		// the agent-scoped agent_files delete below — but only after the agent's
+		// own sessions are deleted first. Without ON DELETE SET NULL on
+		// agent_files.session_id, that ordering blocks the session delete with a
+		// 23503 violation.
+		const [agentFile] = await db
+			.insert(agentFiles)
+			.values(buildAgentFile({ workspaceId, actorId: agentId, sessionId: ownSession.id }))
+			.returning()
+
 		// Workspace artifacts authored by the agent.
 		const [wsSkill] = await db
 			.insert(workspaceSkills)
@@ -120,6 +135,15 @@ describe('Actors Integration — DELETE', () => {
 			.where(eq(notifications.id, notification.id))
 		expect(notificationAfter).toBeDefined()
 		expect(notificationAfter.sessionId).toBeNull()
+
+		// The agent's own file record is gone (agent-scoped agent_files cleanup),
+		// which only runs because the session delete above no longer blocks on
+		// this row's session_id FK.
+		const remainingAgentFiles = await db
+			.select()
+			.from(agentFiles)
+			.where(eq(agentFiles.id, agentFile.id))
+		expect(remainingAgentFiles).toHaveLength(0)
 
 		// The session the agent created for the human is reassigned, not deleted.
 		const [createdSessionAfter] = await db
