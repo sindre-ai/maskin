@@ -20,6 +20,11 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import {
+	type SummaryRow,
+	buildContentSummary,
+	isResponseScopingEnabled,
+} from './response-scoping.js'
+import {
 	MUTATION_TOOL_KINDS,
 	type TelemetrySink,
 	createDefaultSink,
@@ -98,6 +103,33 @@ function addUrl(
 		ordered.url = buildWebAppHref(stripTrailingSlash(config.webAppBaseUrl), workspaceId, target)
 	}
 	return ordered
+}
+
+/**
+ * Build the `content` text for a list/search tool response. When response
+ * scoping is on, returns a lean markdown summary bounded by the summary
+ * byte budget (AC-T2); when off, returns `JSON.stringify(fullPayload, null, 2)`
+ * so the flag-off response is byte-identical to the pre-scoping shape
+ * (AC-T4 partial). `structuredContent` (built by the caller) is never touched
+ * either way — the full enriched payload always survives on the structured
+ * channel.
+ */
+function buildListContentText(
+	fullPayload: unknown,
+	rows: SummaryRow[],
+	emptyLabel: string,
+): string {
+	if (isResponseScopingEnabled()) {
+		return buildContentSummary(rows, { emptyLabel })
+	}
+	return JSON.stringify(fullPayload, null, 2)
+}
+
+/** Read `.url` off an enriched row without paying the TS cost each time. */
+function pickUrl(row: unknown): string | undefined {
+	if (!row || typeof row !== 'object') return undefined
+	const u = (row as { url?: unknown }).url
+	return typeof u === 'string' ? u : undefined
 }
 
 function authSetupHint(config: McpConfig): string {
@@ -1860,6 +1892,11 @@ export function createMcpServer(config: McpConfig) {
 						}),
 					)
 				: result
+			const summaryRows: SummaryRow[] = result.map((obj, idx) => ({
+				title: obj.title ?? `Untitled ${obj.type}`,
+				url: pickUrl(enriched[idx]),
+				meta: `${obj.type}${obj.status ? ` · ${obj.status}` : ''}`,
+			}))
 			return {
 				_meta: uiMeta(
 					'list_objects',
@@ -1867,7 +1904,12 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(enriched, summaryRows, 'No objects.'),
+					},
+				],
 				structuredContent: {
 					heroCard,
 					objects: enriched,
@@ -1913,6 +1955,11 @@ export function createMcpServer(config: McpConfig) {
 						}),
 					)
 				: result
+			const summaryRows: SummaryRow[] = result.map((obj, idx) => ({
+				title: obj.title ?? `Untitled ${obj.type}`,
+				url: pickUrl(enriched[idx]),
+				meta: `${obj.type}${obj.status ? ` · ${obj.status}` : ''}`,
+			}))
 			return {
 				_meta: uiMeta(
 					'search_objects',
@@ -1920,7 +1967,12 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(enriched, summaryRows, 'No matches.'),
+					},
+				],
 				structuredContent: {
 					heroCard,
 					objects: enriched,
@@ -1945,12 +1997,38 @@ export function createMcpServer(config: McpConfig) {
 			if (args.source_id) params.set('source_id', args.source_id)
 			if (args.target_id) params.set('target_id', args.target_id)
 			if (args.type) params.set('type', args.type)
-			const result = await apiCall(config, 'GET', `/api/relationships?${params}`, undefined, {
+			const result = (await apiCall(config, 'GET', `/api/relationships?${params}`, undefined, {
 				workspaceId: args.workspace_id,
+			})) as Array<{
+				id: string
+				sourceId: string
+				targetId: string
+				type: string
+				sourceTitle?: string | null
+				targetTitle?: string | null
+			}>
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : undefined
+			const summaryRows: SummaryRow[] = result.map((r) => {
+				const sourceLabel = r.sourceTitle && r.sourceTitle.length > 0 ? r.sourceTitle : r.sourceId
+				const targetLabel = r.targetTitle && r.targetTitle.length > 0 ? r.targetTitle : r.targetId
+				return {
+					title: `${sourceLabel} → ${targetLabel}`,
+					url:
+						baseUrl && wsId
+							? buildWebAppHref(baseUrl, wsId, { kind: 'relationship', sourceId: r.sourceId })
+							: undefined,
+					meta: r.type,
+				}
 			})
 			return {
 				_meta: meta('list_relationships', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No relationships.'),
+					},
+				],
 			}
 		},
 	)
@@ -2070,6 +2148,19 @@ export function createMcpServer(config: McpConfig) {
 							addUrl(a, config, wsId, { kind: 'actor', id: a.id as string }),
 						)
 					: data
+			const enrichedRows: Array<Record<string, unknown>> = Array.isArray(enriched)
+				? (enriched as Array<Record<string, unknown>>)
+				: []
+			const summaryRows: SummaryRow[] = rows.map((actor, idx) => {
+				const kind = actor.type ?? 'actor'
+				const metaParts = [kind]
+				if (actor.role) metaParts.push(actor.role)
+				return {
+					title: actor.name ?? `${kind} ${actor.id.slice(0, 8)}`,
+					url: pickUrl(enrichedRows[idx]),
+					meta: metaParts.join(' · '),
+				}
+			})
 			return {
 				_meta: uiMeta(
 					'list_actors',
@@ -2077,7 +2168,12 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(enriched, summaryRows, 'No actors.'),
+					},
+				],
 				structuredContent: { heroCard },
 			}
 		},
@@ -2736,8 +2832,18 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = await apiCall(config, 'GET', `/api/workspaces/${wsId}/skills`, undefined, {
+			const result = (await apiCall(config, 'GET', `/api/workspaces/${wsId}/skills`, undefined, {
 				workspaceId: wsId,
+			})) as Array<{ name: string; description?: string | null; isValid?: boolean }>
+			const summaryRows: SummaryRow[] = result.map((skill) => {
+				const metaParts: string[] = []
+				if (skill.isValid === false) metaParts.push('invalid')
+				const description = skill.description?.split(/\r?\n/)[0]?.trim()
+				if (description) metaParts.push(makePreview(description, 80))
+				return {
+					title: skill.name,
+					meta: metaParts.length > 0 ? metaParts.join(' · ') : undefined,
+				}
 			})
 			return {
 				_meta: meta(
@@ -2745,7 +2851,12 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No skills.'),
+					},
+				],
 			}
 		},
 	)
@@ -2908,12 +3019,31 @@ export function createMcpServer(config: McpConfig) {
 			if (args.limit !== undefined) params.set('limit', String(args.limit))
 			if (args.offset !== undefined) params.set('offset', String(args.offset))
 			const qs = params.toString()
-			const result = await apiCall(config, 'GET', `/api/files${qs ? `?${qs}` : ''}`, undefined, {
+			const result = (await apiCall(config, 'GET', `/api/files${qs ? `?${qs}` : ''}`, undefined, {
 				workspaceId: wsId,
+			})) as Array<{
+				id: string
+				name: string
+				mimeType?: string | null
+				sizeBytes?: number | null
+			}>
+			const summaryRows: SummaryRow[] = result.map((file) => {
+				const metaParts: string[] = []
+				if (file.mimeType) metaParts.push(file.mimeType)
+				if (typeof file.sizeBytes === 'number') metaParts.push(`${file.sizeBytes}B`)
+				return {
+					title: file.name,
+					meta: metaParts.length > 0 ? metaParts.join(' · ') : undefined,
+				}
 			})
 			return {
 				_meta: meta('list_files', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No files.'),
+					},
+				],
 			}
 		},
 	)
@@ -3146,6 +3276,17 @@ export function createMcpServer(config: McpConfig) {
 							}),
 						)
 					: data
+			const enrichedRows: Array<Record<string, unknown>> = Array.isArray(enriched)
+				? (enriched as Array<Record<string, unknown>>)
+				: []
+			const summaryRows: SummaryRow[] = rows.map((trigger, idx) => {
+				const enabledLabel = trigger.enabled ? 'enabled' : 'disabled'
+				return {
+					title: trigger.name || `Trigger ${trigger.id.slice(0, 8)}`,
+					url: pickUrl(enrichedRows[idx]),
+					meta: `${trigger.type} · ${enabledLabel}`,
+				}
+			})
 			return {
 				_meta: uiMeta(
 					'list_triggers',
@@ -3153,7 +3294,12 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(enriched, summaryRows, 'No triggers.'),
+					},
+				],
 				structuredContent: { heroCard },
 			}
 		},
