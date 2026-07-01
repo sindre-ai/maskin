@@ -2,13 +2,9 @@ import type { SignalKind } from './types.js'
 
 export const PATH_FLOOR_SCORE = 100
 export const REGEX_FLOOR_SCORE = 60
-export const KILL_SWITCH_SCORE = 100
 
 export const SIGNAL_WEIGHTS: Record<
-	Exclude<
-		SignalKind,
-		'protected_path' | 'regex_floor_hit' | 'kill_switch' | 'codeql_or_semgrep_alert'
-	>,
+	Exclude<SignalKind, 'protected_path' | 'regex_floor_hit' | 'codeql_or_semgrep_alert'>,
 	number
 > = {
 	diff_loc: 0,

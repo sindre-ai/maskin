@@ -35,6 +35,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @maskin/risk-classifier build
 
+      # squawk (github.com/sbdchd/squawk) lints .sql files for blocking-lock
+      # migrations. Without this step the `squawk_blocking_lock` signal and the
+      # hot-table floor in .maskin/hot-tables.yml can never fire on ubuntu-latest,
+      # since squawk isn't preinstalled on the runner image. Version is pinned
+      # for determinism — bump deliberately alongside a SKILL_VERSION bump.
+      - name: Install squawk
+        run: |
+          curl -sSfL -o /usr/local/bin/squawk \
+            https://github.com/sbdchd/squawk/releases/download/v2.59.0/squawk-linux-x64
+          chmod +x /usr/local/bin/squawk
+          squawk --version
+
       # R4 (risk-gate skill): a floor file that's missing or fails to parse must
       # fail the check loudly, not degrade to "no floors" silently. This is what
       # both risk-classifier bets asked for — see .maskin/*.yml and
@@ -44,11 +56,17 @@ jobs:
 
       - name: Run risk-classifier
         run: |
+          # `risk-classifier.mjs` exits 1/2 for a non-auto band by design (see
+          # cli.ts) — that must not abort this step under bash's default -e,
+          # or the check-run below never posts for exactly the risky PRs this
+          # workflow exists to flag. `|| true` neutralizes that exit code; a
+          # genuine adapter crash still fails the job below, since it leaves
+          # risk-score-check-run.json empty/invalid and JSON.parse throws.
           node packages/risk-classifier/bin/risk-classifier.mjs \
             --base "${{ github.event.pull_request.base.sha }}" \
             --head "${{ github.event.pull_request.head.sha }}" \
             --repo . \
-            --output check-run > risk-score-check-run.json
+            --output check-run > risk-score-check-run.json || true
           cat risk-score-check-run.json
 
       - name: Post maskin/risk-score check run
@@ -69,3 +87,6 @@ jobs:
                 summary: result.summary,
               },
             })
+            if (result.conclusion === 'failure') {
+              core.setFailed(`Risk score requires two-human review: ${result.summary}`)
+            }

@@ -13,7 +13,6 @@ interface CliOptions {
 	base: string
 	head: string
 	repo: string
-	killSwitch: boolean
 	incidentDensityFile?: string
 	cveDeps: string[]
 	missingTests: boolean
@@ -29,7 +28,6 @@ export function parseCliArgs(argv: string[]): CliOptions {
 			base: { type: 'string' },
 			head: { type: 'string' },
 			repo: { type: 'string' },
-			'kill-switch': { type: 'boolean', default: false },
 			'incident-density': { type: 'string' },
 			'cve-dep': { type: 'string', multiple: true },
 			'missing-tests': { type: 'boolean', default: false },
@@ -53,7 +51,6 @@ export function parseCliArgs(argv: string[]): CliOptions {
 		base,
 		head,
 		repo,
-		killSwitch: Boolean(values['kill-switch']),
 		incidentDensityFile: values['incident-density'],
 		cveDeps: (values['cve-dep'] as string[] | undefined) ?? [],
 		missingTests: Boolean(values['missing-tests']),
@@ -90,7 +87,6 @@ export function runCli(argv: string[]): { exitCode: number; stdout: string } {
 		protected_paths: config.protected_paths,
 		regex_floors: config.regex_floors,
 		hot_tables: config.hot_tables,
-		kill_switch: opts.killSwitch,
 		new_deps_with_cve: opts.cveDeps,
 		semgrep_alerts: semgrepAlerts,
 		squawk_findings: squawkFindings,

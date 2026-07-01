@@ -21,7 +21,6 @@ function input(overrides: Partial<ClassifierInput> = {}): ClassifierInput {
 		protected_paths: [],
 		regex_floors: [],
 		hot_tables: [],
-		kill_switch: false,
 		...overrides,
 	}
 }
@@ -50,13 +49,6 @@ describe('classify', () => {
 		expect(v.score).toBe(100)
 		expect(v.band).toBe('two_human_required')
 		expect(v.floors_applied.some((f) => f.kind === 'protected_path')).toBe(true)
-	})
-
-	it('floors to 100 when kill switch is active, regardless of diff', () => {
-		const v = classify(input({ kill_switch: true }))
-		expect(v.score).toBe(100)
-		expect(v.band).toBe('two_human_required')
-		expect(v.kill_switch_active).toBe(true)
 	})
 
 	it('regex floor lifts a low score to 60', () => {

@@ -30,7 +30,6 @@ Outputs the `## Risk Score` block to stdout and exits with:
 
 ### Optional inputs
 
-- `--kill-switch` — sets the score to 100 unconditionally (used by orchestrate-pr-review when the workspace kill-switch object is on)
 - `--cve-dep <name@version>` — repeated; flagged dependencies considered "new with known CVE"
 - `--missing-tests` — pre-computed signal: logic changes lacking corresponding test changes
 - `--ai-generated` — pre-computed signal: PR carries an AI-generated marker

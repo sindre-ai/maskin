@@ -24,7 +24,6 @@ export type SignalKind =
 	| 'codeql_or_semgrep_alert'
 	| 'protected_path'
 	| 'regex_floor_hit'
-	| 'kill_switch'
 	| 'squawk_blocking_lock'
 
 export interface SignalHit {
@@ -47,7 +46,6 @@ export interface ClassifierInput {
 	protected_paths: string[]
 	regex_floors: RegexFloor[]
 	hot_tables: string[]
-	kill_switch: boolean
 	new_deps_with_cve?: string[]
 	semgrep_alerts?: SemgrepAlert[]
 	incident_density?: Record<string, number>
@@ -84,7 +82,6 @@ export interface ClassifierVerdict {
 	band: RiskBand
 	signals: SignalHit[]
 	floors_applied: SignalHit[]
-	kill_switch_active: boolean
 	deterministic_seed: string
 }
 

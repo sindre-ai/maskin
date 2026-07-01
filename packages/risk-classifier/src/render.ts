@@ -14,7 +14,6 @@ export function renderRiskScoreBlock(verdict: ClassifierVerdict): string {
 	lines.push(`**Skill version:** ${verdict.skill_version}`)
 	lines.push(`**Commit:** ${verdict.commit_sha}`)
 	lines.push(`**Deterministic seed:** ${verdict.deterministic_seed}`)
-	if (verdict.kill_switch_active) lines.push('**Kill switch:** ON — every PR routes to humans')
 	lines.push('')
 	lines.push('### Signals')
 	if (verdict.signals.length === 0) {

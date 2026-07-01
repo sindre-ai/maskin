@@ -27,11 +27,7 @@ The skill re-runs on every `synchronize` (per-SHA). The previous verdict is inva
 
 Walk these in order. Each step is non-negotiable; skipping any step makes the verdict non-deterministic.
 
-### 1. Read the kill switch
-
-If the workspace `risk-classifier-kill-switch` object is `on`, set `score = 100`, set `band = TWO-HUMAN REQUIRED`, write the `## Risk Score` block with `kill_switch: true`, post the `maskin/risk-score` check run, and stop. No signals, no floors, no further work.
-
-### 2. Resolve the diff
+### 1. Resolve the diff
 
 Run the adapter binary at `packages/risk-classifier/bin/risk-classifier.mjs`. Pass:
 
@@ -43,11 +39,10 @@ Run the adapter binary at `packages/risk-classifier/bin/risk-classifier.mjs`. Pa
 - `--ai-generated` if the PR body or commit trailers carry an AI-authoring marker
 - `--public-api-delta <n>` for the count of public symbols added/removed
 - `--incident-density <file.json>` if Sentry/PagerDuty data is available
-- `--kill-switch` if step 1 said so
 
 The adapter reads `.maskin/protected-paths.yml`, `.maskin/risk-floors.yml`, and `.maskin/hot-tables.yml` from the repo, runs `git diff` between the two SHAs, runs `squawk` on `.sql` files, and runs Semgrep diff-scan. It returns a `ClassifierVerdict` JSON object.
 
-### 3. Apply the signal table
+### 2. Apply the signal table
 
 Sum the weights of every triggered signal. Cap the sum at 100.
 
@@ -72,11 +67,10 @@ Sum the weights of every triggered signal. Cap the sum at 100.
 | `codeql_or_semgrep_alert` | severity-weighted: 30 / 20 / 8 / 2 (CRITICAL / ERROR / WARNING / INFO) |
 | `squawk_blocking_lock` | +15 |
 
-### 4. Apply the floors
+### 3. Apply the floors
 
 Floors override the additive sum. Apply in this order:
 
-- **Kill switch** (`step 1`) → score = 100, no further work.
 - **Protected path** — any file matches a glob in `.maskin/protected-paths.yml` → score = 100, regardless of additive sum.
 - **Regex floor** — any line matches a pattern in `.maskin/risk-floors.yml` → score = max(additive_sum, 60).
 - **Squawk hot-table hit** — squawk flags a blocking lock against a table in `.maskin/hot-tables.yml` → score = max(additive_sum, 60).
@@ -102,7 +96,6 @@ Write the verdict on the **task** linked from the PR's `github_link`, under a `#
 **Skill version:** 0.1.0
 **Commit:** <head-sha>
 **Deterministic seed:** <16-hex>
-**Kill switch:** ON  (only if active)
 
 ### Signals
 - `paths_auth_session` +15 — packages/auth/src/session.ts
@@ -127,7 +120,6 @@ Record the skill version (`0.1.0`) and the deterministic seed in the in-toto att
 ## What NOT to do
 
 - Do not invent a signal that isn't in the table. The table is the contract; new signals require a version bump and a bet revision.
-- Do not skip the kill switch. The kill switch is the team's manual brake; bypassing it for "obviously fine" PRs defeats the purpose.
 - Do not produce a non-deterministic score. If the adapter cannot reach a sub-tool (squawk, semgrep, incident density), the affected signal is *absent*, not *guessed*. Absent signals are observable in the verdict — that is itself a feature.
 - Do not write a partial verdict. Either the full `## Risk Score` block lands on the task and the check run lands on the PR, or neither does. Half-output is worse than no output.
 - Do not edit `.maskin/protected-paths.yml`, `.maskin/risk-floors.yml`, or `.maskin/hot-tables.yml` from this skill. Those are protected paths themselves; edits are always two-human PRs.

@@ -18,7 +18,6 @@ function trivialInput(): ClassifierInput {
 		protected_paths: [],
 		regex_floors: [],
 		hot_tables: [],
-		kill_switch: false,
 	}
 }
 
