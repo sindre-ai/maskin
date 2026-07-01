@@ -10,6 +10,7 @@ import { createApp } from './app-factory'
 import { type DevBootstrapResult, maybeBootstrapDev, seedCatalogIfEmpty } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
+import { AwaitingDeployAgingSweep } from './services/awaiting-deploy-aging-sweep'
 import { ContainerManager } from './services/container-manager'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { PackageVersionPusher } from './services/package-version-pusher'
@@ -125,6 +126,10 @@ logger.info('Webhook deliveries cleaner started')
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
+
+const awaitingDeployAgingSweep = new AwaitingDeployAgingSweep(db)
+awaitingDeployAgingSweep.start()
+logger.info('Awaiting-deploy aging sweep started')
 
 const packageVersionPusher = new PackageVersionPusher(db)
 packageVersionPusher.start()
