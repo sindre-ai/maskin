@@ -519,29 +519,31 @@ app.openapi(callbackRoute, (async (c) => {
 	const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
 	if (ownerLogin) activeConfig.owner_login = ownerLogin
 
-	// Re-connecting an already-active installation: refresh the existing row in
+	// Re-connecting an already-active integration: refresh the existing row in
 	// place and drop the pending nonce row. Without this, we'd UPDATE the pending
-	// row to externalId=installation_id and hit the (workspace_id, provider,
-	// external_id) unique constraint at commit time. Only meaningful for providers
-	// whose externalId is stable across connects (GitHub installations); standard
-	// OAuth2 nonce-derived externalIds can't collide.
+	// row to the resolved externalId and hit the (workspace_id, provider,
+	// external_id) unique constraint at commit time whenever externalId is stable
+	// across connects — GitHub installation_id, or a resolveExternalId provider
+	// like Google Calendar's account email. Nonce-derived externalIds
+	// (`oauth-${nonce}`) are unique per attempt, so this lookup naturally finds
+	// nothing for them and falls through to the plain update below.
 	let integrationId = pendingIntegration.id
-	if (credentials.installation_id) {
-		const [existingActive] = await db
-			.select()
-			.from(integrations)
-			.where(
-				and(
-					eq(integrations.workspaceId, stateData.workspaceId),
-					eq(integrations.provider, providerName),
-					eq(integrations.externalId, externalId),
-					eq(integrations.status, 'active'),
-				),
-			)
-			.limit(1)
+	const [existingActive] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, stateData.workspaceId),
+				eq(integrations.provider, providerName),
+				eq(integrations.externalId, externalId),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
 
-		if (existingActive) {
-			await db
+	if (existingActive) {
+		await db.transaction(async (tx) => {
+			await tx
 				.update(integrations)
 				.set({
 					credentials: encryptedCredentials,
@@ -550,27 +552,16 @@ app.openapi(callbackRoute, (async (c) => {
 				})
 				.where(eq(integrations.id, existingActive.id))
 
-			await db.delete(integrations).where(eq(integrations.id, pendingIntegration.id))
+			await tx.delete(integrations).where(eq(integrations.id, pendingIntegration.id))
+		})
 
-			integrationId = existingActive.id
-			logger.info(`Refreshed existing ${providerName} installation`, {
-				integrationId,
-				workspaceId: stateData.workspaceId,
-				externalId,
-				ownerLogin,
-			})
-		} else {
-			await db
-				.update(integrations)
-				.set({
-					status: 'active',
-					externalId,
-					credentials: encryptedCredentials,
-					config: activeConfig,
-					updatedAt: new Date(),
-				})
-				.where(eq(integrations.id, integrationId))
-		}
+		integrationId = existingActive.id
+		logger.info(`Refreshed existing ${providerName} integration`, {
+			integrationId,
+			workspaceId: stateData.workspaceId,
+			externalId,
+			ownerLogin,
+		})
 	} else {
 		await db
 			.update(integrations)
