@@ -2,6 +2,7 @@ import {
 	actors,
 	files,
 	imports,
+	notifications,
 	readState,
 	sessions,
 	subscriptions,
@@ -16,6 +17,7 @@ import {
 	buildSubscription,
 	buildWorkspaceSkill,
 	insertActor,
+	insertNotification,
 	insertSession,
 	insertWorkspace,
 } from '../factories'
@@ -59,6 +61,17 @@ describe('Actors Integration — DELETE', () => {
 		// A session the agent ran itself — deleted along with the actor.
 		const ownSession = await insertSession(db, workspaceId, agentId, humanId)
 
+		// A notification sent to the human about the agent's own session. Its
+		// source/target actor is the human, not the agent, so the agent-scoped
+		// notification cleanup won't touch it — but it still references
+		// ownSession via session_id, which is about to be hard-deleted. Without
+		// ON DELETE SET NULL on notifications.session_id, this FK reference
+		// blocks the session delete with a 23503 violation.
+		const notification = await insertNotification(db, workspaceId, humanId, {
+			targetActorId: humanId,
+			sessionId: ownSession.id,
+		})
+
 		// Workspace artifacts authored by the agent.
 		const [wsSkill] = await db
 			.insert(workspaceSkills)
@@ -97,6 +110,16 @@ describe('Actors Integration — DELETE', () => {
 		// The agent's own session is deleted.
 		const ownSessionAfter = await db.select().from(sessions).where(eq(sessions.id, ownSession.id))
 		expect(ownSessionAfter).toHaveLength(0)
+
+		// The human's notification about that session survives (it isn't owned
+		// by the deleted agent) but its session_id is nulled rather than
+		// blocking the session delete with a FK violation.
+		const [notificationAfter] = await db
+			.select()
+			.from(notifications)
+			.where(eq(notifications.id, notification.id))
+		expect(notificationAfter).toBeDefined()
+		expect(notificationAfter.sessionId).toBeNull()
 
 		// The session the agent created for the human is reassigned, not deleted.
 		const [createdSessionAfter] = await db

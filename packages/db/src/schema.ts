@@ -511,7 +511,7 @@ export const notifications = pgTable(
 			.notNull(),
 		targetActorId: uuid('target_actor_id').references(() => actors.id),
 		objectId: uuid('object_id').references(() => objects.id, { onDelete: 'set null' }),
-		sessionId: uuid('session_id').references(() => sessions.id),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
 		status: text('status').notNull(),
 		resolvedAt: timestamp('resolved_at', { withTimezone: true }),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
