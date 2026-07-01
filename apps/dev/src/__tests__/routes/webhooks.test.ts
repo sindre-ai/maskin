@@ -702,8 +702,10 @@ describe('Webhook Routes', () => {
 			})
 			const { app, mockResults, calls } = createWebhookTestApp()
 			mockResults.select = [integration]
-			// Claim succeeds; fan-out returns []; no event insert follows.
+			// Claim succeeds; fan-out returns []; commit still marks the claim
+			// processed so the reconciler doesn't drop it after 15 min.
 			mockResults.insertQueue = [[{ id: 'claim-happy' }]]
+			mockResults.update = [{ id: 'claim-happy' }]
 
 			const res = await app.request(
 				new Request('http://localhost/api/webhooks/github', {
@@ -727,6 +729,13 @@ describe('Webhook Routes', () => {
 			expect(body.skipped).toBe(true)
 			// One insert: the delivery claim. No event insert.
 			expect(calls.inserts).toHaveLength(1)
+			// The commit path still ran and marked the claim processed — otherwise
+			// the reconciler's 15-min stale-orphan sweep would drop the claim and
+			// the DoD's 30-day dedup window would collapse.
+			const processedUpdate = calls.updates.find(
+				(u) => (u as { processedAt?: unknown }).processedAt instanceof Date,
+			)
+			expect(processedUpdate).toBeDefined()
 		})
 
 		it('silently drops a redelivered X-GitHub-Delivery (claim conflict)', async () => {

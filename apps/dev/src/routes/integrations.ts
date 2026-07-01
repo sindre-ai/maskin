@@ -1066,7 +1066,15 @@ webhookApp.post('/:provider', async (c) => {
 					}
 				}
 
-				if (toInsert.length === 0) return { kind: 'inserted', count: 0 }
+				// If fan-out produced no events AND no claim was taken, nothing to
+				// commit. Providers that return [] with a claim (GitHub
+				// deployment_status: the deploy IS the signal, no downstream event
+				// row) still need to mark the claim processed so the reconciler's
+				// 15-min stale-orphan sweep doesn't drop it, which would collapse
+				// the 30-day delivery-ID dedup window to 15 minutes.
+				if (toInsert.length === 0 && !claimRowId) {
+					return { kind: 'inserted', count: 0 }
+				}
 
 				// Mark the claim processed in the SAME transaction as the events insert,
 				// gated on the claim row still existing and being unprocessed. Without
