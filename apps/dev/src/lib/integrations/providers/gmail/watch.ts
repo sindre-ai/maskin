@@ -219,18 +219,20 @@ export async function renewGmailWatch(db: Database, integrationId: string): Prom
  * always succeed even if Google or the token refresh is unreachable.
  */
 export async function stopGmailWatch(ctx: PreDisconnectContext): Promise<void> {
-	const db = ctx.db as Database
-	const [integration] = await db
-		.select()
-		.from(integrations)
-		.where(eq(integrations.id, ctx.integrationId))
-		.limit(1)
-	if (!integration) return
+	// Use the already-decrypted credentials passed by the disconnect route rather than
+	// calling getValidToken(). getValidToken() can trigger markRevoked() as a side-effect
+	// (on invalid_grant), which writes a token_revoked audit event before the disconnect
+	// route's own transaction writes user_disconnected — producing two conflicting events
+	// for a single user-initiated disconnect.
+	const accessToken = ctx.credentials.accessToken
+	if (!accessToken) {
+		logger.warn('Gmail watch stop skipped: no access token in credentials', {
+			integrationId: ctx.integrationId,
+		})
+		return
+	}
 
 	try {
-		const provider = getProvider(integration.provider)
-		const tokenManager = new TokenManager()
-		const accessToken = await tokenManager.getValidToken(db, ctx.integrationId, provider)
 		await callStop(accessToken)
 		logger.info('Gmail watch stopped', { integrationId: ctx.integrationId })
 	} catch (err) {
