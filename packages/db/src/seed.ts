@@ -3422,13 +3422,20 @@ Triggering event: {triggering_event}`,
 
 Load \`maskin-voice\` and \`pipeline-liveness-watchdog\` before any action. The skill is the source of truth — run Mode 1 (full sweep) exactly as it specifies. The checks below are a memory aid, not a replacement.
 
+For each of Checks 1–3, query stalled tasks directly with the server-side filter:
+\`list_objects(type='task', status='<status>', updated_before='<now minus N hours, ISO-8601 UTC>', sort='updated_at_asc')\`.
+Compute the cutoff as \`new Date(Date.now() - N * 3600 * 1000).toISOString()\`. Walk the returned rows oldest-first — the server has already filtered to only tasks that haven't been touched inside the window, so you never need to fetch-then-filter in the session. Server-side filter must appear in the tool call log line for each check.
+
 **Check 1 — Tasks stuck in \`in_progress\` > 2h with no running session.**
+Query: \`list_objects(type='task', status='in_progress', updated_before=<now - 2h>, sort='updated_at_asc')\`.
 For each: find the last session, check its status. If \`failed\` or \`timeout\`, restart. If \`completed\` but task not advanced, advance the task manually. If no session at all, create one.
 
 **Check 2 — Tasks stuck in \`in_review\` > 4h with no reviewer session.**
+Query: \`list_objects(type='task', status='in_review', updated_before=<now - 4h>, sort='updated_at_asc')\`.
 For each: spawn a Code Reviewer session. The session trigger will pick it up normally.
 
 **Check 3 — Tasks stuck in \`testing\` > 4h with no CTO session.**
+Query: \`list_objects(type='task', status='testing', updated_before=<now - 4h>, sort='updated_at_asc')\`.
 For each: spawn an Acceptance Validator session.
 
 **Check 4 — Bets in \`active\` with all tasks \`done\` but bet not advanced.**
@@ -3460,11 +3467,15 @@ Triggering event: {triggering_event}`,
 				actionPrompt: `Run your Mode 3 daily bet sweep. Three responsibilities:
 
 **STEP 1 — Unstick stalled tasks.**
-For each \`active\` bet:
-- Find tasks in \`in_progress\` > 6h with no active session: restart.
-- Find tasks in \`in_review\` > 12h: re-trigger Code Reviewer.
-- Find tasks in \`testing\` > 12h: re-trigger Acceptance Validator.
-- Find \`todo\` tasks that should have started (concurrency budget available, no blocker): move to \`in_progress\`.
+
+Query stalled tasks directly with the server-side time filter instead of enumerating every active bet. For each cutoff below, compute \`new Date(Date.now() - N * 3600 * 1000).toISOString()\` and call:
+\`list_objects(type='task', status='<status>', updated_before='<cutoff>', sort='updated_at_asc')\`.
+Walk the returned rows oldest-first. The server has already narrowed the set to tasks not touched inside the window — no client-side filter needed, and the session reaches every row in one pass instead of running out of context after a few bets.
+
+- \`in_progress\`, cutoff \`now - 6h\`, no active session → restart.
+- \`in_review\`, cutoff \`now - 12h\` → re-trigger Code Reviewer.
+- \`testing\`, cutoff \`now - 12h\` → re-trigger Acceptance Validator.
+- \`todo\` tasks that should have started (concurrency budget available): move to \`in_progress\`. (No time filter — todos always eligible.)
 
 **STEP 2 — Advance completed bets.**
 Find bets where all tasks are \`done\` or \`discarded\` but bet is still \`active\`. Post a comment @mentioning the Strategist (\`c524aac2-4373-485b-b709-bbb4eb2d021e\`) to run acceptance review.
