@@ -19,6 +19,8 @@
 	--color-muted-foreground: var(--muted-foreground);
 	--color-accent: var(--accent);
 	--color-accent-foreground: var(--accent-foreground);
+	--color-accent-hover: var(--accent-hover);
+	--color-primary-hover: var(--primary-hover);
 	--color-destructive: var(--destructive);
 	--color-destructive-foreground: var(--destructive-foreground);
 	--color-border: var(--border);
@@ -95,6 +97,22 @@
 
 :root {
 	--radius: 0.625rem;
+
+	/* Named spacing scale on a 4pt base. Surfaces apply these in T2 (read
+	   via var(--space-N)). Lives in :root rather than @theme so the
+	   integer indices 7+ don't redefine Tailwind's space-y-* / space-x-*
+	   utilities — Tailwind v4 auto-binds those to --space-N. Mode-invariant. */
+	--space-1: 0.25rem; /* 4px */
+	--space-2: 0.5rem; /* 8px */
+	--space-3: 0.75rem; /* 12px */
+	--space-4: 1rem; /* 16px */
+	--space-5: 1.25rem; /* 20px */
+	--space-6: 1.5rem; /* 24px */
+	--space-7: 2rem; /* 32px */
+	--space-8: 2.5rem; /* 40px */
+	--space-9: 3rem; /* 48px */
+	--space-10: 4rem; /* 64px */
+
 	--background: oklch(1 0 0);
 	--foreground: oklch(0.145 0.005 285.823);
 	--card: oklch(1 0 0);
@@ -109,6 +127,8 @@
 	--muted-foreground: oklch(0.556 0.005 286.286);
 	--accent: oklch(0.965 0.001 286.375);
 	--accent-foreground: oklch(0.205 0.006 285.885);
+	--accent-hover: oklch(0.93 0.002 286.375);
+	--primary-hover: oklch(0.27 0.006 285.885);
 	--destructive: oklch(0.577 0.245 27.325);
 	--destructive-foreground: oklch(0.985 0 0);
 	--border: oklch(0.922 0.004 286.32);
@@ -188,6 +208,8 @@
 	--muted-foreground: oklch(0.708 0.005 286.344);
 	--accent: oklch(0.264 0.006 286.033);
 	--accent-foreground: oklch(0.985 0 0);
+	--accent-hover: oklch(0.32 0.006 286.033);
+	--primary-hover: oklch(0.94 0 0);
 	--destructive: oklch(0.396 0.141 25.723);
 	--destructive-foreground: oklch(0.637 0.237 25.331);
 	--border: oklch(0.264 0.006 286.033);
