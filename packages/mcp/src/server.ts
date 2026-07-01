@@ -132,6 +132,12 @@ function buildListContentText(
  *  gets responses shaped like what a human sees in the widget. */
 const DEFAULT_SCOPED_PAGE_SIZE = 25
 
+/** Hard cap the `/api/objects` list + search endpoints enforce on `limit`
+ *  (`objectQuerySchema` / `searchObjectsSchema` in `@maskin/shared`). The
+ *  cursor `+ 1` sentinel below must stay strictly under this ceiling, so
+ *  the effective scoped page size is capped at `MAX - 1`. */
+const LIST_ENDPOINT_MAX_LIMIT = 100
+
 /**
  * Resolve the effective page size + cursor state for a list/search MCP
  * tool call. When response scoping is on and the caller passes neither
@@ -167,12 +173,17 @@ function resolveListPagination(
 ): ResolvedPagination {
 	const scoped = isResponseScopingEnabled()
 	const cursor = scoped ? decodeCursor(args.cursor) : null
-	const limit =
+	const requested =
 		typeof args.limit === 'number' && Number.isFinite(args.limit) && args.limit > 0
 			? args.limit
 			: scoped
 				? DEFAULT_SCOPED_PAGE_SIZE
 				: fallbackLimit
+	// Under scoping we fetch `requested + 1` to detect "has more"; the API's
+	// list endpoints reject any `limit > LIST_ENDPOINT_MAX_LIMIT`, so cap the
+	// effective page at `MAX - 1` to keep the sentinel within bounds. Flag-off
+	// pays no such price — the URL sends exactly what the caller asked for.
+	const limit = scoped ? Math.min(requested, LIST_ENDPOINT_MAX_LIMIT - 1) : requested
 	const snapshotAt = cursor?.s ?? toSnapshotAt(new Date())
 	const order = cursor?.o ?? 'desc'
 	return { limit, cursor, snapshotAt, order }

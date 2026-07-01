@@ -402,6 +402,30 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 		expect(result.content[0].text).toContain('](https://maskin.io/')
 	})
 
+	it('list_objects: flag ON keeps the fetched `limit` within the API cap even when caller passes the max', async () => {
+		// The API's list route caps `limit` at 100. Under scoping we fetch
+		// `limit + 1` for the "has more" sentinel — if the caller passes 100,
+		// that sentinel must NOT push the URL param to 101 (the API would 400).
+		process.env[RESPONSE_SCOPING_ENV_VAR] = 'true'
+		const fixture = Array.from({ length: 100 }, (_, i) => objectRow(i))
+		const stub = fetchStubFor(fixture)
+		const handler = getHandler('list_objects')
+		const result = (await handler({ limit: 100 })) as {
+			structuredContent: { objects: Array<{ id: string }>; next_cursor?: string }
+		}
+		// Effective page under scoping is clamped to `MAX - 1 = 99`.
+		expect(result.structuredContent.objects.length).toBeLessThanOrEqual(99)
+		// The URL forwarded to the API must never breach the API's own cap.
+		const objectsListCall = stub.mock.calls
+			.map(([url]) => String(url))
+			.find((u) => u.includes('/api/objects?') && !u.includes('/api/objects/search'))
+		expect(objectsListCall).toBeDefined()
+		const limitParam = new URL(objectsListCall as string, 'http://localhost').searchParams.get(
+			'limit',
+		)
+		expect(Number(limitParam)).toBeLessThanOrEqual(100)
+	})
+
 	it('flag toggle is honoured mid-process without a restart (AC-T4)', async () => {
 		const fixture = [objectRow(1), objectRow(2)]
 		fetchStubFor(fixture)
