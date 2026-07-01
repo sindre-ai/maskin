@@ -82,7 +82,7 @@ jobs:
       - run: pnpm test:integration -- --run
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
-          INTEGRATION_ENCRYPTION_KEY: ci-test-key-000000000000000000000000000000
+          INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
   verify-e2e:
     needs: lint-typecheck-build
@@ -128,7 +128,7 @@ jobs:
         run: pnpm --filter @maskin/e2e test:e2e
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
-          INTEGRATION_ENCRYPTION_KEY: ci-test-key-000000000000000000000000000000
+          INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
           ARGOS_TOKEN: ${{ secrets.ARGOS_TOKEN }}
 
       - name: Upload Playwright report
