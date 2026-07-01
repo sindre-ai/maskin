@@ -44,16 +44,19 @@ function SchemaApp() {
 	const toolResult = useToolResult()
 
 	if (!toolResult) {
-		return <div className="p-4 text-muted-foreground text-sm">Waiting for data...</div>
+		return (
+			<div className="p-[var(--space-4)] text-muted-foreground text-sm">Waiting for data...</div>
+		)
 	}
 
 	const text = toolResult.result.content?.find(
 		(c: { type: string; text?: string }) => c.type === 'text',
 	)?.text
-	if (!text) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
+	if (!text)
+		return <div className="p-[var(--space-4)] text-muted-foreground text-sm">No data received</div>
 
 	const data = safeParseJson(text)
-	if (!data) return <div className="p-4 text-sm text-foreground">{text}</div>
+	if (!data) return <div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
 
 	switch (toolResult.toolName) {
 		case 'get_workspace_schema':
@@ -76,7 +79,7 @@ function SchemaApp() {
 
 function MessageView({ message }: { message: string }) {
 	return (
-		<div className="p-4 max-w-2xl">
+		<div className="p-[var(--space-4)] max-w-2xl">
 			<pre className="text-xs whitespace-pre-wrap break-words text-foreground">{message}</pre>
 		</div>
 	)
@@ -130,8 +133,8 @@ function SchemaEditor({ schema }: { schema: WorkspaceSchema }) {
 	}
 
 	return (
-		<div className="p-4 max-w-3xl space-y-6">
-			<div className="flex items-start justify-between gap-3">
+		<div className="p-[var(--space-4)] max-w-3xl space-y-[var(--space-6)]">
+			<div className="flex items-start justify-between gap-[var(--space-3)]">
 				<div>
 					<h1 className="text-lg font-semibold text-foreground">{schema.workspace_name}</h1>
 					<p className="text-xs text-muted-foreground">
@@ -142,12 +145,12 @@ function SchemaEditor({ schema }: { schema: WorkspaceSchema }) {
 			</div>
 
 			{error && (
-				<div className="text-xs text-destructive border border-destructive/40 rounded-md p-2">
+				<div className="text-xs text-destructive border border-destructive/40 rounded-md p-[var(--space-2)]">
 					{error}
 				</div>
 			)}
 
-			<div className="space-y-6">
+			<div className="space-y-[var(--space-6)]">
 				{typeNames.map((typeName) => (
 					<TypeSection
 						key={typeName}
@@ -177,7 +180,7 @@ function TypeSection({
 
 	return (
 		<div className="border border-border rounded-lg overflow-hidden">
-			<div className="flex items-center justify-between px-4 py-2 bg-muted/40">
+			<div className="flex items-center justify-between px-[var(--space-4)] py-[var(--space-2)] bg-muted/40">
 				<div>
 					<h2 className="text-sm font-semibold text-foreground capitalize">
 						{typeSchema.display_name}
@@ -187,13 +190,13 @@ function TypeSection({
 					</p>
 				</div>
 				<Button size="sm" variant="outline" onClick={() => setAdding((v) => !v)} disabled={!!busy}>
-					<Plus className="size-3.5 mr-1" />
+					<Plus className="size-3.5 mr-[var(--space-1)]" />
 					Add field
 				</Button>
 			</div>
 
 			{adding && (
-				<div className="border-t border-border px-4 py-3 bg-bg-surface">
+				<div className="border-t border-border px-[var(--space-4)] py-[var(--space-3)] bg-bg-surface">
 					<NewFieldForm
 						typeName={typeName}
 						existingNames={typeSchema.fields.map((f) => f.name)}
@@ -214,7 +217,9 @@ function TypeSection({
 			)}
 
 			{typeSchema.fields.length === 0 ? (
-				<div className="px-4 py-6 text-center text-xs text-muted-foreground">No fields yet</div>
+				<div className="px-[var(--space-4)] py-[var(--space-6)] text-center text-xs text-muted-foreground">
+					No fields yet
+				</div>
 			) : (
 				<ul className="divide-y divide-border">
 					{typeSchema.fields.map((field) => (
@@ -244,11 +249,11 @@ function FieldRow({
 	const [newValue, setNewValue] = useState('')
 
 	return (
-		<div className="px-4 py-3 space-y-2">
-			<div className="flex items-center gap-3">
+		<div className="px-[var(--space-4)] py-[var(--space-3)] space-y-[var(--space-2)]">
+			<div className="flex items-center gap-[var(--space-3)]">
 				<span className="text-sm text-foreground flex-1 font-medium">{field.name}</span>
 				<span className="text-xs text-muted-foreground capitalize">{field.type}</span>
-				<div className="flex items-center gap-1">
+				<div className="flex items-center gap-[var(--space-1)]">
 					<Switch
 						checked={field.required ?? false}
 						onCheckedChange={(checked) =>
@@ -277,11 +282,11 @@ function FieldRow({
 				</Button>
 			</div>
 			{field.type === 'enum' && (
-				<div className="flex flex-wrap items-center gap-1 pl-1">
+				<div className="flex flex-wrap items-center gap-[var(--space-1)] pl-[var(--space-1)]">
 					{(field.values ?? []).map((value) => (
 						<span
 							key={value}
-							className="inline-flex items-center gap-1 rounded-md border border-border bg-bg-surface px-2 py-0.5 text-xs text-foreground"
+							className="inline-flex items-center gap-[var(--space-1)] rounded-md border border-border bg-bg-surface px-[var(--space-2)] py-[2px] text-xs text-foreground"
 						>
 							{value}
 							<button
@@ -302,7 +307,7 @@ function FieldRow({
 						</span>
 					))}
 					<form
-						className="inline-flex items-center gap-1"
+						className="inline-flex items-center gap-[var(--space-1)]"
 						onSubmit={async (e) => {
 							e.preventDefault()
 							const trimmed = newValue.trim()
@@ -383,12 +388,12 @@ function NewFieldForm({
 	}
 
 	return (
-		<form onSubmit={submit} className="space-y-2">
-			<div className="grid grid-cols-2 gap-2">
+		<form onSubmit={submit} className="space-y-[var(--space-2)]">
+			<div className="grid grid-cols-2 gap-[var(--space-2)]">
 				<div>
 					<label
 						htmlFor={`new-field-name-${typeName}`}
-						className="text-xs text-muted-foreground block mb-1"
+						className="text-xs text-muted-foreground block mb-[var(--space-1)]"
 					>
 						Name
 					</label>
@@ -403,7 +408,7 @@ function NewFieldForm({
 				<div>
 					<label
 						htmlFor={`new-field-type-${typeName}`}
-						className="text-xs text-muted-foreground block mb-1"
+						className="text-xs text-muted-foreground block mb-[var(--space-1)]"
 					>
 						Type
 					</label>
@@ -425,7 +430,7 @@ function NewFieldForm({
 				<div>
 					<label
 						htmlFor={`new-field-values-${typeName}`}
-						className="text-xs text-muted-foreground block mb-1"
+						className="text-xs text-muted-foreground block mb-[var(--space-1)]"
 					>
 						Values (comma-separated)
 					</label>
@@ -438,7 +443,7 @@ function NewFieldForm({
 					/>
 				</div>
 			)}
-			<div className="flex items-center gap-2">
+			<div className="flex items-center gap-[var(--space-2)]">
 				<Switch
 					checked={required}
 					onCheckedChange={setRequired}
@@ -448,7 +453,7 @@ function NewFieldForm({
 				<span className="text-xs text-muted-foreground">Required</span>
 			</div>
 			{error && <p className="text-xs text-destructive">{error}</p>}
-			<div className="flex justify-end gap-2 pt-1">
+			<div className="flex justify-end gap-[var(--space-2)] pt-[var(--space-1)]">
 				<Button type="button" variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
 					Cancel
 				</Button>
@@ -476,7 +481,7 @@ function FieldChangedView({
 		? payload
 		: null
 	return (
-		<div className="p-4 max-w-2xl space-y-2">
+		<div className="p-[var(--space-4)] max-w-2xl space-y-[var(--space-2)]">
 			<p className="text-sm text-foreground">
 				Field {verb}
 				{summary?.field?.name ? ` — ${summary.field.name}` : ''}.
@@ -500,7 +505,7 @@ function FieldDeletedView({ payload }: { payload: unknown }) {
 		? payload
 		: null
 	return (
-		<div className="p-4 max-w-2xl">
+		<div className="p-[var(--space-4)] max-w-2xl">
 			<p className="text-sm text-foreground">
 				Field {summary?.deleted ? `"${summary.deleted}" ` : ''}deleted.
 			</p>

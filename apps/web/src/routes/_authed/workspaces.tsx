@@ -30,20 +30,20 @@ function WorkspacePicker() {
 
 	return (
 		<div className="flex min-h-screen items-center justify-center">
-			<div className="w-full max-w-sm space-y-6">
+			<div className="w-full max-w-sm space-y-[var(--space-6)]">
 				<div className="text-center">
 					<h1 className="text-2xl font-semibold tracking-tight">Choose workspace</h1>
 				</div>
-				<div className="space-y-2">
+				<div className="space-y-[var(--space-2)]">
 					{workspaces?.map((ws) => (
 						<Link
 							key={ws.id}
 							to="/$workspaceId"
 							params={{ workspaceId: ws.id }}
-							className="block rounded-lg border border-border bg-card p-4 hover:bg-muted transition-all"
+							className="block rounded-lg border border-border bg-card p-[var(--space-4)] hover:bg-muted transition-all"
 						>
 							<p className="text-sm font-medium text-foreground">{ws.name}</p>
-							<p className="text-xs text-muted-foreground mt-1">Role: {ws.role}</p>
+							<p className="text-xs text-muted-foreground mt-[var(--space-1)]">Role: {ws.role}</p>
 						</Link>
 					))}
 				</div>

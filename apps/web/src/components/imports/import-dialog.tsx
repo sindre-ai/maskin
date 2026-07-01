@@ -180,7 +180,7 @@ function UploadStep({
 	return (
 		<div
 			className={cn(
-				'flex flex-col items-center justify-center gap-4 rounded-lg border-2 border-dashed p-8 transition-colors',
+				'flex flex-col items-center justify-center gap-[var(--space-4)] rounded-lg border-2 border-dashed p-[var(--space-7)] transition-colors',
 				isDragging ? 'border-accent bg-accent/5' : 'border-border',
 				isLoading && 'pointer-events-none opacity-50',
 			)}
@@ -200,7 +200,9 @@ function UploadStep({
 				<p className="text-sm font-medium">
 					{isLoading ? 'Uploading and parsing...' : 'Drag and drop a file here'}
 				</p>
-				<p className="text-xs text-muted-foreground mt-1">Supports CSV and JSON files</p>
+				<p className="text-xs text-muted-foreground mt-[var(--space-1)]">
+					Supports CSV and JSON files
+				</p>
 			</div>
 			{!isLoading && (
 				<Button variant="outline" size="sm" onClick={() => inputRef.current?.click()}>
@@ -447,9 +449,9 @@ function MappingStep({
 	if (!mapping || !preview) return null
 
 	return (
-		<div className="space-y-4">
+		<div className="space-y-[var(--space-4)]">
 			{/* Summary */}
-			<div className="flex gap-4 text-sm">
+			<div className="flex gap-[var(--space-4)] text-sm">
 				<div>
 					<span className="text-muted-foreground">Rows:</span>{' '}
 					<span className="font-medium">{preview.totalRows}</span>
@@ -462,8 +464,8 @@ function MappingStep({
 
 			{/* CSV format options */}
 			{importRecord.fileType === 'csv' && (
-				<div className="flex gap-3 items-center text-sm border rounded-lg px-3 py-2 bg-muted/30">
-					<div className="flex items-center gap-2">
+				<div className="flex gap-[var(--space-3)] items-center text-sm border rounded-lg px-[var(--space-3)] py-[var(--space-2)] bg-muted/30">
+					<div className="flex items-center gap-[var(--space-2)]">
 						<span className="text-muted-foreground text-xs">Delimiter:</span>
 						<Select
 							value={mapping.csvOptions?.delimiter ?? ','}
@@ -486,7 +488,7 @@ function MappingStep({
 							</SelectContent>
 						</Select>
 					</div>
-					<div className="flex items-center gap-2">
+					<div className="flex items-center gap-[var(--space-2)]">
 						<span className="text-muted-foreground text-xs">Encoding:</span>
 						<Select
 							value={mapping.csvOptions?.encoding ?? 'utf-8'}
@@ -513,10 +515,15 @@ function MappingStep({
 			)}
 
 			{/* Type mappings */}
-			<div className="space-y-3">
+			<div className="space-y-[var(--space-3)]">
 				<div className="flex items-center justify-between">
 					<span className="text-sm font-medium">Object Types</span>
-					<Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={handleAddType}>
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-6 px-[var(--space-2)] text-xs"
+						onClick={handleAddType}
+					>
 						<Plus size={12} />
 						Add type
 					</Button>
@@ -542,17 +549,17 @@ function MappingStep({
 
 			{/* Relationships section */}
 			<div className="border rounded-lg">
-				<div className="flex items-center justify-between w-full px-3 py-2 text-sm font-medium">
+				<div className="flex items-center justify-between w-full px-[var(--space-3)] py-[var(--space-2)] text-sm font-medium">
 					<button
 						type="button"
-						className="flex items-center gap-2 hover:text-accent transition-colors"
+						className="flex items-center gap-[var(--space-2)] hover:text-accent transition-colors"
 						onClick={() => setRelSectionOpen((prev) => !prev)}
 					>
 						{relSectionOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
 						<Link2 size={14} />
 						Relationships
 						{localRelationships.length > 0 && (
-							<span className="text-xs bg-muted px-1.5 py-0.5 rounded">
+							<span className="text-xs bg-muted px-[6px] py-[2px] rounded">
 								{localRelationships.length}
 							</span>
 						)}
@@ -560,7 +567,7 @@ function MappingStep({
 					<Button
 						variant="ghost"
 						size="sm"
-						className="h-6 px-2 text-xs"
+						className="h-6 px-[var(--space-2)] text-xs"
 						onClick={handleAddRelationship}
 					>
 						<Plus size={12} />
@@ -569,12 +576,12 @@ function MappingStep({
 				</div>
 
 				{relSectionOpen && localRelationships.length > 0 && (
-					<div className="border-t px-3 py-2 space-y-2">
+					<div className="border-t px-[var(--space-3)] py-[var(--space-2)] space-y-[var(--space-2)]">
 						{localRelationships.map((rel, idx) => (
 							<div
 								// biome-ignore lint/suspicious/noArrayIndexKey: relationships have no stable ID
 								key={idx}
-								className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 text-sm"
+								className="flex flex-col sm:flex-row items-stretch sm:items-center gap-[var(--space-2)] text-sm"
 							>
 								<Select
 									value={rel.sourceType}
@@ -633,7 +640,7 @@ function MappingStep({
 								<Button
 									variant="ghost"
 									size="sm"
-									className="h-7 w-7 p-0 shrink-0 self-end sm:self-center"
+									className="h-7 w-7 p-[0] shrink-0 self-end sm:self-center"
 									onClick={() => handleRemoveRelationship(idx)}
 								>
 									<X size={14} />
@@ -644,7 +651,7 @@ function MappingStep({
 				)}
 
 				{relSectionOpen && localRelationships.length === 0 && (
-					<div className="border-t px-3 py-4 text-center text-xs text-muted-foreground">
+					<div className="border-t px-[var(--space-3)] py-[var(--space-4)] text-center text-xs text-muted-foreground">
 						No relationships configured. Click "Add" to link objects together.
 					</div>
 				)}
@@ -653,7 +660,7 @@ function MappingStep({
 			<p
 				aria-hidden={!isUpdating}
 				className={cn(
-					'text-xs flex items-center gap-1',
+					'text-xs flex items-center gap-[var(--space-1)]',
 					isUpdating ? 'text-muted-foreground' : 'invisible',
 				)}
 			>
@@ -707,7 +714,7 @@ function TypeMappingSection({
 	return (
 		<div className="border rounded-lg overflow-x-auto">
 			{/* Type header */}
-			<div className="flex items-center gap-2 px-3 py-2 bg-muted/50">
+			<div className="flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)] bg-muted/50">
 				<Select
 					value={typeMapping.objectType}
 					onValueChange={(v) => onTypeChange(typeMappingIndex, v)}
@@ -729,7 +736,7 @@ function TypeMappingSection({
 					<Button
 						variant="ghost"
 						size="sm"
-						className="h-7 w-7 p-0 shrink-0 ml-auto"
+						className="h-7 w-7 p-[0] shrink-0 ml-auto"
 						onClick={() => onRemove(typeMappingIndex)}
 					>
 						<X size={14} />
@@ -741,9 +748,15 @@ function TypeMappingSection({
 			<table className="w-full text-sm min-w-[400px]">
 				<thead>
 					<tr className="bg-muted/30">
-						<th className="text-left px-3 py-2 font-medium">Source Column</th>
-						<th className="text-left px-3 py-2 font-medium">Maps To</th>
-						<th className="text-left px-3 py-2 font-medium">Sample</th>
+						<th className="text-left px-[var(--space-3)] py-[var(--space-2)] font-medium">
+							Source Column
+						</th>
+						<th className="text-left px-[var(--space-3)] py-[var(--space-2)] font-medium">
+							Maps To
+						</th>
+						<th className="text-left px-[var(--space-3)] py-[var(--space-2)] font-medium">
+							Sample
+						</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -751,8 +764,10 @@ function TypeMappingSection({
 						const sampleValue = sampleRows[0]?.[col.sourceColumn] ?? ''
 						return (
 							<tr key={col.sourceColumn} className="border-t">
-								<td className="px-3 py-2 font-mono text-xs">{col.sourceColumn}</td>
-								<td className="px-3 py-2">
+								<td className="px-[var(--space-3)] py-[var(--space-2)] font-mono text-xs">
+									{col.sourceColumn}
+								</td>
+								<td className="px-[var(--space-3)] py-[var(--space-2)]">
 									<Select
 										value={col.skip ? '__skip__' : col.targetField}
 										onValueChange={(v) => onTargetChange(typeMappingIndex, col.sourceColumn, v)}
@@ -769,7 +784,7 @@ function TypeMappingSection({
 										</SelectContent>
 									</Select>
 								</td>
-								<td className="px-3 py-2 text-xs text-muted-foreground truncate max-w-[150px]">
+								<td className="px-[var(--space-3)] py-[var(--space-2)] text-xs text-muted-foreground truncate max-w-[150px]">
 									{sampleValue}
 								</td>
 							</tr>

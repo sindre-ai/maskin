@@ -549,7 +549,10 @@ export function BoardView({
 		>
 			<div
 				data-testid="board-view"
-				className={cn('flex gap-3 overflow-x-auto pb-2', activeObject && 'cursor-grabbing')}
+				className={cn(
+					'flex gap-[var(--space-3)] overflow-x-auto pb-[var(--space-2)]',
+					activeObject && 'cursor-grabbing',
+				)}
 			>
 				{columns.map((column) => (
 					<BoardColumn
@@ -677,12 +680,12 @@ function BoardColumn({
 			ref={setNodeRef}
 			data-testid={`board-column-${status}`}
 			className={cn(
-				'relative flex min-h-[28rem] shrink-0 flex-col gap-2 rounded-md transition-colors',
+				'relative flex min-h-[28rem] shrink-0 flex-col gap-[var(--space-2)] rounded-md transition-colors',
 				'w-full sm:w-72 md:w-72 lg:w-80',
 				isValidTarget && 'bg-accent/5',
 			)}
 		>
-			<div className="flex items-center justify-between px-1">
+			<div className="flex items-center justify-between px-[var(--space-1)]">
 				<StatusBadge status={label} />
 				<span className="text-xs text-muted-foreground tabular-nums">
 					{objects.length}
@@ -692,14 +695,14 @@ function BoardColumn({
 
 			<div
 				className={cn(
-					'relative flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto rounded-md pr-1 transition-colors',
+					'relative flex min-h-24 flex-1 flex-col gap-[var(--space-2)] overflow-y-auto rounded-md pr-[var(--space-1)] transition-colors',
 					'max-h-[calc(100dvh-15rem)]',
 					isValidTarget &&
 						'border border-dashed border-border/70 bg-accent/10 ring-1 ring-accent/15',
 				)}
 			>
 				{isLoading ? (
-					<div className="flex flex-col gap-2">
+					<div className="flex flex-col gap-[var(--space-2)]">
 						{Array.from({ length: SKELETON_CARDS_PER_COLUMN }).map((_, i) => (
 							<CardSkeleton
 								// biome-ignore lint/suspicious/noArrayIndexKey: static skeleton rows never reorder
@@ -711,7 +714,7 @@ function BoardColumn({
 					previewCard ? (
 						previewCard
 					) : isValidTarget ? (
-						<div className="pointer-events-none min-h-14 rounded-md border border-dashed border-border/70 bg-accent/20 px-3 py-3 text-xs text-muted-foreground">
+						<div className="pointer-events-none min-h-14 rounded-md border border-dashed border-border/70 bg-accent/20 px-[var(--space-3)] py-[var(--space-3)] text-xs text-muted-foreground">
 							Drop here to move to {humanizeStatus(status)}.
 						</div>
 					) : (
@@ -722,7 +725,7 @@ function BoardColumn({
 						items={orderedObjects.map((obj) => obj.id)}
 						strategy={verticalListSortingStrategy}
 					>
-						<div className="flex flex-col gap-2">
+						<div className="flex flex-col gap-[var(--space-2)]">
 							{orderedObjects.map((obj, index) => (
 								<div key={obj.id} className="contents">
 									{previewIndex === index && previewCard}
@@ -746,7 +749,7 @@ function BoardColumn({
 					</SortableContext>
 				)}
 				{isValidTarget && orderedObjects.length > 0 && previewIndex === null && (
-					<div className="pointer-events-none min-h-14 rounded-md border border-dashed border-border/70 bg-accent/20 px-3 py-3 text-xs text-muted-foreground">
+					<div className="pointer-events-none min-h-14 rounded-md border border-dashed border-border/70 bg-accent/20 px-[var(--space-3)] py-[var(--space-3)] text-xs text-muted-foreground">
 						Drop here to move to {humanizeStatus(status)}.
 					</div>
 				)}
@@ -806,7 +809,10 @@ function ColumnLoadMore({
 	if (!hasMore) return null
 
 	return (
-		<div ref={sentinelRef} className="py-2 text-center text-xs text-muted-foreground">
+		<div
+			ref={sentinelRef}
+			className="py-[var(--space-2)] text-center text-xs text-muted-foreground"
+		>
 			{isFetching ? 'Loading more...' : 'Scroll for more'}
 		</div>
 	)
@@ -981,9 +987,9 @@ function CardSkeleton() {
 
 function ColumnEmpty({ status }: { status: string }) {
 	return (
-		<div className="rounded-md border border-dashed border-border/70 bg-muted/20 px-3 py-4 text-xs text-muted-foreground">
+		<div className="rounded-md border border-dashed border-border/70 bg-muted/20 px-[var(--space-3)] py-[var(--space-4)] text-xs text-muted-foreground">
 			<p>Nothing here yet.</p>
-			<p className="mt-1">Drag a card to {humanizeStatus(status)}.</p>
+			<p className="mt-[var(--space-1)]">Drag a card to {humanizeStatus(status)}.</p>
 		</div>
 	)
 }

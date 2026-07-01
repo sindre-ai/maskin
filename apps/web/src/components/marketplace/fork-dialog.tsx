@@ -45,7 +45,7 @@ export function ForkDialog({
 					<DialogDescription>{body}</DialogDescription>
 				</DialogHeader>
 				<p className="text-sm text-muted-foreground">Forking can't be undone.</p>
-				<DialogFooter className="gap-2">
+				<DialogFooter className="gap-[var(--space-2)]">
 					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isForking}>
 						Cancel
 					</Button>

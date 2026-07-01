@@ -47,7 +47,7 @@ export function SortableHeader({
 		<button
 			type="button"
 			className={cn(
-				'flex items-center gap-1 hover:text-foreground transition-colors -ml-2 px-2 py-1 rounded',
+				'flex items-center gap-[var(--space-1)] hover:text-foreground transition-colors -ml-[var(--space-2)] px-[var(--space-2)] py-[var(--space-1)] rounded',
 				isActive ? 'text-foreground' : 'text-muted-foreground',
 			)}
 			onClick={() => onSort?.(columnId)}
@@ -113,7 +113,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			accessorKey: 'title',
 			header: sortableHeader('Title', 'title'),
 			cell: ({ row }) => (
-				<div className="flex items-center gap-2">
+				<div className="flex items-center gap-[var(--space-2)]">
 					<Link
 						to="/$workspaceId/objects/$objectId"
 						params={{ workspaceId, objectId: row.original.id }}

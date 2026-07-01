@@ -27,14 +27,14 @@ export function AgentCard({
 			to="/$workspaceId/agents/$agentId"
 			params={{ workspaceId, agentId: agent.id }}
 			className={cn(
-				'block rounded-lg border bg-card p-4 shadow-md transition-colors hover:border-border-hover',
+				'block rounded-lg border bg-card p-[var(--space-4)] shadow-md transition-colors hover:border-border-hover',
 				status === 'working' && 'border-accent bg-accent/5',
 				status === 'failed' && 'border-error',
 				status === 'idle' && 'border-border',
 			)}
 		>
-			<div className="flex items-center justify-between gap-2 mb-1">
-				<div className="flex items-center gap-2 min-w-0">
+			<div className="flex items-center justify-between gap-[var(--space-2)] mb-[var(--space-1)]">
+				<div className="flex items-center gap-[var(--space-2)] min-w-0">
 					<ActorAvatar name={agent.name} type="agent" size="md" />
 					<span className="text-sm font-medium text-foreground truncate min-w-0">{agent.name}</span>
 					<StatusIndicator status={status} />
@@ -43,10 +43,12 @@ export function AgentCard({
 			</div>
 
 			{description && (
-				<p className="text-xs text-muted-foreground mb-3 ml-9 line-clamp-1">{description}</p>
+				<p className="text-xs text-muted-foreground mb-[var(--space-3)] ml-[36px] line-clamp-1">
+					{description}
+				</p>
 			)}
 
-			<div className="ml-9">
+			<div className="ml-[36px]">
 				<ActivityLine status={status} session={latestSession} />
 			</div>
 		</Link>

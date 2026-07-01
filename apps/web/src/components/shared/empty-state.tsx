@@ -12,10 +12,17 @@ export function EmptyState({
 	className?: string
 }) {
 	return (
-		<div className={cn('flex flex-col items-center justify-center py-16 text-center', className)}>
+		<div
+			className={cn(
+				'flex flex-col items-center justify-center py-[var(--space-10)] text-center',
+				className,
+			)}
+		>
 			<p className="text-sm font-medium text-muted-foreground">{title}</p>
-			{description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}
-			{action && <div className="mt-4">{action}</div>}
+			{description && (
+				<p className="mt-[var(--space-1)] text-xs text-muted-foreground">{description}</p>
+			)}
+			{action && <div className="mt-[var(--space-4)]">{action}</div>}
 		</div>
 	)
 }

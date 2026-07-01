@@ -43,7 +43,7 @@ function TriggerDetailPage() {
 
 	if (isLoading && !isCreated) {
 		return (
-			<div className="max-w-3xl mx-auto space-y-4">
+			<div className="max-w-3xl mx-auto space-y-[var(--space-4)]">
 				<Skeleton className="h-8 w-64" />
 				<Skeleton className="h-4 w-full max-w-96" />
 				<Skeleton className="h-32 w-full" />

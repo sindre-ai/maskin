@@ -168,7 +168,7 @@ export function DataTable({
 
 	if (isLoading) {
 		return (
-			<div className="flex items-center justify-center py-12">
+			<div className="flex items-center justify-center py-[var(--space-9)]">
 				<Spinner />
 			</div>
 		)
@@ -195,7 +195,7 @@ export function DataTable({
 				) : (
 					<ul
 						aria-label="Objects"
-						className="m-0 list-none p-0"
+						className="m-[0] list-none p-[0]"
 						style={{ height: totalSize, position: 'relative' }}
 					>
 						{virtualItems.map((virtualItem) => {
@@ -219,7 +219,7 @@ export function DataTable({
 										<button
 											type="button"
 											onClick={() => row.toggleExpanded()}
-											className="flex w-full items-center gap-2 border-b border-border bg-muted/30 px-4 py-2 text-left hover:bg-muted/50"
+											className="flex w-full items-center gap-[var(--space-2)] border-b border-border bg-muted/30 px-[var(--space-4)] py-[var(--space-2)] text-left hover:bg-muted/50"
 										>
 											<ChevronRight
 												size={14}
@@ -255,7 +255,7 @@ export function DataTable({
 				)}
 				<div ref={sentinelRef} className="h-1" />
 				{isFetchingNextPage && (
-					<div className="flex items-center justify-center py-4">
+					<div className="flex items-center justify-center py-[var(--space-4)]">
 						<Spinner />
 					</div>
 				)}
@@ -318,7 +318,7 @@ export function DataTable({
 											onClick={() => row.toggleExpanded()}
 										>
 											<TableCell colSpan={columns.length}>
-												<div className="flex items-center gap-2">
+												<div className="flex items-center gap-[var(--space-2)]">
 													<ChevronRight
 														size={14}
 														className={cn(
@@ -370,7 +370,7 @@ export function DataTable({
 			{/* Infinite scroll sentinel */}
 			<div ref={sentinelRef} className="h-1" />
 			{isFetchingNextPage && (
-				<div className="flex items-center justify-center py-4">
+				<div className="flex items-center justify-center py-[var(--space-4)]">
 					<Spinner />
 				</div>
 			)}

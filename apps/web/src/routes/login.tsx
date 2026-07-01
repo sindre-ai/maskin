@@ -38,15 +38,17 @@ function LoginPage() {
 
 	return (
 		<div className="flex min-h-screen items-center justify-center">
-			<div className="w-full max-w-sm space-y-6">
+			<div className="w-full max-w-sm space-y-[var(--space-6)]">
 				<div className="text-center">
 					<h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
-					<p className="mt-1 text-sm text-muted-foreground">Sign in with your email and password</p>
+					<p className="mt-[var(--space-1)] text-sm text-muted-foreground">
+						Sign in with your email and password
+					</p>
 				</div>
 
-				<form onSubmit={handleSubmit} className="space-y-4">
+				<form onSubmit={handleSubmit} className="space-y-[var(--space-4)]">
 					<div>
-						<Label className="mb-1 text-muted-foreground">Email</Label>
+						<Label className="mb-[var(--space-1)] text-muted-foreground">Email</Label>
 						<Input
 							type="email"
 							value={email}
@@ -60,7 +62,7 @@ function LoginPage() {
 					</div>
 
 					<div>
-						<Label className="mb-1 text-muted-foreground">Password</Label>
+						<Label className="mb-[var(--space-1)] text-muted-foreground">Password</Label>
 						<Input
 							type="password"
 							value={password}

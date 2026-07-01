@@ -13,16 +13,19 @@ function ActorsApp() {
 	const toolResult = useToolResult()
 
 	if (!toolResult) {
-		return <div className="p-4 text-muted-foreground text-sm">Waiting for data...</div>
+		return (
+			<div className="p-[var(--space-4)] text-muted-foreground text-sm">Waiting for data...</div>
+		)
 	}
 
 	const text = toolResult.result.content?.find(
 		(c: { type: string; text?: string }) => c.type === 'text',
 	)?.text
-	if (!text) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
+	if (!text)
+		return <div className="p-[var(--space-4)] text-muted-foreground text-sm">No data received</div>
 
 	const data = safeParseJson(text)
-	if (!data) return <div className="p-4 text-sm text-foreground">{text}</div>
+	if (!data) return <div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
 	const unwrapped = unwrapEnvelope(data)
 
 	switch (toolResult.toolName) {
@@ -30,20 +33,20 @@ function ActorsApp() {
 			return isArray(unwrapped) ? (
 				<ActorListView actors={unwrapped as ActorResponse[]} />
 			) : (
-				<div className="p-4 text-sm text-foreground">{text}</div>
+				<div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
 			)
 		case 'create_actor':
 			return isObject<ActorWithKey>(data, 'id', 'name') ? (
 				<ActorCreatedView actor={data} />
 			) : (
-				<div className="p-4 text-sm text-foreground">{text}</div>
+				<div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
 			)
 		case 'get_actor':
 		case 'update_actor':
 			return isObject<ActorResponse>(data, 'id', 'name') ? (
 				<ActorDetailView actor={data} />
 			) : (
-				<div className="p-4 text-sm text-foreground">{text}</div>
+				<div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
 			)
 		case 'regenerate_api_key': {
 			const apiKey = isObject<{ api_key?: string }>(data) ? (data.api_key ?? '') : ''
@@ -53,7 +56,7 @@ function ActorsApp() {
 			return isObject<ActorResponse>(data, 'id', 'name') ? (
 				<ActorDetailView actor={data} />
 			) : (
-				<div className="p-4 text-sm text-foreground">{text}</div>
+				<div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
 			)
 	}
 }
@@ -84,9 +87,9 @@ function ActorListView({ actors }: { actors: ActorResponse[] }) {
 	}
 
 	return (
-		<div className="p-4 space-y-4">
+		<div className="p-[var(--space-4)] space-y-[var(--space-4)]">
 			{agents.length > 0 && (
-				<div className="space-y-2">
+				<div className="space-y-[var(--space-2)]">
 					{agents.map((agent) => (
 						<ActorAgentRow
 							key={agent.id}
@@ -98,7 +101,7 @@ function ActorListView({ actors }: { actors: ActorResponse[] }) {
 				</div>
 			)}
 			{humans.length > 0 && (
-				<div className="space-y-1">
+				<div className="space-y-[var(--space-1)]">
 					{humans.map((actor) => (
 						<ActorHumanRow key={actor.id} actor={actor} />
 					))}
@@ -121,8 +124,8 @@ function ActorAgentRow({
 	const description = agent.description?.trim()
 	const content = (
 		<>
-			<div className="flex items-center justify-between gap-2 mb-1">
-				<div className="flex items-center gap-2 min-w-0">
+			<div className="flex items-center justify-between gap-[var(--space-2)] mb-[var(--space-1)]">
+				<div className="flex items-center gap-[var(--space-2)] min-w-0">
 					<ActorAvatar name={agent.name} type="agent" size="md" />
 					<span className="text-sm font-medium text-foreground truncate min-w-0">{agent.name}</span>
 					<span
@@ -138,9 +141,11 @@ function ActorAgentRow({
 				<span className="text-xs font-medium text-muted-foreground">{status}</span>
 			</div>
 			{description && (
-				<p className="text-xs text-muted-foreground mb-3 ml-9 line-clamp-1">{description}</p>
+				<p className="text-xs text-muted-foreground mb-[var(--space-3)] ml-[36px] line-clamp-1">
+					{description}
+				</p>
 			)}
-			<p className="text-xs text-muted-foreground truncate ml-9">
+			<p className="text-xs text-muted-foreground truncate ml-[36px]">
 				{latestSession?.actionPrompt ?? 'No activity yet'}
 				{latestSession?.completedAt && (
 					<>
@@ -152,14 +157,18 @@ function ActorAgentRow({
 		</>
 	)
 	if (!href) {
-		return <div className="rounded-lg border border-border bg-card p-4 shadow-md">{content}</div>
+		return (
+			<div className="rounded-lg border border-border bg-card p-[var(--space-4)] shadow-md">
+				{content}
+			</div>
+		)
 	}
 	return (
 		<a
 			href={href}
 			target="_blank"
 			rel="noreferrer"
-			className="block rounded-lg border border-border bg-card p-4 shadow-md transition-colors hover:border-border-hover no-underline"
+			className="block rounded-lg border border-border bg-card p-[var(--space-4)] shadow-md transition-colors hover:border-border-hover no-underline"
 		>
 			{content}
 		</a>
@@ -173,20 +182,26 @@ function ActorHumanRow({ actor }: { actor: ActorResponse }) {
 			<ActorAvatar name={actor.name} type={actor.type} size="sm" />
 			<div className="flex-1 min-w-0">
 				<span className="text-sm text-foreground">{actor.name}</span>
-				{actor.email && <span className="text-xs text-muted-foreground ml-2">{actor.email}</span>}
+				{actor.email && (
+					<span className="text-xs text-muted-foreground ml-[var(--space-2)]">{actor.email}</span>
+				)}
 			</div>
 			<span className="text-xs text-muted-foreground capitalize">{actor.type}</span>
 		</>
 	)
 	if (!href) {
-		return <div className="flex items-center gap-3 px-3 py-2 rounded-lg">{content}</div>
+		return (
+			<div className="flex items-center gap-[var(--space-3)] px-[var(--space-3)] py-[var(--space-2)] rounded-lg">
+				{content}
+			</div>
+		)
 	}
 	return (
 		<a
 			href={href}
 			target="_blank"
 			rel="noreferrer"
-			className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
+			className="flex items-center gap-[var(--space-3)] px-[var(--space-3)] py-[var(--space-2)] rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
 		>
 			{content}
 		</a>
@@ -195,9 +210,9 @@ function ActorHumanRow({ actor }: { actor: ActorResponse }) {
 
 function ActorDetailView({ actor }: { actor: ActorResponse }) {
 	return (
-		<div className="p-4 max-w-2xl">
-			<div className="flex items-start justify-between gap-3 mb-4">
-				<div className="flex items-center gap-3">
+		<div className="p-[var(--space-4)] max-w-2xl">
+			<div className="flex items-start justify-between gap-[var(--space-3)] mb-[var(--space-4)]">
+				<div className="flex items-center gap-[var(--space-3)]">
 					<ActorAvatar name={actor.name} type={actor.type} />
 					<div>
 						<h1 className="text-lg font-semibold text-foreground">{actor.name}</h1>
@@ -207,20 +222,20 @@ function ActorDetailView({ actor }: { actor: ActorResponse }) {
 				<WebAppLink target={{ kind: 'actor', id: actor.id }} />
 			</div>
 			{actor.email && (
-				<div className="text-sm text-muted-foreground mb-2">
+				<div className="text-sm text-muted-foreground mb-[var(--space-2)]">
 					<span className="text-muted-foreground">Email:</span> {actor.email}
 				</div>
 			)}
 			{actor.system_prompt && (
-				<div className="border-t border-border pt-3 mt-3">
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
+				<div className="border-t border-border pt-[var(--space-3)] mt-[var(--space-3)]">
+					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-[var(--space-2)]">
 						Instructions
 					</h3>
 					<p className="text-sm text-muted-foreground whitespace-pre-wrap">{actor.system_prompt}</p>
 				</div>
 			)}
 			{actor.llm_provider && (
-				<div className="text-sm text-muted-foreground mt-2">
+				<div className="text-sm text-muted-foreground mt-[var(--space-2)]">
 					<span className="text-muted-foreground">LLM:</span> {actor.llm_provider}
 					{actor.llm_config?.model ? ` / ${String(actor.llm_config.model)}` : null}
 				</div>
@@ -231,18 +246,20 @@ function ActorDetailView({ actor }: { actor: ActorResponse }) {
 
 function ActorCreatedView({ actor }: { actor: ActorWithKey }) {
 	return (
-		<div className="p-4 max-w-2xl">
-			<h2 className="text-lg font-semibold text-foreground mb-2">Actor Created</h2>
-			<div className="flex items-center gap-3 mb-4">
+		<div className="p-[var(--space-4)] max-w-2xl">
+			<h2 className="text-lg font-semibold text-foreground mb-[var(--space-2)]">Actor Created</h2>
+			<div className="flex items-center gap-[var(--space-3)] mb-[var(--space-4)]">
 				<ActorAvatar name={actor.name} type={actor.type} />
 				<div>
 					<span className="text-sm text-foreground">{actor.name}</span>
-					<span className="text-xs text-muted-foreground capitalize ml-2">{actor.type}</span>
+					<span className="text-xs text-muted-foreground capitalize ml-[var(--space-2)]">
+						{actor.type}
+					</span>
 				</div>
 			</div>
 			{actor.api_key && (
-				<div className="rounded border border-border bg-card p-3">
-					<p className="text-xs text-muted-foreground mb-1">
+				<div className="rounded border border-border bg-card p-[var(--space-3)]">
+					<p className="text-xs text-muted-foreground mb-[var(--space-1)]">
 						API Key (save this — it cannot be retrieved later):
 					</p>
 					<code className="text-xs font-mono text-foreground break-all">{actor.api_key}</code>
@@ -254,11 +271,13 @@ function ActorCreatedView({ actor }: { actor: ActorWithKey }) {
 
 function RegeneratedApiKeyView({ apiKey }: { apiKey: string }) {
 	return (
-		<div className="p-4 max-w-2xl">
-			<h2 className="text-lg font-semibold text-foreground mb-2">API Key Regenerated</h2>
+		<div className="p-[var(--space-4)] max-w-2xl">
+			<h2 className="text-lg font-semibold text-foreground mb-[var(--space-2)]">
+				API Key Regenerated
+			</h2>
 			{apiKey ? (
-				<div className="rounded border border-border bg-card p-3">
-					<p className="text-xs text-muted-foreground mb-1">
+				<div className="rounded border border-border bg-card p-[var(--space-3)]">
+					<p className="text-xs text-muted-foreground mb-[var(--space-1)]">
 						New API Key (save this — it cannot be retrieved later):
 					</p>
 					<code className="text-xs font-mono text-foreground break-all">{apiKey}</code>

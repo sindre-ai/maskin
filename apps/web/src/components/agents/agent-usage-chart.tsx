@@ -101,8 +101,8 @@ export function AgentUsageChart({
 	const totals = data?.totals
 
 	return (
-		<div className="mb-6">
-			<div className="flex items-center justify-between mb-3">
+		<div className="mb-[var(--space-6)]">
+			<div className="flex items-center justify-between mb-[var(--space-3)]">
 				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
 					Usage
 				</h3>
@@ -114,7 +114,7 @@ export function AgentUsageChart({
 				</Tabs>
 			</div>
 
-			<div className="flex flex-wrap items-center gap-2 mb-4">
+			<div className="flex flex-wrap items-center gap-[var(--space-2)] mb-[var(--space-4)]">
 				{PRESETS.filter((p) => p.id !== 'custom').map((p) => (
 					<Button
 						key={p.id}
@@ -135,7 +135,7 @@ export function AgentUsageChart({
 				/>
 			</div>
 
-			<div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+			<div className="grid grid-cols-1 sm:grid-cols-3 gap-[var(--space-4)] mb-[var(--space-4)]">
 				<Stat
 					label="Total cost"
 					value={totals ? currency.format(totals.total_cost_usd) : '—'}
@@ -236,12 +236,12 @@ export function AgentUsageChart({
 
 function Stat({ label, value, loading }: { label: string; value: string; loading: boolean }) {
 	return (
-		<div className="rounded-md border bg-card p-3">
+		<div className="rounded-md border bg-card p-[var(--space-3)]">
 			<div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
 			{loading ? (
-				<Skeleton className="h-5 w-16 mt-1" />
+				<Skeleton className="h-5 w-16 mt-[var(--space-1)]" />
 			) : (
-				<div className="text-lg font-medium tabular-nums mt-0.5">{value}</div>
+				<div className="text-lg font-medium tabular-nums mt-[2px]">{value}</div>
 			)}
 		</div>
 	)

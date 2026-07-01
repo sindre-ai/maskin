@@ -159,14 +159,14 @@ export function AuxiliaryActionMenu({
 		return (
 			<Sheet open={open} onOpenChange={handleOpenChange}>
 				<SheetTrigger asChild>{trigger}</SheetTrigger>
-				<SheetContent side="bottom" className="rounded-t-xl px-0 pb-6">
-					<SheetHeader className="px-4">
+				<SheetContent side="bottom" className="rounded-t-xl px-[0] pb-[var(--space-6)]">
+					<SheetHeader className="px-[var(--space-4)]">
 						<SheetTitle>Actions</SheetTitle>
 					</SheetHeader>
-					<div className="mt-2 flex flex-col">
+					<div className="mt-[var(--space-2)] flex flex-col">
 						{visibleItems.map((item) => (
 							<Fragment key={item.id}>
-								{item.separatorBefore && <Separator className="my-1" />}
+								{item.separatorBefore && <Separator className="my-[var(--space-1)]" />}
 								<SheetMenuItemImpl item={item} closeSheet={() => onOpenChange?.(false)} />
 							</Fragment>
 						))}
@@ -234,7 +234,7 @@ function SheetMenuItemImpl({
 				closeSheet()
 			}}
 			className={cn(
-				'h-[44px] justify-start gap-3 rounded-none px-4 font-normal',
+				'h-[44px] justify-start gap-[var(--space-3)] rounded-none px-[var(--space-4)] font-normal',
 				item.variant === 'destructive' && 'text-error hover:text-error',
 			)}
 		>

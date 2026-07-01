@@ -33,7 +33,7 @@ export function ObjectCard({
 			data-state={isSelected ? 'selected' : undefined}
 			onClick={onClick}
 			className={cn(
-				'flex w-full items-start gap-3 border-b border-border bg-card px-4 py-3',
+				'flex w-full items-start gap-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-3)]',
 				'cursor-pointer transition-colors hover:bg-accent/30',
 				'data-[state=selected]:bg-accent/50',
 			)}
@@ -43,11 +43,11 @@ export function ObjectCard({
 				onCheckedChange={(value) => onSelect(!!value)}
 				onClick={(e) => e.stopPropagation()}
 				aria-label="Select row"
-				className="mt-0.5 shrink-0"
+				className="mt-[2px] shrink-0"
 			/>
-			<div className="flex min-w-0 flex-1 flex-col gap-1.5">
-				<div className="flex min-w-0 items-start justify-between gap-2">
-					<div className="flex min-w-0 items-center gap-2">
+			<div className="flex min-w-0 flex-1 flex-col gap-[6px]">
+				<div className="flex min-w-0 items-start justify-between gap-[var(--space-2)]">
+					<div className="flex min-w-0 items-center gap-[var(--space-2)]">
 						<Link
 							to="/$workspaceId/objects/$objectId"
 							params={{ workspaceId, objectId: object.id }}
@@ -62,7 +62,7 @@ export function ObjectCard({
 					</div>
 					<StatusBadge status={object.status} className="shrink-0" />
 				</div>
-				<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+				<div className="flex min-w-0 flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)] text-xs text-muted-foreground">
 					<TypeBadge type={object.type} />
 					{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
 					{owner && <span className="truncate">{owner.name}</span>}

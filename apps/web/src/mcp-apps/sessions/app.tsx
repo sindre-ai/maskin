@@ -142,7 +142,7 @@ function SessionActions({
 						onClick={handle(onClick)}
 						title={label}
 					>
-						<Icon className={cn('size-4', variant === 'labeled' && 'mr-1')} />
+						<Icon className={cn('size-4', variant === 'labeled' && 'mr-[var(--space-1)]')} />
 						{variant === 'labeled' && label}
 					</Button>
 				))}
@@ -154,23 +154,26 @@ function SessionsApp() {
 	const toolResult = useToolResult()
 
 	if (!toolResult) {
-		return <div className="p-4 text-muted-foreground text-sm">Waiting for data...</div>
+		return (
+			<div className="p-[var(--space-4)] text-muted-foreground text-sm">Waiting for data...</div>
+		)
 	}
 
 	const text = toolResult.result.content?.find(
 		(c: { type: string; text?: string }) => c.type === 'text',
 	)?.text
-	if (!text) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
+	if (!text)
+		return <div className="p-[var(--space-4)] text-muted-foreground text-sm">No data received</div>
 
 	const data = safeParseJson(text)
-	if (!data) return <div className="p-4 text-sm text-foreground">{text}</div>
+	if (!data) return <div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
 
 	if (toolResult.toolName === 'list_sessions') {
 		const unwrapped = unwrapEnvelope(data)
 		return isArray(unwrapped) ? (
 			<SessionListView sessions={unwrapped as EnrichedSession[]} />
 		) : (
-			<div className="p-4 text-sm text-foreground">{text}</div>
+			<div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
 		)
 	}
 
@@ -178,7 +181,7 @@ function SessionsApp() {
 	// run_agent — all return either { session, logs? } or a raw session.
 	const parsed = parseSessionFromResult(toolResult.result)
 	if (parsed) return <SessionDetailView session={parsed.session} logs={parsed.logs} />
-	return <div className="p-4 text-sm text-foreground">{text}</div>
+	return <div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
 }
 
 function SessionListView({ sessions }: { sessions: EnrichedSession[] }) {
@@ -250,8 +253,8 @@ function SessionListView({ sessions }: { sessions: EnrichedSession[] }) {
 	}
 
 	return (
-		<div className="p-4 space-y-2">
-			<div className="flex justify-end mb-2">
+		<div className="p-[var(--space-4)] space-y-[var(--space-2)]">
+			<div className="flex justify-end mb-[var(--space-2)]">
 				<WebAppLink target={{ kind: 'activity' }} label="Open activity in Maskin" />
 			</div>
 			{local.map((session) => (
@@ -285,13 +288,13 @@ function SessionRow({
 	onStop: () => void
 }) {
 	return (
-		<div className="rounded-lg border border-border bg-bg-surface p-3 flex items-start gap-3 hover:border-border-hover hover:bg-bg-hover transition-colors">
+		<div className="rounded-lg border border-border bg-bg-surface p-[var(--space-3)] flex items-start gap-[var(--space-3)] hover:border-border-hover hover:bg-bg-hover transition-colors">
 			<button
 				type="button"
 				onClick={onSelect}
 				className="flex-1 min-w-0 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"
 			>
-				<div className="flex items-center gap-2 flex-wrap">
+				<div className="flex items-center gap-[var(--space-2)] flex-wrap">
 					<StatusBadge status={session.status} />
 					<span className="font-mono text-xs text-muted-foreground truncate">{session.id}</span>
 					{session.createdAt && (
@@ -301,10 +304,12 @@ function SessionRow({
 					)}
 				</div>
 				{session.actionPrompt && (
-					<p className="text-sm text-foreground mt-1 line-clamp-2">{session.actionPrompt}</p>
+					<p className="text-sm text-foreground mt-[var(--space-1)] line-clamp-2">
+						{session.actionPrompt}
+					</p>
 				)}
 			</button>
-			<div className="flex items-center gap-1 shrink-0">
+			<div className="flex items-center gap-[var(--space-1)] shrink-0">
 				<Badge variant="outline" className="font-medium">
 					{actorDisplay(session)}
 				</Badge>
@@ -382,9 +387,9 @@ function SessionDetailView({
 	}, [logs, logFilter])
 
 	return (
-		<div className="p-4 max-w-3xl space-y-4">
-			<div className="flex items-center justify-between gap-2">
-				<div className="flex items-center gap-2 min-w-0">
+		<div className="p-[var(--space-4)] max-w-3xl space-y-[var(--space-4)]">
+			<div className="flex items-center justify-between gap-[var(--space-2)]">
+				<div className="flex items-center gap-[var(--space-2)] min-w-0">
 					{onBack && (
 						<Button size="sm" variant="ghost" onClick={onBack} title="Back to list">
 							<ArrowLeft className="size-4" />
@@ -400,13 +405,13 @@ function SessionDetailView({
 				/>
 			</div>
 
-			<div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm">
-				<div className="flex items-center gap-1.5">
+			<div className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[6px] text-sm">
+				<div className="flex items-center gap-[6px]">
 					<StatusBadge status={current.status} />
 					{isRunning && <Spinner className="size-3 text-accent" />}
 				</div>
 				{duration && (
-					<span className="text-muted-foreground flex items-center gap-1">
+					<span className="text-muted-foreground flex items-center gap-[var(--space-1)]">
 						<Clock size={13} />
 						{duration}
 					</span>
@@ -420,14 +425,14 @@ function SessionDetailView({
 			</div>
 
 			{(errorMessage || (exitCode !== undefined && exitCode !== 0)) && (
-				<div className="rounded-md bg-error/10 border border-error/20 px-3 py-2">
+				<div className="rounded-md bg-error/10 border border-error/20 px-[var(--space-3)] py-[var(--space-2)]">
 					<p className="text-sm text-error font-medium">
 						{errorMessage ?? `Process exited with code ${exitCode}`}
 					</p>
 				</div>
 			)}
 
-			<div className="flex items-center gap-2">
+			<div className="flex items-center gap-[var(--space-2)]">
 				<SessionActions
 					session={current}
 					busy={busy}
@@ -439,13 +444,13 @@ function SessionDetailView({
 			</div>
 
 			<div>
-				<div className="flex items-center justify-between mb-2">
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+				<div className="flex items-center justify-between mb-[var(--space-2)]">
+					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-[6px]">
 						<Terminal size={13} />
 						Logs
 					</h3>
 					{logs && logs.length > 0 && (
-						<div className="flex items-center gap-1">
+						<div className="flex items-center gap-[var(--space-1)]">
 							{(['all', 'stdout', 'stderr', 'system'] as const).map((filter) => {
 								const count =
 									filter === 'all' ? logs.length : logCounts[filter as keyof typeof logCounts]
@@ -454,7 +459,7 @@ function SessionDetailView({
 										key={filter}
 										type="button"
 										className={cn(
-											'text-[11px] px-1.5 py-0.5 rounded transition-colors cursor-pointer',
+											'text-[11px] px-[6px] py-[2px] rounded transition-colors cursor-pointer',
 											logFilter === filter
 												? 'bg-accent text-accent-foreground'
 												: 'text-muted-foreground hover:text-foreground',
@@ -462,7 +467,7 @@ function SessionDetailView({
 										onClick={() => setLogFilter(filter)}
 									>
 										{filter}
-										{count > 0 && <span className="ml-0.5 opacity-60">({count})</span>}
+										{count > 0 && <span className="ml-[2px] opacity-60">({count})</span>}
 									</button>
 								)
 							})}
@@ -471,18 +476,18 @@ function SessionDetailView({
 				</div>
 
 				{loading ? (
-					<div className="flex items-center justify-center py-8">
+					<div className="flex items-center justify-center py-[var(--space-7)]">
 						<Spinner />
 					</div>
 				) : filteredLogs.length > 0 ? (
 					<div className="rounded-md border border-border bg-secondary/30 overflow-hidden">
 						<div className="max-h-[60vh] overflow-y-auto">
-							<pre className="text-xs font-mono p-3 whitespace-pre-wrap break-words">
+							<pre className="text-xs font-mono p-[var(--space-3)] whitespace-pre-wrap break-words">
 								{filteredLogs.map((log, idx) => (
 									<div
 										key={log.id ?? idx}
 										className={cn(
-											'py-0.5',
+											'py-[2px]',
 											log.stream === 'stderr' && 'text-error',
 											log.stream === 'system' && 'text-muted-foreground italic',
 										)}
@@ -494,22 +499,24 @@ function SessionDetailView({
 						</div>
 					</div>
 				) : (
-					<p className="text-sm text-muted-foreground py-4 text-center">No logs available</p>
+					<p className="text-sm text-muted-foreground py-[var(--space-4)] text-center">
+						No logs available
+					</p>
 				)}
 			</div>
 
 			{result && Object.keys(result).length > 0 && (
 				<div>
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
+					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-[var(--space-2)]">
 						Result
 					</h3>
-					<pre className="text-xs font-mono rounded-md border border-border bg-secondary/30 p-3 whitespace-pre-wrap break-words">
+					<pre className="text-xs font-mono rounded-md border border-border bg-secondary/30 p-[var(--space-3)] whitespace-pre-wrap break-words">
 						{JSON.stringify(result, null, 2)}
 					</pre>
 				</div>
 			)}
 
-			<div className="pt-2 border-t border-border">
+			<div className="pt-[var(--space-2)] border-t border-border">
 				<p className="text-[11px] text-muted-foreground font-mono">Session: {current.id}</p>
 			</div>
 		</div>

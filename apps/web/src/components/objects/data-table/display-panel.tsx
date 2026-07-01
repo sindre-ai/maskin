@@ -87,7 +87,7 @@ function PillButton({
 			title={title}
 			onClick={onClick}
 			className={cn(
-				'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors',
+				'inline-flex items-center gap-[var(--space-1)] rounded-full border px-[10px] py-[var(--space-1)] text-xs transition-colors',
 				active
 					? 'border-accent bg-accent text-accent-foreground'
 					: 'border-border bg-bg-surface text-text-secondary hover:text-foreground hover:border-border-hover',
@@ -113,9 +113,9 @@ function PickerRow({
 	trailing?: React.ReactNode
 }) {
 	return (
-		<div className="flex items-center gap-2">
+		<div className="flex items-center gap-[var(--space-2)]">
 			<span className="w-16 shrink-0 text-xs text-text-secondary">{label}</span>
-			<div className="flex flex-1 items-center gap-1.5">
+			<div className="flex flex-1 items-center gap-[6px]">
 				{children}
 				{trailing}
 				<span className="sr-only">{value ?? placeholder}</span>
@@ -215,31 +215,31 @@ export function DisplayPanel({
 					>
 						<SlidersHorizontal size={14} />
 						{hasActiveFilters && (
-							<span className="absolute -top-0.5 -right-0.5 rounded-full bg-primary text-primary-foreground text-[10px] leading-none px-1 py-0.5 min-w-[14px] text-center">
+							<span className="absolute -top-0.5 -right-0.5 rounded-full bg-primary text-primary-foreground text-[10px] leading-none px-[var(--space-1)] py-[2px] min-w-[14px] text-center">
 								{activeFilterCount}
 							</span>
 						)}
 					</Button>
 				) : (
-					<Button variant="outline" size="sm" className="gap-1.5">
+					<Button variant="outline" size="sm" className="gap-[6px]">
 						<SlidersHorizontal size={14} />
 						Display
 						{hasActiveFilters && (
-							<span className="ml-1 rounded-full bg-primary text-primary-foreground text-xs px-1.5 py-0.5">
+							<span className="ml-[var(--space-1)] rounded-full bg-primary text-primary-foreground text-xs px-[6px] py-[2px]">
 								{activeFilterCount}
 							</span>
 						)}
 					</Button>
 				)}
 			</ResponsivePopoverTrigger>
-			<ResponsivePopoverContent align="end" accessibleTitle="Display" className="md:w-80 md:p-0">
+			<ResponsivePopoverContent align="end" accessibleTitle="Display" className="md:w-80 md:p-[0]">
 				<div className="min-h-0 overflow-y-auto md:max-h-[480px] text-left">
 					{/* View */}
 					{showView && (
 						<>
-							<div className="p-3 space-y-2">
+							<div className="p-[var(--space-3)] space-y-[var(--space-2)]">
 								<SectionHeader>View</SectionHeader>
-								<div className="flex items-center gap-1.5">
+								<div className="flex items-center gap-[6px]">
 									<PillButton active={view === 'list'} onClick={() => onViewChange?.('list')}>
 										List
 									</PillButton>
@@ -264,7 +264,7 @@ export function DisplayPanel({
 					{/* Ordering */}
 					{showOrdering && (
 						<>
-							<div className="p-3 space-y-2">
+							<div className="p-[var(--space-3)] space-y-[var(--space-2)]">
 								<SectionHeader>Ordering</SectionHeader>
 								<PickerRow label="Sort by" value={sortLabel} placeholder="Sort">
 									<DropdownMenu>
@@ -272,7 +272,7 @@ export function DisplayPanel({
 											<Button
 												variant="outline"
 												size="sm"
-												className="h-7 flex-1 justify-between gap-1.5 px-2 text-xs"
+												className="h-7 flex-1 justify-between gap-[6px] px-[var(--space-2)] text-xs"
 											>
 												<span className="truncate capitalize">{sortLabel ?? 'Created'}</span>
 												<ChevronDown size={12} className="shrink-0 opacity-60" />
@@ -311,7 +311,7 @@ export function DisplayPanel({
 					{/* Grouping */}
 					{showGrouping && (
 						<>
-							<div className="p-3 space-y-2">
+							<div className="p-[var(--space-3)] space-y-[var(--space-2)]">
 								<SectionHeader>Grouping</SectionHeader>
 								<PickerRow label="Group by" value={groupLabel ?? 'None'} placeholder="None">
 									<DropdownMenu>
@@ -319,7 +319,7 @@ export function DisplayPanel({
 											<Button
 												variant="outline"
 												size="sm"
-												className="h-7 flex-1 justify-between gap-1.5 px-2 text-xs"
+												className="h-7 flex-1 justify-between gap-[6px] px-[var(--space-2)] text-xs"
 											>
 												<span className="truncate capitalize">{groupLabel ?? 'None'}</span>
 												<ChevronDown size={12} className="shrink-0 opacity-60" />
@@ -351,7 +351,7 @@ export function DisplayPanel({
 					{/* Filters */}
 					{showFilters && (
 						<>
-							<div className="p-3 space-y-2">
+							<div className="p-[var(--space-3)] space-y-[var(--space-2)]">
 								<div className="flex items-center justify-between">
 									<SectionHeader>Filters</SectionHeader>
 									{hasActiveFilters && (
@@ -374,7 +374,7 @@ export function DisplayPanel({
 
 								{/* Status — grouped by type with separators, multi-select */}
 								{onStatusFilterChange && (
-									<div className="flex items-center gap-2">
+									<div className="flex items-center gap-[var(--space-2)]">
 										<span className="w-16 shrink-0 text-xs text-text-secondary">Status</span>
 										<DropdownMenu>
 											<DropdownMenuTrigger asChild disabled={!hasStatuses}>
@@ -382,7 +382,7 @@ export function DisplayPanel({
 													variant={activeStatuses.length > 0 ? 'outline' : 'ghost'}
 													size="sm"
 													className={cn(
-														'h-7 gap-1.5 px-2 text-xs',
+														'h-7 gap-[6px] px-[var(--space-2)] text-xs',
 														activeStatuses.length === 0 &&
 															'text-text-secondary hover:text-foreground',
 													)}
@@ -395,7 +395,7 @@ export function DisplayPanel({
 												{typeEntries.map(([type, statuses], i) => (
 													<div key={type}>
 														{i > 0 && <DropdownMenuSeparator />}
-														<DropdownMenuLabel className="capitalize text-xs font-medium text-text-secondary py-1">
+														<DropdownMenuLabel className="capitalize text-xs font-medium text-text-secondary py-[var(--space-1)]">
 															{type}
 														</DropdownMenuLabel>
 														{statuses.map((status) => (
@@ -428,7 +428,7 @@ export function DisplayPanel({
 
 								{/* Filter by Driver */}
 								{onDriverFilterChange && (
-									<div className="flex items-center gap-2">
+									<div className="flex items-center gap-[var(--space-2)]">
 										<span className="w-16 shrink-0 text-xs text-text-secondary">Driver</span>
 										<DropdownMenu>
 											<DropdownMenuTrigger asChild disabled={!hasOwners}>
@@ -436,7 +436,7 @@ export function DisplayPanel({
 													variant={activeDrivers.length > 0 ? 'outline' : 'ghost'}
 													size="sm"
 													className={cn(
-														'h-7 gap-1.5 px-2 text-xs',
+														'h-7 gap-[6px] px-[var(--space-2)] text-xs',
 														activeDrivers.length === 0 &&
 															'text-text-secondary hover:text-foreground',
 													)}
@@ -477,9 +477,9 @@ export function DisplayPanel({
 
 					{/* Properties */}
 					{showProperties && (
-						<div className="p-3 space-y-2">
+						<div className="p-[var(--space-3)] space-y-[var(--space-2)]">
 							<SectionHeader>Properties</SectionHeader>
-							<div className="flex flex-wrap gap-1.5">
+							<div className="flex flex-wrap gap-[6px]">
 								{hideableColumns.map((col) => {
 									const isVisible = columnVisibility?.[col.id] !== false
 									return (

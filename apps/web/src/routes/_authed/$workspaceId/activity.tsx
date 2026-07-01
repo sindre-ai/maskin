@@ -42,7 +42,7 @@ function ActivityPage() {
 			<PageHeader title="Activity" />
 
 			{/* Mobile: dropdown */}
-			<div className="md:hidden mb-4 shrink-0">
+			<div className="md:hidden mb-[var(--space-4)] shrink-0">
 				<Select
 					value={filter ?? '__all__'}
 					onValueChange={(v) => navigateFilter(v === '__all__' ? undefined : (v as CategoryFilter))}
@@ -61,13 +61,13 @@ function ActivityPage() {
 			</div>
 
 			{/* Desktop: button row */}
-			<div className="hidden md:flex gap-1 mb-4 shrink-0">
+			<div className="hidden md:flex gap-[var(--space-1)] mb-[var(--space-4)] shrink-0">
 				{FILTER_TABS.map((tab) => (
 					<button
 						key={tab.label}
 						type="button"
 						className={cn(
-							'rounded px-3 py-1 text-sm',
+							'rounded px-[var(--space-3)] py-[var(--space-1)] text-sm',
 							filter === tab.value
 								? 'bg-muted text-foreground font-medium'
 								: 'text-muted-foreground hover:text-foreground',

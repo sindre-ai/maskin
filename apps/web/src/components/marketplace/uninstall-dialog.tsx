@@ -68,10 +68,10 @@ export function UninstallDialog({
 				<RadioGroup
 					value={keepItems ? 'keep' : 'remove'}
 					onValueChange={(v) => setKeepItems(v === 'keep')}
-					className="space-y-3"
+					className="space-y-[var(--space-3)]"
 				>
-					<div className="flex items-start gap-3">
-						<RadioGroupItem value="remove" id="remove-all" className="mt-0.5" />
+					<div className="flex items-start gap-[var(--space-3)]">
+						<RadioGroupItem value="remove" id="remove-all" className="mt-[2px]" />
 						<Label htmlFor="remove-all" className="cursor-pointer font-normal leading-snug">
 							<span className="font-medium">Remove everything</span>
 							<br />
@@ -80,8 +80,8 @@ export function UninstallDialog({
 							</span>
 						</Label>
 					</div>
-					<div className="flex items-start gap-3">
-						<RadioGroupItem value="keep" id="keep-items" className="mt-0.5" />
+					<div className="flex items-start gap-[var(--space-3)]">
+						<RadioGroupItem value="keep" id="keep-items" className="mt-[2px]" />
 						<Label htmlFor="keep-items" className="cursor-pointer font-normal leading-snug">
 							<span className="font-medium">Keep agents, triggers, and skills</span>
 							<br />
@@ -94,7 +94,7 @@ export function UninstallDialog({
 					</div>
 				</RadioGroup>
 
-				<DialogFooter className="gap-2">
+				<DialogFooter className="gap-[var(--space-2)]">
 					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
 						Cancel
 					</Button>

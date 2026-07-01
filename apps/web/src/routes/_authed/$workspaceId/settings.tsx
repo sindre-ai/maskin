@@ -22,10 +22,10 @@ function SettingsLayout() {
 
 	return (
 		<div className="mx-auto w-full max-w-4xl">
-			<h1 className="text-lg font-semibold text-foreground mb-6">Settings</h1>
-			<div className="flex flex-col md:flex-row gap-6 md:gap-8">
+			<h1 className="text-lg font-semibold text-foreground mb-[var(--space-6)]">Settings</h1>
+			<div className="flex flex-col md:flex-row gap-[var(--space-6)] md:gap-[var(--space-7)]">
 				<nav className="md:w-48 md:shrink-0">
-					<ul className="flex md:flex-col gap-0.5 overflow-x-auto pb-2 md:pb-0">
+					<ul className="flex md:flex-col gap-[2px] overflow-x-auto pb-[var(--space-2)] md:pb-[0]">
 						{settingsNav.map((item) => {
 							const isActive = item.exact
 								? !!matchRoute({ to: item.to, params: { workspaceId } })
@@ -36,7 +36,7 @@ function SettingsLayout() {
 										to={item.to}
 										params={{ workspaceId }}
 										className={cn(
-											'block whitespace-nowrap rounded-md px-3 py-1.5 text-sm transition-colors',
+											'block whitespace-nowrap rounded-md px-[var(--space-3)] py-[6px] text-sm transition-colors',
 											isActive
 												? 'bg-muted font-medium text-foreground'
 												: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',

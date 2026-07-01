@@ -148,7 +148,7 @@ export function ExtensionRemovalDialog({
 					</ResponsiveDialogDescription>
 				</ResponsiveDialogHeader>
 
-				<div className="space-y-4 max-h-[60vh] overflow-y-auto">
+				<div className="space-y-[var(--space-4)] max-h-[60vh] overflow-y-auto">
 					{affectedTypes.map((type, idx) => {
 						const countQuery = countQueries[idx]
 						const data = countQuery?.data
@@ -160,8 +160,8 @@ export function ExtensionRemovalDialog({
 						const unmappedStatuses = sourceStatuses.filter((s) => !targetStatuses.includes(s))
 
 						return (
-							<div key={type} className="rounded-lg border border-border p-4">
-								<div className="flex items-center justify-between mb-3">
+							<div key={type} className="rounded-lg border border-border p-[var(--space-4)]">
+								<div className="flex items-center justify-between mb-[var(--space-3)]">
 									<div>
 										<div className="text-sm font-medium capitalize">{label}</div>
 										<div className="text-xs text-muted-foreground">
@@ -187,16 +187,20 @@ export function ExtensionRemovalDialog({
 												setChoice(type, { kind: 'keep' })
 											}
 										}}
-										className="space-y-2"
+										className="space-y-[var(--space-2)]"
 									>
-										<div className="flex items-start gap-2">
-											<RadioGroupItem value="migrate" id={`${type}-migrate`} className="mt-1" />
+										<div className="flex items-start gap-[var(--space-2)]">
+											<RadioGroupItem
+												value="migrate"
+												id={`${type}-migrate`}
+												className="mt-[var(--space-1)]"
+											/>
 											<div className="flex-1">
 												<Label htmlFor={`${type}-migrate`} className="text-sm font-normal">
 													Migrate to a different type
 												</Label>
 												{choice?.kind === 'migrate' && (
-													<div className="mt-2 space-y-3">
+													<div className="mt-[var(--space-2)] space-y-[var(--space-3)]">
 														{targetTypes.length === 0 ? (
 															<p className="text-xs text-error">
 																No remaining object types to migrate to.
@@ -222,15 +226,15 @@ export function ExtensionRemovalDialog({
 														)}
 
 														{choice.toType && unmappedStatuses.length > 0 && (
-															<div className="space-y-2">
+															<div className="space-y-[var(--space-2)]">
 																<p className="text-xs text-muted-foreground">
 																	Map statuses that don't exist on the target type:
 																</p>
-																<div className="space-y-1">
+																<div className="space-y-[var(--space-1)]">
 																	{unmappedStatuses.map((srcStatus) => (
 																		<div
 																			key={srcStatus}
-																			className="flex items-center gap-2 text-xs"
+																			className="flex items-center gap-[var(--space-2)] text-xs"
 																		>
 																			<span className="font-mono text-muted-foreground w-32 truncate">
 																				{srcStatus}
@@ -268,15 +272,23 @@ export function ExtensionRemovalDialog({
 											</div>
 										</div>
 
-										<div className="flex items-start gap-2">
-											<RadioGroupItem value="delete" id={`${type}-delete`} className="mt-1" />
+										<div className="flex items-start gap-[var(--space-2)]">
+											<RadioGroupItem
+												value="delete"
+												id={`${type}-delete`}
+												className="mt-[var(--space-1)]"
+											/>
 											<Label htmlFor={`${type}-delete`} className="text-sm font-normal">
 												Delete {formatCount(data)} <span className="text-error">(permanent)</span>
 											</Label>
 										</div>
 
-										<div className="flex items-start gap-2">
-											<RadioGroupItem value="keep" id={`${type}-keep`} className="mt-1" />
+										<div className="flex items-start gap-[var(--space-2)]">
+											<RadioGroupItem
+												value="keep"
+												id={`${type}-keep`}
+												className="mt-[var(--space-1)]"
+											/>
 											<Label htmlFor={`${type}-keep`} className="text-sm font-normal">
 												Keep as orphans
 												<span className="block text-xs text-muted-foreground">

@@ -136,14 +136,17 @@ function MarketplacePage() {
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
-			<div className="mb-4 md:mb-6">
+			<div className="mb-[var(--space-4)] md:mb-[var(--space-6)]">
 				<h1 className="text-lg font-semibold text-foreground">Marketplace</h1>
-				<p className="mt-1 text-sm text-muted-foreground max-w-2xl">{SUBHEAD}</p>
+				<p className="mt-[var(--space-1)] text-sm text-muted-foreground max-w-2xl">{SUBHEAD}</p>
 			</div>
 
-			<div className="flex flex-col md:flex-row md:gap-8 flex-1 min-h-0">
+			<div className="flex flex-col md:flex-row md:gap-[var(--space-7)] flex-1 min-h-0">
 				{/* Mobile: horizontal chip strip. Hidden ≥md. */}
-				<nav aria-label="Marketplace filters" className="md:hidden -mx-1 mb-4 flex flex-col gap-2">
+				<nav
+					aria-label="Marketplace filters"
+					className="md:hidden -mx-[var(--space-1)] mb-[var(--space-4)] flex flex-col gap-[var(--space-2)]"
+				>
 					<ChipStrip
 						items={TYPE_ITEMS}
 						active={typeFilter}
@@ -217,11 +220,11 @@ function MarketplacePage() {
 
 function SidebarGroup({ label, children }: { label: string; children: React.ReactNode }) {
 	return (
-		<div className="mb-4">
-			<div className="px-2 mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+		<div className="mb-[var(--space-4)]">
+			<div className="px-[var(--space-2)] mb-[var(--space-1)] text-xs font-medium uppercase tracking-wider text-muted-foreground">
 				{label}
 			</div>
-			<ul className="flex flex-col gap-0.5">{children}</ul>
+			<ul className="flex flex-col gap-[2px]">{children}</ul>
 		</div>
 	)
 }
@@ -243,7 +246,7 @@ function SidebarItem({
 				type="button"
 				onClick={onClick}
 				className={cn(
-					'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors',
+					'flex w-full items-center justify-between rounded-md px-[var(--space-2)] py-[6px] text-left text-sm transition-colors',
 					active
 						? 'bg-muted font-medium text-foreground'
 						: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
@@ -281,7 +284,7 @@ function ChipStrip({
 	kind: 'type' | 'use_case'
 }) {
 	return (
-		<div className="flex gap-1.5 overflow-x-auto px-1 pb-1">
+		<div className="flex gap-[6px] overflow-x-auto px-[var(--space-1)] pb-[var(--space-1)]">
 			{items.map((item) => {
 				const count =
 					kind === 'type'
@@ -294,7 +297,7 @@ function ChipStrip({
 						type="button"
 						onClick={() => onSelect(item.value)}
 						className={cn(
-							'shrink-0 rounded-full border px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors',
+							'shrink-0 rounded-full border px-[var(--space-3)] py-[var(--space-1)] text-xs font-medium whitespace-nowrap transition-colors',
 							isActive
 								? 'border-foreground bg-foreground text-background'
 								: 'border-border bg-background text-muted-foreground hover:text-foreground',
@@ -302,7 +305,7 @@ function ChipStrip({
 					>
 						{item.label}
 						{typeof count === 'number' ? (
-							<span className={cn('ml-1.5 tabular-nums', isActive ? 'opacity-80' : 'opacity-60')}>
+							<span className={cn('ml-[6px] tabular-nums', isActive ? 'opacity-80' : 'opacity-60')}>
 								{count}
 							</span>
 						) : null}
