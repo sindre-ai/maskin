@@ -22,6 +22,7 @@ import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import {
 	and,
+	asc,
 	count as countFn,
 	desc,
 	eq,
@@ -1046,6 +1047,7 @@ export class SessionManager extends EventEmitter {
 			.where(
 				and(eq(integrations.workspaceId, session.workspaceId), eq(integrations.status, 'active')),
 			)
+			.orderBy(asc(integrations.createdAt))
 
 		const tokenManager = new TokenManager()
 		// MCP servers injected by virtue of a workspace having an active
