@@ -95,6 +95,22 @@ app.openapi(recordRoute, (async (c) => {
 			objectType: body.object_type ?? null,
 			mutationKind: body.mutation_kind,
 		})
+	} else if (body.event_type === 'tool_response_emitted') {
+		// Response-size event. Persisted to `mcp_telemetry` with the payload-shape
+		// fields (`response_bytes`, `has_include`) in the existing `data` jsonb
+		// column so no migration is needed for the ship-metric query. Aggregation
+		// (median by tool_name grouped on `has_include`) is out of scope for T1
+		// and lives in a follow-up task per the bet plan.
+		await db.insert(mcpTelemetry).values({
+			workspaceId,
+			eventType: 'tool_response_emitted',
+			toolName: body.tool_name,
+			sessionId: body.session_id ?? null,
+			data: {
+				response_bytes: body.response_bytes,
+				has_include: body.has_include,
+			},
+		})
 	} else {
 		// widget_event — widget-only fields (event, widget_name, card_kind, object_id,
 		// ts) live in the `data` jsonb column so we avoid a hot-table migration. T9's

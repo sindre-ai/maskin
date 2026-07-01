@@ -25,6 +25,7 @@ import {
 	createDefaultSink,
 	recordMutation,
 	recordToolCall,
+	recordToolResponseEmitted,
 	recordWidgetEvent,
 } from './telemetry.js'
 import { tools } from './tools.js'
@@ -706,6 +707,14 @@ function extractWorkspaceId(args: unknown): string | undefined {
 	return typeof ws === 'string' ? ws : undefined
 }
 
+/** True when the caller passed a non-empty `include` array. Generic across
+ *  tools so any future opt-in expansion parameter with the same name lights up. */
+function hasIncludeArg(args: unknown): boolean {
+	if (!args || typeof args !== 'object') return false
+	const inc = (args as { include?: unknown }).include
+	return Array.isArray(inc) && inc.length > 0
+}
+
 /**
  * Inspects a mutation tool response to decide whether it actually mutated
  * something. Tools like `update_objects` aggregate per-target outcomes, so we
@@ -1304,6 +1313,29 @@ export function createMcpServer(config: McpConfig) {
 				duration_ms: Date.now() - start,
 				workspace_id: extractWorkspaceId(args),
 			})
+
+			// Response-size event powers the response-shape bet's ship metric
+			// (median response_bytes over successful tool calls). We measure the
+			// full response envelope — content + structuredContent + _meta —
+			// because that is what the client actually consumes. Errored calls
+			// are covered by tool_call only; a 0-byte error frame would drag the
+			// ship-metric median down and mask a real regression.
+			let responseBytes = 0
+			try {
+				responseBytes = Buffer.byteLength(JSON.stringify(response ?? {}), 'utf8')
+			} catch {
+				// Circular / unserialisable response — skip the size event rather
+				// than fabricate a number. The tool_call event still fires.
+				responseBytes = -1
+			}
+			if (responseBytes >= 0) {
+				recordToolResponseEmitted(telemetrySink, telemetryTarget, {
+					tool_name: name,
+					response_bytes: responseBytes,
+					has_include: hasIncludeArg(args),
+					workspace_id: extractWorkspaceId(args),
+				})
+			}
 
 			if (mutationKind && isSuccessfulMutationResponse(response)) {
 				recordMutation(telemetrySink, telemetryTarget, {
