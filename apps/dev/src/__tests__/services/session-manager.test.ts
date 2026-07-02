@@ -1058,6 +1058,35 @@ describe('SessionManager', () => {
 				fetchSpy.mockRestore()
 			}
 		})
+
+		it('sanitizes a raw network/fetch error from the remote stop call — no internal host leaks to the caller', async () => {
+			const session = buildSession({
+				status: 'running',
+				agentServerId: 'agent-server-1',
+				containerId: 'sandbox-name',
+			})
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			mockResults.selectQueue = [[session], [server]]
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockRejectedValue(new TypeError('fetch failed: connect ECONNREFUSED 10.2.0.5:3001'))
+
+			try {
+				const err = await manager.stopSession(session.id).catch((e) => e)
+				expect(err).toBeInstanceOf(Error)
+				const message = (err as Error).message
+				expect(message).toBe(`Failed to stop session ${session.id}: agent-server request failed`)
+				expect(message).not.toContain('10.2.0.5')
+				expect(message).not.toContain(server.url)
+			} finally {
+				fetchSpy.mockRestore()
+			}
+		})
 	})
 
 	describe('markRemoteSessionComplete()', () => {
@@ -1106,17 +1135,54 @@ describe('SessionManager', () => {
 			expect(eventInsert).toBeDefined()
 		})
 
-		it('gives up and no-ops after exhausting retries on a persistently thrown DB error', async () => {
+		it('gives up and no-ops after exhausting retries when the fallback lookup also finds no session', async () => {
 			mockResults.updateErrorQueue = [
 				new Error('connection reset'),
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
+			// The fallback lookup after CAS retries are exhausted finds nothing
+			// (unconfigured select defaults to []) — nothing left to clean up.
 			const initialInsertCount = calls.inserts.length
 
 			await expect(
 				manager.markRemoteSessionComplete('some-session-id', 137),
 			).resolves.toBeUndefined()
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
+		})
+
+		it('still runs terminal side effects via a fallback lookup when CAS retries are exhausted but the session is still running (Bug 2 regression)', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			// 1st select: the fallback lookup after CAS retries are exhausted,
+			// finds the session still 'running'. 2nd select: hasOtherActiveSessions'
+			// check — a non-empty result skips the actors-table update branch.
+			mockResults.selectQueue = [[session], [{ id: 'other-session' }]]
+
+			await manager.markRemoteSessionComplete(session.id, 137)
+
+			const eventInsert = calls.inserts.find(
+				(v) => (v as Record<string, unknown>).action === 'session_failed',
+			)
+			expect(eventInsert).toBeDefined()
+		})
+
+		it('no-ops via the fallback lookup when a concurrent call already resolved the session', async () => {
+			const session = buildSession({ status: 'failed' })
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			mockResults.selectQueue = [[session]]
+			const initialInsertCount = calls.inserts.length
+
+			await manager.markRemoteSessionComplete(session.id, 137)
 
 			expect(calls.inserts.length).toBe(initialInsertCount)
 		})

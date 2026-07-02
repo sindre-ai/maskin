@@ -600,7 +600,18 @@ export class SessionManager extends EventEmitter {
 						`Failed to stop session ${sessionId}: agent-server returned HTTP ${err.status}`,
 					)
 				}
-				throw err
+				// Anything else (e.g. a raw network/DNS failure thrown by fetch inside
+				// postJson) isn't a typed AgentServerClient error and carries no
+				// built-in sanitization — its raw message can still embed internal
+				// details. Sanitize it the same way as the two branches above instead
+				// of rethrowing unmodified; full details still go to the log.
+				logger.error('unexpected error while stopping session on agent-server', {
+					sessionId,
+					agentServerId: serverRow.id,
+					agentServerUrl: serverRow.url,
+					error: String(err),
+				})
+				throw new Error(`Failed to stop session ${sessionId}: agent-server request failed`)
 			}
 			// Remote sessions have no local exit watcher — the agent-server's own
 			// completion monitor lives in that process's memory and may already be
@@ -2531,7 +2542,61 @@ export class SessionManager extends EventEmitter {
 				status,
 				error: String(updateErr),
 			})
-			return
+			// The CAS UPDATE never persisted after all retries — most likely a
+			// transient DB outage, not a lost race (a lost race returns 0 rows
+			// without throwing, handled by the `!updated` check below). Returning
+			// here unconditionally would skip every side effect below and strand
+			// the session at 'running' with a hung SSE /logs/stream client — the
+			// exact bug class this method exists to fix. Do one read-only lookup
+			// to decide whether those side effects should still run.
+			let fallback: typeof sessions.$inferSelect | undefined
+			try {
+				;[fallback] = await this.db
+					.select()
+					.from(sessions)
+					.where(eq(sessions.id, sessionId))
+					.limit(1)
+			} catch (err) {
+				logger.error('Fallback session lookup after CAS retries also failed — giving up', {
+					sessionId,
+					error: String(err),
+				})
+				return
+			}
+			if (!fallback) return
+			// Another call already resolved this session while our retries were
+			// failing (its own report landed, or a concurrent call won the CAS) —
+			// no-op to avoid a duplicate terminal event.
+			if (
+				(SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES as readonly string[]).includes(
+					fallback.status,
+				)
+			) {
+				return
+			}
+			// Best-effort: try once more to persist the status directly (not
+			// CAS-guarded — the read above just confirmed no other call has
+			// resolved it). If this also fails, still fall through to the side
+			// effects below so the session doesn't hang forever, matching the
+			// pre-CAS code's unconditional fallthrough on an UPDATE error.
+			try {
+				await this.db
+					.update(sessions)
+					.set({
+						status,
+						result: { exit_code: exitCode },
+						completedAt: new Date(),
+						updatedAt: new Date(),
+						currentActivity: null,
+					})
+					.where(eq(sessions.id, sessionId))
+			} catch (err) {
+				logger.error(
+					'Fallback direct status update also failed — continuing with best-effort cleanup only',
+					{ sessionId, error: String(err) },
+				)
+			}
+			updated = fallback
 		}
 
 		// No row matched: either the session doesn't exist, or it was already
