@@ -8,6 +8,7 @@ import {
 	encryptOAuthTokens,
 	getValidOAuthToken,
 } from '../lib/claude-oauth'
+import { clearSlot, writeSlot } from '../lib/claude-oauth-slots'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -76,11 +77,16 @@ app.openapi(disconnectRoute, (async (c) => {
 	}
 
 	const settings = (ws.settings as WorkspaceSettings) ?? {}
+	// Only clear the primary slot — a workspace that has failed over to backup
+	// must keep its working backup credentials and failover state intact.
+	const nextClaudeOauth = clearSlot(settings.claude_oauth, 'primary')
 	const { claude_oauth: _, ...rest } = settings
+	const nextSettings =
+		nextClaudeOauth === undefined ? rest : { ...rest, claude_oauth: nextClaudeOauth }
 
 	await db
 		.update(workspaces)
-		.set({ settings: rest, updatedAt: new Date() })
+		.set({ settings: nextSettings, updatedAt: new Date() })
 		.where(eq(workspaces.id, workspaceId))
 
 	logger.info('Claude OAuth disconnected for workspace', { workspaceId })
@@ -225,10 +231,14 @@ app.openapi(importRoute, (async (c) => {
 	}
 
 	const settings = (ws.settings as WorkspaceSettings) ?? {}
+	// Write into the primary slot only — preserves a configured backup slot
+	// and any in-progress failover state instead of clobbering the whole
+	// claude_oauth value.
+	const nextClaudeOauth = writeSlot(settings.claude_oauth, 'primary', encryptOAuthTokens(tokens))
 	await db
 		.update(workspaces)
 		.set({
-			settings: { ...settings, claude_oauth: encryptOAuthTokens(tokens) },
+			settings: { ...settings, claude_oauth: nextClaudeOauth },
 			updatedAt: new Date(),
 		})
 		.where(eq(workspaces.id, workspaceId))

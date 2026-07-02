@@ -50,6 +50,62 @@ describe('Claude OAuth Routes', () => {
 
 			expect(res.status).toBe(403)
 		})
+
+		it('clears only the primary slot, preserving backup and failover state', async () => {
+			const backup = {
+				encryptedAccessToken: 'backup-access',
+				encryptedRefreshToken: 'backup-refresh',
+				expiresAt: 222,
+			}
+			const failover = {
+				active_slot: 'backup',
+				last_primary_failure_at: 111,
+				last_classified_reason: 'auth_failed',
+			}
+			const workspace = buildWorkspace({
+				id: wsId,
+				settings: {
+					claude_oauth: {
+						primary: {
+							encryptedAccessToken: 'primary-access',
+							encryptedRefreshToken: 'primary-refresh',
+							expiresAt: 111,
+						},
+						backup,
+						failover,
+					},
+				},
+			})
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			const res = await app.request(jsonRequest('DELETE', '/api/claude-oauth', undefined, headers))
+
+			expect(res.status).toBe(200)
+			const [updatePayload] = calls.updates as Array<{ settings: { claude_oauth?: unknown } }>
+			expect(updatePayload.settings.claude_oauth).toEqual({ backup, failover })
+		})
+
+		it('drops claude_oauth entirely when disconnecting a legacy primary-only row', async () => {
+			const workspace = buildWorkspace({
+				id: wsId,
+				settings: {
+					claude_oauth: {
+						encryptedAccessToken: 'legacy-access',
+						encryptedRefreshToken: 'legacy-refresh',
+						expiresAt: 111,
+					},
+				},
+			})
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			const res = await app.request(jsonRequest('DELETE', '/api/claude-oauth', undefined, headers))
+
+			expect(res.status).toBe(200)
+			const [updatePayload] = calls.updates as Array<{ settings: { claude_oauth?: unknown } }>
+			expect(updatePayload.settings.claude_oauth).toBeUndefined()
+		})
 	})
 
 	describe('GET /api/claude-oauth/status', () => {
@@ -123,6 +179,53 @@ describe('Claude OAuth Routes', () => {
 			)
 
 			expect(res.status).toBe(403)
+		})
+
+		it('writes into the primary slot, preserving an existing backup and failover state', async () => {
+			const backup = {
+				encryptedAccessToken: 'backup-access',
+				encryptedRefreshToken: 'backup-refresh',
+				expiresAt: 222,
+			}
+			const failover = {
+				active_slot: 'backup',
+				last_primary_failure_at: 111,
+				last_classified_reason: 'auth_failed',
+			}
+			const workspace = buildWorkspace({
+				id: wsId,
+				settings: {
+					claude_oauth: {
+						primary: {
+							encryptedAccessToken: 'stale-primary-access',
+							encryptedRefreshToken: 'stale-primary-refresh',
+							expiresAt: 1,
+						},
+						backup,
+						failover,
+					},
+				},
+			})
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/claude-oauth/import', importBody, headers),
+			)
+
+			expect(res.status).toBe(200)
+			const [updatePayload] = calls.updates as Array<{
+				settings: { claude_oauth?: { primary?: unknown; backup?: unknown; failover?: unknown } }
+			}>
+			const nextOauth = updatePayload.settings.claude_oauth
+			expect(nextOauth?.primary).toEqual({
+				encryptedAccessToken: 'enc-access',
+				encryptedRefreshToken: 'enc-refresh',
+				expiresAt: expect.any(Number),
+				subscriptionType: 'pro',
+			})
+			expect(nextOauth?.backup).toEqual(backup)
+			expect(nextOauth?.failover).toEqual(failover)
 		})
 	})
 })
