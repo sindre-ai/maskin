@@ -1,0 +1,801 @@
+{
+  "cycles": [
+    {
+      "cycle": [
+        "apps/dev/src/lib/integrations/providers/gmail/watch.ts",
+        "apps/dev/src/lib/integrations/registry.ts"
+      ]
+    },
+    {
+      "cycle": [
+        "apps/dev/src/lib/integrations/providers/slack/fan-out.ts",
+        "apps/dev/src/lib/integrations/registry.ts"
+      ]
+    }
+  ],
+  "boundary_violations": [],
+  "cognitive_complexity": [
+    {
+      "file": "apps/agent-server/src/index.ts",
+      "fn": "buildApp",
+      "score": 21
+    },
+    {
+      "file": "apps/agent-server/src/index.ts",
+      "fn": "monitorSession",
+      "score": 26
+    },
+    {
+      "file": "apps/agent-server/src/services/microsandbox.ts",
+      "fn": "spawnSession",
+      "score": 21
+    },
+    {
+      "file": "apps/dev/scripts/publish-ccd-package.ts",
+      "fn": "main",
+      "score": 17
+    },
+    {
+      "file": "apps/dev/scripts/publish-dev-pipeline-package.ts",
+      "fn": "main",
+      "score": 17
+    },
+    {
+      "file": "apps/dev/src/__tests__/lib/integrations/providers/gmail.test.ts",
+      "fn": "sqlToString",
+      "score": 20
+    },
+    {
+      "file": "apps/dev/src/__tests__/services/session-dispatch-queue.test.ts",
+      "fn": "delete",
+      "score": 16
+    },
+    {
+      "file": "apps/dev/src/__tests__/services/session-dispatch-queue.test.ts",
+      "fn": "update",
+      "score": 22
+    },
+    {
+      "file": "apps/dev/src/__tests__/services/session-dispatcher.test.ts",
+      "fn": "apply",
+      "score": 50
+    },
+    {
+      "file": "apps/dev/src/__tests__/setup.ts",
+      "fn": "createTestContext",
+      "score": 19
+    },
+    {
+      "file": "apps/dev/src/app-factory.ts",
+      "fn": "cause",
+      "score": 24
+    },
+    {
+      "file": "apps/dev/src/app-factory.ts",
+      "fn": "createApp",
+      "score": 22
+    },
+    {
+      "file": "apps/dev/src/lib/errors.ts",
+      "fn": "formatZodIssue",
+      "score": 17
+    },
+    {
+      "file": "apps/dev/src/lib/integrations/providers/gmail/watch.ts",
+      "fn": "fanOutGmailHistory",
+      "score": 21
+    },
+    {
+      "file": "apps/dev/src/lib/integrations/providers/slack/client.ts",
+      "fn": "listSlackUsers",
+      "score": 17
+    },
+    {
+      "file": "apps/dev/src/lib/integrations/providers/slack/fan-out.ts",
+      "fn": "slackWebhookFanOut",
+      "score": 19
+    },
+    {
+      "file": "apps/dev/src/lib/llm-routing.ts",
+      "fn": "resolveLlmRoute",
+      "score": 16
+    },
+    {
+      "file": "apps/dev/src/middleware/idempotency.ts",
+      "fn": "createIdempotencyMiddleware",
+      "score": 21
+    },
+    {
+      "file": "apps/dev/src/routes/actors.ts",
+      "fn": "groupActorMemberships",
+      "score": 19
+    },
+    {
+      "file": "apps/dev/src/routes/actors.ts",
+      "fn": "isEmailUniqueViolation",
+      "score": 23
+    },
+    {
+      "file": "apps/dev/src/routes/actors.ts",
+      "fn": "parseIdsParam",
+      "score": 19
+    },
+    {
+      "file": "apps/dev/src/routes/catalog-packages.ts",
+      "fn": "snapshot",
+      "score": 20
+    },
+    {
+      "file": "apps/dev/src/routes/events.ts",
+      "fn": "handler",
+      "score": 30
+    },
+    {
+      "file": "apps/dev/src/routes/events.ts",
+      "fn": "spawnThreadReplySessions",
+      "score": 25
+    },
+    {
+      "file": "apps/dev/src/routes/integrations.ts",
+      "fn": "body",
+      "score": 45
+    },
+    {
+      "file": "apps/dev/src/routes/integrations.ts",
+      "fn": "runFanOutAndInsert",
+      "score": 26
+    },
+    {
+      "file": "apps/dev/src/routes/objects.ts",
+      "fn": "buildObjectListConditions",
+      "score": 17
+    },
+    {
+      "file": "apps/dev/src/routes/objects.ts",
+      "fn": "columnLabel",
+      "score": 43
+    },
+    {
+      "file": "apps/dev/src/routes/public-landing-events.ts",
+      "fn": "_resetLandingEventBuckets",
+      "score": 27
+    },
+    {
+      "file": "apps/dev/src/services/import-processor.ts",
+      "fn": "executeImport",
+      "score": 69
+    },
+    {
+      "file": "apps/dev/src/services/import-processor.ts",
+      "fn": "generateMapping",
+      "score": 59
+    },
+    {
+      "file": "apps/dev/src/services/import-processor.ts",
+      "fn": "mapRowForType",
+      "score": 28
+    },
+    {
+      "file": "apps/dev/src/services/package-version-pusher.ts",
+      "fn": "itemSnapshot",
+      "score": 52
+    },
+    {
+      "file": "apps/dev/src/services/session-manager.ts",
+      "fn": "buildLaunchSpec",
+      "score": 67
+    },
+    {
+      "file": "apps/dev/src/services/session-manager.ts",
+      "fn": "drained",
+      "score": 39
+    },
+    {
+      "file": "apps/dev/src/services/session-manager.ts",
+      "fn": "markRemoteSessionComplete",
+      "score": 22
+    },
+    {
+      "file": "apps/dev/src/services/session-manager.ts",
+      "fn": "poll",
+      "score": 30
+    },
+    {
+      "file": "apps/dev/src/services/session-manager.ts",
+      "fn": "runWatchdog",
+      "score": 26
+    },
+    {
+      "file": "apps/dev/src/services/session-manager.ts",
+      "fn": "startSession",
+      "score": 28
+    },
+    {
+      "file": "apps/dev/src/services/trigger-runner.ts",
+      "fn": "evaluateCondition",
+      "score": 24
+    },
+    {
+      "file": "apps/dev/src/services/trigger-runner.ts",
+      "fn": "handleEvent",
+      "score": 46
+    },
+    {
+      "file": "apps/dev/src/services/workspace-bootstrap.ts",
+      "fn": "bootstrapDefaultAgents",
+      "score": 29
+    },
+    {
+      "file": "apps/dev/src/services/workspace-briefing.ts",
+      "fn": "renderWorkspaceBriefing",
+      "score": 49
+    },
+    {
+      "file": "apps/web/src/components/activity/activity-item.tsx",
+      "fn": "ActivityItemView",
+      "score": 17
+    },
+    {
+      "file": "apps/web/src/components/activity/comment-input.tsx",
+      "fn": "onSuccess",
+      "score": 27
+    },
+    {
+      "file": "apps/web/src/components/agents/agent-document.tsx",
+      "fn": "AgentDocumentView",
+      "score": 32
+    },
+    {
+      "file": "apps/web/src/components/agents/agent-document.tsx",
+      "fn": "SessionRow",
+      "score": 22
+    },
+    {
+      "file": "apps/web/src/components/agents/agent-usage-chart.tsx",
+      "fn": "AgentUsageChart",
+      "score": 17
+    },
+    {
+      "file": "apps/web/src/components/agents/instruction-log.tsx",
+      "fn": "onmessage",
+      "score": 18
+    },
+    {
+      "file": "apps/web/src/components/agents/mcp-servers.tsx",
+      "fn": "McpServers",
+      "score": 17
+    },
+    {
+      "file": "apps/web/src/components/agents/mcp-servers.tsx",
+      "fn": "handleSave",
+      "score": 19
+    },
+    {
+      "file": "apps/web/src/components/agents/session-detail-panel.tsx",
+      "fn": "SessionDetailPanel",
+      "score": 34
+    },
+    {
+      "file": "apps/web/src/components/command-palette.tsx",
+      "fn": "handler",
+      "score": 18
+    },
+    {
+      "file": "apps/web/src/components/extensions/extension-removal-dialog.tsx",
+      "fn": "handleConfirm",
+      "score": 16
+    },
+    {
+      "file": "apps/web/src/components/files/file-body.tsx",
+      "fn": "FileBody",
+      "score": 27
+    },
+    {
+      "file": "apps/web/src/components/foryou/unread-thread-card.tsx",
+      "fn": "UnreadThreadCard",
+      "score": 47
+    },
+    {
+      "file": "apps/web/src/components/imports/import-dialog.tsx",
+      "fn": "onMappingUpdate",
+      "score": 21
+    },
+    {
+      "file": "apps/web/src/components/marketplace/package-card.tsx",
+      "fn": "PackageCard",
+      "score": 16
+    },
+    {
+      "file": "apps/web/src/components/objects/auxiliary-action-menu.tsx",
+      "fn": "handleKeyDown",
+      "score": 28
+    },
+    {
+      "file": "apps/web/src/components/objects/board/board-view.tsx",
+      "fn": "BoardColumn",
+      "score": 18
+    },
+    {
+      "file": "apps/web/src/components/objects/board/board-view.tsx",
+      "fn": "handleDragEnd",
+      "score": 40
+    },
+    {
+      "file": "apps/web/src/components/objects/board/board-view.tsx",
+      "fn": "onError",
+      "score": 16
+    },
+    {
+      "file": "apps/web/src/components/objects/board/board-view.tsx",
+      "fn": "selectCardRange",
+      "score": 18
+    },
+    {
+      "file": "apps/web/src/components/objects/board/derive-columns.ts",
+      "fn": "deriveColumns",
+      "score": 17
+    },
+    {
+      "file": "apps/web/src/components/objects/data-table/data-table-controls.tsx",
+      "fn": "DataTableControls",
+      "score": 20
+    },
+    {
+      "file": "apps/web/src/components/objects/data-table/data-table.tsx",
+      "fn": "DataTable",
+      "score": 18
+    },
+    {
+      "file": "apps/web/src/components/objects/data-table/display-panel.tsx",
+      "fn": "DisplayPanel",
+      "score": 46
+    },
+    {
+      "file": "apps/web/src/components/objects/metadata-field-add.tsx",
+      "fn": "handleAdd",
+      "score": 25
+    },
+    {
+      "file": "apps/web/src/components/pulse/pulse-card.tsx",
+      "fn": "PulseCard",
+      "score": 23
+    },
+    {
+      "file": "apps/web/src/components/pulse/pulse-card.tsx",
+      "fn": "resolveActions",
+      "score": 16
+    },
+    {
+      "file": "apps/web/src/components/shared/object-reference.tsx",
+      "fn": "ObjectReference",
+      "score": 16
+    },
+    {
+      "file": "apps/web/src/components/triggers/slack-filters.tsx",
+      "fn": "slackFiltersFromConditions",
+      "score": 29
+    },
+    {
+      "file": "apps/web/src/components/triggers/trigger-form.tsx",
+      "fn": "TriggerForm",
+      "score": 59
+    },
+    {
+      "file": "apps/web/src/components/triggers/trigger-form.tsx",
+      "fn": "buildTriggerSummary",
+      "score": 40
+    },
+    {
+      "file": "apps/web/src/components/triggers/trigger-form.tsx",
+      "fn": "connected",
+      "score": 16
+    },
+    {
+      "file": "apps/web/src/components/triggers/trigger-form.tsx",
+      "fn": "statuses",
+      "score": 23
+    },
+    {
+      "file": "apps/web/src/hooks/use-chat-session.ts",
+      "fn": "onerror",
+      "score": 39
+    },
+    {
+      "file": "apps/web/src/hooks/use-chat-session.ts",
+      "fn": "onopen",
+      "score": 21
+    },
+    {
+      "file": "apps/web/src/hooks/use-events.ts",
+      "fn": "deriveAffectedObjects",
+      "score": 19
+    },
+    {
+      "file": "apps/web/src/hooks/use-imports.ts",
+      "fn": "useImportToast",
+      "score": 22
+    },
+    {
+      "file": "apps/web/src/lib/api.ts",
+      "fn": "request",
+      "score": 26
+    },
+    {
+      "file": "apps/web/src/lib/api.ts",
+      "fn": "uploadFileWithProgress",
+      "score": 34
+    },
+    {
+      "file": "apps/web/src/lib/chat-export.ts",
+      "fn": "formatChatMarkdown",
+      "score": 24
+    },
+    {
+      "file": "apps/web/src/lib/chat-selection.ts",
+      "fn": "buildOneShotActionPrompt",
+      "score": 21
+    },
+    {
+      "file": "apps/web/src/lib/chat-selection.ts",
+      "fn": "chatSelectionReducer",
+      "score": 23
+    },
+    {
+      "file": "apps/web/src/lib/chat-stream.ts",
+      "fn": "parseAssistant",
+      "score": 27
+    },
+    {
+      "file": "apps/web/src/lib/chat-stream.ts",
+      "fn": "parseUserMessage",
+      "score": 19
+    },
+    {
+      "file": "apps/web/src/lib/pending-comments-context.tsx",
+      "fn": "tryAdvance",
+      "score": 39
+    },
+    {
+      "file": "apps/web/src/mcp-apps/sessions/app.tsx",
+      "fn": "SessionDetailView",
+      "score": 16
+    },
+    {
+      "file": "apps/web/src/mcp-apps/shared/mcp-app-provider.tsx",
+      "fn": "countResultItems",
+      "score": 16
+    },
+    {
+      "file": "apps/web/src/mcp-apps/shared/schema-form.tsx",
+      "fn": "SchemaForm",
+      "score": 17
+    },
+    {
+      "file": "apps/web/src/mcp-apps/shared/schema-form.tsx",
+      "fn": "handleSubmit",
+      "score": 91
+    },
+    {
+      "file": "apps/web/src/mcp-apps/shared/schema-form.tsx",
+      "fn": "validate",
+      "score": 24
+    },
+    {
+      "file": "apps/web/src/mcp-apps/shared/schema-select.tsx",
+      "fn": "SchemaSelect",
+      "score": 16
+    },
+    {
+      "file": "apps/web/src/mcp-apps/shared/use-workspace-schema.ts",
+      "fn": "normalizeSchema",
+      "score": 17
+    },
+    {
+      "file": "apps/web/src/mcp-apps/shared/use-workspace-schema.ts",
+      "fn": "useWorkspaceSchema",
+      "score": 18
+    },
+    {
+      "file": "apps/web/src/mcp-apps/workspaces/app.tsx",
+      "fn": "WorkspacesApp",
+      "score": 23
+    },
+    {
+      "file": "apps/web/src/routes/_authed/$workspaceId/objects/index.tsx",
+      "fn": "itself",
+      "score": 29
+    },
+    {
+      "file": "apps/web/src/routes/_authed/$workspaceId/settings/keys.tsx",
+      "fn": "ClaudeOAuthSection",
+      "score": 18
+    },
+    {
+      "file": "apps/web/src/routes/_authed/$workspaceId/settings/keys.tsx",
+      "fn": "CustomLlmEditor",
+      "score": 16
+    },
+    {
+      "file": "apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx",
+      "fn": "PropertyDetailPage",
+      "score": 17
+    },
+    {
+      "file": "apps/web/src/routes/_authed/$workspaceId/settings/skills.tsx",
+      "fn": "SkillsPage",
+      "score": 19
+    },
+    {
+      "file": "apps/web/src/routes/_authed/$workspaceId/triggers/index.tsx",
+      "fn": "describeTrigger",
+      "score": 19
+    },
+    {
+      "file": "apps/web/src/routes/signup.tsx",
+      "fn": "handleSubmit",
+      "score": 25
+    },
+    {
+      "file": "packages/mcp/src/__tests__/tools.test.ts",
+      "fn": "getHandler",
+      "score": 20
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "apiFetch",
+      "score": 21
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "buildContextLine",
+      "score": 29
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "buildEnableModuleSettings",
+      "score": 35
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "buildTriggerContextLine",
+      "score": 32
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "collectActiveRelTypes",
+      "score": 18
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "content",
+      "score": 16
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "displayNames",
+      "score": 22
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "ensureEnumField",
+      "score": 25
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "existing",
+      "score": 18
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "objects",
+      "score": 40
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "patchFieldDefinitions",
+      "score": 27
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "responseMeta",
+      "score": 19
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "result",
+      "score": 16
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "settings",
+      "score": 48
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "wsId",
+      "score": 22
+    },
+    {
+      "file": "packages/risk-classifier/src/lib/diff.ts",
+      "fn": "parseUnifiedDiff",
+      "score": 27
+    },
+    {
+      "file": "packages/risk-classifier/src/lib/semgrep.ts",
+      "fn": "runSemgrepDiff",
+      "score": 21
+    },
+    {
+      "file": "packages/risk-classifier/src/signals.ts",
+      "fn": "collectSignals",
+      "score": 54
+    },
+    {
+      "file": "packages/shared/src/schemas/skills.ts",
+      "fn": "parseSkillMd",
+      "score": 18
+    }
+  ],
+  "oversized_files": [
+    {
+      "file": "apps/agent-server/src/__tests__/index.test.ts",
+      "loc": 628
+    },
+    {
+      "file": "apps/agent-server/src/__tests__/microsandbox.test.ts",
+      "loc": 811
+    },
+    {
+      "file": "apps/agent-server/src/index.ts",
+      "loc": 691
+    },
+    {
+      "file": "apps/agent-server/src/services/microsandbox.ts",
+      "loc": 672
+    },
+    {
+      "file": "apps/dev/src/__tests__/routes/actors.test.ts",
+      "loc": 968
+    },
+    {
+      "file": "apps/dev/src/__tests__/routes/events.test.ts",
+      "loc": 1179
+    },
+    {
+      "file": "apps/dev/src/__tests__/routes/integrations.test.ts",
+      "loc": 949
+    },
+    {
+      "file": "apps/dev/src/__tests__/routes/objects.test.ts",
+      "loc": 697
+    },
+    {
+      "file": "apps/dev/src/__tests__/services/execute-import.test.ts",
+      "loc": 614
+    },
+    {
+      "file": "apps/dev/src/__tests__/services/session-manager.test.ts",
+      "loc": 1735
+    },
+    {
+      "file": "apps/dev/src/__tests__/services/trigger-runner.test.ts",
+      "loc": 1046
+    },
+    {
+      "file": "apps/dev/src/routes/actors.ts",
+      "loc": 1130
+    },
+    {
+      "file": "apps/dev/src/routes/catalog-packages.ts",
+      "loc": 930
+    },
+    {
+      "file": "apps/dev/src/routes/events.ts",
+      "loc": 604
+    },
+    {
+      "file": "apps/dev/src/routes/imports.ts",
+      "loc": 611
+    },
+    {
+      "file": "apps/dev/src/routes/installed-packages.ts",
+      "loc": 802
+    },
+    {
+      "file": "apps/dev/src/routes/integrations.ts",
+      "loc": 1113
+    },
+    {
+      "file": "apps/dev/src/routes/objects.ts",
+      "loc": 1130
+    },
+    {
+      "file": "apps/dev/src/routes/sessions.ts",
+      "loc": 701
+    },
+    {
+      "file": "apps/dev/src/services/session-manager.ts",
+      "loc": 2433
+    },
+    {
+      "file": "apps/web/src/__tests__/components/chat/chat.test.tsx",
+      "loc": 692
+    },
+    {
+      "file": "apps/web/src/__tests__/components/objects/board/board-view.test.tsx",
+      "loc": 948
+    },
+    {
+      "file": "apps/web/src/__tests__/mcp-apps/hero-card/app.test.tsx",
+      "loc": 761
+    },
+    {
+      "file": "apps/web/src/components/agents/agent-document.tsx",
+      "loc": 781
+    },
+    {
+      "file": "apps/web/src/components/agents/mcp-servers.tsx",
+      "loc": 623
+    },
+    {
+      "file": "apps/web/src/components/agents/skills.tsx",
+      "loc": 626
+    },
+    {
+      "file": "apps/web/src/components/chat/chat.tsx",
+      "loc": 710
+    },
+    {
+      "file": "apps/web/src/components/imports/import-dialog.tsx",
+      "loc": 730
+    },
+    {
+      "file": "apps/web/src/components/objects/board/board-view.tsx",
+      "loc": 913
+    },
+    {
+      "file": "apps/web/src/components/triggers/trigger-form.tsx",
+      "loc": 1067
+    },
+    {
+      "file": "apps/web/src/components/ui/sidebar.tsx",
+      "loc": 692
+    },
+    {
+      "file": "apps/web/src/lib/api.ts",
+      "loc": 1163
+    },
+    {
+      "file": "apps/web/src/routes/_authed/$workspaceId/objects/index.tsx",
+      "loc": 716
+    },
+    {
+      "file": "packages/db/src/schema.ts",
+      "loc": 818
+    },
+    {
+      "file": "packages/db/src/seed.ts",
+      "loc": 4000
+    },
+    {
+      "file": "packages/mcp/src/__tests__/server.test.ts",
+      "loc": 2900
+    },
+    {
+      "file": "packages/mcp/src/__tests__/tools.test.ts",
+      "loc": 938
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "loc": 4577
+    },
+    {
+      "file": "packages/mcp/src/tools.ts",
+      "loc": 1150
+    },
+    {
+      "file": "packages/shared/src/templates/development-agents.ts",
+      "loc": 1540
+    }
+  ]
+}

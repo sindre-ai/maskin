@@ -38,7 +38,8 @@
 			"routeTree.gen.ts",
 			".claude",
 			".codex",
-			"maskin.io"
+			"maskin.io",
+			".maskin/fitness-baseline.json"
 		]
 	}
 }

@@ -16,6 +16,7 @@
 		"depcruise": "depcruise --output-type err .",
 		"depcruise:json": "depcruise --output-type json .",
 		"fitness:filesize": "node scripts/check-max-file-size.mjs",
+		"fitness:baseline": "node scripts/fitness-baseline.mjs",
 		"db:generate": "turbo db:generate",
 		"db:migrate": "turbo db:migrate",
 		"db:seed": "turbo db:seed"
