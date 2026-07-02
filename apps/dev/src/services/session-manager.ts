@@ -2404,6 +2404,15 @@ export class SessionManager extends EventEmitter {
 			return
 
 		const status = exitCode === 0 ? 'completed' : 'failed'
+		let usage: SessionUsage | null = null
+		try {
+			usage = await extractSessionUsage(this.db, sessionId)
+		} catch (err) {
+			logger.warn('Failed to parse usage from remote session logs', {
+				sessionId,
+				error: String(err),
+			})
+		}
 
 		try {
 			await this.db
@@ -2414,6 +2423,16 @@ export class SessionManager extends EventEmitter {
 					completedAt: new Date(),
 					updatedAt: new Date(),
 					currentActivity: null,
+					...(usage
+						? {
+								totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+								inputTokens: usage.inputTokens,
+								outputTokens: usage.outputTokens,
+								cacheCreationInputTokens: usage.cacheCreationInputTokens,
+								cacheReadInputTokens: usage.cacheReadInputTokens,
+								durationMs: usage.durationMs,
+							}
+						: {}),
 				})
 				.where(eq(sessions.id, sessionId))
 		} catch (err) {
