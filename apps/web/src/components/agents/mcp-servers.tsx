@@ -61,10 +61,23 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		url: 'https://gmailmcp.googleapis.com/mcp/v1',
 		headers: { Authorization: 'Bearer ${GMAIL_TOKEN}' },
 	},
+	// Google Calendar routes through the tool-invocation emitter (stdio → mcp-remote → hosted MCP)
+	// so every tool call fires one PostHog `mcp_tool_invocation`. The ship metric for the
+	// Google Calendar bet reads that event; without this wrapping the metric is blind.
 	'google-calendar': {
-		type: 'http',
-		url: 'https://calendarmcp.googleapis.com/mcp/v1',
-		headers: { Authorization: 'Bearer ${GOOGLE_CALENDAR_TOKEN}' },
+		type: 'stdio',
+		command: 'node',
+		args: [
+			'/opt/maskin/mcp-tool-invocation-emitter.mjs',
+			'https://calendarmcp.googleapis.com/mcp/v1',
+		],
+		env: {
+			MASKIN_TOOL_PROVIDER: 'google-calendar',
+			MASKIN_MCP_AUTH_HEADER: 'Bearer ${GOOGLE_CALENDAR_TOKEN}',
+			MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+			POSTHOG_API_KEY: '${POSTHOG_API_KEY}',
+			POSTHOG_HOST: '${POSTHOG_HOST}',
+		},
 	},
 	posthog: {
 		type: 'http',

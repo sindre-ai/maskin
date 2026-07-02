@@ -1143,6 +1143,13 @@ export class SessionManager extends EventEmitter {
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 		}
 
+		// Forward the PostHog capture credentials so container-side emitters —
+		// agent-run.sh's `developer_session_completed` and the google-calendar
+		// tool-invocation wrapper at /opt/maskin/mcp-tool-invocation-emitter.mjs —
+		// can post analytics events. Both fail-open when the key is unset.
+		if (process.env.POSTHOG_API_KEY) envVars.POSTHOG_API_KEY = process.env.POSTHOG_API_KEY
+		if (process.env.POSTHOG_HOST) envVars.POSTHOG_HOST = process.env.POSTHOG_HOST
+
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
 		// arrives via POST /api/sessions/:id/input over the attached stdin stream.
 		// Non-interactive sessions pass the action prompt positionally so `claude -p`
@@ -1452,6 +1459,8 @@ export class SessionManager extends EventEmitter {
 			'CLAUDE_OAUTH_SCOPES',
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
 			'BROWSER_CDP_URL',
+			'POSTHOG_API_KEY',
+			'POSTHOG_HOST',
 		])
 		// Only reserve GITHUB_TOKEN when we actually injected one; otherwise a
 		// user-supplied PAT (no GitHub integration configured) must pass through.
