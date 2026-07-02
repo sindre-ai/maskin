@@ -61,6 +61,10 @@ import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-d
 import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
 import { Skills } from './skills'
 
+// create-session schema requires a non-empty action_prompt (min length 1) — this
+// is the instruction the agent actually receives when starting a fresh session.
+const NEW_CONVERSATION_ACTION_PROMPT = 'Start a new conversation.'
+
 interface AgentDocumentViewProps {
 	agent: ActorResponse
 	workspaceId: string
@@ -302,7 +306,12 @@ export function AgentDocumentView({
 					variant="outline"
 					size="sm"
 					className="min-h-[44px]"
-					onClick={() => createSession.mutate({ actor_id: agent.id, action_prompt: '' })}
+					onClick={() =>
+						createSession.mutate({
+							actor_id: agent.id,
+							action_prompt: NEW_CONVERSATION_ACTION_PROMPT,
+						})
+					}
 					disabled={createSession.isPending}
 				>
 					{createSession.isPending ? 'Starting…' : 'New Conversation'}

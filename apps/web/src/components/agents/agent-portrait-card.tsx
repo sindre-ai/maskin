@@ -53,7 +53,7 @@ export function AgentPortraitCard({
 
 			<AvatarPortrait name={agent.name} type={agent.type} status={status} />
 
-			<div className="relative flex flex-col items-center gap-0.5 min-w-0 w-full">
+			<div className="relative flex flex-col items-center gap-0.5 min-w-0 w-full pointer-events-none">
 				<span className="text-sm font-semibold text-foreground truncate max-w-full">
 					{agent.name}
 				</span>
@@ -64,7 +64,7 @@ export function AgentPortraitCard({
 
 			<FocusLine status={status} text={focus} session={latestSession} />
 
-			<div className="relative inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+			<div className="relative inline-flex items-center gap-1.5 text-[11px] text-muted-foreground pointer-events-none">
 				<span
 					className={cn(
 						'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium',
@@ -145,7 +145,7 @@ function FocusLine({
 	return (
 		<p
 			className={cn(
-				'relative text-xs leading-snug line-clamp-2 w-full min-h-8',
+				'relative text-xs leading-snug line-clamp-2 w-full min-h-8 pointer-events-none',
 				status === 'failed' ? 'text-error' : 'text-foreground',
 			)}
 		>
@@ -186,7 +186,7 @@ function AvatarPortrait({
 					: 'stroke-border'
 
 	return (
-		<div className="relative" style={{ width: size, height: size }}>
+		<div className="relative pointer-events-none" style={{ width: size, height: size }}>
 			<svg
 				className="absolute inset-0 -rotate-90"
 				width={size}
