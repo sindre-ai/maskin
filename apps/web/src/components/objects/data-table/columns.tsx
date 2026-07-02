@@ -107,13 +107,18 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 				/>
 			),
 			cell: ({ row }) => (
-				<Checkbox
-					checked={row.getIsSelected()}
-					onCheckedChange={(value) => row.toggleSelected(!!value)}
-					aria-label="Select row"
-					onClick={(e) => e.stopPropagation()}
-					className={TAP_TARGET_44}
-				/>
+				<span
+					data-drag-checkbox=""
+					className="inline-flex touch-none select-none items-center justify-center"
+				>
+					<Checkbox
+						checked={row.getIsSelected()}
+						onCheckedChange={(value) => row.toggleSelected(!!value)}
+						aria-label="Select row"
+						onClick={(e) => e.stopPropagation()}
+						className={TAP_TARGET_44}
+					/>
+				</span>
 			),
 			enableSorting: false,
 			enableHiding: false,
