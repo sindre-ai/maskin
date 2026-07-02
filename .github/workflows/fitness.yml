@@ -1,0 +1,87 @@
+name: Fitness
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'bet/*'
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: fitness-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  fitness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # Three fitness signals — each writes its raw output to a file the
+      # aggregator reads. All three can produce non-zero exit codes when
+      # violations exist (dep-cruiser fails on error-severity rules,
+      # check-max-file-size on new offenders); `|| true` neutralises that so
+      # the aggregator + check-run always get a chance to run. A genuine
+      # crash still surfaces: the aggregator writes conclusion=failure with
+      # the input error in the summary, and the check-run posts anyway.
+      - name: Run dependency-cruiser
+        run: |
+          pnpm exec depcruise --config .dependency-cruiser.cjs --output-type json . \
+            > fitness-depcruise.json || true
+
+      - name: Run Biome cognitive-complexity check
+        run: |
+          pnpm exec biome lint \
+            --only=lint/complexity/noExcessiveCognitiveComplexity \
+            --reporter=json . \
+            > fitness-biome.json || true
+
+      - name: Run file-size check
+        run: node scripts/check-max-file-size.mjs --all > fitness-filesize.json
+
+      # Aggregator diffs each signal against .maskin/fitness-baseline.json and
+      # writes fitness-report.json = {name, conclusion, summary, totals}.
+      - name: Aggregate to fitness-report.json
+        run: node scripts/fitness-report.mjs
+
+      - name: Post maskin/fitness check-run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            const result = JSON.parse(fs.readFileSync('fitness-report.json', 'utf8'))
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: result.name,
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'completed',
+              conclusion: result.conclusion,
+              output: {
+                title: `Fitness: ${result.conclusion}`,
+                summary: result.summary,
+              },
+            })
+            if (result.conclusion === 'failure') {
+              const t = result.totals
+              const totals = `cycles ${t.cycles.new}, boundary ${t.boundary_violations.new}, complexity ${t.cognitive_complexity.new}, oversized ${t.oversized_files.new}`
+              core.setFailed(`Fitness gate: new violations — ${totals}`)
+            }
