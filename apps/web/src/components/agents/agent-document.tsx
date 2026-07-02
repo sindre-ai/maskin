@@ -43,7 +43,6 @@ import {
 	Clock,
 	MinusCircle,
 	PauseCircle,
-	Play,
 	RotateCcw,
 	Trash2,
 	XCircle,
@@ -55,6 +54,7 @@ import { PageHeader } from '../layout/page-header'
 import { ObjectReference } from '../shared/object-reference'
 import { RelativeTime } from '../shared/relative-time'
 import { TypeBadge } from '../shared/type-badge'
+import { AgentRunPauseButton } from './agent-run-pause-button'
 import { AgentUsageChart } from './agent-usage-chart'
 import { McpServers } from './mcp-servers'
 import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-detail-panel'
@@ -285,23 +285,13 @@ export function AgentDocumentView({
 
 			{/* Run/Pause + New Conversation */}
 			<div className="flex items-center gap-2 mb-6">
-				{isActive ? (
-					<Button
-						variant="outline"
-						size="sm"
-						className="min-h-[44px]"
-						onClick={onPause}
-						disabled={isPausePending}
-					>
-						<PauseCircle size={14} />
-						{isPausePending ? 'Pausing…' : 'Pause'}
-					</Button>
-				) : (
-					<Button size="sm" className="min-h-[44px]" onClick={onRun} disabled={isRunPending}>
-						<Play size={14} />
-						{isRunPending ? 'Starting…' : 'Run'}
-					</Button>
-				)}
+				<AgentRunPauseButton
+					isActive={isActive}
+					onRun={onRun}
+					onPause={onPause}
+					isRunPending={isRunPending}
+					isPausePending={isPausePending}
+				/>
 				<Button
 					variant="outline"
 					size="sm"

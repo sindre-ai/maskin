@@ -5,8 +5,8 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { AlertTriangle, Pause, Play } from 'lucide-react'
 import { ActorAvatar } from '../shared/actor-avatar'
-import { Button } from '../ui/button'
 import { Spinner } from '../ui/spinner'
+import { AgentRunPauseButton } from './agent-run-pause-button'
 
 export type PortraitStatus = 'running' | 'paused' | 'idle' | 'failed'
 
@@ -82,54 +82,17 @@ export function AgentPortraitCard({
 			</div>
 
 			<div className="relative mt-auto flex w-full items-center justify-center gap-2 pt-1">
-				{isRunning ? (
-					<PortraitButton
-						intent="pause"
-						onClick={onPause}
-						disabled={isPausePending}
-						label={isPausePending ? 'Pausing…' : 'Pause'}
-					/>
-				) : (
-					<PortraitButton
-						intent="run"
-						onClick={onRun}
-						disabled={isRunPending}
-						label={isRunPending ? 'Starting…' : status === 'paused' ? 'Resume' : 'Run'}
-					/>
-				)}
+				<AgentRunPauseButton
+					isActive={isRunning}
+					onRun={onRun}
+					onPause={onPause}
+					isRunPending={isRunPending}
+					isPausePending={isPausePending}
+					runLabel={status === 'paused' ? 'Resume' : 'Run'}
+					fullWidth
+				/>
 			</div>
 		</div>
-	)
-}
-
-function PortraitButton({
-	intent,
-	onClick,
-	disabled,
-	label,
-}: {
-	intent: 'run' | 'pause'
-	onClick: () => void
-	disabled: boolean
-	label: string
-}) {
-	const Icon = intent === 'run' ? Play : Pause
-	return (
-		<Button
-			type="button"
-			size="sm"
-			variant={intent === 'run' ? 'default' : 'outline'}
-			onClick={(e) => {
-				e.preventDefault()
-				e.stopPropagation()
-				onClick()
-			}}
-			disabled={disabled}
-			className="w-full min-h-[44px]"
-		>
-			<Icon size={14} aria-hidden="true" />
-			{label}
-		</Button>
 	)
 }
 

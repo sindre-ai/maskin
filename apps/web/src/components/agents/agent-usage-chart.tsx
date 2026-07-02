@@ -1,6 +1,7 @@
 import { DateRangePicker, type DateRangeValue } from '@/components/shared/date-range-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
+import { ButtonGroup } from '@/components/ui/button-group'
 import { Skeleton } from '@/components/ui/skeleton'
 import { pickBucket, useSessionUsage } from '@/hooks/use-session-usage'
 import type { ActorResponse } from '@/lib/api'
@@ -105,15 +106,26 @@ export function AgentUsageChart({
 				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
 					Usage
 				</h3>
-				<fieldset className="m-0 inline-flex h-10 items-center justify-center rounded-md border-0 bg-muted p-1 text-muted-foreground">
-					<legend className="sr-only">Chart view</legend>
-					<ViewToggle
-						active={view === 'tokens'}
-						onSelect={() => setView('tokens')}
-						label="Tokens"
-					/>
-					<ViewToggle active={view === 'cost'} onSelect={() => setView('cost')} label="Cost" />
-				</fieldset>
+				<ButtonGroup>
+					<Button
+						type="button"
+						variant={view === 'tokens' ? 'secondary' : 'ghost'}
+						size="sm"
+						aria-pressed={view === 'tokens'}
+						onClick={() => setView('tokens')}
+					>
+						Tokens
+					</Button>
+					<Button
+						type="button"
+						variant={view === 'cost' ? 'secondary' : 'ghost'}
+						size="sm"
+						aria-pressed={view === 'cost'}
+						onClick={() => setView('cost')}
+					>
+						Cost
+					</Button>
+				</ButtonGroup>
 			</div>
 
 			<div className="flex flex-wrap items-center gap-2 mb-4">
@@ -246,29 +258,5 @@ function Stat({ label, value, loading }: { label: string; value: string; loading
 				<div className="text-lg font-medium tabular-nums mt-0.5">{value}</div>
 			)}
 		</div>
-	)
-}
-
-function ViewToggle({
-	active,
-	onSelect,
-	label,
-}: {
-	active: boolean
-	onSelect: () => void
-	label: string
-}) {
-	return (
-		<button
-			type="button"
-			aria-pressed={active}
-			onClick={onSelect}
-			className={cn(
-				'inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-				active ? 'bg-background text-foreground shadow-sm' : 'text-foreground/70',
-			)}
-		>
-			{label}
-		</button>
 	)
 }
