@@ -1214,6 +1214,46 @@ app.openapi(deleteActorRoute, (async (c) => {
 						.update(events)
 						.set({ actorId: sindreRow.id })
 						.where(and(eq(events.workspaceId, wsId), eq(events.actorId, id)))
+					// Triggers targeting the deleted user cannot meaningfully re-target
+					// Sindre (would silently fire against a system actor), so drop them.
+					// Reassign trigger authorship on surviving rows to preserve the trail.
+					await tx
+						.delete(triggers)
+						.where(and(eq(triggers.workspaceId, wsId), eq(triggers.targetActorId, id)))
+					await tx
+						.update(triggers)
+						.set({ createdBy: sindreRow.id })
+						.where(and(eq(triggers.workspaceId, wsId), eq(triggers.createdBy, id)))
+					// Agent files back this human's own agent state — nothing for a
+					// teammate to inherit. Drop them (blobs are actor-scoped in S3).
+					await tx
+						.delete(agentFiles)
+						.where(and(eq(agentFiles.workspaceId, wsId), eq(agentFiles.actorId, id)))
+					// Workspace skills authored by the user survive; only the audit
+					// pointer moves to Sindre.
+					await tx
+						.update(workspaceSkills)
+						.set({ createdBy: sindreRow.id })
+						.where(and(eq(workspaceSkills.workspaceId, wsId), eq(workspaceSkills.createdBy, id)))
+					// Relationships aren't workspace-scoped in schema, so filter via
+					// the workspace's objects (source or target). Reassign authorship
+					// to preserve the trail for teammates.
+					const wsObjectIds = tx
+						.select({ id: objects.id })
+						.from(objects)
+						.where(eq(objects.workspaceId, wsId))
+					await tx
+						.update(relationships)
+						.set({ createdBy: sindreRow.id })
+						.where(
+							and(
+								eq(relationships.createdBy, id),
+								or(
+									inArray(relationships.sourceId, wsObjectIds),
+									inArray(relationships.targetId, wsObjectIds),
+								),
+							),
+						)
 					await tx
 						.update(workspaces)
 						.set({ createdBy: sindreRow.id })
@@ -1241,6 +1281,14 @@ app.openapi(deleteActorRoute, (async (c) => {
 			// NOT NULL column.
 			await tx.delete(sessions).where(eq(sessions.createdBy, id))
 			await tx.delete(sessions).where(eq(sessions.actorId, id))
+			// Residual triggers, agent files, and relationships whose workspace was
+			// already gone before this loop reached it — drop them rather than
+			// leaving an FK violation to block the final actor delete.
+			await tx
+				.delete(triggers)
+				.where(or(eq(triggers.createdBy, id), eq(triggers.targetActorId, id)))
+			await tx.delete(agentFiles).where(eq(agentFiles.actorId, id))
+			await tx.delete(relationships).where(eq(relationships.createdBy, id))
 			await tx.update(actors).set({ createdBy: null }).where(eq(actors.createdBy, id))
 			await tx.delete(actors).where(eq(actors.id, id))
 		})

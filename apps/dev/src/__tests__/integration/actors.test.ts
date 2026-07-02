@@ -5,8 +5,10 @@ import {
 	imports,
 	notifications,
 	readState,
+	relationships,
 	sessions,
 	subscriptions,
+	triggers,
 	workspaceMembers,
 	workspaceSkills,
 } from '@maskin/db/schema'
@@ -20,7 +22,10 @@ import {
 	buildWorkspaceSkill,
 	insertActor,
 	insertNotification,
+	insertObject,
+	insertRelationship,
 	insertSession,
+	insertTrigger,
 	insertWorkspace,
 } from '../factories'
 import { jsonRequest } from '../helpers'
@@ -165,5 +170,123 @@ describe('Actors Integration — DELETE', () => {
 		expect(fileAfter.createdBy).toBe(humanId)
 		const [importAfter] = await db.select().from(imports).where(eq(imports.id, importRow.id))
 		expect(importAfter.createdBy).toBe(humanId)
+	})
+})
+
+// A human self-delete in a shared workspace must reassign or drop every FK
+// from actors.id before the actors row is removed. Any missed FK — triggers,
+// agent_files, relationships, workspace_skills — surfaces as a 23503 rollback
+// on the final delete, and the user cannot delete their account.
+describe('Actors Integration — human self-delete in a shared workspace', () => {
+	it('reassigns / drops all actors-referencing FKs, then removes the human', async () => {
+		// Create a workspace with the test actor (this is the "other human" keeping
+		// the workspace from being solely-owned by the human we'll delete).
+		const otherHumanId = getTestActorId()
+		const ws = await insertWorkspace(db, otherHumanId)
+		const workspaceId = ws.id
+
+		// The workspace's Sindre (system agent) — where authored content will be
+		// reassigned to after the human is gone.
+		const sindre = await insertActor(db, {
+			type: 'agent',
+			name: 'Sindre',
+			isSystem: true,
+		})
+		await db.insert(workspaceMembers).values({
+			workspaceId,
+			actorId: sindre.id,
+			role: 'member',
+		})
+
+		// The human who's about to delete their own account.
+		const deleting = await insertActor(db, { type: 'human', name: 'Departing' })
+		await db.insert(workspaceMembers).values({
+			workspaceId,
+			actorId: deleting.id,
+			role: 'member',
+		})
+
+		// FK-bearing rows owned by (or targeting) the deleting human:
+		//   - trigger authored by the human, targeting Sindre → createdBy reassign
+		//   - trigger targeting the human → hard-deleted (target is gone)
+		//   - agent file owned by the human → hard-deleted
+		//   - workspace skill authored by the human → createdBy reassigned to Sindre
+		//   - relationship between two workspace objects, authored by the human →
+		//       createdBy reassigned to Sindre
+		const triggerByHuman = await insertTrigger(db, workspaceId, deleting.id, sindre.id)
+		const triggerAtHuman = await insertTrigger(db, workspaceId, otherHumanId, deleting.id)
+		const [agentFile] = await db
+			.insert(agentFiles)
+			.values(buildAgentFile({ workspaceId, actorId: deleting.id }))
+			.returning()
+		const [wsSkill] = await db
+			.insert(workspaceSkills)
+			.values(buildWorkspaceSkill({ workspaceId, createdBy: deleting.id }))
+			.returning()
+		const sourceObj = await insertObject(db, workspaceId, otherHumanId, { type: 'insight' })
+		const targetObj = await insertObject(db, workspaceId, otherHumanId, { type: 'bet' })
+		const rel = await insertRelationship(db, deleting.id, {
+			sourceType: 'insight',
+			sourceId: sourceObj.id,
+			targetType: 'bet',
+			targetId: targetObj.id,
+		})
+
+		// Drive the delete through the route handler, authenticated as the human
+		// who's deleting themselves.
+		const app = createIntegrationApp({ path: '/api/actors', module: actorsRoutes })
+		app.use('/api/actors/*', async (c, next) => {
+			c.set('actorId', deleting.id)
+			await next()
+		})
+
+		const res = await app.request(jsonRequest('DELETE', `/api/actors/${deleting.id}`))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ deleted: true })
+
+		// The actor is gone; no FK violation blocked the delete.
+		const remainingActor = await db.select().from(actors).where(eq(actors.id, deleting.id))
+		expect(remainingActor).toHaveLength(0)
+
+		// The workspace and its other member survive.
+		const remainingWs = await db
+			.select()
+			.from(workspaceMembers)
+			.where(eq(workspaceMembers.workspaceId, workspaceId))
+		expect(remainingWs.some((m) => m.actorId === otherHumanId)).toBe(true)
+		expect(remainingWs.some((m) => m.actorId === deleting.id)).toBe(false)
+
+		// Trigger targeting the deleted user is dropped (retargeting to Sindre
+		// would silently fire against a system actor).
+		const remainingTargetTrigger = await db
+			.select()
+			.from(triggers)
+			.where(eq(triggers.id, triggerAtHuman.id))
+		expect(remainingTargetTrigger).toHaveLength(0)
+
+		// Trigger authored by the user survives, with authorship moved to Sindre.
+		const [survivingTrigger] = await db
+			.select()
+			.from(triggers)
+			.where(eq(triggers.id, triggerByHuman.id))
+		expect(survivingTrigger.createdBy).toBe(sindre.id)
+
+		// Agent files owned by the deleted user are gone.
+		const remainingAgentFiles = await db
+			.select()
+			.from(agentFiles)
+			.where(eq(agentFiles.id, agentFile.id))
+		expect(remainingAgentFiles).toHaveLength(0)
+
+		// Workspace skill authored by the user survives, createdBy reassigned.
+		const [skillAfter] = await db
+			.select()
+			.from(workspaceSkills)
+			.where(eq(workspaceSkills.id, wsSkill.id))
+		expect(skillAfter.createdBy).toBe(sindre.id)
+
+		// Relationship authored by the user survives, createdBy reassigned.
+		const [relAfter] = await db.select().from(relationships).where(eq(relationships.id, rel.id))
+		expect(relAfter.createdBy).toBe(sindre.id)
 	})
 })

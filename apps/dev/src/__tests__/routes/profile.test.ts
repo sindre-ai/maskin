@@ -16,6 +16,7 @@ import {
 	userDisplaySettings,
 	webhookDeliveries,
 	workspaceMembers,
+	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -486,7 +487,14 @@ describe('Profile — DELETE /api/actors/:id (human self-delete)', () => {
 		//   2) memberships → one workspace
 		//   3) otherHumanCount → 1 (shared branch)
 		//   4) Sindre lookup → present, so reassignment can proceed
-		mockResults.selectQueue = [[actor], [{ workspaceId: wsId }], [{ count: 1 }], [{ id: sindreId }]]
+		//   5) objects subquery used by inArray on relationships in the workspace
+		mockResults.selectQueue = [
+			[actor],
+			[{ workspaceId: wsId }],
+			[{ count: 1 }],
+			[{ id: sindreId }],
+			[],
+		]
 
 		const res = await app.request(
 			new Request(`http://localhost/api/actors/${actor.id}`, {
@@ -498,7 +506,8 @@ describe('Profile — DELETE /api/actors/:id (human self-delete)', () => {
 		expect(res.status).toBe(200)
 		// Updates, in order: objects (createdBy), objects (owner=null), files,
 		// integrations, imports, sessions (createdBy), sessions (actorId),
-		// events (actorId), workspaces (createdBy), and the actor-level
+		// events (actorId), triggers (createdBy), workspaceSkills (createdBy),
+		// relationships (createdBy), workspaces (createdBy), and the actor-level
 		// createdBy=null sweep just before the actors row drops.
 		expect(calls.updateTables).toEqual([
 			objects,
@@ -509,13 +518,19 @@ describe('Profile — DELETE /api/actors/:id (human self-delete)', () => {
 			sessions,
 			sessions,
 			events,
+			triggers,
+			workspaceSkills,
+			relationships,
 			workspaces,
 			actors,
 		])
-		// Deletes, in order: subscriptions / readState / workspaceMembers inside
-		// the shared-workspace branch, then notifications×2 and sessions×2 from
-		// the actor-level sweep, then the actors row itself.
+		// Deletes, in order (per-workspace): triggers targeting the deleted user,
+		// agentFiles for the actor, subscriptions, readState, workspaceMembers.
+		// Then actor-level sweep: notifications×2, sessions×2, triggers residual,
+		// agentFiles residual, relationships residual, actors.
 		expect(calls.deleteTables).toEqual([
+			triggers,
+			agentFiles,
 			subscriptions,
 			readState,
 			workspaceMembers,
@@ -523,17 +538,20 @@ describe('Profile — DELETE /api/actors/:id (human self-delete)', () => {
 			notifications,
 			sessions,
 			sessions,
+			triggers,
+			agentFiles,
+			relationships,
 			actors,
 		])
-		// Six `createdBy` reassignments to Sindre: objects, files, integrations,
-		// imports, sessions, workspaces. The actor-level createdBy sweep nulls
-		// instead, so it is excluded.
+		// Nine `createdBy` reassignments to Sindre: objects, files, integrations,
+		// imports, sessions, triggers, workspaceSkills, relationships, workspaces.
+		// The actor-level createdBy sweep nulls instead, so it is excluded.
 		const reassignedToSindre = calls.updates.filter(
 			(u): u is { createdBy: string } =>
 				typeof (u as { createdBy?: unknown }).createdBy === 'string' &&
 				(u as { createdBy: string }).createdBy === sindreId,
 		)
-		expect(reassignedToSindre).toHaveLength(6)
+		expect(reassignedToSindre).toHaveLength(9)
 		// Two `actorId` reassignments to Sindre: sessions and events.
 		const actorIdReassigned = calls.updates.filter(
 			(u): u is { actorId: string } =>
