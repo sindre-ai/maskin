@@ -140,26 +140,26 @@ export function Header() {
 	}
 
 	return (
-		<header className="relative flex h-11 shrink-0 items-center gap-2 after:pointer-events-none after:absolute after:top-full after:right-0 after:left-0 after:z-10 after:h-8 after:bg-gradient-to-b after:from-background after:to-transparent after:content-['']">
-			<div className="flex w-full min-w-0 items-center gap-1 px-3 lg:gap-2 lg:px-4">
-				<SidebarTrigger className="md:hidden -ml-1 h-7 w-7 shrink-0" />
+		<header className="relative flex h-11 shrink-0 items-center gap-[var(--space-2)] after:pointer-events-none after:absolute after:top-full after:right-0 after:left-0 after:z-10 after:h-8 after:bg-gradient-to-b after:from-background after:to-transparent after:content-['']">
+			<div className="flex w-full min-w-0 items-center gap-[var(--space-1)] px-[var(--space-3)] lg:gap-[var(--space-2)] lg:px-[var(--space-4)]">
+				<SidebarTrigger className="md:hidden -ml-[var(--space-1)] h-7 w-7 shrink-0" />
 				{crumbs.length > 1 && (
 					<Button
 						variant="ghost"
 						size="icon"
-						className="md:hidden -ml-1 h-7 w-7 shrink-0"
+						className="md:hidden -ml-[var(--space-1)] h-7 w-7 shrink-0"
 						onClick={() => router.history.back()}
 					>
 						<ArrowLeft />
 						<span className="sr-only">Go back</span>
 					</Button>
 				)}
-				<div className="hidden md:flex min-w-0 flex-1 items-center gap-1 opacity-0 hover:opacity-100 transition-opacity duration-150 lg:gap-2">
+				<div className="hidden md:flex min-w-0 flex-1 items-center gap-[var(--space-1)] opacity-0 hover:opacity-100 transition-opacity duration-150 lg:gap-[var(--space-2)]">
 					{crumbs.length > 1 && (
 						<Button
 							variant="ghost"
 							size="icon"
-							className="-ml-1 h-7 w-7"
+							className="-ml-[var(--space-1)] h-7 w-7"
 							onClick={() => router.history.back()}
 						>
 							<ArrowLeft />
@@ -190,7 +190,7 @@ export function Header() {
 						</Breadcrumb>
 					)}
 				</div>
-				<div className="ml-auto flex shrink-0 items-center gap-2">
+				<div className="ml-auto flex shrink-0 items-center gap-[var(--space-2)]">
 					{actions}
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>

@@ -52,7 +52,7 @@ type ViewMode = 'rendered' | 'source'
 
 function SourceView({ text }: { text: string }) {
 	return (
-		<pre className="rounded-md border border-border bg-bg-surface p-4 text-xs font-mono whitespace-pre-wrap break-words overflow-x-auto text-text">
+		<pre className="rounded-md border border-border bg-bg-surface p-[var(--space-4)] text-caption font-mono whitespace-pre-wrap break-words overflow-x-auto text-text">
 			{text}
 		</pre>
 	)
@@ -149,11 +149,17 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 	if (isMarkdown(file.mimeType)) {
 		const text = fileText(file)
 		return (
-			<div className="space-y-3">
+			<div className="space-y-[var(--space-3)]">
 				<div className="flex justify-end">
 					<ViewToggle mode={mode} onChange={setMode} />
 				</div>
-				{mode === 'rendered' ? <MarkdownContent content={text} /> : <SourceView text={text} />}
+				{mode === 'rendered' ? (
+					<div className="max-w-[65ch]">
+						<MarkdownContent content={text} />
+					</div>
+				) : (
+					<SourceView text={text} />
+				)}
 			</div>
 		)
 	}
@@ -161,10 +167,10 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 	if (isHtml(file.mimeType)) {
 		const text = fileText(file)
 		return (
-			<div className="space-y-3">
-				<div className="flex items-center justify-end gap-2">
+			<div className="space-y-[var(--space-3)]">
+				<div className="flex items-center justify-end gap-[var(--space-2)]">
 					{showSaved && (
-						<span className="flex items-center gap-1 text-xs text-muted-foreground mr-auto">
+						<span className="flex items-center gap-[var(--space-1)] text-caption text-muted-foreground mr-auto">
 							<Check size={14} /> Saved
 						</span>
 					)}
@@ -237,7 +243,7 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 		const b64 = file.encoding === 'base64' ? file.content : btoa(file.content)
 		const src = `data:${file.mimeType};base64,${b64}`
 		return (
-			<div className="rounded-md border border-border bg-bg-surface p-4">
+			<div className="rounded-md border border-border bg-bg-surface p-[var(--space-4)]">
 				<img src={src} alt={file.name} className="max-w-full h-auto rounded" />
 			</div>
 		)

@@ -214,7 +214,7 @@ export function AgentDocumentView({
 	return (
 		<div className="w-full min-w-0 max-w-3xl mx-auto">
 			{/* Name */}
-			<div className="flex items-start gap-2 mb-2">
+			<div className="flex items-start gap-[var(--space-2)] mb-[var(--space-2)]">
 				<textarea
 					value={nameDraft}
 					onChange={(e) => {
@@ -228,7 +228,7 @@ export function AgentDocumentView({
 					placeholder="Agent name"
 					rows={1}
 					readOnly={isManaged}
-					className={`w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none ${isManaged ? 'cursor-default select-text' : ''}`}
+					className={`w-full text-display font-bold bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-[0] focus:outline-none ${isManaged ? 'cursor-default select-text' : ''}`}
 					ref={(el) => {
 						if (el) {
 							el.style.height = 'auto'
@@ -237,7 +237,7 @@ export function AgentDocumentView({
 					}}
 				/>
 				{showSaved && (
-					<span className="flex items-center gap-1 text-xs text-muted-foreground mt-1.5">
+					<span className="flex items-center gap-[var(--space-1)] text-caption text-muted-foreground mt-[6px]">
 						<Check size={14} /> Saved
 					</span>
 				)}
@@ -253,13 +253,13 @@ export function AgentDocumentView({
 				placeholder="Short description shown on the Agents page"
 				maxLength={80}
 				readOnly={isManaged}
-				className={`mb-3 border-none bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0 ${isManaged ? 'cursor-default' : ''}`}
+				className={`mb-[var(--space-3)] border-none bg-transparent px-[0] text-label text-muted-foreground shadow-none focus-visible:ring-0 ${isManaged ? 'cursor-default' : ''}`}
 			/>
 
 			{/* Metadata badges row */}
-			<div className="flex flex-wrap items-center gap-2 mb-6">
+			<div className="flex flex-wrap items-center gap-[var(--space-2)] mb-[var(--space-6)]">
 				<TypeBadge type="agent" />
-				<span className="flex items-center gap-1.5 text-xs">
+				<span className="flex items-center gap-[6px] text-caption">
 					<span
 						className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-success animate-pulse' : 'bg-text-muted'}`}
 					/>
@@ -270,7 +270,7 @@ export function AgentDocumentView({
 				)}
 				<RelativeTime date={agent.createdAt} className="text-[11px] text-muted-foreground" />
 				{isManaged && (
-					<span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+					<span className="flex items-center gap-[6px] text-[11px] text-muted-foreground">
 						<span>🔒</span>
 						<span>Managed{managedPackageName ? ` · ${managedPackageName}` : ''}</span>
 						<button
@@ -290,7 +290,7 @@ export function AgentDocumentView({
 			{/* Currently Working On */}
 			{activeSessions && activeSessions.length > 0 && (
 				<Section title="Currently Working On">
-					<div className="space-y-2">
+					<div className="space-y-[var(--space-2)]">
 						{activeSessions.map((session) => (
 							<ActiveSessionCard
 								key={session.id}
@@ -307,7 +307,10 @@ export function AgentDocumentView({
 			{pastSessions.length > 0 && (
 				<Section title="Sessions">
 					<div
-						className={cn('space-y-1', pastSessions.length > 10 && 'max-h-[400px] overflow-y-auto')}
+						className={cn(
+							'space-y-[var(--space-1)]',
+							pastSessions.length > 10 && 'max-h-[400px] overflow-y-auto',
+						)}
 					>
 						{pastSessions.map((session) => (
 							<SessionRow
@@ -323,7 +326,7 @@ export function AgentDocumentView({
 						<Button
 							variant="ghost"
 							size="sm"
-							className="mt-2"
+							className="mt-[var(--space-2)]"
 							disabled={isLoadingMoreSessions}
 							onClick={() => onLoadMoreSessions?.()}
 						>
@@ -347,11 +350,11 @@ export function AgentDocumentView({
 
 			{/* Configuration (collapsible) */}
 			<Collapsible open={configExpanded} onOpenChange={setConfigExpanded}>
-				<CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground mb-4 hover:text-foreground transition-colors cursor-pointer">
+				<CollapsibleTrigger className="flex w-full items-center gap-[6px] text-caption font-medium uppercase text-muted-foreground mb-[var(--space-4)] hover:text-foreground transition-colors cursor-pointer">
 					{configExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
 					Configuration
 					{isManaged && (
-						<span className="ml-auto flex items-center gap-1 normal-case tracking-normal font-normal text-[11px] text-muted-foreground">
+						<span className="ml-auto flex items-center gap-[var(--space-1)] normal-case font-normal text-[11px] text-muted-foreground">
 							<span>🔒</span>
 							<span>Managed{managedPackageName ? ` · ${managedPackageName}` : ''}</span>
 							<button
@@ -379,7 +382,7 @@ export function AgentDocumentView({
 							}}
 							onBlur={isManaged ? undefined : handleSystemPromptBlur}
 							placeholder="Instructions for the agent..."
-							className={`min-h-[120px] font-mono text-sm ${isManaged ? 'cursor-default' : ''}`}
+							className={`min-h-[120px] font-mono text-label ${isManaged ? 'cursor-default' : ''}`}
 							autoResize
 							readOnly={isManaged}
 						/>
@@ -387,7 +390,7 @@ export function AgentDocumentView({
 
 					{/* LLM Configuration */}
 					<Section title="LLM Configuration">
-						<div className="flex flex-col sm:flex-row gap-3">
+						<div className="flex flex-col sm:flex-row gap-[var(--space-3)]">
 							<div className="flex-1">
 								<Label>Provider</Label>
 								<Select
@@ -438,15 +441,17 @@ export function AgentDocumentView({
 								setMemoryDirty(true)
 							}}
 							placeholder="{}"
-							className={`min-h-[100px] font-mono text-sm ${isManaged ? 'cursor-default' : ''}`}
+							className={`min-h-[100px] font-mono text-label ${isManaged ? 'cursor-default' : ''}`}
 							readOnly={isManaged}
 						/>
-						{memoryError && <p className="text-xs text-error mt-1">{memoryError}</p>}
+						{memoryError && (
+							<p className="text-caption text-error mt-[var(--space-1)]">{memoryError}</p>
+						)}
 						{!isManaged && memoryDirty && (
-							<div className="flex justify-end mt-2">
+							<div className="flex justify-end mt-[var(--space-2)]">
 								<button
 									type="button"
-									className="rounded bg-accent px-3 py-1 text-xs text-accent-foreground hover:bg-accent-hover"
+									className="rounded bg-accent px-[var(--space-3)] py-[var(--space-1)] text-caption text-accent-foreground hover:bg-accent-hover"
 									onClick={handleMemorySave}
 								>
 									Save Memory
@@ -459,11 +464,11 @@ export function AgentDocumentView({
 
 			{/* Activity trail */}
 			{events && events.length > 0 && (
-				<div className="border-t border-border pt-6">
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
+				<div className="border-t border-border pt-[var(--space-6)]">
+					<h3 className="text-caption font-medium uppercase text-muted-foreground mb-[var(--space-3)]">
 						Activity
 					</h3>
-					<div className="space-y-2">
+					<div className="space-y-[var(--space-2)]">
 						{events.map((event) => (
 							<ActivityItem key={event.id} event={event} compact actorsById={actorsById} />
 						))}
@@ -482,8 +487,8 @@ function Section({
 	children: React.ReactNode
 }) {
 	return (
-		<div className="mb-6">
-			<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
+		<div className="mb-[var(--space-6)]">
+			<h3 className="text-caption font-medium uppercase text-muted-foreground mb-[var(--space-2)]">
 				{title}
 			</h3>
 			{children}
@@ -508,17 +513,17 @@ function ActiveSessionCard({
 	return (
 		<button
 			type="button"
-			className="flex w-full items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 min-w-0 text-left hover:bg-secondary transition-colors cursor-pointer"
+			className="flex w-full items-center gap-[10px] rounded-md border border-border bg-secondary/50 px-[var(--space-3)] py-[var(--space-2)] min-w-0 text-left hover:bg-secondary transition-colors cursor-pointer"
 			onClick={() => onSelect?.(session)}
 		>
 			{idle ? <PauseCircle size={14} className="shrink-0 text-muted-foreground" /> : <Spinner />}
-			<span className="text-sm truncate flex-1 min-w-0">{session.actionPrompt}</span>
+			<span className="text-label truncate flex-1 min-w-0">{session.actionPrompt}</span>
 			{preview && (
-				<span className="text-xs text-muted-foreground truncate max-w-[120px] sm:max-w-[200px]">
+				<span className="text-caption text-muted-foreground truncate max-w-[120px] sm:max-w-[200px]">
 					{preview}
 				</span>
 			)}
-			{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
+			{duration && <span className="text-caption text-muted-foreground shrink-0">{duration}</span>}
 		</button>
 	)
 }
@@ -584,18 +589,18 @@ function SessionRow({
 		<div>
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements inner button actions */}
 			<div
-				className="flex items-center gap-2.5 rounded-md px-3 py-1.5 min-w-0 hover:bg-secondary/50 transition-colors cursor-pointer"
+				className="flex items-center gap-[10px] rounded-md px-[var(--space-3)] py-[6px] min-w-0 hover:bg-secondary/50 transition-colors cursor-pointer"
 				onClick={() => onSelect?.(session)}
 			>
 				<SessionStatusIcon status={session.status} />
-				<span className={`text-sm truncate flex-1 min-w-0 ${isFailed ? 'text-error' : ''}`}>
+				<span className={`text-label truncate flex-1 min-w-0 ${isFailed ? 'text-error' : ''}`}>
 					{session.actionPrompt || 'Untitled session'}
 				</span>
 				{isFailed && (
 					<>
 						<button
 							type="button"
-							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
+							className="text-caption text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
 							onClick={(e) => {
 								e.stopPropagation()
 								setShowError((v) => !v)
@@ -605,7 +610,7 @@ function SessionRow({
 						</button>
 						<button
 							type="button"
-							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
+							className="text-caption text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
 							onClick={(e) => {
 								e.stopPropagation()
 								createSession.mutate({
@@ -619,20 +624,22 @@ function SessionRow({
 						</button>
 					</>
 				)}
-				{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
+				{duration && (
+					<span className="text-caption text-muted-foreground shrink-0">{duration}</span>
+				)}
 				<RelativeTime
 					date={session.completedAt ?? session.createdAt}
-					className="text-xs text-muted-foreground shrink-0"
+					className="text-caption text-muted-foreground shrink-0"
 				/>
 			</div>
 			{showError &&
 				(failureReason ? (
-					<div className="mx-3 mt-1">
+					<div className="mx-[var(--space-3)] mt-[var(--space-1)]">
 						<FailureCard failureReason={failureReason} workspaceId={workspaceId} />
 					</div>
 				) : (
 					displayError && (
-						<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap break-words">
+						<pre className="text-caption font-mono text-error bg-error/10 rounded p-[var(--space-2)] mx-[var(--space-3)] mt-[var(--space-1)] whitespace-pre-wrap break-words">
 							{displayError}
 						</pre>
 					)
@@ -693,8 +700,8 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const headerActions = useMemo(() => {
 		if (agent.isSystem) {
 			return confirmReset ? (
-				<div className="flex items-center gap-2">
-					<span className="text-xs text-muted-foreground">Reset this agent to defaults?</span>
+				<div className="flex items-center gap-[var(--space-2)]">
+					<span className="text-caption text-muted-foreground">Reset this agent to defaults?</span>
 					<Button size="sm" onClick={handleReset} disabled={resetActor.isPending}>
 						{resetActor.isPending ? 'Resetting...' : 'Confirm'}
 					</Button>
@@ -710,8 +717,8 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 			)
 		}
 		return confirmDelete ? (
-			<div className="flex items-center gap-2">
-				<span className="text-xs text-error">Delete this agent?</span>
+			<div className="flex items-center gap-[var(--space-2)]">
+				<span className="text-caption text-error">Delete this agent?</span>
 				<Button
 					variant="destructive"
 					size="sm"

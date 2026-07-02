@@ -168,7 +168,7 @@ export function DataTable({
 
 	if (isLoading) {
 		return (
-			<div className="flex items-center justify-center py-12">
+			<div className="flex items-center justify-center py-[var(--space-9)]">
 				<Spinner />
 			</div>
 		)
@@ -189,13 +189,13 @@ export function DataTable({
 		return (
 			<div ref={parentRef} className="flex-1 min-h-0 overflow-auto rounded-md border">
 				{virtualItems.length === 0 ? (
-					<div className="h-24 flex items-center justify-center text-sm text-muted-foreground">
+					<div className="h-24 flex items-center justify-center text-label text-muted-foreground">
 						No results.
 					</div>
 				) : (
 					<ul
 						aria-label="Objects"
-						className="m-0 list-none p-0"
+						className="m-[0] list-none p-[0]"
 						style={{ height: totalSize, position: 'relative' }}
 					>
 						{virtualItems.map((virtualItem) => {
@@ -219,14 +219,16 @@ export function DataTable({
 										<button
 											type="button"
 											onClick={() => row.toggleExpanded()}
-											className="flex w-full items-center gap-2 border-b border-border bg-muted/30 px-4 py-2 text-left hover:bg-muted/50"
+											className="flex w-full items-center gap-[var(--space-2)] border-b border-border bg-muted/30 px-[var(--space-4)] py-[var(--space-2)] text-left hover:bg-muted/50"
 										>
 											<ChevronRight
 												size={14}
 												className={cn('transition-transform', row.getIsExpanded() && 'rotate-90')}
 											/>
-											<span className="font-medium text-sm">{displayValue}</span>
-											<span className="text-muted-foreground text-xs">({row.subRows.length})</span>
+											<span className="font-medium text-label">{displayValue}</span>
+											<span className="text-muted-foreground text-caption">
+												({row.subRows.length})
+											</span>
 										</button>
 									</li>
 								)
@@ -255,7 +257,7 @@ export function DataTable({
 				)}
 				<div ref={sentinelRef} className="h-1" />
 				{isFetchingNextPage && (
-					<div className="flex items-center justify-center py-4">
+					<div className="flex items-center justify-center py-[var(--space-4)]">
 						<Spinner />
 					</div>
 				)}
@@ -318,7 +320,7 @@ export function DataTable({
 											onClick={() => row.toggleExpanded()}
 										>
 											<TableCell colSpan={columns.length}>
-												<div className="flex items-center gap-2">
+												<div className="flex items-center gap-[var(--space-2)]">
 													<ChevronRight
 														size={14}
 														className={cn(
@@ -326,8 +328,8 @@ export function DataTable({
 															row.getIsExpanded() && 'rotate-90',
 														)}
 													/>
-													<span className="font-medium text-sm">{displayValue}</span>
-													<span className="text-muted-foreground text-xs">
+													<span className="font-medium text-label">{displayValue}</span>
+													<span className="text-muted-foreground text-caption">
 														({row.subRows.length})
 													</span>
 												</div>
@@ -370,7 +372,7 @@ export function DataTable({
 			{/* Infinite scroll sentinel */}
 			<div ref={sentinelRef} className="h-1" />
 			{isFetchingNextPage && (
-				<div className="flex items-center justify-center py-4">
+				<div className="flex items-center justify-center py-[var(--space-4)]">
 					<Spinner />
 				</div>
 			)}

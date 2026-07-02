@@ -621,11 +621,11 @@ function ObjectsPage() {
 			<PageHeader title="Objects" />
 
 			{idsFilter && (
-				<div className="flex items-center gap-2 mx-6 mb-3 px-3 py-2 rounded-md bg-muted/50 border text-sm">
+				<div className="flex items-center gap-[var(--space-2)] mx-[var(--space-6)] mb-[var(--space-3)] px-[var(--space-3)] py-[var(--space-2)] rounded-md bg-muted/50 border text-label">
 					<Filter className="h-4 w-4 text-muted-foreground shrink-0" />
 					<span className="text-muted-foreground">
 						Showing{' '}
-						<Badge variant="secondary" className="mx-0.5">
+						<Badge variant="secondary" className="mx-[2px]">
 							{idsCount}
 						</Badge>{' '}
 						{idsCount === 1 ? 'object' : 'objects'} from notification
@@ -633,10 +633,10 @@ function ObjectsPage() {
 					<Button
 						variant="ghost"
 						size="sm"
-						className="ml-auto h-6 px-2 text-muted-foreground hover:text-foreground"
+						className="ml-auto h-6 px-[var(--space-2)] text-muted-foreground hover:text-foreground"
 						onClick={clearIdsFilter}
 					>
-						<X className="h-3 w-3 mr-1" />
+						<X className="h-3 w-3 mr-[var(--space-1)]" />
 						Clear filter
 					</Button>
 				</div>
@@ -712,7 +712,7 @@ function ObjectsPage() {
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
 
 			{effectiveView === 'board' && typeFilter ? (
-				<div className="pb-4 flex-1 min-h-0 overflow-x-auto overflow-y-hidden md:px-6">
+				<div className="pb-[var(--space-4)] flex-1 min-h-0 overflow-x-auto overflow-y-hidden md:px-[var(--space-6)]">
 					<BoardView
 						objectType={typeFilter}
 						columns={boardQuery.data?.columns ?? []}

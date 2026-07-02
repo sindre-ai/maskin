@@ -94,15 +94,15 @@ export function DataTableToolbar({
 	}
 
 	return (
-		<div className="flex items-center gap-2 md:gap-3 mb-4 flex-wrap">
+		<div className="flex items-center gap-[var(--space-2)] md:gap-[var(--space-3)] mb-[var(--space-4)] flex-wrap">
 			{/* Type tabs */}
-			<div className="flex gap-1 overflow-x-auto">
+			<div className="flex gap-[var(--space-1)] overflow-x-auto">
 				{tabs.map((tab) => (
 					<button
 						key={tab.label}
 						type="button"
 						className={cn(
-							'rounded px-3 py-1 text-sm whitespace-nowrap transition-colors',
+							'rounded px-[var(--space-3)] py-[var(--space-1)] text-label whitespace-nowrap transition-colors',
 							typeFilter === tab.value
 								? 'bg-muted text-foreground font-medium'
 								: 'text-muted-foreground hover:text-foreground',
@@ -124,7 +124,7 @@ export function DataTableToolbar({
 					value={localSearch}
 					onChange={(e) => handleSearchChange(e.target.value)}
 					placeholder="Search..."
-					className="h-8 pl-8 text-sm"
+					className="h-8 pl-[var(--space-7)] text-label"
 				/>
 			</div>
 
@@ -152,7 +152,7 @@ export function DataTableToolbar({
 			/>
 
 			{/* Import */}
-			<Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={onImportClick}>
+			<Button variant="outline" size="sm" className="ml-auto gap-[6px]" onClick={onImportClick}>
 				<Upload size={14} />
 				Import
 			</Button>

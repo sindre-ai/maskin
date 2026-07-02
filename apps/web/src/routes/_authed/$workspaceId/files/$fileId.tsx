@@ -76,7 +76,7 @@ function FileViewerPage() {
 
 	if (isLoading) {
 		return (
-			<div className="max-w-3xl mx-auto space-y-4">
+			<div className="max-w-3xl mx-auto space-y-[var(--space-4)]">
 				<Skeleton className="h-8 w-64" />
 				<Skeleton className="h-4 w-full max-w-96" />
 				<Skeleton className="h-32 w-full" />
@@ -104,11 +104,11 @@ function FileViewerPage() {
 	return (
 		<>
 			<PageHeader />
-			<div className="max-w-3xl mx-auto space-y-6">
-				<header className="space-y-2">
-					<h1 className="text-2xl font-semibold text-text break-words">{file.name}</h1>
-					{file.description && <p className="text-sm text-text-secondary">{file.description}</p>}
-					<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
+			<div className="max-w-3xl mx-auto space-y-[var(--space-6)]">
+				<header className="space-y-[var(--space-2)]">
+					<h1 className="text-display font-semibold text-text break-words">{file.name}</h1>
+					{file.description && <p className="text-label text-text-secondary">{file.description}</p>}
+					<div className="flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--space-1)] text-caption text-text-muted">
 						<span className="font-mono break-all">{file.mimeType}</span>
 						<span aria-hidden="true">·</span>
 						<span>{formatSize(file.sizeBytes)}</span>

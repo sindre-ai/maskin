@@ -194,7 +194,7 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 		<div>
 			{/* Server list */}
 			{serverEntries.length > 0 ? (
-				<div className="space-y-2 mb-3">
+				<div className="space-y-[var(--space-2)] mb-[var(--space-3)]">
 					{serverEntries.map(([name, server]) =>
 						!readOnly && editingServer === name ? (
 							<ServerForm
@@ -217,7 +217,7 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 					)}
 				</div>
 			) : (
-				<p className="text-xs text-muted-foreground mb-3">
+				<p className="text-caption text-muted-foreground mb-[var(--space-3)]">
 					{readOnly
 						? 'No MCP servers configured.'
 						: 'No MCP servers configured. Add servers to give this agent access to external tools.'}
@@ -233,25 +233,25 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 							onCancel={() => setAddingServer(false)}
 						/>
 					) : (
-						<div className="flex flex-wrap items-center gap-2">
+						<div className="flex flex-wrap items-center gap-[var(--space-2)]">
 							{!hasMaskin && (
 								<Button size="sm" variant="outline" onClick={handleAddMaskin}>
-									<Globe className="h-3.5 w-3.5 mr-1" />
+									<Globe className="h-3.5 w-3.5 mr-[var(--space-1)]" />
 									Add Maskin
 								</Button>
 							)}
 							{!hasBrowser && (
 								<Button size="sm" variant="outline" onClick={handleAddBrowser}>
-									<Globe className="h-3.5 w-3.5 mr-1" />
+									<Globe className="h-3.5 w-3.5 mr-[var(--space-1)]" />
 									Add Browser
 								</Button>
 							)}
 							<Button size="sm" variant="outline" onClick={() => setAddingServer(true)}>
-								<Plus className="h-3.5 w-3.5 mr-1" />
+								<Plus className="h-3.5 w-3.5 mr-[var(--space-1)]" />
 								Add Server
 							</Button>
 							<Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
-								<FileJson className="h-3.5 w-3.5 mr-1" />
+								<FileJson className="h-3.5 w-3.5 mr-[var(--space-1)]" />
 								Import .mcp.json
 							</Button>
 							{availableQuickAdds.map(({ id, name, label, preset }) => (
@@ -261,13 +261,13 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 									variant="outline"
 									onClick={() => handleQuickAdd(name, preset)}
 								>
-									<Zap className="h-3.5 w-3.5 mr-1" />
+									<Zap className="h-3.5 w-3.5 mr-[var(--space-1)]" />
 									Add {label}
 								</Button>
 							))}
 							{showAddGithub && (
 								<Button size="sm" variant="outline" onClick={handleAddGithub}>
-									<Zap className="h-3.5 w-3.5 mr-1" />
+									<Zap className="h-3.5 w-3.5 mr-[var(--space-1)]" />
 									Add github
 								</Button>
 							)}
@@ -306,18 +306,18 @@ function ServerCard({
 		: Object.keys(server.env ?? {}).length
 
 	return (
-		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-bg-surface px-3 py-2">
+		<div className="flex items-center gap-[var(--space-3)] overflow-hidden rounded-md border border-border bg-bg-surface px-[var(--space-3)] py-[var(--space-2)]">
 			{http ? (
 				<Globe className="h-4 w-4 text-muted-foreground shrink-0" />
 			) : (
 				<Terminal className="h-4 w-4 text-muted-foreground shrink-0" />
 			)}
 			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">{name}</p>
-				<p className="text-xs text-muted-foreground truncate">
+				<p className="text-label font-medium text-foreground truncate">{name}</p>
+				<p className="text-caption text-muted-foreground truncate">
 					{http ? server.url : `${server.command} ${server.args?.join(' ')}`}
 					{detailCount > 0 && (
-						<span className="ml-2 text-text-muted">
+						<span className="ml-[var(--space-2)] text-text-muted">
 							{detailCount} {http ? 'header' : 'env var'}
 							{detailCount > 1 ? 's' : ''}
 						</span>
@@ -326,7 +326,7 @@ function ServerCard({
 			</div>
 			{!readOnly &&
 				(confirmDelete ? (
-					<div className="flex items-center gap-1 shrink-0">
+					<div className="flex items-center gap-[var(--space-1)] shrink-0">
 						<Button size="sm" variant="destructive" onClick={onDelete}>
 							Delete
 						</Button>
@@ -335,7 +335,7 @@ function ServerCard({
 						</Button>
 					</div>
 				) : (
-					<div className="flex items-center gap-1 shrink-0">
+					<div className="flex items-center gap-[var(--space-1)] shrink-0">
 						<Button
 							size="icon"
 							variant="ghost"
@@ -422,15 +422,15 @@ function ServerForm({
 	}
 
 	return (
-		<div className="rounded-md border border-border bg-bg-surface p-3 space-y-2">
-			<div className="flex gap-2">
+		<div className="rounded-md border border-border bg-bg-surface p-[var(--space-3)] space-y-[var(--space-2)]">
+			<div className="flex gap-[var(--space-2)]">
 				<div className="flex-1">
 					<Label>Name</Label>
 					<Input
 						value={name}
 						onChange={(e) => setName(e.target.value)}
 						placeholder="e.g. github"
-						className="h-8 text-sm"
+						className="h-8 text-label"
 					/>
 				</div>
 				<div className="w-28">
@@ -449,14 +449,14 @@ function ServerForm({
 
 			{transport === 'stdio' ? (
 				<>
-					<div className="flex gap-2">
+					<div className="flex gap-[var(--space-2)]">
 						<div className="flex-1">
 							<Label>Command</Label>
 							<Input
 								value={command}
 								onChange={(e) => setCommand(e.target.value)}
 								placeholder="e.g. npx"
-								className="h-8 text-sm"
+								className="h-8 text-label"
 							/>
 						</div>
 					</div>
@@ -466,7 +466,7 @@ function ServerForm({
 							value={args}
 							onChange={(e) => setArgs(e.target.value)}
 							placeholder="e.g. -y, @modelcontextprotocol/server-github"
-							className="h-8 text-sm"
+							className="h-8 text-label"
 						/>
 					</div>
 					<KeyValueEditor
@@ -487,7 +487,7 @@ function ServerForm({
 							value={url}
 							onChange={(e) => setUrl(e.target.value)}
 							placeholder="e.g. http://localhost:3000/mcp"
-							className="h-8 text-sm"
+							className="h-8 text-label"
 						/>
 					</div>
 					<KeyValueEditor
@@ -502,7 +502,7 @@ function ServerForm({
 				</>
 			)}
 
-			<div className="flex justify-end gap-2 pt-1">
+			<div className="flex justify-end gap-[var(--space-2)] pt-[var(--space-1)]">
 				<Button size="sm" variant="ghost" onClick={onCancel}>
 					Cancel
 				</Button>
@@ -533,7 +533,7 @@ function KeyValueEditor({
 }) {
 	return (
 		<div>
-			<div className="flex items-center justify-between mb-1">
+			<div className="flex items-center justify-between mb-[var(--space-1)]">
 				<Label>{label}</Label>
 				<Button
 					size="sm"
@@ -543,19 +543,19 @@ function KeyValueEditor({
 						onNextId(nextId + 1)
 					}}
 				>
-					<Plus className="h-3 w-3 mr-1" />
+					<Plus className="h-3 w-3 mr-[var(--space-1)]" />
 					Add
 				</Button>
 			</div>
 			{pairs.map((pair) => (
-				<div key={pair.id} className="flex gap-2 mb-1">
+				<div key={pair.id} className="flex gap-[var(--space-2)] mb-[var(--space-1)]">
 					<Input
 						value={pair.key}
 						onChange={(e) =>
 							onChange(pairs.map((p) => (p.id === pair.id ? { ...p, key: e.target.value } : p)))
 						}
 						placeholder={keyPlaceholder}
-						className="h-7 text-xs font-mono flex-1 min-w-0"
+						className="h-7 text-caption font-mono flex-1 min-w-0"
 					/>
 					<Input
 						value={pair.value}
@@ -563,7 +563,7 @@ function KeyValueEditor({
 							onChange(pairs.map((p) => (p.id === pair.id ? { ...p, value: e.target.value } : p)))
 						}
 						placeholder={valuePlaceholder}
-						className="h-7 text-xs font-mono flex-1 min-w-0"
+						className="h-7 text-caption font-mono flex-1 min-w-0"
 					/>
 					<Button
 						size="icon"
@@ -629,12 +629,12 @@ function ImportMcpDialog({
 					value={json}
 					onChange={(e) => setJson(e.target.value)}
 					placeholder={
-						'{\n  "mcpServers": {\n    "server-name": {\n      "command": "npx",\n      "args": ["-y", "package-name"],\n      "env": {}\n    }\n  }\n}'
+						'{\n "mcpServers": {\n "server-name": {\n "command": "npx",\n "args": ["-y", "package-name"],\n "env": {}\n }\n }\n}'
 					}
-					className="min-h-[200px] font-mono text-sm"
+					className="min-h-[200px] font-mono text-label"
 				/>
-				{error && <p className="text-xs text-error">{error}</p>}
-				<div className="flex justify-end gap-2">
+				{error && <p className="text-caption text-error">{error}</p>}
+				<div className="flex justify-end gap-[var(--space-2)]">
 					<Button
 						variant="ghost"
 						onClick={() => {

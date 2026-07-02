@@ -47,7 +47,7 @@ export function SortableHeader({
 		<button
 			type="button"
 			className={cn(
-				'flex items-center gap-1 hover:text-foreground transition-colors -ml-2 px-2 py-1 rounded',
+				'flex items-center gap-[var(--space-1)] hover:text-foreground transition-colors -ml-[var(--space-2)] px-[var(--space-2)] py-[var(--space-1)] rounded',
 				isActive ? 'text-foreground' : 'text-muted-foreground',
 			)}
 			onClick={() => onSort?.(columnId)}
@@ -113,7 +113,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			accessorKey: 'title',
 			header: sortableHeader('Title', 'title'),
 			cell: ({ row }) => (
-				<div className="flex items-center gap-2">
+				<div className="flex items-center gap-[var(--space-2)]">
 					<Link
 						to="/$workspaceId/objects/$objectId"
 						params={{ workspaceId, objectId: row.original.id }}
@@ -147,7 +147,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 				const driverId = row.getValue('driver') as string | null
 				if (!driverId) return <span className="text-muted-foreground">—</span>
 				const actor = actors?.find((a) => a.id === driverId)
-				return <span className="text-sm">{actor?.name ?? '—'}</span>
+				return <span className="text-label">{actor?.name ?? '—'}</span>
 			},
 			enableSorting: false,
 		},
@@ -157,7 +157,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			cell: ({ row }) => {
 				const createdById = row.getValue('createdBy') as string
 				const actor = actors?.find((a) => a.id === createdById)
-				return <span className="text-sm">{actor?.name ?? '—'}</span>
+				return <span className="text-label">{actor?.name ?? '—'}</span>
 			},
 			enableSorting: false,
 		},
@@ -165,7 +165,10 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			accessorKey: 'createdAt',
 			header: sortableHeader('Created', 'createdAt'),
 			cell: ({ row }) => (
-				<RelativeTime date={row.getValue('createdAt')} className="text-sm text-muted-foreground" />
+				<RelativeTime
+					date={row.getValue('createdAt')}
+					className="text-label text-muted-foreground"
+				/>
 			),
 			getGroupingValue: (row) => toDateKey(row.createdAt),
 		},
@@ -173,7 +176,10 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			accessorKey: 'updatedAt',
 			header: sortableHeader('Updated', 'updatedAt'),
 			cell: ({ row }) => (
-				<RelativeTime date={row.getValue('updatedAt')} className="text-sm text-muted-foreground" />
+				<RelativeTime
+					date={row.getValue('updatedAt')}
+					className="text-label text-muted-foreground"
+				/>
 			),
 			getGroupingValue: (row) => toDateKey(row.updatedAt),
 		},

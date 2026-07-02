@@ -95,7 +95,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 				</SidebarGroup>
 			</SidebarContent>
 			<SidebarFooter>
-				<div className="px-2 group-data-[collapsible=icon]:hidden">
+				<div className="px-[var(--space-2)] group-data-[collapsible=icon]:hidden">
 					<AgentPulse workspaceId={workspaceId} />
 				</div>
 				<NavUser />

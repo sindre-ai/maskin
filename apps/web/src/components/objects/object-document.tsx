@@ -109,7 +109,7 @@ export function ObjectDocumentView({
 	return (
 		<div className="w-full min-w-0 max-w-3xl mx-auto">
 			{/* Title */}
-			<div className="flex items-start gap-2 mb-2">
+			<div className="flex items-start gap-[var(--space-2)] mb-[var(--space-2)]">
 				<textarea
 					value={titleDraft}
 					onChange={(e) => {
@@ -121,7 +121,7 @@ export function ObjectDocumentView({
 					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Untitled"
 					rows={1}
-					className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
+					className="w-full text-display font-bold bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-[0] focus:outline-none"
 					ref={(el) => {
 						if (el) {
 							el.style.height = 'auto'
@@ -130,7 +130,7 @@ export function ObjectDocumentView({
 					}}
 				/>
 				{showSaved && (
-					<span className="flex items-center gap-1 text-xs text-muted-foreground mt-1.5">
+					<span className="flex items-center gap-[var(--space-1)] text-caption text-muted-foreground mt-[6px]">
 						<Check size={14} /> Saved
 					</span>
 				)}
@@ -146,7 +146,7 @@ export function ObjectDocumentView({
 			)}
 
 			{/* Metadata badges row */}
-			<div className="flex flex-wrap items-center gap-2 mb-6">
+			<div className="flex flex-wrap items-center gap-[var(--space-2)] mb-[var(--space-6)]">
 				<TypeBadge type={object.type} />
 				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
 				{statuses.length > 0 ? (
@@ -168,7 +168,7 @@ export function ObjectDocumentView({
 					isSubscribed={object.is_subscribed}
 				/>
 				{creator && (
-					<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+					<span className="inline-flex items-center gap-[var(--space-1)] text-[11px] text-muted-foreground">
 						<ActorAvatar name={creator.name} type={creator.type} size="sm" />
 						{creator.name}
 					</span>
@@ -177,18 +177,18 @@ export function ObjectDocumentView({
 			</div>
 
 			{/* Properties */}
-			<div className="mb-6 w-full">
+			<div className="mb-[var(--space-6)] w-full">
 				<MetadataProperties object={object} />
 			</div>
 
 			{/* Content */}
-			<div className="mb-8">
+			<div className="mb-[var(--space-7)] max-w-[65ch]">
 				<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
 			</div>
 
 			{/* Linked objects */}
 			{relationships && (
-				<div className="border-t border-border pt-6 mb-8">
+				<div className="border-t border-border pt-[var(--space-6)] mb-[var(--space-7)]">
 					<LinkedObjects
 						objectId={object.id}
 						objectType={object.type}
@@ -200,7 +200,7 @@ export function ObjectDocumentView({
 			)}
 
 			{/* Files */}
-			<div className="border-t border-border pt-6 mb-8">
+			<div className="border-t border-border pt-[var(--space-6)] mb-[var(--space-7)]">
 				<ObjectFiles
 					workspaceId={workspaceId}
 					objectId={object.id}
@@ -413,7 +413,7 @@ export function DeleteConfirmDialog({
 					<DialogTitle>Delete this {objectType}?</DialogTitle>
 					<DialogDescription>{description}</DialogDescription>
 				</DialogHeader>
-				<DialogFooter className="gap-2 sm:gap-0">
+				<DialogFooter className="gap-[var(--space-2)] sm:gap-[0]">
 					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
 						Cancel
 					</Button>
@@ -473,7 +473,7 @@ function OwnerSelect({
 			<SelectTrigger>
 				<SelectValue>
 					{current ? (
-						<span className="inline-flex items-center gap-1.5">
+						<span className="inline-flex items-center gap-[6px]">
 							{current.type !== 'agent' && <User className="size-3 text-amber-600 shrink-0" />}
 							<span className="text-muted-foreground text-[11px]">Driver:</span>
 							<ActorAvatar name={current.name} type={current.type} size="sm" />
@@ -494,7 +494,7 @@ function OwnerSelect({
 				</SelectItem>
 				{members.map((m) => (
 					<SelectItem key={m.actorId} value={m.actorId}>
-						<span className="inline-flex items-center gap-1.5">
+						<span className="inline-flex items-center gap-[6px]">
 							<ActorAvatar name={m.name} type={m.type} size="sm" />
 							{m.name}
 						</span>

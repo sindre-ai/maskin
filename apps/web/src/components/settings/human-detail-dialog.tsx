@@ -57,7 +57,7 @@ export function HumanDetailDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle className="flex items-center gap-2">
+					<DialogTitle className="flex items-center gap-[var(--space-2)]">
 						<ActorAvatar name={actor?.name ?? 'Member'} type="human" size="md" />
 						{actor?.name ?? 'Member'}
 					</DialogTitle>
@@ -66,7 +66,7 @@ export function HumanDetailDialog({
 							'Human teammate. Add context that agents can pick up when you are @mentioned.'}
 					</DialogDescription>
 				</DialogHeader>
-				<div className="space-y-4">
+				<div className="space-y-[var(--space-4)]">
 					<div>
 						<Label htmlFor="human-description">Description</Label>
 						<Input
@@ -85,15 +85,15 @@ export function HumanDetailDialog({
 							value={systemPromptDraft}
 							onChange={(e) => setSystemPromptDraft(e.target.value)}
 							placeholder="Context for agents when this person is @mentioned in a comment."
-							className="min-h-[160px] font-mono text-sm"
+							className="min-h-[160px] font-mono text-label"
 						/>
-						<p className="mt-1 text-xs text-muted-foreground">
+						<p className="mt-[var(--space-1)] text-caption text-muted-foreground">
 							Agents fetch this on demand via the actor API when this person is @mentioned in a
 							comment.
 						</p>
 					</div>
 				</div>
-				<div className="flex justify-end gap-2">
+				<div className="flex justify-end gap-[var(--space-2)]">
 					<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
 						Cancel
 					</Button>

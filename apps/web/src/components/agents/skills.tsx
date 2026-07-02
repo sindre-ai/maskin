@@ -71,7 +71,7 @@ export function Skills({ actorId, readOnly = false }: SkillsProps) {
 	)
 
 	if (isLoading) {
-		return <p className="text-xs text-muted-foreground">Loading skills...</p>
+		return <p className="text-caption text-muted-foreground">Loading skills...</p>
 	}
 
 	const skillList = skills ?? []
@@ -80,10 +80,15 @@ export function Skills({ actorId, readOnly = false }: SkillsProps) {
 		<div>
 			<WorkspaceSkillsSection actorId={actorId} workspaceId={workspaceId} readOnly={readOnly} />
 
-			<SkillsSectionHeader icon={User} label="Personal" count={skillList.length} className="mt-4" />
+			<SkillsSectionHeader
+				icon={User}
+				label="Personal"
+				count={skillList.length}
+				className="mt-[var(--space-4)]"
+			/>
 
 			{skillList.length > 0 ? (
-				<div className="space-y-2 mb-3">
+				<div className="space-y-[var(--space-2)] mb-[var(--space-3)]">
 					{skillList.map((skill) =>
 						!readOnly && editingSkill === skill.name ? (
 							<SkillForm
@@ -104,7 +109,7 @@ export function Skills({ actorId, readOnly = false }: SkillsProps) {
 					)}
 				</div>
 			) : (
-				<p className="text-xs text-muted-foreground mb-3">
+				<p className="text-caption text-muted-foreground mb-[var(--space-3)]">
 					No personal skills configured. Add skills to extend what this agent can do.
 				</p>
 			)}
@@ -114,13 +119,13 @@ export function Skills({ actorId, readOnly = false }: SkillsProps) {
 					{addingSkill ? (
 						<SkillForm actorId={actorId} onDone={() => setAddingSkill(false)} />
 					) : (
-						<div className="flex flex-wrap items-center gap-2">
+						<div className="flex flex-wrap items-center gap-[var(--space-2)]">
 							<Button size="sm" variant="outline" onClick={() => setAddingSkill(true)}>
-								<Plus className="h-3.5 w-3.5 mr-1" />
+								<Plus className="h-3.5 w-3.5 mr-[var(--space-1)]" />
 								Add Skill
 							</Button>
 							<Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
-								<FileText className="h-3.5 w-3.5 mr-1" />
+								<FileText className="h-3.5 w-3.5 mr-[var(--space-1)]" />
 								Import SKILL.md
 							</Button>
 						</div>
@@ -184,10 +189,12 @@ function WorkspaceSkillsSection({
 				count={isLoading ? undefined : attached.length}
 			/>
 
-			{isLoading && <p className="text-xs text-muted-foreground">Loading workspace skills...</p>}
+			{isLoading && (
+				<p className="text-caption text-muted-foreground">Loading workspace skills...</p>
+			)}
 
 			{showEmptyState && !readOnly && (
-				<p className="text-xs text-muted-foreground">
+				<p className="text-caption text-muted-foreground">
 					No workspace skills in this workspace yet. Create one in{' '}
 					<Link
 						to="/$workspaceId/settings/skills"
@@ -210,12 +217,12 @@ function WorkspaceSkillsSection({
 							aria-label="Attach workspace skill"
 							aria-expanded={open}
 						>
-							<Plus className="h-3.5 w-3.5 mr-1" />
+							<Plus className="h-3.5 w-3.5 mr-[var(--space-1)]" />
 							Attach workspace skill
 						</Button>
 					</ResponsivePopoverTrigger>
 					<ResponsivePopoverContent
-						className="md:w-72 md:p-0"
+						className="md:w-72 md:p-[0]"
 						align="start"
 						accessibleTitle="Attach workspace skill"
 					>
@@ -224,10 +231,10 @@ function WorkspaceSkillsSection({
 								value={query}
 								onValueChange={setQuery}
 								placeholder="Search workspace skills..."
-								className="w-full border-b border-border bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none"
+								className="w-full border-b border-border bg-transparent px-[var(--space-3)] py-[var(--space-2)] text-label text-foreground placeholder:text-muted-foreground outline-none"
 							/>
-							<Command.List className="max-h-60 overflow-auto p-1">
-								<Command.Empty className="py-4 text-center text-xs text-muted-foreground">
+							<Command.List className="max-h-60 overflow-auto p-[var(--space-1)]">
+								<Command.Empty className="py-[var(--space-4)] text-center text-caption text-muted-foreground">
 									No workspace skills match.
 								</Command.Empty>
 								{filtered.map((skill) => {
@@ -244,7 +251,7 @@ function WorkspaceSkillsSection({
 												}
 												setOpen(false)
 											}}
-											className="flex items-center gap-2 rounded px-2 py-1.5 text-sm cursor-pointer data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+											className="flex items-center gap-[var(--space-2)] rounded px-[var(--space-2)] py-[6px] text-label cursor-pointer data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
 										>
 											<Check
 												className={`h-3.5 w-3.5 shrink-0 ${
@@ -252,9 +259,9 @@ function WorkspaceSkillsSection({
 												}`}
 											/>
 											<div className="flex-1 min-w-0">
-												<p className="text-sm font-medium truncate">{skill.name}</p>
+												<p className="text-label font-medium truncate">{skill.name}</p>
 												{skill.description && (
-													<p className="text-xs text-muted-foreground truncate">
+													<p className="text-caption text-muted-foreground truncate">
 														{skill.description}
 													</p>
 												)}
@@ -269,7 +276,7 @@ function WorkspaceSkillsSection({
 			)}
 
 			{!isLoading && attached.length > 0 && (
-				<div className="mt-2 space-y-2">
+				<div className="mt-[var(--space-2)] space-y-[var(--space-2)]">
 					{attached.map((skill) => (
 						<AttachedSkillRow
 							key={skill.id}
@@ -298,7 +305,7 @@ function SkillsSectionHeader({
 	return (
 		<h3
 			className={cn(
-				'flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2',
+				'flex items-center gap-[6px] text-caption font-semibold uppercase text-muted-foreground mb-[var(--space-2)]',
 				className,
 			)}
 		>
@@ -321,12 +328,12 @@ function AttachedSkillRow({
 	readOnly?: boolean
 }) {
 	return (
-		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-bg-surface px-3 py-2">
+		<div className="flex items-center gap-[var(--space-3)] overflow-hidden rounded-md border border-border bg-bg-surface px-[var(--space-3)] py-[var(--space-2)]">
 			<Library className="h-4 w-4 text-muted-foreground shrink-0" />
 			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
+				<p className="text-label font-medium text-foreground truncate">{skill.name}</p>
 				{skill.description && (
-					<p className="text-xs text-muted-foreground truncate">{skill.description}</p>
+					<p className="text-caption text-muted-foreground truncate">{skill.description}</p>
 				)}
 			</div>
 			{!readOnly && (
@@ -358,17 +365,17 @@ function SkillCard({
 	const [confirmDelete, setConfirmDelete] = useState(false)
 
 	return (
-		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-bg-surface px-3 py-2">
+		<div className="flex items-center gap-[var(--space-3)] overflow-hidden rounded-md border border-border bg-bg-surface px-[var(--space-3)] py-[var(--space-2)]">
 			<BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
 			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
+				<p className="text-label font-medium text-foreground truncate">{skill.name}</p>
 				{skill.description && (
-					<p className="text-xs text-muted-foreground truncate">{skill.description}</p>
+					<p className="text-caption text-muted-foreground truncate">{skill.description}</p>
 				)}
 			</div>
 			{!readOnly &&
 				(confirmDelete ? (
-					<div className="flex items-center gap-1 shrink-0">
+					<div className="flex items-center gap-[var(--space-1)] shrink-0">
 						<Button size="sm" variant="destructive" onClick={onDelete}>
 							Delete
 						</Button>
@@ -377,7 +384,7 @@ function SkillCard({
 						</Button>
 					</div>
 				) : (
-					<div className="flex items-center gap-1 shrink-0">
+					<div className="flex items-center gap-[var(--space-1)] shrink-0">
 						<Button
 							size="icon"
 							variant="ghost"
@@ -470,15 +477,15 @@ function SkillForm({
 	}
 
 	return (
-		<div className="rounded-md border border-border bg-bg-surface p-3 space-y-2">
-			<div className="flex gap-2">
+		<div className="rounded-md border border-border bg-bg-surface p-[var(--space-3)] space-y-[var(--space-2)]">
+			<div className="flex gap-[var(--space-2)]">
 				<div className="flex-1">
 					<Label>Name</Label>
 					<Input
 						value={name}
 						onChange={(e) => setName(e.target.value)}
 						placeholder="e.g. deploy, review-pr"
-						className="h-8 text-sm"
+						className="h-8 text-label"
 						disabled={!!editingName}
 					/>
 				</div>
@@ -490,7 +497,7 @@ function SkillForm({
 					value={description}
 					onChange={(e) => setDescription(e.target.value)}
 					placeholder="What this skill does and when to use it"
-					className="h-8 text-sm"
+					className="h-8 text-label"
 				/>
 			</div>
 
@@ -500,7 +507,7 @@ function SkillForm({
 					value={content}
 					onChange={(e) => setContent(e.target.value)}
 					placeholder="Markdown instructions for the agent..."
-					className="min-h-[120px] font-mono text-sm"
+					className="min-h-[120px] font-mono text-label"
 				/>
 			</div>
 
@@ -510,7 +517,7 @@ function SkillForm({
 			</Button>
 
 			{showAdvanced && (
-				<div className="space-y-2 border-t border-border pt-2">
+				<div className="space-y-[var(--space-2)] border-t border-border pt-[var(--space-2)]">
 					<div className="flex items-center justify-between">
 						<Label>Manual invocation only</Label>
 						<Switch checked={disableModelInvocation} onCheckedChange={setDisableModelInvocation} />
@@ -522,11 +529,11 @@ function SkillForm({
 							value={allowedTools}
 							onChange={(e) => setAllowedTools(e.target.value)}
 							placeholder="e.g. Read, Grep, Glob"
-							className="h-8 text-sm"
+							className="h-8 text-label"
 						/>
 					</div>
 
-					<div className="flex gap-2">
+					<div className="flex gap-[var(--space-2)]">
 						<div className="flex-1">
 							<Label>Context</Label>
 							<Select value={context} onValueChange={(v) => setContext(v as 'none' | 'fork')}>
@@ -546,7 +553,7 @@ function SkillForm({
 									value={agent}
 									onChange={(e) => setAgent(e.target.value)}
 									placeholder="e.g. Explore, Plan"
-									className="h-8 text-sm"
+									className="h-8 text-label"
 								/>
 							</div>
 						)}
@@ -558,13 +565,13 @@ function SkillForm({
 							value={model}
 							onChange={(e) => setModel(e.target.value)}
 							placeholder="e.g. sonnet, opus"
-							className="h-8 text-sm"
+							className="h-8 text-label"
 						/>
 					</div>
 				</div>
 			)}
 
-			<div className="flex justify-end gap-2 pt-1">
+			<div className="flex justify-end gap-[var(--space-2)] pt-[var(--space-1)]">
 				<Button size="sm" variant="ghost" onClick={onDone}>
 					Cancel
 				</Button>
@@ -649,10 +656,10 @@ function ImportSkillDialog({
 					placeholder={
 						'---\nname: my-skill\ndescription: What this skill does\n---\n\nInstructions for the agent...'
 					}
-					className="min-h-[200px] font-mono text-sm"
+					className="min-h-[200px] font-mono text-label"
 				/>
-				{error && <p className="text-xs text-error">{error}</p>}
-				<div className="flex justify-end gap-2">
+				{error && <p className="text-caption text-error">{error}</p>}
+				<div className="flex justify-end gap-[var(--space-2)]">
 					<Button
 						variant="ghost"
 						onClick={() => {

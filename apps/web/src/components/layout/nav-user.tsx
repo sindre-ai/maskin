@@ -55,15 +55,17 @@ export function NavUser() {
 						align="end"
 						sideOffset={4}
 					>
-						<DropdownMenuLabel className="p-0 font-normal">
-							<div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+						<DropdownMenuLabel className="p-[0] font-normal">
+							<div className="flex items-center gap-[var(--space-2)] px-[var(--space-1)] py-[6px] text-left text-label">
 								<div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-									<span className="text-xs font-bold">{initial}</span>
+									<span className="text-caption font-bold">{initial}</span>
 								</div>
-								<div className="grid flex-1 text-left text-sm leading-tight">
+								<div className="grid flex-1 text-left text-label ">
 									<span className="truncate font-semibold">{displayName}</span>
 									{displayEmail && (
-										<span className="truncate text-xs text-muted-foreground">{displayEmail}</span>
+										<span className="truncate text-caption text-muted-foreground">
+											{displayEmail}
+										</span>
 									)}
 								</div>
 							</div>
@@ -78,7 +80,7 @@ export function NavUser() {
 								})
 							}}
 						>
-							<Settings className="mr-2 size-4" />
+							<Settings className="mr-[var(--space-2)] size-4" />
 							Settings
 						</DropdownMenuItem>
 						{workspaces &&
@@ -86,12 +88,12 @@ export function NavUser() {
 							(isMobile ? (
 								<>
 									<DropdownMenuSeparator />
-									<DropdownMenuLabel className="text-xs text-muted-foreground">
+									<DropdownMenuLabel className="text-caption text-muted-foreground">
 										Workspace
 									</DropdownMenuLabel>
 									{currentWorkspace && (
 										<DropdownMenuItem disabled>
-											<Check className="mr-2 size-4" />
+											<Check className="mr-[var(--space-2)] size-4" />
 											{currentWorkspace.name}
 										</DropdownMenuItem>
 									)}
@@ -105,20 +107,20 @@ export function NavUser() {
 												})
 											}
 										>
-											<span className="ml-6">{ws.name}</span>
+											<span className="ml-[var(--space-6)]">{ws.name}</span>
 										</DropdownMenuItem>
 									))}
 								</>
 							) : (
 								<DropdownMenuSub>
 									<DropdownMenuSubTrigger>
-										<UserCircle className="mr-2 size-4" />
+										<UserCircle className="mr-[var(--space-2)] size-4" />
 										{currentWorkspace?.name ?? 'Switch workspace'}
 									</DropdownMenuSubTrigger>
 									<DropdownMenuSubContent className="min-w-48">
 										{currentWorkspace && (
 											<DropdownMenuItem disabled>
-												<Check className="mr-2 size-4" />
+												<Check className="mr-[var(--space-2)] size-4" />
 												{currentWorkspace.name}
 											</DropdownMenuItem>
 										)}
@@ -132,7 +134,7 @@ export function NavUser() {
 													})
 												}
 											>
-												<span className="ml-6">{ws.name}</span>
+												<span className="ml-[var(--space-6)]">{ws.name}</span>
 											</DropdownMenuItem>
 										))}
 									</DropdownMenuSubContent>
@@ -146,7 +148,7 @@ export function NavUser() {
 								navigate({ to: '/login' })
 							}}
 						>
-							<LogOut className="mr-2 size-4" />
+							<LogOut className="mr-[var(--space-2)] size-4" />
 							Sign out
 						</DropdownMenuItem>
 					</DropdownMenuContent>

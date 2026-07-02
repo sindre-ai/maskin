@@ -68,24 +68,24 @@ export function UninstallDialog({
 				<RadioGroup
 					value={keepItems ? 'keep' : 'remove'}
 					onValueChange={(v) => setKeepItems(v === 'keep')}
-					className="space-y-3"
+					className="space-y-[var(--space-3)]"
 				>
-					<div className="flex items-start gap-3">
-						<RadioGroupItem value="remove" id="remove-all" className="mt-0.5" />
-						<Label htmlFor="remove-all" className="cursor-pointer font-normal leading-snug">
+					<div className="flex items-start gap-[var(--space-3)]">
+						<RadioGroupItem value="remove" id="remove-all" className="mt-[2px]" />
+						<Label htmlFor="remove-all" className="cursor-pointer font-normal ">
 							<span className="font-medium">Remove everything</span>
 							<br />
-							<span className="text-xs text-muted-foreground">
+							<span className="text-caption text-muted-foreground">
 								Deletes all agents, triggers, and skills from this package.
 							</span>
 						</Label>
 					</div>
-					<div className="flex items-start gap-3">
-						<RadioGroupItem value="keep" id="keep-items" className="mt-0.5" />
-						<Label htmlFor="keep-items" className="cursor-pointer font-normal leading-snug">
+					<div className="flex items-start gap-[var(--space-3)]">
+						<RadioGroupItem value="keep" id="keep-items" className="mt-[2px]" />
+						<Label htmlFor="keep-items" className="cursor-pointer font-normal ">
 							<span className="font-medium">Keep agents, triggers, and skills</span>
 							<br />
-							<span className="text-xs text-muted-foreground">
+							<span className="text-caption text-muted-foreground">
 								{isLocked
 									? 'Components stay in your workspace as regular (unmanaged) resources.'
 									: 'They remain in your workspace as regular resources.'}
@@ -94,7 +94,7 @@ export function UninstallDialog({
 					</div>
 				</RadioGroup>
 
-				<DialogFooter className="gap-2">
+				<DialogFooter className="gap-[var(--space-2)]">
 					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
 						Cancel
 					</Button>

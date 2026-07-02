@@ -41,12 +41,14 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 		(!!installedEntity || installMutation.isSuccess) && !uninstallMutation.isSuccess
 
 	return (
-		<article className="flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm">
-			<div className="flex items-start justify-between gap-3">
+		<article className="flex flex-col gap-[var(--space-3)] rounded-lg border border-border bg-background p-[var(--space-4)] shadow-sm">
+			<div className="flex items-start justify-between gap-[var(--space-3)]">
 				<div className="min-w-0">
-					<h3 className="text-sm font-semibold text-foreground">{name}</h3>
+					<h3 className="text-label font-semibold text-foreground">{name}</h3>
 					{description && (
-						<p className="mt-1 text-xs text-muted-foreground line-clamp-2">{description}</p>
+						<p className="mt-[var(--space-1)] text-caption text-muted-foreground line-clamp-2">
+							{description}
+						</p>
 					)}
 				</div>
 				{install ? (
@@ -68,13 +70,13 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 				) : null}
 			</div>
 
-			<div className="flex flex-wrap gap-1">
-				<span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+			<div className="flex flex-wrap gap-[var(--space-1)]">
+				<span className="rounded-full border border-border bg-muted/40 px-[var(--space-2)] py-[2px] text-[10px] font-medium uppercase text-muted-foreground">
 					{TYPE_LABEL[item.item_type]}
 				</span>
 			</div>
 
-			<div className="mt-auto flex items-center justify-end gap-2">
+			<div className="mt-auto flex items-center justify-end gap-[var(--space-2)]">
 				{!install &&
 					(isCurrentlyInstalled ? (
 						<>
@@ -84,7 +86,7 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 							<Button
 								size="sm"
 								variant="ghost"
-								className="h-7 text-xs text-muted-foreground hover:text-destructive"
+								className="h-7 text-caption text-muted-foreground hover:text-destructive"
 								onClick={() => setRemoveOpen(true)}
 							>
 								Remove
@@ -108,7 +110,7 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 						<Button
 							size="sm"
 							variant="default"
-							className="h-7 text-xs"
+							className="h-7 text-caption"
 							disabled={installMutation.isPending}
 							onClick={() => installMutation.mutate(item.id)}
 						>

@@ -44,8 +44,8 @@ export function ForkDialog({
 					<DialogTitle>Fork this package?</DialogTitle>
 					<DialogDescription>{body}</DialogDescription>
 				</DialogHeader>
-				<p className="text-sm text-muted-foreground">Forking can't be undone.</p>
-				<DialogFooter className="gap-2">
+				<p className="text-label text-muted-foreground">Forking can't be undone.</p>
+				<DialogFooter className="gap-[var(--space-2)]">
 					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isForking}>
 						Cancel
 					</Button>

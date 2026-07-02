@@ -40,13 +40,18 @@ function WorkspacesApp() {
 	const toolResult = useToolResult()
 
 	if (!toolResult) {
-		return <div className="p-4 text-muted-foreground text-sm">Waiting for data...</div>
+		return (
+			<div className="p-[var(--space-4)] text-muted-foreground text-label">Waiting for data...</div>
+		)
 	}
 
 	const text = toolResult.result.content?.find(
 		(c: { type: string; text?: string }) => c.type === 'text',
 	)?.text
-	if (!text) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
+	if (!text)
+		return (
+			<div className="p-[var(--space-4)] text-muted-foreground text-label">No data received</div>
+		)
 
 	const data = safeParseJson(text)
 	if (!data) return <MessageView message={text} />
@@ -113,8 +118,8 @@ function WorkspacesApp() {
 
 function MessageView({ message }: { message: string }) {
 	return (
-		<div className="p-4">
-			<p className="text-sm text-foreground">{message}</p>
+		<div className="p-[var(--space-4)]">
+			<p className="text-label text-foreground">{message}</p>
 		</div>
 	)
 }
@@ -125,7 +130,7 @@ function WorkspaceListView({ workspaces }: { workspaces: WorkspaceResponse[] }) 
 	}
 
 	return (
-		<div className="p-4 space-y-1">
+		<div className="p-[var(--space-4)] space-y-[var(--space-1)]">
 			{workspaces.map((ws) => (
 				<WorkspaceListRow key={ws.id} workspace={ws} />
 			))}
@@ -138,19 +143,24 @@ function WorkspaceListRow({ workspace }: { workspace: WorkspaceResponse }) {
 	const href = ctx ? `${ctx.baseUrl}/${workspace.id}` : null
 	const content = (
 		<>
-			<span className="text-sm text-foreground flex-1">{workspace.name}</span>
+			<span className="text-label text-foreground flex-1">{workspace.name}</span>
 			{workspace.createdAt && (
-				<RelativeTime date={workspace.createdAt} className="text-xs text-muted-foreground" />
+				<RelativeTime date={workspace.createdAt} className="text-caption text-muted-foreground" />
 			)}
 		</>
 	)
-	if (!href) return <div className="flex items-center gap-3 px-3 py-2 rounded-lg">{content}</div>
+	if (!href)
+		return (
+			<div className="flex items-center gap-[var(--space-3)] px-[var(--space-3)] py-[var(--space-2)] rounded-lg">
+				{content}
+			</div>
+		)
 	return (
 		<a
 			href={href}
 			target="_blank"
 			rel="noreferrer"
-			className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
+			className="flex items-center gap-[var(--space-3)] px-[var(--space-3)] py-[var(--space-2)] rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
 		>
 			{content}
 		</a>
@@ -159,12 +169,14 @@ function WorkspaceListRow({ workspace }: { workspace: WorkspaceResponse }) {
 
 function WorkspaceDetailView({ workspace }: { workspace: WorkspaceResponse }) {
 	return (
-		<div className="p-4 max-w-2xl">
-			<div className="flex items-start justify-between gap-3 mb-2">
-				<h1 className="text-xl font-semibold text-foreground">{workspace.name}</h1>
+		<div className="p-[var(--space-4)] max-w-2xl">
+			<div className="flex items-start justify-between gap-[var(--space-3)] mb-[var(--space-2)]">
+				<h1 className="text-title font-semibold text-foreground">{workspace.name}</h1>
 				<WebAppLink target={{ kind: 'workspace' }} />
 			</div>
-			<div className="text-xs text-muted-foreground mb-4">ID: {workspace.id}</div>
+			<div className="text-caption text-muted-foreground mb-[var(--space-4)]">
+				ID: {workspace.id}
+			</div>
 			{workspace.settings && Object.keys(workspace.settings).length > 0 && (
 				<SettingsView settings={workspace.settings as Record<string, unknown>} />
 			)}
@@ -190,23 +202,23 @@ function ObjectTypeCard({
 	fields: FieldDef[]
 }) {
 	return (
-		<div className="px-3 py-2 rounded-lg bg-muted">
-			<div className="flex items-center gap-2 mb-1.5">
-				<span className="text-sm font-medium text-foreground">{displayName}</span>
-				<span className="text-xs text-muted-foreground font-mono">{type}</span>
+		<div className="px-[var(--space-3)] py-[var(--space-2)] rounded-lg bg-muted">
+			<div className="flex items-center gap-[var(--space-2)] mb-[6px]">
+				<span className="text-label font-medium text-foreground">{displayName}</span>
+				<span className="text-caption text-muted-foreground font-mono">{type}</span>
 			</div>
 			{statuses.length > 0 && (
-				<div className="flex flex-wrap gap-1 mb-1">
+				<div className="flex flex-wrap gap-[var(--space-1)] mb-[var(--space-1)]">
 					{statuses.map((s) => (
 						<StatusBadge key={s} status={s} />
 					))}
 				</div>
 			)}
 			{fields.length > 0 && (
-				<div className="mt-2 pt-2 border-t border-border">
-					<span className="text-xs text-muted-foreground">Fields: </span>
+				<div className="mt-[var(--space-2)] pt-[var(--space-2)] border-t border-border">
+					<span className="text-caption text-muted-foreground">Fields: </span>
 					{fields.map((f, i) => (
-						<span key={f.name} className="text-xs text-foreground">
+						<span key={f.name} className="text-caption text-foreground">
 							{i > 0 && ', '}
 							{f.name}
 							<span className="text-muted-foreground"> ({f.type})</span>
@@ -221,13 +233,16 @@ function ObjectTypeCard({
 
 function RelationshipTypeList({ types }: { types: string[] }) {
 	return (
-		<div className="border-t border-border pt-3">
-			<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
+		<div className="border-t border-border pt-[var(--space-3)]">
+			<h3 className="text-caption font-medium uppercase text-muted-foreground mb-[var(--space-2)]">
 				Relationship Types
 			</h3>
-			<div className="flex flex-wrap gap-1">
+			<div className="flex flex-wrap gap-[var(--space-1)]">
 				{types.map((rt) => (
-					<span key={rt} className="px-2 py-0.5 text-xs rounded bg-muted text-foreground">
+					<span
+						key={rt}
+						className="px-[var(--space-2)] py-[2px] text-caption rounded bg-muted text-foreground"
+					>
 						{rt.replace(/_/g, ' ')}
 					</span>
 				))}
@@ -246,8 +261,8 @@ function SettingsView({ settings }: { settings: Record<string, unknown> }) {
 
 	if (!hasStructuredData) {
 		return (
-			<div className="border-t border-border pt-3">
-				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
+			<div className="border-t border-border pt-[var(--space-3)]">
+				<h3 className="text-caption font-medium uppercase text-muted-foreground mb-[var(--space-2)]">
 					Settings
 				</h3>
 				<KeyValueList data={settings} />
@@ -256,13 +271,13 @@ function SettingsView({ settings }: { settings: Record<string, unknown> }) {
 	}
 
 	return (
-		<div className="space-y-4">
+		<div className="space-y-[var(--space-4)]">
 			{statuses && Object.keys(statuses).length > 0 && (
-				<div className="border-t border-border pt-3">
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
+				<div className="border-t border-border pt-[var(--space-3)]">
+					<h3 className="text-caption font-medium uppercase text-muted-foreground mb-[var(--space-2)]">
 						Object Types
 					</h3>
-					<div className="space-y-3">
+					<div className="space-y-[var(--space-3)]">
 						{Object.entries(statuses).map(([type, statusList]) => (
 							<ObjectTypeCard
 								key={type}
@@ -284,15 +299,15 @@ function WorkspaceSchemaView({ schema }: { schema: WorkspaceSchema }) {
 	const types = Object.entries(schema.types)
 
 	return (
-		<div className="p-4 max-w-2xl">
-			<h1 className="text-xl font-semibold text-foreground mb-1">{schema.workspace_name}</h1>
-			<div className="text-xs text-muted-foreground mb-4">Schema</div>
+		<div className="p-[var(--space-4)] max-w-2xl">
+			<h1 className="text-title font-semibold text-foreground mb-[var(--space-1)]">
+				{schema.workspace_name}
+			</h1>
+			<div className="text-caption text-muted-foreground mb-[var(--space-4)]">Schema</div>
 
 			{types.length > 0 && (
-				<div className="space-y-3 mb-4">
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-						Object Types
-					</h3>
+				<div className="space-y-[var(--space-3)] mb-[var(--space-4)]">
+					<h3 className="text-caption font-medium uppercase text-muted-foreground">Object Types</h3>
 					{types.map(([type, typeSchema]) => (
 						<ObjectTypeCard
 							key={type}
@@ -318,7 +333,7 @@ function ExtensionListView({ extensions }: { extensions: Extension[] }) {
 	}
 
 	return (
-		<div className="p-4 space-y-1">
+		<div className="p-[var(--space-4)] space-y-[var(--space-1)]">
 			{extensions.map((ext) => (
 				<ExtensionListRow key={ext.id} ext={ext} />
 			))}
@@ -333,19 +348,24 @@ function ExtensionListRow({ ext }: { ext: Extension }) {
 			<span
 				className={`w-2 h-2 rounded-full ${ext.enabled ? 'bg-success' : 'bg-muted-foreground'}`}
 			/>
-			<span className="text-sm text-foreground flex-1">{ext.name}</span>
-			<span className="text-xs text-muted-foreground">
+			<span className="text-label text-foreground flex-1">{ext.name}</span>
+			<span className="text-caption text-muted-foreground">
 				{ext.object_types.length} type{ext.object_types.length !== 1 ? 's' : ''}
 			</span>
 		</>
 	)
-	if (!href) return <div className="flex items-center gap-3 px-3 py-2 rounded-lg">{content}</div>
+	if (!href)
+		return (
+			<div className="flex items-center gap-[var(--space-3)] px-[var(--space-3)] py-[var(--space-2)] rounded-lg">
+				{content}
+			</div>
+		)
 	return (
 		<a
 			href={href}
 			target="_blank"
 			rel="noreferrer"
-			className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
+			className="flex items-center gap-[var(--space-3)] px-[var(--space-3)] py-[var(--space-2)] rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
 		>
 			{content}
 		</a>
@@ -354,20 +374,20 @@ function ExtensionListRow({ ext }: { ext: Extension }) {
 
 function ExtensionConfirmView({ data, action }: { data: Extension; action: string }) {
 	return (
-		<div className="p-4 max-w-2xl">
-			<h2 className="text-sm font-medium text-foreground mb-3 capitalize">Extension {action}</h2>
-			<div className="flex items-center gap-2 mb-2">
+		<div className="p-[var(--space-4)] max-w-2xl">
+			<h2 className="text-label font-medium text-foreground mb-[var(--space-3)] capitalize">
+				Extension {action}
+			</h2>
+			<div className="flex items-center gap-[var(--space-2)] mb-[var(--space-2)]">
 				<span
 					className={`w-2 h-2 rounded-full ${data.enabled ? 'bg-success' : 'bg-muted-foreground'}`}
 				/>
-				<h3 className="text-lg font-semibold text-foreground">{data.name}</h3>
+				<h3 className="text-title font-semibold text-foreground">{data.name}</h3>
 			</div>
-			<div className="text-xs text-muted-foreground mb-4">ID: {data.id}</div>
+			<div className="text-caption text-muted-foreground mb-[var(--space-4)]">ID: {data.id}</div>
 			{data.object_types.length > 0 && (
-				<div className="space-y-3">
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-						Object Types
-					</h3>
+				<div className="space-y-[var(--space-3)]">
+					<h3 className="text-caption font-medium uppercase text-muted-foreground">Object Types</h3>
 					{data.object_types.map((ot) => (
 						<ObjectTypeCard
 							key={ot.type}
@@ -385,9 +405,9 @@ function ExtensionConfirmView({ data, action }: { data: Extension; action: strin
 
 function KeyValueList({ data }: { data: Record<string, unknown> }) {
 	return (
-		<div className="space-y-1">
+		<div className="space-y-[var(--space-1)]">
 			{Object.entries(data).map(([key, value]) => (
-				<div key={key} className="flex gap-2 text-xs">
+				<div key={key} className="flex gap-[var(--space-2)] text-caption">
 					<span className="text-muted-foreground font-medium min-w-[80px]">
 						{key.replace(/_/g, ' ')}
 					</span>
@@ -410,7 +430,7 @@ function MemberListView({ members }: { members: MemberResponse[] }) {
 	}
 
 	return (
-		<div className="p-4 space-y-1">
+		<div className="p-[var(--space-4)] space-y-[var(--space-1)]">
 			{members.map((member) => (
 				<MemberListRow key={member.actorId} member={member} />
 			))}
@@ -423,17 +443,22 @@ function MemberListRow({ member }: { member: MemberResponse }) {
 	const content = (
 		<>
 			<ActorAvatar name={member.name} type={member.type} size="sm" />
-			<span className="text-sm text-foreground flex-1">{member.name}</span>
-			<span className="text-xs text-muted-foreground capitalize">{member.role}</span>
+			<span className="text-label text-foreground flex-1">{member.name}</span>
+			<span className="text-caption text-muted-foreground capitalize">{member.role}</span>
 		</>
 	)
-	if (!href) return <div className="flex items-center gap-3 px-3 py-2 rounded-lg">{content}</div>
+	if (!href)
+		return (
+			<div className="flex items-center gap-[var(--space-3)] px-[var(--space-3)] py-[var(--space-2)] rounded-lg">
+				{content}
+			</div>
+		)
 	return (
 		<a
 			href={href}
 			target="_blank"
 			rel="noreferrer"
-			className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
+			className="flex items-center gap-[var(--space-3)] px-[var(--space-3)] py-[var(--space-2)] rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
 		>
 			{content}
 		</a>
@@ -442,8 +467,8 @@ function MemberListRow({ member }: { member: MemberResponse }) {
 
 function MemberAddedView({ member }: { member: MemberResponse }) {
 	return (
-		<div className="p-4 text-center">
-			<p className="text-sm text-muted-foreground">
+		<div className="p-[var(--space-4)] text-center">
+			<p className="text-label text-muted-foreground">
 				<span className="font-medium text-foreground">{member.name}</span> added as{' '}
 				<span className="capitalize">{member.role}</span>
 			</p>

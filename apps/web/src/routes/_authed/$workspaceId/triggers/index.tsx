@@ -63,12 +63,12 @@ function TriggersPage() {
 					description="Triggers automate your workspace by running agents in response to events, schedules, or one-time reminders. Create your first trigger to get started."
 				/>
 			) : (
-				<div className="space-y-1">
-					<p className="text-xs text-muted-foreground mb-3">
+				<div className="space-y-[var(--space-1)]">
+					<p className="text-caption text-muted-foreground mb-[var(--space-3)]">
 						Triggers automatically run agents when events happen, on a schedule, or at a specific
 						time.
 					</p>
-					<div className="space-y-2">
+					<div className="space-y-[var(--space-2)]">
 						{triggers.map((trigger) => {
 							const agent = actors?.find((a) => a.id === trigger.targetActorId)
 							return (
@@ -103,25 +103,25 @@ function TriggerRow({
 		<Link
 			to="/$workspaceId/triggers/$triggerId"
 			params={{ workspaceId, triggerId: trigger.id }}
-			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
+			className="flex items-center gap-[var(--space-3)] rounded-lg border border-border bg-card p-[var(--space-4)] hover:bg-accent/50 transition-colors"
 		>
-			<div className="flex flex-col items-center gap-1">
+			<div className="flex flex-col items-center gap-[var(--space-1)]">
 				<span
 					className={`h-3 w-3 rounded-full shrink-0 ${trigger.enabled ? 'bg-success' : 'bg-zinc-600'}`}
 				/>
 			</div>
 			<Icon size={15} className="shrink-0 text-muted-foreground" />
 			<div className="flex-1 min-w-0">
-				<div className="flex items-center gap-2">
-					<p className="text-sm font-medium text-foreground truncate">{trigger.name}</p>
+				<div className="flex items-center gap-[var(--space-2)]">
+					<p className="text-label font-medium text-foreground truncate">{trigger.name}</p>
 					{!trigger.enabled && (
-						<span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+						<span className="text-[10px] font-medium text-muted-foreground bg-muted px-[6px] py-[2px] rounded">
 							Disabled
 						</span>
 					)}
 				</div>
-				<p className="text-xs text-muted-foreground truncate">{description}</p>
-				<p className="text-xs text-muted-foreground/60 mt-0.5">
+				<p className="text-caption text-muted-foreground truncate">{description}</p>
+				<p className="text-caption text-muted-foreground/60 mt-[2px]">
 					Agent: {agentName}
 					{trigger.updatedAt && (
 						<>

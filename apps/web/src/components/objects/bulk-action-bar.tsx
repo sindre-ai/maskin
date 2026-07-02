@@ -108,8 +108,8 @@ export function BulkActionBar({
 				inert={!visible || undefined}
 				className={cn(
 					'fixed left-1/2 bottom-10 z-50 -translate-x-1/2',
-					'flex w-[calc(100%-2rem)] max-w-[44rem] items-center gap-2',
-					'overflow-x-auto rounded-md border border-border bg-white px-3 py-2 shadow-lg',
+					'flex w-[calc(100%-2rem)] max-w-[44rem] items-center gap-[var(--space-2)]',
+					'overflow-x-auto rounded-md border border-border bg-white px-[var(--space-3)] py-[var(--space-2)] shadow-lg',
 					transitionClass,
 					visible
 						? 'pointer-events-auto opacity-100 translate-y-0'
@@ -117,14 +117,14 @@ export function BulkActionBar({
 				)}
 			>
 				<span
-					className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-accent px-2 text-xs font-medium text-accent-foreground"
+					className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-accent px-[var(--space-2)] text-caption font-medium text-accent-foreground"
 					aria-label={`${selectedCount} selected`}
 				>
 					{selectedCount}
 				</span>
-				<span className="hidden text-sm text-text-secondary sm:inline">selected</span>
+				<span className="hidden text-label text-text-secondary sm:inline">selected</span>
 
-				<div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+				<div className="mx-[var(--space-1)] h-5 w-px shrink-0 bg-border" aria-hidden="true" />
 
 				{onStatusChange && statusOptions.length > 0 && (
 					<Select
@@ -136,7 +136,7 @@ export function BulkActionBar({
 					>
 						<SelectTrigger
 							aria-label="Set status"
-							className="shrink-0 text-sm data-[placeholder]:text-text-secondary"
+							className="shrink-0 text-label data-[placeholder]:text-text-secondary"
 						>
 							<SelectValue placeholder="Status" />
 						</SelectTrigger>
@@ -160,7 +160,7 @@ export function BulkActionBar({
 				>
 					<SelectTrigger
 						aria-label="Set owner"
-						className="shrink-0 text-sm data-[placeholder]:text-text-secondary"
+						className="shrink-0 text-label data-[placeholder]:text-text-secondary"
 					>
 						<SelectValue placeholder="Owner" />
 					</SelectTrigger>
@@ -173,7 +173,7 @@ export function BulkActionBar({
 					</SelectContent>
 				</Select>
 
-				<div className="ml-auto flex shrink-0 items-center gap-1">
+				<div className="ml-auto flex shrink-0 items-center gap-[var(--space-1)]">
 					{onCopyLink && (
 						<Tooltip>
 							<TooltipTrigger asChild>

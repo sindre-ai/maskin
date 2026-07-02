@@ -20,7 +20,7 @@ function ForYouDashboard() {
 
 	if (isLoading) {
 		return (
-			<div className="space-y-4">
+			<div className="space-y-[var(--space-4)]">
 				<CardSkeleton />
 				<CardSkeleton />
 				<CardSkeleton />
@@ -30,11 +30,11 @@ function ForYouDashboard() {
 
 	if (items.length === 0) {
 		return (
-			<div className="space-y-2">
+			<div className="space-y-[var(--space-2)]">
 				<EmptyState
 					title="All caught up"
 					description="New comments and replies on things you're subscribed to will appear here."
-					className="py-8"
+					className="py-[var(--space-7)]"
 				/>
 				<SparseComposer itemsCount={0} />
 			</div>
@@ -46,7 +46,7 @@ function ForYouDashboard() {
 	const isSparse = items.length < 3
 
 	return (
-		<div className="space-y-4">
+		<div className="space-y-[var(--space-4)]">
 			{onboardingItems.map((item) => (
 				<OnboardingPromptCard
 					key={`${item.entity_type}-${item.entity_id}`}

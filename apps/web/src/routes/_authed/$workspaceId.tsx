@@ -104,7 +104,7 @@ function WorkspaceLayout() {
 	if (!workspace) {
 		return (
 			<div className="flex min-h-screen items-center justify-center">
-				<p className="text-sm text-muted-foreground">Loading workspace...</p>
+				<p className="text-label text-muted-foreground">Loading workspace...</p>
 			</div>
 		)
 	}
@@ -121,7 +121,7 @@ function WorkspaceLayout() {
 								<AppSidebar />
 								<SidebarInset className="min-w-0">
 									<Header />
-									<div className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8">
+									<div className="flex flex-col flex-1 min-w-0 overflow-auto p-[var(--space-4)] md:p-[var(--space-7)]">
 										<Outlet />
 									</div>
 								</SidebarInset>
