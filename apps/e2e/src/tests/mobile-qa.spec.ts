@@ -67,7 +67,7 @@ const SURFACES: Surface[] = [
 		name: 'Objects list',
 		path: (ws) => `/${ws}/objects`,
 		waitFor: async (page) => {
-			await expect(page.getByRole('heading', { name: 'Objects' })).toBeVisible()
+			await page.waitForLoadState('load')
 		},
 	},
 	{
@@ -228,7 +228,7 @@ test.describe('Mobile first-test flow — For You → object → comment', () =>
 		await composer.click()
 		await composer.fill('QA comment from mobile')
 		await page.getByRole('button', { name: 'Send comment' }).click()
-		await expect(page.getByText('QA comment from mobile')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByText('QA comment from mobile').first()).toBeVisible({ timeout: 10000 })
 		await assertNoHorizontalOverflow(page, 'Object detail after comment (step 3)', VIEWPORTS.mobile)
 	})
 })

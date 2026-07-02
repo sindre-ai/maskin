@@ -39,8 +39,13 @@ export function serializeActor(actor: ActorRow): z.infer<typeof actorResponseSch
 		llm_provider: serialized.llmProvider,
 		llm_config: serialized.llmConfig as JsonbField,
 		isSystem: serialized.isSystem,
+		agentState: serialized.agentState,
+		agentStateUpdatedAt: serialized.agentStateUpdatedAt,
 		createdAt: serialized.createdAt,
 		updatedAt: serialized.updatedAt,
+		installedPackageId:
+			(serialized.metadata as { installed_package_id?: string } | null | undefined)
+				?.installed_package_id ?? null,
 	}
 }
 

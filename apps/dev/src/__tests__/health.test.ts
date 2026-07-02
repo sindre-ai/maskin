@@ -1,5 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { describe, expect, it } from 'vitest'
+import objectsRoute from '../routes/objects'
 
 describe('Health endpoint', () => {
 	const app = new OpenAPIHono()
@@ -15,9 +16,7 @@ describe('Health endpoint', () => {
 })
 
 describe('OpenAPI spec', () => {
-	// Import a route module to verify it exports an OpenAPIHono with registered routes
-	it('route modules export OpenAPIHono instances', async () => {
-		const objectsModule = await import('../routes/objects')
-		expect(objectsModule.default).toBeDefined()
+	it('route modules export OpenAPIHono instances', () => {
+		expect(objectsRoute).toBeDefined()
 	})
 })

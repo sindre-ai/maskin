@@ -23,15 +23,16 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import {
+	type AgentState,
 	PLATFORM_MCP_PRESET,
-	SINDRE_DEFAULT,
+	WORKSPACE_COACH_DEFAULT,
 	createActorSchema,
 	notificationPrefsSchema,
 	updateActorSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, asc, count, countDistinct, eq, inArray, ne, or } from 'drizzle-orm'
+import { and, asc, count, countDistinct, desc, eq, inArray, ne, or } from 'drizzle-orm'
 import { serializeActor, serializeActorWithKey } from '../lib/actor-response'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -46,6 +47,9 @@ import {
 import { emitProfileFieldChanged } from '../lib/profile-telemetry'
 import { serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import type { AgentStorageManager } from '../services/agent-storage'
+import type { SessionManager } from '../services/session-manager'
+import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
@@ -53,6 +57,8 @@ type Env = {
 		actorId: string
 		actorType: string
 		storageProvider: StorageProvider
+		sessionManager: SessionManager
+		agentStorage: AgentStorageManager
 	}
 }
 
@@ -99,6 +105,11 @@ function detectImageFormat(bytes: Buffer): 'jpg' | 'png' | 'webp' | null {
 	return null
 }
 
+/** Default prompt used when /run is invoked with no explicit action_prompt. */
+const DEFAULT_RUN_ACTION_PROMPT = 'Resume your assigned work.'
+
+const RUNNING_SESSION_STATUSES = ['pending', 'starting', 'queued', 'running', 'snapshotting']
+
 const app = new OpenAPIHono<Env>()
 
 // POST / - Create actor (signup)
@@ -135,6 +146,25 @@ const createActorRoute = createRoute({
 		},
 	},
 })
+
+function isEmailUniqueViolation(err: unknown): boolean {
+	for (let cur: unknown = err; cur && typeof cur === 'object'; ) {
+		const e = cur as {
+			code?: string
+			constraint_name?: string
+			constraint?: string
+			message?: string
+			cause?: unknown
+		}
+		if (e.code === '23505') {
+			const name = e.constraint_name ?? e.constraint
+			if (name === 'actors_email_unique') return true
+			if (typeof e.message === 'string' && e.message.includes('actors_email_unique')) return true
+		}
+		cur = e.cause
+	}
+	return false
+}
 
 app.openapi(createActorRoute, async (c) => {
 	const db = c.get('db')
@@ -177,27 +207,40 @@ app.openapi(createActorRoute, async (c) => {
 				}
 			: body.tools
 
-	const [actor] = await db
-		.insert(actors)
-		.values({
-			...(body.id && { id: body.id }),
-			type: body.type,
-			name: body.name,
-			email: body.email,
-			apiKey: key,
-			passwordHash,
-			description: body.description,
-			systemPrompt: body.system_prompt,
-			tools,
-			llmProvider: body.llm_provider,
-			llmConfig: body.llm_config,
-		})
-		.onConflictDoNothing({ target: actors.id })
-		.returning()
+	let actor: typeof actors.$inferSelect | undefined
+	try {
+		;[actor] = await db
+			.insert(actors)
+			.values({
+				...(body.id && { id: body.id }),
+				type: body.type,
+				name: body.name,
+				email: body.email,
+				apiKey: key,
+				passwordHash,
+				description: body.description,
+				systemPrompt: body.system_prompt,
+				tools,
+				llmProvider: body.llm_provider,
+				llmConfig: body.llm_config,
+			})
+			.onConflictDoNothing({ target: actors.id })
+			.returning()
+	} catch (err) {
+		if (isEmailUniqueViolation(err)) {
+			return c.json(
+				createApiError('CONFLICT', 'Email already exists', [
+					{ field: 'email', message: 'An account with this email already exists' },
+				]),
+				409,
+			)
+		}
+		throw err
+	}
 
 	if (!actor) {
 		if (body.id) {
-			return c.json(createApiError('BAD_REQUEST', 'An actor with this ID already exists'), 409)
+			return c.json(createApiError('CONFLICT', 'An actor with this ID already exists'), 409)
 		}
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create actor'), 500)
 	}
@@ -207,7 +250,9 @@ app.openapi(createActorRoute, async (c) => {
 	let workspaceId: string | undefined
 
 	if (shouldCreateWorkspace) {
-		const defaultSettings = workspaceSettingsSchema.parse({})
+		const defaultSettings = workspaceSettingsSchema.parse({
+			enabled_modules: ['work', 'knowledge'],
+		})
 		const created = await db.transaction(async (tx) => {
 			const [workspace] = await tx
 				.insert(workspaces)
@@ -226,37 +271,45 @@ app.openapi(createActorRoute, async (c) => {
 				role: 'owner',
 			})
 
-			// Seed Sindre — the built-in meta-agent shipped with every workspace.
-			// apiKey is required: without it, Sindre's container boots with an empty
+			// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
+			// apiKey is required: without it, the agent's container boots with an empty
 			// Bearer token and MCP writes either 401 or — worse — fall back to a key
 			// that resolves to a different actor, misattributing every comment.
-			const [sindre] = await tx
+			const [coach] = await tx
 				.insert(actors)
 				.values({
-					type: SINDRE_DEFAULT.type,
-					name: SINDRE_DEFAULT.name,
-					isSystem: SINDRE_DEFAULT.isSystem,
-					systemPrompt: SINDRE_DEFAULT.systemPrompt,
-					llmProvider: SINDRE_DEFAULT.llmProvider,
-					llmConfig: SINDRE_DEFAULT.llmConfig,
-					tools: SINDRE_DEFAULT.tools,
+					type: WORKSPACE_COACH_DEFAULT.type,
+					name: WORKSPACE_COACH_DEFAULT.name,
+					isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
+					systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+					llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
+					llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
+					tools: WORKSPACE_COACH_DEFAULT.tools,
 					apiKey: generateApiKey().key,
 					createdBy: actor.id,
 				})
 				.returning()
 
-			if (!sindre) throw new Error('Failed to seed Sindre actor')
+			if (!coach) throw new Error('Failed to seed Workspace Coach actor')
 
 			await tx.insert(workspaceMembers).values({
 				workspaceId: workspace.id,
-				actorId: sindre.id,
+				actorId: coach.id,
 				role: 'member',
 			})
 
 			return workspace
 		})
 
-		if (created) workspaceId = created.id
+		if (created) {
+			workspaceId = created.id
+			const agentStorage = c.get('agentStorage')
+			if (agentStorage) {
+				await bootstrapDefaultAgents(db, agentStorage, created.id, actor.id).catch((err) =>
+					logger.error('workspace bootstrap failed', { workspaceId: created.id, err }),
+				)
+			}
+		}
 	}
 
 	return c.json(serializeActorWithKey(actor, key, workspaceId), 201)
@@ -363,6 +416,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					email: actors.email,
 					description: actors.description,
 					isSystem: actors.isSystem,
+					agentState: actors.agentState,
 					role: workspaceMembers.role,
 				})
 				.from(workspaceMembers)
@@ -382,6 +436,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					email: actors.email,
 					description: actors.description,
 					isSystem: actors.isSystem,
+					agentState: actors.agentState,
 					role: workspaceMembers.role,
 				})
 				.from(workspaceMembers)
@@ -424,6 +479,7 @@ app.openapi(listActorsRoute, (async (c) => {
 				email: actors.email,
 				description: actors.description,
 				isSystem: actors.isSystem,
+				agentState: actors.agentState,
 				workspaceId: workspaces.id,
 				workspaceName: workspaces.name,
 				role: workspaceMembers.role,
@@ -490,6 +546,7 @@ interface ActorMembershipRow {
 	email: string | null
 	description: string | null
 	isSystem: boolean
+	agentState: AgentState
 	workspaceId: string
 	workspaceName: string
 	role: string
@@ -502,6 +559,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 	email: string | null
 	description: string | null
 	isSystem: boolean
+	agentState: AgentState
 	workspaces: { id: string; name: string; role: string }[]
 }> {
 	const byActor = new Map<
@@ -513,6 +571,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 			email: string | null
 			description: string | null
 			isSystem: boolean
+			agentState: AgentState
 			workspaces: { id: string; name: string; role: string }[]
 		}
 	>()
@@ -529,6 +588,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 				email: r.email,
 				description: r.description,
 				isSystem: r.isSystem,
+				agentState: r.agentState,
 				workspaces: [membership],
 			})
 		}
@@ -897,7 +957,7 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 	return c.json(serializeActor(updated))
 }) as RouteHandler<typeof uploadAvatarRoute, Env>)
 
-// POST /:id/reset - Reset system actor to factory defaults (Sindre)
+// POST /:id/reset - Reset system actor to factory defaults (Workspace Coach)
 const resetActorRoute = createRoute({
 	method: 'post',
 	path: '/{id}/reset',
@@ -950,12 +1010,12 @@ app.openapi(resetActorRoute, (async (c) => {
 	const [updated] = await db
 		.update(actors)
 		.set({
-			name: SINDRE_DEFAULT.name,
+			name: WORKSPACE_COACH_DEFAULT.name,
 			description: null,
-			systemPrompt: SINDRE_DEFAULT.systemPrompt,
-			llmProvider: SINDRE_DEFAULT.llmProvider,
-			llmConfig: SINDRE_DEFAULT.llmConfig,
-			tools: SINDRE_DEFAULT.tools,
+			systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+			llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
+			llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
+			tools: WORKSPACE_COACH_DEFAULT.tools,
 			memory: null,
 			updatedAt: new Date(),
 		})
@@ -1126,8 +1186,8 @@ app.openapi(deleteActorRoute, (async (c) => {
 						.where(and(eq(objects.workspaceId, wsId), eq(objects.createdBy, id)))
 					await tx
 						.update(objects)
-						.set({ owner: null })
-						.where(and(eq(objects.workspaceId, wsId), eq(objects.owner, id)))
+						.set({ driver: null })
+						.where(and(eq(objects.workspaceId, wsId), eq(objects.driver, id)))
 					await tx
 						.update(files)
 						.set({ createdBy: sindreRow.id })
@@ -1248,7 +1308,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 		await tx.delete(readState).where(eq(readState.actorId, id))
 
 		// Reassign objects
-		await tx.update(objects).set({ owner: null }).where(eq(objects.owner, id))
+		await tx.update(objects).set({ driver: null }).where(eq(objects.driver, id))
 		await tx.update(objects).set({ createdBy: actorId }).where(eq(objects.createdBy, id))
 
 		// Reassign workspace artifacts authored by this agent
@@ -1280,5 +1340,258 @@ app.openapi(deleteActorRoute, (async (c) => {
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteActorRoute, Env>)
+
+// POST /:id/pause - Pause an agent (and any in-flight session for it)
+const pauseAgentRoute = createRoute({
+	method: 'post',
+	path: '/{id}/pause',
+	tags: ['Actors'],
+	summary: 'Pause an agent and any in-flight session',
+	description:
+		'Sets the agent to a paused state. If the agent has a session in `running` state, that session is paused (snapshotted) too.',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: actorResponseSchema } },
+			description: 'Agent paused',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Cannot pause agent',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found in workspace',
+		},
+	},
+})
+
+app.openapi(pauseAgentRoute, (async (c) => {
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	// Verify workspace membership before leaking anything about the actor (e.g.
+	// its type), so a member of one workspace can't probe actors in another.
+	if (!(await isWorkspaceMember(db, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type !== 'agent') {
+		return c.json(createApiError('BAD_REQUEST', 'Actor is not an agent'), 400)
+	}
+
+	// Pause any currently-running session for this agent. Only `running`
+	// sessions can be snapshotted — sessions in pending/starting/queued are
+	// stopped instead so we don't leave orphaned containers behind.
+	const liveSessions = await db
+		.select()
+		.from(sessions)
+		.where(
+			and(
+				eq(sessions.actorId, id),
+				eq(sessions.workspaceId, workspaceId),
+				inArray(sessions.status, RUNNING_SESSION_STATUSES),
+			),
+		)
+		.orderBy(desc(sessions.createdAt))
+
+	const failedSessionIds: string[] = []
+	for (const s of liveSessions) {
+		try {
+			if (s.status === 'running') {
+				await sessionManager.pauseSession(s.id)
+			} else {
+				await sessionManager.stopSession(s.id)
+			}
+		} catch (err) {
+			failedSessionIds.push(s.id)
+			logger.warn('Failed to pause/stop session during agent pause', {
+				sessionId: s.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	const [updated] = await db
+		.update(actors)
+		.set({
+			agentState: 'paused',
+			agentStateUpdatedAt: new Date(),
+			updatedAt: new Date(),
+		})
+		.where(eq(actors.id, id))
+		.returning()
+
+	if (!updated) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: 'agent_paused',
+		entityType: 'actor',
+		entityId: id,
+		data: {
+			paused_session_ids: liveSessions.map((s) => s.id),
+			failed_session_ids: failedSessionIds,
+		},
+	})
+
+	return c.json(serializeActor(updated))
+}) as RouteHandler<typeof pauseAgentRoute, Env>)
+
+// POST /:id/run - Resume a paused agent OR start a fresh session
+const runAgentBodySchema = z
+	.object({
+		action_prompt: z.string().min(1).optional(),
+	})
+	.optional()
+
+const runAgentRoute = createRoute({
+	method: 'post',
+	path: '/{id}/run',
+	tags: ['Actors'],
+	summary: 'Run an agent — resume paused session or start a fresh one',
+	description:
+		'If the agent has a paused session, it is resumed. Otherwise a fresh session is started using the provided action_prompt (or a default).',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: runAgentBodySchema } },
+			required: false,
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: actorResponseSchema } },
+			description: 'Agent running',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Cannot run agent',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found in workspace',
+		},
+	},
+})
+
+app.openapi(runAgentRoute, (async (c) => {
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const body = c.req.valid('json') ?? {}
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	// Verify workspace membership before leaking anything about the actor (e.g.
+	// its type), so a member of one workspace can't probe actors in another.
+	if (!(await isWorkspaceMember(db, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type !== 'agent') {
+		return c.json(createApiError('BAD_REQUEST', 'Actor is not an agent'), 400)
+	}
+
+	// If there's already a live session, the agent is effectively running —
+	// no-op the start logic and just sync the state field.
+	const [liveSession] = await db
+		.select()
+		.from(sessions)
+		.where(
+			and(
+				eq(sessions.actorId, id),
+				eq(sessions.workspaceId, workspaceId),
+				inArray(sessions.status, RUNNING_SESSION_STATUSES),
+			),
+		)
+		.orderBy(desc(sessions.createdAt))
+		.limit(1)
+
+	if (!liveSession) {
+		// Prefer resuming the most recent paused session over creating a new one,
+		// so users don't lose context that was snapshotted on Pause.
+		const [pausedSession] = await db
+			.select()
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.actorId, id),
+					eq(sessions.workspaceId, workspaceId),
+					eq(sessions.status, 'paused'),
+				),
+			)
+			.orderBy(desc(sessions.createdAt))
+			.limit(1)
+
+		try {
+			if (pausedSession) {
+				await sessionManager.resumeSession(pausedSession.id)
+			} else {
+				await sessionManager.createSession(workspaceId, {
+					actorId: id,
+					actionPrompt: body.action_prompt ?? DEFAULT_RUN_ACTION_PROMPT,
+					createdBy: actorId,
+				})
+			}
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			return c.json(createApiError('BAD_REQUEST', message), 400)
+		}
+	}
+
+	const [updated] = await db
+		.update(actors)
+		.set({
+			agentState: 'running',
+			agentStateUpdatedAt: new Date(),
+			updatedAt: new Date(),
+		})
+		.where(eq(actors.id, id))
+		.returning()
+
+	if (!updated) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: 'agent_run',
+		entityType: 'actor',
+		entityId: id,
+		data: {},
+	})
+
+	return c.json(serializeActor(updated))
+}) as RouteHandler<typeof runAgentRoute, Env>)
 
 export default app

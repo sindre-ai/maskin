@@ -83,6 +83,8 @@ function buildActor(overrides: Partial<ActorResponse> = {}): ActorResponse {
 		memory: null,
 		llm_provider: null,
 		llm_config: null,
+		agentState: 'idle',
+		agentStateUpdatedAt: null,
 		createdAt: null,
 		updatedAt: null,
 		...overrides,

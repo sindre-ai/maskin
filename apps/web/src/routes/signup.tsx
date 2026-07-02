@@ -2,8 +2,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
+import { trackEvent } from '@/lib/analytics'
+import { api } from '@/lib/api'
+import { buildSignupCaptureKnowledge } from '@maskin/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export const Route = createFileRoute('/signup')({
 	component: SignupPage,
@@ -12,16 +15,61 @@ export const Route = createFileRoute('/signup')({
 function SignupPage() {
 	const { signup } = useAuth()
 	const [name, setName] = useState('')
+	const [organization, setOrganization] = useState('')
+	const [role, setRole] = useState('')
 	const [email, setEmail] = useState('')
 	const [password, setPassword] = useState('')
 	const [confirmPassword, setConfirmPassword] = useState('')
 	const [error, setError] = useState('')
 	const [loading, setLoading] = useState(false)
 
+	const startedRef = useRef(false)
+	useEffect(() => {
+		if (startedRef.current) return
+		startedRef.current = true
+		trackEvent('signup_form_started', {})
+	}, [])
+
+	useEffect(() => {
+		const url = new URL(window.location.href)
+		const pendingPrompt = url.searchParams.get('pending_prompt')
+		const anonId = url.searchParams.get('anon_id')
+		if (!pendingPrompt && !anonId) return
+
+		try {
+			if (pendingPrompt) {
+				console.info('[maskin] imported pending prompt from URL', {
+					promptChars: pendingPrompt.length,
+				})
+				localStorage.setItem('maskin_pending_prompt', pendingPrompt)
+			}
+			if (anonId) {
+				localStorage.setItem('maskin_anon_id', anonId)
+			}
+		} catch (err) {
+			console.error('[maskin] failed to import landing params from URL', err)
+		}
+
+		url.searchParams.delete('pending_prompt')
+		url.searchParams.delete('anon_id')
+		window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+	}, [])
+
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
-		if (!name.trim()) {
+		const trimmedName = name.trim()
+		const trimmedOrg = organization.trim()
+		const trimmedRole = role.trim()
+		if (!trimmedName) {
 			setError('Name is required')
+			return
+		}
+		if (!trimmedOrg) {
+			setError('Organization is required')
+			return
+		}
+		if (!trimmedRole) {
+			setError('Role is required')
 			return
 		}
 		if (!email.trim()) {
@@ -38,12 +86,49 @@ function SignupPage() {
 		}
 		setLoading(true)
 		try {
-			await signup({
+			const anonId = localStorage.getItem('maskin_anon_id')
+			const result = await signup({
 				type: 'human',
-				name: name.trim(),
+				name: trimmedName,
 				email: email.trim(),
 				password,
 			})
+			const actorId = result?.id
+			const workspaceId = result?.workspace_id
+			if (workspaceId) {
+				try {
+					const payload = buildSignupCaptureKnowledge({
+						name: trimmedName,
+						organization: trimmedOrg,
+						role: trimmedRole,
+					})
+					await api.objects.create(workspaceId, payload)
+					console.info('[maskin] wrote signup capture knowledge', {
+						workspaceId,
+						actorId,
+					})
+				} catch (err) {
+					console.error('[maskin] failed to write signup capture knowledge', err)
+				}
+			} else {
+				console.warn('[maskin] no workspace_id returned from signup; skipping capture write')
+			}
+			if (!actorId) {
+				console.error(
+					'[maskin] signup succeeded but returned no actor id; skipping submitted event',
+				)
+			} else {
+				trackEvent('signup_form_submitted', {
+					user_id: actorId,
+					completed: true,
+				})
+			}
+			if (anonId) {
+				api.landingEvents
+					.emit([{ name: 'signup_complete', anonId, props: { fromGuest: true } }])
+					.catch(() => console.error('[maskin] failed to emit signup_complete'))
+			}
+			window.location.assign('/')
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Signup failed')
 		} finally {
@@ -71,6 +156,32 @@ function SignupPage() {
 							}}
 							placeholder="Your name"
 							autoFocus
+						/>
+					</div>
+
+					<div>
+						<Label className="mb-1 text-muted-foreground">Organization</Label>
+						<Input
+							type="text"
+							value={organization}
+							onChange={(e) => {
+								setOrganization(e.target.value)
+								setError('')
+							}}
+							placeholder="Company name"
+						/>
+					</div>
+
+					<div>
+						<Label className="mb-1 text-muted-foreground">Role</Label>
+						<Input
+							type="text"
+							value={role}
+							onChange={(e) => {
+								setRole(e.target.value)
+								setError('')
+							}}
+							placeholder="What you do"
 						/>
 					</div>
 

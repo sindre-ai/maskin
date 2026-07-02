@@ -26,6 +26,7 @@ import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
+import { ALL_TYPES_KEY } from '@maskin/shared'
 import {
 	type InfiniteData,
 	keepPreviousData,
@@ -45,7 +46,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	validateSearch: (search: Record<string, unknown>) => ({
 		type: typeof search.type === 'string' ? search.type : undefined,
 		status: typeof search.status === 'string' ? search.status : undefined,
-		owner: typeof search.owner === 'string' ? search.owner : undefined,
+		driver: typeof search.driver === 'string' ? search.driver : undefined,
 		sort: typeof search.sort === 'string' ? search.sort : 'createdAt',
 		order:
 			typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
@@ -68,7 +69,7 @@ function ObjectsPage() {
 	const {
 		type: typeFilter,
 		status: statusFilter,
-		owner: ownerFilter,
+		driver: driverFilter,
 		sort,
 		order,
 		q,
@@ -134,12 +135,12 @@ function ObjectsPage() {
 		const f: Record<string, string> = {}
 		if (typeFilter) f.type = typeFilter
 		if (statusFilter) f.status = statusFilter
-		if (ownerFilter) f.owner = ownerFilter
+		if (driverFilter) f.driver = driverFilter
 		if (idsFilter) f.ids = idsFilter
 		f.sort = sort
 		f.order = order
 		return f
-	}, [typeFilter, statusFilter, ownerFilter, idsFilter, sort, order])
+	}, [typeFilter, statusFilter, driverFilter, idsFilter, sort, order])
 
 	// Infinite query — use search endpoint when q is present
 	const infiniteQuery = useInfiniteQuery({
@@ -176,8 +177,7 @@ function ObjectsPage() {
 	}, [settings, typeFilter, tabs])
 
 	// Board view needs a single active object type with at least one configured
-	// status. The All tab has no slot for "all types" in the persistence row
-	// (Task 5 keyed the row by object_type), so List is the only option there.
+	// status, so List is the only option on the All tab.
 	const boardSupported = Boolean(typeFilter && (statusesByType[typeFilter]?.length ?? 0) > 0)
 	// Effective view: even if the user previously chose Board for this type, an
 	// unsupported context (All tab, type with zero configured statuses) renders
@@ -270,7 +270,7 @@ function ObjectsPage() {
 		const staticNames: Record<string, string> = {
 			status: 'Status',
 			type: 'Type',
-			owner: 'Owner',
+			driver: 'Driver',
 			createdBy: 'Created by',
 			createdAt: 'Created',
 			updatedAt: 'Updated',
@@ -315,10 +315,12 @@ function ObjectsPage() {
 	// Per-actor display settings (persistence layer from Task 5).
 	// Hydration policy: when the user lands on a tab with persisted settings
 	// and the URL is in its default shape, apply the saved view. Once any
-	// tracked field changes we write the whole blob back. The All tab is not
-	// persisted because the persistence row is keyed by `object_type` —
-	// there is no slot for "all types".
-	const displaySettingsQuery = useUserDisplaySettings(workspaceId, typeFilter ?? '')
+	// tracked field changes we write the whole blob back. The All tab uses
+	// the `__all__` sentinel slot so its column-visibility toggles persist
+	// the same way per-type tabs do — without that, the user's choices in
+	// the display menu reset to defaults on every navigation away and back.
+	const displaySettingsKey = typeFilter ?? ALL_TYPES_KEY
+	const displaySettingsQuery = useUserDisplaySettings(workspaceId, displaySettingsKey)
 	const updateDisplaySettings = useUpdateUserDisplaySettings(workspaceId)
 	// `useMutation` returns a new object reference on every render, but the
 	// `mutate` function itself is stable. Pinning the stable callable into a
@@ -336,27 +338,26 @@ function ObjectsPage() {
 			(!searchParams.order || searchParams.order === 'desc') &&
 			!searchParams.groupBy &&
 			!searchParams.status &&
-			!searchParams.owner,
+			!searchParams.driver,
 		[
 			searchParams.sort,
 			searchParams.order,
 			searchParams.groupBy,
 			searchParams.status,
-			searchParams.owner,
+			searchParams.driver,
 		],
 	)
 
 	useEffect(() => {
-		if (!typeFilter) return
-		if (hydratedTypesRef.current.has(typeFilter)) return
+		if (hydratedTypesRef.current.has(displaySettingsKey)) return
 		if (!displaySettingsQuery.isSuccess) return
 		// Mark hydrated even if there are no persisted settings yet — that lets
 		// the write-through effect start tracking once the user makes their
 		// first change, without re-running this hydrate block.
-		hydratedTypesRef.current.add(typeFilter)
+		hydratedTypesRef.current.add(displaySettingsKey)
 		const persisted = displaySettingsQuery.data
 		if (!persisted) {
-			// No saved view for this type — fall back to the route default.
+			// No saved view for this key — fall back to the route default.
 			setView('list')
 			return
 		}
@@ -364,31 +365,33 @@ function ObjectsPage() {
 		// View hydrates regardless of urlIsInDefaultShape: `view` is route-local
 		// (not in the URL), so the URL's shape can't conflict with it.
 		setView(s.view ?? 'list')
-		if (!urlIsInDefaultShape) return
-		const updates: Record<string, string | undefined> = {}
-		if (s.sort) updates.sort = s.sort
-		if (s.order) updates.order = s.order
-		if (s.groupBy) updates.groupBy = s.groupBy
-		if (s.filters?.status) updates.status = s.filters.status
-		if (s.filters?.owner) updates.owner = s.filters.owner
-		if (Object.keys(updates).length > 0) updateSearch(updates)
+		if (urlIsInDefaultShape) {
+			const updates: Record<string, string | undefined> = {}
+			if (s.sort) updates.sort = s.sort
+			if (s.order) updates.order = s.order
+			if (s.groupBy) updates.groupBy = s.groupBy
+			if (s.filters?.status) updates.status = s.filters.status
+			if (s.filters?.driver) updates.driver = s.filters.driver
+			if (Object.keys(updates).length > 0) updateSearch(updates)
+		}
 		// Persisted blob wins: the saved map REPLACES the route's initial
 		// columnVisibility defaults (e.g. `{ createdBy: false }`). The user's
 		// last toggle is canonical — never merge old defaults back on top.
+		// This applies on the All tab too — `__all__` is its own row, so
+		// switching between All and a type tab restores each side's own state.
 		if (s.columnVisibility) setColumnVisibility(s.columnVisibility)
 	}, [
-		typeFilter,
+		displaySettingsKey,
 		displaySettingsQuery.isSuccess,
 		displaySettingsQuery.data,
 		urlIsInDefaultShape,
 		updateSearch,
 	])
 
-	// Write-through. Only fires after this type has been hydrated so the
+	// Write-through. Only fires after this key has been hydrated so the
 	// initial apply doesn't immediately re-write the same blob back.
 	useEffect(() => {
-		if (!typeFilter) return
-		if (!hydratedTypesRef.current.has(typeFilter)) return
+		if (!hydratedTypesRef.current.has(displaySettingsKey)) return
 		const settings: DisplaySettingsBody = {
 			view,
 			sort,
@@ -396,16 +399,16 @@ function ObjectsPage() {
 			groupBy: groupBy ?? null,
 			columnVisibility,
 		}
-		const filters: { status?: string; owner?: string } = {}
+		const filters: { status?: string; driver?: string } = {}
 		if (statusFilter) filters.status = statusFilter
-		if (ownerFilter) filters.owner = ownerFilter
-		if (filters.status || filters.owner) settings.filters = filters
+		if (driverFilter) filters.driver = driverFilter
+		if (filters.status || filters.driver) settings.filters = filters
 
 		const handle = setTimeout(() => {
-			updateMutateRef.current({ objectType: typeFilter, settings })
+			updateMutateRef.current({ objectType: displaySettingsKey, settings })
 		}, 500)
 		return () => clearTimeout(handle)
-	}, [typeFilter, view, sort, order, groupBy, statusFilter, ownerFilter, columnVisibility])
+	}, [displaySettingsKey, view, sort, order, groupBy, statusFilter, driverFilter, columnVisibility])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
 
@@ -462,7 +465,7 @@ function ObjectsPage() {
 			if (selectedIds.length === 0) return
 			const ids = [...selectedIds]
 			bulkUpdate.mutate(
-				{ ids, patch: { owner: ownerId } },
+				{ ids, patch: { driver: ownerId } },
 				{
 					onSuccess: (data) => reportBulkResult(data, ids.length, 'updated'),
 					onError: () => toast.error('Failed to update objects'),
@@ -646,7 +649,10 @@ function ObjectsPage() {
 				tabs={tabs}
 				typeFilter={typeFilter}
 				onTypeFilterChange={(value) => {
-					if (typeFilter) hydratedTypesRef.current.delete(typeFilter)
+					// Clear the outgoing key (real type or `__all__`) so the destination
+					// tab re-hydrates from its own persisted row instead of inheriting
+					// the previous tab's settings.
+					hydratedTypesRef.current.delete(displaySettingsKey)
 					navigate({
 						to: '/$workspaceId/objects',
 						params: { workspaceId },
@@ -655,7 +661,7 @@ function ObjectsPage() {
 							sort: 'createdAt',
 							order: 'desc',
 							status: undefined,
-							owner: undefined,
+							driver: undefined,
 							q: undefined,
 							groupBy: undefined,
 							ids: undefined,
@@ -668,10 +674,10 @@ function ObjectsPage() {
 				statusFilter={statusFilter}
 				onStatusFilterChange={(value) => updateSearch({ status: value })}
 				statusesByType={statusesByType}
-				ownerFilter={ownerFilter}
-				onOwnerFilterChange={(value) => updateSearch({ owner: value })}
+				driverFilter={driverFilter}
+				onDriverFilterChange={(value) => updateSearch({ driver: value })}
 				actors={actors}
-				onResetFilters={() => updateSearch({ status: undefined, owner: undefined })}
+				onResetFilters={() => updateSearch({ status: undefined, driver: undefined })}
 				sort={sort}
 				onSortChange={(value) =>
 					updateSearch({

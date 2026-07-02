@@ -1,3 +1,5 @@
+import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
+import { SparseComposer } from '@/components/foryou/sparse-composer'
 import { UnreadThreadCard } from '@/components/foryou/unread-thread-card'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
@@ -28,22 +30,38 @@ function ForYouDashboard() {
 
 	if (items.length === 0) {
 		return (
-			<EmptyState
-				title="All caught up"
-				description="New comments and replies on things you're subscribed to will appear here."
-			/>
+			<div className="space-y-2">
+				<EmptyState
+					title="All caught up"
+					description="New comments and replies on things you're subscribed to will appear here."
+					className="py-8"
+				/>
+				<SparseComposer itemsCount={0} />
+			</div>
 		)
 	}
 
+	const onboardingItems = items.filter((item) => item.object?.type === 'onboarding_session')
+	const regularItems = items.filter((item) => item.object?.type !== 'onboarding_session')
+	const isSparse = items.length < 3
+
 	return (
 		<div className="space-y-4">
-			{items.map((item) => (
+			{onboardingItems.map((item) => (
+				<OnboardingPromptCard
+					key={`${item.entity_type}-${item.entity_id}`}
+					workspaceId={workspaceId}
+					item={item}
+				/>
+			))}
+			{regularItems.map((item) => (
 				<UnreadThreadCard
 					key={`${item.entity_type}-${item.entity_id}`}
 					workspaceId={workspaceId}
 					item={item}
 				/>
 			))}
+			{isSparse ? <SparseComposer itemsCount={items.length} /> : null}
 		</div>
 	)
 }

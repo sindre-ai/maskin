@@ -7,15 +7,15 @@ const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		it('creates a workspace and seeds Sindre, returning 201', async () => {
+		it('creates a workspace and seeds Workspace Coach, returning 201', async () => {
 			const ws = buildWorkspace()
-			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insertQueue = [
 				[ws], // workspaces insert
 				[{}], // owner workspaceMembers insert
-				[sindre], // Sindre actor insert
-				[{}], // Sindre workspaceMembers insert
+				[coach], // Workspace Coach actor insert
+				[{}], // Workspace Coach workspaceMembers insert
 			]
 
 			const res = await app.request(
@@ -28,22 +28,22 @@ describe('Workspaces Routes', () => {
 			expect(body.name).toBe(ws.name)
 		})
 
-		it('seeds Sindre with a generated apiKey distinct from the creator', async () => {
+		it('seeds Workspace Coach with a generated apiKey distinct from the creator', async () => {
 			const ws = buildWorkspace()
-			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
-			mockResults.insertQueue = [[ws], [{}], [sindre], [{}]]
+			mockResults.insertQueue = [[ws], [{}], [coach], [{}]]
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
 			)
 
 			expect(res.status).toBe(201)
-			// inserts: [workspace, owner-member, sindre-actor, sindre-member]
-			const sindreInsert = calls.inserts[2] as { apiKey?: string; type?: string }
-			expect(sindreInsert.type).toBe('agent')
-			expect(sindreInsert.apiKey).toBeDefined()
-			expect(sindreInsert.apiKey).toMatch(/^ank_/)
+			// inserts: [workspace, owner-member, coach-actor, coach-member]
+			const coachInsert = calls.inserts[2] as { apiKey?: string; type?: string }
+			expect(coachInsert.type).toBe('agent')
+			expect(coachInsert.apiKey).toBeDefined()
+			expect(coachInsert.apiKey).toMatch(/^ank_/)
 		})
 
 		it('returns 500 when workspace insert returns empty', async () => {
@@ -60,13 +60,13 @@ describe('Workspaces Routes', () => {
 			expect(body.error.message).toContain('Failed to create workspace')
 		})
 
-		it('rolls back and returns 500 when Sindre actor insert returns empty', async () => {
+		it('rolls back and returns 500 when Workspace Coach actor insert returns empty', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insertQueue = [
 				[ws], // workspaces insert succeeds
 				[{}], // owner workspaceMembers insert succeeds
-				[], // Sindre actor insert fails — triggers rollback
+				[], // Workspace Coach actor insert fails — triggers rollback
 			]
 
 			const res = await app.request(
@@ -113,6 +113,56 @@ describe('Workspaces Routes', () => {
 				jsonRequest('PATCH', `/api/workspaces/${id}`, {
 					settings: { display_names: { insight: 'Signal' } },
 				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('PATCH /api/workspaces/admin/:id', () => {
+		it('returns 200 and seeds prompt rows when owner enables onboarding', async () => {
+			const ws = buildWorkspace()
+			const updated = { ...ws, onboardingEnabled: true }
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[ws], // workspace exists check
+				[{ actorId: 'test-actor-id' }], // isWorkspaceOwner → owner row found
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { onboarding_enabled: true }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.onboardingEnabled).toBe(true)
+		})
+
+		it('returns 403 when caller is not the workspace owner', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[ws], // workspace exists
+				[], // isWorkspaceOwner → no owner row (caller is member, not owner)
+			]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { onboarding_enabled: true }),
+			)
+
+			expect(res.status).toBe(403)
+			const body = await res.json()
+			expect(body.error.code).toBe('FORBIDDEN')
+		})
+
+		it('returns 404 when workspace does not exist', async () => {
+			const id = '00000000-0000-0000-0000-000000000099'
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${id}`, { onboarding_enabled: true }),
 			)
 
 			expect(res.status).toBe(404)

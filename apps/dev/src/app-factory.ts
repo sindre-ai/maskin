@@ -11,20 +11,27 @@ import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
 import { logger } from './lib/logger'
-import { idempotencyMiddleware } from './middleware/idempotency'
+import { createIdempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
+import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
+import agentServerReconcileRoutes from './routes/agent-server-reconcile'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
+import catalogPackagesRoutes from './routes/catalog-packages'
 import claudeOauthRoutes from './routes/claude-oauth'
 import eventsRoutes from './routes/events'
 import filesRoutes from './routes/files'
 import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
+import installedPackagesRoutes from './routes/installed-packages'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import mcpRoutes from './routes/mcp'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
+import publicBetStrategistRoutes from './routes/public-bet-strategist'
+import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
 import subscriptionsRoutes from './routes/subscriptions'
@@ -98,6 +105,12 @@ export function getOpenApiConfig(port = 3000) {
  *     and the change was already gated by current-password at request time.
  *   - /api/webhooks/*: authenticated via provider HMAC, not our API key
  *   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
+ *   - POST /api/public/landing-events: landing-page funnel event ingest
+ *     (per-IP rate-limited inside the handler).
+ *   - POST /api/public/bet-strategist/drafts, POST /api/public/bet-strategist/claim:
+ *     pre-auth bet-council intake endpoints.
+ *   - /api/internal/agent-servers/*: authenticated via the shared bearer secret
+ *     enforced inside the handler, not our API key.
  */
 export function isAuthBypassed(path: string, method: string): boolean {
 	if (path === '/api/health' || path === '/api/openapi.json') return true
@@ -105,6 +118,10 @@ export function isAuthBypassed(path: string, method: string): boolean {
 	if (path === '/api/auth/login' && method === 'POST') return true
 	if (path === '/api/auth/email-change/verify' && method === 'POST') return true
 	if (path.startsWith('/api/webhooks/')) return true
+	if (path.startsWith('/api/internal/agent-servers/')) return true
+	if (path === '/api/public/landing-events' && method === 'POST') return true
+	if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return true
+	if (path === '/api/public/bet-strategist/claim' && method === 'POST') return true
 	if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return true
 	return false
 }
@@ -194,9 +211,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		return auth(c, next)
 	})
 
-	app.use('/api/*', idempotencyMiddleware)
+	app.use('/api/*', createIdempotencyMiddleware(db))
 
 	app.route('/api/objects', objectsRoutes)
+	app.route('/api/public/landing-events', publicLandingEventsRoutes)
+	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
+	app.route('/api/admin/landing-funnel', adminLandingFunnelRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
@@ -206,13 +226,17 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/relationships', relationshipsRoutes)
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/integrations', integrationsRoutes)
+	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
+	app.route('/api/catalog', catalogPackagesRoutes)
 	app.route('/api/webhooks', webhookApp)
+	app.route('/api/internal/agent-servers', agentServerReconcileRoutes)
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)
 	app.route('/api/graph', graphRoutes)
 	app.route('/api/imports', importsRoutes)
+	app.route('/api/installed-packages', installedPackagesRoutes)
 	app.route('/api/files', filesRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)

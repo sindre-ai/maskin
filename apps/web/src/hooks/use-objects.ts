@@ -115,7 +115,7 @@ function applyOptimisticBulkPatch(
 		if (!idSet.has(obj.id)) return obj
 		const next: ObjectResponse = { ...obj, updatedAt: stamped }
 		if (patch.status !== undefined) next.status = patch.status
-		if (patch.owner !== undefined) next.owner = patch.owner
+		if (patch.driver !== undefined) next.driver = patch.driver
 		if (patch.metadata !== undefined) {
 			next.metadata = { ...(obj.metadata ?? {}), ...patch.metadata }
 		}

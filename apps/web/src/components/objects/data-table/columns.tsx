@@ -141,12 +141,12 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			enableSorting: false,
 		},
 		{
-			accessorKey: 'owner',
-			header: 'Owner',
+			accessorKey: 'driver',
+			header: 'Driver',
 			cell: ({ row }) => {
-				const ownerId = row.getValue('owner') as string | null
-				if (!ownerId) return <span className="text-muted-foreground">—</span>
-				const actor = actors?.find((a) => a.id === ownerId)
+				const driverId = row.getValue('driver') as string | null
+				if (!driverId) return <span className="text-muted-foreground">—</span>
+				const actor = actors?.find((a) => a.id === driverId)
 				return <span className="text-sm">{actor?.name ?? '—'}</span>
 			},
 			enableSorting: false,

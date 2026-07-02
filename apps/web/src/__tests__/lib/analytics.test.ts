@@ -145,7 +145,7 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
-	it('comment_posted captures is_reply and attachment_count', () => {
+	it('comment_posted captures is_reply, attachment_count, and content', () => {
 		const capture = captureSpy()
 
 		trackCommentPosted({
@@ -153,6 +153,7 @@ describe('v1 taxonomy helpers', () => {
 			entity_type: 'task',
 			is_reply: true,
 			attachment_count: 2,
+			content: 'first line\nsecond line',
 			flow_id: 'draft-99',
 		})
 
@@ -163,6 +164,7 @@ describe('v1 taxonomy helpers', () => {
 				entity_type: 'task',
 				is_reply: true,
 				attachment_count: 2,
+				content: 'first line\nsecond line',
 				flow_id: 'draft-99',
 			}),
 		)

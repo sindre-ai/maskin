@@ -15,15 +15,15 @@ describe('frontendBaseUrl', () => {
 	})
 
 	it('returns FRONTEND_URL verbatim when set', () => {
-		vi.stubEnv('FRONTEND_URL', 'https://maskin.sindre.ai')
-		expect(frontendBaseUrl()).toBe('https://maskin.sindre.ai')
+		vi.stubEnv('FRONTEND_URL', 'https://maskin.io')
+		expect(frontendBaseUrl()).toBe('https://maskin.io')
 	})
 
 	it('strips a trailing slash from FRONTEND_URL', () => {
 		// Without normalisation, downstream `${frontendUrl}/<ws>/...` joins
 		// produce double slashes. fileViewerUrl relies on this.
-		vi.stubEnv('FRONTEND_URL', 'https://maskin.sindre.ai/')
-		expect(frontendBaseUrl()).toBe('https://maskin.sindre.ai')
+		vi.stubEnv('FRONTEND_URL', 'https://maskin.io/')
+		expect(frontendBaseUrl()).toBe('https://maskin.io')
 	})
 
 	it('throws in production when FRONTEND_URL is unset', () => {
@@ -35,14 +35,14 @@ describe('frontendBaseUrl', () => {
 
 describe('fileViewerUrl', () => {
 	it('builds a workspace-scoped file viewer URL', () => {
-		expect(fileViewerUrl('https://maskin.sindre.ai', 'ws-1', 'file-9')).toBe(
-			'https://maskin.sindre.ai/ws-1/files/file-9',
+		expect(fileViewerUrl('https://maskin.io', 'ws-1', 'file-9')).toBe(
+			'https://maskin.io/ws-1/files/file-9',
 		)
 	})
 
 	it('tolerates a trailing slash on the frontend URL', () => {
-		expect(fileViewerUrl('https://maskin.sindre.ai/', 'ws-1', 'file-9')).toBe(
-			'https://maskin.sindre.ai/ws-1/files/file-9',
+		expect(fileViewerUrl('https://maskin.io/', 'ws-1', 'file-9')).toBe(
+			'https://maskin.io/ws-1/files/file-9',
 		)
 	})
 })

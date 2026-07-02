@@ -1,24 +1,37 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { actors, workspaceMembers, workspaces } from '@maskin/db/schema'
 import {
-	SINDRE_DEFAULT,
+	events,
+	actors,
+	workspaceMembers,
+	workspaceOnboardingPrompts,
+	workspaces,
+} from '@maskin/db/schema'
+import {
+	WORKSPACE_COACH_DEFAULT,
 	createWorkspaceSchema,
+	updateWorkspaceAdminSchema,
 	updateWorkspaceSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
+import type { AgentStorageManager } from '../services/agent-storage'
+import type { SessionManager } from '../services/session-manager'
+import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		actorType: string
+		agentStorage: AgentStorageManager
+		sessionManager: SessionManager
 	}
 }
 
@@ -94,29 +107,29 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			role: 'owner',
 		})
 
-		// Seed Sindre — the built-in meta-agent shipped with every workspace.
-		// apiKey is required (see comment in actors.ts) — without it the agent's
-		// container has no identity to authenticate MCP writes with.
-		const [sindre] = await tx
+		// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
+		// apiKey is required — without it the agent's container has no identity to
+		// authenticate MCP writes with.
+		const [coach] = await tx
 			.insert(actors)
 			.values({
-				type: SINDRE_DEFAULT.type,
-				name: SINDRE_DEFAULT.name,
-				isSystem: SINDRE_DEFAULT.isSystem,
-				systemPrompt: SINDRE_DEFAULT.systemPrompt,
-				llmProvider: SINDRE_DEFAULT.llmProvider,
-				llmConfig: SINDRE_DEFAULT.llmConfig,
-				tools: SINDRE_DEFAULT.tools,
+				type: WORKSPACE_COACH_DEFAULT.type,
+				name: WORKSPACE_COACH_DEFAULT.name,
+				isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
+				systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+				llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
+				llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
+				tools: WORKSPACE_COACH_DEFAULT.tools,
 				apiKey: generateApiKey().key,
 				createdBy: actorId,
 			})
 			.returning()
 
-		if (!sindre) throw new Error('Failed to seed Sindre actor')
+		if (!coach) throw new Error('Failed to seed Workspace Coach actor')
 
 		await tx.insert(workspaceMembers).values({
 			workspaceId: ws.id,
-			actorId: sindre.id,
+			actorId: coach.id,
 			role: 'member',
 		})
 
@@ -125,6 +138,13 @@ app.openapi(createWorkspaceRoute, async (c) => {
 
 	if (!workspace) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace'), 500)
+	}
+
+	const agentStorage = c.get('agentStorage')
+	if (agentStorage) {
+		bootstrapDefaultAgents(c.get('db'), agentStorage, workspace.id, actorId).catch((err) =>
+			logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
+		)
 	}
 
 	return c.json(serialize(workspace) as z.infer<typeof workspaceResponseSchema>, 201)
@@ -193,6 +213,7 @@ const updateWorkspaceRoute = createRoute({
 
 app.openapi(updateWorkspaceRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 
@@ -229,8 +250,121 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
+	await db.insert(events).values({
+		workspaceId: id,
+		actorId,
+		action: 'updated',
+		entityType: 'workspace',
+		entityId: id,
+		data: { updated },
+	})
+
 	return c.json(serialize(updated) as z.infer<typeof workspaceResponseSchema>)
 }) as RouteHandler<typeof updateWorkspaceRoute, Env>)
+
+// PATCH /api/workspaces/admin/:id — flip onboarding_enabled without a code deploy
+const updateWorkspaceOnboardingRoute = createRoute({
+	method: 'patch',
+	path: '/admin/{id}',
+	tags: ['workspaces'],
+	summary: 'Set onboarding_enabled flag (owner only)',
+	request: {
+		params: idParamSchema,
+		body: {
+			content: {
+				'application/json': {
+					schema: updateWorkspaceAdminSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Workspace updated',
+			content: { 'application/json': { schema: workspaceResponseSchema } },
+		},
+		403: {
+			description: 'Caller is not the workspace owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+const ONBOARDING_PROMPT_TYPES = [
+	'product_vision',
+	'icp',
+	'first_bet_hypothesis',
+	'north_star_metric',
+	'customer_evidence',
+] as const
+
+app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const body = c.req.valid('json')
+
+	const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	if (!(await isWorkspaceOwner(db, actorId, id))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a workspace owner'), 403)
+	}
+
+	const [updated] = await db
+		.update(workspaces)
+		.set({ onboardingEnabled: body.onboarding_enabled, updatedAt: new Date() })
+		.where(eq(workspaces.id, id))
+		.returning()
+
+	if (!updated) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	if (body.onboarding_enabled) {
+		await db
+			.insert(workspaceOnboardingPrompts)
+			.values(ONBOARDING_PROMPT_TYPES.map((promptType) => ({ workspaceId: id, promptType })))
+			.onConflictDoNothing()
+
+		const [coach] = await db
+			.select({ id: actors.id })
+			.from(actors)
+			.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+			.where(
+				and(eq(workspaceMembers.workspaceId, id), eq(actors.name, WORKSPACE_COACH_DEFAULT.name)),
+			)
+			.limit(1)
+
+		if (coach) {
+			c.get('sessionManager')
+				.createSession(id, {
+					actorId: coach.id,
+					actionPrompt:
+						'A workspace has been enabled for onboarding (onboarding_enabled flipped to true). Run the workspace-observer-onboarding skill.\n\nBefore starting: check whether this workspace already has an onboarding_session object. If one exists, exit silently.\n\nIf none exists, follow the workspace-observer-onboarding skill to:\n1. Create the onboarding_session object.\n2. Subscribe the workspace owner.\n3. Post the five context prompts in sequence, waiting for each reply before the next.\n4. Capture each reply as a knowledge object.\n5. Close the session when all prompts are answered (or after 24h).',
+					createdBy: actorId,
+				})
+				.catch((err) =>
+					logger.error('Failed to create onboarding session', { workspaceId: id, err }),
+				)
+		}
+	}
+
+	await db.insert(events).values({
+		workspaceId: id,
+		actorId,
+		action: 'updated',
+		entityType: 'workspace',
+		entityId: id,
+		data: { previous: existing, updated },
+	})
+
+	return c.json(serialize(updated) as z.infer<typeof workspaceResponseSchema>)
+}) as RouteHandler<typeof updateWorkspaceOnboardingRoute, Env>)
 
 // POST /api/workspaces/:id/members
 const addMemberRoute = createRoute({

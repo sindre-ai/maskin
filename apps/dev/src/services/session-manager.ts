@@ -1,34 +1,83 @@
-﻿import { execFile as execFileCb } from 'node:child_process'
+import { execFile as execFileCb } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { createGzip } from 'node:zlib'
 
 const execFileAsync = promisify(execFileCb)
 import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
+	agentServers,
 	integrations,
 	objects,
 	sessionLogs,
 	sessions,
 	workspaces,
 } from '@maskin/db/schema'
+import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, count as countFn, desc, eq, inArray, lt, or } from 'drizzle-orm'
+import {
+	and,
+	count as countFn,
+	desc,
+	eq,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	ne,
+	notInArray,
+	or,
+} from 'drizzle-orm'
+import {
+	claimLoopActiveDay,
+	trackLoopActiveDay,
+	utcDayString,
+} from '../lib/analytics/catalog-events'
+import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
+import { isAuthRevokedError } from '../lib/integrations/errors'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
+import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
+import {
+	AgentServerAuthError,
+	AgentServerClient,
+	AgentServerHttpError,
+} from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
+import type { SessionDispatchQueue } from './session-dispatch-queue'
 import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
 import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
+
+/**
+ * Today's runtime is Docker on the same host as `apps/dev`. The bet introduces
+ * a real `agent_servers` table (T5) + dispatcher (T6) — until those land, every
+ * session is bucketed under this synthetic URL so the ship-metric query has a
+ * stable group-by key from day one.
+ */
+const LOCAL_RUNTIME_BUCKET = 'local-docker'
+
+/**
+ * `sessions.startedAt`/`createdAt` are typed `Date | null` by Drizzle but
+ * `createdAt` is always populated (DB default). When measuring elapsed runtime
+ * for telemetry, prefer `startedAt`, fall back to `createdAt`, and emit zero if
+ * both are missing rather than crashing analytics.
+ */
+function elapsedMs(startedAt: Date | null, createdAt: Date | null): number {
+	const anchor = startedAt ?? createdAt
+	return anchor ? Date.now() - anchor.getTime() : 0
+}
 
 export interface CreateSessionParams {
 	actorId: string
@@ -46,6 +95,8 @@ export interface CreateSessionParams {
 	triggerId?: string
 	createdBy: string
 	autoStart?: boolean
+	/** ID of a prior session whose workspace snapshot should be restored at startup. */
+	sourceSessionId?: string
 }
 
 /**
@@ -103,12 +154,30 @@ export class SessionManager extends EventEmitter {
 	 */
 	private static readonly LOG_STREAM_MAX_RECONNECTS = 5
 	private static readonly LOG_STREAM_RECONNECT_DELAY_MS = 2000
+	/**
+	 * AC-T5: cap how long `cleanupBrowserSidecar` waits for Docker to actually
+	 * surface a 404 on the sidecar container after `remove({ force: true })`.
+	 * `remove -f` is normally synchronous, but a slow daemon can briefly keep
+	 * the container row visible — the SLA bounds how long we tolerate that.
+	 */
+	private static readonly SIDECAR_TEARDOWN_SLA_MS = 60_000
+	private static readonly SIDECAR_TEARDOWN_POLL_INTERVAL_MS = 500
 	private agentBaseBuildContext: string | null = null
+	private browserSidecarBuildContext: string | null = null
+	private browserSidecarImageReady: Promise<void> | null = null
 	private drainingWorkspaces: Set<string> = new Set()
+	private dispatchQueue: SessionDispatchQueue | null = null
+	/**
+	 * Session IDs the operator (or the agent itself) has asked to stop. Read by
+	 * `handleCompletion` to distinguish a `user_stopped` end from a `failed` one
+	 * even though both arrive at `watchContainerExit` as a non-zero exit code.
+	 */
+	private stopRequested: Set<string> = new Set()
 
 	constructor(
 		private db: Database,
 		private storage: StorageProvider,
+		private telemetry: RuntimeTelemetry = new RuntimeTelemetry(),
 	) {
 		super()
 		this.containers = new ContainerManager()
@@ -117,6 +186,25 @@ export class SessionManager extends EventEmitter {
 
 	setAgentBaseBuildContext(buildContext: string) {
 		this.agentBaseBuildContext = buildContext
+	}
+
+	setBrowserSidecarBuildContext(buildContext: string) {
+		this.browserSidecarBuildContext = buildContext
+	}
+
+	warmBrowserSidecarImage(): Promise<void> {
+		return this.prepareBrowserSidecarImage()
+	}
+
+	/**
+	 * Wire a `SessionDispatchQueue` to take over the start path. When set
+	 * (production), `startSession` enqueues the session instead of spawning a
+	 * local Docker container; the queue calls the `SessionDispatcher`, which
+	 * routes to an `agent_servers` row over HTTPS. Local-dev leaves this null
+	 * and the manager keeps spawning Docker.
+	 */
+	setDispatchQueue(queue: SessionDispatchQueue) {
+		this.dispatchQueue = queue
 	}
 
 	async start() {
@@ -134,6 +222,21 @@ export class SessionManager extends EventEmitter {
 			clearInterval(this.watchdogInterval)
 			this.watchdogInterval = null
 		}
+		await this.telemetry.shutdown()
+	}
+
+	/**
+	 * Per-agent-server snapshot of how many sessions are currently `starting` or
+	 * `running`. Used by the telemetry gauge loop to emit
+	 * `runtime_concurrent_sessions_gauge`. Until `agent_servers` lands (T5) every
+	 * session bucket is the local Docker runtime.
+	 */
+	async getConcurrencyByAgentServer(): Promise<Map<string, number>> {
+		const [row] = await this.db
+			.select({ count: countFn() })
+			.from(sessions)
+			.where(inArray(sessions.status, ['starting', 'running']))
+		return new Map([[LOCAL_RUNTIME_BUCKET, Number(row?.count ?? 0)]])
 	}
 
 	async createSession(
@@ -154,6 +257,7 @@ export class SessionManager extends EventEmitter {
 				config,
 				interactive,
 				createdBy: params.createdBy,
+				sourceSessionId: params.sourceSessionId,
 			})
 			.returning()
 
@@ -211,6 +315,40 @@ export class SessionManager extends EventEmitter {
 			.set({ status: 'starting', updatedAt: new Date() })
 			.where(eq(sessions.id, sessionId))
 
+		// Production path: hand off to the dispatch queue, which routes through
+		// `SessionDispatcher` to an agent_servers row over HTTPS. The agent-
+		// server pulls its own /agent workspace from S3 (T8), so we don't
+		// pre-stage a temp dir locally — we only own the queue handoff.
+		if (this.dispatchQueue) {
+			try {
+				await this.dispatchQueue.enqueue(sessionId)
+				logger.info(`Session enqueued for remote dispatch: ${sessionId}`, {
+					workspaceId: session.workspaceId,
+				})
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err)
+				await this.db
+					.update(sessions)
+					.set({
+						status: 'failed',
+						result: { error: `Enqueue failed: ${message}` },
+						completedAt: new Date(),
+						updatedAt: new Date(),
+					})
+					.where(eq(sessions.id, sessionId))
+				await this.db.insert(events).values({
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					action: 'session_failed',
+					entityType: 'session',
+					entityId: sessionId,
+					data: { error: `Enqueue failed: ${message}` },
+				})
+				throw err
+			}
+			return
+		}
+
 		try {
 			// Pull agent files from S3 to temp dir (chmod 777 so non-root agent user in container can write)
 			const tempDir = await mkdtemp(join(tmpdir(), 'anko-session-'))
@@ -230,23 +368,97 @@ export class SessionManager extends EventEmitter {
 			await this.reportSkillPullFailures(sessionId, pullResult)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
+			// Restore workspace from a prior session if requested. Overwrites
+			// the staged agent files with the prior session's full /agent/ snapshot,
+			// so the agent picks up exactly where the previous session left off.
+			if (session.sourceSessionId) {
+				// Verify the source session belongs to the same workspace before
+				// restoring its snapshot — prevents cross-workspace data leakage.
+				const [sourceSession] = await this.db
+					.select({ id: sessions.id })
+					.from(sessions)
+					.where(
+						and(
+							eq(sessions.id, session.sourceSessionId),
+							eq(sessions.workspaceId, session.workspaceId),
+						),
+					)
+				if (!sourceSession) {
+					logger.warn('sourceSessionId does not belong to this workspace — skipping restore', {
+						sessionId,
+						sourceSessionId: session.sourceSessionId,
+						workspaceId: session.workspaceId,
+					})
+				} else {
+					const snapshotKey = `session-workspaces/${session.sourceSessionId}.tar.gz`
+					if (await this.storage.exists(snapshotKey)) {
+						const buf = await this.storage.get(snapshotKey)
+						const archivePath = join(tempDir, '_source_snapshot.tar.gz')
+						await writeFile(archivePath, buf)
+						try {
+							await execFileAsync('tar', [
+								'-xzf',
+								archivePath,
+								'-C',
+								tempDir,
+								'--strip-components=1',
+							])
+						} finally {
+							await rm(archivePath, { force: true })
+						}
+						await this.insertSystemLog(
+							sessionId,
+							`Workspace restored from session ${session.sourceSessionId}`,
+						)
+						logger.info('Workspace restored from source session', {
+							sessionId,
+							sourceSessionId: session.sourceSessionId,
+						})
+					} else {
+						logger.warn('Source session workspace snapshot not found — starting fresh', {
+							sessionId,
+							sourceSessionId: session.sourceSessionId,
+						})
+					}
+				}
+			}
+
 			// Build env vars and launch container. Let launchContainer derive
 			// the container name from session.id so re-entry (e.g. a watchdog
 			// retry) doesn't collide with a Docker name we forced ourselves.
 			const containerId = await this.launchContainer(session, tempDir)
 
+			const startedAt = new Date()
 			await this.db
 				.update(sessions)
 				.set({
 					status: 'running',
 					containerId,
-					startedAt: new Date(),
+					startedAt,
 					timeoutAt: this.computeTimeout(session),
-					updatedAt: new Date(),
+					updatedAt: startedAt,
 				})
 				.where(eq(sessions.id, sessionId))
 
 			logger.info(`Session started: ${sessionId}`, { containerId })
+
+			const sessionStartLatencyMs = session.createdAt
+				? startedAt.getTime() - session.createdAt.getTime()
+				: 0
+			this.telemetry.recordSessionStarted({
+				sessionId,
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				sessionStartLatencyMs,
+			})
+			// Per-session isolation is structural in Docker (separate cgroup, separate
+			// bind-mounted /agent tempDir). The future agent-server runtime (T2) will
+			// swap in a real probe — until then this is a literal observation, not a
+			// placeholder.
+			this.telemetry.recordCrossSessionCheck({
+				sessionId,
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				hostIsolationOk: true,
+			})
 
 			// Start streaming logs
 			this.streamContainerLogs(sessionId, containerId)
@@ -274,6 +486,13 @@ export class SessionManager extends EventEmitter {
 				data: { error: message },
 			})
 
+			this.telemetry.recordSessionEnded({
+				sessionId,
+				endReason: 'failed',
+				durationMs: elapsedMs(null, session.createdAt),
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			})
+
 			this.containers.detachStdin(sessionId)
 			await this.clearActiveSession(sessionId)
 			await this.cleanupBrowserSidecar(sessionId)
@@ -283,12 +502,33 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Deliver a user turn to an interactive session's stdin. Caller must have
-	 * already validated the session is interactive and in `running` state; this
-	 * method only performs the stdin write and propagates any underlying error.
+	 * Deliver a user turn to an interactive session's stdin. Routes to the remote
+	 * agent-server when the session was dispatched there, otherwise writes to the
+	 * local Docker stdin stream. Caller must have already validated the session is
+	 * interactive and in `running` state.
 	 */
 	async writeInput(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
-		await this.containers.write(sessionId, payload)
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+
+		if (session?.agentServerId) {
+			const [serverRow] = await this.db
+				.select({ id: agentServers.id, url: agentServers.url, secret: agentServers.secret })
+				.from(agentServers)
+				.where(eq(agentServers.id, session.agentServerId))
+				.limit(1)
+			if (!serverRow) {
+				throw new Error(`Agent server ${session.agentServerId} not found`)
+			}
+			const client = new AgentServerClient({ server: serverRow })
+			await client.sendInput(sessionId, payload)
+		} else {
+			await this.containers.write(sessionId, payload)
+		}
+
 		// The CLI does not echo the user turn back to stdout — only the
 		// assistant response. Persist the same JSON envelope we wrote to
 		// stdin as a stdout-stream log row so historical transcripts and the
@@ -319,13 +559,88 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		if (!session || !session.containerId) {
+		if (!session) {
 			throw new Error(`Session ${sessionId} not found or has no container`)
 		}
 
+		if (session.agentServerId) {
+			const [serverRow] = await this.db
+				.select({ id: agentServers.id, url: agentServers.url, secret: agentServers.secret })
+				.from(agentServers)
+				.where(eq(agentServers.id, session.agentServerId))
+				.limit(1)
+			if (!serverRow) {
+				throw new Error(`Agent server ${session.agentServerId} not found`)
+			}
+			const client = new AgentServerClient({ server: serverRow })
+			try {
+				await client.stopSession(sessionId)
+			} catch (err) {
+				// Sanitize before rethrowing — the route handler surfaces this
+				// message verbatim to the API caller (apps/dev/src/routes/sessions.ts),
+				// and AgentServerHttpError's raw message embeds the agent-server's
+				// internal URL plus up to 200 chars of its HTTP response body, which
+				// must not reach an external client. Full details still go to the log.
+				if (err instanceof AgentServerAuthError) {
+					logger.error(
+						'agent-server rejected bearer token while stopping session — secret rotation race',
+						{ sessionId, agentServerId: serverRow.id, agentServerUrl: serverRow.url },
+					)
+					throw new Error(`Failed to stop session ${sessionId}: agent-server rejected bearer token`)
+				}
+				if (err instanceof AgentServerHttpError) {
+					logger.error('agent-server returned an error while stopping session', {
+						sessionId,
+						agentServerId: serverRow.id,
+						agentServerUrl: serverRow.url,
+						status: err.status,
+						body: err.body,
+					})
+					throw new Error(
+						`Failed to stop session ${sessionId}: agent-server returned HTTP ${err.status}`,
+					)
+				}
+				// Anything else (e.g. a raw network/DNS failure thrown by fetch inside
+				// postJson) isn't a typed AgentServerClient error and carries no
+				// built-in sanitization — its raw message can still embed internal
+				// details. Sanitize it the same way as the two branches above instead
+				// of rethrowing unmodified; full details still go to the log.
+				logger.error('unexpected error while stopping session on agent-server', {
+					sessionId,
+					agentServerId: serverRow.id,
+					agentServerUrl: serverRow.url,
+					error: String(err),
+				})
+				throw new Error(`Failed to stop session ${sessionId}: agent-server request failed`)
+			}
+			// Remote sessions have no local exit watcher — the agent-server's own
+			// completion monitor lives in that process's memory and may already be
+			// gone (e.g. after a redeploy), so it can never call back to report
+			// completion. Treat this explicit, successful stop as authoritative
+			// instead of waiting on a callback that might never arrive.
+			await this.markRemoteSessionComplete(sessionId, null)
+			return
+		}
+
+		if (!session.containerId) {
+			throw new Error(`Session ${sessionId} not found or has no container`)
+		}
+
+		this.stopRequested.add(sessionId)
 		this.containers.detachStdin(sessionId)
 		await this.containers.stop(session.containerId)
 		// handleCompletion will be called by the exit watcher
+	}
+
+	/**
+	 * Copy the container's /agent/ directory to S3 as session-workspaces/{sessionId}.tar.gz
+	 * so continuation sessions can restore from it via sourceSessionId. Works on stopped
+	 * containers (before docker rm). Called non-fatally from handleCompletion.
+	 */
+	private async snapshotWorkspaceAfterExit(sessionId: string, containerId: string): Promise<void> {
+		const tarStream = await this.containers.copyFrom(containerId, '/agent/')
+		await this.storage.put(`session-workspaces/${sessionId}.tar.gz`, tarStream.pipe(createGzip()))
+		logger.info('Workspace snapshot saved', { sessionId })
 	}
 
 	async pauseSession(sessionId: string): Promise<void> {
@@ -380,6 +695,7 @@ export class SessionManager extends EventEmitter {
 					status: 'paused',
 					snapshotPath: snapshotKey,
 					containerId: null,
+					currentActivity: null,
 					updatedAt: new Date(),
 				})
 				.where(eq(sessions.id, sessionId))
@@ -423,12 +739,19 @@ export class SessionManager extends EventEmitter {
 		sessionId: string,
 		workspaceId: string,
 	): Promise<void> {
+		const [existing] = await this.db
+			.select({ startedAt: sessions.startedAt, createdAt: sessions.createdAt })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+
 		await this.db
 			.update(sessions)
 			.set({
 				status: 'failed',
 				containerId: null,
 				completedAt: new Date(),
+				currentActivity: null,
 				updatedAt: new Date(),
 			})
 			.where(eq(sessions.id, sessionId))
@@ -442,6 +765,15 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			}),
 		)
+
+		if (existing) {
+			this.telemetry.recordSessionEnded({
+				sessionId,
+				endReason: 'failed',
+				durationMs: elapsedMs(existing.startedAt, existing.createdAt),
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			})
+		}
 
 		await this.clearActiveSession(sessionId).catch(() => {})
 
@@ -548,6 +880,13 @@ export class SessionManager extends EventEmitter {
 				data: { error: message },
 			})
 
+			this.telemetry.recordSessionEnded({
+				sessionId,
+				endReason: 'failed',
+				durationMs: elapsedMs(session.startedAt, session.createdAt),
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			})
+
 			this.containers.detachStdin(sessionId)
 			await this.clearActiveSession(sessionId)
 			await this.cleanupBrowserSidecar(sessionId)
@@ -625,13 +964,20 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Shared helper: build env vars (including integration credentials) and create+start container.
+	 * Build the launch spec for a session — env vars (including integration
+	 * credentials), image, and resource limits. The shape mirrors
+	 * `StartSessionRequest` on `AgentServerClient` so the SessionDispatcher (T6)
+	 * can pass it straight through to apps/agent-server. Local Docker launches
+	 * call this from `launchContainer` so both paths derive env identically.
 	 */
-	private async launchContainer(
-		session: typeof sessions.$inferSelect,
-		tempDir: string,
-		containerName?: string,
-	): Promise<string> {
+	async buildLaunchSpec(session: typeof sessions.$inferSelect): Promise<{
+		image: string
+		env: Record<string, string>
+		memoryMib: number
+		cpus: number
+		cpuShares: number
+		browserRequired: boolean
+	}> {
 		const [agent] = await this.db
 			.select()
 			.from(actors)
@@ -649,7 +995,7 @@ export class SessionManager extends EventEmitter {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
-			MASKIN_API_URL: 'http://host.docker.internal:3000',
+			MASKIN_API_URL: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 		}
 
@@ -776,10 +1122,11 @@ export class SessionManager extends EventEmitter {
 		// (e.g. PostHog → Synthesizer) belong here; tools an agent opts into
 		// per-config still go through the agent/session MCP paths.
 		//
-		// GitHub installations also get a per-owner env var plus a synthesized
-		// MCP server entry so a workspace can expose multiple installations at once.
+		// GitHub installations only get a per-owner env var here; the MCP server
+		// entry is not auto-injected — agents opt in per their tools.mcpServers
+		// config (github-{owner} key). The env var is available for envsubst
+		// substitution when the container resolves the agent's configured entry.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
-		const githubMcpServers: Record<string, unknown> = {}
 		for (const integration of activeIntegrations) {
 			try {
 				const resolved = getProvider(integration.provider)
@@ -789,19 +1136,30 @@ export class SessionManager extends EventEmitter {
 					const ownerLogin = await this.resolveGithubOwnerLogin(integration)
 					if (!ownerLogin) continue
 
-					const sanitizedOwner = ownerLogin.toUpperCase().replace(/[^A-Z0-9]/g, '_')
-					const envVarName = `GITHUB_TOKEN_${sanitizedOwner}`
-					envVars[envVarName] = accessToken
-
-					const mcpName = `github-${ownerLogin.toLowerCase()}`
-					githubMcpServers[mcpName] = {
-						command: resolved.config.mcp?.command ?? 'npx',
-						args: resolved.config.mcp?.args ?? ['-y', '@modelcontextprotocol/server-github'],
-						env: { GITHUB_TOKEN: `\${${envVarName}}` },
-					}
+					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
 				} else {
+					// Slack: only inject the bot token. A user token (xoxp-) here means
+					// the install granted user scopes instead of bot scopes — posting
+					// with it would attribute every message to the human installer
+					// (the mesh-firm bug). Skip injection so the agent gets a clean
+					// "Slack not configured" error from its tools rather than silently
+					// posting as a person.
+					if (integration.provider === 'slack' && !isSlackBotToken(accessToken)) {
+						logger.warn(
+							'Skipping Slack token injection — stored access token is not a bot (xoxb-) token',
+							{
+								sessionId: session.id,
+								workspaceId: session.workspaceId,
+								integrationId: integration.id,
+								tokenPrefix: accessToken.slice(0, 5),
+							},
+						)
+						continue
+					}
+
 					const envVarName =
-						resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
+						resolved.config.mcp?.envKey ??
+						`${integration.provider.toUpperCase().replace(/-/g, '_')}_TOKEN`
 					envVars[envVarName] = accessToken
 					if (resolved.config.mcp?.autoInject && resolved.config.mcp.server) {
 						autoInjectedMcpServers[`integration-${integration.provider}`] =
@@ -814,9 +1172,20 @@ export class SessionManager extends EventEmitter {
 					}
 				}
 			} catch (err) {
-				logger.warn(`Failed to load credentials for ${integration.provider}`, {
-					error: String(err),
-				})
+				if (isAuthRevokedError(err)) {
+					logger.warn(
+						`Integration ${integration.provider} is revoked — skipping token injection; user must reconnect`,
+						{
+							integrationId: integration.id,
+							provider: integration.provider,
+						},
+					)
+				} else {
+					logger.warn(`Failed to load credentials for ${integration.provider}`, {
+						integrationId: integration.id,
+						error: String(err),
+					})
+				}
 			}
 		}
 
@@ -863,7 +1232,7 @@ export class SessionManager extends EventEmitter {
 		// merged with any auto-injected workspace MCPs and GitHub installation MCPs.
 		// Keys are namespaced so the sources can't collide.
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
-		const mcpServers: Record<string, unknown> = { ...autoInjectedMcpServers, ...githubMcpServers }
+		const mcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
 			for (const [i, mcp] of mcps.entries()) {
 				mcpServers[`session-mcp-${i}`] = mcp
@@ -873,31 +1242,67 @@ export class SessionManager extends EventEmitter {
 			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers })
 		}
 
+		const browserRequired =
+			sessionConfig.browserRequired === true || this.needsBrowserSidecar(envVars)
+
+		const image =
+			(sessionConfig.base_image as string) ?? process.env.AGENT_BASE_IMAGE ?? 'agent-base:latest'
+		// memory_mb / cpu_shares are the Docker-native units used historically;
+		// the spec exposes MiB and a CPU count so apps/agent-server can pass
+		// them through to libkrun without re-translating per call site.
+		const memoryMib = (sessionConfig.memory_mb as number) ?? 4096
+		const cpuShares = (sessionConfig.cpu_shares as number) ?? 1024
+		const cpus = Math.max(1, Math.round(cpuShares / 1024))
+
+		return { image, env: envVars, memoryMib, cpus, cpuShares, browserRequired }
+	}
+
+	/**
+	 * Shared helper: build the launch spec and create+start the local Docker
+	 * container. Local-dev only — production goes through the dispatch queue
+	 * to apps/agent-server.
+	 */
+	private async launchContainer(
+		session: typeof sessions.$inferSelect,
+		tempDir: string,
+		containerName?: string,
+	): Promise<string> {
+		const spec = await this.buildLaunchSpec(session)
+		const envVars = { ...spec.env }
 		const name = containerName ?? `anko-session-${session.id.slice(0, 8)}`
-		const image = (sessionConfig.base_image as string) ?? 'agent-base:latest'
 
 		// Ensure the image exists — rebuild if it was pruned or lost
-		if (image === 'agent-base:latest' && this.agentBaseBuildContext) {
-			await this.containers.ensureImage(image, this.agentBaseBuildContext)
+		if (spec.image === 'agent-base:latest' && this.agentBaseBuildContext) {
+			await this.containers.ensureImage(spec.image, this.agentBaseBuildContext)
 		}
 
-		// Provision browser sidecar if Playwright MCP is configured
+		// Write exec-trigger so the entrypoint starts the agent. The entrypoint
+		// checks for this file to distinguish local Docker (immediate start) from
+		// the microsandbox path (where the agent-server writes the file after
+		// the TCP proxy is active). On the local Docker path we write it here.
+		await writeFile(join(tempDir, '.exec-trigger'), '')
+
+		// Provision browser sidecar when the browserRequired flag is set
 		let networkMode: string | undefined
-		if (this.needsBrowserSidecar(envVars)) {
-			const prefix = session.id.slice(0, 8)
+		if (spec.browserRequired) {
+			const prefix = session.id.slice(0, 16)
 			const result = await this.provisionBrowserSidecar(session.id, prefix)
 			if (result) {
-				envVars.BROWSER_CDP_URL = `ws://anko-browser-${prefix}:9222`
+				envVars.BROWSER_CDP_URL = `http://${result.browserIp}:9222`
 				networkMode = result.networkName
 			}
 		}
 
+		// Write the exec-trigger file before starting — the entrypoint checks for
+		// /agent/.exec-trigger and sleeps forever without it (microsandbox contract).
+		await writeFile(join(tempDir, '.exec-trigger'), '')
+
 		const containerId = await this.containers.create({
-			image,
+			image: spec.image,
 			name,
 			env: envVars,
-			memoryMb: (sessionConfig.memory_mb as number) ?? 4096,
-			cpuShares: (sessionConfig.cpu_shares as number) ?? 1024,
+			memoryMb: spec.memoryMib,
+			cpuShares: spec.cpuShares,
 			binds: [`${tempDir}:/agent:rw`],
 			networkMode,
 			interactive: session.interactive,
@@ -910,6 +1315,17 @@ export class SessionManager extends EventEmitter {
 		}
 
 		return containerId
+	}
+
+	/**
+	 * Existing seeded/template agents opt into browser access by referencing
+	 * ${BROWSER_CDP_URL} in their MCP config. Keep that contract while newer
+	 * callers can use config.browserRequired directly.
+	 */
+	private needsBrowserSidecar(envVars: Record<string, string>): boolean {
+		const agentMcp = envVars.AGENT_MCP_JSON ?? ''
+		const sessionMcp = envVars.MCP_SERVERS_JSON ?? ''
+		return agentMcp.includes('${BROWSER_CDP_URL}') || sessionMcp.includes('${BROWSER_CDP_URL}')
 	}
 
 	/**
@@ -958,7 +1374,7 @@ export class SessionManager extends EventEmitter {
 
 	private computeTimeout(session: typeof sessions.$inferSelect): Date {
 		const sessionConfig = session.config as Record<string, unknown>
-		const timeoutSeconds = (sessionConfig.timeout_seconds as number) ?? 3600
+		const timeoutSeconds = (sessionConfig.timeout_seconds as number) ?? 7200
 		return new Date(Date.now() + timeoutSeconds * 1000)
 	}
 
@@ -1062,7 +1478,7 @@ export class SessionManager extends EventEmitter {
 				const status = await this.containers.inspect(containerId)
 				consecutiveFailures = 0
 				if (!status.running) {
-					await this.handleCompletion(sessionId, containerId, status.exitCode ?? 1)
+					await this.handleCompletion(sessionId, containerId, status.exitCode)
 					return
 				}
 			} catch (err) {
@@ -1092,10 +1508,58 @@ export class SessionManager extends EventEmitter {
 		setTimeout(poll, 2000)
 	}
 
+	/** Session statuses that count as "the agent is still doing work". */
+	private static readonly ACTIVE_SESSION_STATUSES = [
+		'pending',
+		'starting',
+		'queued',
+		'running',
+		'snapshotting',
+	] as const
+
+	/**
+	 * Session statuses that are already resolved (or mid-way through their own
+	 * lifecycle path) — a session in one of these must never be reprocessed as
+	 * newly-completing, whether the completion signal came from the local
+	 * Docker exit watcher (`handleCompletion`) or from a remote agent-server
+	 * (`markRemoteSessionComplete`).
+	 */
+	private static readonly TERMINAL_OR_TRANSITIONAL_STATUSES = [
+		'completed',
+		'failed',
+		'timeout',
+		'paused',
+		'snapshotting',
+	] as const
+
+	/**
+	 * True if the actor has an active session other than `excludeSessionId`.
+	 * Used to avoid clobbering agent-level `agentState` when one of several
+	 * concurrent sessions transitions — the agent should only flip to a
+	 * terminal/paused state once its last active session does.
+	 */
+	private async hasOtherActiveSessions(
+		actorId: string,
+		excludeSessionId: string,
+	): Promise<boolean> {
+		const [other] = await this.db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.actorId, actorId),
+					ne(sessions.id, excludeSessionId),
+					inArray(sessions.status, SessionManager.ACTIVE_SESSION_STATUSES),
+				),
+			)
+			.limit(1)
+		return Boolean(other)
+	}
+
 	private async handleCompletion(
 		sessionId: string,
 		containerId: string,
-		exitCode: number,
+		exitCode: number | null,
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -1106,7 +1570,11 @@ export class SessionManager extends EventEmitter {
 		if (!session) return
 
 		// Skip if already in a terminal or transitional state (avoid double-processing)
-		if (['completed', 'failed', 'timeout', 'paused', 'snapshotting'].includes(session.status))
+		if (
+			(SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES as readonly string[]).includes(
+				session.status,
+			)
+		)
 			return
 
 		try {
@@ -1162,6 +1630,18 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		const failureReason =
+			exitCode !== null && exitCode !== 0
+				? classifyCreditExhaustion(this.activeSessions.get(sessionId)?.stdoutTail ?? '')
+				: null
+		if (failureReason) {
+			logger.info('Session credit-exhaustion classified', {
+				sessionId,
+				reason_code: failureReason.reason_code,
+				provider: failureReason.provider,
+			})
+		}
+
 		// SSE clients subscribed to /logs/stream rely on the "Session
 		// completed|failed|timed out|paused" system log to emit their `done`
 		// event and close. If any DB write below throws, subscribers would sit
@@ -1172,9 +1652,13 @@ export class SessionManager extends EventEmitter {
 				.update(sessions)
 				.set({
 					status,
-					result: { exit_code: exitCode },
+					result: {
+						exit_code: exitCode,
+						...(failureReason ? { failure_reason: failureReason } : {}),
+					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
+					currentActivity: null,
 					...(usage
 						? {
 								totalCostUsd: usage.totalCostUsd?.toString() ?? null,
@@ -1195,6 +1679,28 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// Sync agentState on the actor so the agents overview reflects terminal status.
+		// completed → idle (agent finished cleanly), failed → failed (needs attention).
+		// Skip if the agent still has other active sessions, so one finishing
+		// session doesn't prematurely flip an agent that's still working.
+		try {
+			if (!(await this.hasOtherActiveSessions(session.actorId, sessionId))) {
+				await this.db
+					.update(actors)
+					.set({
+						agentState: status === 'completed' ? 'idle' : 'failed',
+						agentStateUpdatedAt: new Date(),
+						updatedAt: new Date(),
+					})
+					.where(eq(actors.id, session.actorId))
+			}
+		} catch (err) {
+			logger.warn('Failed to sync agentState after session completion', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
 		try {
 			await this.db.insert(events).values({
 				workspaceId: session.workspaceId,
@@ -1202,7 +1708,7 @@ export class SessionManager extends EventEmitter {
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
-				data: { exit_code: exitCode },
+				data: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) },
 			})
 		} catch (err) {
 			logger.error('Failed to insert completion event in handleCompletion', {
@@ -1211,6 +1717,16 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			})
 		}
+
+		// Ship-metric emit. If this session belongs to a managed-catalog actor
+		// (carries `metadata.installed_package_id`), claim the per-(workspace,
+		// install, UTC day) idempotency slot and emit `loop_active_day` to
+		// PostHog when the claim is won. Both the lookup and the emit are
+		// best-effort — analytics failures must not affect the completion
+		// path that downstream watchdogs and SSE clients depend on.
+		await this.maybeEmitLoopActiveDay(session.actorId, session.workspaceId).catch((err) => {
+			logger.warn('Failed loop_active_day emit', { sessionId, error: String(err) })
+		})
 
 		try {
 			await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
@@ -1231,8 +1747,33 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		const wasUserStopped = this.stopRequested.delete(sessionId)
+		const endReason: RuntimeEndReason = wasUserStopped
+			? 'user_stopped'
+			: status === 'completed'
+				? 'completed'
+				: failureReason
+					? 'irrecoverable'
+					: 'failed'
+		this.telemetry.recordSessionEnded({
+			sessionId,
+			endReason,
+			durationMs: elapsedMs(session.startedAt, session.createdAt),
+			agentServerUrl: LOCAL_RUNTIME_BUCKET,
+		})
+
 		// Clear active session link on object
 		await this.clearActiveSession(sessionId)
+
+		// Snapshot the full /agent/ workspace before removing the container so a
+		// continuation session can restore it via sourceSessionId. Non-fatal.
+		await this.snapshotWorkspaceAfterExit(sessionId, containerId).catch((err) =>
+			logger.warn('Failed to snapshot workspace after exit', {
+				sessionId,
+				containerId,
+				error: String(err),
+			}),
+		)
 
 		// Cleanup
 		this.containers.detachStdin(sessionId)
@@ -1250,6 +1791,56 @@ export class SessionManager extends EventEmitter {
 		await this.drainQueue(session.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after completion', { error: String(err) }),
 		)
+	}
+
+	/**
+	 * If the completing session's actor is part of a managed-catalog install
+	 * (carries `metadata.installed_package_id`), claim today's idempotency
+	 * slot and emit `loop_active_day`. Returns silently when the actor isn't
+	 * a managed install or when today has already been claimed for that
+	 * install — both are normal no-ops.
+	 */
+	private async maybeEmitLoopActiveDay(actorId: string, workspaceId: string): Promise<void> {
+		const [actor] = await this.db
+			.select({ metadata: actors.metadata })
+			.from(actors)
+			.where(eq(actors.id, actorId))
+			.limit(1)
+
+		const meta = (actor?.metadata as Record<string, unknown> | null) ?? null
+		const installedPackageId = meta?.installed_package_id
+		if (typeof installedPackageId !== 'string' || installedPackageId.length === 0) return
+
+		const utcDay = utcDayString()
+		const claim = await claimLoopActiveDay(this.db, installedPackageId, utcDay)
+		if (!claim) return
+
+		// Guard against a misaligned actor metadata (workspace_id mismatch is
+		// not expected but can happen if an install row was deleted while a
+		// session was still in flight). The emitted workspace_id is the one
+		// stored on the install row, which is the canonical join key for
+		// PostHog's Synthesizer.
+		if (claim.workspaceId !== workspaceId) {
+			logger.warn('loop_active_day workspace mismatch', {
+				actorWorkspace: workspaceId,
+				installWorkspace: claim.workspaceId,
+				installedPackageId,
+			})
+		}
+
+		await trackLoopActiveDay({
+			installedPackageId: claim.installedPackageId,
+			packageId: claim.packageId,
+			packageSlug: claim.packageSlug,
+			workspaceId: claim.workspaceId,
+			utcDay,
+		})
+
+		logger.info('loop_active_day emitted', {
+			installedPackageId: claim.installedPackageId,
+			workspaceId: claim.workspaceId,
+			utcDay,
+		})
 	}
 
 	private async runWatchdog(): Promise<void> {
@@ -1304,9 +1895,24 @@ export class SessionManager extends EventEmitter {
 					status: 'timeout',
 					result: { error: 'Session timed out' },
 					completedAt: now,
+					currentActivity: null,
 					updatedAt: now,
 				})
 				.where(eq(sessions.id, session.id))
+
+			// Only sync the agent to idle if this was its last active session.
+			if (!(await this.hasOtherActiveSessions(session.actorId, session.id))) {
+				await this.db
+					.update(actors)
+					.set({ agentState: 'idle', agentStateUpdatedAt: now, updatedAt: now })
+					.where(eq(actors.id, session.actorId))
+					.catch((err) =>
+						logger.warn('Failed to sync agentState after session timeout', {
+							sessionId: session.id,
+							error: String(err),
+						}),
+					)
+			}
 
 			await this.db.insert(events).values({
 				workspaceId: session.workspaceId,
@@ -1315,6 +1921,13 @@ export class SessionManager extends EventEmitter {
 				entityType: 'session',
 				entityId: session.id,
 				data: {},
+			})
+
+			this.telemetry.recordSessionEnded({
+				sessionId: session.id,
+				endReason: 'irrecoverable',
+				durationMs: elapsedMs(session.startedAt, session.createdAt),
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			})
 
 			await this.insertSystemLog(session.id, 'Session timed out').catch((err) =>
@@ -1334,8 +1947,47 @@ export class SessionManager extends EventEmitter {
 			)
 		}
 
-		// 2. Auto-pause idle non-interactive sessions (no log output for >10 minutes).
-		// Interactive sessions (Sindre chat) are long-lived by design and naturally
+		// 2. Reap agent-server sessions that exceeded the default 2-hour timeout but
+		// never had timeoutAt set (dispatcher bug in earlier versions). The normal
+		// timeout reaper above requires timeoutAt to be non-null, so without this
+		// fallback these sessions accumulate as permanent zombies consuming workspace
+		// capacity indefinitely.
+		const defaultTimeoutMs = 7200 * 1000
+		const defaultTimeoutAgo = new Date(now.getTime() - defaultTimeoutMs)
+		const stuckAgentSessions = await this.db
+			.select()
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.status, 'running'),
+					isNotNull(sessions.agentServerId),
+					isNull(sessions.timeoutAt),
+					lt(sessions.startedAt, defaultTimeoutAgo),
+				),
+			)
+		for (const session of stuckAgentSessions) {
+			logger.warn('Reaping stuck agent-server session (no timeoutAt, past default 2h limit)', {
+				sessionId: session.id,
+			})
+			await this.db
+				.update(sessions)
+				.set({
+					status: 'timeout',
+					result: { error: 'Session timed out' },
+					completedAt: now,
+					currentActivity: null,
+					updatedAt: now,
+				})
+				.where(eq(sessions.id, session.id))
+			await this.drainQueue(session.workspaceId).catch((err) =>
+				logger.error('Failed to drain queue after stuck agent-server session reap', {
+					error: String(err),
+				}),
+			)
+		}
+
+		// 3. Auto-pause idle non-interactive sessions (no log output for >10 minutes).
+		// Interactive sessions (chat) are long-lived by design and naturally
 		// idle between user turns — pausing them silently breaks the next /input call.
 		const runningSessions = await this.db
 			.select()
@@ -1377,23 +2029,50 @@ export class SessionManager extends EventEmitter {
 			}
 
 			if (!(await this.isContainerAlive(session.containerId))) {
-				// Container died but the exit watcher hasn't noticed (e.g.,
-				// inspect calls were transiently failing). Skip this tick;
-				// watchContainerExit will route it to terminal-failed once it
-				// recovers, or the timeout reaper will catch it.
-				logger.warn('Skipping auto-pause: container is no longer running', {
+				if (session.agentServerId) {
+					// Agent-server session — containerId is an msb sandbox name on a
+					// remote host; local Docker inspect is meaningless here. The
+					// agent-server reports completion via its exit callback.
+					continue
+				}
+				// Local Docker session — container is gone. watchContainerExit is not
+				// re-registered after a server restart, so it will never fire for
+				// these sessions. Mark as failed to free workspace capacity.
+				logger.warn('Marking session failed: local container no longer running', {
 					sessionId: session.id,
 				})
+				await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId).catch(
+					(err) =>
+						logger.error('Failed to mark session failed after container loss', {
+							sessionId: session.id,
+							error: String(err),
+						}),
+				)
 				continue
 			}
 
 			logger.info(`Auto-pausing idle session: ${session.id}`)
-			this.pauseSession(session.id).catch((err) =>
-				logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
-			)
+			this.pauseSession(session.id)
+				.then(async () => {
+					// Only reflect paused at the agent level if no other session is active.
+					if (await this.hasOtherActiveSessions(session.actorId, session.id)) return
+					await this.db
+						.update(actors)
+						.set({ agentState: 'paused', agentStateUpdatedAt: new Date(), updatedAt: new Date() })
+						.where(eq(actors.id, session.actorId))
+						.catch((err) =>
+							logger.warn('Failed to sync agentState after auto-pause', {
+								sessionId: session.id,
+								error: String(err),
+							}),
+						)
+				})
+				.catch((err) =>
+					logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
+				)
 		}
 
-		// 3. Archive old paused sessions (7 days)
+		// 4. Archive old paused sessions (7 days)
 		const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
 		const expiredPaused = await this.db
 			.select()
@@ -1478,6 +2157,14 @@ export class SessionManager extends EventEmitter {
 				data: { error: 'Session stuck in starting state' },
 			})
 
+			this.telemetry.recordSessionEnded({
+				sessionId: session.id,
+				endReason: 'failed',
+				durationMs: elapsedMs(session.startedAt, session.createdAt),
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			})
+
+			await this.cleanupBrowserSidecar(session.id).catch(() => {})
 			await this.clearActiveSession(session.id)
 			await this.cleanupSession(session.id)
 
@@ -1530,15 +2217,6 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Check if the MCP config references ${BROWSER_CDP_URL}, indicating a browser sidecar is needed.
-	 */
-	private needsBrowserSidecar(envVars: Record<string, string>): boolean {
-		const agentMcp = envVars.AGENT_MCP_JSON ?? ''
-		const sessionMcp = envVars.MCP_SERVERS_JSON ?? ''
-		return agentMcp.includes('${BROWSER_CDP_URL}') || sessionMcp.includes('${BROWSER_CDP_URL}')
-	}
-
-	/**
 	 * Provision a headless Chrome sidecar container on a per-session Docker network.
 	 * Returns the network name and browser container ID, or null if provisioning fails.
 	 * On failure, the agent session continues without browser capability.
@@ -1546,17 +2224,18 @@ export class SessionManager extends EventEmitter {
 	private async provisionBrowserSidecar(
 		sessionId: string,
 		prefix: string,
-	): Promise<{ networkName: string; browserContainerId: string } | null> {
+	): Promise<{ networkName: string; browserIp: string } | null> {
 		const networkName = `anko-net-${prefix}`
 		const browserName = `anko-browser-${prefix}`
 		let browserContainerId: string | undefined
+		const image = process.env.BROWSER_SIDECAR_IMAGE ?? 'browser-sidecar:latest'
 
 		try {
-			await this.containers.pullImage('chromedp/headless-shell:latest')
+			await this.prepareBrowserSidecarImage()
 			await this.containers.createNetwork(networkName)
 
 			browserContainerId = await this.containers.create({
-				image: 'chromedp/headless-shell:latest',
+				image,
 				name: browserName,
 				env: {},
 				memoryMb: 512,
@@ -1570,6 +2249,14 @@ export class SessionManager extends EventEmitter {
 			// Brief wait for Chrome to initialize CDP listener
 			await new Promise((resolve) => setTimeout(resolve, 2000))
 
+			// Use the container's IP address on the session network so Chrome
+			// accepts the WebSocket connection — Chrome's CDP rejects Host headers
+			// that are hostnames, but accepts IP addresses and localhost.
+			const browserIp = await this.containers.getIpOnNetwork(browserContainerId, networkName)
+			if (!browserIp) {
+				throw new Error('Could not determine browser sidecar IP on session network')
+			}
+
 			// Track sidecar resources for cleanup
 			const sessionData = this.activeSessions.get(sessionId)
 			if (sessionData) {
@@ -1577,13 +2264,13 @@ export class SessionManager extends EventEmitter {
 				sessionData.networkName = networkName
 			}
 
-			logger.info('Browser sidecar started', { sessionId, browserName, networkName })
+			logger.info('Browser sidecar started', { sessionId, browserName, networkName, browserIp })
 			await this.insertSystemLog(
 				sessionId,
 				'Browser sidecar started — Playwright MCP can connect via CDP',
 			)
 
-			return { networkName, browserContainerId }
+			return { networkName, browserIp }
 		} catch (err) {
 			logger.error('Browser sidecar failed — agent will run without browser', {
 				sessionId,
@@ -1612,33 +2299,118 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
+	private prepareBrowserSidecarImage(): Promise<void> {
+		if (!this.browserSidecarImageReady) {
+			this.browserSidecarImageReady = this.buildOrPullBrowserSidecarImage().catch((err) => {
+				this.browserSidecarImageReady = null
+				throw err
+			})
+		}
+		return this.browserSidecarImageReady
+	}
+
+	private async buildOrPullBrowserSidecarImage(): Promise<void> {
+		const image = process.env.BROWSER_SIDECAR_IMAGE ?? 'browser-sidecar:latest'
+		if (image === 'browser-sidecar:latest' && this.browserSidecarBuildContext) {
+			await this.containers.ensureImage(image, this.browserSidecarBuildContext)
+			return
+		}
+		await this.containers.pullImage(image)
+	}
+
 	/**
 	 * Clean up browser sidecar container and its Docker network.
-	 * Called before cleanupSession() in all exit paths.
+	 * Called before cleanupSession() in all exit paths. After invoking
+	 * stop+remove this polls Docker until the container is actually gone so
+	 * the caller has a real teardown guarantee — `remove({ force: true })` is
+	 * normally synchronous but the Docker daemon can briefly keep the row
+	 * around, and an unrecoverable sidecar would otherwise leak a Chromium
+	 * process tree on the host (AC-T5: 60s SLA, container-count delta 0).
 	 */
 	private async cleanupBrowserSidecar(sessionId: string): Promise<void> {
 		const sessionData = this.activeSessions.get(sessionId)
 		if (!sessionData) return
+		if (!sessionData.browserContainerId && !sessionData.networkName) return
 
-		if (sessionData.browserContainerId) {
+		const start = Date.now()
+		const browserContainerId = sessionData.browserContainerId
+		const networkName = sessionData.networkName
+		let slaViolation = false
+
+		if (browserContainerId) {
 			await this.containers
-				.stop(sessionData.browserContainerId)
+				.stop(browserContainerId)
 				.catch((err) =>
 					logger.warn('Failed to stop browser sidecar', { sessionId, error: String(err) }),
 				)
 			await this.containers
-				.remove(sessionData.browserContainerId)
+				.remove(browserContainerId)
 				.catch((err) =>
 					logger.warn('Failed to remove browser sidecar', { sessionId, error: String(err) }),
 				)
+
+			const gone = await this.waitForContainerGone(
+				browserContainerId,
+				SessionManager.SIDECAR_TEARDOWN_SLA_MS,
+			)
+			if (!gone) {
+				slaViolation = true
+				logger.error('Browser sidecar still present after teardown SLA', {
+					sessionId,
+					browserContainerId,
+					slaMs: SessionManager.SIDECAR_TEARDOWN_SLA_MS,
+				})
+			}
 		}
 
-		if (sessionData.networkName) {
+		if (networkName) {
 			await this.containers
-				.removeNetwork(sessionData.networkName)
+				.removeNetwork(networkName)
 				.catch((err) =>
 					logger.warn('Failed to remove session network', { sessionId, error: String(err) }),
 				)
+		}
+
+		// Idempotency: clear bookkeeping so a duplicate cleanup call is a no-op
+		// (the 7 session-end paths can fire close together — watchdog + handler).
+		sessionData.browserContainerId = undefined
+		sessionData.networkName = undefined
+
+		if (!slaViolation) {
+			logger.info('Browser sidecar teardown complete', {
+				sessionId,
+				elapsedMs: Date.now() - start,
+			})
+		}
+	}
+
+	/**
+	 * Poll `containers.inspect` until the container returns 404 (gone) or the
+	 * deadline elapses. Returns true if the container was confirmed gone.
+	 * Treats only 404 / "No such container" as gone — a stopped-but-present
+	 * container still counts as a leak for the AC-T5 delta check.
+	 */
+	private async waitForContainerGone(containerId: string, deadlineMs: number): Promise<boolean> {
+		const deadline = Date.now() + deadlineMs
+		while (Date.now() < deadline) {
+			if (await this.isContainerGone(containerId)) return true
+			await new Promise((r) => setTimeout(r, SessionManager.SIDECAR_TEARDOWN_POLL_INTERVAL_MS))
+		}
+		return this.isContainerGone(containerId)
+	}
+
+	private async isContainerGone(containerId: string): Promise<boolean> {
+		try {
+			await this.containers.inspect(containerId)
+			return false
+		} catch (err) {
+			const statusCode = (err as { statusCode?: unknown }).statusCode
+			if (statusCode === 404) return true
+			const message = (err as { message?: unknown }).message
+			if (typeof message === 'string' && /No such container|HTTP code 404/.test(message)) {
+				return true
+			}
+			return false
 		}
 	}
 
@@ -1677,6 +2449,213 @@ export class SessionManager extends EventEmitter {
 			)
 			this.activeSessions.delete(sessionId)
 		}
+	}
+
+	/**
+	 * Append log lines received from a remote agent-server and emit them on the
+	 * in-process bus so SSE /logs/stream clients see them in real time.
+	 */
+	async appendRemoteSessionLogs(
+		sessionId: string,
+		lines: Array<{ stream: 'stdout' | 'stderr' | 'system'; content: string }>,
+	): Promise<void> {
+		for (const line of lines) {
+			const [log] = await this.db
+				.insert(sessionLogs)
+				.values({ sessionId, stream: line.stream, content: line.content })
+				.returning()
+			if (log) {
+				this.emit('log', {
+					sessionId,
+					logId: log.id,
+					stream: line.stream,
+					data: line.content,
+				} satisfies SessionLogEvent)
+			}
+		}
+	}
+
+	/**
+	 * Mark a remote agent-server session as completed or failed. Mirrors the
+	 * relevant parts of `handleCompletion` but skips local Docker cleanup (the
+	 * agent-server owns the sandbox lifecycle; the workspace is already in S3).
+	 *
+	 * Uses a compare-and-set UPDATE (status NOT IN the terminal/transitional
+	 * set, in the WHERE clause, with `.returning()` in place of a preliminary
+	 * SELECT) so two concurrent calls for the same session — e.g. a stop
+	 * request racing the agent-server's async completion report, or two
+	 * racing stop requests — can never both observe 'running' and both write
+	 * a terminal event. Exactly one call's UPDATE matches the row; the other
+	 * gets zero rows back and no-ops.
+	 */
+	private static readonly CAS_UPDATE_RETRIES = 3
+	private static readonly CAS_UPDATE_RETRY_DELAY_MS = 150
+
+	async markRemoteSessionComplete(sessionId: string, exitCode: number | null): Promise<void> {
+		const status = exitCode === 0 ? 'completed' : 'failed'
+
+		// A thrown DB error here (distinct from a clean 0-row CAS miss) must not
+		// permanently strand the session: giving up immediately would skip the
+		// audit event, the terminal system log (which SSE /logs/stream clients
+		// need to close), activeSessionId clearing, and the queue drain below —
+		// leaving a connected client hanging until the watchdog reaper eventually
+		// fires. Retry a few times with linear backoff before accepting that, per
+		// the retry pattern already used for transient errors in
+		// pushSessionWorkspace (apps/agent-server/src/services/session-workspace.ts).
+		let updated: typeof sessions.$inferSelect | undefined
+		let updateErr: unknown
+		for (let attempt = 1; attempt <= SessionManager.CAS_UPDATE_RETRIES; attempt++) {
+			try {
+				;[updated] = await this.db
+					.update(sessions)
+					.set({
+						status,
+						result: { exit_code: exitCode },
+						completedAt: new Date(),
+						updatedAt: new Date(),
+						currentActivity: null,
+					})
+					.where(
+						and(
+							eq(sessions.id, sessionId),
+							notInArray(sessions.status, [...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES]),
+						),
+					)
+					.returning()
+				updateErr = undefined
+				break
+			} catch (err) {
+				updateErr = err
+				if (attempt < SessionManager.CAS_UPDATE_RETRIES) {
+					await new Promise((resolve) =>
+						setTimeout(resolve, SessionManager.CAS_UPDATE_RETRY_DELAY_MS * attempt),
+					)
+				}
+			}
+		}
+		if (updateErr) {
+			// Best-effort: a DB hiccup here must not surface as a thrown error to
+			// stopSession()'s caller, which would otherwise report a 400 "stop
+			// failed" even though the remote sandbox kill already succeeded.
+			logger.error('Failed to update remote session status after retries', {
+				sessionId,
+				status,
+				error: String(updateErr),
+			})
+			// The CAS UPDATE never persisted after all retries — most likely a
+			// transient DB outage, not a lost race (a lost race returns 0 rows
+			// without throwing, handled by the `!updated` check below). Returning
+			// here unconditionally would skip every side effect below and strand
+			// the session at 'running' with a hung SSE /logs/stream client — the
+			// exact bug class this method exists to fix. Do one read-only lookup
+			// to decide whether those side effects should still run.
+			let fallback: typeof sessions.$inferSelect | undefined
+			try {
+				;[fallback] = await this.db
+					.select()
+					.from(sessions)
+					.where(eq(sessions.id, sessionId))
+					.limit(1)
+			} catch (err) {
+				logger.error('Fallback session lookup after CAS retries also failed — giving up', {
+					sessionId,
+					error: String(err),
+				})
+				return
+			}
+			if (!fallback) return
+			// Another call already resolved this session while our retries were
+			// failing (its own report landed, or a concurrent call won the CAS) —
+			// no-op to avoid a duplicate terminal event.
+			if (
+				(SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES as readonly string[]).includes(
+					fallback.status,
+				)
+			) {
+				return
+			}
+			// Best-effort: try once more to persist the status directly (not
+			// CAS-guarded — the read above just confirmed no other call has
+			// resolved it). If this also fails, still fall through to the side
+			// effects below so the session doesn't hang forever, matching the
+			// pre-CAS code's unconditional fallthrough on an UPDATE error.
+			try {
+				await this.db
+					.update(sessions)
+					.set({
+						status,
+						result: { exit_code: exitCode },
+						completedAt: new Date(),
+						updatedAt: new Date(),
+						currentActivity: null,
+					})
+					.where(eq(sessions.id, sessionId))
+			} catch (err) {
+				logger.error(
+					'Fallback direct status update also failed — continuing with best-effort cleanup only',
+					{ sessionId, error: String(err) },
+				)
+			}
+			updated = fallback
+		}
+
+		// No row matched: either the session doesn't exist, or it was already
+		// terminal/transitional (this call lost the race, or is a stale retry).
+		if (!updated) return
+
+		try {
+			if (!(await this.hasOtherActiveSessions(updated.actorId, sessionId))) {
+				await this.db
+					.update(actors)
+					.set({
+						agentState: status === 'completed' ? 'idle' : 'failed',
+						agentStateUpdatedAt: new Date(),
+						updatedAt: new Date(),
+					})
+					.where(eq(actors.id, updated.actorId))
+			}
+		} catch (err) {
+			logger.warn('Failed to sync agentState for remote session', { sessionId, error: String(err) })
+		}
+
+		try {
+			await this.db.insert(events).values({
+				workspaceId: updated.workspaceId,
+				actorId: updated.actorId,
+				action: `session_${status}`,
+				entityType: 'session',
+				entityId: sessionId,
+				data: { exit_code: exitCode },
+			})
+		} catch (err) {
+			logger.error('Failed to insert remote session completion event', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
+		// Terminal system log is required for SSE /logs/stream clients to close.
+		await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`).catch(
+			(err) => {
+				logger.error('Failed to write terminal system log for remote session', {
+					sessionId,
+					error: String(err),
+				})
+				this.emit('log', {
+					sessionId,
+					logId: -Date.now(),
+					stream: 'system',
+					data: `Session ${status} with exit code ${exitCode}`,
+				})
+			},
+		)
+
+		await this.clearActiveSession(sessionId)
+		await this.drainQueue(updated.workspaceId).catch((err) =>
+			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
+		)
+
+		logger.info(`Remote session ${status}: ${sessionId}`, { exitCode })
 	}
 
 	/** Clear activeSessionId on any object linked to this session. */

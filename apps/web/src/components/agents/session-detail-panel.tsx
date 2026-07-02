@@ -1,4 +1,4 @@
-import { MarkdownContent } from '@/components/shared/markdown-content'
+import { AgentOutput } from '@/components/shared/agent-output'
 import { type AffectedObject, useSessionAffectedObjects } from '@/hooks/use-events'
 import { useCreateSession, useSessionLogs } from '@/hooks/use-sessions'
 import { trackEvent } from '@/lib/analytics'
@@ -11,6 +11,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 	Clock,
+	ExternalLink,
 	FileText,
 	MinusCircle,
 	PauseCircle,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { RelativeTime } from '../shared/relative-time'
+import { Button } from '../ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../ui/sheet'
 import { Spinner } from '../ui/spinner'
 import {
@@ -26,6 +28,160 @@ import {
 	getSessionResultDisplay,
 	isSessionIdleAwaitingInput,
 } from './session-log-transcript'
+
+export interface FailureReason {
+	provider: string
+	reason_code: string
+	human_message: string
+	http_status: number | null
+	reset_at: string | null
+	verbatim_output: string | null
+}
+
+export function parseFailureReason(result: Record<string, unknown> | null): FailureReason | null {
+	if (!result) return null
+	const fr = result.failure_reason
+	if (!fr || typeof fr !== 'object') return null
+	const obj = fr as Record<string, unknown>
+	if (typeof obj.provider !== 'string' || typeof obj.reason_code !== 'string') return null
+	return {
+		provider: obj.provider,
+		reason_code: obj.reason_code,
+		human_message: typeof obj.human_message === 'string' ? obj.human_message : '',
+		http_status: typeof obj.http_status === 'number' ? obj.http_status : null,
+		reset_at: typeof obj.reset_at === 'string' ? obj.reset_at : null,
+		verbatim_output: typeof obj.verbatim_output === 'string' ? obj.verbatim_output : null,
+	}
+}
+
+const TOP_UP_URLS: Record<string, string> = {
+	anthropic: 'https://console.anthropic.com/settings/plans',
+	openrouter: 'https://openrouter.ai/credits',
+}
+
+const PROVIDER_LABELS: Record<string, string> = {
+	anthropic: 'Anthropic',
+	openrouter: 'OpenRouter',
+	'claude-code': 'Claude Code',
+}
+
+// Reason codes that show the recovery row (credit depletion + temporary quota limits).
+// Matches the codes emitted by credit-classifier.ts.
+const CREDIT_REASON_CODES = new Set([
+	'billing_error',
+	'credit_balance_low',
+	'insufficient_credits',
+	'session_limit',
+	'weekly_limit',
+	'opus_limit',
+	'max_plan_rate_limit',
+	'server_rate_limit',
+	'request_rejected_429',
+])
+
+// Codes that require topping up credits (subset of CREDIT_REASON_CODES).
+// max_plan_rate_limit is excluded — it's a temporary rate limit, not credit depletion.
+const TOPUP_REASON_CODES = new Set([
+	'billing_error',
+	'credit_balance_low',
+	'insufficient_credits',
+	'session_limit',
+	'weekly_limit',
+	'opus_limit',
+])
+
+// Codes where the agent couldn't authenticate — recovery is connecting credentials.
+const AUTH_REASON_CODES = new Set(['not_logged_in'])
+
+export function FailureCard({
+	failureReason,
+	workspaceId,
+}: { failureReason: FailureReason; workspaceId: string }) {
+	const [showVerbatim, setShowVerbatim] = useState(false)
+	const topUpUrl = TOP_UP_URLS[failureReason.provider]
+	const isCredit = CREDIT_REASON_CODES.has(failureReason.reason_code)
+	const isTopUp = TOPUP_REASON_CODES.has(failureReason.reason_code)
+	const isAuth = AUTH_REASON_CODES.has(failureReason.reason_code)
+	const isOpenRouter = failureReason.provider === 'openrouter'
+	const providerLabel =
+		PROVIDER_LABELS[failureReason.provider] ??
+		failureReason.provider.charAt(0).toUpperCase() + failureReason.provider.slice(1)
+
+	return (
+		<div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-3 space-y-2">
+			<p className="text-sm font-bold text-warning">
+				{providerLabel} — {failureReason.human_message}
+			</p>
+			<div className="flex flex-wrap items-center gap-1.5">
+				<span className="inline-flex items-center text-xs px-1.5 py-0.5 rounded-md bg-warning/10 text-warning border border-warning/20">
+					{failureReason.provider}
+				</span>
+				<span className="inline-flex items-center text-xs px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground">
+					{failureReason.reason_code}
+				</span>
+				{failureReason.http_status !== null && (
+					<span className="inline-flex items-center text-xs px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground">
+						HTTP {failureReason.http_status}
+					</span>
+				)}
+				{failureReason.reset_at && (
+					<span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md bg-warning/10 text-warning border border-warning/20">
+						<Clock size={10} />
+						resets <RelativeTime date={failureReason.reset_at} />
+					</span>
+				)}
+			</div>
+			{isCredit && (
+				<div className="flex flex-wrap items-center gap-2">
+					{isTopUp && topUpUrl && (
+						<Button size="sm" asChild>
+							<a href={topUpUrl} target="_blank" rel="noreferrer">
+								Top up {providerLabel} credits
+								<ExternalLink size={12} className="ml-1" />
+							</a>
+						</Button>
+					)}
+					{isTopUp && !isOpenRouter && (
+						<Button size="sm" variant="outline" asChild>
+							<Link to="/$workspaceId/settings/keys" params={{ workspaceId }}>
+								Switch to OpenRouter key
+							</Link>
+						</Button>
+					)}
+					<span className="inline-flex items-center text-xs px-2 py-1 rounded-md bg-muted text-muted-foreground">
+						Wait
+					</span>
+				</div>
+			)}
+			{isAuth && (
+				<div className="flex flex-wrap items-center gap-2">
+					<Button size="sm" asChild>
+						<Link to="/$workspaceId/settings/keys" params={{ workspaceId }}>
+							Connect Claude subscription
+						</Link>
+					</Button>
+				</div>
+			)}
+			{failureReason.verbatim_output && (
+				<div>
+					<button
+						type="button"
+						className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+						onClick={() => setShowVerbatim((v) => !v)}
+					>
+						{showVerbatim ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+						Provider output
+					</button>
+					{showVerbatim && (
+						<pre className="mt-1 text-xs font-mono text-muted-foreground bg-muted/30 rounded p-2 whitespace-pre-wrap overflow-auto max-h-40">
+							{failureReason.verbatim_output}
+						</pre>
+					)}
+				</div>
+			)}
+		</div>
+	)
+}
 
 interface SessionDetailPanelProps {
 	session: SessionResponse | null
@@ -253,7 +409,10 @@ export function SessionDetailPanel({
 	const duration = session ? formatDurationBetween(session.startedAt, session.completedAt) : null
 	const result = session?.result as Record<string, unknown> | null
 	const errorMessage = typeof result?.error === 'string' ? result.error : undefined
-	const exitCode = typeof result?.exit_code === 'number' ? result.exit_code : undefined
+	const rawExitCode = result?.exit_code
+	const exitCode: number | null | undefined =
+		typeof rawExitCode === 'number' || rawExitCode === null ? rawExitCode : undefined
+	const failureReason = parseFailureReason(result)
 
 	const lastResult = useMemo(() => getSessionResultDisplay(logs ?? []), [logs])
 	const idleAwaitingInput = useMemo(() => isSessionIdleAwaitingInput(logs ?? []), [logs])
@@ -296,12 +455,19 @@ export function SessionDetailPanel({
 							</div>
 
 							{/* Error / non-zero exit code */}
-							{(errorMessage || (exitCode !== undefined && exitCode !== 0)) && (
-								<div className="rounded-md bg-error/10 border border-error/20 px-3 py-2">
-									<p className="text-sm text-error font-medium">
-										{errorMessage ?? `Process exited with code ${exitCode}`}
-									</p>
-								</div>
+							{failureReason ? (
+								<FailureCard failureReason={failureReason} workspaceId={workspaceId} />
+							) : (
+								(errorMessage || (exitCode !== undefined && exitCode !== 0)) && (
+									<div className="rounded-md bg-error/10 border border-error/20 px-3 py-2">
+										<p className="text-sm text-error font-medium">
+											{errorMessage ??
+												(exitCode !== null
+													? `Process exited with code ${exitCode}`
+													: 'Container process was killed')}
+										</p>
+									</div>
+								)
 							)}
 						</div>
 
@@ -319,7 +485,7 @@ export function SessionDetailPanel({
 											: 'border-border bg-secondary/30',
 									)}
 								>
-									<MarkdownContent content={lastResult.text} size="sm" />
+									<AgentOutput content={lastResult.text} size="sm" />
 								</div>
 							</div>
 						)}

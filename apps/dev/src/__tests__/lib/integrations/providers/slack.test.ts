@@ -42,11 +42,18 @@ describe('Slack provider config', () => {
 		}
 	})
 
-	it('has MCP server config', () => {
+	it('auto-injects the Maskin-hosted Slack MCP HTTP server', () => {
 		expect(config.mcp).toBeDefined()
-		expect(config.mcp?.command).toBe('npx')
-		expect(config.mcp?.args).toEqual(['-y', '@modelcontextprotocol/server-slack'])
 		expect(config.mcp?.envKey).toBe('SLACK_BOT_TOKEN')
+		expect(config.mcp?.autoInject).toBe(true)
+		expect(config.mcp?.server).toEqual({
+			type: 'http',
+			url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+			headers: {
+				Authorization: 'Bearer ${MASKIN_API_KEY}',
+				'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+			},
+		})
 	})
 
 	it('defines event types', () => {

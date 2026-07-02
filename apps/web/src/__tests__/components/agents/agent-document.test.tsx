@@ -53,6 +53,8 @@ vi.mock('@/components/agents/instruction-log', () => ({
 
 vi.mock('@/components/agents/session-detail-panel', () => ({
 	SessionDetailPanel: () => null,
+	FailureCard: () => null,
+	parseFailureReason: () => null,
 }))
 
 vi.mock('@/components/agents/mcp-servers', () => ({
@@ -294,7 +296,7 @@ describe('AgentDocument — header actions', () => {
 	})
 
 	it('shows a Reset button and hides the delete button when agent.isSystem is true', () => {
-		const agent = buildActorResponse({ name: 'Sindre', type: 'agent', isSystem: true })
+		const agent = buildActorResponse({ name: 'Workspace Coach', type: 'agent', isSystem: true })
 		render(<AgentDocument agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
 		expect(screen.getByText('Reset to default')).toBeInTheDocument()
@@ -304,7 +306,7 @@ describe('AgentDocument — header actions', () => {
 
 	it('prompts for confirmation and calls reset mutation when confirmed', async () => {
 		const user = userEvent.setup()
-		const agent = buildActorResponse({ id: 'actor-sindre', type: 'agent', isSystem: true })
+		const agent = buildActorResponse({ id: 'actor-workspace-coach', type: 'agent', isSystem: true })
 		render(<AgentDocument agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
 		await user.click(screen.getByText('Reset to default'))
@@ -312,7 +314,7 @@ describe('AgentDocument — header actions', () => {
 
 		await user.click(screen.getByText('Confirm'))
 		expect(resetMutate).toHaveBeenCalledWith(
-			'actor-sindre',
+			'actor-workspace-coach',
 			expect.objectContaining({ onSuccess: expect.any(Function) }),
 		)
 		expect(deleteMutate).not.toHaveBeenCalled()
