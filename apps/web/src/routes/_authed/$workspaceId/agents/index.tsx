@@ -2,6 +2,7 @@ import { AgentCard, type AgentStatus } from '@/components/agents/agent-card'
 import { PageHeader } from '@/components/layout/page-header'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FilterTabs } from '@/components/shared/filter-tabs'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
@@ -9,7 +10,6 @@ import { useActors } from '@/hooks/use-actors'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import type { ActorResponse } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
@@ -70,11 +70,11 @@ function AgentsPage() {
 		[agents, statusFilter, agentStatuses],
 	)
 
-	const tabs: { label: string; value: StatusFilter }[] = [
-		{ label: 'All', value: 'all' },
-		{ label: 'Working', value: 'working' },
-		{ label: 'Idle', value: 'idle' },
-		{ label: 'Failed', value: 'failed' },
+	const tabs: { label: string; value: StatusFilter; count: number }[] = [
+		{ label: 'All', value: 'all', count: counts.all },
+		{ label: 'Working', value: 'working', count: counts.working },
+		{ label: 'Idle', value: 'idle', count: counts.idle },
+		{ label: 'Failed', value: 'failed', count: counts.failed },
 	]
 
 	const newButton = (
@@ -112,23 +112,13 @@ function AgentsPage() {
 				/>
 			) : (
 				<>
-					<div className="flex gap-1 mb-4">
-						{tabs.map((tab) => (
-							<button
-								key={tab.value}
-								type="button"
-								className={cn(
-									'rounded px-3 py-1 text-sm',
-									statusFilter === tab.value
-										? 'bg-muted text-foreground font-medium'
-										: 'text-muted-foreground hover:text-foreground',
-								)}
-								onClick={() => setStatusFilter(tab.value)}
-							>
-								{tab.label} ({counts[tab.value]})
-							</button>
-						))}
-					</div>
+					<FilterTabs
+						tabs={tabs}
+						value={statusFilter}
+						onChange={setStatusFilter}
+						aria-label="Agent status filter"
+						className="mb-4"
+					/>
 
 					<div className="grid gap-4 md:grid-cols-2">
 						{filtered.map((agent) => (
