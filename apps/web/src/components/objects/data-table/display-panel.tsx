@@ -60,7 +60,7 @@ export interface DisplayPanelProps {
 }
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
-	return <p className="text-[11px] font-medium uppercase text-text-secondary">{children}</p>
+	return <p className="text-eyebrow font-medium uppercase text-text-secondary">{children}</p>
 }
 
 function PillButton({
@@ -211,7 +211,7 @@ export function DisplayPanel({
 					>
 						<SlidersHorizontal size={14} />
 						{hasActiveFilters && (
-							<span className="absolute -top-0.5 -right-0.5 rounded-full bg-primary text-primary-foreground text-[10px] px-[var(--space-1)] py-[2px] min-w-[14px] text-center">
+							<span className="absolute -top-0.5 -right-0.5 rounded-full bg-primary text-primary-foreground text-badge px-[var(--space-1)] py-[2px] min-w-[14px] text-center">
 								{activeFilterCount}
 							</span>
 						)}

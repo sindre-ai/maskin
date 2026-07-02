@@ -235,7 +235,7 @@ export function AgentUsageChart({
 function Stat({ label, value, loading }: { label: string; value: string; loading: boolean }) {
 	return (
 		<div className="rounded-md border bg-card p-[var(--space-3)]">
-			<div className="text-[11px] uppercase text-muted-foreground">{label}</div>
+			<div className="text-eyebrow uppercase text-muted-foreground">{label}</div>
 			{loading ? (
 				<Skeleton className="h-5 w-16 mt-[var(--space-1)]" />
 			) : (
