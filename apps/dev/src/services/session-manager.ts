@@ -1375,12 +1375,6 @@ export class SessionManager extends EventEmitter {
 			await this.containers.ensureImage(spec.image, this.agentBaseBuildContext)
 		}
 
-		// Write exec-trigger so the entrypoint starts the agent. The entrypoint
-		// checks for this file to distinguish local Docker (immediate start) from
-		// the microsandbox path (where the agent-server writes the file after
-		// the TCP proxy is active). On the local Docker path we write it here.
-		await writeFile(join(tempDir, '.exec-trigger'), '')
-
 		// Provision browser sidecar when the browserRequired flag is set
 		let networkMode: string | undefined
 		if (spec.browserRequired) {
