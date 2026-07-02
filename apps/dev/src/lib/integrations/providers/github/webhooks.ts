@@ -112,6 +112,13 @@ export const githubEventNormalizer: CustomEventNormalizer = (
 			data.deployment_status_updated_at = deploymentStatus.updated_at
 			data.deployment_target_url = deploymentStatus.target_url ?? deploymentStatus.log_url
 		}
+		// Lift the per-delivery UUID onto `data` so the unattributed log line in
+		// deployment-status.ts and the T4 aging sweep can correlate stuck deploys
+		// back to `webhook_deliveries` without a second header lookup.
+		const deliveryId = headers['x-github-delivery']
+		if (typeof deliveryId === 'string' && deliveryId.length > 0) {
+			data.delivery_id = deliveryId
+		}
 	}
 
 	return { entityType, action, installationId, data }

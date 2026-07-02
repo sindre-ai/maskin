@@ -417,6 +417,7 @@ describe('githubEventNormalizer', () => {
 		const sha = 'a'.repeat(40)
 		const createdAt = '2026-07-01T08:00:00Z'
 		const updatedAt = '2026-07-01T08:00:15Z'
+		const deliveryId = '4d5f7c6e-1a2b-4c3d-9e8f-0a1b2c3d4e5f'
 		const payload = makePayload({
 			action: 'created',
 			deployment: { sha, environment: 'production', ref: 'refs/heads/main' },
@@ -427,7 +428,10 @@ describe('githubEventNormalizer', () => {
 				target_url: 'https://vercel.com/logs/abc',
 			},
 		})
-		const headers = { 'x-github-event': 'deployment_status' }
+		const headers = {
+			'x-github-event': 'deployment_status',
+			'x-github-delivery': deliveryId,
+		}
 
 		const result = githubEventNormalizer(payload, headers)
 
@@ -439,6 +443,25 @@ describe('githubEventNormalizer', () => {
 		expect(result?.data.deployment_status_created_at).toBe(createdAt)
 		expect(result?.data.deployment_status_updated_at).toBe(updatedAt)
 		expect(result?.data.deployment_target_url).toBe('https://vercel.com/logs/abc')
+		// The unattributed-deploy log at deployment-status.ts:150 reads
+		// data.delivery_id ?? null — without this lift, every real production
+		// delivery logs deliveryId: null and T4's aging sweep can't correlate
+		// stuck deploys back to webhook_deliveries.
+		expect(result?.data.delivery_id).toBe(deliveryId)
+	})
+
+	it('omits delivery_id on deployment_status when the header is absent', () => {
+		const sha = 'a'.repeat(40)
+		const payload = makePayload({
+			action: 'created',
+			deployment: { sha, environment: 'production', ref: 'refs/heads/main' },
+			deployment_status: { state: 'success' },
+		})
+		const headers = { 'x-github-event': 'deployment_status' }
+
+		const result = githubEventNormalizer(payload, headers)
+
+		expect(result?.data.delivery_id).toBeUndefined()
 	})
 })
 
@@ -633,15 +656,21 @@ describe('githubWebhookFanOut', () => {
 	})
 
 	it('logs an unattributed record when attribution finds no match', async () => {
+		const deliveryId = '9f8e7d6c-5b4a-4938-9271-6f5e4d3c2b1a'
 		const spy = vi
 			.spyOn(deployAttribution, 'attributeDeploymentToObject')
 			.mockResolvedValue({ matched: false })
 		const infoSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 		try {
-			await githubWebhookFanOut(fanOutCtx(normalizedDeploymentStatus()))
+			await githubWebhookFanOut(fanOutCtx(normalizedDeploymentStatus({ delivery_id: deliveryId })))
 			const logged = infoSpy.mock.calls.map(([m]) => String(m)).join('\n')
 			expect(logged).toContain('deployment_status unattributed')
 			expect(logged).toContain('d'.repeat(40))
+			// Delivery id must appear in the log so T4's aging sweep can grep it
+			// back to `webhook_deliveries`. Without the normalizer lifting
+			// `x-github-delivery` into `data.delivery_id`, this line wrote
+			// `deliveryId: null` and correlation was impossible.
+			expect(logged).toContain(deliveryId)
 		} finally {
 			infoSpy.mockRestore()
 			spy.mockRestore()
