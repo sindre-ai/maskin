@@ -61,10 +61,20 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		url: 'https://gmailmcp.googleapis.com/mcp/v1',
 		headers: { Authorization: 'Bearer ${GMAIL_TOKEN}' },
 	},
+	// Google Calendar routes through the agent-container mcp-emitter wrapper
+	// (docker/agent-base/mcp-emitter-wrapper.mjs) so every tool call emits one
+	// PostHog `mcp_tool_invocation` — the Google Calendar bet's ship metric and
+	// auth_revoked guardrail both read per-tool-call granularity. The wrapper
+	// spawns `mcp-remote` internally with the same hosted endpoint and forwards
+	// stdio verbatim; the client sees an ordinary MCP server.
 	'google-calendar': {
-		type: 'http',
-		url: 'https://calendarmcp.googleapis.com/mcp/v1',
-		headers: { Authorization: 'Bearer ${GOOGLE_CALENDAR_TOKEN}' },
+		type: 'stdio',
+		command: 'node',
+		args: [
+			'/mcp-emitter-wrapper.mjs',
+			'google-calendar',
+			'https://calendarmcp.googleapis.com/mcp/v1',
+		],
 	},
 	posthog: {
 		type: 'http',

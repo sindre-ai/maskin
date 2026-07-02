@@ -42,9 +42,20 @@ export const config: ProviderConfig = {
 		},
 	},
 
+	// Runtime MCP entry lives in the frontend preset
+	// (apps/web/src/components/agents/mcp-servers.tsx). The entry there routes
+	// through `docker/agent-base/mcp-emitter-wrapper.mjs`, which spawns
+	// `mcp-remote` internally and emits one `mcp_tool_invocation` PostHog event
+	// per client tool call — the Google Calendar bet's ship metric and
+	// auth_revoked guardrail both depend on that per-call granularity. This
+	// field is retained so `envKey` still resolves for token injection.
 	mcp: {
-		command: 'npx',
-		args: ['-y', 'mcp-remote', 'https://calendarmcp.googleapis.com/mcp/v1'],
+		command: 'node',
+		args: [
+			'/mcp-emitter-wrapper.mjs',
+			'google-calendar',
+			'https://calendarmcp.googleapis.com/mcp/v1',
+		],
 		envKey: 'GOOGLE_CALENDAR_TOKEN',
 	},
 

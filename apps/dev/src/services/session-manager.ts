@@ -999,6 +999,18 @@ export class SessionManager extends EventEmitter {
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 		}
 
+		// PostHog credentials for client-side emitters in the container
+		// (mcp-emitter-wrapper.mjs and the developer_session_completed exit
+		// trap). Passed through only when set on the backend host — a missing
+		// key is fail-open at the emitter, so local dev / CI without analytics
+		// stay silent instead of crashing the session.
+		if (process.env.POSTHOG_API_KEY) {
+			envVars.POSTHOG_API_KEY = process.env.POSTHOG_API_KEY
+		}
+		if (process.env.POSTHOG_HOST) {
+			envVars.POSTHOG_HOST = process.env.POSTHOG_HOST
+		}
+
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
 		// arrives via POST /api/sessions/:id/input over the attached stdin stream.
 		// Non-interactive sessions pass the action prompt positionally so `claude -p`
@@ -1216,6 +1228,11 @@ export class SessionManager extends EventEmitter {
 			'CLAUDE_OAUTH_SCOPES',
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
 			'BROWSER_CDP_URL',
+			// Reserved so a user-provided env_var can't spoof the payload the
+			// container's PostHog emitters (developer_session_completed exit
+			// trap, mcp-emitter-wrapper) fire.
+			'POSTHOG_API_KEY',
+			'POSTHOG_HOST',
 		])
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {

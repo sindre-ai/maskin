@@ -81,8 +81,14 @@ describe('Google Calendar provider config', () => {
 		}
 	})
 
-	it('wires Google Calendar to the hosted MCP endpoint via mcp-remote', () => {
+	it('wires Google Calendar through the mcp-emitter wrapper to the hosted MCP endpoint', () => {
 		expect(config.mcp).toBeDefined()
+		expect(config.mcp?.command).toBe('node')
+		// The wrapper script's container path is load-bearing — mcp-servers.tsx
+		// references the same path from the frontend preset, so the runtime and
+		// backend agree on where the client-side emitter lives.
+		expect(config.mcp?.args?.[0]).toBe('/mcp-emitter-wrapper.mjs')
+		expect(config.mcp?.args).toContain('google-calendar')
 		expect(config.mcp?.args).toContain('https://calendarmcp.googleapis.com/mcp/v1')
 		expect(config.mcp?.envKey).toBe('GOOGLE_CALENDAR_TOKEN')
 	})
