@@ -650,6 +650,8 @@ export interface ClaudeOAuthStatusResponse {
 	active_slot: ClaudeOAuthSlot
 	last_primary_failure_at?: number
 	last_classified_reason?: string
+	last_backup_failure_at?: number
+	last_backup_classified_reason?: string
 }
 
 export interface ClaudeOAuthImportInput {

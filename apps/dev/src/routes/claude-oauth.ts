@@ -53,6 +53,8 @@ const statusResponseSchema = z.object({
 	active_slot: slotKindSchema,
 	last_primary_failure_at: z.number().optional(),
 	last_classified_reason: z.string().optional(),
+	last_backup_failure_at: z.number().optional(),
+	last_backup_classified_reason: z.string().optional(),
 })
 
 async function requireWorkspaceMember(db: Database, workspaceId: string, actorId: string) {
@@ -277,6 +279,8 @@ app.openapi(statusRoute, (async (c) => {
 		active_slot: failover.active_slot,
 		last_primary_failure_at: failover.last_primary_failure_at,
 		last_classified_reason: failover.last_classified_reason,
+		last_backup_failure_at: failover.last_backup_failure_at,
+		last_backup_classified_reason: failover.last_backup_classified_reason,
 	})
 }) as RouteHandler<typeof statusRoute, Env>)
 
