@@ -938,6 +938,254 @@ describe('SessionManager', () => {
 
 			await expect(manager.stopSession(session.id)).rejects.toThrow('not found or has no container')
 		})
+
+		it('routes to the agent-server and marks the session terminal when agentServerId is set', async () => {
+			const session = buildSession({
+				status: 'running',
+				agentServerId: 'agent-server-1',
+				containerId: 'sandbox-name',
+			})
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			// 1st select: stopSession's own session lookup. 2nd: the agent_servers
+			// row lookup. markRemoteSessionComplete no longer does its own SELECT —
+			// it does a single CAS UPDATE ... RETURNING instead (see updateQueue
+			// below); the subsequent hasOtherActiveSessions select falls through to
+			// the unset static `mockResults.select` default of [], i.e. "no other
+			// active sessions", which drives the actors-table update below.
+			mockResults.selectQueue = [[session], [server]]
+			// 1st update: markRemoteSessionComplete's CAS on `sessions` — its
+			// .returning() must yield the row so workspaceId/actorId are available
+			// for the events insert. 2nd update: the actors.agentState sync inside
+			// hasOtherActiveSessions' branch — its return value is unused by the
+			// code, so an empty array is fine.
+			mockResults.updateQueue = [[session], []]
+
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				}),
+			)
+
+			try {
+				await manager.stopSession(session.id)
+
+				expect(fetchSpy).toHaveBeenCalledWith(
+					`${server.url}/sessions/${session.id}/stop`,
+					expect.objectContaining({
+						method: 'POST',
+						headers: expect.objectContaining({ Authorization: `Bearer ${server.secret}` }),
+					}),
+				)
+				// Local Docker must never be touched for a remotely-dispatched session.
+				expect(mockContainerManager.stop).not.toHaveBeenCalled()
+
+				const statusUpdate = calls.updates.find(
+					(u) => (u as Record<string, unknown>).status === 'failed',
+				) as Record<string, unknown> | undefined
+				expect(statusUpdate).toBeDefined()
+			} finally {
+				fetchSpy.mockRestore()
+			}
+		})
+
+		it('throws when the session references a missing agent server', async () => {
+			const session = buildSession({ status: 'running', agentServerId: 'ghost-server' })
+			mockResults.selectQueue = [[session], []]
+
+			await expect(manager.stopSession(session.id)).rejects.toThrow(
+				'Agent server ghost-server not found',
+			)
+		})
+
+		it('sanitizes an AgentServerHttpError from the remote stop call — no internal URL or response body leaks to the caller', async () => {
+			const session = buildSession({
+				status: 'running',
+				agentServerId: 'agent-server-1',
+				containerId: 'sandbox-name',
+			})
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			mockResults.selectQueue = [[session], [server]]
+
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				new Response('internal stack trace: secrets.db line 42', {
+					status: 500,
+				}),
+			)
+
+			try {
+				const err = await manager.stopSession(session.id).catch((e) => e)
+				expect(err).toBeInstanceOf(Error)
+				const message = (err as Error).message
+				expect(message).toBe(`Failed to stop session ${session.id}: agent-server returned HTTP 500`)
+				expect(message).not.toContain(server.url)
+				expect(message).not.toContain('secrets.db')
+			} finally {
+				fetchSpy.mockRestore()
+			}
+		})
+
+		it('sanitizes an AgentServerAuthError from the remote stop call', async () => {
+			const session = buildSession({
+				status: 'running',
+				agentServerId: 'agent-server-1',
+				containerId: 'sandbox-name',
+			})
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			mockResults.selectQueue = [[session], [server]]
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValue(new Response('', { status: 401 }))
+
+			try {
+				await expect(manager.stopSession(session.id)).rejects.toThrow(
+					`Failed to stop session ${session.id}: agent-server rejected bearer token`,
+				)
+			} finally {
+				fetchSpy.mockRestore()
+			}
+		})
+
+		it('sanitizes a raw network/fetch error from the remote stop call — no internal host leaks to the caller', async () => {
+			const session = buildSession({
+				status: 'running',
+				agentServerId: 'agent-server-1',
+				containerId: 'sandbox-name',
+			})
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			mockResults.selectQueue = [[session], [server]]
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockRejectedValue(new TypeError('fetch failed: connect ECONNREFUSED 10.2.0.5:3001'))
+
+			try {
+				const err = await manager.stopSession(session.id).catch((e) => e)
+				expect(err).toBeInstanceOf(Error)
+				const message = (err as Error).message
+				expect(message).toBe(`Failed to stop session ${session.id}: agent-server request failed`)
+				expect(message).not.toContain('10.2.0.5')
+				expect(message).not.toContain(server.url)
+			} finally {
+				fetchSpy.mockRestore()
+			}
+		})
+	})
+
+	describe('markRemoteSessionComplete()', () => {
+		it('no-ops without writing an event when the CAS update matches no row (already terminal / lost the race)', async () => {
+			mockResults.update = [] // .returning() → no row: UPDATE matched nothing
+			const initialInsertCount = calls.inserts.length
+
+			await manager.markRemoteSessionComplete('some-session-id', 1)
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
+		})
+
+		it('inserts exactly one session_failed event when the CAS update matches a row (nonzero exit code)', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.updateQueue = [[session], []]
+
+			await manager.markRemoteSessionComplete(session.id, 137)
+
+			const eventInsert = calls.inserts.find(
+				(v) => (v as Record<string, unknown>).action === 'session_failed',
+			)
+			expect(eventInsert).toBeDefined()
+		})
+
+		it('retries the CAS update on a thrown DB error and succeeds once a retry clears', async () => {
+			const session = buildSession({ status: 'running' })
+			// hasOtherActiveSessions' SELECT — a non-empty result means "yes, other
+			// active sessions exist", so the actors-table update branch is skipped
+			// and doesn't consume an extra update() call, keeping the retry count
+			// below attributable only to the CAS update.
+			mockResults.select = [{ id: 'other-session' }]
+			// 1st and 2nd CAS attempts throw; 3rd (final, within CAS_UPDATE_RETRIES)
+			// succeeds and returns the row via .returning().
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				undefined,
+			]
+			mockResults.updateQueue = [[session]]
+
+			await manager.markRemoteSessionComplete(session.id, 137)
+
+			const eventInsert = calls.inserts.find(
+				(v) => (v as Record<string, unknown>).action === 'session_failed',
+			)
+			expect(eventInsert).toBeDefined()
+		})
+
+		it('gives up and no-ops after exhausting retries when the fallback lookup also finds no session', async () => {
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			// The fallback lookup after CAS retries are exhausted finds nothing
+			// (unconfigured select defaults to []) — nothing left to clean up.
+			const initialInsertCount = calls.inserts.length
+
+			await expect(
+				manager.markRemoteSessionComplete('some-session-id', 137),
+			).resolves.toBeUndefined()
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
+		})
+
+		it('still runs terminal side effects via a fallback lookup when CAS retries are exhausted but the session is still running (Bug 2 regression)', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			// 1st select: the fallback lookup after CAS retries are exhausted,
+			// finds the session still 'running'. 2nd select: hasOtherActiveSessions'
+			// check — a non-empty result skips the actors-table update branch.
+			mockResults.selectQueue = [[session], [{ id: 'other-session' }]]
+
+			await manager.markRemoteSessionComplete(session.id, 137)
+
+			const eventInsert = calls.inserts.find(
+				(v) => (v as Record<string, unknown>).action === 'session_failed',
+			)
+			expect(eventInsert).toBeDefined()
+		})
+
+		it('no-ops via the fallback lookup when a concurrent call already resolved the session', async () => {
+			const session = buildSession({ status: 'failed' })
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			mockResults.selectQueue = [[session]]
+			const initialInsertCount = calls.inserts.length
+
+			await manager.markRemoteSessionComplete(session.id, 137)
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
+		})
 	})
 
 	describe('pauseSession()', () => {
@@ -1786,9 +2034,12 @@ describe('SessionManager', () => {
 			})
 
 			mockResults.selectQueue = [
-				[session], // markRemoteSessionComplete: load session
 				[log], // extractSessionUsage: read remote stdout tail
 				[], // hasOtherActiveSessions: no other active session
+			]
+			mockResults.updateQueue = [
+				[session], // CAS update on sessions table (.returning())
+				[], // actors agentState sync update
 			]
 
 			await manager.markRemoteSessionComplete(session.id, 0)
