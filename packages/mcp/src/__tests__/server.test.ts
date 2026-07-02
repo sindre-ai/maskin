@@ -304,7 +304,7 @@ describe('tool handlers', () => {
 			expect(parsed[0].success).toBe(true)
 		})
 
-		it('keeps graph context model-visible while the heroCard stays object-only', async () => {
+		it('default response is the lean core-fields projection — no graph context leaks to the model', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
 				if (urlStr.includes('/api/objects/bet-1/graph')) {
@@ -312,7 +312,14 @@ describe('tool handlers', () => {
 						ok: true,
 						json: () =>
 							Promise.resolve({
-								object: { id: 'bet-1', type: 'bet', title: 'Bet 1', status: 'active' },
+								object: {
+									id: 'bet-1',
+									type: 'bet',
+									title: 'Bet 1',
+									status: 'active',
+									content: 'Full body text',
+									metadata: { key: 'value' },
+								},
 								relationships: [
 									{
 										id: 'rel-1',
@@ -325,6 +332,8 @@ describe('tool handlers', () => {
 								connected_objects: [
 									{ id: 'task-1', type: 'task', title: 'Task 1', status: 'todo' },
 								],
+								events: [{ id: 'evt-1', action: 'commented' }],
+								files: [{ id: 'file-1', name: 'note.md' }],
 							}),
 					} as Response
 				}
@@ -333,16 +342,94 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('get_objects')
 			const result = (await handler({ ids: ['bet-1'] })) as {
+				content: Array<{ text: string }>
 				structuredContent: {
 					heroCard: { object?: { id: string }; relationships?: unknown }
-					objects: Array<{ relationships: unknown[]; connected_objects: unknown[] }>
+					results: Array<{
+						success: boolean
+						result: {
+							object: Record<string, unknown>
+							relationships?: unknown
+							connected_objects?: unknown
+							events?: unknown
+							files?: unknown
+						}
+					}>
+					objects: Array<{ object: Record<string, unknown>; relationships?: unknown }>
 				}
 			}
 
 			expect(result.structuredContent.heroCard.object?.id).toBe('bet-1')
 			expect(result.structuredContent.heroCard.relationships).toBeUndefined()
-			expect(result.structuredContent.objects[0].relationships).toHaveLength(1)
-			expect(result.structuredContent.objects[0].connected_objects).toHaveLength(1)
+
+			// Per-result envelope: only `object` remains, no relationships/connected_objects/events/files.
+			const first = result.structuredContent.results[0]
+			expect(Object.keys(first.result).sort()).toEqual(['object'])
+			// Per-object payload: exactly the core five (url is omitted when
+			// webAppBaseUrl isn't configured on the test rig — the injection is
+			// covered separately in the `url field injection` suite).
+			expect(Object.keys(first.result.object).sort()).toEqual([
+				'contextLine',
+				'id',
+				'status',
+				'title',
+				'type',
+			])
+			expect(first.result.object.content).toBeUndefined()
+			// content[0].text is what the LLM actually reads — must also carry the lean shape.
+			const parsed = JSON.parse(result.content[0].text) as typeof result.structuredContent.results
+			expect(Object.keys(parsed[0].result.object).sort()).toEqual([
+				'contextLine',
+				'id',
+				'status',
+				'title',
+				'type',
+			])
+			// Triple-emit's `objects` array (kept intact for T5) also carries the projected shape.
+			expect(result.structuredContent.objects[0].relationships).toBeUndefined()
+		})
+
+		it('opts back into extra blocks when include: is passed', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/bet-2/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: { id: 'bet-2', type: 'bet', title: 'Bet 2', status: 'active' },
+								relationships: [
+									{
+										id: 'rel-2',
+										sourceId: 'bet-2',
+										targetId: 'task-2',
+										type: 'breaks_into',
+										targetTitle: 'Task 2',
+									},
+								],
+								connected_objects: [
+									{ id: 'task-2', type: 'task', title: 'Task 2', status: 'todo' },
+								],
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({
+				ids: ['bet-2'],
+				include: ['relationships', 'connected_objects'],
+			})) as {
+				structuredContent: {
+					results: Array<{
+						result: { relationships?: unknown[]; connected_objects?: unknown[] }
+					}>
+				}
+			}
+
+			expect(result.structuredContent.results[0].result.relationships).toHaveLength(1)
+			expect(result.structuredContent.results[0].result.connected_objects).toHaveLength(1)
 		})
 	})
 

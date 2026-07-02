@@ -1487,7 +1487,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id } = args
+			const { workspace_id, include } = args
+			const includeSet = new Set(include ?? [])
 			const results = await Promise.all(
 				args.ids.map(async (id) => {
 					try {
@@ -1516,6 +1517,7 @@ export function createMcpServer(config: McpConfig) {
 			const heroObjects = rawObjects.map((o) =>
 				buildHeroCardObject(o, o.driver ? (actors.get(o.driver) ?? null) : null),
 			)
+			const contextLineById = new Map(heroObjects.map((h) => [h.id, h.contextLine]))
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
 					? { kind: 'empty', tool: 'get_objects' }
@@ -1534,30 +1536,56 @@ export function createMcpServer(config: McpConfig) {
 							}
 
 			const wsId = workspace_id ?? config.defaultWorkspaceId
-			const enrichedResults = wsId
-				? results.map((r) => {
-						if (!r.success) return r
-						const obj = (r.result as { object?: Record<string, unknown> })?.object
-						if (!obj) return r
-						return {
-							...r,
-							result: {
-								...(r.result as Record<string, unknown>),
-								object: addUrl(obj, config, wsId, { kind: 'object', id: obj.id as string }),
-							},
-						}
-					})
-				: results
+			// Default projection: strip every graph field except the core six
+			// (`id, type, title, status, contextLine, url`) so the LLM's context
+			// isn't paid to carry relationships/connected_objects/events/files/content/metadata
+			// the caller didn't ask for. `include:` opt-in expansions are wired in T4.
+			const projectedResults = results.map((r) => {
+				if (!r.success) return r
+				const graph = r.result as Record<string, unknown> | null | undefined
+				const rawObj = graph?.object as Record<string, unknown> | undefined
+				if (!rawObj) return r
+				const withUrl = wsId
+					? addUrl(rawObj, config, wsId, { kind: 'object', id: rawObj.id as string })
+					: rawObj
+				const projectedObject: Record<string, unknown> = {
+					id: withUrl.id,
+					type: withUrl.type,
+					title: withUrl.title ?? null,
+					status: withUrl.status ?? null,
+					contextLine: contextLineById.get(withUrl.id as string) ?? '',
+				}
+				if (typeof withUrl.url === 'string') projectedObject.url = withUrl.url
+				if (includeSet.has('content') && 'content' in withUrl) {
+					projectedObject.content = withUrl.content
+				}
+				const extras: Record<string, unknown> = {}
+				if (includeSet.has('relationships') && graph && 'relationships' in graph) {
+					extras.relationships = graph.relationships
+				}
+				if (includeSet.has('connected_objects') && graph && 'connected_objects' in graph) {
+					extras.connected_objects = graph.connected_objects
+				}
+				if (includeSet.has('events') && graph && 'events' in graph) {
+					extras.events = graph.events
+				}
+				if (includeSet.has('files') && graph && 'files' in graph) {
+					extras.files = graph.files
+				}
+				return { ...r, result: { object: projectedObject, ...extras } }
+			})
 
 			return {
 				_meta: uiMeta('get_objects', config, workspace_id, pickResourceUri(heroCard)),
-				content: [{ type: 'text' as const, text: JSON.stringify(enrichedResults, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(projectedResults, null, 2) }],
 				structuredContent: {
 					heroCard,
-					results: enrichedResults,
-					objects: (enrichedResults as typeof results)
+					results: projectedResults,
+					objects: projectedResults
 						.filter(
-							(r): r is { id: string; success: true; result: { object: RawObject } } =>
+							(
+								r,
+							): r is { id: string; success: true; result: { object: Record<string, unknown> } } =>
 								r.success === true && (r.result as { object?: unknown } | null)?.object != null,
 						)
 						.map((r) => r.result),
