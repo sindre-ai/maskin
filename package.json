@@ -6,7 +6,7 @@
 		"dev": "bash scripts/dev.sh",
 		"dev:win": "node scripts/dev.mjs",
 		"build": "turbo build",
-		"test": "turbo test",
+		"test": "turbo test --concurrency=4",
 		"test:integration": "turbo test:integration",
 		"test:e2e": "turbo test:e2e",
 		"lint": "biome check .",
