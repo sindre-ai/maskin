@@ -17,9 +17,12 @@ import {
 	CCD_PACKAGE_SLUG,
 	CCD_PACKAGE_USE_CASE,
 	CCD_PACKAGE_VERSION,
-	SINDRE_DEFAULT,
+	WORKSPACE_COACH_DEFAULT,
 } from '@maskin/shared'
 import { and, count, eq, isNotNull } from 'drizzle-orm'
+import type { AgentStorageManager } from '../services/agent-storage'
+import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
+import { logger } from './logger'
 
 /**
  * Seeds the global catalog with the Customer Continuous Discovery package if
@@ -285,7 +288,10 @@ export interface DevBootstrapResult {
  *
  * Skipped in production or when MASKIN_AUTO_BOOTSTRAP=false.
  */
-export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResult | null> {
+export async function maybeBootstrapDev(
+	db: Database,
+	agentStorage?: AgentStorageManager,
+): Promise<DevBootstrapResult | null> {
 	if (process.env.NODE_ENV === 'production') return null
 	if (process.env.MASKIN_AUTO_BOOTSTRAP === 'false') return null
 
@@ -322,29 +328,29 @@ export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResul
 			role: 'owner',
 		})
 
-		// Seed Sindre — the built-in meta-agent shipped with every workspace.
+		// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
 		// apiKey is required (see comment in actors.ts) — without it the agent's
 		// container has no identity to authenticate MCP writes with.
-		const [sindre] = await tx
+		const [coach] = await tx
 			.insert(actors)
 			.values({
-				type: SINDRE_DEFAULT.type,
-				name: SINDRE_DEFAULT.name,
-				isSystem: SINDRE_DEFAULT.isSystem,
-				systemPrompt: SINDRE_DEFAULT.systemPrompt,
-				llmProvider: SINDRE_DEFAULT.llmProvider,
-				llmConfig: SINDRE_DEFAULT.llmConfig,
-				tools: SINDRE_DEFAULT.tools,
+				type: WORKSPACE_COACH_DEFAULT.type,
+				name: WORKSPACE_COACH_DEFAULT.name,
+				isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
+				systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+				llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
+				llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
+				tools: WORKSPACE_COACH_DEFAULT.tools,
 				apiKey: generateApiKey().key,
 				createdBy: actor.id,
 			})
 			.returning()
 
-		if (!sindre) throw new Error('dev bootstrap: failed to seed Sindre actor')
+		if (!coach) throw new Error('dev bootstrap: failed to seed Workspace Coach actor')
 
 		await tx.insert(workspaceMembers).values({
 			workspaceId: ws.id,
-			actorId: sindre.id,
+			actorId: coach.id,
 			role: 'member',
 		})
 
@@ -352,6 +358,17 @@ export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResul
 	})
 
 	if (!workspace) throw new Error('dev bootstrap: failed to create workspace')
+
+	// Seed Driver and Strategist async (Workspace Coach was already seeded above).
+	// bootstrapDefaultAgents is idempotent — it skips Workspace Coach by name.
+	if (agentStorage) {
+		bootstrapDefaultAgents(db, agentStorage, workspace.id, actor.id).catch((err) =>
+			logger.error('dev bootstrap: default agent seeding failed', {
+				workspaceId: workspace.id,
+				err,
+			}),
+		)
+	}
 
 	return {
 		apiKey: key,

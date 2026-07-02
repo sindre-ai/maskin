@@ -82,12 +82,13 @@ export function trackAgentSessionCompleted(
 }
 
 export function trackCommentPosted(
-	p: BaseProps & { is_reply: boolean; attachment_count: number },
+	p: BaseProps & { is_reply: boolean; attachment_count: number; content: string },
 ): void {
 	trackEvent('comment_posted', {
 		...fillBase(p),
 		is_reply: p.is_reply,
 		attachment_count: p.attachment_count,
+		content: p.content,
 	})
 }
 
@@ -109,4 +110,17 @@ export function trackObjectAttachedFile(
 		file_id: p.file_id,
 		parent_entity_type: p.parent_entity_type,
 	})
+}
+
+// For You sparse-state composer. `items_count` is the rendered item count on
+// the For You feed at the moment of the event (0–2 for the sparse range).
+// `workspace_id` rides via PostHog super-properties registered on workspace
+// mount — do not pass it explicitly.
+
+export function trackForyouSparseComposerShown(p: { items_count: number }): void {
+	trackEvent('foryou_sparse_composer_shown', { items_count: p.items_count })
+}
+
+export function trackForyouSparseComposerSubmit(p: { items_count: number }): void {
+	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
 }

@@ -8,6 +8,7 @@ export const ApiErrorCode = {
 	BAD_REQUEST: 'BAD_REQUEST',
 	INTERNAL_ERROR: 'INTERNAL_ERROR',
 	PLAN_CAP_EXCEEDED: 'PLAN_CAP_EXCEEDED',
+	AUTH_REVOKED: 'AUTH_REVOKED',
 } as const
 
 export type ApiErrorCode = (typeof ApiErrorCode)[keyof typeof ApiErrorCode]

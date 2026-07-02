@@ -46,7 +46,7 @@ describe('PackageVersionPusher', () => {
 			// notifyForkedInstall(): no existing pending notification
 			[],
 			// resolveNotificationSource(): a system actor in the workspace
-			[{ id: 'sindre-actor' }],
+			[{ id: 'system-actor' }],
 		]
 
 		const pusher = new PackageVersionPusher(db, 60_000)
@@ -57,7 +57,7 @@ describe('PackageVersionPusher', () => {
 		expect(inserted.type).toBe('package_update_available')
 		expect(inserted.workspaceId).toBe('ws-1')
 		expect(inserted.status).toBe('pending')
-		expect(inserted.sourceActorId).toBe('sindre-actor')
+		expect(inserted.sourceActorId).toBe('system-actor')
 		expect(inserted.metadata).toMatchObject({
 			installed_package_id: 'install-1',
 			from_version: '1.0.0',
@@ -188,7 +188,7 @@ describe('PackageVersionPusher', () => {
 			[],
 			[],
 			// resolveWorkspaceActor(): a system actor is a member of the workspace.
-			[{ id: 'sindre-actor' }],
+			[{ id: 'system-actor' }],
 		]
 		// Inserts fire in order: actor, workspace_members (binds the actor), trigger.
 		mockResults.insertQueue = [[{ id: 'new-actor' }], [], [{ id: 'new-trigger' }]]
@@ -216,7 +216,7 @@ describe('PackageVersionPusher', () => {
 		// would 've thrown an FK violation) and its target_actor_id is rewritten
 		// from the source id to the freshly-minted local actor id.
 		const triggerInsert = calls.inserts[2] as Record<string, unknown>
-		expect(triggerInsert.createdBy).toBe('sindre-actor')
+		expect(triggerInsert.createdBy).toBe('system-actor')
 		expect(triggerInsert.targetActorId).toBe('new-actor')
 
 		// The install row's version is bumped on success.

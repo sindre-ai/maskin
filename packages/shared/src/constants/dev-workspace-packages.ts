@@ -135,7 +135,8 @@ export const DEV_TRIGGER_CODE_REVIEWER_TASK_IN_REVIEW = '2a8f9709-c239-4f92-9ebf
 export const DEV_TRIGGER_CODE_REVIEWER_PR_SYNCHRONIZE = 'a7dead80-190e-4da0-86bf-e5500994716b'
 
 // Acceptance Validator
-export const DEV_TRIGGER_ACCEPTANCE_VALIDATOR_TASK_TESTING = '89bd7d2a-2256-4aef-8960-4c5669307e9c'
+export const DEV_TRIGGER_ACCEPTANCE_VALIDATOR_TASK_VALIDATED =
+	'89bd7d2a-2256-4aef-8960-4c5669307e9c'
 
 // Auto-Merge Bot
 export const DEV_TRIGGER_AUTO_MERGE_BOT_TASK_DONE = 'a941beb1-78af-4ac9-b079-b198f8e9c92a'
@@ -208,3 +209,10 @@ export const DEV_TRIGGER_PRODUCT_ANALYST_WEEKLY_DISCOVERY = '665c1b46-23bf-4666-
 
 // Summarization Agent
 export const DEV_TRIGGER_SUMMARIZATION_AGENT_MEETING_DONE = '5eefd3e7-396b-4de1-9fdf-a22ccfc0d120'
+
+// ── Development Pipeline bundle ───────────────────────────────────────────────
+
+export const DEV_PACKAGE_DEVELOPMENT_PIPELINE_SLUG = 'development-pipeline'
+export const DEV_PACKAGE_DEVELOPMENT_PIPELINE_NAME = 'Development Pipeline'
+export const DEV_PACKAGE_DEVELOPMENT_PIPELINE_DESCRIPTION =
+	'Implements tasks, reviews PRs for quality and risk, and validates that implementations deliver their stated goals before marking work done.'

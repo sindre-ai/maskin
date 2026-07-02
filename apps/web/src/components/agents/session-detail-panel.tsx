@@ -1,4 +1,4 @@
-import { MarkdownContent } from '@/components/shared/markdown-content'
+import { AgentOutput } from '@/components/shared/agent-output'
 import { type AffectedObject, useSessionAffectedObjects } from '@/hooks/use-events'
 import { useCreateSession, useSessionLogs } from '@/hooks/use-sessions'
 import { trackEvent } from '@/lib/analytics'
@@ -485,7 +485,7 @@ export function SessionDetailPanel({
 											: 'border-border bg-secondary/30',
 									)}
 								>
-									<MarkdownContent content={lastResult.text} size="sm" />
+									<AgentOutput content={lastResult.text} size="sm" />
 								</div>
 							</div>
 						)}

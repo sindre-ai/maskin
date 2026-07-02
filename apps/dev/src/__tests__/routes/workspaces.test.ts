@@ -7,15 +7,15 @@ const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		it('creates a workspace and seeds Sindre, returning 201', async () => {
+		it('creates a workspace and seeds Workspace Coach, returning 201', async () => {
 			const ws = buildWorkspace()
-			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insertQueue = [
 				[ws], // workspaces insert
 				[{}], // owner workspaceMembers insert
-				[sindre], // Sindre actor insert
-				[{}], // Sindre workspaceMembers insert
+				[coach], // Workspace Coach actor insert
+				[{}], // Workspace Coach workspaceMembers insert
 			]
 
 			const res = await app.request(
@@ -28,22 +28,22 @@ describe('Workspaces Routes', () => {
 			expect(body.name).toBe(ws.name)
 		})
 
-		it('seeds Sindre with a generated apiKey distinct from the creator', async () => {
+		it('seeds Workspace Coach with a generated apiKey distinct from the creator', async () => {
 			const ws = buildWorkspace()
-			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
-			mockResults.insertQueue = [[ws], [{}], [sindre], [{}]]
+			mockResults.insertQueue = [[ws], [{}], [coach], [{}]]
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
 			)
 
 			expect(res.status).toBe(201)
-			// inserts: [workspace, owner-member, sindre-actor, sindre-member]
-			const sindreInsert = calls.inserts[2] as { apiKey?: string; type?: string }
-			expect(sindreInsert.type).toBe('agent')
-			expect(sindreInsert.apiKey).toBeDefined()
-			expect(sindreInsert.apiKey).toMatch(/^ank_/)
+			// inserts: [workspace, owner-member, coach-actor, coach-member]
+			const coachInsert = calls.inserts[2] as { apiKey?: string; type?: string }
+			expect(coachInsert.type).toBe('agent')
+			expect(coachInsert.apiKey).toBeDefined()
+			expect(coachInsert.apiKey).toMatch(/^ank_/)
 		})
 
 		it('returns 500 when workspace insert returns empty', async () => {
@@ -60,13 +60,13 @@ describe('Workspaces Routes', () => {
 			expect(body.error.message).toContain('Failed to create workspace')
 		})
 
-		it('rolls back and returns 500 when Sindre actor insert returns empty', async () => {
+		it('rolls back and returns 500 when Workspace Coach actor insert returns empty', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insertQueue = [
 				[ws], // workspaces insert succeeds
 				[{}], // owner workspaceMembers insert succeeds
-				[], // Sindre actor insert fails — triggers rollback
+				[], // Workspace Coach actor insert fails — triggers rollback
 			]
 
 			const res = await app.request(
@@ -116,6 +116,31 @@ describe('Workspaces Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+
+		it('returns 400 and does not touch the DB when settings.claude_oauth is present', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.update = [{ ...ws, name: 'should not be used' }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: {
+						claude_oauth: {
+							primary: {
+								encryptedAccessToken: 'token',
+								encryptedRefreshToken: 'refresh',
+								expiresAt: 1234567890,
+							},
+						},
+					},
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(calls.updates).toHaveLength(0)
 		})
 	})
 

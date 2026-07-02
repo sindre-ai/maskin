@@ -6,7 +6,8 @@ import {
 	TRIAL_HARD_CAP_DEFAULT_TOKENS,
 	parsePositiveIntEnv,
 } from './billing-defaults'
-import { getValidOAuthToken } from './claude-oauth'
+import { type SubscriptionProbe, resolveClaudeCredentialsWithFailover } from './claude-failover'
+import type { OAuthSlotKind } from './claude-oauth-slots'
 import type { WorkspaceSettings } from './types'
 
 export const LLM_ROUTE_CUSTOM = 'workspace_custom'
@@ -33,6 +34,7 @@ export interface LlmRoutingResult {
 	route: LlmRoute
 	/** Env vars to merge into the container environment. */
 	envVars: Record<string, string>
+	oauthSlot?: OAuthSlotKind
 }
 
 export interface FallbackConfig {
@@ -270,10 +272,19 @@ function buildMaskinPlanEnv(
 export async function resolveLlmRoute(params: {
 	db: Database
 	workspaceId: string
+	actorId: string
 	wsSettings: WorkspaceSettings
 	agent: AgentLlmConfig
+	/**
+	 * Overrides the default `probeClaudeSubscription` probe used by the
+	 * failover path when `MASKIN_CLAUDE_FAILOVER_ENABLED=true`. Only tests
+	 * need to pass this — production callers can omit it and
+	 * `resolveClaudeCredentialsWithFailover` falls back to the real
+	 * Anthropic Messages API probe.
+	 */
+	claudeProbe?: SubscriptionProbe
 }): Promise<LlmRoutingResult | null> {
-	const { db, workspaceId, wsSettings, agent } = params
+	const { db, workspaceId, actorId, wsSettings, agent, claudeProbe } = params
 
 	// 1. Agent-level override — only handled here for anthropic; non-anthropic
 	//    providers fall through to caller (matches existing behavior).
@@ -290,9 +301,16 @@ export async function resolveLlmRoute(params: {
 
 	// 2. Claude OAuth subscription — checked first among BYO routes so a
 	//    connected Pro/Max subscription is always preferred over custom endpoints
-	//    and never consumes maskin plan tokens.
+	//    and never consumes maskin plan tokens. Primary→backup failover kicks in
+	//    when MASKIN_CLAUDE_FAILOVER_ENABLED is set; otherwise legacy
+	//    primary-only behaviour applies.
 	try {
-		const oauthResult = await getValidOAuthToken(db, workspaceId)
+		const oauthResult = await resolveClaudeCredentialsWithFailover({
+			db,
+			workspaceId,
+			actorId,
+			probe: claudeProbe,
+		})
 		if (oauthResult) {
 			const envVars: Record<string, string> = {
 				CLAUDE_OAUTH_ACCESS_TOKEN: oauthResult.tokens.accessToken,
@@ -305,7 +323,7 @@ export async function resolveLlmRoute(params: {
 			if (oauthResult.tokens.subscriptionType) {
 				envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
 			}
-			return { route: LLM_ROUTE_OAUTH, envVars }
+			return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
 		}
 	} catch {
 		// Swallow OAuth errors and let the next route take over — the warning

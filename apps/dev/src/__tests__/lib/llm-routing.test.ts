@@ -5,9 +5,14 @@ vi.mock('../../lib/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn() },
 }))
 
-const getValidOAuthTokenMock = vi.fn()
-vi.mock('../../lib/claude-oauth', () => ({
-	getValidOAuthToken: (...args: unknown[]) => getValidOAuthTokenMock(...args),
+// crypto = identity so encrypted claude_oauth blobs round-trip as their
+// plaintext values — `resolveClaudeCredentialsWithFailover` reads the
+// primary slot directly now, so tests drive it through the `db` mock's
+// workspace row rather than mocking `getValidOAuthToken` (which it no
+// longer calls).
+vi.mock('../../lib/crypto', () => ({
+	decrypt: (input: string) => input,
+	encrypt: (input: string) => input,
 }))
 
 import {
@@ -34,7 +39,7 @@ const FALLBACK_ENV_KEYS = [
 
 beforeEach(() => {
 	for (const k of FALLBACK_ENV_KEYS) delete process.env[k]
-	getValidOAuthTokenMock.mockReset()
+	process.env.MASKIN_CLAUDE_FAILOVER_ENABLED = undefined
 })
 
 afterEach(() => {
@@ -54,8 +59,26 @@ function emptySettings(): WorkspaceSettings {
 	} as WorkspaceSettings
 }
 
-function dbWithFallbackUsage(rows: Array<{ inputTokens: number; outputTokens: number }>) {
-	const where = vi.fn().mockResolvedValue(rows)
+/**
+ * `where()` resolves directly to `rows` for `getActorFallbackTokenUsage24h`'s
+ * unchained `select().from(sessions).where(...)` query, and ALSO exposes a
+ * `.limit()` method for `resolveClaudeCredentialsWithFailover`'s
+ * `select().from(workspaces).where(...).limit(1)` query — the same
+ * thenable-plus-chainable idiom used by `__tests__/setup.ts`'s mock DB.
+ * `workspaceRow` is omitted by default, so OAuth resolution sees "no
+ * workspace" and returns null without touching claude_oauth data.
+ */
+function dbWithFallbackUsage(
+	rows: Array<{ inputTokens: number; outputTokens: number }>,
+	workspaceRow?: { id: string; settings: Record<string, unknown> },
+) {
+	const where = vi.fn(() => {
+		const promise = Promise.resolve(rows) as Promise<unknown[]> & {
+			limit: (n: number) => Promise<unknown[]>
+		}
+		promise.limit = vi.fn(async () => (workspaceRow ? [workspaceRow] : []))
+		return promise
+	})
 	return {
 		select: vi.fn().mockReturnValue({
 			from: vi.fn().mockReturnValue({ where }),
@@ -66,6 +89,13 @@ function dbWithFallbackUsage(rows: Array<{ inputTokens: number; outputTokens: nu
 // Same shape as dbWithFallbackUsage — the workspace-plan query has the same
 // drizzle call chain (select → from → where). Aliased for readability.
 const dbWithSessionUsage = dbWithFallbackUsage
+
+function claudeOAuthWorkspaceRow(claudeOAuth: Record<string, unknown>): {
+	id: string
+	settings: Record<string, unknown>
+} {
+	return { id: 'ws-1', settings: { claude_oauth: claudeOAuth } }
+}
 
 describe('readFallbackConfig', () => {
 	it('returns undefined apiKey when env not set', () => {
@@ -86,6 +116,7 @@ describe('resolveLlmRoute priority order', () => {
 	const baseParams = {
 		db: dbWithFallbackUsage([]),
 		workspaceId: 'ws-1',
+		actorId: 'actor-1',
 	}
 
 	it('1. agent anthropic api_key wins over everything', async () => {
@@ -117,13 +148,14 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('2. Claude OAuth overrides custom_llm', async () => {
-		getValidOAuthTokenMock.mockResolvedValue({
-			tokens: {
-				accessToken: 'oauth-access',
-				refreshToken: 'oauth-refresh',
+		const db = dbWithFallbackUsage(
+			[],
+			claudeOAuthWorkspaceRow({
+				encryptedAccessToken: 'oauth-access',
+				encryptedRefreshToken: 'oauth-refresh',
 				expiresAt: Date.now() + 60_000,
-			},
-		})
+			}),
+		)
 		const settings = emptySettings()
 		settings.custom_llm = {
 			enabled: true,
@@ -132,7 +164,9 @@ describe('resolveLlmRoute priority order', () => {
 			model: 'deepseek/deepseek-v4-flash',
 		}
 		const result = await resolveLlmRoute({
-			...baseParams,
+			db,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
 			wsSettings: settings,
 			agent: {},
 		})
@@ -143,7 +177,6 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('skips custom_llm when enabled but missing fields', async () => {
-		getValidOAuthTokenMock.mockResolvedValue(null)
 		const settings = emptySettings()
 		settings.custom_llm = { enabled: true, base_url: 'https://x', api_key: '', model: 'm' }
 		settings.llm_keys = { anthropic: 'sk-ant-fallback' }
@@ -157,19 +190,23 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('3. Claude OAuth wins over workspace api_key', async () => {
-		getValidOAuthTokenMock.mockResolvedValue({
-			tokens: {
-				accessToken: 'oauth-access',
-				refreshToken: 'oauth-refresh',
-				expiresAt: 12345,
+		const expiresAt = Date.now() + 60 * 60 * 1000
+		const db = dbWithFallbackUsage(
+			[],
+			claudeOAuthWorkspaceRow({
+				encryptedAccessToken: 'oauth-access',
+				encryptedRefreshToken: 'oauth-refresh',
+				expiresAt,
 				scopes: ['read'],
 				subscriptionType: 'pro',
-			},
-		})
+			}),
+		)
 		const settings = emptySettings()
 		settings.llm_keys = { anthropic: 'sk-ant-x' }
 		const result = await resolveLlmRoute({
-			...baseParams,
+			db,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
 			wsSettings: settings,
 			agent: {},
 		})
@@ -177,7 +214,7 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars).toMatchObject({
 			CLAUDE_OAUTH_ACCESS_TOKEN: 'oauth-access',
 			CLAUDE_OAUTH_REFRESH_TOKEN: 'oauth-refresh',
-			CLAUDE_OAUTH_EXPIRES_AT: '12345',
+			CLAUDE_OAUTH_EXPIRES_AT: String(expiresAt),
 			CLAUDE_OAUTH_SCOPES: '["read"]',
 			CLAUDE_OAUTH_SUBSCRIPTION_TYPE: 'pro',
 		})
@@ -185,7 +222,6 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('4. workspace api_key when OAuth absent', async () => {
-		getValidOAuthTokenMock.mockResolvedValue(null)
 		const settings = emptySettings()
 		settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
 		const result = await resolveLlmRoute({
@@ -198,11 +234,22 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('falls through OAuth errors to next route', async () => {
-		getValidOAuthTokenMock.mockRejectedValue(new Error('expired'))
+		// Simulate a DB error during OAuth resolution's workspace read itself.
+		const db = {
+			select: vi.fn().mockReturnValue({
+				from: vi.fn().mockReturnValue({
+					where: vi.fn().mockReturnValue({
+						limit: vi.fn().mockRejectedValue(new Error('db unavailable')),
+					}),
+				}),
+			}),
+		} as unknown as Database
 		const settings = emptySettings()
 		settings.llm_keys = { anthropic: 'sk-ant-recover' }
 		const result = await resolveLlmRoute({
-			...baseParams,
+			db,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
 			wsSettings: settings,
 			agent: {},
 		})
@@ -210,7 +257,6 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('returns null when nothing is configured', async () => {
-		getValidOAuthTokenMock.mockResolvedValue(null)
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: emptySettings(),
@@ -229,7 +275,6 @@ describe('resolveLlmRoute priority order', () => {
 		it.each(['starter', 'pro', 'trial'] as const)(
 			'%s plan routes through Maskin OR + Deepseek v4 Flash',
 			async (plan) => {
-				getValidOAuthTokenMock.mockResolvedValue(null)
 				const settings = emptySettings()
 				settings.billing = { plan }
 				const result = await resolveLlmRoute({
@@ -250,7 +295,6 @@ describe('resolveLlmRoute priority order', () => {
 		)
 
 		it('maskin_plan is only used when no BYO credentials are present', async () => {
-			getValidOAuthTokenMock.mockResolvedValue(null)
 			const settings = emptySettings()
 			settings.billing = { plan: 'pro' }
 			const result = await resolveLlmRoute({
@@ -264,14 +308,19 @@ describe('resolveLlmRoute priority order', () => {
 		})
 
 		it('OAuth wins over maskin_plan — never counts against cap', async () => {
-			getValidOAuthTokenMock.mockResolvedValue({
-				tokens: { accessToken: 'oauth-access', refreshToken: 'r', expiresAt: 9999 },
-			})
+			const db = dbWithSessionUsage(
+				[],
+				claudeOAuthWorkspaceRow({
+					encryptedAccessToken: 'oauth-access',
+					encryptedRefreshToken: 'r',
+					expiresAt: Date.now() + 60_000,
+				}),
+			)
 			const settings = emptySettings()
 			settings.billing = { plan: 'pro' }
 			const result = await resolveLlmRoute({
 				...baseParams,
-				db: dbWithSessionUsage([]),
+				db,
 				wsSettings: settings,
 				agent: {},
 			})
@@ -279,7 +328,6 @@ describe('resolveLlmRoute priority order', () => {
 		})
 
 		it('custom_llm wins over maskin_plan', async () => {
-			getValidOAuthTokenMock.mockResolvedValue(null)
 			const settings = emptySettings()
 			settings.billing = { plan: 'pro' }
 			settings.custom_llm = {
@@ -298,7 +346,6 @@ describe('resolveLlmRoute priority order', () => {
 		})
 
 		it('workspace api_key wins over maskin_plan', async () => {
-			getValidOAuthTokenMock.mockResolvedValue(null)
 			const settings = emptySettings()
 			settings.billing = { plan: 'pro' }
 			settings.llm_keys = { anthropic: 'sk-ant-x' }
@@ -323,7 +370,6 @@ describe('resolveLlmRoute priority order', () => {
 		})
 
 		it('byollm plan does NOT route through maskin_plan', async () => {
-			getValidOAuthTokenMock.mockResolvedValue(null)
 			const settings = emptySettings()
 			settings.billing = { plan: 'byollm' }
 			settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
@@ -338,7 +384,6 @@ describe('resolveLlmRoute priority order', () => {
 
 		it('falls through when paid plan is set but operator OR key is missing', async () => {
 			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = ''
-			getValidOAuthTokenMock.mockResolvedValue(null)
 			const settings = emptySettings()
 			settings.billing = { plan: 'starter' }
 			settings.llm_keys = { anthropic: 'sk-ant-recover' }
@@ -351,7 +396,6 @@ describe('resolveLlmRoute priority order', () => {
 		})
 
 		it('no billing block defaults to trial and routes through maskin_plan when no BYO set', async () => {
-			getValidOAuthTokenMock.mockResolvedValue(null)
 			const result = await resolveLlmRoute({
 				...baseParams,
 				db: dbWithSessionUsage([]),

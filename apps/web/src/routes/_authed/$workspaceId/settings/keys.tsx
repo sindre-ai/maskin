@@ -3,15 +3,22 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
-import { api } from '@/lib/api'
+import {
+	type ClaudeOAuthImportInput,
+	type ClaudeOAuthSlot,
+	type ClaudeOAuthSlotInfo,
+	api,
+} from '@/lib/api'
 import { getCredentialsCommand, parseClaudeCredentials } from '@/lib/claude-oauth'
+import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { Eye, EyeOff, Unplug } from 'lucide-react'
+import { ChevronDown, ChevronRight, Eye, EyeOff, Unplug } from 'lucide-react'
 import { useCallback, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/keys')({
@@ -41,11 +48,50 @@ function KeysPage() {
 	)
 }
 
+// Map a classified failover reason (written by the classifier in T4/T6) to
+// the customer-facing line shown next to the unhealthy primary. Reasons
+// outside this map render generically rather than leaking raw codes.
+const FAILOVER_REASON_COPY: Record<string, { slotLine: string; bannerBody: string }> = {
+	auth_failed: {
+		slotLine: 'Authentication failed. Reconnect to use this subscription again.',
+		bannerBody:
+			'The primary subscription needs to be reconnected. Agents are running on the backup until then.',
+	},
+	token_expired: {
+		slotLine: 'Credentials expired. Reconnect to use this subscription again.',
+		bannerBody:
+			'The primary subscription needs to be reconnected. Agents are running on the backup until then.',
+	},
+	quota_exhausted_5h: {
+		slotLine: '5-hour usage limit reached.',
+		bannerBody:
+			'The primary hit its 5-hour usage limit. Agents are running on the backup until the primary resets.',
+	},
+	quota_exhausted_weekly: {
+		slotLine: 'Weekly usage limit reached.',
+		bannerBody:
+			'The primary hit its weekly usage limit. Agents are running on the backup until the primary resets.',
+	},
+	quota_exhausted: {
+		slotLine: 'Usage limit reached.',
+		bannerBody:
+			'The primary hit a usage limit. Agents are running on the backup until it recovers.',
+	},
+}
+
+function formatExpiry(expiresAt: number | undefined): string {
+	if (!expiresAt) return ''
+	const remaining = expiresAt - Date.now()
+	if (remaining <= 0) return 'expired'
+	const hours = Math.floor(remaining / (1000 * 60 * 60))
+	if (hours > 24) return `${Math.floor(hours / 24)}d`
+	if (hours > 0) return `${hours}h`
+	return `${Math.floor(remaining / (1000 * 60))}m`
+}
+
 function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 	const queryClient = useQueryClient()
-	const [mode, setMode] = useState<'idle' | 'paste'>('idle')
-	const [pasteValue, setPasteValue] = useState('')
-	const [parseError, setParseError] = useState('')
+	const [pasteSlot, setPasteSlot] = useState<ClaudeOAuthSlot | null>(null)
 
 	const invalidate = useCallback(
 		() => queryClient.invalidateQueries({ queryKey: queryKeys.claudeOauth.status(workspaceId) }),
@@ -57,43 +103,19 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 		queryFn: () => api.claudeOauth.status(workspaceId),
 	})
 
-	const importMutation = useMutation({
-		mutationFn: (tokens: import('@/lib/api').ClaudeOAuthImportInput) =>
-			api.claudeOauth.import(workspaceId, tokens),
-		onSuccess: () => {
-			setPasteValue('')
-			setMode('idle')
-			invalidate()
-		},
-	})
-
-	const disconnectMutation = useMutation({
-		mutationFn: () => api.claudeOauth.disconnect(workspaceId),
-		onSuccess: invalidate,
-	})
-
-	const handlePasteImport = () => {
-		setParseError('')
-		const parsed = parseClaudeCredentials(pasteValue)
-		if (!parsed) {
-			setParseError('Could not find Claude OAuth tokens in the pasted JSON.')
-			return
-		}
-		importMutation.mutate(parsed)
-	}
-
 	const status = statusQuery.data
-	const isConnected = status?.connected && status?.valid
+	const slots = status?.slots ?? {}
+	const isFailedOver = Boolean(
+		status?.connected &&
+			status.active_slot === 'backup' &&
+			slots.primary &&
+			status.last_classified_reason,
+	)
+	const reasonCopy = status?.last_classified_reason
+		? FAILOVER_REASON_COPY[status.last_classified_reason]
+		: undefined
 
-	const formatExpiry = (expiresAt?: number) => {
-		if (!expiresAt) return ''
-		const remaining = expiresAt - Date.now()
-		if (remaining <= 0) return 'expired'
-		const hours = Math.floor(remaining / (1000 * 60 * 60))
-		if (hours > 24) return `${Math.floor(hours / 24)}d`
-		if (hours > 0) return `${hours}h`
-		return `${Math.floor(remaining / (1000 * 60))}m`
-	}
+	const closePaste = useCallback(() => setPasteSlot(null), [])
 
 	return (
 		<div>
@@ -108,102 +130,322 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 			<Label className="mb-1 text-bold">Claude Subscription</Label>
 			<p className="text-xs text-muted-foreground mb-3">
 				Connect your Claude Pro/Max/Teams subscription to use it for agent sessions instead of an
-				API key.
+				API key. Add a backup so agents keep working if the primary hits a usage limit or its
+				credentials expire.
 			</p>
 
-			{isConnected ? (
-				<div className="rounded-lg border border-border bg-bg-surface p-3 space-y-2">
-					<div className="flex items-center justify-between">
-						<div className="flex items-center gap-2">
-							<div className="size-2 rounded-full bg-success" />
-							<span className="text-sm font-medium text-foreground">Connected</span>
-							{status?.subscription_type && (
-								<span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-									{status.subscription_type}
-								</span>
-							)}
-							{status?.expires_at && (
-								<span className="text-xs text-muted-foreground">
-									expires in {formatExpiry(status.expires_at)}
-								</span>
-							)}
-						</div>
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => disconnectMutation.mutate()}
-							disabled={disconnectMutation.isPending}
-						>
-							<Unplug size={14} className="mr-1" />
-							Disconnect
-						</Button>
-					</div>
-				</div>
-			) : status?.connected && !status?.valid ? (
-				<div className="rounded-lg border border-warning/30 bg-warning/5 p-3 space-y-2">
-					<div className="flex items-center gap-2 text-sm text-warning">
-						<span>Credentials expired</span>
-					</div>
-					<div className="flex gap-2">
-						<Button variant="outline" size="sm" onClick={() => setMode('paste')}>
-							Import credentials
-						</Button>
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={() => disconnectMutation.mutate()}
-							disabled={disconnectMutation.isPending}
-						>
-							<Unplug size={14} className="mr-1" />
-							Remove
-						</Button>
-					</div>
-				</div>
-			) : mode === 'paste' ? (
-				<div className="space-y-3">
-					<p className="text-xs text-muted-foreground">
-						Run this in your terminal, then paste the output below:
-					</p>
-					<code className="block rounded-md border border-border bg-muted px-3 py-2 text-xs font-mono select-all">
-						{getCredentialsCommand()}
-					</code>
-					<textarea
-						value={pasteValue}
-						onChange={(e) => setPasteValue(e.target.value)}
-						placeholder="Paste the contents of .credentials.json here..."
-						className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-mono min-h-[80px] resize-y focus:outline-none focus:ring-1 focus:ring-accent"
-					/>
-					{(parseError || importMutation.isError) && (
-						<p className="text-xs text-error">
-							{parseError || importMutation.error?.message || 'Import failed'}
-						</p>
-					)}
-					<div className="flex gap-2">
-						<Button
-							onClick={handlePasteImport}
-							disabled={!pasteValue.trim() || importMutation.isPending}
-							size="sm"
-						>
-							{importMutation.isPending ? 'Importing...' : 'Import'}
-						</Button>
-						<button
-							type="button"
-							className="text-xs text-muted-foreground hover:text-foreground"
-							onClick={() => {
-								setMode('idle')
-								setPasteValue('')
-								setParseError('')
-							}}
-						>
-							Cancel
-						</button>
-					</div>
-				</div>
-			) : (
-				<Button variant="outline" onClick={() => setMode('paste')}>
-					Import credentials
-				</Button>
+			{isFailedOver && reasonCopy && (
+				<FailoverBanner reasonCopy={reasonCopy} reasonCode={status?.last_classified_reason ?? ''} />
 			)}
+
+			<div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="claude-oauth-slots">
+				<SlotCard
+					slot="primary"
+					info={slots.primary}
+					activeSlot={status?.active_slot ?? 'primary'}
+					connected={Boolean(status?.connected)}
+					unhealthyReasonLine={
+						isFailedOver ? (reasonCopy?.slotLine ?? 'Primary subscription is unhealthy.') : null
+					}
+					workspaceId={workspaceId}
+					onConnectClick={() => setPasteSlot('primary')}
+					onSuccess={invalidate}
+					hasOtherSlot={Boolean(slots.backup)}
+				/>
+				<SlotCard
+					slot="backup"
+					info={slots.backup}
+					activeSlot={status?.active_slot ?? 'primary'}
+					connected={Boolean(status?.connected)}
+					unhealthyReasonLine={null}
+					workspaceId={workspaceId}
+					onConnectClick={() => setPasteSlot('backup')}
+					onSuccess={invalidate}
+					hasOtherSlot={Boolean(slots.primary)}
+				/>
+			</div>
+
+			{pasteSlot && (
+				<PasteFlow
+					workspaceId={workspaceId}
+					initialSlot={pasteSlot}
+					onClose={closePaste}
+					onSuccess={invalidate}
+				/>
+			)}
+		</div>
+	)
+}
+
+interface SlotCardProps {
+	slot: ClaudeOAuthSlot
+	info: ClaudeOAuthSlotInfo | undefined
+	activeSlot: ClaudeOAuthSlot
+	connected: boolean
+	unhealthyReasonLine: string | null
+	workspaceId: string
+	onConnectClick: () => void
+	onSuccess: () => void
+	hasOtherSlot: boolean
+}
+
+function SlotCard({
+	slot,
+	info,
+	activeSlot,
+	connected,
+	unhealthyReasonLine,
+	workspaceId,
+	onConnectClick,
+	onSuccess,
+	hasOtherSlot,
+}: SlotCardProps) {
+	const disconnectMutation = useMutation({
+		mutationFn: () => api.claudeOauth.disconnect(workspaceId, slot),
+		onSuccess,
+	})
+
+	const swapMutation = useMutation({
+		mutationFn: () => api.claudeOauth.swap(workspaceId),
+		onSuccess,
+	})
+
+	const label = slot === 'primary' ? 'Primary' : 'Backup'
+	const isActive = connected && activeSlot === slot && Boolean(info)
+	const isUnhealthy = slot === 'primary' && Boolean(unhealthyReasonLine)
+
+	if (!info) {
+		// Empty state — only the backup slot can be in this state when a
+		// primary is connected (the dashed "Add a backup" card). An empty
+		// primary slot also lands here (e.g. legacy disconnect path) and we
+		// use slot-appropriate copy.
+		const isBackup = slot === 'backup'
+		return (
+			<div
+				className="rounded-lg border border-dashed border-border bg-transparent p-3 space-y-2"
+				data-slot={slot}
+				data-testid={`slot-${slot}`}
+			>
+				<div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+					{label}
+				</div>
+				<div className="text-sm font-medium text-muted-foreground">
+					{isBackup ? 'Add a backup' : 'No primary connected'}
+				</div>
+				<p className="text-xs text-muted-foreground leading-snug">
+					{isBackup
+						? 'If your primary hits its usage limit or its credentials expire, agents stop until you reconnect. A backup keeps them running.'
+						: 'Connect your Claude subscription to start running agent sessions.'}
+				</p>
+				<Button variant="outline" size="sm" onClick={onConnectClick}>
+					{isBackup ? 'Import backup credentials' : 'Import credentials'}
+				</Button>
+			</div>
+		)
+	}
+
+	return (
+		<div
+			className="rounded-lg border border-border bg-bg-surface p-3 space-y-2"
+			data-slot={slot}
+			data-testid={`slot-${slot}`}
+		>
+			<div className="flex items-center justify-between gap-2">
+				<span className="text-xs font-semibold uppercase tracking-wide text-foreground">
+					{label}
+				</span>
+				{isActive && (
+					<span
+						className="inline-flex items-center rounded-full bg-success/15 text-success px-2 py-0.5 text-[11px] font-medium"
+						aria-label="Currently serving sessions"
+					>
+						In use
+					</span>
+				)}
+			</div>
+			<div className="flex items-center gap-2 flex-wrap">
+				<div
+					className={cn('size-2 rounded-full', isUnhealthy ? 'bg-warning' : 'bg-success')}
+					aria-hidden="true"
+				/>
+				<span className="text-sm font-medium text-foreground">
+					{isUnhealthy ? 'Unhealthy' : 'Connected'}
+				</span>
+				{info.subscription_type && (
+					<span
+						className={cn(
+							'rounded-full px-2 py-0.5 text-xs',
+							isUnhealthy ? 'bg-warning/15 text-warning' : 'bg-muted text-muted-foreground',
+						)}
+					>
+						{info.subscription_type}
+					</span>
+				)}
+				<span className="text-xs text-muted-foreground">
+					expires in {formatExpiry(info.expires_at)}
+				</span>
+				{info.fingerprint && (
+					<span className="text-xs font-mono text-muted-foreground">id {info.fingerprint}</span>
+				)}
+			</div>
+			{isUnhealthy && unhealthyReasonLine && (
+				<p className="text-xs text-warning">{unhealthyReasonLine}</p>
+			)}
+			<div className="flex flex-wrap gap-2 pt-1">
+				{slot === 'backup' && hasOtherSlot && (
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => swapMutation.mutate()}
+						disabled={swapMutation.isPending}
+					>
+						{swapMutation.isPending ? 'Swapping...' : 'Swap into primary'}
+					</Button>
+				)}
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={() => disconnectMutation.mutate()}
+					disabled={disconnectMutation.isPending}
+				>
+					<Unplug size={14} className="mr-1" />
+					Disconnect
+				</Button>
+			</div>
+		</div>
+	)
+}
+
+function FailoverBanner({
+	reasonCopy,
+	reasonCode,
+}: {
+	reasonCopy: (typeof FAILOVER_REASON_COPY)[string]
+	reasonCode: string
+}) {
+	const [showVerbatim, setShowVerbatim] = useState(false)
+	return (
+		<div
+			className="rounded-md border border-warning/30 bg-warning/5 px-3 py-3 mb-3 space-y-2"
+			data-testid="failover-banner"
+		>
+			<p className="text-sm font-bold text-warning">Running on backup</p>
+			<p className="text-xs text-foreground/80">{reasonCopy.bannerBody}</p>
+			<button
+				type="button"
+				className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+				onClick={() => setShowVerbatim((v) => !v)}
+				aria-expanded={showVerbatim}
+			>
+				{showVerbatim ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+				Failure detail
+			</button>
+			{showVerbatim && (
+				<pre className="mt-1 text-xs font-mono text-muted-foreground bg-muted/30 rounded p-2 whitespace-pre-wrap overflow-auto max-h-40">
+					classified reason: {reasonCode}
+				</pre>
+			)}
+		</div>
+	)
+}
+
+interface PasteFlowProps {
+	workspaceId: string
+	initialSlot: ClaudeOAuthSlot
+	onClose: () => void
+	onSuccess: () => void
+}
+
+function PasteFlow({ workspaceId, initialSlot, onClose, onSuccess }: PasteFlowProps) {
+	const [pasteValue, setPasteValue] = useState('')
+	const [slot, setSlot] = useState<ClaudeOAuthSlot>(initialSlot)
+	const [parseError, setParseError] = useState('')
+
+	const importMutation = useMutation({
+		mutationFn: (tokens: ClaudeOAuthImportInput) => api.claudeOauth.import(workspaceId, tokens),
+		onSuccess: () => {
+			setPasteValue('')
+			onSuccess()
+			onClose()
+		},
+	})
+
+	const handleImport = () => {
+		setParseError('')
+		const parsed = parseClaudeCredentials(pasteValue)
+		if (!parsed) {
+			setParseError('Could not find Claude OAuth tokens in the pasted JSON.')
+			return
+		}
+		importMutation.mutate({ ...parsed, slot })
+	}
+
+	return (
+		<div
+			className="mt-3 rounded-lg border border-border bg-muted/30 p-3 space-y-3"
+			data-testid="paste-flow"
+		>
+			<p className="text-xs text-muted-foreground">
+				Run this in your terminal, then paste the output below:
+			</p>
+			<code className="block rounded-md border border-border bg-muted px-3 py-2 text-xs font-mono select-all">
+				{getCredentialsCommand()}
+			</code>
+			<textarea
+				value={pasteValue}
+				onChange={(e) => setPasteValue(e.target.value)}
+				placeholder="Paste the contents of .credentials.json here..."
+				className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-mono min-h-[80px] resize-y focus:outline-none focus:ring-1 focus:ring-accent"
+			/>
+			<div className="space-y-1.5">
+				<Label className="text-xs text-muted-foreground">Designate as</Label>
+				<RadioGroup
+					value={slot}
+					onValueChange={(value) => setSlot(value as ClaudeOAuthSlot)}
+					className="flex gap-4"
+					aria-label="Slot designation"
+				>
+					<label
+						htmlFor="paste-slot-primary"
+						className="flex items-center gap-2 text-sm text-foreground cursor-pointer"
+					>
+						<RadioGroupItem value="primary" id="paste-slot-primary" />
+						Primary
+					</label>
+					<label
+						htmlFor="paste-slot-backup"
+						className="flex items-center gap-2 text-sm text-foreground cursor-pointer"
+					>
+						<RadioGroupItem value="backup" id="paste-slot-backup" />
+						Backup
+					</label>
+				</RadioGroup>
+			</div>
+			{(parseError || importMutation.isError) && (
+				<p className="text-xs text-error">
+					{parseError || importMutation.error?.message || 'Import failed'}
+				</p>
+			)}
+			<div className="flex gap-2">
+				<Button
+					onClick={handleImport}
+					disabled={!pasteValue.trim() || importMutation.isPending}
+					size="sm"
+				>
+					{importMutation.isPending ? 'Importing...' : 'Import'}
+				</Button>
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={() => {
+						setPasteValue('')
+						setParseError('')
+						onClose()
+					}}
+				>
+					Cancel
+				</Button>
+			</div>
 		</div>
 	)
 }
