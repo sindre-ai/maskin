@@ -1,0 +1,26 @@
+name = "liveness-worker"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+# Every 2 minutes. Cloudflare Cron drifts by seconds, not minutes, so this
+# comfortably hits the ≤10 min MTTD target in the parent bet's AC.
+[triggers]
+crons = ["*/2 * * * *"]
+
+# Non-secret defaults. The four secret values (SLACK_WEBHOOK_URL,
+# GH_DISPATCH_TOKEN, HEARTBEAT_SHARED_SECRET, HEARTBEAT_URL) are provisioned
+# out-of-band with `wrangler secret put <NAME>` — never checked into the repo.
+# See README for the exact commands.
+[vars]
+SILENCE_THRESHOLD_MIN = "8"
+ACTIVE_HOURS = "07:00-23:00"
+ACTIVE_TIMEZONE = "Europe/Copenhagen"
+GH_DISPATCH_REPO = "sindre-ai/maskin"
+BET_URL = "https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/ec861955-00c0-447e-a72e-1b940a61ec0f"
+
+# Workers KV holds the single-key silence flag used for dedup. The namespace
+# id is bound at deploy time — see README for the `wrangler kv namespace create`
+# step. A plain module-level variable would reset per V8 isolate and misfire.
+[[kv_namespaces]]
+binding = "SILENCE_STATE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

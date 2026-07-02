@@ -1,0 +1,22 @@
+{
+	"name": "@maskin/liveness-worker",
+	"version": "0.1.0",
+	"private": true,
+	"license": "Apache-2.0",
+	"type": "module",
+	"description": "Off-fleet Cloudflare Workers cron that polls the fleet-liveness heartbeat, pages Slack, and fires a GitHub repository_dispatch when the fleet goes silent.",
+	"scripts": {
+		"dev": "wrangler dev",
+		"deploy": "wrangler deploy",
+		"tail": "wrangler tail",
+		"type-check": "tsc --noEmit",
+		"test": "vitest"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20250109.0",
+		"@types/node": "^25.6.0",
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0",
+		"wrangler": "^3.100.0"
+	}
+}
