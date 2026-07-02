@@ -96,6 +96,71 @@ describe('Claude OAuth Routes', () => {
 			expect(update.settings).not.toHaveProperty('claude_oauth')
 		})
 
+		it('repoints active_slot to the remaining slot when the active slot is disconnected', async () => {
+			const workspace = buildWorkspace({
+				id: wsId,
+				settings: {
+					claude_oauth: newShapeOAuth({
+						failover: { active_slot: 'backup', last_classified_reason: 'quota_exhausted_weekly' },
+					}),
+				},
+			})
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			const res = await app.request(jsonDelete('/api/claude-oauth?slot=backup', headers))
+
+			expect(res.status).toBe(200)
+			const update = calls.updates[0] as {
+				settings: {
+					claude_oauth: { failover: { active_slot: string; last_classified_reason?: string } }
+				}
+			}
+			expect(update.settings.claude_oauth.failover.active_slot).toBe('primary')
+			expect(update.settings.claude_oauth.failover.last_classified_reason).toBeUndefined()
+		})
+
+		it('repoints active_slot to backup when the default-active primary is disconnected', async () => {
+			// No explicit `failover` on the row — active_slot defaults to 'primary'.
+			const workspace = buildWorkspace({ id: wsId, settings: { claude_oauth: newShapeOAuth() } })
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			const res = await app.request(jsonDelete('/api/claude-oauth?slot=primary', headers))
+
+			expect(res.status).toBe(200)
+			const update = calls.updates[0] as {
+				settings: { claude_oauth: { failover: { active_slot: string } } }
+			}
+			expect(update.settings.claude_oauth.failover.active_slot).toBe('backup')
+		})
+
+		it('leaves active_slot untouched when disconnecting a slot that was not active', async () => {
+			const workspace = buildWorkspace({
+				id: wsId,
+				settings: {
+					claude_oauth: newShapeOAuth({
+						failover: { active_slot: 'backup', last_classified_reason: 'quota_exhausted_weekly' },
+					}),
+				},
+			})
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			const res = await app.request(jsonDelete('/api/claude-oauth?slot=primary', headers))
+
+			expect(res.status).toBe(200)
+			const update = calls.updates[0] as {
+				settings: {
+					claude_oauth: { failover: { active_slot: string; last_classified_reason?: string } }
+				}
+			}
+			expect(update.settings.claude_oauth.failover.active_slot).toBe('backup')
+			expect(update.settings.claude_oauth.failover.last_classified_reason).toBe(
+				'quota_exhausted_weekly',
+			)
+		})
+
 		it('returns 403 when not a workspace member', async () => {
 			const { app } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
 			const res = await app.request(jsonRequest('DELETE', '/api/claude-oauth', undefined, headers))
@@ -268,6 +333,33 @@ describe('Claude OAuth Routes', () => {
 				settings: { claude_oauth: { failover: { active_slot: string } } }
 			}
 			expect(update.settings.claude_oauth.failover.active_slot).toBe('primary')
+		})
+
+		it('keeps active_slot on backup when re-importing backup while primary is still unhealthy', async () => {
+			const workspace = buildWorkspace({
+				id: wsId,
+				settings: {
+					claude_oauth: newShapeOAuth({
+						failover: { active_slot: 'backup', last_classified_reason: 'quota_exhausted_weekly' },
+					}),
+				},
+			})
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			await app.request(
+				jsonRequest('POST', '/api/claude-oauth/import', { ...baseImport, slot: 'backup' }, headers),
+			)
+
+			const update = calls.updates[0] as {
+				settings: {
+					claude_oauth: { failover: { active_slot: string; last_classified_reason?: string } }
+				}
+			}
+			// Importing into backup should NOT force session-start back onto the
+			// still-broken primary by resetting active_slot to 'primary'.
+			expect(update.settings.claude_oauth.failover.active_slot).toBe('backup')
+			expect(update.settings.claude_oauth.failover.last_classified_reason).toBeUndefined()
 		})
 
 		it('returns 403 when not a workspace member', async () => {

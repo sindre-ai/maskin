@@ -109,6 +109,41 @@ describe('Claude OAuth Routes — slot writes (integration)', () => {
 		expect(oauth.failover?.last_classified_reason).toBeUndefined()
 	})
 
+	it('POST /import to backup keeps active_slot on backup while primary is still unhealthy', async () => {
+		const ws = await insertWorkspace(db, getTestActorId(), {
+			settings: {
+				enabled_modules: ['work'],
+				claude_oauth: {
+					primary: seededPrimary,
+					backup: seededBackup,
+					failover: { active_slot: 'backup', last_classified_reason: 'quota_exhausted_weekly' },
+				},
+			},
+		})
+
+		await makeApp().request(
+			jsonRequest(
+				'POST',
+				'/api/claude-oauth/import',
+				{
+					accessToken: 'rotated-backup-access',
+					refreshToken: 'rotated-backup-refresh',
+					expiresAt: 1_980_000_000_000,
+					slot: 'backup',
+				},
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+
+		const oauth = (await readClaudeOAuth(ws.id)) as {
+			failover?: { active_slot: string; last_classified_reason?: string }
+		}
+		// Rotating the backup's own credentials must not route session-start
+		// back onto the still-broken primary.
+		expect(oauth.failover?.active_slot).toBe('backup')
+		expect(oauth.failover?.last_classified_reason).toBeUndefined()
+	})
+
 	it('POST /swap rotates primary↔backup data and resets failover (AC-U5)', async () => {
 		const ws = await insertWorkspace(db, getTestActorId(), {
 			settings: {
@@ -159,6 +194,56 @@ describe('Claude OAuth Routes — slot writes (integration)', () => {
 		}
 		expect(oauth.primary).toBeDefined()
 		expect(oauth.backup).toBeUndefined()
+	})
+
+	it('DELETE of the active slot repoints active_slot to the healthy remaining slot', async () => {
+		const ws = await insertWorkspace(db, getTestActorId(), {
+			settings: {
+				enabled_modules: ['work'],
+				claude_oauth: {
+					primary: seededPrimary,
+					backup: seededBackup,
+					failover: { active_slot: 'backup', last_classified_reason: 'quota_exhausted_weekly' },
+				},
+			},
+		})
+
+		const res = await makeApp().request(
+			jsonDelete('/api/claude-oauth?slot=backup', { 'x-workspace-id': ws.id }),
+		)
+		expect(res.status).toBe(200)
+
+		const oauth = (await readClaudeOAuth(ws.id)) as {
+			primary?: unknown
+			backup?: unknown
+			failover?: { active_slot: string; last_classified_reason?: string }
+		}
+		expect(oauth.backup).toBeUndefined()
+		// The disconnected slot was active — session-start must fall back to
+		// the still-healthy primary instead of resolving to nothing.
+		expect(oauth.failover?.active_slot).toBe('primary')
+		expect(oauth.failover?.last_classified_reason).toBeUndefined()
+	})
+
+	it('DELETE of the default-active primary repoints active_slot to backup', async () => {
+		const ws = await insertWorkspace(db, getTestActorId(), {
+			settings: {
+				enabled_modules: ['work'],
+				claude_oauth: { primary: seededPrimary, backup: seededBackup },
+			},
+		})
+
+		const res = await makeApp().request(
+			jsonDelete('/api/claude-oauth?slot=primary', { 'x-workspace-id': ws.id }),
+		)
+		expect(res.status).toBe(200)
+
+		const oauth = (await readClaudeOAuth(ws.id)) as {
+			primary?: unknown
+			failover?: { active_slot: string }
+		}
+		expect(oauth.primary).toBeUndefined()
+		expect(oauth.failover?.active_slot).toBe('backup')
 	})
 
 	it('DELETE with no slot drops the entire claude_oauth key (back-compat)', async () => {

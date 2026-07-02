@@ -120,7 +120,19 @@ app.openapi(disconnectRoute, (async (c) => {
 		return c.json({ success: true })
 	}
 
-	const nextOAuth = clearSlot(settings.claude_oauth, slot)
+	const wasActiveSlot = readFailoverState(settings.claude_oauth).active_slot === slot
+	let nextOAuth = clearSlot(settings.claude_oauth, slot)
+
+	if (nextOAuth && wasActiveSlot) {
+		// We just disconnected the slot session-start would have read next.
+		// Repoint active_slot to whichever slot still has data so a healthy
+		// remaining slot isn't orphaned by a stale pointer.
+		const remainingSlot: OAuthSlotKind = slot === 'primary' ? 'backup' : 'primary'
+		if (readSlots(nextOAuth)[remainingSlot]) {
+			nextOAuth = writeFailoverState(nextOAuth, { active_slot: remainingSlot })
+		}
+	}
+
 	let nextSettings: WorkspaceSettings
 	if (nextOAuth) {
 		nextSettings = { ...settings, claude_oauth: nextOAuth }
@@ -308,12 +320,15 @@ app.openapi(importRoute, (async (c) => {
 	}
 
 	const settings = (ws.settings as WorkspaceSettings) ?? {}
-	// Re-importing into a slot is a recovery action — clear any stale
-	// failover state so the next session-start re-evaluates from a clean
-	// slate. T6/T7 will re-write failover state if the new tokens fail again.
+	// Re-importing into a slot is a recovery action for THAT slot — clear any
+	// stale failover state and make the freshly-imported slot active again so
+	// the next session-start re-evaluates from a clean slate. Resetting to a
+	// hardcoded 'primary' here would be wrong when the caller just fixed the
+	// backup while primary is still unhealthy. T6/T7 will re-write failover
+	// state if the new tokens fail again.
 	const withSlot = writeSlot(settings.claude_oauth, slot, encryptOAuthTokens(tokens))
 	const nextOAuth = withSlot.failover
-		? writeFailoverState(withSlot, { active_slot: 'primary' })
+		? writeFailoverState(withSlot, { active_slot: slot })
 		: withSlot
 
 	await db
