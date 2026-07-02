@@ -5,13 +5,26 @@
 // no absolute paths, repo-relative POSIX only, pretty-printed with a trailing
 // newline.
 //
-// The shape mirrors the three sub-signals plus cycles:
+// The shape matches what scripts/fitness-report.mjs (T5's aggregator)
+// looks up when it diffs current-tree findings against accepted debt:
 //   {
-//     "cycles":               [{ "cycle": ["a", "b", "a"] }, ...],
-//     "boundary_violations":  [{ "from", "to", "rule" }, ...],
+//     "cycles":               [{ "path": ["a", "b"] }, ...],
+//     "boundary_violations":  [{ "rule", "from", "to" }, ...],
 //     "cognitive_complexity": [{ "file", "fn", "score" }, ...],
 //     "oversized_files":      [{ "file", "loc" }, ...]
 //   }
+//
+// `cycles.path` is rotation-canonicalised (smallest module name first) so a
+// cycle a->b->a and b->a->b collapse to the same entry — matches T5's
+// canonicalCyclePath.
+//
+// `cognitive_complexity.fn` is the T5 `biomeFnIdent` output: `L{1-based line}`
+// derived from the biome diagnostic's span. Function-name extraction was
+// intentionally rejected — it's not stable when unrelated code above shifts
+// byte offsets, whereas line numbers land where the span already points and
+// let the aggregator lookup succeed. If line numbers shift too (e.g. a
+// refactor lands lines above), the ratchet correctly counts the moved
+// finding as a new violation and `pnpm fitness:baseline` regenerates.
 //
 // Usage:
 //   pnpm fitness:baseline
@@ -37,41 +50,6 @@ const BIOME_BIN = join(REPO_ROOT, 'node_modules/.bin/biome')
 const FILESIZE_SCRIPT = join(REPO_ROOT, 'scripts/check-max-file-size.mjs')
 
 const BIOME_CATEGORY = 'lint/complexity/noExcessiveCognitiveComplexity'
-const RESERVED_WORDS = new Set([
-	'if',
-	'else',
-	'for',
-	'while',
-	'switch',
-	'case',
-	'return',
-	'const',
-	'let',
-	'var',
-	'function',
-	'class',
-	'import',
-	'export',
-	'default',
-	'new',
-	'try',
-	'catch',
-	'throw',
-	'async',
-	'await',
-	'yield',
-	'static',
-	'public',
-	'private',
-	'protected',
-	'get',
-	'set',
-	'of',
-	'in',
-	'do',
-	'typeof',
-	'instanceof',
-])
 
 function main() {
 	const args = process.argv.slice(2)
@@ -130,7 +108,7 @@ function removeMode(rawTargets) {
 // Per-array match rules keep partitionByTargets flat: one predicate per bucket
 // keyed by the baseline field name, driven by a shared partition helper.
 const REMOVE_MATCHERS = {
-	cycles: (c, targets) => c.cycle.some((n) => matchesAny(n, targets)),
+	cycles: (c, targets) => (c.path ?? []).some((n) => matchesAny(n, targets)),
 	boundary_violations: (b, targets) => matchesAny(b.from, targets) || matchesAny(b.to, targets),
 	cognitive_complexity: (c, targets) => matchesAny(c.file, targets),
 	oversized_files: (o, targets) => matchesAny(o.file, targets),
@@ -157,8 +135,8 @@ function partitionArray(arr, predicate) {
 function findStillPresent(removed, current) {
 	const out = []
 	for (const c of removed.cycles) {
-		const id = c.cycle.join(' -> ')
-		if (current.cycles.some((x) => x.cycle.join(' -> ') === id)) {
+		const id = (c.path ?? []).join(' -> ')
+		if (current.cycles.some((x) => (x.path ?? []).join(' -> ') === id)) {
 			out.push(`cycle: ${id}`)
 		}
 	}
@@ -206,42 +184,41 @@ function extractCycles(dc) {
 	const seen = new Set()
 	const out = []
 	for (const v of dc?.summary?.violations ?? []) {
-		if (v.type !== 'cycle') continue
-		const names = (v.cycle ?? []).map((n) => normalizePath(n.name))
-		if (names.length === 0) continue
-		// Rotate the cycle so its identity is invariant under starting-node choice.
-		// A cycle a->b->c and b->c->a should collapse to a single entry.
-		const canonical = canonicalizeCycle(names)
-		const id = canonical.join(' -> ')
+		if (v?.rule?.name !== 'no-circular') continue
+		const modules = Array.isArray(v.cycle) ? v.cycle.map((c) => normalizePath(c.name)) : []
+		if (modules.length === 0) continue
+		const path = canonicalCyclePath(modules)
+		const id = path.join('>')
 		if (seen.has(id)) continue
 		seen.add(id)
-		out.push({ cycle: canonical })
+		out.push({ path })
 	}
-	return sortBy(out, (c) => c.cycle.join(' -> '))
+	return sortBy(out, (c) => c.path.join('>'))
 }
 
-function canonicalizeCycle(names) {
-	// Rotate so the lexicographically smallest name is first.
+// Rotate the cycle so the lexicographically smallest module name is first —
+// the exact canonicalisation T5's aggregator uses. Ensures dep-cruiser's
+// duplicate cycle reports collapse to one baseline entry.
+function canonicalCyclePath(modules) {
 	let minIdx = 0
-	for (let i = 1; i < names.length; i++) {
-		if (names[i] < names[minIdx]) minIdx = i
+	for (let i = 1; i < modules.length; i++) {
+		if (modules[i] < modules[minIdx]) minIdx = i
 	}
-	return names.slice(minIdx).concat(names.slice(0, minIdx))
+	return modules.slice(minIdx).concat(modules.slice(0, minIdx))
 }
 
 function extractBoundaryViolations(dc) {
 	const out = []
 	const seen = new Set()
 	for (const v of dc?.summary?.violations ?? []) {
-		if (v.type === 'cycle') continue
-		if (v.rule?.severity !== 'error') continue
+		const rule = v?.rule?.name
+		if (!rule || rule === 'no-circular') continue
 		const from = normalizePath(v.from)
 		const to = normalizePath(v.to)
-		const rule = v.rule.name
 		const key = `${rule}|${from}|${to}`
 		if (seen.has(key)) continue
 		seen.add(key)
-		out.push({ from, to, rule })
+		out.push({ rule, from, to })
 	}
 	return sortBy(out, (v) => `${v.rule}\t${v.from}\t${v.to}`)
 }
@@ -250,12 +227,11 @@ function extractCognitiveComplexity(bi) {
 	const out = []
 	const seen = new Set()
 	for (const d of bi?.diagnostics ?? []) {
-		if (d.category !== BIOME_CATEGORY) continue
+		if (d?.category !== BIOME_CATEGORY) continue
 		const file = normalizePath(d.location?.path?.file ?? '')
-		const [s, e] = d.location?.span ?? [0, 0]
-		const fn = extractFunctionName(d.location?.sourceCode ?? '', s, e)
+		if (!file) continue
+		const fn = biomeFnIdent(d)
 		const score = extractScore(d.description ?? '')
-		if (!file || !fn) continue
 		const key = `${file}|${fn}`
 		if (seen.has(key)) continue
 		seen.add(key)
@@ -264,77 +240,26 @@ function extractCognitiveComplexity(bi) {
 	return sortBy(out, (x) => `${x.file}\t${x.fn}`)
 }
 
+// Line-based identifier — matches scripts/fitness-report.mjs::biomeFnIdent
+// byte-for-byte so the baseline lookup succeeds. Line number is 1-based.
+function biomeFnIdent(diag) {
+	const span = diag?.location?.span
+	const startOffset = Array.isArray(span) ? span[0] : null
+	const source = diag?.location?.sourceCode
+	if (typeof source === 'string' && Number.isFinite(startOffset)) {
+		let line = 1
+		const end = Math.min(startOffset, source.length)
+		for (let i = 0; i < end; i++) {
+			if (source.charCodeAt(i) === 10) line++
+		}
+		return `L${line}`
+	}
+	return Number.isFinite(startOffset) ? `@${startOffset}` : 'unknown'
+}
+
 function extractScore(desc) {
-	const m = desc.match(/complexity of (\d+)/)
-	return m ? Number(m[1]) : 0
-}
-
-// Biome's span often lands mid-signature or even mid-body — the reported
-// region is the "problem area" rather than the name. Walk backwards line by
-// line from the span's line until we hit a function/method declaration. That
-// keeps the recorded `fn` stable when unrelated code above shifts the file's
-// byte offsets (rebases, adjacent inserts) — an unstable `fn` would spuriously
-// force a NEW-violation failure at ratchet time and break the whole point of
-// the baseline. Cap the walk at 200 lines to avoid pathological files.
-function extractFunctionName(src, spanStart, spanEnd) {
-	if (!src) return null
-	const spanLineStart = Math.max(0, src.lastIndexOf('\n', spanStart - 1) + 1)
-	const spanLineEndRaw = src.indexOf('\n', spanEnd)
-	const spanLineEnd = spanLineEndRaw < 0 ? src.length : spanLineEndRaw
-	const spanLine = src.slice(spanLineStart, spanLineEnd)
-
-	// The span line itself may carry a multi-line signature opener like
-	// `methodName(` — accept the looser match here since we know biome
-	// pointed at this line for a reason.
-	const fromSpanLine = matchFunctionDecl(spanLine, { allowMultilineOpener: true })
-	if (fromSpanLine) return fromSpanLine
-
-	// Walk backwards up to 200 lines. Disable the multi-line opener match here —
-	// otherwise Drizzle-style chains (`and(\n\t...\n)`) get mistaken for a decl.
-	let cursor = spanLineStart - 1
-	for (let i = 0; i < 200 && cursor > 0; i++) {
-		const prevStart = Math.max(0, src.lastIndexOf('\n', cursor - 1) + 1)
-		const line = src.slice(prevStart, cursor)
-		const hit = matchFunctionDecl(line, { allowMultilineOpener: false })
-		if (hit) return hit
-		cursor = prevStart - 1
-	}
-	return null
-}
-
-function matchFunctionDecl(line, { allowMultilineOpener }) {
-	// `function foo(` / `async function foo(` / `export function foo(`
-	let m = line.match(/function\s+([A-Za-z_$][\w$]*)/)
-	if (m) return m[1]
-
-	// `const foo = ...` where the RHS is an arrow, function expr, or type-arg opener.
-	m = line.match(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:function\s*|\(|<)/)
-	if (m) return m[1]
-
-	// Class method — leading whitespace + optional modifiers + name + args + `{` at
-	// end of line. The trailing `{` discriminates a method definition from a call
-	// like `foo(bar) {…}` block statement, and `[^=>{;]*` inside the parens rules
-	// out arrow-callback calls like `setTimeout(() => {`.
-	m = line.match(
-		/^\s*(?:public\s+|private\s+|protected\s+|readonly\s+|static\s+|async\s+|get\s+|set\s+|\*\s*)*([A-Za-z_$][\w$]*)\s*\([^=>{;]*\)[^{;=]*\{\s*$/,
-	)
-	if (m && !RESERVED_WORDS.has(m[1])) return m[1]
-
-	// Multi-line class-method signature — only permitted on the span line itself;
-	// during walkback it produces false positives on function-call chains like
-	// Drizzle's `and(\n\t...\n)`.
-	if (allowMultilineOpener) {
-		m = line.match(
-			/^\s*(?:public\s+|private\s+|protected\s+|readonly\s+|static\s+|async\s+|get\s+|set\s+|\*\s*)*([A-Za-z_$][\w$]*)\s*\(\s*$/,
-		)
-		if (m && !RESERVED_WORDS.has(m[1])) return m[1]
-	}
-
-	// Object literal method / property assigned to a function
-	m = line.match(/^\s*([A-Za-z_$][\w$]*)\s*:\s*(?:async\s*)?(?:function\s*)?\(/)
-	if (m && !RESERVED_WORDS.has(m[1])) return m[1]
-
-	return null
+	const m = desc.match(/complexity of (\d+)/i)
+	return m ? Number.parseInt(m[1], 10) : null
 }
 
 // ─── utilities ────────────────────────────────────────────────────────

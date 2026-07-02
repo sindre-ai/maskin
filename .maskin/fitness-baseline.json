@@ -1,638 +1,2504 @@
 {
   "cycles": [
     {
-      "cycle": [
+      "path": [
         "apps/dev/src/lib/integrations/providers/gmail/watch.ts",
         "apps/dev/src/lib/integrations/registry.ts"
       ]
     },
     {
-      "cycle": [
+      "path": [
         "apps/dev/src/lib/integrations/providers/slack/fan-out.ts",
         "apps/dev/src/lib/integrations/registry.ts"
       ]
     }
   ],
-  "boundary_violations": [],
+  "boundary_violations": [
+    {
+      "rule": "no-orphans",
+      "from": "apps/agent-server/build.mjs",
+      "to": "apps/agent-server/build.mjs"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/dev/build.mjs",
+      "to": "apps/dev/build.mjs"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/dev/vitest.integration.config.ts",
+      "to": "apps/dev/vitest.integration.config.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/scripts/build-mcp.mjs",
+      "to": "apps/web/scripts/build-mcp.mjs"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/catalog/package-grid.tsx",
+      "to": "apps/web/src/components/catalog/package-grid.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/chat/chat-panel.tsx",
+      "to": "apps/web/src/components/chat/chat-panel.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/chat/chat-sidebar-provider.tsx",
+      "to": "apps/web/src/components/chat/chat-sidebar-provider.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/chat/chat-transcript.tsx",
+      "to": "apps/web/src/components/chat/chat-transcript.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/chat/chat.tsx",
+      "to": "apps/web/src/components/chat/chat.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/chat/selection-chips.tsx",
+      "to": "apps/web/src/components/chat/selection-chips.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/chat/slash-picker.tsx",
+      "to": "apps/web/src/components/chat/slash-picker.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/command-palette.tsx",
+      "to": "apps/web/src/components/command-palette.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/extensions/extension-removal-dialog.tsx",
+      "to": "apps/web/src/components/extensions/extension-removal-dialog.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/foryou/onboarding-prompt-card.tsx",
+      "to": "apps/web/src/components/foryou/onboarding-prompt-card.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/foryou/sparse-composer.tsx",
+      "to": "apps/web/src/components/foryou/sparse-composer.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/foryou/unread-thread-card.tsx",
+      "to": "apps/web/src/components/foryou/unread-thread-card.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/imports/import-dialog.tsx",
+      "to": "apps/web/src/components/imports/import-dialog.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/layout/header.tsx",
+      "to": "apps/web/src/components/layout/header.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/objects/bulk-action-bar.tsx",
+      "to": "apps/web/src/components/objects/bulk-action-bar.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/objects/metadata-badges.tsx",
+      "to": "apps/web/src/components/objects/metadata-badges.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/settings/human-detail-dialog.tsx",
+      "to": "apps/web/src/components/settings/human-detail-dialog.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/settings/mcp-connection.tsx",
+      "to": "apps/web/src/components/settings/mcp-connection.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/shared/date-range-picker.tsx",
+      "to": "apps/web/src/components/shared/date-range-picker.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/shared/form-error.tsx",
+      "to": "apps/web/src/components/shared/form-error.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/shared/offline-banner.tsx",
+      "to": "apps/web/src/components/shared/offline-banner.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/shared/route-error.tsx",
+      "to": "apps/web/src/components/shared/route-error.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/breadcrumb.tsx",
+      "to": "apps/web/src/components/ui/breadcrumb.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/button-group.tsx",
+      "to": "apps/web/src/components/ui/button-group.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/calendar.tsx",
+      "to": "apps/web/src/components/ui/calendar.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/card.tsx",
+      "to": "apps/web/src/components/ui/card.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/checkbox.tsx",
+      "to": "apps/web/src/components/ui/checkbox.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/dialog.tsx",
+      "to": "apps/web/src/components/ui/dialog.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/dropdown-menu.tsx",
+      "to": "apps/web/src/components/ui/dropdown-menu.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/input.tsx",
+      "to": "apps/web/src/components/ui/input.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/label.tsx",
+      "to": "apps/web/src/components/ui/label.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/popover.tsx",
+      "to": "apps/web/src/components/ui/popover.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/radio-group.tsx",
+      "to": "apps/web/src/components/ui/radio-group.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/responsive-dialog.tsx",
+      "to": "apps/web/src/components/ui/responsive-dialog.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/responsive-popover.tsx",
+      "to": "apps/web/src/components/ui/responsive-popover.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/select.tsx",
+      "to": "apps/web/src/components/ui/select.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/separator.tsx",
+      "to": "apps/web/src/components/ui/separator.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/sidebar.tsx",
+      "to": "apps/web/src/components/ui/sidebar.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/skeleton.tsx",
+      "to": "apps/web/src/components/ui/skeleton.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/switch.tsx",
+      "to": "apps/web/src/components/ui/switch.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/table.tsx",
+      "to": "apps/web/src/components/ui/table.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/tabs.tsx",
+      "to": "apps/web/src/components/ui/tabs.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/textarea.tsx",
+      "to": "apps/web/src/components/ui/textarea.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/components/ui/tooltip.tsx",
+      "to": "apps/web/src/components/ui/tooltip.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/hooks/use-auto-save.ts",
+      "to": "apps/web/src/hooks/use-auto-save.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/hooks/use-chat-one-shot.ts",
+      "to": "apps/web/src/hooks/use-chat-one-shot.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/hooks/use-chat-session.ts",
+      "to": "apps/web/src/hooks/use-chat-session.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/hooks/use-duration.ts",
+      "to": "apps/web/src/hooks/use-duration.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/hooks/use-event-visible.ts",
+      "to": "apps/web/src/hooks/use-event-visible.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/hooks/use-imports.ts",
+      "to": "apps/web/src/hooks/use-imports.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/hooks/use-mobile.tsx",
+      "to": "apps/web/src/hooks/use-mobile.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/hooks/use-notifications.ts",
+      "to": "apps/web/src/hooks/use-notifications.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/hooks/use-online-status.ts",
+      "to": "apps/web/src/hooks/use-online-status.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/hooks/use-session-usage.ts",
+      "to": "apps/web/src/hooks/use-session-usage.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/hooks/use-sessions.ts",
+      "to": "apps/web/src/hooks/use-sessions.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/hooks/use-subscriptions.ts",
+      "to": "apps/web/src/hooks/use-subscriptions.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/hooks/use-user-display-settings.ts",
+      "to": "apps/web/src/hooks/use-user-display-settings.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/lib/agent-status.ts",
+      "to": "apps/web/src/lib/agent-status.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/lib/annotations.ts",
+      "to": "apps/web/src/lib/annotations.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/lib/chat-context.tsx",
+      "to": "apps/web/src/lib/chat-context.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/lib/chat-export.ts",
+      "to": "apps/web/src/lib/chat-export.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/lib/chat-selection.ts",
+      "to": "apps/web/src/lib/chat-selection.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/lib/chat-stream.ts",
+      "to": "apps/web/src/lib/chat-stream.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/lib/claude-oauth.ts",
+      "to": "apps/web/src/lib/claude-oauth.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/lib/cn.ts",
+      "to": "apps/web/src/lib/cn.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/lib/file-utils.ts",
+      "to": "apps/web/src/lib/file-utils.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/lib/format-duration.ts",
+      "to": "apps/web/src/lib/format-duration.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/lib/navigation.ts",
+      "to": "apps/web/src/lib/navigation.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/lib/page-header-context.tsx",
+      "to": "apps/web/src/lib/page-header-context.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/lib/pending-comments-context.tsx",
+      "to": "apps/web/src/lib/pending-comments-context.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/mcp-apps/hero-card/app.tsx",
+      "to": "apps/web/src/mcp-apps/hero-card/app.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/mcp-apps/shared/compact-empty.tsx",
+      "to": "apps/web/src/mcp-apps/shared/compact-empty.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/mcp-apps/shared/error-state.tsx",
+      "to": "apps/web/src/mcp-apps/shared/error-state.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/mcp-apps/shared/loading-state.tsx",
+      "to": "apps/web/src/mcp-apps/shared/loading-state.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/mcp-apps/shared/theme-init.js",
+      "to": "apps/web/src/mcp-apps/shared/theme-init.js"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/__root.tsx",
+      "to": "apps/web/src/routes/__root.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed.tsx",
+      "to": "apps/web/src/routes/_authed.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/activity.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/activity.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/agents/$agentId.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/agents/$agentId.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/agents/index.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/agents/index.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/files/$fileId.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/files/$fileId.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/index.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/index.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/marketplace.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/marketplace.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/keys.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/keys.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/mcp.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/mcp.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/members.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/members.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/objects/index.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/objects/index.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/triggers/$triggerId.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/triggers/$triggerId.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/$workspaceId/triggers/index.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/triggers/index.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/index.tsx",
+      "to": "apps/web/src/routes/_authed/index.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/_authed/workspaces.tsx",
+      "to": "apps/web/src/routes/_authed/workspaces.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/src/routes/login.tsx",
+      "to": "apps/web/src/routes/login.tsx"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "apps/web/vite.config.mcp.ts",
+      "to": "apps/web/vite.config.mcp.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "packages/db/src/migrate.ts",
+      "to": "packages/db/src/migrate.ts"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "packages/risk-classifier/bin/assert-risk-config.mjs",
+      "to": "packages/risk-classifier/bin/assert-risk-config.mjs"
+    },
+    {
+      "rule": "no-orphans",
+      "from": "packages/risk-classifier/bin/risk-classifier.mjs",
+      "to": "packages/risk-classifier/bin/risk-classifier.mjs"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/agent-server/src/index.ts",
+      "to": "apps/agent-server/src/index.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/dev/src/index.ts",
+      "to": "apps/dev/src/index.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/dev/src/lib/integrations/index.ts",
+      "to": "apps/dev/src/lib/integrations/index.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/dev/src/lib/integrations/mcp/bridge.ts",
+      "to": "apps/dev/src/lib/integrations/mcp/bridge.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/dev/src/lib/integrations/providers/_template/config.ts",
+      "to": "apps/dev/src/lib/integrations/providers/_template/config.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/dev/src/lib/llm/adapter.ts",
+      "to": "apps/dev/src/lib/llm/adapter.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/dev/src/lib/llm/anthropic.ts",
+      "to": "apps/dev/src/lib/llm/anthropic.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/dev/src/lib/llm/index.ts",
+      "to": "apps/dev/src/lib/llm/index.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/dev/src/lib/llm/openai.ts",
+      "to": "apps/dev/src/lib/llm/openai.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/dev/src/openapi.ts",
+      "to": "apps/dev/src/openapi.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/e2e/src/fixtures/auth.fixture.ts",
+      "to": "apps/e2e/src/fixtures/auth.fixture.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/e2e/src/helpers/api.helper.ts",
+      "to": "apps/e2e/src/helpers/api.helper.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/e2e/src/helpers/chat.helper.ts",
+      "to": "apps/e2e/src/helpers/chat.helper.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/e2e/src/helpers/viewports.ts",
+      "to": "apps/e2e/src/helpers/viewports.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/activity/action-banner.tsx",
+      "to": "apps/web/src/components/activity/action-banner.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/activity/activity-comment.tsx",
+      "to": "apps/web/src/components/activity/activity-comment.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/activity/activity-feed.tsx",
+      "to": "apps/web/src/components/activity/activity-feed.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/activity/activity-filters.ts",
+      "to": "apps/web/src/components/activity/activity-filters.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/activity/activity-item.tsx",
+      "to": "apps/web/src/components/activity/activity-item.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/activity/build-phases.ts",
+      "to": "apps/web/src/components/activity/build-phases.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/activity/comment-input.tsx",
+      "to": "apps/web/src/components/activity/comment-input.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/activity/decision-chips.tsx",
+      "to": "apps/web/src/components/activity/decision-chips.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/activity/mention-session-card.tsx",
+      "to": "apps/web/src/components/activity/mention-session-card.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/activity/object-activity.tsx",
+      "to": "apps/web/src/components/activity/object-activity.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/activity/pending-comment-row.tsx",
+      "to": "apps/web/src/components/activity/pending-comment-row.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/activity/phase-divider.tsx",
+      "to": "apps/web/src/components/activity/phase-divider.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/agents/agent-card.tsx",
+      "to": "apps/web/src/components/agents/agent-card.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/agents/agent-create-form.tsx",
+      "to": "apps/web/src/components/agents/agent-create-form.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/agents/agent-document.tsx",
+      "to": "apps/web/src/components/agents/agent-document.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/agents/agent-pulse.tsx",
+      "to": "apps/web/src/components/agents/agent-pulse.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/agents/agent-usage-chart.tsx",
+      "to": "apps/web/src/components/agents/agent-usage-chart.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/agents/instruction-log.tsx",
+      "to": "apps/web/src/components/agents/instruction-log.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/agents/mcp-servers.tsx",
+      "to": "apps/web/src/components/agents/mcp-servers.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/agents/session-detail-panel.tsx",
+      "to": "apps/web/src/components/agents/session-detail-panel.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/agents/session-log-transcript.tsx",
+      "to": "apps/web/src/components/agents/session-log-transcript.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/agents/skills.tsx",
+      "to": "apps/web/src/components/agents/skills.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/bets/bet-card.tsx",
+      "to": "apps/web/src/components/bets/bet-card.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/bets/bet-group.tsx",
+      "to": "apps/web/src/components/bets/bet-group.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/catalog/package-grid.tsx",
+      "to": "apps/web/src/components/catalog/package-grid.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/chat/chat-panel.tsx",
+      "to": "apps/web/src/components/chat/chat-panel.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/chat/chat-sidebar-provider.tsx",
+      "to": "apps/web/src/components/chat/chat-sidebar-provider.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/chat/chat-transcript.tsx",
+      "to": "apps/web/src/components/chat/chat-transcript.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/chat/chat.tsx",
+      "to": "apps/web/src/components/chat/chat.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/chat/selection-chips.tsx",
+      "to": "apps/web/src/components/chat/selection-chips.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/chat/slash-picker.tsx",
+      "to": "apps/web/src/components/chat/slash-picker.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/command-palette.tsx",
+      "to": "apps/web/src/components/command-palette.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/extensions/extension-removal-dialog.tsx",
+      "to": "apps/web/src/components/extensions/extension-removal-dialog.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/files/annotation-overlay.tsx",
+      "to": "apps/web/src/components/files/annotation-overlay.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/files/file-body.tsx",
+      "to": "apps/web/src/components/files/file-body.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/foryou/onboarding-prompt-card.tsx",
+      "to": "apps/web/src/components/foryou/onboarding-prompt-card.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/foryou/sparse-composer.tsx",
+      "to": "apps/web/src/components/foryou/sparse-composer.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/foryou/unread-thread-card.tsx",
+      "to": "apps/web/src/components/foryou/unread-thread-card.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/imports/import-dialog.tsx",
+      "to": "apps/web/src/components/imports/import-dialog.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/layout/header.tsx",
+      "to": "apps/web/src/components/layout/header.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/layout/nav-user.tsx",
+      "to": "apps/web/src/components/layout/nav-user.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/layout/page-header.tsx",
+      "to": "apps/web/src/components/layout/page-header.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/layout/sidebar.tsx",
+      "to": "apps/web/src/components/layout/sidebar.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/marketplace/fork-dialog.tsx",
+      "to": "apps/web/src/components/marketplace/fork-dialog.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/marketplace/install-button.tsx",
+      "to": "apps/web/src/components/marketplace/install-button.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/marketplace/item-card.tsx",
+      "to": "apps/web/src/components/marketplace/item-card.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/marketplace/package-card.tsx",
+      "to": "apps/web/src/components/marketplace/package-card.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/marketplace/uninstall-dialog.tsx",
+      "to": "apps/web/src/components/marketplace/uninstall-dialog.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/marketplace/update-available-banner.tsx",
+      "to": "apps/web/src/components/marketplace/update-available-banner.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/auxiliary-action-menu.tsx",
+      "to": "apps/web/src/components/objects/auxiliary-action-menu.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/board/board-card.tsx",
+      "to": "apps/web/src/components/objects/board/board-card.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/board/board-view.tsx",
+      "to": "apps/web/src/components/objects/board/board-view.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/board/derive-columns.ts",
+      "to": "apps/web/src/components/objects/board/derive-columns.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/bulk-action-bar.tsx",
+      "to": "apps/web/src/components/objects/bulk-action-bar.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/data-table/columns.tsx",
+      "to": "apps/web/src/components/objects/data-table/columns.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/data-table/data-table-controls.tsx",
+      "to": "apps/web/src/components/objects/data-table/data-table-controls.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/data-table/data-table-toolbar.tsx",
+      "to": "apps/web/src/components/objects/data-table/data-table-toolbar.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/data-table/data-table.tsx",
+      "to": "apps/web/src/components/objects/data-table/data-table.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/data-table/display-panel.tsx",
+      "to": "apps/web/src/components/objects/data-table/display-panel.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/data-table/dynamic-columns.tsx",
+      "to": "apps/web/src/components/objects/data-table/dynamic-columns.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/data-table/object-card.tsx",
+      "to": "apps/web/src/components/objects/data-table/object-card.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/linked-objects.tsx",
+      "to": "apps/web/src/components/objects/linked-objects.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/metadata-badges.tsx",
+      "to": "apps/web/src/components/objects/metadata-badges.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/metadata-field-add.tsx",
+      "to": "apps/web/src/components/objects/metadata-field-add.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/metadata-properties.tsx",
+      "to": "apps/web/src/components/objects/metadata-properties.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/object-create-form.tsx",
+      "to": "apps/web/src/components/objects/object-create-form.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/object-document.tsx",
+      "to": "apps/web/src/components/objects/object-document.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/object-files.tsx",
+      "to": "apps/web/src/components/objects/object-files.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/objects/related-objects-table.tsx",
+      "to": "apps/web/src/components/objects/related-objects-table.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/pulse/notification-input.tsx",
+      "to": "apps/web/src/components/pulse/notification-input.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/pulse/pulse-card.tsx",
+      "to": "apps/web/src/components/pulse/pulse-card.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/settings/human-detail-dialog.tsx",
+      "to": "apps/web/src/components/settings/human-detail-dialog.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/settings/mcp-connection.tsx",
+      "to": "apps/web/src/components/settings/mcp-connection.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/actor-avatar.tsx",
+      "to": "apps/web/src/components/shared/actor-avatar.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/agent-output.tsx",
+      "to": "apps/web/src/components/shared/agent-output.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/agent-working-badge.tsx",
+      "to": "apps/web/src/components/shared/agent-working-badge.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/attached-file-card.tsx",
+      "to": "apps/web/src/components/shared/attached-file-card.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/date-range-picker.tsx",
+      "to": "apps/web/src/components/shared/date-range-picker.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/empty-state.tsx",
+      "to": "apps/web/src/components/shared/empty-state.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/form-error.tsx",
+      "to": "apps/web/src/components/shared/form-error.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/loading-skeleton.tsx",
+      "to": "apps/web/src/components/shared/loading-skeleton.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/markdown-content.tsx",
+      "to": "apps/web/src/components/shared/markdown-content.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/mentioned-text.tsx",
+      "to": "apps/web/src/components/shared/mentioned-text.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/object-reference.tsx",
+      "to": "apps/web/src/components/shared/object-reference.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/offline-banner.tsx",
+      "to": "apps/web/src/components/shared/offline-banner.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/relative-time.tsx",
+      "to": "apps/web/src/components/shared/relative-time.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/route-error.tsx",
+      "to": "apps/web/src/components/shared/route-error.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/source-badge.tsx",
+      "to": "apps/web/src/components/shared/source-badge.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/status-badge.tsx",
+      "to": "apps/web/src/components/shared/status-badge.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/streaming-indicator.tsx",
+      "to": "apps/web/src/components/shared/streaming-indicator.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/subscribe-toggle.tsx",
+      "to": "apps/web/src/components/shared/subscribe-toggle.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/type-badge.tsx",
+      "to": "apps/web/src/components/shared/type-badge.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/unread-badge.tsx",
+      "to": "apps/web/src/components/shared/unread-badge.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/shared/upload-progress.tsx",
+      "to": "apps/web/src/components/shared/upload-progress.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/triggers/searchable-multi-select.tsx",
+      "to": "apps/web/src/components/triggers/searchable-multi-select.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/triggers/slack-filters.tsx",
+      "to": "apps/web/src/components/triggers/slack-filters.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/triggers/trigger-form.tsx",
+      "to": "apps/web/src/components/triggers/trigger-form.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/badge.tsx",
+      "to": "apps/web/src/components/ui/badge.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/breadcrumb.tsx",
+      "to": "apps/web/src/components/ui/breadcrumb.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/button-group.tsx",
+      "to": "apps/web/src/components/ui/button-group.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/button.tsx",
+      "to": "apps/web/src/components/ui/button.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/calendar.tsx",
+      "to": "apps/web/src/components/ui/calendar.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/card.tsx",
+      "to": "apps/web/src/components/ui/card.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/checkbox.tsx",
+      "to": "apps/web/src/components/ui/checkbox.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/collapsible.tsx",
+      "to": "apps/web/src/components/ui/collapsible.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/dialog.tsx",
+      "to": "apps/web/src/components/ui/dialog.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/dropdown-menu.tsx",
+      "to": "apps/web/src/components/ui/dropdown-menu.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/input.tsx",
+      "to": "apps/web/src/components/ui/input.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/label.tsx",
+      "to": "apps/web/src/components/ui/label.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/popover.tsx",
+      "to": "apps/web/src/components/ui/popover.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/radio-group.tsx",
+      "to": "apps/web/src/components/ui/radio-group.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/responsive-dialog.tsx",
+      "to": "apps/web/src/components/ui/responsive-dialog.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/responsive-popover.tsx",
+      "to": "apps/web/src/components/ui/responsive-popover.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/select.tsx",
+      "to": "apps/web/src/components/ui/select.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/separator.tsx",
+      "to": "apps/web/src/components/ui/separator.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/sheet.tsx",
+      "to": "apps/web/src/components/ui/sheet.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/sidebar.tsx",
+      "to": "apps/web/src/components/ui/sidebar.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/skeleton.tsx",
+      "to": "apps/web/src/components/ui/skeleton.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/spinner.tsx",
+      "to": "apps/web/src/components/ui/spinner.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/switch.tsx",
+      "to": "apps/web/src/components/ui/switch.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/table.tsx",
+      "to": "apps/web/src/components/ui/table.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/tabs.tsx",
+      "to": "apps/web/src/components/ui/tabs.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/textarea.tsx",
+      "to": "apps/web/src/components/ui/textarea.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/components/ui/tooltip.tsx",
+      "to": "apps/web/src/components/ui/tooltip.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-actors.ts",
+      "to": "apps/web/src/hooks/use-actors.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-agent-skill-attachments.ts",
+      "to": "apps/web/src/hooks/use-agent-skill-attachments.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-auth.ts",
+      "to": "apps/web/src/hooks/use-auth.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-auto-save.ts",
+      "to": "apps/web/src/hooks/use-auto-save.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-available-object-types.ts",
+      "to": "apps/web/src/hooks/use-available-object-types.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-bets.ts",
+      "to": "apps/web/src/hooks/use-bets.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-catalog-packages.ts",
+      "to": "apps/web/src/hooks/use-catalog-packages.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-chat-one-shot.ts",
+      "to": "apps/web/src/hooks/use-chat-one-shot.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-chat-session.ts",
+      "to": "apps/web/src/hooks/use-chat-session.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-custom-extensions.ts",
+      "to": "apps/web/src/hooks/use-custom-extensions.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-duration.ts",
+      "to": "apps/web/src/hooks/use-duration.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-enabled-modules.ts",
+      "to": "apps/web/src/hooks/use-enabled-modules.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-event-visible.ts",
+      "to": "apps/web/src/hooks/use-event-visible.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-events.ts",
+      "to": "apps/web/src/hooks/use-events.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-files.ts",
+      "to": "apps/web/src/hooks/use-files.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-imports.ts",
+      "to": "apps/web/src/hooks/use-imports.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-installed-packages.ts",
+      "to": "apps/web/src/hooks/use-installed-packages.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-integrations.ts",
+      "to": "apps/web/src/hooks/use-integrations.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-mobile.tsx",
+      "to": "apps/web/src/hooks/use-mobile.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-notifications.ts",
+      "to": "apps/web/src/hooks/use-notifications.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-objects.ts",
+      "to": "apps/web/src/hooks/use-objects.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-online-status.ts",
+      "to": "apps/web/src/hooks/use-online-status.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-relationships.ts",
+      "to": "apps/web/src/hooks/use-relationships.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-session-usage.ts",
+      "to": "apps/web/src/hooks/use-session-usage.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-sessions.ts",
+      "to": "apps/web/src/hooks/use-sessions.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-skills.ts",
+      "to": "apps/web/src/hooks/use-skills.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-sse.ts",
+      "to": "apps/web/src/hooks/use-sse.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-subscriptions.ts",
+      "to": "apps/web/src/hooks/use-subscriptions.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-triggers.ts",
+      "to": "apps/web/src/hooks/use-triggers.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-user-display-settings.ts",
+      "to": "apps/web/src/hooks/use-user-display-settings.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-workspace-skills.ts",
+      "to": "apps/web/src/hooks/use-workspace-skills.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/hooks/use-workspaces.ts",
+      "to": "apps/web/src/hooks/use-workspaces.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/agent-status.ts",
+      "to": "apps/web/src/lib/agent-status.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/analytics.ts",
+      "to": "apps/web/src/lib/analytics.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/annotations.ts",
+      "to": "apps/web/src/lib/annotations.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/chat-context.tsx",
+      "to": "apps/web/src/lib/chat-context.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/chat-export.ts",
+      "to": "apps/web/src/lib/chat-export.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/chat-selection.ts",
+      "to": "apps/web/src/lib/chat-selection.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/chat-stream.ts",
+      "to": "apps/web/src/lib/chat-stream.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/claude-oauth.ts",
+      "to": "apps/web/src/lib/claude-oauth.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/cn.ts",
+      "to": "apps/web/src/lib/cn.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/extensions.ts",
+      "to": "apps/web/src/lib/extensions.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/file-utils.ts",
+      "to": "apps/web/src/lib/file-utils.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/format-duration.ts",
+      "to": "apps/web/src/lib/format-duration.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/navigation.ts",
+      "to": "apps/web/src/lib/navigation.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/page-header-context.tsx",
+      "to": "apps/web/src/lib/page-header-context.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/pending-comments-context.tsx",
+      "to": "apps/web/src/lib/pending-comments-context.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/query-keys.ts",
+      "to": "apps/web/src/lib/query-keys.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/sse-invalidation.ts",
+      "to": "apps/web/src/lib/sse-invalidation.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/sse.ts",
+      "to": "apps/web/src/lib/sse.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/lib/workspace-context.ts",
+      "to": "apps/web/src/lib/workspace-context.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/main.tsx",
+      "to": "apps/web/src/main.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/actors/app.tsx",
+      "to": "apps/web/src/mcp-apps/actors/app.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/events/app.tsx",
+      "to": "apps/web/src/mcp-apps/events/app.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/graph/app.tsx",
+      "to": "apps/web/src/mcp-apps/graph/app.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/hero-card/app.tsx",
+      "to": "apps/web/src/mcp-apps/hero-card/app.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/objects/app.tsx",
+      "to": "apps/web/src/mcp-apps/objects/app.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/objects/extractors.ts",
+      "to": "apps/web/src/mcp-apps/objects/extractors.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/relationships/app.tsx",
+      "to": "apps/web/src/mcp-apps/relationships/app.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/schema/app.tsx",
+      "to": "apps/web/src/mcp-apps/schema/app.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/sessions/app.tsx",
+      "to": "apps/web/src/mcp-apps/sessions/app.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/actions/action-button.tsx",
+      "to": "apps/web/src/mcp-apps/shared/actions/action-button.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/actions/confirm-dialog.tsx",
+      "to": "apps/web/src/mcp-apps/shared/actions/confirm-dialog.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/actions/index.ts",
+      "to": "apps/web/src/mcp-apps/shared/actions/index.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/actions/policy.ts",
+      "to": "apps/web/src/mcp-apps/shared/actions/policy.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/actions/types.ts",
+      "to": "apps/web/src/mcp-apps/shared/actions/types.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/actions/use-object-mutation.ts",
+      "to": "apps/web/src/mcp-apps/shared/actions/use-object-mutation.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/compact-empty.tsx",
+      "to": "apps/web/src/mcp-apps/shared/compact-empty.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/error-state.tsx",
+      "to": "apps/web/src/mcp-apps/shared/error-state.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/loading-state.tsx",
+      "to": "apps/web/src/mcp-apps/shared/loading-state.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/mcp-app-provider.tsx",
+      "to": "apps/web/src/mcp-apps/shared/mcp-app-provider.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/parse.ts",
+      "to": "apps/web/src/mcp-apps/shared/parse.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/render.tsx",
+      "to": "apps/web/src/mcp-apps/shared/render.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/schema-form.tsx",
+      "to": "apps/web/src/mcp-apps/shared/schema-form.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/schema-select.tsx",
+      "to": "apps/web/src/mcp-apps/shared/schema-select.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/theme-init.js",
+      "to": "apps/web/src/mcp-apps/shared/theme-init.js"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/theme-toggle.tsx",
+      "to": "apps/web/src/mcp-apps/shared/theme-toggle.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/tool-history.tsx",
+      "to": "apps/web/src/mcp-apps/shared/tool-history.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/types.ts",
+      "to": "apps/web/src/mcp-apps/shared/types.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/use-workspace-schema.ts",
+      "to": "apps/web/src/mcp-apps/shared/use-workspace-schema.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/shared/web-app-link.tsx",
+      "to": "apps/web/src/mcp-apps/shared/web-app-link.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/triggers/app.tsx",
+      "to": "apps/web/src/mcp-apps/triggers/app.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/mcp-apps/workspaces/app.tsx",
+      "to": "apps/web/src/mcp-apps/workspaces/app.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/__root.tsx",
+      "to": "apps/web/src/routes/__root.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed.tsx",
+      "to": "apps/web/src/routes/_authed.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/activity.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/activity.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/agents/$agentId.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/agents/$agentId.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/agents/index.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/agents/index.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/files/$fileId.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/files/$fileId.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/index.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/index.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/marketplace.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/marketplace.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/objects/$objectId.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/objects/$objectId.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/objects/index.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/objects/index.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/index.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/index.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/keys.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/keys.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/mcp.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/mcp.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/members.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/members.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/objects/index.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/objects/index.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/settings/skills.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/settings/skills.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/triggers/$triggerId.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/triggers/$triggerId.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/$workspaceId/triggers/index.tsx",
+      "to": "apps/web/src/routes/_authed/$workspaceId/triggers/index.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/index.tsx",
+      "to": "apps/web/src/routes/_authed/index.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/_authed/workspaces.tsx",
+      "to": "apps/web/src/routes/_authed/workspaces.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/login.tsx",
+      "to": "apps/web/src/routes/login.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/routes/signup.tsx",
+      "to": "apps/web/src/routes/signup.tsx"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "apps/web/src/types/api.ts",
+      "to": "apps/web/src/types/api.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "packages/db/src/migrate.ts",
+      "to": "packages/db/src/migrate.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "packages/db/src/seed-agent-servers.ts",
+      "to": "packages/db/src/seed-agent-servers.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "packages/db/src/seed.ts",
+      "to": "packages/db/src/seed.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "packages/risk-classifier/src/cli.ts",
+      "to": "packages/risk-classifier/src/cli.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "packages/risk-classifier/src/index.ts",
+      "to": "packages/risk-classifier/src/index.ts"
+    },
+    {
+      "rule": "no-unreachable-from-root",
+      "from": "packages/risk-classifier/src/render.ts",
+      "to": "packages/risk-classifier/src/render.ts"
+    }
+  ],
   "cognitive_complexity": [
     {
       "file": "apps/agent-server/src/index.ts",
-      "fn": "buildApp",
+      "fn": "L122",
+      "score": 26
+    },
+    {
+      "file": "apps/agent-server/src/index.ts",
+      "fn": "L352",
       "score": 21
     },
     {
       "file": "apps/agent-server/src/index.ts",
-      "fn": "monitorSession",
-      "score": 26
+      "fn": "L437",
+      "score": 27
     },
     {
       "file": "apps/agent-server/src/services/microsandbox.ts",
-      "fn": "spawnSession",
+      "fn": "L261",
       "score": 21
     },
     {
       "file": "apps/dev/scripts/publish-ccd-package.ts",
-      "fn": "main",
+      "fn": "L40",
       "score": 17
     },
     {
       "file": "apps/dev/scripts/publish-dev-pipeline-package.ts",
-      "fn": "main",
+      "fn": "L40",
       "score": 17
     },
     {
       "file": "apps/dev/src/__tests__/lib/integrations/providers/gmail.test.ts",
-      "fn": "sqlToString",
+      "fn": "L261",
       "score": 20
     },
     {
       "file": "apps/dev/src/__tests__/services/session-dispatch-queue.test.ts",
-      "fn": "delete",
-      "score": 16
-    },
-    {
-      "file": "apps/dev/src/__tests__/services/session-dispatch-queue.test.ts",
-      "fn": "update",
+      "fn": "L152",
       "score": 22
     },
     {
+      "file": "apps/dev/src/__tests__/services/session-dispatch-queue.test.ts",
+      "fn": "L181",
+      "score": 16
+    },
+    {
       "file": "apps/dev/src/__tests__/services/session-dispatcher.test.ts",
-      "fn": "apply",
+      "fn": "L59",
       "score": 50
     },
     {
       "file": "apps/dev/src/__tests__/setup.ts",
-      "fn": "createTestContext",
+      "fn": "L80",
       "score": 19
     },
     {
       "file": "apps/dev/src/app-factory.ts",
-      "fn": "cause",
+      "fn": "L188",
       "score": 24
     },
     {
       "file": "apps/dev/src/app-factory.ts",
-      "fn": "createApp",
+      "fn": "L96",
       "score": 22
     },
     {
       "file": "apps/dev/src/lib/errors.ts",
-      "fn": "formatZodIssue",
+      "fn": "L17",
       "score": 17
     },
     {
+      "file": "apps/dev/src/lib/integrations/providers/github/webhooks.ts",
+      "fn": "L14",
+      "score": 20
+    },
+    {
       "file": "apps/dev/src/lib/integrations/providers/gmail/watch.ts",
-      "fn": "fanOutGmailHistory",
+      "fn": "L303",
       "score": 21
     },
     {
       "file": "apps/dev/src/lib/integrations/providers/slack/client.ts",
-      "fn": "listSlackUsers",
+      "fn": "L139",
       "score": 17
     },
     {
       "file": "apps/dev/src/lib/integrations/providers/slack/fan-out.ts",
-      "fn": "slackWebhookFanOut",
+      "fn": "L254",
       "score": 19
     },
     {
       "file": "apps/dev/src/lib/llm-routing.ts",
-      "fn": "resolveLlmRoute",
+      "fn": "L150",
       "score": 16
     },
     {
       "file": "apps/dev/src/middleware/idempotency.ts",
-      "fn": "createIdempotencyMiddleware",
+      "fn": "L50",
       "score": 21
     },
     {
       "file": "apps/dev/src/routes/actors.ts",
-      "fn": "groupActorMemberships",
-      "score": 19
-    },
-    {
-      "file": "apps/dev/src/routes/actors.ts",
-      "fn": "isEmailUniqueViolation",
+      "fn": "L119",
       "score": 23
     },
     {
       "file": "apps/dev/src/routes/actors.ts",
-      "fn": "parseIdsParam",
+      "fn": "L349",
+      "score": 19
+    },
+    {
+      "file": "apps/dev/src/routes/actors.ts",
+      "fn": "L650",
       "score": 19
     },
     {
       "file": "apps/dev/src/routes/catalog-packages.ts",
-      "fn": "snapshot",
+      "fn": "L619",
+      "score": 16
+    },
+    {
+      "file": "apps/dev/src/routes/catalog-packages.ts",
+      "fn": "L812",
       "score": 20
     },
     {
       "file": "apps/dev/src/routes/events.ts",
-      "fn": "handler",
+      "fn": "L216",
       "score": 30
     },
     {
       "file": "apps/dev/src/routes/events.ts",
-      "fn": "spawnThreadReplySessions",
+      "fn": "L512",
+      "score": 25
+    },
+    {
+      "file": "apps/dev/src/routes/graph.ts",
+      "fn": "L73",
+      "score": 32
+    },
+    {
+      "file": "apps/dev/src/routes/installed-packages.ts",
+      "fn": "L263",
       "score": 25
     },
     {
       "file": "apps/dev/src/routes/integrations.ts",
-      "fn": "body",
+      "fn": "L1101",
+      "score": 26
+    },
+    {
+      "file": "apps/dev/src/routes/integrations.ts",
+      "fn": "L151",
+      "score": 19
+    },
+    {
+      "file": "apps/dev/src/routes/integrations.ts",
+      "fn": "L345",
       "score": 45
     },
     {
       "file": "apps/dev/src/routes/integrations.ts",
-      "fn": "runFanOutAndInsert",
-      "score": 26
+      "fn": "L921",
+      "score": 25
     },
     {
       "file": "apps/dev/src/routes/objects.ts",
-      "fn": "buildObjectListConditions",
+      "fn": "L1095",
+      "score": 24
+    },
+    {
+      "file": "apps/dev/src/routes/objects.ts",
+      "fn": "L112",
       "score": 17
     },
     {
       "file": "apps/dev/src/routes/objects.ts",
-      "fn": "columnLabel",
+      "fn": "L369",
+      "score": 24
+    },
+    {
+      "file": "apps/dev/src/routes/objects.ts",
+      "fn": "L525",
       "score": 43
     },
     {
+      "file": "apps/dev/src/routes/objects.ts",
+      "fn": "L932",
+      "score": 21
+    },
+    {
       "file": "apps/dev/src/routes/public-landing-events.ts",
-      "fn": "_resetLandingEventBuckets",
+      "fn": "L102",
       "score": 27
     },
     {
-      "file": "apps/dev/src/services/import-processor.ts",
-      "fn": "executeImport",
-      "score": 69
+      "file": "apps/dev/src/routes/workspaces.ts",
+      "fn": "L214",
+      "score": 18
     },
     {
       "file": "apps/dev/src/services/import-processor.ts",
-      "fn": "generateMapping",
+      "fn": "L248",
       "score": 59
     },
     {
       "file": "apps/dev/src/services/import-processor.ts",
-      "fn": "mapRowForType",
+      "fn": "L410",
       "score": 28
     },
     {
+      "file": "apps/dev/src/services/import-processor.ts",
+      "fn": "L472",
+      "score": 69
+    },
+    {
       "file": "apps/dev/src/services/package-version-pusher.ts",
-      "fn": "itemSnapshot",
+      "fn": "L221",
       "score": 52
     },
     {
       "file": "apps/dev/src/services/session-manager.ts",
-      "fn": "buildLaunchSpec",
-      "score": 67
-    },
-    {
-      "file": "apps/dev/src/services/session-manager.ts",
-      "fn": "drained",
+      "fn": "L1383",
       "score": 39
     },
     {
       "file": "apps/dev/src/services/session-manager.ts",
-      "fn": "markRemoteSessionComplete",
-      "score": 22
-    },
-    {
-      "file": "apps/dev/src/services/session-manager.ts",
-      "fn": "poll",
+      "fn": "L1562",
       "score": 30
     },
     {
       "file": "apps/dev/src/services/session-manager.ts",
-      "fn": "runWatchdog",
+      "fn": "L1848",
       "score": 26
     },
     {
       "file": "apps/dev/src/services/session-manager.ts",
-      "fn": "startSession",
+      "fn": "L2495",
+      "score": 22
+    },
+    {
+      "file": "apps/dev/src/services/session-manager.ts",
+      "fn": "L288",
       "score": 28
     },
     {
-      "file": "apps/dev/src/services/trigger-runner.ts",
-      "fn": "evaluateCondition",
-      "score": 24
+      "file": "apps/dev/src/services/session-manager.ts",
+      "fn": "L973",
+      "score": 67
     },
     {
       "file": "apps/dev/src/services/trigger-runner.ts",
-      "fn": "handleEvent",
+      "fn": "L142",
       "score": 46
     },
     {
+      "file": "apps/dev/src/services/trigger-runner.ts",
+      "fn": "L525",
+      "score": 24
+    },
+    {
       "file": "apps/dev/src/services/workspace-bootstrap.ts",
-      "fn": "bootstrapDefaultAgents",
+      "fn": "L19",
       "score": 29
     },
     {
       "file": "apps/dev/src/services/workspace-briefing.ts",
-      "fn": "renderWorkspaceBriefing",
+      "fn": "L151",
       "score": 49
     },
     {
       "file": "apps/web/src/components/activity/activity-item.tsx",
-      "fn": "ActivityItemView",
+      "fn": "L50",
       "score": 17
     },
     {
       "file": "apps/web/src/components/activity/comment-input.tsx",
-      "fn": "onSuccess",
+      "fn": "L237",
       "score": 27
     },
     {
       "file": "apps/web/src/components/agents/agent-document.tsx",
-      "fn": "AgentDocumentView",
-      "score": 32
-    },
-    {
-      "file": "apps/web/src/components/agents/agent-document.tsx",
-      "fn": "SessionRow",
+      "fn": "L544",
       "score": 22
     },
     {
+      "file": "apps/web/src/components/agents/agent-document.tsx",
+      "fn": "L95",
+      "score": 32
+    },
+    {
       "file": "apps/web/src/components/agents/agent-usage-chart.tsx",
-      "fn": "AgentUsageChart",
+      "fn": "L67",
       "score": 17
     },
     {
       "file": "apps/web/src/components/agents/instruction-log.tsx",
-      "fn": "onmessage",
+      "fn": "L75",
       "score": 18
     },
     {
       "file": "apps/web/src/components/agents/mcp-servers.tsx",
-      "fn": "McpServers",
+      "fn": "L101",
       "score": 17
     },
     {
       "file": "apps/web/src/components/agents/mcp-servers.tsx",
-      "fn": "handleSave",
+      "fn": "L404",
       "score": 19
     },
     {
       "file": "apps/web/src/components/agents/session-detail-panel.tsx",
-      "fn": "SessionDetailPanel",
+      "fn": "L385",
       "score": 34
     },
     {
       "file": "apps/web/src/components/command-palette.tsx",
-      "fn": "handler",
+      "fn": "L29",
       "score": 18
     },
     {
       "file": "apps/web/src/components/extensions/extension-removal-dialog.tsx",
-      "fn": "handleConfirm",
+      "fn": "L152",
       "score": 16
     },
     {
       "file": "apps/web/src/components/files/file-body.tsx",
-      "fn": "FileBody",
+      "fn": "L116",
       "score": 27
     },
     {
       "file": "apps/web/src/components/foryou/unread-thread-card.tsx",
-      "fn": "UnreadThreadCard",
+      "fn": "L77",
       "score": 47
     },
     {
       "file": "apps/web/src/components/imports/import-dialog.tsx",
-      "fn": "onMappingUpdate",
+      "fn": "L235",
       "score": 21
     },
     {
       "file": "apps/web/src/components/marketplace/package-card.tsx",
-      "fn": "PackageCard",
+      "fn": "L16",
       "score": 16
     },
     {
       "file": "apps/web/src/components/objects/auxiliary-action-menu.tsx",
-      "fn": "handleKeyDown",
+      "fn": "L118",
       "score": 28
     },
     {
       "file": "apps/web/src/components/objects/board/board-view.tsx",
-      "fn": "BoardColumn",
+      "fn": "L349",
       "score": 18
     },
     {
       "file": "apps/web/src/components/objects/board/board-view.tsx",
-      "fn": "handleDragEnd",
+      "fn": "L383",
       "score": 40
     },
     {
       "file": "apps/web/src/components/objects/board/board-view.tsx",
-      "fn": "onError",
+      "fn": "L492",
       "score": 16
     },
     {
       "file": "apps/web/src/components/objects/board/board-view.tsx",
-      "fn": "selectCardRange",
+      "fn": "L634",
       "score": 18
     },
     {
       "file": "apps/web/src/components/objects/board/derive-columns.ts",
-      "fn": "deriveColumns",
+      "fn": "L45",
       "score": 17
     },
     {
       "file": "apps/web/src/components/objects/data-table/data-table-controls.tsx",
-      "fn": "DataTableControls",
+      "fn": "L50",
       "score": 20
     },
     {
       "file": "apps/web/src/components/objects/data-table/data-table.tsx",
-      "fn": "DataTable",
+      "fn": "L93",
       "score": 18
     },
     {
       "file": "apps/web/src/components/objects/data-table/display-panel.tsx",
-      "fn": "DisplayPanel",
+      "fn": "L130",
       "score": 46
     },
     {
       "file": "apps/web/src/components/objects/metadata-field-add.tsx",
-      "fn": "handleAdd",
+      "fn": "L48",
       "score": 25
     },
     {
       "file": "apps/web/src/components/pulse/pulse-card.tsx",
-      "fn": "PulseCard",
+      "fn": "L133",
       "score": 23
     },
     {
       "file": "apps/web/src/components/pulse/pulse-card.tsx",
-      "fn": "resolveActions",
+      "fn": "L77",
       "score": 16
     },
     {
       "file": "apps/web/src/components/shared/object-reference.tsx",
-      "fn": "ObjectReference",
+      "fn": "L19",
       "score": 16
     },
     {
       "file": "apps/web/src/components/triggers/slack-filters.tsx",
-      "fn": "slackFiltersFromConditions",
+      "fn": "L308",
       "score": 29
     },
     {
       "file": "apps/web/src/components/triggers/trigger-form.tsx",
-      "fn": "TriggerForm",
+      "fn": "L177",
+      "score": 40
+    },
+    {
+      "file": "apps/web/src/components/triggers/trigger-form.tsx",
+      "fn": "L254",
       "score": 59
     },
     {
       "file": "apps/web/src/components/triggers/trigger-form.tsx",
-      "fn": "buildTriggerSummary",
-      "score": 40
-    },
-    {
-      "file": "apps/web/src/components/triggers/trigger-form.tsx",
-      "fn": "connected",
-      "score": 16
-    },
-    {
-      "file": "apps/web/src/components/triggers/trigger-form.tsx",
-      "fn": "statuses",
+      "fn": "L413",
       "score": 23
     },
     {
-      "file": "apps/web/src/hooks/use-chat-session.ts",
-      "fn": "onerror",
-      "score": 39
+      "file": "apps/web/src/components/triggers/trigger-form.tsx",
+      "fn": "L478",
+      "score": 16
     },
     {
       "file": "apps/web/src/hooks/use-chat-session.ts",
-      "fn": "onopen",
+      "fn": "L139",
       "score": 21
     },
     {
+      "file": "apps/web/src/hooks/use-chat-session.ts",
+      "fn": "L200",
+      "score": 39
+    },
+    {
       "file": "apps/web/src/hooks/use-events.ts",
-      "fn": "deriveAffectedObjects",
+      "fn": "L71",
       "score": 19
     },
     {
       "file": "apps/web/src/hooks/use-imports.ts",
-      "fn": "useImportToast",
+      "fn": "L63",
       "score": 22
     },
     {
       "file": "apps/web/src/lib/api.ts",
-      "fn": "request",
-      "score": 26
-    },
-    {
-      "file": "apps/web/src/lib/api.ts",
-      "fn": "uploadFileWithProgress",
+      "fn": "L117",
       "score": 34
     },
     {
+      "file": "apps/web/src/lib/api.ts",
+      "fn": "L38",
+      "score": 26
+    },
+    {
       "file": "apps/web/src/lib/chat-export.ts",
-      "fn": "formatChatMarkdown",
+      "fn": "L18",
       "score": 24
     },
     {
       "file": "apps/web/src/lib/chat-selection.ts",
-      "fn": "buildOneShotActionPrompt",
-      "score": 21
-    },
-    {
-      "file": "apps/web/src/lib/chat-selection.ts",
-      "fn": "chatSelectionReducer",
+      "fn": "L122",
       "score": 23
     },
     {
-      "file": "apps/web/src/lib/chat-stream.ts",
-      "fn": "parseAssistant",
-      "score": 27
+      "file": "apps/web/src/lib/chat-selection.ts",
+      "fn": "L59",
+      "score": 21
     },
     {
       "file": "apps/web/src/lib/chat-stream.ts",
-      "fn": "parseUserMessage",
+      "fn": "L155",
       "score": 19
     },
     {
+      "file": "apps/web/src/lib/chat-stream.ts",
+      "fn": "L72",
+      "score": 27
+    },
+    {
       "file": "apps/web/src/lib/pending-comments-context.tsx",
-      "fn": "tryAdvance",
+      "fn": "L302",
       "score": 39
     },
     {
       "file": "apps/web/src/mcp-apps/sessions/app.tsx",
-      "fn": "SessionDetailView",
+      "fn": "L325",
       "score": 16
     },
     {
       "file": "apps/web/src/mcp-apps/shared/mcp-app-provider.tsx",
-      "fn": "countResultItems",
+      "fn": "L43",
       "score": 16
     },
     {
       "file": "apps/web/src/mcp-apps/shared/schema-form.tsx",
-      "fn": "SchemaForm",
-      "score": 17
-    },
-    {
-      "file": "apps/web/src/mcp-apps/shared/schema-form.tsx",
-      "fn": "handleSubmit",
+      "fn": "L150",
       "score": 91
     },
     {
       "file": "apps/web/src/mcp-apps/shared/schema-form.tsx",
-      "fn": "validate",
+      "fn": "L38",
       "score": 24
     },
     {
+      "file": "apps/web/src/mcp-apps/shared/schema-form.tsx",
+      "fn": "L75",
+      "score": 17
+    },
+    {
       "file": "apps/web/src/mcp-apps/shared/schema-select.tsx",
-      "fn": "SchemaSelect",
+      "fn": "L55",
       "score": 16
     },
     {
       "file": "apps/web/src/mcp-apps/shared/use-workspace-schema.ts",
-      "fn": "normalizeSchema",
-      "score": 17
-    },
-    {
-      "file": "apps/web/src/mcp-apps/shared/use-workspace-schema.ts",
-      "fn": "useWorkspaceSchema",
+      "fn": "L109",
       "score": 18
     },
     {
+      "file": "apps/web/src/mcp-apps/shared/use-workspace-schema.ts",
+      "fn": "L51",
+      "score": 17
+    },
+    {
       "file": "apps/web/src/mcp-apps/workspaces/app.tsx",
-      "fn": "WorkspacesApp",
+      "fn": "L39",
       "score": 23
     },
     {
       "file": "apps/web/src/routes/_authed/$workspaceId/objects/index.tsx",
-      "fn": "itself",
+      "fn": "L352",
       "score": 29
     },
     {
       "file": "apps/web/src/routes/_authed/$workspaceId/settings/keys.tsx",
-      "fn": "ClaudeOAuthSection",
-      "score": 18
-    },
-    {
-      "file": "apps/web/src/routes/_authed/$workspaceId/settings/keys.tsx",
-      "fn": "CustomLlmEditor",
+      "fn": "L300",
       "score": 16
     },
     {
+      "file": "apps/web/src/routes/_authed/$workspaceId/settings/keys.tsx",
+      "fn": "L39",
+      "score": 18
+    },
+    {
       "file": "apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx",
-      "fn": "PropertyDetailPage",
+      "fn": "L25",
       "score": 17
     },
     {
       "file": "apps/web/src/routes/_authed/$workspaceId/settings/skills.tsx",
-      "fn": "SkillsPage",
+      "fn": "L137",
       "score": 19
     },
     {
+      "file": "apps/web/src/routes/_authed/$workspaceId/settings/skills.tsx",
+      "fn": "L95",
+      "score": 24
+    },
+    {
       "file": "apps/web/src/routes/_authed/$workspaceId/triggers/index.tsx",
-      "fn": "describeTrigger",
+      "fn": "L18",
       "score": 19
     },
     {
       "file": "apps/web/src/routes/signup.tsx",
-      "fn": "handleSubmit",
+      "fn": "L58",
       "score": 25
     },
     {
       "file": "packages/mcp/src/__tests__/tools.test.ts",
-      "fn": "getHandler",
+      "fn": "L1025",
       "score": 20
     },
     {
       "file": "packages/mcp/src/server.ts",
-      "fn": "apiFetch",
-      "score": 21
-    },
-    {
-      "file": "packages/mcp/src/server.ts",
-      "fn": "buildContextLine",
-      "score": 29
-    },
-    {
-      "file": "packages/mcp/src/server.ts",
-      "fn": "buildEnableModuleSettings",
-      "score": 35
-    },
-    {
-      "file": "packages/mcp/src/server.ts",
-      "fn": "buildTriggerContextLine",
+      "fn": "L1149",
       "score": 32
     },
     {
       "file": "packages/mcp/src/server.ts",
-      "fn": "collectActiveRelTypes",
-      "score": 18
-    },
-    {
-      "file": "packages/mcp/src/server.ts",
-      "fn": "content",
-      "score": 16
-    },
-    {
-      "file": "packages/mcp/src/server.ts",
-      "fn": "displayNames",
-      "score": 22
-    },
-    {
-      "file": "packages/mcp/src/server.ts",
-      "fn": "ensureEnumField",
-      "score": 25
-    },
-    {
-      "file": "packages/mcp/src/server.ts",
-      "fn": "existing",
-      "score": 18
-    },
-    {
-      "file": "packages/mcp/src/server.ts",
-      "fn": "objects",
-      "score": 40
-    },
-    {
-      "file": "packages/mcp/src/server.ts",
-      "fn": "patchFieldDefinitions",
-      "score": 27
-    },
-    {
-      "file": "packages/mcp/src/server.ts",
-      "fn": "responseMeta",
+      "fn": "L1361",
       "score": 19
     },
     {
       "file": "packages/mcp/src/server.ts",
-      "fn": "result",
+      "fn": "L1576",
+      "score": 40
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "L1643",
+      "score": 18
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "L172",
+      "score": 21
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "L2034",
       "score": 16
     },
     {
       "file": "packages/mcp/src/server.ts",
-      "fn": "settings",
+      "fn": "L2128",
+      "score": 22
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "L2329",
+      "score": 22
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "L2456",
+      "score": 27
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "L2577",
+      "score": 25
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "L319",
+      "score": 35
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "L375",
+      "score": 18
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "L4157",
       "score": 48
     },
     {
       "file": "packages/mcp/src/server.ts",
-      "fn": "wsId",
-      "score": 22
+      "fn": "L4293",
+      "score": 87
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "L4501",
+      "score": 32
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "L4692",
+      "score": 85
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "L723",
+      "score": 16
+    },
+    {
+      "file": "packages/mcp/src/server.ts",
+      "fn": "L925",
+      "score": 29
     },
     {
       "file": "packages/risk-classifier/src/lib/diff.ts",
-      "fn": "parseUnifiedDiff",
+      "fn": "L10",
       "score": 27
     },
     {
       "file": "packages/risk-classifier/src/lib/semgrep.ts",
-      "fn": "runSemgrepDiff",
+      "fn": "L13",
       "score": 21
     },
     {
       "file": "packages/risk-classifier/src/signals.ts",
-      "fn": "collectSignals",
+      "fn": "L18",
       "score": 54
     },
     {
       "file": "packages/shared/src/schemas/skills.ts",
-      "fn": "parseSkillMd",
+      "fn": "L45",
       "score": 18
     }
   ],
