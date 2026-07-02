@@ -641,6 +641,7 @@ describe('SessionManager', () => {
 				[{ count: 0 }], // hasCapacity: running count
 				[opts.agent], // launchContainer: agent lookup
 				[opts.workspace], // launchContainer: workspace lookup (llm keys)
+				[opts.workspace], // resolveLlmRoute -> resolveClaudeCredentialsWithFailover: workspace lookup
 				opts.integrationRows, // launchContainer: integrations lookup
 			]
 		}

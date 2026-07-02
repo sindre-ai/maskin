@@ -12,10 +12,10 @@ import {
 	type EncryptedOAuthData,
 	decryptOAuthData,
 	encryptOAuthTokens,
-	getValidOAuthToken,
 	persistRefreshedSlot,
 	refreshClaudeTokenIfNeeded,
 } from './claude-oauth'
+import { attemptPrimaryRecovery, shouldAttemptPrimaryRecovery } from './claude-oauth-recovery'
 import {
 	type OAuthFailoverState,
 	type OAuthSlotKind,
@@ -112,9 +112,13 @@ export function isClaudeFailoverEnabled(env: NodeJS.ProcessEnv = process.env): b
 /**
  * Session-start entry point for Claude subscription credentials.
  *
- * Flag off (AC-T5): identical to the legacy `getValidOAuthToken` path —
- * no probe, no event, no state write. Returns primary tokens (or the
- * legacy single-slot row) or `null` when nothing is configured.
+ * Flag off (AC-T5): always primary-only, regardless of whatever
+ * `active_slot` a prior (flag-on) failover may have persisted — reads the
+ * primary slot directly rather than through the slot resolver, so disabling
+ * the flag as an incident kill-switch actually forces routing back to
+ * primary instead of silently continuing to serve backup. No probe, no
+ * event, no state write. Returns `null` when nothing is configured or the
+ * primary can't be refreshed.
  *
  * Flag on: reads slots + failover state. If `active_slot === 'primary'`
  * (or the row still has the legacy shape), probes the primary token and
@@ -127,6 +131,10 @@ export function isClaudeFailoverEnabled(env: NodeJS.ProcessEnv = process.env): b
  * and skips the insert (AC-T2). AC-U4: with only a primary connected the
  * `failover` verdict returns the primary tokens unchanged — the caller
  * (session container) falls back to today's hard-failure behaviour.
+ *
+ * If `active_slot === 'backup'`, T7's lazy recovery (`attemptPrimaryRecovery`)
+ * is attempted once the cooldown has elapsed (AC-U6) before falling back to
+ * refreshing and returning the backup slot.
  */
 export async function resolveClaudeCredentialsWithFailover(
 	params: FailoverParams,
@@ -136,40 +144,89 @@ export async function resolveClaudeCredentialsWithFailover(
 	const env = params.env ?? process.env
 	const now = params.now ?? Date.now
 
-	if (!isClaudeFailoverEnabled(env)) {
-		const legacy = await getValidOAuthToken(db, workspaceId, bufferMs)
-		if (!legacy) return null
-		return { slot: 'primary', tokens: legacy.tokens }
-	}
-
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	if (!ws) return null
 
 	const wsSettings = (ws.settings as Record<string, unknown>) ?? {}
 	const slots = readSlots(wsSettings.claude_oauth)
+
+	if (!isClaudeFailoverEnabled(env)) {
+		if (!slots.primary) return null
+		const { tokens, refreshFailure } = await loadAndRefreshPrimary(
+			db,
+			workspaceId,
+			slots.primary,
+			bufferMs,
+		)
+		if (refreshFailure && tokens.expiresAt <= now()) return null
+		return { slot: 'primary', tokens }
+	}
+
 	const failover = readFailoverState(wsSettings.claude_oauth)
 
-	// Already flipped to backup on an earlier session — T7 owns the switch-back.
+	// Already flipped to backup on an earlier session.
 	if (failover.active_slot === 'backup') {
 		if (!slots.backup) return null
+
+		if (shouldAttemptPrimaryRecovery({ slots, failover, now: now() })) {
+			let recoveredTokens: ClaudeOAuthTokens | null = null
+			let recoveredNeedsPersist = false
+			const recovery = await attemptPrimaryRecovery({
+				db,
+				workspaceId,
+				actorId,
+				now: now(),
+				healthCheck: async (primary) => {
+					const decrypted = decryptOAuthData(primary)
+					try {
+						const { tokens, refreshed } = await refreshClaudeTokenIfNeeded(
+							decrypted,
+							bufferMs ?? 10 * 60 * 1000,
+						)
+						const probeResult = await runProbe(probe, tokens)
+						if (probeResult) {
+							const decision = classifyClaudeFailure(probeResult)
+							return { healthy: false, reason: decision.reason }
+						}
+						recoveredTokens = tokens
+						recoveredNeedsPersist = refreshed
+						return { healthy: true }
+					} catch (err) {
+						const decision = classifyClaudeFailure(classifierInputFromError(err))
+						return { healthy: false, reason: decision.reason }
+					}
+				},
+			})
+
+			if (recovery.recovered && recoveredTokens) {
+				if (recoveredNeedsPersist) {
+					// Persist AFTER attemptPrimaryRecovery's transaction has released
+					// its row lock — persisting from inside `healthCheck` (which runs
+					// under that lock) would open a second transaction competing for
+					// the same lock and deadlock against itself.
+					await persistRefreshedSlot(
+						db,
+						workspaceId,
+						'primary',
+						encryptOAuthTokens(recoveredTokens),
+					)
+				}
+				return { slot: 'primary', tokens: recoveredTokens }
+			}
+		}
+
 		const backupTokens = await refreshSlot(db, workspaceId, 'backup', slots.backup, bufferMs)
 		return backupTokens ? { slot: 'backup', tokens: backupTokens } : null
 	}
 
 	if (!slots.primary) return null
 
-	const primaryTokens = decryptOAuthData(slots.primary)
-	let workingTokens = primaryTokens
-	let refreshFailure: ClassifierInput | null = null
-	try {
-		const result = await refreshClaudeTokenIfNeeded(primaryTokens, bufferMs ?? 10 * 60 * 1000)
-		workingTokens = result.tokens
-		if (result.refreshed) {
-			await persistRefreshedSlot(db, workspaceId, 'primary', encryptOAuthTokens(result.tokens))
-		}
-	} catch (err) {
-		refreshFailure = classifierInputFromError(err)
-	}
+	const { tokens: workingTokens, refreshFailure } = await loadAndRefreshPrimary(
+		db,
+		workspaceId,
+		slots.primary,
+		bufferMs,
+	)
 
 	const probeInput: ClassifierInput | null =
 		refreshFailure ?? (await runProbe(probe, workingTokens))
@@ -178,6 +235,15 @@ export async function resolveClaudeCredentialsWithFailover(
 
 	const decision = classifyClaudeFailure(probeInput)
 	if (decision.action === 'retry_primary') {
+		if (refreshFailure && workingTokens.expiresAt <= now()) {
+			// The refresh itself failed transiently (network/5xx) AND the
+			// fallback token is actually expired — not just inside the
+			// proactive refresh buffer. Handing it back as "success" would
+			// launch a session with dead credentials and never reach the
+			// workspace API key / system fallback routes. Signal unusable so
+			// the caller (llm-routing) falls through instead.
+			return null
+		}
 		return { slot: 'primary', tokens: workingTokens }
 	}
 
@@ -197,6 +263,30 @@ export async function resolveClaudeCredentialsWithFailover(
 	const backupTokens = await refreshSlot(db, workspaceId, 'backup', slots.backup, bufferMs)
 	if (!backupTokens) return null
 	return { slot: 'backup', tokens: backupTokens }
+}
+
+/**
+ * Decrypt the primary slot, refresh if needed, and persist any refresh.
+ * `refreshFailure` is set (and `tokens` left at the pre-refresh, possibly
+ * stale value) when the refresh call itself throws — callers decide whether
+ * the stale token is still safe to hand back based on its real `expiresAt`.
+ */
+async function loadAndRefreshPrimary(
+	db: Database,
+	workspaceId: string,
+	primary: EncryptedOAuthData,
+	bufferMs: number | undefined,
+): Promise<{ tokens: ClaudeOAuthTokens; refreshFailure: ClassifierInput | null }> {
+	const primaryTokens = decryptOAuthData(primary)
+	try {
+		const result = await refreshClaudeTokenIfNeeded(primaryTokens, bufferMs ?? 10 * 60 * 1000)
+		if (result.refreshed) {
+			await persistRefreshedSlot(db, workspaceId, 'primary', encryptOAuthTokens(result.tokens))
+		}
+		return { tokens: result.tokens, refreshFailure: null }
+	} catch (err) {
+		return { tokens: primaryTokens, refreshFailure: classifierInputFromError(err) }
+	}
 }
 
 /**

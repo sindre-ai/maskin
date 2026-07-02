@@ -9,6 +9,7 @@ import {
 	clearSlot,
 	readFailoverState,
 	readSlots,
+	resolveActiveSlot,
 	writeFailoverState,
 	writeSlot,
 } from '../lib/claude-oauth-slots'
@@ -101,52 +102,66 @@ app.openapi(disconnectRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
-	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
-	if (!ws) {
+	// Locked read-modify-write so a concurrent session-start (which persists
+	// refreshed tokens or a failover transition via its own `SELECT ... FOR
+	// UPDATE`) can't have its write silently clobbered by this route's stale
+	// snapshot, or vice versa.
+	const found = await db.transaction(async (tx) => {
+		const [ws] = await tx
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!ws) return false
+
+		const settings = (ws.settings as WorkspaceSettings) ?? {}
+
+		if (!slot) {
+			// Back-compat path used by older clients and the "remove credentials"
+			// fallback when the row is in an unparseable state — drop the whole key.
+			const { claude_oauth: _, ...rest } = settings
+			await tx
+				.update(workspaces)
+				.set({ settings: rest, updatedAt: new Date() })
+				.where(eq(workspaces.id, workspaceId))
+			logger.info('Claude OAuth disconnected for workspace', { workspaceId, slot: 'all' })
+			return true
+		}
+
+		const wasActiveSlot = readFailoverState(settings.claude_oauth).active_slot === slot
+		let nextOAuth = clearSlot(settings.claude_oauth, slot)
+
+		if (nextOAuth && wasActiveSlot) {
+			// We just disconnected the slot session-start would have read next.
+			// Repoint active_slot to whichever slot still has data so a healthy
+			// remaining slot isn't orphaned by a stale pointer.
+			const remainingSlot: OAuthSlotKind = slot === 'primary' ? 'backup' : 'primary'
+			if (readSlots(nextOAuth)[remainingSlot]) {
+				nextOAuth = writeFailoverState(nextOAuth, { active_slot: remainingSlot })
+			}
+		}
+
+		let nextSettings: WorkspaceSettings
+		if (nextOAuth) {
+			nextSettings = { ...settings, claude_oauth: nextOAuth }
+		} else {
+			const { claude_oauth: _, ...rest } = settings
+			nextSettings = rest
+		}
+
+		await tx
+			.update(workspaces)
+			.set({ settings: nextSettings, updatedAt: new Date() })
+			.where(eq(workspaces.id, workspaceId))
+
+		logger.info('Claude OAuth slot disconnected for workspace', { workspaceId, slot })
+		return true
+	})
+
+	if (!found) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
-
-	const settings = (ws.settings as WorkspaceSettings) ?? {}
-
-	if (!slot) {
-		// Back-compat path used by older clients and the "remove credentials"
-		// fallback when the row is in an unparseable state — drop the whole key.
-		const { claude_oauth: _, ...rest } = settings
-		await db
-			.update(workspaces)
-			.set({ settings: rest, updatedAt: new Date() })
-			.where(eq(workspaces.id, workspaceId))
-		logger.info('Claude OAuth disconnected for workspace', { workspaceId, slot: 'all' })
-		return c.json({ success: true })
-	}
-
-	const wasActiveSlot = readFailoverState(settings.claude_oauth).active_slot === slot
-	let nextOAuth = clearSlot(settings.claude_oauth, slot)
-
-	if (nextOAuth && wasActiveSlot) {
-		// We just disconnected the slot session-start would have read next.
-		// Repoint active_slot to whichever slot still has data so a healthy
-		// remaining slot isn't orphaned by a stale pointer.
-		const remainingSlot: OAuthSlotKind = slot === 'primary' ? 'backup' : 'primary'
-		if (readSlots(nextOAuth)[remainingSlot]) {
-			nextOAuth = writeFailoverState(nextOAuth, { active_slot: remainingSlot })
-		}
-	}
-
-	let nextSettings: WorkspaceSettings
-	if (nextOAuth) {
-		nextSettings = { ...settings, claude_oauth: nextOAuth }
-	} else {
-		const { claude_oauth: _, ...rest } = settings
-		nextSettings = rest
-	}
-
-	await db
-		.update(workspaces)
-		.set({ settings: nextSettings, updatedAt: new Date() })
-		.where(eq(workspaces.id, workspaceId))
-
-	logger.info('Claude OAuth slot disconnected for workspace', { workspaceId, slot })
 	return c.json({ success: true })
 }) as RouteHandler<typeof disconnectRoute, Env>)
 
@@ -314,30 +329,52 @@ app.openapi(importRoute, (async (c) => {
 	const slot: OAuthSlotKind = requestedSlot ?? 'primary'
 	const tokens: ClaudeOAuthTokens = tokenFields
 
-	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
-	if (!ws) {
+	// Locked read-modify-write — see the disconnect route above for why.
+	const found = await db.transaction(async (tx) => {
+		const [ws] = await tx
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!ws) return false
+
+		const settings = (ws.settings as WorkspaceSettings) ?? {}
+		const currentFailover = readFailoverState(settings.claude_oauth)
+		const currentlyResolvable = resolveActiveSlot(settings.claude_oauth) !== undefined
+
+		// Reset failover state (clearing any stale reason/failure timestamp) in
+		// three cases: re-importing the slot that's already active (fresh
+		// credentials deserve a clean slate), restoring the default primary
+		// after a failover to backup, or nothing was resolvable beforehand (a
+		// dangling active_slot pointer). Anything else — e.g. routine
+		// credential rotation of an inactive slot while a different slot is
+		// currently active and healthy — must leave `active_slot` and the
+		// recorded failure state untouched; it must not silently steal traffic
+		// away from a slot that's serving fine.
+		const isReimportOfActiveSlot = currentFailover.active_slot === slot
+		const isPrimaryRecovery = slot === 'primary' && currentFailover.active_slot === 'backup'
+		const shouldResetFailoverState =
+			isReimportOfActiveSlot || isPrimaryRecovery || !currentlyResolvable
+
+		const withSlot = writeSlot(settings.claude_oauth, slot, encryptOAuthTokens(tokens))
+		const nextOAuth = shouldResetFailoverState
+			? writeFailoverState(withSlot, { active_slot: slot })
+			: withSlot
+
+		await tx
+			.update(workspaces)
+			.set({
+				settings: { ...settings, claude_oauth: nextOAuth },
+				updatedAt: new Date(),
+			})
+			.where(eq(workspaces.id, workspaceId))
+		return true
+	})
+
+	if (!found) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
-
-	const settings = (ws.settings as WorkspaceSettings) ?? {}
-	// Re-importing into a slot is a recovery action for THAT slot — clear any
-	// stale failover state and make the freshly-imported slot active again so
-	// the next session-start re-evaluates from a clean slate. Resetting to a
-	// hardcoded 'primary' here would be wrong when the caller just fixed the
-	// backup while primary is still unhealthy. T6/T7 will re-write failover
-	// state if the new tokens fail again.
-	const withSlot = writeSlot(settings.claude_oauth, slot, encryptOAuthTokens(tokens))
-	const nextOAuth = withSlot.failover
-		? writeFailoverState(withSlot, { active_slot: slot })
-		: withSlot
-
-	await db
-		.update(workspaces)
-		.set({
-			settings: { ...settings, claude_oauth: nextOAuth },
-			updatedAt: new Date(),
-		})
-		.where(eq(workspaces.id, workspaceId))
 
 	logger.info('Claude OAuth tokens imported for workspace', {
 		workspaceId,
@@ -396,34 +433,47 @@ app.openapi(swapRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
-	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
-	if (!ws) {
+	// Locked read-modify-write — see the disconnect route above for why.
+	const result = await db.transaction(async (tx) => {
+		const [ws] = await tx
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!ws) return 'not_found' as const
+
+		const settings = (ws.settings as WorkspaceSettings) ?? {}
+		const slots = readSlots(settings.claude_oauth)
+		if (!slots.primary || !slots.backup) return 'incomplete' as const
+
+		// Swap the data, then reset failover state — what was unhealthy is now
+		// the backup, so the next session-start should try primary fresh.
+		let nextOAuth = writeSlot(settings.claude_oauth, 'primary', slots.backup)
+		nextOAuth = writeSlot(nextOAuth, 'backup', slots.primary)
+		const resetFailover: OAuthFailoverState = { active_slot: 'primary' }
+		nextOAuth = writeFailoverState(nextOAuth, resetFailover)
+
+		await tx
+			.update(workspaces)
+			.set({
+				settings: { ...settings, claude_oauth: nextOAuth },
+				updatedAt: new Date(),
+			})
+			.where(eq(workspaces.id, workspaceId))
+
+		return 'ok' as const
+	})
+
+	if (result === 'not_found') {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
-
-	const settings = (ws.settings as WorkspaceSettings) ?? {}
-	const slots = readSlots(settings.claude_oauth)
-	if (!slots.primary || !slots.backup) {
+	if (result === 'incomplete') {
 		return c.json(
 			createApiError('BAD_REQUEST', 'Both primary and backup slots must be connected to swap'),
 			400,
 		)
 	}
-
-	// Swap the data, then reset failover state — what was unhealthy is now
-	// the backup, so the next session-start should try primary fresh.
-	let nextOAuth = writeSlot(settings.claude_oauth, 'primary', slots.backup)
-	nextOAuth = writeSlot(nextOAuth, 'backup', slots.primary)
-	const resetFailover: OAuthFailoverState = { active_slot: 'primary' }
-	nextOAuth = writeFailoverState(nextOAuth, resetFailover)
-
-	await db
-		.update(workspaces)
-		.set({
-			settings: { ...settings, claude_oauth: nextOAuth },
-			updatedAt: new Date(),
-		})
-		.where(eq(workspaces.id, workspaceId))
 
 	logger.info('Claude OAuth slots swapped for workspace', { workspaceId })
 	return c.json({ success: true })

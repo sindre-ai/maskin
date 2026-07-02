@@ -19,11 +19,11 @@ import {
 import type { ClassifierInput } from '../../lib/claude-failure-classifier'
 import { headersFrom } from '../../lib/claude-failure-classifier'
 import type { EncryptedOAuthData } from '../../lib/claude-oauth'
+import { PRIMARY_RECOVERY_COOLDOWN_MS } from '../../lib/claude-oauth-recovery'
 import type { OAuthSlotStorage } from '../../lib/claude-oauth-slots'
 
 const WORKSPACE_ID = 'workspace-1'
 const ACTOR_ID = 'actor-1'
-const ORIGINAL_ENV = { ...process.env }
 
 function encryptedSlot(overrides?: Partial<EncryptedOAuthData>): EncryptedOAuthData {
 	return {
@@ -80,6 +80,10 @@ function createMockDb(initial: { settings: Record<string, unknown> } | undefined
 		select: vi.fn(selectChain),
 		update,
 		insert: vi.fn().mockReturnValue({ values: insertValues }),
+		// `attemptPrimaryRecovery` (T7) locks the row via a raw `tx.execute(sql\`...
+		// FOR UPDATE\`)` instead of the `.select().for('update')` chain — mirror
+		// its `{ rows: [...] }` result shape here.
+		execute: vi.fn(async () => ({ rows: current ? [current] : [] })),
 		transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
 			const next = txChain.then(() => fn(db))
 			txChain = next.catch(() => undefined)
@@ -96,13 +100,19 @@ function createMockDb(initial: { settings: Record<string, unknown> } | undefined
 }
 
 beforeEach(() => {
-	const cleaned: NodeJS.ProcessEnv = { ...ORIGINAL_ENV }
-	cleaned.MASKIN_CLAUDE_FAILOVER_ENABLED = undefined
-	process.env = cleaned
+	// Every test below passes `env` explicitly to
+	// `resolveClaudeCredentialsWithFailover`, so this is just a safety net in
+	// case a future test forgets to. Use `vi.stubEnv`/`unstubAllEnvs` (scoped,
+	// tracked restoration of just this key) rather than reassigning
+	// `process.env` wholesale — a full reassignment across a `beforeEach` /
+	// `afterEach` pair mutates the single process-wide `process.env` object
+	// other test files share, and can clobber env vars another file's test
+	// set up concurrently.
+	vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', '')
 })
 
 afterEach(() => {
-	process.env = { ...ORIGINAL_ENV }
+	vi.unstubAllEnvs()
 	vi.unstubAllGlobals()
 })
 
@@ -145,6 +155,37 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			expect(result?.slot).toBe('primary')
 			expect(result?.tokens.accessToken).toBe('access-plain')
 			expect(probe).not.toHaveBeenCalled()
+			expect(eventInserts).toHaveLength(0)
+			expect(workspaceUpdates).toHaveLength(0)
+		})
+
+		it('forces primary-only routing even when active_slot was persisted as backup', async () => {
+			// Disabling the flag is meant to work as an incident kill-switch —
+			// it must not keep silently serving backup tokens (mislabeled as
+			// primary) just because an earlier flag-on failover flipped
+			// active_slot.
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({ encryptedAccessToken: 'primary-token' }),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+				failover: {
+					active_slot: 'backup',
+					last_primary_failure_at: 1_700_000_000_000,
+					last_classified_reason: 'auth_failed',
+				},
+			}
+			const { db, eventInserts, workspaceUpdates } = createMockDb({
+				settings: { claude_oauth: claudeOAuth },
+			})
+
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				env: {},
+			})
+
+			expect(result?.slot).toBe('primary')
+			expect(result?.tokens.accessToken).toBe('primary-token')
 			expect(eventInserts).toHaveLength(0)
 			expect(workspaceUpdates).toHaveLength(0)
 		})
@@ -421,6 +462,113 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 		})
 	})
 
+	describe('AC-U6: lazy primary recovery (T7)', () => {
+		it('flips back to primary once the cooldown has elapsed and the probe succeeds', async () => {
+			const lastFailure = 1_700_000_000_000
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({ encryptedAccessToken: 'recovered-primary-token' }),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+				failover: {
+					active_slot: 'backup',
+					last_primary_failure_at: lastFailure,
+					last_classified_reason: 'auth_failed',
+				},
+			}
+			const { db, eventInserts, getSettings } = createMockDb({
+				settings: { claude_oauth: claudeOAuth },
+			})
+			const probe = vi.fn(async () => null) // primary is healthy again
+
+			const now = lastFailure + PRIMARY_RECOVERY_COOLDOWN_MS + 1
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				probe,
+				now: () => now,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
+			expect(result?.slot).toBe('primary')
+			expect(result?.tokens.accessToken).toBe('recovered-primary-token')
+			expect(probe).toHaveBeenCalledTimes(1)
+			const stored = getSettings()?.claude_oauth as OAuthSlotStorage
+			expect(stored.failover).toEqual({ active_slot: 'primary' })
+			expect(eventInserts).toHaveLength(1)
+			expect(eventInserts[0]).toMatchObject({ action: 'claude_subscription_recovered' })
+		})
+
+		it('stays on backup and records the new failure reason when the recovery probe still fails', async () => {
+			const lastFailure = 1_700_000_000_000
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({ encryptedAccessToken: 'still-broken-primary-token' }),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+				failover: {
+					active_slot: 'backup',
+					last_primary_failure_at: lastFailure,
+					last_classified_reason: 'auth_failed',
+				},
+			}
+			const { db, eventInserts, getSettings } = createMockDb({
+				settings: { claude_oauth: claudeOAuth },
+			})
+			const probe = vi.fn(
+				async (): Promise<ClassifierInput> => ({
+					kind: 'http',
+					status: 401,
+					headers: headersFrom({}),
+				}),
+			)
+
+			const now = lastFailure + PRIMARY_RECOVERY_COOLDOWN_MS + 1
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				probe,
+				now: () => now,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
+			expect(result?.slot).toBe('backup')
+			expect(result?.tokens.accessToken).toBe('backup-token')
+			const stored = getSettings()?.claude_oauth as OAuthSlotStorage
+			expect(stored.failover?.active_slot).toBe('backup')
+			expect(stored.failover?.last_primary_failure_at).toBe(now)
+			expect(stored.failover?.last_classified_reason).toBe('auth_failed')
+			expect(eventInserts).toHaveLength(0)
+		})
+
+		it('does not attempt recovery before the cooldown has elapsed', async () => {
+			const lastFailure = 1_700_000_000_000
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({ encryptedAccessToken: 'primary-token' }),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+				failover: {
+					active_slot: 'backup',
+					last_primary_failure_at: lastFailure,
+					last_classified_reason: 'auth_failed',
+				},
+			}
+			const { db, workspaceUpdates } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
+			const probe = vi.fn(async () => null)
+
+			const now = lastFailure + 1000 // well within the 5-minute cooldown
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				probe,
+				now: () => now,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
+			expect(result?.slot).toBe('backup')
+			expect(probe).not.toHaveBeenCalled()
+			expect(workspaceUpdates).toHaveLength(0)
+		})
+	})
+
 	describe('refresh failures', () => {
 		it('classifies a 401 thrown by refresh as auth_failed and fails over', async () => {
 			const claudeOAuth: OAuthSlotStorage = {
@@ -482,7 +630,13 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			})
 		})
 
-		it('still retries the primary on a 5xx thrown by refresh', async () => {
+		it('returns null (not a stale token) on a 5xx thrown by refresh when the token is actually expired', async () => {
+			// The proactive refresh buffer already meant this token *would*
+			// still work for a few more minutes in the common case — but here
+			// `expiresAt` is genuinely in the past, so handing it back as
+			// "success" would launch a session with a dead token instead of
+			// letting the caller (llm-routing) fall through to the workspace
+			// API key / system fallback routes.
 			const claudeOAuth: OAuthSlotStorage = {
 				primary: encryptedSlot({
 					expiresAt: Date.now() - 60_000,
@@ -509,7 +663,45 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
 			})
 
+			expect(result).toBeNull()
+			// Not a failover verdict — this is retry_primary, so no backup flip.
+			expect(eventInserts).toHaveLength(0)
+			expect(workspaceUpdates).toHaveLength(0)
+		})
+
+		it('still returns the primary on a 5xx thrown by refresh when the token has not actually expired yet', async () => {
+			// Proactive refresh (10-minute buffer) attempted early and hit a
+			// transient 503, but the token itself is still genuinely valid for
+			// a few more minutes — safe to keep using rather than force a
+			// fallback route switch for a non-issue.
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({
+					expiresAt: Date.now() + 2 * 60 * 1000,
+					encryptedAccessToken: 'still-valid-primary-token',
+				}),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+			}
+			const { db, eventInserts, workspaceUpdates } = createMockDb({
+				settings: { claude_oauth: claudeOAuth },
+			})
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue({
+					ok: false,
+					status: 503,
+					text: () => Promise.resolve('service unavailable'),
+				}),
+			)
+
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
 			expect(result?.slot).toBe('primary')
+			expect(result?.tokens.accessToken).toBe('still-valid-primary-token')
 			expect(eventInserts).toHaveLength(0)
 			expect(workspaceUpdates).toHaveLength(0)
 		})
