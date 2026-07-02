@@ -1,9 +1,19 @@
 import { randomUUID } from 'node:crypto'
+import { actors, workspaceMembers, workspaces as workspacesTable } from '@maskin/db/schema'
+import { eq } from 'drizzle-orm'
 import { insertActor } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
+
+const DEFAULT_AGENT_NAMES = [
+	'Workspace Coach',
+	'Workspace Driver',
+	'Strategist',
+	'Insights Triage Agent',
+	'Research Agent',
+]
 
 function createApp() {
 	return createIntegrationApp({ path: '/api/workspaces', module: workspacesRoutes })
@@ -138,15 +148,103 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + Workspace Coach (seeded synchronously in the transaction) + new member.
-			// Driver and Strategist are seeded async via bootstrapDefaultAgents (requires agentStorage),
-			// which is not wired in integration tests, so they are not present here.
-			expect(members).toHaveLength(3)
-			expect(members.map((m: { role: string }) => m.role).sort()).toEqual([
-				'member',
-				'member',
-				'owner',
-			])
+			// Creator (owner) + all 5 default agents (seeded atomically inside the
+			// create transaction) + the newly-added member = 7.
+			expect(members).toHaveLength(7)
+			const roles = members.map((m: { role: string }) => m.role).sort()
+			expect(roles).toEqual(['member', 'member', 'member', 'member', 'member', 'member', 'owner'])
+		})
+	})
+
+	describe('default agent seeding', () => {
+		it('seeds all 5 default agents atomically inside the create transaction', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Default Agents' }),
+			)
+			expect(createRes.status).toBe(201)
+			const ws = await createRes.json()
+
+			const seededNames = await db
+				.select({ name: actors.name })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(eq(workspaceMembers.workspaceId, ws.id))
+
+			const agentNames = seededNames
+				.map((r) => r.name)
+				.filter((n) => DEFAULT_AGENT_NAMES.includes(n))
+				.sort()
+			expect(agentNames).toEqual([...DEFAULT_AGENT_NAMES].sort())
+		})
+
+		it('re-invoking the seeding path against an already-seeded workspace inserts zero new agent rows', async () => {
+			const app = createApp()
+
+			const first = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Idempotent Seed' }),
+			)
+			const ws = await first.json()
+
+			const initial = await db
+				.select({ actorId: workspaceMembers.actorId })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(eq(workspaceMembers.workspaceId, ws.id))
+			const initialAgents = initial.filter(() => true)
+
+			const { seedDefaultAgentActors } = await import('../../services/workspace-bootstrap')
+			await seedDefaultAgentActors(db, ws.id, getTestActorId())
+
+			const after = await db
+				.select({ actorId: workspaceMembers.actorId })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(eq(workspaceMembers.workspaceId, ws.id))
+
+			expect(after.length).toBe(initialAgents.length)
+		})
+
+		it('rolls back the workspace, member, and any partial actor rows when the seed helper throws', async () => {
+			const { seedDefaultAgentActors, SeedAgentError } = await import(
+				'../../services/workspace-bootstrap'
+			)
+
+			const workspacesBefore = await db.select().from(workspacesTable)
+			const coachesBefore = await db.select().from(actors).where(eq(actors.name, 'Workspace Coach'))
+
+			let caught: unknown = null
+			try {
+				await db.transaction(async (tx) => {
+					const [ws] = await tx
+						.insert(workspacesTable)
+						.values({ name: 'Should Rollback', createdBy: getTestActorId() })
+						.returning()
+					if (!ws) throw new Error('workspace insert returned no row')
+					await tx.insert(workspaceMembers).values({
+						workspaceId: ws.id,
+						actorId: getTestActorId(),
+						role: 'owner',
+					})
+					// Seed the first agents, then throw partway through — this is how
+					// the route also aborts: SeedAgentError bubbles out of the tx and
+					// Postgres rolls back every write, including the actor rows the
+					// helper already inserted.
+					await seedDefaultAgentActors(tx, ws.id, getTestActorId())
+					throw new SeedAgentError('workspace_driver', new Error('forced rollback'))
+				})
+			} catch (err) {
+				caught = err
+			}
+
+			expect(caught).toBeInstanceOf(SeedAgentError)
+
+			// No workspace row, no member row, and no actor rows survived.
+			const workspacesAfter = await db.select().from(workspacesTable)
+			expect(workspacesAfter.length).toBe(workspacesBefore.length)
+			const coachesAfter = await db.select().from(actors).where(eq(actors.name, 'Workspace Coach'))
+			expect(coachesAfter.length).toBe(coachesBefore.length)
 		})
 	})
 })
