@@ -15,6 +15,7 @@
 		"type-check": "turbo type-check",
 		"depcruise": "depcruise --output-type err .",
 		"depcruise:json": "depcruise --output-type json .",
+		"fitness:filesize": "node scripts/check-max-file-size.mjs",
 		"db:generate": "turbo db:generate",
 		"db:migrate": "turbo db:migrate",
 		"db:seed": "turbo db:seed"

@@ -1,0 +1,17 @@
+# Fitness suite: file-size rules (ADR Decision 3 & 5).
+#
+# The 600 LOC ceiling is enforced by `scripts/check-max-file-size.mjs`, which
+# ratchets against `.maskin/fitness-baseline.json`. Baseline mutation is owned
+# by `pnpm fitness:baseline` (T4); this file only declares the rule.
+#
+# Adding a fourth exclusion here is an ADR-level decision — see
+# packages/risk-classifier/SKILL.md for the two-human PR gate on `.maskin/`.
+
+max_file_size_loc: 600
+
+exclusions:
+  - "routeTree.gen.ts"
+  - "drizzle/**"
+  - "**/__tests__/fixtures/**"
+
+baseline_path: .maskin/fitness-baseline.json
