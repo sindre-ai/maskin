@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as SecurityRouteImport } from './routes/security'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
@@ -38,6 +39,11 @@ import { Route as AuthedWorkspaceIdSettingsObjectsPropertyNameRouteImport } from
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SecurityRoute = SecurityRouteImport.update({
+  id: '/security',
+  path: '/security',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -181,6 +187,7 @@ const AuthedWorkspaceIdSettingsObjectsPropertyNameRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/login': typeof LoginRoute
+  '/security': typeof SecurityRoute
   '/signup': typeof SignupRoute
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/workspaces': typeof AuthedWorkspacesRoute
@@ -206,6 +213,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/security': typeof SecurityRoute
   '/signup': typeof SignupRoute
   '/workspaces': typeof AuthedWorkspacesRoute
   '/': typeof AuthedIndexRoute
@@ -232,6 +240,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authed': typeof AuthedRouteWithChildren
   '/login': typeof LoginRoute
+  '/security': typeof SecurityRoute
   '/signup': typeof SignupRoute
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/_authed/workspaces': typeof AuthedWorkspacesRoute
@@ -261,6 +270,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/security'
     | '/signup'
     | '/$workspaceId'
     | '/workspaces'
@@ -286,6 +296,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
+    | '/security'
     | '/signup'
     | '/workspaces'
     | '/'
@@ -311,6 +322,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authed'
     | '/login'
+    | '/security'
     | '/signup'
     | '/_authed/$workspaceId'
     | '/_authed/workspaces'
@@ -339,6 +351,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AuthedRoute: typeof AuthedRouteWithChildren
   LoginRoute: typeof LoginRoute
+  SecurityRoute: typeof SecurityRoute
   SignupRoute: typeof SignupRoute
 }
 
@@ -349,6 +362,13 @@ declare module '@tanstack/react-router' {
       path: '/signup'
       fullPath: '/signup'
       preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/security': {
+      id: '/security'
+      path: '/security'
+      fullPath: '/security'
+      preLoaderRoute: typeof SecurityRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -604,6 +624,7 @@ const AuthedRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   AuthedRoute: AuthedRouteWithChildren,
   LoginRoute: LoginRoute,
+  SecurityRoute: SecurityRoute,
   SignupRoute: SignupRoute,
 }
 export const routeTree = rootRouteImport
