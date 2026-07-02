@@ -50,19 +50,13 @@ export interface HeaderLookup {
 }
 
 /**
- * Threshold below which a 429 with `retry-after` is treated as a transient
- * RPM/TPM burst (retry the primary) rather than a quota-exhausted failover
- * signal. From AC-U2: "NOT a transient RPM/TPM throughput limit that carries
- * a retry-after < 60s".
- */
-const THROUGHPUT_BURST_RETRY_AFTER_SECONDS = 60
-
-/**
  * Classify a Claude API call failure.
  *
  * Decision order on a 429: an `anthropic-ratelimit-unified-status: exhausted`
  * header always wins — that's the quota-exhausted signal we must failover on.
- * Only if the header is absent do we fall back to the `retry-after` heuristic.
+ * Any other 429 (throughput burst, or no usable signal at all) retries the
+ * primary rather than failing over silently — failover requires an explicit
+ * exhausted marker.
  */
 export function classifyClaudeFailure(input: ClassifierInput): ClassifierDecision {
 	if (input.kind === 'transport') {
@@ -80,12 +74,6 @@ export function classifyClaudeFailure(input: ClassifierInput): ClassifierDecisio
 		if (unified?.trim().toLowerCase() === 'exhausted') {
 			return { action: 'failover', reason: 'quota_exhausted' }
 		}
-		const retryAfterSeconds = parseRetryAfter(headers.get('retry-after'))
-		if (retryAfterSeconds !== null && retryAfterSeconds < THROUGHPUT_BURST_RETRY_AFTER_SECONDS) {
-			return { action: 'retry_primary', reason: 'throughput_burst' }
-		}
-		// A 429 with no usable signal — treat as throughput-burst rather than
-		// failing over silently. Failover requires an explicit exhausted marker.
 		return { action: 'retry_primary', reason: 'throughput_burst' }
 	}
 
@@ -97,25 +85,6 @@ export function classifyClaudeFailure(input: ClassifierInput): ClassifierDecisio
 	// invoking the classifier on these, but default to retry to avoid an
 	// unwarranted failover on a status we don't recognise.
 	return { action: 'retry_primary', reason: 'server_error' }
-}
-
-/**
- * Parse a `retry-after` header. The HTTP spec allows either an integer
- * seconds value or an HTTP-date; Anthropic's 429s carry the seconds form,
- * but accept the date form too — anything in the past resolves to 0s.
- * Returns null when the header is missing or unparseable.
- */
-function parseRetryAfter(raw: string | null): number | null {
-	if (raw === null) return null
-	const trimmed = raw.trim()
-	if (trimmed === '') return null
-
-	const seconds = Number(trimmed)
-	if (Number.isFinite(seconds) && seconds >= 0) return seconds
-
-	const dateMs = Date.parse(trimmed)
-	if (Number.isNaN(dateMs)) return null
-	return Math.max(0, Math.round((dateMs - Date.now()) / 1000))
 }
 
 /**

@@ -219,22 +219,14 @@ export async function resolveClaudeCredentialsWithFailover(
 			}
 		}
 
-		const backupTokens = await refreshSlot(db, workspaceId, 'backup', slots.backup, bufferMs)
-		if (!backupTokens) return null
-		const backupProbeInput = await runProbe(probe, backupTokens)
-		if (backupProbeInput) {
-			const backupDecision = classifyClaudeFailure(backupProbeInput)
-			if (backupDecision.action === 'failover') {
-				await recordRuntimeClaudeOAuthBackupExhausted({
-					db,
-					workspaceId,
-					actorId,
-					reason: backupDecision.reason,
-				})
-				return null
-			}
-		}
-		return { slot: 'backup', tokens: backupTokens }
+		return refreshAndProbeBackup({
+			db,
+			workspaceId,
+			actorId,
+			backup: slots.backup,
+			probe,
+			bufferMs,
+		})
 	}
 
 	if (!slots.primary) return null
@@ -278,22 +270,7 @@ export async function resolveClaudeCredentialsWithFailover(
 		reason: decision.reason,
 	})
 
-	const backupTokens = await refreshSlot(db, workspaceId, 'backup', slots.backup, bufferMs)
-	if (!backupTokens) return null
-	const backupProbeInput = await runProbe(probe, backupTokens)
-	if (backupProbeInput) {
-		const backupDecision = classifyClaudeFailure(backupProbeInput)
-		if (backupDecision.action === 'failover') {
-			await recordRuntimeClaudeOAuthBackupExhausted({
-				db,
-				workspaceId,
-				actorId,
-				reason: backupDecision.reason,
-			})
-			return null
-		}
-	}
-	return { slot: 'backup', tokens: backupTokens }
+	return refreshAndProbeBackup({ db, workspaceId, actorId, backup: slots.backup, probe, bufferMs })
 }
 
 /**
@@ -542,6 +519,39 @@ async function refreshSlot(
 		})
 		return null
 	}
+}
+
+/**
+ * Refresh the backup slot, probe it, and classify the response. Returns the
+ * backup credentials when healthy, or `null` when the refresh fails or the
+ * backup itself reports a failover-worthy failure (recording
+ * `claude_subscription_backup_exhausted` in that last case).
+ */
+async function refreshAndProbeBackup(params: {
+	db: Database
+	workspaceId: string
+	actorId: string
+	backup: EncryptedOAuthData
+	probe: SubscriptionProbe
+	bufferMs: number | undefined
+}): Promise<ClaudeCredentials | null> {
+	const { db, workspaceId, actorId, backup, probe, bufferMs } = params
+	const backupTokens = await refreshSlot(db, workspaceId, 'backup', backup, bufferMs)
+	if (!backupTokens) return null
+	const backupProbeInput = await runProbe(probe, backupTokens)
+	if (backupProbeInput) {
+		const backupDecision = classifyClaudeFailure(backupProbeInput)
+		if (backupDecision.action === 'failover') {
+			await recordRuntimeClaudeOAuthBackupExhausted({
+				db,
+				workspaceId,
+				actorId,
+				reason: backupDecision.reason,
+			})
+			return null
+		}
+	}
+	return { slot: 'backup', tokens: backupTokens }
 }
 
 async function runProbe(

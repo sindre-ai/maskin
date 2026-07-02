@@ -46,39 +46,31 @@ function KeysPage() {
 // Map a classified failover reason (written by the classifier in T4/T6) to
 // the customer-facing line shown next to the unhealthy primary. Reasons
 // outside this map render generically rather than leaking raw codes.
-const FAILOVER_REASON_COPY: Record<
-	string,
-	{ slotLine: string; bannerBody: string; recoverable: 'reconnect' | 'wait' }
-> = {
+const FAILOVER_REASON_COPY: Record<string, { slotLine: string; bannerBody: string }> = {
 	auth_failed: {
 		slotLine: 'Authentication failed. Reconnect to use this subscription again.',
 		bannerBody:
 			'The primary subscription needs to be reconnected. Agents are running on the backup until then.',
-		recoverable: 'reconnect',
 	},
 	token_expired: {
 		slotLine: 'Credentials expired. Reconnect to use this subscription again.',
 		bannerBody:
 			'The primary subscription needs to be reconnected. Agents are running on the backup until then.',
-		recoverable: 'reconnect',
 	},
 	quota_exhausted_5h: {
 		slotLine: '5-hour usage limit reached.',
 		bannerBody:
 			'The primary hit its 5-hour usage limit. Agents are running on the backup until the primary resets.',
-		recoverable: 'wait',
 	},
 	quota_exhausted_weekly: {
 		slotLine: 'Weekly usage limit reached.',
 		bannerBody:
 			'The primary hit its weekly usage limit. Agents are running on the backup until the primary resets.',
-		recoverable: 'wait',
 	},
 	quota_exhausted: {
 		slotLine: 'Usage limit reached.',
 		bannerBody:
 			'The primary hit a usage limit. Agents are running on the backup until it recovers.',
-		recoverable: 'wait',
 	},
 }
 

@@ -21,7 +21,7 @@ describe('classifyClaudeFailure', () => {
 			expect(decision).toEqual({ action: 'failover', reason: 'auth_failed' })
 		})
 
-		it('429 with retry-after: 30s → retry_primary with throughput_burst', () => {
+		it('429 without an exhausted marker → retry_primary with throughput_burst', () => {
 			const decision = classifyClaudeFailure(httpResponse(429, { 'retry-after': '30' }))
 			expect(decision).toEqual({ action: 'retry_primary', reason: 'throughput_burst' })
 		})
@@ -55,13 +55,6 @@ describe('classifyClaudeFailure', () => {
 			expect(decision).toEqual({ action: 'failover', reason: 'quota_exhausted' })
 		})
 
-		it('retry-after of exactly 60 is treated as not-throughput-burst', () => {
-			// AC-U2 says retry-after < 60s is the burst case; 60 itself is not.
-			// Without an exhausted marker the 429 still does not justify failover.
-			const decision = classifyClaudeFailure(httpResponse(429, { 'retry-after': '60' }))
-			expect(decision).toEqual({ action: 'retry_primary', reason: 'throughput_burst' })
-		})
-
 		it('429 with no usable headers stays on the primary', () => {
 			const decision = classifyClaudeFailure(httpResponse(429))
 			expect(decision).toEqual({ action: 'retry_primary', reason: 'throughput_burst' })
@@ -79,24 +72,6 @@ describe('classifyClaudeFailure', () => {
 				httpResponse(429, { 'anthropic-ratelimit-unified-status': 'EXHAUSTED' }),
 			)
 			expect(decision).toEqual({ action: 'failover', reason: 'quota_exhausted' })
-		})
-	})
-
-	describe('retry-after parsing', () => {
-		it('accepts an integer seconds value', () => {
-			const decision = classifyClaudeFailure(httpResponse(429, { 'retry-after': '5' }))
-			expect(decision.reason).toBe('throughput_burst')
-		})
-
-		it('accepts an HTTP-date that is < 60s in the future', () => {
-			const future = new Date(Date.now() + 30_000).toUTCString()
-			const decision = classifyClaudeFailure(httpResponse(429, { 'retry-after': future }))
-			expect(decision.reason).toBe('throughput_burst')
-		})
-
-		it('ignores an unparseable retry-after and stays on retry', () => {
-			const decision = classifyClaudeFailure(httpResponse(429, { 'retry-after': 'not-a-date' }))
-			expect(decision.action).toBe('retry_primary')
 		})
 	})
 
