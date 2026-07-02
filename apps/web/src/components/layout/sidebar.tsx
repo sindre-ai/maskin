@@ -19,8 +19,8 @@ import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { Link, useMatchRoute } from '@tanstack/react-router'
 import { Activity, Bot, Layers, Store, Zap } from 'lucide-react'
 import { useMemo } from 'react'
-import { AgentPulse } from '../agents/agent-pulse'
 import { NavUser } from './nav-user'
+import { SidebarActivity } from './sidebar-activity'
 
 const FOR_YOU_ROUTE = '/$workspaceId' as const
 
@@ -95,9 +95,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 				</SidebarGroup>
 			</SidebarContent>
 			<SidebarFooter>
-				<div className="px-2 group-data-[collapsible=icon]:hidden">
-					<AgentPulse workspaceId={workspaceId} />
-				</div>
+				<SidebarActivity workspaceId={workspaceId} />
 				<NavUser />
 			</SidebarFooter>
 			<SidebarRail />
