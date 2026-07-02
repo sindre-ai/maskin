@@ -98,6 +98,17 @@ const COMPLETE_STOP_DELAY_MS = 2_000
 // milliseconds is a genuine ambiguity, not a bug this fix is meant to close.
 export const FORCED_STOP_EXIT_CODE = 137
 
+// Upper bound on how long a `sessionExitCodes` entry seeded by /stop may
+// outlive its write. monitorSession (the only reader/deleter, see its
+// `sessionExitCodes?.delete(sessionId)` below) polls sandbox status every
+// COMPLETION_POLL_INTERVAL_MS (5s in services/microsandbox.ts), so a session
+// it's still actively tracking will consume the entry within seconds of the
+// sandbox actually stopping. A /stop call for a session with no live monitor
+// on this box (already finished here, or never dispatched here) would
+// otherwise leak this entry for the life of the process — this timer bounds
+// that instead of relying on an unbounded Map.
+export const SESSION_EXIT_CODE_SENTINEL_TTL_MS = 10 * 60 * 1000
+
 /**
  * Background task that runs after a session's microVM is confirmed Running.
  * Streams logs back to the Maskin backend (when MASKIN_BASE_URL is set),
@@ -637,6 +648,13 @@ export function buildApp(deps: AppDeps): Hono {
 		// Seed BEFORE stopping the sandbox, and regardless of whether the stop
 		// below succeeds — see FORCED_STOP_EXIT_CODE's comment.
 		sessionExitCodes.set(id, FORCED_STOP_EXIT_CODE)
+		// Self-cleaning: only deletes if nothing has consumed or overwritten the
+		// entry by then — see SESSION_EXIT_CODE_SENTINEL_TTL_MS's comment.
+		setTimeout(() => {
+			if (sessionExitCodes.get(id) === FORCED_STOP_EXIT_CODE) {
+				sessionExitCodes.delete(id)
+			}
+		}, SESSION_EXIT_CODE_SENTINEL_TTL_MS).unref()
 		try {
 			await stopSandbox(id, deps.msb)
 		} catch (err) {

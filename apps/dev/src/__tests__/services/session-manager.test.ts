@@ -1001,6 +1001,63 @@ describe('SessionManager', () => {
 				'Agent server ghost-server not found',
 			)
 		})
+
+		it('sanitizes an AgentServerHttpError from the remote stop call — no internal URL or response body leaks to the caller', async () => {
+			const session = buildSession({
+				status: 'running',
+				agentServerId: 'agent-server-1',
+				containerId: 'sandbox-name',
+			})
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			mockResults.selectQueue = [[session], [server]]
+
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				new Response('internal stack trace: secrets.db line 42', {
+					status: 500,
+				}),
+			)
+
+			try {
+				const err = await manager.stopSession(session.id).catch((e) => e)
+				expect(err).toBeInstanceOf(Error)
+				const message = (err as Error).message
+				expect(message).toBe(`Failed to stop session ${session.id}: agent-server returned HTTP 500`)
+				expect(message).not.toContain(server.url)
+				expect(message).not.toContain('secrets.db')
+			} finally {
+				fetchSpy.mockRestore()
+			}
+		})
+
+		it('sanitizes an AgentServerAuthError from the remote stop call', async () => {
+			const session = buildSession({
+				status: 'running',
+				agentServerId: 'agent-server-1',
+				containerId: 'sandbox-name',
+			})
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			mockResults.selectQueue = [[session], [server]]
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValue(new Response('', { status: 401 }))
+
+			try {
+				await expect(manager.stopSession(session.id)).rejects.toThrow(
+					`Failed to stop session ${session.id}: agent-server rejected bearer token`,
+				)
+			} finally {
+				fetchSpy.mockRestore()
+			}
+		})
 	})
 
 	describe('markRemoteSessionComplete()', () => {
@@ -1023,6 +1080,45 @@ describe('SessionManager', () => {
 				(v) => (v as Record<string, unknown>).action === 'session_failed',
 			)
 			expect(eventInsert).toBeDefined()
+		})
+
+		it('retries the CAS update on a thrown DB error and succeeds once a retry clears', async () => {
+			const session = buildSession({ status: 'running' })
+			// hasOtherActiveSessions' SELECT — a non-empty result means "yes, other
+			// active sessions exist", so the actors-table update branch is skipped
+			// and doesn't consume an extra update() call, keeping the retry count
+			// below attributable only to the CAS update.
+			mockResults.select = [{ id: 'other-session' }]
+			// 1st and 2nd CAS attempts throw; 3rd (final, within CAS_UPDATE_RETRIES)
+			// succeeds and returns the row via .returning().
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				undefined,
+			]
+			mockResults.updateQueue = [[session]]
+
+			await manager.markRemoteSessionComplete(session.id, 137)
+
+			const eventInsert = calls.inserts.find(
+				(v) => (v as Record<string, unknown>).action === 'session_failed',
+			)
+			expect(eventInsert).toBeDefined()
+		})
+
+		it('gives up and no-ops after exhausting retries on a persistently thrown DB error', async () => {
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			const initialInsertCount = calls.inserts.length
+
+			await expect(
+				manager.markRemoteSessionComplete('some-session-id', 137),
+			).resolves.toBeUndefined()
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
 		})
 	})
 

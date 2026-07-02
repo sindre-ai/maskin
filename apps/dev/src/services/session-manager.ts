@@ -48,7 +48,11 @@ import { getProvider } from '../lib/integrations/registry'
 import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
-import { AgentServerClient } from './agent-server-client'
+import {
+	AgentServerAuthError,
+	AgentServerClient,
+	AgentServerHttpError,
+} from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
@@ -569,7 +573,35 @@ export class SessionManager extends EventEmitter {
 				throw new Error(`Agent server ${session.agentServerId} not found`)
 			}
 			const client = new AgentServerClient({ server: serverRow })
-			await client.stopSession(sessionId)
+			try {
+				await client.stopSession(sessionId)
+			} catch (err) {
+				// Sanitize before rethrowing — the route handler surfaces this
+				// message verbatim to the API caller (apps/dev/src/routes/sessions.ts),
+				// and AgentServerHttpError's raw message embeds the agent-server's
+				// internal URL plus up to 200 chars of its HTTP response body, which
+				// must not reach an external client. Full details still go to the log.
+				if (err instanceof AgentServerAuthError) {
+					logger.error(
+						'agent-server rejected bearer token while stopping session — secret rotation race',
+						{ sessionId, agentServerId: serverRow.id, agentServerUrl: serverRow.url },
+					)
+					throw new Error(`Failed to stop session ${sessionId}: agent-server rejected bearer token`)
+				}
+				if (err instanceof AgentServerHttpError) {
+					logger.error('agent-server returned an error while stopping session', {
+						sessionId,
+						agentServerId: serverRow.id,
+						agentServerUrl: serverRow.url,
+						status: err.status,
+						body: err.body,
+					})
+					throw new Error(
+						`Failed to stop session ${sessionId}: agent-server returned HTTP ${err.status}`,
+					)
+				}
+				throw err
+			}
 			// Remote sessions have no local exit watcher — the agent-server's own
 			// completion monitor lives in that process's memory and may already be
 			// gone (e.g. after a redeploy), so it can never call back to report
@@ -2436,11 +2468,6 @@ export class SessionManager extends EventEmitter {
 	 * Mark a remote agent-server session as completed or failed. Mirrors the
 	 * relevant parts of `handleCompletion` but skips local Docker cleanup (the
 	 * agent-server owns the sandbox lifecycle; the workspace is already in S3).
-	 */
-	/**
-	 * Mark a remote agent-server session as completed or failed. Mirrors the
-	 * relevant parts of `handleCompletion` but skips local Docker cleanup (the
-	 * agent-server owns the sandbox lifecycle; the workspace is already in S3).
 	 *
 	 * Uses a compare-and-set UPDATE (status NOT IN the terminal/transitional
 	 * set, in the WHERE clause, with `.returning()` in place of a preliminary
@@ -2450,35 +2477,59 @@ export class SessionManager extends EventEmitter {
 	 * a terminal event. Exactly one call's UPDATE matches the row; the other
 	 * gets zero rows back and no-ops.
 	 */
+	private static readonly CAS_UPDATE_RETRIES = 3
+	private static readonly CAS_UPDATE_RETRY_DELAY_MS = 150
+
 	async markRemoteSessionComplete(sessionId: string, exitCode: number | null): Promise<void> {
 		const status = exitCode === 0 ? 'completed' : 'failed'
 
+		// A thrown DB error here (distinct from a clean 0-row CAS miss) must not
+		// permanently strand the session: giving up immediately would skip the
+		// audit event, the terminal system log (which SSE /logs/stream clients
+		// need to close), activeSessionId clearing, and the queue drain below —
+		// leaving a connected client hanging until the watchdog reaper eventually
+		// fires. Retry a few times with linear backoff before accepting that, per
+		// the retry pattern already used for transient errors in
+		// pushSessionWorkspace (apps/agent-server/src/services/session-workspace.ts).
 		let updated: typeof sessions.$inferSelect | undefined
-		try {
-			;[updated] = await this.db
-				.update(sessions)
-				.set({
-					status,
-					result: { exit_code: exitCode },
-					completedAt: new Date(),
-					updatedAt: new Date(),
-					currentActivity: null,
-				})
-				.where(
-					and(
-						eq(sessions.id, sessionId),
-						notInArray(sessions.status, [...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES]),
-					),
-				)
-				.returning()
-		} catch (err) {
+		let updateErr: unknown
+		for (let attempt = 1; attempt <= SessionManager.CAS_UPDATE_RETRIES; attempt++) {
+			try {
+				;[updated] = await this.db
+					.update(sessions)
+					.set({
+						status,
+						result: { exit_code: exitCode },
+						completedAt: new Date(),
+						updatedAt: new Date(),
+						currentActivity: null,
+					})
+					.where(
+						and(
+							eq(sessions.id, sessionId),
+							notInArray(sessions.status, [...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES]),
+						),
+					)
+					.returning()
+				updateErr = undefined
+				break
+			} catch (err) {
+				updateErr = err
+				if (attempt < SessionManager.CAS_UPDATE_RETRIES) {
+					await new Promise((resolve) =>
+						setTimeout(resolve, SessionManager.CAS_UPDATE_RETRY_DELAY_MS * attempt),
+					)
+				}
+			}
+		}
+		if (updateErr) {
 			// Best-effort: a DB hiccup here must not surface as a thrown error to
 			// stopSession()'s caller, which would otherwise report a 400 "stop
 			// failed" even though the remote sandbox kill already succeeded.
-			logger.error('Failed to update remote session status', {
+			logger.error('Failed to update remote session status after retries', {
 				sessionId,
 				status,
-				error: String(err),
+				error: String(updateErr),
 			})
 			return
 		}

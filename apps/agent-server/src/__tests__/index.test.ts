@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FORCED_STOP_EXIT_CODE, buildApp } from '../index'
+import { FORCED_STOP_EXIT_CODE, SESSION_EXIT_CODE_SENTINEL_TTL_MS, buildApp } from '../index'
 import type { AgentServerEnv } from '../lib/env'
 import { ImageWarmer } from '../services/image-warmer'
 
@@ -638,5 +638,65 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 
 		expect(res.status).toBe(400)
 		expect(sessionExitCodes.size).toBe(0)
+	})
+
+	it('self-cleans an orphaned sentinel after the TTL elapses (no live monitor ever consumed it)', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const sessionExitCodes = new Map<string, number>()
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionExitCodes,
+		})
+
+		vi.useFakeTimers()
+		try {
+			const res = await app.request('/sessions/sess-orphan/stop', {
+				method: 'POST',
+				headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+			})
+			expect(res.status).toBe(200)
+			expect(sessionExitCodes.get('sess-orphan')).toBe(FORCED_STOP_EXIT_CODE)
+
+			await vi.advanceTimersByTimeAsync(SESSION_EXIT_CODE_SENTINEL_TTL_MS)
+
+			expect(sessionExitCodes.has('sess-orphan')).toBe(false)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('does not clobber a value a live monitor already wrote over the sentinel before the TTL fires', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const sessionExitCodes = new Map<string, number>()
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionExitCodes,
+		})
+
+		vi.useFakeTimers()
+		try {
+			const res = await app.request('/sessions/sess-raced/stop', {
+				method: 'POST',
+				headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+			})
+			expect(res.status).toBe(200)
+
+			// Simulate /complete reporting a real exit code for this session before
+			// the cleanup timer fires — the sentinel's cleanup must not delete a
+			// value it didn't write.
+			sessionExitCodes.set('sess-raced', 0)
+
+			await vi.advanceTimersByTimeAsync(SESSION_EXIT_CODE_SENTINEL_TTL_MS)
+
+			expect(sessionExitCodes.get('sess-raced')).toBe(0)
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 })
