@@ -4,6 +4,8 @@ import {
 	SIGNUP_CAPTURE_SOURCE,
 	SIGNUP_CAPTURE_STATUS,
 	SIGNUP_CAPTURE_TAGS,
+	SIGNUP_FIRST_BET_DRAFT_SOURCE,
+	SIGNUP_RESEARCH_SOURCE,
 	buildSignupCaptureKnowledge,
 	signupCaptureInputSchema,
 } from '../schemas/signup-capture'
@@ -89,5 +91,22 @@ describe('buildSignupCaptureKnowledge', () => {
 
 	it('throws on invalid input rather than producing an empty payload', () => {
 		expect(() => buildSignupCaptureKnowledge({ name: '', organization: 'x', role: 'y' })).toThrow()
+	})
+})
+
+describe('signup source constants', () => {
+	it('exports the three signup-path source values as literal string types', () => {
+		expect(SIGNUP_CAPTURE_SOURCE).toBe('signup_capture')
+		expect(SIGNUP_RESEARCH_SOURCE).toBe('signup_research')
+		expect(SIGNUP_FIRST_BET_DRAFT_SOURCE).toBe('signup_first_bet_draft')
+	})
+
+	it('all three source values are unique — no accidental duplicates on the metadata.source runtime allow-list', () => {
+		const values = new Set([
+			SIGNUP_CAPTURE_SOURCE,
+			SIGNUP_RESEARCH_SOURCE,
+			SIGNUP_FIRST_BET_DRAFT_SOURCE,
+		])
+		expect(values.size).toBe(3)
 	})
 })

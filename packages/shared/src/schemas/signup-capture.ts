@@ -32,6 +32,27 @@ export const SIGNUP_CAPTURE_SOURCE = 'signup_capture' as const
 export const SIGNUP_CAPTURE_STATUS = 'validated' as const
 export const SIGNUP_CAPTURE_TAGS = ['context:user', 'context:company'] as const
 
+/**
+ * `metadata.source` value written on knowledge objects the Strategist produces
+ * during signup research (the second stage — after `signup_capture` lands and
+ * the Strategist reads it, before any council intake). The council event
+ * trigger filters on this value: `knowledge.created` with `metadata.source ==
+ * signup_research` fires `strategic-intake-review` in its signup-context branch
+ * against the freshly-landed research cluster.
+ */
+export const SIGNUP_RESEARCH_SOURCE = 'signup_research' as const
+
+/**
+ * `metadata.source` value written on bets the council promote-door creates from
+ * signup research. New in T2. Used by T3 to distinguish signup-driven draft
+ * cards from council-cadence-promoted bets, and by T4 to include them in the
+ * always-notify-Sebastian batched digest. `bet.metadata.source` is a free-form
+ * JSONB field — there is no runtime enum on it — so this constant is the
+ * canonical allow-list entry: seed-time producers and downstream readers
+ * import this instead of hardcoding the string.
+ */
+export const SIGNUP_FIRST_BET_DRAFT_SOURCE = 'signup_first_bet_draft' as const
+
 export const signupCaptureInputSchema = z.object({
 	name: z.string().trim().min(1).max(200),
 	organization: z.string().trim().min(1).max(200),
