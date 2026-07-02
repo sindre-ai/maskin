@@ -23,6 +23,7 @@ import {
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
+import { type BetStatusResult, classifyBetStatus } from '@/lib/bet-status'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
@@ -247,10 +248,52 @@ function ObjectsPage() {
 		[sort, order, updateSearch],
 	)
 
+	// Bet status indicator wiring — the Title cell renders `IndicatorBadgeRow`
+	// beside each bet's title. It classifies over child tasks; the overview
+	// only loads a flat page of objects, so pull the workspace's tasks and
+	// `breaks_into` relationships once and group them here. Both queries are
+	// gated on whether any bets are actually visible so tabs like `insight`
+	// never pay for tasks + rels they don't render.
+	const hasVisibleBets = useMemo(
+		() => visibleObjects.some((o) => o.type === 'bet'),
+		[visibleObjects],
+	)
+	const { data: workspaceTasks } = useQuery({
+		queryKey: queryKeys.objects.list(workspaceId, { type: 'task' }),
+		queryFn: () => api.objects.list(workspaceId, { type: 'task' }),
+		enabled: hasVisibleBets,
+	})
+	const { data: breaksIntoRels } = useQuery({
+		queryKey: [...queryKeys.relationships.all(workspaceId), { type: 'breaks_into' }] as const,
+		queryFn: () => api.relationships.list(workspaceId, { type: 'breaks_into' }),
+		enabled: hasVisibleBets,
+	})
+	const betStatuses = useMemo<Map<string, BetStatusResult>>(() => {
+		const map = new Map<string, BetStatusResult>()
+		if (!hasVisibleBets) return map
+		const childrenByBet = new Map<string, ObjectResponse[]>()
+		if (workspaceTasks && breaksIntoRels) {
+			const tasksById = new Map(workspaceTasks.map((t) => [t.id, t]))
+			for (const rel of breaksIntoRels) {
+				const child = tasksById.get(rel.targetId)
+				if (!child) continue
+				const bucket = childrenByBet.get(rel.sourceId)
+				if (bucket) bucket.push(child)
+				else childrenByBet.set(rel.sourceId, [child])
+			}
+		}
+		const now = new Date()
+		for (const obj of visibleObjects) {
+			if (obj.type !== 'bet') continue
+			map.set(obj.id, classifyBetStatus(obj, childrenByBet.get(obj.id) ?? [], now))
+		}
+		return map
+	}, [hasVisibleBets, workspaceTasks, breaksIntoRels, visibleObjects])
+
 	// Table meta — sort state passed via meta to avoid re-creating columns on every sort change
 	const tableMeta: ObjectsTableMeta = useMemo(
-		() => ({ onSort: handleSort, currentSort: sort, currentOrder: order }),
-		[handleSort, sort, order],
+		() => ({ onSort: handleSort, currentSort: sort, currentOrder: order, betStatuses }),
+		[handleSort, sort, order, betStatuses],
 	)
 
 	// Columns — stable across sort changes since sort state is in meta
