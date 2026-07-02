@@ -112,22 +112,47 @@ export type PushSessionWorkspaceResult = {
 	archiveBytes: number
 }
 
+export type PushSessionWorkspaceOptions = {
+	retries?: number
+	retryDelayMs?: number
+	sleep?: (ms: number) => Promise<void>
+}
+
+const DEFAULT_PUSH_RETRIES = 3
+const DEFAULT_PUSH_RETRY_DELAY_MS = 2_000
+
+function defaultSleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 /**
  * Pack `sessionDir` into `session-workspaces/<sessionId>.tar.gz` and upload.
  *
  * Pairs with `pullSessionWorkspace` — `pull → run microVM → push` round-trips
  * the workspace through S3 between sessions. Last writer wins on the S3 key.
+ *
+ * The upload is retried with backoff — S3-compatible backends return
+ * transient throttling errors (e.g. `SlowDown`) under load, and the caller
+ * (monitorSession in apps/agent-server/src/index.ts) treats ANY push failure
+ * as a lost workspace and forces the session's exit code non-zero, so a
+ * single throttled attempt would otherwise mark an entirely successful agent
+ * run as failed.
  */
 export async function pushSessionWorkspace(
 	storage: StorageProvider,
 	sessionId: string,
 	sessionDir: string,
+	options: PushSessionWorkspaceOptions = {},
 ): Promise<PushSessionWorkspaceResult> {
 	const key = sessionWorkspaceKey(sessionId)
 	const sessionStat = await stat(sessionDir).catch(() => null)
 	if (!sessionStat?.isDirectory()) {
 		throw new Error(`Cannot push session workspace — not a directory: ${sessionDir}`)
 	}
+
+	const retries = options.retries ?? DEFAULT_PUSH_RETRIES
+	const retryDelayMs = options.retryDelayMs ?? DEFAULT_PUSH_RETRY_DELAY_MS
+	const sleep = options.sleep ?? defaultSleep
 
 	const stage = await mkdtemp(join(tmpdir(), 'maskin-agent-push-'))
 	const archivePath = join(stage, 'workspace.tar.gz')
@@ -137,8 +162,18 @@ export async function pushSessionWorkspace(
 		// --strip-components=1 which strips that `.`, landing files at newDir/*.
 		await execFile('tar', ['-C', sessionDir, '-czf', archivePath, '.'])
 		const buf = await readFile(archivePath)
-		await storage.put(key, buf)
-		return { archiveBytes: buf.length }
+
+		let lastErr: unknown
+		for (let attempt = 1; attempt <= retries; attempt++) {
+			try {
+				await storage.put(key, buf)
+				return { archiveBytes: buf.length }
+			} catch (err) {
+				lastErr = err
+				if (attempt < retries) await sleep(retryDelayMs * attempt)
+			}
+		}
+		throw lastErr
 	} finally {
 		await rm(stage, { recursive: true, force: true })
 	}
