@@ -39,6 +39,9 @@ export const CLAUDE_FAILOVER_FLAG_ENV = 'MASKIN_CLAUDE_FAILOVER_ENABLED'
 /** Emitted on the workspace when the primary fails over to the backup. */
 export const FAILOVER_TRIGGERED_ACTION = 'claude_subscription_failover_triggered'
 
+/** Emitted when the backup subscription also rejects a runtime session. */
+export const BACKUP_EXHAUSTED_ACTION = 'claude_subscription_backup_exhausted'
+
 export interface ClaudeCredentials {
 	slot: OAuthSlotKind
 	tokens: ClaudeOAuthTokens
@@ -133,8 +136,9 @@ export function isClaudeFailoverEnabled(env: NodeJS.ProcessEnv = process.env): b
  * (session container) falls back to today's hard-failure behaviour.
  *
  * If `active_slot === 'backup'`, T7's lazy recovery (`attemptPrimaryRecovery`)
- * is attempted once the cooldown has elapsed (AC-U6) before falling back to
- * refreshing and returning the backup slot.
+ * is attempted once the cooldown has elapsed (AC-U6). Otherwise we refresh
+ * and probe the backup before returning it, so a dead backup can fall through
+ * to the next LLM route instead of launching a doomed container.
  */
 export async function resolveClaudeCredentialsWithFailover(
 	params: FailoverParams,
@@ -216,7 +220,21 @@ export async function resolveClaudeCredentialsWithFailover(
 		}
 
 		const backupTokens = await refreshSlot(db, workspaceId, 'backup', slots.backup, bufferMs)
-		return backupTokens ? { slot: 'backup', tokens: backupTokens } : null
+		if (!backupTokens) return null
+		const backupProbeInput = await runProbe(probe, backupTokens)
+		if (backupProbeInput) {
+			const backupDecision = classifyClaudeFailure(backupProbeInput)
+			if (backupDecision.action === 'failover') {
+				await recordRuntimeClaudeOAuthBackupExhausted({
+					db,
+					workspaceId,
+					actorId,
+					reason: backupDecision.reason,
+				})
+				return null
+			}
+		}
+		return { slot: 'backup', tokens: backupTokens }
 	}
 
 	if (!slots.primary) return null
@@ -262,6 +280,19 @@ export async function resolveClaudeCredentialsWithFailover(
 
 	const backupTokens = await refreshSlot(db, workspaceId, 'backup', slots.backup, bufferMs)
 	if (!backupTokens) return null
+	const backupProbeInput = await runProbe(probe, backupTokens)
+	if (backupProbeInput) {
+		const backupDecision = classifyClaudeFailure(backupProbeInput)
+		if (backupDecision.action === 'failover') {
+			await recordRuntimeClaudeOAuthBackupExhausted({
+				db,
+				workspaceId,
+				actorId,
+				reason: backupDecision.reason,
+			})
+			return null
+		}
+	}
 	return { slot: 'backup', tokens: backupTokens }
 }
 
@@ -415,6 +446,72 @@ export async function recordRuntimeClaudeOAuthFailover(params: {
 	}
 
 	return didFailover
+}
+
+export async function recordRuntimeClaudeOAuthBackupExhausted(params: {
+	db: Database
+	workspaceId: string
+	actorId: string
+	reason: string
+	now?: number
+	sourceSessionId?: string
+}): Promise<void> {
+	const { db, workspaceId, actorId, reason, sourceSessionId } = params
+	const now = params.now ?? Date.now()
+
+	await db.transaction(async (tx) => {
+		const [latest] = await tx
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!latest) return
+
+		const latestSettings = (latest.settings as Record<string, unknown>) ?? {}
+		const existing = readFailoverState(latestSettings.claude_oauth)
+		const alreadyRecorded =
+			existing.active_slot === 'backup' &&
+			existing.last_backup_failure_at === now &&
+			existing.last_backup_classified_reason === reason
+
+		if (!alreadyRecorded) {
+			const nextState: OAuthFailoverState = {
+				...existing,
+				active_slot: 'backup',
+				last_backup_failure_at: now,
+				last_backup_classified_reason: reason,
+			}
+			const nextOAuth = writeFailoverState(latestSettings.claude_oauth, nextState)
+			await tx
+				.update(workspaces)
+				.set({
+					settings: { ...latestSettings, claude_oauth: nextOAuth },
+					updatedAt: new Date(),
+				})
+				.where(eq(workspaces.id, workspaceId))
+		}
+
+		await tx.insert(events).values({
+			workspaceId,
+			actorId,
+			action: BACKUP_EXHAUSTED_ACTION,
+			entityType: 'workspace',
+			entityId: workspaceId,
+			data: {
+				reason,
+				failure_window: now,
+				trigger: 'runtime_session_failure',
+				...(sourceSessionId ? { source_session_id: sourceSessionId } : {}),
+			},
+		})
+	})
+
+	logger.info('Claude backup subscription exhausted after runtime session failure', {
+		workspaceId,
+		reason,
+		sourceSessionId,
+	})
 }
 
 /**

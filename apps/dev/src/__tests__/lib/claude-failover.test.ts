@@ -12,6 +12,7 @@ vi.mock('../../lib/crypto', () => ({
 }))
 
 import {
+	BACKUP_EXHAUSTED_ACTION,
 	FAILOVER_TRIGGERED_ACTION,
 	isClaudeFailoverEnabled,
 	resolveClaudeCredentialsWithFailover,
@@ -227,13 +228,14 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			const { db, eventInserts, workspaceUpdates, getSettings } = createMockDb({
 				settings: { claude_oauth: claudeOAuth },
 			})
-			const probe = vi.fn(
-				async (): Promise<ClassifierInput> => ({
+			const probe = vi
+				.fn<() => Promise<ClassifierInput | null>>()
+				.mockResolvedValueOnce({
 					kind: 'http',
 					status: 401,
 					headers: headersFrom({}),
-				}),
-			)
+				})
+				.mockResolvedValueOnce(null)
 
 			const nowMs = 1_800_000_060_000 // arbitrary — 1s past a bucket boundary
 			const bucket = Math.floor(nowMs / 60_000) * 60_000
@@ -272,13 +274,14 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
 			}
 			const { db, eventInserts } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
-			const probe = vi.fn(
-				async (): Promise<ClassifierInput> => ({
+			const probe = vi
+				.fn<() => Promise<ClassifierInput | null>>()
+				.mockResolvedValueOnce({
 					kind: 'http',
 					status: 429,
 					headers: headersFrom({ 'anthropic-ratelimit-unified-status': 'exhausted' }),
-				}),
-			)
+				})
+				.mockResolvedValueOnce(null)
 
 			const result = await resolveClaudeCredentialsWithFailover({
 				db,
@@ -291,6 +294,48 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			expect(result?.slot).toBe('backup')
 			expect(eventInserts[0]).toMatchObject({
 				data: expect.objectContaining({ reason: 'quota_exhausted' }),
+			})
+		})
+
+		it('returns null and records backup exhaustion when the backup probe also fails', async () => {
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({ encryptedAccessToken: 'primary-token' }),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+			}
+			const { db, eventInserts, getSettings } = createMockDb({
+				settings: { claude_oauth: claudeOAuth },
+			})
+			const probe = vi
+				.fn<() => Promise<ClassifierInput | null>>()
+				.mockResolvedValueOnce({
+					kind: 'http',
+					status: 401,
+					headers: headersFrom({}),
+				})
+				.mockResolvedValueOnce({
+					kind: 'http',
+					status: 429,
+					headers: headersFrom({ 'anthropic-ratelimit-unified-status': 'exhausted' }),
+				})
+
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				probe,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
+			expect(result).toBeNull()
+			expect(eventInserts.map((event) => event.action)).toEqual([
+				FAILOVER_TRIGGERED_ACTION,
+				BACKUP_EXHAUSTED_ACTION,
+			])
+			const stored = getSettings()?.claude_oauth as OAuthSlotStorage
+			expect(stored.failover).toMatchObject({
+				active_slot: 'backup',
+				last_classified_reason: 'auth_failed',
+				last_backup_classified_reason: 'quota_exhausted',
 			})
 		})
 
@@ -396,13 +441,19 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			const { db, eventInserts, workspaceUpdates } = createMockDb({
 				settings: { claude_oauth: claudeOAuth },
 			})
-			const probe = vi.fn(
-				async (): Promise<ClassifierInput> => ({
+			const probe = vi
+				.fn<() => Promise<ClassifierInput | null>>()
+				.mockResolvedValueOnce({
 					kind: 'http',
 					status: 401,
 					headers: headersFrom({}),
-				}),
-			)
+				})
+				.mockResolvedValueOnce({
+					kind: 'http',
+					status: 401,
+					headers: headersFrom({}),
+				})
+				.mockResolvedValue(null)
 			const now = () => 1_800_000_060_000
 
 			const [a, b] = await Promise.all([
@@ -445,7 +496,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 				},
 			}
 			const { db, eventInserts } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
-			const probe = vi.fn(async () => null) // healthy — but active_slot is backup so no probe
+			const probe = vi.fn(async () => null) // healthy backup probe
 
 			const result = await resolveClaudeCredentialsWithFailover({
 				db,
@@ -457,7 +508,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			})
 
 			expect(result?.slot).toBe('backup')
-			expect(probe).not.toHaveBeenCalled()
+			expect(probe).toHaveBeenCalledTimes(1)
 			expect(eventInserts).toHaveLength(0)
 		})
 	})
@@ -512,13 +563,14 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			const { db, eventInserts, getSettings } = createMockDb({
 				settings: { claude_oauth: claudeOAuth },
 			})
-			const probe = vi.fn(
-				async (): Promise<ClassifierInput> => ({
+			const probe = vi
+				.fn<() => Promise<ClassifierInput | null>>()
+				.mockResolvedValueOnce({
 					kind: 'http',
 					status: 401,
 					headers: headersFrom({}),
-				}),
-			)
+				})
+				.mockResolvedValueOnce(null)
 
 			const now = lastFailure + PRIMARY_RECOVERY_COOLDOWN_MS + 1
 			const result = await resolveClaudeCredentialsWithFailover({
@@ -564,7 +616,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			})
 
 			expect(result?.slot).toBe('backup')
-			expect(probe).not.toHaveBeenCalled()
+			expect(probe).toHaveBeenCalledTimes(1)
 			expect(workspaceUpdates).toHaveLength(0)
 		})
 	})
@@ -579,11 +631,14 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			const { db, eventInserts } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
 			vi.stubGlobal(
 				'fetch',
-				vi.fn().mockResolvedValue({
-					ok: false,
-					status: 401,
-					text: () => Promise.resolve('unauthorized'),
-				}),
+				vi
+					.fn()
+					.mockResolvedValueOnce({
+						ok: false,
+						status: 401,
+						text: () => Promise.resolve('unauthorized'),
+					})
+					.mockResolvedValueOnce({ ok: true, headers: new Headers() }),
 			)
 
 			const result = await resolveClaudeCredentialsWithFailover({
@@ -610,11 +665,14 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			const { db, eventInserts } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
 			vi.stubGlobal(
 				'fetch',
-				vi.fn().mockResolvedValue({
-					ok: false,
-					status: 400,
-					text: () => Promise.resolve('{"error":"invalid_grant"}'),
-				}),
+				vi
+					.fn()
+					.mockResolvedValueOnce({
+						ok: false,
+						status: 400,
+						text: () => Promise.resolve('{"error":"invalid_grant"}'),
+					})
+					.mockResolvedValueOnce({ ok: true, headers: new Headers() }),
 			)
 
 			const result = await resolveClaudeCredentialsWithFailover({
@@ -714,11 +772,14 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
 			}
 			const { db, eventInserts } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
-			const fetchMock = vi.fn().mockResolvedValue({
-				ok: false,
-				status: 401,
-				headers: new Headers(),
-			})
+			const fetchMock = vi
+				.fn()
+				.mockResolvedValueOnce({
+					ok: false,
+					status: 401,
+					headers: new Headers(),
+				})
+				.mockResolvedValueOnce({ ok: true, headers: new Headers() })
 			vi.stubGlobal('fetch', fetchMock)
 
 			const result = await resolveClaudeCredentialsWithFailover({

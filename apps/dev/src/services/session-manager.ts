@@ -31,13 +31,17 @@ import {
 	lt,
 	ne,
 	or,
+	sql,
 } from 'drizzle-orm'
 import {
 	claimLoopActiveDay,
 	trackLoopActiveDay,
 	utcDayString,
 } from '../lib/analytics/catalog-events'
-import { recordRuntimeClaudeOAuthFailover } from '../lib/claude-failover'
+import {
+	recordRuntimeClaudeOAuthBackupExhausted,
+	recordRuntimeClaudeOAuthFailover,
+} from '../lib/claude-failover'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { isAuthRevokedError } from '../lib/integrations/errors'
@@ -1523,11 +1527,41 @@ export class SessionManager extends EventEmitter {
 		const { session, failureReason, stdoutTail } = params
 		const config = ((session.config as Record<string, unknown>) ?? {}) as Record<string, unknown>
 		if (config.llm_route !== LLM_ROUTE_OAUTH) return
-		if (config.llm_oauth_slot !== 'primary') return
-		if (typeof config.claude_oauth_runtime_failover_retry_of === 'string') return
 
 		const reason = claudeRuntimeFailoverReason(failureReason, stdoutTail)
 		if (!reason) return
+
+		if (
+			config.llm_oauth_slot === 'backup' ||
+			typeof config.claude_oauth_runtime_failover_retry_of === 'string'
+		) {
+			await recordRuntimeClaudeOAuthBackupExhausted({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				reason,
+				sourceSessionId: session.id,
+			})
+			await this.insertSystemLog(
+				session.id,
+				'Claude backup subscription also hit a usage limit; no further Claude OAuth fallback is available',
+			)
+			return
+		}
+
+		if (config.llm_oauth_slot !== 'primary') return
+
+		const [existingRetry] = await this.db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.workspaceId, session.workspaceId),
+					sql`${sessions.config}->>'claude_oauth_runtime_failover_retry_of' = ${session.id}`,
+				),
+			)
+			.limit(1)
+		if (existingRetry) return
 
 		const didFailover = await recordRuntimeClaudeOAuthFailover({
 			db: this.db,
@@ -1547,12 +1581,13 @@ export class SessionManager extends EventEmitter {
 			actionPrompt: session.actionPrompt,
 			config: {
 				...config,
+				llm_oauth_slot: 'backup',
 				claude_oauth_runtime_failover_retry_of: session.id,
 			},
 			triggerId: session.triggerId ?? undefined,
 			createdBy: session.createdBy,
 			autoStart: true,
-			sourceSessionId: session.sourceSessionId ?? undefined,
+			sourceSessionId: session.id,
 		})
 	}
 

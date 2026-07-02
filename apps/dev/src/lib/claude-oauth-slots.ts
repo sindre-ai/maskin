@@ -12,8 +12,10 @@ export type OAuthSlotData = EncryptedOAuthData
  */
 export interface OAuthFailoverState {
 	last_primary_failure_at?: number
+	last_backup_failure_at?: number
 	active_slot: OAuthSlotKind
 	last_classified_reason?: string
+	last_backup_classified_reason?: string
 }
 
 /**
@@ -78,7 +80,9 @@ export function readFailoverState(raw: unknown): OAuthFailoverState {
 		return {
 			active_slot: slot,
 			last_primary_failure_at: raw.failover.last_primary_failure_at,
+			last_backup_failure_at: raw.failover.last_backup_failure_at,
 			last_classified_reason: raw.failover.last_classified_reason,
+			last_backup_classified_reason: raw.failover.last_backup_classified_reason,
 		}
 	}
 	return { active_slot: 'primary' }

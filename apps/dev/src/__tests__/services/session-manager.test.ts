@@ -1793,9 +1793,10 @@ describe('SessionManager', () => {
 				actorId: session.actorId,
 				createdBy: session.createdBy,
 				status: 'pending',
+				sourceSessionId: session.id,
 				config: {
 					llm_route: 'claude_oauth',
-					llm_oauth_slot: 'primary',
+					llm_oauth_slot: 'backup',
 					claude_oauth_runtime_failover_retry_of: session.id,
 				},
 			})
@@ -1814,6 +1815,7 @@ describe('SessionManager', () => {
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
 				[], // hasOtherActiveSessions
+				[], // existing runtime failover retry lookup
 				[
 					{
 						id: session.workspaceId,
@@ -1872,9 +1874,120 @@ describe('SessionManager', () => {
 					(i as { actionPrompt?: unknown }).actionPrompt === session.actionPrompt,
 			)
 			expect(retryInsert?.config).toMatchObject({
+				llm_oauth_slot: 'backup',
 				claude_oauth_runtime_failover_retry_of: session.id,
 			})
+			expect(retryInsert).toMatchObject({ sourceSessionId: session.id })
 			expect(startSpy).toHaveBeenCalledWith(retrySession.id)
+		})
+
+		it('records backup OAuth runtime limits without starting another retry session', async () => {
+			const sourceSessionId = randomUUID()
+			const session = buildSession({
+				status: 'running',
+				sourceSessionId,
+				config: {
+					llm_route: 'claude_oauth',
+					llm_oauth_slot: 'backup',
+					claude_oauth_runtime_failover_retry_of: sourceSessionId,
+				},
+			})
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail:
+					'{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour"}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
+			})
+			const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[], // hasOtherActiveSessions
+				[
+					{
+						id: session.workspaceId,
+						settings: {
+							claude_oauth: {
+								primary: {
+									encryptedAccessToken: 'primary-access',
+									encryptedRefreshToken: 'primary-refresh',
+									expiresAt: 1_800_000_000_000,
+								},
+								backup: {
+									encryptedAccessToken: 'backup-access',
+									encryptedRefreshToken: 'backup-refresh',
+									expiresAt: 1_900_000_000_000,
+								},
+								failover: {
+									active_slot: 'backup',
+									last_primary_failure_at: 1_783_005_600_000,
+									last_classified_reason: 'quota_exhausted_5h',
+								},
+							},
+						},
+					},
+				], // recordRuntimeClaudeOAuthBackupExhausted locked workspace read
+			]
+			mockResults.insertQueue = [
+				[], // completion event
+				[], // backup exhausted event
+				[], // backup exhausted system log
+				[], // terminal system log
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const backupUpdate = calls.updates.find(
+				(
+					u,
+				): u is {
+					settings: {
+						claude_oauth: {
+							failover: {
+								active_slot: string
+								last_backup_classified_reason: string
+							}
+						}
+					}
+				} =>
+					typeof u === 'object' &&
+					u !== null &&
+					typeof (u as { settings?: unknown }).settings === 'object' &&
+					Boolean(
+						(
+							(u as { settings: { claude_oauth?: { failover?: unknown } } }).settings.claude_oauth
+								?.failover as Record<string, unknown> | undefined
+						)?.last_backup_classified_reason,
+					),
+			)
+			expect(backupUpdate?.settings.claude_oauth.failover).toMatchObject({
+				active_slot: 'backup',
+				last_classified_reason: 'quota_exhausted_5h',
+				last_backup_classified_reason: 'quota_exhausted_5h',
+			})
+			const backupEvent = calls.inserts.find(
+				(i): i is { action: string; data: { source_session_id: string } } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { action?: string }).action === 'claude_subscription_backup_exhausted',
+			)
+			expect(backupEvent?.data).toMatchObject({ source_session_id: session.id })
+			const retryInsert = calls.inserts.find(
+				(i): i is { config: Record<string, unknown>; actionPrompt: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { actionPrompt?: unknown }).actionPrompt === session.actionPrompt,
+			)
+			expect(retryInsert).toBeUndefined()
+			expect(startSpy).not.toHaveBeenCalled()
 		})
 
 		it('does not call classifier when exitCode is null (OOM kill)', async () => {
