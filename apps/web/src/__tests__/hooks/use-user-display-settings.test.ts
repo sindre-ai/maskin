@@ -58,6 +58,24 @@ describe('useUserDisplaySettings', () => {
 		expect(result.current.data).toBeNull()
 	})
 
+	it('fetches the row keyed by the All-tab sentinel', async () => {
+		const row = {
+			object_type: '__all__',
+			name: 'default',
+			settings: { columnVisibility: { createdBy: false, 'metadata.foo': true } },
+			updated_at: '2026-05-28T10:00:00.000Z',
+		}
+		vi.mocked(api.userDisplaySettings.get).mockResolvedValue(row)
+
+		const { result } = renderHook(() => useUserDisplaySettings('ws-1', '__all__'), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toEqual(row)
+		expect(api.userDisplaySettings.get).toHaveBeenCalledWith('ws-1', '__all__')
+	})
+
 	it('skips the fetch when objectType is empty', () => {
 		vi.mocked(api.userDisplaySettings.get).mockResolvedValue({
 			object_type: 'task',

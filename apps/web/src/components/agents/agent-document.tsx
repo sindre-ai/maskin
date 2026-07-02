@@ -1,3 +1,4 @@
+import { ForkDialog } from '@/components/marketplace/fork-dialog'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
@@ -21,6 +22,7 @@ import {
 } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
+import { useInstalledPackages } from '@/hooks/use-installed-packages'
 import {
 	useActiveSessionsForActor,
 	useActorSessionsInfinite,
@@ -80,6 +82,9 @@ interface AgentDocumentViewProps {
 	isRunPending?: boolean
 	isPausePending?: boolean
 	showSaved?: boolean
+	isManaged?: boolean
+	onForkPackage?: () => void
+	managedPackageName?: string
 }
 
 function useConfigExpanded() {
@@ -120,6 +125,9 @@ export function AgentDocumentView({
 	isRunPending = false,
 	isPausePending = false,
 	showSaved = false,
+	isManaged = false,
+	onForkPackage,
+	managedPackageName,
 }: AgentDocumentViewProps) {
 	const [nameDraft, setNameDraft] = useState(agent.name)
 	const [descriptionDraft, setDescriptionDraft] = useState(agent.description ?? '')
@@ -202,16 +210,18 @@ export function AgentDocumentView({
 				<textarea
 					value={nameDraft}
 					onChange={(e) => {
+						if (isManaged) return
 						setNameDraft(e.target.value)
 						e.target.style.height = 'auto'
 						e.target.style.height = `${e.target.scrollHeight}px`
 					}}
-					onBlur={handleNameBlur}
-					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+					onBlur={isManaged ? undefined : handleNameBlur}
+					onKeyDown={(e) => !isManaged && e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Agent name"
 					aria-label="Agent name"
 					rows={1}
-					className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
+					readOnly={isManaged}
+					className={`w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none ${isManaged ? 'cursor-default select-text' : ''}`}
 					ref={(el) => {
 						if (el) {
 							el.style.height = 'auto'
@@ -230,13 +240,14 @@ export function AgentDocumentView({
 			<Input
 				type="text"
 				value={descriptionDraft}
-				onChange={(e) => setDescriptionDraft(e.target.value)}
-				onBlur={handleDescriptionBlur}
-				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+				onChange={(e) => !isManaged && setDescriptionDraft(e.target.value)}
+				onBlur={isManaged ? undefined : handleDescriptionBlur}
+				onKeyDown={(e) => !isManaged && e.key === 'Enter' && e.currentTarget.blur()}
 				placeholder="Short description shown on the Agents page"
 				aria-label="Short description"
 				maxLength={80}
-				className="mb-3 border-none bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0"
+				readOnly={isManaged}
+				className={`mb-3 border-none bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0 ${isManaged ? 'cursor-default' : ''}`}
 			/>
 
 			{/* Metadata badges row */}
@@ -253,6 +264,19 @@ export function AgentDocumentView({
 					<span className="text-[11px] text-muted-foreground">{agent.llm_provider}</span>
 				)}
 				<RelativeTime date={agent.createdAt} className="text-[11px] text-muted-foreground" />
+				{isManaged && (
+					<span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+						<span>🔒</span>
+						<span>Managed{managedPackageName ? ` · ${managedPackageName}` : ''}</span>
+						<button
+							type="button"
+							onClick={onForkPackage}
+							className="text-primary hover:underline cursor-pointer"
+						>
+							Fork to edit
+						</button>
+					</span>
+				)}
 			</div>
 
 			{/* Run/Pause + New Conversation */}
@@ -345,9 +369,25 @@ export function AgentDocumentView({
 
 			{/* Configuration (collapsible) */}
 			<Collapsible open={configExpanded} onOpenChange={setConfigExpanded}>
-				<CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground mb-4 hover:text-foreground transition-colors cursor-pointer">
+				<CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground mb-4 hover:text-foreground transition-colors cursor-pointer">
 					{configExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
 					Configuration
+					{isManaged && (
+						<span className="ml-auto flex items-center gap-1 normal-case tracking-normal font-normal text-[11px] text-muted-foreground">
+							<span>🔒</span>
+							<span>Managed{managedPackageName ? ` · ${managedPackageName}` : ''}</span>
+							<button
+								type="button"
+								onClick={(e) => {
+									e.stopPropagation()
+									onForkPackage?.()
+								}}
+								className="text-primary hover:underline cursor-pointer"
+							>
+								Fork to edit
+							</button>
+						</span>
+					)}
 				</CollapsibleTrigger>
 				<CollapsibleContent>
 					{/* Instructions */}
@@ -355,13 +395,15 @@ export function AgentDocumentView({
 						<Textarea
 							value={systemPromptDraft}
 							onChange={(e) => {
+								if (isManaged) return
 								setSystemPromptDraft(e.target.value)
 								setSystemPromptDirty(true)
 							}}
-							onBlur={handleSystemPromptBlur}
+							onBlur={isManaged ? undefined : handleSystemPromptBlur}
 							placeholder="Instructions for the agent..."
-							className="min-h-[120px] font-mono text-sm"
+							className={`min-h-[120px] font-mono text-sm ${isManaged ? 'cursor-default' : ''}`}
 							autoResize
+							readOnly={isManaged}
 						/>
 					</Section>
 
@@ -372,7 +414,8 @@ export function AgentDocumentView({
 								<Label>Provider</Label>
 								<Select
 									value={agent.llm_provider ?? 'anthropic'}
-									onValueChange={onUpdateLlmProvider}
+									onValueChange={isManaged ? undefined : onUpdateLlmProvider}
+									disabled={isManaged}
 								>
 									<SelectTrigger>
 										<SelectValue />
@@ -388,9 +431,10 @@ export function AgentDocumentView({
 								<Input
 									type="text"
 									value={modelDraft}
-									onChange={(e) => setModelDraft(e.target.value)}
-									onBlur={handleModelBlur}
+									onChange={(e) => !isManaged && setModelDraft(e.target.value)}
+									onBlur={isManaged ? undefined : handleModelBlur}
 									placeholder="e.g. claude-opus-4-7"
+									readOnly={isManaged}
 								/>
 							</div>
 						</div>
@@ -398,12 +442,12 @@ export function AgentDocumentView({
 
 					{/* MCP Servers */}
 					<Section title="MCP Servers">
-						<McpServers tools={agent.tools} onUpdate={onUpdateTools} />
+						<McpServers tools={agent.tools} onUpdate={onUpdateTools} readOnly={isManaged} />
 					</Section>
 
 					{/* Skills */}
 					<Section title="Skills">
-						<Skills actorId={agent.id} />
+						<Skills actorId={agent.id} readOnly={isManaged} />
 					</Section>
 
 					{/* Memory */}
@@ -411,14 +455,16 @@ export function AgentDocumentView({
 						<Textarea
 							value={memoryDraft}
 							onChange={(e) => {
+								if (isManaged) return
 								setMemoryDraft(e.target.value)
 								setMemoryDirty(true)
 							}}
 							placeholder="{}"
-							className="min-h-[100px] font-mono text-sm"
+							className={`min-h-[100px] font-mono text-sm ${isManaged ? 'cursor-default' : ''}`}
+							readOnly={isManaged}
 						/>
 						{memoryError && <p className="text-xs text-error mt-1">{memoryError}</p>}
-						{memoryDirty && (
+						{!isManaged && memoryDirty && (
 							<div className="flex justify-end mt-2">
 								<button
 									type="button"
@@ -684,6 +730,15 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 		[allEvents, agent.id],
 	)
 
+	// Managed package detection
+	const isManaged = !!agent.installedPackageId
+	const { data: installedPackagesData } = useInstalledPackages(workspaceId)
+	const installRecord = useMemo(
+		() => installedPackagesData?.installs.find((i) => i.id === agent.installedPackageId) ?? null,
+		[installedPackagesData, agent.installedPackageId],
+	)
+	const [forkOpen, setForkOpen] = useState(false)
+
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const [confirmReset, setConfirmReset] = useState(false)
 
@@ -839,7 +894,21 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				}
 				isRunPending={run.isPending}
 				isPausePending={pause.isPending}
+				isManaged={isManaged}
+				onForkPackage={() => setForkOpen(true)}
+				managedPackageName={installRecord?.packageName}
 			/>
+			{isManaged && installRecord && (
+				<ForkDialog
+					open={forkOpen}
+					onOpenChange={setForkOpen}
+					workspaceId={workspaceId}
+					installedPackageId={installRecord.id}
+					packageName={installRecord.packageName}
+					installedVersion={installRecord.installedVersion}
+					pendingVersion={installRecord.hasUpdate ? installRecord.availableVersion : null}
+				/>
+			)}
 		</>
 	)
 }

@@ -1,37 +1,37 @@
+import { randomUUID } from 'node:crypto'
 import { expect, test } from '../fixtures/auth.fixture'
 
 test.describe('Objects CRUD', () => {
 	test('can create a new bet', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}/objects?create=true`)
+		await page.goto(`/${account.workspaceId}/objects/${randomUUID()}`)
 
-		// The create form should be open
-		await expect(page.getByPlaceholder("What's this about?")).toBeVisible()
+		// The create form should be open with an empty title field
+		await expect(page.getByPlaceholder('Untitled')).toBeVisible()
 
-		// Type defaults to 'bet', so just fill in the title
-		await page.getByPlaceholder("What's this about?").fill('E2E Test Bet')
-		await page.getByPlaceholder('Describe it...').fill('This is a test bet')
-		await page.getByRole('button', { name: 'Create', exact: true }).click()
+		// Fill in the title then select the type — auto-create fires when both are set
+		await page.getByPlaceholder('Untitled').fill('E2E Test Bet')
+		await page.getByRole('button', { name: 'Bets' }).click()
 
 		// Should navigate to the object detail page
 		await expect(page.getByText('E2E Test Bet')).toBeVisible({ timeout: 10000 })
 	})
 
 	test('can create an insight', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}/objects?create=true`)
+		await page.goto(`/${account.workspaceId}/objects/${randomUUID()}`)
 
-		await page.getByRole('button', { name: 'insight', exact: true }).click()
-		await page.getByPlaceholder("What's this about?").fill('E2E Test Insight')
-		await page.getByRole('button', { name: 'Create', exact: true }).click()
+		await expect(page.getByPlaceholder('Untitled')).toBeVisible()
+		await page.getByPlaceholder('Untitled').fill('E2E Test Insight')
+		await page.getByRole('button', { name: 'Insights' }).click()
 
 		await expect(page.getByText('E2E Test Insight')).toBeVisible({ timeout: 10000 })
 	})
 
 	test('can create a task', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}/objects?create=true`)
+		await page.goto(`/${account.workspaceId}/objects/${randomUUID()}`)
 
-		await page.getByRole('button', { name: 'task', exact: true }).click()
-		await page.getByPlaceholder("What's this about?").fill('E2E Test Task')
-		await page.getByRole('button', { name: 'Create', exact: true }).click()
+		await expect(page.getByPlaceholder('Untitled')).toBeVisible()
+		await page.getByPlaceholder('Untitled').fill('E2E Test Task')
+		await page.getByRole('button', { name: 'Tasks' }).click()
 
 		await expect(page.getByText('E2E Test Task')).toBeVisible({ timeout: 10000 })
 	})
@@ -56,18 +56,15 @@ test.describe('Objects CRUD', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
-		await expect(page.getByText('Original Title')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByPlaceholder('Untitled')).toBeVisible({ timeout: 10000 })
 
-		// Click the title to start editing
-		await page.getByText('Original Title').click()
-
-		// The title should now be an input — clear and type new value
-		const titleInput = page.locator('input[type="text"]').first()
+		// The title textbox is always editable — clear and type new value
+		const titleInput = page.getByPlaceholder('Untitled')
 		await titleInput.fill('Updated Title')
-		await titleInput.press('Enter')
+		await titleInput.press('Tab')
 
 		// Verify the title was updated
-		await expect(page.getByText('Updated Title')).toBeVisible()
+		await expect(page.getByPlaceholder('Untitled')).toHaveValue('Updated Title')
 	})
 
 	test('can delete an object', async ({ page, account }) => {
@@ -80,20 +77,23 @@ test.describe('Objects CRUD', () => {
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
 		await expect(page.getByText('Object To Delete')).toBeVisible({ timeout: 10000 })
 
-		// Click Delete, then Confirm
-		await page.getByRole('button', { name: 'Delete', exact: true }).click()
+		// Delete is inside the "More actions" dropdown
+		await page.getByRole('button', { name: 'More actions' }).click()
+		await page.getByRole('menuitem', { name: 'Delete' }).click()
 		await expect(page.getByText('Delete this insight?')).toBeVisible()
-		await page.getByRole('button', { name: 'Confirm' }).click()
+		await page.getByRole('button', { name: 'Delete' }).last().click()
 
 		// Should redirect back to workspace
 		await expect(page).not.toHaveURL(/objects\//, { timeout: 10000 })
 	})
 
-	test('can open create form via + Create button', async ({ page, account }) => {
+	test('can open create form via header create button', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}/objects`)
 
-		await page.getByRole('button', { name: '+ Create' }).click()
+		// The header + button opens a dropdown; click Object to navigate to the create form
+		await page.getByRole('button', { name: 'Create new' }).click()
+		await page.getByRole('menuitem', { name: 'Object' }).click()
 
-		await expect(page.getByPlaceholder("What's this about?")).toBeVisible()
+		await expect(page.getByPlaceholder('Untitled')).toBeVisible()
 	})
 })

@@ -1,5 +1,6 @@
 export { getProvider, listProviders } from './registry'
-export { OAuth2Handler } from './oauth/handler'
+export { IntegrationAuthRevokedError, isAuthRevokedError } from './errors'
+export { OAuth2Handler, TokenRequestError } from './oauth/handler'
 export { TokenManager } from './oauth/token-manager'
 export { generateCodeVerifier } from './oauth/pkce'
 export { WebhookHandler } from './webhooks/handler'

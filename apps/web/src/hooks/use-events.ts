@@ -39,6 +39,10 @@ export function trackCommentPostedFor(
 		entity_type: type,
 		is_reply: data.parent_event_id !== undefined,
 		attachment_count: data.attachment_file_ids?.length ?? 0,
+		// Carried so the bet's `properties.content CONTAINS '\n'` PostHog query
+		// can count multi-line mobile comments. Both submit paths feed through
+		// here so the contract stays in one place.
+		content: data.content,
 		flow_id: flowId,
 	})
 }

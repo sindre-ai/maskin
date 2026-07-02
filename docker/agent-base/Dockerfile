@@ -1,13 +1,17 @@
-FROM node:20-slim
+# CI: trigger automated build and deploy
+FROM node:22-slim
 
 # System tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl jq ca-certificates openssh-client gettext-base \
     && rm -rf /var/lib/apt/lists/*
 
+# Pre-install pnpm (avoids corepack runtime download stalling sessions)
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+
 # Pre-install Claude Code CLI (avoids npm install on every session start)
 # Version is pinned because the stream-json I/O format is not stable across
-# Claude Code releases — the interactive Sindre session parses these lines
+# Claude Code releases — the interactive chat session parses these lines
 # verbatim, so a silent CLI bump can break parsing. Bump this deliberately
 # after re-validating the stream-json fixtures.
 RUN npm install -g @anthropic-ai/claude-code@2.1.112

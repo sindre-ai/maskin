@@ -696,6 +696,99 @@ describe('Integrations Routes', () => {
 			)
 			expect(activateCalls).toHaveLength(0)
 		})
+
+		it('re-connecting a resolveExternalId provider (e.g. Google Calendar) refreshes the existing row instead of hitting the unique constraint', async () => {
+			// Regression test: resolveExternalId-based providers (Google Calendar's
+			// account email) derive a STABLE externalId, same as GitHub's
+			// installation_id. Reconnecting must hit the existing-active-row refresh
+			// path — not the plain "activate the pending row" path, which would try
+			// to UPDATE ... SET external_id = <the same email already in use> and
+			// violate the (workspace_id, provider, external_id) unique constraint.
+			const providerName = 'test-email-provider'
+			const stableEmail = 'magnus@meshfirm.com'
+
+			const testProvider: ResolvedProvider = {
+				config: {
+					name: providerName,
+					displayName: 'Test Email Provider',
+					auth: {
+						type: 'oauth2',
+						config: {
+							authorizationUrl: 'http://example.test/auth',
+							tokenUrl: 'http://example.test/token',
+							scopes: [],
+							clientIdEnv: 'TEST_CLIENT_ID',
+							clientSecretEnv: 'TEST_CLIENT_SECRET',
+						},
+					},
+				},
+				customAuth: {
+					getInstallUrl: () => 'http://example.test/auth',
+					handleCallback: async () => ({ accessToken: 'test-token' }),
+					getAccessToken: async () => 'test-token',
+				},
+				resolveExternalId: async () => stableEmail,
+			}
+			vi.mocked(getProvider).mockReturnValueOnce(testProvider)
+
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'reconnect-email-nonce'
+			const state = encrypt(
+				JSON.stringify({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					ts: Date.now(),
+					nonce,
+				}),
+			)
+			const pendingIntegration = buildIntegration({
+				workspaceId: wsId,
+				provider: providerName,
+				status: 'pending',
+				externalId: nonce,
+			})
+			const existingActive = buildIntegration({
+				workspaceId: wsId,
+				provider: providerName,
+				status: 'active',
+				externalId: stableEmail,
+				config: { system_actor_id: 'system-actor-id' },
+			})
+			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+			const systemActor = { id: 'system-actor-id', type: 'system', name: 'Test Email Provider' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[pendingIntegration], // pending integration lookup
+				[member], // membership check
+				[systemActor], // system actor lookup
+				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
+				[existingActive], // existing-active-row lookup — finds the already-active integration by email
+			]
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${providerName}/callback?state=${encodeURIComponent(state)}`),
+			)
+
+			expect(res.status).toBe(302)
+
+			// Refresh-shaped update: sets credentials + config but does NOT touch status.
+			const refreshCall = calls.updates.find(
+				(u) =>
+					u &&
+					typeof u === 'object' &&
+					!('status' in (u as Record<string, unknown>)) &&
+					'credentials' in (u as Record<string, unknown>),
+			)
+			expect(refreshCall).toBeDefined()
+
+			// No activate-shaped update — this is the exact bug: activating the
+			// pending row here would set external_id to a value already used by
+			// existingActive and violate the unique constraint.
+			const activateCalls = calls.updates.filter(
+				(u) => u && typeof u === 'object' && (u as { status?: string }).status === 'active',
+			)
+			expect(activateCalls).toHaveLength(0)
+		})
 	})
 
 	describe('DELETE /api/integrations/:id', () => {

@@ -80,6 +80,7 @@ export const sessionConfigSchema = z.object({
 	interactive: z.boolean().default(false),
 	mention: sessionMentionContextSchema.optional(),
 	thread_reply: sessionThreadReplyContextSchema.optional(),
+	browserRequired: z.boolean().default(false),
 })
 
 export const createSessionSchema = z.object({
@@ -88,6 +89,7 @@ export const createSessionSchema = z.object({
 	config: sessionConfigSchema.partial().default({}),
 	trigger_id: z.string().uuid().optional(),
 	auto_start: z.boolean().default(true),
+	source_session_id: z.string().uuid().optional(),
 })
 
 export const sessionQuerySchema = z.object({
@@ -155,8 +157,9 @@ export const sessionUsageResponseSchema = z.object({
 export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
 
 /**
- * Reason codes for classified session failures. All codes originate from
- * credit-exhaustion or rate-limit signals detected in the session stdout tail.
+ * Reason codes for classified session failures. Credit/rate-limit codes are
+ * detected from the session stdout tail; infrastructure codes are written by
+ * out-of-band reconcilers.
  *
  * CLI banner codes (Claude Code exits with a user-visible banner):
  * - session_limit         "You've hit your session limit"
@@ -174,6 +177,11 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  *
  * OpenRouter HTTP error codes:
  * - insufficient_credits  402 — OpenRouter credit balance exhausted
+ *
+ * Infrastructure codes (written by reconcilers, not detected from stdout):
+ * - agent_server_lost     The agent-server restarted and no longer holds
+ *                         the microsandbox for this session — the work is
+ *                         irrecoverable and the row is closed out.
  */
 export const failureReasonCodeSchema = z.enum([
 	'session_limit',
@@ -187,6 +195,7 @@ export const failureReasonCodeSchema = z.enum([
 	'max_plan_rate_limit',
 	'rate_limit_error',
 	'insufficient_credits',
+	'agent_server_lost',
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 

@@ -195,7 +195,11 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 	const objectType = item.object?.type
 
 	return (
-		<div ref={cardRef} className="rounded-lg border border-border bg-card">
+		<div
+			ref={cardRef}
+			data-testid="unread-thread-card"
+			className="rounded-lg border border-border bg-card"
+		>
 			<div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-4 py-3">
 				{/* Title row: takes the full row on mobile so a long title gets room
 				    to breathe; on sm+ collapses back to a single inline cell. */}
