@@ -13,6 +13,7 @@
 		"start": "node dist/index.js",
 		"test": "vitest",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
+		"test:eval": "vitest run --config vitest.integration.config.ts src/__tests__/integration/knowledge-eval.test.ts",
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {

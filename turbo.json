@@ -87,6 +87,11 @@
 			"cache": false,
 			"env": ["DATABASE_URL"]
 		},
+		"test:eval": {
+			"dependsOn": ["^build"],
+			"cache": false,
+			"env": ["DATABASE_URL"]
+		},
 		"test:e2e": {
 			"dependsOn": ["^build"],
 			"cache": false,
