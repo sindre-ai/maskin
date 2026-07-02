@@ -154,9 +154,11 @@ export async function resolveLlmRoute(params: {
 	wsSettings: WorkspaceSettings
 	agent: AgentLlmConfig
 	/**
-	 * Optional Claude subscription probe used by the failover path when
-	 * `MASKIN_CLAUDE_FAILOVER_ENABLED=true`. Wire a real probe from the
-	 * caller (e.g. session-manager); tests can inject stubs matching AC-T3.
+	 * Overrides the default `probeClaudeSubscription` probe used by the
+	 * failover path when `MASKIN_CLAUDE_FAILOVER_ENABLED=true`. Only tests
+	 * need to pass this — production callers can omit it and
+	 * `resolveClaudeCredentialsWithFailover` falls back to the real
+	 * Anthropic Messages API probe.
 	 */
 	claudeProbe?: SubscriptionProbe
 }): Promise<LlmRoutingResult | null> {

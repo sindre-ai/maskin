@@ -450,6 +450,127 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 				data: expect.objectContaining({ reason: 'auth_failed' }),
 			})
 		})
+
+		it('classifies a 400 invalid_grant thrown by refresh as auth_failed and fails over', async () => {
+			// The OAuth token endpoint returns 400 (not 401) for a revoked/expired
+			// refresh token — this must land on the same auth_failed bucket as a
+			// live 401, not the classifier's generic server_error default.
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({ expiresAt: Date.now() - 60_000 }),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+			}
+			const { db, eventInserts } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue({
+					ok: false,
+					status: 400,
+					text: () => Promise.resolve('{"error":"invalid_grant"}'),
+				}),
+			)
+
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
+			expect(result?.slot).toBe('backup')
+			expect(eventInserts[0]).toMatchObject({
+				data: expect.objectContaining({ reason: 'auth_failed' }),
+			})
+		})
+
+		it('still retries the primary on a 5xx thrown by refresh', async () => {
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({
+					expiresAt: Date.now() - 60_000,
+					encryptedAccessToken: 'stale-primary-token',
+				}),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+			}
+			const { db, eventInserts, workspaceUpdates } = createMockDb({
+				settings: { claude_oauth: claudeOAuth },
+			})
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue({
+					ok: false,
+					status: 503,
+					text: () => Promise.resolve('service unavailable'),
+				}),
+			)
+
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
+			expect(result?.slot).toBe('primary')
+			expect(eventInserts).toHaveLength(0)
+			expect(workspaceUpdates).toHaveLength(0)
+		})
+	})
+
+	describe('default probe wiring', () => {
+		it('falls back to the real Anthropic Messages API probe when none is injected', async () => {
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({ encryptedAccessToken: 'primary-token' }),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+			}
+			const { db, eventInserts } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
+			const fetchMock = vi.fn().mockResolvedValue({
+				ok: false,
+				status: 401,
+				headers: new Headers(),
+			})
+			vi.stubGlobal('fetch', fetchMock)
+
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+				// No `probe` override — must default to a real probe instead of
+				// silently treating the primary as healthy.
+			})
+
+			expect(fetchMock).toHaveBeenCalledWith(
+				expect.stringContaining('/v1/messages'),
+				expect.objectContaining({
+					headers: expect.objectContaining({ Authorization: 'Bearer primary-token' }),
+				}),
+			)
+			expect(result?.slot).toBe('backup')
+			expect(eventInserts[0]).toMatchObject({
+				data: expect.objectContaining({ reason: 'auth_failed' }),
+			})
+		})
+
+		it('returns primary unchanged when the default probe succeeds', async () => {
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({ encryptedAccessToken: 'primary-token' }),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+			}
+			const { db, eventInserts, workspaceUpdates } = createMockDb({
+				settings: { claude_oauth: claudeOAuth },
+			})
+			vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, headers: new Headers() }))
+
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
+			expect(result?.slot).toBe('primary')
+			expect(eventInserts).toHaveLength(0)
+			expect(workspaceUpdates).toHaveLength(0)
+		})
 	})
 
 	describe('empty state', () => {

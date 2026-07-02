@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import { events, workspaces } from '@maskin/db/schema'
+import { CLAUDE_MESSAGES_URL } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import {
 	type ClassifierInput,
@@ -49,16 +50,52 @@ export interface ClaudeCredentials {
  * so `classifyClaudeFailure` can decide failover vs retry-primary.
  *
  * Injectable so tests can stub each of AC-T3's five HTTP fixtures without
- * standing up a real Anthropic mock server; production wiring provides a
- * default probe against the Anthropic Messages API.
+ * standing up a real Anthropic mock server; `resolveClaudeCredentialsWithFailover`
+ * falls back to `probeClaudeSubscription` (the real Anthropic Messages API
+ * probe) below whenever no `probe` override is passed in.
  */
 export type SubscriptionProbe = (tokens: ClaudeOAuthTokens) => Promise<ClassifierInput | null>
+
+/**
+ * Default production probe: a minimal (max_tokens: 1) Messages API call
+ * authenticated with the primary OAuth access token, so session start can
+ * detect a dead subscription (revoked auth, exhausted quota, 5xx) before the
+ * container launches. `null` on 2xx; otherwise the response status/headers
+ * are handed to `classifyClaudeFailure`. Network-level failures (DNS, abort,
+ * etc.) are caught by `runProbe`'s wrapper, not here.
+ */
+export async function probeClaudeSubscription(
+	tokens: ClaudeOAuthTokens,
+): Promise<ClassifierInput | null> {
+	const res = await fetch(CLAUDE_MESSAGES_URL, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${tokens.accessToken}`,
+			'anthropic-version': '2023-06-01',
+			'anthropic-beta': 'oauth-2025-04-20',
+		},
+		body: JSON.stringify({
+			model: 'claude-haiku-4-5-20251001',
+			max_tokens: 1,
+			messages: [{ role: 'user', content: 'ping' }],
+		}),
+	})
+
+	if (res.ok) return null
+
+	const headerRecord: Record<string, string> = {}
+	res.headers.forEach((value, key) => {
+		headerRecord[key] = value
+	})
+	return { kind: 'http', status: res.status, headers: headersFrom(headerRecord) }
+}
 
 export interface FailoverParams {
 	db: Database
 	workspaceId: string
 	actorId: string
-	/** Overrides the default probe (used by tests). */
+	/** Overrides the default `probeClaudeSubscription` probe (used by tests). */
 	probe?: SubscriptionProbe
 	/** Overrides `Date.now` (used by tests). */
 	now?: () => number
@@ -94,7 +131,8 @@ export function isClaudeFailoverEnabled(env: NodeJS.ProcessEnv = process.env): b
 export async function resolveClaudeCredentialsWithFailover(
 	params: FailoverParams,
 ): Promise<ClaudeCredentials | null> {
-	const { db, workspaceId, actorId, probe, bufferMs } = params
+	const { db, workspaceId, actorId, bufferMs } = params
+	const probe = params.probe ?? probeClaudeSubscription
 	const env = params.env ?? process.env
 	const now = params.now ?? Date.now
 
@@ -134,7 +172,7 @@ export async function resolveClaudeCredentialsWithFailover(
 	}
 
 	const probeInput: ClassifierInput | null =
-		refreshFailure ?? (probe ? await runProbe(probe, workingTokens) : null)
+		refreshFailure ?? (await runProbe(probe, workingTokens))
 
 	if (!probeInput) return { slot: 'primary', tokens: workingTokens }
 
@@ -270,15 +308,31 @@ async function runProbe(
  * Extract a classifier input from a refresh error. `refreshClaudeToken`
  * throws `Error('Token refresh failed (STATUS): body')` on non-2xx; parse
  * the status so 401 → auth_failed and 5xx → retry-primary land on the
- * expected fixtures from AC-T3. Anything unparseable maps to a network
- * transport failure so we don't classify a client-side bug as failover.
+ * expected fixtures from AC-T3.
+ *
+ * The OAuth token endpoint (unlike the Messages API) returns 4xx — most
+ * commonly 400 `invalid_grant` — whenever the stored refresh token itself is
+ * no longer usable (revoked, expired past the refresh window, rotated by a
+ * concurrent refresh). That's the same "this credential is dead, not
+ * temporarily unavailable" signal a live 401 carries, so every refresh-time
+ * 4xx is normalised onto 401 here and lands on the same `auth_failed` →
+ * failover bucket — otherwise it would fall through the classifier's generic
+ * default and retry a refresh that can never succeed. 429/5xx pass through
+ * unchanged so a rate-limited or momentarily-down token endpoint still
+ * retries the primary. Anything unparseable maps to a network transport
+ * failure so we don't classify a client-side bug as failover.
  */
 function classifierInputFromError(err: unknown): ClassifierInput {
 	const message = err instanceof Error ? err.message : String(err)
 	const match = message.match(/\((\d{3})\)/)
 	if (match) {
 		const status = Number(match[1])
-		return { kind: 'http', status, headers: headersFrom({}) }
+		const isTokenEndpointAuthFailure = status >= 400 && status < 500 && status !== 429
+		return {
+			kind: 'http',
+			status: isTokenEndpointAuthFailure ? 401 : status,
+			headers: headersFrom({}),
+		}
 	}
 	return { kind: 'transport', error: 'network' }
 }
