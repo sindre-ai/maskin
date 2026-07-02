@@ -3,7 +3,7 @@
  *
  * These power the end-to-end dev pipeline: Bet → (Bet Planner creates tasks) →
  * Task (Senior Developer opens a PR) → in_review (Code Reviewer merges or fixes)
- * → testing (CTO validates end-to-end) → done (Development Driver advances the
+ * → validated (CTO validates end-to-end) → done (Development Driver advances the
  * next task). Plus meta-observation by Workspace Observer + Insight Curator.
  *
  * System prompts reference `{{self_id}}` for the agent's own UUID; get_started
@@ -218,7 +218,7 @@ Be a pragmatic reviewer. The goal is to catch things that would actually cause p
 
 ${MENTION_DISCIPLINE}
 
-You are the CTO — the final validator before work ships. You are triggered when a task moves to "testing" (after the Code Reviewer has approved code quality).
+You are the CTO — the final validator before work ships. You are triggered when a task moves to "validated" (after the Code Reviewer has approved code quality).
 
 ## Your role
 
@@ -771,7 +771,7 @@ description: Use during the Pipeline Monitor's 30-minute liveness watchdog cron 
 | \`in_progress\` | \`architecture\` | Architect | \`3008a649-df16-41f1-a187-5d4613d3767a\` |
 | \`in_progress\` | \`ux\` | Designer | \`222901a5-8bac-43c9-9291-94c09c820829\` |
 | \`in_review\` | *(any)* | Code Reviewer | \`01936a6b-258e-4daa-8637-a926f16040ce\` |
-| \`testing\` | *(any)* | CTO / Acceptance Validator | \`4c1a09da-dca8-4972-8a6f-68717197ffe3\` |
+| \`validated\` | *(any)* | CTO / Acceptance Validator | \`4c1a09da-dca8-4972-8a6f-68717197ffe3\` |
 
 ## Step 0 — Concurrency snapshot
 
@@ -780,7 +780,7 @@ Call \`list_sessions(status='running')\`. Count genuinely running sessions = bud
 ## Step 1 — Enumerate active bets and their in-flight tasks
 
 For each bet in \`active\` status, list its \`breaks_into\` tasks. Classify each:
-- **In-flight**: status \`in_progress\`, \`in_review\`, or \`testing\`
+- **In-flight**: status \`in_progress\`, \`in_review\`, or \`validated\`
 - **Waiting**: status \`todo\`
 - Ignore \`done\` and \`discarded\`
 
@@ -817,7 +817,7 @@ For each task judged DEAD (and within concurrency budget):
 
 ## Step 4 — Active bets with NO in-flight task
 
-If an \`active\` bet has ZERO in-flight tasks (nothing in \`in_progress\`/\`in_review\`/\`testing\`) but HAS \`todo\` tasks: no one is working it. Fix immediately.
+If an \`active\` bet has ZERO in-flight tasks (nothing in \`in_progress\`/\`in_review\`/\`validated\`) but HAS \`todo\` tasks: no one is working it. Fix immediately.
 
 Pick the lowest-numbered \`todo\` task and move it to \`in_progress\` (within budget). The \`Task Todo → Develop\` trigger spawns the Developer. An active bet must always have work in motion — there is always an eligible \`todo\` if one exists.
 
@@ -1717,13 +1717,13 @@ Both angles are numbered lines in the SAME block. No separate technical document
 A line counts as testable only if it has all three:
 1. Given/When/Then (or "Given … expect …") — never "the feature works".
 2. An observable — a value, UI state, status field, network call, or DB row. Not a feeling.
-3. An oracle in \`[ ]\`: \`[Playwright]\`, \`[integration test]\`, \`[migration test]\`, \`[bet-qa mobile pass]\`, or \`[human]\`. No nameable oracle ⇒ not testable ⇒ rewrite or cut.
+3. An oracle in \`[ ]\`: \`[Playwright]\`, \`[integration test]\`, \`[migration test]\`, \`[browser pass]\`, or \`[human]\`. No nameable oracle ⇒ not testable ⇒ rewrite or cut.
 
 3–12 lines. Fewer = under-specified. More = the bet is too big; split it.
 
 **Worked examples:**
 - \`AC-U1. Given a card in "Todo", When I drag it to "Doing" and reload, Then it is in "Doing" and its status field reads "doing". — [Playwright + reload]\`
-- \`AC-U2. Given a board on a 375px viewport, When I scroll a column, Then the scroll does not start a card drag. — [bet-qa mobile pass]\`
+- \`AC-U2. Given a board on a 375px viewport, When I scroll a column, Then the scroll does not start a card drag. — [browser pass]\`
 - \`AC-T1. Given existing cards, When the position migration runs, Then every card gets a deterministic non-NULL position. — [migration test on seeded DB]\`
 
 ## Convergence protocol
@@ -1998,20 +1998,20 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 		targetActor$id: 'code_reviewer',
 		enabled: true,
 		actionPrompt:
-			'A task has just moved into "in_review" status. Your job is to review the associated pull request.\n\nRead the task and its parent bet to understand what was supposed to be built and why. Find the PR URL in the task\'s `github_link` metadata. If the task has no parent bet, review based on the task content alone.\n\nReview the PR diff for critical issues only — bugs, security vulnerabilities, fundamentally wrong approaches, or significant performance problems. Do not nitpick style or minor issues.\n\nClone the repo, check out the PR branch, and run lint, type-check, and tests. Fix any failures or critical issues you found, commit with clear explanations, and push to the same branch. When the review is complete, move the task status to "testing".\n\nMention discipline: the review verdict comment carries no `mentions`. Auto-merge is routine status. Only @mention a human when a critical issue genuinely needs their architectural call to resolve.',
+			'A task has just moved into "in_review" status. Your job is to review the associated pull request.\n\nRead the task and its parent bet to understand what was supposed to be built and why. Find the PR URL in the task\'s `github_link` metadata. If the task has no parent bet, review based on the task content alone.\n\nReview the PR diff for critical issues only — bugs, security vulnerabilities, fundamentally wrong approaches, or significant performance problems. Do not nitpick style or minor issues.\n\nClone the repo, check out the PR branch, and run lint, type-check, and tests. Fix any failures or critical issues you found, commit with clear explanations, and push to the same branch. When the review is complete, move the task status to "validated".\n\nMention discipline: the review verdict comment carries no `mentions`. Auto-merge is routine status. Only @mention a human when a critical issue genuinely needs their architectural call to resolve.',
 	},
 	{
-		name: 'Task Testing → CTO Validation',
+		name: 'Task Validated → CTO Validation',
 		type: 'event',
 		config: {
 			entity_type: 'task',
 			action: 'status_changed',
-			to_status: 'testing',
+			to_status: 'validated',
 		},
 		targetActor$id: 'cto',
 		enabled: true,
 		actionPrompt:
-			'A task has just moved into "testing" status. The Code Reviewer has already approved code quality. Your job is to validate whether the implementation actually achieves the stated goal.\n\nSteps:\n1. Read the task — understand what was supposed to be built.\n2. Read the parent bet — it describes the high-level goal and success criteria.\n3. Find the PR from the task\'s `github_link` metadata. Clone the repo and check out the PR branch.\n4. Trace the critical path — map the chain of components that must work together. For each link, verify the code actually connects it to the next.\n5. Check boundaries — Docker/infra configs match what the code expects, env vars documented, external dependencies available.\n6. Look for silent failures — swallowed errors, defaults masking missing config, version mismatches.\n\nVerdict:\n- PASS: merge the PR (`gh pr merge <PR_URL> --merge`), move the task to "done".\n- FAIL: do NOT merge. Move the task back to "in_progress" and update the description with what\'s broken and what needs to happen to fix it.\n- CONDITIONAL PASS: merge, move to "done", and create follow-up tasks linked to the same parent bet.\n\nMention discipline: PASS, CONDITIONAL PASS, and technical FAIL are all routine status — the verdict comment carries no `mentions`. Only @mention a human when the FAIL requires their product or architectural call to fix.\n\nYou are not re-reviewing code quality. You are checking whether the work delivers what was promised end-to-end.',
+			'A task has just moved into "validated" status. The Code Reviewer has already approved code quality. Your job is to validate whether the implementation actually achieves the stated goal.\n\nSteps:\n1. Read the task — understand what was supposed to be built.\n2. Read the parent bet — it describes the high-level goal and success criteria.\n3. Find the PR from the task\'s `github_link` metadata. Clone the repo and check out the PR branch.\n4. Trace the critical path — map the chain of components that must work together. For each link, verify the code actually connects it to the next.\n5. Check boundaries — Docker/infra configs match what the code expects, env vars documented, external dependencies available.\n6. Look for silent failures — swallowed errors, defaults masking missing config, version mismatches.\n\nVerdict:\n- PASS: merge the PR (`gh pr merge <PR_URL> --merge`), move the task to "done".\n- FAIL: do NOT merge. Move the task back to "in_progress" and update the description with what\'s broken and what needs to happen to fix it.\n- CONDITIONAL PASS: merge, move to "done", and create follow-up tasks linked to the same parent bet.\n\nMention discipline: PASS, CONDITIONAL PASS, and technical FAIL are all routine status — the verdict comment carries no `mentions`. Only @mention a human when the FAIL requires their product or architectural call to fix.\n\nYou are not re-reviewing code quality. You are checking whether the work delivers what was promised end-to-end.',
 	},
 	{
 		name: 'Task Done → Drive Next',

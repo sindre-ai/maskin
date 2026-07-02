@@ -39,6 +39,7 @@ import {
 } from '../lib/analytics/catalog-events'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
+import { isAuthRevokedError } from '../lib/integrations/errors'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
@@ -148,7 +149,17 @@ export class SessionManager extends EventEmitter {
 	 */
 	private static readonly LOG_STREAM_MAX_RECONNECTS = 5
 	private static readonly LOG_STREAM_RECONNECT_DELAY_MS = 2000
+	/**
+	 * AC-T5: cap how long `cleanupBrowserSidecar` waits for Docker to actually
+	 * surface a 404 on the sidecar container after `remove({ force: true })`.
+	 * `remove -f` is normally synchronous, but a slow daemon can briefly keep
+	 * the container row visible — the SLA bounds how long we tolerate that.
+	 */
+	private static readonly SIDECAR_TEARDOWN_SLA_MS = 60_000
+	private static readonly SIDECAR_TEARDOWN_POLL_INTERVAL_MS = 500
 	private agentBaseBuildContext: string | null = null
+	private browserSidecarBuildContext: string | null = null
+	private browserSidecarImageReady: Promise<void> | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 	private dispatchQueue: SessionDispatchQueue | null = null
 	/**
@@ -170,6 +181,14 @@ export class SessionManager extends EventEmitter {
 
 	setAgentBaseBuildContext(buildContext: string) {
 		this.agentBaseBuildContext = buildContext
+	}
+
+	setBrowserSidecarBuildContext(buildContext: string) {
+		this.browserSidecarBuildContext = buildContext
+	}
+
+	warmBrowserSidecarImage(): Promise<void> {
+		return this.prepareBrowserSidecarImage()
 	}
 
 	/**
@@ -889,6 +908,7 @@ export class SessionManager extends EventEmitter {
 		memoryMib: number
 		cpus: number
 		cpuShares: number
+		browserRequired: boolean
 	}> {
 		const [agent] = await this.db
 			.select()
@@ -1070,7 +1090,8 @@ export class SessionManager extends EventEmitter {
 					}
 
 					const envVarName =
-						resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
+						resolved.config.mcp?.envKey ??
+						`${integration.provider.toUpperCase().replace(/-/g, '_')}_TOKEN`
 					envVars[envVarName] = accessToken
 					if (resolved.config.mcp?.autoInject && resolved.config.mcp.server) {
 						autoInjectedMcpServers[`integration-${integration.provider}`] =
@@ -1083,9 +1104,20 @@ export class SessionManager extends EventEmitter {
 					}
 				}
 			} catch (err) {
-				logger.warn(`Failed to load credentials for ${integration.provider}`, {
-					error: String(err),
-				})
+				if (isAuthRevokedError(err)) {
+					logger.warn(
+						`Integration ${integration.provider} is revoked — skipping token injection; user must reconnect`,
+						{
+							integrationId: integration.id,
+							provider: integration.provider,
+						},
+					)
+				} else {
+					logger.warn(`Failed to load credentials for ${integration.provider}`, {
+						integrationId: integration.id,
+						error: String(err),
+					})
+				}
 			}
 		}
 
@@ -1142,6 +1174,9 @@ export class SessionManager extends EventEmitter {
 			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers })
 		}
 
+		const browserRequired =
+			sessionConfig.browserRequired === true || this.needsBrowserSidecar(envVars)
+
 		const image =
 			(sessionConfig.base_image as string) ?? process.env.AGENT_BASE_IMAGE ?? 'agent-base:latest'
 		// memory_mb / cpu_shares are the Docker-native units used historically;
@@ -1151,7 +1186,7 @@ export class SessionManager extends EventEmitter {
 		const cpuShares = (sessionConfig.cpu_shares as number) ?? 1024
 		const cpus = Math.max(1, Math.round(cpuShares / 1024))
 
-		return { image, env: envVars, memoryMib, cpus, cpuShares }
+		return { image, env: envVars, memoryMib, cpus, cpuShares, browserRequired }
 	}
 
 	/**
@@ -1173,16 +1208,26 @@ export class SessionManager extends EventEmitter {
 			await this.containers.ensureImage(spec.image, this.agentBaseBuildContext)
 		}
 
-		// Provision browser sidecar if Playwright MCP is configured
+		// Write exec-trigger so the entrypoint starts the agent. The entrypoint
+		// checks for this file to distinguish local Docker (immediate start) from
+		// the microsandbox path (where the agent-server writes the file after
+		// the TCP proxy is active). On the local Docker path we write it here.
+		await writeFile(join(tempDir, '.exec-trigger'), '')
+
+		// Provision browser sidecar when the browserRequired flag is set
 		let networkMode: string | undefined
-		if (this.needsBrowserSidecar(envVars)) {
-			const prefix = session.id.slice(0, 8)
+		if (spec.browserRequired) {
+			const prefix = session.id.slice(0, 16)
 			const result = await this.provisionBrowserSidecar(session.id, prefix)
 			if (result) {
-				envVars.BROWSER_CDP_URL = `ws://anko-browser-${prefix}:9222`
+				envVars.BROWSER_CDP_URL = `http://${result.browserIp}:9222`
 				networkMode = result.networkName
 			}
 		}
+
+		// Write the exec-trigger file before starting — the entrypoint checks for
+		// /agent/.exec-trigger and sleeps forever without it (microsandbox contract).
+		await writeFile(join(tempDir, '.exec-trigger'), '')
 
 		const containerId = await this.containers.create({
 			image: spec.image,
@@ -1202,6 +1247,17 @@ export class SessionManager extends EventEmitter {
 		}
 
 		return containerId
+	}
+
+	/**
+	 * Existing seeded/template agents opt into browser access by referencing
+	 * ${BROWSER_CDP_URL} in their MCP config. Keep that contract while newer
+	 * callers can use config.browserRequired directly.
+	 */
+	private needsBrowserSidecar(envVars: Record<string, string>): boolean {
+		const agentMcp = envVars.AGENT_MCP_JSON ?? ''
+		const sessionMcp = envVars.MCP_SERVERS_JSON ?? ''
+		return agentMcp.includes('${BROWSER_CDP_URL}') || sessionMcp.includes('${BROWSER_CDP_URL}')
 	}
 
 	/**
@@ -2074,15 +2130,6 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Check if the MCP config references ${BROWSER_CDP_URL}, indicating a browser sidecar is needed.
-	 */
-	private needsBrowserSidecar(envVars: Record<string, string>): boolean {
-		const agentMcp = envVars.AGENT_MCP_JSON ?? ''
-		const sessionMcp = envVars.MCP_SERVERS_JSON ?? ''
-		return agentMcp.includes('${BROWSER_CDP_URL}') || sessionMcp.includes('${BROWSER_CDP_URL}')
-	}
-
-	/**
 	 * Provision a headless Chrome sidecar container on a per-session Docker network.
 	 * Returns the network name and browser container ID, or null if provisioning fails.
 	 * On failure, the agent session continues without browser capability.
@@ -2090,17 +2137,18 @@ export class SessionManager extends EventEmitter {
 	private async provisionBrowserSidecar(
 		sessionId: string,
 		prefix: string,
-	): Promise<{ networkName: string; browserContainerId: string } | null> {
+	): Promise<{ networkName: string; browserIp: string } | null> {
 		const networkName = `anko-net-${prefix}`
 		const browserName = `anko-browser-${prefix}`
 		let browserContainerId: string | undefined
+		const image = process.env.BROWSER_SIDECAR_IMAGE ?? 'browser-sidecar:latest'
 
 		try {
-			await this.containers.pullImage('chromedp/headless-shell:latest')
+			await this.prepareBrowserSidecarImage()
 			await this.containers.createNetwork(networkName)
 
 			browserContainerId = await this.containers.create({
-				image: 'chromedp/headless-shell:latest',
+				image,
 				name: browserName,
 				env: {},
 				memoryMb: 512,
@@ -2114,6 +2162,14 @@ export class SessionManager extends EventEmitter {
 			// Brief wait for Chrome to initialize CDP listener
 			await new Promise((resolve) => setTimeout(resolve, 2000))
 
+			// Use the container's IP address on the session network so Chrome
+			// accepts the WebSocket connection — Chrome's CDP rejects Host headers
+			// that are hostnames, but accepts IP addresses and localhost.
+			const browserIp = await this.containers.getIpOnNetwork(browserContainerId, networkName)
+			if (!browserIp) {
+				throw new Error('Could not determine browser sidecar IP on session network')
+			}
+
 			// Track sidecar resources for cleanup
 			const sessionData = this.activeSessions.get(sessionId)
 			if (sessionData) {
@@ -2121,13 +2177,13 @@ export class SessionManager extends EventEmitter {
 				sessionData.networkName = networkName
 			}
 
-			logger.info('Browser sidecar started', { sessionId, browserName, networkName })
+			logger.info('Browser sidecar started', { sessionId, browserName, networkName, browserIp })
 			await this.insertSystemLog(
 				sessionId,
 				'Browser sidecar started — Playwright MCP can connect via CDP',
 			)
 
-			return { networkName, browserContainerId }
+			return { networkName, browserIp }
 		} catch (err) {
 			logger.error('Browser sidecar failed — agent will run without browser', {
 				sessionId,
@@ -2156,33 +2212,118 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
+	private prepareBrowserSidecarImage(): Promise<void> {
+		if (!this.browserSidecarImageReady) {
+			this.browserSidecarImageReady = this.buildOrPullBrowserSidecarImage().catch((err) => {
+				this.browserSidecarImageReady = null
+				throw err
+			})
+		}
+		return this.browserSidecarImageReady
+	}
+
+	private async buildOrPullBrowserSidecarImage(): Promise<void> {
+		const image = process.env.BROWSER_SIDECAR_IMAGE ?? 'browser-sidecar:latest'
+		if (image === 'browser-sidecar:latest' && this.browserSidecarBuildContext) {
+			await this.containers.ensureImage(image, this.browserSidecarBuildContext)
+			return
+		}
+		await this.containers.pullImage(image)
+	}
+
 	/**
 	 * Clean up browser sidecar container and its Docker network.
-	 * Called before cleanupSession() in all exit paths.
+	 * Called before cleanupSession() in all exit paths. After invoking
+	 * stop+remove this polls Docker until the container is actually gone so
+	 * the caller has a real teardown guarantee — `remove({ force: true })` is
+	 * normally synchronous but the Docker daemon can briefly keep the row
+	 * around, and an unrecoverable sidecar would otherwise leak a Chromium
+	 * process tree on the host (AC-T5: 60s SLA, container-count delta 0).
 	 */
 	private async cleanupBrowserSidecar(sessionId: string): Promise<void> {
 		const sessionData = this.activeSessions.get(sessionId)
 		if (!sessionData) return
+		if (!sessionData.browserContainerId && !sessionData.networkName) return
 
-		if (sessionData.browserContainerId) {
+		const start = Date.now()
+		const browserContainerId = sessionData.browserContainerId
+		const networkName = sessionData.networkName
+		let slaViolation = false
+
+		if (browserContainerId) {
 			await this.containers
-				.stop(sessionData.browserContainerId)
+				.stop(browserContainerId)
 				.catch((err) =>
 					logger.warn('Failed to stop browser sidecar', { sessionId, error: String(err) }),
 				)
 			await this.containers
-				.remove(sessionData.browserContainerId)
+				.remove(browserContainerId)
 				.catch((err) =>
 					logger.warn('Failed to remove browser sidecar', { sessionId, error: String(err) }),
 				)
+
+			const gone = await this.waitForContainerGone(
+				browserContainerId,
+				SessionManager.SIDECAR_TEARDOWN_SLA_MS,
+			)
+			if (!gone) {
+				slaViolation = true
+				logger.error('Browser sidecar still present after teardown SLA', {
+					sessionId,
+					browserContainerId,
+					slaMs: SessionManager.SIDECAR_TEARDOWN_SLA_MS,
+				})
+			}
 		}
 
-		if (sessionData.networkName) {
+		if (networkName) {
 			await this.containers
-				.removeNetwork(sessionData.networkName)
+				.removeNetwork(networkName)
 				.catch((err) =>
 					logger.warn('Failed to remove session network', { sessionId, error: String(err) }),
 				)
+		}
+
+		// Idempotency: clear bookkeeping so a duplicate cleanup call is a no-op
+		// (the 7 session-end paths can fire close together — watchdog + handler).
+		sessionData.browserContainerId = undefined
+		sessionData.networkName = undefined
+
+		if (!slaViolation) {
+			logger.info('Browser sidecar teardown complete', {
+				sessionId,
+				elapsedMs: Date.now() - start,
+			})
+		}
+	}
+
+	/**
+	 * Poll `containers.inspect` until the container returns 404 (gone) or the
+	 * deadline elapses. Returns true if the container was confirmed gone.
+	 * Treats only 404 / "No such container" as gone — a stopped-but-present
+	 * container still counts as a leak for the AC-T5 delta check.
+	 */
+	private async waitForContainerGone(containerId: string, deadlineMs: number): Promise<boolean> {
+		const deadline = Date.now() + deadlineMs
+		while (Date.now() < deadline) {
+			if (await this.isContainerGone(containerId)) return true
+			await new Promise((r) => setTimeout(r, SessionManager.SIDECAR_TEARDOWN_POLL_INTERVAL_MS))
+		}
+		return this.isContainerGone(containerId)
+	}
+
+	private async isContainerGone(containerId: string): Promise<boolean> {
+		try {
+			await this.containers.inspect(containerId)
+			return false
+		} catch (err) {
+			const statusCode = (err as { statusCode?: unknown }).statusCode
+			if (statusCode === 404) return true
+			const message = (err as { message?: unknown }).message
+			if (typeof message === 'string' && /No such container|HTTP code 404/.test(message)) {
+				return true
+			}
+			return false
 		}
 	}
 

@@ -891,6 +891,7 @@ export interface ProviderInfo {
 	displayName: string
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key'
 	events: ProviderEventDefinition[]
+	externalIdDisplay?: 'email' | 'installation'
 }
 
 export interface SlackConversation {

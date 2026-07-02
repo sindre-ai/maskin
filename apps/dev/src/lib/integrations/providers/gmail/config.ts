@@ -61,4 +61,6 @@ export const config: ProviderConfig = {
 		args: ['-y', 'mcp-remote', 'https://gmailmcp.googleapis.com/mcp/v1'],
 		envKey: 'GMAIL_TOKEN',
 	},
+
+	externalIdDisplay: 'email',
 }
