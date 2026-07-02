@@ -24,8 +24,8 @@ export function PackageCard({ workspaceId, pkg, install }: PackageCardProps) {
 		<article className="flex flex-col gap-[var(--space-3)] rounded-lg border border-border bg-background p-[var(--space-4)] shadow-sm">
 			<div className="flex items-start justify-between gap-[var(--space-3)]">
 				<div className="min-w-0">
-					<h3 className="text-sm font-semibold text-foreground">{pkg.name}</h3>
-					<p className="mt-[var(--space-1)] text-xs text-muted-foreground line-clamp-2">
+					<h3 className="text-label font-semibold text-foreground">{pkg.name}</h3>
+					<p className="mt-[var(--space-1)] text-caption text-muted-foreground line-clamp-2">
 						{pkg.description}
 					</p>
 				</div>
@@ -52,7 +52,7 @@ export function PackageCard({ workspaceId, pkg, install }: PackageCardProps) {
 				{pkg.item_types.map((type) => (
 					<span
 						key={type}
-						className="rounded-full border border-border bg-muted/40 px-[var(--space-2)] py-[2px] text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+						className="rounded-full border border-border bg-muted/40 px-[var(--space-2)] py-[2px] text-[10px] font-medium uppercase text-muted-foreground"
 					>
 						{type}
 					</span>

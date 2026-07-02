@@ -92,7 +92,7 @@ function AgentsPage() {
 								key={tab.value}
 								type="button"
 								className={cn(
-									'rounded px-[var(--space-3)] py-[var(--space-1)] text-sm',
+									'rounded px-[var(--space-3)] py-[var(--space-1)] text-label',
 									statusFilter === tab.value
 										? 'bg-muted text-foreground font-medium'
 										: 'text-muted-foreground hover:text-foreground',

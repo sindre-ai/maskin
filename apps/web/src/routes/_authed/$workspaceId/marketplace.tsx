@@ -137,8 +137,8 @@ function MarketplacePage() {
 	return (
 		<div className="flex flex-col h-full min-h-0">
 			<div className="mb-[var(--space-4)] md:mb-[var(--space-6)]">
-				<h1 className="text-lg font-semibold text-foreground">Marketplace</h1>
-				<p className="mt-[var(--space-1)] text-sm text-muted-foreground max-w-2xl">{SUBHEAD}</p>
+				<h1 className="text-title font-semibold text-foreground">Marketplace</h1>
+				<p className="mt-[var(--space-1)] text-label text-muted-foreground max-w-2xl">{SUBHEAD}</p>
 			</div>
 
 			<div className="flex flex-col md:flex-row md:gap-[var(--space-7)] flex-1 min-h-0">
@@ -193,13 +193,13 @@ function MarketplacePage() {
 
 				<section className="flex-1 min-w-0">
 					{isError ? (
-						<p className="text-sm text-muted-foreground">
+						<p className="text-label text-muted-foreground">
 							Couldn't load the catalog right now. Try refreshing.
 						</p>
 					) : isLoading ? (
-						<p className="text-sm text-muted-foreground">Loading catalog…</p>
+						<p className="text-label text-muted-foreground">Loading catalog…</p>
 					) : isEmpty ? (
-						<p className="text-sm text-muted-foreground">
+						<p className="text-label text-muted-foreground">
 							No packages yet — check back once Maskin publishes the first one.
 						</p>
 					) : (
@@ -221,7 +221,7 @@ function MarketplacePage() {
 function SidebarGroup({ label, children }: { label: string; children: React.ReactNode }) {
 	return (
 		<div className="mb-[var(--space-4)]">
-			<div className="px-[var(--space-2)] mb-[var(--space-1)] text-xs font-medium uppercase tracking-wider text-muted-foreground">
+			<div className="px-[var(--space-2)] mb-[var(--space-1)] text-caption font-medium uppercase text-muted-foreground">
 				{label}
 			</div>
 			<ul className="flex flex-col gap-[2px]">{children}</ul>
@@ -246,7 +246,7 @@ function SidebarItem({
 				type="button"
 				onClick={onClick}
 				className={cn(
-					'flex w-full items-center justify-between rounded-md px-[var(--space-2)] py-[6px] text-left text-sm transition-colors',
+					'flex w-full items-center justify-between rounded-md px-[var(--space-2)] py-[6px] text-left text-label transition-colors',
 					active
 						? 'bg-muted font-medium text-foreground'
 						: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
@@ -256,7 +256,7 @@ function SidebarItem({
 				{typeof count === 'number' ? (
 					<span
 						className={cn(
-							'text-xs tabular-nums',
+							'text-caption tabular-nums',
 							active ? 'text-muted-foreground' : 'text-muted-foreground/70',
 						)}
 					>
@@ -297,7 +297,7 @@ function ChipStrip({
 						type="button"
 						onClick={() => onSelect(item.value)}
 						className={cn(
-							'shrink-0 rounded-full border px-[var(--space-3)] py-[var(--space-1)] text-xs font-medium whitespace-nowrap transition-colors',
+							'shrink-0 rounded-full border px-[var(--space-3)] py-[var(--space-1)] text-caption font-medium whitespace-nowrap transition-colors',
 							isActive
 								? 'border-foreground bg-foreground text-background'
 								: 'border-border bg-background text-muted-foreground hover:text-foreground',

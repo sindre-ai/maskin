@@ -52,7 +52,7 @@ export function ObjectCard({
 							to="/$workspaceId/objects/$objectId"
 							params={{ workspaceId, objectId: object.id }}
 							onClick={(e) => e.stopPropagation()}
-							className="truncate text-sm font-medium text-foreground hover:underline"
+							className="truncate text-label font-medium text-foreground hover:underline"
 						>
 							{object.title || 'Untitled'}
 						</Link>
@@ -62,7 +62,7 @@ export function ObjectCard({
 					</div>
 					<StatusBadge status={object.status} className="shrink-0" />
 				</div>
-				<div className="flex min-w-0 flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)] text-xs text-muted-foreground">
+				<div className="flex min-w-0 flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)] text-caption text-muted-foreground">
 					<TypeBadge type={object.type} />
 					{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
 					{owner && <span className="truncate">{owner.name}</span>}

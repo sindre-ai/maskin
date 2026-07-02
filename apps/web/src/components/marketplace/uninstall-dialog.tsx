@@ -72,20 +72,20 @@ export function UninstallDialog({
 				>
 					<div className="flex items-start gap-[var(--space-3)]">
 						<RadioGroupItem value="remove" id="remove-all" className="mt-[2px]" />
-						<Label htmlFor="remove-all" className="cursor-pointer font-normal leading-snug">
+						<Label htmlFor="remove-all" className="cursor-pointer font-normal ">
 							<span className="font-medium">Remove everything</span>
 							<br />
-							<span className="text-xs text-muted-foreground">
+							<span className="text-caption text-muted-foreground">
 								Deletes all agents, triggers, and skills from this package.
 							</span>
 						</Label>
 					</div>
 					<div className="flex items-start gap-[var(--space-3)]">
 						<RadioGroupItem value="keep" id="keep-items" className="mt-[2px]" />
-						<Label htmlFor="keep-items" className="cursor-pointer font-normal leading-snug">
+						<Label htmlFor="keep-items" className="cursor-pointer font-normal ">
 							<span className="font-medium">Keep agents, triggers, and skills</span>
 							<br />
-							<span className="text-xs text-muted-foreground">
+							<span className="text-caption text-muted-foreground">
 								{isLocked
 									? 'Components stay in your workspace as regular (unmanaged) resources.'
 									: 'They remain in your workspace as regular resources.'}

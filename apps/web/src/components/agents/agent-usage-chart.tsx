@@ -103,9 +103,7 @@ export function AgentUsageChart({
 	return (
 		<div className="mb-[var(--space-6)]">
 			<div className="flex items-center justify-between mb-[var(--space-3)]">
-				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-					Usage
-				</h3>
+				<h3 className="text-caption font-medium uppercase text-muted-foreground">Usage</h3>
 				<Tabs value={view} onValueChange={(v) => setView(v as View)}>
 					<TabsList>
 						<TabsTrigger value="tokens">Tokens</TabsTrigger>
@@ -237,11 +235,11 @@ export function AgentUsageChart({
 function Stat({ label, value, loading }: { label: string; value: string; loading: boolean }) {
 	return (
 		<div className="rounded-md border bg-card p-[var(--space-3)]">
-			<div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
+			<div className="text-[11px] uppercase text-muted-foreground">{label}</div>
 			{loading ? (
 				<Skeleton className="h-5 w-16 mt-[var(--space-1)]" />
 			) : (
-				<div className="text-lg font-medium tabular-nums mt-[2px]">{value}</div>
+				<div className="text-title font-medium tabular-nums mt-[2px]">{value}</div>
 			)}
 		</div>
 	)

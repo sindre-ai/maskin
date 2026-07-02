@@ -36,14 +36,16 @@ export function AgentCard({
 			<div className="flex items-center justify-between gap-[var(--space-2)] mb-[var(--space-1)]">
 				<div className="flex items-center gap-[var(--space-2)] min-w-0">
 					<ActorAvatar name={agent.name} type="agent" size="md" />
-					<span className="text-sm font-medium text-foreground truncate min-w-0">{agent.name}</span>
+					<span className="text-label font-medium text-foreground truncate min-w-0">
+						{agent.name}
+					</span>
 					<StatusIndicator status={status} />
 				</div>
 				<StatusLabel status={status} />
 			</div>
 
 			{description && (
-				<p className="text-xs text-muted-foreground mb-[var(--space-3)] ml-[36px] line-clamp-1">
+				<p className="text-caption text-muted-foreground mb-[var(--space-3)] ml-[36px] line-clamp-1">
 					{description}
 				</p>
 			)}
@@ -70,7 +72,7 @@ function StatusLabel({ status }: { status: AgentStatus }) {
 	return (
 		<span
 			className={cn(
-				'text-xs font-medium',
+				'text-caption font-medium',
 				status === 'working' && 'text-status-in_progress-text',
 				status === 'failed' && 'text-error',
 				status === 'idle' && 'text-muted-foreground',
@@ -83,7 +85,7 @@ function StatusLabel({ status }: { status: AgentStatus }) {
 
 function ActivityLine({ status, session }: { status: AgentStatus; session?: SessionResponse }) {
 	if (!session) {
-		return <p className="text-xs text-muted-foreground">No activity yet</p>
+		return <p className="text-caption text-muted-foreground">No activity yet</p>
 	}
 
 	if (status === 'working') {
@@ -92,7 +94,7 @@ function ActivityLine({ status, session }: { status: AgentStatus; session?: Sess
 
 	if (status === 'failed') {
 		return (
-			<p className="text-xs text-error truncate">
+			<p className="text-caption text-error truncate">
 				✕ {session.actionPrompt}
 				{session.completedAt && (
 					<>
@@ -106,7 +108,7 @@ function ActivityLine({ status, session }: { status: AgentStatus; session?: Sess
 
 	// idle — show last completed session
 	return (
-		<p className="text-xs text-muted-foreground truncate">
+		<p className="text-caption text-muted-foreground truncate">
 			{session.actionPrompt}
 			{session.completedAt && (
 				<>
@@ -122,7 +124,7 @@ function WorkingActivity({ session }: { session: SessionResponse }) {
 	const duration = useDuration(session.startedAt)
 
 	return (
-		<p className="text-xs text-muted-foreground truncate">
+		<p className="text-caption text-muted-foreground truncate">
 			{session.actionPrompt}
 			{duration && ` · ${duration}`}
 		</p>

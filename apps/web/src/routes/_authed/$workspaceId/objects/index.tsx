@@ -621,7 +621,7 @@ function ObjectsPage() {
 			<PageHeader title="Objects" />
 
 			{idsFilter && (
-				<div className="flex items-center gap-[var(--space-2)] mx-[var(--space-6)] mb-[var(--space-3)] px-[var(--space-3)] py-[var(--space-2)] rounded-md bg-muted/50 border text-sm">
+				<div className="flex items-center gap-[var(--space-2)] mx-[var(--space-6)] mb-[var(--space-3)] px-[var(--space-3)] py-[var(--space-2)] rounded-md bg-muted/50 border text-label">
 					<Filter className="h-4 w-4 text-muted-foreground shrink-0" />
 					<span className="text-muted-foreground">
 						Showing{' '}

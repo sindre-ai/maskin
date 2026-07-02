@@ -85,9 +85,9 @@ export function HumanDetailDialog({
 							value={systemPromptDraft}
 							onChange={(e) => setSystemPromptDraft(e.target.value)}
 							placeholder="Context for agents when this person is @mentioned in a comment."
-							className="min-h-[160px] font-mono text-sm"
+							className="min-h-[160px] font-mono text-label"
 						/>
-						<p className="mt-[var(--space-1)] text-xs text-muted-foreground">
+						<p className="mt-[var(--space-1)] text-caption text-muted-foreground">
 							Agents fetch this on demand via the actor API when this person is @mentioned in a
 							comment.
 						</p>

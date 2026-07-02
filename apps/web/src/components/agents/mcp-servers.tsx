@@ -217,7 +217,7 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 					)}
 				</div>
 			) : (
-				<p className="text-xs text-muted-foreground mb-[var(--space-3)]">
+				<p className="text-caption text-muted-foreground mb-[var(--space-3)]">
 					{readOnly
 						? 'No MCP servers configured.'
 						: 'No MCP servers configured. Add servers to give this agent access to external tools.'}
@@ -313,8 +313,8 @@ function ServerCard({
 				<Terminal className="h-4 w-4 text-muted-foreground shrink-0" />
 			)}
 			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">{name}</p>
-				<p className="text-xs text-muted-foreground truncate">
+				<p className="text-label font-medium text-foreground truncate">{name}</p>
+				<p className="text-caption text-muted-foreground truncate">
 					{http ? server.url : `${server.command} ${server.args?.join(' ')}`}
 					{detailCount > 0 && (
 						<span className="ml-[var(--space-2)] text-text-muted">
@@ -430,7 +430,7 @@ function ServerForm({
 						value={name}
 						onChange={(e) => setName(e.target.value)}
 						placeholder="e.g. github"
-						className="h-8 text-sm"
+						className="h-8 text-label"
 					/>
 				</div>
 				<div className="w-28">
@@ -456,7 +456,7 @@ function ServerForm({
 								value={command}
 								onChange={(e) => setCommand(e.target.value)}
 								placeholder="e.g. npx"
-								className="h-8 text-sm"
+								className="h-8 text-label"
 							/>
 						</div>
 					</div>
@@ -466,7 +466,7 @@ function ServerForm({
 							value={args}
 							onChange={(e) => setArgs(e.target.value)}
 							placeholder="e.g. -y, @modelcontextprotocol/server-github"
-							className="h-8 text-sm"
+							className="h-8 text-label"
 						/>
 					</div>
 					<KeyValueEditor
@@ -487,7 +487,7 @@ function ServerForm({
 							value={url}
 							onChange={(e) => setUrl(e.target.value)}
 							placeholder="e.g. http://localhost:3000/mcp"
-							className="h-8 text-sm"
+							className="h-8 text-label"
 						/>
 					</div>
 					<KeyValueEditor
@@ -555,7 +555,7 @@ function KeyValueEditor({
 							onChange(pairs.map((p) => (p.id === pair.id ? { ...p, key: e.target.value } : p)))
 						}
 						placeholder={keyPlaceholder}
-						className="h-7 text-xs font-mono flex-1 min-w-0"
+						className="h-7 text-caption font-mono flex-1 min-w-0"
 					/>
 					<Input
 						value={pair.value}
@@ -563,7 +563,7 @@ function KeyValueEditor({
 							onChange(pairs.map((p) => (p.id === pair.id ? { ...p, value: e.target.value } : p)))
 						}
 						placeholder={valuePlaceholder}
-						className="h-7 text-xs font-mono flex-1 min-w-0"
+						className="h-7 text-caption font-mono flex-1 min-w-0"
 					/>
 					<Button
 						size="icon"
@@ -629,11 +629,11 @@ function ImportMcpDialog({
 					value={json}
 					onChange={(e) => setJson(e.target.value)}
 					placeholder={
-						'{\n  "mcpServers": {\n    "server-name": {\n      "command": "npx",\n      "args": ["-y", "package-name"],\n      "env": {}\n    }\n  }\n}'
+						'{\n "mcpServers": {\n "server-name": {\n "command": "npx",\n "args": ["-y", "package-name"],\n "env": {}\n }\n }\n}'
 					}
-					className="min-h-[200px] font-mono text-sm"
+					className="min-h-[200px] font-mono text-label"
 				/>
-				{error && <p className="text-xs text-error">{error}</p>}
+				{error && <p className="text-caption text-error">{error}</p>}
 				<div className="flex justify-end gap-[var(--space-2)]">
 					<Button
 						variant="ghost"

@@ -52,7 +52,7 @@ type ViewMode = 'rendered' | 'source'
 
 function SourceView({ text }: { text: string }) {
 	return (
-		<pre className="rounded-md border border-border bg-bg-surface p-[var(--space-4)] text-xs font-mono whitespace-pre-wrap break-words overflow-x-auto text-text">
+		<pre className="rounded-md border border-border bg-bg-surface p-[var(--space-4)] text-caption font-mono whitespace-pre-wrap break-words overflow-x-auto text-text">
 			{text}
 		</pre>
 	)
@@ -153,7 +153,13 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 				<div className="flex justify-end">
 					<ViewToggle mode={mode} onChange={setMode} />
 				</div>
-				{mode === 'rendered' ? <MarkdownContent content={text} /> : <SourceView text={text} />}
+				{mode === 'rendered' ? (
+					<div className="max-w-[65ch]">
+						<MarkdownContent content={text} />
+					</div>
+				) : (
+					<SourceView text={text} />
+				)}
 			</div>
 		)
 	}
@@ -164,7 +170,7 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 			<div className="space-y-[var(--space-3)]">
 				<div className="flex items-center justify-end gap-[var(--space-2)]">
 					{showSaved && (
-						<span className="flex items-center gap-[var(--space-1)] text-xs text-muted-foreground mr-auto">
+						<span className="flex items-center gap-[var(--space-1)] text-caption text-muted-foreground mr-auto">
 							<Check size={14} /> Saved
 						</span>
 					)}

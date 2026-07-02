@@ -9,7 +9,7 @@ function RelationshipsApp() {
 
 	if (!toolResult) {
 		return (
-			<div className="p-[var(--space-4)] text-muted-foreground text-sm">Waiting for data...</div>
+			<div className="p-[var(--space-4)] text-muted-foreground text-label">Waiting for data...</div>
 		)
 	}
 
@@ -17,7 +17,9 @@ function RelationshipsApp() {
 		(c: { type: string; text?: string }) => c.type === 'text',
 	)?.text
 	if (!text)
-		return <div className="p-[var(--space-4)] text-muted-foreground text-sm">No data received</div>
+		return (
+			<div className="p-[var(--space-4)] text-muted-foreground text-label">No data received</div>
+		)
 
 	const data = JSON.parse(text)
 
@@ -55,21 +57,21 @@ function RelationshipListRow({ rel }: { rel: RelationshipResponse }) {
 	})
 	const content = (
 		<>
-			<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
+			<span className="text-muted-foreground font-mono text-caption truncate max-w-24">
 				{rel.sourceId.slice(0, 8)}
 			</span>
-			<span className="text-accent-foreground font-medium text-xs">
+			<span className="text-accent-foreground font-medium text-caption">
 				{rel.type.replace(/_/g, ' ')}
 			</span>
 			<span className="text-muted-foreground">→</span>
-			<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
+			<span className="text-muted-foreground font-mono text-caption truncate max-w-24">
 				{rel.targetId.slice(0, 8)}
 			</span>
 		</>
 	)
 	if (!href) {
 		return (
-			<div className="flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)] rounded-lg text-sm">
+			<div className="flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)] rounded-lg text-label">
 				{content}
 			</div>
 		)
@@ -79,7 +81,7 @@ function RelationshipListRow({ rel }: { rel: RelationshipResponse }) {
 			href={href}
 			target="_blank"
 			rel="noreferrer"
-			className="flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)] rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors text-sm no-underline"
+			className="flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)] rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors text-label no-underline"
 		>
 			{content}
 		</a>
@@ -89,16 +91,16 @@ function RelationshipListRow({ rel }: { rel: RelationshipResponse }) {
 function RelationshipCreatedView({ relationship }: { relationship: RelationshipResponse }) {
 	return (
 		<div className="p-[var(--space-4)]">
-			<h2 className="text-sm font-medium text-foreground mb-[var(--space-3)]">
+			<h2 className="text-label font-medium text-foreground mb-[var(--space-3)]">
 				Relationship Created
 			</h2>
-			<div className="flex items-center gap-[var(--space-2)] text-sm">
-				<span className="text-muted-foreground font-mono text-xs">
+			<div className="flex items-center gap-[var(--space-2)] text-label">
+				<span className="text-muted-foreground font-mono text-caption">
 					{relationship.sourceId.slice(0, 8)}
 				</span>
-				<span className="text-primary text-xs">{relationship.type.replace(/_/g, ' ')}</span>
+				<span className="text-primary text-caption">{relationship.type.replace(/_/g, ' ')}</span>
 				<span className="text-muted-foreground">→</span>
-				<span className="text-muted-foreground font-mono text-xs">
+				<span className="text-muted-foreground font-mono text-caption">
 					{relationship.targetId.slice(0, 8)}
 				</span>
 			</div>
@@ -109,7 +111,7 @@ function RelationshipCreatedView({ relationship }: { relationship: RelationshipR
 function DeletedView() {
 	return (
 		<div className="p-[var(--space-4)] text-center">
-			<p className="text-sm text-muted-foreground">Relationship deleted successfully.</p>
+			<p className="text-label text-muted-foreground">Relationship deleted successfully.</p>
 		</div>
 	)
 }

@@ -104,7 +104,7 @@ function WorkspaceLayout() {
 	if (!workspace) {
 		return (
 			<div className="flex min-h-screen items-center justify-center">
-				<p className="text-sm text-muted-foreground">Loading workspace...</p>
+				<p className="text-label text-muted-foreground">Loading workspace...</p>
 			</div>
 		)
 	}

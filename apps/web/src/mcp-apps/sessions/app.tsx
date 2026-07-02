@@ -155,7 +155,7 @@ function SessionsApp() {
 
 	if (!toolResult) {
 		return (
-			<div className="p-[var(--space-4)] text-muted-foreground text-sm">Waiting for data...</div>
+			<div className="p-[var(--space-4)] text-muted-foreground text-label">Waiting for data...</div>
 		)
 	}
 
@@ -163,17 +163,19 @@ function SessionsApp() {
 		(c: { type: string; text?: string }) => c.type === 'text',
 	)?.text
 	if (!text)
-		return <div className="p-[var(--space-4)] text-muted-foreground text-sm">No data received</div>
+		return (
+			<div className="p-[var(--space-4)] text-muted-foreground text-label">No data received</div>
+		)
 
 	const data = safeParseJson(text)
-	if (!data) return <div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
+	if (!data) return <div className="p-[var(--space-4)] text-label text-foreground">{text}</div>
 
 	if (toolResult.toolName === 'list_sessions') {
 		const unwrapped = unwrapEnvelope(data)
 		return isArray(unwrapped) ? (
 			<SessionListView sessions={unwrapped as EnrichedSession[]} />
 		) : (
-			<div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
+			<div className="p-[var(--space-4)] text-label text-foreground">{text}</div>
 		)
 	}
 
@@ -181,7 +183,7 @@ function SessionsApp() {
 	// run_agent — all return either { session, logs? } or a raw session.
 	const parsed = parseSessionFromResult(toolResult.result)
 	if (parsed) return <SessionDetailView session={parsed.session} logs={parsed.logs} />
-	return <div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
+	return <div className="p-[var(--space-4)] text-label text-foreground">{text}</div>
 }
 
 function SessionListView({ sessions }: { sessions: EnrichedSession[] }) {
@@ -296,15 +298,17 @@ function SessionRow({
 			>
 				<div className="flex items-center gap-[var(--space-2)] flex-wrap">
 					<StatusBadge status={session.status} />
-					<span className="font-mono text-xs text-muted-foreground truncate">{session.id}</span>
+					<span className="font-mono text-caption text-muted-foreground truncate">
+						{session.id}
+					</span>
 					{session.createdAt && (
-						<span className="text-xs text-muted-foreground">
+						<span className="text-caption text-muted-foreground">
 							<RelativeTime date={session.createdAt} />
 						</span>
 					)}
 				</div>
 				{session.actionPrompt && (
-					<p className="text-sm text-foreground mt-[var(--space-1)] line-clamp-2">
+					<p className="text-label text-foreground mt-[var(--space-1)] line-clamp-2">
 						{session.actionPrompt}
 					</p>
 				)}
@@ -395,7 +399,7 @@ function SessionDetailView({
 							<ArrowLeft className="size-4" />
 						</Button>
 					)}
-					<h2 className="text-base font-semibold text-foreground truncate">
+					<h2 className="text-body font-semibold text-foreground truncate">
 						{current.actionPrompt || 'Untitled session'}
 					</h2>
 				</div>
@@ -405,7 +409,7 @@ function SessionDetailView({
 				/>
 			</div>
 
-			<div className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[6px] text-sm">
+			<div className="flex flex-wrap items-center gap-x-[var(--space-4)] gap-y-[6px] text-label">
 				<div className="flex items-center gap-[6px]">
 					<StatusBadge status={current.status} />
 					{isRunning && <Spinner className="size-3 text-accent" />}
@@ -417,7 +421,7 @@ function SessionDetailView({
 					</span>
 				)}
 				{current.startedAt && (
-					<RelativeTime date={current.startedAt} className="text-muted-foreground text-sm" />
+					<RelativeTime date={current.startedAt} className="text-muted-foreground text-label" />
 				)}
 				<Badge variant="outline" className="font-medium">
 					{actorDisplay(current)}
@@ -426,7 +430,7 @@ function SessionDetailView({
 
 			{(errorMessage || (exitCode !== undefined && exitCode !== 0)) && (
 				<div className="rounded-md bg-error/10 border border-error/20 px-[var(--space-3)] py-[var(--space-2)]">
-					<p className="text-sm text-error font-medium">
+					<p className="text-label text-error font-medium">
 						{errorMessage ?? `Process exited with code ${exitCode}`}
 					</p>
 				</div>
@@ -445,7 +449,7 @@ function SessionDetailView({
 
 			<div>
 				<div className="flex items-center justify-between mb-[var(--space-2)]">
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-[6px]">
+					<h3 className="text-caption font-medium uppercase text-muted-foreground flex items-center gap-[6px]">
 						<Terminal size={13} />
 						Logs
 					</h3>
@@ -482,7 +486,7 @@ function SessionDetailView({
 				) : filteredLogs.length > 0 ? (
 					<div className="rounded-md border border-border bg-secondary/30 overflow-hidden">
 						<div className="max-h-[60vh] overflow-y-auto">
-							<pre className="text-xs font-mono p-[var(--space-3)] whitespace-pre-wrap break-words">
+							<pre className="text-caption font-mono p-[var(--space-3)] whitespace-pre-wrap break-words">
 								{filteredLogs.map((log, idx) => (
 									<div
 										key={log.id ?? idx}
@@ -499,7 +503,7 @@ function SessionDetailView({
 						</div>
 					</div>
 				) : (
-					<p className="text-sm text-muted-foreground py-[var(--space-4)] text-center">
+					<p className="text-label text-muted-foreground py-[var(--space-4)] text-center">
 						No logs available
 					</p>
 				)}
@@ -507,10 +511,10 @@ function SessionDetailView({
 
 			{result && Object.keys(result).length > 0 && (
 				<div>
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-[var(--space-2)]">
+					<h3 className="text-caption font-medium uppercase text-muted-foreground mb-[var(--space-2)]">
 						Result
 					</h3>
-					<pre className="text-xs font-mono rounded-md border border-border bg-secondary/30 p-[var(--space-3)] whitespace-pre-wrap break-words">
+					<pre className="text-caption font-mono rounded-md border border-border bg-secondary/30 p-[var(--space-3)] whitespace-pre-wrap break-words">
 						{JSON.stringify(result, null, 2)}
 					</pre>
 				</div>

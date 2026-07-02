@@ -687,7 +687,7 @@ function BoardColumn({
 		>
 			<div className="flex items-center justify-between px-[var(--space-1)]">
 				<StatusBadge status={label} />
-				<span className="text-xs text-muted-foreground tabular-nums">
+				<span className="text-caption text-muted-foreground tabular-nums">
 					{objects.length}
 					{total > objects.length ? `/${total}` : ''}
 				</span>
@@ -714,7 +714,7 @@ function BoardColumn({
 					previewCard ? (
 						previewCard
 					) : isValidTarget ? (
-						<div className="pointer-events-none min-h-14 rounded-md border border-dashed border-border/70 bg-accent/20 px-[var(--space-3)] py-[var(--space-3)] text-xs text-muted-foreground">
+						<div className="pointer-events-none min-h-14 rounded-md border border-dashed border-border/70 bg-accent/20 px-[var(--space-3)] py-[var(--space-3)] text-caption text-muted-foreground">
 							Drop here to move to {humanizeStatus(status)}.
 						</div>
 					) : (
@@ -749,7 +749,7 @@ function BoardColumn({
 					</SortableContext>
 				)}
 				{isValidTarget && orderedObjects.length > 0 && previewIndex === null && (
-					<div className="pointer-events-none min-h-14 rounded-md border border-dashed border-border/70 bg-accent/20 px-[var(--space-3)] py-[var(--space-3)] text-xs text-muted-foreground">
+					<div className="pointer-events-none min-h-14 rounded-md border border-dashed border-border/70 bg-accent/20 px-[var(--space-3)] py-[var(--space-3)] text-caption text-muted-foreground">
 						Drop here to move to {humanizeStatus(status)}.
 					</div>
 				)}
@@ -811,7 +811,7 @@ function ColumnLoadMore({
 	return (
 		<div
 			ref={sentinelRef}
-			className="py-[var(--space-2)] text-center text-xs text-muted-foreground"
+			className="py-[var(--space-2)] text-center text-caption text-muted-foreground"
 		>
 			{isFetching ? 'Loading more...' : 'Scroll for more'}
 		</div>
@@ -987,7 +987,7 @@ function CardSkeleton() {
 
 function ColumnEmpty({ status }: { status: string }) {
 	return (
-		<div className="rounded-md border border-dashed border-border/70 bg-muted/20 px-[var(--space-3)] py-[var(--space-4)] text-xs text-muted-foreground">
+		<div className="rounded-md border border-dashed border-border/70 bg-muted/20 px-[var(--space-3)] py-[var(--space-4)] text-caption text-muted-foreground">
 			<p>Nothing here yet.</p>
 			<p className="mt-[var(--space-1)]">Drag a card to {humanizeStatus(status)}.</p>
 		</div>

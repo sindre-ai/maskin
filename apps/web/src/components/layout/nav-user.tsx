@@ -56,14 +56,16 @@ export function NavUser() {
 						sideOffset={4}
 					>
 						<DropdownMenuLabel className="p-[0] font-normal">
-							<div className="flex items-center gap-[var(--space-2)] px-[var(--space-1)] py-[6px] text-left text-sm">
+							<div className="flex items-center gap-[var(--space-2)] px-[var(--space-1)] py-[6px] text-left text-label">
 								<div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-									<span className="text-xs font-bold">{initial}</span>
+									<span className="text-caption font-bold">{initial}</span>
 								</div>
-								<div className="grid flex-1 text-left text-sm leading-tight">
+								<div className="grid flex-1 text-left text-label ">
 									<span className="truncate font-semibold">{displayName}</span>
 									{displayEmail && (
-										<span className="truncate text-xs text-muted-foreground">{displayEmail}</span>
+										<span className="truncate text-caption text-muted-foreground">
+											{displayEmail}
+										</span>
 									)}
 								</div>
 							</div>
@@ -86,7 +88,7 @@ export function NavUser() {
 							(isMobile ? (
 								<>
 									<DropdownMenuSeparator />
-									<DropdownMenuLabel className="text-xs text-muted-foreground">
+									<DropdownMenuLabel className="text-caption text-muted-foreground">
 										Workspace
 									</DropdownMenuLabel>
 									{currentWorkspace && (

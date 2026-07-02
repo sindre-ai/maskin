@@ -99,7 +99,7 @@ export function DataTableControls({
 					>
 						<Settings2 size={14} />
 						{hasActiveFilters && (
-							<span className="absolute -top-0.5 -right-0.5 rounded-full bg-primary text-primary-foreground text-[10px] leading-none px-[var(--space-1)] py-[2px] min-w-[14px] text-center">
+							<span className="absolute -top-0.5 -right-0.5 rounded-full bg-primary text-primary-foreground text-[10px] px-[var(--space-1)] py-[2px] min-w-[14px] text-center">
 								{activeFilterCount}
 							</span>
 						)}
@@ -109,7 +109,7 @@ export function DataTableControls({
 						<Settings2 size={14} />
 						Controls
 						{hasActiveFilters && (
-							<span className="ml-[var(--space-1)] rounded-full bg-primary text-primary-foreground text-xs px-[6px] py-[2px]">
+							<span className="ml-[var(--space-1)] rounded-full bg-primary text-primary-foreground text-caption px-[6px] py-[2px]">
 								{activeFilterCount}
 							</span>
 						)}
@@ -122,14 +122,14 @@ export function DataTableControls({
 					{showTypeFilter && (
 						<>
 							<div className="p-[var(--space-3)]">
-								<p className="text-xs font-medium text-muted-foreground mb-[var(--space-2)]">
+								<p className="text-caption font-medium text-muted-foreground mb-[var(--space-2)]">
 									Filter by type
 								</p>
 								<div className="space-y-[var(--space-1)]">
 									{Object.entries(typeCounts).map(([type, count]) => (
 										<div
 											key={type}
-											className="flex items-center gap-[var(--space-2)] py-[var(--space-1)] px-[var(--space-1)] rounded hover:bg-muted/50 cursor-pointer text-sm capitalize"
+											className="flex items-center gap-[var(--space-2)] py-[var(--space-1)] px-[var(--space-1)] rounded hover:bg-muted/50 cursor-pointer text-label capitalize"
 										>
 											<Checkbox
 												checked={typeFilter === type}
@@ -140,7 +140,7 @@ export function DataTableControls({
 												}}
 											/>
 											<span className="flex-1">{type}</span>
-											<span className="text-xs text-muted-foreground">{count}</span>
+											<span className="text-caption text-muted-foreground">{count}</span>
 										</div>
 									))}
 								</div>
@@ -153,7 +153,7 @@ export function DataTableControls({
 					{Object.keys(statusesByType).length > 0 && onStatusFilterChange && (
 						<>
 							<div className="p-[var(--space-3)]">
-								<p className="text-xs font-medium text-muted-foreground mb-[var(--space-2)]">
+								<p className="text-caption font-medium text-muted-foreground mb-[var(--space-2)]">
 									Filter by status
 								</p>
 								<div className="space-y-[var(--space-1)]">
@@ -162,14 +162,14 @@ export function DataTableControls({
 										return (
 											<div key={type}>
 												{showTypeHeader && (
-													<p className="text-xs font-medium text-muted-foreground mt-[var(--space-2)] mb-[var(--space-1)] capitalize">
+													<p className="text-caption font-medium text-muted-foreground mt-[var(--space-2)] mb-[var(--space-1)] capitalize">
 														{type}
 													</p>
 												)}
 												{statuses.map((s) => (
 													<div
 														key={s}
-														className="flex items-center gap-[var(--space-2)] py-[var(--space-1)] px-[var(--space-1)] rounded hover:bg-muted/50 cursor-pointer text-sm"
+														className="flex items-center gap-[var(--space-2)] py-[var(--space-1)] px-[var(--space-1)] rounded hover:bg-muted/50 cursor-pointer text-label"
 													>
 														<Checkbox
 															checked={statusFilter === s}
@@ -195,14 +195,14 @@ export function DataTableControls({
 					{actors && actors.length > 0 && onDriverFilterChange && (
 						<>
 							<div className="p-[var(--space-3)]">
-								<p className="text-xs font-medium text-muted-foreground mb-[var(--space-2)]">
+								<p className="text-caption font-medium text-muted-foreground mb-[var(--space-2)]">
 									Filter by driver
 								</p>
 								<div className="space-y-[var(--space-1)]">
 									{actors.map((a) => (
 										<div
 											key={a.id}
-											className="flex items-center gap-[var(--space-2)] py-[var(--space-1)] px-[var(--space-1)] rounded hover:bg-muted/50 cursor-pointer text-sm"
+											className="flex items-center gap-[var(--space-2)] py-[var(--space-1)] px-[var(--space-1)] rounded hover:bg-muted/50 cursor-pointer text-label"
 										>
 											<Checkbox
 												checked={driverFilter === a.id}
@@ -226,10 +226,10 @@ export function DataTableControls({
 						<>
 							<div className="p-[var(--space-3)]">
 								<div className="flex items-center justify-between mb-[var(--space-2)]">
-									<p className="text-xs font-medium text-muted-foreground">Sort by</p>
+									<p className="text-caption font-medium text-muted-foreground">Sort by</p>
 									<button
 										type="button"
-										className="flex items-center gap-[var(--space-1)] text-xs text-muted-foreground hover:text-foreground transition-colors"
+										className="flex items-center gap-[var(--space-1)] text-caption text-muted-foreground hover:text-foreground transition-colors"
 										onClick={() => {
 											const next = order === 'asc' ? 'desc' : 'asc'
 											track('sort_order', next)
@@ -246,7 +246,7 @@ export function DataTableControls({
 											key={col.id}
 											type="button"
 											className={cn(
-												'w-full text-left py-[var(--space-1)] px-[var(--space-2)] rounded text-sm transition-colors capitalize',
+												'w-full text-left py-[var(--space-1)] px-[var(--space-2)] rounded text-label transition-colors capitalize',
 												sort === col.id
 													? 'bg-muted text-foreground font-medium'
 													: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
@@ -269,14 +269,14 @@ export function DataTableControls({
 					{showGroupBy && (
 						<>
 							<div className="p-[var(--space-3)]">
-								<p className="text-xs font-medium text-muted-foreground mb-[var(--space-2)]">
+								<p className="text-caption font-medium text-muted-foreground mb-[var(--space-2)]">
 									Group by
 								</p>
 								<div className="space-y-[var(--space-1)]">
 									<button
 										type="button"
 										className={cn(
-											'w-full text-left py-[var(--space-1)] px-[var(--space-2)] rounded text-sm transition-colors',
+											'w-full text-left py-[var(--space-1)] px-[var(--space-2)] rounded text-label transition-colors',
 											!groupBy
 												? 'bg-muted text-foreground font-medium'
 												: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
@@ -293,7 +293,7 @@ export function DataTableControls({
 											key={col.id}
 											type="button"
 											className={cn(
-												'w-full text-left py-[var(--space-1)] px-[var(--space-2)] rounded text-sm transition-colors capitalize',
+												'w-full text-left py-[var(--space-1)] px-[var(--space-2)] rounded text-label transition-colors capitalize',
 												groupBy === col.id
 													? 'bg-muted text-foreground font-medium'
 													: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
@@ -315,7 +315,7 @@ export function DataTableControls({
 					{/* Column visibility */}
 					{showColumns && (
 						<div className="p-[var(--space-3)]">
-							<p className="text-xs font-medium text-muted-foreground mb-[var(--space-2)]">
+							<p className="text-caption font-medium text-muted-foreground mb-[var(--space-2)]">
 								Columns
 							</p>
 							<div className="space-y-[var(--space-1)]">
@@ -324,7 +324,7 @@ export function DataTableControls({
 									return (
 										<div
 											key={col.id}
-											className="flex items-center gap-[var(--space-2)] py-[var(--space-1)] px-[var(--space-1)] rounded hover:bg-muted/50 cursor-pointer text-sm"
+											className="flex items-center gap-[var(--space-2)] py-[var(--space-1)] px-[var(--space-1)] rounded hover:bg-muted/50 cursor-pointer text-label"
 										>
 											<Checkbox
 												checked={isVisible}

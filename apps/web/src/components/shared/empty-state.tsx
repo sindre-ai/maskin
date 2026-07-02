@@ -18,9 +18,9 @@ export function EmptyState({
 				className,
 			)}
 		>
-			<p className="text-sm font-medium text-muted-foreground">{title}</p>
+			<p className="text-label font-medium text-muted-foreground">{title}</p>
 			{description && (
-				<p className="mt-[var(--space-1)] text-xs text-muted-foreground">{description}</p>
+				<p className="mt-[var(--space-1)] text-caption text-muted-foreground">{description}</p>
 			)}
 			{action && <div className="mt-[var(--space-4)]">{action}</div>}
 		</div>

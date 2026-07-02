@@ -79,7 +79,7 @@ export function ObjectCreateForm({
 				// biome-ignore lint/a11y/noAutofocus: focus title on create
 				autoFocus
 				rows={1}
-				className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-[var(--space-2)] resize-none overflow-hidden p-[0] focus:outline-none"
+				className="w-full text-display font-bold bg-transparent border-none outline-none text-foreground mb-[var(--space-2)] resize-none overflow-hidden p-[0] focus:outline-none"
 				ref={(el) => {
 					if (el) {
 						el.style.height = 'auto'
@@ -118,7 +118,7 @@ export function ObjectCreateForm({
 			</div>
 
 			{/* Content editor */}
-			<div className="mb-[var(--space-7)]">
+			<div className="mb-[var(--space-7)] max-w-[65ch]">
 				<MarkdownContent content={object?.content ?? ''} onChange={handleContentChange} editable />
 			</div>
 
@@ -132,10 +132,10 @@ export function ObjectCreateForm({
 				/>
 			</div>
 
-			{isPending && <p className="text-xs text-muted-foreground">Creating...</p>}
+			{isPending && <p className="text-caption text-muted-foreground">Creating...</p>}
 
 			{error && (
-				<div className="rounded bg-error/10 px-[var(--space-3)] py-[var(--space-2)] text-sm text-error">
+				<div className="rounded bg-error/10 px-[var(--space-3)] py-[var(--space-2)] text-label text-error">
 					{error.message || 'Failed to create object'}
 				</div>
 			)}

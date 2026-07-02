@@ -10,7 +10,7 @@ function TriggersApp() {
 
 	if (!toolResult) {
 		return (
-			<div className="p-[var(--space-4)] text-muted-foreground text-sm">Waiting for data...</div>
+			<div className="p-[var(--space-4)] text-muted-foreground text-label">Waiting for data...</div>
 		)
 	}
 
@@ -18,10 +18,12 @@ function TriggersApp() {
 		(c: { type: string; text?: string }) => c.type === 'text',
 	)?.text
 	if (!text)
-		return <div className="p-[var(--space-4)] text-muted-foreground text-sm">No data received</div>
+		return (
+			<div className="p-[var(--space-4)] text-muted-foreground text-label">No data received</div>
+		)
 
 	const data = safeParseJson(text)
-	if (!data) return <div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
+	if (!data) return <div className="p-[var(--space-4)] text-label text-foreground">{text}</div>
 
 	const unwrapped = unwrapEnvelope(data)
 
@@ -30,14 +32,14 @@ function TriggersApp() {
 			return isArray(unwrapped) ? (
 				<TriggerListView triggers={unwrapped as TriggerResponse[]} />
 			) : (
-				<div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
+				<div className="p-[var(--space-4)] text-label text-foreground">{text}</div>
 			)
 		case 'create_trigger':
 		case 'update_trigger':
 			return isObject<TriggerResponse>(data, 'id', 'name') ? (
 				<TriggerDetailView trigger={data} />
 			) : (
-				<div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
+				<div className="p-[var(--space-4)] text-label text-foreground">{text}</div>
 			)
 		case 'delete_trigger':
 			return <TriggerDeletedView />
@@ -45,7 +47,7 @@ function TriggersApp() {
 			return isObject<TriggerResponse>(data, 'id', 'name') ? (
 				<TriggerDetailView trigger={data} />
 			) : (
-				<div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
+				<div className="p-[var(--space-4)] text-label text-foreground">{text}</div>
 			)
 	}
 }
@@ -71,8 +73,8 @@ function TriggerListRow({ trigger }: { trigger: TriggerResponse }) {
 			<span
 				className={`w-2 h-2 rounded-full ${trigger.enabled ? 'bg-success' : 'bg-muted-foreground'}`}
 			/>
-			<span className="text-sm text-foreground flex-1">{trigger.name}</span>
-			<span className="text-xs text-muted-foreground capitalize">{trigger.type}</span>
+			<span className="text-label text-foreground flex-1">{trigger.name}</span>
+			<span className="text-caption text-muted-foreground capitalize">{trigger.type}</span>
 		</>
 	)
 	if (!href)
@@ -101,31 +103,31 @@ function TriggerDetailView({ trigger }: { trigger: TriggerResponse }) {
 					<span
 						className={`w-2 h-2 rounded-full ${trigger.enabled ? 'bg-success' : 'bg-muted-foreground'}`}
 					/>
-					<h1 className="text-lg font-semibold text-foreground truncate">{trigger.name}</h1>
+					<h1 className="text-title font-semibold text-foreground truncate">{trigger.name}</h1>
 				</div>
 				<WebAppLink target={{ kind: 'trigger', id: trigger.id }} />
 			</div>
-			<div className="text-xs text-muted-foreground mb-[var(--space-4)] capitalize">
+			<div className="text-caption text-muted-foreground mb-[var(--space-4)] capitalize">
 				Type: {trigger.type} | {trigger.enabled ? 'Enabled' : 'Disabled'}
 			</div>
 			{trigger.actionPrompt && (
 				<div className="border-t border-border pt-[var(--space-3)] mt-[var(--space-3)]">
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-[var(--space-2)]">
+					<h3 className="text-caption font-medium uppercase text-muted-foreground mb-[var(--space-2)]">
 						Action Prompt
 					</h3>
-					<p className="text-sm text-muted-foreground whitespace-pre-wrap">
+					<p className="text-label text-muted-foreground whitespace-pre-wrap">
 						{trigger.actionPrompt}
 					</p>
 				</div>
 			)}
 			{trigger.config && Object.keys(trigger.config).length > 0 && (
 				<div className="border-t border-border pt-[var(--space-3)] mt-[var(--space-3)]">
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-[var(--space-2)]">
+					<h3 className="text-caption font-medium uppercase text-muted-foreground mb-[var(--space-2)]">
 						Config
 					</h3>
 					<div className="space-y-[6px]">
 						{Object.entries(trigger.config).map(([key, value]) => (
-							<div key={key} className="flex gap-[var(--space-2)] text-xs">
+							<div key={key} className="flex gap-[var(--space-2)] text-caption">
 								<span className="text-muted-foreground font-medium min-w-[100px]">
 									{key.replace(/_/g, ' ')}
 								</span>
@@ -148,7 +150,7 @@ function TriggerDetailView({ trigger }: { trigger: TriggerResponse }) {
 function TriggerDeletedView() {
 	return (
 		<div className="p-[var(--space-4)] text-center">
-			<p className="text-sm text-muted-foreground">Trigger deleted successfully.</p>
+			<p className="text-label text-muted-foreground">Trigger deleted successfully.</p>
 		</div>
 	)
 }

@@ -45,7 +45,7 @@ function SchemaApp() {
 
 	if (!toolResult) {
 		return (
-			<div className="p-[var(--space-4)] text-muted-foreground text-sm">Waiting for data...</div>
+			<div className="p-[var(--space-4)] text-muted-foreground text-label">Waiting for data...</div>
 		)
 	}
 
@@ -53,10 +53,12 @@ function SchemaApp() {
 		(c: { type: string; text?: string }) => c.type === 'text',
 	)?.text
 	if (!text)
-		return <div className="p-[var(--space-4)] text-muted-foreground text-sm">No data received</div>
+		return (
+			<div className="p-[var(--space-4)] text-muted-foreground text-label">No data received</div>
+		)
 
 	const data = safeParseJson(text)
-	if (!data) return <div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
+	if (!data) return <div className="p-[var(--space-4)] text-label text-foreground">{text}</div>
 
 	switch (toolResult.toolName) {
 		case 'get_workspace_schema':
@@ -80,7 +82,7 @@ function SchemaApp() {
 function MessageView({ message }: { message: string }) {
 	return (
 		<div className="p-[var(--space-4)] max-w-2xl">
-			<pre className="text-xs whitespace-pre-wrap break-words text-foreground">{message}</pre>
+			<pre className="text-caption whitespace-pre-wrap break-words text-foreground">{message}</pre>
 		</div>
 	)
 }
@@ -136,8 +138,8 @@ function SchemaEditor({ schema }: { schema: WorkspaceSchema }) {
 		<div className="p-[var(--space-4)] max-w-3xl space-y-[var(--space-6)]">
 			<div className="flex items-start justify-between gap-[var(--space-3)]">
 				<div>
-					<h1 className="text-lg font-semibold text-foreground">{schema.workspace_name}</h1>
-					<p className="text-xs text-muted-foreground">
+					<h1 className="text-title font-semibold text-foreground">{schema.workspace_name}</h1>
+					<p className="text-caption text-muted-foreground">
 						Workspace schema — {typeNames.length} type{typeNames.length === 1 ? '' : 's'}
 					</p>
 				</div>
@@ -145,7 +147,7 @@ function SchemaEditor({ schema }: { schema: WorkspaceSchema }) {
 			</div>
 
 			{error && (
-				<div className="text-xs text-destructive border border-destructive/40 rounded-md p-[var(--space-2)]">
+				<div className="text-caption text-destructive border border-destructive/40 rounded-md p-[var(--space-2)]">
 					{error}
 				</div>
 			)}
@@ -182,10 +184,10 @@ function TypeSection({
 		<div className="border border-border rounded-lg overflow-hidden">
 			<div className="flex items-center justify-between px-[var(--space-4)] py-[var(--space-2)] bg-muted/40">
 				<div>
-					<h2 className="text-sm font-semibold text-foreground capitalize">
+					<h2 className="text-label font-semibold text-foreground capitalize">
 						{typeSchema.display_name}
 					</h2>
-					<p className="text-xs text-muted-foreground">
+					<p className="text-caption text-muted-foreground">
 						{typeSchema.fields.length} field{typeSchema.fields.length === 1 ? '' : 's'}
 					</p>
 				</div>
@@ -217,7 +219,7 @@ function TypeSection({
 			)}
 
 			{typeSchema.fields.length === 0 ? (
-				<div className="px-[var(--space-4)] py-[var(--space-6)] text-center text-xs text-muted-foreground">
+				<div className="px-[var(--space-4)] py-[var(--space-6)] text-center text-caption text-muted-foreground">
 					No fields yet
 				</div>
 			) : (
@@ -251,8 +253,8 @@ function FieldRow({
 	return (
 		<div className="px-[var(--space-4)] py-[var(--space-3)] space-y-[var(--space-2)]">
 			<div className="flex items-center gap-[var(--space-3)]">
-				<span className="text-sm text-foreground flex-1 font-medium">{field.name}</span>
-				<span className="text-xs text-muted-foreground capitalize">{field.type}</span>
+				<span className="text-label text-foreground flex-1 font-medium">{field.name}</span>
+				<span className="text-caption text-muted-foreground capitalize">{field.type}</span>
 				<div className="flex items-center gap-[var(--space-1)]">
 					<Switch
 						checked={field.required ?? false}
@@ -266,7 +268,7 @@ function FieldRow({
 						disabled={isBusy}
 						aria-label={`Required for ${field.name}`}
 					/>
-					<span className="text-xs text-muted-foreground">Required</span>
+					<span className="text-caption text-muted-foreground">Required</span>
 				</div>
 				<Button
 					variant="ghost"
@@ -286,7 +288,7 @@ function FieldRow({
 					{(field.values ?? []).map((value) => (
 						<span
 							key={value}
-							className="inline-flex items-center gap-[var(--space-1)] rounded-md border border-border bg-bg-surface px-[var(--space-2)] py-[2px] text-xs text-foreground"
+							className="inline-flex items-center gap-[var(--space-1)] rounded-md border border-border bg-bg-surface px-[var(--space-2)] py-[2px] text-caption text-foreground"
 						>
 							{value}
 							<button
@@ -324,7 +326,7 @@ function FieldRow({
 							value={newValue}
 							onChange={(e) => setNewValue(e.target.value)}
 							placeholder="Add value"
-							className="h-7 text-xs w-32"
+							className="h-7 text-caption w-32"
 							disabled={isBusy}
 						/>
 						<Button type="submit" size="sm" variant="outline" disabled={isBusy || !newValue.trim()}>
@@ -393,7 +395,7 @@ function NewFieldForm({
 				<div>
 					<label
 						htmlFor={`new-field-name-${typeName}`}
-						className="text-xs text-muted-foreground block mb-[var(--space-1)]"
+						className="text-caption text-muted-foreground block mb-[var(--space-1)]"
 					>
 						Name
 					</label>
@@ -408,7 +410,7 @@ function NewFieldForm({
 				<div>
 					<label
 						htmlFor={`new-field-type-${typeName}`}
-						className="text-xs text-muted-foreground block mb-[var(--space-1)]"
+						className="text-caption text-muted-foreground block mb-[var(--space-1)]"
 					>
 						Type
 					</label>
@@ -430,7 +432,7 @@ function NewFieldForm({
 				<div>
 					<label
 						htmlFor={`new-field-values-${typeName}`}
-						className="text-xs text-muted-foreground block mb-[var(--space-1)]"
+						className="text-caption text-muted-foreground block mb-[var(--space-1)]"
 					>
 						Values (comma-separated)
 					</label>
@@ -450,9 +452,9 @@ function NewFieldForm({
 					disabled={busy}
 					aria-label="Required"
 				/>
-				<span className="text-xs text-muted-foreground">Required</span>
+				<span className="text-caption text-muted-foreground">Required</span>
 			</div>
-			{error && <p className="text-xs text-destructive">{error}</p>}
+			{error && <p className="text-caption text-destructive">{error}</p>}
 			<div className="flex justify-end gap-[var(--space-2)] pt-[var(--space-1)]">
 				<Button type="button" variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
 					Cancel
@@ -482,12 +484,12 @@ function FieldChangedView({
 		: null
 	return (
 		<div className="p-[var(--space-4)] max-w-2xl space-y-[var(--space-2)]">
-			<p className="text-sm text-foreground">
+			<p className="text-label text-foreground">
 				Field {verb}
 				{summary?.field?.name ? ` — ${summary.field.name}` : ''}.
 			</p>
 			{summary && (
-				<pre className="text-xs whitespace-pre-wrap break-words text-muted-foreground">
+				<pre className="text-caption whitespace-pre-wrap break-words text-muted-foreground">
 					{JSON.stringify(summary, null, 2)}
 				</pre>
 			)}
@@ -506,7 +508,7 @@ function FieldDeletedView({ payload }: { payload: unknown }) {
 		: null
 	return (
 		<div className="p-[var(--space-4)] max-w-2xl">
-			<p className="text-sm text-foreground">
+			<p className="text-label text-foreground">
 				Field {summary?.deleted ? `"${summary.deleted}" ` : ''}deleted.
 			</p>
 		</div>

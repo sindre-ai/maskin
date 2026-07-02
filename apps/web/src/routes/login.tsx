@@ -40,8 +40,8 @@ function LoginPage() {
 		<div className="flex min-h-screen items-center justify-center">
 			<div className="w-full max-w-sm space-y-[var(--space-6)]">
 				<div className="text-center">
-					<h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
-					<p className="mt-[var(--space-1)] text-sm text-muted-foreground">
+					<h1 className="text-display font-semibold ">Welcome back</h1>
+					<p className="mt-[var(--space-1)] text-label text-muted-foreground">
 						Sign in with your email and password
 					</p>
 				</div>
@@ -74,14 +74,14 @@ function LoginPage() {
 						/>
 					</div>
 
-					{error && <p className="text-xs text-error">{error}</p>}
+					{error && <p className="text-caption text-error">{error}</p>}
 
 					<Button type="submit" disabled={loading} className="w-full">
 						{loading ? 'Signing in...' : 'Sign in'}
 					</Button>
 				</form>
 
-				<p className="text-center text-xs text-muted-foreground">
+				<p className="text-center text-caption text-muted-foreground">
 					Don't have an account?{' '}
 					<Link to="/signup" className="text-primary hover:text-primary-hover">
 						Sign up

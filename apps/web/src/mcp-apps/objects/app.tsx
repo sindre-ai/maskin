@@ -71,7 +71,7 @@ function ObjectsApp() {
 
 	if (!toolResult) {
 		return (
-			<div className="p-[var(--space-4)] text-muted-foreground text-sm">Waiting for data...</div>
+			<div className="p-[var(--space-4)] text-muted-foreground text-label">Waiting for data...</div>
 		)
 	}
 
@@ -79,11 +79,13 @@ function ObjectsApp() {
 		(c: { type: string; text?: string }) => c.type === 'text',
 	)?.text
 	if (!text) {
-		return <div className="p-[var(--space-4)] text-muted-foreground text-sm">No data received</div>
+		return (
+			<div className="p-[var(--space-4)] text-muted-foreground text-label">No data received</div>
+		)
 	}
 
 	const data = safeParseJson(text)
-	if (!data) return <div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
+	if (!data) return <div className="p-[var(--space-4)] text-label text-foreground">{text}</div>
 
 	const renderDocumentOrList = (objects: ObjectResponse[]) => {
 		if (objects.length === 1) {
@@ -120,7 +122,7 @@ function ObjectsApp() {
 		case 'delete_object':
 			return <DeletedView />
 		default:
-			return <div className="p-[var(--space-4)] text-sm text-foreground">{text}</div>
+			return <div className="p-[var(--space-4)] text-label text-foreground">{text}</div>
 	}
 }
 
@@ -175,7 +177,7 @@ function ObjectListRow({ obj }: { obj: ObjectResponse }) {
 	const content = (
 		<>
 			<TypeBadge type={obj.type} />
-			<span className="flex-1 text-sm text-foreground truncate">{obj.title || 'Untitled'}</span>
+			<span className="flex-1 text-label text-foreground truncate">{obj.title || 'Untitled'}</span>
 			<StatusBadge status={obj.status} />
 		</>
 	)
@@ -201,7 +203,7 @@ function ObjectListRow({ obj }: { obj: ObjectResponse }) {
 function DeletedView() {
 	return (
 		<div className="p-[var(--space-4)] text-center">
-			<p className="text-sm text-muted-foreground">Object deleted successfully.</p>
+			<p className="text-label text-muted-foreground">Object deleted successfully.</p>
 		</div>
 	)
 }
@@ -220,23 +222,25 @@ function UpdateSummaryView({
 }) {
 	const { objectsUpdated, objectsFailed, relationshipsCreated, relationshipsFailed } = summary
 	const hasAny = objectsUpdated + objectsFailed + relationshipsCreated + relationshipsFailed > 0
-	if (!hasAny) return <div className="p-[var(--space-4)] text-sm text-foreground">{rawText}</div>
+	if (!hasAny) return <div className="p-[var(--space-4)] text-label text-foreground">{rawText}</div>
 	const hasFailures = objectsFailed + relationshipsFailed > 0
 	return (
 		<div className="p-[var(--space-4)] max-w-2xl space-y-[var(--space-1)]">
-			<h2 className="text-sm font-semibold text-foreground mb-[var(--space-2)]">Update complete</h2>
+			<h2 className="text-label font-semibold text-foreground mb-[var(--space-2)]">
+				Update complete
+			</h2>
 			{relationshipsCreated > 0 && (
-				<p className="text-sm text-muted-foreground">
+				<p className="text-label text-muted-foreground">
 					{relationshipsCreated} relationship{relationshipsCreated === 1 ? '' : 's'} created
 				</p>
 			)}
 			{objectsUpdated > 0 && (
-				<p className="text-sm text-muted-foreground">
+				<p className="text-label text-muted-foreground">
 					{objectsUpdated} object{objectsUpdated === 1 ? '' : 's'} updated
 				</p>
 			)}
 			{hasFailures && (
-				<p className="text-sm text-destructive">
+				<p className="text-label text-destructive">
 					{objectsFailed > 0 && (
 						<>
 							{objectsFailed} object update{objectsFailed === 1 ? '' : 's'} failed

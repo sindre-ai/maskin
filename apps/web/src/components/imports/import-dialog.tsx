@@ -197,10 +197,10 @@ function UploadStep({
 				<Upload size={32} className="text-muted-foreground" />
 			)}
 			<div className="text-center">
-				<p className="text-sm font-medium">
+				<p className="text-label font-medium">
 					{isLoading ? 'Uploading and parsing...' : 'Drag and drop a file here'}
 				</p>
-				<p className="text-xs text-muted-foreground mt-[var(--space-1)]">
+				<p className="text-caption text-muted-foreground mt-[var(--space-1)]">
 					Supports CSV and JSON files
 				</p>
 			</div>
@@ -451,7 +451,7 @@ function MappingStep({
 	return (
 		<div className="space-y-[var(--space-4)]">
 			{/* Summary */}
-			<div className="flex gap-[var(--space-4)] text-sm">
+			<div className="flex gap-[var(--space-4)] text-label">
 				<div>
 					<span className="text-muted-foreground">Rows:</span>{' '}
 					<span className="font-medium">{preview.totalRows}</span>
@@ -464,9 +464,9 @@ function MappingStep({
 
 			{/* CSV format options */}
 			{importRecord.fileType === 'csv' && (
-				<div className="flex gap-[var(--space-3)] items-center text-sm border rounded-lg px-[var(--space-3)] py-[var(--space-2)] bg-muted/30">
+				<div className="flex gap-[var(--space-3)] items-center text-label border rounded-lg px-[var(--space-3)] py-[var(--space-2)] bg-muted/30">
 					<div className="flex items-center gap-[var(--space-2)]">
-						<span className="text-muted-foreground text-xs">Delimiter:</span>
+						<span className="text-muted-foreground text-caption">Delimiter:</span>
 						<Select
 							value={mapping.csvOptions?.delimiter ?? ','}
 							onValueChange={(v) =>
@@ -476,7 +476,7 @@ function MappingStep({
 								})
 							}
 						>
-							<SelectTrigger className="w-[130px] h-7 text-xs">
+							<SelectTrigger className="w-[130px] h-7 text-caption">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -489,7 +489,7 @@ function MappingStep({
 						</Select>
 					</div>
 					<div className="flex items-center gap-[var(--space-2)]">
-						<span className="text-muted-foreground text-xs">Encoding:</span>
+						<span className="text-muted-foreground text-caption">Encoding:</span>
 						<Select
 							value={mapping.csvOptions?.encoding ?? 'utf-8'}
 							onValueChange={(v) =>
@@ -499,7 +499,7 @@ function MappingStep({
 								})
 							}
 						>
-							<SelectTrigger className="w-[170px] h-7 text-xs">
+							<SelectTrigger className="w-[170px] h-7 text-caption">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -517,11 +517,11 @@ function MappingStep({
 			{/* Type mappings */}
 			<div className="space-y-[var(--space-3)]">
 				<div className="flex items-center justify-between">
-					<span className="text-sm font-medium">Object Types</span>
+					<span className="text-label font-medium">Object Types</span>
 					<Button
 						variant="ghost"
 						size="sm"
-						className="h-6 px-[var(--space-2)] text-xs"
+						className="h-6 px-[var(--space-2)] text-caption"
 						onClick={handleAddType}
 					>
 						<Plus size={12} />
@@ -549,7 +549,7 @@ function MappingStep({
 
 			{/* Relationships section */}
 			<div className="border rounded-lg">
-				<div className="flex items-center justify-between w-full px-[var(--space-3)] py-[var(--space-2)] text-sm font-medium">
+				<div className="flex items-center justify-between w-full px-[var(--space-3)] py-[var(--space-2)] text-label font-medium">
 					<button
 						type="button"
 						className="flex items-center gap-[var(--space-2)] hover:text-accent transition-colors"
@@ -559,7 +559,7 @@ function MappingStep({
 						<Link2 size={14} />
 						Relationships
 						{localRelationships.length > 0 && (
-							<span className="text-xs bg-muted px-[6px] py-[2px] rounded">
+							<span className="text-caption bg-muted px-[6px] py-[2px] rounded">
 								{localRelationships.length}
 							</span>
 						)}
@@ -567,7 +567,7 @@ function MappingStep({
 					<Button
 						variant="ghost"
 						size="sm"
-						className="h-6 px-[var(--space-2)] text-xs"
+						className="h-6 px-[var(--space-2)] text-caption"
 						onClick={handleAddRelationship}
 					>
 						<Plus size={12} />
@@ -581,7 +581,7 @@ function MappingStep({
 							<div
 								// biome-ignore lint/suspicious/noArrayIndexKey: relationships have no stable ID
 								key={idx}
-								className="flex flex-col sm:flex-row items-stretch sm:items-center gap-[var(--space-2)] text-sm"
+								className="flex flex-col sm:flex-row items-stretch sm:items-center gap-[var(--space-2)] text-label"
 							>
 								<Select
 									value={rel.sourceType}
@@ -651,7 +651,7 @@ function MappingStep({
 				)}
 
 				{relSectionOpen && localRelationships.length === 0 && (
-					<div className="border-t px-[var(--space-3)] py-[var(--space-4)] text-center text-xs text-muted-foreground">
+					<div className="border-t px-[var(--space-3)] py-[var(--space-4)] text-center text-caption text-muted-foreground">
 						No relationships configured. Click "Add" to link objects together.
 					</div>
 				)}
@@ -660,7 +660,7 @@ function MappingStep({
 			<p
 				aria-hidden={!isUpdating}
 				className={cn(
-					'text-xs flex items-center gap-[var(--space-1)]',
+					'text-caption flex items-center gap-[var(--space-1)]',
 					isUpdating ? 'text-muted-foreground' : 'invisible',
 				)}
 			>
@@ -745,7 +745,7 @@ function TypeMappingSection({
 			</div>
 
 			{/* Column mapping table */}
-			<table className="w-full text-sm min-w-[400px]">
+			<table className="w-full text-label min-w-[400px]">
 				<thead>
 					<tr className="bg-muted/30">
 						<th className="text-left px-[var(--space-3)] py-[var(--space-2)] font-medium">
@@ -764,7 +764,7 @@ function TypeMappingSection({
 						const sampleValue = sampleRows[0]?.[col.sourceColumn] ?? ''
 						return (
 							<tr key={col.sourceColumn} className="border-t">
-								<td className="px-[var(--space-3)] py-[var(--space-2)] font-mono text-xs">
+								<td className="px-[var(--space-3)] py-[var(--space-2)] font-mono text-caption">
 									{col.sourceColumn}
 								</td>
 								<td className="px-[var(--space-3)] py-[var(--space-2)]">
@@ -784,7 +784,7 @@ function TypeMappingSection({
 										</SelectContent>
 									</Select>
 								</td>
-								<td className="px-[var(--space-3)] py-[var(--space-2)] text-xs text-muted-foreground truncate max-w-[150px]">
+								<td className="px-[var(--space-3)] py-[var(--space-2)] text-caption text-muted-foreground truncate max-w-[150px]">
 									{sampleValue}
 								</td>
 							</tr>

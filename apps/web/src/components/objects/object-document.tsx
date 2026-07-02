@@ -121,7 +121,7 @@ export function ObjectDocumentView({
 					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Untitled"
 					rows={1}
-					className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-[0] focus:outline-none"
+					className="w-full text-display font-bold bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-[0] focus:outline-none"
 					ref={(el) => {
 						if (el) {
 							el.style.height = 'auto'
@@ -130,7 +130,7 @@ export function ObjectDocumentView({
 					}}
 				/>
 				{showSaved && (
-					<span className="flex items-center gap-[var(--space-1)] text-xs text-muted-foreground mt-[6px]">
+					<span className="flex items-center gap-[var(--space-1)] text-caption text-muted-foreground mt-[6px]">
 						<Check size={14} /> Saved
 					</span>
 				)}
@@ -182,7 +182,7 @@ export function ObjectDocumentView({
 			</div>
 
 			{/* Content */}
-			<div className="mb-[var(--space-7)]">
+			<div className="mb-[var(--space-7)] max-w-[65ch]">
 				<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
 			</div>
 

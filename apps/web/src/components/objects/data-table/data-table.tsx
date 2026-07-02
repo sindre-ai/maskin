@@ -189,7 +189,7 @@ export function DataTable({
 		return (
 			<div ref={parentRef} className="flex-1 min-h-0 overflow-auto rounded-md border">
 				{virtualItems.length === 0 ? (
-					<div className="h-24 flex items-center justify-center text-sm text-muted-foreground">
+					<div className="h-24 flex items-center justify-center text-label text-muted-foreground">
 						No results.
 					</div>
 				) : (
@@ -225,8 +225,10 @@ export function DataTable({
 												size={14}
 												className={cn('transition-transform', row.getIsExpanded() && 'rotate-90')}
 											/>
-											<span className="font-medium text-sm">{displayValue}</span>
-											<span className="text-muted-foreground text-xs">({row.subRows.length})</span>
+											<span className="font-medium text-label">{displayValue}</span>
+											<span className="text-muted-foreground text-caption">
+												({row.subRows.length})
+											</span>
 										</button>
 									</li>
 								)
@@ -326,8 +328,8 @@ export function DataTable({
 															row.getIsExpanded() && 'rotate-90',
 														)}
 													/>
-													<span className="font-medium text-sm">{displayValue}</span>
-													<span className="text-muted-foreground text-xs">
+													<span className="font-medium text-label">{displayValue}</span>
+													<span className="text-muted-foreground text-caption">
 														({row.subRows.length})
 													</span>
 												</div>

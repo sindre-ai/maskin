@@ -7,7 +7,7 @@ interface UpdateAvailableBannerProps {
 // credentials-expired strip in settings/keys.tsx.
 export function UpdateAvailableBanner({ newVersion }: UpdateAvailableBannerProps) {
 	return (
-		<div className="rounded-md border border-warning/30 bg-warning/5 px-[var(--space-3)] py-[var(--space-2)] text-xs text-warning">
+		<div className="rounded-md border border-warning/30 bg-warning/5 px-[var(--space-3)] py-[var(--space-2)] text-caption text-warning">
 			Update to v{newVersion} available.
 		</div>
 	)

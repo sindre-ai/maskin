@@ -117,12 +117,12 @@ export function BulkActionBar({
 				)}
 			>
 				<span
-					className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-accent px-[var(--space-2)] text-xs font-medium text-accent-foreground"
+					className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-accent px-[var(--space-2)] text-caption font-medium text-accent-foreground"
 					aria-label={`${selectedCount} selected`}
 				>
 					{selectedCount}
 				</span>
-				<span className="hidden text-sm text-text-secondary sm:inline">selected</span>
+				<span className="hidden text-label text-text-secondary sm:inline">selected</span>
 
 				<div className="mx-[var(--space-1)] h-5 w-px shrink-0 bg-border" aria-hidden="true" />
 
@@ -136,7 +136,7 @@ export function BulkActionBar({
 					>
 						<SelectTrigger
 							aria-label="Set status"
-							className="shrink-0 text-sm data-[placeholder]:text-text-secondary"
+							className="shrink-0 text-label data-[placeholder]:text-text-secondary"
 						>
 							<SelectValue placeholder="Status" />
 						</SelectTrigger>
@@ -160,7 +160,7 @@ export function BulkActionBar({
 				>
 					<SelectTrigger
 						aria-label="Set owner"
-						className="shrink-0 text-sm data-[placeholder]:text-text-secondary"
+						className="shrink-0 text-label data-[placeholder]:text-text-secondary"
 					>
 						<SelectValue placeholder="Owner" />
 					</SelectTrigger>

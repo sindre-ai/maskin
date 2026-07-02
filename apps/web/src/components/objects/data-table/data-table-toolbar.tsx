@@ -102,7 +102,7 @@ export function DataTableToolbar({
 						key={tab.label}
 						type="button"
 						className={cn(
-							'rounded px-[var(--space-3)] py-[var(--space-1)] text-sm whitespace-nowrap transition-colors',
+							'rounded px-[var(--space-3)] py-[var(--space-1)] text-label whitespace-nowrap transition-colors',
 							typeFilter === tab.value
 								? 'bg-muted text-foreground font-medium'
 								: 'text-muted-foreground hover:text-foreground',
@@ -124,7 +124,7 @@ export function DataTableToolbar({
 					value={localSearch}
 					onChange={(e) => handleSearchChange(e.target.value)}
 					placeholder="Search..."
-					className="h-8 pl-[var(--space-7)] text-sm"
+					className="h-8 pl-[var(--space-7)] text-label"
 				/>
 			</div>
 

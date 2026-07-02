@@ -64,7 +64,7 @@ function TriggersPage() {
 				/>
 			) : (
 				<div className="space-y-[var(--space-1)]">
-					<p className="text-xs text-muted-foreground mb-[var(--space-3)]">
+					<p className="text-caption text-muted-foreground mb-[var(--space-3)]">
 						Triggers automatically run agents when events happen, on a schedule, or at a specific
 						time.
 					</p>
@@ -113,15 +113,15 @@ function TriggerRow({
 			<Icon size={15} className="shrink-0 text-muted-foreground" />
 			<div className="flex-1 min-w-0">
 				<div className="flex items-center gap-[var(--space-2)]">
-					<p className="text-sm font-medium text-foreground truncate">{trigger.name}</p>
+					<p className="text-label font-medium text-foreground truncate">{trigger.name}</p>
 					{!trigger.enabled && (
 						<span className="text-[10px] font-medium text-muted-foreground bg-muted px-[6px] py-[2px] rounded">
 							Disabled
 						</span>
 					)}
 				</div>
-				<p className="text-xs text-muted-foreground truncate">{description}</p>
-				<p className="text-xs text-muted-foreground/60 mt-[2px]">
+				<p className="text-caption text-muted-foreground truncate">{description}</p>
+				<p className="text-caption text-muted-foreground/60 mt-[2px]">
 					Agent: {agentName}
 					{trigger.updatedAt && (
 						<>

@@ -48,7 +48,7 @@ export function BoardCard({
 			data-state={isSelected ? 'selected' : undefined}
 			aria-selected={isSelected}
 			className={cn(
-				'relative flex flex-col gap-[var(--space-2)] rounded-md border border-border bg-card p-[var(--space-3)] text-sm transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+				'relative flex flex-col gap-[var(--space-2)] rounded-md border border-border bg-card p-[var(--space-3)] text-label transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
 				'data-[state=selected]:border-accent data-[state=selected]:bg-accent/40 data-[state=selected]:ring-2 data-[state=selected]:ring-accent/30',
 			)}
 		>
@@ -64,7 +64,7 @@ export function BoardCard({
 			)}
 
 			{visibleProperties.length > 0 && (
-				<div className="flex flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)] text-xs text-muted-foreground">
+				<div className="flex flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)] text-caption text-muted-foreground">
 					{visibleProperties.map((property) => (
 						<PropertyValue
 							key={property.id}
