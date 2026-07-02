@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
-import { getValidOAuthToken } from './claude-oauth'
+import { type SubscriptionProbe, resolveClaudeCredentialsWithFailover } from './claude-failover'
 import type { WorkspaceSettings } from './types'
 
 /**
@@ -153,8 +153,14 @@ export async function resolveLlmRoute(params: {
 	actorId: string
 	wsSettings: WorkspaceSettings
 	agent: AgentLlmConfig
+	/**
+	 * Optional Claude subscription probe used by the failover path when
+	 * `MASKIN_CLAUDE_FAILOVER_ENABLED=true`. Wire a real probe from the
+	 * caller (e.g. session-manager); tests can inject stubs matching AC-T3.
+	 */
+	claudeProbe?: SubscriptionProbe
 }): Promise<LlmRoutingResult | null> {
-	const { db, workspaceId, actorId, wsSettings, agent } = params
+	const { db, workspaceId, actorId, wsSettings, agent, claudeProbe } = params
 
 	// 1. Agent-level override — only handled here for anthropic; non-anthropic
 	//    providers fall through to caller (matches existing behavior).
@@ -175,9 +181,16 @@ export async function resolveLlmRoute(params: {
 		return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
 	}
 
-	// 3. Claude OAuth subscription
+	// 3. Claude OAuth subscription (with primary→backup failover when the
+	//    MASKIN_CLAUDE_FAILOVER_ENABLED flag is set; otherwise legacy
+	//    primary-only behaviour).
 	try {
-		const oauthResult = await getValidOAuthToken(db, workspaceId)
+		const oauthResult = await resolveClaudeCredentialsWithFailover({
+			db,
+			workspaceId,
+			actorId,
+			probe: claudeProbe,
+		})
 		if (oauthResult) {
 			const envVars: Record<string, string> = {
 				CLAUDE_OAUTH_ACCESS_TOKEN: oauthResult.tokens.accessToken,
