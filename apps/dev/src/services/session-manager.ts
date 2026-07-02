@@ -39,6 +39,7 @@ import {
 	utcDayString,
 } from '../lib/analytics/catalog-events'
 import {
+	isClaudeFailoverEnabled,
 	recordRuntimeClaudeOAuthBackupExhausted,
 	recordRuntimeClaudeOAuthFailover,
 } from '../lib/claude-failover'
@@ -142,6 +143,41 @@ function claudeRuntimeFailoverReason(
 	if (stdoutTail.includes('"rateLimitType":"five_hour"')) return 'quota_exhausted_5h'
 	if (failureReason.reason_code === 'weekly_limit') return 'quota_exhausted_weekly'
 	return 'quota_exhausted'
+}
+
+/**
+ * Decides whether `buildLaunchSpec`'s resolved LLM route needs persisting on
+ * `sessions.config`, and if so, returns the merged config. Returns `null`
+ * when nothing changed.
+ *
+ * Clears `claude_oauth_runtime_failover_retry_of` whenever the slot resolves
+ * back to `primary`. That marker only means anything while the session is
+ * still actually running on the backup a prior runtime failover put it on —
+ * leaving it stamped after a lazy recovery flips the slot back to primary
+ * would make `maybeRetryClaudeOAuthOnBackup`'s gate (which treats a
+ * `retry_of` string alone as sufficient, regardless of the current
+ * `llm_oauth_slot`) misclassify a later, unrelated primary failure as
+ * "backup already exhausted".
+ */
+export function mergeLaunchRouteConfig(
+	existingConfig: Record<string, unknown>,
+	routeTaken: LlmRoute,
+	nextOauthSlot: string | undefined,
+): Record<string, unknown> | null {
+	const needsUpdate =
+		existingConfig.llm_route !== routeTaken ||
+		(nextOauthSlot && existingConfig.llm_oauth_slot !== nextOauthSlot)
+	if (!needsUpdate) return null
+
+	const updatedConfig: Record<string, unknown> = {
+		...existingConfig,
+		llm_route: routeTaken,
+		...(nextOauthSlot ? { llm_oauth_slot: nextOauthSlot } : {}),
+	}
+	if (nextOauthSlot === 'primary') {
+		updatedConfig.claude_oauth_runtime_failover_retry_of = undefined
+	}
+	return updatedConfig
 }
 
 export interface SessionLogEvent extends LogChunk {
@@ -1044,15 +1080,8 @@ export class SessionManager extends EventEmitter {
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
 			const nextOauthSlot = routeTaken === LLM_ROUTE_OAUTH ? oauthSlotTaken : undefined
-			if (
-				existingConfig.llm_route !== routeTaken ||
-				(nextOauthSlot && existingConfig.llm_oauth_slot !== nextOauthSlot)
-			) {
-				const updatedConfig = {
-					...existingConfig,
-					llm_route: routeTaken,
-					...(nextOauthSlot ? { llm_oauth_slot: nextOauthSlot } : {}),
-				}
+			const updatedConfig = mergeLaunchRouteConfig(existingConfig, routeTaken, nextOauthSlot)
+			if (updatedConfig) {
 				await this.db
 					.update(sessions)
 					.set({ config: updatedConfig })
@@ -1525,6 +1554,12 @@ export class SessionManager extends EventEmitter {
 		stdoutTail: string
 	}): Promise<void> {
 		const { session, failureReason, stdoutTail } = params
+		// Mirrors the session-start gate in resolveClaudeCredentialsWithFailover —
+		// flipping the flag off must stop failover everywhere, not just at
+		// session start. Without this, an operator using the flag as an
+		// incident kill-switch would still see mid-session runtime failures
+		// flip active_slot to backup and fire the failover event.
+		if (!isClaudeFailoverEnabled()) return
 		const config = ((session.config as Record<string, unknown>) ?? {}) as Record<string, unknown>
 		if (config.llm_route !== LLM_ROUTE_OAUTH) return
 

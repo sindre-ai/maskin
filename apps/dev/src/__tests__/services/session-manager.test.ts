@@ -95,7 +95,7 @@ import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
 import { getProvider } from '../../lib/integrations/registry'
 import { AgentStorageManager } from '../../services/agent-storage'
-import { SessionManager } from '../../services/session-manager'
+import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
 import { buildIntegration, buildSession } from '../factories'
 import { createTestContext } from '../setup'
 
@@ -1673,6 +1673,10 @@ describe('SessionManager', () => {
 			mockClassifyCreditExhaustion.mockReturnValue(knownReason)
 		})
 
+		afterEach(() => {
+			vi.unstubAllEnvs()
+		})
+
 		it('writes failure_reason to both the DB result payload and the event data payload', async () => {
 			const session = buildSession({ status: 'running' })
 			;(
@@ -1831,6 +1835,7 @@ describe('SessionManager', () => {
 		})
 
 		it('fails over primary OAuth runtime limits to backup and starts one retry session', async () => {
+			vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
 			const session = buildSession({
 				status: 'running',
 				config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
@@ -1929,6 +1934,7 @@ describe('SessionManager', () => {
 		})
 
 		it('records backup OAuth runtime limits without starting another retry session', async () => {
+			vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
 			const sourceSessionId = randomUUID()
 			const session = buildSession({
 				status: 'running',
@@ -2037,6 +2043,72 @@ describe('SessionManager', () => {
 			expect(startSpy).not.toHaveBeenCalled()
 		})
 
+		it('does not fail over to backup on a runtime limit when the failover flag is off', async () => {
+			// Regression test: MASKIN_CLAUDE_FAILOVER_ENABLED gates session-start
+			// failover (resolveClaudeCredentialsWithFailover) but previously did
+			// NOT gate this runtime mid-session retry path — an operator using
+			// the flag as an incident kill-switch would still see failover
+			// triggered here. Flag left unset (default off) for this test.
+			const session = buildSession({
+				status: 'running',
+				config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+			})
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail:
+					'{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour"}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
+			})
+			const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[], // hasOtherActiveSessions
+			]
+			mockResults.insertQueue = [
+				[], // completion event
+				[], // terminal system log
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const failoverUpdate = calls.updates.find(
+				(u): u is { settings: { claude_oauth?: { failover?: unknown } } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					typeof (u as { settings?: unknown }).settings === 'object' &&
+					Boolean(
+						(u as { settings: { claude_oauth?: { failover?: unknown } } }).settings.claude_oauth
+							?.failover,
+					),
+			)
+			expect(failoverUpdate).toBeUndefined()
+			const failoverEvent = calls.inserts.find(
+				(i): i is { action: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					((i as { action?: string }).action === 'claude_subscription_failover_triggered' ||
+						(i as { action?: string }).action === 'claude_subscription_backup_exhausted'),
+			)
+			expect(failoverEvent).toBeUndefined()
+			const retryInsert = calls.inserts.find(
+				(i): i is { config: Record<string, unknown>; actionPrompt: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { actionPrompt?: unknown }).actionPrompt === session.actionPrompt,
+			)
+			expect(retryInsert).toBeUndefined()
+			expect(startSpy).not.toHaveBeenCalled()
+		})
+
 		it('does not call classifier when exitCode is null (OOM kill)', async () => {
 			const session = buildSession({ status: 'running' })
 			;(
@@ -2059,5 +2131,64 @@ describe('SessionManager', () => {
 
 			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
 		})
+	})
+})
+
+describe('mergeLaunchRouteConfig()', () => {
+	it('returns null when the route and oauth slot are unchanged', () => {
+		expect(
+			mergeLaunchRouteConfig(
+				{ llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+				'claude_oauth',
+				'primary',
+			),
+		).toBeNull()
+	})
+
+	it('merges in the new route and oauth slot when they change', () => {
+		expect(mergeLaunchRouteConfig({}, 'claude_oauth', 'backup')).toMatchObject({
+			llm_route: 'claude_oauth',
+			llm_oauth_slot: 'backup',
+		})
+	})
+
+	it('clears a stale claude_oauth_runtime_failover_retry_of marker once the slot resolves back to primary', () => {
+		// Regression test: a retry session created during a runtime failover is
+		// stamped with llm_oauth_slot: 'backup' + claude_oauth_runtime_failover_retry_of.
+		// If primary recovers before that retry session's container actually
+		// launches, the slot resolves back to 'primary' here — the stale
+		// retry_of marker must not survive, or maybeRetryClaudeOAuthOnBackup's
+		// gate (`llm_oauth_slot === 'backup' || typeof retry_of === 'string'`)
+		// would misclassify a later, unrelated primary failure as
+		// "backup already exhausted".
+		const existingConfig = {
+			llm_route: 'claude_oauth',
+			llm_oauth_slot: 'backup',
+			claude_oauth_runtime_failover_retry_of: 'source-session-id',
+		}
+		const updated = mergeLaunchRouteConfig(existingConfig, 'claude_oauth', 'primary')
+		expect(updated).toMatchObject({ llm_route: 'claude_oauth', llm_oauth_slot: 'primary' })
+		expect(updated?.claude_oauth_runtime_failover_retry_of).toBeUndefined()
+	})
+
+	it('preserves other config fields untouched', () => {
+		const existingConfig = {
+			llm_route: 'agent_override',
+			runtime: 'claude-code',
+			env_vars: { FOO: 'bar' },
+		}
+		const updated = mergeLaunchRouteConfig(existingConfig, 'claude_oauth', 'primary')
+		expect(updated).toMatchObject({
+			runtime: 'claude-code',
+			env_vars: { FOO: 'bar' },
+			llm_route: 'claude_oauth',
+			llm_oauth_slot: 'primary',
+		})
+	})
+
+	it('returns null when only the route is unchanged and no oauth slot is taken (non-OAuth route)', () => {
+		expect(
+			mergeLaunchRouteConfig({ llm_route: 'workspace_api_key' }, 'workspace_api_key', undefined),
+		).toBeNull()
 	})
 })

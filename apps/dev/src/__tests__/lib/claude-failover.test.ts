@@ -192,6 +192,98 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			expect(eventInserts).toHaveLength(0)
 			expect(workspaceUpdates).toHaveLength(0)
 		})
+
+		describe('refresh failures', () => {
+			it('returns null on a permanent (401) refresh failure instead of serving a doomed stale token', async () => {
+				// Regression test: the flag-off path used to swallow ANY refresh
+				// error and hand back the pre-refresh token as "success" as long
+				// as it hadn't literally expired yet — including a revoked
+				// refresh token (401/invalid_grant), which can never succeed
+				// again. That skipped llm-routing's fallback to the workspace
+				// API key / system routes and launched a session doomed to fail.
+				const claudeOAuth: OAuthSlotStorage = {
+					primary: encryptedSlot({
+						expiresAt: Date.now() + 5 * 60 * 1000,
+						encryptedAccessToken: 'still-valid-primary-token',
+					}),
+				}
+				const { db } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
+				vi.stubGlobal(
+					'fetch',
+					vi.fn().mockResolvedValue({
+						ok: false,
+						status: 401,
+						text: () => Promise.resolve('unauthorized'),
+					}),
+				)
+
+				const result = await resolveClaudeCredentialsWithFailover({
+					db,
+					workspaceId: WORKSPACE_ID,
+					actorId: ACTOR_ID,
+					env: {},
+				})
+
+				expect(result).toBeNull()
+			})
+
+			it('still returns the stale primary on a transient (5xx) refresh failure when not yet expired', async () => {
+				// Transient failures are still safe to swallow — this preserves
+				// the flag-off path's existing lenient behaviour for blips.
+				const claudeOAuth: OAuthSlotStorage = {
+					primary: encryptedSlot({
+						expiresAt: Date.now() + 5 * 60 * 1000,
+						encryptedAccessToken: 'still-valid-primary-token',
+					}),
+				}
+				const { db } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
+				vi.stubGlobal(
+					'fetch',
+					vi.fn().mockResolvedValue({
+						ok: false,
+						status: 503,
+						text: () => Promise.resolve('service unavailable'),
+					}),
+				)
+
+				const result = await resolveClaudeCredentialsWithFailover({
+					db,
+					workspaceId: WORKSPACE_ID,
+					actorId: ACTOR_ID,
+					env: {},
+				})
+
+				expect(result?.slot).toBe('primary')
+				expect(result?.tokens.accessToken).toBe('still-valid-primary-token')
+			})
+
+			it('returns null on a transient (5xx) refresh failure when the token has actually expired', async () => {
+				const claudeOAuth: OAuthSlotStorage = {
+					primary: encryptedSlot({
+						expiresAt: Date.now() - 60_000,
+						encryptedAccessToken: 'stale-primary-token',
+					}),
+				}
+				const { db } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
+				vi.stubGlobal(
+					'fetch',
+					vi.fn().mockResolvedValue({
+						ok: false,
+						status: 503,
+						text: () => Promise.resolve('service unavailable'),
+					}),
+				)
+
+				const result = await resolveClaudeCredentialsWithFailover({
+					db,
+					workspaceId: WORKSPACE_ID,
+					actorId: ACTOR_ID,
+					env: {},
+				})
+
+				expect(result).toBeNull()
+			})
+		})
 	})
 
 	describe('AC-U1: healthy primary', () => {

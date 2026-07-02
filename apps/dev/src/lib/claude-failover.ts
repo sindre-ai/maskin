@@ -162,7 +162,18 @@ export async function resolveClaudeCredentialsWithFailover(
 			slots.primary,
 			bufferMs,
 		)
-		if (refreshFailure && tokens.expiresAt <= now()) return null
+		if (refreshFailure) {
+			// A transient refresh error (network blip, 5xx from the token
+			// endpoint) is safe to swallow as long as the pre-refresh token
+			// hasn't actually expired yet. A permanently-dead credential
+			// (revoked refresh token -> auth_failed) is not -- handing it back
+			// as "success" would launch a doomed session and skip the
+			// workspace API key / system fallback routes llm-routing would
+			// otherwise fall through to. Classify it the same way the
+			// flag-on path does below instead of only checking expiry.
+			const decision = classifyClaudeFailure(refreshFailure)
+			if (decision.action === 'failover' || tokens.expiresAt <= now()) return null
+		}
 		return { slot: 'primary', tokens }
 	}
 
