@@ -206,6 +206,10 @@ const updateWorkspaceRoute = createRoute({
 			description: 'Workspace updated',
 			content: { 'application/json': { schema: workspaceResponseSchema } },
 		},
+		400: {
+			description: 'Invalid request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Workspace not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -218,6 +222,23 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
+
+	// claude_oauth has its own locked, slot-aware, audited read-modify-write
+	// routes (POST /api/claude-oauth/import, DELETE /api/claude-oauth,
+	// POST /api/claude-oauth/swap) built to prevent concurrent writers from
+	// clobbering the other slot or failover state. This route does a shallow,
+	// unlocked settings merge, so it must not be allowed to touch claude_oauth
+	// at all — otherwise any PATCH body containing `settings.claude_oauth`
+	// (including `{}`) would silently overwrite both slots.
+	if (body.settings && 'claude_oauth' in body.settings) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'claude_oauth cannot be updated via PATCH /api/workspaces/:id — use /api/claude-oauth instead',
+			),
+			400,
+		)
+	}
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
