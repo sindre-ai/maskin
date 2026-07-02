@@ -1088,11 +1088,7 @@ function CountCard({
 	onJump: () => void
 }) {
 	const toneClass =
-		tone === 'update'
-			? 'text-blue-700 dark:text-blue-300'
-			: tone === 'create'
-				? 'text-emerald-700 dark:text-emerald-300'
-				: 'text-muted-foreground'
+		tone === 'update' ? 'text-info' : tone === 'create' ? 'text-success' : 'text-muted-foreground'
 
 	const displayValue = value === null ? '—' : value
 	return (
