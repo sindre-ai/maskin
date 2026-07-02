@@ -1,23 +1,31 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const BASE = 'http://localhost:5173'
 
-async function patchWorkspaceSettings(
+async function importClaudeOAuth(
 	apiKey: string,
 	workspaceId: string,
-	settings: Record<string, unknown>,
+	tokens: {
+		accessToken: string
+		refreshToken: string
+		expiresAt: number
+		subscriptionType?: string
+		slot?: 'primary' | 'backup'
+	},
 ) {
-	const res = await fetch(`${BASE}/api/workspaces/${workspaceId}`, {
-		method: 'PATCH',
+	const res = await fetch(`${BASE}/api/claude-oauth/import`, {
+		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json',
 			Authorization: `Bearer ${apiKey}`,
+			'X-Workspace-Id': workspaceId,
 		},
-		body: JSON.stringify({ settings }),
+		body: JSON.stringify(tokens),
 	})
 	if (!res.ok) {
-		throw new Error(`PATCH workspace failed: ${res.status} ${await res.text()}`)
+		throw new Error(`Claude OAuth import failed: ${res.status} ${await res.text()}`)
 	}
 	return res.json()
 }
@@ -33,17 +41,41 @@ async function getWorkspaceSettings(apiKey: string, workspaceId: string) {
 }
 
 const seedPrimary = {
-	encryptedAccessToken: 'e2e-primary-access',
-	encryptedRefreshToken: 'e2e-primary-refresh',
+	accessToken: 'e2e-primary-access',
+	refreshToken: 'e2e-primary-refresh',
 	expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
 	subscriptionType: 'max-5x',
 }
 
-const seedBackup = {
-	encryptedAccessToken: 'e2e-backup-access',
-	encryptedRefreshToken: 'e2e-backup-refresh',
-	expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
-	subscriptionType: 'pro',
+// An already-failed-over state (both slots connected, active_slot flipped to
+// backup with a specific classified reason + timestamp) is only ever
+// produced by a live session-start failover (apps/dev/src/lib/claude-failover.ts)
+// under a row lock — there's no write path a test can seed it through
+// directly. PATCH /api/workspaces/:id intentionally rejects `claude_oauth`
+// (apps/dev/src/routes/workspaces.ts) so an unlocked merge can't clobber that
+// locked state. Mock the status boundary instead, same pattern as
+// foryou-sparse-composer.spec.ts's `mockUnreadCount`.
+async function mockFailedOverStatus(page: Page) {
+	const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000
+	await page.route('**/api/claude-oauth/status*', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				connected: true,
+				valid: true,
+				subscription_type: 'pro',
+				expires_at: expiresAt,
+				slots: {
+					primary: { subscription_type: 'max-5x', expires_at: expiresAt, fingerprint: 'e2eprim1' },
+					backup: { subscription_type: 'pro', expires_at: expiresAt, fingerprint: 'e2ebckp1' },
+				},
+				active_slot: 'backup',
+				last_primary_failure_at: Date.now() - 2 * 60 * 1000,
+				last_classified_reason: 'quota_exhausted_weekly',
+			}),
+		})
+	})
 }
 
 test.describe('Claude subscription failover — settings UI', () => {
@@ -51,17 +83,7 @@ test.describe('Claude subscription failover — settings UI', () => {
 		page,
 		account,
 	}) => {
-		await patchWorkspaceSettings(account.apiKey, account.workspaceId, {
-			claude_oauth: {
-				primary: seedPrimary,
-				backup: seedBackup,
-				failover: {
-					active_slot: 'backup',
-					last_classified_reason: 'quota_exhausted_weekly',
-					last_primary_failure_at: Date.now() - 2 * 60 * 1000,
-				},
-			},
-		})
+		await mockFailedOverStatus(page)
 
 		await page.goto(`/${account.workspaceId}/settings/keys`)
 
@@ -93,8 +115,9 @@ test.describe('Claude subscription failover — settings UI', () => {
 	test('AC-U5: backup designation persists across reload', async ({ page, account }) => {
 		// Seed a primary so the "Add a backup" CTA renders. The slot field on the
 		// import body is what the customer designation flows through.
-		await patchWorkspaceSettings(account.apiKey, account.workspaceId, {
-			claude_oauth: { primary: seedPrimary },
+		await importClaudeOAuth(account.apiKey, account.workspaceId, {
+			...seedPrimary,
+			slot: 'primary',
 		})
 
 		await page.goto(`/${account.workspaceId}/settings/keys`)
@@ -124,15 +147,20 @@ test.describe('Claude subscription failover — settings UI', () => {
 				},
 			}),
 		)
-		await page.getByRole('button', { name: 'Import' }).click()
+		// Scoped to the paste flow — "Import backup credentials" (the button that
+		// opened this flow) stays mounted underneath and also matches the broad
+		// 'Import' substring, so an unscoped locator resolves to two elements.
+		await pasteFlow.getByRole('button', { name: 'Import' }).click()
 
 		// Backup slot should now render in connected state with a Disconnect action.
-		await expect(backup).toContainText('Healthy', { timeout: 10_000 })
+		// SlotCard renders "Connected" for a healthy slot ("Unhealthy" only when
+		// a failover reason line is present) — see keys.tsx's `isUnhealthy` check.
+		await expect(backup).toContainText('Connected', { timeout: 10_000 })
 
 		// AC-U5: reload — designation persists
 		await page.reload()
-		await expect(page.getByTestId('slot-primary')).toContainText('Healthy')
-		await expect(page.getByTestId('slot-backup')).toContainText('Healthy')
+		await expect(page.getByTestId('slot-primary')).toContainText('Connected')
+		await expect(page.getByTestId('slot-backup')).toContainText('Connected')
 
 		// And the storage shape on disk has the backup slot populated (not the
 		// primary key being overwritten with the just-pasted tokens).

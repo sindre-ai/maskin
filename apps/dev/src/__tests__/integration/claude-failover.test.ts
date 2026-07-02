@@ -54,12 +54,17 @@ describe('Claude failover — session-start credential resolver against Postgres
 			},
 		})
 
-		// AC-T3 fixture — 401 → failover(auth_failed). Same probe on both sessions.
-		const probe = async (): Promise<ClassifierInput> => ({
-			kind: 'http',
-			status: 401,
-			headers: headersFrom({}),
-		})
+		// AC-T3 fixture — 401 → failover(auth_failed) for the primary token, same
+		// on both concurrent sessions. Must discriminate on the token it's
+		// called with: `resolveClaudeCredentialsWithFailover` re-probes the
+		// backup immediately after flipping active_slot (claude-failover.ts,
+		// refreshAndProbeBackup) to avoid handing back a dead backup, so a
+		// probe that returned 401 unconditionally would also fail the
+		// just-selected backup and collapse both concurrent resolves to null.
+		const probe = async (tokens: { accessToken: string }): Promise<ClassifierInput | null> =>
+			tokens.accessToken === 'access-plain'
+				? { kind: 'http', status: 401, headers: headersFrom({}) }
+				: null
 		const now = () => 1_800_000_060_000
 
 		const [a, b] = await Promise.all([
