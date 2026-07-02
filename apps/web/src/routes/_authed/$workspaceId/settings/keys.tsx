@@ -272,7 +272,7 @@ function SlotCard({
 					aria-hidden="true"
 				/>
 				<span className="text-sm font-medium text-foreground">
-					{isUnhealthy ? 'Unhealthy' : 'Healthy'}
+					{isUnhealthy ? 'Unhealthy' : 'Connected'}
 				</span>
 				{info.subscription_type && (
 					<span
@@ -287,6 +287,9 @@ function SlotCard({
 				<span className="text-xs text-muted-foreground">
 					expires in {formatExpiry(info.expires_at)}
 				</span>
+				{info.fingerprint && (
+					<span className="text-xs font-mono text-muted-foreground">id {info.fingerprint}</span>
+				)}
 			</div>
 			{isUnhealthy && unhealthyReasonLine && (
 				<p className="text-xs text-warning">{unhealthyReasonLine}</p>
@@ -299,7 +302,7 @@ function SlotCard({
 						onClick={() => swapMutation.mutate()}
 						disabled={swapMutation.isPending}
 					>
-						Set as primary
+						{swapMutation.isPending ? 'Swapping...' : 'Swap into primary'}
 					</Button>
 				)}
 				<Button

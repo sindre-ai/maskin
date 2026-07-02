@@ -87,7 +87,11 @@ describe('Settings > Keys > Claude Subscription', () => {
 			valid: true,
 			slots: {
 				primary: { subscription_type: 'max-5x', expires_at: Date.now() + 24 * 60 * 60 * 1000 * 10 },
-				backup: { subscription_type: 'pro', expires_at: Date.now() + 24 * 60 * 60 * 1000 * 20 },
+				backup: {
+					subscription_type: 'pro',
+					expires_at: Date.now() + 24 * 60 * 60 * 1000 * 20,
+					fingerprint: 'backup123',
+				},
 			},
 			active_slot: 'primary',
 		})
@@ -97,8 +101,9 @@ describe('Settings > Keys > Claude Subscription', () => {
 		const primary = await screen.findByTestId('slot-primary')
 		const backup = screen.getByTestId('slot-backup')
 		await waitFor(() => expect(primary).toHaveTextContent('In use'))
-		expect(primary).toHaveTextContent('Healthy')
-		expect(backup).toHaveTextContent('Healthy')
+		expect(primary).toHaveTextContent('Connected')
+		expect(backup).toHaveTextContent('Connected')
+		expect(backup).toHaveTextContent('id backup123')
 		expect(backup).not.toHaveTextContent('In use')
 		expect(screen.queryByTestId('failover-banner')).not.toBeInTheDocument()
 	})
@@ -202,7 +207,7 @@ describe('Settings > Keys > Claude Subscription', () => {
 		expect(payload.accessToken).toBe('a')
 	})
 
-	it('"Set as primary" on the backup slot triggers swap', async () => {
+	it('"Swap into primary" on the backup slot triggers swap', async () => {
 		const user = userEvent.setup()
 		mockStatus.mockResolvedValue({
 			connected: true,
@@ -217,7 +222,7 @@ describe('Settings > Keys > Claude Subscription', () => {
 
 		renderPage()
 
-		await user.click(await screen.findByRole('button', { name: 'Set as primary' }))
+		await user.click(await screen.findByRole('button', { name: 'Swap into primary' }))
 		await waitFor(() => expect(mockSwap).toHaveBeenCalledWith(mockWorkspaceWithRole.id))
 	})
 })

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { vi } from 'vitest'
 
 vi.mock('../../lib/claude-oauth', () => ({
@@ -21,6 +22,10 @@ const wsId = '00000000-0000-0000-0000-000000000001'
 const headers = { 'x-workspace-id': wsId }
 
 const mockGetValid = getValidOAuthToken as ReturnType<typeof vi.fn>
+
+function expectedFingerprint(accessToken: string, refreshToken: string) {
+	return createHash('sha256').update(`${accessToken}:${refreshToken}`).digest('hex').slice(0, 8)
+}
 
 const legacyOAuth = {
 	encryptedAccessToken: 'legacy-access',
@@ -209,10 +214,12 @@ describe('Claude OAuth Routes', () => {
 			expect(body.slots.primary).toEqual({
 				subscription_type: 'max-5x',
 				expires_at: 1_800_000_000_000,
+				fingerprint: expectedFingerprint('primary-access', 'primary-refresh'),
 			})
 			expect(body.slots.backup).toEqual({
 				subscription_type: 'pro',
 				expires_at: 1_900_000_000_000,
+				fingerprint: expectedFingerprint('backup-access', 'backup-refresh'),
 			})
 		})
 

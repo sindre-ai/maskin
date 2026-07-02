@@ -11,6 +11,11 @@ const CLI_BANNERS: ReadonlyArray<{
 		humanMessage: 'Claude session limit reached',
 	},
 	{
+		match: "You've hit your limit",
+		reasonCode: 'session_limit',
+		humanMessage: 'Claude session limit reached',
+	},
+	{
 		match: "You've hit your weekly limit",
 		reasonCode: 'weekly_limit',
 		humanMessage: 'Claude weekly limit reached',

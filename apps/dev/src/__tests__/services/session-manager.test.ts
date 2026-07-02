@@ -1716,8 +1716,9 @@ describe('SessionManager', () => {
 			expect(eventInsert?.data).toMatchObject({ failure_reason: knownReason })
 		})
 
-		it('does not call classifier and omits failure_reason when exitCode is 0', async () => {
+		it('omits failure_reason when exitCode is 0 and no credit signal is present', async () => {
 			const session = buildSession({ status: 'running' })
+			mockClassifyCreditExhaustion.mockReturnValue(null)
 			;(
 				manager as unknown as {
 					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
@@ -1732,12 +1733,148 @@ describe('SessionManager', () => {
 				}
 			).handleCompletion(session.id, 'container-abc', 0)
 
-			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
+			expect(mockClassifyCreditExhaustion).toHaveBeenCalledWith('')
 			const sessionUpdate = calls.updates.find(
 				(u): u is Record<string, unknown> =>
 					typeof u === 'object' && u !== null && 'result' in (u as Record<string, unknown>),
 			)
 			expect(sessionUpdate?.result as Record<string, unknown>).not.toHaveProperty('failure_reason')
+		})
+
+		it('marks exitCode 0 sessions failed when Claude prints a limit banner', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail: "You've hit your limit · resets 3:20pm (UTC)",
+			})
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			expect(mockClassifyCreditExhaustion).toHaveBeenCalledWith(
+				"You've hit your limit · resets 3:20pm (UTC)",
+			)
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: { exit_code: number; failure_reason: unknown } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({
+				status: 'failed',
+				result: { exit_code: 0, failure_reason: knownReason },
+			})
+			const eventInsert = calls.inserts.find(
+				(i): i is { action: string; data: { exit_code: number; failure_reason: unknown } } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { action?: string }).action === 'session_failed',
+			)
+			expect(eventInsert?.data).toMatchObject({ exit_code: 0, failure_reason: knownReason })
+		})
+
+		it('fails over primary OAuth runtime limits to backup and starts one retry session', async () => {
+			const session = buildSession({
+				status: 'running',
+				config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+			})
+			const retrySession = buildSession({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				createdBy: session.createdBy,
+				status: 'pending',
+				config: {
+					llm_route: 'claude_oauth',
+					llm_oauth_slot: 'primary',
+					claude_oauth_runtime_failover_retry_of: session.id,
+				},
+			})
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail:
+					'{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour"}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
+			})
+			const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[], // hasOtherActiveSessions
+				[
+					{
+						id: session.workspaceId,
+						settings: {
+							claude_oauth: {
+								primary: {
+									encryptedAccessToken: 'primary-access',
+									encryptedRefreshToken: 'primary-refresh',
+									expiresAt: 1_800_000_000_000,
+								},
+								backup: {
+									encryptedAccessToken: 'backup-access',
+									encryptedRefreshToken: 'backup-refresh',
+									expiresAt: 1_900_000_000_000,
+								},
+							},
+						},
+					},
+				], // recordRuntimeClaudeOAuthFailover locked workspace read
+			]
+			mockResults.insertQueue = [
+				[], // completion event
+				[], // failover event
+				[], // retry notice system log
+				[retrySession], // createSession row insert
+				[], // createSession event
+				[], // terminal system log
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const failoverUpdate = calls.updates.find(
+				(u): u is { settings: { claude_oauth: { failover: { active_slot: string } } } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					typeof (u as { settings?: unknown }).settings === 'object' &&
+					Boolean(
+						(
+							(u as { settings: { claude_oauth?: { failover?: unknown } } }).settings.claude_oauth
+								?.failover as Record<string, unknown> | undefined
+						)?.active_slot,
+					),
+			)
+			expect(failoverUpdate?.settings.claude_oauth.failover).toMatchObject({
+				active_slot: 'backup',
+				last_classified_reason: 'quota_exhausted_5h',
+			})
+			const retryInsert = calls.inserts.find(
+				(i): i is { config: Record<string, unknown>; actionPrompt: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { actionPrompt?: unknown }).actionPrompt === session.actionPrompt,
+			)
+			expect(retryInsert?.config).toMatchObject({
+				claude_oauth_runtime_failover_retry_of: session.id,
+			})
+			expect(startSpy).toHaveBeenCalledWith(retrySession.id)
 		})
 
 		it('does not call classifier when exitCode is null (OOM kill)', async () => {

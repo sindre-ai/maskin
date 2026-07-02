@@ -350,6 +350,73 @@ async function recordFailoverTransition(params: {
 	})
 }
 
+export async function recordRuntimeClaudeOAuthFailover(params: {
+	db: Database
+	workspaceId: string
+	actorId: string
+	reason: string
+	now?: number
+	sourceSessionId?: string
+}): Promise<boolean> {
+	const { db, workspaceId, actorId, reason, sourceSessionId } = params
+	const now = params.now ?? Date.now()
+	let didFailover = false
+
+	await db.transaction(async (tx) => {
+		const [latest] = await tx
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!latest) return
+
+		const latestSettings = (latest.settings as Record<string, unknown>) ?? {}
+		const slots = readSlots(latestSettings.claude_oauth)
+		const existing = readFailoverState(latestSettings.claude_oauth)
+		if (existing.active_slot !== 'primary' || !slots.backup) return
+
+		const nextState: OAuthFailoverState = {
+			active_slot: 'backup',
+			last_primary_failure_at: now,
+			last_classified_reason: reason,
+		}
+		const nextOAuth = writeFailoverState(latestSettings.claude_oauth, nextState)
+		await tx
+			.update(workspaces)
+			.set({
+				settings: { ...latestSettings, claude_oauth: nextOAuth },
+				updatedAt: new Date(),
+			})
+			.where(eq(workspaces.id, workspaceId))
+
+		await tx.insert(events).values({
+			workspaceId,
+			actorId,
+			action: FAILOVER_TRIGGERED_ACTION,
+			entityType: 'workspace',
+			entityId: workspaceId,
+			data: {
+				reason,
+				failure_window: now,
+				trigger: 'runtime_session_failure',
+				...(sourceSessionId ? { source_session_id: sourceSessionId } : {}),
+			},
+		})
+		didFailover = true
+	})
+
+	if (didFailover) {
+		logger.info('Claude subscription failed over to backup after runtime session failure', {
+			workspaceId,
+			reason,
+			sourceSessionId,
+		})
+	}
+
+	return didFailover
+}
+
 /**
  * Refresh the requested slot's tokens if they're about to expire, persist
  * the refreshed blob via T5's slot-safe helper, and return the fresh

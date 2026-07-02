@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { workspaceMembers, workspaces } from '@maskin/db/schema'
@@ -33,6 +34,7 @@ const slotKindSchema = z.enum(['primary', 'backup'])
 const slotStatusSchema = z.object({
 	subscription_type: z.string().optional(),
 	expires_at: z.number(),
+	fingerprint: z.string(),
 })
 
 const statusResponseSchema = z.object({
@@ -62,6 +64,16 @@ async function requireWorkspaceMember(db: Database, workspaceId: string, actorId
 		)
 		.limit(1)
 	return member ?? null
+}
+
+function slotFingerprint(slot: {
+	encryptedAccessToken: string
+	encryptedRefreshToken: string
+}): string {
+	return createHash('sha256')
+		.update(`${slot.encryptedAccessToken}:${slot.encryptedRefreshToken}`)
+		.digest('hex')
+		.slice(0, 8)
 }
 
 // ── DELETE /api/claude-oauth ────────────────────────────────────────────────
@@ -214,19 +226,21 @@ app.openapi(statusRoute, (async (c) => {
 	const failover = readFailoverState(settings.claude_oauth)
 
 	const slotResponse: {
-		primary?: { subscription_type?: string; expires_at: number }
-		backup?: { subscription_type?: string; expires_at: number }
+		primary?: { subscription_type?: string; expires_at: number; fingerprint: string }
+		backup?: { subscription_type?: string; expires_at: number; fingerprint: string }
 	} = {}
 	if (slots.primary) {
 		slotResponse.primary = {
 			subscription_type: slots.primary.subscriptionType,
 			expires_at: slots.primary.expiresAt,
+			fingerprint: slotFingerprint(slots.primary),
 		}
 	}
 	if (slots.backup) {
 		slotResponse.backup = {
 			subscription_type: slots.backup.subscriptionType,
 			expires_at: slots.backup.expiresAt,
+			fingerprint: slotFingerprint(slots.backup),
 		}
 	}
 

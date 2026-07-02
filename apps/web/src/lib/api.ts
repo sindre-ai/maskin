@@ -628,6 +628,7 @@ export type ClaudeOAuthSlot = 'primary' | 'backup'
 export interface ClaudeOAuthSlotInfo {
 	subscription_type?: string
 	expires_at: number
+	fingerprint?: string
 }
 
 export interface ClaudeOAuthExchangeResponse {

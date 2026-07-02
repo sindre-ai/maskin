@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { type SubscriptionProbe, resolveClaudeCredentialsWithFailover } from './claude-failover'
+import type { OAuthSlotKind } from './claude-oauth-slots'
 import type { WorkspaceSettings } from './types'
 
 /**
@@ -25,6 +26,7 @@ export interface LlmRoutingResult {
 	route: LlmRoute
 	/** Env vars to merge into the container environment. */
 	envVars: Record<string, string>
+	oauthSlot?: OAuthSlotKind
 }
 
 export interface FallbackConfig {
@@ -205,7 +207,7 @@ export async function resolveLlmRoute(params: {
 			if (oauthResult.tokens.subscriptionType) {
 				envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
 			}
-			return { route: LLM_ROUTE_OAUTH, envVars }
+			return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
 		}
 	} catch {
 		// Swallow OAuth errors and let the next route take over — the warning
