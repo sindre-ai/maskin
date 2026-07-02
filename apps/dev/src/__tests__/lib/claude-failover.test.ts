@@ -83,8 +83,10 @@ function createMockDb(initial: { settings: Record<string, unknown> } | undefined
 		insert: vi.fn().mockReturnValue({ values: insertValues }),
 		// `attemptPrimaryRecovery` (T7) locks the row via a raw `tx.execute(sql\`...
 		// FOR UPDATE\`)` instead of the `.select().for('update')` chain — mirror
-		// its `{ rows: [...] }` result shape here.
-		execute: vi.fn(async () => ({ rows: current ? [current] : [] })),
+		// its result shape here. drizzle-orm/postgres-js's `.execute()` returns
+		// the row list directly (no `{ rows: [...] }` wrapper — that's a
+		// node-postgres/`pg`-specific shape).
+		execute: vi.fn(async () => (current ? [current] : [])),
 		transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
 			const next = txChain.then(() => fn(db))
 			txChain = next.catch(() => undefined)

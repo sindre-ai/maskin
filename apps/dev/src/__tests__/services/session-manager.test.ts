@@ -1733,12 +1733,58 @@ describe('SessionManager', () => {
 				}
 			).handleCompletion(session.id, 'container-abc', 0)
 
-			expect(mockClassifyCreditExhaustion).toHaveBeenCalledWith('')
+			expect(mockClassifyCreditExhaustion).toHaveBeenCalledWith('', {
+				includeAmbiguousSignals: false,
+			})
 			const sessionUpdate = calls.updates.find(
 				(u): u is Record<string, unknown> =>
 					typeof u === 'object' && u !== null && 'result' in (u as Record<string, unknown>),
 			)
 			expect(sessionUpdate?.result as Record<string, unknown>).not.toHaveProperty('failure_reason')
+		})
+
+		it('does not fail a successful session on an ambiguous credit-exhaustion substring', async () => {
+			// Regression test: exitCode 0 must not run the ambiguous (bare-substring)
+			// classifier branches — only the literal CLI banner strings can fail a
+			// clean exit. Simulate the real classifier's behavior for this input via
+			// the mock: since `includeAmbiguousSignals` will be false for exitCode 0,
+			// the classifier must return null even though `stdoutTail` contains a
+			// substring ('billing_error') that would match an ambiguous signal.
+			const session = buildSession({ status: 'running' })
+			mockClassifyCreditExhaustion.mockImplementation(
+				(_tail: string, options?: { includeAmbiguousSignals?: boolean }) =>
+					options?.includeAmbiguousSignals === false ? null : knownReason,
+			)
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail: 'Tool result: {"error":"billing_error: connection refused"}',
+			})
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			expect(mockClassifyCreditExhaustion).toHaveBeenCalledWith(
+				'Tool result: {"error":"billing_error: connection refused"}',
+				{ includeAmbiguousSignals: false },
+			)
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: Record<string, unknown> } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({ status: 'completed' })
+			expect(sessionUpdate?.result).not.toHaveProperty('failure_reason')
 		})
 
 		it('marks exitCode 0 sessions failed when Claude prints a limit banner', async () => {
@@ -1762,6 +1808,7 @@ describe('SessionManager', () => {
 
 			expect(mockClassifyCreditExhaustion).toHaveBeenCalledWith(
 				"You've hit your limit · resets 3:20pm (UTC)",
+				{ includeAmbiguousSignals: false },
 			)
 			const sessionUpdate = calls.updates.find(
 				(u): u is { status: string; result: { exit_code: number; failure_reason: unknown } } =>

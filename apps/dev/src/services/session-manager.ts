@@ -1660,7 +1660,10 @@ export class SessionManager extends EventEmitter {
 		}
 
 		const stdoutTail = this.activeSessions.get(sessionId)?.stdoutTail ?? ''
-		const failureReason = exitCode !== null ? classifyCreditExhaustion(stdoutTail) : null
+		const failureReason =
+			exitCode !== null
+				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
+				: null
 		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
 		if (failureReason) {
 			logger.info('Session credit-exhaustion classified', {

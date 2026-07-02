@@ -57,6 +57,9 @@ const claudeOAuthFailoverStateSchema = z
 
 // Strict so malformed-legacy values (e.g. encryptedAccessToken alone) don't
 // silently parse as an empty new-shape object — they fail both union branches.
+// `.refine()` requires at least one field so `{}` is rejected too — an empty
+// object would otherwise validate (every field is optional) and silently wipe
+// both slots + failover state for any caller that merges it into settings.
 const claudeOAuthSlotStorageSchema = z
 	.object({
 		primary: claudeOAuthLegacySlotSchema.optional(),
@@ -64,6 +67,9 @@ const claudeOAuthSlotStorageSchema = z
 		failover: claudeOAuthFailoverStateSchema.optional(),
 	})
 	.strict()
+	.refine((v) => v.primary !== undefined || v.backup !== undefined || v.failover !== undefined, {
+		message: 'claude_oauth must define at least one of primary, backup, or failover',
+	})
 
 export const workspaceSettingsSchema = z.object({
 	display_names: z.record(z.string()).default({

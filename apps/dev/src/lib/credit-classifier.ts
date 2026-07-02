@@ -58,10 +58,22 @@ const CLI_BANNERS: ReadonlyArray<{
  *    with Max plan 402 distinguished by body text
  * 3. OpenRouter 402 — 'insufficient credits' substring
  *
+ * `includeAmbiguousSignals` (default true) gates steps 2 and 3, which match
+ * bare substrings anywhere in the tail and can false-positive on unrelated
+ * tool output (see comment below). Callers classifying an exitCode === 0
+ * (otherwise-successful) session should pass `false` so only the
+ * high-confidence, literal Claude CLI banner strings in step 1 can flip a
+ * successful exit to 'failed'.
+ *
  * Every `reasonCode` value emitted here must exist in `failureReasonCodeSchema`
  * in packages/shared/src/schemas/sessions.ts — add new codes there first.
  */
-export function classifyCreditExhaustion(tail: string): SessionResultFailureReason | null {
+export function classifyCreditExhaustion(
+	tail: string,
+	options: { includeAmbiguousSignals?: boolean } = {},
+): SessionResultFailureReason | null {
+	const { includeAmbiguousSignals = true } = options
+
 	for (const banner of CLI_BANNERS) {
 		if (tail.includes(banner.match)) {
 			return {
@@ -75,6 +87,8 @@ export function classifyCreditExhaustion(tail: string): SessionResultFailureReas
 		}
 	}
 
+	if (!includeAmbiguousSignals) return null
+
 	// False-positive risk: `billing_error` and `rate_limit_error` are matched as bare
 	// substrings anywhere in stdoutTail, which spans the full stdout of the agent session.
 	// A Maskin agent session can echo these strings in tool output (e.g. when inspecting
@@ -86,6 +100,8 @@ export function classifyCreditExhaustion(tail: string): SessionResultFailureReas
 	// "billing_error — usage/rate limit exceeded" as plain CLI text, not JSON.
 	// Accepted trade-off: the classifier is best-effort at session boundary; false-positive
 	// rate is low in practice since these are uncommon substrings in typical tool output.
+	// This trade-off is only accepted for sessions that already exited non-zero — see
+	// `includeAmbiguousSignals` above.
 	if (tail.includes('billing_error')) {
 		// Max plan returns 402 for temporary rate limits; distinguish by body text
 		const isMaxRateLimit = tail.includes('try again') || tail.includes('usage/rate limit')
