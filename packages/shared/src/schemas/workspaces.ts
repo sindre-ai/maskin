@@ -72,9 +72,9 @@ export const workspaceSettingsSchema = z.object({
 		task: 'Task',
 	}),
 	statuses: z.record(z.array(z.string())).default({
-		insight: ['new', 'processing', 'clustered', 'discarded'],
-		bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
-		task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'blocked'],
+		insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
+		bet: ['signal', 'qualified', 'define', 'active', 'live', 'succeeded', 'failed', 'paused'],
+		task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 	}),
 	field_definitions: z.record(z.array(fieldDefinitionSchema)).default({}),
 	hero_card: z.record(heroCardTypeAnnotationSchema).default({}),

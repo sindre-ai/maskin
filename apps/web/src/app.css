@@ -65,6 +65,16 @@
 	--color-status-in_review-text: var(--st-in_review-text);
 	--color-status-validated-bg: var(--st-validated-bg);
 	--color-status-validated-text: var(--st-validated-text);
+	--color-status-qualified-bg: var(--st-qualified-bg);
+	--color-status-qualified-text: var(--st-qualified-text);
+	--color-status-define-bg: var(--st-define-bg);
+	--color-status-define-text: var(--st-define-text);
+	--color-status-live-bg: var(--st-live-bg);
+	--color-status-live-text: var(--st-live-text);
+	--color-status-scored-bg: var(--st-scored-bg);
+	--color-status-scored-text: var(--st-scored-text);
+	--color-status-parked-bg: var(--st-parked-bg);
+	--color-status-parked-text: var(--st-parked-text);
 
 	/* Type badge colors */
 	--color-type-insight-bg: var(--tp-insight-bg);
@@ -155,6 +165,16 @@
 	--st-in_review-text: #c2410c;
 	--st-validated-bg: #ede9fe;
 	--st-validated-text: #5b21b6;
+	--st-qualified-bg: #e0f2fe;
+	--st-qualified-text: #075985;
+	--st-define-bg: #ffedd5;
+	--st-define-text: #9a3412;
+	--st-live-bg: #a7f3d0;
+	--st-live-text: #047857;
+	--st-scored-bg: #fae8ff;
+	--st-scored-text: #86198f;
+	--st-parked-bg: #f5f5f4;
+	--st-parked-text: #57534e;
 
 	/* Type badges */
 	--tp-insight-bg: #fef3c7;
@@ -234,6 +254,16 @@
 	--st-in_review-text: #fdba74;
 	--st-validated-bg: #2e1065;
 	--st-validated-text: #c4b5fd;
+	--st-qualified-bg: #0c4a6e;
+	--st-qualified-text: #7dd3fc;
+	--st-define-bg: #7c2d12;
+	--st-define-text: #fdba74;
+	--st-live-bg: #064e3b;
+	--st-live-text: #34d399;
+	--st-scored-bg: #4a044e;
+	--st-scored-text: #e879f9;
+	--st-parked-bg: #292524;
+	--st-parked-text: #a8a29e;
 
 	/* Type badges */
 	--tp-insight-bg: #422006;

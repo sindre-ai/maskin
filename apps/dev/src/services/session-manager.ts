@@ -39,6 +39,7 @@ import {
 } from '../lib/analytics/catalog-events'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
+import { isAuthRevokedError } from '../lib/integrations/errors'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
@@ -1089,7 +1090,8 @@ export class SessionManager extends EventEmitter {
 					}
 
 					const envVarName =
-						resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
+						resolved.config.mcp?.envKey ??
+						`${integration.provider.toUpperCase().replace(/-/g, '_')}_TOKEN`
 					envVars[envVarName] = accessToken
 					if (resolved.config.mcp?.autoInject && resolved.config.mcp.server) {
 						autoInjectedMcpServers[`integration-${integration.provider}`] =
@@ -1102,9 +1104,20 @@ export class SessionManager extends EventEmitter {
 					}
 				}
 			} catch (err) {
-				logger.warn(`Failed to load credentials for ${integration.provider}`, {
-					error: String(err),
-				})
+				if (isAuthRevokedError(err)) {
+					logger.warn(
+						`Integration ${integration.provider} is revoked — skipping token injection; user must reconnect`,
+						{
+							integrationId: integration.id,
+							provider: integration.provider,
+						},
+					)
+				} else {
+					logger.warn(`Failed to load credentials for ${integration.provider}`, {
+						integrationId: integration.id,
+						error: String(err),
+					})
+				}
 			}
 		}
 
@@ -1211,6 +1224,10 @@ export class SessionManager extends EventEmitter {
 				networkMode = result.networkName
 			}
 		}
+
+		// Write the exec-trigger file before starting — the entrypoint checks for
+		// /agent/.exec-trigger and sleeps forever without it (microsandbox contract).
+		await writeFile(join(tempDir, '.exec-trigger'), '')
 
 		const containerId = await this.containers.create({
 			image: spec.image,
