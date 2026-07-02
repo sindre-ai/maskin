@@ -19,6 +19,11 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.112
 # Pre-install Playwright MCP server (connects to external browser via CDP)
 RUN npm install -g @playwright/mcp
 
+# Pre-install mcp-remote so the client-side mcp_tool_invocation wrapper
+# (mcp-emitter-wrapper.mjs) doesn't cold-start an `npx` download on every
+# tool call — one process-boundary hop per session is enough.
+RUN npm install -g mcp-remote
+
 # Non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash agent
 
@@ -30,6 +35,7 @@ WORKDIR /agent/workspace
 
 COPY entrypoint.sh /entrypoint.sh
 COPY agent-run.sh /agent-run.sh
-RUN chmod +x /entrypoint.sh /agent-run.sh
+COPY mcp-emitter-wrapper.mjs /mcp-emitter-wrapper.mjs
+RUN chmod +x /entrypoint.sh /agent-run.sh /mcp-emitter-wrapper.mjs
 
 ENTRYPOINT ["/entrypoint.sh"]
