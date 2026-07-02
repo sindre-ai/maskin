@@ -9,7 +9,9 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import {
+	WORKSPACE_ADMIN_DIFF_FIELDS,
 	WORKSPACE_COACH_DEFAULT,
+	computeChanges,
 	createWorkspaceSchema,
 	updateWorkspaceAdminSchema,
 	updateWorkspaceSchema,
@@ -354,13 +356,18 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 		}
 	}
 
+	const changes = computeChanges(
+		existing as unknown as Record<string, unknown>,
+		updated as unknown as Record<string, unknown>,
+		WORKSPACE_ADMIN_DIFF_FIELDS,
+	)
 	await db.insert(events).values({
 		workspaceId: id,
 		actorId,
 		action: 'updated',
 		entityType: 'workspace',
 		entityId: id,
-		data: { previous: existing, updated },
+		data: { changes },
 	})
 
 	return c.json(serialize(updated) as z.infer<typeof workspaceResponseSchema>)
