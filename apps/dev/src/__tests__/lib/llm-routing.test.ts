@@ -153,7 +153,9 @@ describe('resolveLlmRoute priority order', () => {
 			claudeOAuthWorkspaceRow({
 				encryptedAccessToken: 'oauth-access',
 				encryptedRefreshToken: 'oauth-refresh',
-				expiresAt: Date.now() + 60_000,
+				// Beyond the 10 min refresh buffer so the resolver doesn't try to
+				// hit the real refresh endpoint from the unit test.
+				expiresAt: Date.now() + 60 * 60 * 1000,
 			}),
 		)
 		const settings = emptySettings()
@@ -313,7 +315,7 @@ describe('resolveLlmRoute priority order', () => {
 				claudeOAuthWorkspaceRow({
 					encryptedAccessToken: 'oauth-access',
 					encryptedRefreshToken: 'r',
-					expiresAt: Date.now() + 60_000,
+					expiresAt: Date.now() + 60 * 60 * 1000,
 				}),
 			)
 			const settings = emptySettings()
