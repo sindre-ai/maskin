@@ -160,13 +160,21 @@ async function monitorSession(
 	// Push workspace BEFORE reporting completion so a push failure can be reflected
 	// in the exit code. Reporting first would mark the session completed even when
 	// the workspace was lost, giving the user a silently incorrect starting state on
-	// the next session.
+	// the next session. pushSessionWorkspace already retries transient storage
+	// errors (e.g. S3 `SlowDown` throttling) internally — only a failure that
+	// survives those retries reaches this catch, so this only overrides a genuine
+	// agent success (exitCode 0) when the workspace is truly lost, not on a blip.
 	if (storage) {
 		try {
-			const { archiveBytes } = await pushSessionWorkspace(storage, sessionId, sessionDir)
+			const { archiveBytes } = await pushSessionWorkspace(storage, sessionId, sessionDir, {
+				sleep,
+			})
 			logger.info('session workspace pushed to S3', { sessionId, archiveBytes })
 		} catch (err) {
-			logger.error('session workspace push failed', { sessionId, error: String(err) })
+			logger.error('session workspace push failed after retries', {
+				sessionId,
+				error: String(err),
+			})
 			if (exitCode === 0) exitCode = 1
 		}
 	}
