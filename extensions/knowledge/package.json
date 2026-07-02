@@ -17,6 +17,10 @@
 			"types": "./server/schema.ts",
 			"default": "./server/schema.ts"
 		},
+		"./retrieval": {
+			"types": "./server/retrieval.ts",
+			"default": "./server/retrieval.ts"
+		},
 		"./web": {
 			"types": "./web/index.ts",
 			"default": "./web/index.ts"

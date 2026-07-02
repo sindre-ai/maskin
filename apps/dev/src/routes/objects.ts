@@ -11,6 +11,7 @@ import {
 	subscriptions,
 	workspaces,
 } from '@maskin/db/schema'
+import { retrieveKnowledge } from '@maskin/ext-knowledge/retrieval'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
@@ -325,6 +326,18 @@ app.openapi(listObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
+	if (query.type === 'knowledge') {
+		const results = await retrieveKnowledge(db, {
+			workspaceId,
+			status: query.status ? query.status.split(',').filter(Boolean) : undefined,
+			driverIds: query.driver ? query.driver.split(',').filter(Boolean) : undefined,
+			ids: query.ids ? query.ids.split(',').filter(Boolean) : undefined,
+			limit: query.limit,
+			offset: query.offset,
+		})
+		return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
+	}
+
 	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
 
 	const orderBy = resolveOrderBy(query)
@@ -484,6 +497,17 @@ app.openapi(searchObjectsRoute, async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
+
+	if (query.type === 'knowledge') {
+		const results = await retrieveKnowledge(db, {
+			workspaceId,
+			q: query.q,
+			status: query.status ? query.status.split(',').filter(Boolean) : undefined,
+			limit: query.limit,
+			offset: query.offset,
+		})
+		return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
+	}
 
 	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
 
