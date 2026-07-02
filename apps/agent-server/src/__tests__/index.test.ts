@@ -517,3 +517,61 @@ describe('POST /sessions/:id/complete', () => {
 		expect(calls.find((c) => c.args[0] === 'stop')).toBeUndefined()
 	})
 })
+
+describe('POST /sessions/:id/stop', () => {
+	it('returns 401 without a bearer token', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
+
+		const res = await app.request('/sessions/sess-stop/stop', { method: 'POST' })
+
+		expect(res.status).toBe(401)
+	})
+
+	it('stops the sandbox immediately (not deferred) given a valid bearer token', async () => {
+		const { run, calls } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
+
+		const res = await app.request('/sessions/sess-stop/stop', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+		})
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ok: true })
+		expect(calls.find((c) => c.args[0] === 'stop')?.args).toEqual(['stop', 'sess-stop'])
+	})
+
+	it('is idempotent — swallows a stop failure (e.g. sandbox already gone) and still returns ok', async () => {
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const run = async (_bin: string, args: readonly string[]) => {
+			if (args[0] === 'stop') throw new Error('sandbox not found')
+			return { stdout: '', stderr: '' }
+		}
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
+
+		const res = await app.request('/sessions/sess-gone/stop', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+		})
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ok: true })
+	})
+
+	it('rejects an invalid session id with 400 and does not shell out', async () => {
+		const { run, calls } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
+
+		const res = await app.request('/sessions/-bad/stop', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+		})
+
+		expect(res.status).toBe(400)
+		expect(calls.find((c) => c.args[0] === 'stop')).toBeUndefined()
+	})
+})

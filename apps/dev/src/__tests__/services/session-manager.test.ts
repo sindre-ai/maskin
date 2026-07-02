@@ -938,6 +938,61 @@ describe('SessionManager', () => {
 
 			await expect(manager.stopSession(session.id)).rejects.toThrow('not found or has no container')
 		})
+
+		it('routes to the agent-server and marks the session terminal when agentServerId is set', async () => {
+			const session = buildSession({
+				status: 'running',
+				agentServerId: 'agent-server-1',
+				containerId: 'sandbox-name',
+			})
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			// 1st select: stopSession's own session lookup. 2nd: the agent_servers
+			// row lookup. 3rd: markRemoteSessionComplete's independent session
+			// re-fetch (it's also called from the internal /complete route, so it
+			// re-reads rather than trusting a value the caller already had).
+			mockResults.selectQueue = [[session], [server], [session]]
+
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				}),
+			)
+
+			try {
+				await manager.stopSession(session.id)
+
+				expect(fetchSpy).toHaveBeenCalledWith(
+					`${server.url}/sessions/${session.id}/stop`,
+					expect.objectContaining({
+						method: 'POST',
+						headers: expect.objectContaining({ Authorization: `Bearer ${server.secret}` }),
+					}),
+				)
+				// Local Docker must never be touched for a remotely-dispatched session.
+				expect(mockContainerManager.stop).not.toHaveBeenCalled()
+
+				const statusUpdate = calls.updates.find(
+					(u) => (u as Record<string, unknown>).status === 'failed',
+				) as Record<string, unknown> | undefined
+				expect(statusUpdate).toBeDefined()
+			} finally {
+				fetchSpy.mockRestore()
+			}
+		})
+
+		it('throws when the session references a missing agent server', async () => {
+			const session = buildSession({ status: 'running', agentServerId: 'ghost-server' })
+			mockResults.selectQueue = [[session], []]
+
+			await expect(manager.stopSession(session.id)).rejects.toThrow(
+				'Agent server ghost-server not found',
+			)
+		})
 	})
 
 	describe('pauseSession()', () => {

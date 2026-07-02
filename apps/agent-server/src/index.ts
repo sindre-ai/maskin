@@ -596,6 +596,28 @@ export function buildApp(deps: AppDeps): Hono {
 		return c.json({ ok: true })
 	})
 
+	// POST /sessions/:id/stop — apps/dev calls this to force-stop a session's
+	// sandbox (user-initiated stop). Bearer auth is inherited from the
+	// /sessions/* middleware. Idempotent, like the /complete handler's deferred
+	// stopSandbox call above: stopping an already-stopped or absent sandbox is
+	// not an error. apps/dev treats this call as authoritative and marks the
+	// session terminal itself rather than waiting for monitorSession to report
+	// back — that watcher lives in this process's memory and would be gone
+	// after a redeploy, leaving the session stuck otherwise.
+	app.post('/sessions/:id/stop', async (c) => {
+		const { id } = c.req.param()
+		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+		try {
+			await stopSandbox(id, deps.msb)
+		} catch (err) {
+			logger.warn('failed to stop sandbox on external stop request', {
+				sessionId: id,
+				error: String(err),
+			})
+		}
+		return c.json({ ok: true })
+	})
+
 	return app
 }
 

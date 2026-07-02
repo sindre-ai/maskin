@@ -554,7 +554,31 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		if (!session || !session.containerId) {
+		if (!session) {
+			throw new Error(`Session ${sessionId} not found or has no container`)
+		}
+
+		if (session.agentServerId) {
+			const [serverRow] = await this.db
+				.select({ id: agentServers.id, url: agentServers.url, secret: agentServers.secret })
+				.from(agentServers)
+				.where(eq(agentServers.id, session.agentServerId))
+				.limit(1)
+			if (!serverRow) {
+				throw new Error(`Agent server ${session.agentServerId} not found`)
+			}
+			const client = new AgentServerClient({ server: serverRow })
+			await client.stopSession(sessionId)
+			// Remote sessions have no local exit watcher — the agent-server's own
+			// completion monitor lives in that process's memory and may already be
+			// gone (e.g. after a redeploy), so it can never call back to report
+			// completion. Treat this explicit, successful stop as authoritative
+			// instead of waiting on a callback that might never arrive.
+			await this.markRemoteSessionComplete(sessionId, null)
+			return
+		}
+
+		if (!session.containerId) {
 			throw new Error(`Session ${sessionId} not found or has no container`)
 		}
 
