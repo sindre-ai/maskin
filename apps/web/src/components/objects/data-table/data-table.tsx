@@ -1,4 +1,5 @@
 import { EmptyState } from '@/components/shared/empty-state'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Spinner } from '@/components/ui/spinner'
 
 const DATE_GROUP_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -41,6 +42,39 @@ function resolveGroupLabel(
 	}
 	return formatGroupDate(rawValue)
 }
+
+// Hit zone for the group-header select-all checkbox — matches T1's iOS 44×44 target on
+// the row-level checkboxes so the new control isn't the one missed tap in the chain.
+const GROUP_SELECT_TAP_TARGET =
+	"relative before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
+
+function getGroupSelectState<T>(row: Row<T>): boolean | 'indeterminate' {
+	const leaves = row.getLeafRows()
+	if (leaves.length === 0) return false
+	let selected = 0
+	for (const leaf of leaves) {
+		if (leaf.getCanSelect() && leaf.getIsSelected()) selected++
+	}
+	if (selected === 0) return false
+	if (selected === leaves.length) return true
+	return 'indeterminate'
+}
+
+function toggleGroupSelection<T>(table: TanstackTable<T>, row: Row<T>, value: boolean): void {
+	const ids = row
+		.getLeafRows()
+		.filter((leaf) => leaf.getCanSelect())
+		.map((leaf) => leaf.id)
+	if (ids.length === 0) return
+	table.setRowSelection((prev) => {
+		const next = { ...prev }
+		for (const id of ids) {
+			if (value) next[id] = true
+			else delete next[id]
+		}
+		return next
+	})
+}
 import {
 	Table,
 	TableBody,
@@ -58,7 +92,9 @@ import {
 	type ColumnDef,
 	type GroupingState,
 	type OnChangeFn,
+	type Row,
 	type RowSelectionState,
+	type Table as TanstackTable,
 	type VisibilityState,
 	flexRender,
 	getCoreRowModel,
@@ -216,18 +252,30 @@ export function DataTable({
 										className="absolute left-0 right-0"
 										style={{ transform: `translateY(${virtualItem.start}px)` }}
 									>
-										<button
-											type="button"
-											onClick={() => row.toggleExpanded()}
-											className="flex w-full items-center gap-2 border-b border-border bg-muted/30 px-4 py-2 text-left hover:bg-muted/50"
-										>
-											<ChevronRight
-												size={14}
-												className={cn('transition-transform', row.getIsExpanded() && 'rotate-90')}
+										<div className="flex w-full items-center gap-2 border-b border-border bg-muted/30 px-4 py-2 hover:bg-muted/50">
+											<Checkbox
+												checked={getGroupSelectState(row)}
+												onCheckedChange={(value) => toggleGroupSelection(table, row, !!value)}
+												onClick={(e) => e.stopPropagation()}
+												aria-label={`Select all in ${displayValue}`}
+												className={cn('shrink-0', GROUP_SELECT_TAP_TARGET)}
 											/>
-											<span className="font-medium text-sm">{displayValue}</span>
-											<span className="text-muted-foreground text-xs">({row.subRows.length})</span>
-										</button>
+											<button
+												type="button"
+												onClick={() => row.toggleExpanded()}
+												aria-expanded={row.getIsExpanded()}
+												className="flex flex-1 items-center gap-2 text-left"
+											>
+												<ChevronRight
+													size={14}
+													className={cn('transition-transform', row.getIsExpanded() && 'rotate-90')}
+												/>
+												<span className="font-medium text-sm">{displayValue}</span>
+												<span className="text-muted-foreground text-xs">
+													({row.subRows.length})
+												</span>
+											</button>
+										</div>
 									</li>
 								)
 							}
@@ -317,24 +365,33 @@ export function DataTable({
 											className="bg-muted/30 hover:bg-muted/50"
 										>
 											<TableCell colSpan={columns.length}>
-												<button
-													type="button"
-													onClick={() => row.toggleExpanded()}
-													aria-expanded={row.getIsExpanded()}
-													className="flex items-center gap-2 text-left"
-												>
-													<ChevronRight
-														size={14}
-														className={cn(
-															'transition-transform',
-															row.getIsExpanded() && 'rotate-90',
-														)}
+												<div className="flex items-center gap-2">
+													<Checkbox
+														checked={getGroupSelectState(row)}
+														onCheckedChange={(value) => toggleGroupSelection(table, row, !!value)}
+														onClick={(e) => e.stopPropagation()}
+														aria-label={`Select all in ${displayValue}`}
+														className={cn('shrink-0', GROUP_SELECT_TAP_TARGET)}
 													/>
-													<span className="font-medium text-sm">{displayValue}</span>
-													<span className="text-muted-foreground text-xs">
-														({row.subRows.length})
-													</span>
-												</button>
+													<button
+														type="button"
+														onClick={() => row.toggleExpanded()}
+														aria-expanded={row.getIsExpanded()}
+														className="flex items-center gap-2 text-left"
+													>
+														<ChevronRight
+															size={14}
+															className={cn(
+																'transition-transform',
+																row.getIsExpanded() && 'rotate-90',
+															)}
+														/>
+														<span className="font-medium text-sm">{displayValue}</span>
+														<span className="text-muted-foreground text-xs">
+															({row.subRows.length})
+														</span>
+													</button>
+												</div>
 											</TableCell>
 										</TableRow>
 									)
