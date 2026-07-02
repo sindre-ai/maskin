@@ -94,13 +94,22 @@
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 4px);
 
-	/* Named typography scale — approximate 1.25 modular scale, semantic names
-	   so they don't collide with Tailwind's numeric text-sm / text-base / …
-	   defaults. Each token carries font-size + line-height + letter-spacing;
-	   weighted tokens also carry font-weight. Tailwind v4 auto-generates the
-	   `text-<name>` utility from `--text-<name>` in @theme. Surfaces apply
-	   these in T3. Body honours 1.45 line-height; tight leading (<1.3) is
-	   reserved for label-shaped tokens (label + display) that don't wrap. */
+	/* Named typography scale — semantic names so they don't collide with
+	   Tailwind's numeric text-sm / text-base / … defaults. Each token carries
+	   font-size + line-height + letter-spacing; weighted tokens also carry
+	   font-weight. Tailwind v4 auto-generates the `text-<name>` utility from
+	   `--text-<name>` in @theme. Body honours 1.45 line-height; tight leading
+	   (<1.3) is reserved for label-shaped tokens (label + display) that don't
+	   wrap.
+
+	   Scale scope: the `≥1.25` modular-scale ratio applies from body upward
+	   (body → title → display, ratios 1.25 / 1.25). The caption→label step
+	   is deliberately tight (12→13, ratio 1.08) so body stays at 16px prose
+	   readability and label at 13px UI-chrome density — mirrors Linear /
+	   GitHub / Vercel small-text tiers. Sub-caption sizes (10–11px) for
+	   badges, count pips, and uppercase eyebrow labels sit outside the
+	   typographic scale and are permitted as `text-[Npx]` arbitraries on
+	   UI-chrome elements — see .claude/rules/frontend.md for the policy. */
 	--text-caption: 0.75rem; /* 12px */
 	--text-caption--line-height: 1.4;
 	--text-caption--letter-spacing: 0.02em;
