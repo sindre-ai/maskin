@@ -5,9 +5,14 @@ vi.mock('../../lib/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn() },
 }))
 
-const getValidOAuthTokenMock = vi.fn()
-vi.mock('../../lib/claude-oauth', () => ({
-	getValidOAuthToken: (...args: unknown[]) => getValidOAuthTokenMock(...args),
+// crypto = identity so encrypted claude_oauth blobs round-trip as their
+// plaintext values — `resolveClaudeCredentialsWithFailover` reads the
+// primary slot directly now, so tests drive it through the `db` mock's
+// workspace row rather than mocking `getValidOAuthToken` (which it no
+// longer calls).
+vi.mock('../../lib/crypto', () => ({
+	decrypt: (input: string) => input,
+	encrypt: (input: string) => input,
 }))
 
 import {
@@ -34,7 +39,7 @@ const FALLBACK_ENV_KEYS = [
 
 beforeEach(() => {
 	for (const k of FALLBACK_ENV_KEYS) delete process.env[k]
-	getValidOAuthTokenMock.mockReset()
+	process.env.MASKIN_CLAUDE_FAILOVER_ENABLED = undefined
 })
 
 afterEach(() => {
@@ -54,13 +59,38 @@ function emptySettings(): WorkspaceSettings {
 	} as WorkspaceSettings
 }
 
-function dbWithFallbackUsage(rows: Array<{ inputTokens: number; outputTokens: number }>) {
-	const where = vi.fn().mockResolvedValue(rows)
+/**
+ * `where()` resolves directly to `rows` for `getActorFallbackTokenUsage24h`'s
+ * unchained `select().from(sessions).where(...)` query, and ALSO exposes a
+ * `.limit()` method for `resolveClaudeCredentialsWithFailover`'s
+ * `select().from(workspaces).where(...).limit(1)` query — the same
+ * thenable-plus-chainable idiom used by `__tests__/setup.ts`'s mock DB.
+ * `workspaceRow` is omitted by default, so OAuth resolution sees "no
+ * workspace" and returns null without touching claude_oauth data.
+ */
+function dbWithFallbackUsage(
+	rows: Array<{ inputTokens: number; outputTokens: number }>,
+	workspaceRow?: { id: string; settings: Record<string, unknown> },
+) {
+	const where = vi.fn(() => {
+		const promise = Promise.resolve(rows) as Promise<unknown[]> & {
+			limit: (n: number) => Promise<unknown[]>
+		}
+		promise.limit = vi.fn(async () => (workspaceRow ? [workspaceRow] : []))
+		return promise
+	})
 	return {
 		select: vi.fn().mockReturnValue({
 			from: vi.fn().mockReturnValue({ where }),
 		}),
 	} as unknown as Database
+}
+
+function claudeOAuthWorkspaceRow(claudeOAuth: Record<string, unknown>): {
+	id: string
+	settings: Record<string, unknown>
+} {
+	return { id: 'ws-1', settings: { claude_oauth: claudeOAuth } }
 }
 
 describe('readFallbackConfig', () => {
@@ -142,13 +172,6 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('2. workspace custom_llm overrides Claude OAuth', async () => {
-		getValidOAuthTokenMock.mockResolvedValue({
-			tokens: {
-				accessToken: 'oauth-access',
-				refreshToken: 'oauth-refresh',
-				expiresAt: Date.now() + 60_000,
-			},
-		})
 		const settings = emptySettings()
 		settings.custom_llm = {
 			enabled: true,
@@ -174,7 +197,6 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('skips custom_llm when enabled but missing fields', async () => {
-		getValidOAuthTokenMock.mockResolvedValue(null)
 		const settings = emptySettings()
 		settings.custom_llm = { enabled: true, base_url: 'https://x', api_key: '', model: 'm' }
 		settings.llm_keys = { anthropic: 'sk-ant-fallback' }
@@ -188,19 +210,23 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('3. Claude OAuth wins over workspace api_key', async () => {
-		getValidOAuthTokenMock.mockResolvedValue({
-			tokens: {
-				accessToken: 'oauth-access',
-				refreshToken: 'oauth-refresh',
-				expiresAt: 12345,
+		const expiresAt = Date.now() + 60 * 60 * 1000
+		const db = dbWithFallbackUsage(
+			[],
+			claudeOAuthWorkspaceRow({
+				encryptedAccessToken: 'oauth-access',
+				encryptedRefreshToken: 'oauth-refresh',
+				expiresAt,
 				scopes: ['read'],
 				subscriptionType: 'pro',
-			},
-		})
+			}),
+		)
 		const settings = emptySettings()
 		settings.llm_keys = { anthropic: 'sk-ant-x' }
 		const result = await resolveLlmRoute({
-			...baseParams,
+			db,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
 			wsSettings: settings,
 			agent: {},
 		})
@@ -208,7 +234,7 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars).toMatchObject({
 			CLAUDE_OAUTH_ACCESS_TOKEN: 'oauth-access',
 			CLAUDE_OAUTH_REFRESH_TOKEN: 'oauth-refresh',
-			CLAUDE_OAUTH_EXPIRES_AT: '12345',
+			CLAUDE_OAUTH_EXPIRES_AT: String(expiresAt),
 			CLAUDE_OAUTH_SCOPES: '["read"]',
 			CLAUDE_OAUTH_SUBSCRIPTION_TYPE: 'pro',
 		})
@@ -216,7 +242,6 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('4. workspace api_key when OAuth absent', async () => {
-		getValidOAuthTokenMock.mockResolvedValue(null)
 		const settings = emptySettings()
 		settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
 		const result = await resolveLlmRoute({
@@ -229,11 +254,22 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('falls through OAuth errors to next route', async () => {
-		getValidOAuthTokenMock.mockRejectedValue(new Error('expired'))
+		// Simulate a DB error during OAuth resolution's workspace read itself.
+		const db = {
+			select: vi.fn().mockReturnValue({
+				from: vi.fn().mockReturnValue({
+					where: vi.fn().mockReturnValue({
+						limit: vi.fn().mockRejectedValue(new Error('db unavailable')),
+					}),
+				}),
+			}),
+		} as unknown as Database
 		const settings = emptySettings()
 		settings.llm_keys = { anthropic: 'sk-ant-recover' }
 		const result = await resolveLlmRoute({
-			...baseParams,
+			db,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
 			wsSettings: settings,
 			agent: {},
 		})
@@ -241,7 +277,6 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('5. system fallback when nothing else set and env configured', async () => {
-		getValidOAuthTokenMock.mockResolvedValue(null)
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
 		process.env.MASKIN_FALLBACK_BASE_URL = 'https://openrouter.ai/api'
 		process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
@@ -260,7 +295,6 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('returns null when nothing is configured', async () => {
-		getValidOAuthTokenMock.mockResolvedValue(null)
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: emptySettings(),
@@ -270,7 +304,6 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('throws FallbackQuotaExceededError when over the daily limit', async () => {
-		getValidOAuthTokenMock.mockResolvedValue(null)
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
 		process.env.MASKIN_FALLBACK_DAILY_TOKEN_LIMIT = '1000'
 		const db = dbWithFallbackUsage([
@@ -288,7 +321,6 @@ describe('resolveLlmRoute priority order', () => {
 	})
 
 	it('does NOT consume the fallback when usage is exactly at the limit', async () => {
-		getValidOAuthTokenMock.mockResolvedValue(null)
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
 		process.env.MASKIN_FALLBACK_DAILY_TOKEN_LIMIT = '1000'
 		const db = dbWithFallbackUsage([{ inputTokens: 1000, outputTokens: 0 }])
