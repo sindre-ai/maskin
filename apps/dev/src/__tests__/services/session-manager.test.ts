@@ -951,10 +951,18 @@ describe('SessionManager', () => {
 				secret: 'x'.repeat(32),
 			}
 			// 1st select: stopSession's own session lookup. 2nd: the agent_servers
-			// row lookup. 3rd: markRemoteSessionComplete's independent session
-			// re-fetch (it's also called from the internal /complete route, so it
-			// re-reads rather than trusting a value the caller already had).
-			mockResults.selectQueue = [[session], [server], [session]]
+			// row lookup. markRemoteSessionComplete no longer does its own SELECT —
+			// it does a single CAS UPDATE ... RETURNING instead (see updateQueue
+			// below); the subsequent hasOtherActiveSessions select falls through to
+			// the unset static `mockResults.select` default of [], i.e. "no other
+			// active sessions", which drives the actors-table update below.
+			mockResults.selectQueue = [[session], [server]]
+			// 1st update: markRemoteSessionComplete's CAS on `sessions` — its
+			// .returning() must yield the row so workspaceId/actorId are available
+			// for the events insert. 2nd update: the actors.agentState sync inside
+			// hasOtherActiveSessions' branch — its return value is unused by the
+			// code, so an empty array is fine.
+			mockResults.updateQueue = [[session], []]
 
 			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
 				new Response(JSON.stringify({ ok: true }), {
@@ -992,6 +1000,29 @@ describe('SessionManager', () => {
 			await expect(manager.stopSession(session.id)).rejects.toThrow(
 				'Agent server ghost-server not found',
 			)
+		})
+	})
+
+	describe('markRemoteSessionComplete()', () => {
+		it('no-ops without writing an event when the CAS update matches no row (already terminal / lost the race)', async () => {
+			mockResults.update = [] // .returning() → no row: UPDATE matched nothing
+			const initialInsertCount = calls.inserts.length
+
+			await manager.markRemoteSessionComplete('some-session-id', 1)
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
+		})
+
+		it('inserts exactly one session_failed event when the CAS update matches a row (nonzero exit code)', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.updateQueue = [[session], []]
+
+			await manager.markRemoteSessionComplete(session.id, 137)
+
+			const eventInsert = calls.inserts.find(
+				(v) => (v as Record<string, unknown>).action === 'session_failed',
+			)
+			expect(eventInsert).toBeDefined()
 		})
 	})
 

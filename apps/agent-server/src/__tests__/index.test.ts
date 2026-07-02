@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildApp } from '../index'
+import { FORCED_STOP_EXIT_CODE, buildApp } from '../index'
 import type { AgentServerEnv } from '../lib/env'
 import { ImageWarmer } from '../services/image-warmer'
 
@@ -573,5 +573,70 @@ describe('POST /sessions/:id/stop', () => {
 
 		expect(res.status).toBe(400)
 		expect(calls.find((c) => c.args[0] === 'stop')).toBeUndefined()
+	})
+})
+
+describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', () => {
+	it('seeds the forced-stop sentinel into sessionExitCodes before stopping the sandbox', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const sessionExitCodes = new Map<string, number>()
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionExitCodes,
+		})
+
+		const res = await app.request('/sessions/sess-stop/stop', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+		})
+
+		expect(res.status).toBe(200)
+		expect(sessionExitCodes.get('sess-stop')).toBe(FORCED_STOP_EXIT_CODE)
+	})
+
+	it('still seeds the sentinel even when the underlying stopSandbox call fails', async () => {
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const run = async (_bin: string, args: readonly string[]) => {
+			if (args[0] === 'stop') throw new Error('sandbox not found')
+			return { stdout: '', stderr: '' }
+		}
+		const sessionExitCodes = new Map<string, number>()
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionExitCodes,
+		})
+
+		const res = await app.request('/sessions/sess-gone/stop', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+		})
+
+		expect(res.status).toBe(200)
+		expect(sessionExitCodes.get('sess-gone')).toBe(FORCED_STOP_EXIT_CODE)
+	})
+
+	it('does not seed a sentinel for an invalid session id (rejected before the handler body runs)', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const sessionExitCodes = new Map<string, number>()
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionExitCodes,
+		})
+
+		const res = await app.request('/sessions/-bad/stop', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+		})
+
+		expect(res.status).toBe(400)
+		expect(sessionExitCodes.size).toBe(0)
 	})
 })

@@ -30,6 +30,7 @@ import {
 	isNull,
 	lt,
 	ne,
+	notInArray,
 	or,
 } from 'drizzle-orm'
 import {
@@ -1474,6 +1475,21 @@ export class SessionManager extends EventEmitter {
 	] as const
 
 	/**
+	 * Session statuses that are already resolved (or mid-way through their own
+	 * lifecycle path) — a session in one of these must never be reprocessed as
+	 * newly-completing, whether the completion signal came from the local
+	 * Docker exit watcher (`handleCompletion`) or from a remote agent-server
+	 * (`markRemoteSessionComplete`).
+	 */
+	private static readonly TERMINAL_OR_TRANSITIONAL_STATUSES = [
+		'completed',
+		'failed',
+		'timeout',
+		'paused',
+		'snapshotting',
+	] as const
+
+	/**
 	 * True if the actor has an active session other than `excludeSessionId`.
 	 * Used to avoid clobbering agent-level `agentState` when one of several
 	 * concurrent sessions transitions — the agent should only flip to a
@@ -1511,7 +1527,11 @@ export class SessionManager extends EventEmitter {
 		if (!session) return
 
 		// Skip if already in a terminal or transitional state (avoid double-processing)
-		if (['completed', 'failed', 'timeout', 'paused', 'snapshotting'].includes(session.status))
+		if (
+			(SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES as readonly string[]).includes(
+				session.status,
+			)
+		)
 			return
 
 		try {
@@ -2417,20 +2437,25 @@ export class SessionManager extends EventEmitter {
 	 * relevant parts of `handleCompletion` but skips local Docker cleanup (the
 	 * agent-server owns the sandbox lifecycle; the workspace is already in S3).
 	 */
+	/**
+	 * Mark a remote agent-server session as completed or failed. Mirrors the
+	 * relevant parts of `handleCompletion` but skips local Docker cleanup (the
+	 * agent-server owns the sandbox lifecycle; the workspace is already in S3).
+	 *
+	 * Uses a compare-and-set UPDATE (status NOT IN the terminal/transitional
+	 * set, in the WHERE clause, with `.returning()` in place of a preliminary
+	 * SELECT) so two concurrent calls for the same session — e.g. a stop
+	 * request racing the agent-server's async completion report, or two
+	 * racing stop requests — can never both observe 'running' and both write
+	 * a terminal event. Exactly one call's UPDATE matches the row; the other
+	 * gets zero rows back and no-ops.
+	 */
 	async markRemoteSessionComplete(sessionId: string, exitCode: number | null): Promise<void> {
-		const [session] = await this.db
-			.select()
-			.from(sessions)
-			.where(eq(sessions.id, sessionId))
-			.limit(1)
-		if (!session) return
-		if (['completed', 'failed', 'timeout', 'paused', 'snapshotting'].includes(session.status))
-			return
-
 		const status = exitCode === 0 ? 'completed' : 'failed'
 
+		let updated: typeof sessions.$inferSelect | undefined
 		try {
-			await this.db
+			;[updated] = await this.db
 				.update(sessions)
 				.set({
 					status,
@@ -2439,17 +2464,31 @@ export class SessionManager extends EventEmitter {
 					updatedAt: new Date(),
 					currentActivity: null,
 				})
-				.where(eq(sessions.id, sessionId))
+				.where(
+					and(
+						eq(sessions.id, sessionId),
+						notInArray(sessions.status, [...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES]),
+					),
+				)
+				.returning()
 		} catch (err) {
+			// Best-effort: a DB hiccup here must not surface as a thrown error to
+			// stopSession()'s caller, which would otherwise report a 400 "stop
+			// failed" even though the remote sandbox kill already succeeded.
 			logger.error('Failed to update remote session status', {
 				sessionId,
 				status,
 				error: String(err),
 			})
+			return
 		}
 
+		// No row matched: either the session doesn't exist, or it was already
+		// terminal/transitional (this call lost the race, or is a stale retry).
+		if (!updated) return
+
 		try {
-			if (!(await this.hasOtherActiveSessions(session.actorId, sessionId))) {
+			if (!(await this.hasOtherActiveSessions(updated.actorId, sessionId))) {
 				await this.db
 					.update(actors)
 					.set({
@@ -2457,7 +2496,7 @@ export class SessionManager extends EventEmitter {
 						agentStateUpdatedAt: new Date(),
 						updatedAt: new Date(),
 					})
-					.where(eq(actors.id, session.actorId))
+					.where(eq(actors.id, updated.actorId))
 			}
 		} catch (err) {
 			logger.warn('Failed to sync agentState for remote session', { sessionId, error: String(err) })
@@ -2465,8 +2504,8 @@ export class SessionManager extends EventEmitter {
 
 		try {
 			await this.db.insert(events).values({
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
+				workspaceId: updated.workspaceId,
+				actorId: updated.actorId,
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
@@ -2496,7 +2535,7 @@ export class SessionManager extends EventEmitter {
 		)
 
 		await this.clearActiveSession(sessionId)
-		await this.drainQueue(session.workspaceId).catch((err) =>
+		await this.drainQueue(updated.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
 		)
 

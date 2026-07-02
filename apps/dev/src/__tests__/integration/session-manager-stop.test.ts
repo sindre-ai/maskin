@@ -124,4 +124,57 @@ describe('SessionManager.stopSession — remote agent-server routing (Integratio
 			await manager.stop()
 		}
 	})
+
+	// Regression coverage for the duplicate-audit-event race: markRemoteSessionComplete
+	// used to SELECT then UPDATE with no status condition, so two concurrent calls for
+	// the same session (a double-click stop, or a stop racing the agent-server's async
+	// completion report) could both observe 'running' and both insert a terminal event.
+	// The fix makes the UPDATE a compare-and-set (status NOT IN <terminal set> in the
+	// WHERE clause); only the winning call's UPDATE matches a row.
+	it('two concurrent markRemoteSessionComplete calls for the same session produce exactly one terminal event', async () => {
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		try {
+			await Promise.all([
+				manager.markRemoteSessionComplete(session.id, 1),
+				manager.markRemoteSessionComplete(session.id, 1),
+			])
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('failed')
+
+		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+		expect(eventRows.filter((e) => e.action === 'session_failed')).toHaveLength(1)
+	})
+
+	// Regression coverage for the crash-window race: if apps/dev crashes between
+	// AgentServerClient.stopSession() succeeding and stopSession()'s own
+	// markRemoteSessionComplete(id, null) call landing, the row is left 'running'
+	// until agent-server's monitorSession loop later reports completion. That report
+	// now always carries FORCED_STOP_EXIT_CODE (apps/agent-server/src/index.ts) for a
+	// forcibly-stopped session instead of a possibly-0 default, so it must still land
+	// on 'failed' — never 'completed' — even when it's the only call that ever fires.
+	// 137 must match FORCED_STOP_EXIT_CODE in apps/agent-server/src/index.ts.
+	it('a forced-stop sentinel exit code lands the session on failed, never completed', async () => {
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		try {
+			await manager.markRemoteSessionComplete(session.id, 137)
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('failed')
+		expect(row?.result).toMatchObject({ exit_code: 137 })
+	})
 })

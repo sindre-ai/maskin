@@ -60,6 +60,13 @@ export type AppDeps = {
 	storage: StorageProvider | null
 	msb: MicrosandboxDeps
 	warmer?: ImageWarmer | null
+	/**
+	 * Test seam only. Lets tests inject a map and assert what the /stop and
+	 * /complete handlers write into it. The production entrypoint (`main()`)
+	 * never sets this — buildApp creates its own map when omitted, so this is
+	 * fully backward-compatible with the real boot path.
+	 */
+	sessionExitCodes?: Map<string, number>
 }
 
 const LOG_FLUSH_INTERVAL_MS = 2_000
@@ -72,6 +79,24 @@ const LOG_FLUSH_MAX_LINES = 100
 // not honored once msb destroys the socket), which wedges the VM's EXIT trap and
 // leaves the session "running" until the max-duration backstop fires (hours).
 const COMPLETE_STOP_DELAY_MS = 2_000
+
+// Exit code seeded into `sessionExitCodes` when a session is force-stopped via
+// POST /sessions/:id/stop (as opposed to a graceful exit reported through
+// POST /sessions/:id/complete, whose EXIT trap always supplies a real exit
+// code). Guarantees that if monitorSession's independent waitForCompletion
+// poll ever notices this session's VM went to "stopped" as a side effect of
+// the forced kill, it reports a nonzero code — never the 0 default at
+// `sessionExitCodes?.get(sessionId) ?? 0` below — so markRemoteSessionComplete
+// always computes 'failed', never 'completed', for an explicitly-stopped
+// session, even if apps/dev crashes before it can record the stop itself.
+// 137 = 128 + SIGKILL(9), the conventional "force-killed" exit code.
+//
+// Accepted tradeoff: if the session's own agent-run.sh EXIT trap reports a
+// real exit code to /complete within the same narrow window as a stop
+// request — in either order — the later write wins and the earlier one is
+// silently overwritten. A stop racing a natural completion within
+// milliseconds is a genuine ambiguity, not a bug this fix is meant to close.
+export const FORCED_STOP_EXIT_CODE = 137
 
 /**
  * Background task that runs after a session's microVM is confirmed Running.
@@ -254,8 +279,10 @@ export function buildApp(deps: AppDeps): Hono {
 	const inputQueue = new InputQueue()
 	// Connects the /sessions/:id/logs/ingest endpoint to monitorSession's buffer.
 	const sessionLogRouters = new Map<string, (line: string) => void>()
-	// Receives exit codes from the /sessions/:id/complete endpoint for monitorSession.
-	const sessionExitCodes = new Map<string, number>()
+	// Receives exit codes from the /sessions/:id/complete and /sessions/:id/stop
+	// endpoints for monitorSession. Injectable via deps for tests; production
+	// always omits it and gets a fresh map (see AppDeps.sessionExitCodes).
+	const sessionExitCodes = deps.sessionExitCodes ?? new Map<string, number>()
 
 	app.get('/health', async (c) => {
 		// `ok` must track msb liveness — a box whose `msb` is missing or broken
@@ -607,6 +634,9 @@ export function buildApp(deps: AppDeps): Hono {
 	app.post('/sessions/:id/stop', async (c) => {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+		// Seed BEFORE stopping the sandbox, and regardless of whether the stop
+		// below succeeds — see FORCED_STOP_EXIT_CODE's comment.
+		sessionExitCodes.set(id, FORCED_STOP_EXIT_CODE)
 		try {
 			await stopSandbox(id, deps.msb)
 		} catch (err) {
