@@ -344,6 +344,54 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.objects[0].relationships).toHaveLength(1)
 			expect(result.structuredContent.objects[0].connected_objects).toHaveLength(1)
 		})
+
+		it('emits each object body exactly once across heroCard, results, and objects', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				const match = urlStr.match(/\/api\/objects\/([^/]+)\/graph/)
+				const id = match?.[1] ?? 'unknown'
+				return {
+					ok: true,
+					json: () =>
+						Promise.resolve({
+							object: { id, type: 'bet', title: `Bet ${id}`, status: 'active' },
+							relationships: [],
+							connected_objects: [],
+						}),
+				} as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['bet-a', 'bet-b'] })) as {
+				structuredContent: {
+					heroCard: {
+						object?: { id: string }
+						objects?: Array<{ id: string; relationships?: unknown; connected_objects?: unknown }>
+					}
+					results: Array<{ id: string; success: boolean; result?: unknown }>
+					objects: Array<{ object: { id: string }; relationships?: unknown }>
+				}
+			}
+
+			// heroCard entries must be the lean HeroCardObject shape — no full body.
+			const heroEntries = result.structuredContent.heroCard.objects ?? []
+			for (const entry of heroEntries) {
+				expect(entry.relationships).toBeUndefined()
+				expect(entry.connected_objects).toBeUndefined()
+			}
+
+			// results[] is now a per-id envelope — no object body nested under .result.
+			for (const r of result.structuredContent.results) {
+				expect(r).not.toHaveProperty('result')
+				expect(typeof r.id).toBe('string')
+				expect(typeof r.success).toBe('boolean')
+			}
+
+			// objects[] is the canonical body location — exactly one entry per id.
+			const bodyIds = result.structuredContent.objects.map((o) => o.object.id)
+			expect(bodyIds).toEqual(['bet-a', 'bet-b'])
+			expect(new Set(bodyIds).size).toBe(bodyIds.length)
+		})
 	})
 
 	describe('list_objects handler', () => {

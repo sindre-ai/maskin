@@ -1549,18 +1549,28 @@ export function createMcpServer(config: McpConfig) {
 					})
 				: results
 
+			// Object body lives at `structuredContent.objects[]` only (ADR-0001).
+			// `results[]` is a per-id success/error envelope so the same body isn't
+			// duplicated across `results[].result.object` and `objects[].object`.
+			const slimResults = enrichedResults.map((r) =>
+				r.success
+					? { id: r.id, success: true as const }
+					: { id: r.id, success: false as const, error: r.error },
+			)
+			const canonicalObjects = (enrichedResults as typeof results)
+				.filter(
+					(r): r is { id: string; success: true; result: { object: RawObject } } =>
+						r.success === true && (r.result as { object?: unknown } | null)?.object != null,
+				)
+				.map((r) => r.result)
+
 			return {
 				_meta: uiMeta('get_objects', config, workspace_id, pickResourceUri(heroCard)),
 				content: [{ type: 'text' as const, text: JSON.stringify(enrichedResults, null, 2) }],
 				structuredContent: {
 					heroCard,
-					results: enrichedResults,
-					objects: (enrichedResults as typeof results)
-						.filter(
-							(r): r is { id: string; success: true; result: { object: RawObject } } =>
-								r.success === true && (r.result as { object?: unknown } | null)?.object != null,
-						)
-						.map((r) => r.result),
+					results: slimResults,
+					objects: canonicalObjects,
 				},
 			}
 		},
