@@ -12,12 +12,20 @@ describe('workspaceSettingsSchema', () => {
 	it('provides all defaults when given empty object', () => {
 		const result = workspaceSettingsSchema.parse({})
 		expect(result.display_names).toEqual({ insight: 'Insight', bet: 'Bet', task: 'Task' })
-		expect(result.statuses.insight).toEqual(['new', 'processing', 'clustered', 'discarded'])
+		expect(result.statuses.insight).toEqual([
+			'new',
+			'processing',
+			'clustered',
+			'scored',
+			'parked',
+			'discarded',
+		])
 		expect(result.statuses.bet).toEqual([
 			'signal',
-			'proposed',
+			'qualified',
+			'define',
 			'active',
-			'completed',
+			'live',
 			'succeeded',
 			'failed',
 			'paused',
@@ -26,9 +34,9 @@ describe('workspaceSettingsSchema', () => {
 			'todo',
 			'in_progress',
 			'in_review',
-			'testing',
+			'validated',
 			'done',
-			'blocked',
+			'discarded',
 		])
 		expect(result.field_definitions).toEqual({})
 		expect(result.relationship_types).toEqual([

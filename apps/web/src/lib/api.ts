@@ -453,6 +453,63 @@ export const api = {
 			}),
 	},
 
+	catalogPackages: {
+		list: (params?: { type?: string; use_case?: string; q?: string }) => {
+			const qs = params
+				? `?${new URLSearchParams(
+						Object.entries(params).filter(([, v]) => v !== undefined) as [string, string][],
+					)}`
+				: ''
+			return request<CatalogPackagesListResponse>(`/catalog/packages${qs}`)
+		},
+		get: (id: string) => request<CatalogPackageDetailResponse>(`/catalog/packages/${id}`),
+	},
+
+	catalogItems: {
+		install: (itemId: string, workspaceId: string) =>
+			request<CatalogItemInstallResponse>(`/catalog/items/${encodeURIComponent(itemId)}/install`, {
+				method: 'POST',
+				body: { workspaceId },
+				workspaceId,
+			}),
+		installed: (workspaceId: string) =>
+			request<CatalogItemsInstalledResponse>(
+				`/catalog/items/installed?workspaceId=${encodeURIComponent(workspaceId)}`,
+				{ workspaceId },
+			),
+		uninstall: (itemId: string, workspaceId: string, keepProvisionedItems: boolean) =>
+			request<{ deleted: boolean }>(`/catalog/items/${encodeURIComponent(itemId)}/uninstall`, {
+				method: 'DELETE',
+				body: { workspaceId, keepProvisionedItems },
+				workspaceId,
+			}),
+	},
+
+	installedPackages: {
+		list: (workspaceId: string) =>
+			request<InstalledPackagesListResponse>(
+				`/installed-packages?workspaceId=${encodeURIComponent(workspaceId)}`,
+				{ workspaceId },
+			),
+		install: (workspaceId: string, packageId: string) =>
+			request<InstalledPackageInstallResponse>('/installed-packages', {
+				method: 'POST',
+				body: { packageId, workspaceId },
+				workspaceId,
+			}),
+		fork: (workspaceId: string, installedPackageId: string) =>
+			request<InstalledPackageForkResponse>(`/installed-packages/${installedPackageId}/fork`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		uninstall: (workspaceId: string, installedPackageId: string, keepProvisionedItems: boolean) =>
+			request<{ deleted: boolean }>(`/installed-packages/${installedPackageId}`, {
+				method: 'DELETE',
+				body: { keepProvisionedItems },
+				workspaceId,
+			}),
+	},
+
 	subscriptions: {
 		subscribe: (workspaceId: string, entityType: string, entityId: string) =>
 			request<{ subscribed: true }>('/subscriptions', {
@@ -832,6 +889,7 @@ export interface ProviderInfo {
 	displayName: string
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key'
 	events: ProviderEventDefinition[]
+	externalIdDisplay?: 'email' | 'installation'
 }
 
 export interface SlackConversation {
@@ -1129,4 +1187,101 @@ export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
 	csvOptions?: CsvOptions
+}
+
+export type CatalogItemType = 'actor' | 'trigger' | 'skill' | 'integration'
+
+export interface CatalogPackageSummary {
+	id: string
+	name: string
+	slug: string
+	description: string
+	version: string
+	use_case: string | null
+	item_types: CatalogItemType[]
+	created_at: string | null
+	updated_at: string | null
+}
+
+export interface CatalogPackageItem {
+	id: string
+	package_id: string
+	item_type: CatalogItemType
+	source_item_id: string
+	item_snapshot: Record<string, unknown>
+	created_at: string | null
+}
+
+export interface CatalogPackageCounts {
+	total: number
+	by_type: Record<CatalogItemType, number>
+	by_use_case: Record<string, number>
+}
+
+export interface CatalogPackagesListResponse {
+	packages: CatalogPackageSummary[]
+	counts: CatalogPackageCounts
+}
+
+export interface CatalogPackageDetailResponse {
+	package: CatalogPackageSummary
+	items: CatalogPackageItem[]
+}
+
+export interface CatalogItemInstallResponse {
+	id: string
+	item_type: CatalogItemType
+	name: string
+}
+
+export interface CatalogItemInstalledEntry {
+	catalog_item_id: string
+	entity_id: string
+	entity_type: 'actor' | 'trigger' | 'skill' | 'integration'
+}
+
+export interface CatalogItemsInstalledResponse {
+	items: CatalogItemInstalledEntry[]
+}
+
+export interface InstalledPackageRow {
+	id: string
+	workspaceId: string
+	sourcePackageId: string
+	packageName: string
+	installedVersion: string
+	isLocked: boolean
+	forkedAt: string | null
+	installedAt: string | null
+	updatedAt: string | null
+	availableVersion: string
+	hasUpdate: boolean
+}
+
+export interface InstalledPackagesListResponse {
+	installs: InstalledPackageRow[]
+}
+
+interface InstalledPackageInstallResponse {
+	id: string
+	workspaceId: string
+	sourcePackageId: string
+	installedVersion: string
+	isLocked: boolean
+	forkedAt: string | null
+	installedAt: string | null
+	updatedAt: string | null
+	provisioned: { actors: number; triggers: number; skills: number; integrations: number }
+}
+
+interface InstalledPackageForkResponse {
+	id: string
+	workspaceId: string
+	sourcePackageId: string
+	installedVersion: string
+	isLocked: boolean
+	forkedAt: string | null
+	installedAt: string | null
+	updatedAt: string | null
+	detached: { actors: number; triggers: number; skills: number; integrations: number }
 }

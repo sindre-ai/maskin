@@ -51,9 +51,10 @@ import { useCallback, useEffect, useState } from 'react'
 
 interface SkillsProps {
 	actorId: string
+	readOnly?: boolean
 }
 
-export function Skills({ actorId }: SkillsProps) {
+export function Skills({ actorId, readOnly = false }: SkillsProps) {
 	const { workspaceId } = useWorkspace()
 	const { data: skills, isLoading } = useSkills(actorId, workspaceId)
 	const deleteSkill = useDeleteSkill(actorId, workspaceId)
@@ -77,14 +78,14 @@ export function Skills({ actorId }: SkillsProps) {
 
 	return (
 		<div>
-			<WorkspaceSkillsSection actorId={actorId} workspaceId={workspaceId} />
+			<WorkspaceSkillsSection actorId={actorId} workspaceId={workspaceId} readOnly={readOnly} />
 
 			<SkillsSectionHeader icon={User} label="Personal" count={skillList.length} className="mt-4" />
 
 			{skillList.length > 0 ? (
 				<div className="space-y-2 mb-3">
 					{skillList.map((skill) =>
-						editingSkill === skill.name ? (
+						!readOnly && editingSkill === skill.name ? (
 							<SkillForm
 								key={skill.name}
 								actorId={actorId}
@@ -97,6 +98,7 @@ export function Skills({ actorId }: SkillsProps) {
 								skill={skill}
 								onEdit={() => setEditingSkill(skill.name)}
 								onDelete={() => handleDelete(skill.name)}
+								readOnly={readOnly}
 							/>
 						),
 					)}
@@ -107,22 +109,30 @@ export function Skills({ actorId }: SkillsProps) {
 				</p>
 			)}
 
-			{addingSkill ? (
-				<SkillForm actorId={actorId} onDone={() => setAddingSkill(false)} />
-			) : (
-				<div className="flex flex-wrap items-center gap-2">
-					<Button size="sm" variant="outline" onClick={() => setAddingSkill(true)}>
-						<Plus className="h-3.5 w-3.5 mr-1" />
-						Add Skill
-					</Button>
-					<Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
-						<FileText className="h-3.5 w-3.5 mr-1" />
-						Import SKILL.md
-					</Button>
-				</div>
-			)}
+			{!readOnly && (
+				<>
+					{addingSkill ? (
+						<SkillForm actorId={actorId} onDone={() => setAddingSkill(false)} />
+					) : (
+						<div className="flex flex-wrap items-center gap-2">
+							<Button size="sm" variant="outline" onClick={() => setAddingSkill(true)}>
+								<Plus className="h-3.5 w-3.5 mr-1" />
+								Add Skill
+							</Button>
+							<Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
+								<FileText className="h-3.5 w-3.5 mr-1" />
+								Import SKILL.md
+							</Button>
+						</div>
+					)}
 
-			<ImportSkillDialog actorId={actorId} open={importOpen} onClose={() => setImportOpen(false)} />
+					<ImportSkillDialog
+						actorId={actorId}
+						open={importOpen}
+						onClose={() => setImportOpen(false)}
+					/>
+				</>
+			)}
 		</div>
 	)
 }
@@ -130,9 +140,11 @@ export function Skills({ actorId }: SkillsProps) {
 function WorkspaceSkillsSection({
 	actorId,
 	workspaceId,
+	readOnly = false,
 }: {
 	actorId: string
 	workspaceId: string
+	readOnly?: boolean
 }) {
 	const { data: workspaceSkills, isLoading: isLoadingWorkspace } = useWorkspaceSkills(workspaceId)
 	const { data: attachments, isLoading: isLoadingAttachments } = useAgentSkillAttachments(actorId)
@@ -174,7 +186,7 @@ function WorkspaceSkillsSection({
 
 			{isLoading && <p className="text-xs text-muted-foreground">Loading workspace skills...</p>}
 
-			{showEmptyState && (
+			{showEmptyState && !readOnly && (
 				<p className="text-xs text-muted-foreground">
 					No workspace skills in this workspace yet. Create one in{' '}
 					<Link
@@ -189,7 +201,7 @@ function WorkspaceSkillsSection({
 				</p>
 			)}
 
-			{!isLoading && available.length > 0 && (
+			{!readOnly && !isLoading && available.length > 0 && (
 				<ResponsivePopover open={open} onOpenChange={handleOpenChange}>
 					<ResponsivePopoverTrigger asChild>
 						<Button
@@ -263,6 +275,7 @@ function WorkspaceSkillsSection({
 							key={skill.id}
 							skill={skill}
 							onRemove={() => detachSkill.mutate(skill.id)}
+							readOnly={readOnly}
 						/>
 					))}
 				</div>
@@ -301,9 +314,11 @@ function SkillsSectionHeader({
 function AttachedSkillRow({
 	skill,
 	onRemove,
+	readOnly = false,
 }: {
 	skill: AttachedWorkspaceSkill | WorkspaceSkillListItem
 	onRemove: () => void
+	readOnly?: boolean
 }) {
 	return (
 		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-bg-surface px-3 py-2">
@@ -314,15 +329,17 @@ function AttachedSkillRow({
 					<p className="text-xs text-muted-foreground truncate">{skill.description}</p>
 				)}
 			</div>
-			<Button
-				size="sm"
-				variant="ghost"
-				className="text-muted-foreground shrink-0"
-				onClick={onRemove}
-				aria-label={`Remove ${skill.name}`}
-			>
-				Remove
-			</Button>
+			{!readOnly && (
+				<Button
+					size="sm"
+					variant="ghost"
+					className="text-muted-foreground shrink-0"
+					onClick={onRemove}
+					aria-label={`Remove ${skill.name}`}
+				>
+					Remove
+				</Button>
+			)}
 		</div>
 	)
 }
@@ -331,10 +348,12 @@ function SkillCard({
 	skill,
 	onEdit,
 	onDelete,
+	readOnly = false,
 }: {
 	skill: SkillListItem
 	onEdit: () => void
 	onDelete: () => void
+	readOnly?: boolean
 }) {
 	const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -347,37 +366,38 @@ function SkillCard({
 					<p className="text-xs text-muted-foreground truncate">{skill.description}</p>
 				)}
 			</div>
-			{confirmDelete ? (
-				<div className="flex items-center gap-1 shrink-0">
-					<Button size="sm" variant="destructive" onClick={onDelete}>
-						Delete
-					</Button>
-					<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
-						Cancel
-					</Button>
-				</div>
-			) : (
-				<div className="flex items-center gap-1 shrink-0">
-					<Button
-						size="icon"
-						variant="ghost"
-						className="text-muted-foreground"
-						onClick={onEdit}
-						aria-label="Edit skill"
-					>
-						<Pencil className="h-3.5 w-3.5" />
-					</Button>
-					<Button
-						size="icon"
-						variant="ghost"
-						className="text-muted-foreground hover:text-error"
-						onClick={() => setConfirmDelete(true)}
-						aria-label="Delete skill"
-					>
-						<Trash2 className="h-3.5 w-3.5" />
-					</Button>
-				</div>
-			)}
+			{!readOnly &&
+				(confirmDelete ? (
+					<div className="flex items-center gap-1 shrink-0">
+						<Button size="sm" variant="destructive" onClick={onDelete}>
+							Delete
+						</Button>
+						<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+							Cancel
+						</Button>
+					</div>
+				) : (
+					<div className="flex items-center gap-1 shrink-0">
+						<Button
+							size="icon"
+							variant="ghost"
+							className="text-muted-foreground"
+							onClick={onEdit}
+							aria-label="Edit skill"
+						>
+							<Pencil className="h-3.5 w-3.5" />
+						</Button>
+						<Button
+							size="icon"
+							variant="ghost"
+							className="text-muted-foreground hover:text-error"
+							onClick={() => setConfirmDelete(true)}
+							aria-label="Delete skill"
+						>
+							<Trash2 className="h-3.5 w-3.5" />
+						</Button>
+					</div>
+				))}
 		</div>
 	)
 }

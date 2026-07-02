@@ -27,6 +27,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `.claude/rules/input-validation.md` — input validation requirements at system boundaries (HTTP params, env vars, DB triggers)
 - `.claude/rules/structural-verification.md` — file placement and build configuration verification checklist
 - `.claude/rules/known-pitfalls.md` — registry of recurring bugs to check against before submitting code
+- `.claude/rules/verification.md` — mandatory runtime-verification gates: integration tests for DB/route changes, E2E specs for frontend changes
 - `packages/db/MIGRATIONS.md` — migration conventions for hot tables (CONCURRENTLY indexes, chunked backfills); read before editing a `.sql` file produced by `pnpm db:generate`
 
 ## Architecture

@@ -1,0 +1,12 @@
+# Hot tables for the `risk-classifier` skill (packages/risk-classifier).
+#
+# Mirrors the "Hot tables list" in packages/db/MIGRATIONS.md, the canonical
+# human-maintained source. When squawk flags a blocking-lock finding against
+# one of these tables, the score floors to max(additive_sum, 60). Update this
+# list whenever a table is added to or removed from MIGRATIONS.md.
+#
+# This file is itself a protected path (.maskin/protected-paths.yml) — edits
+# here are always two-human PRs.
+
+hot_tables:
+  - webhook_deliveries

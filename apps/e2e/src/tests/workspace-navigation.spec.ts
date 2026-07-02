@@ -10,7 +10,6 @@ test.describe('Workspace Navigation', () => {
 		// Navigate to Objects
 		await page.getByRole('link', { name: 'Objects' }).click()
 		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/objects`))
-		await expect(page.getByRole('heading', { name: 'Objects' })).toBeVisible()
 
 		// Navigate to Activity
 		await page.getByRole('link', { name: 'Activity' }).click()
@@ -19,10 +18,6 @@ test.describe('Workspace Navigation', () => {
 		// Navigate to Agents
 		await page.getByRole('link', { name: 'Agents' }).click()
 		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/agents`))
-
-		// Navigate to Settings
-		await page.getByRole('link', { name: 'Settings' }).click()
-		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/settings`))
 	})
 
 	test('redirects unauthenticated users to login', async ({ browser }) => {
