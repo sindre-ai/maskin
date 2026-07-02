@@ -451,7 +451,6 @@ app.openapi(importRoute, (async (c) => {
 		})
 	}
 
-
 	logger.info('Claude OAuth tokens imported for workspace', {
 		workspaceId,
 		slot,
