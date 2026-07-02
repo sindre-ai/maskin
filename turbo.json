@@ -29,6 +29,8 @@
 		"GMAIL_PUBSUB_TOPIC",
 		"GMAIL_PUBSUB_AUDIENCE",
 		"GMAIL_PUBSUB_SERVICE_ACCOUNT",
+		"GOOGLE_CALENDAR_CLIENT_ID",
+		"GOOGLE_CALENDAR_CLIENT_SECRET",
 		"CORS_ORIGIN",
 		"FRONTEND_URL",
 		"API_BASE_URL",
@@ -91,7 +93,8 @@
 			"env": ["DATABASE_URL"]
 		},
 		"type-check": {
-			"dependsOn": ["^build"]
+			"dependsOn": ["^build"],
+			"outputs": ["**/*.tsbuildinfo"]
 		},
 		"lint": {},
 		"db:generate": {
