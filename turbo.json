@@ -93,7 +93,8 @@
 			"env": ["DATABASE_URL"]
 		},
 		"type-check": {
-			"dependsOn": ["^build"]
+			"dependsOn": ["^build"],
+			"outputs": ["**/*.tsbuildinfo"]
 		},
 		"lint": {},
 		"db:generate": {
