@@ -71,6 +71,8 @@ export type AppDeps = {
 
 const LOG_FLUSH_INTERVAL_MS = 2_000
 const LOG_FLUSH_MAX_LINES = 100
+const LOG_FLUSH_RETRIES = 3
+const LOG_FLUSH_RETRY_DELAY_MS = 1_000
 
 // Delay before stopping a microVM after it signals completion. `msb stop` tears
 // down the VM's (smoltcp) network, so we must let the {ok:true} response flush
@@ -134,7 +136,9 @@ async function monitorSession(
 	const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 	// Log streaming: buffer lines and POST them to the Maskin backend in batches.
-	// Best-effort — if the POST fails, sessions still complete.
+	// Retried like the completion report below — the terminal flush carries the
+	// `result` line that markRemoteSessionComplete() parses for usage/cost, so a
+	// single dropped POST here silently loses that session's usage forever.
 	let logBuffer: Array<{ stream: 'stdout' | 'stderr'; content: string }> = []
 	let flushTimer: NodeJS.Timeout | null = null
 
@@ -144,18 +148,33 @@ async function monitorSession(
 			return
 		}
 		const batch = logBuffer.splice(0)
-		try {
-			await fetch(`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/logs`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${agentServerSecret}`,
-				},
-				body: JSON.stringify({ logs: batch }),
-			})
-		} catch (err) {
-			logger.warn('failed to POST logs to Maskin', { sessionId, error: String(err) })
+		for (let attempt = 1; attempt <= LOG_FLUSH_RETRIES; attempt++) {
+			try {
+				await fetch(`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/logs`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						Authorization: `Bearer ${agentServerSecret}`,
+					},
+					body: JSON.stringify({ logs: batch }),
+				})
+				return
+			} catch (err) {
+				logger.warn('failed to POST logs to Maskin, will retry', {
+					sessionId,
+					attempt,
+					maxAttempts: LOG_FLUSH_RETRIES,
+					error: String(err),
+				})
+				if (attempt < LOG_FLUSH_RETRIES) {
+					await sleep(LOG_FLUSH_RETRY_DELAY_MS)
+				}
+			}
 		}
+		logger.error('failed to POST logs to Maskin after all retries — log lines dropped', {
+			sessionId,
+			droppedLines: batch.length,
+		})
 	}
 
 	const scheduleFlush = (): void => {

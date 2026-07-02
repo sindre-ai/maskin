@@ -2493,6 +2493,26 @@ export class SessionManager extends EventEmitter {
 
 	async markRemoteSessionComplete(sessionId: string, exitCode: number | null): Promise<void> {
 		const status = exitCode === 0 ? 'completed' : 'failed'
+		let usage: SessionUsage | null = null
+		try {
+			usage = await extractSessionUsage(this.db, sessionId)
+		} catch (err) {
+			logger.warn('Failed to parse usage from remote session logs', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
+		const usageFields = usage
+			? {
+					totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+					inputTokens: usage.inputTokens,
+					outputTokens: usage.outputTokens,
+					cacheCreationInputTokens: usage.cacheCreationInputTokens,
+					cacheReadInputTokens: usage.cacheReadInputTokens,
+					durationMs: usage.durationMs,
+				}
+			: {}
 
 		// A thrown DB error here (distinct from a clean 0-row CAS miss) must not
 		// permanently strand the session: giving up immediately would skip the
@@ -2514,6 +2534,7 @@ export class SessionManager extends EventEmitter {
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,
+						...usageFields,
 					})
 					.where(
 						and(
@@ -2588,6 +2609,7 @@ export class SessionManager extends EventEmitter {
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,
+						...usageFields,
 					})
 					.where(eq(sessions.id, sessionId))
 			} catch (err) {

@@ -96,7 +96,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { getProvider } from '../../lib/integrations/registry'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { SessionManager } from '../../services/session-manager'
-import { buildIntegration, buildSession } from '../factories'
+import { buildIntegration, buildSession, buildSessionLog } from '../factories'
 import { createTestContext } from '../setup'
 
 function createMockStorageProvider() {
@@ -2008,6 +2008,67 @@ describe('SessionManager', () => {
 			).handleCompletion(session.id, 'container-abc', null)
 
 			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('markRemoteSessionComplete() — usage parsing', () => {
+		it('persists Claude usage from remote session logs before marking complete', async () => {
+			const session = buildSession({ status: 'running' })
+			const resultLine = JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				duration_ms: 3210,
+				total_cost_usd: 0.012345,
+				usage: {
+					input_tokens: 1234,
+					output_tokens: 567,
+					cache_creation_input_tokens: 89,
+					cache_read_input_tokens: 1011,
+				},
+			})
+			const log = buildSessionLog({
+				sessionId: session.id,
+				stream: 'stdout',
+				content: `${resultLine}\n`,
+			})
+
+			mockResults.selectQueue = [
+				[log], // extractSessionUsage: read remote stdout tail
+				[], // hasOtherActiveSessions: no other active session
+			]
+			mockResults.updateQueue = [
+				[session], // CAS update on sessions table (.returning())
+				[], // actors agentState sync update
+			]
+
+			await manager.markRemoteSessionComplete(session.id, 0)
+
+			const sessionUpdate = calls.updates.find(
+				(
+					u,
+				): u is {
+					status: string
+					totalCostUsd: string
+					inputTokens: number
+					outputTokens: number
+					cacheCreationInputTokens: number
+					cacheReadInputTokens: number
+					durationMs: number
+				} =>
+					typeof u === 'object' &&
+					u !== null &&
+					(u as Record<string, unknown>).status === 'completed' &&
+					'totalCostUsd' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({
+				totalCostUsd: '0.012345',
+				inputTokens: 1234,
+				outputTokens: 567,
+				cacheCreationInputTokens: 89,
+				cacheReadInputTokens: 1011,
+				durationMs: 3210,
+			})
 		})
 	})
 })
