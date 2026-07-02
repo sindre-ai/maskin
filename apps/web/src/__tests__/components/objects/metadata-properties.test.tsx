@@ -59,4 +59,50 @@ describe('MetadataPropertiesView', () => {
 		render(<MetadataPropertiesView {...baseProps} object={object} />)
 		expect(screen.getByText('42')).toBeInTheDocument()
 	})
+
+	it('renders branch value as a GitHub tree link when both branch and repo are set', () => {
+		const object = buildObjectResponse({
+			metadata: {
+				branch: 'bet/branch-one-click-link',
+				repo: 'https://github.com/sindre-ai/maskin',
+			},
+		})
+		render(<MetadataPropertiesView {...baseProps} object={object} />)
+		const link = screen.getByRole('link', { name: 'bet/branch-one-click-link' })
+		expect(link).toHaveAttribute(
+			'href',
+			'https://github.com/sindre-ai/maskin/tree/bet%2Fbranch-one-click-link',
+		)
+		expect(link).toHaveAttribute('target', '_blank')
+		expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+	})
+
+	it('trims trailing slash on repo before building the branch link', () => {
+		const object = buildObjectResponse({
+			metadata: {
+				branch: 'main',
+				repo: 'https://github.com/sindre-ai/maskin/',
+			},
+		})
+		render(<MetadataPropertiesView {...baseProps} object={object} />)
+		expect(screen.getByRole('link', { name: 'main' })).toHaveAttribute(
+			'href',
+			'https://github.com/sindre-ai/maskin/tree/main',
+		)
+	})
+
+	it('renders branch as plain text when repo is missing', () => {
+		const object = buildObjectResponse({ metadata: { branch: 'feature/x' } })
+		render(<MetadataPropertiesView {...baseProps} object={object} />)
+		expect(screen.getByText('feature/x')).toBeInTheDocument()
+		expect(screen.queryByRole('link')).not.toBeInTheDocument()
+	})
+
+	it('does not link non-branch keys that happen to sit next to a repo', () => {
+		const object = buildObjectResponse({
+			metadata: { branch: 'main', repo: 'https://github.com/sindre-ai/maskin', priority: 'high' },
+		})
+		render(<MetadataPropertiesView {...baseProps} object={object} />)
+		expect(screen.getAllByRole('link')).toHaveLength(1)
+	})
 })
