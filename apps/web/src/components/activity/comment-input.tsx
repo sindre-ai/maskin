@@ -294,6 +294,10 @@ export function CommentInput({
 		>
 			<div className="flex items-start gap-2">
 				<ActorAvatar name={actor.name} type={actor.type} size="sm" className="mt-1" />
+				{/* min-w-0 lets the flex child shrink below its textarea's intrinsic
+				    content width — without it, a long unbroken token (URL, paste)
+				    pushes the row past the card and the page scrolls horizontally
+				    instead of the field growing vertically. */}
 				<div className="min-w-0 flex-1">
 					<div
 						className={cn(
@@ -344,6 +348,11 @@ export function CommentInput({
 								{/* Trailing zero-width space keeps the overlay height in sync when content ends with a newline */}
 								{content.endsWith('\n') && '​'}
 							</div>
+							{/* wrap="soft" + break-words match the overlay's whitespace-pre-wrap
+							    break-words so the textarea's scrollHeight (which the
+							    useLayoutEffect resize reads) reflects the wrapped layout
+							    instead of one runaway line. text-base stays for the iOS
+							    Safari zoom-on-focus guard (#655). */}
 							<textarea
 								ref={inputRef}
 								value={content}
@@ -352,6 +361,7 @@ export function CommentInput({
 								onScroll={handleScroll}
 								placeholder="Write a comment... Use @ to mention an agent"
 								rows={1}
+								wrap="soft"
 								aria-invalid={overLimit || undefined}
 								className="relative block w-full resize-none overflow-x-hidden overflow-y-hidden whitespace-pre-wrap break-words border-0 bg-transparent px-2 py-1.5 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
 								style={{ minHeight: '32px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
