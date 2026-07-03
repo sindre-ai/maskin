@@ -7,11 +7,14 @@ import { knowledgeExtras } from './schema'
 // `knowledge_extras` on `object_id` and filters/ranks by the first-class
 // columns promoted in migration `0043_knowledge_extras.sql`:
 //
-//  - bi-temporal live-only: rows with `t_invalid IS NOT NULL` are excluded.
+//  - bi-temporal live-only: rows with `t_invalid IS NOT NULL` are excluded,
+//    and rows scheduled for a future validity (`t_valid > now`) are excluded
+//    so the candidate set reflects what is in-force right now.
 //  - `verification_status='deprecated'` rows are excluded.
 //  - order: token-score DESC (when `q` is provided) → verification priority
 //    (verified > pending > unverified > contested) → confidence priority
-//    (high > medium > low > NULL) → base sort (createdAt DESC by default).
+//    (high > medium > low > NULL) → `t_valid` DESC NULLS LAST (recency is a
+//    first-class tiebreaker now that the column is promoted) → id ASC.
 //
 // Callers on `search_objects` / list flow through here when `type='knowledge'`
 // so eval and runtime retrieval stay on one path.
@@ -147,6 +150,11 @@ export async function retrieveKnowledge(
 	// naturally, so nothing is excluded on that account.
 	filters.push(isNull(knowledgeExtras.tInvalid))
 
+	// In-force at query time. Rows with `t_valid > now` are scheduled for a
+	// future validity and should not be candidates yet. Missing extras row
+	// (LEFT JOIN null) keeps legacy rows retrievable.
+	filters.push(or(isNull(knowledgeExtras.tValid), sql`${knowledgeExtras.tValid} <= now()`) as SQL)
+
 	// `deprecated` verification means the row is intentionally out of retrieval.
 	// Missing extras row (LEFT JOIN null) is treated as retrievable — the extension
 	// may not be populated for a workspace, and we don't want to hide legacy rows.
@@ -190,7 +198,9 @@ export async function retrieveKnowledge(
 	if (scoreExpr) orderBy.push(desc(scoreExpr))
 	orderBy.push(desc(verificationPriorityExpr))
 	orderBy.push(desc(confidencePriorityExpr))
-	orderBy.push(desc(objects.createdAt))
+	// `t_valid` DESC NULLS LAST — most-recent live row wins the tiebreak, with
+	// legacy rows (no extras row) sorting last so they don't shadow a promoted row.
+	orderBy.push(sql`${knowledgeExtras.tValid} desc nulls last`)
 	orderBy.push(asc(objects.id))
 
 	const rows = await db

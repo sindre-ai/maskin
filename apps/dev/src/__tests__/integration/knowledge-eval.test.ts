@@ -14,9 +14,19 @@ import {
 } from './knowledge-eval-fixture'
 
 // Joint cited-answer eval — runs the 30 content-lookup pairs (T1) and
-// the 10 metadata-filter pairs (T5 spec) through both retrieval paths in
-// one seeded workspace: JSONB-ILIKE (today's baseline) and
-// `retrieveKnowledge()` (column-aware, post-migration).
+// the 10 metadata-filter pairs (T5 spec) through both retrieval paths:
+// JSONB-ILIKE (today's baseline) and `retrieveKnowledge()` (column-aware,
+// post-migration).
+//
+// Seeding topology:
+//   - content-30 lives in one shared workspace — the shared corpus is the
+//     point (ranking under a realistic 30-row search surface).
+//   - metadata-10 seeds one fresh workspace per pair, containing only that
+//     pair's expected + trap rows. The T5 spec calibrated each pair against
+//     its own trap set; peripheral ILIKE bleed from other pairs' rows (e.g.
+//     U1's "on-call" leaking into V3's query) is a joint-seed artifact of
+//     T6's harness, not a retrieval-mechanism gap. Isolation matches the
+//     calibration without touching retrieval.
 //
 // Split reporting per the Strategist's lock-in:
 //   - content-30: legibility number, not a kill gate
@@ -261,8 +271,10 @@ function perDimensionBreakdown(outcomes: Outcome[]): string[] {
 
 describe('Knowledge cited-answer eval — joint (content-30 + metadata-10)', () => {
 	it('runs the joint fixture through JSONB-ILIKE baseline and column-aware retrieval and reports split accuracy', async () => {
-		const actor = await insertActor(db, { name: 'Eval Actor', email: 'eval@test.com' })
-		const workspace = await insertWorkspace(db, actor.id, { name: 'Eval Workspace' })
+		const contentActor = await insertActor(db, { name: 'Eval Actor', email: 'eval@test.com' })
+		const contentWorkspace = await insertWorkspace(db, contentActor.id, {
+			name: 'Content-30 Eval Workspace',
+		})
 
 		// ── Seed content-30 rows with baseline metadata (verified/high/live). ──
 		const contentIdByFixture = new Map<string, string>()
@@ -271,13 +283,13 @@ describe('Knowledge cited-answer eval — joint (content-30 + metadata-10)', () 
 			contentIdByFixture.set(entry.fixtureId, id)
 			return {
 				id,
-				workspaceId: workspace.id,
+				workspaceId: contentWorkspace.id,
 				type: 'knowledge',
 				title: entry.title,
 				content: entry.content,
 				status: 'validated',
 				metadata: null,
-				createdBy: actor.id,
+				createdBy: contentActor.id,
 			}
 		})
 		await db.insert(objects).values(contentSeedRows)
@@ -285,28 +297,10 @@ describe('Knowledge cited-answer eval — joint (content-30 + metadata-10)', () 
 		const now = new Date()
 		const dayMs = 86_400_000
 
-		// ── Seed metadata-20 rows with per-row extras. ──
-		const metaIdByFixture = new Map<string, string>()
-		const metaSeedRows = METADATA_KNOWLEDGE_CORPUS.map((entry) => {
-			const id = randomUUID()
-			metaIdByFixture.set(entry.fixtureId, id)
-			return {
-				id,
-				workspaceId: workspace.id,
-				type: 'knowledge',
-				title: entry.title,
-				content: entry.content,
-				status: 'validated',
-				metadata: null,
-				createdBy: actor.id,
-			}
-		})
-		await db.insert(objects).values(metaSeedRows)
-
 		// content-30 extras — matches T4's defaults.
 		const contentExtras = contentSeedRows.map((row) => ({
 			objectId: row.id,
-			workspaceId: workspace.id,
+			workspaceId: contentWorkspace.id,
 			tValid: now,
 			tInvalid: null as Date | null,
 			confidence: 'high',
@@ -317,56 +311,122 @@ describe('Knowledge cited-answer eval — joint (content-30 + metadata-10)', () 
 		}))
 		await db.insert(knowledgeExtras).values(contentExtras)
 
-		// metadata-20 extras — per-row.
-		const metaExtras = METADATA_KNOWLEDGE_CORPUS.map((entry) => {
-			const objectId = metaIdByFixture.get(entry.fixtureId)
-			if (!objectId) throw new Error(`fixtureId not seeded: ${entry.fixtureId}`)
-			return {
-				objectId,
-				workspaceId: workspace.id,
-				tValid: new Date(now.getTime() + entry.tValidOffsetDays * dayMs),
-				tInvalid:
-					entry.tInvalidOffsetDays === null
-						? null
-						: new Date(now.getTime() + entry.tInvalidOffsetDays * dayMs),
-				confidence: entry.confidence,
-				verificationStatus: entry.verificationStatus,
-				writerType: 'agent',
-				provenanceType: 'imported',
-				provenanceRef: null,
+		// ── Seed metadata-10 rows into one fresh workspace per pair. ──
+		// Isolation prevents peripheral ILIKE matches from other pairs' rows
+		// (e.g. U1's "on-call" leaking into V3's query) from surviving the
+		// deprecated exclusion. Each pair is calibrated against its own trap
+		// set per T5; joint-workspace seeding under-specified that contract.
+		const metadataCorpusById = new Map(METADATA_KNOWLEDGE_CORPUS.map((c) => [c.fixtureId, c]))
+		type MetadataPairContext = {
+			workspaceId: string
+			idByFixture: Map<string, string>
+		}
+		const metadataContextByPair = new Map<string, MetadataPairContext>()
+
+		for (const pair of METADATA_EVAL_PAIRS) {
+			const actor = await insertActor(db, {
+				name: `Eval Actor ${pair.pairId}`,
+				email: `eval-${pair.pairId.toLowerCase()}@test.com`,
+			})
+			const workspace = await insertWorkspace(db, actor.id, {
+				name: `Metadata Eval Workspace ${pair.pairId}`,
+			})
+
+			const pairFixtureIds = new Set<string>([...pair.expectedFixtureIds, ...pair.trapFixtureIds])
+			const idByFixture = new Map<string, string>()
+			const objectRows: Array<{
+				id: string
+				workspaceId: string
+				type: string
+				title: string
+				content: string
+				status: string
+				metadata: null
+				createdBy: string
+			}> = []
+			for (const fixtureId of pairFixtureIds) {
+				const entry = metadataCorpusById.get(fixtureId)
+				if (!entry) throw new Error(`fixtureId not in corpus: ${fixtureId}`)
+				const id = randomUUID()
+				idByFixture.set(fixtureId, id)
+				objectRows.push({
+					id,
+					workspaceId: workspace.id,
+					type: 'knowledge',
+					title: entry.title,
+					content: entry.content,
+					status: 'validated',
+					metadata: null,
+					createdBy: actor.id,
+				})
 			}
-		})
-		await db.insert(knowledgeExtras).values(metaExtras)
+			await db.insert(objects).values(objectRows)
+
+			const extrasRows = Array.from(pairFixtureIds).map((fixtureId) => {
+				const entry = metadataCorpusById.get(
+					fixtureId,
+				) as (typeof METADATA_KNOWLEDGE_CORPUS)[number]
+				const objectId = idByFixture.get(fixtureId) as string
+				return {
+					objectId,
+					workspaceId: workspace.id,
+					tValid: new Date(now.getTime() + entry.tValidOffsetDays * dayMs),
+					tInvalid:
+						entry.tInvalidOffsetDays === null
+							? null
+							: new Date(now.getTime() + entry.tInvalidOffsetDays * dayMs),
+					confidence: entry.confidence,
+					verificationStatus: entry.verificationStatus,
+					writerType: 'agent',
+					provenanceType: 'imported',
+					provenanceRef: null,
+				}
+			})
+			await db.insert(knowledgeExtras).values(extrasRows)
+
+			metadataContextByPair.set(pair.pairId, {
+				workspaceId: workspace.id,
+				idByFixture,
+			})
+		}
 
 		// ── Build the unified pair list for both retrieval paths. ──
-		const contentPairs: UnifiedPair[] = EVAL_PAIRS.map((p) => ({
+		const contentPairs: Array<UnifiedPair & { workspaceId: string }> = EVAL_PAIRS.map((p) => ({
 			subset: 'content-30',
 			pairId: p.expectedFixtureId,
 			question: p.question,
 			expectedIds: [contentIdByFixture.get(p.expectedFixtureId) as string],
 			expectedExcerpt: p.expectedExcerpt,
 			dimension: null,
+			workspaceId: contentWorkspace.id,
 		}))
-		const metadataPairs: UnifiedPair[] = METADATA_EVAL_PAIRS.map((p) => ({
-			subset: 'metadata-10',
-			pairId: p.pairId,
-			question: p.question,
-			expectedIds: p.expectedFixtureIds.map((id) => metaIdByFixture.get(id) as string),
-			expectedExcerpt: p.expectedExcerpt,
-			dimension: p.dimension,
-		}))
+		const metadataPairs: Array<UnifiedPair & { workspaceId: string }> = METADATA_EVAL_PAIRS.map(
+			(p) => {
+				const ctx = metadataContextByPair.get(p.pairId)
+				if (!ctx) throw new Error(`no metadata context for pair ${p.pairId}`)
+				return {
+					subset: 'metadata-10',
+					pairId: p.pairId,
+					question: p.question,
+					expectedIds: p.expectedFixtureIds.map((id) => ctx.idByFixture.get(id) as string),
+					expectedExcerpt: p.expectedExcerpt,
+					dimension: p.dimension,
+					workspaceId: ctx.workspaceId,
+				}
+			},
+		)
 		const allPairs = [...contentPairs, ...metadataPairs]
 
-		// ── Run both retrieval paths for every pair. ──
+		// ── Run both retrieval paths for every pair against its own workspace. ──
 		const baselineOutcomes: Outcome[] = []
 		const columnAwareOutcomes: Outcome[] = []
 
 		for (const pair of allPairs) {
-			const baselineRows = await runJsonbIlikeBaseline(workspace.id, pair.question)
+			const baselineRows = await runJsonbIlikeBaseline(pair.workspaceId, pair.question)
 			baselineOutcomes.push(scorePair(pair, baselineRows))
 
 			const colRows = (await retrieveKnowledge(db, {
-				workspaceId: workspace.id,
+				workspaceId: pair.workspaceId,
 				q: pair.question,
 				limit: 10,
 				offset: 0,
@@ -392,10 +452,12 @@ describe('Knowledge cited-answer eval — joint (content-30 + metadata-10)', () 
 		lines.push(
 			`corpus size (total):    ${KNOWLEDGE_CORPUS.length + METADATA_KNOWLEDGE_CORPUS.length}`,
 		)
-		lines.push(`  content-30 seeds:     ${KNOWLEDGE_CORPUS.length}`)
-		lines.push(`  metadata-10 seeds:    ${METADATA_KNOWLEDGE_CORPUS.length} (expected + trap rows)`)
+		lines.push(`  content-30 seeds:     ${KNOWLEDGE_CORPUS.length} (shared workspace)`)
+		lines.push(
+			`  metadata-10 seeds:    ${METADATA_KNOWLEDGE_CORPUS.length} (expected + trap rows, one workspace per pair)`,
+		)
 		lines.push('')
-		lines.push('--- JSONB-ILIKE baseline (T1 harness on the joint fixture) ---')
+		lines.push('--- JSONB-ILIKE baseline (T1-equivalent ILIKE path) ---')
 		lines.push(...baseContentSummary.block)
 		lines.push(...baseMetaSummary.block)
 		lines.push('')
@@ -424,11 +486,25 @@ describe('Knowledge cited-answer eval — joint (content-30 + metadata-10)', () 
 			expect(o.citedAnswerHit === 0 || o.citedAnswerHit === 1).toBe(true)
 		}
 
-		const [{ seeded }] = await db
+		// content-30 workspace holds the full 30-row corpus; each metadata
+		// pair's isolated workspace holds only its expected + trap rows.
+		const [{ seeded: contentSeeded }] = await db
 			.select({ seeded: sql<number>`count(*)::int` })
 			.from(objects)
-			.where(and(eq(objects.workspaceId, workspace.id), eq(objects.type, 'knowledge')))
-		expect(seeded).toBe(KNOWLEDGE_CORPUS.length + METADATA_KNOWLEDGE_CORPUS.length)
+			.where(and(eq(objects.workspaceId, contentWorkspace.id), eq(objects.type, 'knowledge')))
+		expect(contentSeeded).toBe(KNOWLEDGE_CORPUS.length)
+
+		for (const pair of METADATA_EVAL_PAIRS) {
+			const ctx = metadataContextByPair.get(pair.pairId)
+			if (!ctx) throw new Error(`no metadata context for pair ${pair.pairId}`)
+			const [{ seeded }] = await db
+				.select({ seeded: sql<number>`count(*)::int` })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, ctx.workspaceId), eq(objects.type, 'knowledge')))
+			const expectedCount = new Set<string>([...pair.expectedFixtureIds, ...pair.trapFixtureIds])
+				.size
+			expect(seeded).toBe(expectedCount)
+		}
 	})
 
 	it('excludes rows with t_invalid set (bi-temporal live-only)', async () => {
