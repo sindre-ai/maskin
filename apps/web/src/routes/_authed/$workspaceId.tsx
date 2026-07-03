@@ -211,7 +211,7 @@ function ChatPinShell({ children }: { children: ReactNode }) {
 	const pushed = pinned && open && !isMobile
 	return (
 		<div
-			className="transition-[margin] duration-200 ease-linear"
+			className="transition-[margin] duration-state ease-default"
 			style={{ marginRight: pushed ? `${panelWidth}px` : 0 }}
 		>
 			{children}
