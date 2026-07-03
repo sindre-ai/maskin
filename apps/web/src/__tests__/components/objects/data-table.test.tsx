@@ -1,7 +1,7 @@
 import { getStaticColumns } from '@/components/objects/data-table/columns'
 import { DataTable } from '@/components/objects/data-table/data-table'
 import type { RowSelectionState, VisibilityState } from '@tanstack/react-table'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ButtonHTMLAttributes, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import { buildObjectResponse } from '../../factories'
@@ -132,6 +132,62 @@ describe('DataTable', () => {
 		// The main table plus a loading spinner for pagination
 		const spinners = screen.getAllByTitle('Loading')
 		expect(spinners.length).toBeGreaterThanOrEqual(1)
+	})
+
+	describe('grouping (desktop)', () => {
+		it('keeps the group expanded when selecting a child row', async () => {
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'obj-a', title: 'Alpha', createdBy: 'actor-x' }),
+				buildObjectResponse({ id: 'obj-b', title: 'Beta', createdBy: 'actor-x' }),
+			]
+			renderDataTable({ data, grouping: ['createdBy'] })
+
+			// Row bodies are not rendered until the group is expanded.
+			expect(screen.queryByText('Alpha')).not.toBeInTheDocument()
+
+			await user.click(screen.getByRole('button', { name: /\(2\)/ }))
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+
+			const [firstCheckbox] = screen.getAllByLabelText('Select row')
+			await user.click(firstCheckbox)
+
+			// If the child click bubbles to a row-level toggle, Alpha disappears.
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+			expect(screen.getByText('Beta')).toBeInTheDocument()
+		})
+
+		it('keeps the group expanded across a parent re-render', async () => {
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'obj-c', title: 'Gamma', createdBy: 'actor-y' }),
+				buildObjectResponse({ id: 'obj-d', title: 'Delta', createdBy: 'actor-y' }),
+			]
+			const props = {
+				data,
+				columns: defaultColumns,
+				workspaceId: 'ws-1',
+				rowSelection: {} as RowSelectionState,
+				onRowSelectionChange: vi.fn(),
+				columnVisibility: {} as VisibilityState,
+				onColumnVisibilityChange: vi.fn(),
+				grouping: ['createdBy'],
+			}
+			const { rerender } = render(<DataTable {...props} />)
+
+			await user.click(screen.getByRole('button', { name: /\(2\)/ }))
+			expect(screen.getByText('Gamma')).toBeInTheDocument()
+
+			// Simulate a parent re-render (e.g. closing the left nav) that passes
+			// through a fresh data reference. Without autoResetExpanded: false,
+			// TanStack Table would collapse the group on this cycle.
+			await act(async () => {
+				rerender(<DataTable {...props} data={[...data]} />)
+			})
+
+			expect(screen.getByText('Gamma')).toBeInTheDocument()
+			expect(screen.getByText('Delta')).toBeInTheDocument()
+		})
 	})
 
 	describe('mobile (below md)', () => {
