@@ -131,6 +131,7 @@ export function DataTable({
 		getExpandedRowModel: grouping?.length ? getExpandedRowModel() : undefined,
 		groupedColumnMode: 'remove',
 		enableRowSelection: true,
+		autoResetExpanded: false,
 		getRowId: (row) => row.id,
 	})
 
@@ -314,11 +315,14 @@ export function DataTable({
 											key={row.id}
 											data-index={virtualItem.index}
 											ref={virtualizer.measureElement}
-											className="bg-muted/30 hover:bg-muted/50 cursor-pointer"
-											onClick={() => row.toggleExpanded()}
+											className="bg-muted/30 hover:bg-muted/50"
 										>
-											<TableCell colSpan={columns.length}>
-												<div className="flex items-center gap-2">
+											<TableCell colSpan={columns.length} className="p-0">
+												<button
+													type="button"
+													onClick={() => row.toggleExpanded()}
+													className="flex w-full items-center gap-2 px-4 py-2 text-left"
+												>
 													<ChevronRight
 														size={14}
 														className={cn(
@@ -330,7 +334,7 @@ export function DataTable({
 													<span className="text-muted-foreground text-xs">
 														({row.subRows.length})
 													</span>
-												</div>
+												</button>
 											</TableCell>
 										</TableRow>
 									)
