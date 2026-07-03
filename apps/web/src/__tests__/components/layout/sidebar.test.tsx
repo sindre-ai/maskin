@@ -68,6 +68,10 @@ vi.mock('@/components/layout/nav-user', () => ({
 	NavUser: () => <div data-testid="nav-user">NavUser</div>,
 }))
 
+vi.mock('@/components/layout/workspace-switcher', () => ({
+	WorkspaceSwitcher: () => <div data-testid="workspace-switcher">WorkspaceSwitcher</div>,
+}))
+
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useUnread } from '@/hooks/use-subscriptions'
 
@@ -96,6 +100,11 @@ describe('AppSidebar', () => {
 		render(<AppSidebar />)
 		expect(screen.getByText('SidebarActivity')).toBeInTheDocument()
 		expect(screen.getByText('NavUser')).toBeInTheDocument()
+	})
+
+	it('renders WorkspaceSwitcher in the header', () => {
+		render(<AppSidebar />)
+		expect(screen.getByTestId('workspace-switcher')).toBeInTheDocument()
 	})
 
 	it('does not render a chat launcher — lives in the app header now', () => {
