@@ -138,7 +138,7 @@ jobs:
         run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
 
       - name: Run E2E tests (shard ${{ matrix.shard }}/3)
-        run: pnpm --filter @maskin/e2e test:e2e -- --shard=${{ matrix.shard }}/3
+        run: pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/3
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
