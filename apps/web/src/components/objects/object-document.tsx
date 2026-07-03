@@ -153,7 +153,9 @@ export function ObjectDocumentView({
 				/>
 			)}
 
-			{/* Metadata badges row */}
+			{/* Metadata badges row — editable cluster stays inline; provenance
+			 * (creator + createdAt) drops to its own row below sm so 375px never
+			 * spills into a jagged partial wrap. */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
 				<TypeBadge type={object.type} />
 				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
@@ -175,13 +177,15 @@ export function ObjectDocumentView({
 					entityId={object.id}
 					isSubscribed={object.is_subscribed}
 				/>
-				{creator && (
-					<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-						<ActorAvatar name={creator.name} type={creator.type} size="sm" />
-						{creator.name}
-					</span>
-				)}
-				<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
+				<div className="flex basis-full items-center gap-2 sm:basis-auto">
+					{creator && (
+						<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+							<ActorAvatar name={creator.name} type={creator.type} size="sm" />
+							{creator.name}
+						</span>
+					)}
+					<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
+				</div>
 			</div>
 
 			{/* Properties */}

@@ -74,6 +74,19 @@ describe('DataTableToolbar', () => {
 		expect(screen.getByRole('button', { name: /import/i })).toBeInTheDocument()
 	})
 
+	it('keeps the action cluster on its own row below the xl breakpoint', () => {
+		// Actions cluster must sit on `basis-full` (own row) up to <1280px so
+		// iPad landscape (1024px) wraps predictably, and `xl:basis-auto`
+		// restores the inline single-row layout on wider viewports.
+		renderToolbar()
+		const importBtn = screen.getByRole('button', { name: /import/i })
+		const cluster = importBtn.parentElement
+		expect(cluster).not.toBeNull()
+		expect(cluster?.className).toContain('basis-full')
+		expect(cluster?.className).toContain('xl:basis-auto')
+		expect(cluster?.className).toContain('justify-end')
+	})
+
 	it('calls onImportClick when Import is clicked', async () => {
 		const user = userEvent.setup()
 		const { props } = renderToolbar()

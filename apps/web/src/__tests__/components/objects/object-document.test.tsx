@@ -66,6 +66,21 @@ describe('ObjectDocumentView', () => {
 		expect(screen.getByText('Alice')).toBeInTheDocument()
 	})
 
+	it('wraps the provenance cluster on its own row below the sm breakpoint', () => {
+		// Creator + createdAt must group into a sub-div with basis-full so
+		// 375px never spills into a jagged partial wrap; sm:basis-auto lets
+		// them flow inline again on wider phones.
+		const object = buildObjectResponse()
+		const creator = buildActorResponse({ name: 'Alice' })
+		render(<ObjectDocumentView {...baseProps} object={object} creator={creator} />)
+		const creatorLabel = screen.getByText('Alice')
+		// creator span → provenance cluster (has basis-full sm:basis-auto)
+		const cluster = creatorLabel.parentElement
+		expect(cluster).not.toBeNull()
+		expect(cluster?.className).toContain('basis-full')
+		expect(cluster?.className).toContain('sm:basis-auto')
+	})
+
 	it('calls onUpdateTitle on blur when title changed', async () => {
 		const user = userEvent.setup()
 		const onUpdateTitle = vi.fn()

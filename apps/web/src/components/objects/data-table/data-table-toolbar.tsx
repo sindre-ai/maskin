@@ -141,8 +141,11 @@ export function DataTableToolbar({
 			/>
 
 			{/* Actions — Import is occasional, New is primary. Ordered per the
-			 * 2026-05-30 button hierarchy call. */}
-			<div className="ml-auto flex items-center gap-2">
+			 * 2026-05-30 button hierarchy call. `basis-full` below xl keeps the
+			 * action cluster on its own predictable row when there isn't enough
+			 * inline room (iPad landscape included); `xl:basis-auto` restores
+			 * the single-row layout on wider viewports. */}
+			<div className="ml-auto flex basis-full items-center justify-end gap-2 xl:basis-auto">
 				<Button variant="ghost" size="sm" className="gap-1.5" onClick={onImportClick}>
 					<Upload size={14} />
 					Import
