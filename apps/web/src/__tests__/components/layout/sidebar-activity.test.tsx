@@ -9,6 +9,11 @@ vi.mock('@/hooks/use-active-agents', () => ({
 	useActiveAgents: (workspaceId: string) => mockUseActiveAgents(workspaceId),
 }))
 
+const trackExpanded = vi.fn()
+vi.mock('@/lib/analytics', () => ({
+	trackSidebarAgentActivityExpanded: (p: { workspaceId: string }) => trackExpanded(p),
+}))
+
 vi.mock('@/components/ui/sidebar', () => {
 	const passthrough = ({ children, ...rest }: React.ComponentProps<'div'>) => (
 		<div {...rest}>{children}</div>
@@ -48,6 +53,7 @@ function agent(overrides: Partial<ActiveAgent> = {}): ActiveAgent {
 describe('SidebarActivity', () => {
 	beforeEach(() => {
 		mockUseActiveAgents.mockReset()
+		trackExpanded.mockReset()
 	})
 
 	it('renders the "Activity" group label', () => {
@@ -116,6 +122,20 @@ describe('SidebarActivity', () => {
 		mockUseActiveAgents.mockReturnValue({ agents: [], isLoading: false, isError: true })
 		const { container } = render(<SidebarActivity workspaceId="ws-1" />)
 		expect(container).toBeEmptyDOMElement()
+	})
+
+	it('emits sidebar.agent_activity.expanded once on expand, not on collapse (T4)', () => {
+		mockUseActiveAgents.mockReturnValue({
+			agents: Array.from({ length: 7 }, (_, i) => agent({ actorId: `a-${i}`, name: `Agent ${i}` })),
+			isLoading: false,
+			isError: false,
+		})
+		render(<SidebarActivity workspaceId="ws-42" />)
+		fireEvent.click(screen.getByText('+2 more'))
+		expect(trackExpanded).toHaveBeenCalledTimes(1)
+		expect(trackExpanded).toHaveBeenCalledWith({ workspaceId: 'ws-42' })
+		fireEvent.click(screen.getByText('Show fewer'))
+		expect(trackExpanded).toHaveBeenCalledTimes(1)
 	})
 
 	it('exposes an accessible label for each icon-mode dot (AC-T3)', () => {

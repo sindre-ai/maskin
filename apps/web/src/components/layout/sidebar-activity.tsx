@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { type ActiveAgent, useActiveAgents } from '@/hooks/use-active-agents'
+import { trackSidebarAgentActivityExpanded } from '@/lib/analytics'
 import { useState } from 'react'
 
 const VISIBLE_ROW_LIMIT = 5
@@ -60,7 +61,12 @@ export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 						<SidebarMenuItem>
 							<SidebarMenuButton
 								size="sm"
-								onClick={() => setExpanded((prev) => !prev)}
+								onClick={() => {
+									setExpanded((prev) => {
+										if (!prev) trackSidebarAgentActivityExpanded({ workspaceId })
+										return !prev
+									})
+								}}
 								aria-expanded={expanded}
 								className="text-xs text-muted-foreground"
 							>

@@ -80,6 +80,7 @@ export const sessionConfigSchema = z.object({
 	interactive: z.boolean().default(false),
 	mention: sessionMentionContextSchema.optional(),
 	thread_reply: sessionThreadReplyContextSchema.optional(),
+	browserRequired: z.boolean().default(false),
 })
 
 export const createSessionSchema = z.object({

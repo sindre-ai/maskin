@@ -2,6 +2,46 @@ import { getEnvOrThrow } from '../env'
 import type { OAuth2Config, StoredCredentials } from '../types'
 import { createS256CodeChallenge } from './pkce'
 
+/**
+ * Thrown when the OAuth2 provider rejects a token request.
+ *
+ * Carries the HTTP status, the raw response body, and the parsed OAuth2 `error`
+ * field (e.g. `invalid_grant`) so callers can distinguish recoverable failures
+ * from terminal ones (grant revoked, user disconnected app) without re-parsing
+ * the message string.
+ */
+export class TokenRequestError extends Error {
+	readonly status: number
+	readonly oauthError?: string
+	readonly responseBody: string
+
+	constructor(
+		status: number,
+		responseBody: string,
+		oauthError?: string,
+		operation = 'Token exchange',
+	) {
+		super(`${operation} failed: ${status} ${responseBody}`)
+		this.name = 'TokenRequestError'
+		this.status = status
+		this.responseBody = responseBody
+		this.oauthError = oauthError
+	}
+}
+
+function parseOAuthErrorField(body: string): string | undefined {
+	try {
+		const parsed: unknown = JSON.parse(body)
+		if (parsed && typeof parsed === 'object' && 'error' in parsed) {
+			const value = (parsed as { error: unknown }).error
+			if (typeof value === 'string') return value
+		}
+	} catch {
+		// Body wasn't JSON — provider didn't follow RFC 6749; no error field to surface.
+	}
+	return undefined
+}
+
 export class OAuth2Handler {
 	private customParser?: (raw: unknown) => Partial<StoredCredentials>
 
@@ -90,7 +130,12 @@ export class OAuth2Handler {
 
 		if (!response.ok) {
 			const text = await response.text()
-			throw new Error(`Token revocation failed: ${response.status} ${text}`)
+			throw new TokenRequestError(
+				response.status,
+				text,
+				parseOAuthErrorField(text),
+				'Token revocation',
+			)
 		}
 	}
 
@@ -118,7 +163,7 @@ export class OAuth2Handler {
 
 		if (!response.ok) {
 			const text = await response.text()
-			throw new Error(`Token exchange failed: ${response.status} ${text}`)
+			throw new TokenRequestError(response.status, text, parseOAuthErrorField(text))
 		}
 
 		const raw = await response.json()
