@@ -49,15 +49,15 @@ describe('useRequestEmailChange', () => {
 
 		await act(async () => {
 			await result.current.mutateAsync({
-				new_email: 'new@example.com',
-				current_password: 'pw',
+				data: { new_email: 'new@example.com', current_password: 'pw' },
+				idempotencyKey: 'idem-1',
 			})
 		})
 
-		expect(api.auth.requestEmailChange).toHaveBeenCalledWith({
-			new_email: 'new@example.com',
-			current_password: 'pw',
-		})
+		expect(api.auth.requestEmailChange).toHaveBeenCalledWith(
+			{ new_email: 'new@example.com', current_password: 'pw' },
+			'idem-1',
+		)
 		expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.actors.detail(actorId) })
 	})
 
@@ -69,7 +69,10 @@ describe('useRequestEmailChange', () => {
 		const { result } = renderHook(() => useRequestEmailChange('actor-1'), { wrapper })
 
 		await act(async () => {
-			result.current.mutate({ new_email: 'new@example.com', current_password: 'pw' })
+			result.current.mutate({
+				data: { new_email: 'new@example.com', current_password: 'pw' },
+				idempotencyKey: 'idem-err',
+			})
 		})
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
@@ -90,10 +93,10 @@ describe('useCancelEmailChange', () => {
 		const { result } = renderHook(() => useCancelEmailChange(actorId), { wrapper })
 
 		await act(async () => {
-			await result.current.mutateAsync()
+			await result.current.mutateAsync({ idempotencyKey: 'idem-cancel' })
 		})
 
-		expect(api.auth.cancelEmailChange).toHaveBeenCalledWith()
+		expect(api.auth.cancelEmailChange).toHaveBeenCalledWith('idem-cancel')
 		expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.actors.detail(actorId) })
 	})
 })

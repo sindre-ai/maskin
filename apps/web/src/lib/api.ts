@@ -225,9 +225,17 @@ export const api = {
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
 		changePassword: (data: ChangePasswordInput) =>
 			request<ActorWithKey>('/auth/password', { method: 'POST', body: data }),
-		requestEmailChange: (data: RequestEmailChangeInput) =>
-			request<ActorWithKey>('/auth/email-change', { method: 'POST', body: data }),
-		cancelEmailChange: () => request<ActorWithKey>('/auth/email-change/cancel', { method: 'POST' }),
+		requestEmailChange: (data: RequestEmailChangeInput, idempotencyKey?: string) =>
+			request<ActorWithKey>('/auth/email-change', {
+				method: 'POST',
+				body: data,
+				headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+			}),
+		cancelEmailChange: (idempotencyKey?: string) =>
+			request<ActorWithKey>('/auth/email-change/cancel', {
+				method: 'POST',
+				headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+			}),
 	},
 
 	landingEvents: {

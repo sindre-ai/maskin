@@ -700,7 +700,7 @@ describe('Profile — POST /api/auth/email-change', () => {
 		expect(columns).toContain('pending_email')
 	})
 
-	it('returns 401 when current password is wrong', async () => {
+	it('returns 401 with a current_password field detail when the password is wrong', async () => {
 		const actor = buildActor({ type: 'human', passwordHash: 'old' })
 		const { app, mockResults } = createTestApp(authRoutes, '/api/auth', actor.id)
 		mockResults.select = [actor]
@@ -714,6 +714,17 @@ describe('Profile — POST /api/auth/email-change', () => {
 		)
 
 		expect(res.status).toBe(401)
+		// The field detail is what the frontend uses to distinguish
+		// wrong-password 401s from session-expired 401s. Without it the dialog
+		// would prompt the user to re-enter their password into an invalidated
+		// session.
+		const body = (await res.json()) as {
+			error: { code: string; details?: Array<{ field: string; message: string }> }
+		}
+		expect(body.error.code).toBe('UNAUTHORIZED')
+		expect(body.error.details).toEqual([
+			{ field: 'current_password', message: 'Current password is incorrect' },
+		])
 	})
 })
 
