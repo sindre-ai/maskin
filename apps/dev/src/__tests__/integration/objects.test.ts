@@ -605,5 +605,72 @@ describe('Objects Integration', () => {
 			)
 			expect(res.status).toBe(400)
 		})
+
+		it('server-side updated_before returns the same row set as fetch-all + client filter (AC-T4)', async () => {
+			// This is the parity contract T4 is measured on: the daily sweep switches from
+			// "fetch every in_progress task, filter updated_at < now-6h in JS" to a single
+			// server-side call. Both must yield identical row sets on the same DB state.
+			const app = createApp()
+			const now = new Date('2026-06-30T12:00:00.000Z')
+			const cutoff = new Date(now.getTime() - 6 * 3600 * 1000) // now - 6h
+
+			// Stalled in_progress tasks (should be in both result sets).
+			const stalledA = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'in_progress',
+				updatedAt: new Date(cutoff.getTime() - 3600 * 1000), // 7h old
+			})
+			const stalledB = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'in_progress',
+				updatedAt: new Date(cutoff.getTime() - 24 * 3600 * 1000), // 30h old
+			})
+
+			// Fresh in_progress task (should be in neither result set).
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'in_progress',
+				updatedAt: new Date(cutoff.getTime() + 3600 * 1000), // 5h old, inside window
+			})
+
+			// Noise: stalled but wrong status / type — must not appear.
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				updatedAt: new Date(cutoff.getTime() - 3600 * 1000),
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'active',
+				updatedAt: new Date(cutoff.getTime() - 3600 * 1000),
+			})
+
+			// Pre-ship: fetch all in_progress tasks in the workspace, filter in JS.
+			const preShipRes = await app.request(
+				jsonGet('/api/objects?type=task&status=in_progress', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(preShipRes.status).toBe(200)
+			const preShipRows = (await preShipRes.json()) as Array<{ id: string; updatedAt: string }>
+			const preShipIds = preShipRows
+				.filter((row) => new Date(row.updatedAt) < cutoff)
+				.map((row) => row.id)
+				.sort()
+
+			// Post-ship: single server-side call with the same intent.
+			const postShipRes = await app.request(
+				jsonGet(
+					`/api/objects?type=task&status=in_progress&updated_before=${encodeURIComponent(cutoff.toISOString())}`,
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(postShipRes.status).toBe(200)
+			const postShipRows = (await postShipRes.json()) as Array<{ id: string }>
+			const postShipIds = postShipRows.map((row) => row.id).sort()
+
+			expect(postShipIds).toEqual(preShipIds)
+			expect(postShipIds).toEqual([stalledA.id, stalledB.id].sort())
+		})
 	})
 })
