@@ -168,6 +168,7 @@ export function DataTable({
 		getExpandedRowModel: grouping?.length ? getExpandedRowModel() : undefined,
 		groupedColumnMode: 'remove',
 		enableRowSelection: true,
+		autoResetExpanded: false,
 		getRowId: (row) => row.id,
 	})
 
@@ -401,7 +402,7 @@ export function DataTable({
 														type="button"
 														onClick={() => row.toggleExpanded()}
 														aria-expanded={row.getIsExpanded()}
-														className="flex items-center gap-2 text-left"
+														className="flex flex-1 items-center gap-2 text-left"
 													>
 														<ChevronRight
 															size={14}
