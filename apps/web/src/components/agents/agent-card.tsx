@@ -27,7 +27,7 @@ export function AgentCard({
 			to="/$workspaceId/agents/$agentId"
 			params={{ workspaceId, agentId: agent.id }}
 			className={cn(
-				'block rounded-lg border bg-card p-[var(--space-4)] shadow-md transition-colors hover:border-border-hover',
+				'block rounded-lg border bg-card p-[var(--space-4)] shadow-md transition-colors duration-micro ease-default hover:border-border-hover',
 				status === 'working' && 'border-accent bg-accent/5',
 				status === 'failed' && 'border-error',
 				status === 'idle' && 'border-border',

@@ -47,7 +47,7 @@ export function SortableHeader({
 		<button
 			type="button"
 			className={cn(
-				'flex items-center gap-[var(--space-1)] hover:text-foreground transition-colors -ml-[var(--space-2)] px-[var(--space-2)] py-[var(--space-1)] rounded',
+				'flex items-center gap-[var(--space-1)] hover:text-foreground transition-colors duration-micro ease-default -ml-[var(--space-2)] px-[var(--space-2)] py-[var(--space-1)] rounded',
 				isActive ? 'text-foreground' : 'text-muted-foreground',
 			)}
 			onClick={() => onSort?.(columnId)}

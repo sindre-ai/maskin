@@ -34,7 +34,7 @@ export function ObjectCard({
 			onClick={onClick}
 			className={cn(
 				'flex w-full items-start gap-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-3)]',
-				'cursor-pointer transition-colors hover:bg-accent/30',
+				'cursor-pointer transition-colors duration-micro ease-default hover:bg-accent/30',
 				'data-[state=selected]:bg-accent/50',
 			)}
 		>

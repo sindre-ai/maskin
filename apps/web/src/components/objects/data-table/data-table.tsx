@@ -223,7 +223,10 @@ export function DataTable({
 										>
 											<ChevronRight
 												size={14}
-												className={cn('transition-transform', row.getIsExpanded() && 'rotate-90')}
+												className={cn(
+													'transition-transform duration-micro ease-default',
+													row.getIsExpanded() && 'rotate-90',
+												)}
 											/>
 											<span className="font-medium text-label">{displayValue}</span>
 											<span className="text-muted-foreground text-caption">
@@ -324,7 +327,7 @@ export function DataTable({
 													<ChevronRight
 														size={14}
 														className={cn(
-															'transition-transform',
+															'transition-transform duration-micro ease-default',
 															row.getIsExpanded() && 'rotate-90',
 														)}
 													/>
