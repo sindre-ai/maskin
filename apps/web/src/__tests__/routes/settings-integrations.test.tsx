@@ -255,4 +255,71 @@ describe('IntegrationsPage', () => {
 			expect(screen.getAllByRole('button', { name: 'Disconnect' })).toHaveLength(1)
 		})
 	})
+
+	describe('google calendar detail card', () => {
+		const googleCalendarProvider = {
+			name: 'google-calendar',
+			displayName: 'Google Calendar',
+			authType: 'oauth2',
+			events: [],
+			externalIdDisplay: 'email' as const,
+		}
+
+		it('shows the connected Google account email and a Disconnect button when connected', async () => {
+			const user = userEvent.setup()
+			const integration = buildIntegrationResponse({
+				id: 'gc-1',
+				provider: 'google-calendar',
+				status: 'active',
+				externalId: 'magnus@example.com',
+			})
+			mockUseIntegrations.mockReturnValue({ data: [integration], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [googleCalendarProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByText('Google Calendar')).toBeInTheDocument()
+			expect(screen.getByText('Connected as magnus@example.com')).toBeInTheDocument()
+			expect(screen.queryByText(/Installation /)).not.toBeInTheDocument()
+
+			await user.click(screen.getByRole('button', { name: 'Disconnect' }))
+			expect(mockDisconnect).toHaveBeenCalledWith('gc-1')
+		})
+
+		it('shows "Available to connect" when not connected (no event types defined yet)', () => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [googleCalendarProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByText('Available to connect')).toBeInTheDocument()
+			expect(screen.queryByText(/event types available/)).not.toBeInTheDocument()
+		})
+	})
+
+	describe('gmail label remains unchanged', () => {
+		const gmailProvider = {
+			name: 'gmail',
+			displayName: 'Gmail',
+			authType: 'oauth2',
+			events: [{ entityType: 'gmail.message', actions: ['received'], label: 'Email' }],
+			externalIdDisplay: 'email' as const,
+		}
+
+		it('shows "Connected as <email>" for Gmail when externalIdDisplay is email', () => {
+			const integration = buildIntegrationResponse({
+				id: 'gm-1',
+				provider: 'gmail',
+				status: 'active',
+				externalId: 'user@gmail.com',
+			})
+			mockUseIntegrations.mockReturnValue({ data: [integration], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [gmailProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByText('Connected as user@gmail.com')).toBeInTheDocument()
+			expect(screen.queryByText(/Installation /)).not.toBeInTheDocument()
+		})
+	})
 })
