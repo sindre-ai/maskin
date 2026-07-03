@@ -71,7 +71,7 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 			</div>
 
 			<div className="flex flex-wrap gap-[var(--space-1)]">
-				<span className="rounded-full border border-border bg-muted/40 px-[var(--space-2)] py-[2px] text-[10px] font-medium uppercase text-muted-foreground">
+				<span className="rounded-full border border-border bg-muted/40 px-[var(--space-2)] py-[2px] text-eyebrow font-medium uppercase text-muted-foreground">
 					{TYPE_LABEL[item.item_type]}
 				</span>
 			</div>

@@ -52,7 +52,7 @@ export function PackageCard({ workspaceId, pkg, install }: PackageCardProps) {
 				{pkg.item_types.map((type) => (
 					<span
 						key={type}
-						className="rounded-full border border-border bg-muted/40 px-[var(--space-2)] py-[2px] text-[10px] font-medium uppercase text-muted-foreground"
+						className="rounded-full border border-border bg-muted/40 px-[var(--space-2)] py-[2px] text-eyebrow font-medium uppercase text-muted-foreground"
 					>
 						{type}
 					</span>
