@@ -2,8 +2,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { Link } from '@tanstack/react-router'
 import type { VisibilityState } from '@tanstack/react-table'
-import { Search, Upload } from 'lucide-react'
+import { History, Search, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ColumnInfo } from './data-table-controls'
 import { DisplayPanel, type DisplayPanelView } from './display-panel'
@@ -45,6 +46,8 @@ interface DataTableToolbarProps {
 	boardSupported?: boolean
 	// Import
 	onImportClick: () => void
+	// Imports history — needs workspaceId for the link target.
+	workspaceId: string
 }
 
 export function DataTableToolbar({
@@ -73,6 +76,7 @@ export function DataTableToolbar({
 	onViewChange,
 	boardSupported,
 	onImportClick,
+	workspaceId,
 }: DataTableToolbarProps) {
 	const [localSearch, setLocalSearch] = useState(search ?? '')
 	const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -151,8 +155,22 @@ export function DataTableToolbar({
 				onGroupByChange={onGroupByChange}
 			/>
 
+			{/* Imports history — icon-only link to the audit index */}
+			<Button
+				asChild
+				variant="ghost"
+				size="icon"
+				className="ml-auto h-8 w-8"
+				aria-label="Imports history"
+				title="Imports history"
+			>
+				<Link to="/$workspaceId/imports" params={{ workspaceId }}>
+					<History size={14} />
+				</Link>
+			</Button>
+
 			{/* Import */}
-			<Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={onImportClick}>
+			<Button variant="outline" size="sm" className="gap-1.5" onClick={onImportClick}>
 				<Upload size={14} />
 				Import
 			</Button>

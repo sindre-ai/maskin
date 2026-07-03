@@ -433,8 +433,18 @@ export const api = {
 				body: { mapping },
 				workspaceId,
 			}),
+		preview: (id: string, mapping: ImportMappingInput, workspaceId: string) =>
+			request<ImportPreviewResponse>(`/imports/${id}/preview`, {
+				method: 'POST',
+				body: { mapping },
+				workspaceId,
+			}),
 		confirm: (id: string, workspaceId: string) =>
 			request<ImportResponse>(`/imports/${id}/confirm`, { method: 'POST', workspaceId }),
+		listAuditRows: (id: string, workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<ImportAuditRow[]>(`/imports/${id}/audit-rows${qs}`, { workspaceId })
+		},
 	},
 
 	claudeOauth: {
@@ -1160,6 +1170,8 @@ export interface ImportResponse {
 	processedRows: number
 	successCount: number
 	errorCount: number
+	updatedCount: number
+	skippedCount: number
 	mapping: ImportMappingInput | null
 	preview: ImportPreview | null
 	errors: ImportError[] | null
@@ -1196,6 +1208,27 @@ export interface TypeMappingInput {
 	objectType: string
 	columns: ColumnMappingInput[]
 	defaultStatus?: string
+	dedupKeys?: string[]
+	createAllAsNew?: boolean
+}
+
+export interface ImportPreviewDiffChange {
+	column: string
+	old: unknown
+	new: unknown
+}
+
+export interface ImportPreviewDiffRow {
+	row_index: number
+	object_id: string
+	changes: ImportPreviewDiffChange[]
+}
+
+export interface ImportPreviewResponse {
+	matched: number
+	created: number
+	skipped: number
+	diffs: ImportPreviewDiffRow[]
 }
 
 export interface RelationshipMappingInput {
@@ -1208,6 +1241,20 @@ export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
 	csvOptions?: CsvOptions
+}
+
+export type ImportAuditRowAction = 'created' | 'updated' | 'skipped' | 'failed'
+
+export interface ImportAuditRow {
+	id: string
+	importId: string
+	rowIndex: number
+	objectId: string | null
+	action: ImportAuditRowAction
+	changedColumns: string[]
+	oldValues: Record<string, unknown>
+	newValues: Record<string, unknown>
+	createdAt: string | null
 }
 
 export type CatalogItemType = 'actor' | 'trigger' | 'skill' | 'integration'

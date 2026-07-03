@@ -707,6 +707,7 @@ function ObjectsPage() {
 				}}
 				boardSupported={boardSupported}
 				onImportClick={() => setImportOpen(true)}
+				workspaceId={workspaceId}
 			/>
 
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />

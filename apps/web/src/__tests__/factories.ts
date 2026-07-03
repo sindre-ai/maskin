@@ -239,6 +239,8 @@ export function buildImportResponse(overrides: Partial<ImportResponse> = {}): Im
 		processedRows: 0,
 		successCount: 0,
 		errorCount: 0,
+		updatedCount: 0,
+		skippedCount: 0,
 		mapping: null,
 		preview: null,
 		errors: null,

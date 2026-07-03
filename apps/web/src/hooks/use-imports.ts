@@ -5,6 +5,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
+export function useImportPreview(workspaceId: string) {
+	return useMutation({
+		mutationFn: ({ id, mapping }: { id: string; mapping: ImportMappingInput }) =>
+			api.imports.preview(id, mapping, workspaceId),
+	})
+}
+
 export function useImport(id: string | undefined, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.imports.detail(id ?? ''),
@@ -16,6 +23,30 @@ export function useImport(id: string | undefined, workspaceId: string) {
 			if (data?.status === 'importing') return 2000
 			return false
 		},
+	})
+}
+
+// Workspace-scoped list of imports for the `/imports` index page. Pass `params`
+// to filter by status or paginate; the backend returns the same shape regardless.
+export function useImports(workspaceId: string, params?: Record<string, string>) {
+	return useQuery({
+		queryKey: queryKeys.imports.list(workspaceId, params),
+		queryFn: () => api.imports.list(workspaceId, params),
+	})
+}
+
+// Per-row audit entries for an import. Powers the AC-U5 detail view —
+// each entry carries `changedColumns` + `oldValues` / `newValues` so the
+// page can render `old → new` per changed attribute.
+export function useImportAuditRows(
+	id: string | undefined,
+	workspaceId: string,
+	params?: Record<string, string>,
+) {
+	return useQuery({
+		queryKey: queryKeys.imports.auditRows(id ?? '', params),
+		queryFn: () => api.imports.listAuditRows(id as string, workspaceId, params),
+		enabled: !!id,
 	})
 }
 
@@ -63,7 +94,16 @@ export function useImportToast(workspaceId: string) {
 	useEffect(() => {
 		if (!importData || !activeImportId) return
 
-		const { status, totalRows, processedRows, successCount, errorCount, fileName } = importData
+		const {
+			status,
+			totalRows,
+			processedRows,
+			successCount,
+			errorCount,
+			updatedCount,
+			skippedCount,
+			fileName,
+		} = importData
 		const progress = totalRows ? Math.round((processedRows / totalRows) * 100) : 0
 
 		if (status === 'importing') {
@@ -83,8 +123,12 @@ export function useImportToast(workspaceId: string) {
 			}
 
 			if (status === 'completed') {
-				const parts = [`${successCount} objects created`]
+				const parts: string[] = []
+				if (successCount > 0) parts.push(`${successCount} created`)
+				if (updatedCount > 0) parts.push(`${updatedCount} updated`)
+				if (skippedCount > 0) parts.push(`${skippedCount} unchanged`)
 				if (errorCount > 0) parts.push(`${errorCount} failed`)
+				if (parts.length === 0) parts.push('no rows resolved')
 				toast.success(`Import complete: ${parts.join(', ')}`)
 			} else {
 				toast.error(`Import failed: ${errorCount} errors`)

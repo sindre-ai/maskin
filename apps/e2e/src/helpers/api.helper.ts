@@ -160,6 +160,19 @@ export class TestAPI {
 		return res.json()
 	}
 
+	async updateWorkspace(
+		id: string,
+		data: { name?: string; settings?: Record<string, unknown> },
+	): Promise<WorkspaceResponse> {
+		const res = await fetch(`${this.baseURL}/api/workspaces/${id}`, {
+			method: 'PATCH',
+			headers: this.headers(id),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`updateWorkspace failed: ${res.status}`)
+		return res.json()
+	}
+
 	async listWorkspaceActors(workspaceId: string): Promise<ActorListItem[]> {
 		const res = await fetch(`${this.baseURL}/api/actors`, {
 			headers: this.headers(workspaceId),

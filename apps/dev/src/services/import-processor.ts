@@ -1,8 +1,15 @@
 import type { Database } from '@maskin/db'
-import { events, imports, objects, relationships } from '@maskin/db/schema'
+import {
+	events,
+	type NewImportAuditRow,
+	importAuditRows,
+	imports,
+	objects,
+	relationships,
+} from '@maskin/db/schema'
 import type { CsvOptions, ImportMapping, TypeMapping } from '@maskin/shared'
 import { parse } from 'csv-parse/sync'
-import { eq } from 'drizzle-orm'
+import { type SQL, and, eq, isNotNull, ne, or, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 
@@ -29,6 +36,10 @@ export interface ImportResult {
 	successCount: number
 	/** Number of row-level errors during object creation */
 	errorCount: number
+	/** Number of existing objects updated by dedup-key matching */
+	updatedCount: number
+	/** Number of rows resolved to an existing object with no changes (skipped) */
+	skippedCount: number
 	/** Number of relationships created in Pass 2 */
 	relationshipCount: number
 	/** Number of relationship-level errors */
@@ -379,6 +390,11 @@ interface MappedRow {
 	status: string
 	metadata: Record<string, unknown>
 	driver?: string
+	// Target fields the CSV row actually populated (non-empty source cell on a
+	// non-skipped column). Lets the diff and audit gate per-row provenance
+	// rather than per-typeMapping — empty cells must never overwrite stored
+	// values with `defaultStatus` or a fallback.
+	providedFields: Set<string>
 }
 
 function applyTransform(value: string, transform: string): string | number | boolean {
@@ -406,6 +422,7 @@ export function mapRowForType(
 	let status: string | undefined
 	let driver: string | undefined
 	const metadata: Record<string, unknown> = {}
+	const providedFields = new Set<string>()
 	let hasValue = false
 
 	for (const col of typeMapping.columns) {
@@ -414,6 +431,7 @@ export function mapRowForType(
 		if (value === undefined || value === '') continue
 
 		hasValue = true
+		providedFields.add(col.targetField)
 		if (col.targetField === 'title') {
 			titleParts.push(value)
 		} else if (col.targetField === 'content') {
@@ -451,7 +469,276 @@ export function mapRowForType(
 		status = typeMapping.defaultStatus ?? settings.statuses?.[type]?.[0] ?? 'new'
 	}
 
-	return { type, title, content, status, metadata, driver }
+	return { type, title, content, status, metadata, driver, providedFields }
+}
+
+// ── Dedup matching engine ────────────────────────────────────────────────
+//
+// When a `typeMapping.dedupKeys` array is set, the per-batch transaction
+// resolves each input row to an outcome before any write happens:
+//   - `created` — no existing object matched on all keys, INSERT a new one
+//   - `updated` — existing object matched and at least one mapped column
+//                 differs; UPDATE only the changed columns (columns the
+//                 CSV omits stay untouched)
+//   - `skipped` — existing object matched and every mapped column already
+//                 equals the existing value (idempotent re-run)
+// The full classify + write happens in one transaction per batch so AC-T7
+// (parallel imports with overlapping keys must not double-create) is
+// surfaced by the integration test against real Postgres.
+
+type DedupKey = { kind: 'title' } | { kind: 'metadata'; field: string }
+
+const METADATA_FIELD_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
+
+// First slot of the two-int pg_advisory_xact_lock keyspace reserved for the
+// import-dedup serializer. Picked as the int32 representation of the ASCII
+// bytes "IMPD" so it's visually identifiable in pg_locks during debugging
+// and stays out of any single-int advisory-lock keyspace a future feature
+// might choose. Lower 32 bits = hashtext(workspaceId).
+const IMPORT_DEDUP_LOCK_NAMESPACE = 0x494d5044
+
+/** Parse `dedupKeys` strings into validated key descriptors. Throws on a malformed entry so the batch surfaces a clear error rather than silently matching the wrong field. */
+function parseDedupKeys(keys: readonly string[]): DedupKey[] {
+	const out: DedupKey[] = []
+	for (const key of keys) {
+		if (key === 'title') {
+			out.push({ kind: 'title' })
+			continue
+		}
+		if (key.startsWith('metadata.')) {
+			const field = key.slice('metadata.'.length)
+			if (!METADATA_FIELD_RE.test(field)) {
+				throw new Error(
+					`Invalid dedup key '${key}': metadata field must match ${METADATA_FIELD_RE}`,
+				)
+			}
+			out.push({ kind: 'metadata', field })
+			continue
+		}
+		throw new Error(
+			`Invalid dedup key '${key}': must be 'title' or 'metadata.<field>' (e.g. 'metadata.email')`,
+		)
+	}
+	return out
+}
+
+interface ExistingRow {
+	id: string
+	title: string | null
+	content: string | null
+	status: string
+	driver: string | null
+	metadata: Record<string, unknown> | null
+}
+
+function stringifyMetadataValue(value: unknown): string | undefined {
+	if (value === undefined || value === null) return undefined
+	if (typeof value === 'string') return value
+	return String(value)
+}
+
+/** Extract the dedup-key tuple from a mapped CSV row. Returns `null` if any key has an empty / undefined value — those rows route to "create" per AC-T3. */
+function getMappedDedupTuple(mapped: MappedRow, keys: DedupKey[]): string[] | null {
+	const out: string[] = []
+	for (const key of keys) {
+		const value =
+			key.kind === 'title' ? mapped.title : stringifyMetadataValue(mapped.metadata[key.field])
+		if (value === undefined || value === '') return null
+		out.push(value)
+	}
+	return out
+}
+
+/** Extract the dedup-key tuple from an existing object. Returns `null` if any stored value is NULL/empty — those rows never match (AC-T3, "empty ≠ empty"). */
+function getExistingDedupTuple(existing: ExistingRow, keys: DedupKey[]): string[] | null {
+	const out: string[] = []
+	for (const key of keys) {
+		const value =
+			key.kind === 'title' ? existing.title : stringifyMetadataValue(existing.metadata?.[key.field])
+		if (value === undefined || value === null || value === '') return null
+		out.push(value)
+	}
+	return out
+}
+
+/** Build a single SQL clause matching one CSV row's dedup-key tuple against the `objects` row. `IS NOT NULL AND <> ''` excludes NULL/empty stored values (AC-T3). */
+function buildRowMatchClause(keys: DedupKey[], tuple: string[]): SQL {
+	const parts: SQL[] = []
+	for (let i = 0; i < keys.length; i++) {
+		const key = keys[i]
+		const value = tuple[i]
+		if (key === undefined || value === undefined) continue
+		if (key.kind === 'title') {
+			const titleClause = and(
+				isNotNull(objects.title),
+				ne(objects.title, ''),
+				eq(objects.title, value),
+			)
+			if (titleClause !== undefined) parts.push(titleClause)
+		} else {
+			parts.push(
+				sql`${objects.metadata}->>${key.field} IS NOT NULL AND ${objects.metadata}->>${key.field} <> '' AND ${objects.metadata}->>${key.field} = ${value}`,
+			)
+		}
+	}
+	const composed = and(...parts)
+	if (composed === undefined) {
+		throw new Error('buildRowMatchClause produced an empty clause — dedupKeys must be non-empty')
+	}
+	return composed
+}
+
+interface DiffResult {
+	changedColumns: string[]
+	oldValues: Record<string, unknown>
+	newValues: Record<string, unknown>
+	setPayload: Partial<{
+		title: string | null
+		content: string | null
+		status: string
+		driver: string | null
+		metadata: Record<string, unknown> | null
+	}>
+}
+
+/** Compute the diff between a mapped CSV row and an existing object. Only mapped (non-skip) target fields are compared — columns the CSV omits stay untouched (AC-T4). The setPayload is the minimal patch to send to UPDATE objects SET. */
+function diffMappedRow(mapped: MappedRow, existing: ExistingRow): DiffResult {
+	const changedColumns: string[] = []
+	const oldValues: Record<string, unknown> = {}
+	const newValues: Record<string, unknown> = {}
+	const setPayload: DiffResult['setPayload'] = {}
+
+	// Gate every field on per-row provenance (mapped.providedFields) — a CSV
+	// row that left a mapped cell empty must never overwrite the stored value,
+	// even if the typeMapping defines that column. Status was the canonical
+	// silent-overwrite case: mapRowForType falls back to `defaultStatus` when
+	// the cell is empty, so gating on `typeMapping.columns.some(...)` would
+	// write that fallback to the DB and audit it as a real change.
+	const provided = mapped.providedFields
+
+	if (provided.has('title') && (mapped.title ?? null) !== (existing.title ?? null)) {
+		changedColumns.push('title')
+		oldValues.title = existing.title
+		newValues.title = mapped.title
+		setPayload.title = mapped.title ?? null
+	}
+	if (provided.has('content') && (mapped.content ?? null) !== (existing.content ?? null)) {
+		changedColumns.push('content')
+		oldValues.content = existing.content
+		newValues.content = mapped.content
+		setPayload.content = mapped.content ?? null
+	}
+	if (provided.has('status') && mapped.status !== existing.status) {
+		changedColumns.push('status')
+		oldValues.status = existing.status
+		newValues.status = mapped.status
+		setPayload.status = mapped.status
+	}
+	if (provided.has('driver') && (mapped.driver ?? null) !== (existing.driver ?? null)) {
+		changedColumns.push('driver')
+		oldValues.driver = existing.driver
+		newValues.driver = mapped.driver
+		setPayload.driver = mapped.driver ?? null
+	}
+
+	// Metadata: compare each CSV-provided metadata.<field> against the existing
+	// row. The UPDATE merges changed fields into existing metadata so CSV-omitted
+	// metadata columns stay at their stored value (AC-T4).
+	const mergedMetadata: Record<string, unknown> = { ...(existing.metadata ?? {}) }
+	let metadataChanged = false
+	for (const [field, value] of Object.entries(mapped.metadata)) {
+		const existingValue = existing.metadata?.[field]
+		const same =
+			existingValue === value ||
+			(existingValue === undefined && value === undefined) ||
+			(existingValue === null && value === null) ||
+			(typeof existingValue !== 'object' &&
+				typeof value !== 'object' &&
+				String(existingValue) === String(value))
+		if (!same) {
+			changedColumns.push(`metadata.${field}`)
+			oldValues[`metadata.${field}`] = existingValue ?? null
+			newValues[`metadata.${field}`] = value
+			mergedMetadata[field] = value
+			metadataChanged = true
+		}
+	}
+	if (metadataChanged) {
+		setPayload.metadata = mergedMetadata
+	}
+
+	return { changedColumns, oldValues, newValues, setPayload }
+}
+
+interface ValidRow {
+	rowIndex: number
+	mapped: MappedRow
+}
+
+interface ClassifiedBuckets {
+	creates: ValidRow[]
+	updates: { row: ValidRow; existing: ExistingRow; diff: DiffResult }[]
+	skips: { row: ValidRow; existing: ExistingRow }[]
+}
+
+/** Classify a batch of valid rows for one type mapping into create/update/skip buckets. Multi-match resolves to the lowest object_id deterministically. Duplicate-tuple CSV rows all bind to the same matched object — matching T3 preview's classifier — and are applied sequentially against a running view so each row's audit reflects the state it actually observed. */
+function classifyRows(
+	validRows: ValidRow[],
+	dedupKeys: DedupKey[],
+	existingByTuple: Map<string, ExistingRow>,
+): ClassifiedBuckets {
+	const creates: ValidRow[] = []
+	const updates: ClassifiedBuckets['updates'] = []
+	const skips: ClassifiedBuckets['skips'] = []
+	// Track the post-diff state of each existing object as we walk the batch.
+	// When two CSV rows share a dedup tuple they both target the same matched
+	// object; the second row must diff against the first row's pending state
+	// so its audit row reflects the field values it actually observed. The
+	// write pass then applies the per-row UPDATEs sequentially against the
+	// same row inside the transaction.
+	const runningState = new Map<string, ExistingRow>()
+
+	for (const row of validRows) {
+		if (dedupKeys.length === 0) {
+			creates.push(row)
+			continue
+		}
+		const tuple = getMappedDedupTuple(row.mapped, dedupKeys)
+		if (tuple === null) {
+			creates.push(row)
+			continue
+		}
+		const tupleKey = tuple.join('\u0000')
+		const existing = existingByTuple.get(tupleKey)
+		if (!existing) {
+			creates.push(row)
+			continue
+		}
+		const current = runningState.get(existing.id) ?? existing
+		const diff = diffMappedRow(row.mapped, current)
+		if (diff.changedColumns.length === 0) {
+			skips.push({ row, existing })
+		} else {
+			updates.push({ row, existing, diff })
+			runningState.set(existing.id, applyDiffToExisting(current, diff))
+		}
+	}
+
+	return { creates, updates, skips }
+}
+
+/** Project a DiffResult onto an ExistingRow so the next same-target row diffs against the post-update state. Mirrors the SET payload semantics of the UPDATE issued in the write pass. */
+function applyDiffToExisting(existing: ExistingRow, diff: DiffResult): ExistingRow {
+	const next: ExistingRow = { ...existing }
+	const payload = diff.setPayload
+	if ('title' in payload) next.title = payload.title ?? null
+	if ('content' in payload) next.content = payload.content ?? null
+	if ('status' in payload && payload.status !== undefined) next.status = payload.status
+	if ('driver' in payload) next.driver = payload.driver ?? null
+	if ('metadata' in payload) {
+		next.metadata = (payload.metadata ?? null) as Record<string, unknown> | null
+	}
+	return next
 }
 
 export async function executeImport(
@@ -465,55 +752,185 @@ export async function executeImport(
 ): Promise<ImportResult> {
 	let successCount = 0
 	let errorCount = 0
+	let updatedCount = 0
+	let skippedCount = 0
 	let relationshipCount = 0
 	let relationshipErrorCount = 0
 	const errors: ImportError[] = []
 
 	const relDefs = mapping.relationships ?? []
-	// Track (rowIndex, objectType) → created object ID for relationship pass
+	// Track (rowIndex, objectType) → object ID for relationship pass. Populated
+	// for created AND updated/skipped outcomes — a relationship should bind to
+	// the resolved object regardless of whether this import row created it or
+	// matched an existing one.
 	const rowTypeToObjectId = new Map<string, string>()
 
-	// ── Pass 1: Create objects ──────────────────────────────────────────
+	// ── Pass 1: Resolve + write per batch ───────────────────────────────
 	for (let i = 0; i < rows.length; i += BATCH_SIZE) {
 		const batch = rows.slice(i, i + BATCH_SIZE)
 		const batchErrors: ImportError[] = []
 
-		const validRows: { rowIndex: number; typeMapping: TypeMapping; mapped: MappedRow }[] = []
-		for (let j = 0; j < batch.length; j++) {
-			const rowIndex = i + j // 0-based internally; +1 for user-facing error messages
-			const row = batch[j]
-			if (!row) continue
-
-			for (const typeMapping of mapping.typeMappings) {
+		// Build per-typeMapping context for this batch. Index preserved so we
+		// can restore row-major ordering (rowIndex first, typeMapping second)
+		// when batching INSERTs across typeMappings.
+		const perType = mapping.typeMappings.map((typeMapping, typeMappingIdx) => {
+			const dedupKeys = parseDedupKeys(typeMapping.dedupKeys ?? [])
+			const validRows: ValidRow[] = []
+			for (let j = 0; j < batch.length; j++) {
+				const rowIndex = i + j
+				const row = batch[j]
+				if (!row) continue
 				const mapped = mapRowForType(row, typeMapping, settings)
-				if (mapped) {
-					validRows.push({ rowIndex, typeMapping, mapped })
-				}
+				if (mapped) validRows.push({ rowIndex, mapped })
 			}
-		}
+			return { typeMapping, typeMappingIdx, dedupKeys, validRows }
+		})
 
-		if (validRows.length > 0) {
+		const totalValidRows = perType.reduce((sum, p) => sum + p.validRows.length, 0)
+		const anyDedup = perType.some((p) => p.dedupKeys.length > 0)
+		const allValidRowIndexes = perType.flatMap((p) => p.validRows.map((r) => r.rowIndex))
+
+		if (totalValidRows > 0) {
 			try {
-				const createdObjects = await db.transaction(async (tx) => {
-					const created = await tx
-						.insert(objects)
-						.values(
-							validRows.map(({ mapped }) => ({
-								workspaceId,
-								type: mapped.type,
-								title: mapped.title,
-								content: mapped.content,
-								status: mapped.status,
-								metadata: Object.keys(mapped.metadata).length > 0 ? mapped.metadata : undefined,
-								driver: mapped.driver,
-								createdBy: actorId,
-							})),
+				const batchResult = await db.transaction(async (tx) => {
+					// Serialize per-workspace import batches so two parallel
+					// imports with overlapping dedup tuples cannot both
+					// match-select before either writes — the documented
+					// architecture fallback for AC-T7. The lock auto-releases
+					// at transaction commit/rollback. Two-int form (namespace,
+					// hashtext(workspaceId)) so we only collide with other
+					// import-dedup locks, not with arbitrary single-int
+					// advisory locks future code might take elsewhere.
+					if (anyDedup) {
+						await tx.execute(
+							sql`SELECT pg_advisory_xact_lock(${IMPORT_DEDUP_LOCK_NAMESPACE}, hashtext(${workspaceId}))`,
 						)
-						.returning()
+					}
 
-					if (created.length > 0) {
+					const allCreates: {
+						typeMapping: TypeMapping
+						typeMappingIdx: number
+						row: ValidRow
+					}[] = []
+					const allUpdates: {
+						typeMapping: TypeMapping
+						typeMappingIdx: number
+						row: ValidRow
+						existing: ExistingRow
+						diff: DiffResult
+					}[] = []
+					const allSkips: {
+						typeMapping: TypeMapping
+						typeMappingIdx: number
+						row: ValidRow
+						existing: ExistingRow
+					}[] = []
+
+					// 1. For each typeMapping: match-select (when dedup is configured)
+					//    + classify into create/update/skip buckets. Match-select is
+					//    type-scoped so it has to be per-typeMapping; INSERT can be
+					//    batched across typeMappings (objects is one table).
+					for (const { typeMapping, typeMappingIdx, dedupKeys, validRows } of perType) {
+						if (validRows.length === 0) continue
+
+						const existingByTuple = new Map<string, ExistingRow>()
+						if (dedupKeys.length > 0) {
+							const lookupTuples: string[][] = []
+							for (const row of validRows) {
+								const tuple = getMappedDedupTuple(row.mapped, dedupKeys)
+								if (tuple !== null) lookupTuples.push(tuple)
+							}
+							if (lookupTuples.length > 0) {
+								const rowClauses: SQL[] = []
+								for (const tuple of lookupTuples) {
+									rowClauses.push(buildRowMatchClause(dedupKeys, tuple))
+								}
+								const matched = await tx
+									.select({
+										id: objects.id,
+										title: objects.title,
+										content: objects.content,
+										status: objects.status,
+										driver: objects.driver,
+										metadata: objects.metadata,
+									})
+									.from(objects)
+									.where(
+										and(
+											eq(objects.workspaceId, workspaceId),
+											eq(objects.type, typeMapping.objectType),
+											or(...rowClauses),
+										),
+									)
+
+								const grouped = new Map<string, ExistingRow[]>()
+								for (const row of matched) {
+									const ex: ExistingRow = {
+										id: row.id,
+										title: row.title,
+										content: row.content,
+										status: row.status,
+										driver: row.driver,
+										metadata: (row.metadata ?? null) as Record<string, unknown> | null,
+									}
+									const tuple = getExistingDedupTuple(ex, dedupKeys)
+									if (tuple === null) continue
+									const tupleKey = tuple.join('\u0000')
+									const list = grouped.get(tupleKey) ?? []
+									list.push(ex)
+									grouped.set(tupleKey, list)
+								}
+								for (const [tupleKey, list] of grouped) {
+									list.sort((a, b) => a.id.localeCompare(b.id))
+									const head = list[0]
+									if (head) existingByTuple.set(tupleKey, head)
+								}
+							}
+						}
+
+						const { creates, updates, skips } = classifyRows(validRows, dedupKeys, existingByTuple)
+						for (const row of creates) allCreates.push({ typeMapping, typeMappingIdx, row })
+						for (const u of updates) allUpdates.push({ typeMapping, typeMappingIdx, ...u })
+						for (const s of skips) allSkips.push({ typeMapping, typeMappingIdx, ...s })
+					}
+
+					// Restore row-major ordering across typeMappings so paired
+					// arrays (allCreates ↔ createdRows) line up with the row-major
+					// shape the executor uses elsewhere.
+					const sortByRowThenType = <T extends { row: ValidRow; typeMappingIdx: number }>(
+						a: T,
+						b: T,
+					) => a.row.rowIndex - b.row.rowIndex || a.typeMappingIdx - b.typeMappingIdx
+					allCreates.sort(sortByRowThenType)
+					allUpdates.sort(sortByRowThenType)
+					allSkips.sort(sortByRowThenType)
+
+					// 2. INSERT all creates in one batch (across typeMappings).
+					let createdRows: { id: string; type: string; title: string | null }[] = []
+					if (allCreates.length > 0) {
+						createdRows = await tx
+							.insert(objects)
+							.values(
+								allCreates.map(({ row }) => ({
+									workspaceId,
+									type: row.mapped.type,
+									title: row.mapped.title,
+									content: row.mapped.content,
+									status: row.mapped.status,
+									metadata:
+										Object.keys(row.mapped.metadata).length > 0 ? row.mapped.metadata : undefined,
+									driver: row.mapped.driver,
+									createdBy: actorId,
+								})),
+							)
+							.returning({
+								id: objects.id,
+								type: objects.type,
+								title: objects.title,
+							})
+
 						await tx.insert(events).values(
-							created.map((obj) => ({
+							createdRows.map((obj) => ({
 								workspaceId,
 								actorId,
 								action: 'created' as const,
@@ -523,22 +940,106 @@ export async function executeImport(
 							})),
 						)
 					}
-					return created
+
+					// 3. UPDATE matched objects — one statement per row, SET payload
+					//    differs per row (changed-cols-only, AC-T4).
+					for (const { typeMapping, existing, diff } of allUpdates) {
+						await tx
+							.update(objects)
+							.set({ ...diff.setPayload, updatedAt: new Date() })
+							.where(eq(objects.id, existing.id))
+
+						await tx.insert(events).values({
+							workspaceId,
+							actorId,
+							action: 'updated',
+							entityType: typeMapping.objectType,
+							entityId: existing.id,
+							data: {
+								id: existing.id,
+								changedColumns: diff.changedColumns,
+								importId,
+							},
+						})
+					}
+
+					// 4. INSERT audit rows for every dedup-configured outcome in
+					//    this batch. Rows under typeMappings without dedupKeys are
+					//    deliberately not audited — the "create all as new" hatch
+					//    keeps the audit table empty.
+					if (anyDedup) {
+						const auditRows: NewImportAuditRow[] = []
+						for (let k = 0; k < allCreates.length; k++) {
+							const c = allCreates[k]
+							const created = createdRows[k]
+							if (!c || !created) continue
+							if (c.typeMapping.dedupKeys?.length) {
+								auditRows.push({
+									importId,
+									rowIndex: c.row.rowIndex,
+									objectId: created.id,
+									action: 'created',
+									changedColumns: [],
+									oldValues: {},
+									newValues: {},
+								})
+							}
+						}
+						for (const { typeMapping, row, existing, diff } of allUpdates) {
+							if (!typeMapping.dedupKeys?.length) continue
+							auditRows.push({
+								importId,
+								rowIndex: row.rowIndex,
+								objectId: existing.id,
+								action: 'updated',
+								changedColumns: diff.changedColumns,
+								oldValues: diff.oldValues,
+								newValues: diff.newValues,
+							})
+						}
+						for (const { typeMapping, row, existing } of allSkips) {
+							if (!typeMapping.dedupKeys?.length) continue
+							auditRows.push({
+								importId,
+								rowIndex: row.rowIndex,
+								objectId: existing.id,
+								action: 'skipped',
+								changedColumns: [],
+								oldValues: {},
+								newValues: {},
+							})
+						}
+						if (auditRows.length > 0) {
+							await tx.insert(importAuditRows).values(auditRows)
+						}
+					}
+
+					return { allCreates, createdRows, allUpdates, allSkips }
 				})
 
-				// Index created objects for relationship matching
-				for (let k = 0; k < validRows.length; k++) {
-					const validRow = validRows[k]
-					const obj = createdObjects[k]
-					if (!validRow || !obj) continue
-
-					const key = `${validRow.rowIndex}::${obj.type}`
-					rowTypeToObjectId.set(key, obj.id)
+				// Bind every resolved row → object id so Pass 2 can build
+				// relationships against created AND matched objects.
+				for (let k = 0; k < batchResult.allCreates.length; k++) {
+					const create = batchResult.allCreates[k]
+					const created = batchResult.createdRows[k]
+					if (!create || !created) continue
+					rowTypeToObjectId.set(`${create.row.rowIndex}::${created.type}`, created.id)
+				}
+				for (const upd of batchResult.allUpdates) {
+					rowTypeToObjectId.set(
+						`${upd.row.rowIndex}::${upd.typeMapping.objectType}`,
+						upd.existing.id,
+					)
+				}
+				for (const sk of batchResult.allSkips) {
+					rowTypeToObjectId.set(`${sk.row.rowIndex}::${sk.typeMapping.objectType}`, sk.existing.id)
 				}
 
-				successCount += createdObjects.length
+				successCount += batchResult.createdRows.length
+				updatedCount += batchResult.allUpdates.length
+				skippedCount += batchResult.allSkips.length
 			} catch (err) {
-				const uniqueRows = [...new Set(validRows.map(({ rowIndex }) => rowIndex))]
+				const uniqueRows = [...new Set(allValidRowIndexes)]
 				for (const rowIndex of uniqueRows) {
 					batchErrors.push({
 						row: rowIndex + 1,
@@ -557,6 +1058,8 @@ export async function executeImport(
 				processedRows: Math.min(i + BATCH_SIZE, rows.length),
 				successCount,
 				errorCount,
+				updatedCount,
+				skippedCount,
 				errors: errors.length > 0 ? errors : undefined,
 				updatedAt: new Date(),
 			})
@@ -655,10 +1158,340 @@ export async function executeImport(
 		importId,
 		successCount,
 		errorCount,
+		updatedCount,
+		skippedCount,
 		relationshipCount,
 		relationshipErrorCount,
 		totalRows: rows.length,
 	})
 
-	return { successCount, errorCount, relationshipCount, relationshipErrorCount, errors }
+	return {
+		successCount,
+		errorCount,
+		updatedCount,
+		skippedCount,
+		relationshipCount,
+		relationshipErrorCount,
+		errors,
+	}
+}
+
+// ── Dedup Matching Engine ───────────────────────────────────────────────
+//
+// Shared by the preview endpoint (dry-run, whole file) and the import
+// processor's per-batch write path. Resolves each input row against existing
+// objects in the workspace using the user-selected dedup keys, classifies
+// the row as updated / created / skipped, and computes the per-column diff
+// for matched rows so the caller can emit the correct audit record (T2) or
+// preview diff (T3).
+
+/** One concrete change between a CSV row and its matched existing object. */
+export interface DedupColumnChange {
+	column: string
+	old: unknown
+	new: unknown
+}
+
+/** A row that resolved to an existing object via the dedup keys. */
+export interface DedupMatchedRow {
+	rowIndex: number
+	objectId: string
+	/** Empty when the row would be a no-op (skipped). */
+	changes: DedupColumnChange[]
+}
+
+export interface DedupClassification {
+	/** Rows resolved to an existing object with at least one diff column. */
+	updated: DedupMatchedRow[]
+	/** Rows that had no matching existing object — would create a new record. */
+	createdRowIndices: number[]
+	/** Rows resolved to an existing object but with no diff columns — no-op. */
+	skippedRowIndices: number[]
+}
+
+/**
+ * Convert a dedup-key spec (`title` or `metadata.<field>`) into a column path
+ * we can compare on both sides. `null` means the key does not exist on the
+ * target type and the caller must reject the request before reaching here
+ * (the route-level validator catches this).
+ */
+function resolveColumnValue(
+	source: { title: string | null; metadata: Record<string, unknown> | null },
+	dedupKey: string,
+): string | null {
+	if (dedupKey === 'title') {
+		return source.title ?? null
+	}
+	if (dedupKey.startsWith('metadata.')) {
+		const field = dedupKey.slice('metadata.'.length)
+		const value = source.metadata?.[field]
+		if (value === undefined || value === null) return null
+		return String(value)
+	}
+	return null
+}
+
+/**
+ * Build the dedup-key value tuple for a CSV row. Returns null when any
+ * selected key resolves to an empty/missing value — per AC-T3 those rows
+ * must never match (routed straight to "create new").
+ */
+function buildKeyTuple(
+	row: Record<string, string>,
+	typeMapping: TypeMapping,
+	dedupKeys: string[],
+): string[] | null {
+	const values: string[] = []
+	for (const dedupKey of dedupKeys) {
+		const sourceColumn = typeMapping.columns.find(
+			(c) => !c.skip && c.targetField === dedupKey,
+		)?.sourceColumn
+		if (!sourceColumn) return null
+		const raw = row[sourceColumn]
+		if (raw === undefined || raw === '') return null
+		values.push(raw)
+	}
+	return values
+}
+
+/** Build the SQL fragment that selects existing objects for a column path. */
+function dedupKeyEquals(dedupKey: string, value: string): SQL {
+	if (dedupKey === 'title') {
+		return sql`${objects.title} = ${value}`
+	}
+	const field = dedupKey.slice('metadata.'.length)
+	// Per AC-T3, also guard against the column missing on the existing row
+	// — JSONB `->>` returns NULL when the key isn't present, and SQL `NULL =
+	// $val` is NULL (not true), so the IS NOT NULL is defence-in-depth.
+	return sql`${objects.metadata} ->> ${field} IS NOT NULL AND ${objects.metadata} ->> ${field} = ${value}`
+}
+
+const MATCH_CHUNK_SIZE = 200
+
+export async function matchRowsByDedupKeys(
+	rows: Record<string, string>[],
+	typeMapping: TypeMapping,
+	workspaceId: string,
+	settings: WorkspaceSettings,
+	db: Database,
+): Promise<DedupClassification> {
+	const dedupKeys = typeMapping.dedupKeys ?? []
+	if (dedupKeys.length === 0) {
+		// No dedup keys → every row is a create (the caller already enforced
+		// the createAllAsNew backstop at the route layer).
+		return {
+			updated: [],
+			createdRowIndices: rows.map((_, i) => i),
+			skippedRowIndices: [],
+		}
+	}
+
+	// Pre-compute each row's mapped target values once — both for matching
+	// (we need the dedup-key values) and for diffing matched rows.
+	const mappedRows = rows.map((row, rowIndex) => {
+		const mapped = mapRowForType(row, typeMapping, settings)
+		const keyTuple = buildKeyTuple(row, typeMapping, dedupKeys)
+		return { rowIndex, row, mapped, keyTuple }
+	})
+
+	// Rows that can never match (any empty key value) are immediately routed
+	// to "create" without a DB roundtrip.
+	const eligibleForMatching: typeof mappedRows = []
+	const createdRowIndices: number[] = []
+	for (const entry of mappedRows) {
+		if (!entry.keyTuple) {
+			createdRowIndices.push(entry.rowIndex)
+			continue
+		}
+		eligibleForMatching.push(entry)
+	}
+
+	// Bucket eligible rows by their dedup-key tuple so duplicate CSV rows
+	// share one DB lookup. Map key: JSON-encoded tuple → list of eligible
+	// row entries with that tuple.
+	const tupleToRows = new Map<string, typeof eligibleForMatching>()
+	for (const entry of eligibleForMatching) {
+		// keyTuple is guaranteed non-null here by the loop above.
+		const tupleKey = JSON.stringify(entry.keyTuple)
+		const bucket = tupleToRows.get(tupleKey)
+		if (bucket) bucket.push(entry)
+		else tupleToRows.set(tupleKey, [entry])
+	}
+
+	// Walk unique tuples in chunks, issue one SELECT per chunk that ORs all
+	// per-tuple AND-clauses together. Postgres parameter limit is 65535 — at
+	// 200 tuples × up to ~5 keys = 1000 params we stay well under it.
+	const uniqueTuples = [...tupleToRows.keys()]
+	const tupleToMatch = new Map<
+		string,
+		{
+			id: string
+			title: string | null
+			metadata: Record<string, unknown> | null
+			status: string
+			content: string | null
+			driver: string | null
+		}
+	>()
+
+	for (let i = 0; i < uniqueTuples.length; i += MATCH_CHUNK_SIZE) {
+		const chunkTupleKeys = uniqueTuples.slice(i, i + MATCH_CHUNK_SIZE)
+		const orClauses: SQL[] = []
+		for (const tupleKey of chunkTupleKeys) {
+			const values = JSON.parse(tupleKey) as string[]
+			const andParts: SQL[] = []
+			for (let k = 0; k < dedupKeys.length; k++) {
+				const key = dedupKeys[k]
+				const val = values[k]
+				if (key === undefined || val === undefined) continue
+				andParts.push(dedupKeyEquals(key, val))
+			}
+			const combined = and(...andParts)
+			if (combined) orClauses.push(combined)
+		}
+		if (orClauses.length === 0) continue
+
+		const matches = await db
+			.select({
+				id: objects.id,
+				title: objects.title,
+				content: objects.content,
+				status: objects.status,
+				metadata: objects.metadata,
+				driver: objects.driver,
+			})
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					eq(objects.type, typeMapping.objectType),
+					or(...orClauses),
+				),
+			)
+
+		// Index matches by their dedup-key tuple. When multiple existing
+		// objects collide on the same tuple (rare — usually a data-quality
+		// issue), AC-T7 / architecture requires picking deterministically:
+		// the lowest object_id wins so re-runs of the same import are
+		// idempotent (AC-T6).
+		for (const match of matches) {
+			const tuple = dedupKeys.map((key) =>
+				resolveColumnValue(
+					{
+						title: match.title,
+						metadata: match.metadata as Record<string, unknown> | null,
+					},
+					key,
+				),
+			)
+			if (tuple.some((v) => v === null || v === '')) continue
+			const tupleKey = JSON.stringify(tuple)
+			const existing = tupleToMatch.get(tupleKey)
+			if (!existing || match.id < existing.id) {
+				tupleToMatch.set(tupleKey, {
+					id: match.id,
+					title: match.title,
+					content: match.content,
+					status: match.status,
+					metadata: (match.metadata as Record<string, unknown> | null) ?? null,
+					driver: match.driver,
+				})
+			}
+		}
+	}
+
+	// Classify each eligible row using the tuple→match index.
+	const updated: DedupMatchedRow[] = []
+	const skippedRowIndices: number[] = []
+
+	for (const entry of eligibleForMatching) {
+		if (!entry.keyTuple) continue
+		const tupleKey = JSON.stringify(entry.keyTuple)
+		const match = tupleToMatch.get(tupleKey)
+		if (!match) {
+			createdRowIndices.push(entry.rowIndex)
+			continue
+		}
+		const changes = diffMappedRowAgainstObject(entry.row, entry.mapped, typeMapping, match)
+		if (changes.length === 0) {
+			skippedRowIndices.push(entry.rowIndex)
+		} else {
+			updated.push({ rowIndex: entry.rowIndex, objectId: match.id, changes })
+		}
+	}
+
+	// Sort so the output order is deterministic across runs (helps tests +
+	// keeps the first-25-diff cap stable when the same CSV is re-uploaded).
+	createdRowIndices.sort((a, b) => a - b)
+	skippedRowIndices.sort((a, b) => a - b)
+	updated.sort((a, b) => a.rowIndex - b.rowIndex)
+
+	return { updated, createdRowIndices, skippedRowIndices }
+}
+
+/**
+ * Compute the changed-column diff between a matched existing object and the
+ * mapped CSV row. Only columns the CSV provided a value for are diffed —
+ * columns the CSV omits stay untouched (AC-T4). The `column` field in each
+ * change mirrors the dotted `targetField` notation: `title`, `content`,
+ * `status`, `driver`, or `metadata.<field>`.
+ */
+function diffMappedRowAgainstObject(
+	row: Record<string, string>,
+	mapped: ReturnType<typeof mapRowForType>,
+	typeMapping: TypeMapping,
+	existing: {
+		title: string | null
+		content: string | null
+		status: string
+		driver: string | null
+		metadata: Record<string, unknown> | null
+	},
+): DedupColumnChange[] {
+	const changes: DedupColumnChange[] = []
+	if (!mapped) return changes
+
+	// Build the set of target fields the CSV actually provided a value for —
+	// only those participate in the diff. This is the column-level analogue
+	// of "columns the CSV omits stay untouched" (AC-T4).
+	const provided = new Set<string>()
+	for (const col of typeMapping.columns) {
+		if (col.skip) continue
+		const raw = row[col.sourceColumn]
+		if (raw === undefined || raw === '') continue
+		provided.add(col.targetField)
+	}
+
+	if (provided.has('title') && mapped.title !== undefined && mapped.title !== existing.title) {
+		changes.push({ column: 'title', old: existing.title, new: mapped.title })
+	}
+	if (
+		provided.has('content') &&
+		mapped.content !== undefined &&
+		mapped.content !== existing.content
+	) {
+		changes.push({ column: 'content', old: existing.content, new: mapped.content })
+	}
+	if (provided.has('status') && mapped.status !== existing.status) {
+		changes.push({ column: 'status', old: existing.status, new: mapped.status })
+	}
+	if (provided.has('driver') && mapped.driver !== undefined && mapped.driver !== existing.driver) {
+		changes.push({ column: 'driver', old: existing.driver, new: mapped.driver })
+	}
+
+	const existingMetadata = (existing.metadata ?? {}) as Record<string, unknown>
+	for (const targetField of provided) {
+		if (!targetField.startsWith('metadata.')) continue
+		const field = targetField.slice('metadata.'.length)
+		const newValue = mapped.metadata[field]
+		const oldValue = existingMetadata[field]
+		// Loose equality through JSON canonicalization handles primitive
+		// values (strings, numbers, booleans) consistently — both sides
+		// originate from JSONB / mapped output, never deeply nested.
+		if (JSON.stringify(newValue ?? null) !== JSON.stringify(oldValue ?? null)) {
+			changes.push({ column: targetField, old: oldValue ?? null, new: newValue ?? null })
+		}
+	}
+
+	return changes
 }

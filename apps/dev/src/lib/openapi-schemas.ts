@@ -203,6 +203,8 @@ export const importResponseSchema = z.object({
 	processedRows: z.number(),
 	successCount: z.number(),
 	errorCount: z.number(),
+	updatedCount: z.number(),
+	skippedCount: z.number(),
 	mapping: jsonbField,
 	preview: jsonbField,
 	errors: jsonbField,
@@ -217,6 +219,44 @@ export const importListItemSchema = importResponseSchema.omit({
 	preview: true,
 	errors: true,
 	mapping: true,
+})
+
+// Preview endpoint response — dry-run match counts + per-row diffs for the
+// first N matched rows. Powers AC-U2 (three counts + diff table). Diff rows
+// are intentionally limited to keep the payload bounded; the cap is set by
+// the route handler, not the schema.
+export const importPreviewResponseSchema = z.object({
+	matched: z.number(),
+	created: z.number(),
+	skipped: z.number(),
+	diffs: z.array(
+		z.object({
+			row_index: z.number(),
+			object_id: z.string().uuid(),
+			changes: z.array(
+				z.object({
+					column: z.string(),
+					old: z.unknown(),
+					new: z.unknown(),
+				}),
+			),
+		}),
+	),
+})
+
+// Per-row audit entry from `import_audit_rows`. Powers AC-U5 — the audit
+// detail page renders one of these per processed row, showing `old → new`
+// for each entry in `changedColumns`.
+export const importAuditRowResponseSchema = z.object({
+	id: z.string().uuid(),
+	importId: z.string().uuid(),
+	rowIndex: z.number(),
+	objectId: z.string().uuid().nullable(),
+	action: z.enum(['created', 'updated', 'skipped', 'failed']),
+	changedColumns: z.array(z.string()),
+	oldValues: jsonbField,
+	newValues: jsonbField,
+	createdAt: z.string().nullable(),
 })
 
 export const notificationResponseSchema = z.object({

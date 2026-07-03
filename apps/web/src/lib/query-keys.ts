@@ -82,7 +82,11 @@ export const queryKeys = {
 	},
 	imports: {
 		all: (workspaceId: string) => ['imports', workspaceId] as const,
+		list: (workspaceId: string, params?: Record<string, unknown>) =>
+			['imports', workspaceId, 'list', params ?? {}] as const,
 		detail: (id: string) => ['imports', 'detail', id] as const,
+		auditRows: (id: string, params?: Record<string, unknown>) =>
+			['imports', 'detail', id, 'audit-rows', params ?? {}] as const,
 	},
 	files: {
 		all: (workspaceId: string) => ['files', workspaceId] as const,

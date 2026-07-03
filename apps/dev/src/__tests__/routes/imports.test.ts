@@ -27,9 +27,16 @@ vi.mock('../../services/import-processor', () => ({
 		relationships: [],
 	}),
 	executeImport: vi.fn(),
+	matchRowsByDedupKeys: vi.fn().mockResolvedValue({
+		updated: [],
+		createdRowIndices: [0, 1],
+		skippedRowIndices: [],
+	}),
 }))
 
-const { parseFile, generateMapping } = await import('../../services/import-processor')
+const { parseFile, generateMapping, matchRowsByDedupKeys } = await import(
+	'../../services/import-processor'
+)
 const { default: importsRoutes } = await import('../../routes/imports')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
@@ -542,6 +549,358 @@ describe('POST /api/imports (file upload)', () => {
 	})
 })
 
+describe('POST /api/imports/:id/preview', () => {
+	beforeEach(() => {
+		vi.mocked(matchRowsByDedupKeys).mockClear()
+	})
+
+	function previewMapping(overrides?: Record<string, unknown>) {
+		return {
+			typeMappings: [
+				{
+					objectType: 'task',
+					columns: [{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false }],
+					defaultStatus: 'todo',
+					dedupKeys: ['title'],
+					...(overrides ?? {}),
+				},
+			],
+			relationships: [],
+		}
+	}
+
+	it('returns counts and diffs from the matching engine', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({ workspaceId: wsId, status: 'mapping' })
+		const ws = buildWorkspace({ id: wsId })
+		mockResults.selectQueue = [[member], [imp], [ws]]
+		vi.mocked(matchRowsByDedupKeys).mockResolvedValueOnce({
+			updated: [
+				{
+					rowIndex: 0,
+					objectId: '11111111-1111-1111-1111-111111111111',
+					changes: [{ column: 'title', old: 'Old', new: 'Item 1' }],
+				},
+			],
+			createdRowIndices: [1],
+			skippedRowIndices: [],
+		})
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/imports/${imp.id}/preview`,
+				{ mapping: previewMapping() },
+				{ 'x-workspace-id': wsId },
+			),
+		)
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.matched).toBe(1)
+		expect(body.created).toBe(1)
+		expect(body.skipped).toBe(0)
+		expect(body.diffs).toHaveLength(1)
+		expect(body.diffs[0]).toEqual({
+			row_index: 0,
+			object_id: '11111111-1111-1111-1111-111111111111',
+			changes: [{ column: 'title', old: 'Old', new: 'Item 1' }],
+		})
+	})
+
+	it('caps diffs at 25 even when more rows matched', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({ workspaceId: wsId, status: 'mapping' })
+		const ws = buildWorkspace({ id: wsId })
+		mockResults.selectQueue = [[member], [imp], [ws]]
+		const updated = Array.from({ length: 40 }, (_, i) => ({
+			rowIndex: i,
+			objectId: `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`,
+			changes: [{ column: 'title', old: `Old ${i}`, new: `New ${i}` }],
+		}))
+		vi.mocked(matchRowsByDedupKeys).mockResolvedValueOnce({
+			updated,
+			createdRowIndices: [],
+			skippedRowIndices: [],
+		})
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/imports/${imp.id}/preview`,
+				{ mapping: previewMapping() },
+				{ 'x-workspace-id': wsId },
+			),
+		)
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.matched).toBe(40)
+		expect(body.diffs).toHaveLength(25)
+		// Diffs are sorted by row_index — the cap keeps the lowest indices.
+		expect(body.diffs[0].row_index).toBe(0)
+		expect(body.diffs[24].row_index).toBe(24)
+	})
+
+	it('returns 400 when dedupKeys references a non-existent field on the target type', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({ workspaceId: wsId, status: 'mapping' })
+		const ws = buildWorkspace({ id: wsId })
+		mockResults.selectQueue = [[member], [imp], [ws]]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/imports/${imp.id}/preview`,
+				{ mapping: previewMapping({ dedupKeys: ['metadata.unknown_field'] }) },
+				{ 'x-workspace-id': wsId },
+			),
+		)
+		expect(res.status).toBe(400)
+		const body = await res.json()
+		expect(body.error.message).toContain('Invalid dedup key')
+		expect(body.error.message).toContain('unknown_field')
+		expect(matchRowsByDedupKeys).not.toHaveBeenCalled()
+	})
+
+	it('returns 400 when no dedupKeys and no createAllAsNew (AC-U4 backstop)', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({ workspaceId: wsId, status: 'mapping' })
+		const ws = buildWorkspace({ id: wsId })
+		mockResults.selectQueue = [[member], [imp], [ws]]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/imports/${imp.id}/preview`,
+				{
+					mapping: {
+						typeMappings: [
+							{
+								objectType: 'task',
+								columns: [
+									{
+										sourceColumn: 'name',
+										targetField: 'title',
+										transform: 'none',
+										skip: false,
+									},
+								],
+								defaultStatus: 'todo',
+							},
+						],
+						relationships: [],
+					},
+				},
+				{ 'x-workspace-id': wsId },
+			),
+		)
+		expect(res.status).toBe(400)
+		const body = await res.json()
+		expect(body.error.message).toContain('pick at least one field')
+	})
+
+	it('accepts empty dedupKeys when createAllAsNew is true', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({ workspaceId: wsId, status: 'mapping' })
+		const ws = buildWorkspace({ id: wsId })
+		mockResults.selectQueue = [[member], [imp], [ws]]
+		vi.mocked(matchRowsByDedupKeys).mockResolvedValueOnce({
+			updated: [],
+			createdRowIndices: [0, 1],
+			skippedRowIndices: [],
+		})
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/imports/${imp.id}/preview`,
+				{
+					mapping: {
+						typeMappings: [
+							{
+								objectType: 'task',
+								columns: [
+									{
+										sourceColumn: 'name',
+										targetField: 'title',
+										transform: 'none',
+										skip: false,
+									},
+								],
+								defaultStatus: 'todo',
+								createAllAsNew: true,
+							},
+						],
+						relationships: [],
+					},
+				},
+				{ 'x-workspace-id': wsId },
+			),
+		)
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.matched).toBe(0)
+		expect(body.created).toBe(2)
+	})
+
+	it('returns 409 when import is not in mapping state', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({ workspaceId: wsId, status: 'importing' })
+		mockResults.selectQueue = [[member], [imp]]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/imports/${imp.id}/preview`,
+				{ mapping: previewMapping() },
+				{ 'x-workspace-id': wsId },
+			),
+		)
+		expect(res.status).toBe(409)
+	})
+
+	it('returns 404 for non-existent import', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		mockResults.selectQueue = [[member], []]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/imports/${crypto.randomUUID()}/preview`,
+				{ mapping: previewMapping() },
+				{ 'x-workspace-id': wsId },
+			),
+		)
+		expect(res.status).toBe(404)
+	})
+
+	it('returns 403 for non-member', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		mockResults.selectQueue = [[]]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/imports/${crypto.randomUUID()}/preview`,
+				{ mapping: previewMapping() },
+				{ 'x-workspace-id': wsId },
+			),
+		)
+		expect(res.status).toBe(403)
+	})
+})
+
+describe('POST /api/imports/:id/confirm — dedup key validation (AC-U4 backstop)', () => {
+	it('returns 400 when stored mapping has no dedupKeys and no createAllAsNew', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({
+			workspaceId: wsId,
+			status: 'mapping',
+			mapping: {
+				typeMappings: [
+					{
+						objectType: 'task',
+						columns: [
+							{
+								sourceColumn: 'name',
+								targetField: 'title',
+								transform: 'none',
+								skip: false,
+							},
+						],
+						defaultStatus: 'todo',
+					},
+				],
+				relationships: [],
+			},
+		})
+		const ws = buildWorkspace({ id: wsId })
+		mockResults.selectQueue = [[member], [imp], [ws]]
+
+		const res = await app.request(
+			jsonRequest('POST', `/api/imports/${imp.id}/confirm`, undefined, {
+				'x-workspace-id': wsId,
+			}),
+		)
+		expect(res.status).toBe(400)
+		const body = await res.json()
+		expect(body.error.message).toContain('pick at least one field')
+	})
+
+	it('returns 400 when stored mapping references a non-existent metadata field', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({
+			workspaceId: wsId,
+			status: 'mapping',
+			mapping: {
+				typeMappings: [
+					{
+						objectType: 'task',
+						columns: [
+							{
+								sourceColumn: 'email',
+								targetField: 'metadata.email',
+								transform: 'none',
+								skip: false,
+							},
+						],
+						defaultStatus: 'todo',
+						dedupKeys: ['metadata.nonexistent'],
+					},
+				],
+				relationships: [],
+			},
+		})
+		const ws = buildWorkspace({ id: wsId })
+		mockResults.selectQueue = [[member], [imp], [ws]]
+
+		const res = await app.request(
+			jsonRequest('POST', `/api/imports/${imp.id}/confirm`, undefined, {
+				'x-workspace-id': wsId,
+			}),
+		)
+		expect(res.status).toBe(400)
+		const body = await res.json()
+		expect(body.error.message).toContain('Invalid dedup key')
+	})
+
+	it('returns 202 when stored mapping has a valid dedupKey (title)', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({
+			workspaceId: wsId,
+			status: 'mapping',
+			mapping: {
+				typeMappings: [
+					{
+						objectType: 'task',
+						columns: [
+							{
+								sourceColumn: 'name',
+								targetField: 'title',
+								transform: 'none',
+								skip: false,
+							},
+						],
+						defaultStatus: 'todo',
+						dedupKeys: ['title'],
+					},
+				],
+				relationships: [],
+			},
+		})
+		const ws = buildWorkspace({ id: wsId })
+		const updatedImp = { ...imp, status: 'importing' }
+		mockResults.selectQueue = [[member], [imp], [ws]]
+		mockResults.update = [updatedImp]
+
+		const res = await app.request(
+			jsonRequest('POST', `/api/imports/${imp.id}/confirm`, undefined, {
+				'x-workspace-id': wsId,
+			}),
+		)
+		expect(res.status).toBe(202)
+	})
+})
+
 describe('GET /api/imports (query params)', () => {
 	it('accepts status query parameter', async () => {
 		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
@@ -567,5 +926,57 @@ describe('GET /api/imports (query params)', () => {
 		expect(res.status).toBe(200)
 		const body = await res.json()
 		expect(Array.isArray(body)).toBe(true)
+	})
+})
+
+describe('GET /api/imports/:id/audit-rows', () => {
+	const auditRow = {
+		id: '11111111-1111-1111-1111-111111111111',
+		importId: '22222222-2222-2222-2222-222222222222',
+		rowIndex: 0,
+		objectId: '33333333-3333-3333-3333-333333333333',
+		action: 'updated' as const,
+		changedColumns: ['email'],
+		oldValues: { email: null },
+		newValues: { email: 'a@example.com' },
+		createdAt: new Date('2026-06-25T00:00:00Z'),
+	}
+
+	it('returns audit rows for a workspace-scoped import', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({ workspaceId: wsId, id: auditRow.importId })
+		// membership, findImport, list audit rows
+		mockResults.selectQueue = [[member], [imp], [auditRow]]
+
+		const res = await app.request(
+			jsonGet(`/api/imports/${imp.id}/audit-rows`, { 'x-workspace-id': wsId }),
+		)
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(Array.isArray(body)).toBe(true)
+		expect(body[0].action).toBe('updated')
+		expect(body[0].changedColumns).toEqual(['email'])
+		expect(body[0].newValues.email).toBe('a@example.com')
+	})
+
+	it('returns 404 when the parent import is missing — scopes audit rows by workspace', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		// membership ok, findImport returns nothing — no audit-row query is run.
+		mockResults.selectQueue = [[member], []]
+
+		const res = await app.request(
+			jsonGet(`/api/imports/${crypto.randomUUID()}/audit-rows`, { 'x-workspace-id': wsId }),
+		)
+		expect(res.status).toBe(404)
+	})
+
+	it('returns 403 for non-member', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		mockResults.selectQueue = [[]]
+
+		const res = await app.request(
+			jsonGet(`/api/imports/${crypto.randomUUID()}/audit-rows`, { 'x-workspace-id': wsId }),
+		)
+		expect(res.status).toBe(403)
 	})
 })

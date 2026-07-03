@@ -26,6 +26,17 @@ export const typeMappingSchema = z.object({
 	objectType: z.string(),
 	columns: z.array(columnMappingSchema),
 	defaultStatus: z.string().optional(),
+	// Optional list of dedup keys used by the bulk-import matching engine.
+	// Each entry mirrors `columnMappingSchema.targetField` shape — either
+	// `title` (top-level column) or `metadata.<field>` (JSONB path). The
+	// import processor uses these to resolve matches before upsert; absent
+	// or empty means the user opted into the "create all as new" hatch.
+	dedupKeys: z.array(z.string()).optional(),
+	// Explicit opt-in to the "create all as new" escape hatch — the only way
+	// to confirm an import without any dedup key. Used by AC-U4 (frontend
+	// gate + server backstop): when no dedup keys are set, this must be
+	// true or both `/preview` and `/confirm` reject the request.
+	createAllAsNew: z.boolean().optional(),
 })
 
 export const relationshipMappingSchema = z.object({
@@ -54,6 +65,15 @@ export const importParamsSchema = z.object({
 	id: z.string().uuid(),
 })
 
+export const importAuditRowActionSchema = z.enum(['created', 'updated', 'skipped', 'failed'])
+
+// Paginated by row_index asc — limit kept lower than the list endpoint
+// because each row carries per-column diff payloads.
+export const importAuditRowsQuerySchema = z.object({
+	limit: z.coerce.number().int().min(1).max(200).default(50),
+	offset: z.coerce.number().int().min(0).default(0),
+})
+
 export type ImportStatus = z.infer<typeof importStatusSchema>
 export type ImportFileType = z.infer<typeof importFileTypeSchema>
 export type ColumnMapping = z.infer<typeof columnMappingSchema>
@@ -61,3 +81,4 @@ export type TypeMapping = z.infer<typeof typeMappingSchema>
 export type RelationshipMapping = z.infer<typeof relationshipMappingSchema>
 export type ImportMapping = z.infer<typeof importMappingSchema>
 export type CsvOptions = z.infer<typeof csvOptionsSchema>
+export type ImportAuditRowAction = z.infer<typeof importAuditRowActionSchema>

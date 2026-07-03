@@ -462,12 +462,19 @@ export function buildImport(overrides?: Record<string, unknown>) {
 		processedRows: 0,
 		successCount: 0,
 		errorCount: 0,
+		updatedCount: 0,
+		skippedCount: 0,
 		mapping: {
 			typeMappings: [
 				{
 					objectType: 'task',
 					columns: [{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false }],
 					defaultStatus: 'todo',
+					// Default to the explicit "create all as new" escape hatch so the
+					// AC-U4 server backstop in /confirm passes for tests that don't
+					// configure dedupKeys themselves. Tests covering dedup-key paths
+					// override `mapping` wholesale.
+					createAllAsNew: true,
 				},
 			],
 			relationships: [],

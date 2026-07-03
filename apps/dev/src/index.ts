@@ -4,7 +4,7 @@ import { serve } from '@hono/node-server'
 import { createDb, syncAgentServersFromEnv } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
-import { S3StorageProvider } from '@maskin/storage'
+import { MemoryStorageProvider, S3StorageProvider, type StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { type DevBootstrapResult, maybeBootstrapDev, seedCatalogIfEmpty } from './lib/dev-bootstrap'
@@ -54,8 +54,11 @@ notifyBridge.start().then(() => {
 	logger.info('PG NOTIFY bridge started')
 })
 
-// S3-compatible storage (SeaweedFS for dev, any S3 service in production)
-const storageProvider = new S3StorageProvider({
+// S3-compatible storage (SeaweedFS for dev, any S3 service in production).
+// Falls back to an in-process Memory provider when S3 is unreachable so the
+// dev server stays operable in CI / sandbox environments that don't run a
+// SeaweedFS container.
+let storageProvider: StorageProvider = new S3StorageProvider({
 	endpoint: process.env.S3_ENDPOINT ?? 'http://localhost:8333',
 	bucket: process.env.S3_BUCKET ?? 'agent-files',
 	accessKeyId: process.env.S3_ACCESS_KEY ?? 'admin',
@@ -66,12 +69,10 @@ const storageProvider = new S3StorageProvider({
 try {
 	await storageProvider.ensureBucket()
 } catch (err) {
-	logger.error(
-		'Failed to initialize S3 bucket — agent file operations will fail until S3 is available',
-		{
-			error: err instanceof Error ? err.message : String(err),
-		},
-	)
+	logger.warn('S3 unreachable — falling back to in-memory storage for this process', {
+		error: err instanceof Error ? err.message : String(err),
+	})
+	storageProvider = new MemoryStorageProvider()
 }
 
 const containers = new ContainerManager()

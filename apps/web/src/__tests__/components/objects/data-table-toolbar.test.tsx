@@ -7,6 +7,30 @@ vi.mock('@/components/objects/data-table/display-panel', () => ({
 	DisplayPanel: () => <button type="button">MockDisplay</button>,
 }))
 
+// Router Link requires a router context — replace with a plain anchor so the
+// toolbar's History icon-button can render in isolation.
+type MockLinkProps = {
+	to?: string
+	params?: Record<string, string>
+	children?: unknown
+	[key: string]: unknown
+}
+vi.mock('@tanstack/react-router', () => ({
+	Link: ({ to, params, children, ...rest }: MockLinkProps) => {
+		let href = to ?? '#'
+		if (to && params) {
+			for (const [k, v] of Object.entries(params)) {
+				href = href.replace(`$${k}`, v)
+			}
+		}
+		return (
+			<a href={href} {...rest}>
+				{children as never}
+			</a>
+		)
+	},
+}))
+
 function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableToolbar>> = {}) {
 	const props = {
 		columns: [],
@@ -34,6 +58,7 @@ function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableT
 		groupBy: undefined,
 		onGroupByChange: vi.fn(),
 		onImportClick: vi.fn(),
+		workspaceId: 'ws-test',
 		...overrides,
 	}
 	return { ...render(<DataTableToolbar {...props} />), props }
@@ -70,15 +95,24 @@ describe('DataTableToolbar', () => {
 
 	it('renders Import button', () => {
 		renderToolbar()
-		expect(screen.getByRole('button', { name: /import/i })).toBeInTheDocument()
+		// Match the upload trigger specifically so it doesn't collide with the
+		// History icon-button (aria-label "Imports history") next to it.
+		expect(screen.getByRole('button', { name: /^import$/i })).toBeInTheDocument()
 	})
 
 	it('calls onImportClick when Import is clicked', async () => {
 		const user = userEvent.setup()
 		const { props } = renderToolbar()
 
-		await user.click(screen.getByRole('button', { name: /import/i }))
+		await user.click(screen.getByRole('button', { name: /^import$/i }))
 		expect(props.onImportClick).toHaveBeenCalledOnce()
+	})
+
+	it('renders an Imports-history link pointing to /<workspaceId>/imports', () => {
+		renderToolbar()
+		const link = screen.getByRole('link', { name: /imports history/i })
+		expect(link).toBeInTheDocument()
+		expect(link).toHaveAttribute('href', '/ws-test/imports')
 	})
 
 	it('renders the mocked Display panel', () => {
