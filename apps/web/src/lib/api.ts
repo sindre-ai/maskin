@@ -299,12 +299,19 @@ export const api = {
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
-		connect: (workspaceId: string, provider: string, body?: { api_key?: string }) =>
-			request<{ install_url: string }>(`/integrations/${provider}/connect`, {
+		connect: (
+			workspaceId: string,
+			provider: string,
+			body?: { api_key?: string },
+			options?: { confirmReinstall?: boolean },
+		) => {
+			const qs = options?.confirmReinstall ? '?confirm_reinstall=1' : ''
+			return request<{ install_url: string }>(`/integrations/${provider}/connect${qs}`, {
 				method: 'POST',
 				body,
 				workspaceId,
-			}),
+			})
+		},
 		disconnect: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/integrations/${id}`, {
 				method: 'DELETE',

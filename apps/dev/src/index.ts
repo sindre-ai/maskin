@@ -13,6 +13,7 @@ import { AgentStorageManager } from './services/agent-storage'
 import { ContainerManager } from './services/container-manager'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { PackageVersionPusher } from './services/package-version-pusher'
+import { PendingIntegrationsReaper } from './services/pending-integrations-reaper'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
@@ -125,6 +126,10 @@ logger.info('Webhook deliveries cleaner started')
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
+
+const pendingIntegrationsReaper = new PendingIntegrationsReaper(db)
+pendingIntegrationsReaper.start()
+logger.info('Pending integrations reaper started')
 
 const packageVersionPusher = new PackageVersionPusher(db)
 packageVersionPusher.start()

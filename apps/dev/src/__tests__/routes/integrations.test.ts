@@ -117,6 +117,46 @@ describe('Integrations Routes', () => {
 			expect(body.install_url).toContain('github.com')
 		})
 
+		it('returns 409 for github when an active installation already exists', async () => {
+			const existing = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				status: 'active',
+				externalId: '141870781',
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [existing]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/integrations/github/connect', undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+			expect(res.status).toBe(409)
+			const body = await res.json()
+			expect(body.error.code).toBe('CONFLICT')
+		})
+
+		it('proceeds past the guard when confirm_reinstall=1 is passed', async () => {
+			const existing = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				status: 'active',
+				externalId: '141870781',
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [existing]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/integrations/github/connect?confirm_reinstall=1', undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.install_url).toContain('github.com')
+		})
+
 		it('activates an api_key provider (posthog) immediately and stores the request key in credentials', async () => {
 			const originalFrontendUrl = process.env.FRONTEND_URL
 			process.env.FRONTEND_URL = 'http://localhost:5173'
