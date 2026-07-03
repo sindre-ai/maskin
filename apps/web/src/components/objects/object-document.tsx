@@ -67,6 +67,15 @@ interface ObjectDocumentViewProps {
 	showSaved?: boolean
 }
 
+function shouldShowUpdatedChip(createdAt: string | null, updatedAt: string | null): boolean {
+	if (!updatedAt) return false
+	if (!createdAt) return true
+	const created = Date.parse(createdAt)
+	const updated = Date.parse(updatedAt)
+	if (!Number.isFinite(created) || !Number.isFinite(updated)) return false
+	return updated - created >= 60_000
+}
+
 export function ObjectDocumentView({
 	object,
 	workspaceId,
@@ -185,6 +194,11 @@ export function ObjectDocumentView({
 						</span>
 					)}
 					<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
+					{shouldShowUpdatedChip(object.createdAt, object.updatedAt) && (
+						<span className="text-[11px] text-muted-foreground">
+							updated <RelativeTime date={object.updatedAt} />
+						</span>
+					)}
 				</div>
 			</div>
 
