@@ -28,13 +28,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Cache turbo build outputs
-        uses: actions/cache@v4
+        uses: ./.github/actions/cache-turbo
         with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
-            turbo-${{ runner.os }}-
+          job-name: lint-typecheck
 
       - run: pnpm lint
       - run: pnpm type-check
@@ -56,13 +52,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Cache turbo build outputs
-        uses: actions/cache@v4
+        uses: ./.github/actions/cache-turbo
         with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
-            turbo-${{ runner.os }}-
+          job-name: unit-tests
 
       - run: pnpm test -- -- --run
 
@@ -97,13 +89,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Cache turbo build outputs
-        uses: actions/cache@v4
+        uses: ./.github/actions/cache-turbo
         with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
-            turbo-${{ runner.os }}-
+          job-name: integration-tests
 
       - run: pnpm build
       - run: pnpm test:integration -- --run
@@ -146,13 +134,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Cache turbo build outputs
-        uses: actions/cache@v4
+        uses: ./.github/actions/cache-turbo
         with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
-            turbo-${{ runner.os }}-
+          job-name: verify-e2e
 
       - run: pnpm build
 
