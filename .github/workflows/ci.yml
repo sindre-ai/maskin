@@ -1,4 +1,3 @@
-# Autoresearch iteration 2: measuring warm-cache effect on the run below
 name: CI
 
 on:
