@@ -477,4 +477,133 @@ describe('Objects Integration', () => {
 			expect(nextTodo.objects.map((obj: { title: string }) => obj.title)).toEqual(['High'])
 		})
 	})
+
+	describe('updated_before / updated_after filters', () => {
+		// Three rows, each updated 60s apart, so a ±1s boundary is unambiguous.
+		const T = new Date('2026-06-20T12:00:00.000Z')
+		const before = new Date(T.getTime() - 60_000)
+		const after = new Date(T.getTime() + 60_000)
+
+		async function seedThree() {
+			const old = await insertObject(db, workspaceId, getTestActorId(), {
+				title: 'old',
+				updatedAt: before,
+			})
+			const mid = await insertObject(db, workspaceId, getTestActorId(), {
+				title: 'mid',
+				updatedAt: T,
+			})
+			const fresh = await insertObject(db, workspaceId, getTestActorId(), {
+				title: 'fresh',
+				updatedAt: after,
+			})
+			return { old, mid, fresh }
+		}
+
+		it('returns rows when updated_before is one second after the row (AC-T1)', async () => {
+			const app = createApp()
+			const { mid } = await seedThree()
+
+			const cutoff = new Date(T.getTime() + 1_000).toISOString()
+			const res = await app.request(
+				jsonGet(`/api/objects?updated_before=${encodeURIComponent(cutoff)}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			const ids = body.map((row) => row.id)
+			expect(ids).toContain(mid.id)
+		})
+
+		it('excludes the row when updated_before is one second before it (AC-T1)', async () => {
+			const app = createApp()
+			const { mid } = await seedThree()
+
+			const cutoff = new Date(T.getTime() - 1_000).toISOString()
+			const res = await app.request(
+				jsonGet(`/api/objects?updated_before=${encodeURIComponent(cutoff)}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			const ids = body.map((row) => row.id)
+			expect(ids).not.toContain(mid.id)
+		})
+
+		it('half-open bound excludes rows at the exact instant on both sides (AC-T9)', async () => {
+			const app = createApp()
+			const { mid } = await seedThree()
+
+			const cutoff = T.toISOString()
+			const beforeRes = await app.request(
+				jsonGet(`/api/objects?updated_before=${encodeURIComponent(cutoff)}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			const beforeBody = (await beforeRes.json()) as Array<{ id: string }>
+			expect(beforeBody.map((r) => r.id)).not.toContain(mid.id)
+
+			const afterRes = await app.request(
+				jsonGet(`/api/objects?updated_after=${encodeURIComponent(cutoff)}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			const afterBody = (await afterRes.json()) as Array<{ id: string }>
+			expect(afterBody.map((r) => r.id)).not.toContain(mid.id)
+		})
+
+		it('intersects with type and status (AC-T2)', async () => {
+			const app = createApp()
+			// Two rows updated within the same time window, different (type, status).
+			const taskTodo = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				updatedAt: before,
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'done',
+				updatedAt: before,
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'signal',
+				updatedAt: before,
+			})
+
+			const cutoff = T.toISOString()
+			const res = await app.request(
+				jsonGet(`/api/objects?type=task&status=todo&updated_before=${encodeURIComponent(cutoff)}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string; type: string; status: string }>
+			expect(body).toHaveLength(1)
+			expect(body[0].id).toBe(taskTodo.id)
+		})
+
+		it('response is unchanged when neither param is set (AC-T7)', async () => {
+			const app = createApp()
+			await seedThree()
+
+			const baseline = await app.request(jsonGet('/api/objects', { 'x-workspace-id': workspaceId }))
+			const withDefaults = await app.request(
+				jsonGet('/api/objects', { 'x-workspace-id': workspaceId }),
+			)
+			expect(baseline.status).toBe(200)
+			expect(withDefaults.status).toBe(200)
+			expect(await baseline.text()).toBe(await withDefaults.text())
+		})
+
+		it('rejects malformed updated_before with 400 (AC-T6)', async () => {
+			const app = createApp()
+			const res = await app.request(
+				jsonGet('/api/objects?updated_before=not-a-date', { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(400)
+		})
+	})
 })
