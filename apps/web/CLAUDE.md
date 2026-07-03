@@ -98,6 +98,12 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 - Border radius: 6px (Linear-style) — `--radius: 0.375rem`
 - Subtle transitions: `transition-colors duration-150` on all elements (base layer)
 
+### Typography scale (`--text-*`)
+- Named scale in `src/app.css` `@theme`: `text-caption` (12px) / `text-label` (13px, 500) / `text-body` (16px, line-height 1.45) / `text-title` (20px, 600) / `text-display` (25px, 700). Each token carries font-size + line-height + letter-spacing (+ weight where noted), so `leading-*` / `tracking-*` utilities are never needed on top.
+- **Never use raw** `text-xs` / `text-sm` / `text-base` / `text-lg` / `text-xl` / `text-2xl+` / `leading-*` / `tracking-*` on primary surfaces — use the named tokens.
+- The `≥1.25` modular-scale ratio applies from body upward (body → title → display, ratios 1.25 / 1.25). The caption→label step is deliberately tight (12→13) so body stays at 16px prose readability and label at 13px UI-chrome density — mirrors Linear / GitHub / Vercel small-text tiers.
+- **Sub-caption UI-chrome exception**: sizes below caption (10px, 11px) are permitted as `text-[10px]` / `text-[11px]` arbitraries on **UI-chrome elements only** — badges, count pips, uppercase eyebrow labels, dense metadata micro-labels. They sit outside the typographic scale, so a `--text-micro` token would fragment the scale without buying clarity — different chrome shapes (a 10px count pip vs. an 11px uppercase eyebrow) want different line-height and letter-spacing. When restoring tight leading (`line-height: 1` on badges) or wide tracking (`letter-spacing: 0.05em` on uppercase labels), use inline `style={{ … }}` or a purpose-specific token — do **not** reintroduce `leading-*` / `tracking-*` utilities. Prose and hierarchical text (running body copy, section titles, headings) must use the named scale.
+
 ### Component Conventions
 - **Full rules**: see `.claude/rules/frontend.md` — component reuse hierarchy, DRY, and consistency rules
 - **Reuse first** — always use existing components before creating new ones. Creating a new component should be extremely rare. See `.claude/rules/frontend.md` for the full reuse hierarchy.
