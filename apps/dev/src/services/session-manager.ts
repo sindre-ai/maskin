@@ -32,12 +32,18 @@ import {
 	ne,
 	notInArray,
 	or,
+	sql,
 } from 'drizzle-orm'
 import {
 	claimLoopActiveDay,
 	trackLoopActiveDay,
 	utcDayString,
 } from '../lib/analytics/catalog-events'
+import {
+	isClaudeFailoverEnabled,
+	recordRuntimeClaudeOAuthBackupExhausted,
+	recordRuntimeClaudeOAuthFailover,
+} from '../lib/claude-failover'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { isAuthRevokedError } from '../lib/integrations/errors'
@@ -45,7 +51,12 @@ import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
-import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
+import {
+	FallbackQuotaExceededError,
+	LLM_ROUTE_OAUTH,
+	type LlmRoute,
+	resolveLlmRoute,
+} from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
@@ -111,6 +122,67 @@ function isContainerGoneError(err: unknown): boolean {
 	const message = (err as { message?: unknown }).message
 	if (typeof message !== 'string') return false
 	return /HTTP code 404/.test(message) || /is not running/.test(message)
+}
+
+function claudeRuntimeFailoverReason(
+	failureReason: { provider: string; reason_code: string } | null,
+	stdoutTail: string,
+): string | null {
+	if (!failureReason || failureReason.provider !== 'anthropic') return null
+	if (failureReason.reason_code === 'not_logged_in') return 'auth_failed'
+
+	const usageCodes = new Set([
+		'session_limit',
+		'weekly_limit',
+		'opus_limit',
+		'server_rate_limit',
+		'request_rejected_429',
+		'credit_balance_low',
+		'billing_error',
+		'max_plan_rate_limit',
+		'rate_limit_error',
+	])
+	if (!usageCodes.has(failureReason.reason_code)) return null
+
+	if (stdoutTail.includes('"rateLimitType":"weekly"')) return 'quota_exhausted_weekly'
+	if (stdoutTail.includes('"rateLimitType":"five_hour"')) return 'quota_exhausted_5h'
+	if (failureReason.reason_code === 'weekly_limit') return 'quota_exhausted_weekly'
+	return 'quota_exhausted'
+}
+
+/**
+ * Decides whether `buildLaunchSpec`'s resolved LLM route needs persisting on
+ * `sessions.config`, and if so, returns the merged config. Returns `null`
+ * when nothing changed.
+ *
+ * Clears `claude_oauth_runtime_failover_retry_of` whenever the slot resolves
+ * back to `primary`. That marker only means anything while the session is
+ * still actually running on the backup a prior runtime failover put it on —
+ * leaving it stamped after a lazy recovery flips the slot back to primary
+ * would make `maybeRetryClaudeOAuthOnBackup`'s gate (which treats a
+ * `retry_of` string alone as sufficient, regardless of the current
+ * `llm_oauth_slot`) misclassify a later, unrelated primary failure as
+ * "backup already exhausted".
+ */
+export function mergeLaunchRouteConfig(
+	existingConfig: Record<string, unknown>,
+	routeTaken: LlmRoute,
+	nextOauthSlot: string | undefined,
+): Record<string, unknown> | null {
+	const needsUpdate =
+		existingConfig.llm_route !== routeTaken ||
+		(nextOauthSlot && existingConfig.llm_oauth_slot !== nextOauthSlot)
+	if (!needsUpdate) return null
+
+	const updatedConfig: Record<string, unknown> = {
+		...existingConfig,
+		llm_route: routeTaken,
+		...(nextOauthSlot ? { llm_oauth_slot: nextOauthSlot } : {}),
+	}
+	if (nextOauthSlot === 'primary') {
+		updatedConfig.claude_oauth_runtime_failover_retry_of = undefined
+	}
+	return updatedConfig
 }
 
 export interface SessionLogEvent extends LogChunk {
@@ -1033,6 +1105,7 @@ export class SessionManager extends EventEmitter {
 		const wsLlmKeys = wsSettings.llm_keys ?? {}
 
 		let routeTaken: LlmRoute | null = null
+		let oauthSlotTaken: string | undefined
 		try {
 			const resolved = await resolveLlmRoute({
 				db: this.db,
@@ -1046,6 +1119,7 @@ export class SessionManager extends EventEmitter {
 			})
 			if (resolved) {
 				routeTaken = resolved.route
+				oauthSlotTaken = resolved.oauthSlot
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
@@ -1073,8 +1147,9 @@ export class SessionManager extends EventEmitter {
 		// queries (and later analytics) can find fallback sessions cheaply.
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
-			if (existingConfig.llm_route !== routeTaken) {
-				const updatedConfig = { ...existingConfig, llm_route: routeTaken }
+			const nextOauthSlot = routeTaken === LLM_ROUTE_OAUTH ? oauthSlotTaken : undefined
+			const updatedConfig = mergeLaunchRouteConfig(existingConfig, routeTaken, nextOauthSlot)
+			if (updatedConfig) {
 				await this.db
 					.update(sessions)
 					.set({ config: updatedConfig })
@@ -1556,6 +1631,84 @@ export class SessionManager extends EventEmitter {
 		return Boolean(other)
 	}
 
+	private async maybeRetryClaudeOAuthOnBackup(params: {
+		session: typeof sessions.$inferSelect
+		failureReason: { provider: string; reason_code: string } | null
+		stdoutTail: string
+	}): Promise<void> {
+		const { session, failureReason, stdoutTail } = params
+		// Mirrors the session-start gate in resolveClaudeCredentialsWithFailover —
+		// flipping the flag off must stop failover everywhere, not just at
+		// session start. Without this, an operator using the flag as an
+		// incident kill-switch would still see mid-session runtime failures
+		// flip active_slot to backup and fire the failover event.
+		if (!isClaudeFailoverEnabled()) return
+		const config = ((session.config as Record<string, unknown>) ?? {}) as Record<string, unknown>
+		if (config.llm_route !== LLM_ROUTE_OAUTH) return
+
+		const reason = claudeRuntimeFailoverReason(failureReason, stdoutTail)
+		if (!reason) return
+
+		if (
+			config.llm_oauth_slot === 'backup' ||
+			typeof config.claude_oauth_runtime_failover_retry_of === 'string'
+		) {
+			await recordRuntimeClaudeOAuthBackupExhausted({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				reason,
+				sourceSessionId: session.id,
+			})
+			await this.insertSystemLog(
+				session.id,
+				'Claude backup subscription also hit a usage limit; no further Claude OAuth fallback is available',
+			)
+			return
+		}
+
+		if (config.llm_oauth_slot !== 'primary') return
+
+		const [existingRetry] = await this.db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.workspaceId, session.workspaceId),
+					sql`${sessions.config}->>'claude_oauth_runtime_failover_retry_of' = ${session.id}`,
+				),
+			)
+			.limit(1)
+		if (existingRetry) return
+
+		const didFailover = await recordRuntimeClaudeOAuthFailover({
+			db: this.db,
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			reason,
+			sourceSessionId: session.id,
+		})
+		if (!didFailover) return
+
+		await this.insertSystemLog(
+			session.id,
+			'Claude primary subscription hit a usage limit; retrying this session on the backup subscription',
+		)
+		await this.createSession(session.workspaceId, {
+			actorId: session.actorId,
+			actionPrompt: session.actionPrompt,
+			config: {
+				...config,
+				llm_oauth_slot: 'backup',
+				claude_oauth_runtime_failover_retry_of: session.id,
+			},
+			triggerId: session.triggerId ?? undefined,
+			createdBy: session.createdBy,
+			autoStart: true,
+			sourceSessionId: session.id,
+		})
+	}
+
 	private async handleCompletion(
 		sessionId: string,
 		containerId: string,
@@ -1593,8 +1746,6 @@ export class SessionManager extends EventEmitter {
 			logger.warn('Failed to push session files', { sessionId, error: String(err) })
 		}
 
-		const status = exitCode === 0 ? 'completed' : 'failed'
-
 		// Extract token / cost usage from the tail of stdout. Codex and custom
 		// runtimes don't emit structured usage — extractor returns null and the
 		// columns stay NULL. Parser failures must never block the status update,
@@ -1630,15 +1781,18 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		const stdoutTail = this.activeSessions.get(sessionId)?.stdoutTail ?? ''
 		const failureReason =
-			exitCode !== null && exitCode !== 0
-				? classifyCreditExhaustion(this.activeSessions.get(sessionId)?.stdoutTail ?? '')
+			exitCode !== null
+				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
 				: null
+		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
 		if (failureReason) {
 			logger.info('Session credit-exhaustion classified', {
 				sessionId,
 				reason_code: failureReason.reason_code,
 				provider: failureReason.provider,
+				exitCode,
 			})
 		}
 
@@ -1716,6 +1870,16 @@ export class SessionManager extends EventEmitter {
 				status,
 				error: String(err),
 			})
+		}
+
+		if (status === 'failed') {
+			await this.maybeRetryClaudeOAuthOnBackup({ session, failureReason, stdoutTail }).catch(
+				(err) =>
+					logger.warn('Failed to retry Claude OAuth session on backup', {
+						sessionId,
+						error: String(err),
+					}),
+			)
 		}
 
 		// Ship-metric emit. If this session belongs to a managed-catalog actor
