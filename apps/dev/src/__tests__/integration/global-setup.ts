@@ -82,6 +82,16 @@ beforeAll(async () => {
 	await sql`DROP SCHEMA public CASCADE`
 	await sql`CREATE SCHEMA public`
 
+	// Mirror packages/db/src/migrate.ts: the tracking table must exist so any
+	// migration or rollback file that touches it (e.g. reversibility tests)
+	// runs identically to production.
+	await sql`
+		CREATE TABLE IF NOT EXISTS "_migrations" (
+			"name" text PRIMARY KEY,
+			"applied_at" timestamp with time zone DEFAULT now()
+		)
+	`
+
 	// Run migrations
 	const __dirname = dirname(fileURLToPath(import.meta.url))
 	const migrationsDir = join(__dirname, '..', '..', '..', '..', '..', 'packages', 'db', 'drizzle')
@@ -92,6 +102,7 @@ beforeAll(async () => {
 	for (const file of files) {
 		const content = readFileSync(join(migrationsDir, file), 'utf-8')
 		await sql.unsafe(content)
+		await sql`INSERT INTO "_migrations" ("name") VALUES (${file}) ON CONFLICT DO NOTHING`
 	}
 
 	// Create a test actor to use across all integration tests
