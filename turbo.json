@@ -69,7 +69,7 @@
 	"tasks": {
 		"build": {
 			"dependsOn": ["^build"],
-			"outputs": ["dist/**"]
+			"outputs": ["dist/**", "dist-mcp/**"]
 		},
 		"build:mcp": {
 			"dependsOn": ["^build"],

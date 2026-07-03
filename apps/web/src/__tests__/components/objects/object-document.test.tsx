@@ -95,6 +95,22 @@ describe('ObjectDocumentView', () => {
 		expect(onUpdateTitle).not.toHaveBeenCalled()
 	})
 
+	it('updates displayed title when rerendered with a different object', () => {
+		const objectA = buildObjectResponse({
+			id: '11111111-1111-1111-1111-111111111111',
+			title: 'Object A title',
+		})
+		const objectB = buildObjectResponse({
+			id: '22222222-2222-2222-2222-222222222222',
+			title: 'Object B title',
+		})
+		const { rerender } = render(<ObjectDocumentView {...baseProps} object={objectA} />)
+		expect(screen.getByDisplayValue('Object A title')).toBeInTheDocument()
+		rerender(<ObjectDocumentView {...baseProps} object={objectB} />)
+		expect(screen.getByDisplayValue('Object B title')).toBeInTheDocument()
+		expect(screen.queryByDisplayValue('Object A title')).not.toBeInTheDocument()
+	})
+
 	it('shows "Saved" indicator when showSaved is true', () => {
 		const object = buildObjectResponse()
 		render(<ObjectDocumentView {...baseProps} object={object} showSaved />)

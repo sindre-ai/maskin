@@ -3,6 +3,10 @@ import { events, workspaces } from '@maskin/db/schema'
 import { CLAUDE_MESSAGES_URL } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import {
+	trackClaudeSubscriptionBackupExhausted,
+	trackClaudeSubscriptionFailoverTriggered,
+} from './analytics/claude-failover-events'
+import {
 	type ClassifierInput,
 	classifyClaudeFailure,
 	headersFrom,
@@ -323,21 +327,21 @@ async function recordFailoverTransition(params: {
 	reason: string
 }): Promise<void> {
 	const { db, workspaceId, actorId, bucket, reason } = params
-	await db.transaction(async (tx) => {
+	const inserted = await db.transaction(async (tx) => {
 		const [latest] = await tx
 			.select()
 			.from(workspaces)
 			.where(eq(workspaces.id, workspaceId))
 			.for('update')
 			.limit(1)
-		if (!latest) return
+		if (!latest) return false
 		const latestSettings = (latest.settings as Record<string, unknown>) ?? {}
 		const existing = readFailoverState(latestSettings.claude_oauth)
 		const alreadyRecorded =
 			existing.active_slot === 'backup' &&
 			existing.last_primary_failure_at === bucket &&
 			existing.last_classified_reason === reason
-		if (alreadyRecorded) return
+		if (alreadyRecorded) return false
 
 		const nextState: OAuthFailoverState = {
 			active_slot: 'backup',
@@ -361,11 +365,24 @@ async function recordFailoverTransition(params: {
 			entityId: workspaceId,
 			data: { reason, failure_window: bucket },
 		})
+		return true
 	})
+	if (!inserted) return
 	logger.info('Claude subscription failed over to backup', {
 		workspaceId,
 		reason,
 		failure_window: bucket,
+	})
+	// PostHog forwarding — runs after the tx commits so we don't hold the
+	// workspace row lock across the network fetch. The AC-T2 dedup skip
+	// path returns `inserted=false` above, so PostHog also fires exactly
+	// once per failure window.
+	await trackClaudeSubscriptionFailoverTriggered({
+		workspaceId,
+		actorId,
+		reason,
+		failureWindow: bucket,
+		trigger: 'session_start',
 	})
 }
 
@@ -429,6 +446,14 @@ export async function recordRuntimeClaudeOAuthFailover(params: {
 		logger.info('Claude subscription failed over to backup after runtime session failure', {
 			workspaceId,
 			reason,
+			sourceSessionId,
+		})
+		await trackClaudeSubscriptionFailoverTriggered({
+			workspaceId,
+			actorId,
+			reason,
+			failureWindow: now,
+			trigger: 'runtime_session_failure',
 			sourceSessionId,
 		})
 	}
@@ -498,6 +523,13 @@ export async function recordRuntimeClaudeOAuthBackupExhausted(params: {
 	logger.info('Claude backup subscription exhausted after runtime session failure', {
 		workspaceId,
 		reason,
+		sourceSessionId,
+	})
+	await trackClaudeSubscriptionBackupExhausted({
+		workspaceId,
+		actorId,
+		reason,
+		failureWindow: now,
 		sourceSessionId,
 	})
 }

@@ -183,6 +183,42 @@ describe('list_objects schema', () => {
 	it('rejects limit above 100', () => {
 		expect(() => schema.parse({ limit: 101 })).toThrow()
 	})
+
+	it('accepts updated_before / updated_after as ISO-8601', () => {
+		const result = schema.parse({
+			updated_before: '2026-06-30T12:00:00.000Z',
+			updated_after: '2026-06-29T12:00:00+02:00',
+		})
+		expect(result.updated_before).toBe('2026-06-30T12:00:00.000Z')
+		expect(result.updated_after).toBe('2026-06-29T12:00:00+02:00')
+	})
+
+	// AC-T6: malformed value surfaces as a Zod schema error so the SDK can
+	// return 400 instead of letting the bad string reach the route as a 500.
+	it('rejects malformed updated_before with a Zod error (AC-T6)', () => {
+		const result = schema.safeParse({ updated_before: 'not-a-date' })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['updated_before'])
+		}
+	})
+
+	it('rejects malformed updated_after with a Zod error', () => {
+		const result = schema.safeParse({ updated_after: 'yesterday' })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['updated_after'])
+		}
+	})
+
+	it('accepts sort = updated_at_asc / updated_at_desc', () => {
+		expect(schema.parse({ sort: 'updated_at_asc' }).sort).toBe('updated_at_asc')
+		expect(schema.parse({ sort: 'updated_at_desc' }).sort).toBe('updated_at_desc')
+	})
+
+	it('rejects unknown sort values', () => {
+		expect(() => schema.parse({ sort: 'created_at_asc' })).toThrow()
+	})
 })
 
 describe('search_objects schema', () => {
@@ -353,6 +389,25 @@ describe('list_sessions schema', () => {
 
 	it('rejects invalid status', () => {
 		expect(() => schema.parse({ status: 'cancelled' })).toThrow()
+	})
+
+	it('accepts updated_before / updated_after as ISO-8601', () => {
+		const result = schema.parse({
+			updated_before: '2026-06-30T12:00:00.000Z',
+			updated_after: '2026-06-29T00:00:00Z',
+		})
+		expect(result.updated_before).toBe('2026-06-30T12:00:00.000Z')
+		expect(result.updated_after).toBe('2026-06-29T00:00:00Z')
+	})
+
+	// AC-T6: malformed value surfaces as a Zod schema error so the SDK can
+	// return 400 instead of letting the bad string reach the route as a 500.
+	it('rejects malformed updated_before with a Zod error (AC-T6)', () => {
+		const result = schema.safeParse({ updated_before: 'not-a-date' })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['updated_before'])
+		}
 	})
 })
 

@@ -11,6 +11,24 @@ vi.mock('../../lib/crypto', () => ({
 	encrypt: (input: string) => input,
 }))
 
+// PostHog forwarding — stubbed so tests never actually hit the network,
+// and so we can assert the wrapper is called with the same reason +
+// failure_window that lands on the internal event. All three trackers are
+// stubbed because `attemptPrimaryRecovery` (invoked by the T7 recovery
+// branch) reaches into `trackClaudeSubscriptionRecovered` too.
+const { trackFailoverTriggeredMock, trackBackupExhaustedMock, trackRecoveredMock } = vi.hoisted(
+	() => ({
+		trackFailoverTriggeredMock: vi.fn().mockResolvedValue(undefined),
+		trackBackupExhaustedMock: vi.fn().mockResolvedValue(undefined),
+		trackRecoveredMock: vi.fn().mockResolvedValue(undefined),
+	}),
+)
+vi.mock('../../lib/analytics/claude-failover-events', () => ({
+	trackClaudeSubscriptionFailoverTriggered: trackFailoverTriggeredMock,
+	trackClaudeSubscriptionBackupExhausted: trackBackupExhaustedMock,
+	trackClaudeSubscriptionRecovered: trackRecoveredMock,
+}))
+
 import {
 	BACKUP_EXHAUSTED_ACTION,
 	FAILOVER_TRIGGERED_ACTION,
@@ -112,6 +130,9 @@ beforeEach(() => {
 	// other test files share, and can clobber env vars another file's test
 	// set up concurrently.
 	vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', '')
+	trackFailoverTriggeredMock.mockClear()
+	trackBackupExhaustedMock.mockClear()
+	trackRecoveredMock.mockClear()
 })
 
 afterEach(() => {
@@ -160,6 +181,8 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			expect(probe).not.toHaveBeenCalled()
 			expect(eventInserts).toHaveLength(0)
 			expect(workspaceUpdates).toHaveLength(0)
+			// AC-T5: flag off ⇒ no PostHog forwarding either.
+			expect(trackFailoverTriggeredMock).not.toHaveBeenCalled()
 		})
 
 		it('forces primary-only routing even when active_slot was persisted as backup', async () => {
@@ -359,6 +382,16 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 				active_slot: 'backup',
 				last_primary_failure_at: bucket,
 				last_classified_reason: 'auth_failed',
+			})
+			// PostHog forwarding: exactly one capture, same reason +
+			// failure_window as the internal event.
+			expect(trackFailoverTriggeredMock).toHaveBeenCalledOnce()
+			expect(trackFailoverTriggeredMock).toHaveBeenCalledWith({
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				reason: 'auth_failed',
+				failureWindow: bucket,
+				trigger: 'session_start',
 			})
 		})
 
@@ -575,6 +608,9 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			// Only the first tx writes; the second tx sees the same bucket +
 			// reason under lock and skips both the update and the event insert.
 			expect(workspaceUpdates).toHaveLength(1)
+			// PostHog forwarding must match the internal-event dedup exactly —
+			// the losing contender skips the capture too.
+			expect(trackFailoverTriggeredMock).toHaveBeenCalledOnce()
 		})
 
 		it('emits a new event when the reason changes on a subsequent failure', async () => {
