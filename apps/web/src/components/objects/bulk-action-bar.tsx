@@ -15,6 +15,12 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useIsMobile } from '@/hooks/use-mobile'
+import {
+	type BulkEditCommitAction,
+	type PlatformDevice,
+	trackBulkEditCommit,
+} from '@/lib/analytics'
 import { cn } from '@/lib/cn'
 import { Brackets, ExternalLink, Link, Trash2, Type, X } from 'lucide-react'
 import * as React from 'react'
@@ -41,6 +47,26 @@ export interface BulkActionBarProps {
 	onOpenLinks?: () => void
 	onDelete?: () => void
 	onClear: () => void
+}
+
+// Resolve the device class powering `platform_device` on bulk_edit_commit.
+// Honours both signals named in T4's brief — `useIsMobile` (small viewport)
+// and a coarse `navigator.userAgent` check — so iPhone/iPad classic UAs and
+// iPadOS-13+ devices (which report as Mac with touch) all land on `ios`.
+export function resolvePlatformDevice(isMobileViewport: boolean): PlatformDevice {
+	if (typeof navigator === 'undefined') return 'desktop'
+	const ua = navigator.userAgent ?? ''
+	if (/iPad|iPhone|iPod/.test(ua)) return 'ios'
+	if (
+		isMobileViewport &&
+		navigator.platform === 'MacIntel' &&
+		typeof navigator.maxTouchPoints === 'number' &&
+		navigator.maxTouchPoints > 1
+	) {
+		return 'ios'
+	}
+	if (/Android/i.test(ua)) return 'android'
+	return 'desktop'
 }
 
 function usePrefersReducedMotion() {
@@ -71,12 +97,24 @@ export function BulkActionBar({
 }: BulkActionBarProps) {
 	const visible = selectedCount > 0
 	const reducedMotion = usePrefersReducedMotion()
+	const isMobile = useIsMobile()
 	const [confirmOpen, setConfirmOpen] = React.useState(false)
 	// Bump these keys after each pick so the Selects remount and don't latch onto
 	// the last-chosen value — otherwise re-selecting the same status/owner on a
 	// new row selection wouldn't refire onValueChange.
 	const [statusKey, setStatusKey] = React.useState(0)
 	const [ownerKey, setOwnerKey] = React.useState(0)
+
+	const emitCommit = React.useCallback(
+		(action: BulkEditCommitAction) => {
+			trackBulkEditCommit({
+				selected_count: selectedCount,
+				action,
+				platform_device: resolvePlatformDevice(isMobile),
+			})
+		},
+		[selectedCount, isMobile],
+	)
 
 	React.useEffect(() => {
 		if (!visible) return
@@ -130,6 +168,7 @@ export function BulkActionBar({
 					<Select
 						key={`status-${statusKey}`}
 						onValueChange={(value) => {
+							emitCommit('status_change')
 							onStatusChange(value)
 							setStatusKey((k) => k + 1)
 						}}
@@ -153,7 +192,10 @@ export function BulkActionBar({
 				<Select
 					key={`owner-${ownerKey}`}
 					onValueChange={(value) => {
-						if (onOwnerChange) onOwnerChange(value)
+						if (onOwnerChange) {
+							emitCommit('owner_change')
+							onOwnerChange(value)
+						}
 						setOwnerKey((k) => k + 1)
 					}}
 					disabled={ownerOptions.length === 0 || !onOwnerChange}
@@ -182,7 +224,10 @@ export function BulkActionBar({
 									variant="outline"
 									size="icon"
 									className="size-8"
-									onClick={onCopyLink}
+									onClick={() => {
+										emitCommit('copy')
+										onCopyLink()
+									}}
 									aria-label={copyLinkLabel}
 								>
 									<Link className="size-4" />
@@ -199,7 +244,10 @@ export function BulkActionBar({
 									variant="outline"
 									size="icon"
 									className="size-8"
-									onClick={onCopyTitle}
+									onClick={() => {
+										emitCommit('copy')
+										onCopyTitle()
+									}}
 									aria-label={copyTitleLabel}
 								>
 									<Type className="size-4" />
@@ -216,7 +264,10 @@ export function BulkActionBar({
 									variant="outline"
 									size="icon"
 									className="size-8"
-									onClick={onCopyTitleAsLink}
+									onClick={() => {
+										emitCommit('copy')
+										onCopyTitleAsLink()
+									}}
 									aria-label={copyTitleAsLinkLabel}
 								>
 									<Brackets className="size-4" />
@@ -233,7 +284,10 @@ export function BulkActionBar({
 									variant="outline"
 									size="icon"
 									className="size-8"
-									onClick={onOpenLinks}
+									onClick={() => {
+										emitCommit('copy')
+										onOpenLinks()
+									}}
 									aria-label={openLinksLabel}
 								>
 									<ExternalLink className="size-4" />
@@ -285,7 +339,10 @@ export function BulkActionBar({
 							variant="destructive"
 							onClick={() => {
 								setConfirmOpen(false)
-								if (onDelete) onDelete()
+								if (onDelete) {
+									emitCommit('delete')
+									onDelete()
+								}
 							}}
 						>
 							Delete
