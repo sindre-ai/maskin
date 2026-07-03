@@ -198,23 +198,29 @@ function PendingPromptBootstrap({ agentActorId }: { agentActorId: string | null 
 
 /**
  * Wraps the main layout so that when the chat panel is pinned AND open, the layout
- * gets a right margin equal to the chat panel width — the panel is always
- * fixed-positioned, so this margin is what makes it "push content aside"
- * instead of floating over it.
+ * shrinks to `viewportWidth - panelWidth` — the panel is always fixed-positioned,
+ * so this shrinkage is what makes it "push content aside" instead of floating over
+ * it. The mechanic is a two-column CSS Grid whose second column carries the panel
+ * width; animating `grid-template-columns` (rather than `margin`) keeps the ban
+ * list from design-principles §7 clean (no margin/width/height/padding/top/left/
+ * inset). Reduced-motion is inherited from the global rule in app.css that clamps
+ * all transition-durations to 0.01ms.
  */
-function ChatPinShell({ children }: { children: ReactNode }) {
+export function ChatPinShell({ children }: { children: ReactNode }) {
 	const { pinned, open, panelWidth } = useChat()
 	const isMobile = useIsMobile()
 	// On mobile the panel overlays the viewport and the pin toggle is hidden,
-	// so a stale `pinned=true` from desktop must not apply a margin that would
-	// squash the main content off-screen.
+	// so a stale `pinned=true` from desktop must not reserve a spacer column
+	// that would squash the main content off-screen.
 	const pushed = pinned && open && !isMobile
 	return (
 		<div
-			className="transition-[margin] duration-state ease-default"
-			style={{ marginRight: pushed ? `${panelWidth}px` : 0 }}
+			data-testid="chat-pin-shell"
+			className="grid transition-[grid-template-columns] duration-state ease-default"
+			style={{ gridTemplateColumns: `minmax(0,1fr) ${pushed ? panelWidth : 0}px` }}
 		>
-			{children}
+			<div className="min-w-0">{children}</div>
+			<div aria-hidden="true" />
 		</div>
 	)
 }
