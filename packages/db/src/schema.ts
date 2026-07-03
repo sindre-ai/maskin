@@ -101,7 +101,7 @@ export const objects = pgTable(
 	(t) => [
 		index('objects_ws_type_status_idx').on(t.workspaceId, t.type, t.status),
 		// Range-scan path for list_objects(updated_before/updated_after) — the
-		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0040.
+		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0043.
 		index('objects_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 	],
 )
@@ -249,7 +249,7 @@ export const sessions = pgTable(
 	(t) => [
 		index('sessions_ws_status_idx').on(t.workspaceId, t.status),
 		// Range-scan path for list_sessions(updated_before/updated_after) — the
-		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0041.
+		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
 		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
 		index('sessions_actor_completed_idx')

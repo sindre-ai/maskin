@@ -476,6 +476,36 @@ describe('Objects Integration', () => {
 			const nextTodo = nextBody.columns.find((column: { value: string }) => column.value === 'todo')
 			expect(nextTodo.objects.map((obj: { title: string }) => obj.title)).toEqual(['High'])
 		})
+
+		it('applies updated_before / updated_after to column totals and objects', async () => {
+			const app = createApp()
+			const cutoff = new Date('2026-06-20T12:00:00.000Z')
+
+			const stale = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				title: 'Stale',
+				updatedAt: new Date(cutoff.getTime() - 3600 * 1000),
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				title: 'Fresh',
+				updatedAt: new Date(cutoff.getTime() + 3600 * 1000),
+			})
+
+			const res = await app.request(
+				jsonGet(
+					`/api/objects/board?type=task&updated_before=${encodeURIComponent(cutoff.toISOString())}`,
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			const todo = body.columns.find((column: { value: string }) => column.value === 'todo')
+			expect(todo.total).toBe(1)
+			expect(todo.objects.map((obj: { id: string }) => obj.id)).toEqual([stale.id])
+		})
 	})
 
 	describe('updated_before / updated_after filters', () => {

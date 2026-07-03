@@ -406,6 +406,8 @@ app.openapi(boardObjectsRoute, async (c) => {
 			driver: query.driver,
 			ids: query.ids,
 			q: query.q,
+			updated_before: query.updated_before,
+			updated_after: query.updated_after,
 		}),
 	]
 

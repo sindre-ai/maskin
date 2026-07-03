@@ -107,7 +107,7 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 	})
 
 	it('objects has composite (workspace_id, updated_at) index objects_ws_updated_at_idx', async () => {
-		// AC-T8: migrations 0040 must build the (workspace_id, updated_at) composite
+		// AC-T8: migrations 0043 must build the (workspace_id, updated_at) composite
 		// index on objects. Without it, list_objects(updated_before=…) falls back to
 		// a sequential scan once a workspace grows past a few thousand rows.
 		expect(await getIndexColumns('objects_ws_updated_at_idx')).toEqual([
@@ -117,7 +117,7 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 	})
 
 	it('sessions has composite (workspace_id, updated_at) index sessions_ws_updated_at_idx', async () => {
-		// AC-T8: same as objects, on sessions (migration 0041).
+		// AC-T8: same as objects, on sessions (migration 0044).
 		expect(await getIndexColumns('sessions_ws_updated_at_idx')).toEqual([
 			'workspace_id',
 			'updated_at',
