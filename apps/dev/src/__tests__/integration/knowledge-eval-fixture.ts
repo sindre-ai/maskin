@@ -540,9 +540,9 @@ export const METADATA_KNOWLEDGE_CORPUS: readonly MetadataCorpusEntry[] = [
 	},
 	{
 		fixtureId: 'meta-r3-trap-import-older',
-		title: 'Style-guide import ordering — by-length (older, latest phrasing from 2025)',
+		title: 'Style-guide import ordering — by-size (older, latest phrasing from 2025)',
 		content:
-			'Older style-guide rule for import ordering: by length. Prior style-guide rule mentions ordering. Import ordering rule notes are long. Rule details for imports. Latest style-guide compilation of rules.',
+			'Older style-guide rule for import ordering: by size. Prior style-guide rule mentions ordering. Import ordering rule notes are extensive. Rule details for imports. Latest style-guide compilation of rules.',
 		tValidOffsetDays: -90,
 		tInvalidOffsetDays: null,
 		verificationStatus: 'verified',
