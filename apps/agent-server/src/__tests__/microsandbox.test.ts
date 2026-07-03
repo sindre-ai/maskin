@@ -5,8 +5,10 @@ import { describe, expect, it } from 'vitest'
 import {
 	assertValidSessionId,
 	buildMsbCreateArgs,
+	cleanupBrowserSidecar,
 	ensureSessionSkeleton,
 	formatOverflowEnvFile,
+	provisionBrowserSidecar,
 	removeSandbox,
 	sanitizeEnvForMicroVM,
 	spawnSession,
@@ -221,6 +223,41 @@ describe('buildMsbCreateArgs', () => {
 			...(maxDuration !== undefined && { maxDuration }),
 		})
 		expect(args).not.toContain('--max-duration')
+	})
+
+	it('omits allow@private by default (default firewall posture stays tight)', () => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+		})
+		const netRules: string[] = []
+		for (let i = 0; i < args.length - 1; i++) {
+			if (args[i] === '--net-rule') netRules.push(args[i + 1] as string)
+		}
+		expect(netRules).not.toContain('allow@private')
+	})
+
+	it('adds allow@private only when allowPrivateNet is true (sidecar reachability)', () => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+			allowPrivateNet: true,
+		})
+		const netRules: string[] = []
+		for (let i = 0; i < args.length - 1; i++) {
+			if (args[i] === '--net-rule') netRules.push(args[i + 1] as string)
+		}
+		expect(netRules).toContain('allow@private')
 	})
 })
 
@@ -532,5 +569,296 @@ describe('waitForCompletion', () => {
 			60_000,
 		)
 		expect(calls).toBe(3)
+	})
+})
+
+describe('provisionBrowserSidecar', () => {
+	const msbBin = '/usr/local/bin/msb'
+
+	it('creates the sidecar VM, waits for Running, launches exec, polls CDP, returns the URL', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-deadbeef', status: 'Running' }]),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+		const sidecar = await provisionBrowserSidecar('deadbeef', {
+			msbBin,
+			run,
+			sleep: async () => {},
+			now: () => 0,
+			findPort: async () => 39222,
+			cdpPollReady: async () => {},
+		})
+		expect(sidecar).toEqual({
+			name: 'anko-browser-deadbeef',
+			cdpUrl: 'ws://10.0.1.1:39222',
+		})
+		const verbs = calls.map((c) => c[0])
+		expect(verbs).toContain('create')
+		expect(verbs).toContain('list')
+		expect(verbs).not.toContain('inspect')
+		// create args must include port forwarding and the default image.
+		const createCall = calls.find((c) => c[0] === 'create')
+		expect(createCall).toContain('-p')
+		expect(createCall).toContain('10.0.1.1:39222:9222')
+		expect(createCall?.at(-1)).toBe('browser-sidecar:latest')
+	})
+
+	it('uses a configured sidecar image when provided', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-custom1', status: 'Running' }]),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+
+		const sidecar = await provisionBrowserSidecar(
+			'custom1',
+			{
+				msbBin,
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: async () => 39222,
+				cdpPollReady: async () => {},
+			},
+			{ image: 'maskin/browser-sidecar:latest' },
+		)
+
+		expect(sidecar?.cdpUrl).toBe('ws://10.0.1.1:39222')
+		const createCall = calls.find((c) => c[0] === 'create')
+		expect(createCall?.at(-1)).toBe('maskin/browser-sidecar:latest')
+	})
+
+	it('uses a configured bridge gateway when provided', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'list')
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-gw00001', status: 'Running' }]),
+					stderr: '',
+				}
+			return { stdout: '', stderr: '' }
+		}
+
+		const sidecar = await provisionBrowserSidecar(
+			'gw00001',
+			{
+				msbBin,
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: async () => 40000,
+				cdpPollReady: async () => {},
+			},
+			{ bridgeGateway: '192.168.100.1' },
+		)
+
+		expect(sidecar?.cdpUrl).toBe('ws://192.168.100.1:40000')
+		const createCall = calls.find((c) => c[0] === 'create')
+		expect(createCall).toContain('192.168.100.1:40000:9222')
+	})
+
+	it('returns null and removes the half-built VM when msb create fails', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'create') {
+				throw Object.assign(new Error('boom'), { stderr: 'libkrun: image pull failed' })
+			}
+			return { stdout: '', stderr: '' }
+		}
+		const sidecar = await provisionBrowserSidecar('failcre8', {
+			msbBin,
+			run,
+			sleep: async () => {},
+			now: () => 0,
+			findPort: async () => 39222,
+			cdpPollReady: async () => {},
+		})
+		expect(sidecar).toBeNull()
+		expect(calls.map((c) => c[0])).toEqual(['create', 'remove'])
+	})
+
+	it('returns null and removes the VM when CDP polling times out', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-nocdp000', status: 'Running' }]),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+		const sidecar = await provisionBrowserSidecar('nocdp000', {
+			msbBin,
+			run,
+			sleep: async () => {},
+			now: () => 0,
+			findPort: async () => 39222,
+			cdpPollReady: async () => {
+				throw new Error('CDP not ready within timeout')
+			},
+		})
+		expect(sidecar).toBeNull()
+		expect(calls.map((c) => c[0])).toContain('remove')
+	})
+})
+
+describe('cleanupBrowserSidecar', () => {
+	const msbBin = '/usr/local/bin/msb'
+
+	// Drive the SLA polling deterministically: a fake clock + sleep means the
+	// 60s deadline is reached in zero wall-clock time, so tests are fast.
+	function fakeClock(stepMs = 1_000): {
+		sleep: (ms: number) => Promise<void>
+		now: () => number
+	} {
+		let t = 0
+		return {
+			sleep: async (ms: number) => {
+				t += ms
+			},
+			now: () => {
+				const v = t
+				t += stepMs
+				return v
+			},
+		}
+	}
+
+	it('removes the sidecar VM via msb remove -f --quiet and confirms via msb list', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'list') {
+				// Sidecar already absent on the first list — happy path.
+				return { stdout: '[]', stderr: '' }
+			}
+			return { stdout: '', stderr: '' }
+		}
+		const clock = fakeClock()
+		await cleanupBrowserSidecar(
+			{ name: 'anko-browser-feed', cdpUrl: 'ws://10.0.0.5:9222' },
+			{ msbBin, run, sleep: clock.sleep, now: clock.now },
+		)
+		expect(calls[0]).toEqual(['remove', '-f', '--quiet', 'anko-browser-feed'])
+		expect(calls[1]?.[0]).toBe('list')
+	})
+
+	it('no-ops when no sidecar was provisioned (the common path)', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			return { stdout: '', stderr: '' }
+		}
+		await cleanupBrowserSidecar(null, { msbBin, run })
+		expect(calls.length).toBe(0)
+	})
+
+	it('swallows msb remove failures so a missing/stopped sandbox is idempotent', async () => {
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			if (args[0] === 'remove') throw new Error('No such sandbox')
+			// Confirm absence via msb list returning an empty roster.
+			return { stdout: '[]', stderr: '' }
+		}
+		const clock = fakeClock()
+		await expect(
+			cleanupBrowserSidecar(
+				{ name: 'anko-browser-gone', cdpUrl: 'ws://10.0.0.6:9222' },
+				{ msbBin, run, sleep: clock.sleep, now: clock.now },
+			),
+		).resolves.toBeUndefined()
+	})
+
+	it('polls msb list until the sidecar is absent — AC-T5 VM-count delta within 60s', async () => {
+		// Simulate a slow agentd: list reports the sidecar for two polls, then it
+		// drops out. The test asserts we keep polling and finish before the SLA.
+		let listCalls = 0
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			if (args[0] === 'list') {
+				listCalls += 1
+				const present = listCalls < 3
+				return {
+					stdout: JSON.stringify(
+						present ? [{ name: 'anko-browser-slow', status: 'Stopping' }] : [],
+					),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+		const clock = fakeClock()
+		await cleanupBrowserSidecar(
+			{ name: 'anko-browser-slow', cdpUrl: 'ws://10.0.0.7:9222' },
+			{ msbBin, run, sleep: clock.sleep, now: clock.now },
+		)
+		expect(listCalls).toBeGreaterThanOrEqual(3)
+	})
+
+	it('logs an error when the sidecar is still present after the 60s SLA', async () => {
+		// list never drops the sidecar — the function must exit (not hang) and
+		// the surrounding monitorSession code must not be blocked indefinitely.
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			if (args[0] === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-stuck', status: 'Running' }]),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+		// Tick the fake clock by 30s per `now()` read so the deadline is hit fast.
+		const clock = fakeClock(30_000)
+		await expect(
+			cleanupBrowserSidecar(
+				{ name: 'anko-browser-stuck', cdpUrl: 'ws://10.0.0.8:9222' },
+				{ msbBin, run, sleep: clock.sleep, now: clock.now },
+			),
+		).resolves.toBeUndefined()
 	})
 })

@@ -122,6 +122,7 @@ describe('sessionConfigSchema', () => {
 		expect(result.mcps).toEqual([])
 		expect(result.env_vars).toEqual({})
 		expect(result.interactive).toBe(false)
+		expect(result.browserRequired).toBe(false)
 	})
 
 	it('accepts interactive=true', () => {
