@@ -111,7 +111,7 @@ export function Header() {
 						<span className="sr-only">Go back</span>
 					</Button>
 				)}
-				<div className="hidden md:flex min-w-0 flex-1 items-center gap-1 opacity-0 hover:opacity-100 transition-opacity duration-150 lg:gap-2">
+				<div className="hidden md:flex min-w-0 flex-1 items-center gap-1 text-muted-foreground hover:text-foreground transition-colors duration-150 lg:gap-2">
 					{crumbs.length > 1 && (
 						<Button
 							variant="ghost"

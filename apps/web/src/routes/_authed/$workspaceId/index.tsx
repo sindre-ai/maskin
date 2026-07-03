@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import type { UnreadItem } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -25,6 +25,7 @@ function itemKey(item: UnreadItem): string {
 
 function ForYouDashboard() {
 	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
 	const { data, isLoading } = useUnread(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
@@ -107,6 +108,29 @@ function ForYouDashboard() {
 				<EmptyState
 					title="All caught up"
 					description="New comments and replies on things you're subscribed to will appear here."
+					action={
+						<Button
+							size="sm"
+							onClick={() =>
+								navigate({
+									to: '/$workspaceId/objects',
+									params: { workspaceId },
+									search: {
+										type: undefined,
+										status: undefined,
+										driver: undefined,
+										sort: 'createdAt',
+										order: 'desc',
+										q: undefined,
+										groupBy: undefined,
+										ids: undefined,
+									},
+								})
+							}
+						>
+							Browse objects
+						</Button>
+					}
 					className="py-8"
 				/>
 				<SparseComposer itemsCount={0} />

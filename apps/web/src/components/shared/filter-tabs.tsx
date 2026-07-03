@@ -14,6 +14,10 @@ interface FilterTabsProps<T> {
 	'aria-label'?: string
 }
 
+// Tab-style filter pill. Active state uses `bg-muted text-foreground font-medium`
+// — the unified style for filter state that lives directly in the page toolbar
+// (FilterTabs active, FilterChip). The bordered `border-accent` style is
+// reserved for picker toggles inside popovers (DisplayPanel PillButton).
 export function FilterTabs<T extends string | undefined>({
 	tabs,
 	value,
