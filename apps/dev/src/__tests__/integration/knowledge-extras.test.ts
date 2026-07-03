@@ -89,54 +89,54 @@ describe('knowledge_extras — migration + column filters + supersede semantics'
 		expect(row).toBeUndefined()
 	})
 
+	// Raw sql (postgres.js) is used for these CHECK assertions so the underlying
+	// PostgresError surfaces directly. Drizzle wraps failed inserts in a
+	// DrizzleQueryError whose `.message` is only `Failed query: <sql>\nparams: ...`
+	// — the original constraint name lives on `.cause`, which `.rejects.toThrow`
+	// does not walk. Raw sql skips that wrapper.
+
 	it('enforces CHECK on confidence enum', async () => {
 		const k = await seedKnowledge(workspaceId, getTestActorId())
 		await expect(
-			db.insert(knowledgeExtras).values({
-				objectId: k.id,
-				workspaceId,
-				writerType: 'human',
-				provenanceType: 'insight',
-				confidence: 'certain',
-			}),
-		).rejects.toThrow(/knowledge_extras_confidence_ck|check/i)
+			sql`
+				INSERT INTO knowledge_extras
+					(object_id, workspace_id, writer_type, provenance_type, confidence)
+				VALUES (${k.id}, ${workspaceId}, 'human', 'insight', 'certain')
+			`,
+		).rejects.toThrow(/knowledge_extras_confidence_ck/)
 	})
 
 	it('enforces CHECK on verification_status enum', async () => {
 		const k = await seedKnowledge(workspaceId, getTestActorId())
 		await expect(
-			db.insert(knowledgeExtras).values({
-				objectId: k.id,
-				workspaceId,
-				writerType: 'human',
-				provenanceType: 'insight',
-				verificationStatus: 'bogus',
-			}),
-		).rejects.toThrow(/verification_status|check/i)
+			sql`
+				INSERT INTO knowledge_extras
+					(object_id, workspace_id, writer_type, provenance_type, verification_status)
+				VALUES (${k.id}, ${workspaceId}, 'human', 'insight', 'bogus')
+			`,
+		).rejects.toThrow(/knowledge_extras_verification_status_ck/)
 	})
 
 	it('enforces CHECK on writer_type enum', async () => {
 		const k = await seedKnowledge(workspaceId, getTestActorId())
 		await expect(
-			db.insert(knowledgeExtras).values({
-				objectId: k.id,
-				workspaceId,
-				writerType: 'bot',
-				provenanceType: 'insight',
-			}),
-		).rejects.toThrow(/writer_type|check/i)
+			sql`
+				INSERT INTO knowledge_extras
+					(object_id, workspace_id, writer_type, provenance_type)
+				VALUES (${k.id}, ${workspaceId}, 'bot', 'insight')
+			`,
+		).rejects.toThrow(/knowledge_extras_writer_type_ck/)
 	})
 
 	it('enforces CHECK on provenance_type enum', async () => {
 		const k = await seedKnowledge(workspaceId, getTestActorId())
 		await expect(
-			db.insert(knowledgeExtras).values({
-				objectId: k.id,
-				workspaceId,
-				writerType: 'human',
-				provenanceType: 'twitter',
-			}),
-		).rejects.toThrow(/provenance_type|check/i)
+			sql`
+				INSERT INTO knowledge_extras
+					(object_id, workspace_id, writer_type, provenance_type)
+				VALUES (${k.id}, ${workspaceId}, 'human', 'twitter')
+			`,
+		).rejects.toThrow(/knowledge_extras_provenance_type_ck/)
 	})
 
 	// ── Column filters (AC1) ───────────────────────────────────────────────────
@@ -430,26 +430,36 @@ describe('knowledge_extras — migration + column filters + supersede semantics'
 	// ── Reversibility (AC5) ────────────────────────────────────────────────────
 
 	it('up → down → up is byte-equal (table, indexes, constraints re-created identically)', async () => {
+		// Comparing postgres.js Result instances (Array subclasses carrying
+		// non-enumerable metadata like `count` and `statement`) with `toEqual`
+		// is brittle. Normalise to plain rows first, then compare.
+		type Row = Record<string, unknown>
+		const asRows = (r: readonly Row[]): Row[] => r.map((row) => ({ ...row }))
+
 		async function snapshot() {
-			const cols = await sql`
+			const cols = await sql<Row[]>`
 				SELECT column_name, data_type, is_nullable, column_default
 				FROM information_schema.columns
-				WHERE table_name = 'knowledge_extras'
+				WHERE table_schema = 'public' AND table_name = 'knowledge_extras'
 				ORDER BY column_name
 			`
-			const checks = await sql`
-				SELECT conname, pg_get_constraintdef(oid) AS def
+			const constraints = await sql<Row[]>`
+				SELECT conname, contype, pg_get_constraintdef(oid) AS def
 				FROM pg_constraint
 				WHERE conrelid = 'public.knowledge_extras'::regclass
 				ORDER BY conname
 			`
-			const indexes = await sql`
+			const indexes = await sql<Row[]>`
 				SELECT indexname, indexdef
 				FROM pg_indexes
-				WHERE tablename = 'knowledge_extras'
+				WHERE schemaname = 'public' AND tablename = 'knowledge_extras'
 				ORDER BY indexname
 			`
-			return { cols, checks, indexes }
+			return {
+				cols: asRows(cols),
+				constraints: asRows(constraints),
+				indexes: asRows(indexes),
+			}
 		}
 
 		const before = await snapshot()
@@ -466,6 +476,13 @@ describe('knowledge_extras — migration + column filters + supersede semantics'
 		await sql.unsafe(migrationSql)
 
 		const after = await snapshot()
-		expect(after).toEqual(before)
+
+		// Split into three assertions so a failure narrows to columns vs
+		// constraints vs indexes rather than dumping the full diff.
+		expect(after.cols, 'columns diverged after up → down → up').toEqual(before.cols)
+		expect(after.constraints, 'constraints diverged after up → down → up').toEqual(
+			before.constraints,
+		)
+		expect(after.indexes, 'indexes diverged after up → down → up').toEqual(before.indexes)
 	})
 })
