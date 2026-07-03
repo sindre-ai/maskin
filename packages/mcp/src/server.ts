@@ -20,6 +20,7 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import { type CursorState, decodeCursor, encodeCursor, toSnapshotAt } from './cursor.js'
+import { applyResponseTokenCap } from './response-cap.js'
 import {
 	type SummaryRow,
 	buildContentSummary,
@@ -1429,24 +1430,32 @@ export function createMcpServer(config: McpConfig) {
 				workspace_id: extractWorkspaceId(args),
 			})
 
+			// Token-cap guardrail (T4). Enforces `MAX_RESPONSE_TOKENS` before the
+			// telemetry event measures the shipped payload — the size event and
+			// the wire response see the same, capped shape. Skipped when scoping
+			// is off so AC-T4 flag-off byte parity holds.
+			const scoped = isResponseScopingEnabled()
+			const capped = scoped ? applyResponseTokenCap(name, response) : { response, truncated: false }
+			const finalResponse = capped.response
+
 			// Response-size baseline for the MCP response-scoping bet's First test.
 			// Measures the two channels MCP serializes onto the wire — `content`
-			// (always present) and `structuredContent` (optional). `truncated` is
-			// hard-coded `false` here and flips `true` once T4's token-cap wrapper
-			// lands. Fires uniformly for every tool because we sit inside the single
-			// `registerAppTool` integration point.
-			const responseShape = response as
+			// (always present) and `structuredContent` (optional). `truncated`
+			// flips true when the token-cap wrapper dropped rows. Fires uniformly
+			// for every tool because we sit inside the single `registerAppTool`
+			// integration point.
+			const responseShape = finalResponse as
 				| { content?: unknown; structuredContent?: unknown }
 				| undefined
 			recordToolCallResponseSize(telemetrySink, telemetryTarget, {
 				tool_name: name,
 				content: responseShape?.content,
 				structured_content: responseShape?.structuredContent,
-				truncated: false,
+				truncated: capped.truncated,
 				workspace_id: extractWorkspaceId(args),
 			})
 
-			if (mutationKind && isSuccessfulMutationResponse(response)) {
+			if (mutationKind && isSuccessfulMutationResponse(finalResponse)) {
 				recordMutation(telemetrySink, telemetryTarget, {
 					tool_name: name,
 					mutation_kind: mutationKind,
@@ -1455,7 +1464,7 @@ export function createMcpServer(config: McpConfig) {
 				})
 			}
 
-			return response
+			return finalResponse
 		}
 
 		// biome-ignore lint/suspicious/noExplicitAny: handler signature varies by inputSchema presence; the wrapper is a pure pass-through so we forward as-is.
