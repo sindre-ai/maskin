@@ -889,6 +889,131 @@ app.openapi(listSlackUsersRoute, (async (c) => {
 	}
 }) as RouteHandler<typeof listSlackUsersRoute, Env>)
 
+// ── POST /api/integrations/github/token ────────────────────────────────────
+
+// GitHub owner logins are 1–39 chars: alphanumeric plus single hyphens, no leading
+// or trailing hyphen. Validating at the boundary means we can safely include the
+// value in log lines and error messages without worrying about control chars.
+const githubOwnerLoginSchema = z
+	.string()
+	.min(1)
+	.max(39)
+	.regex(/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/, {
+		message: 'owner must be a valid GitHub login (alphanumeric + single hyphens, ≤39 chars)',
+	})
+
+const mintGithubTokenBodySchema = z.object({
+	owner: githubOwnerLoginSchema.describe(
+		'GitHub owner login (org or user) — matches the owner_login stored on the active GitHub integration for this workspace.',
+	),
+})
+
+const mintGithubTokenResponseSchema = z.object({
+	token: z.string().describe('Fresh GitHub App installation access token (expires ~1h from mint).'),
+	owner: z.string(),
+	integration_id: z.string().uuid(),
+})
+
+const mintGithubTokenRoute = createRoute({
+	method: 'post',
+	path: '/github/token',
+	tags: ['integrations'],
+	summary: 'Mint a fresh GitHub App installation access token',
+	description:
+		'Returns a freshly minted installation access token for the workspace\u2019s active GitHub App installation matching the given owner. Every call hits the GitHub API — no caching — so REST writes (approve-review, merge, any PATCH/POST) called >1h after the session\u2019s original spawn can request a fresh token immediately before the write and avoid expired-token 401s.',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: mintGithubTokenBodySchema } },
+		},
+	},
+	responses: {
+		200: {
+			description: 'Fresh installation token',
+			content: { 'application/json': { schema: mintGithubTokenResponseSchema } },
+		},
+		400: {
+			description: 'Bad request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		401: {
+			description: 'Integration authorization revoked',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'No active GitHub integration for the given owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(mintGithubTokenRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { owner } = c.req.valid('json')
+
+	// Load every active GitHub integration in the workspace and match owner_login
+	// case-insensitively (GitHub logins are stored in their canonical case). We
+	// don't push the owner into the WHERE clause because owner_login lives inside
+	// the jsonb `config` column — a small in-memory filter over the (near-always
+	// tiny) active-integrations list is simpler than a jsonb path predicate and
+	// avoids surprising SQL injection surfaces on a JSON key comparison.
+	const rows = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'github'),
+				eq(integrations.status, 'active'),
+			),
+		)
+
+	const ownerLower = owner.toLowerCase()
+	const match = rows.find((r) => {
+		const cfgOwner = (r.config as IntegrationConfig | null)?.owner_login
+		return typeof cfgOwner === 'string' && cfgOwner.toLowerCase() === ownerLower
+	})
+
+	if (!match) {
+		return c.json(
+			createApiError('NOT_FOUND', `No active GitHub integration found for owner "${owner}"`),
+			404,
+		)
+	}
+
+	try {
+		const provider = getProvider('github')
+		const tokenManager = new TokenManager()
+		// For GitHub (custom auth) getValidToken always mints fresh: token-manager.ts
+		// short-circuits to githubAuth.getAccessToken() which POSTs a JWT-authenticated
+		// request to /app/installations/{id}/access_tokens on every call. No caching.
+		const token = await tokenManager.getValidToken(db, match.id, provider)
+		const ownerLogin = (match.config as IntegrationConfig | null)?.owner_login ?? owner
+		return c.json({
+			token,
+			owner: ownerLogin,
+			integration_id: match.id,
+		})
+	} catch (err) {
+		if (isAuthRevokedError(err)) {
+			return c.json(
+				createApiError(
+					'AUTH_REVOKED',
+					'GitHub integration authorization has been revoked — please reconnect',
+				),
+				401,
+			)
+		}
+		logger.warn('Failed to mint GitHub installation token', {
+			integrationId: match.id,
+			owner,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('BAD_REQUEST', 'Failed to mint GitHub installation token'), 400)
+	}
+}) as RouteHandler<typeof mintGithubTokenRoute, Env>)
+
 export default app
 
 // ── Webhook handler (mounted separately at /api/webhooks) ──────────────────

@@ -1074,4 +1074,152 @@ describe('Webhook Routes', () => {
 			await new Promise<void>((r) => setImmediate(r))
 		})
 	})
+
+	describe('POST /api/integrations/github/token', () => {
+		// A GitHub REST write executed hours after session start reuses a token
+		// baked into the container env at spawn — it's dead by then and produces
+		// 401. This endpoint hands the caller a freshly-minted installation token
+		// on every hit so the write path can refresh immediately before the call.
+
+		async function seededIntegration(overrides: Record<string, unknown> = {}) {
+			const { encrypt } = await import('../../lib/crypto')
+			return buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				status: 'active',
+				externalId: '141870781',
+				credentials: encrypt(JSON.stringify({ installation_id: '141870781' })),
+				config: { owner_login: 'sindre-ai' },
+				...overrides,
+			})
+		}
+
+		function githubProviderReturning(token: string) {
+			const p: ResolvedProvider = {
+				config: {
+					name: 'github',
+					displayName: 'GitHub',
+					auth: { type: 'oauth2_custom' },
+				},
+				customAuth: {
+					getInstallUrl: () => 'http://example.test/install',
+					handleCallback: async () => ({ installation_id: '141870781' }),
+					getAccessToken: async () => token,
+				},
+			}
+			return p
+		}
+
+		it('returns 200 with a freshly minted token when owner matches an active integration', async () => {
+			const integration = await seededIntegration()
+			vi.mocked(getProvider).mockReturnValueOnce(githubProviderReturning('ghs_fresh_1'))
+			vi.mocked(getProvider).mockReturnValueOnce(githubProviderReturning('ghs_fresh_1'))
+
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			// First select: route filters active github integrations. Second: TokenManager
+			// re-fetches the integration by id before decrypting credentials.
+			mockResults.selectQueue = [[integration], [integration]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/github/token',
+					{ owner: 'sindre-ai' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.token).toBe('ghs_fresh_1')
+			expect(body.owner).toBe('sindre-ai')
+			expect(body.integration_id).toBe(integration.id)
+		})
+
+		it('matches owner_login case-insensitively so agents can pass either case', async () => {
+			const integration = await seededIntegration({
+				config: { owner_login: 'Sindre-AI' },
+			})
+			vi.mocked(getProvider).mockReturnValueOnce(githubProviderReturning('ghs_case'))
+			vi.mocked(getProvider).mockReturnValueOnce(githubProviderReturning('ghs_case'))
+
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [[integration], [integration]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/github/token',
+					{ owner: 'sindre-ai' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			// The stored (canonical) owner_login wins in the response so callers
+			// can use it downstream without an extra normalization step.
+			expect(body.owner).toBe('Sindre-AI')
+		})
+
+		it('returns 404 when no active GitHub integration matches the owner', async () => {
+			const integration = await seededIntegration({ config: { owner_login: 'someone-else' } })
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/github/token',
+					{ owner: 'sindre-ai' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+			const body = await res.json()
+			expect(body.error.message).toContain('sindre-ai')
+		})
+
+		it('returns 404 when no active GitHub integration exists at all', async () => {
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/github/token',
+					{ owner: 'sindre-ai' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 400 when the owner field is missing', async () => {
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/integrations/github/token', {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 for an owner that fails the GitHub login regex', async () => {
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/github/token',
+					{ owner: '-leading-hyphen' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+	})
 })

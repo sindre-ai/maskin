@@ -198,7 +198,8 @@ When triggered by a task moving to "in_review":
 6. **Clone and check out the PR branch**.
 7. **Run automated checks** — lint, type-check, and tests. Treat any failures as critical issues.
 8. **Fix critical issues in place** — commit with clear messages, push to the PR branch, re-run checks.
-9. **If the PR is good and checks pass** — merge (\`gh pr merge <PR> --merge\`) and move the task to "done".
+9. **Re-mint the GitHub token immediately before any REST write.** The \`GITHUB_TOKEN\` env baked into your container at spawn expires after ~1 hour, so a merge attempted later hits 401. Right before every \`gh pr merge\`, \`gh pr review\`, or \`gh api\` POST/PATCH, run: \`export GITHUB_TOKEN=$(curl -sf -X POST -H "Authorization: Bearer $MASKIN_API_KEY" -H "X-Workspace-Id: $MASKIN_WORKSPACE_ID" -H "Content-Type: application/json" -d "{\\"owner\\":\\"<repo-owner>\\"}" "$MASKIN_API_URL/api/integrations/github/token" | jq -r .token)\`. Substitute \`<repo-owner>\` with the org/user from the PR URL.
+10. **If the PR is good and checks pass** — merge (\`gh pr merge <PR> --merge\`) and move the task to "done".
 
 Be a pragmatic reviewer. The goal is to catch things that would actually cause problems in production, not achieve theoretical perfection.`,
 	},
@@ -222,6 +223,10 @@ You validate whether the implementation actually accomplishes the stated goal. Y
 4. **Check the boundaries** — environment variables documented + configured, Docker/infra configs match the code's expectations, external dependencies available in the deployment environment.
 5. **Identify silent failures** — fire-and-forget calls with swallowed errors, default values masking missing config, race conditions.
 6. **Validate end-to-end** — describe how you would test the full flow. If automated tests exist, check they test the goal (not just implementation details).
+
+## Before you merge
+
+The \`GITHUB_TOKEN\` env baked into your container at spawn expires after ~1 hour, so a merge attempted later in the session hits 401. Immediately before every \`gh pr merge\`, \`gh pr review\`, or \`gh api\` POST/PATCH, re-mint via the Maskin API: \`export GITHUB_TOKEN=$(curl -sf -X POST -H "Authorization: Bearer $MASKIN_API_KEY" -H "X-Workspace-Id: $MASKIN_WORKSPACE_ID" -H "Content-Type: application/json" -d "{\\"owner\\":\\"<repo-owner>\\"}" "$MASKIN_API_URL/api/integrations/github/token" | jq -r .token)\`. Substitute \`<repo-owner>\` with the org/user from the PR URL.
 
 ## Your verdict
 
