@@ -1970,16 +1970,21 @@ export function createMcpServer(config: McpConfig) {
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
 			if (args.driver) params.set('driver', args.driver)
-			// Fetch limit + 1 so we can decide "has more" without a second
-			// query — the extra row (if it exists) is dropped before returning
-			// and its `(createdAt, id)` seeds the next cursor.
+			if (args.updated_before) params.set('updated_before', args.updated_before)
+			if (args.updated_after) params.set('updated_after', args.updated_after)
+			if (args.sort) {
+				params.set('sort', 'updatedAt')
+				params.set('order', args.sort === 'updated_at_asc' ? 'asc' : 'desc')
+			}
 			const fetchCap = isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
 			params.set('limit', String(fetchCap))
 			if (args.offset) params.set('offset', String(args.offset))
 			if (isResponseScopingEnabled()) {
 				params.set('snapshot_at', pagination.snapshotAt)
-				params.set('order', pagination.order)
-				params.set('sort', 'createdAt')
+				if (!args.sort) {
+					params.set('order', pagination.order)
+					params.set('sort', 'createdAt')
+				}
 				if (pagination.cursor) {
 					params.set('cursor_created_at', pagination.cursor.k.sortValue)
 					params.set('cursor_id', pagination.cursor.k.id)
@@ -3955,6 +3960,8 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.status) params.set('status', args.status)
 			if (args.actor_id) params.set('actor_id', args.actor_id)
+			if (args.updated_before) params.set('updated_before', args.updated_before)
+			if (args.updated_after) params.set('updated_after', args.updated_after)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
