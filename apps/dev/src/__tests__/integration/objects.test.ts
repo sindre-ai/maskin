@@ -1,6 +1,12 @@
-import { events, objects } from '@maskin/db/schema'
+import { events, files, objects, relationships } from '@maskin/db/schema'
 import { eq, inArray } from 'drizzle-orm'
-import { buildCreateObjectBody, insertActor, insertObject, insertWorkspace } from '../factories'
+import {
+	buildCreateObjectBody,
+	buildFile,
+	insertActor,
+	insertObject,
+	insertWorkspace,
+} from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
@@ -701,6 +707,70 @@ describe('Objects Integration', () => {
 
 			expect(postShipIds).toEqual(preShipIds)
 			expect(postShipIds).toEqual([stalledA.id, stalledB.id].sort())
+		})
+	})
+
+	describe('GET /api/objects/:id/graph — endpoint resolution by id', () => {
+		it('surfaces an edge whose sourceType/targetType label is non-canonical', async () => {
+			// Bet-creation historically stamped `source_type` / `target_type` with
+			// the endpoint's specialised `objects.type` (e.g. `'insight'`, `'bet'`)
+			// rather than the coarse `'object'` kind. The read layer must resolve
+			// endpoints via id lookup so those legacy rows still render.
+			const app = createApp()
+			const bet = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet' })
+			const insight = await insertObject(db, workspaceId, getTestActorId(), { type: 'insight' })
+			await db.insert(relationships).values({
+				sourceType: 'insight',
+				sourceId: insight.id,
+				targetType: 'bet',
+				targetId: bet.id,
+				type: 'informs',
+				createdBy: getTestActorId(),
+			})
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${bet.id}/graph`, { 'x-workspace-id': workspaceId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.relationships).toHaveLength(1)
+			expect(body.relationships[0].sourceId).toBe(insight.id)
+			expect(body.relationships[0].type).toBe('informs')
+			expect(body.connected_objects).toHaveLength(1)
+			expect(body.connected_objects[0].id).toBe(insight.id)
+			expect(body.files).toEqual([])
+		})
+
+		it('buckets a file endpoint even when the edge label is a legacy object type', async () => {
+			// The mirror case: an `attached` edge whose file endpoint carries a
+			// legacy specialised label. The endpoint id lives in the `files`
+			// table, so it must land in `files`, not as a broken row in
+			// `connected_objects`.
+			const app = createApp()
+			const bet = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet' })
+			const [fileRow] = await db
+				.insert(files)
+				.values(buildFile({ workspaceId, createdBy: getTestActorId() }))
+				.returning()
+			await db.insert(relationships).values({
+				sourceType: 'bet',
+				sourceId: bet.id,
+				targetType: 'bet', // legacy mislabel — endpoint is a file
+				targetId: fileRow.id,
+				type: 'attached',
+				createdBy: getTestActorId(),
+			})
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${bet.id}/graph`, { 'x-workspace-id': workspaceId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.connected_objects).toEqual([])
+			expect(body.files).toHaveLength(1)
+			expect(body.files[0].id).toBe(fileRow.id)
 		})
 	})
 })
