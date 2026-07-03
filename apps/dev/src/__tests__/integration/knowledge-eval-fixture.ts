@@ -1,14 +1,28 @@
 /**
  * Gold Q/A fixture for the cited-answer eval.
  *
- * Each corpus row is derived from a real, validated `type=knowledge`
- * object in Maskin's dev workspace (mined 2026-07-02). Titles + content
- * snippets are quoted; no fabricated bodies.
+ * Two subsets share one fixture module:
+ *   - `KNOWLEDGE_CORPUS` + `EVAL_PAIRS` — 30 content-lookup Q/A pairs, each
+ *     rooted in a real validated `type=knowledge` row from Maskin's dev
+ *     workspace (mined 2026-07-02). Content matches question vocabulary; the
+ *     baseline (JSONB-ILIKE) is expected to do well here — this is where the
+ *     content-lookup ceiling shows.
+ *   - `METADATA_KNOWLEDGE_CORPUS` + `METADATA_EVAL_PAIRS` — 10 metadata-filter
+ *     Q/A pairs across recency, un-superseded, confidence, and verification.
+ *     Each expected row is deliberately paired with a trap row that outranks
+ *     it under content-alone (ILIKE), so the baseline is near-zero by design.
+ *     The kill-trigger judgment rides on metadata-10 alone (≥80% = pass,
+ *     <80% = kill); content-30 is a legibility number, not a gate.
  *
- * The eval seeds these into a fresh integration DB and runs today's
- * `ilike(title, %q%) OR ilike(content, %q%)` retrieval — no schema
- * change, no metadata-column filters — so the numbers reflect what
- * agents actually see through `search_objects` today.
+ * The eval seeds both subsets into a fresh integration DB and runs the
+ * fixture through two retrieval paths: today's `ilike(title, %q%) OR
+ * ilike(content, %q%)` baseline, and `retrieveKnowledge()`'s column-aware
+ * path (LEFT JOIN `knowledge_extras`, `t_invalid IS NULL`,
+ * `verification_status != 'deprecated'`, rank verification → confidence).
+ *
+ * An on-import self-check asserts every metadata-10 pair has at least one
+ * trap row that outranks the expected row under the baseline ranker — a
+ * pair that doesn't stress the mechanism doesn't count.
  */
 
 export type CorpusEntry = {
@@ -21,6 +35,42 @@ export type EvalPair = {
 	question: string
 	expectedFixtureId: string
 	expectedExcerpt: string
+}
+
+export type MetadataDimension = 'recency' | 'un_superseded' | 'confidence' | 'verification_status'
+
+export type VerificationStatus = 'verified' | 'pending' | 'unverified' | 'contested' | 'deprecated'
+
+export type Confidence = 'high' | 'medium' | 'low' | null
+
+/**
+ * Corpus entry for the metadata-filter subset. `t_valid` / `t_invalid` are
+ * expressed as day offsets from the eval run's `now` (negative = past,
+ * positive = future, 0 = now). The harness converts to absolute Dates at
+ * seed time so tests stay deterministic across runs.
+ */
+export type MetadataCorpusEntry = {
+	fixtureId: string
+	title: string
+	content: string
+	tValidOffsetDays: number
+	tInvalidOffsetDays: number | null
+	verificationStatus: VerificationStatus
+	confidence: Confidence
+}
+
+/**
+ * Metadata Q/A pair. `expectedFixtureIds: []` means the correct behaviour
+ * is an empty return (every ILIKE match is filtered out by metadata — e.g.
+ * every candidate is `verification_status='deprecated'`).
+ */
+export type MetadataEvalPair = {
+	pairId: string
+	dimension: MetadataDimension
+	question: string
+	expectedFixtureIds: readonly string[]
+	expectedExcerpt: string | null
+	trapFixtureIds: readonly string[]
 }
 
 export const KNOWLEDGE_CORPUS: readonly CorpusEntry[] = [
@@ -423,5 +473,533 @@ for (const pair of EVAL_PAIRS) {
 		throw new Error(
 			`EvalPair ${pair.expectedFixtureId}: expectedExcerpt not present in seeded content.`,
 		)
+	}
+}
+
+// ── Metadata-filter subset ──────────────────────────────────────────────────
+//
+// 10 Q/A pairs stress the retrieval class the promoted `knowledge_extras`
+// columns unlock — the axis JSONB-ILIKE ceilings on. Split across four
+// dimensions (recency, un-superseded, confidence, verification). Each pair
+// pairs an "expected" row (right on metadata, matching the question)
+// with one or more "trap" rows that outrank the expected row on ILIKE
+// alone. The self-check at the bottom of the file asserts this invariant.
+
+export const METADATA_KNOWLEDGE_CORPUS: readonly MetadataCorpusEntry[] = [
+	// R1 · recency · trap invalidated by t_invalid
+	{
+		fixtureId: 'meta-r1-expected-sprint-2w',
+		title: 'Sprint length — 2 weeks',
+		content: 'Sprint length is now 2 weeks. Sprints run bi-weekly.',
+		tValidOffsetDays: -7,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+	{
+		fixtureId: 'meta-r1-trap-sprint-3w',
+		title: 'Sprint length — 3 weeks (older, superseded)',
+		content:
+			'Sprint length was 3 weeks for a long time. Long-form sprint planning notes. Sprint retro notes are long.',
+		tValidOffsetDays: -365,
+		tInvalidOffsetDays: -120,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+
+	// R2 · recency · retrieval has no `t_valid > now` filter → expected miss
+	{
+		fixtureId: 'meta-r2-expected-squash-only',
+		title: 'Merge policy — squash-only (in effect)',
+		content: 'The merge policy is squash-only. Merge policy has been squash-only for weeks.',
+		tValidOffsetDays: -30,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+	{
+		fixtureId: 'meta-r2-trap-rebase-only',
+		title: 'Merge policy — rebase-only (upcoming from +14d)',
+		content:
+			'New merge policy: rebase-only. Merge policy switches to rebase-only. Policy details cover current PRs. Merge policy migration steps here. Policy history: squash to rebase. Current merge policy under review. The merge policy update ships soon.',
+		tValidOffsetDays: 14,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+
+	// R3 · recency · retrieval has no recency sort → expected miss
+	{
+		fixtureId: 'meta-r3-expected-import-recent',
+		title: 'Style-guide import ordering — alphabetical',
+		content: 'The style-guide rule for import ordering is alphabetical. Applies to all modules.',
+		tValidOffsetDays: -14,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+	{
+		fixtureId: 'meta-r3-trap-import-older',
+		title: 'Style-guide import ordering — by-length (older, latest phrasing from 2025)',
+		content:
+			'Older style-guide rule for import ordering: by length. Prior style-guide rule mentions ordering. Import ordering rule notes are long. Rule details for imports. Latest style-guide compilation of rules.',
+		tValidOffsetDays: -90,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+
+	// C1 · confidence · tokens tie → confidence high > low resolves it
+	{
+		fixtureId: 'meta-c1-expected-sebastian-founder',
+		title: "Sebastian's role — founder",
+		content: 'Sebastian is the founder. His role: founder.',
+		tValidOffsetDays: 0,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+	{
+		fixtureId: 'meta-c1-trap-sebastian-cofounder',
+		title: "Sebastian's role — cofounder ex-consultant (older framing)",
+		content: "Sebastian's role: cofounder and ex-consultant. His prior role.",
+		tValidOffsetDays: -60,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'verified',
+		confidence: 'low',
+	},
+
+	// C2 · confidence · tokens tie → confidence high > NULL resolves it
+	{
+		fixtureId: 'meta-c2-expected-billing-sentry',
+		title: 'Billing incidents tracker — Sentry',
+		content: 'We track billing incidents in Sentry.',
+		tValidOffsetDays: 0,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+	{
+		fixtureId: 'meta-c2-trap-billing-archive',
+		title: 'Billing incidents tracker — archive spreadsheet (legacy notes)',
+		content: 'We used to track billing incidents in a spreadsheet.',
+		tValidOffsetDays: -180,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'verified',
+		confidence: null,
+	},
+
+	// V1 · verification · tokens tie → verified > unverified resolves it
+	{
+		fixtureId: 'meta-v1-expected-migrations-new',
+		title: 'Run migrations locally — new command',
+		content:
+			'How to run migrations locally: use the new tool. Migrations run locally with the updated CLI.',
+		tValidOffsetDays: -3,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+	{
+		fixtureId: 'meta-v1-trap-migrations-old',
+		title: 'How to run migrations locally — older take with more overlap',
+		content:
+			'Run migrations locally using the old command. To run migrations locally, use the older approach. Migrations run locally, though this is not verified. Local migrations runbook. Locally we run migrations.',
+		tValidOffsetDays: -60,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'unverified',
+		confidence: 'high',
+	},
+
+	// V2 · verification · trap deprecated → excluded even with stronger content
+	{
+		fixtureId: 'meta-v2-expected-runner-gha',
+		title: 'CI runner — GitHub Actions',
+		content: 'We use GitHub Actions as our CI runner. The runner is Actions-hosted.',
+		tValidOffsetDays: 0,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+	{
+		fixtureId: 'meta-v2-trap-runner-circle',
+		title: 'CI runner — CircleCI (legacy, deprecated)',
+		content:
+			'We used CircleCI as our CI runner. Prior runner setup. CircleCI runner details. In-use during the old era.',
+		tValidOffsetDays: -500,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'deprecated',
+		confidence: 'high',
+	},
+
+	// V3 · verification · only trap deprecated exists → expected: empty return
+	{
+		fixtureId: 'meta-v3-trap-oncall-pagerduty',
+		title: 'On-call vendor — PagerDuty (deprecated)',
+		content:
+			'We use PagerDuty as our on-call paging vendor. Deprecated on-call paging setup, no verified alternative.',
+		tValidOffsetDays: -500,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'deprecated',
+		confidence: 'high',
+	},
+
+	// U1 · un-superseded · trap invalidated by supersede (t_invalid=recent)
+	{
+		fixtureId: 'meta-u1-expected-oncall-bob',
+		title: 'On-call infra rotation this week — Bob',
+		content: 'Bob is on-call for infra this week.',
+		tValidOffsetDays: -1,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+	{
+		fixtureId: 'meta-u1-trap-oncall-alice',
+		title: 'On-call infra rotation last week — Alice (superseded)',
+		content:
+			'Alice was on-call for infra this week. The on-call infra shift changed. Weekly on-call rotation. Alice covered infra this week previously.',
+		tValidOffsetDays: -8,
+		tInvalidOffsetDays: -1,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+
+	// U2 · un-superseded · chain A → B → C, only C live
+	{
+		fixtureId: 'meta-u2-expected-retention-live',
+		title: 'Data retention policy — live (2026, current version)',
+		content: 'Data retention policy: 90 days for logs, 7 years for audit.',
+		tValidOffsetDays: -14,
+		tInvalidOffsetDays: null,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+	{
+		fixtureId: 'meta-u2-trap-retention-a',
+		title: 'Data retention policy — archived v1 (superseded)',
+		content: 'Data retention policy v1: 30 days for logs. Data retention policy details.',
+		tValidOffsetDays: -400,
+		tInvalidOffsetDays: -200,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+	{
+		fixtureId: 'meta-u2-trap-retention-b',
+		title: 'Data retention policy — archived v2 (superseded)',
+		content: 'Data retention policy v2: 60 days. Data retention policy notes.',
+		tValidOffsetDays: -200,
+		tInvalidOffsetDays: -30,
+		verificationStatus: 'verified',
+		confidence: 'high',
+	},
+]
+
+if (METADATA_KNOWLEDGE_CORPUS.length !== 20) {
+	throw new Error(
+		`METADATA_KNOWLEDGE_CORPUS must have 20 entries (has ${METADATA_KNOWLEDGE_CORPUS.length}).`,
+	)
+}
+
+export const METADATA_EVAL_PAIRS: readonly MetadataEvalPair[] = [
+	{
+		pairId: 'R1',
+		dimension: 'recency',
+		question: 'How long is a sprint?',
+		expectedFixtureIds: ['meta-r1-expected-sprint-2w'],
+		expectedExcerpt: '2 weeks',
+		trapFixtureIds: ['meta-r1-trap-sprint-3w'],
+	},
+	{
+		pairId: 'R2',
+		dimension: 'recency',
+		question: "What's our current merge policy?",
+		expectedFixtureIds: ['meta-r2-expected-squash-only'],
+		expectedExcerpt: 'squash-only',
+		trapFixtureIds: ['meta-r2-trap-rebase-only'],
+	},
+	{
+		pairId: 'R3',
+		dimension: 'recency',
+		question: 'Latest style-guide rule for import ordering?',
+		expectedFixtureIds: ['meta-r3-expected-import-recent'],
+		expectedExcerpt: 'alphabetical',
+		trapFixtureIds: ['meta-r3-trap-import-older'],
+	},
+	{
+		pairId: 'C1',
+		dimension: 'confidence',
+		question: "What's Sebastian's role?",
+		expectedFixtureIds: ['meta-c1-expected-sebastian-founder'],
+		expectedExcerpt: 'founder',
+		trapFixtureIds: ['meta-c1-trap-sebastian-cofounder'],
+	},
+	{
+		pairId: 'C2',
+		dimension: 'confidence',
+		question: 'Where do we track billing incidents?',
+		expectedFixtureIds: ['meta-c2-expected-billing-sentry'],
+		expectedExcerpt: 'Sentry',
+		trapFixtureIds: ['meta-c2-trap-billing-archive'],
+	},
+	{
+		pairId: 'V1',
+		dimension: 'verification_status',
+		question: 'How do we run migrations locally?',
+		expectedFixtureIds: ['meta-v1-expected-migrations-new'],
+		expectedExcerpt: 'new tool',
+		trapFixtureIds: ['meta-v1-trap-migrations-old'],
+	},
+	{
+		pairId: 'V2',
+		dimension: 'verification_status',
+		question: "What's the CI runner we use?",
+		expectedFixtureIds: ['meta-v2-expected-runner-gha'],
+		expectedExcerpt: 'GitHub Actions',
+		trapFixtureIds: ['meta-v2-trap-runner-circle'],
+	},
+	{
+		pairId: 'V3',
+		dimension: 'verification_status',
+		question: 'Which vendor do we use for on-call paging?',
+		expectedFixtureIds: [],
+		expectedExcerpt: null,
+		trapFixtureIds: ['meta-v3-trap-oncall-pagerduty'],
+	},
+	{
+		pairId: 'U1',
+		dimension: 'un_superseded',
+		question: 'Who is on-call for infra this week?',
+		expectedFixtureIds: ['meta-u1-expected-oncall-bob'],
+		expectedExcerpt: 'Bob',
+		trapFixtureIds: ['meta-u1-trap-oncall-alice'],
+	},
+	{
+		pairId: 'U2',
+		dimension: 'un_superseded',
+		question: "What's our data retention policy?",
+		expectedFixtureIds: ['meta-u2-expected-retention-live'],
+		expectedExcerpt: '90 days',
+		trapFixtureIds: ['meta-u2-trap-retention-a', 'meta-u2-trap-retention-b'],
+	},
+]
+
+if (METADATA_EVAL_PAIRS.length !== 10) {
+	throw new Error(`METADATA_EVAL_PAIRS must have 10 entries (has ${METADATA_EVAL_PAIRS.length}).`)
+}
+
+// ── Self-check for the metadata-10 pairs ────────────────────────────────────
+//
+// Every metadata pair must have at least one trap row that outranks its
+// expected row(s) under the JSONB-ILIKE baseline (score DESC → title ASC).
+// If a pair doesn't have a trap that beats it on content alone, the pair
+// isn't stressing the metadata mechanism and the fixture must fail its
+// import so the gap is caught at test-load time, not silently ignored in
+// the aggregate number.
+
+const METADATA_STOPWORDS = new Set([
+	'a',
+	'an',
+	'and',
+	'are',
+	'as',
+	'at',
+	'be',
+	'been',
+	'but',
+	'by',
+	'can',
+	'could',
+	'did',
+	'do',
+	'does',
+	'for',
+	'from',
+	'has',
+	'have',
+	'how',
+	'i',
+	'if',
+	'in',
+	'into',
+	'is',
+	'it',
+	'its',
+	'just',
+	'not',
+	'of',
+	'on',
+	'or',
+	'over',
+	'past',
+	'per',
+	'should',
+	'so',
+	'than',
+	'that',
+	'the',
+	'their',
+	'them',
+	'then',
+	'there',
+	'they',
+	'this',
+	'to',
+	'up',
+	'was',
+	'we',
+	'were',
+	'what',
+	'when',
+	'where',
+	'which',
+	'while',
+	'who',
+	'why',
+	'will',
+	'with',
+	'you',
+	'your',
+])
+
+function tokenizeForSelfCheck(text: string): string[] {
+	const raw = text
+		.toLowerCase()
+		.replace(/[^a-z0-9\s_-]+/g, ' ')
+		.split(/\s+/)
+		.filter(Boolean)
+	const seen = new Set<string>()
+	const out: string[] = []
+	for (const word of raw) {
+		if (word.length < 3) continue
+		if (METADATA_STOPWORDS.has(word)) continue
+		if (seen.has(word)) continue
+		seen.add(word)
+		out.push(word)
+	}
+	return out
+}
+
+function scoreRow(tokens: readonly string[], entry: MetadataCorpusEntry): number {
+	const haystack = `${entry.title}\n${entry.content}`.toLowerCase()
+	let score = 0
+	for (const token of tokens) {
+		if (haystack.includes(token.toLowerCase())) score += 1
+	}
+	return score
+}
+
+const METADATA_CORPUS_BY_ID = new Map<string, MetadataCorpusEntry>(
+	METADATA_KNOWLEDGE_CORPUS.map((c) => [c.fixtureId, c]),
+)
+
+for (const pair of METADATA_EVAL_PAIRS) {
+	if (pair.trapFixtureIds.length === 0) {
+		throw new Error(`Metadata pair ${pair.pairId}: no trap rows defined.`)
+	}
+	for (const trapId of pair.trapFixtureIds) {
+		if (!METADATA_CORPUS_BY_ID.has(trapId)) {
+			throw new Error(`Metadata pair ${pair.pairId}: trap fixture ${trapId} not in corpus.`)
+		}
+	}
+	for (const expectedId of pair.expectedFixtureIds) {
+		if (!METADATA_CORPUS_BY_ID.has(expectedId)) {
+			throw new Error(`Metadata pair ${pair.pairId}: expected fixture ${expectedId} not in corpus.`)
+		}
+	}
+	if (pair.expectedFixtureIds.length === 0 && pair.expectedExcerpt !== null) {
+		throw new Error(
+			`Metadata pair ${pair.pairId}: empty-expected pair must have expectedExcerpt=null.`,
+		)
+	}
+	if (pair.expectedFixtureIds.length > 0 && pair.expectedExcerpt === null) {
+		throw new Error(`Metadata pair ${pair.pairId}: non-empty expected must have expectedExcerpt.`)
+	}
+
+	// expectedExcerpt must be present in at least one expected row's haystack.
+	if (pair.expectedFixtureIds.length > 0 && pair.expectedExcerpt !== null) {
+		const needle = pair.expectedExcerpt.toLowerCase()
+		const anyMatch = pair.expectedFixtureIds.some((id) => {
+			const entry = METADATA_CORPUS_BY_ID.get(id)
+			if (!entry) return false
+			return `${entry.title}\n${entry.content}`.toLowerCase().includes(needle)
+		})
+		if (!anyMatch) {
+			throw new Error(
+				`Metadata pair ${pair.pairId}: expectedExcerpt not present in any expected row.`,
+			)
+		}
+	}
+
+	// Core self-check: at least one trap row outranks the expected row(s) under
+	// the JSONB-ILIKE baseline ranker (score DESC → title ASC → id ASC).
+	// If the pair has no expected row (empty-return), the trap just needs to
+	// have score > 0 so it appears in the baseline candidates at all.
+	const tokens = tokenizeForSelfCheck(pair.question)
+	if (tokens.length === 0) {
+		throw new Error(
+			`Metadata pair ${pair.pairId}: question yields no tokens after stopword/length filtering.`,
+		)
+	}
+
+	const trapEntries = pair.trapFixtureIds.map((id) => {
+		const entry = METADATA_CORPUS_BY_ID.get(id)
+		if (!entry) throw new Error(`missing trap ${id}`)
+		return entry
+	})
+	const expectedEntries = pair.expectedFixtureIds.map((id) => {
+		const entry = METADATA_CORPUS_BY_ID.get(id)
+		if (!entry) throw new Error(`missing expected ${id}`)
+		return entry
+	})
+
+	const trapMaxScore = Math.max(...trapEntries.map((e) => scoreRow(tokens, e)))
+	if (pair.expectedFixtureIds.length === 0) {
+		if (trapMaxScore <= 0) {
+			throw new Error(
+				`Metadata pair ${pair.pairId}: trap rows do not match any question token — pair does not stress the mechanism.`,
+			)
+		}
+		continue
+	}
+
+	// Non-empty expected: verify at least one trap outranks at least one
+	// expected row in (score DESC, title ASC).
+	const trapWinner = trapEntries
+		.map((e) => ({ entry: e, score: scoreRow(tokens, e) }))
+		.sort((a, b) => {
+			if (b.score !== a.score) return b.score - a.score
+			return a.entry.title.localeCompare(b.entry.title)
+		})[0]
+	const expectedWinner = expectedEntries
+		.map((e) => ({ entry: e, score: scoreRow(tokens, e) }))
+		.sort((a, b) => {
+			if (b.score !== a.score) return b.score - a.score
+			return a.entry.title.localeCompare(b.entry.title)
+		})[0]
+
+	if (!trapWinner || !expectedWinner) {
+		throw new Error(`Metadata pair ${pair.pairId}: unable to rank rows.`)
+	}
+
+	const trapBeats =
+		trapWinner.score > expectedWinner.score ||
+		(trapWinner.score === expectedWinner.score &&
+			trapWinner.entry.title.localeCompare(expectedWinner.entry.title) < 0)
+
+	if (!trapBeats) {
+		throw new Error(
+			`Metadata pair ${pair.pairId}: no trap row outranks the expected row under ILIKE-baseline (trap ${trapWinner.entry.fixtureId} score=${trapWinner.score} title="${trapWinner.entry.title}", expected ${expectedWinner.entry.fixtureId} score=${expectedWinner.score} title="${expectedWinner.entry.title}"). Pair does not stress the metadata mechanism.`,
+		)
+	}
+}
+
+// Guardrail: metadata fixture IDs must not collide with content-30 IDs.
+{
+	const contentIds = new Set(KNOWLEDGE_CORPUS.map((c) => c.fixtureId))
+	for (const entry of METADATA_KNOWLEDGE_CORPUS) {
+		if (contentIds.has(entry.fixtureId)) {
+			throw new Error(`Metadata fixture ${entry.fixtureId} collides with a content-30 fixtureId.`)
+		}
 	}
 }
