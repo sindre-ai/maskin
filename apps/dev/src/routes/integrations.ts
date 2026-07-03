@@ -20,6 +20,7 @@ import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
+import { handleGithubInstallationEvent } from '../lib/integrations/providers/github/installation-events'
 import {
 	type SlackConversationType,
 	listSlackConversations,
@@ -137,6 +138,10 @@ const connectRoute = createRoute({
 			description: 'Error',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		409: {
+			description: 'Provider already connected — reinstall requires explicit confirmation',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -242,6 +247,47 @@ app.openapi(connectRoute, (async (c) => {
 
 		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 		return c.json({ install_url: `${frontendUrl}/${workspaceId}/settings/integrations` })
+	}
+
+	// GitHub-only guard: block reinstall clicks when the workspace already has an
+	// active GitHub App installation and the caller didn't explicitly opt in via
+	// `?confirm_reinstall=1`. Every reinstall rotates GitHub's installation_id,
+	// which invalidates cached tokens under running agent sessions — the churn
+	// this route was silently amplifying. The confirm flag comes from the UI's
+	// re-install confirm dialog; direct API callers can pass it too.
+	if (providerName === 'github' && resolved.config.auth.type === 'oauth2_custom') {
+		const confirmReinstall = c.req.query('confirm_reinstall') === '1'
+		if (!confirmReinstall) {
+			const activeRows = await db
+				.select({ id: integrations.id, externalId: integrations.externalId })
+				.from(integrations)
+				.where(
+					and(
+						eq(integrations.workspaceId, workspaceId),
+						eq(integrations.provider, providerName),
+						eq(integrations.status, 'active'),
+					),
+				)
+			if (activeRows.length > 0) {
+				logger.info('Blocked implicit GitHub reinstall — active installation exists', {
+					workspaceId,
+					actorId,
+					activeCount: activeRows.length,
+				})
+				return c.json(
+					createApiError(
+						'CONFLICT',
+						`Workspace already has ${activeRows.length} active GitHub installation${activeRows.length === 1 ? '' : 's'}. Reinstalling rotates the installation ID and invalidates tokens held by running sessions — see docs/integrations/github/README.md for the deliberate reinstall procedure. Pass ?confirm_reinstall=1 to override.`,
+					),
+					409,
+				)
+			}
+		} else {
+			logger.info('Proceeding with GitHub reinstall — confirm flag set', {
+				workspaceId,
+				actorId,
+			})
+		}
 	}
 
 	// Create signed state containing workspace + actor info + one-time nonce
@@ -952,6 +998,27 @@ webhookApp.post('/:provider', async (c) => {
 	if (resolved.webhookPreHandler) {
 		const preResponse = resolved.webhookPreHandler(payload, headers)
 		if (preResponse) return c.json(preResponse.body, (preResponse.status ?? 200) as 200)
+	}
+
+	// GitHub delivers `installation` and `installation_target` events on install /
+	// uninstall / suspend / permission-accept transitions. These carry no
+	// per-repo entity that a normalized event would map to, but they are exactly
+	// what we need to detect and reconcile installation_id rotation — otherwise
+	// old rows silently starve of events. Handle them here before the generic
+	// normalizer discards them.
+	if (providerName === 'github' && headers['x-github-event'] === 'installation') {
+		try {
+			const result = await handleGithubInstallationEvent(
+				db,
+				payload as Parameters<typeof handleGithubInstallationEvent>[1],
+			)
+			return c.json({ ok: true, handled: 'installation', ...result })
+		} catch (err) {
+			logger.error('GitHub installation event handler failed', {
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return c.json({ ok: true, handled: 'installation', kind: 'error' })
+		}
 	}
 
 	const normalized = normalizeEvent(resolved, payload, headers)

@@ -19,11 +19,12 @@ export function useProviders() {
 
 export function useConnectIntegration(workspaceId: string) {
 	return useMutation({
-		mutationFn: (input: { provider: string; apiKey?: string }) =>
+		mutationFn: (input: { provider: string; apiKey?: string; confirmReinstall?: boolean }) =>
 			api.integrations.connect(
 				workspaceId,
 				input.provider,
 				input.apiKey ? { api_key: input.apiKey } : undefined,
+				input.confirmReinstall ? { confirmReinstall: true } : undefined,
 			),
 		onSuccess: (data) => {
 			// Redirect to the provider's install/OAuth page

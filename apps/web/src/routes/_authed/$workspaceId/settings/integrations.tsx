@@ -6,6 +6,7 @@ import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
@@ -20,7 +21,7 @@ import {
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
+import { AlertTriangle, Plus } from 'lucide-react'
 import { useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/integrations')({
@@ -169,7 +170,22 @@ function GroupedProviderRow({
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
 	const [expanded, setExpanded] = useState(installations.length > 1)
+	const [reinstallOpen, setReinstallOpen] = useState(false)
 	const count = installations.length
+	const isGithub = provider.name === 'github'
+	const handleAddAnother = () => {
+		if (isGithub) {
+			setReinstallOpen(true)
+			return
+		}
+		connect.mutate({ provider: provider.name })
+	}
+	const handleConfirmReinstall = () => {
+		connect.mutate(
+			{ provider: provider.name, confirmReinstall: true },
+			{ onSuccess: () => setReinstallOpen(false) },
+		)
+	}
 
 	return (
 		<div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -203,7 +219,7 @@ function GroupedProviderRow({
 						variant="outline"
 						size="sm"
 						className="w-full"
-						onClick={() => connect.mutate({ provider: provider.name })}
+						onClick={handleAddAnother}
 						disabled={connect.isPending}
 					>
 						<Plus className="h-3.5 w-3.5 mr-1" />
@@ -211,7 +227,57 @@ function GroupedProviderRow({
 					</Button>
 				</div>
 			)}
+			{isGithub && (
+				<GithubReinstallConfirmDialog
+					open={reinstallOpen}
+					pending={connect.isPending}
+					onConfirm={handleConfirmReinstall}
+					onCancel={() => setReinstallOpen(false)}
+				/>
+			)}
 		</div>
+	)
+}
+
+function GithubReinstallConfirmDialog({
+	open,
+	pending,
+	onConfirm,
+	onCancel,
+}: {
+	open: boolean
+	pending: boolean
+	onConfirm: () => void
+	onCancel: () => void
+}) {
+	return (
+		<Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle className="flex items-center gap-2">
+						<AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />
+						Reinstall GitHub App?
+					</DialogTitle>
+					<DialogDescription>
+						Reinstalling rotates the GitHub installation ID. Any running agent session holding the
+						previous installation's token will start getting 401s on its next REST write. Only
+						continue if you intend to add a new org or replace a broken installation.
+					</DialogDescription>
+				</DialogHeader>
+				<div className="rounded-md border border-border bg-bg-surface p-3 text-xs text-muted-foreground">
+					For the deliberate reinstall procedure — including how to notify running sessions — see{' '}
+					<code>docs/integrations/github/README.md</code>.
+				</div>
+				<DialogFooter>
+					<Button variant="ghost" onClick={onCancel} disabled={pending}>
+						Cancel
+					</Button>
+					<Button onClick={onConfirm} disabled={pending}>
+						Reinstall anyway
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	)
 }
 
