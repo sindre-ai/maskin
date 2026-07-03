@@ -20,6 +20,7 @@ vi.mock('node:fs', () => ({
 
 import { registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { decodeCursor, encodeCursor } from '../cursor'
 import {
 	DEFAULT_MAX_RESPONSE_TOKENS,
 	MAX_FETCH_HANDLE_IDS,
@@ -211,6 +212,141 @@ describe('applyResponseTokenCap', () => {
 		}
 		expect(capped._meta.fetch_handle.ids.length).toBeLessThanOrEqual(MAX_FETCH_HANDLE_IDS)
 		expect(MAX_FETCH_HANDLE_IDS).toBe(50)
+	})
+
+	// T4 follow-up: when the pre-trim payload has more omitted rows than
+	// fetch_handle can carry, the response's inherited next_cursor points
+	// past the omitted tail — rows between the 50th omitted id and the
+	// original last row would be silently unrecoverable. The wrapper
+	// rewrites next_cursor to the last recoverable row so a follow-up list
+	// call resumes right after it.
+	function makeRowWithCreatedAt(idx: number, payloadKb: number) {
+		return {
+			id: `obj-${String(idx).padStart(4, '0')}`,
+			type: 'bet',
+			title: `Row ${idx}`,
+			createdAt: `2026-01-${String((idx % 28) + 1).padStart(2, '0')}T00:00:00.000Z`,
+			body: 'x'.repeat(payloadKb * 1024),
+		}
+	}
+
+	function makeListObjectsResponseWithCursor(
+		rows: Array<ReturnType<typeof makeRowWithCreatedAt>>,
+		snapshotAt: string,
+	) {
+		// Emulates the pre-trim shape server.ts produces when the pagination
+		// upper bound is hit — a next_cursor is seeded from the last row.
+		const last = rows[rows.length - 1]
+		const inherited = encodeCursor({
+			s: snapshotAt,
+			o: 'desc',
+			k: { sortValue: last.createdAt, id: last.id },
+		})
+		return {
+			_meta: { ui: { resourceUri: 'ui://objects' } },
+			content: [{ type: 'text', text: `- ${rows.length} rows` }],
+			structuredContent: {
+				heroCard: { kind: 'list', tool: 'list_objects' },
+				objects: rows,
+				next_cursor: inherited,
+				page: { limit: rows.length, offset: 0, next_cursor: inherited },
+			},
+		}
+	}
+
+	it('rewrites next_cursor to the last recoverable row when omitted rows exceed MAX_FETCH_HANDLE_IDS', () => {
+		// 100 rows, cap forces most to omit. fetch_handle covers the first 50
+		// omitted; the next_cursor must point at that 50th omitted row so a
+		// follow-up list call returns row 51 of the omitted tail onward.
+		const snapshotAt = '2026-06-30T12:00:00.000Z'
+		const rows = Array.from({ length: 100 }, (_, i) => makeRowWithCreatedAt(i, 1))
+		const response = makeListObjectsResponseWithCursor(rows, snapshotAt)
+		const result = applyResponseTokenCap('list_objects', response, { maxTokens: 500 })
+		expect(result.truncated).toBe(true)
+
+		const capped = result.response as {
+			_meta: { fetch_handle: { ids: string[] } }
+			structuredContent: {
+				objects: Array<{ id: string }>
+				next_cursor?: string
+				page: { next_cursor?: string }
+			}
+		}
+
+		const keptIds = capped.structuredContent.objects.map((r) => r.id)
+		const fetchIds = capped._meta.fetch_handle.ids
+		expect(fetchIds.length).toBe(MAX_FETCH_HANDLE_IDS)
+
+		// The last recoverable row is the one whose id sits at
+		// fetch_handle.ids[MAX_FETCH_HANDLE_IDS - 1].
+		const boundaryId = fetchIds[fetchIds.length - 1]
+		const boundaryRow = rows.find((r) => r.id === boundaryId)
+		expect(boundaryRow).toBeDefined()
+		if (!boundaryRow) throw new Error('boundary row missing')
+
+		// The rewritten cursor decodes to that boundary row's keyset while
+		// preserving the inherited snapshot and order.
+		const decoded = decodeCursor(capped.structuredContent.next_cursor)
+		expect(decoded).not.toBeNull()
+		if (!decoded) throw new Error('decoded null')
+		expect(decoded.s).toBe(snapshotAt)
+		expect(decoded.o).toBe('desc')
+		expect(decoded.k.id).toBe(boundaryRow.id)
+		expect(decoded.k.sortValue).toBe(boundaryRow.createdAt)
+
+		// The mirrored copy on `page.next_cursor` (T3 exposes the value on
+		// both spots for backwards compatibility) is rewritten too.
+		expect(capped.structuredContent.page.next_cursor).toBe(capped.structuredContent.next_cursor)
+
+		// Recoverability contract: kept rows + fetch_handle ids together
+		// cover the prefix of the pre-trim payload; every row past the
+		// boundary row is still recoverable via a follow-up list call that
+		// uses the rewritten cursor (keyset seek strictly past boundary).
+		const boundaryIdx = rows.findIndex((r) => r.id === boundaryId)
+		expect([...keptIds, ...fetchIds]).toEqual(rows.slice(0, boundaryIdx + 1).map((r) => r.id))
+	})
+
+	it('leaves next_cursor untouched when omitted rows fit inside fetch_handle', () => {
+		// 30 rows, most get omitted but 30 ≤ 50 → every omitted row is in
+		// fetch_handle.ids, no unrecoverable tail. The inherited cursor
+		// already points past all omitted rows, so no rewrite is needed —
+		// preserving it avoids a spurious cursor change for the common path.
+		const snapshotAt = '2026-06-30T12:00:00.000Z'
+		const rows = Array.from({ length: 30 }, (_, i) => makeRowWithCreatedAt(i, 1))
+		const response = makeListObjectsResponseWithCursor(rows, snapshotAt)
+		const inheritedCursor = response.structuredContent.next_cursor
+		const result = applyResponseTokenCap('list_objects', response, { maxTokens: 500 })
+		expect(result.truncated).toBe(true)
+		const capped = result.response as {
+			structuredContent: { next_cursor?: string; page: { next_cursor?: string } }
+		}
+		expect(capped.structuredContent.next_cursor).toBe(inheritedCursor)
+		expect(capped.structuredContent.page.next_cursor).toBe(inheritedCursor)
+	})
+
+	it('leaves next_cursor untouched when the pre-trim payload had no cursor', () => {
+		// No cursor in the pre-trim payload → the pagination upper bound
+		// wasn't hit → there is no "past the omitted tail" to worry about.
+		// The rewrite path must be a no-op even when omitted > 50.
+		const rows = Array.from({ length: 100 }, (_, i) => makeRowWithCreatedAt(i, 1))
+		const response = {
+			_meta: { ui: { resourceUri: 'ui://objects' } },
+			content: [{ type: 'text', text: `- ${rows.length} rows` }],
+			structuredContent: {
+				heroCard: { kind: 'list', tool: 'list_objects' },
+				objects: rows,
+				page: { limit: rows.length, offset: 0 },
+			},
+		}
+		const result = applyResponseTokenCap('list_objects', response, { maxTokens: 500 })
+		const capped = result.response as {
+			structuredContent: {
+				next_cursor?: string
+				page: { next_cursor?: string; limit: number; offset: number }
+			}
+		}
+		expect(capped.structuredContent.next_cursor).toBeUndefined()
+		expect(capped.structuredContent.page.next_cursor).toBeUndefined()
 	})
 
 	it('handles the degenerate case where zero rows still exceed the cap', () => {

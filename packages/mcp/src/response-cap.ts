@@ -26,6 +26,7 @@
 // tool exists; its rows are lightweight enough that overflow is not a
 // realistic path.
 
+import { decodeCursor, encodeCursor } from './cursor'
 import { estimateTokensFromBytes } from './telemetry'
 
 /** Environment override for the per-response token cap. Unset → default. */
@@ -40,12 +41,14 @@ export const RESPONSE_TOKEN_CAP_ENV_VAR = 'MCP_RESPONSE_MAX_TOKENS'
 export const DEFAULT_MAX_RESPONSE_TOKENS = 15_000
 
 /**
- * `fetch_handle.ids` upper bound. Matches the tightest schema constraint
- * across get-by-id counterparts — `get_objects` accepts up to 50 ids per
- * call. Anything larger would produce a fetch_handle the client can't act on
- * in one hop. Kept in step with the schema at
- * `packages/mcp/src/tools.ts` — bumping one side without the other regresses
- * AC-T6 silently.
+ * `fetch_handle.ids` upper bound. Matches the tightest tool-facing schema
+ * constraint across get-by-id counterparts — `get_objects` accepts up to 50
+ * ids per call (`packages/mcp/src/tools.ts` `.max(50)`). Anything larger
+ * would produce a fetch_handle the client can't act on in one hop, so
+ * bumping one side without the other regresses AC-T6 silently. When the
+ * trimmed tail carries more than this many rows the wrapper also rewrites
+ * `next_cursor` to point at the last recoverable row — otherwise ids past
+ * the cap would be silently unrecoverable via either channel.
  */
 export const MAX_FETCH_HANDLE_IDS = 50
 
@@ -107,8 +110,6 @@ export interface ApplyResponseTokenCapResult {
 	response: unknown
 	/** True iff rows were dropped — matches the value we write to `_meta.truncated`. */
 	truncated: boolean
-	/** IDs of the omitted rows (or `undefined` when no trim happened). */
-	omittedIds?: string[]
 }
 
 /**
@@ -162,13 +163,10 @@ export function applyResponseTokenCap(
 		const candidate = buildCappedResponse(rsp, structured, target.rowsField, rows, {
 			tool: target.fetchHandleTool,
 			ids: extractIds(omitted, idField),
+			omittedRows: omitted,
 		})
 		if (estimateResponseTokens(candidate) <= maxTokens) {
-			return {
-				response: candidate,
-				truncated: true,
-				omittedIds: extractIds(omitted, idField),
-			}
+			return { response: candidate, truncated: true }
 		}
 	}
 
@@ -178,12 +176,9 @@ export function applyResponseTokenCap(
 	const finalResponse = buildCappedResponse(rsp, structured, target.rowsField, [], {
 		tool: target.fetchHandleTool,
 		ids: extractIds(rowsRaw as unknown[], idField),
+		omittedRows: rowsRaw as unknown[],
 	})
-	return {
-		response: finalResponse,
-		truncated: true,
-		omittedIds: extractIds(rowsRaw as unknown[], idField),
-	}
+	return { response: finalResponse, truncated: true }
 }
 
 function buildCappedResponse(
@@ -191,7 +186,7 @@ function buildCappedResponse(
 	structured: Record<string, unknown>,
 	rowsField: string,
 	keptRows: unknown[],
-	fetchHandle: FetchHandle,
+	fetchHandle: FetchHandle & { omittedRows: unknown[] },
 ): MutableMcpResponse {
 	// Cap the fetch_handle.ids at MAX_FETCH_HANDLE_IDS so a single hop of
 	// `fetch_handle.tool(ids)` stays within the get-by-id schema's cap.
@@ -204,11 +199,84 @@ function buildCappedResponse(
 			ids: cappedIds,
 		},
 	}
+	// When the tail of the pre-trim payload has more omitted rows than a
+	// single fetch_handle hop can carry, the inherited `next_cursor` still
+	// points past the *original* last row — rows between the 50th omitted id
+	// and that row would be silently unrecoverable. Rewrite the cursor to
+	// point at the last recoverable row (the row backing the 50th id in
+	// `fetch_handle.ids`) so a follow-up list call resumes right after it.
+	const cappedStructured = rewriteNextCursor(
+		{ ...structured, [rowsField]: keptRows },
+		fetchHandle.omittedRows,
+		cappedIds.length,
+	)
 	return {
 		...rsp,
-		structuredContent: { ...structured, [rowsField]: keptRows },
+		structuredContent: cappedStructured,
 		_meta: meta,
 	}
+}
+
+/**
+ * Re-encode `structuredContent.next_cursor` (and `page.next_cursor`) to the
+ * keyset of the last row the client can still recover — index
+ * `boundaryIndex - 1` in `omittedRows`. Only fires when the pre-trim payload
+ * carried a cursor AND `omittedRows.length > boundaryIndex`; otherwise the
+ * original cursor is either already null or already correct.
+ *
+ * Falls back to a no-op if the boundary row is missing `createdAt`/`id` or
+ * if the inherited cursor can't be decoded — the original next_cursor is
+ * kept so the client sees the same shape as before the fix.
+ */
+function rewriteNextCursor(
+	structured: Record<string, unknown>,
+	omittedRows: unknown[],
+	boundaryIndex: number,
+): Record<string, unknown> {
+	if (boundaryIndex <= 0 || omittedRows.length <= boundaryIndex) return structured
+	const inherited = readCursor(structured)
+	if (inherited === undefined) return structured
+	const decoded = decodeCursor(inherited)
+	if (!decoded) return structured
+	const boundary = omittedRows[boundaryIndex - 1]
+	if (!boundary || typeof boundary !== 'object') return structured
+	const row = boundary as Record<string, unknown>
+	const sortValue = row.createdAt
+	const id = row.id
+	if (typeof sortValue !== 'string' || typeof id !== 'string') return structured
+	const rewritten = encodeCursor({
+		s: decoded.s,
+		o: decoded.o,
+		k: { sortValue, id },
+	})
+	return writeCursor(structured, rewritten)
+}
+
+function readCursor(structured: Record<string, unknown>): string | undefined {
+	const top = structured.next_cursor
+	if (typeof top === 'string' && top.length > 0) return top
+	const page = structured.page
+	if (page && typeof page === 'object') {
+		const inPage = (page as Record<string, unknown>).next_cursor
+		if (typeof inPage === 'string' && inPage.length > 0) return inPage
+	}
+	return undefined
+}
+
+function writeCursor(
+	structured: Record<string, unknown>,
+	nextCursor: string,
+): Record<string, unknown> {
+	const out: Record<string, unknown> = { ...structured }
+	if (typeof structured.next_cursor === 'string') out.next_cursor = nextCursor
+	const page = structured.page
+	if (page && typeof page === 'object') {
+		const pageObj = page as Record<string, unknown>
+		if (typeof pageObj.next_cursor === 'string') {
+			out.page = { ...pageObj, next_cursor: nextCursor }
+		}
+	}
+	return out
 }
 
 function extractIds(rows: unknown[], idField: string): string[] {
