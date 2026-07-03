@@ -109,7 +109,8 @@
 	   GitHub / Vercel small-text tiers. Sub-caption sizes (10–11px) for
 	   badges, count pips, and uppercase eyebrow labels sit outside the
 	   typographic scale and are permitted as `text-[Npx]` arbitraries on
-	   UI-chrome elements — see .claude/rules/frontend.md for the policy. */
+	   UI-chrome elements — see apps/web/CLAUDE.md "Typography scale
+	   (`--text-*`)" for the policy. */
 	--text-caption: 0.75rem; /* 12px */
 	--text-caption--line-height: 1.4;
 	--text-caption--letter-spacing: 0.02em;
