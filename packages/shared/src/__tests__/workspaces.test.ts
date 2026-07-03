@@ -12,12 +12,20 @@ describe('workspaceSettingsSchema', () => {
 	it('provides all defaults when given empty object', () => {
 		const result = workspaceSettingsSchema.parse({})
 		expect(result.display_names).toEqual({ insight: 'Insight', bet: 'Bet', task: 'Task' })
-		expect(result.statuses.insight).toEqual(['new', 'processing', 'clustered', 'discarded'])
+		expect(result.statuses.insight).toEqual([
+			'new',
+			'processing',
+			'clustered',
+			'scored',
+			'parked',
+			'discarded',
+		])
 		expect(result.statuses.bet).toEqual([
 			'signal',
-			'proposed',
+			'qualified',
+			'define',
 			'active',
-			'completed',
+			'live',
 			'succeeded',
 			'failed',
 			'paused',
@@ -28,7 +36,7 @@ describe('workspaceSettingsSchema', () => {
 			'in_review',
 			'validated',
 			'done',
-			'blocked',
+			'discarded',
 		])
 		expect(result.field_definitions).toEqual({})
 		expect(result.relationship_types).toEqual([
@@ -93,6 +101,25 @@ describe('workspaceSettingsSchema', () => {
 				claude_oauth: { encryptedAccessToken: 'token' },
 			}),
 		).toThrow()
+	})
+
+	it('accepts claude_oauth new slot shape with a primary slot', () => {
+		const result = workspaceSettingsSchema.parse({
+			claude_oauth: {
+				primary: {
+					encryptedAccessToken: 'encrypted-token',
+					encryptedRefreshToken: 'encrypted-refresh',
+					expiresAt: 1234567890,
+				},
+			},
+		})
+		expect(result.claude_oauth).toMatchObject({
+			primary: { encryptedAccessToken: 'encrypted-token' },
+		})
+	})
+
+	it('rejects an empty claude_oauth object', () => {
+		expect(() => workspaceSettingsSchema.parse({ claude_oauth: {} })).toThrow()
 	})
 
 	it('accepts field_definitions', () => {
