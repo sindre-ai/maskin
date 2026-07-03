@@ -3066,6 +3066,7 @@ export function createMcpServer(config: McpConfig) {
 			}>
 			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
 			const result = trimmed as typeof raw
+			const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : undefined
 			const summaryRows: SummaryRow[] = result.map((skill) => {
 				const metaParts: string[] = []
 				if (skill.isValid === false) metaParts.push('invalid')
@@ -3073,6 +3074,9 @@ export function createMcpServer(config: McpConfig) {
 				if (description) metaParts.push(makePreview(description, 80))
 				return {
 					title: skill.name,
+					url: baseUrl
+						? buildWebAppHref(baseUrl, wsId, { kind: 'skill', name: skill.name })
+						: undefined,
 					meta: metaParts.length > 0 ? metaParts.join(' · ') : undefined,
 				}
 			})
@@ -3288,12 +3292,14 @@ export function createMcpServer(config: McpConfig) {
 			}>
 			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
 			const result = trimmed as typeof raw
+			const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : undefined
 			const summaryRows: SummaryRow[] = result.map((file) => {
 				const metaParts: string[] = []
 				if (file.mimeType) metaParts.push(file.mimeType)
 				if (typeof file.sizeBytes === 'number') metaParts.push(`${file.sizeBytes}B`)
 				return {
 					title: file.name,
+					url: baseUrl ? buildWebAppHref(baseUrl, wsId, { kind: 'file', id: file.id }) : undefined,
 					meta: metaParts.length > 0 ? metaParts.join(' · ') : undefined,
 				}
 			})

@@ -369,6 +369,12 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 			}
 			// Content is markdown list — starts with "- " or the empty label.
 			expect(/^(- |No |… )/.test(result.content[0].text)).toBe(true)
+			// AC-U2: every summary row carries a deep link back into the web app.
+			// The seven scoped list/search tools all wire a `url` through the
+			// SummaryRow so the rendered markdown carries `](https://maskin.io/`
+			// once per row. Empty fixtures skip this — but the scoping cases seed
+			// 50 rows, so the summary always has at least one linked row.
+			expect(result.content[0].text).toContain('](https://maskin.io/')
 		})
 	}
 
