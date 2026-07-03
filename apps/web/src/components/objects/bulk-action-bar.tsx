@@ -111,7 +111,7 @@ export function BulkActionBar({
 				className={cn(
 					'fixed left-1/2 bottom-10 z-50 -translate-x-1/2',
 					'flex w-[calc(100%-2rem)] max-w-[44rem] items-center gap-[var(--space-2)]',
-					'overflow-x-auto rounded-md border border-border bg-white px-[var(--space-3)] py-[var(--space-2)] shadow-lg',
+					'overflow-x-auto rounded-md border border-border bg-card px-[var(--space-3)] py-[var(--space-2)] shadow-lg',
 					transitionClass,
 					visible
 						? 'pointer-events-auto opacity-100 translate-y-0'
