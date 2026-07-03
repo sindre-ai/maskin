@@ -345,39 +345,39 @@ describe('tool handlers', () => {
 				content: Array<{ text: string }>
 				structuredContent: {
 					heroCard: { object?: { id: string }; relationships?: unknown }
-					results: Array<{
-						success: boolean
-						result: {
-							object: Record<string, unknown>
-							relationships?: unknown
-							connected_objects?: unknown
-							events?: unknown
-							files?: unknown
-						}
+					results: Array<{ id: string; success: boolean }>
+					objects: Array<{
+						object: Record<string, unknown>
+						relationships?: unknown
+						connected_objects?: unknown
+						events?: unknown
+						files?: unknown
 					}>
-					objects: Array<{ object: Record<string, unknown>; relationships?: unknown }>
 				}
 			}
 
 			expect(result.structuredContent.heroCard.object?.id).toBe('bet-1')
 			expect(result.structuredContent.heroCard.relationships).toBeUndefined()
 
-			// Per-result envelope: only `object` remains, no relationships/connected_objects/events/files.
-			const first = result.structuredContent.results[0]
-			expect(Object.keys(first.result).sort()).toEqual(['object'])
+			// Canonical object body lives at `objects[]` — one entry per successful id,
+			// carrying only `object` (no relationships/connected_objects/events/files).
+			const first = result.structuredContent.objects[0]
+			expect(Object.keys(first).sort()).toEqual(['object'])
 			// Per-object payload: exactly the core five (url is omitted when
 			// webAppBaseUrl isn't configured on the test rig — the injection is
 			// covered separately in the `url field injection` suite).
-			expect(Object.keys(first.result.object).sort()).toEqual([
+			expect(Object.keys(first.object).sort()).toEqual([
 				'contextLine',
 				'id',
 				'status',
 				'title',
 				'type',
 			])
-			expect(first.result.object.content).toBeUndefined()
+			expect(first.object.content).toBeUndefined()
 			// content[0].text is what the LLM actually reads — must also carry the lean shape.
-			const parsed = JSON.parse(result.content[0].text) as typeof result.structuredContent.results
+			const parsed = JSON.parse(result.content[0].text) as Array<{
+				result: { object: Record<string, unknown> }
+			}>
 			expect(Object.keys(parsed[0].result.object).sort()).toEqual([
 				'contextLine',
 				'id',
@@ -385,8 +385,6 @@ describe('tool handlers', () => {
 				'title',
 				'type',
 			])
-			// Triple-emit's `objects` array (kept intact for T5) also carries the projected shape.
-			expect(result.structuredContent.objects[0].relationships).toBeUndefined()
 		})
 
 		it('opts back into extra blocks when include: is passed', async () => {
@@ -422,14 +420,60 @@ describe('tool handlers', () => {
 				include: ['relationships', 'connected_objects'],
 			})) as {
 				structuredContent: {
-					results: Array<{
-						result: { relationships?: unknown[]; connected_objects?: unknown[] }
-					}>
+					objects: Array<{ relationships?: unknown[]; connected_objects?: unknown[] }>
 				}
 			}
 
-			expect(result.structuredContent.results[0].result.relationships).toHaveLength(1)
-			expect(result.structuredContent.results[0].result.connected_objects).toHaveLength(1)
+			expect(result.structuredContent.objects[0].relationships).toHaveLength(1)
+			expect(result.structuredContent.objects[0].connected_objects).toHaveLength(1)
+		})
+
+		it('emits each object body exactly once across heroCard, results, and objects', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				const match = urlStr.match(/\/api\/objects\/([^/]+)\/graph/)
+				const id = match?.[1] ?? 'unknown'
+				return {
+					ok: true,
+					json: () =>
+						Promise.resolve({
+							object: { id, type: 'bet', title: `Bet ${id}`, status: 'active' },
+							relationships: [],
+							connected_objects: [],
+						}),
+				} as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['bet-a', 'bet-b'] })) as {
+				structuredContent: {
+					heroCard: {
+						object?: { id: string }
+						objects?: Array<{ id: string; relationships?: unknown; connected_objects?: unknown }>
+					}
+					results: Array<{ id: string; success: boolean; result?: unknown }>
+					objects: Array<{ object: { id: string }; relationships?: unknown }>
+				}
+			}
+
+			// heroCard entries must be the lean HeroCardObject shape — no full body.
+			const heroEntries = result.structuredContent.heroCard.objects ?? []
+			for (const entry of heroEntries) {
+				expect(entry.relationships).toBeUndefined()
+				expect(entry.connected_objects).toBeUndefined()
+			}
+
+			// results[] is now a per-id envelope — no object body nested under .result.
+			for (const r of result.structuredContent.results) {
+				expect(r).not.toHaveProperty('result')
+				expect(typeof r.id).toBe('string')
+				expect(typeof r.success).toBe('boolean')
+			}
+
+			// objects[] is the canonical body location — exactly one entry per id.
+			const bodyIds = result.structuredContent.objects.map((o) => o.object.id)
+			expect(bodyIds).toEqual(['bet-a', 'bet-b'])
+			expect(new Set(bodyIds).size).toBe(bodyIds.length)
 		})
 	})
 

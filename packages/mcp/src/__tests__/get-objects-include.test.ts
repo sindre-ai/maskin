@@ -116,20 +116,10 @@ describe('get_objects `include:` expansions', () => {
 		return (await handler(args)) as {
 			content: Array<{ text: string }>
 			structuredContent: {
-				results: Array<{
-					id: string
-					success: boolean
-					result: {
-						object?: Record<string, unknown>
-						content?: unknown
-						relationships?: unknown[]
-						connected_objects?: unknown[]
-						events?: unknown[]
-						files?: unknown[]
-					}
-				}>
+				results: Array<{ id: string; success: boolean; error?: string }>
 				objects: Array<{
 					object?: Record<string, unknown>
+					content?: unknown
 					relationships?: unknown[]
 					connected_objects?: unknown[]
 					events?: unknown[]
@@ -143,10 +133,10 @@ describe('get_objects `include:` expansions', () => {
 		it('returns only {id, type, title, status, contextLine, url} on each object', async () => {
 			const result = await callGetObjects({ ids: ['bet-9'] })
 
-			const entry = result.structuredContent.results[0]
-			expect(entry.success).toBe(true)
-			expect(Object.keys(entry.result).sort()).toEqual(['object'])
-			const projected = entry.result.object as Record<string, unknown>
+			expect(result.structuredContent.results[0].success).toBe(true)
+			const entry = result.structuredContent.objects[0]
+			expect(Object.keys(entry).sort()).toEqual(['object'])
+			const projected = entry.object as Record<string, unknown>
 			expect(Object.keys(projected).sort()).toEqual([...CORE_OBJECT_KEYS].sort())
 			expect(projected.id).toBe('bet-9')
 			expect(projected.type).toBe('bet')
@@ -158,7 +148,7 @@ describe('get_objects `include:` expansions', () => {
 
 		it('behaves the same when `include` is omitted altogether', async () => {
 			const result = await callGetObjects({ ids: ['bet-9'] })
-			const entryKeys = Object.keys(result.structuredContent.results[0].result).sort()
+			const entryKeys = Object.keys(result.structuredContent.objects[0]).sort()
 			expect(entryKeys).toEqual(['object'])
 		})
 
@@ -174,26 +164,26 @@ describe('get_objects `include:` expansions', () => {
 	describe('(b) each single `include: [X]` returns default + only block X', () => {
 		it.each(EXPANSION_BLOCK_KEYS)('adds only the `%s` block', async (block: ExpansionBlockKey) => {
 			const result = await callGetObjects({ ids: ['bet-9'], include: [block] })
-			const entry = result.structuredContent.results[0]
+			const entry = result.structuredContent.objects[0]
 
 			// The core object body is untouched (still the lean 6-field default).
-			const projected = entry.result.object as Record<string, unknown>
+			const projected = entry.object as Record<string, unknown>
 			expect(Object.keys(projected).sort()).toEqual([...CORE_OBJECT_KEYS].sort())
 
-			// The result envelope has exactly one extra top-level key: the block.
-			expect(Object.keys(entry.result).sort()).toEqual(['object', block].sort())
-			expect(Array.isArray(entry.result[block])).toBe(true)
+			// The canonical body entry has exactly one extra top-level key: the block.
+			expect(Object.keys(entry).sort()).toEqual(['object', block].sort())
+			expect(Array.isArray(entry[block])).toBe(true)
 		})
 
 		it('adds `content` as a field on the object body, not a top-level block', async () => {
 			const result = await callGetObjects({ ids: ['bet-9'], include: ['content'] })
-			const entry = result.structuredContent.results[0]
+			const entry = result.structuredContent.objects[0]
 
-			// Top-level `result` still has only `object`.
-			expect(Object.keys(entry.result).sort()).toEqual(['object'])
+			// Top-level entry still has only `object`.
+			expect(Object.keys(entry).sort()).toEqual(['object'])
 
 			// The object body grows by exactly one field: `content`.
-			const projected = entry.result.object as Record<string, unknown>
+			const projected = entry.object as Record<string, unknown>
 			expect(Object.keys(projected).sort()).toEqual([...CORE_OBJECT_KEYS, 'content'].sort())
 			expect(projected.content).toBe('## Brief\n\nSome markdown body')
 		})
@@ -205,14 +195,14 @@ describe('get_objects `include:` expansions', () => {
 				ids: ['bet-9'],
 				include: ['relationships', 'events'],
 			})
-			const entry = result.structuredContent.results[0]
+			const entry = result.structuredContent.objects[0]
 
-			expect(Object.keys(entry.result).sort()).toEqual(['events', 'object', 'relationships'])
-			expect(entry.result.relationships).toHaveLength(1)
-			expect(entry.result.events).toHaveLength(1)
+			expect(Object.keys(entry).sort()).toEqual(['events', 'object', 'relationships'])
+			expect(entry.relationships).toHaveLength(1)
+			expect(entry.events).toHaveLength(1)
 
 			// The object body is still the lean 6-field default.
-			const projected = entry.result.object as Record<string, unknown>
+			const projected = entry.object as Record<string, unknown>
 			expect(Object.keys(projected).sort()).toEqual([...CORE_OBJECT_KEYS].sort())
 		})
 
@@ -221,13 +211,13 @@ describe('get_objects `include:` expansions', () => {
 				ids: ['bet-9'],
 				include: ['content', 'relationships', 'connected_objects', 'events', 'files'],
 			})
-			const entry = result.structuredContent.results[0]
+			const entry = result.structuredContent.objects[0]
 
 			// content flows into the object body; the other 4 land as peers of `object`.
-			expect(Object.keys(entry.result).sort()).toEqual(
+			expect(Object.keys(entry).sort()).toEqual(
 				['object', 'relationships', 'connected_objects', 'events', 'files'].sort(),
 			)
-			const projected = entry.result.object as Record<string, unknown>
+			const projected = entry.object as Record<string, unknown>
 			expect(Object.keys(projected).sort()).toEqual([...CORE_OBJECT_KEYS, 'content'].sort())
 		})
 	})
