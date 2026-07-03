@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useWorkspaces } from '@/hooks/use-workspaces'
+import { trackSidebarWorkspaceSwitcherOpened } from '@/lib/analytics'
 import type { WorkspaceWithRole } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -60,7 +61,11 @@ export function WorkspaceSwitcher() {
 	return (
 		<SidebarMenu>
 			<SidebarMenuItem>
-				<DropdownMenu>
+				<DropdownMenu
+					onOpenChange={(open) => {
+						if (open) trackSidebarWorkspaceSwitcherOpened({ workspaceId })
+					}}
+				>
 					<DropdownMenuTrigger asChild>
 						<SidebarMenuButton
 							tooltip={displayName}

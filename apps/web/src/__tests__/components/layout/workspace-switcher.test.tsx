@@ -41,6 +41,11 @@ vi.mock('@/hooks/use-workspaces', () => ({
 	useWorkspaces: vi.fn(),
 }))
 
+const trackOpened = vi.fn()
+vi.mock('@/lib/analytics', () => ({
+	trackSidebarWorkspaceSwitcherOpened: (p: { workspaceId: string }) => trackOpened(p),
+}))
+
 import { useWorkspaces } from '@/hooks/use-workspaces'
 
 function makeWrapper() {
@@ -63,6 +68,7 @@ describe('WorkspaceSwitcher', () => {
 	beforeEach(() => {
 		mockNavigate.mockReset()
 		setOpenMobile.mockReset()
+		trackOpened.mockReset()
 	})
 
 	it('shows the current workspace name on the pill (AC-U1)', () => {
@@ -156,6 +162,31 @@ describe('WorkspaceSwitcher', () => {
 		const trigger = screen.getByRole('button', { name: /Switch workspace/ })
 		expect(trigger.getAttribute('aria-label')).toContain('Workspace Alpha')
 		expect(trigger.getAttribute('data-tooltip')).toBe('Workspace Alpha')
+	})
+
+	it('emits sidebar.workspace_switcher.opened when the dropdown opens (T4)', async () => {
+		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+		const { Wrapper } = makeWrapper()
+		const user = userEvent.setup()
+		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
+
+		expect(trackOpened).toHaveBeenCalledTimes(1)
+		expect(trackOpened).toHaveBeenCalledWith({ workspaceId: 'ws-a' })
+	})
+
+	it('does not emit sidebar.workspace_switcher.opened when the dropdown closes', async () => {
+		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+		const { Wrapper } = makeWrapper()
+		const user = userEvent.setup()
+		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+		const trigger = screen.getByRole('button', { name: /Switch workspace/ })
+		await user.click(trigger)
+		expect(trackOpened).toHaveBeenCalledTimes(1)
+		await user.keyboard('{Escape}')
+		expect(trackOpened).toHaveBeenCalledTimes(1)
 	})
 
 	function _typeCheck(): WorkspaceWithRole {

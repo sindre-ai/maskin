@@ -124,3 +124,16 @@ export function trackForyouSparseComposerShown(p: { items_count: number }): void
 export function trackForyouSparseComposerSubmit(p: { items_count: number }): void {
 	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
 }
+
+// Sidebar legibility bet — click-through proxy for the qualitative ship metric.
+// `workspace_id` already rides via the PostHog super-property registered on
+// workspace mount; the explicit `workspaceId` here is a duplicate the Analyst
+// asked for so the events can be sliced without joining super-properties.
+
+export function trackSidebarWorkspaceSwitcherOpened(p: { workspaceId: string }): void {
+	trackEvent('sidebar.workspace_switcher.opened', { workspaceId: p.workspaceId })
+}
+
+export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): void {
+	trackEvent('sidebar.agent_activity.expanded', { workspaceId: p.workspaceId })
+}

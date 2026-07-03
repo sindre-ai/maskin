@@ -8,6 +8,8 @@ import {
 	trackEvent,
 	trackObjectAttachedFile,
 	trackRelationshipCreated,
+	trackSidebarAgentActivityExpanded,
+	trackSidebarWorkspaceSwitcherOpened,
 	trackTriggerFired,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
@@ -214,5 +216,25 @@ describe('v1 taxonomy helpers', () => {
 				parent_entity_type: 'bet',
 			}),
 		)
+	})
+
+	it('sidebar.workspace_switcher.opened carries the workspaceId', () => {
+		const capture = captureSpy()
+
+		trackSidebarWorkspaceSwitcherOpened({ workspaceId: 'ws-42' })
+
+		expect(capture).toHaveBeenCalledWith('sidebar.workspace_switcher.opened', {
+			workspaceId: 'ws-42',
+		})
+	})
+
+	it('sidebar.agent_activity.expanded carries the workspaceId', () => {
+		const capture = captureSpy()
+
+		trackSidebarAgentActivityExpanded({ workspaceId: 'ws-42' })
+
+		expect(capture).toHaveBeenCalledWith('sidebar.agent_activity.expanded', {
+			workspaceId: 'ws-42',
+		})
 	})
 })
