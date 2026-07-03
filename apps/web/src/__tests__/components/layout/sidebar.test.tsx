@@ -60,8 +60,8 @@ vi.mock('@/components/ui/sidebar', () => ({
 	useSidebar: () => ({ setOpenMobile }),
 }))
 
-vi.mock('@/components/agents/agent-pulse', () => ({
-	AgentPulse: () => <div data-testid="agent-pulse">AgentPulse</div>,
+vi.mock('@/components/layout/sidebar-activity', () => ({
+	SidebarActivity: () => <div data-testid="sidebar-activity">SidebarActivity</div>,
 }))
 
 vi.mock('@/components/layout/nav-user', () => ({
@@ -91,10 +91,10 @@ describe('AppSidebar', () => {
 		expect(screen.queryByText('Objects')).not.toBeInTheDocument()
 	})
 
-	it('renders AgentPulse and NavUser in footer', () => {
+	it('renders SidebarActivity and NavUser in footer', () => {
 		vi.mocked(useEnabledModules).mockReturnValue(['work'])
 		render(<AppSidebar />)
-		expect(screen.getByText('AgentPulse')).toBeInTheDocument()
+		expect(screen.getByText('SidebarActivity')).toBeInTheDocument()
 		expect(screen.getByText('NavUser')).toBeInTheDocument()
 	})
 
