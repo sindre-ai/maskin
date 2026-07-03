@@ -388,8 +388,11 @@ describe('Objects Routes', () => {
 				action: 'created',
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select: target object, second: relationships, third: connected objects, fourth: events
-			mockResults.selectQueue = [[obj], [rel], [connectedObj], [comment, lifecycleEvent]]
+			// Queue order matches the id-based endpoint resolution: 1) object,
+			// 2) relationships, 3) files.id membership probe on rel endpoints
+			// (empty here because connectedObj is not a file), 4) connected
+			// objects, 5) events.
+			mockResults.selectQueue = [[obj], [rel], [], [connectedObj], [comment, lifecycleEvent]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -457,11 +460,12 @@ describe('Objects Routes', () => {
 				type: 'attached',
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// Queue order matches handler call order: 1) object, 2) relationships
-			// (file-typed endpoint → skips connected_objects), 3) events, 4-6) the
-			// three subscription queries fired in parallel (isSubscribed,
-			// getUnreadCount, getSubscriberCount), 7) files.
-			mockResults.selectQueue = [[obj], [rel], [], [], [], [], [file]]
+			// Queue order matches handler call order: 1) object, 2) relationships,
+			// 3) files.id membership probe on the rel's endpoint set — resolves the
+			// file endpoint by id, so no connected_objects fetch, 4) events, 5-7)
+			// the three subscription queries fired in parallel (isSubscribed,
+			// getUnreadCount, getSubscriberCount), 8) files.
+			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [file]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),

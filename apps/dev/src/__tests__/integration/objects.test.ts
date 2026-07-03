@@ -1,6 +1,13 @@
-import { events, objects } from '@maskin/db/schema'
+import { events, files, objects } from '@maskin/db/schema'
 import { eq, inArray } from 'drizzle-orm'
-import { buildCreateObjectBody, insertActor, insertObject, insertWorkspace } from '../factories'
+import {
+	buildCreateObjectBody,
+	buildFile,
+	insertActor,
+	insertObject,
+	insertRelationship,
+	insertWorkspace,
+} from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
@@ -701,6 +708,140 @@ describe('Objects Integration', () => {
 
 			expect(postShipIds).toEqual(preShipIds)
 			expect(postShipIds).toEqual([stalledA.id, stalledB.id].sort())
+		})
+	})
+
+	// Bet: edge-type-normalize — the read layer must resolve relationship
+	// endpoints by object/file id, not by the stored sourceType/targetType
+	// label. These tests exercise legacy-labelled rows against real Postgres so
+	// a drifted stamp (`'insight'`/`'bet'` on an object endpoint, `'object'` on
+	// a file endpoint) still surfaces in the graph payload.
+	describe('GET /api/objects/:id/graph — id-based edge resolution', () => {
+		it('returns an informs edge + endpoint object when sourceType is a legacy specialised label', async () => {
+			const app = createApp()
+			const actorId = getTestActorId()
+
+			const bet = await insertObject(db, workspaceId, actorId, {
+				type: 'bet',
+				status: 'active',
+			})
+			const insight = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'active',
+			})
+			// Legacy stamp — sourceType is the specialised 'insight' label rather
+			// than the canonical 'object'. The graph handler must still resolve
+			// the insight into connected_objects by id.
+			const rel = await insertRelationship(db, actorId, {
+				sourceType: 'insight',
+				sourceId: insight.id,
+				targetType: 'bet',
+				targetId: bet.id,
+				type: 'informs',
+			})
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${bet.id}/graph`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+
+			const relIds = (body.relationships as Array<{ id: string }>).map((r) => r.id)
+			expect(relIds).toContain(rel.id)
+
+			const connectedIds = (body.connected_objects as Array<{ id: string }>).map((o) => o.id)
+			expect(connectedIds).toContain(insight.id)
+
+			// File bucket must remain empty — the insight endpoint is an object,
+			// not a file, so it should not leak into the files array even though
+			// the stored label is specialised.
+			expect(body.files).toEqual([])
+		})
+
+		it('returns an attached file even when the file edge is stamped with a legacy non-file label', async () => {
+			const app = createApp()
+			const actorId = getTestActorId()
+
+			const bet = await insertObject(db, workspaceId, actorId, {
+				type: 'bet',
+				status: 'active',
+			})
+			const [fileRow] = await db
+				.insert(files)
+				.values(buildFile({ workspaceId, createdBy: actorId }))
+				.returning()
+			// Legacy stamp — a file endpoint written by a code path that defaulted
+			// to 'object' instead of 'file'. The graph handler must resolve this
+			// by files.id membership, not by the stored label.
+			await insertRelationship(db, actorId, {
+				sourceType: 'bet',
+				sourceId: bet.id,
+				targetType: 'object',
+				targetId: fileRow.id,
+				type: 'attached',
+			})
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${bet.id}/graph`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+
+			const fileIds = (body.files as Array<{ id: string }>).map((f) => f.id)
+			expect(fileIds).toContain(fileRow.id)
+
+			// The file must not leak into connected_objects — it lives in the
+			// files table, not objects.
+			const connectedIds = (body.connected_objects as Array<{ id: string }>).map((o) => o.id)
+			expect(connectedIds).not.toContain(fileRow.id)
+		})
+
+		it('resolves both a canonically-stamped object edge and a legacy file edge in the same payload', async () => {
+			const app = createApp()
+			const actorId = getTestActorId()
+
+			const bet = await insertObject(db, workspaceId, actorId, {
+				type: 'bet',
+				status: 'active',
+			})
+			const insight = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'active',
+			})
+			const [fileRow] = await db
+				.insert(files)
+				.values(buildFile({ workspaceId, createdBy: actorId }))
+				.returning()
+
+			// Canonical object stamp.
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: insight.id,
+				targetType: 'object',
+				targetId: bet.id,
+				type: 'informs',
+			})
+			// Legacy file stamp — targetType is 'object' rather than 'file'.
+			await insertRelationship(db, actorId, {
+				sourceType: 'bet',
+				sourceId: bet.id,
+				targetType: 'object',
+				targetId: fileRow.id,
+				type: 'attached',
+			})
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${bet.id}/graph`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+
+			const connectedIds = (body.connected_objects as Array<{ id: string }>).map((o) => o.id)
+			expect(connectedIds).toContain(insight.id)
+			expect(connectedIds).not.toContain(fileRow.id)
+
+			const graphFileIds = (body.files as Array<{ id: string }>).map((f) => f.id)
+			expect(graphFileIds).toContain(fileRow.id)
 		})
 	})
 })

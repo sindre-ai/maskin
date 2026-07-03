@@ -23,6 +23,7 @@ import type {
 	ActorResponse,
 	EventResponse,
 	MemberResponse,
+	ObjectGraphFileSummary,
 	ObjectResponse,
 	RelationshipResponse,
 } from '@/lib/api'
@@ -57,6 +58,7 @@ interface ObjectDocumentViewProps {
 		asTarget: RelationshipResponse[]
 	}
 	connectedObjects?: ObjectResponse[]
+	files?: ObjectGraphFileSummary[]
 	events?: EventResponse[]
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
@@ -75,6 +77,7 @@ export function ObjectDocumentView({
 	members,
 	relationships,
 	connectedObjects,
+	files,
 	events,
 	onUpdateTitle,
 	onUpdateContent,
@@ -213,7 +216,7 @@ export function ObjectDocumentView({
 					workspaceId={workspaceId}
 					objectId={object.id}
 					objectType={object.type}
-					relationships={relationships}
+					files={files}
 				/>
 			</div>
 
@@ -384,6 +387,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				members={members}
 				relationships={relationships}
 				connectedObjects={graph?.connected_objects}
+				files={graph?.files}
 				events={events}
 				onUpdateTitle={handleUpdateTitle}
 				onUpdateContent={handleUpdateContent}

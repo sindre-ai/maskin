@@ -1,12 +1,12 @@
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { Button } from '@/components/ui/button'
-import { useCreateFile, useFiles } from '@/hooks/use-files'
+import { useCreateFile } from '@/hooks/use-files'
 import { useCreateRelationship } from '@/hooks/use-relationships'
-import type { RelationshipResponse } from '@/lib/api'
+import type { ObjectGraphFileSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
 import { Loader2, Plus, Upload } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 const ATTACHED_REL_TYPE = 'attached'
@@ -15,29 +15,10 @@ interface ObjectFilesProps {
 	workspaceId: string
 	objectId: string
 	objectType: string
-	relationships?: { asSource: RelationshipResponse[]; asTarget: RelationshipResponse[] }
+	files?: ObjectGraphFileSummary[]
 }
 
-export function ObjectFiles({
-	workspaceId,
-	objectId,
-	objectType,
-	relationships,
-}: ObjectFilesProps) {
-	const fileIds = useMemo(() => {
-		if (!relationships) return [] as string[]
-		const ids = new Set<string>()
-		for (const rel of relationships.asSource) {
-			if (rel.targetType === 'file') ids.add(rel.targetId)
-		}
-		for (const rel of relationships.asTarget) {
-			if (rel.sourceType === 'file') ids.add(rel.sourceId)
-		}
-		return [...ids]
-	}, [relationships])
-
-	const { data: files = [] } = useFiles(workspaceId, { ids: fileIds })
-
+export function ObjectFiles({ workspaceId, objectId, objectType, files = [] }: ObjectFilesProps) {
 	const createFile = useCreateFile(workspaceId)
 	const createRelationship = useCreateRelationship(workspaceId, objectId)
 
@@ -95,7 +76,7 @@ export function ObjectFiles({
 	)
 
 	const hasFiles = files.length > 0
-	const totalCount = fileIds.length
+	const totalCount = files.length
 
 	return (
 		<div

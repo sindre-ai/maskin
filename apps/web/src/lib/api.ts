@@ -855,11 +855,20 @@ export interface RelationshipResponse {
 	createdAt: string | null
 }
 
+export interface ObjectGraphFileSummary {
+	id: string
+	name: string
+	mimeType: string
+	sizeBytes: number
+	url: string
+}
+
 export interface ObjectGraphResponse {
 	object: ObjectResponse
 	relationships: RelationshipResponse[]
 	connected_objects: ObjectResponse[]
 	events: EventResponse[]
+	files: ObjectGraphFileSummary[]
 }
 
 export interface CreateRelationshipInput {

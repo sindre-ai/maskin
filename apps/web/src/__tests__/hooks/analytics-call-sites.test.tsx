@@ -307,4 +307,39 @@ describe('useCreateRelationship — relationship_created + object_attached_file'
 			}),
 		)
 	})
+
+	it('emits object_attached_file even when the response targetType is a legacy non-file label', async () => {
+		// The write path drifts across code paths — some stamp target_type as
+		// the coarse endpoint kind, some inherit a specialised label. The
+		// analytics trigger keys on the `attached` relationship type
+		// (semantic) so drifted labels don't silently drop the event.
+		vi.mocked(api.relationships.create).mockResolvedValue({
+			id: 'rel-3',
+			sourceType: 'bet',
+			sourceId: 'bet-1',
+			targetType: 'object',
+			targetId: 'file-42',
+			type: 'attached',
+			createdBy: 'actor-1',
+			createdAt: null,
+		})
+		const { Wrapper } = makeWrapper()
+		const { result } = renderHook(() => useCreateRelationship(workspaceId, 'bet-1'), {
+			wrapper: Wrapper,
+		})
+
+		result.current.mutate({
+			source_type: 'bet',
+			source_id: 'bet-1',
+			target_type: 'file',
+			target_id: 'file-42',
+			type: 'attached',
+		})
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+		expect(trackEvent).toHaveBeenCalledWith(
+			'object_attached_file',
+			expect.objectContaining({ file_id: 'file-42', flow_id: 'rel-3' }),
+		)
+	})
 })

@@ -553,13 +553,29 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		.from(relationships)
 		.where(or(eq(relationships.sourceId, id), eq(relationships.targetId, id)))
 
-	// Collect connected object IDs — skip endpoints typed as 'file', since
-	// those live in the `files` table (resolved into the `files` array below)
-	// and would never match against `objects.id`.
-	const connectedIds = new Set<string>()
+	// Resolve which endpoint ids are files vs objects by id membership, not by
+	// the stored sourceType/targetType label. Legacy rows drift between labels
+	// (see bet edge-type-normalize) — id lookup is the load-bearing signal.
+	const endpointIds = new Set<string>()
 	for (const rel of rels) {
-		if (rel.sourceId !== id && rel.sourceType !== 'file') connectedIds.add(rel.sourceId)
-		if (rel.targetId !== id && rel.targetType !== 'file') connectedIds.add(rel.targetId)
+		if (rel.sourceId !== id) endpointIds.add(rel.sourceId)
+		if (rel.targetId !== id) endpointIds.add(rel.targetId)
+	}
+	const fileEndpointIds = new Set<string>()
+	if (endpointIds.size > 0) {
+		const fileRows = await db
+			.select({ id: files.id })
+			.from(files)
+			.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, [...endpointIds])))
+		for (const row of fileRows) fileEndpointIds.add(row.id)
+	}
+
+	// Everything not resolved as a file endpoint is an object endpoint. The
+	// objects lookup naturally drops ids that don't exist (deleted rows,
+	// cross-workspace ids), so we don't need a second membership probe here.
+	const connectedIds = new Set<string>()
+	for (const endpointId of endpointIds) {
+		if (!fileEndpointIds.has(endpointId)) connectedIds.add(endpointId)
 	}
 
 	// Batch-fetch connected objects
@@ -630,15 +646,12 @@ app.openapi(getObjectGraphRoute, async (c) => {
 	titleById.set(object.id, object.title ?? null)
 	for (const co of connectedObjects) titleById.set(co.id, co.title ?? null)
 
-	// Collect every file id this object touches: (1) files attached via
-	// `attached` relationships (sourceType/targetType === 'file'), (2) files
-	// referenced by `data.attachmentFileIds` on comment events. Resolving them
-	// here saves agents an N+1 fan-out of /api/files/:id calls.
-	const fileIds = new Set<string>()
-	for (const r of rels) {
-		if (r.sourceType === 'file') fileIds.add(r.sourceId)
-		if (r.targetType === 'file') fileIds.add(r.targetId)
-	}
+	// Collect every file id this object touches: (1) file endpoints of any
+	// relationship (resolved by files.id membership above so drifted labels
+	// still bucket correctly), (2) files referenced by `data.attachmentFileIds`
+	// on comment events. Resolving them here saves agents an N+1 fan-out of
+	// /api/files/:id calls.
+	const fileIds = new Set<string>(fileEndpointIds)
 	for (const event of objectEvents) {
 		if (event.action !== 'commented') continue
 		const data = event.data as { attachmentFileIds?: unknown } | null

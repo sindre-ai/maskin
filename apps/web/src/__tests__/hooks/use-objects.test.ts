@@ -140,6 +140,7 @@ describe('useObjectGraph', () => {
 			],
 			connected_objects: [linkedTask],
 			events: [],
+			files: [],
 		}
 		vi.mocked(api.objects.graph).mockResolvedValue(graph)
 

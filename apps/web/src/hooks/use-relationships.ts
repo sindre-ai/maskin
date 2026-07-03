@@ -29,7 +29,10 @@ export function useCreateRelationship(workspaceId: string, objectId: string) {
 			// `attached` edges from any object → file are the file-attach v1 event.
 			// Trigger fires from the object-files panel and any future direct-attach
 			// flow; the comment-attachment path emits this from the queue directly.
-			if (created.type === 'attached' && created.targetType === 'file') {
+			// `attached` is only ever emitted for object→file edges, so the type
+			// discriminator is sufficient — no need to inspect the stored
+			// sourceType/targetType label, which drifts pre-backfill.
+			if (created.type === 'attached') {
 				trackEvent('object_attached_file', {
 					entity_id: created.sourceId,
 					entity_type: created.sourceType,
