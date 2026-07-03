@@ -229,7 +229,7 @@ export function DataTableControls({
 									<p className="text-caption font-medium text-muted-foreground">Sort by</p>
 									<button
 										type="button"
-										className="flex items-center gap-[var(--space-1)] text-caption text-muted-foreground hover:text-foreground transition-colors"
+										className="flex items-center gap-[var(--space-1)] text-caption text-muted-foreground hover:text-foreground transition-colors duration-micro ease-default"
 										onClick={() => {
 											const next = order === 'asc' ? 'desc' : 'asc'
 											track('sort_order', next)
@@ -246,7 +246,7 @@ export function DataTableControls({
 											key={col.id}
 											type="button"
 											className={cn(
-												'w-full text-left py-[var(--space-1)] px-[var(--space-2)] rounded text-label transition-colors capitalize',
+												'w-full text-left py-[var(--space-1)] px-[var(--space-2)] rounded text-label transition-colors duration-micro ease-default capitalize',
 												sort === col.id
 													? 'bg-muted text-foreground font-medium'
 													: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
@@ -276,7 +276,7 @@ export function DataTableControls({
 									<button
 										type="button"
 										className={cn(
-											'w-full text-left py-[var(--space-1)] px-[var(--space-2)] rounded text-label transition-colors',
+											'w-full text-left py-[var(--space-1)] px-[var(--space-2)] rounded text-label transition-colors duration-micro ease-default',
 											!groupBy
 												? 'bg-muted text-foreground font-medium'
 												: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
@@ -293,7 +293,7 @@ export function DataTableControls({
 											key={col.id}
 											type="button"
 											className={cn(
-												'w-full text-left py-[var(--space-1)] px-[var(--space-2)] rounded text-label transition-colors capitalize',
+												'w-full text-left py-[var(--space-1)] px-[var(--space-2)] rounded text-label transition-colors duration-micro ease-default capitalize',
 												groupBy === col.id
 													? 'bg-muted text-foreground font-medium'
 													: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',

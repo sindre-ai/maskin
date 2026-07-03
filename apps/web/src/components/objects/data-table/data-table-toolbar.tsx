@@ -102,7 +102,7 @@ export function DataTableToolbar({
 						key={tab.label}
 						type="button"
 						className={cn(
-							'rounded px-[var(--space-3)] py-[var(--space-1)] text-label whitespace-nowrap transition-colors',
+							'rounded px-[var(--space-3)] py-[var(--space-1)] text-label whitespace-nowrap transition-colors duration-micro ease-default',
 							typeFilter === tab.value
 								? 'bg-muted text-foreground font-medium'
 								: 'text-muted-foreground hover:text-foreground',

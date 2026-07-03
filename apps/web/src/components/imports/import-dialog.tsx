@@ -180,7 +180,7 @@ function UploadStep({
 	return (
 		<div
 			className={cn(
-				'flex flex-col items-center justify-center gap-[var(--space-4)] rounded-lg border-2 border-dashed p-[var(--space-7)] transition-colors',
+				'flex flex-col items-center justify-center gap-[var(--space-4)] rounded-lg border-2 border-dashed p-[var(--space-7)] transition-colors duration-micro ease-default',
 				isDragging ? 'border-accent bg-accent/5' : 'border-border',
 				isLoading && 'pointer-events-none opacity-50',
 			)}
@@ -552,7 +552,7 @@ function MappingStep({
 				<div className="flex items-center justify-between w-full px-[var(--space-3)] py-[var(--space-2)] text-label font-medium">
 					<button
 						type="button"
-						className="flex items-center gap-[var(--space-2)] hover:text-accent transition-colors"
+						className="flex items-center gap-[var(--space-2)] hover:text-accent transition-colors duration-micro ease-default"
 						onClick={() => setRelSectionOpen((prev) => !prev)}
 					>
 						{relSectionOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}

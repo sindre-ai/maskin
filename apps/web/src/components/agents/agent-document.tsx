@@ -350,7 +350,7 @@ export function AgentDocumentView({
 
 			{/* Configuration (collapsible) */}
 			<Collapsible open={configExpanded} onOpenChange={setConfigExpanded}>
-				<CollapsibleTrigger className="flex w-full items-center gap-[6px] text-caption font-medium uppercase text-muted-foreground mb-[var(--space-4)] hover:text-foreground transition-colors cursor-pointer">
+				<CollapsibleTrigger className="flex w-full items-center gap-[6px] text-caption font-medium uppercase text-muted-foreground mb-[var(--space-4)] hover:text-foreground transition-colors duration-micro ease-default cursor-pointer">
 					{configExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
 					Configuration
 					{isManaged && (
@@ -513,7 +513,7 @@ function ActiveSessionCard({
 	return (
 		<button
 			type="button"
-			className="flex w-full items-center gap-[10px] rounded-md border border-border bg-secondary/50 px-[var(--space-3)] py-[var(--space-2)] min-w-0 text-left hover:bg-secondary transition-colors cursor-pointer"
+			className="flex w-full items-center gap-[10px] rounded-md border border-border bg-secondary/50 px-[var(--space-3)] py-[var(--space-2)] min-w-0 text-left hover:bg-secondary transition-colors duration-micro ease-default cursor-pointer"
 			onClick={() => onSelect?.(session)}
 		>
 			{idle ? <PauseCircle size={14} className="shrink-0 text-muted-foreground" /> : <Spinner />}
@@ -589,7 +589,7 @@ function SessionRow({
 		<div>
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements inner button actions */}
 			<div
-				className="flex items-center gap-[10px] rounded-md px-[var(--space-3)] py-[6px] min-w-0 hover:bg-secondary/50 transition-colors cursor-pointer"
+				className="flex items-center gap-[10px] rounded-md px-[var(--space-3)] py-[6px] min-w-0 hover:bg-secondary/50 transition-colors duration-micro ease-default cursor-pointer"
 				onClick={() => onSelect?.(session)}
 			>
 				<SessionStatusIcon status={session.status} />
@@ -600,7 +600,7 @@ function SessionRow({
 					<>
 						<button
 							type="button"
-							className="text-caption text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
+							className="text-caption text-muted-foreground hover:text-foreground transition-colors duration-micro ease-default shrink-0 cursor-pointer"
 							onClick={(e) => {
 								e.stopPropagation()
 								setShowError((v) => !v)
@@ -610,7 +610,7 @@ function SessionRow({
 						</button>
 						<button
 							type="button"
-							className="text-caption text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
+							className="text-caption text-muted-foreground hover:text-foreground transition-colors duration-micro ease-default shrink-0 cursor-pointer"
 							onClick={(e) => {
 								e.stopPropagation()
 								createSession.mutate({

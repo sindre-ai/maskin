@@ -680,7 +680,7 @@ function BoardColumn({
 			ref={setNodeRef}
 			data-testid={`board-column-${status}`}
 			className={cn(
-				'relative flex min-h-[28rem] shrink-0 flex-col gap-[var(--space-2)] rounded-md transition-colors',
+				'relative flex min-h-[28rem] shrink-0 flex-col gap-[var(--space-2)] rounded-md transition-colors duration-micro ease-default',
 				'w-full sm:w-72 md:w-72 lg:w-80',
 				isValidTarget && 'bg-accent/5',
 			)}
@@ -695,7 +695,7 @@ function BoardColumn({
 
 			<div
 				className={cn(
-					'relative flex min-h-24 flex-1 flex-col gap-[var(--space-2)] overflow-y-auto rounded-md pr-[var(--space-1)] transition-colors',
+					'relative flex min-h-24 flex-1 flex-col gap-[var(--space-2)] overflow-y-auto rounded-md pr-[var(--space-1)] transition-colors duration-micro ease-default',
 					'max-h-[calc(100dvh-15rem)]',
 					isValidTarget &&
 						'border border-dashed border-border/70 bg-accent/10 ring-1 ring-accent/15',

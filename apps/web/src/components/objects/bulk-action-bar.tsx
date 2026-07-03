@@ -92,7 +92,9 @@ export function BulkActionBar({
 		if (!visible && confirmOpen) setConfirmOpen(false)
 	}, [visible, confirmOpen])
 
-	const transitionClass = reducedMotion ? '' : 'transition-all duration-200 ease-out'
+	const transitionClass = reducedMotion
+		? ''
+		: 'transition-[transform,opacity] duration-state ease-default'
 
 	const plural = selectedCount === 1 ? '' : 's'
 	const copyLinkLabel = `Copy link${plural}`

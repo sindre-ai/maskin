@@ -83,7 +83,7 @@ function PillButton({
 			title={title}
 			onClick={onClick}
 			className={cn(
-				'inline-flex items-center gap-[var(--space-1)] rounded-full border px-[10px] py-[var(--space-1)] text-caption transition-colors',
+				'inline-flex items-center gap-[var(--space-1)] rounded-full border px-[10px] py-[var(--space-1)] text-caption transition-colors duration-micro ease-default',
 				active
 					? 'border-accent bg-accent text-accent-foreground'
 					: 'border-border bg-bg-surface text-text-secondary hover:text-foreground hover:border-border-hover',
@@ -293,7 +293,7 @@ export function DisplayPanel({
 											aria-label={order === 'asc' ? 'Ascending' : 'Descending'}
 											title={order === 'asc' ? 'Ascending' : 'Descending'}
 											onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
-											className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-secondary hover:text-foreground hover:border-border-hover transition-colors"
+											className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-secondary hover:text-foreground hover:border-border-hover transition-colors duration-micro ease-default"
 										>
 											{order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
 										</button>
@@ -353,7 +353,7 @@ export function DisplayPanel({
 									{hasActiveFilters && (
 										<button
 											type="button"
-											className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
+											className="text-[11px] text-text-secondary hover:text-foreground transition-colors duration-micro ease-default"
 											onClick={() => {
 												if (onResetFilters) {
 													onResetFilters()
@@ -414,7 +414,7 @@ export function DisplayPanel({
 												aria-label="Clear Status filter"
 												title="Clear Status filter"
 												onClick={() => onStatusFilterChange?.(undefined)}
-												className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
+												className="text-[11px] text-text-secondary hover:text-foreground transition-colors duration-micro ease-default"
 											>
 												Clear
 											</button>
@@ -459,7 +459,7 @@ export function DisplayPanel({
 												aria-label="Clear Driver filter"
 												title="Clear Driver filter"
 												onClick={() => onDriverFilterChange?.(undefined)}
-												className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
+												className="text-[11px] text-text-secondary hover:text-foreground transition-colors duration-micro ease-default"
 											>
 												Clear
 											</button>
