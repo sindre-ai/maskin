@@ -103,6 +103,25 @@ describe('workspaceSettingsSchema', () => {
 		).toThrow()
 	})
 
+	it('accepts claude_oauth new slot shape with a primary slot', () => {
+		const result = workspaceSettingsSchema.parse({
+			claude_oauth: {
+				primary: {
+					encryptedAccessToken: 'encrypted-token',
+					encryptedRefreshToken: 'encrypted-refresh',
+					expiresAt: 1234567890,
+				},
+			},
+		})
+		expect(result.claude_oauth).toMatchObject({
+			primary: { encryptedAccessToken: 'encrypted-token' },
+		})
+	})
+
+	it('rejects an empty claude_oauth object', () => {
+		expect(() => workspaceSettingsSchema.parse({ claude_oauth: {} })).toThrow()
+	})
+
 	it('accepts field_definitions', () => {
 		const result = workspaceSettingsSchema.parse({
 			field_definitions: {

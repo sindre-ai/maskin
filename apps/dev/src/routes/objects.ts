@@ -37,8 +37,10 @@ import {
 	count,
 	desc,
 	eq,
+	gt,
 	ilike,
 	inArray,
+	lt,
 	ne,
 	or,
 	sql,
@@ -119,6 +121,8 @@ function buildObjectListConditions(query: {
 	driver?: string
 	ids?: string
 	q?: string
+	updated_before?: string
+	updated_after?: string
 }) {
 	const conditions: SQL[] = []
 	if (query.type) conditions.push(eq(objects.type, query.type))
@@ -142,6 +146,9 @@ function buildObjectListConditions(query: {
 		const textMatch = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
 		if (textMatch) conditions.push(textMatch)
 	}
+	// Half-open contract — Zod has already validated these as ISO-8601 strings.
+	if (query.updated_before) conditions.push(lt(objects.updatedAt, new Date(query.updated_before)))
+	if (query.updated_after) conditions.push(gt(objects.updatedAt, new Date(query.updated_after)))
 	return conditions
 }
 
@@ -403,6 +410,8 @@ app.openapi(boardObjectsRoute, async (c) => {
 			driver: query.driver,
 			ids: query.ids,
 			q: query.q,
+			updated_before: query.updated_before,
+			updated_after: query.updated_after,
 		}),
 	]
 
