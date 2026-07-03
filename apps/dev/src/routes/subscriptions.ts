@@ -2,6 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, objects, subscriptions } from '@maskin/db/schema'
 import {
+	TERMINAL_BET_STATUSES,
 	markReadBodySchema,
 	subscribeBodySchema,
 	subscribersQuerySchema,
@@ -326,20 +327,22 @@ app.openapi(listUnreadRoute, (async (c) => {
 				// Two surfaces land in the unread feed:
 				// (1) comments on the subscribed entity (events.entity_type matches the
 				//     subscription's polymorphic type, e.g. 'object'), and
-				// (2) the bet's own succeeded/failed transition (events.entity_type is
+				// (2) the bet's own terminal-status transition (events.entity_type is
 				//     the object's concrete type, e.g. 'bet', while the subscription's
 				//     entityType is 'object'). The entityType guard on this arm is
 				//     explicit to prevent other subscribable entity types from
 				//     accidentally matching bet terminal events via entityId alone.
-				// Without (2) a watcher misses the terminal signal — see T2 on
-				// bet/notif-cascade-fix.
+				// TERMINAL_BET_STATUSES (succeeded/failed/paused) is the single
+				// source of truth shared with the notification fan-out gate in
+				// objects.ts — without (2) a watcher misses the terminal signal, see
+				// T2 on bet/notif-cascade-fix.
 				or(
 					and(eq(events.entityType, subscriptions.entityType), eq(events.action, 'commented')),
 					and(
 						eq(subscriptions.entityType, 'object'),
 						eq(events.entityType, 'bet'),
 						eq(events.action, 'status_changed'),
-						sql`${events.data}->'updated'->>'status' in ('succeeded', 'failed')`,
+						inArray(sql`${events.data}->'updated'->>'status'`, [...TERMINAL_BET_STATUSES]),
 					),
 				),
 			),

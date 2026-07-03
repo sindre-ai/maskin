@@ -471,6 +471,112 @@ describe('Subscriptions Integration', () => {
 		expect(bAlert.title).toContain('failed')
 	})
 
+	it('a bet watcher receives the paused signal, same as succeeded/failed', async () => {
+		// 'paused' is a terminal bet status alongside succeeded/failed (see
+		// TERMINAL_BET_STATUSES in packages/shared/src/schemas/objects.ts and the
+		// Retro & Knowledge Author's "bet reaches a terminal status (succeeded,
+		// failed, or paused)" trigger in packages/db/src/seed.ts) — a paused bet
+		// with no comment activity must still surface in the watcher's unread
+		// feed and get a notification row, exactly like succeeded/failed.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const betRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({ type: 'bet', title: 'Paused bet', status: 'active' }),
+				headersA,
+			),
+		)
+		const bet = await betRes.json()
+
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: bet.id },
+				headersB,
+			),
+		)
+
+		const patchRes = await appA.request(
+			jsonRequest('PATCH', `/api/objects/${bet.id}`, { status: 'paused' }, headersA),
+		)
+		expect(patchRes.status).toBe(200)
+
+		const unreadB = await appB
+			.request(jsonGet('/api/subscriptions/unread', headersB))
+			.then((r) => r.json())
+		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === bet.id)
+		expect(itemB).toBeDefined()
+		expect(itemB.unread_count).toBe(1)
+
+		const notifsForB = await appB
+			.request(jsonGet(`/api/notifications?object_id=${bet.id}`, headersB))
+			.then((r) => r.json())
+		const bAlert = notifsForB.find(
+			(n: { type: string; targetActorId: string }) => n.type === 'alert' && n.targetActorId === bId,
+		)
+		expect(bAlert).toBeDefined()
+		expect(bAlert.title).toContain('paused')
+	})
+
+	it('concurrent PATCHes flipping the same bet to succeeded notify each subscriber exactly once', async () => {
+		// Regression test for the TOCTOU race: the terminal-notification guard
+		// used to compare against a pre-transaction `existing` snapshot, so two
+		// concurrent PATCHes could both observe the pre-transition status and
+		// both fan out. The fix re-reads the row under FOR UPDATE inside the
+		// transaction, so the second PATCH blocks on the row lock and then
+		// observes the already-terminal status.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const betRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({ type: 'bet', title: 'Racy bet', status: 'active' }),
+				headersA,
+			),
+		)
+		const bet = await betRes.json()
+
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: bet.id },
+				headersB,
+			),
+		)
+
+		// Fire two concurrent PATCHes flipping the same bet to 'succeeded'.
+		const [res1, res2] = await Promise.all([
+			appA.request(
+				jsonRequest('PATCH', `/api/objects/${bet.id}`, { status: 'succeeded' }, headersA),
+			),
+			appA.request(
+				jsonRequest('PATCH', `/api/objects/${bet.id}`, { status: 'succeeded' }, headersA),
+			),
+		])
+		expect(res1.status).toBe(200)
+		expect(res2.status).toBe(200)
+
+		const notifsForB = await appB
+			.request(jsonGet(`/api/notifications?object_id=${bet.id}`, headersB))
+			.then((r) => r.json())
+		const bGoodNews = notifsForB.filter(
+			(n: { type: string; targetActorId: string }) =>
+				n.type === 'good_news' && n.targetActorId === bId,
+		)
+		expect(bGoodNews).toHaveLength(1)
+	})
+
 	it('non-terminal bet status changes do NOT trigger watcher notifications', async () => {
 		// Guards against accidentally widening the trigger to every status_changed
 		// event. proposed → active is part of the normal bet lifecycle and must
