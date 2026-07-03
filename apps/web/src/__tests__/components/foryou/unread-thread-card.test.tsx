@@ -390,6 +390,48 @@ describe('UnreadThreadCard', () => {
 		)
 	})
 
+	// Regression lock for the v4 "no height cap, page scroll" direction. The shipped
+	// version on `main` had `h-72 overflow-y-auto sm:h-96` on the thread body, which
+	// users hit as "cards too short — forces internal scrolling". A reviewer who
+	// re-introduces a per-card scroll body or a fixed-height clamp should trip this
+	// test, not Slack feedback.
+	it('does not clamp card or inline thread height (no inner scrollbars)', () => {
+		const longThread = Array.from({ length: 25 }, (_, i) =>
+			buildComment({ id: 100 + i, actorId: 'other', data: { content: `comment ${i}` } }),
+		)
+		mockUseEntityEvents.mockReturnValue({ data: longThread })
+
+		const { container } = render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ unread_count: 25, latest_event_id: 124 })}
+				isActive={false}
+				onActivate={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		// The quick-reply chip strip is intentionally a horizontal scroller; exempt it
+		// (and its descendants) so the assertion targets vertical clamps on the card
+		// and inline thread surface.
+		const chipStrip = container.querySelector('.overflow-x-auto')
+		const all = Array.from(container.querySelectorAll<HTMLElement>('*'))
+		const offenders = all
+			.filter((el) => !chipStrip || (el !== chipStrip && !chipStrip.contains(el)))
+			.filter((el) => {
+				const cls = el.className
+				if (typeof cls !== 'string') return false
+				return (
+					/\bmax-h-/.test(cls) ||
+					/\bh-72\b/.test(cls) ||
+					/\bh-96\b/.test(cls) ||
+					/\boverflow-y-(auto|scroll)\b/.test(cls) ||
+					(/\boverflow-(auto|scroll)\b/.test(cls) && !/\boverflow-x-(auto|scroll)\b/.test(cls))
+				)
+			})
+		expect(offenders.map((el) => el.className)).toEqual([])
+	})
+
 	it('marks the thread read after a quick-reply chip send succeeds', async () => {
 		mockCreateCommentMutate.mockImplementation(
 			(_args: unknown, opts?: { onSuccess?: () => void }) => {
