@@ -17,6 +17,11 @@ interface CommentInputProps {
 	objectId: string
 	parentEventId?: number
 	onSubmitted?: () => void
+	// Direction the @-mention dropdown opens. Defaults to 'below' (object detail
+	// page, plenty of room underneath). Callers pinned to the viewport bottom
+	// (e.g. the For You page's PersistentReplyBar) pass 'above' so the dropdown
+	// doesn't render off-screen.
+	mentionDropdownPlacement?: 'below' | 'above'
 }
 
 function randomDraftId(): string {
@@ -36,6 +41,7 @@ export function CommentInput({
 	objectId,
 	parentEventId,
 	onSubmitted,
+	mentionDropdownPlacement = 'below',
 }: CommentInputProps) {
 	const actor = getStoredActor()
 	const createComment = useCreateComment(workspaceId, objectId)
@@ -420,7 +426,12 @@ export function CommentInput({
 
 			{/* @mention autocomplete dropdown */}
 			{showMentions && filteredActors.length > 0 && (
-				<div className="absolute left-7 z-50 mt-1 max-h-48 w-56 overflow-auto rounded-md border border-border bg-popover p-1 shadow-md">
+				<div
+					className={cn(
+						'absolute left-7 z-50 max-h-48 w-56 overflow-auto rounded-md border border-border bg-popover p-1 shadow-md',
+						mentionDropdownPlacement === 'above' ? 'bottom-full mb-1' : 'mt-1',
+					)}
+				>
 					{filteredActors.map((a, i) => (
 						<button
 							key={a.id}
