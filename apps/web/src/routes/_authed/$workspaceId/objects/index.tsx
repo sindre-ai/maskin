@@ -489,6 +489,24 @@ function ObjectsPage() {
 		[clearSelection],
 	)
 
+	// Matches the handleBulkDelete pattern: on partial success, prune selection
+	// to the ids that still need attention so the bulk bar stays pinned to the
+	// failed rows and the operator can retry them without re-selecting.
+	const retainOnlyFailed = useCallback(
+		(response: { results: Array<{ id: string; ok: boolean }> }) => {
+			const failedIds = new Set(response.results.filter((r) => !r.ok).map((r) => r.id))
+			if (failedIds.size === 0) return
+			setRowSelection((prev) => {
+				const next: RowSelectionState = {}
+				for (const id of Object.keys(prev)) {
+					if (failedIds.has(id)) next[id] = prev[id] as boolean
+				}
+				return next
+			})
+		},
+		[],
+	)
+
 	const handleBulkStatusChange = useCallback(
 		(status: string) => {
 			if (selectedIds.length === 0) return
@@ -496,12 +514,15 @@ function ObjectsPage() {
 			bulkUpdate.mutate(
 				{ ids, patch: { status } },
 				{
-					onSuccess: (data) => reportBulkResult(data, ids.length, 'updated'),
+					onSuccess: (data) => {
+						retainOnlyFailed(data)
+						reportBulkResult(data, ids.length, 'updated')
+					},
 					onError: () => toast.error('Failed to update objects'),
 				},
 			)
 		},
-		[selectedIds, bulkUpdate, reportBulkResult],
+		[selectedIds, bulkUpdate, reportBulkResult, retainOnlyFailed],
 	)
 
 	const handleBulkOwnerChange = useCallback(
@@ -511,12 +532,15 @@ function ObjectsPage() {
 			bulkUpdate.mutate(
 				{ ids, patch: { driver: ownerId } },
 				{
-					onSuccess: (data) => reportBulkResult(data, ids.length, 'updated'),
+					onSuccess: (data) => {
+						retainOnlyFailed(data)
+						reportBulkResult(data, ids.length, 'updated')
+					},
 					onError: () => toast.error('Failed to update objects'),
 				},
 			)
 		},
-		[selectedIds, bulkUpdate, reportBulkResult],
+		[selectedIds, bulkUpdate, reportBulkResult, retainOnlyFailed],
 	)
 
 	// Build the path the app uses for object detail pages — kept relative so we can
