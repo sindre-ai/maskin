@@ -8,10 +8,13 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // flex content wrapper, plus wrap="soft" + break-words on the textarea so its
 // scrollHeight reflects the wrapped layout the resize effect reads.
 //
-// This spec drives a long unbroken token (the worst case — neither soft-wrap
-// nor word-break helps unless break-words is on) into the For You comment
-// field and asserts: (a) the textarea grows taller than its one-line minimum
-// and (b) the page never produces a horizontal scrollbar.
+// The reply UX has since moved off the card itself: clicking a card's Reply
+// button activates it, mounting a CommentInput inside PersistentReplyBar
+// (fixed to the viewport bottom) rather than inline in the card footer. This
+// spec activates a card first, then drives a long unbroken token (the worst
+// case — neither soft-wrap nor word-break helps unless break-words is on)
+// into that persistent input and asserts: (a) the textarea grows taller than
+// its one-line minimum and (b) the page never produces a horizontal scrollbar.
 
 interface UnreadFixture {
 	entity_type: 'object'
@@ -56,7 +59,7 @@ async function mockUnreadThread(page: Page, workspaceId: string) {
 		})
 	})
 	// The card renders empty for the activity body until it has events; that's
-	// fine — the comment input lives in the card footer regardless.
+	// fine — the comment input lives in the persistent reply bar regardless.
 	await page.route('**/api/events*', async (route) => {
 		await route.fulfill({
 			status: 200,
@@ -79,7 +82,11 @@ test.describe('For You comment field — wraps and grows, no horizontal scroll',
 			const card = page.getByTestId('unread-thread-card').first()
 			await expect(card).toBeVisible()
 
-			const input = card.getByPlaceholder(COMMENT_PLACEHOLDER)
+			// Activate the card so PersistentReplyBar mounts its CommentInput at
+			// the bottom of the viewport — the input no longer lives in the card.
+			await card.getByRole('button', { name: 'Reply' }).click()
+
+			const input = page.getByPlaceholder(COMMENT_PLACEHOLDER)
 			await expect(input).toBeVisible()
 
 			const initialBox = await input.boundingBox()
