@@ -349,9 +349,14 @@ describe('BulkActionBar', () => {
 		})
 
 		// iPadOS 13+ reports a Mac UA — covered by the second branch of
-		// resolvePlatformDevice via maxTouchPoints.
-		it('sets platform_device=ios on iPadOS 13+ (Mac UA + touch + mobile viewport)', () => {
-			Object.defineProperty(window, 'innerWidth', { value: 700, configurable: true })
+		// resolvePlatformDevice via maxTouchPoints. Real iPads sit at the
+		// project's own ship-gate widths (768/1024), so detection must NOT
+		// depend on a mobile-viewport check — assert both explicitly.
+		it.each([
+			['768px portrait', 768],
+			['1024px landscape', 1024],
+		])('sets platform_device=ios on iPadOS 13+ (Mac UA + touch) at %s', (_label, width) => {
+			Object.defineProperty(window, 'innerWidth', { value: width, configurable: true })
 			stubNavigator({
 				userAgent:
 					'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',

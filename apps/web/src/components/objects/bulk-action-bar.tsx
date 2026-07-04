@@ -15,7 +15,6 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useIsMobile } from '@/hooks/use-mobile'
 import {
 	type BulkEditCommitAction,
 	type PlatformDevice,
@@ -50,15 +49,16 @@ export interface BulkActionBarProps {
 }
 
 // Resolve the device class powering `platform_device` on bulk_edit_commit.
-// Honours both signals named in T4's brief — `useIsMobile` (small viewport)
-// and a coarse `navigator.userAgent` check — so iPhone/iPad classic UAs and
-// iPadOS-13+ devices (which report as Mac with touch) all land on `ios`.
-export function resolvePlatformDevice(isMobileViewport: boolean): PlatformDevice {
+// Uses a coarse `navigator.userAgent` check for iPhone/classic-iPad UAs, plus
+// the standard iPadOS-13+ detection (UA reports as Mac, but exposes multi-touch —
+// real desktop Macs report `maxTouchPoints === 0`). Deliberately NOT gated on
+// viewport width: real iPads sit at 768px/1024px, the project's own ship-gate
+// widths, so gating on a mobile-viewport check would misclassify them as desktop.
+export function resolvePlatformDevice(): PlatformDevice {
 	if (typeof navigator === 'undefined') return 'desktop'
 	const ua = navigator.userAgent ?? ''
 	if (/iPad|iPhone|iPod/.test(ua)) return 'ios'
 	if (
-		isMobileViewport &&
 		navigator.platform === 'MacIntel' &&
 		typeof navigator.maxTouchPoints === 'number' &&
 		navigator.maxTouchPoints > 1
@@ -97,7 +97,6 @@ export function BulkActionBar({
 }: BulkActionBarProps) {
 	const visible = selectedCount > 0
 	const reducedMotion = usePrefersReducedMotion()
-	const isMobile = useIsMobile()
 	const [confirmOpen, setConfirmOpen] = React.useState(false)
 	// Bump these keys after each pick so the Selects remount and don't latch onto
 	// the last-chosen value — otherwise re-selecting the same status/owner on a
@@ -110,10 +109,10 @@ export function BulkActionBar({
 			trackBulkEditCommit({
 				selected_count: selectedCount,
 				action,
-				platform_device: resolvePlatformDevice(isMobile),
+				platform_device: resolvePlatformDevice(),
 			})
 		},
-		[selectedCount, isMobile],
+		[selectedCount],
 	)
 
 	React.useEffect(() => {

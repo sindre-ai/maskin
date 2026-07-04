@@ -62,6 +62,12 @@ export function computeRangeSelection({
 interface UseDragSelectArgs<T> {
 	scrollRef: React.RefObject<HTMLDivElement | null>
 	table: Table<T>
+	// True once the real scroll container is expected to be mounted (i.e. not
+	// during a loading/empty placeholder render). scrollRef is a ref object
+	// whose identity never changes, so without this the attach effect — which
+	// runs before the container exists on first mount — would never re-run
+	// once the real container replaces the placeholder.
+	enabled: boolean
 }
 
 interface ArmState {
@@ -96,7 +102,7 @@ interface DragState {
  * - the row's checkbox (or its 44px hit-zone wrapper) carries
  *   `data-drag-checkbox` and `touch-action: none`
  */
-export function useDragSelect<T>({ scrollRef, table }: UseDragSelectArgs<T>) {
+export function useDragSelect<T>({ scrollRef, table, enabled }: UseDragSelectArgs<T>) {
 	const [mode, setMode] = useState<'idle' | 'drag'>('idle')
 
 	// Keep the latest table available to long-lived listeners without re-binding
@@ -124,6 +130,7 @@ export function useDragSelect<T>({ scrollRef, table }: UseDragSelectArgs<T>) {
 	})
 
 	useEffect(() => {
+		if (!enabled) return
 		const container = scrollRef.current
 		if (!container) return
 
@@ -420,7 +427,7 @@ export function useDragSelect<T>({ scrollRef, table }: UseDragSelectArgs<T>) {
 			sessionRef.current.drag = null
 			sessionRef.current.suppressClick = false
 		}
-	}, [scrollRef])
+	}, [scrollRef, enabled])
 
 	return { mode }
 }

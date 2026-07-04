@@ -167,14 +167,26 @@ export function DataTable({
 		getGroupedRowModel: grouping?.length ? getGroupedRowModel() : undefined,
 		getExpandedRowModel: grouping?.length ? getExpandedRowModel() : undefined,
 		groupedColumnMode: 'remove',
-		enableRowSelection: true,
+		// Exclude synthetic group-header rows from selection — otherwise the
+		// page-level "select all" checkbox sweeps in group pseudo-ids (e.g.
+		// "status:active") alongside real object ids, and those bogus ids get
+		// sent straight into bulk-update/delete mutations.
+		enableRowSelection: (row) => !row.getIsGrouped(),
 		autoResetExpanded: false,
 		getRowId: (row) => row.id,
 	})
 
 	const { rows } = table.getRowModel()
 
-	const { mode: dragMode } = useDragSelect({ scrollRef: parentRef, table })
+	// The scroll container only mounts once loading/empty placeholders give way
+	// to the real list below — gate attachment on that so the hook's listener
+	// effect actually re-runs once the container exists (scrollRef's identity
+	// never changes, so it can't signal that transition on its own).
+	const { mode: dragMode } = useDragSelect({
+		scrollRef: parentRef,
+		table,
+		enabled: !isLoading && data.length > 0,
+	})
 
 	const virtualizer = useVirtualizer({
 		count: rows.length,
