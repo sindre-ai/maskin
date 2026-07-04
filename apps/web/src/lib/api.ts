@@ -703,7 +703,9 @@ export interface UnreadItem {
 	entity_type: string
 	entity_id: string
 	unread_count: number
-	mentions_you: boolean
+	// Count of unread events on the entity that actually @-mention the viewer.
+	// Drives the "Mentioned" pill on the For You card when > 0.
+	mentioning_unread_count: number
 	latest_event_id: number | null
 	latest_activity_at: string | null
 	object?: ObjectResponse

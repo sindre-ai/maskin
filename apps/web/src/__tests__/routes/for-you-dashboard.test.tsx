@@ -94,7 +94,7 @@ function buildUnreadItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 		entity_type: 'object',
 		entity_id: 'obj-1',
 		unread_count: 1,
-		mentions_you: false,
+		mentioning_unread_count: 0,
 		latest_event_id: 10,
 		latest_activity_at: '2026-01-01T00:00:00Z',
 		object: buildObjectResponse({ id: 'obj-1', title: 'Test Bet' }),
@@ -133,14 +133,14 @@ describe('ForYouDashboard', () => {
 		expect(screen.getByText('obj-2')).toBeInTheDocument()
 	})
 
-	it('sorts mentions_you items above non-mention items', () => {
+	it('sorts mentioning_unread_count items above non-mention items', () => {
 		mockUseUnread.mockReturnValue({
 			data: {
 				items: [
-					buildUnreadItem({ entity_id: 'fyi-1', mentions_you: false }),
-					buildUnreadItem({ entity_id: 'mention-1', mentions_you: true }),
-					buildUnreadItem({ entity_id: 'fyi-2', mentions_you: false }),
-					buildUnreadItem({ entity_id: 'mention-2', mentions_you: true }),
+					buildUnreadItem({ entity_id: 'fyi-1', mentioning_unread_count: 0 }),
+					buildUnreadItem({ entity_id: 'mention-1', mentioning_unread_count: 1 }),
+					buildUnreadItem({ entity_id: 'fyi-2', mentioning_unread_count: 0 }),
+					buildUnreadItem({ entity_id: 'mention-2', mentioning_unread_count: 1 }),
 				],
 			},
 			isLoading: false,

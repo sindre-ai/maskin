@@ -20,7 +20,7 @@ interface UnreadFixture {
 	entity_type: 'object'
 	entity_id: string
 	unread_count: number
-	mentions_you: boolean
+	mentioning_unread_count: number
 	latest_event_id: number
 	latest_activity_at: string
 	object: {
@@ -37,7 +37,7 @@ function buildItem(workspaceId: string): UnreadFixture {
 		entity_type: 'object',
 		entity_id: 'bet-foryou-comment-wrap',
 		unread_count: 0,
-		mentions_you: false,
+		mentioning_unread_count: 0,
 		latest_event_id: 1,
 		latest_activity_at: new Date().toISOString(),
 		object: {

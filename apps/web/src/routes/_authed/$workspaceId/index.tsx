@@ -36,15 +36,17 @@ function ForYouDashboard() {
 		[items],
 	)
 
-	// Regular threads, with mentions_you items ("Needs your input") sorted before FYI
+	// Regular threads, with mentioning_unread_count items ("Needs your input") sorted before FYI
 	// items; stable within each tier.
 	const sortedRegular = useMemo(
 		() =>
 			items
 				.filter((item) => item.object?.type !== 'onboarding_session')
 				.sort((a, b) => {
-					if (a.mentions_you && !b.mentions_you) return -1
-					if (!a.mentions_you && b.mentions_you) return 1
+					const aMentions = a.mentioning_unread_count > 0
+					const bMentions = b.mentioning_unread_count > 0
+					if (aMentions && !bMentions) return -1
+					if (!aMentions && bMentions) return 1
 					return 0
 				}),
 		[items],

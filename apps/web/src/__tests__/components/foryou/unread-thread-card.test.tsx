@@ -48,7 +48,7 @@ function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 		entity_type: 'object',
 		entity_id: 'obj-1',
 		unread_count: 1,
-		mentions_you: false,
+		mentioning_unread_count: 0,
 		latest_event_id: 20,
 		latest_activity_at: '2026-01-01T00:00:00Z',
 		object: buildObjectResponse({ id: 'obj-1', title: 'Onboarding A/B', type: 'bet' }),
@@ -91,12 +91,12 @@ describe('UnreadThreadCard', () => {
 		expect(screen.getByLabelText('3 unread')).toBeInTheDocument()
 	})
 
-	it('renders a "Mentioned" badge when the unread thread mentions the viewer', () => {
+	it('renders a "Mentioned" badge when at least one unread event mentions the viewer', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		render(
 			<UnreadThreadCard
 				workspaceId="ws-1"
-				item={buildItem({ mentions_you: true })}
+				item={buildItem({ mentioning_unread_count: 1 })}
 				isActive={false}
 				onActivate={noop}
 				onReplyTargetChange={noop}
@@ -106,12 +106,12 @@ describe('UnreadThreadCard', () => {
 		expect(screen.getByLabelText('Mentioned')).toBeInTheDocument()
 	})
 
-	it('omits the "Mentioned" badge when mentions_you is false', () => {
+	it('omits the "Mentioned" badge when no unread events mention the viewer', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		render(
 			<UnreadThreadCard
 				workspaceId="ws-1"
-				item={buildItem({ mentions_you: false })}
+				item={buildItem({ mentioning_unread_count: 0 })}
 				isActive={false}
 				onActivate={noop}
 				onReplyTargetChange={noop}

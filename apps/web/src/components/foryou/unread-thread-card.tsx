@@ -289,7 +289,7 @@ export function UnreadThreadCard({
 								className="text-xs text-muted-foreground"
 							/>
 						)}
-						{item.mentions_you && (
+						{item.mentioning_unread_count > 0 && (
 							<span
 								aria-label="Mentioned"
 								title="You were @-mentioned in an unread comment"
