@@ -475,11 +475,13 @@ export const api = {
 			}),
 		status: (workspaceId: string) =>
 			request<ClaudeOAuthStatusResponse>('/claude-oauth/status', { workspaceId }),
-		disconnect: (workspaceId: string) =>
-			request<{ success: boolean }>('/claude-oauth', {
+		disconnect: (workspaceId: string, slot?: ClaudeOAuthSlot) =>
+			request<{ success: boolean }>(slot ? `/claude-oauth?slot=${slot}` : '/claude-oauth', {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		swap: (workspaceId: string) =>
+			request<{ success: boolean }>('/claude-oauth/swap', { method: 'POST', workspaceId }),
 	},
 
 	catalogPackages: {
@@ -650,8 +652,17 @@ export const api = {
 	},
 }
 
+export type ClaudeOAuthSlot = 'primary' | 'backup'
+
+export interface ClaudeOAuthSlotInfo {
+	subscription_type?: string
+	expires_at: number
+	fingerprint?: string
+}
+
 export interface ClaudeOAuthExchangeResponse {
 	success: boolean
+	slot?: ClaudeOAuthSlot
 	subscription_type?: string
 	expires_at: number
 }
@@ -661,6 +672,15 @@ export interface ClaudeOAuthStatusResponse {
 	subscription_type?: string
 	expires_at?: number
 	valid: boolean
+	slots: {
+		primary?: ClaudeOAuthSlotInfo
+		backup?: ClaudeOAuthSlotInfo
+	}
+	active_slot: ClaudeOAuthSlot
+	last_primary_failure_at?: number
+	last_classified_reason?: string
+	last_backup_failure_at?: number
+	last_backup_classified_reason?: string
 }
 
 export interface ClaudeOAuthImportInput {
@@ -669,6 +689,7 @@ export interface ClaudeOAuthImportInput {
 	expiresAt: number
 	subscriptionType?: string
 	scopes?: string[]
+	slot?: ClaudeOAuthSlot
 }
 
 // Types derived from backend response schemas
@@ -711,7 +732,9 @@ export interface UnreadItem {
 	entity_type: string
 	entity_id: string
 	unread_count: number
-	mentions_you: boolean
+	// Count of unread events on the entity that actually @-mention the viewer.
+	// Drives the "Mentioned" pill on the For You card when > 0.
+	mentioning_unread_count: number
 	latest_event_id: number | null
 	latest_activity_at: string | null
 	object?: ObjectResponse

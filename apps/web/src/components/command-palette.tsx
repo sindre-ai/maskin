@@ -36,17 +36,13 @@ export function CommandPalette() {
 				setChatOpen(true)
 				setOpen(false)
 			}
-			if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
-				e.preventDefault()
-				navigateTo(`/${workspaceId}/objects/${crypto.randomUUID()}`)
-			}
 			if (e.key === 'Escape') {
 				setOpen(false)
 			}
 		}
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
-	}, [navigateTo, workspaceId, setChatOpen])
+	}, [setChatOpen])
 
 	if (!open) return null
 
@@ -138,10 +134,6 @@ export function CommandPalette() {
 						</span>
 						<span>
 							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘J</kbd> Chat
-						</span>
-						<span>
-							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘N</kbd> New
-							object
 						</span>
 						<span>
 							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">Esc</kbd> Close
