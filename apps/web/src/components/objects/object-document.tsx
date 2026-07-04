@@ -89,6 +89,14 @@ export function ObjectDocumentView({
 	betStatus,
 }: ObjectDocumentViewProps) {
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
+	// Reset the local title draft when navigating to a different object — this
+	// component instance is reused across route param changes, so the useState
+	// initializer alone would leave the textarea stuck on the previous title.
+	const [trackedObjectId, setTrackedObjectId] = useState(object.id)
+	if (trackedObjectId !== object.id) {
+		setTrackedObjectId(object.id)
+		setTitleDraft(object.title ?? '')
+	}
 
 	const handleTitleBlur = useCallback(() => {
 		if (titleDraft !== object.title) {
