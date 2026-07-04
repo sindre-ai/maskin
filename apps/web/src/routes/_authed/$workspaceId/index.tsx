@@ -115,7 +115,7 @@ function ForYouDashboard() {
 	if (items.length === 0) {
 		return (
 			<>
-				<div className="flex flex-col gap-4">
+				<div className="flex flex-col gap-2">
 					<div className="flex items-center justify-end">
 						<Button
 							size="sm"
@@ -130,7 +130,7 @@ function ForYouDashboard() {
 					<EmptyState
 						title="All caught up"
 						description="New comments and replies on things you're subscribed to will appear here."
-						className="py-8"
+						className="py-4 md:py-8"
 					/>
 					<SparseComposer itemsCount={0} />
 				</div>
