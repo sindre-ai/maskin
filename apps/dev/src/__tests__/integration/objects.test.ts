@@ -711,18 +711,21 @@ describe('Objects Integration', () => {
 	})
 
 	describe('GET /api/objects/:id/graph — endpoint resolution by id', () => {
-		it('surfaces an edge whose sourceType/targetType label is non-canonical', async () => {
-			// Bet-creation historically stamped `source_type` / `target_type` with
-			// the endpoint's specialised `objects.type` (e.g. `'insight'`, `'bet'`)
-			// rather than the coarse `'object'` kind. The read layer must resolve
-			// endpoints via id lookup so those legacy rows still render.
+		it('surfaces an edge and resolves its connected object by id', async () => {
+			// The read layer resolves endpoints by object/file id, not by the
+			// stored `sourceType`/`targetType` label. The DB CHECK constraint
+			// blocks non-canonical labels at write time, and the route unit tests
+			// (objects.test.ts, `resolves an edge whose sourceType label does not
+			// match the endpoint kind`) cover the legacy-label scenario with mocks.
+			// This integration test validates the id-based resolution mechanism
+			// against a real database with canonical types.
 			const app = createApp()
 			const bet = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet' })
 			const insight = await insertObject(db, workspaceId, getTestActorId(), { type: 'insight' })
 			await db.insert(relationships).values({
-				sourceType: 'insight',
+				sourceType: 'object',
 				sourceId: insight.id,
-				targetType: 'bet',
+				targetType: 'object',
 				targetId: bet.id,
 				type: 'informs',
 				createdBy: getTestActorId(),
@@ -742,11 +745,14 @@ describe('Objects Integration', () => {
 			expect(body.files).toEqual([])
 		})
 
-		it('buckets a file endpoint even when the edge label is a legacy object type', async () => {
-			// The mirror case: an `attached` edge whose file endpoint carries a
-			// legacy specialised label. The endpoint id lives in the `files`
-			// table, so it must land in `files`, not as a broken row in
-			// `connected_objects`.
+		it('buckets a file endpoint correctly with canonical target_type', async () => {
+			// An `attached` edge whose target endpoint is a file. The read layer
+			// resolves endpoints by id lookup against the `files` table, so the
+			// attachment lands in `files` regardless of what type label the edge
+			// carries. Since the DB CHECK constraint now enforces canonical labels
+			// at write time, we use `targetType: 'file'` here. The route unit test
+			// (`resolves a file endpoint even when the edge label is a legacy
+			// object type`) covers the legacy-label scenario with mocks.
 			const app = createApp()
 			const bet = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet' })
 			const [fileRow] = await db
@@ -754,9 +760,9 @@ describe('Objects Integration', () => {
 				.values(buildFile({ workspaceId, createdBy: getTestActorId() }))
 				.returning()
 			await db.insert(relationships).values({
-				sourceType: 'bet',
+				sourceType: 'object',
 				sourceId: bet.id,
-				targetType: 'bet', // legacy mislabel — endpoint is a file
+				targetType: 'file',
 				targetId: fileRow.id,
 				type: 'attached',
 				createdBy: getTestActorId(),
