@@ -32,12 +32,6 @@ vi.mock('@/components/ui/sidebar', () => {
 	}
 })
 
-vi.mock('@/components/ui/popover', () => ({
-	Popover: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-	PopoverTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-	PopoverContent: () => null,
-}))
-
 function agent(overrides: Partial<ActiveAgent> = {}): ActiveAgent {
 	return {
 		actorId: 'a-1',
@@ -138,13 +132,14 @@ describe('SidebarActivity', () => {
 		expect(trackExpanded).toHaveBeenCalledTimes(1)
 	})
 
-	it('exposes an accessible label for each icon-mode dot (AC-T3)', () => {
+	it('hides the Activity group in icon-collapsed mode via CSS class (AC-T3)', () => {
 		mockUseActiveAgents.mockReturnValue({
 			agents: [agent({ actorId: 'a-1', name: 'Planner', currentActivity: 'Reading files' })],
 			isLoading: false,
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(screen.getByLabelText(/Planner — Reading files/)).toBeInTheDocument()
+		const group = screen.getByTestId('sidebar-activity')
+		expect(group.className).toContain('group-data-[collapsible=icon]:hidden')
 	})
 })

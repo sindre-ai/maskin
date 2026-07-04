@@ -9,7 +9,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // AC-U6: 0 running agents render a muted "No agents running" line.
 // AC-U7: SSE-driven cache invalidation reflects start/stop without a page refresh.
 // AC-T2 (activity side): loading skeleton, and hiding on error, must not shift the sidebar shell.
-// AC-T3 (activity side): icon-collapsed mode collapses to a vertical stack of status dots.
+// AC-T3 (activity side): icon-collapsed mode hides the entire Activity group.
 //
 // Sessions + actors are mocked at the API boundary so the spec does not need real
 // running containers.
@@ -169,6 +169,29 @@ test.describe('Sidebar Activity group', () => {
 		await expect(page.getByRole('link', { name: 'For You' })).toBeVisible()
 		// The Activity group disappears entirely — no error state, no shift.
 		await expect(page.getByTestId('sidebar-activity')).toHaveCount(0)
+	})
+
+	test('hides the Activity group in icon-collapsed mode and shows it when expanded (AC-T3)', async ({
+		page,
+		account,
+	}) => {
+		await mockSessionsAndActors(
+			page,
+			[buildSession({ id: 's-1', actorId: 'a-1', currentActivity: 'Reading files' })],
+			[buildActor({ id: 'a-1', name: 'Planner' })],
+		)
+		await page.goto(`/${account.workspaceId}`)
+		const group = page.getByTestId('sidebar-activity')
+		await expect(group.getByText('Planner')).toBeVisible()
+
+		// Toggle sidebar to icon-collapsed mode via the rail.
+		const rail = page.getByRole('button', { name: 'Toggle Sidebar' })
+		await rail.click()
+		await expect(group.getByText('Planner')).toHaveCount(0)
+
+		// Toggle back to expanded — the Activity group re-appears.
+		await rail.click()
+		await expect(group.getByText('Planner')).toBeVisible()
 	})
 
 	for (const viewport of SHIP_GATE_VIEWPORTS) {

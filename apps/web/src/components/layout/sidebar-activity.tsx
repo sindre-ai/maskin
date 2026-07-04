@@ -1,4 +1,3 @@
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
 	SidebarGroup,
 	SidebarGroupContent,
@@ -28,16 +27,15 @@ export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 
 	if (agents.length === 0) {
 		return (
-			<SidebarGroup data-testid="sidebar-activity">
+			<SidebarGroup data-testid="sidebar-activity" className="group-data-[collapsible=icon]:hidden">
 				<SidebarGroupLabel>Activity</SidebarGroupLabel>
 				<SidebarGroupContent>
 					<SidebarMenu>
 						<SidebarMenuItem>
-							<span className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+							<span className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
 								<span className="size-1.5 rounded-full bg-muted-foreground/40" />
 								No agents running
 							</span>
-							<IconModeStack agents={[]} />
 						</SidebarMenuItem>
 					</SidebarMenu>
 				</SidebarGroupContent>
@@ -50,10 +48,10 @@ export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 	const hiddenCount = agents.length - VISIBLE_ROW_LIMIT
 
 	return (
-		<SidebarGroup data-testid="sidebar-activity">
+		<SidebarGroup data-testid="sidebar-activity" className="group-data-[collapsible=icon]:hidden">
 			<SidebarGroupLabel>Activity</SidebarGroupLabel>
 			<SidebarGroupContent>
-				<SidebarMenu className="group-data-[collapsible=icon]:hidden">
+				<SidebarMenu>
 					{visibleAgents.map((agent) => (
 						<AgentRow key={agent.actorId} agent={agent} />
 					))}
@@ -75,7 +73,6 @@ export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 						</SidebarMenuItem>
 					)}
 				</SidebarMenu>
-				<IconModeStack agents={agents} />
 			</SidebarGroupContent>
 		</SidebarGroup>
 	)
@@ -101,56 +98,15 @@ function AgentRow({ agent }: { agent: ActiveAgent }) {
 	)
 }
 
-function IconModeStack({ agents }: { agents: ActiveAgent[] }) {
-	return (
-		<div
-			className="hidden flex-col items-center gap-1.5 py-1 group-data-[collapsible=icon]:flex"
-			data-testid="sidebar-activity-icon-stack"
-		>
-			{agents.length === 0 && (
-				<span
-					className="size-1.5 rounded-full bg-muted-foreground/40"
-					aria-label="No agents running"
-				/>
-			)}
-			{agents.map((agent) => (
-				<Popover key={agent.actorId}>
-					<PopoverTrigger asChild>
-						<button
-							type="button"
-							aria-label={`${agent.name}${agent.currentActivity ? ` — ${agent.currentActivity}` : ''}`}
-							className="size-2 rounded-full bg-success animate-pulse outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-						/>
-					</PopoverTrigger>
-					<PopoverContent
-						side="right"
-						align="start"
-						sideOffset={8}
-						className="w-56 p-3"
-						data-testid="sidebar-activity-popover"
-					>
-						<div className="flex items-center gap-2">
-							<span className="size-1.5 shrink-0 rounded-full bg-success" aria-hidden="true" />
-							<span className="truncate text-sm font-medium">{agent.name}</span>
-						</div>
-						{agent.currentActivity && (
-							<div className="mt-1 truncate text-xs text-muted-foreground">
-								{agent.currentActivity}
-							</div>
-						)}
-					</PopoverContent>
-				</Popover>
-			))}
-		</div>
-	)
-}
-
 function SidebarActivityLoading() {
 	return (
-		<SidebarGroup data-testid="sidebar-activity-loading">
+		<SidebarGroup
+			data-testid="sidebar-activity-loading"
+			className="group-data-[collapsible=icon]:hidden"
+		>
 			<SidebarGroupLabel>Activity</SidebarGroupLabel>
 			<SidebarGroupContent>
-				<SidebarMenu className="group-data-[collapsible=icon]:hidden">
+				<SidebarMenu>
 					{Array.from({ length: 3 }).map((_, i) => (
 						// biome-ignore lint/suspicious/noArrayIndexKey: skeleton rows are static
 						<SidebarMenuItem key={i}>
