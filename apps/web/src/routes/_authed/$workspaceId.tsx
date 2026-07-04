@@ -11,6 +11,7 @@ import { useWorkspaces } from '@/hooks/use-workspaces'
 import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { ChatProvider, useChat } from '@/lib/chat-context'
+import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
 import {
@@ -112,25 +113,27 @@ function WorkspaceLayout() {
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
 			<ChatProvider workspaceId={workspaceId}>
-				<PendingPromptBootstrap agentActorId={agentActorId} />
-				<GuestDraftClaimBootstrap workspaceId={workspaceId} />
-				<PendingCommentsProvider workspaceId={workspaceId}>
-					<PageHeaderProvider>
-						<ChatPinShell>
-							<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
-								<AppSidebar />
-								<SidebarInset className="min-w-0">
-									<Header />
-									<div className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8">
-										<Outlet />
-									</div>
-								</SidebarInset>
-							</SidebarProvider>
-						</ChatPinShell>
-					</PageHeaderProvider>
-					<CommandPalette />
-					<ChatPanel workspaceId={workspaceId} agentActorId={agentActorId} />
-				</PendingCommentsProvider>
+				<NewConversationProvider>
+					<PendingPromptBootstrap agentActorId={agentActorId} />
+					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
+					<PendingCommentsProvider workspaceId={workspaceId}>
+						<PageHeaderProvider>
+							<ChatPinShell>
+								<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
+									<AppSidebar />
+									<SidebarInset className="min-w-0">
+										<Header />
+										<div className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8">
+											<Outlet />
+										</div>
+									</SidebarInset>
+								</SidebarProvider>
+							</ChatPinShell>
+						</PageHeaderProvider>
+						<CommandPalette />
+						<ChatPanel workspaceId={workspaceId} agentActorId={agentActorId} />
+					</PendingCommentsProvider>
+				</NewConversationProvider>
 			</ChatProvider>
 		</WorkspaceContext.Provider>
 	)
