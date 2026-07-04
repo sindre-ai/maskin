@@ -1,10 +1,12 @@
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
+import { IndicatorBadgeRow } from '@/components/shared/indicator-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { SourceBadge } from '@/components/shared/source-badge'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { ActorListItem, ObjectResponse } from '@/lib/api'
+import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 
@@ -15,6 +17,7 @@ interface ObjectCardProps {
 	isSelected: boolean
 	onSelect: (selected: boolean) => void
 	onClick: () => void
+	betStatus?: BetStatusResult
 }
 
 export function ObjectCard({
@@ -24,6 +27,7 @@ export function ObjectCard({
 	isSelected,
 	onSelect,
 	onClick,
+	betStatus,
 }: ObjectCardProps) {
 	const owner = object.driver ? actors?.find((a) => a.id === object.driver) : null
 
@@ -56,6 +60,7 @@ export function ObjectCard({
 						>
 							{object.title || 'Untitled'}
 						</Link>
+						{betStatus && <IndicatorBadgeRow result={betStatus} />}
 						{object.activeSessionId && (
 							<AgentWorkingBadge sessionId={object.activeSessionId} workspaceId={workspaceId} />
 						)}

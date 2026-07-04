@@ -109,6 +109,25 @@ describe('IndicatorBadgeChip', () => {
 		expect(trigger).toHaveAttribute('aria-expanded', 'false')
 	})
 
+	// Regression: a real click fires pointer-move + click; if click toggled, the
+	// hover-open would flip closed on the click that was meant to open it. The
+	// popover must be visible after click, not empty.
+	it('stays open after a hover-then-click sequence (never toggles closed)', async () => {
+		const user = userEvent.setup()
+		render(
+			<TestWrapper>
+				<IndicatorBadgeChip result={makeResult({ state: 'idle' })} workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+		const trigger = screen.getByRole('button', { name: 'Status: idle' })
+		await user.hover(trigger)
+		await user.click(trigger)
+		expect(trigger).toHaveAttribute('aria-expanded', 'true')
+		expect(
+			await screen.findByText(/No open human decisions and no in-flight tasks/i),
+		).toBeInTheDocument()
+	})
+
 	it('is read-only — no approve/answer buttons appear inside the popover', async () => {
 		const user = userEvent.setup()
 		const result: BetStatusResult = {

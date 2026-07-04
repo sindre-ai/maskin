@@ -88,7 +88,12 @@ export function IndicatorBadgeChip({
 
 	const handleMouseEnter = useCallback(() => setOpen(true), [])
 	const handleMouseLeave = useCallback(() => setOpen(false), [])
-	const handleClick = useCallback(() => setOpen((prev) => !prev), [])
+	// Click always opens — never toggles. On desktop, hover already opens the
+	// popover via mouseenter, so toggling on click would close the just-opened
+	// popover (playwright.click fires the pointermove that opens on hover, then
+	// the click that would toggle it shut). Close paths: mouseleave from the
+	// chip/popover, Escape key, or Radix's own outside-interaction handler.
+	const handleClick = useCallback(() => setOpen(true), [])
 
 	return (
 		<Popover open={open} onOpenChange={setOpen}>

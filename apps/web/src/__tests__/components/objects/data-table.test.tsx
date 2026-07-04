@@ -159,5 +159,24 @@ describe('DataTable', () => {
 				params: { workspaceId: 'ws-1', objectId: 'obj-7' },
 			})
 		})
+
+		// Mobile card layout renders alongside the desktop table cell, but reads
+		// its bet indicator from the same `meta.betStatuses` map. Without this
+		// the row indicator is invisible on mobile even though it renders on the
+		// data-table cell at md+ viewports.
+		it('renders the bet status indicator on a bet card', () => {
+			const bet = buildObjectResponse({ id: 'bet-mobile', title: 'Bet Mobile', type: 'bet' })
+			const betStatuses = new Map([
+				[
+					'bet-mobile',
+					{ state: 'waiting_on_human' as const, pendingAction: null, decisionsSoFar: [] },
+				],
+			])
+			renderDataTable({
+				data: [bet],
+				meta: { onSort: vi.fn(), currentSort: 'createdAt', currentOrder: 'desc', betStatuses },
+			})
+			expect(screen.getByLabelText('Status: waiting')).toBeInTheDocument()
+		})
 	})
 })
