@@ -23,7 +23,8 @@ import {
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
-import { type BetStatusResult, classifyBetStatus } from '@/lib/bet-status'
+import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
+import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
@@ -250,44 +251,44 @@ function ObjectsPage() {
 
 	// Bet status indicator wiring — the Title cell renders `IndicatorBadgeRow`
 	// beside each bet's title. It classifies over child tasks; the overview
-	// only loads a flat page of objects, so pull the workspace's tasks and
-	// `breaks_into` relationships once and group them here. Both queries are
-	// gated on whether any bets are actually visible so tabs like `insight`
-	// never pay for tasks + rels they don't render.
+	// only loads a flat page of objects, so pull the workspace's full task
+	// list and `breaks_into` relationships once and group them here. Both
+	// queries page through the endpoints (`limit=50` default would silently
+	// misclassify any bet whose child tasks fell into the second page as
+	// `idle`) and are gated on whether any bets are actually visible so tabs
+	// like `insight` never pay for tasks + rels they don't render.
 	const hasVisibleBets = useMemo(
 		() => visibleObjects.some((o) => o.type === 'bet'),
 		[visibleObjects],
 	)
 	const { data: workspaceTasks } = useQuery({
 		queryKey: queryKeys.objects.list(workspaceId, { type: 'task' }),
-		queryFn: () => api.objects.list(workspaceId, { type: 'task' }),
+		queryFn: () =>
+			fetchAllPages<ObjectResponse>(({ limit, offset }) =>
+				api.objects.list(workspaceId, {
+					type: 'task',
+					limit: String(limit),
+					offset: String(offset),
+				}),
+			),
 		enabled: hasVisibleBets,
 	})
 	const { data: breaksIntoRels } = useQuery({
 		queryKey: [...queryKeys.relationships.all(workspaceId), { type: 'breaks_into' }] as const,
-		queryFn: () => api.relationships.list(workspaceId, { type: 'breaks_into' }),
+		queryFn: () =>
+			fetchAllPages(({ limit, offset }) =>
+				api.relationships.list(workspaceId, {
+					type: 'breaks_into',
+					limit: String(limit),
+					offset: String(offset),
+				}),
+			),
 		enabled: hasVisibleBets,
 	})
 	const betStatuses = useMemo<Map<string, BetStatusResult>>(() => {
-		const map = new Map<string, BetStatusResult>()
-		if (!hasVisibleBets) return map
-		const childrenByBet = new Map<string, ObjectResponse[]>()
-		if (workspaceTasks && breaksIntoRels) {
-			const tasksById = new Map(workspaceTasks.map((t) => [t.id, t]))
-			for (const rel of breaksIntoRels) {
-				const child = tasksById.get(rel.targetId)
-				if (!child) continue
-				const bucket = childrenByBet.get(rel.sourceId)
-				if (bucket) bucket.push(child)
-				else childrenByBet.set(rel.sourceId, [child])
-			}
-		}
-		const now = new Date()
-		for (const obj of visibleObjects) {
-			if (obj.type !== 'bet') continue
-			map.set(obj.id, classifyBetStatus(obj, childrenByBet.get(obj.id) ?? [], now))
-		}
-		return map
+		if (!hasVisibleBets || !workspaceTasks || !breaksIntoRels) return new Map()
+		const bets = visibleObjects.filter((o) => o.type === 'bet')
+		return buildBetStatuses(bets, workspaceTasks, breaksIntoRels, new Date())
 	}, [hasVisibleBets, workspaceTasks, breaksIntoRels, visibleObjects])
 
 	// Table meta — sort state passed via meta to avoid re-creating columns on every sort change

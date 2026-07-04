@@ -130,3 +130,39 @@ export function classifyBetStatus(
 
 	return { state: 'idle', pendingAction: null, decisionsSoFar }
 }
+
+export interface BreaksIntoRel {
+	sourceId: string
+	targetId: string
+}
+
+/**
+ * Build the `betId -> BetStatusResult` map used by the objects overview and any
+ * other surface that classifies many bets at once. Pure — takes the full task
+ * and `breaks_into` sets and groups children per bet in O(tasks + rels) before
+ * running the classifier once per bet.
+ */
+export function buildBetStatuses(
+	bets: BetLike[],
+	tasks: ChildTaskLike[],
+	breaksIntoRels: BreaksIntoRel[],
+	now: Date = new Date(),
+): Map<string, BetStatusResult> {
+	const result = new Map<string, BetStatusResult>()
+	if (bets.length === 0) return result
+
+	const tasksById = new Map(tasks.map((t) => [t.id, t]))
+	const childrenByBet = new Map<string, ChildTaskLike[]>()
+	for (const rel of breaksIntoRels) {
+		const child = tasksById.get(rel.targetId)
+		if (!child) continue
+		const bucket = childrenByBet.get(rel.sourceId)
+		if (bucket) bucket.push(child)
+		else childrenByBet.set(rel.sourceId, [child])
+	}
+
+	for (const bet of bets) {
+		result.set(bet.id, classifyBetStatus(bet, childrenByBet.get(bet.id) ?? [], now))
+	}
+	return result
+}
