@@ -62,6 +62,11 @@ export function useSwipeToMarkRead(onMarkRead: () => void): UseSwipeToMarkReadRe
 	}, [onMarkRead])
 
 	const handlePointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+		// Presses starting on a button/link (quick-reply chips, Reply, Mark as
+		// read) must not engage the swipe gesture — setPointerCapture below
+		// retargets the resulting `click` event to this card, so the button's
+		// own onClick never fires and the card's onClick fires instead.
+		if ((e.target as HTMLElement).closest('button, a')) return
 		const s = swipeRef.current
 		s.startX = e.clientX
 		s.startY = e.clientY

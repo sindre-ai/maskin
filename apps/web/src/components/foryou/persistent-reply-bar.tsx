@@ -1,13 +1,7 @@
-import { Button } from '@/components/ui/button'
+import { CommentInput } from '@/components/activity/comment-input'
 import { useSidebar } from '@/components/ui/sidebar'
-import { Textarea } from '@/components/ui/textarea'
-import { useActors } from '@/hooks/use-actors'
-import { useCreateComment } from '@/hooks/use-events'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { cn } from '@/lib/cn'
-import { parseMentions } from '@/lib/mentions'
-import { ArrowUp, MessageSquare, X } from 'lucide-react'
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { MessageSquare, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 interface PersistentReplyBarProps {
@@ -24,8 +18,8 @@ interface PersistentReplyBarProps {
 	onSent: () => void
 }
 
-const MAX_TEXTAREA_HEIGHT = 120
-
+// Hidden entirely until a card is active — there's nothing to reply to yet,
+// so no bar (and no reserved bottom padding on the feed) until then.
 export function PersistentReplyBar({
 	workspaceId,
 	activeId,
@@ -36,57 +30,8 @@ export function PersistentReplyBar({
 }: PersistentReplyBarProps) {
 	const { open } = useSidebar()
 	const isMobile = useIsMobile()
-	const [content, setContent] = useState('')
-	const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-	const createComment = useCreateComment(workspaceId, activeId ?? '')
-	const { data: actors } = useActors(workspaceId, { enabled: !!activeId })
-	const mentionableActors = useMemo(() => (actors ?? []).filter((a) => !a.isSystem), [actors])
-
-	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure height when content changes
-	useLayoutEffect(() => {
-		const ta = textareaRef.current
-		if (!ta) return
-		ta.style.height = 'auto'
-		ta.style.height = `${Math.min(ta.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`
-	}, [content])
-
-	// Clear the draft whenever the active card changes
-	// biome-ignore lint/correctness/useExhaustiveDependencies: activeId is the trigger, not read in the body
-	useLayoutEffect(() => {
-		setContent('')
-	}, [activeId])
-
-	const handleSend = useCallback(() => {
-		const trimmed = content.trim()
-		if (!trimmed || !activeId) return
-		const mentions = parseMentions(trimmed, mentionableActors)
-		createComment.mutate(
-			{
-				entity_id: activeId,
-				content: trimmed,
-				parent_event_id: parentEventId ?? undefined,
-				mentions: mentions.length > 0 ? mentions : undefined,
-			},
-			{
-				onSuccess: () => {
-					setContent('')
-					toast('Reply sent')
-					onSent()
-				},
-			},
-		)
-	}, [content, activeId, parentEventId, mentionableActors, createComment, onSent])
-
-	const handleKeyDown = useCallback(
-		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			if (e.key === 'Enter' && !e.shiftKey) {
-				e.preventDefault()
-				handleSend()
-			}
-		},
-		[handleSend],
-	)
+	if (!activeId) return null
 
 	// Fixed to the viewport bottom; offset left by the sidebar width on desktop
 	const leftOffset = !isMobile && open ? 'var(--sidebar-width, 16rem)' : '0px'
@@ -104,49 +49,33 @@ export function PersistentReplyBar({
 				{/* Context line */}
 				<div className="mb-2 flex items-center gap-1.5">
 					<MessageSquare size={11} className="shrink-0 text-muted-foreground" aria-hidden />
-					<span
-						className={cn(
-							'flex-1 truncate text-xs',
-							activeId ? 'font-medium text-foreground' : 'text-muted-foreground',
-						)}
-					>
-						{activeId ? `Replying to: ${activeTitle ?? 'Untitled'}` : 'Select a card to reply'}
+					<span className="flex-1 truncate text-xs font-medium text-foreground">
+						Replying to: {activeTitle ?? 'Untitled'}
 					</span>
-					{activeId && (
-						<button
-							type="button"
-							aria-label="Clear selection"
-							className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:text-foreground"
-							onClick={onClear}
-						>
-							<X size={11} />
-						</button>
-					)}
-				</div>
-				{/* Input row */}
-				<div className="flex items-end gap-2">
-					<Textarea
-						ref={textareaRef}
-						rows={1}
-						aria-label="Reply message"
-						disabled={!activeId || createComment.isPending}
-						value={content}
-						onChange={(e) => setContent(e.target.value)}
-						onKeyDown={handleKeyDown}
-						placeholder={activeId ? 'Write a message…' : 'Select a thread above to reply…'}
-						className="min-h-0 flex-1 resize-none text-sm"
-						style={{ minHeight: '38px', maxHeight: `${MAX_TEXTAREA_HEIGHT}px` }}
-					/>
-					<Button
-						size="icon"
-						className="h-[38px] w-[38px] shrink-0"
-						disabled={!content.trim() || !activeId || createComment.isPending}
-						onClick={handleSend}
-						aria-label="Send reply"
+					<button
+						type="button"
+						aria-label="Clear selection"
+						className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:text-foreground"
+						onClick={onClear}
 					>
-						<ArrowUp size={13} />
-					</Button>
+						<X size={11} />
+					</button>
 				</div>
+				{/* Input row — reuses the same composer as the object detail page
+				    (attachments, @-mention autocomplete) instead of a bespoke input.
+				    Keyed on activeId so switching cards mounts a fresh, empty composer
+				    rather than carrying over a stale draft. */}
+				<CommentInput
+					key={activeId}
+					workspaceId={workspaceId}
+					objectId={activeId}
+					parentEventId={parentEventId ?? undefined}
+					mentionDropdownPlacement="above"
+					onSubmitted={() => {
+						toast('Reply sent')
+						onSent()
+					}}
+				/>
 			</div>
 		</div>
 	)

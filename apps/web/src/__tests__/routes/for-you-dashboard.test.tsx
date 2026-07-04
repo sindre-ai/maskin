@@ -27,7 +27,9 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 }))
 
 vi.mock('@/components/foryou/persistent-reply-bar', () => ({
-	PersistentReplyBar: () => null,
+	PersistentReplyBar: ({ activeId }: { activeId: string | null }) => (
+		<div data-testid="persistent-reply-bar" data-active-id={activeId ?? ''} />
+	),
 }))
 
 vi.mock('@/lib/new-conversation-context', () => ({
@@ -38,8 +40,19 @@ vi.mock('@/lib/new-conversation-context', () => ({
 }))
 
 vi.mock('@/components/foryou/unread-thread-card', () => ({
-	UnreadThreadCard: ({ item }: { item: UnreadItem }) => (
-		<div data-testid="unread-thread-card">{item.entity_id}</div>
+	UnreadThreadCard: ({
+		item,
+		onActivate,
+	}: {
+		item: UnreadItem
+		onActivate: () => void
+	}) => (
+		<div data-testid="unread-thread-card">
+			{item.entity_id}
+			<button type="button" onClick={onActivate}>
+				activate-{item.entity_id}
+			</button>
+		</div>
 	),
 }))
 
@@ -133,7 +146,9 @@ describe('ForYouDashboard', () => {
 			isLoading: false,
 		})
 		render(<ForYouDashboard />)
-		const rendered = screen.getAllByTestId('unread-thread-card').map((el) => el.textContent)
+		const rendered = screen
+			.getAllByTestId('unread-thread-card')
+			.map((el) => el.textContent?.replace(/activate-\S+/, ''))
 		expect(rendered).toEqual(['mention-1', 'mention-2', 'fyi-1', 'fyi-2'])
 	})
 
@@ -234,6 +249,34 @@ describe('ForYouDashboard', () => {
 		render(<ForYouDashboard />)
 		const composer = screen.getByTestId('sparse-composer')
 		expect(composer).toHaveAttribute('data-items-count', '1')
+	})
+
+	it('clears the active selection when the active item drops out of the feed', () => {
+		const items = [buildUnreadItem({ entity_id: 'obj-1' }), buildUnreadItem({ entity_id: 'obj-2' })]
+		mockUseUnread.mockReturnValue({ data: { items }, isLoading: false })
+		const { rerender } = render(<ForYouDashboard />)
+
+		fireEvent.click(screen.getByRole('button', { name: 'activate-obj-1' }))
+		expect(screen.getByTestId('persistent-reply-bar')).toHaveAttribute('data-active-id', 'obj-1')
+
+		// obj-1 drops out of the feed — e.g. a quick-reply chip's own mark-read
+		// call zeroed its unread_count, so the next refetch no longer includes it.
+		mockUseUnread.mockReturnValue({ data: { items: [items[1]] }, isLoading: false })
+		rerender(<ForYouDashboard />)
+
+		expect(screen.getByTestId('persistent-reply-bar')).toHaveAttribute('data-active-id', '')
+	})
+
+	it('keeps the active selection when the active item is still in the feed', () => {
+		const items = [buildUnreadItem({ entity_id: 'obj-1' }), buildUnreadItem({ entity_id: 'obj-2' })]
+		mockUseUnread.mockReturnValue({ data: { items }, isLoading: false })
+		const { rerender } = render(<ForYouDashboard />)
+
+		fireEvent.click(screen.getByRole('button', { name: 'activate-obj-1' }))
+		mockUseUnread.mockReturnValue({ data: { items }, isLoading: false })
+		rerender(<ForYouDashboard />)
+
+		expect(screen.getByTestId('persistent-reply-bar')).toHaveAttribute('data-active-id', 'obj-1')
 	})
 
 	it('hides the sparse composer when items.length >= 3', () => {

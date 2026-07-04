@@ -27,6 +27,10 @@ vi.mock('@/hooks/use-actors', () => ({
 	}),
 }))
 
+vi.mock('@/lib/auth', () => ({
+	getStoredActor: () => ({ id: 'viewer', name: 'Viewer', type: 'human', email: null }),
+}))
+
 vi.mock('sonner', () => ({
 	toast: vi.fn(),
 }))
@@ -40,8 +44,8 @@ describe('PersistentReplyBar', () => {
 		vi.clearAllMocks()
 	})
 
-	it('shows idle label when no card is active', () => {
-		render(
+	it('renders nothing when no card is active', () => {
+		const { container } = render(
 			<PersistentReplyBar
 				workspaceId="ws-1"
 				activeId={null}
@@ -52,10 +56,10 @@ describe('PersistentReplyBar', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.getByText('Select a card to reply')).toBeInTheDocument()
+		expect(container.firstChild).toBeNull()
 	})
 
-	it('shows replying-to label with the card title when a card is active', () => {
+	it('shows replying-to label and the shared comment composer when a card is active', () => {
 		render(
 			<PersistentReplyBar
 				workspaceId="ws-1"
@@ -68,42 +72,12 @@ describe('PersistentReplyBar', () => {
 			{ wrapper: TestWrapper },
 		)
 		expect(screen.getByText('Replying to: Some Bet')).toBeInTheDocument()
+		expect(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+		).toBeInTheDocument()
 	})
 
-	it('send button is disabled when content is empty', () => {
-		render(
-			<PersistentReplyBar
-				workspaceId="ws-1"
-				activeId="obj-1"
-				activeTitle="Some Bet"
-				parentEventId={null}
-				onClear={noop}
-				onSent={noop}
-			/>,
-			{ wrapper: TestWrapper },
-		)
-		expect(screen.getByRole('button', { name: /send reply/i })).toBeDisabled()
-	})
-
-	it('send button is disabled when no card is active', () => {
-		render(
-			<PersistentReplyBar
-				workspaceId="ws-1"
-				activeId={null}
-				activeTitle={null}
-				parentEventId={null}
-				onClear={noop}
-				onSent={noop}
-			/>,
-			{ wrapper: TestWrapper },
-		)
-		expect(screen.getByRole('button', { name: /send reply/i })).toBeDisabled()
-	})
-
-	it('clears input after successful send', async () => {
-		mockMutate.mockImplementation((_args: unknown, opts?: { onSuccess?: () => void }) => {
-			opts?.onSuccess?.()
-		})
+	it('shows the @-mention autocomplete dropdown when typing "@" — same as the object detail page', async () => {
 		const user = userEvent.setup()
 		render(
 			<PersistentReplyBar
@@ -116,14 +90,41 @@ describe('PersistentReplyBar', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		const textarea = screen.getByRole('textbox')
-		await user.type(textarea, 'hello')
-		expect(textarea).toHaveValue('hello')
-		await user.click(screen.getByRole('button', { name: /send reply/i }))
-		expect(textarea).toHaveValue('')
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'@Ali',
+		)
+		expect(screen.getByText('Alice')).toBeInTheDocument()
 	})
 
-	it('calls onSent after a successful send so the thread is marked read', async () => {
+	it('sends the reply as a nested reply using parentEventId', async () => {
+		const user = userEvent.setup()
+		mockMutate.mockImplementation((_args: unknown, opts?: { onSuccess?: () => void }) => {
+			opts?.onSuccess?.()
+		})
+		render(
+			<PersistentReplyBar
+				workspaceId="ws-1"
+				activeId="obj-1"
+				activeTitle="Some Bet"
+				parentEventId={42}
+				onClear={noop}
+				onSent={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'hello{Enter}',
+		)
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.objectContaining({ entity_id: 'obj-1', content: 'hello', parent_event_id: 42 }),
+			expect.anything(),
+		)
+	})
+
+	it('calls onSent and shows a toast after a successful send', async () => {
+		const { toast } = await import('sonner')
 		mockMutate.mockImplementation((_args: unknown, opts?: { onSuccess?: () => void }) => {
 			opts?.onSuccess?.()
 		})
@@ -140,9 +141,12 @@ describe('PersistentReplyBar', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		await user.type(screen.getByRole('textbox'), 'hello')
-		await user.click(screen.getByRole('button', { name: /send reply/i }))
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'hello{Enter}',
+		)
 		expect(onSent).toHaveBeenCalledTimes(1)
+		expect(toast).toHaveBeenCalledWith('Reply sent')
 	})
 
 	it('does not call onSent when send fails', async () => {
@@ -162,8 +166,10 @@ describe('PersistentReplyBar', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		await user.type(screen.getByRole('textbox'), 'hello')
-		await user.click(screen.getByRole('button', { name: /send reply/i }))
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'hello{Enter}',
+		)
 		expect(onSent).not.toHaveBeenCalled()
 	})
 
@@ -185,30 +191,8 @@ describe('PersistentReplyBar', () => {
 		expect(onClear).toHaveBeenCalled()
 	})
 
-	it('sends the reply as a nested reply using parentEventId', async () => {
-		const user = userEvent.setup()
-		render(
-			<PersistentReplyBar
-				workspaceId="ws-1"
-				activeId="obj-1"
-				activeTitle="Some Bet"
-				parentEventId={42}
-				onClear={noop}
-				onSent={noop}
-			/>,
-			{ wrapper: TestWrapper },
-		)
-		await user.type(screen.getByRole('textbox'), 'hello')
-		await user.click(screen.getByRole('button', { name: /send reply/i }))
-		expect(mockMutate).toHaveBeenCalledWith(
-			expect.objectContaining({ parent_event_id: 42 }),
-			expect.anything(),
-		)
-	})
-
-	it('derives mentions from @Name text against the workspace actor list', async () => {
-		const user = userEvent.setup()
-		render(
+	it('mounts a fresh composer when the active card changes, discarding any unsent draft', () => {
+		const { rerender } = render(
 			<PersistentReplyBar
 				workspaceId="ws-1"
 				activeId="obj-1"
@@ -219,53 +203,24 @@ describe('PersistentReplyBar', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		await user.type(screen.getByRole('textbox'), 'thanks @Alice')
-		await user.click(screen.getByRole('button', { name: /send reply/i }))
-		expect(mockMutate).toHaveBeenCalledWith(
-			expect.objectContaining({ mentions: ['alice'] }),
-			expect.anything(),
-		)
-	})
+		const firstTextarea = screen.getByPlaceholderText(
+			'Write a comment... Use @ to mention an agent',
+		) as HTMLTextAreaElement
+		firstTextarea.value = 'unsent draft'
 
-	it('omits system actors from mention matching', async () => {
-		const user = userEvent.setup()
-		render(
+		rerender(
 			<PersistentReplyBar
 				workspaceId="ws-1"
-				activeId="obj-1"
-				activeTitle="Some Bet"
+				activeId="obj-2"
+				activeTitle="Another Bet"
 				parentEventId={null}
 				onClear={noop}
 				onSent={noop}
 			/>,
-			{ wrapper: TestWrapper },
 		)
-		await user.type(screen.getByRole('textbox'), 'hi @System')
-		await user.click(screen.getByRole('button', { name: /send reply/i }))
-		expect(mockMutate).toHaveBeenCalledWith(
-			expect.objectContaining({ mentions: undefined }),
-			expect.anything(),
-		)
-	})
-
-	it('omits mentions when no @Name matches an actor', async () => {
-		const user = userEvent.setup()
-		render(
-			<PersistentReplyBar
-				workspaceId="ws-1"
-				activeId="obj-1"
-				activeTitle="Some Bet"
-				parentEventId={null}
-				onClear={noop}
-				onSent={noop}
-			/>,
-			{ wrapper: TestWrapper },
-		)
-		await user.type(screen.getByRole('textbox'), 'no mentions here')
-		await user.click(screen.getByRole('button', { name: /send reply/i }))
-		expect(mockMutate).toHaveBeenCalledWith(
-			expect.objectContaining({ mentions: undefined }),
-			expect.anything(),
-		)
+		const secondTextarea = screen.getByPlaceholderText(
+			'Write a comment... Use @ to mention an agent',
+		) as HTMLTextAreaElement
+		expect(secondTextarea.value).toBe('')
 	})
 })

@@ -9,11 +9,12 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import type { UnreadItem } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useNewConversationComposer } from '@/lib/new-conversation-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
 	component: ForYouDashboard,
@@ -53,6 +54,17 @@ function ForYouDashboard() {
 		() => (activeId ? items.find((item) => item.entity_id === activeId) : null),
 		[activeId, items],
 	)
+
+	// If the active card's item drops out of the feed (e.g. a quick-reply chip's
+	// own mark-read call zeroes its unread_count, so it's no longer rendered),
+	// clear the selection — otherwise the reply bar keeps showing "Replying to:
+	// Untitled" for a card that isn't on the page anymore.
+	useEffect(() => {
+		if (activeId && !activeItem) {
+			setActiveId(null)
+			setActiveReplyTarget(null)
+		}
+	}, [activeId, activeItem])
 
 	// Advance the read high-water-mark for a single unread item, using the
 	// server's authoritative latest_event_id.
@@ -128,7 +140,7 @@ function ForYouDashboard() {
 
 	return (
 		<>
-			<div className="flex flex-col gap-4 pb-28">
+			<div className={cn('flex flex-col gap-4', activeId && 'pb-28')}>
 				<div className="flex items-center justify-between">
 					<div className="flex items-center gap-2">
 						<span className="text-sm font-medium text-foreground">For You</span>

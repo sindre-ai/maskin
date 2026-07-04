@@ -1,8 +1,7 @@
 import { useObjects } from '@/hooks/use-objects'
 import { useChat } from '@/lib/chat-context'
-import { useNewConversationComposer } from '@/lib/new-conversation-context'
 import { useWorkspace } from '@/lib/workspace-context'
-import { useMatchRoute, useNavigate } from '@tanstack/react-router'
+import { useNavigate } from '@tanstack/react-router'
 import { Command } from 'cmdk'
 import { useCallback, useEffect, useState } from 'react'
 
@@ -11,17 +10,7 @@ export function CommandPalette() {
 	const { workspaceId } = useWorkspace()
 	const { data: objects } = useObjects(workspaceId)
 	const { setOpen: setChatOpen } = useChat()
-	const { setOpen: setNewConversationOpen } = useNewConversationComposer()
 	const navigate = useNavigate()
-	const matchRoute = useMatchRoute()
-	// The For You dashboard owns ⌘N while it's the active route (opens its
-	// "New conversation" composer); everywhere else ⌘N creates a blank object.
-	// Single owner of the keybinding avoids two listeners racing on one keypress.
-	const onForYouDashboard = !!matchRoute({
-		to: '/$workspaceId',
-		params: { workspaceId },
-		fuzzy: false,
-	})
 
 	const navigateTo = useCallback(
 		(path: string) => {
@@ -47,22 +36,13 @@ export function CommandPalette() {
 				setChatOpen(true)
 				setOpen(false)
 			}
-			if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
-				e.preventDefault()
-				if (onForYouDashboard) {
-					setNewConversationOpen(true)
-				} else {
-					navigateTo(`/${workspaceId}/objects/${crypto.randomUUID()}`)
-				}
-				setOpen(false)
-			}
 			if (e.key === 'Escape') {
 				setOpen(false)
 			}
 		}
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
-	}, [navigateTo, workspaceId, setChatOpen, onForYouDashboard, setNewConversationOpen])
+	}, [setChatOpen])
 
 	if (!open) return null
 
@@ -154,10 +134,6 @@ export function CommandPalette() {
 						</span>
 						<span>
 							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘J</kbd> Chat
-						</span>
-						<span>
-							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘N</kbd>{' '}
-							{onForYouDashboard ? 'New conversation' : 'New object'}
 						</span>
 						<span>
 							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">Esc</kbd> Close

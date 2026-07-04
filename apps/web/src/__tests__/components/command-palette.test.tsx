@@ -18,10 +18,6 @@ installGlobalDomMocks()
 
 const mockNavigate = vi.fn()
 const mockSetChatOpen = vi.fn()
-const mockSetNewConversationOpen = vi.fn()
-// Defaults to "not on the For You dashboard" so the existing ⌘N→new-object
-// tests keep their original behavior; individual tests override this.
-const mockMatchRoute = vi.fn(() => false)
 
 vi.mock('@/hooks/use-objects', () => ({
 	useObjects: vi.fn(() => ({ data: [] })),
@@ -35,13 +31,8 @@ vi.mock('@/lib/chat-context', () => ({
 	useChat: () => ({ setOpen: mockSetChatOpen }),
 }))
 
-vi.mock('@/lib/new-conversation-context', () => ({
-	useNewConversationComposer: () => ({ setOpen: mockSetNewConversationOpen }),
-}))
-
 vi.mock('@tanstack/react-router', () => ({
 	useNavigate: () => mockNavigate,
-	useMatchRoute: () => mockMatchRoute,
 	Link: ({ children, ...rest }: { children: React.ReactNode; to?: string }) => (
 		<a href={rest.to} {...rest}>
 			{children}
@@ -56,7 +47,6 @@ describe('CommandPalette', () => {
 		vi.clearAllMocks()
 		installGlobalDomMocks()
 		vi.mocked(useObjects).mockReturnValue({ data: [] } as unknown as ReturnType<typeof useObjects>)
-		mockMatchRoute.mockReturnValue(false)
 	})
 
 	it('is not visible initially', () => {
@@ -139,31 +129,15 @@ describe('CommandPalette', () => {
 		expect(screen.queryByPlaceholderText('Search objects, navigate...')).not.toBeInTheDocument()
 	})
 
-	it('Ctrl+N navigates to create new object outside the For You dashboard', async () => {
+	it('does not bind Ctrl+N or Meta+N to anything (reserved by the browser for New Window)', async () => {
 		const user = userEvent.setup()
-		// Mock crypto.randomUUID
-		const mockUUID = '00000000-0000-0000-0000-000000000001'
-		vi.spyOn(crypto, 'randomUUID').mockReturnValue(
-			mockUUID as `${string}-${string}-${string}-${string}-${string}`,
-		)
-
 		render(<CommandPalette />)
+
 		await user.keyboard('{Control>}n{/Control}')
+		await user.keyboard('{Meta>}n{/Meta}')
 
-		expect(mockNavigate).toHaveBeenCalledWith({ to: `/ws-1/objects/${mockUUID}` })
-		expect(mockSetNewConversationOpen).not.toHaveBeenCalled()
-		vi.restoreAllMocks()
-	})
-
-	it('Ctrl+N opens the New Conversation composer on the For You dashboard instead of navigating', async () => {
-		mockMatchRoute.mockReturnValue(true)
-		const user = userEvent.setup()
-
-		render(<CommandPalette />)
-		await user.keyboard('{Control>}n{/Control}')
-
-		expect(mockSetNewConversationOpen).toHaveBeenCalledWith(true)
 		expect(mockNavigate).not.toHaveBeenCalled()
+		expect(screen.queryByPlaceholderText('Search objects, navigate...')).not.toBeInTheDocument()
 	})
 
 	it('Ctrl+J opens the chat sheet without opening the palette', async () => {
