@@ -1,17 +1,23 @@
 import { Button } from '@/components/ui/button'
 import { useSidebar } from '@/components/ui/sidebar'
 import { Textarea } from '@/components/ui/textarea'
+import { useActors } from '@/hooks/use-actors'
 import { useCreateComment } from '@/hooks/use-events'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/cn'
+import { parseMentions } from '@/lib/mentions'
 import { ArrowUp, MessageSquare, X } from 'lucide-react'
-import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 interface PersistentReplyBarProps {
 	workspaceId: string
 	activeId: string | null
 	activeTitle: string | null
+	// Event id the reply should nest under (the active card's first unread
+	// thread, or its latest thread) so replies land in the right conversation
+	// instead of starting a new top-level thread. Null if unknown yet.
+	parentEventId: number | null
 	onClear: () => void
 	// Called after a reply is successfully posted, so the parent can advance the
 	// thread's read high-water-mark (replying implies you've seen the thread).
@@ -24,6 +30,7 @@ export function PersistentReplyBar({
 	workspaceId,
 	activeId,
 	activeTitle,
+	parentEventId,
 	onClear,
 	onSent,
 }: PersistentReplyBarProps) {
@@ -33,6 +40,8 @@ export function PersistentReplyBar({
 	const textareaRef = useRef<HTMLTextAreaElement>(null)
 
 	const createComment = useCreateComment(workspaceId, activeId ?? '')
+	const { data: actors } = useActors(workspaceId, { enabled: !!activeId })
+	const mentionableActors = useMemo(() => (actors ?? []).filter((a) => !a.isSystem), [actors])
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure height when content changes
 	useLayoutEffect(() => {
@@ -51,8 +60,14 @@ export function PersistentReplyBar({
 	const handleSend = useCallback(() => {
 		const trimmed = content.trim()
 		if (!trimmed || !activeId) return
+		const mentions = parseMentions(trimmed, mentionableActors)
 		createComment.mutate(
-			{ entity_id: activeId, content: trimmed },
+			{
+				entity_id: activeId,
+				content: trimmed,
+				parent_event_id: parentEventId ?? undefined,
+				mentions: mentions.length > 0 ? mentions : undefined,
+			},
 			{
 				onSuccess: () => {
 					setContent('')
@@ -61,7 +76,7 @@ export function PersistentReplyBar({
 				},
 			},
 		)
-	}, [content, activeId, createComment, onSent])
+	}, [content, activeId, parentEventId, mentionableActors, createComment, onSent])
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {

@@ -9,10 +9,11 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import type { UnreadItem } from '@/lib/api'
+import { useNewConversationComposer } from '@/lib/new-conversation-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
 	component: ForYouDashboard,
@@ -24,7 +25,8 @@ function ForYouDashboard() {
 	const { data, isLoading } = useUnread(workspaceId)
 	const items = data?.items ?? []
 	const [activeId, setActiveId] = useState<string | null>(null)
-	const [composerOpen, setComposerOpen] = useState(false)
+	const [activeReplyTarget, setActiveReplyTarget] = useState<number | null>(null)
+	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
 	const markRead = useMarkRead(workspaceId)
 
 	// Onboarding sessions render as their own prompt card above the thread stream.
@@ -68,24 +70,6 @@ function ForYouDashboard() {
 	)
 
 	const totalUnread = items.reduce((sum, item) => sum + (item.unread_count ?? 0), 0)
-
-	// ⌘N / Ctrl+N opens the composer. Prevent the default browser "new window" so
-	// the shortcut stays scoped to this page.
-	useEffect(() => {
-		function onKeyDown(e: KeyboardEvent) {
-			const mod = e.metaKey || e.ctrlKey
-			if (!mod || e.key.toLowerCase() !== 'n' || e.shiftKey || e.altKey) return
-			const target = e.target as HTMLElement | null
-			const tag = target?.tagName?.toLowerCase()
-			if (target?.isContentEditable || tag === 'input' || tag === 'textarea' || tag === 'select') {
-				return
-			}
-			e.preventDefault()
-			setComposerOpen(true)
-		}
-		window.addEventListener('keydown', onKeyDown)
-		return () => window.removeEventListener('keydown', onKeyDown)
-	}, [])
 
 	// Fires one mutation per thread — non-batched by design; typical inboxes are small
 	// and a batch endpoint doesn't exist yet. Onboarding prompts render as their own
@@ -189,7 +173,11 @@ function ForYouDashboard() {
 							workspaceId={workspaceId}
 							item={item}
 							isActive={activeId === item.entity_id}
-							onActivate={() => setActiveId(item.entity_id)}
+							onActivate={() => {
+								setActiveId(item.entity_id)
+								setActiveReplyTarget(null)
+							}}
+							onReplyTargetChange={setActiveReplyTarget}
 						/>
 					))}
 					{isSparse ? <SparseComposer itemsCount={items.length} /> : null}
@@ -199,7 +187,11 @@ function ForYouDashboard() {
 				workspaceId={workspaceId}
 				activeId={activeId}
 				activeTitle={activeItem?.object?.title ?? null}
-				onClear={() => setActiveId(null)}
+				parentEventId={activeReplyTarget}
+				onClear={() => {
+					setActiveId(null)
+					setActiveReplyTarget(null)
+				}}
 				onSent={() => {
 					if (activeItem) markItemRead(activeItem)
 				}}

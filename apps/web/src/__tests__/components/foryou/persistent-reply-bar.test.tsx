@@ -18,6 +18,15 @@ vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: mockMutate, isPending: false }),
 }))
 
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({
+		data: [
+			{ id: 'alice', name: 'Alice', type: 'human', isSystem: false },
+			{ id: 'system-1', name: 'System', type: 'agent', isSystem: true },
+		],
+	}),
+}))
+
 vi.mock('sonner', () => ({
 	toast: vi.fn(),
 }))
@@ -37,6 +46,7 @@ describe('PersistentReplyBar', () => {
 				workspaceId="ws-1"
 				activeId={null}
 				activeTitle={null}
+				parentEventId={null}
 				onClear={noop}
 				onSent={noop}
 			/>,
@@ -51,6 +61,7 @@ describe('PersistentReplyBar', () => {
 				workspaceId="ws-1"
 				activeId="obj-1"
 				activeTitle="Some Bet"
+				parentEventId={null}
 				onClear={noop}
 				onSent={noop}
 			/>,
@@ -65,6 +76,7 @@ describe('PersistentReplyBar', () => {
 				workspaceId="ws-1"
 				activeId="obj-1"
 				activeTitle="Some Bet"
+				parentEventId={null}
 				onClear={noop}
 				onSent={noop}
 			/>,
@@ -79,6 +91,7 @@ describe('PersistentReplyBar', () => {
 				workspaceId="ws-1"
 				activeId={null}
 				activeTitle={null}
+				parentEventId={null}
 				onClear={noop}
 				onSent={noop}
 			/>,
@@ -97,6 +110,7 @@ describe('PersistentReplyBar', () => {
 				workspaceId="ws-1"
 				activeId="obj-1"
 				activeTitle="Some Bet"
+				parentEventId={null}
 				onClear={noop}
 				onSent={noop}
 			/>,
@@ -120,6 +134,7 @@ describe('PersistentReplyBar', () => {
 				workspaceId="ws-1"
 				activeId="obj-1"
 				activeTitle="Some Bet"
+				parentEventId={null}
 				onClear={noop}
 				onSent={onSent}
 			/>,
@@ -141,6 +156,7 @@ describe('PersistentReplyBar', () => {
 				workspaceId="ws-1"
 				activeId="obj-1"
 				activeTitle="Some Bet"
+				parentEventId={null}
 				onClear={noop}
 				onSent={onSent}
 			/>,
@@ -159,6 +175,7 @@ describe('PersistentReplyBar', () => {
 				workspaceId="ws-1"
 				activeId="obj-1"
 				activeTitle="Some Bet"
+				parentEventId={null}
 				onClear={onClear}
 				onSent={noop}
 			/>,
@@ -166,5 +183,89 @@ describe('PersistentReplyBar', () => {
 		)
 		await user.click(screen.getByRole('button', { name: /clear selection/i }))
 		expect(onClear).toHaveBeenCalled()
+	})
+
+	it('sends the reply as a nested reply using parentEventId', async () => {
+		const user = userEvent.setup()
+		render(
+			<PersistentReplyBar
+				workspaceId="ws-1"
+				activeId="obj-1"
+				activeTitle="Some Bet"
+				parentEventId={42}
+				onClear={noop}
+				onSent={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		await user.type(screen.getByRole('textbox'), 'hello')
+		await user.click(screen.getByRole('button', { name: /send reply/i }))
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.objectContaining({ parent_event_id: 42 }),
+			expect.anything(),
+		)
+	})
+
+	it('derives mentions from @Name text against the workspace actor list', async () => {
+		const user = userEvent.setup()
+		render(
+			<PersistentReplyBar
+				workspaceId="ws-1"
+				activeId="obj-1"
+				activeTitle="Some Bet"
+				parentEventId={null}
+				onClear={noop}
+				onSent={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		await user.type(screen.getByRole('textbox'), 'thanks @Alice')
+		await user.click(screen.getByRole('button', { name: /send reply/i }))
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.objectContaining({ mentions: ['alice'] }),
+			expect.anything(),
+		)
+	})
+
+	it('omits system actors from mention matching', async () => {
+		const user = userEvent.setup()
+		render(
+			<PersistentReplyBar
+				workspaceId="ws-1"
+				activeId="obj-1"
+				activeTitle="Some Bet"
+				parentEventId={null}
+				onClear={noop}
+				onSent={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		await user.type(screen.getByRole('textbox'), 'hi @System')
+		await user.click(screen.getByRole('button', { name: /send reply/i }))
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.objectContaining({ mentions: undefined }),
+			expect.anything(),
+		)
+	})
+
+	it('omits mentions when no @Name matches an actor', async () => {
+		const user = userEvent.setup()
+		render(
+			<PersistentReplyBar
+				workspaceId="ws-1"
+				activeId="obj-1"
+				activeTitle="Some Bet"
+				parentEventId={null}
+				onClear={noop}
+				onSent={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		await user.type(screen.getByRole('textbox'), 'no mentions here')
+		await user.click(screen.getByRole('button', { name: /send reply/i }))
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.objectContaining({ mentions: undefined }),
+			expect.anything(),
+		)
 	})
 })

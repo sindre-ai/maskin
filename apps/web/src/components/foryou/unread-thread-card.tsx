@@ -27,6 +27,11 @@ interface UnreadThreadCardProps {
 	item: UnreadItem
 	isActive: boolean
 	onActivate: () => void
+	// Reports the event id a reply should nest under (the first unread root, or
+	// the latest thread if nothing's unread) whenever this card is active and
+	// that target changes — so PersistentReplyBar can thread its replies
+	// correctly. Only fires while isActive; other cards' updates are ignored.
+	onReplyTargetChange: (replyTarget: number | null) => void
 }
 
 interface CommentNode {
@@ -45,6 +50,7 @@ export function UnreadThreadCard({
 	item,
 	isActive,
 	onActivate,
+	onReplyTargetChange,
 }: UnreadThreadCardProps) {
 	const objectId = item.entity_id
 
@@ -72,89 +78,94 @@ export function UnreadThreadCard({
 	})
 	const currentActorId = getStoredActor()?.id ?? null
 
-	const { nodes, firstUnreadRootId, firstUnreadEventId, latestEventId } = useMemo(() => {
-		if (!events) {
+	const { nodes, firstUnreadRootId, firstUnreadEventId, latestRootId, latestEventId } =
+		useMemo(() => {
+			if (!events) {
+				return {
+					nodes: [] as CommentNode[],
+					firstUnreadRootId: null as number | null,
+					firstUnreadEventId: null as number | null,
+					latestRootId: null as number | null,
+					latestEventId: 0,
+				}
+			}
+			const chronological = [...events].reverse()
+
+			const repliesByParent = new Map<number, EventResponse[]>()
+			const roots: EventResponse[] = []
+			for (const event of chronological) {
+				if (event.action !== 'commented') continue
+				const parentId = event.data?.parentEventId as number | undefined
+				if (parentId) {
+					const list = repliesByParent.get(parentId) ?? []
+					list.push(event)
+					repliesByParent.set(parentId, list)
+					continue
+				}
+				roots.push(event)
+			}
+
+			const built: CommentNode[] = roots.map((root) => ({
+				root,
+				replies: repliesByParent.get(root.id) ?? [],
+			}))
+
+			let maxId = 0
+			for (const node of built) {
+				if (node.root.id > maxId) maxId = node.root.id
+				for (const reply of node.replies) if (reply.id > maxId) maxId = reply.id
+			}
+
+			// Walk the *flat* timeline (root + replies in chronological order)
+			// from the newest backward, counting comments that don't belong to
+			// the viewer. item.unread_count anchors the boundary so the divider
+			// always reflects the server's count even when the local event list
+			// is partial.
+			const flat: { rootId: number; eventId: number; actorId: string }[] = []
+			for (const node of built) {
+				flat.push({ rootId: node.root.id, eventId: node.root.id, actorId: node.root.actorId })
+				for (const reply of node.replies) {
+					flat.push({ rootId: node.root.id, eventId: reply.id, actorId: reply.actorId })
+				}
+			}
+
+			const targetCount = item.unread_count
+			let counted = 0
+			let boundaryRootId: number | null = null
+			let boundaryEventId: number | null = null
+			let oldestUnreadRootId: number | null = null
+			let oldestUnreadEventId: number | null = null
+			for (let i = flat.length - 1; i >= 0 && counted < targetCount; i--) {
+				const entry = flat[i]
+				if (!entry) continue
+				if (currentActorId && entry.actorId === currentActorId) continue
+				counted++
+				oldestUnreadRootId = entry.rootId
+				oldestUnreadEventId = entry.eventId
+				if (counted === targetCount) {
+					boundaryRootId = entry.rootId
+					boundaryEventId = entry.eventId
+				}
+			}
+
+			// If the server reports more unread events than we have loaded (the
+			// events query is capped at 50), anchor to the oldest non-viewer comment
+			// in the loaded window so the divider still appears above visible unread activity.
+			if (boundaryEventId === null && targetCount > 0 && oldestUnreadEventId !== null) {
+				boundaryRootId = oldestUnreadRootId
+				boundaryEventId = oldestUnreadEventId
+			}
+
+			const lastNode = built.length > 0 ? built[built.length - 1] : null
+
 			return {
-				nodes: [] as CommentNode[],
-				firstUnreadRootId: null as number | null,
-				firstUnreadEventId: null as number | null,
-				latestEventId: 0,
+				nodes: built,
+				firstUnreadRootId: boundaryRootId,
+				firstUnreadEventId: boundaryEventId,
+				latestRootId: lastNode?.root.id ?? null,
+				latestEventId: maxId,
 			}
-		}
-		const chronological = [...events].reverse()
-
-		const repliesByParent = new Map<number, EventResponse[]>()
-		const roots: EventResponse[] = []
-		for (const event of chronological) {
-			if (event.action !== 'commented') continue
-			const parentId = event.data?.parentEventId as number | undefined
-			if (parentId) {
-				const list = repliesByParent.get(parentId) ?? []
-				list.push(event)
-				repliesByParent.set(parentId, list)
-				continue
-			}
-			roots.push(event)
-		}
-
-		const built: CommentNode[] = roots.map((root) => ({
-			root,
-			replies: repliesByParent.get(root.id) ?? [],
-		}))
-
-		let maxId = 0
-		for (const node of built) {
-			if (node.root.id > maxId) maxId = node.root.id
-			for (const reply of node.replies) if (reply.id > maxId) maxId = reply.id
-		}
-
-		// Walk the *flat* timeline (root + replies in chronological order)
-		// from the newest backward, counting comments that don't belong to
-		// the viewer. item.unread_count anchors the boundary so the divider
-		// always reflects the server's count even when the local event list
-		// is partial.
-		const flat: { rootId: number; eventId: number; actorId: string }[] = []
-		for (const node of built) {
-			flat.push({ rootId: node.root.id, eventId: node.root.id, actorId: node.root.actorId })
-			for (const reply of node.replies) {
-				flat.push({ rootId: node.root.id, eventId: reply.id, actorId: reply.actorId })
-			}
-		}
-
-		const targetCount = item.unread_count
-		let counted = 0
-		let boundaryRootId: number | null = null
-		let boundaryEventId: number | null = null
-		let oldestUnreadRootId: number | null = null
-		let oldestUnreadEventId: number | null = null
-		for (let i = flat.length - 1; i >= 0 && counted < targetCount; i--) {
-			const entry = flat[i]
-			if (!entry) continue
-			if (currentActorId && entry.actorId === currentActorId) continue
-			counted++
-			oldestUnreadRootId = entry.rootId
-			oldestUnreadEventId = entry.eventId
-			if (counted === targetCount) {
-				boundaryRootId = entry.rootId
-				boundaryEventId = entry.eventId
-			}
-		}
-
-		// If the server reports more unread events than we have loaded (the
-		// events query is capped at 50), anchor to the oldest non-viewer comment
-		// in the loaded window so the divider still appears above visible unread activity.
-		if (boundaryEventId === null && targetCount > 0 && oldestUnreadEventId !== null) {
-			boundaryRootId = oldestUnreadRootId
-			boundaryEventId = oldestUnreadEventId
-		}
-
-		return {
-			nodes: built,
-			firstUnreadRootId: boundaryRootId,
-			firstUnreadEventId: boundaryEventId,
-			latestEventId: maxId,
-		}
-	}, [events, item.unread_count, currentActorId])
+		}, [events, item.unread_count, currentActorId])
 
 	const markRead = useMarkRead(workspaceId)
 	const handleMarkRead = useCallback(() => {
@@ -162,6 +173,18 @@ export function UnreadThreadCard({
 		if (target <= 0) return
 		markRead.mutate({ entityType: item.entity_type, entityId: objectId, lastEventId: target })
 	}, [markRead, item.entity_type, objectId, item.latest_event_id, latestEventId])
+
+	// Reply target for both quick-reply chips (below) and the PersistentReplyBar
+	// (via onReplyTargetChange): nest under the first unread thread, or the
+	// latest thread if nothing's unread — same target the old per-card
+	// CommentInput used, so replies land in the right thread instead of
+	// starting a new top-level conversation.
+	const replyTarget = firstUnreadRootId ?? latestRootId ?? undefined
+
+	useEffect(() => {
+		if (!isActive) return
+		onReplyTargetChange(replyTarget ?? null)
+	}, [isActive, replyTarget, onReplyTargetChange])
 
 	const quickReply = useCreateComment(workspaceId, objectId)
 
@@ -318,7 +341,7 @@ export function UnreadThreadCard({
 							onClick={(e) => {
 								e.stopPropagation()
 								quickReply.mutate(
-									{ entity_id: objectId, content: chip },
+									{ entity_id: objectId, content: chip, parent_event_id: replyTarget },
 									{
 										onSuccess: () => {
 											handleMarkRead()

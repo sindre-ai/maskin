@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { UnreadItem } from '@/lib/api'
@@ -6,6 +6,8 @@ import { buildObjectResponse } from '../factories'
 
 const mockUseUnread = vi.fn()
 const mockMarkReadMutate = vi.fn()
+const mockSetComposerOpen = vi.fn()
+let mockComposerOpen = false
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -26,6 +28,13 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 
 vi.mock('@/components/foryou/persistent-reply-bar', () => ({
 	PersistentReplyBar: () => null,
+}))
+
+vi.mock('@/lib/new-conversation-context', () => ({
+	useNewConversationComposer: () => ({
+		open: mockComposerOpen,
+		setOpen: mockSetComposerOpen,
+	}),
 }))
 
 vi.mock('@/components/foryou/unread-thread-card', () => ({
@@ -83,6 +92,7 @@ function buildUnreadItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 describe('ForYouDashboard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mockComposerOpen = false
 	})
 
 	it('shows loading skeletons while loading', () => {
@@ -191,29 +201,21 @@ describe('ForYouDashboard', () => {
 		})
 	})
 
-	it('opens the new-conversation composer when ⌘N is pressed', () => {
+	// ⌘N itself is owned by CommandPalette (see command-palette.test.tsx) — it
+	// opens this page's composer via the shared NewConversationComposer context.
+	// Here we only cover this page's own trigger: the "New" header button.
+	it('clicking the "New" button opens the new-conversation composer', () => {
 		mockUseUnread.mockReturnValue({ data: { items: [] }, isLoading: false })
 		render(<ForYouDashboard />)
-		expect(screen.queryByTestId('new-conversation-composer')).not.toBeInTheDocument()
-		act(() => {
-			fireEvent.keyDown(window, { key: 'n', metaKey: true })
-		})
-		expect(screen.getByTestId('new-conversation-composer')).toBeInTheDocument()
+		fireEvent.click(screen.getByRole('button', { name: 'New conversation' }))
+		expect(mockSetComposerOpen).toHaveBeenCalledWith(true)
 	})
 
-	it('ignores ⌘N when keydown originates inside an input', () => {
+	it('renders the new-conversation composer as open when the shared context reports open', () => {
+		mockComposerOpen = true
 		mockUseUnread.mockReturnValue({ data: { items: [] }, isLoading: false })
 		render(<ForYouDashboard />)
-		const input = document.createElement('input')
-		document.body.appendChild(input)
-		try {
-			act(() => {
-				fireEvent.keyDown(input, { key: 'n', metaKey: true })
-			})
-			expect(screen.queryByTestId('new-conversation-composer')).not.toBeInTheDocument()
-		} finally {
-			input.remove()
-		}
+		expect(screen.getByTestId('new-conversation-composer')).toBeInTheDocument()
 	})
 
 	it('renders the sparse composer with items_count=0 on the empty state', () => {

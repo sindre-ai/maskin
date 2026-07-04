@@ -83,6 +83,7 @@ describe('UnreadThreadCard', () => {
 				item={buildItem({ unread_count: 3 })}
 				isActive={false}
 				onActivate={noop}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -98,6 +99,7 @@ describe('UnreadThreadCard', () => {
 				item={buildItem({ mentions_you: true })}
 				isActive={false}
 				onActivate={noop}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -112,6 +114,7 @@ describe('UnreadThreadCard', () => {
 				item={buildItem({ mentions_you: false })}
 				isActive={false}
 				onActivate={noop}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -132,6 +135,7 @@ describe('UnreadThreadCard', () => {
 				item={buildItem({ unread_count: 2 })}
 				isActive={false}
 				onActivate={noop}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -148,6 +152,7 @@ describe('UnreadThreadCard', () => {
 				item={buildItem({ unread_count: 0 })}
 				isActive={false}
 				onActivate={noop}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -157,7 +162,13 @@ describe('UnreadThreadCard', () => {
 	it('renders no per-card reply textarea', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		render(
-			<UnreadThreadCard workspaceId="ws-1" item={buildItem()} isActive={false} onActivate={noop} />,
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem()}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
 			{ wrapper: TestWrapper },
 		)
 		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
@@ -166,7 +177,13 @@ describe('UnreadThreadCard', () => {
 	it('renders a Reply button in the footer', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		render(
-			<UnreadThreadCard workspaceId="ws-1" item={buildItem()} isActive={false} onActivate={noop} />,
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem()}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
 			{ wrapper: TestWrapper },
 		)
 		expect(screen.getByRole('button', { name: /reply/i })).toBeInTheDocument()
@@ -175,7 +192,13 @@ describe('UnreadThreadCard', () => {
 	it('shows "Replying…" on the Reply button when isActive is true', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		render(
-			<UnreadThreadCard workspaceId="ws-1" item={buildItem()} isActive={true} onActivate={noop} />,
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem()}
+				isActive={true}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
 			{ wrapper: TestWrapper },
 		)
 		expect(screen.getByRole('button', { name: /replying/i })).toBeInTheDocument()
@@ -185,7 +208,13 @@ describe('UnreadThreadCard', () => {
 	it('applies active ring styling when isActive is true', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		const { container } = render(
-			<UnreadThreadCard workspaceId="ws-1" item={buildItem()} isActive={true} onActivate={noop} />,
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem()}
+				isActive={true}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
 			{ wrapper: TestWrapper },
 		)
 		// The outer wrapper is the firstChild; the inner card is the second child of the wrapper.
@@ -196,7 +225,13 @@ describe('UnreadThreadCard', () => {
 	it('does not apply ring styling when isActive is false', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		const { container } = render(
-			<UnreadThreadCard workspaceId="ws-1" item={buildItem()} isActive={false} onActivate={noop} />,
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem()}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
 			{ wrapper: TestWrapper },
 		)
 		const card = container.firstChild?.childNodes[1] as HTMLElement
@@ -213,6 +248,7 @@ describe('UnreadThreadCard', () => {
 				item={buildItem()}
 				isActive={false}
 				onActivate={onActivate}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -232,6 +268,7 @@ describe('UnreadThreadCard', () => {
 				item={buildItem()}
 				isActive={false}
 				onActivate={onActivate}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -256,6 +293,7 @@ describe('UnreadThreadCard', () => {
 				item={buildItem({ unread_count: 1 })}
 				isActive={false}
 				onActivate={noop}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -278,6 +316,7 @@ describe('UnreadThreadCard', () => {
 				item={buildItem({ unread_count: 5 })}
 				isActive={false}
 				onActivate={noop}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -294,6 +333,7 @@ describe('UnreadThreadCard', () => {
 				item={buildItem({ unread_count: 1 })}
 				isActive={false}
 				onActivate={noop}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -311,6 +351,7 @@ describe('UnreadThreadCard', () => {
 				item={buildItem({ unread_count: 1, latest_event_id: 42 })}
 				isActive={false}
 				onActivate={noop}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -333,6 +374,7 @@ describe('UnreadThreadCard', () => {
 				})}
 				isActive={false}
 				onActivate={noop}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -349,6 +391,7 @@ describe('UnreadThreadCard', () => {
 				})}
 				isActive={false}
 				onActivate={noop}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -358,7 +401,13 @@ describe('UnreadThreadCard', () => {
 	it('renders the swipe-to-mark-read green background element', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		const { container } = render(
-			<UnreadThreadCard workspaceId="ws-1" item={buildItem()} isActive={false} onActivate={noop} />,
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem()}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
 			{ wrapper: TestWrapper },
 		)
 		// The green reveal background is the first child of the outer wrapper
@@ -370,7 +419,13 @@ describe('UnreadThreadCard', () => {
 	it('renders Mark as read button in the card footer', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		render(
-			<UnreadThreadCard workspaceId="ws-1" item={buildItem()} isActive={false} onActivate={noop} />,
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem()}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
 			{ wrapper: TestWrapper },
 		)
 		expect(screen.getByRole('button', { name: /mark as read/i })).toBeInTheDocument()
@@ -380,14 +435,112 @@ describe('UnreadThreadCard', () => {
 		const user = userEvent.setup()
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		render(
-			<UnreadThreadCard workspaceId="ws-1" item={buildItem()} isActive={false} onActivate={noop} />,
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem()}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
 			{ wrapper: TestWrapper },
 		)
 		await user.click(screen.getByRole('button', { name: 'On it' }))
 		expect(mockCreateCommentMutate).toHaveBeenCalledWith(
-			{ entity_id: 'obj-1', content: 'On it' },
+			{ entity_id: 'obj-1', content: 'On it', parent_event_id: undefined },
 			expect.objectContaining({ onSuccess: expect.any(Function) }),
 		)
+	})
+
+	it('threads a quick-reply chip under the first unread root when unread activity exists', async () => {
+		const user = userEvent.setup()
+		mockUseEntityEvents.mockReturnValue({
+			data: [
+				buildComment({ id: 20, actorId: 'other', data: { content: 'unread', parentEventId: 10 } }),
+				buildComment({ id: 10, actorId: 'viewer', data: { content: 'root' } }),
+			],
+		})
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ unread_count: 1 })}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		await user.click(screen.getByRole('button', { name: 'On it' }))
+		expect(mockCreateCommentMutate).toHaveBeenCalledWith(
+			{ entity_id: 'obj-1', content: 'On it', parent_event_id: 10 },
+			expect.objectContaining({ onSuccess: expect.any(Function) }),
+		)
+	})
+
+	it('threads a quick-reply chip under the latest root when nothing is unread', async () => {
+		const user = userEvent.setup()
+		mockUseEntityEvents.mockReturnValue({
+			data: [
+				buildComment({ id: 30, actorId: 'viewer', data: { content: 'newer root' } }),
+				buildComment({ id: 10, actorId: 'viewer', data: { content: 'older root' } }),
+			],
+		})
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ unread_count: 0 })}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		await user.click(screen.getByRole('button', { name: 'On it' }))
+		expect(mockCreateCommentMutate).toHaveBeenCalledWith(
+			{ entity_id: 'obj-1', content: 'On it', parent_event_id: 30 },
+			expect.objectContaining({ onSuccess: expect.any(Function) }),
+		)
+	})
+
+	it('reports the reply target to the parent only while active, and when it changes', () => {
+		mockUseEntityEvents.mockReturnValue({
+			data: [
+				buildComment({ id: 20, actorId: 'other', data: { content: 'unread', parentEventId: 10 } }),
+				buildComment({ id: 10, actorId: 'viewer', data: { content: 'root' } }),
+			],
+		})
+		const onReplyTargetChange = vi.fn()
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ unread_count: 1 })}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={onReplyTargetChange}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(onReplyTargetChange).not.toHaveBeenCalled()
+	})
+
+	it('reports the first-unread reply target to the parent while active', () => {
+		mockUseEntityEvents.mockReturnValue({
+			data: [
+				buildComment({ id: 20, actorId: 'other', data: { content: 'unread', parentEventId: 10 } }),
+				buildComment({ id: 10, actorId: 'viewer', data: { content: 'root' } }),
+			],
+		})
+		const onReplyTargetChange = vi.fn()
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ unread_count: 1 })}
+				isActive={true}
+				onActivate={noop}
+				onReplyTargetChange={onReplyTargetChange}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(onReplyTargetChange).toHaveBeenCalledWith(10)
 	})
 
 	// Regression lock for the v4 "no height cap, page scroll" direction. The shipped
@@ -407,6 +560,7 @@ describe('UnreadThreadCard', () => {
 				item={buildItem({ unread_count: 25, latest_event_id: 124 })}
 				isActive={false}
 				onActivate={noop}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
@@ -446,6 +600,7 @@ describe('UnreadThreadCard', () => {
 				item={buildItem({ latest_event_id: 20 })}
 				isActive={false}
 				onActivate={noop}
+				onReplyTargetChange={noop}
 			/>,
 			{ wrapper: TestWrapper },
 		)
