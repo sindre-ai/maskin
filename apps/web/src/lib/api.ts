@@ -1340,7 +1340,6 @@ interface InstalledPackageForkResponse {
 	forkedAt: string | null
 	installedAt: string | null
 	updatedAt: string | null
-
 }
 export interface ConversationParticipantActor {
 	actorId: string

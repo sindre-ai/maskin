@@ -113,6 +113,7 @@ export const queryKeys = {
 	installedPackages: {
 		all: (workspaceId: string) => ['installed-packages', workspaceId] as const,
 		list: (workspaceId: string) => ['installed-packages', workspaceId, 'list'] as const,
+	},
 	conversations: {
 		all: (workspaceId: string) => ['conversations', workspaceId] as const,
 		messages: (conversationId: string) => ['conversations', 'messages', conversationId] as const,

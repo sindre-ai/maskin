@@ -220,6 +220,7 @@ export function Header() {
 						className="h-7 w-7"
 						onClick={() => setSindreOpen(true)}
 						aria-label="Open Sindre"
+					>
 						<Sparkles size={15} />
 					</Button>
 				</div>

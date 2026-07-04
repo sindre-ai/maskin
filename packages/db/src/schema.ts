@@ -895,7 +895,7 @@ export const sessionDispatchAttempts = pgTable(
 export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
 export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
 
-		export const conversations = pgTable(
+export const conversations = pgTable(
 	'conversations',
 	{
 		id: uuid('id').defaultRandom().primaryKey(),
@@ -961,4 +961,3 @@ export const messages = pgTable(
 
 export type Message = typeof messages.$inferSelect
 export type NewMessage = typeof messages.$inferInsert
-
