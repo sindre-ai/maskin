@@ -1819,6 +1819,14 @@ export function createMcpServer(config: McpConfig) {
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
 			if (args.driver) params.set('driver', args.driver)
+			if (args.updated_before) params.set('updated_before', args.updated_before)
+			if (args.updated_after) params.set('updated_after', args.updated_after)
+			if (args.sort) {
+				// Map MCP sort enum → the route's (sort, order) pair. Keeps the MCP
+				// surface narrow while reusing the existing route contract.
+				params.set('sort', 'updatedAt')
+				params.set('order', args.sort === 'updated_at_asc' ? 'asc' : 'desc')
+			}
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
 			const result = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
@@ -3482,6 +3490,8 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.status) params.set('status', args.status)
 			if (args.actor_id) params.set('actor_id', args.actor_id)
+			if (args.updated_before) params.set('updated_before', args.updated_before)
+			if (args.updated_after) params.set('updated_after', args.updated_after)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId

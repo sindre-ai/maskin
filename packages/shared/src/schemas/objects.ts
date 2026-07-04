@@ -96,6 +96,10 @@ export const objectQuerySchema = z.object({
 	status: z.string().optional(),
 	driver: z.string().optional(),
 	ids: z.string().optional(),
+	/** Half-open: rows satisfy `updated_at < updated_before`. Bound excluded. */
+	updated_before: z.string().datetime({ offset: true }).optional(),
+	/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */
+	updated_after: z.string().datetime({ offset: true }).optional(),
 	sort: sortFieldSchema,
 	order: z.enum(['asc', 'desc']).default('desc'),
 	limit: z.coerce.number().int().min(1).max(100).default(50),
