@@ -220,7 +220,7 @@ export function UnreadThreadCard({
 
 	return (
 		// Outer wrapper holds the green swipe-reveal background; the card translates over it.
-		<div ref={cardRef} className="relative overflow-hidden rounded-lg">
+		<div ref={cardRef} data-testid="unread-thread-card" className="relative overflow-hidden rounded-lg">
 			{/* Green background revealed on swipe-right */}
 			<div
 				aria-hidden
