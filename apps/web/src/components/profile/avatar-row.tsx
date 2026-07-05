@@ -9,7 +9,7 @@ import {
 	ResponsiveDialogHeader,
 	ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
-import { useUploadAvatar } from '@/hooks/use-actors'
+import { useActorAvatarUrl, useUploadAvatar } from '@/hooks/use-actors'
 import { trackEvent } from '@/lib/analytics'
 import { type ActorResponse, ApiError } from '@/lib/api'
 import { type ChangeEvent, useEffect, useRef, useState } from 'react'
@@ -22,6 +22,7 @@ const ACCEPT_MIME = new Set(['image/jpeg', 'image/png', 'image/webp'])
 export function AvatarRow({ actor }: { actor: ActorResponse }) {
 	const [open, setOpen] = useState(false)
 	const [showSaved, setShowSaved] = useState(false)
+	const { data: avatarUrl } = useActorAvatarUrl(actor.id, actor.avatar_storage_key)
 
 	useEffect(() => {
 		if (!showSaved) return
@@ -36,7 +37,7 @@ export function AvatarRow({ actor }: { actor: ActorResponse }) {
 		>
 			<div className="pt-1 text-sm font-medium text-muted-foreground">Avatar</div>
 			<div className="flex items-center justify-between gap-4">
-				<ActorAvatar name={actor.name} type={actor.type} size="lg" />
+				<ActorAvatar name={actor.name} type={actor.type} avatarUrl={avatarUrl} size="lg" />
 				<div className="flex items-center gap-3">
 					{showSaved ? <span className="text-xs text-muted-foreground">Saved</span> : null}
 					<Button

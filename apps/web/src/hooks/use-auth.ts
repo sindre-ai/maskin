@@ -6,6 +6,7 @@ import {
 	type CreateActorInput,
 	type LoginInput,
 	type RequestEmailChangeInput,
+	type VerifyEmailChangeInput,
 	api,
 } from '../lib/api'
 import {
@@ -87,6 +88,27 @@ export function useRequestEmailChange(actorId: string) {
 		mutationFn: (data: RequestEmailChangeInput) => api.auth.requestEmailChange(data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(actorId) })
+		},
+	})
+}
+
+// Confirms a pending email change from the link sent to the new address.
+// The backend bypasses auth for this route (the token itself proves
+// ownership), so this also works for a browser tab with no session yet —
+// we log it in with the returned api_key, same as signup/login.
+export function useVerifyEmailChange() {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (data: VerifyEmailChangeInput) => api.auth.verifyEmailChange(data),
+		onSuccess: (result) => {
+			setApiKey(result.api_key)
+			setStoredActor({
+				id: result.id,
+				name: result.name,
+				type: result.type,
+				email: result.email,
+			})
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(result.id) })
 		},
 	})
 }

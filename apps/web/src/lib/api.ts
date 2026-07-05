@@ -227,6 +227,8 @@ export const api = {
 			request<ActorWithKey>('/auth/password', { method: 'POST', body: data }),
 		requestEmailChange: (data: RequestEmailChangeInput) =>
 			request<ActorWithKey>('/auth/email-change', { method: 'POST', body: data }),
+		verifyEmailChange: (data: VerifyEmailChangeInput) =>
+			request<ActorWithKey>('/auth/email-change/verify', { method: 'POST', body: data }),
 		cancelEmailChange: () => request<ActorWithKey>('/auth/email-change/cancel', { method: 'POST' }),
 	},
 
@@ -271,6 +273,8 @@ export const api = {
 		delete: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/actors/${id}`, { method: 'DELETE', workspaceId }),
 		uploadAvatar: (id: string, file: File) => uploadAvatarMultipart(id, file),
+		getAvatar: (id: string) =>
+			request<{ content: string; mime_type: string }>(`/actors/${id}/avatar`),
 	},
 
 	workspaces: {
@@ -843,6 +847,10 @@ export interface ChangePasswordInput {
 export interface RequestEmailChangeInput {
 	new_email: string
 	current_password: string
+}
+
+export interface VerifyEmailChangeInput {
+	token: string
 }
 
 export interface CreateActorInput {

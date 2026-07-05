@@ -46,7 +46,7 @@ import {
 } from '../lib/openapi-schemas'
 import { emitProfileFieldChanged } from '../lib/profile-telemetry'
 import { serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceMember, shareWorkspace } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
 import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
@@ -73,6 +73,12 @@ function mimeToExt(mime: string): string | null {
 	if (mime === 'image/png') return 'png'
 	if (mime === 'image/webp') return 'webp'
 	return null
+}
+
+function extToMime(storageKey: string): string {
+	if (storageKey.endsWith('.png')) return 'image/png'
+	if (storageKey.endsWith('.webp')) return 'image/webp'
+	return 'image/jpeg'
 }
 
 // Verify the file's leading bytes match the format the client claims. The
@@ -619,11 +625,19 @@ const getActorRoute = createRoute({
 
 app.openapi(getActorRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 
 	const [actor] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
 
 	if (!actor) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	// This is a by-ID route: the workspace is derived from the resource, not a
+	// header, so it needs its own membership check. Viewing another actor
+	// requires sharing a workspace with them; viewing yourself is always fine.
+	if (id !== actorId && !(await shareWorkspace(db, actorId, id))) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
@@ -681,7 +695,10 @@ app.openapi(updateActorRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	if (existing.type === 'human' && id !== actorId) {
+	// Self-updates need no extra check. Updating another actor — human or
+	// agent — requires workspace context; humans additionally require the
+	// caller to be a workspace admin/owner.
+	if (id !== actorId) {
 		if (!workspaceId) {
 			return c.json(createApiError('FORBIDDEN', 'Workspace context is required'), 403)
 		}
@@ -694,7 +711,11 @@ app.openapi(updateActorRoute, (async (c) => {
 			)
 			.limit(1)
 
-		if (!callerMembership || !['owner', 'admin'].includes(callerMembership.role)) {
+		if (!callerMembership) {
+			return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+		}
+
+		if (existing.type === 'human' && !['owner', 'admin'].includes(callerMembership.role)) {
 			return c.json(createApiError('FORBIDDEN', 'Only workspace admins can update humans'), 403)
 		}
 
@@ -956,6 +977,65 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 
 	return c.json(serializeActor(updated))
 }) as RouteHandler<typeof uploadAvatarRoute, Env>)
+
+// GET /:id/avatar — fetch avatar bytes (base64-encoded, same shape as GET /files/:id)
+const getAvatarRoute = createRoute({
+	method: 'get',
+	path: '/{id}/avatar',
+	tags: ['Actors'],
+	summary: 'Get actor avatar bytes',
+	request: {
+		params: idParamSchema,
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': { schema: z.object({ content: z.string(), mime_type: z.string() }) },
+			},
+			description: 'Avatar bytes (base64-encoded)',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor or avatar not found',
+		},
+	},
+})
+
+app.openapi(getAvatarRoute, (async (c) => {
+	const db = c.get('db')
+	const storage = c.get('storageProvider')
+	const callerId = c.get('actorId')
+	const { id } = c.req.valid('param')
+
+	const [actor] = await db
+		.select({ avatarStorageKey: actors.avatarStorageKey })
+		.from(actors)
+		.where(eq(actors.id, id))
+		.limit(1)
+
+	if (!actor || !actor.avatarStorageKey) {
+		return c.json(createApiError('NOT_FOUND', 'Avatar not found'), 404)
+	}
+
+	// Same visibility rule as GET /:id — self or a shared workspace.
+	if (id !== callerId && !(await shareWorkspace(db, callerId, id))) {
+		return c.json(createApiError('NOT_FOUND', 'Avatar not found'), 404)
+	}
+
+	let bytes: Buffer
+	try {
+		bytes = await storage.get(actor.avatarStorageKey)
+	} catch (err) {
+		logger.error('Failed to read avatar bytes from storage', {
+			actorId: id,
+			storageKey: actor.avatarStorageKey,
+			error: String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to read avatar bytes'), 500)
+	}
+
+	return c.json({ content: bytes.toString('base64'), mime_type: extToMime(actor.avatarStorageKey) })
+}) as RouteHandler<typeof getAvatarRoute, Env>)
 
 // POST /:id/reset - Reset system actor to factory defaults (Workspace Coach)
 const resetActorRoute = createRoute({

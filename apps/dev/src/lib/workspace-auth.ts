@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { workspaceMembers } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 
 /**
  * Check if an actor is a member of a workspace.
@@ -24,6 +24,35 @@ export async function isWorkspaceMember(
 		)
 		.limit(1)
 	return !!member
+}
+
+/**
+ * Check if two actors share at least one workspace. Used by by-ID actor
+ * routes (e.g. viewing another actor's profile) that have no explicit
+ * X-Workspace-Id header to check against but still must not leak actor data
+ * across tenants who share no workspace.
+ */
+export async function shareWorkspace(
+	db: Database,
+	actorIdA: string,
+	actorIdB: string,
+): Promise<boolean> {
+	const workspacesOfA = db
+		.select({ workspaceId: workspaceMembers.workspaceId })
+		.from(workspaceMembers)
+		.where(eq(workspaceMembers.actorId, actorIdA))
+
+	const [shared] = await db
+		.select({ workspaceId: workspaceMembers.workspaceId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, actorIdB),
+				inArray(workspaceMembers.workspaceId, workspacesOfA),
+			),
+		)
+		.limit(1)
+	return !!shared
 }
 
 export async function isWorkspaceOwner(

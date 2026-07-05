@@ -3,12 +3,14 @@ import { cn } from '@/lib/cn'
 export function ActorAvatar({
 	name,
 	type,
+	avatarUrl,
 	size = 'sm',
 	className,
 	onClick,
 }: {
 	name: string
 	type: string
+	avatarUrl?: string
 	size?: 'sm' | 'md' | 'lg'
 	className?: string
 	onClick?: () => void
@@ -21,12 +23,18 @@ export function ActorAvatar({
 				? 'h-7 w-7 text-xs'
 				: 'h-12 w-12 text-base'
 	const baseClasses = cn(
-		'inline-flex items-center justify-center rounded-full font-medium',
+		'inline-flex items-center justify-center overflow-hidden rounded-full font-medium',
 		isAgent ? 'bg-primary/20 text-primary' : 'bg-zinc-700 text-zinc-300',
 		sizeClasses,
 		className,
 	)
-	const content = isAgent ? '⚡' : name.charAt(0).toUpperCase()
+	const content = avatarUrl ? (
+		<img src={avatarUrl} alt={name} className="h-full w-full object-cover" />
+	) : isAgent ? (
+		'⚡'
+	) : (
+		name.charAt(0).toUpperCase()
+	)
 
 	if (onClick) {
 		return (

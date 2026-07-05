@@ -394,6 +394,62 @@ describe('Profile — POST /api/actors/:id/avatar', () => {
 	})
 })
 
+describe('Profile — GET /api/actors/:id/avatar', () => {
+	it('returns base64 avatar bytes for your own avatar', async () => {
+		const actor = buildActor({ type: 'human', avatarStorageKey: 'actors/actor-1/avatar.png' })
+		const { app, mockResults, storageProvider } = createImportTestApp(
+			actorsRoutes,
+			'/api/actors',
+			actor.id,
+		)
+		mockResults.select = [actor]
+		;(storageProvider.get as ReturnType<typeof vi.fn>).mockResolvedValue(Buffer.from('fake-bytes'))
+
+		const res = await app.request(new Request(`http://localhost/api/actors/${actor.id}/avatar`))
+
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.mime_type).toBe('image/png')
+		expect(Buffer.from(body.content, 'base64').toString()).toBe('fake-bytes')
+	})
+
+	it('returns 404 when the actor has no avatar set', async () => {
+		const actor = buildActor({ type: 'human', avatarStorageKey: null })
+		const { app, mockResults } = createImportTestApp(actorsRoutes, '/api/actors', actor.id)
+		mockResults.select = [actor]
+
+		const res = await app.request(new Request(`http://localhost/api/actors/${actor.id}/avatar`))
+
+		expect(res.status).toBe(404)
+	})
+
+	it('returns 404 for another actor who shares no workspace with the caller', async () => {
+		const actor = buildActor({ type: 'human', avatarStorageKey: 'actors/actor-1/avatar.png' })
+		const { app, mockResults } = createImportTestApp(actorsRoutes, '/api/actors', 'caller-id')
+		// Actor lookup, then shareWorkspace's two selects, both empty.
+		mockResults.selectQueue = [[actor], [], []]
+
+		const res = await app.request(new Request(`http://localhost/api/actors/${actor.id}/avatar`))
+
+		expect(res.status).toBe(404)
+	})
+
+	it('returns 200 for another actor who shares a workspace with the caller', async () => {
+		const actor = buildActor({ type: 'human', avatarStorageKey: 'actors/actor-1/avatar.png' })
+		const { app, mockResults, storageProvider } = createImportTestApp(
+			actorsRoutes,
+			'/api/actors',
+			'caller-id',
+		)
+		mockResults.selectQueue = [[actor], [], [{ workspaceId }]]
+		;(storageProvider.get as ReturnType<typeof vi.fn>).mockResolvedValue(Buffer.from('fake-bytes'))
+
+		const res = await app.request(new Request(`http://localhost/api/actors/${actor.id}/avatar`))
+
+		expect(res.status).toBe(200)
+	})
+})
+
 describe('Profile — DELETE /api/actors/:id (human self-delete)', () => {
 	it('forbids deleting another human account', async () => {
 		const target = buildActor({ type: 'human' })

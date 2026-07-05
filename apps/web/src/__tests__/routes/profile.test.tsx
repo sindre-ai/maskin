@@ -48,6 +48,7 @@ vi.mock('@/components/shared/route-error', () => ({
 vi.mock('@/hooks/use-actors', () => ({
 	useActor: vi.fn(),
 	useUploadAvatar: () => ({ mutateAsync: vi.fn(), reset: vi.fn(), isPending: false }),
+	useActorAvatarUrl: () => ({ data: undefined }),
 }))
 
 vi.mock('@/lib/workspace-context', () => ({
