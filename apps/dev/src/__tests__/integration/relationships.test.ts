@@ -1,6 +1,6 @@
 import { buildCreateRelationshipBody, insertObject, insertWorkspace } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
-import { createIntegrationApp, db, getTestActorId } from './global-setup'
+import { createIntegrationApp, db, getTestActorId, sql } from './global-setup'
 
 const { default: relationshipsRoutes } = await import('../../routes/relationships')
 
@@ -120,6 +120,46 @@ describe('Relationships Integration', () => {
 		)
 		// Unique constraint violation — route doesn't handle duplicates, so DB error surfaces as 500
 		expect(second.status).toBe(500)
+	})
+
+	it('write-side normalizes divergent source_type/target_type to canonical values', async () => {
+		const app = createApp()
+
+		const createRes = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/relationships',
+				buildCreateRelationshipBody({
+					source_id: obj1Id,
+					target_id: obj2Id,
+					source_type: 'insight',
+					target_type: 'bet',
+				}),
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+
+		expect(createRes.status).toBe(201)
+
+		// Fetch the persisted row directly; assert canonical types were stored
+		// regardless of what the caller supplied.
+		const persisted = await db.query.relationships.findFirst({
+			where: (rels, { eq }) => eq(rels.sourceId, obj1Id),
+		})
+		expect(persisted).not.toBeNull()
+		expect(persisted?.sourceType).toBe('object')
+		expect(persisted?.targetType).toBe('object')
+	})
+
+	it('constraint rejects a raw INSERT with a non-canonical source_type', async () => {
+		// The DB CHECK constraint lives at the storage layer, not just the
+		// application. A direct INSERT that bypasses the handler must still fail.
+		await expect(
+			sql`
+				INSERT INTO relationships (source_type, source_id, target_type, target_id, type, created_by)
+				VALUES ('invalid_type', ${obj1Id}, 'object', ${obj2Id}, 'informs', ${getTestActorId()})
+			`,
+		).rejects.toThrow()
 	})
 
 	it('deletes a relationship', async () => {
