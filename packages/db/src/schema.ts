@@ -122,7 +122,13 @@ export const relationships = pgTable(
 			.notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 	},
-	(t) => [unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type)],
+	(t) => [
+		unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type),
+		check(
+			'relationships_source_target_type_kind',
+			sql`${t.sourceType} IN ('object', 'file') AND ${t.targetType} IN ('object', 'file')`,
+		),
+	],
 )
 
 // ── Events ──────────────────────────────────────────────────────────────────

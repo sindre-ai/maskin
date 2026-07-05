@@ -393,8 +393,11 @@ describe('Objects Routes', () => {
 				action: 'created',
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select: target object, second: relationships, third: connected objects, fourth: events
-			mockResults.selectQueue = [[obj], [rel], [connectedObj], [comment, lifecycleEvent]]
+			// 1) target object, 2) relationships, 3) files-membership lookup
+			// (endpoints checked against `files` table so the read layer resolves by
+			// id — returns [] here because `connectedObj` is not a file),
+			// 4) connected objects, 5) events.
+			mockResults.selectQueue = [[obj], [rel], [], [connectedObj], [comment, lifecycleEvent]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -462,11 +465,12 @@ describe('Objects Routes', () => {
 				type: 'attached',
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// Queue order matches handler call order: 1) object, 2) relationships
-			// (file-typed endpoint → skips connected_objects), 3) events, 4-6) the
-			// three subscription queries fired in parallel (isSubscribed,
-			// getUnreadCount, getSubscriberCount), 7) files.
-			mockResults.selectQueue = [[obj], [rel], [], [], [], [], [file]]
+			// Queue order matches handler call order: 1) object, 2) relationships,
+			// 3) files-membership lookup (endpoint resolves to the `files` table so
+			// it is bucketed as a file — skips connected_objects), 4) events,
+			// 5-7) the three subscription queries fired in parallel (isSubscribed,
+			// getUnreadCount, getSubscriberCount), 8) files summary.
+			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [file]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -518,6 +522,72 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.files).toEqual([])
+		})
+
+		it('resolves an edge whose sourceType label does not match the endpoint kind', async () => {
+			// Regression for the bet: prior to id-based endpoint resolution, an
+			// `informs` edge written with a specialised `sourceType` (`'insight'`)
+			// still surfaced as expected because the label wasn't `'file'` — but
+			// symmetric cases where a file endpoint was mislabeled would drop.
+			// This test locks in that the read path never depends on the label:
+			// the endpoint is resolved via the `files` table, and anything that
+			// isn't a file is treated as an object endpoint.
+			const bet = buildObject({ workspaceId: wsId, type: 'bet' })
+			const insight = buildObject({ workspaceId: wsId, type: 'insight' })
+			const rel = buildRelationship({
+				sourceType: 'insight', // non-canonical — T1 convention would be 'object'
+				sourceId: insight.id,
+				targetType: 'bet', // non-canonical — T1 convention would be 'object'
+				targetId: bet.id,
+				type: 'informs',
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1) bet, 2) relationships, 3) files-membership lookup (endpoint is
+			// not a file → []), 4) connected objects (insight), 5) events.
+			mockResults.selectQueue = [[bet], [rel], [], [insight], []]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${bet.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.relationships).toHaveLength(1)
+			expect(body.relationships[0].id).toBe(rel.id)
+			expect(body.connected_objects).toHaveLength(1)
+			expect(body.connected_objects[0].id).toBe(insight.id)
+		})
+
+		it('resolves a file endpoint even when the edge label is a legacy object type', async () => {
+			// The mirror case: an `attached` edge whose file endpoint is stamped
+			// with a legacy label (e.g. `'bet'`) rather than the canonical
+			// `'file'`. The endpoint id lives in the `files` table, so the read
+			// layer buckets it as a file — the attachment surfaces in
+			// `files`, not as a broken row in `connected_objects`.
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const file = buildFile({ workspaceId: wsId })
+			const rel = buildRelationship({
+				sourceType: 'bet',
+				sourceId: obj.id,
+				targetType: 'bet', // legacy mislabel — endpoint is a file
+				targetId: file.id,
+				type: 'attached',
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1) object, 2) relationships, 3) files-membership lookup returns the
+			// file (endpoint id resolves to `files.id`), so no connected_objects
+			// fetch, 4) events, 5-7) subscription queries, 8) files summary.
+			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [file]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.connected_objects).toEqual([])
+			expect(body.files).toHaveLength(1)
+			expect(body.files[0].id).toBe(file.id)
 		})
 	})
 
