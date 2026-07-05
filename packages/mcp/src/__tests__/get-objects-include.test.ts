@@ -23,9 +23,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { createMcpServer } from '../server'
 import { tools } from '../tools'
 
+const apiTestKey = 'ank_testkey123'
+
 const config = {
 	apiBaseUrl: 'http://localhost:3000',
-	apiKey: 'ank_testkey123',
+	apiKey: apiTestKey,
 	defaultWorkspaceId: 'ws-default-123',
 	webAppBaseUrl: 'https://maskin.example.com',
 	telemetrySink: () => {},
