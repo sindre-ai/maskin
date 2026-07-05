@@ -381,6 +381,39 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body.isSystem).toBe(false)
 		})
+
+		it('returns 200 without a workspace check when viewing your own actor', async () => {
+			const actor = buildActor()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', actor.id)
+			mockResults.select = [actor]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
+
+			expect(res.status).toBe(200)
+		})
+
+		it('returns 404 when viewing another actor who shares no workspace with the caller', async () => {
+			const actor = buildActor()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+			// Actor lookup, then shareWorkspace's two selects (caller's workspaces,
+			// then the shared-membership check) — both come back empty.
+			mockResults.selectQueue = [[actor], [], []]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 200 when viewing another actor who shares a workspace with the caller', async () => {
+			const actor = buildActor()
+			const wsId = randomUUID()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+			mockResults.selectQueue = [[actor], [], [{ workspaceId: wsId }]]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
+
+			expect(res.status).toBe(200)
+		})
 	})
 
 	describe('PATCH /api/actors/:id', () => {
@@ -448,6 +481,58 @@ describe('Actors Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+
+		it('returns 403 when updating an agent with no workspace context', async () => {
+			const agent = buildActor({ type: 'agent' })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+			mockResults.select = [{ type: agent.type }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, { system_prompt: 'New prompt' }),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 404 when the caller is not a member of the given workspace', async () => {
+			const agent = buildActor({ type: 'agent' })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+			mockResults.selectQueue = [[{ type: agent.type }], []]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/actors/${agent.id}`,
+					{ system_prompt: 'New prompt' },
+					{ 'X-Workspace-Id': '00000000-0000-0000-0000-000000000001' },
+				),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 200 when a workspace member updates an agent in the workspace', async () => {
+			const agent = buildActor({ type: 'agent' })
+			const updated = { ...agent, systemPrompt: 'New prompt' }
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+			mockResults.selectQueue = [
+				[{ type: agent.type }],
+				[{ role: 'member' }],
+				[{ actorId: agent.id }],
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/actors/${agent.id}`,
+					{ system_prompt: 'New prompt' },
+					{ 'X-Workspace-Id': '00000000-0000-0000-0000-000000000001' },
+				),
+			)
+
+			expect(res.status).toBe(200)
 		})
 	})
 
@@ -558,10 +643,11 @@ describe('Actors Routes', () => {
 		it('returns 200 when agent actor deleted successfully', async () => {
 			const agentActor = buildActor({ type: 'agent' })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			// isWorkspaceMember (requester), actor lookup, isWorkspaceMember (target)
+			// actor lookup, isWorkspaceMember (requester), isWorkspaceMember (target),
+			// actorSessions in transaction.
 			mockResults.selectQueue = [
-				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[agentActor],
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[buildWorkspaceMember({ actorId: agentActor.id, workspaceId: wsId })],
 				[], // actorSessions in transaction
 			]
@@ -575,9 +661,10 @@ describe('Actors Routes', () => {
 			expect(body.deleted).toBe(true)
 		})
 
-		it('returns 404 when requesting actor is not a workspace member', async () => {
-			const { app } = createTestApp(actorsRoutes, '/api/actors')
-			// isWorkspaceMember returns empty — requester not a member
+		it('returns 404 when target actor not found', async () => {
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			// actor lookup returns nothing
+			mockResults.selectQueue = [[]]
 
 			const res = await app.request(
 				jsonDelete(`/api/actors/${randomUUID()}`, { 'x-workspace-id': wsId }),
@@ -586,16 +673,14 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(404)
 		})
 
-		it('returns 404 when target actor not found', async () => {
+		it('returns 404 when requesting actor is not a workspace member', async () => {
+			const agentActor = buildActor({ type: 'agent' })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			// isWorkspaceMember (requester) passes, actor lookup fails
-			mockResults.selectQueue = [
-				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
-				[], // actor not found
-			]
+			// actor found, isWorkspaceMember (requester) returns empty
+			mockResults.selectQueue = [[agentActor], []]
 
 			const res = await app.request(
-				jsonDelete(`/api/actors/${randomUUID()}`, { 'x-workspace-id': wsId }),
+				jsonDelete(`/api/actors/${agentActor.id}`, { 'x-workspace-id': wsId }),
 			)
 
 			expect(res.status).toBe(404)
@@ -604,10 +689,10 @@ describe('Actors Routes', () => {
 		it('returns 404 when target actor is not in the workspace', async () => {
 			const agentActor = buildActor({ type: 'agent' })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			// isWorkspaceMember (requester) passes, actor found, isWorkspaceMember (target) fails
+			// actor found, requester member, target not member
 			mockResults.selectQueue = [
-				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[agentActor],
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[], // target not a workspace member
 			]
 
@@ -621,14 +706,11 @@ describe('Actors Routes', () => {
 		it('returns 403 when trying to delete a system actor and leaves the actor intact', async () => {
 			const systemActor = buildActor({ type: 'agent', isSystem: true })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			// DELETE: requester member, target actor, target member.
-			// Follow-up GET: same actor row — proves the record was not removed.
-			mockResults.selectQueue = [
-				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
-				[systemActor],
-				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
-				[systemActor],
-			]
+			// DELETE: target actor (system → rejected early). Follow-up GET: same row,
+			// then shareWorkspace's two selects (caller's workspaces, then the shared
+			// membership check — mock queues one slot per db.select() call, including
+			// the un-awaited subquery) confirming caller and system actor share `wsId`.
+			mockResults.selectQueue = [[systemActor], [systemActor], [], [{ workspaceId: wsId }]]
 
 			const deleteRes = await app.request(
 				jsonDelete(`/api/actors/${systemActor.id}`, { 'x-workspace-id': wsId }),
@@ -636,7 +718,7 @@ describe('Actors Routes', () => {
 
 			expect(deleteRes.status).toBe(403)
 			const deleteBody = await deleteRes.json()
-			expect(deleteBody.error.message).toContain('System agents cannot be deleted')
+			expect(deleteBody.error.message).toContain('System actors cannot be deleted')
 
 			const getRes = await app.request(jsonGet(`/api/actors/${systemActor.id}`))
 
@@ -645,14 +727,10 @@ describe('Actors Routes', () => {
 			expect(getBody.id).toBe(systemActor.id)
 		})
 
-		it('returns 403 when trying to delete a human actor', async () => {
+		it('returns 403 when a human tries to delete another human account', async () => {
 			const humanActor = buildActor({ type: 'human' })
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.selectQueue = [
-				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
-				[humanActor],
-				[buildWorkspaceMember({ actorId: humanActor.id, workspaceId: wsId })],
-			]
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+			mockResults.selectQueue = [[humanActor]]
 
 			const res = await app.request(
 				jsonDelete(`/api/actors/${humanActor.id}`, { 'x-workspace-id': wsId }),
@@ -660,7 +738,7 @@ describe('Actors Routes', () => {
 
 			expect(res.status).toBe(403)
 			const body = await res.json()
-			expect(body.error.message).toContain('Only agent actors can be deleted')
+			expect(body.error.message).toContain('Humans can only delete their own account')
 		})
 	})
 
@@ -676,12 +754,12 @@ describe('Actors Routes', () => {
 				llmConfig: { model: 'gpt-4' },
 				tools: { mcpServers: {} },
 			})
-			// Matches the .returning({ system_prompt: actors.systemPrompt, ... }) shape.
+			// .returning() now returns the full Drizzle row (camelCase columns).
 			const resetActor = {
 				...systemActor,
-				system_prompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
-				llm_provider: WORKSPACE_COACH_DEFAULT.llmProvider,
-				llm_config: WORKSPACE_COACH_DEFAULT.llmConfig,
+				systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+				llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
+				llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
 				tools: WORKSPACE_COACH_DEFAULT.tools,
 			}
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')

@@ -19,6 +19,8 @@ export const queryKeys = {
 	actors: {
 		all: (workspaceId?: string) => ['actors', workspaceId] as const,
 		detail: (id: string) => ['actors', 'detail', id] as const,
+		avatar: (id: string, storageKey?: string | null) =>
+			['actors', 'avatar', id, storageKey] as const,
 	},
 	workspaces: {
 		all: () => ['workspaces'] as const,

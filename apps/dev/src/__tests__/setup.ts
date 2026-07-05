@@ -62,7 +62,16 @@ export function createTestContext() {
 	// Captures the most recent argument passed to chain methods like .values() and .set(),
 	// keyed by the top-level operation ('insert' → values, 'update' → set). Lets tests
 	// assert what the route actually wrote, not just what the mock returned.
-	const calls: { inserts: unknown[]; updates: unknown[] } = { inserts: [], updates: [] }
+	// `updateTables` / `deleteTables` record the table ref passed to db.update(table) and
+	// db.delete(table) — there's no .set/.values capture point for deletes and the table
+	// ref disambiguates which collection was updated when many .set() payloads look alike.
+	const calls: {
+		inserts: unknown[]
+		updates: unknown[]
+		updateTables: unknown[]
+		deleteTables: unknown[]
+		wheres: unknown[]
+	} = { inserts: [], updates: [], updateTables: [], deleteTables: [], wheres: [] }
 
 	const db = new Proxy({} as Database, {
 		get: (_target, prop) => {
@@ -76,7 +85,9 @@ export function createTestContext() {
 				// Map selectDistinct to the same bucket as select
 				const key = prop === 'selectDistinct' ? 'select' : (prop as string)
 				const captureKey = prop === 'insert' ? 'inserts' : prop === 'update' ? 'updates' : undefined
-				return () => {
+				return (...args: unknown[]) => {
+					if (prop === 'update') calls.updateTables.push(args[0])
+					if (prop === 'delete') calls.deleteTables.push(args[0])
 					// Per-call error queue takes precedence over the static error so tests can
 					// simulate "Nth call throws, others succeed" (e.g. one parallel insert fails).
 					// An `undefined` slot in the queue falls through to the normal result path.
@@ -149,7 +160,7 @@ function createChain(
 	returnValue?: unknown,
 	error?: Error,
 	captureKey?: 'inserts' | 'updates',
-	calls?: { inserts: unknown[]; updates: unknown[] },
+	calls?: { inserts: unknown[]; updates: unknown[]; wheres: unknown[] },
 ): Record<string, unknown> {
 	const chain: Record<string, unknown> = {}
 	const methods = [
@@ -177,6 +188,7 @@ function createChain(
 		chain[m] = (arg?: unknown) => {
 			if (calls && captureKey === 'inserts' && m === 'values') calls.inserts.push(arg)
 			if (calls && captureKey === 'updates' && m === 'set') calls.updates.push(arg)
+			if (calls && m === 'where') calls.wheres.push(arg)
 			return chain
 		}
 	}

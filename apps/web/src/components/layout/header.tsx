@@ -35,6 +35,7 @@ const routeConfig: Record<string, RouteConfig> = {
 	},
 	'/_authed/$workspaceId/activity': { label: 'Activity' },
 	'/_authed/$workspaceId/agents': { label: 'Agents' },
+	'/_authed/$workspaceId/profile': { label: 'Profile' },
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
 	'/_authed/$workspaceId/settings/keys': {
 		label: 'LLM',

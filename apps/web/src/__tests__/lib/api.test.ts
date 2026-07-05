@@ -166,6 +166,63 @@ describe('request', () => {
 			expect(apiErr.message).toBe('Internal Server Error')
 		}
 	})
+
+	it('falls back to statusText when error is an object without code or message', async () => {
+		fetchSpy.mockResolvedValue(
+			new Response(JSON.stringify({ error: { unrelated: true } }), {
+				status: 502,
+				statusText: 'Bad Gateway',
+			}),
+		)
+
+		try {
+			await api.objects.list('ws-1')
+			expect.unreachable('Should have thrown')
+		} catch (err) {
+			const apiErr = err as ApiError
+			expect(apiErr.status).toBe(502)
+			expect(apiErr.message).toBe('Bad Gateway')
+			expect(apiErr.fieldErrors).toEqual({})
+		}
+	})
+
+	it('uses error.message as fallback when error object lacks code', async () => {
+		fetchSpy.mockResolvedValue(
+			new Response(JSON.stringify({ error: { message: 'Plain message' } }), {
+				status: 400,
+				statusText: 'Bad Request',
+			}),
+		)
+
+		try {
+			await api.objects.list('ws-1')
+			expect.unreachable('Should have thrown')
+		} catch (err) {
+			const apiErr = err as ApiError
+			expect(apiErr.message).toBe('Plain message')
+		}
+	})
+
+	it('keeps details parsing tied to error.code, not error.message', async () => {
+		// Drift guard: pre-refactor, uploadFileWithProgress gated details parsing on
+		// error.message, while request gated on error.code. Now both use code.
+		const body = {
+			error: {
+				code: 'VALIDATION_ERROR',
+				message: 'Invalid input',
+				details: [{ field: 'name', message: 'Required' }],
+			},
+		}
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify(body), { status: 422 }))
+
+		try {
+			await api.objects.list('ws-1')
+			expect.unreachable('Should have thrown')
+		} catch (err) {
+			const apiErr = err as ApiError
+			expect(apiErr.fieldErrors).toEqual({ name: ['Required'] })
+		}
+	})
 })
 
 describe('sessions.input', () => {

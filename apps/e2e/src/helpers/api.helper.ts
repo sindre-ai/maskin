@@ -234,6 +234,19 @@ export class TestAPI {
 		return res.json()
 	}
 
+	async requestEmailChange(data: {
+		new_email: string
+		current_password: string
+	}): Promise<ActorResponse> {
+		const res = await fetch(`${this.baseURL}/api/auth/email-change`, {
+			method: 'POST',
+			headers: this.headers(),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`requestEmailChange failed: ${res.status}`)
+		return res.json()
+	}
+
 	async createRelationship(
 		workspaceId: string,
 		data: {

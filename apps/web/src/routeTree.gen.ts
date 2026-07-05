@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedRouteImport } from './routes/_authed'
@@ -17,6 +18,7 @@ import { Route as AuthedWorkspacesRouteImport } from './routes/_authed/workspace
 import { Route as AuthedWorkspaceIdRouteImport } from './routes/_authed/$workspaceId'
 import { Route as AuthedWorkspaceIdIndexRouteImport } from './routes/_authed/$workspaceId/index'
 import { Route as AuthedWorkspaceIdSettingsRouteImport } from './routes/_authed/$workspaceId/settings'
+import { Route as AuthedWorkspaceIdProfileRouteImport } from './routes/_authed/$workspaceId/profile'
 import { Route as AuthedWorkspaceIdMarketplaceRouteImport } from './routes/_authed/$workspaceId/marketplace'
 import { Route as AuthedWorkspaceIdActivityRouteImport } from './routes/_authed/$workspaceId/activity'
 import { Route as AuthedWorkspaceIdTriggersIndexRouteImport } from './routes/_authed/$workspaceId/triggers/index'
@@ -35,6 +37,11 @@ import { Route as AuthedWorkspaceIdAgentsAgentIdRouteImport } from './routes/_au
 import { Route as AuthedWorkspaceIdSettingsObjectsIndexRouteImport } from './routes/_authed/$workspaceId/settings/objects/index'
 import { Route as AuthedWorkspaceIdSettingsObjectsPropertyNameRouteImport } from './routes/_authed/$workspaceId/settings/objects/$propertyName'
 
+const VerifyEmailRoute = VerifyEmailRouteImport.update({
+  id: '/verify-email',
+  path: '/verify-email',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
@@ -73,6 +80,12 @@ const AuthedWorkspaceIdSettingsRoute =
   AuthedWorkspaceIdSettingsRouteImport.update({
     id: '/settings',
     path: '/settings',
+    getParentRoute: () => AuthedWorkspaceIdRoute,
+  } as any)
+const AuthedWorkspaceIdProfileRoute =
+  AuthedWorkspaceIdProfileRouteImport.update({
+    id: '/profile',
+    path: '/profile',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
 const AuthedWorkspaceIdMarketplaceRoute =
@@ -182,10 +195,12 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/verify-email': typeof VerifyEmailRoute
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/workspaces': typeof AuthedWorkspacesRoute
   '/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
   '/$workspaceId/marketplace': typeof AuthedWorkspaceIdMarketplaceRoute
+  '/$workspaceId/profile': typeof AuthedWorkspaceIdProfileRoute
   '/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
   '/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
   '/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
@@ -207,10 +222,12 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/verify-email': typeof VerifyEmailRoute
   '/workspaces': typeof AuthedWorkspacesRoute
   '/': typeof AuthedIndexRoute
   '/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
   '/$workspaceId/marketplace': typeof AuthedWorkspaceIdMarketplaceRoute
+  '/$workspaceId/profile': typeof AuthedWorkspaceIdProfileRoute
   '/$workspaceId': typeof AuthedWorkspaceIdIndexRoute
   '/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
   '/$workspaceId/files/$fileId': typeof AuthedWorkspaceIdFilesFileIdRoute
@@ -233,11 +250,13 @@ export interface FileRoutesById {
   '/_authed': typeof AuthedRouteWithChildren
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/verify-email': typeof VerifyEmailRoute
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/_authed/workspaces': typeof AuthedWorkspacesRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
   '/_authed/$workspaceId/marketplace': typeof AuthedWorkspaceIdMarketplaceRoute
+  '/_authed/$workspaceId/profile': typeof AuthedWorkspaceIdProfileRoute
   '/_authed/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
   '/_authed/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
   '/_authed/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
@@ -262,10 +281,12 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/signup'
+    | '/verify-email'
     | '/$workspaceId'
     | '/workspaces'
     | '/$workspaceId/activity'
     | '/$workspaceId/marketplace'
+    | '/$workspaceId/profile'
     | '/$workspaceId/settings'
     | '/$workspaceId/'
     | '/$workspaceId/agents/$agentId'
@@ -287,10 +308,12 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/signup'
+    | '/verify-email'
     | '/workspaces'
     | '/'
     | '/$workspaceId/activity'
     | '/$workspaceId/marketplace'
+    | '/$workspaceId/profile'
     | '/$workspaceId'
     | '/$workspaceId/agents/$agentId'
     | '/$workspaceId/files/$fileId'
@@ -312,11 +335,13 @@ export interface FileRouteTypes {
     | '/_authed'
     | '/login'
     | '/signup'
+    | '/verify-email'
     | '/_authed/$workspaceId'
     | '/_authed/workspaces'
     | '/_authed/'
     | '/_authed/$workspaceId/activity'
     | '/_authed/$workspaceId/marketplace'
+    | '/_authed/$workspaceId/profile'
     | '/_authed/$workspaceId/settings'
     | '/_authed/$workspaceId/'
     | '/_authed/$workspaceId/agents/$agentId'
@@ -340,10 +365,18 @@ export interface RootRouteChildren {
   AuthedRoute: typeof AuthedRouteWithChildren
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  VerifyEmailRoute: typeof VerifyEmailRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/verify-email': {
+      id: '/verify-email'
+      path: '/verify-email'
+      fullPath: '/verify-email'
+      preLoaderRoute: typeof VerifyEmailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/signup': {
       id: '/signup'
       path: '/signup'
@@ -398,6 +431,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/$workspaceId/settings'
       preLoaderRoute: typeof AuthedWorkspaceIdSettingsRouteImport
+      parentRoute: typeof AuthedWorkspaceIdRoute
+    }
+    '/_authed/$workspaceId/profile': {
+      id: '/_authed/$workspaceId/profile'
+      path: '/profile'
+      fullPath: '/$workspaceId/profile'
+      preLoaderRoute: typeof AuthedWorkspaceIdProfileRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
     '/_authed/$workspaceId/marketplace': {
@@ -557,6 +597,7 @@ const AuthedWorkspaceIdSettingsRouteWithChildren =
 interface AuthedWorkspaceIdRouteChildren {
   AuthedWorkspaceIdActivityRoute: typeof AuthedWorkspaceIdActivityRoute
   AuthedWorkspaceIdMarketplaceRoute: typeof AuthedWorkspaceIdMarketplaceRoute
+  AuthedWorkspaceIdProfileRoute: typeof AuthedWorkspaceIdProfileRoute
   AuthedWorkspaceIdSettingsRoute: typeof AuthedWorkspaceIdSettingsRouteWithChildren
   AuthedWorkspaceIdIndexRoute: typeof AuthedWorkspaceIdIndexRoute
   AuthedWorkspaceIdAgentsAgentIdRoute: typeof AuthedWorkspaceIdAgentsAgentIdRoute
@@ -571,6 +612,7 @@ interface AuthedWorkspaceIdRouteChildren {
 const AuthedWorkspaceIdRouteChildren: AuthedWorkspaceIdRouteChildren = {
   AuthedWorkspaceIdActivityRoute: AuthedWorkspaceIdActivityRoute,
   AuthedWorkspaceIdMarketplaceRoute: AuthedWorkspaceIdMarketplaceRoute,
+  AuthedWorkspaceIdProfileRoute: AuthedWorkspaceIdProfileRoute,
   AuthedWorkspaceIdSettingsRoute: AuthedWorkspaceIdSettingsRouteWithChildren,
   AuthedWorkspaceIdIndexRoute: AuthedWorkspaceIdIndexRoute,
   AuthedWorkspaceIdAgentsAgentIdRoute: AuthedWorkspaceIdAgentsAgentIdRoute,
@@ -605,6 +647,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthedRoute: AuthedRouteWithChildren,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  VerifyEmailRoute: VerifyEmailRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

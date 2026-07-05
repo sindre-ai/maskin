@@ -1,5 +1,10 @@
 import { z } from '@hono/zod-openapi'
-import { actorListItemSchema, agentStateSchema, triggerResponseSchema } from '@maskin/shared'
+import {
+	actorListItemSchema,
+	agentStateSchema,
+	notificationPrefsSchema,
+	triggerResponseSchema,
+} from '@maskin/shared'
 import { apiErrorSchema } from './errors'
 
 // Re-exported so existing route handlers keep their `from '../lib/openapi-schemas'`
@@ -61,6 +66,10 @@ export const actorResponseSchema = z.object({
 	name: z.string(),
 	email: z.string().nullable(),
 	description: z.string().nullable(),
+	bio: z.string().nullable(),
+	avatar_storage_key: z.string().nullable(),
+	notification_prefs: notificationPrefsSchema,
+	pending_email: z.string().nullable(),
 	system_prompt: z.string().nullable(),
 	tools: jsonbField,
 	memory: jsonbField,

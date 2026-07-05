@@ -13,6 +13,39 @@ export const llmConfigSchema = z.object({
 })
 
 export const ACTOR_DESCRIPTION_MAX_LENGTH = 80
+export const ACTOR_BIO_MAX_LENGTH = 300
+
+// Notification preferences. The first three default to true (opt-out style — a
+// new user is reachable until they silence channels); weeklyDigest defaults to
+// false (opt-in for periodic mail). T9 renders one Switch per key.
+export const notificationPrefsSchema = z.object({
+	mentions: z.boolean().default(true),
+	subscribed: z.boolean().default(true),
+	betStatusChanges: z.boolean().default(true),
+	weeklyDigest: z.boolean().default(false),
+})
+export type NotificationPrefs = z.infer<typeof notificationPrefsSchema>
+
+// Coerce a row's stored notification_prefs (JSONB, typed `unknown` after
+// serialize) into the response shape. Rows written via the PATCH path are
+// already a full NotificationPrefs object; rows from login / email-change /
+// cancel paths may still hold an empty `{}` from the column default — Zod's
+// defaults fill the missing keys so the response always advertises every flag.
+// Null / undefined input and safeParse failures (schema drift / corrupt JSONB)
+// collapse to the schema defaults so the wire is non-nullable; on a parse
+// failure the caller's optional `onMismatch` callback receives the Zod issues
+// so the drift is still surfaced through its own logger. The helper stays
+// dependency-free for MCP / web reuse.
+export function reshapeNotificationPrefs(
+	value: unknown,
+	onMismatch?: (issues: z.ZodIssue[]) => void,
+): NotificationPrefs {
+	const input = value === null || value === undefined ? {} : value
+	const parsed = notificationPrefsSchema.safeParse(input)
+	if (parsed.success) return parsed.data
+	onMismatch?.(parsed.error.issues)
+	return notificationPrefsSchema.parse({})
+}
 
 export const createActorSchema = z.object({
 	id: z.string().uuid().optional(),
@@ -33,10 +66,14 @@ export const loginSchema = z.object({
 	password: z.string().min(1),
 })
 
+// Note: `email` is intentionally NOT updatable here. Email changes go through
+// the verified flow in POST /auth/email-change so a stolen API key can't
+// silently swap the address.
 export const updateActorSchema = z.object({
 	name: z.string().min(1).optional(),
-	email: z.string().email().optional(),
 	description: z.string().max(ACTOR_DESCRIPTION_MAX_LENGTH).optional(),
+	bio: z.string().max(ACTOR_BIO_MAX_LENGTH).nullable().optional(),
+	notification_prefs: notificationPrefsSchema.partial().optional(),
 	system_prompt: z.string().optional(),
 	tools: actorToolsSchema.optional(),
 	memory: z.record(z.unknown()).optional(),
@@ -46,6 +83,20 @@ export const updateActorSchema = z.object({
 
 export const actorParamsSchema = z.object({
 	id: z.string().uuid(),
+})
+
+export const changePasswordSchema = z.object({
+	current_password: z.string().min(1),
+	new_password: z.string().min(8),
+})
+
+export const requestEmailChangeSchema = z.object({
+	new_email: z.string().email(),
+	current_password: z.string().min(1),
+})
+
+export const verifyEmailChangeSchema = z.object({
+	token: z.string().min(1),
 })
 
 // Server-assigned read-only fields (e.g. isSystem) live on response shapes only.
@@ -65,6 +116,10 @@ export const actorResponseSchema = z.object({
 	name: z.string(),
 	email: z.string().nullable(),
 	description: z.string().nullable(),
+	bio: z.string().nullable(),
+	avatar_storage_key: z.string().nullable(),
+	notification_prefs: notificationPrefsSchema,
+	pending_email: z.string().nullable(),
 	system_prompt: z.string().nullable(),
 	tools: jsonbObject,
 	memory: jsonbObject,

@@ -11,6 +11,7 @@ vi.mock('@/lib/api', () => ({
 			reset: vi.fn(),
 			pause: vi.fn(),
 			run: vi.fn(),
+			getAvatar: vi.fn(),
 		},
 	},
 }))
@@ -24,6 +25,7 @@ vi.mock('sonner', () => ({
 
 import {
 	useActor,
+	useActorAvatarUrl,
 	useActors,
 	useAgent,
 	useAgentPause,
@@ -34,6 +36,7 @@ import {
 } from '@/hooks/use-actors'
 import type { ActorListItem, ActorResponse, ActorWithKey } from '@/lib/api'
 import { api } from '@/lib/api'
+import { notificationPrefsSchema } from '@maskin/shared'
 import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
@@ -57,6 +60,10 @@ function buildActorResponse(overrides: Partial<ActorResponse> & { id: string }):
 		name: 'Test Actor',
 		email: null,
 		description: null,
+		bio: null,
+		avatar_storage_key: null,
+		notification_prefs: notificationPrefsSchema.parse({}),
+		pending_email: null,
 		system_prompt: null,
 		tools: null,
 		memory: null,
@@ -118,6 +125,29 @@ describe('useActor', () => {
 
 		expect(result.current.isFetching).toBe(false)
 		expect(api.actors.get).not.toHaveBeenCalled()
+	})
+})
+
+describe('useActorAvatarUrl', () => {
+	it('fetches avatar bytes and returns a data: URI when a storage key is set', async () => {
+		vi.mocked(api.actors.getAvatar).mockResolvedValue({ content: 'Zm9v', mime_type: 'image/png' })
+
+		const { result } = renderHook(() => useActorAvatarUrl('actor-1', 'actors/actor-1/avatar.png'), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toBe('data:image/png;base64,Zm9v')
+		expect(api.actors.getAvatar).toHaveBeenCalledWith('actor-1')
+	})
+
+	it('is not enabled when there is no storage key', () => {
+		const { result } = renderHook(() => useActorAvatarUrl('actor-1', null), {
+			wrapper: TestWrapper,
+		})
+
+		expect(result.current.isFetching).toBe(false)
+		expect(api.actors.getAvatar).not.toHaveBeenCalled()
 	})
 })
 

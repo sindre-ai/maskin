@@ -25,6 +25,7 @@ vi.mock('recharts', () => {
 import { AgentUsageChart } from '@/components/agents/agent-usage-chart'
 import type { ActorResponse, SessionUsageResponse } from '@/lib/api'
 import { api } from '@/lib/api'
+import { notificationPrefsSchema } from '@maskin/shared'
 import { TestWrapper } from '../../setup'
 
 const agent: ActorResponse = {
@@ -33,6 +34,10 @@ const agent: ActorResponse = {
 	name: 'Test Agent',
 	email: null,
 	description: null,
+	bio: null,
+	avatar_storage_key: null,
+	notification_prefs: notificationPrefsSchema.parse({}),
+	pending_email: null,
 	system_prompt: null,
 	tools: null,
 	memory: null,

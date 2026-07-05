@@ -1,12 +1,12 @@
 import type {
 	ActorListItem,
-	ActorResponse,
 	DisplaySettingsBody,
+	NotificationPrefs,
 	SafeMetadata,
 	TriggerResponse,
 } from '@maskin/shared'
 
-export type { ActorListItem, ActorResponse, DisplaySettingsBody, TriggerResponse }
+export type { ActorListItem, DisplaySettingsBody, NotificationPrefs, TriggerResponse }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -35,6 +35,41 @@ type RequestOptions = {
 	workspaceId?: string
 }
 
+// Single source of truth for parsing { error: { code, message, details? } } responses
+// into ApiError. Shared by request(), uploadFileWithProgress(), and uploadAvatarMultipart()
+// so the legacy-string + missing-body fallbacks stay aligned across fetch and XHR paths.
+function parseApiError(status: number, statusText: string, body: unknown): ApiError {
+	const data = (body && typeof body === 'object' ? body : {}) as { error?: unknown }
+	const err = data.error
+	let fieldErrors: Record<string, string[]> | undefined
+	let message: string
+
+	if (err && typeof err === 'object') {
+		const errObj = err as { code?: string; message?: string; details?: unknown }
+		if (errObj.code) {
+			// Structured error format: { error: { code, message, details?, suggestion? } }
+			message = errObj.message ?? statusText
+			if (Array.isArray(errObj.details)) {
+				fieldErrors = {}
+				for (const detail of errObj.details as Array<{ field?: string; message: string }>) {
+					const field = detail.field || '_root'
+					if (!fieldErrors[field]) fieldErrors[field] = []
+					fieldErrors[field].push(detail.message)
+				}
+			}
+		} else {
+			message = errObj.message || statusText
+		}
+	} else if (typeof err === 'string') {
+		// TODO: Remove legacy string format fallback once all API responses use structured errors
+		message = err
+	} else {
+		message = statusText
+	}
+
+	return new ApiError(status, message, fieldErrors)
+}
+
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	const { method = 'GET', body, headers = {}, workspaceId } = opts
 	const apiKey = getApiKey()
@@ -61,29 +96,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 	if (!res.ok) {
 		const data = await res.json().catch(() => ({ error: res.statusText }))
-
-		let fieldErrors: Record<string, string[]> | undefined
-		let message: string
-
-		if (typeof data.error === 'object' && data.error?.code) {
-			// Structured error format: { error: { code, message, details?, suggestion? } }
-			message = data.error.message
-			if (data.error.details && Array.isArray(data.error.details)) {
-				fieldErrors = {}
-				for (const detail of data.error.details) {
-					const field = detail.field || '_root'
-					if (!fieldErrors[field]) fieldErrors[field] = []
-					fieldErrors[field].push(detail.message)
-				}
-			}
-		} else if (typeof data.error === 'string') {
-			// TODO: Remove legacy string format fallback once all API responses use structured errors
-			message = data.error
-		} else {
-			message = data.error?.message || res.statusText
-		}
-
-		throw new ApiError(res.status, message, fieldErrors)
+		throw parseApiError(res.status, res.statusText, data)
 	}
 
 	return res.json()
@@ -123,27 +136,13 @@ function uploadFileWithProgress(
 				}
 				return
 			}
-			let message = xhr.statusText
-			let fieldErrors: Record<string, string[]> | undefined
+			let data: unknown
 			try {
-				const data = JSON.parse(xhr.responseText)
-				if (typeof data.error === 'object' && data.error?.message) {
-					message = data.error.message
-					if (Array.isArray(data.error.details)) {
-						fieldErrors = {}
-						for (const d of data.error.details) {
-							const field = d.field || '_root'
-							if (!fieldErrors[field]) fieldErrors[field] = []
-							fieldErrors[field].push(d.message)
-						}
-					}
-				} else if (typeof data.error === 'string') {
-					message = data.error
-				}
+				data = JSON.parse(xhr.responseText)
 			} catch {
-				// keep statusText
+				// Leave data undefined → parseApiError falls back to statusText
 			}
-			reject(new ApiError(xhr.status, message, fieldErrors))
+			reject(parseApiError(xhr.status, xhr.statusText, data))
 		}
 		xhr.onerror = () => reject(new ApiError(0, 'Network error'))
 		xhr.onabort = () => reject(new ApiError(0, 'Upload aborted'))
@@ -158,6 +157,30 @@ function uploadFileWithProgress(
 
 		xhr.send(JSON.stringify(body))
 	})
+}
+
+/**
+ * Multipart POST to /actors/:id/avatar. fetch handles multipart bodies natively,
+ * but the actor-avatar route diverges from /files: it takes a single `file` form
+ * field and runs magic-byte + mime + size validation server-side. No upload
+ * progress because avatars cap at 5MB — a progress bar would flash by.
+ */
+async function uploadAvatarMultipart(actorId: string, file: File): Promise<ActorResponse> {
+	const apiKey = getApiKey()
+	const formData = new FormData()
+	formData.append('file', file)
+	const headers: Record<string, string> = {}
+	if (apiKey) headers.Authorization = `Bearer ${apiKey}`
+	const res = await fetch(`${API_BASE}/actors/${actorId}/avatar`, {
+		method: 'POST',
+		headers,
+		body: formData,
+	})
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({ error: res.statusText }))
+		throw parseApiError(res.status, res.statusText, data)
+	}
+	return res.json()
 }
 
 // Objects
@@ -200,6 +223,13 @@ export const api = {
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
+		changePassword: (data: ChangePasswordInput) =>
+			request<ActorWithKey>('/auth/password', { method: 'POST', body: data }),
+		requestEmailChange: (data: RequestEmailChangeInput) =>
+			request<ActorWithKey>('/auth/email-change', { method: 'POST', body: data }),
+		verifyEmailChange: (data: VerifyEmailChangeInput) =>
+			request<ActorWithKey>('/auth/email-change/verify', { method: 'POST', body: data }),
+		cancelEmailChange: () => request<ActorWithKey>('/auth/email-change/cancel', { method: 'POST' }),
 	},
 
 	landingEvents: {
@@ -242,6 +272,9 @@ export const api = {
 			}),
 		delete: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/actors/${id}`, { method: 'DELETE', workspaceId }),
+		uploadAvatar: (id: string, file: File) => uploadAvatarMultipart(id, file),
+		getAvatar: (id: string) =>
+			request<{ content: string; mime_type: string }>(`/actors/${id}/avatar`),
 	},
 
 	workspaces: {
@@ -777,6 +810,22 @@ export interface MigrateObjectTypeResponse {
 	count: number
 }
 
+export interface ActorResponse extends ActorListItem {
+	bio: string | null
+	avatar_storage_key: string | null
+	notification_prefs: NotificationPrefs
+	pending_email: string | null
+	system_prompt: string | null
+	tools: Record<string, unknown> | null
+	memory: Record<string, unknown> | null
+	llm_provider: string | null
+	llm_config: Record<string, unknown> | null
+	agentStateUpdatedAt: string | null
+	createdAt: string | null
+	updatedAt: string | null
+	installedPackageId?: string | null
+}
+
 export interface ActorWithKey extends ActorResponse {
 	api_key: string
 	// Set when the actor is created with `auto_create_workspace` (default for
@@ -788,6 +837,20 @@ export interface ActorWithKey extends ActorResponse {
 export interface LoginInput {
 	email: string
 	password: string
+}
+
+export interface ChangePasswordInput {
+	current_password: string
+	new_password: string
+}
+
+export interface RequestEmailChangeInput {
+	new_email: string
+	current_password: string
+}
+
+export interface VerifyEmailChangeInput {
+	token: string
 }
 
 export interface CreateActorInput {
@@ -807,6 +870,8 @@ export interface UpdateActorInput {
 	name?: string
 	email?: string
 	description?: string
+	bio?: string | null
+	notification_prefs?: Partial<NotificationPrefs>
 	system_prompt?: string
 	tools?: Record<string, unknown>
 	memory?: Record<string, unknown>

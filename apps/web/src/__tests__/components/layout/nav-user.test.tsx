@@ -6,7 +6,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mockNavigate = vi.fn()
 
 vi.mock('@/hooks/use-workspaces', () => ({
-	useWorkspaces: () => ({ data: [] }),
+	useWorkspaces: () => ({
+		data: [
+			{ id: 'ws-1', name: 'Test WS' },
+			{ id: 'ws-2', name: 'Other WS' },
+		],
+	}),
 }))
 
 vi.mock('@/lib/auth', () => ({
@@ -25,14 +30,49 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
 	useNavigate: () => mockNavigate,
+	Link: ({
+		to,
+		params,
+		children,
+		onClick,
+		...rest
+	}: {
+		to: string
+		params?: Record<string, string>
+		children: React.ReactNode
+		onClick?: (e: React.MouseEvent) => void
+		[key: string]: unknown
+	}) => {
+		const href =
+			typeof to === 'string' ? to.replace(/\$(\w+)/g, (_match, key) => params?.[key] ?? '') : '#'
+		return (
+			<a href={href} onClick={onClick} {...rest}>
+				{children}
+			</a>
+		)
+	},
 }))
 
 vi.mock('@/components/ui/sidebar', () => ({
 	SidebarMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	SidebarMenuButton: ({
 		children,
+	}: {
+		children: React.ReactNode
+		asChild?: boolean
+		tooltip?: unknown
+	}) => <div>{children}</div>,
+	SidebarMenuAction: ({
+		children,
+		showOnHover: _showOnHover,
+		asChild: _asChild,
 		...props
-	}: { children: React.ReactNode; [key: string]: unknown }) => (
+	}: {
+		children: React.ReactNode
+		showOnHover?: boolean
+		asChild?: boolean
+		[key: string]: unknown
+	}) => (
 		<button type="button" {...props}>
 			{children}
 		</button>
@@ -45,6 +85,7 @@ import { clearAuth, getStoredActor } from '@/lib/auth'
 
 describe('NavUser', () => {
 	beforeEach(() => {
+		mockNavigate.mockClear()
 		vi.mocked(getStoredActor).mockReturnValue({
 			id: 'actor-1',
 			name: 'Alice',
@@ -53,16 +94,10 @@ describe('NavUser', () => {
 		})
 	})
 
-	it('renders actor display name', () => {
+	it('renders the card as a link to the profile route', () => {
 		render(<NavUser />)
-		expect(screen.getByText('Alice')).toBeInTheDocument()
-	})
-
-	it('shows initial letter avatar in dropdown', async () => {
-		const user = userEvent.setup()
-		render(<NavUser />)
-		await user.click(screen.getByText('Alice'))
-		expect(screen.getByText('A')).toBeInTheDocument()
+		const link = screen.getByRole('link', { name: /alice/i })
+		expect(link).toHaveAttribute('href', '/ws-1/profile')
 	})
 
 	it('falls back to "User" when no stored actor', () => {
@@ -71,29 +106,26 @@ describe('NavUser', () => {
 		expect(screen.getByText('User')).toBeInTheDocument()
 	})
 
-	it('renders Settings menu item', async () => {
+	it('does not show Settings in the kebab menu', async () => {
 		const user = userEvent.setup()
 		render(<NavUser />)
-
-		await user.click(screen.getByText('Alice'))
-		expect(screen.getByText('Settings')).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: /account menu/i }))
+		expect(screen.queryByText('Settings')).not.toBeInTheDocument()
 	})
 
-	it('renders Sign out menu item', async () => {
+	it('kebab menu shows workspace switcher and sign out', async () => {
 		const user = userEvent.setup()
 		render(<NavUser />)
-
-		await user.click(screen.getByText('Alice'))
+		await user.click(screen.getByRole('button', { name: /account menu/i }))
+		expect(screen.getByText('Test WS')).toBeInTheDocument()
 		expect(screen.getByText('Sign out')).toBeInTheDocument()
 	})
 
 	it('calls clearAuth and navigates to /login on sign out', async () => {
 		const user = userEvent.setup()
 		render(<NavUser />)
-
-		await user.click(screen.getByText('Alice'))
+		await user.click(screen.getByRole('button', { name: /account menu/i }))
 		await user.click(screen.getByText('Sign out'))
-
 		expect(clearAuth).toHaveBeenCalled()
 		expect(mockNavigate).toHaveBeenCalledWith({ to: '/login' })
 	})

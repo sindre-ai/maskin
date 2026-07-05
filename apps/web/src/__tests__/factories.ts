@@ -13,6 +13,7 @@ import type {
 	TriggerResponse,
 	WorkspaceWithRole,
 } from '@/lib/api'
+import { notificationPrefsSchema } from '@maskin/shared'
 
 let counter = 0
 function nextId(prefix: string) {
@@ -47,6 +48,10 @@ export function buildActorWithKey(overrides: Partial<ActorWithKey> = {}): ActorW
 		email: 'test@example.com',
 		api_key: 'ank_test123',
 		description: null,
+		bio: null,
+		avatar_storage_key: null,
+		notification_prefs: notificationPrefsSchema.parse({}),
+		pending_email: null,
 		system_prompt: null,
 		tools: null,
 		memory: null,
@@ -69,6 +74,10 @@ export function buildActorResponse(overrides: Partial<ActorResponse> = {}): Acto
 		type: 'human',
 		email: 'test@example.com',
 		description: null,
+		bio: null,
+		avatar_storage_key: null,
+		notification_prefs: notificationPrefsSchema.parse({}),
+		pending_email: null,
 		system_prompt: null,
 		tools: null,
 		memory: null,

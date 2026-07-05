@@ -64,6 +64,34 @@ export function useDeleteActor(workspaceId: string) {
 	})
 }
 
+// Fetches avatar bytes and returns a data: URI for direct <img src> use.
+// Bearer-token auth means an <img src="/api/..."> can't authenticate itself,
+// so this mirrors the file-viewer pattern: fetch base64 via the authenticated
+// client, decode client-side. Keyed on storageKey so a re-upload (new key)
+// refetches instead of serving a stale cached image.
+export function useActorAvatarUrl(actorId: string, avatarStorageKey?: string | null) {
+	return useQuery({
+		queryKey: queryKeys.actors.avatar(actorId, avatarStorageKey),
+		queryFn: async () => {
+			const { content, mime_type } = await api.actors.getAvatar(actorId)
+			return `data:${mime_type};base64,${content}`
+		},
+		enabled: !!actorId && !!avatarStorageKey,
+		staleTime: Number.POSITIVE_INFINITY,
+	})
+}
+
+export function useUploadAvatar(actorId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (file: File) => api.actors.uploadAvatar(actorId, file),
+		onSuccess: (updated) => {
+			queryClient.setQueryData(queryKeys.actors.detail(actorId), updated)
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(actorId) })
+		},
+	})
+}
+
 export function useResetActor(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({

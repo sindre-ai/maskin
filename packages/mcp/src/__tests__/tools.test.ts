@@ -307,6 +307,50 @@ describe('update_actor schema', () => {
 		expect(result.name).toBe('Updated')
 	})
 
+	it('accepts bio as a string', () => {
+		const result = schema.parse({ id: uuid, bio: 'Hello from MCP' })
+		expect(result.bio).toBe('Hello from MCP')
+	})
+
+	it('accepts bio as null to clear it', () => {
+		const result = schema.parse({ id: uuid, bio: null })
+		expect(result.bio).toBeNull()
+	})
+
+	it('rejects bio over the 300-char limit', () => {
+		expect(() => schema.parse({ id: uuid, bio: 'a'.repeat(301) })).toThrow()
+	})
+
+	it('accepts a partial notification_prefs patch', () => {
+		const result = schema.parse({
+			id: uuid,
+			notification_prefs: { weeklyDigest: true },
+		})
+		expect(result.notification_prefs).toEqual({ weeklyDigest: true })
+	})
+
+	it('accepts a full notification_prefs object', () => {
+		const result = schema.parse({
+			id: uuid,
+			notification_prefs: {
+				mentions: false,
+				subscribed: false,
+				betStatusChanges: false,
+				weeklyDigest: true,
+			},
+		})
+		expect(result.notification_prefs).toEqual({
+			mentions: false,
+			subscribed: false,
+			betStatusChanges: false,
+			weeklyDigest: true,
+		})
+	})
+
+	it('rejects a non-boolean notification_prefs flag', () => {
+		expect(() => schema.parse({ id: uuid, notification_prefs: { mentions: 'yes' } })).toThrow()
+	})
+
 	it('accepts attach_skill_ids as an array of UUIDs', () => {
 		const result = schema.parse({ id: uuid, attach_skill_ids: [uuid2] })
 		expect(result.attach_skill_ids).toEqual([uuid2])

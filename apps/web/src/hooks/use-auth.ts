@@ -1,6 +1,14 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback } from 'react'
-import { type CreateActorInput, type LoginInput, api } from '../lib/api'
+import {
+	type ChangePasswordInput,
+	type CreateActorInput,
+	type LoginInput,
+	type RequestEmailChangeInput,
+	type VerifyEmailChangeInput,
+	api,
+} from '../lib/api'
 import {
 	clearAuth,
 	getApiKey,
@@ -9,6 +17,7 @@ import {
 	setApiKey,
 	setStoredActor,
 } from '../lib/auth'
+import { queryKeys } from '../lib/query-keys'
 
 export function useAuth() {
 	const navigate = useNavigate()
@@ -54,4 +63,65 @@ export function useAuth() {
 		signup,
 		logout,
 	}
+}
+
+// Rotates the API key on success so the current tab keeps a working session.
+// Per T1 contract: changing the password rotates the only credential — the
+// response contains the new api_key and we swap it in immediately.
+export function useChangePassword() {
+	return useMutation({
+		mutationFn: (data: ChangePasswordInput) => api.auth.changePassword(data),
+		onSuccess: (result) => {
+			setApiKey(result.api_key)
+		},
+	})
+}
+
+// Asks the backend to mint a verification token for `new_email`. The actor's
+// `pending_email` flips to the target on success; the persistent banner in
+// the profile page reads off that field and stays until verify or cancel
+// clears it. We invalidate the cached actor so the banner appears immediately
+// without waiting for an SSE refresh.
+export function useRequestEmailChange(actorId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (data: RequestEmailChangeInput) => api.auth.requestEmailChange(data),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(actorId) })
+		},
+	})
+}
+
+// Confirms a pending email change from the link sent to the new address.
+// The backend bypasses auth for this route (the token itself proves
+// ownership), so this also works for a browser tab with no session yet —
+// we log it in with the returned api_key, same as signup/login.
+export function useVerifyEmailChange() {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (data: VerifyEmailChangeInput) => api.auth.verifyEmailChange(data),
+		onSuccess: (result) => {
+			setApiKey(result.api_key)
+			setStoredActor({
+				id: result.id,
+				name: result.name,
+				type: result.type,
+				email: result.email,
+			})
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(result.id) })
+		},
+	})
+}
+
+// Clears `pending_email` for the authenticated user. Used by the Cancel
+// action on the verification banner. No body — the backend uses the auth'd
+// actor id.
+export function useCancelEmailChange(actorId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: () => api.auth.cancelEmailChange(),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(actorId) })
+		},
+	})
 }
