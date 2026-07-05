@@ -244,7 +244,10 @@ describe('Objects Routes', () => {
 			const existing = buildObject()
 			const updated = { ...existing, title: 'Updated title' }
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			// First select: existing object, second: workspace membership, third:
+			// the in-transaction FOR UPDATE re-read used to derive the event action
+			// and the terminal-notification guard.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
 			mockResults.update = [updated]
 			mockResults.insert = [{}] // event insert
 
@@ -298,7 +301,9 @@ describe('Objects Routes', () => {
 				},
 			}
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			// First select: existing object, second: workspace membership, third:
+			// the in-transaction FOR UPDATE re-read.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
 			mockResults.update = [merged]
 			mockResults.insert = [{}] // event insert
 
@@ -635,8 +640,9 @@ describe('Objects Routes', () => {
 			const updated = { ...existing, status: 'in_progress' }
 			const ws = buildWorkspace({ id: existing.workspaceId })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select: existing object, second: workspace membership, third: workspace settings
-			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
+			// First select: existing object, second: workspace membership, third:
+			// workspace settings, fourth: the in-transaction FOR UPDATE re-read.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws], [existing]]
 			mockResults.update = [updated]
 			mockResults.insert = [{}] // event insert
 

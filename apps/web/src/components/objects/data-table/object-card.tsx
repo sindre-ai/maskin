@@ -38,13 +38,18 @@ export function ObjectCard({
 				'data-[state=selected]:bg-accent/50',
 			)}
 		>
-			<Checkbox
-				checked={isSelected}
-				onCheckedChange={(value) => onSelect(!!value)}
-				onClick={(e) => e.stopPropagation()}
-				aria-label="Select row"
-				className="mt-0.5 shrink-0"
-			/>
+			<span
+				data-drag-checkbox=""
+				className="mt-0.5 inline-flex shrink-0 touch-none select-none items-center justify-center"
+			>
+				<Checkbox
+					checked={isSelected}
+					onCheckedChange={(value) => onSelect(!!value)}
+					onClick={(e) => e.stopPropagation()}
+					aria-label="Select row"
+					className="relative before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
+				/>
+			</span>
 			<div className="flex min-w-0 flex-1 flex-col gap-1.5">
 				<div className="flex min-w-0 items-start justify-between gap-2">
 					<div className="flex min-w-0 items-center gap-2">
