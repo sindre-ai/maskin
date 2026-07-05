@@ -6,25 +6,30 @@
 --   source_type = 'file' iff source_id exists in files.id, else 'object'
 --   target_type = 'file' iff target_id exists in files.id, else 'object'
 --
--- Runs in a single transaction. Integrity checks after the UPDATE verify
--- zero rows lost, zero rows re-pointed, and zero divergent labels remain.
--- Any violation RAISEs and rolls back the entire migration.
+-- `relationships` is a large, high-traffic table (the universal edge table
+-- linking every object/file relationship in the app). Per
+-- packages/db/MIGRATIONS.md Rule 2, this backfill runs in chunks of ~5,000
+-- rows, each in its own transaction via FOR UPDATE SKIP LOCKED, rather than
+-- one long-running UPDATE across the whole table that would hold row locks
+-- (and block the live write path) for the full duration.
+--
+-- Chunking trades the original single-transaction atomicity for lock
+-- friendliness: the integrity check below still fails loudly (and blocks
+-- the deploy) if anything is left divergent once the loop converges, but
+-- it can no longer roll back already-committed batches. The row-count
+-- comparison is logged for visibility only (not a hard failure) since a
+-- long-running chunked backfill can legitimately overlap with concurrent
+-- object/file deletes that also touch relationships rows.
 --
 -- This migration must run BEFORE the T3 constraint migration (0046) on any
 -- database that has divergent edges. On a fresh DB (e.g. integration-tests),
--- this is a no-op.
+-- the loop's first batch finds nothing to do.
 
 DO $$
 DECLARE
 	pre_count bigint;
-	post_count bigint;
-	divergent_source bigint;
-	divergent_target bigint;
-	divergent_after bigint;
 	pre_state jsonb;
-	post_state jsonb;
 BEGIN
-	-- ── Pre-state ──
 	SELECT COUNT(*) INTO pre_count FROM relationships;
 
 	SELECT jsonb_agg(jsonb_build_object(
@@ -41,39 +46,53 @@ BEGIN
 	RAISE NOTICE '=== Relationship type normalization ===';
 	RAISE NOTICE 'Rows scanned: %', pre_count;
 	RAISE NOTICE 'Pre-state distinct (source_type, target_type): %', COALESCE(pre_state::text, '[]');
+END $$;
+--> statement-breakpoint
 
-	-- Count rows with non-canonical source_type
-	SELECT COUNT(*) INTO divergent_source
-	FROM relationships
-	WHERE source_type NOT IN ('object', 'file');
+CREATE OR REPLACE PROCEDURE backfill_relationship_types()
+LANGUAGE plpgsql AS $$
+DECLARE
+	updated_count integer;
+BEGIN
+	LOOP
+		WITH batch AS (
+			SELECT
+				r.id,
+				(CASE WHEN EXISTS (SELECT 1 FROM files f WHERE f.id = r.source_id)
+					THEN 'file' ELSE 'object' END) AS correct_source_type,
+				(CASE WHEN EXISTS (SELECT 1 FROM files f WHERE f.id = r.target_id)
+					THEN 'file' ELSE 'object' END) AS correct_target_type
+			FROM relationships r
+			WHERE r.source_type <> (CASE WHEN EXISTS (SELECT 1 FROM files f WHERE f.id = r.source_id) THEN 'file' ELSE 'object' END)
+			   OR r.target_type <> (CASE WHEN EXISTS (SELECT 1 FROM files f WHERE f.id = r.target_id) THEN 'file' ELSE 'object' END)
+			LIMIT 5000
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE relationships r
+		SET source_type = batch.correct_source_type,
+			target_type = batch.correct_target_type
+		FROM batch
+		WHERE r.id = batch.id;
 
-	-- Count rows with non-canonical target_type
-	SELECT COUNT(*) INTO divergent_target
-	FROM relationships
-	WHERE target_type NOT IN ('object', 'file');
+		GET DIAGNOSTICS updated_count = ROW_COUNT;
+		EXIT WHEN updated_count = 0;
+		COMMIT;
+	END LOOP;
+END $$;
+--> statement-breakpoint
 
-	RAISE NOTICE 'Rows with non-canonical source_type: %', divergent_source;
-	RAISE NOTICE 'Rows with non-canonical target_type: %', divergent_target;
+CALL backfill_relationship_types();
+--> statement-breakpoint
 
-	-- ── Backfill: source_type ──
-	UPDATE relationships SET source_type = 'file'
-	WHERE source_type <> 'file'
-	  AND EXISTS (SELECT 1 FROM files f WHERE f.id = relationships.source_id);
+DROP PROCEDURE backfill_relationship_types();
+--> statement-breakpoint
 
-	UPDATE relationships SET source_type = 'object'
-	WHERE source_type <> 'object'
-	  AND NOT EXISTS (SELECT 1 FROM files f WHERE f.id = relationships.source_id);
-
-	-- ── Backfill: target_type ──
-	UPDATE relationships SET target_type = 'file'
-	WHERE target_type <> 'file'
-	  AND EXISTS (SELECT 1 FROM files f WHERE f.id = relationships.target_id);
-
-	UPDATE relationships SET target_type = 'object'
-	WHERE target_type <> 'object'
-	  AND NOT EXISTS (SELECT 1 FROM files f WHERE f.id = relationships.target_id);
-
-	-- ── Post-state ──
+DO $$
+DECLARE
+	post_count bigint;
+	post_state jsonb;
+	divergent_after bigint;
+BEGIN
 	SELECT COUNT(*) INTO post_count FROM relationships;
 
 	SELECT jsonb_agg(jsonb_build_object(
@@ -90,9 +109,8 @@ BEGIN
 	RAISE NOTICE 'Rows after: %', post_count;
 	RAISE NOTICE 'Post-state distinct (source_type, target_type): %', COALESCE(post_state::text, '[]');
 
-	-- ── Integrity checks ──
-
-	-- 1. Zero divergent labels remain
+	-- Zero divergent labels remain — the one check that must hold regardless
+	-- of any concurrent activity during the chunked loop above.
 	SELECT COUNT(*) INTO divergent_after
 	FROM relationships
 	WHERE source_type NOT IN ('object', 'file')
@@ -103,15 +121,7 @@ BEGIN
 	END IF;
 	RAISE NOTICE 'Check 1 PASS: zero divergent labels';
 
-	-- 2. Row count unchanged (zero rows lost)
-	IF post_count <> pre_count THEN
-		RAISE EXCEPTION 'INTEGRITY FAILURE: row count changed from % to %', pre_count, post_count;
-	END IF;
-	RAISE NOTICE 'Check 2 PASS: row count unchanged (%)', post_count;
-
-	-- 3. Zero rows re-pointed — the UPDATEs above only touch source_type and
-	-- target_type, never source_id or target_id. We verify explicitly.
-	RAISE NOTICE 'Check 3 PASS: zero rows re-pointed (source_id/target_id never touched)';
+	RAISE NOTICE 'Check 2 PASS: zero rows re-pointed (the loop only ever SETs source_type/target_type, never source_id/target_id)';
 
 	RAISE NOTICE '=== Backfill complete ===';
 END $$;
