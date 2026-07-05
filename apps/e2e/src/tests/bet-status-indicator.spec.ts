@@ -24,13 +24,22 @@ test.describe('Bet status indicator', () => {
 		await expect(page.getByText(/No open human decisions/i)).toBeVisible()
 	})
 
-	test('bet with in-progress child task renders as "progressing" and links to the child from the popover', async ({
+	// `activeSessionId` — required for "progressing" since it now gates on a
+	// live agent session, not just task status — is only ever set by a real
+	// triggered container session (trigger-runner.ts) and cleared when that
+	// session ends. There's no public API to fake one, so the "progressing"
+	// chip render itself is covered at the component level instead (see
+	// indicator-badge.test.tsx). This spec instead guards the behavior that
+	// motivated the gate: a task merely marked in_progress (e.g. by a human,
+	// or left stale after its session already ended) must NOT read as
+	// "progressing".
+	test('bet with in-progress child task but no live agent session renders as idle, not progressing', async ({
 		page,
 		account,
 	}) => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
-			title: 'Bet in flight',
+			title: 'Bet with stale in_progress task',
 			status: 'active',
 		})
 		const task = await account.api.createObject(account.workspaceId, {
@@ -47,12 +56,10 @@ test.describe('Bet status indicator', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		await expect(page.getByText('Bet in flight')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByText('Bet with stale in_progress task')).toBeVisible({ timeout: 10000 })
 
-		const chip = page.getByRole('button', { name: 'Status: progressing' })
-		await expect(chip).toBeVisible()
-		await chip.click()
-		await expect(page.getByRole('link', { name: /Open task/i })).toBeVisible()
+		await expect(page.getByRole('button', { name: 'Status: progressing' })).not.toBeVisible()
+		await expect(page.getByRole('button', { name: 'Status: idle' })).toBeVisible()
 	})
 
 	test('open human_decision task flips the state to "waiting on human" and shows the task title in the popover header', async ({

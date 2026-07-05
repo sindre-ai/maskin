@@ -40,6 +40,7 @@ export interface ChildTaskLike {
 	driver: string | null
 	metadata: SafeMetadata | null
 	updatedAt: string | null
+	activeSessionId: string | null
 }
 
 const OPEN_STATUSES = new Set(['todo', 'in_progress', 'in_review'])
@@ -90,7 +91,12 @@ export function classifyBetStatus(
 		if (humanDecision && DONE_STATUSES.has(task.status)) {
 			resolvedDecisions.push(task)
 		}
-		if (WIP_STATUSES.has(task.status)) {
+		// Requires a live agent session, not just the status string — a task
+		// stuck at in_progress/in_review after its session crashed or finished
+		// (activeSessionId cleared) is not actually being worked on, and should
+		// fall through to the stalled/idle check below instead of reading as
+		// "progressing" forever.
+		if (WIP_STATUSES.has(task.status) && task.activeSessionId) {
 			wipTasks.push(task)
 		}
 	}
