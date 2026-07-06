@@ -178,6 +178,20 @@ function toCount(value: unknown) {
 	return 0
 }
 
+// Column-aware knowledge retrieval is extension-owned behavior — only route
+// into it when the workspace actually has the knowledge module enabled, so a
+// workspace that has disabled it (or never enabled it) stays on the generic
+// query path even if legacy `type='knowledge'` rows still exist.
+async function isKnowledgeModuleEnabled(db: Database, workspaceId: string): Promise<boolean> {
+	const [workspace] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	const enabledModules = getEnabledModuleIds((workspace?.settings ?? {}) as Record<string, unknown>)
+	return enabledModules.includes('knowledge')
+}
+
 // POST / - Create object
 const createObjectRoute = createRoute({
 	method: 'post',
@@ -336,12 +350,14 @@ app.openapi(listObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	if (query.type === 'knowledge') {
+	if (query.type === 'knowledge' && (await isKnowledgeModuleEnabled(db, workspaceId))) {
 		const results = await retrieveKnowledge(db, {
 			workspaceId,
 			status: query.status ? query.status.split(',').filter(Boolean) : undefined,
 			driverIds: query.driver ? query.driver.split(',').filter(Boolean) : undefined,
 			ids: query.ids ? query.ids.split(',').filter(Boolean) : undefined,
+			updatedBefore: query.updated_before,
+			updatedAfter: query.updated_after,
 			limit: query.limit,
 			offset: query.offset,
 		})
@@ -510,7 +526,7 @@ app.openapi(searchObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	if (query.type === 'knowledge') {
+	if (query.type === 'knowledge' && (await isKnowledgeModuleEnabled(db, workspaceId))) {
 		const results = await retrieveKnowledge(db, {
 			workspaceId,
 			q: query.q,

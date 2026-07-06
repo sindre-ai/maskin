@@ -20,7 +20,7 @@ const migrationPath = join(
 	'packages',
 	'db',
 	'drizzle',
-	'0043_knowledge_extras.sql',
+	'0047_knowledge_extras.sql',
 )
 const rollbackPath = join(
 	__dirname,
@@ -32,7 +32,7 @@ const rollbackPath = join(
 	'packages',
 	'db',
 	'rollbacks',
-	'0043_knowledge_extras.sql',
+	'0047_knowledge_extras.sql',
 )
 
 function createApp() {

@@ -3,10 +3,13 @@
 -- new extension-owned table. Sits 1:1 with `objects` rows where type='knowledge',
 -- keyed on `object_id` (PK + FK ON DELETE CASCADE). `objects.metadata` is left
 -- intact — this is COPY, not MOVE. Table exists in every workspace but stays
--- empty when the knowledge extension is disabled, so the base-schema E2E path
--- is unaffected.
+-- empty for workspaces that never had the knowledge module enabled, so the
+-- base-schema E2E path is unaffected. Note: disabling the module after rows
+-- exist does not purge them — see apps/dev/src/routes/objects.ts for the
+-- read-path module-enabled gate that keeps disabled workspaces on the
+-- generic query path regardless.
 --
--- Rollback: see packages/db/rollbacks/0043_knowledge_extras.sql.
+-- Rollback: see packages/db/rollbacks/0047_knowledge_extras.sql.
 
 CREATE TABLE IF NOT EXISTS "knowledge_extras" (
 	"object_id" uuid PRIMARY KEY REFERENCES "objects"("id") ON DELETE CASCADE,

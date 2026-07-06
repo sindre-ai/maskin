@@ -1,11 +1,11 @@
 import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
-import { type SQL, and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { type SQL, and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import { knowledgeExtras } from './schema'
 
 // Column-aware retrieval for `type='knowledge'` objects. Left-joins
 // `knowledge_extras` on `object_id` and filters/ranks by the first-class
-// columns promoted in migration `0043_knowledge_extras.sql`:
+// columns promoted in migration `0047_knowledge_extras.sql`:
 //
 //  - bi-temporal live-only: rows with `t_invalid IS NOT NULL` are excluded,
 //    and rows scheduled for a future validity (`t_valid > now`) are excluded
@@ -14,7 +14,11 @@ import { knowledgeExtras } from './schema'
 //  - order: token-score DESC (when `q` is provided) → verification priority
 //    (verified > pending > unverified > contested) → confidence priority
 //    (high > medium > low > NULL) → `t_valid` DESC NULLS LAST (recency is a
-//    first-class tiebreaker now that the column is promoted) → id ASC.
+//    first-class tiebreaker now that the column is promoted) → `created_at`
+//    DESC (objects with no knowledge_extras row — e.g. everything created
+//    before its first supersede/contradict — tie on all of the above, so
+//    this keeps them newest-first instead of falling through to `id ASC`)
+//    → id ASC.
 //
 // Callers on `search_objects` / list flow through here when `type='knowledge'`
 // so eval and runtime retrieval stay on one path.
@@ -116,6 +120,8 @@ export type RetrieveKnowledgeOptions = {
 	status?: string[]
 	driverIds?: string[]
 	ids?: string[]
+	updatedBefore?: string
+	updatedAfter?: string
 	limit: number
 	offset: number
 }
@@ -181,6 +187,12 @@ export async function retrieveKnowledge(
 		if (idList.length > 0) filters.push(inArray(objects.id, idList))
 	}
 
+	// Half-open contract, mirroring buildObjectListConditions in objects.ts —
+	// callers (e.g. the stalled-work watchdog) rely on this range filter, and
+	// it must apply here too or a `type=knowledge` query silently loses it.
+	if (opts.updatedBefore) filters.push(lt(objects.updatedAt, new Date(opts.updatedBefore)))
+	if (opts.updatedAfter) filters.push(gt(objects.updatedAt, new Date(opts.updatedAfter)))
+
 	const tokens = opts.q ? tokenizeKnowledgeQuery(opts.q) : []
 	let scoreExpr: SQL<number> | null = null
 	if (tokens.length > 0) {
@@ -201,6 +213,11 @@ export async function retrieveKnowledge(
 	// `t_valid` DESC NULLS LAST — most-recent live row wins the tiebreak, with
 	// legacy rows (no extras row) sorting last so they don't shadow a promoted row.
 	orderBy.push(sql`${knowledgeExtras.tValid} desc nulls last`)
+	// Rows with no knowledge_extras row tie on verification/confidence/t_valid
+	// (all fall to their NULL-equivalent defaults), so without this the result
+	// would collapse to `id ASC` — an arbitrary UUID order, not newest-first.
+	// `created_at DESC` restores the pre-migration default ordering for those rows.
+	orderBy.push(desc(objects.createdAt))
 	orderBy.push(asc(objects.id))
 
 	const rows = await db

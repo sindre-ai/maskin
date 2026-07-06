@@ -1,10 +1,11 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { events, actors, files, objects, relationships } from '@maskin/db/schema'
 import { knowledgeExtras } from '@maskin/ext-knowledge/db-schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
 import { and, eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import {
 	errorSchema,
 	idParamSchema,
@@ -24,8 +25,12 @@ type Env = {
 
 const app = new OpenAPIHono<Env>()
 
-async function stampKnowledgeInvalid(db: Database, sourceId: string, targetId: string) {
-	const endpoints = await db
+// Must run inside the same transaction as the relationship/event inserts —
+// otherwise a failure here would leave an already-committed relationship
+// behind a 500 response, and an idempotency-key retry would then hit the
+// relationships unique constraint instead of the original error.
+async function stampKnowledgeInvalid(tx: Transaction, sourceId: string, targetId: string) {
+	const endpoints = await tx
 		.select({
 			id: objects.id,
 			type: objects.type,
@@ -38,7 +43,7 @@ async function stampKnowledgeInvalid(db: Database, sourceId: string, targetId: s
 	const target = endpoints.find((e) => e.id === targetId)
 	if (source?.type !== 'knowledge' || target?.type !== 'knowledge') return
 
-	const [actor] = await db
+	const [actor] = await tx
 		.select({ type: actors.type })
 		.from(actors)
 		.where(eq(actors.id, target.createdBy))
@@ -48,7 +53,7 @@ async function stampKnowledgeInvalid(db: Database, sourceId: string, targetId: s
 			? actor.type
 			: 'system'
 	const now = new Date()
-	await db
+	await tx
 		.insert(knowledgeExtras)
 		.values({
 			objectId: target.id,
@@ -114,36 +119,49 @@ app.openapi(createRelationshipRoute, async (c) => {
 	const sourceType = fileIds.has(body.source_id) ? 'file' : 'object'
 	const targetType = fileIds.has(body.target_id) ? 'file' : 'object'
 
-	const [created] = await db
-		.insert(relationships)
-		.values({
-			sourceType,
-			sourceId: body.source_id,
-			targetType,
-			targetId: body.target_id,
-			type: body.type,
-			createdBy: actorId,
+	let created: typeof relationships.$inferSelect | undefined
+	try {
+		created = await db.transaction(async (tx) => {
+			const [row] = await tx
+				.insert(relationships)
+				.values({
+					sourceType,
+					sourceId: body.source_id,
+					targetType,
+					targetId: body.target_id,
+					type: body.type,
+					createdBy: actorId,
+				})
+				.returning()
+
+			if (!row) {
+				throw new Error('Failed to create relationship')
+			}
+
+			await tx.insert(events).values({
+				workspaceId,
+				actorId,
+				action: 'created',
+				entityType: 'relationship',
+				entityId: row.id,
+				data: row,
+			})
+
+			// Bi-temporal invalidation: creating a supersedes/contradicts edge between
+			// two knowledge objects stamps t_invalid on the target's extras row rather
+			// than deleting the old row. The target stays queryable via t_invalid.
+			// Runs in the same transaction so a failure here rolls back the
+			// relationship + event inserts too, instead of leaving them committed
+			// behind a 500 response.
+			if (row.type === 'supersedes' || row.type === 'contradicts') {
+				await stampKnowledgeInvalid(tx, row.sourceId, row.targetId)
+			}
+
+			return row
 		})
-		.returning()
-
-	if (!created) {
+	} catch (err) {
+		logger.error('Relationship creation transaction failed', { error: String(err) })
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create relationship'), 500)
-	}
-
-	await db.insert(events).values({
-		workspaceId,
-		actorId,
-		action: 'created',
-		entityType: 'relationship',
-		entityId: created.id,
-		data: created,
-	})
-
-	// Bi-temporal invalidation: creating a supersedes/contradicts edge between
-	// two knowledge objects stamps t_invalid on the target's extras row rather
-	// than deleting the old row. The target stays queryable via t_invalid.
-	if (created.type === 'supersedes' || created.type === 'contradicts') {
-		await stampKnowledgeInvalid(db, created.sourceId, created.targetId)
 	}
 
 	const endpointRows = await db

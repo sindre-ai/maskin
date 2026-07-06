@@ -1,4 +1,4 @@
--- Rollback for migration 0043_knowledge_extras.sql.
+-- Rollback for migration 0047_knowledge_extras.sql.
 --
 -- This directory is deliberately outside packages/db/drizzle/ so the forward
 -- migration runner (packages/db/src/migrate.ts) does NOT pick it up. It exists
@@ -10,4 +10,4 @@
 -- CASCADE clears the migration row too so re-running the up path is clean.
 
 DROP TABLE IF EXISTS "knowledge_extras" CASCADE;
-DELETE FROM "_migrations" WHERE "name" = '0043_knowledge_extras.sql';
+DELETE FROM "_migrations" WHERE "name" = '0047_knowledge_extras.sql';
