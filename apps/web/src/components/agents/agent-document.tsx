@@ -31,6 +31,7 @@ import {
 	useSessionLogs,
 } from '@/hooks/use-sessions'
 import type { ActorListItem, ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
+import { useChat } from '@/lib/chat-context'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -61,10 +62,6 @@ import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-d
 import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
 import { Skills } from './skills'
 
-// create-session schema requires a non-empty action_prompt (min length 1) — this
-// is the instruction the agent actually receives when starting a fresh session.
-const NEW_CONVERSATION_ACTION_PROMPT = 'Start a new conversation.'
-
 interface AgentDocumentViewProps {
 	agent: ActorResponse
 	workspaceId: string
@@ -83,6 +80,7 @@ interface AgentDocumentViewProps {
 	onUpdateMemory: (memory: Record<string, unknown>) => void
 	onRun: () => void
 	onPause: () => void
+	onNewConversation: () => void
 	isRunPending?: boolean
 	isPausePending?: boolean
 	showSaved?: boolean
@@ -126,6 +124,7 @@ export function AgentDocumentView({
 	onUpdateMemory,
 	onRun,
 	onPause,
+	onNewConversation,
 	isRunPending = false,
 	isPausePending = false,
 	showSaved = false,
@@ -188,7 +187,6 @@ export function AgentDocumentView({
 	}, [memoryDraft, onUpdateMemory])
 
 	const [selectedSession, setSelectedSession] = useState<SessionResponse | null>(null)
-	const createSession = useCreateSession(workspaceId)
 
 	const { data: actors } = useActors(workspaceId)
 	const actorsById = useMemo(() => {
@@ -292,30 +290,8 @@ export function AgentDocumentView({
 					isRunPending={isRunPending}
 					isPausePending={isPausePending}
 				/>
-				<Button
-					variant="outline"
-					size="sm"
-					className="min-h-[44px]"
-					onClick={() =>
-						createSession.mutate(
-							{
-								actor_id: agent.id,
-								action_prompt: NEW_CONVERSATION_ACTION_PROMPT,
-							},
-							{
-								onError: (err) => {
-									toast.error(
-										err instanceof Error
-											? err.message
-											: `Couldn't start a conversation with ${agent.name}`,
-									)
-								},
-							},
-						)
-					}
-					disabled={createSession.isPending}
-				>
-					{createSession.isPending ? 'Starting…' : 'New Conversation'}
+				<Button variant="outline" size="sm" className="min-h-[44px]" onClick={onNewConversation}>
+					New Conversation
 				</Button>
 			</div>
 
@@ -724,6 +700,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const resetActor = useResetActor(workspaceId)
 	const run = useAgentRun(workspaceId)
 	const pause = useAgentPause(workspaceId)
+	const { openWithContext } = useChat()
 	const navigate = useNavigate()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
@@ -896,6 +873,9 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 						{ id: agent.id },
 						{ onError: () => toast.error(`Couldn't start ${agent.name}`) },
 					)
+				}
+				onNewConversation={() =>
+					openWithContext([{ kind: 'agent', id: agent.id, name: agent.name }])
 				}
 				onPause={() =>
 					pause.mutate(agent.id, {

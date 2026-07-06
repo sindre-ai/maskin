@@ -11,6 +11,12 @@ import { createWorkspaceWrapper } from '../../setup'
 const deleteMutate = vi.fn()
 const resetMutate = vi.fn()
 const navigateMock = vi.fn()
+const openWithContextMock = vi.fn()
+
+vi.mock('@/lib/chat-context', () => ({
+	useChat: () => ({ openWithContext: openWithContextMock }),
+	ChatProvider: ({ children }: { children: React.ReactNode }) => children,
+}))
 
 vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: [] }),
@@ -108,6 +114,7 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 		onUpdateMemory: vi.fn(),
 		onRun: vi.fn(),
 		onPause: vi.fn(),
+		onNewConversation: vi.fn(),
 		...overrides,
 	}
 }
@@ -215,6 +222,16 @@ describe('AgentDocumentView', () => {
 		await user.tab()
 
 		expect(onUpdateName).not.toHaveBeenCalled()
+	})
+
+	it('calls onNewConversation when the New Conversation button is clicked', async () => {
+		const user = userEvent.setup()
+		const onNewConversation = vi.fn()
+		render(<AgentDocumentView {...baseProps({ onNewConversation })} />)
+
+		await user.click(screen.getByText('New Conversation'))
+
+		expect(onNewConversation).toHaveBeenCalledTimes(1)
 	})
 
 	it('renders Configuration collapsible trigger', () => {
@@ -334,6 +351,25 @@ describe('AgentDocument — header actions', () => {
 
 		expect(screen.getByText('Reset to default')).toBeInTheDocument()
 		expect(resetMutate).not.toHaveBeenCalled()
+	})
+})
+
+describe('AgentDocument — New Conversation', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		localStorage.clear()
+	})
+
+	it('opens the chat panel with this agent selected instead of starting a session', async () => {
+		const user = userEvent.setup()
+		const agent = buildActorResponse({ id: 'actor-scout', name: 'Scout', type: 'agent' })
+		render(<AgentDocument agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await user.click(screen.getByText('New Conversation'))
+
+		expect(openWithContextMock).toHaveBeenCalledWith([
+			{ kind: 'agent', id: 'actor-scout', name: 'Scout' },
+		])
 	})
 })
 

@@ -108,6 +108,7 @@ describe('AgentDocumentView accessibility', () => {
 				onUpdateMemory={() => {}}
 				onRun={() => {}}
 				onPause={() => {}}
+				onNewConversation={() => {}}
 			/>,
 			{ wrapper: Wrapper },
 		)
@@ -155,6 +156,7 @@ describe('AgentDocumentView accessibility', () => {
 				onUpdateMemory={() => {}}
 				onRun={() => {}}
 				onPause={() => {}}
+				onNewConversation={() => {}}
 			/>,
 			{ wrapper: Wrapper },
 		)
