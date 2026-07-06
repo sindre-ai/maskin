@@ -119,7 +119,9 @@ describe('Cursor pagination — snapshot consistency (AC-T3, T3.1 follow-up)', (
 			const seeded: Array<{ id: string; createdAt: Date }> = []
 			for (let i = 0; i < 6; i++) {
 				const rel = buildRelationship({
+					sourceType: 'object',
 					sourceId: src.id,
+					targetType: 'object',
 					targetId: tgt.id,
 					type: `informs-${i}`,
 					createdBy: getTestActorId(),
@@ -141,7 +143,9 @@ describe('Cursor pagination — snapshot consistency (AC-T3, T3.1 follow-up)', (
 			expect(page1).toHaveLength(4)
 
 			const intruder = buildRelationship({
+				sourceType: 'object',
 				sourceId: src.id,
+				targetType: 'object',
 				targetId: tgt.id,
 				type: 'intruder',
 				createdBy: getTestActorId(),
