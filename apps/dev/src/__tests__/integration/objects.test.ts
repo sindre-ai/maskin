@@ -878,6 +878,54 @@ describe('Objects Integration', () => {
 			const rows = (await res.json()) as Array<{ id: string }>
 			expect(rows).toHaveLength(3)
 		})
+
+		it('ignores the keyset seek when sort does not resolve to createdAt', async () => {
+			// The `(created_at, id)` keyset seek only produces a result set
+			// consistent with the ORDER BY when the walk is actually sorted by
+			// createdAt. Pairing a `sort=updatedAt` walk with a cursor built from
+			// a createdAt/id tuple would filter on a column unrelated to the
+			// ORDER BY — silently dropping rows whose createdAt/updatedAt rank
+			// disagree. Row 2 here is created last but updated first, so a
+			// createdAt-based seek anchored on row 1 would wrongly exclude it.
+			const app = createApp()
+			const actorId = getTestActorId()
+			const baseMs = new Date('2026-02-02T00:00:00.000Z').getTime()
+
+			const row0 = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'todo',
+				title: 'Row 0 — oldest created, most recently updated',
+				createdAt: new Date(baseMs),
+				updatedAt: new Date(baseMs + 300 * 60_000),
+			})
+			const row1 = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'todo',
+				title: 'Row 1 — cursor anchor',
+				createdAt: new Date(baseMs + 60_000),
+				updatedAt: new Date(baseMs + 200 * 60_000),
+			})
+			const row2 = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'todo',
+				title: 'Row 2 — newest created, least recently updated',
+				createdAt: new Date(baseMs + 120_000),
+				updatedAt: new Date(baseMs + 100 * 60_000),
+			})
+
+			// Cursor anchored on row 1's (createdAt, id) — as if a prior page had
+			// been walked in createdAt order — combined with `sort=updatedAt`.
+			const url = `/api/objects?type=task&limit=10&order=desc&sort=updatedAt&cursor_created_at=${encodeURIComponent(row1.createdAt.toISOString())}&cursor_id=${encodeURIComponent(row1.id)}`
+			const res = await app.request(jsonGet(url, { 'x-workspace-id': workspaceId }))
+			expect(res.status).toBe(200)
+			const rows = (await res.json()) as Array<{ id: string; updatedAt: string }>
+
+			// A createdAt-based seek would incorrectly exclude row2 (createdAt is
+			// not strictly less than row1's) even though row2 legitimately sorts
+			// after row1 in updatedAt-desc order. The seek must be skipped
+			// entirely, so all three rows are returned, ordered by updatedAt desc.
+			expect(rows.map((r) => r.id)).toEqual([row0.id, row1.id, row2.id])
+		})
 	})
 
 	describe('GET /api/objects/:id/graph — endpoint resolution by id', () => {

@@ -2008,7 +2008,20 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 50)
+			// The snapshot-consistent cursor walk is only valid when the API
+			// orders by `createdAt` — the column the keyset seek in
+			// `buildCursorConditions` is always expressed in. A `sort` override
+			// asks for `updatedAt` ordering instead, so pairing it with a cursor
+			// would seek on a column unrelated to the ORDER BY and silently skip
+			// or duplicate rows. Fall back to plain offset pagination for that
+			// combination — the same behavior this tool had before cursors
+			// existed — rather than accept a cursor or hand back a `next_cursor`
+			// that can't be honoured consistently.
+			const sortedByCreatedAt = !args.sort
+			const pagination = resolveListPagination(
+				{ limit: args.limit, cursor: sortedByCreatedAt ? args.cursor : undefined },
+				50,
+			)
 			const params = new URLSearchParams()
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
@@ -2019,15 +2032,14 @@ export function createMcpServer(config: McpConfig) {
 				params.set('sort', 'updatedAt')
 				params.set('order', args.sort === 'updated_at_asc' ? 'asc' : 'desc')
 			}
-			const fetchCap = isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			const fetchCap =
+				sortedByCreatedAt && isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
 			params.set('limit', String(fetchCap))
 			if (args.offset) params.set('offset', String(args.offset))
-			if (isResponseScopingEnabled()) {
+			if (sortedByCreatedAt && isResponseScopingEnabled()) {
 				params.set('snapshot_at', pagination.snapshotAt)
-				if (!args.sort) {
-					params.set('order', pagination.order)
-					params.set('sort', 'createdAt')
-				}
+				params.set('order', pagination.order)
+				params.set('sort', 'createdAt')
 				if (pagination.cursor) {
 					params.set('cursor_created_at', pagination.cursor.k.sortValue)
 					params.set('cursor_id', pagination.cursor.k.id)
@@ -2036,7 +2048,9 @@ export function createMcpServer(config: McpConfig) {
 			const raw = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as RawObject[]
-			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
+			const { nextCursor, trimmed } = sortedByCreatedAt
+				? encodeNextCursor(pagination, raw)
+				: { nextCursor: null, trimmed: raw }
 			const result = trimmed as RawObject[]
 			const offset = typeof args.offset === 'number' ? args.offset : 0
 			const heroCard = await buildCollectionHeroCard(
@@ -2233,20 +2247,16 @@ export function createMcpServer(config: McpConfig) {
 						text: buildListContentText(result, summaryRows, 'No relationships.'),
 					},
 				],
-				...(nextCursor
-					? {
-							structuredContent: {
-								relationships: result,
-								next_cursor: nextCursor,
-								page: {
-									limit: result.length,
-									offset: typeof args.offset === 'number' ? args.offset : 0,
-									returned: result.length,
-									next_cursor: nextCursor,
-								},
-							},
-						}
-					: {}),
+				structuredContent: {
+					relationships: result,
+					page: {
+						limit: result.length,
+						offset: typeof args.offset === 'number' ? args.offset : 0,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -2329,14 +2339,29 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 50)
+			// The snapshot-consistent cursor walk is only implemented by the
+			// workspace-scoped branch of `/api/actors` — the cross-workspace
+			// branch (no `workspace_id`) runs a two-phase distinct-actor query
+			// ordered by `(name, id)` that doesn't honour `snapshot_at`/
+			// `cursor_created_at`/`cursor_id` at all. Sending a cursor there
+			// would be silently ignored server-side, so a follow-up call using
+			// the returned `next_cursor` (with no `offset` to fall back on)
+			// would re-fetch the identical first page forever. Fall back to
+			// plain offset pagination — matching this tool's pre-cursor
+			// behavior — whenever `workspace_id` is omitted.
+			const workspaceScoped = Boolean(args.workspace_id)
+			const pagination = resolveListPagination(
+				{ limit: args.limit, cursor: workspaceScoped ? args.cursor : undefined },
+				50,
+			)
 			const offset = typeof args.offset === 'number' ? args.offset : 0
 			// Under scoping we fetch `limit + 1` so the +1 sentinel drives the
 			// next-cursor decision without a second query. The API caps `limit`
 			// at 100 so the sentinel stays safely inside the ceiling.
-			const fetchCap = isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			const fetchCap =
+				workspaceScoped && isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
 			const params = new URLSearchParams({ limit: String(fetchCap), offset: String(offset) })
-			if (isResponseScopingEnabled()) {
+			if (workspaceScoped && isResponseScopingEnabled()) {
 				params.set('snapshot_at', pagination.snapshotAt)
 				params.set('order', pagination.order)
 				if (pagination.cursor) {
@@ -2353,11 +2378,11 @@ export function createMcpServer(config: McpConfig) {
 			)
 			const rawRows = Array.isArray(data) ? (data as RawActor[]) : []
 			// Trim the sentinel + seed next_cursor from the last-visible row's
-			// (createdAt, id) tuple. Flag-off callers see the raw response.
-			const { nextCursor, trimmed } = encodeNextCursor(
-				pagination,
-				rawRows as Array<{ id: string; createdAt?: string | null }>,
-			)
+			// (createdAt, id) tuple. Flag-off callers (and the cross-workspace
+			// branch, which never gets a cursor) see the raw response.
+			const { nextCursor, trimmed } = workspaceScoped
+				? encodeNextCursor(pagination, rawRows as Array<{ id: string; createdAt?: string | null }>)
+				: { nextCursor: null, trimmed: rawRows }
 			const rows = trimmed as RawActor[]
 			const trimmedData = Array.isArray(data) ? (data as unknown[]).slice(0, rows.length) : data
 			const heroObjects = rows.map((a) => buildActorHeroCardObject(a))
@@ -3140,20 +3165,16 @@ export function createMcpServer(config: McpConfig) {
 						text: buildListContentText(result, summaryRows, 'No skills.'),
 					},
 				],
-				...(nextCursor
-					? {
-							structuredContent: {
-								skills: result,
-								next_cursor: nextCursor,
-								page: {
-									limit: result.length,
-									offset: typeof args.offset === 'number' ? args.offset : 0,
-									returned: result.length,
-									next_cursor: nextCursor,
-								},
-							},
-						}
-					: {}),
+				structuredContent: {
+					skills: result,
+					page: {
+						limit: result.length,
+						offset: typeof args.offset === 'number' ? args.offset : 0,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -3359,20 +3380,16 @@ export function createMcpServer(config: McpConfig) {
 						text: buildListContentText(result, summaryRows, 'No files.'),
 					},
 				],
-				...(nextCursor
-					? {
-							structuredContent: {
-								files: result,
-								next_cursor: nextCursor,
-								page: {
-									limit: result.length,
-									offset: typeof args.offset === 'number' ? args.offset : 0,
-									returned: result.length,
-									next_cursor: nextCursor,
-								},
-							},
-						}
-					: {}),
+				structuredContent: {
+					files: result,
+					page: {
+						limit: result.length,
+						offset: typeof args.offset === 'number' ? args.offset : 0,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)

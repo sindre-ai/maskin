@@ -198,10 +198,10 @@ describe('MCP telemetry wrapper', () => {
 	})
 
 	it('reports zero structured_content bytes when the tool omits structuredContent', async () => {
-		// list_relationships returns only `content`. Confirms the bet's per-tool
+		// delete_relationship returns only `content`. Confirms the bet's per-tool
 		// p95 ranking won't be polluted by phantom structured bytes.
-		const handler = getHandler('list_relationships')
-		await handler({ workspace_id: wsId })
+		const handler = getHandler('delete_relationship')
+		await handler({ workspace_id: wsId, id: '00000000-0000-0000-0000-0000000000bb' })
 
 		const sizeEvents = recorded.filter((r) => r.event_type === 'tool_call_response_size')
 		expect(sizeEvents).toHaveLength(1)

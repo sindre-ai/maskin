@@ -18,13 +18,21 @@
 //   search_objects      → get_objects (batch, `ids`)
 //   list_files          → get_file    (single, `id`)
 //   list_workspace_skills → get_workspace_skill (single, `name`)
+//   list_relationships  → no get-by-id counterpart — see below
 //
 // `list_actors` / `list_triggers` are omitted deliberately: their
 // `structuredContent` only carries the 25-item heroCard slice — the rich
 // rows never reach the structured channel, so there is nothing for the cap
-// to trim. `list_relationships` is omitted because no `get_relationship`
-// tool exists; its rows are lightweight enough that overflow is not a
-// realistic path.
+// to trim.
+//
+// `list_relationships` IS registered despite having no `get_relationship`
+// tool: its rows carry unbounded `sourceTitle`/`targetTitle` strings (joined
+// from `objects.title`, which has no length cap), so overflow is a real
+// path. With no `fetchHandleTool`, trimmed rows have no one-hop recovery —
+// instead `rewriteNextCursor` below always redirects `next_cursor` to point
+// right after the last row still present in `structuredContent`, so a
+// follow-up call with that cursor returns exactly the trimmed tail next
+// (an extra round trip, but no permanently unrecoverable rows).
 
 import { decodeCursor, encodeCursor } from './cursor'
 import { estimateTokensFromBytes } from './telemetry'
@@ -53,14 +61,17 @@ export const DEFAULT_MAX_RESPONSE_TOKENS = 15_000
 export const MAX_FETCH_HANDLE_IDS = 50
 
 /**
- * Registry of tools whose `structuredContent` carries a rich row array and
- * for which a get-by-id counterpart exists. `rowsField` is the key in
- * `structuredContent` that holds the array. `idField` is the property on
- * each row whose value becomes an entry in `fetch_handle.ids` (default
- * `id`; `list_workspace_skills` uses `name`).
+ * Registry of tools whose `structuredContent` carries a rich row array that
+ * may need trimming. `rowsField` is the key in `structuredContent` that
+ * holds the array. `fetchHandleTool`, when set, is the get-by-id counterpart
+ * used to populate `_meta.fetch_handle`; `idField` is the property on each
+ * row whose value becomes an entry in `fetch_handle.ids` (default `id`;
+ * `list_workspace_skills` uses `name`). When `fetchHandleTool` is omitted
+ * (`list_relationships`), trimmed rows have no one-hop recovery — the cursor
+ * rewrite in `rewriteNextCursor` is the only recovery path.
  */
 export interface TokenCapDescriptor {
-	fetchHandleTool: string
+	fetchHandleTool?: string
 	rowsField: string
 	idField?: string
 }
@@ -74,6 +85,7 @@ export const TOKEN_CAP_TARGETS: Record<string, TokenCapDescriptor> = {
 		rowsField: 'skills',
 		idField: 'name',
 	},
+	list_relationships: { rowsField: 'relationships' },
 }
 
 /**
@@ -162,7 +174,7 @@ export function applyResponseTokenCap(
 		omitted.unshift(dropped)
 		const candidate = buildCappedResponse(rsp, structured, target.rowsField, rows, {
 			tool: target.fetchHandleTool,
-			ids: extractIds(omitted, idField),
+			ids: target.fetchHandleTool ? extractIds(omitted, idField) : [],
 			omittedRows: omitted,
 		})
 		if (estimateResponseTokens(candidate) <= maxTokens) {
@@ -171,14 +183,21 @@ export function applyResponseTokenCap(
 	}
 
 	// Even zero rows doesn't fit under the cap. Return the empty-rows shape
-	// with a fetch_handle listing every original row's id — the caller can
-	// still recover the payload via the get-by-id tool.
+	// with a fetch_handle listing every original row's id (when a get-by-id
+	// counterpart exists) — the caller can still recover the payload via the
+	// get-by-id tool, or via the rewritten cursor otherwise.
 	const finalResponse = buildCappedResponse(rsp, structured, target.rowsField, [], {
 		tool: target.fetchHandleTool,
-		ids: extractIds(rowsRaw as unknown[], idField),
+		ids: target.fetchHandleTool ? extractIds(rowsRaw as unknown[], idField) : [],
 		omittedRows: rowsRaw as unknown[],
 	})
 	return { response: finalResponse, truncated: true }
+}
+
+interface TrimResult {
+	tool?: string
+	ids: string[]
+	omittedRows: unknown[]
 }
 
 function buildCappedResponse(
@@ -186,29 +205,29 @@ function buildCappedResponse(
 	structured: Record<string, unknown>,
 	rowsField: string,
 	keptRows: unknown[],
-	fetchHandle: FetchHandle & { omittedRows: unknown[] },
+	fetchHandle: TrimResult,
 ): MutableMcpResponse {
 	// Cap the fetch_handle.ids at MAX_FETCH_HANDLE_IDS so a single hop of
 	// `fetch_handle.tool(ids)` stays within the get-by-id schema's cap.
 	const cappedIds = fetchHandle.ids.slice(0, MAX_FETCH_HANDLE_IDS)
-	const meta = {
-		...(rsp._meta ?? {}),
-		truncated: true,
-		fetch_handle: {
-			tool: fetchHandle.tool,
-			ids: cappedIds,
-		},
+	const meta: Record<string, unknown> = { ...(rsp._meta ?? {}), truncated: true }
+	if (fetchHandle.tool) {
+		meta.fetch_handle = { tool: fetchHandle.tool, ids: cappedIds } satisfies FetchHandle
 	}
-	// When the tail of the pre-trim payload has more omitted rows than a
-	// single fetch_handle hop can carry, the inherited `next_cursor` still
-	// points past the *original* last row — rows between the 50th omitted id
-	// and that row would be silently unrecoverable. Rewrite the cursor to
-	// point at the last recoverable row (the row backing the 50th id in
-	// `fetch_handle.ids`) so a follow-up list call resumes right after it.
+	// When the omitted rows have more one-hop recoverable rows (via
+	// fetch_handle) than were actually omitted, the inherited `next_cursor`
+	// already points past every omitted row (it was computed from the full,
+	// pre-trim page), so no rewrite is needed. Otherwise — including tools
+	// with no `fetchHandleTool` at all, i.e. zero rows recoverable in one hop
+	// — rows past what's directly recoverable would be silently unreachable
+	// unless the cursor is redirected to resume right after the last row the
+	// client actually has (the last kept row, or the last fetch_handle-backed
+	// row, whichever is later), so a follow-up list call picks up the gap.
 	const cappedStructured = rewriteNextCursor(
 		{ ...structured, [rowsField]: keptRows },
+		keptRows,
 		fetchHandle.omittedRows,
-		cappedIds.length,
+		fetchHandle.tool ? cappedIds.length : 0,
 	)
 	return {
 		...rsp,
@@ -219,10 +238,13 @@ function buildCappedResponse(
 
 /**
  * Re-encode `structuredContent.next_cursor` (and `page.next_cursor`) to the
- * keyset of the last row the client can still recover — index
- * `boundaryIndex - 1` in `omittedRows`. Only fires when the pre-trim payload
- * carried a cursor AND `omittedRows.length > boundaryIndex`; otherwise the
- * original cursor is either already null or already correct.
+ * keyset of the last row the client can still recover in one hop — index
+ * `recoverableCount - 1` in `omittedRows` when a `fetchHandleTool` exists, or
+ * (when `recoverableCount` is 0, i.e. no get-by-id counterpart) the last row
+ * still present in `keptRows`. Only fires when the pre-trim payload carried
+ * a cursor AND `omittedRows.length > recoverableCount`; otherwise the
+ * original cursor is either already null, or already points past every
+ * omitted row so no rewrite is needed.
  *
  * Falls back to a no-op if the boundary row is missing `createdAt`/`id` or
  * if the inherited cursor can't be decoded — the original next_cursor is
@@ -230,15 +252,16 @@ function buildCappedResponse(
  */
 function rewriteNextCursor(
 	structured: Record<string, unknown>,
+	keptRows: unknown[],
 	omittedRows: unknown[],
-	boundaryIndex: number,
+	recoverableCount: number,
 ): Record<string, unknown> {
-	if (boundaryIndex <= 0 || omittedRows.length <= boundaryIndex) return structured
+	if (omittedRows.length <= recoverableCount) return structured
 	const inherited = readCursor(structured)
 	if (inherited === undefined) return structured
 	const decoded = decodeCursor(inherited)
 	if (!decoded) return structured
-	const boundary = omittedRows[boundaryIndex - 1]
+	const boundary = recoverableCount > 0 ? omittedRows[recoverableCount - 1] : keptRows.at(-1)
 	if (!boundary || typeof boundary !== 'object') return structured
 	const row = boundary as Record<string, unknown>
 	const sortValue = row.createdAt

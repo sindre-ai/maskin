@@ -120,6 +120,25 @@ function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
 }
 
 /**
+ * True when a caller-supplied keyset pair will actually be applied as a seek
+ * predicate. The seek is always expressed in `createdAt` order, so it only
+ * produces a result set consistent with `resolveOrderBy`'s ORDER BY when the
+ * walk is actually sorted by `createdAt` (the default) — pairing the seek
+ * with `sort=updatedAt` (or any other column) would filter on a column
+ * unrelated to the ORDER BY, silently skipping or duplicating rows across
+ * pages. A lone `cursor_id` is also ignored so a malformed cursor cannot
+ * silently degrade to an unbounded seek.
+ */
+function isCursorSeekActive(query: {
+	sort?: string
+	cursor_created_at?: string
+	cursor_id?: string
+}): boolean {
+	if (!query.cursor_created_at || !query.cursor_id) return false
+	return (resolveSortColumn(query.sort ?? 'createdAt') ?? objects.createdAt) === objects.createdAt
+}
+
+/**
  * Snapshot-consistent cursor predicates for `objects` list/search endpoints.
  *
  * `snapshot_at` (upper bound on `created_at`) is the "freeze" — every hop
@@ -132,9 +151,12 @@ function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
  * malformed cursor cannot silently degrade to unbounded seek.
  *
  * The keyset predicate matches the sort order the list handlers use
- * (`createdAt` desc/asc, `id` asc tiebreaker — see `resolveOrderBy`).
+ * (`createdAt` desc/asc, `id` asc tiebreaker — see `resolveOrderBy`), so it
+ * only fires when the walk is actually sorted by `createdAt` — see
+ * `isCursorSeekActive`.
  */
 function buildCursorConditions(query: {
+	sort?: string
 	order?: string
 	snapshot_at?: string
 	cursor_created_at?: string
@@ -144,9 +166,9 @@ function buildCursorConditions(query: {
 	if (query.snapshot_at) {
 		conditions.push(lte(objects.createdAt, new Date(query.snapshot_at)))
 	}
-	if (query.cursor_created_at && query.cursor_id) {
-		const lastCa = new Date(query.cursor_created_at)
-		const lastId = query.cursor_id
+	if (isCursorSeekActive(query)) {
+		const lastCa = new Date(query.cursor_created_at as string)
+		const lastId = query.cursor_id as string
 		if (query.order === 'asc') {
 			const seek = or(
 				gt(objects.createdAt, lastCa),
@@ -396,7 +418,7 @@ app.openapi(listObjectsRoute, async (c) => {
 	// When the keyset seek is engaged, `offset` no longer makes sense — the
 	// predicate itself skips past the last-seen row. Ignoring it also keeps
 	// the walk snapshot-consistent when a caller accidentally forwards both.
-	const useKeyset = Boolean(query.cursor_created_at && query.cursor_id)
+	const useKeyset = isCursorSeekActive(query)
 	const results = await db
 		.select()
 		.from(objects)
@@ -563,7 +585,7 @@ app.openapi(searchObjectsRoute, async (c) => {
 
 	const orderBy = resolveOrderBy(query)
 
-	const useKeyset = Boolean(query.cursor_created_at && query.cursor_id)
+	const useKeyset = isCursorSeekActive(query)
 	const results = await db
 		.select()
 		.from(objects)
