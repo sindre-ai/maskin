@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { buildCreateSessionBody, buildSession, buildSessionLog } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp } from '../setup'
@@ -23,6 +24,28 @@ describe('Sessions Routes', () => {
 			const body = await res.json()
 			expect(body.id).toBe(session.id)
 			expect(body.status).toBe('running')
+		})
+
+		it('returns 403 when conversation_id belongs to a conversation the caller is not a participant of', async () => {
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			// The membership join finds no row — caller is not a participant (or the
+			// conversation isn't in this workspace at all).
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions',
+					buildCreateSessionBody({ conversation_id: randomUUID() }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(403)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 	})
 
@@ -374,6 +397,45 @@ describe('Sessions Routes', () => {
 				type: 'user',
 				message: { role: 'user', content: 'hello workspace coach' },
 			})
+		})
+
+		it('spawns a session for a participant agent @mentioned in the message text', async () => {
+			const conversationId = randomUUID()
+			const agentId = randomUUID()
+			const session = buildSession({
+				workspaceId: wsId,
+				interactive: true,
+				status: 'running',
+				conversationId,
+			})
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [
+				[session],
+				[{ actorId: agentId, name: 'Strategist', type: 'agent' }],
+				[{ title: 'Room Title' }],
+			]
+			;(sessionManager.writeInput as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${session.id}/input`,
+					{ content: 'hey @Strategist take a look' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			await vi.waitFor(() =>
+				expect(sessionManager.createSession).toHaveBeenCalledWith(
+					wsId,
+					expect.objectContaining({ actorId: agentId, conversationId }),
+				),
+			)
 		})
 
 		it('accepts attachments alongside content without affecting the payload shape', async () => {

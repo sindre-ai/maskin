@@ -1,5 +1,7 @@
 import { Chat, type ChatHandle } from '@/components/chat/chat'
 import { ChatSidebarProvider } from '@/components/chat/chat-sidebar-provider'
+import { ConversationRow } from '@/components/chat/conversation-row'
+import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -9,7 +11,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Sidebar, SidebarContent, SidebarHeader } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+	useConversations,
+	useCreateConversation,
+	useMarkConversationRead,
+	useUpdateConversationTitle,
+} from '@/hooks/use-conversations'
 import { useIsMobile } from '@/hooks/use-mobile'
+import type { ConversationResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { type ChatAttachment, useChat } from '@/lib/chat-context'
 import {
@@ -25,7 +34,7 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import type { ChatEvent } from '@/lib/chat-stream'
-import { Copy, Download, MoreHorizontal, Pin, PinOff, Plus, X } from 'lucide-react'
+import { ChevronLeft, Copy, Download, MoreHorizontal, Pin, PinOff, Plus, X } from 'lucide-react'
 import { type PointerEvent, useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -37,12 +46,11 @@ interface ChatPanelProps {
 }
 
 /**
- * Right-side chat surface. Wraps `<Chat surface="sheet" />` in a
- * shadcn `<Sidebar>` inside a local provider that never reserves horizontal
- * space in the main page layout (so the panel floats as an overlay by
- * default). When the user clicks the pin button, the route layout applies a
- * matching right margin to the main content so the panel pushes content
- * aside like a traditional sidebar.
+ * Right-side panel that is conversation-first. When no conversation is
+ * active it shows the conversation list (Recent DMs + Rooms). Selecting a row
+ * opens the chat scoped to that conversation, which pre-loads historical
+ * messages and links new sessions to the same conversation so every turn is
+ * persisted.
  */
 export function ChatPanel({ workspaceId, agentActorId }: ChatPanelProps) {
 	const {
@@ -63,9 +71,101 @@ export function ChatPanel({ workspaceId, agentActorId }: ChatPanelProps) {
 	const [events, setEvents] = useState<ChatEvent[]>([])
 	const isMobile = useIsMobile()
 
+	const [activeConversation, setActiveConversation] = useState<ConversationResponse | null>(null)
+
+	const { data: conversations = [], isLoading } = useConversations(workspaceId)
+	const createConversation = useCreateConversation(workspaceId)
+	const markRead = useMarkConversationRead(workspaceId)
+	const updateTitle = useUpdateConversationTitle(workspaceId)
+
+	const [editingTitle, setEditingTitle] = useState(false)
+	const [titleDraft, setTitleDraft] = useState('')
+	const titleInputRef = useRef<HTMLInputElement | null>(null)
+	const [pendingAutoMessage, setPendingAutoMessage] = useState<string | null>(null)
+
+	const dms = conversations.filter((c) => c.type === 'dm')
+	const rooms = conversations.filter((c) => c.type === 'room')
+	const isEmpty = !isLoading && conversations.length === 0
+
+	// Reset to list view when the panel closes.
+	useEffect(() => {
+		if (!open) setActiveConversation(null)
+	}, [open])
+
+	const handleSelectConversation = useCallback(
+		(c: ConversationResponse) => {
+			markRead.mutate(c.id)
+			setActiveConversation(c)
+			setEditingTitle(false)
+		},
+		[markRead],
+	)
+
+	const handleNewConversation = useCallback(() => {
+		const actor = getStoredActor()
+		if (!actor) {
+			toast.error('Not signed in — please reload and try again')
+			return
+		}
+		if (!agentActorId) {
+			toast.error('Agent not ready yet — please try again in a moment')
+			return
+		}
+		createConversation.mutate(
+			{ type: 'dm', participant_actor_ids: [actor.id, agentActorId] },
+			{ onSuccess: (c) => setActiveConversation(c) },
+		)
+	}, [createConversation, agentActorId])
+
+	const handleNewConversationAndSend = useCallback(
+		async (content: string) => {
+			const actor = getStoredActor()
+			if (!actor) {
+				toast.error('Not signed in — please reload and try again')
+				throw new Error('Not signed in')
+			}
+			if (!agentActorId) {
+				toast.error('Agent not ready yet — please try again in a moment')
+				throw new Error('Agent not ready')
+			}
+			const c = await createConversation.mutateAsync({
+				type: 'dm',
+				participant_actor_ids: [actor.id, agentActorId],
+			})
+			setActiveConversation(c)
+			setPendingAutoMessage(content)
+		},
+		[createConversation, agentActorId],
+	)
+
 	const handleNewChat = useCallback(() => {
 		chatRef.current?.newChat()
 	}, [])
+
+	const handleAutoSendConsumed = useCallback(() => {
+		setPendingAutoMessage(null)
+		clearPendingMessage()
+	}, [clearPendingMessage])
+
+	const handleTitleDoubleClick = useCallback(() => {
+		if (!activeConversation) return
+		setTitleDraft(activeConversation.title ?? '')
+		setEditingTitle(true)
+		setTimeout(() => titleInputRef.current?.select(), 0)
+	}, [activeConversation])
+
+	const handleTitleSave = useCallback(() => {
+		if (!activeConversation) return
+		setEditingTitle(false)
+		const trimmed = titleDraft.trim() || null
+		if (trimmed === (activeConversation.title ?? null)) return
+		updateTitle.mutate(
+			{ id: activeConversation.id, title: trimmed },
+			{
+				onSuccess: (updated) => setActiveConversation(updated),
+			},
+		)
+	}, [activeConversation, titleDraft, updateTitle])
 
 	const buildExportMarkdown = useCallback(() => {
 		const actor = getStoredActor()
@@ -102,12 +202,6 @@ export function ChatPanel({ workspaceId, agentActorId }: ChatPanelProps) {
 		clearPendingAttachments()
 	}, [pendingAttachments, clearPendingAttachments])
 
-	// In overlay mode (unpinned), close on outside click — matches the prior
-	// Sheet behaviour. When pinned, the chat panel is docked and should survive clicks
-	// in the reflowed main content. The picker popovers and tooltips render in
-	// portals rooted at document.body; treat anything inside [data-radix-popper-content-wrapper]
-	// or other Radix portal containers as "inside" so opening a picker doesn't
-	// close the panel.
 	useEffect(() => {
 		if (!open || pinned) return
 		function handleMouseDown(event: MouseEvent) {
@@ -129,9 +223,6 @@ export function ChatPanel({ workspaceId, agentActorId }: ChatPanelProps) {
 			onOpenChange={setOpen}
 			style={
 				{
-					// On narrow viewports the configured width can exceed the
-					// screen — clamp to 100vw so the panel never hangs off the
-					// right edge.
 					'--sidebar-width': `min(${panelWidth}px, 100vw)`,
 				} as React.CSSProperties
 			}
@@ -140,10 +231,6 @@ export function ChatPanel({ workspaceId, agentActorId }: ChatPanelProps) {
 				ref={panelRef}
 				side="right"
 				collapsible="offcanvas"
-				// `!flex` overrides the primitive's `hidden md:flex` so the
-				// inner fixed panel renders on mobile too. The outer
-				// `hidden md:block` wrapper is already forced visible by the
-				// ChatSidebarProvider via `[&_[data-side=right]]:!block`.
 				className="pointer-events-auto !flex"
 			>
 				<ResizeHandle
@@ -152,86 +239,253 @@ export function ChatPanel({ workspaceId, agentActorId }: ChatPanelProps) {
 					visible={open && !isMobile}
 				/>
 				<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
-					<div className="flex items-center gap-1">
-						<h2 className="font-semibold text-base">Chat</h2>
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
+					{activeConversation ? (
+						// Active conversation header: back | title | export menu | close
+						<>
+							<div className="flex items-center gap-1">
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7"
+											onClick={() => setActiveConversation(null)}
+											aria-label="Back to conversations"
+										>
+											<ChevronLeft size={15} />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>Back to conversations</TooltipContent>
+								</Tooltip>
+								{editingTitle ? (
+									<input
+										ref={titleInputRef}
+										type="text"
+										value={titleDraft}
+										onChange={(e) => setTitleDraft(e.target.value)}
+										onBlur={handleTitleSave}
+										onKeyDown={(e) => {
+											if (e.key === 'Enter') handleTitleSave()
+											if (e.key === 'Escape') setEditingTitle(false)
+										}}
+										className="min-w-0 flex-1 truncate bg-transparent text-sm font-semibold outline-none"
+										placeholder="Untitled"
+										aria-label="Conversation title"
+									/>
+								) : (
+									<span
+										className="truncate text-sm font-semibold cursor-text"
+										onDoubleClick={handleTitleDoubleClick}
+										title="Double-click to rename"
+									>
+										{activeConversation.title || 'Untitled'}
+									</span>
+								)}
+							</div>
+							<div className="flex items-center gap-1">
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7"
+											aria-label="Conversation menu"
+											disabled={events.length === 0}
+										>
+											<MoreHorizontal size={15} />
+										</Button>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent align="start" className="w-56">
+										<DropdownMenuItem onSelect={() => void handleCopy()}>
+											<Copy size={14} />
+											Copy as markdown
+										</DropdownMenuItem>
+										<DropdownMenuItem onSelect={() => handleDownload()}>
+											<Download size={14} />
+											Download as markdown
+										</DropdownMenuItem>
+									</DropdownMenuContent>
+								</DropdownMenu>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7"
+											onClick={handleNewChat}
+											aria-label="New conversation"
+										>
+											<Plus size={15} />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>New conversation</TooltipContent>
+								</Tooltip>
+								{!isMobile && <PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />}
 								<Button
 									type="button"
 									variant="ghost"
 									size="icon"
 									className="h-7 w-7"
-									aria-label="Conversation menu"
-									disabled={events.length === 0}
+									onClick={() => setOpen(false)}
+									aria-label="Close"
 								>
-									<MoreHorizontal size={15} />
+									<X size={15} />
 								</Button>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="start" className="w-56">
-								<DropdownMenuItem onSelect={() => void handleCopy()}>
-									<Copy size={14} />
-									Copy as markdown
-								</DropdownMenuItem>
-								<DropdownMenuItem onSelect={() => handleDownload()}>
-									<Download size={14} />
-									Download as markdown
-								</DropdownMenuItem>
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</div>
-					<div className="flex items-center gap-1">
-						<Tooltip>
-							<TooltipTrigger asChild>
+							</div>
+						</>
+					) : (
+						// List view header: Conversations title | new | pin | close
+						<>
+							<h2 className="font-semibold text-base">Conversations</h2>
+							<div className="flex items-center gap-1">
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7"
+											onClick={handleNewConversation}
+											disabled={createConversation.isPending}
+											aria-label="New conversation"
+										>
+											<Plus size={15} />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>New conversation</TooltipContent>
+								</Tooltip>
+								{!isMobile && <PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />}
 								<Button
 									type="button"
 									variant="ghost"
 									size="icon"
 									className="h-7 w-7"
-									onClick={handleNewChat}
-									aria-label="New conversation"
+									onClick={() => setOpen(false)}
+									aria-label="Close"
 								>
-									<Plus size={15} />
+									<X size={15} />
 								</Button>
-							</TooltipTrigger>
-							<TooltipContent>New conversation</TooltipContent>
-						</Tooltip>
-						{!isMobile && <PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />}
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							className="h-7 w-7"
-							onClick={() => setOpen(false)}
-							aria-label="Close chat"
-						>
-							<X size={15} />
-						</Button>
-					</div>
+							</div>
+						</>
+					)}
 				</SidebarHeader>
 				<SidebarContent className="min-h-0 flex-1 p-3">
-					<Chat
-						ref={chatRef}
-						workspaceId={workspaceId}
-						agentActorId={agentActorId}
-						surface="sheet"
-						selection={selection}
-						onDispatchSelection={dispatch}
-						autoSendMessage={pendingMessage}
-						onAutoSendConsumed={clearPendingMessage}
-						onEventsChange={setEvents}
-					/>
+					{activeConversation ? (
+						<Chat
+							ref={chatRef}
+							workspaceId={workspaceId}
+							agentActorId={agentActorId}
+							conversationId={activeConversation.id}
+							surface="sheet"
+							selection={selection}
+							onDispatchSelection={dispatch}
+							autoSendMessage={pendingAutoMessage ?? pendingMessage}
+							onAutoSendConsumed={handleAutoSendConsumed}
+							onEventsChange={setEvents}
+						/>
+					) : (
+						<div className="flex h-full flex-col gap-2">
+							<ConversationList
+								dms={dms}
+								rooms={rooms}
+								isEmpty={isEmpty}
+								onSelect={handleSelectConversation}
+							/>
+							<div className="shrink-0">
+								<Chat
+									workspaceId={workspaceId}
+									agentActorId={agentActorId}
+									surface="pulse-bar"
+									selection={selection}
+									onDispatchSelection={dispatch}
+									onSubmitOverride={handleNewConversationAndSend}
+								/>
+							</div>
+						</div>
+					)}
 				</SidebarContent>
 			</Sidebar>
 		</ChatSidebarProvider>
 	)
 }
 
+interface ConversationListProps {
+	dms: ConversationResponse[]
+	rooms: ConversationResponse[]
+	isEmpty: boolean
+	onSelect: (c: ConversationResponse) => void
+}
+
+function ConversationList({ dms, rooms, isEmpty, onSelect }: ConversationListProps) {
+	return (
+		<div className="min-h-0 flex-1 overflow-y-auto">
+			{isEmpty ? (
+				<div className="flex h-full items-center justify-center">
+					<EmptyState title="No conversations yet" description="Send a message to start one" />
+				</div>
+			) : (
+				<div className="pb-1">
+					{dms.length > 0 && (
+						<>
+							<SectionLabel>Recent</SectionLabel>
+							{dms.map((c) => (
+								<ConversationRow
+									key={c.id}
+									type="dm"
+									title={c.title}
+									preview={c.lastMessagePreview}
+									timestamp={c.lastActivityAt ?? c.createdAt}
+									unread={c.unreadCount > 0}
+									participants={c.participants.map((p) => ({
+										name: p.name,
+										type: p.type,
+										online: p.isOnline,
+									}))}
+									onClick={() => onSelect(c)}
+								/>
+							))}
+						</>
+					)}
+					{rooms.length > 0 && (
+						<>
+							<SectionLabel>Rooms</SectionLabel>
+							{rooms.map((c) => (
+								<ConversationRow
+									key={c.id}
+									type="room"
+									title={c.title}
+									preview={c.lastMessagePreview}
+									timestamp={c.lastActivityAt ?? c.createdAt}
+									unread={c.unreadCount > 0}
+									participants={c.participants.map((p) => ({
+										name: p.name,
+										type: p.type,
+										online: p.isOnline,
+									}))}
+									onClick={() => onSelect(c)}
+								/>
+							))}
+						</>
+					)}
+				</div>
+			)}
+		</div>
+	)
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+	return (
+		<p className="px-2.5 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+			{children}
+		</p>
+	)
+}
+
 /**
- * Thin vertical hit-target on the left edge of the chat panel. Captures
- * pointer events and reports the live drag width back via `onWidthChange` —
- * the panel container re-renders immediately so the drag feels responsive.
- * Clamping to [min, max] happens inside the chat context setter so the
- * user can't drag the panel off-screen or down to zero.
+ * Thin vertical hit-target on the left edge of the chat panel.
  */
 function ResizeHandle({
 	width,
@@ -259,7 +513,6 @@ function ResizeHandle({
 		(event: PointerEvent<HTMLButtonElement>) => {
 			const drag = dragStartRef.current
 			if (!drag) return
-			// Sidebar lives on the right edge, so dragging left should grow it.
 			const delta = drag.startX - event.clientX
 			onWidthChange(drag.startWidth + delta)
 		},

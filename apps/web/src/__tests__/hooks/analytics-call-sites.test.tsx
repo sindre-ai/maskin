@@ -179,6 +179,7 @@ describe('useCreateSession — agent_session_started', () => {
 			workspaceId,
 			actorId: 'agent-1',
 			triggerId: null,
+			conversationId: null,
 			status: 'pending',
 			containerId: null,
 			actionPrompt: 'do thing',

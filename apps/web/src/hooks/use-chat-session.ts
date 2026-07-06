@@ -46,6 +46,7 @@ export type ChatSessionStatus = 'idle' | 'starting' | 'connecting' | 'ready' | '
 export interface UseChatSessionOptions {
 	workspaceId: string
 	agentActorId: string | null
+	conversationId?: string | null
 	enabled?: boolean
 }
 
@@ -74,6 +75,7 @@ export interface UseChatSessionResult {
 export function useChatSession({
 	workspaceId,
 	agentActorId,
+	conversationId,
 	enabled = true,
 }: UseChatSessionOptions): UseChatSessionResult {
 	const [sessionId, setSessionId] = useState<string | null>(null)
@@ -200,6 +202,21 @@ export function useChatSession({
 			if (!workspaceId) throw new Error('No workspace selected')
 			if (!agentActorId) throw new Error('Chat agent not available')
 
+			// Echo the user's turn immediately — before the (possibly slow)
+			// container bootstrap — so the message is visible the instant they
+			// hit send, and stays visible (copyable) in the transcript even if
+			// the session never starts. Mirrors the one-shot path's optimistic
+			// echo.
+			setEvents((prev) =>
+				prev.concat({
+					kind: 'user',
+					text: displayText ?? content,
+					...(displayAttachments && displayAttachments.length > 0
+						? { attachments: displayAttachments }
+						: {}),
+				}),
+			)
+
 			// Lazy bootstrap — only create the container on the user's first
 			// turn, or when the previous session ended (e.g. container exited or
 			// timed out). In the latter case we treat the closed session as gone
@@ -216,6 +233,7 @@ export function useChatSession({
 						actor_id: agentActorId,
 						action_prompt: BOOTSTRAP_ACTION_PROMPT,
 						config: { interactive: true },
+						...(conversationId ? { conversation_id: conversationId } : {}),
 						auto_start: true,
 					})
 					// If reset() fired between create() resolving and now, the
@@ -235,6 +253,11 @@ export function useChatSession({
 					}
 				} catch (err) {
 					if (generationRef.current === generation) {
+						// Drop the half-started session so the next send re-bootstraps
+						// a fresh container instead of POSTing the turn into one that
+						// never reached `running` (which 409s). The optimistic user
+						// echo above stays in the transcript so the message isn't lost.
+						setSessionId(null)
 						setStatus('error')
 						const wrapped = err instanceof Error ? err : new Error(String(err))
 						setError(wrapped)
@@ -252,19 +275,10 @@ export function useChatSession({
 				throw new Error('Chat session was reset during bootstrap')
 			}
 
-			setEvents((prev) =>
-				prev.concat({
-					kind: 'user',
-					text: displayText ?? content,
-					...(displayAttachments && displayAttachments.length > 0
-						? { attachments: displayAttachments }
-						: {}),
-				}),
-			)
 			const body = attachments && attachments.length > 0 ? { content, attachments } : { content }
 			await api.sessions.input(currentSessionId, body, workspaceId)
 		},
-		[sessionId, workspaceId, agentActorId],
+		[sessionId, workspaceId, agentActorId, conversationId],
 	)
 
 	const reset = useCallback(() => {

@@ -33,6 +33,10 @@ let mockOneShotResult: UseChatOneShotResult = {
 	clear: mockOneShotClear,
 }
 
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversationMessages: () => ({ data: null }),
+}))
+
 vi.mock('@/hooks/use-chat-session', () => ({
 	useChatSession: () => mockHookResult,
 }))
@@ -113,16 +117,16 @@ describe('Chat', () => {
 		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
 		// Empty transcript copy
-		expect(screen.getByText(/Ask the agents about your workspace/i)).toBeInTheDocument()
+		expect(screen.getByText(/Ask about your workspace/i)).toBeInTheDocument()
 		// Composer textarea
-		expect(screen.getByPlaceholderText('Message agents')).toBeInTheDocument()
+		expect(screen.getByPlaceholderText('Message the agent')).toBeInTheDocument()
 	})
 
 	it('hides the transcript in pulse-bar mode', () => {
 		setHookResult({ status: 'ready' })
 		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="pulse-bar" />)
 
-		expect(screen.queryByText(/Ask the agents about your workspace/i)).not.toBeInTheDocument()
+		expect(screen.queryByText(/Ask about your workspace/i)).not.toBeInTheDocument()
 		expect(screen.getByPlaceholderText('Ask anything…')).toBeInTheDocument()
 	})
 
@@ -139,15 +143,15 @@ describe('Chat', () => {
 		setHookResult({ status: 'ready' })
 		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
-		fireEvent.change(textarea, { target: { value: 'hello sindre' } })
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'hi there' } })
 
 		const sendButton = screen.getByRole('button', { name: /send message/i })
 		expect(sendButton).not.toBeDisabled()
 		fireEvent.click(sendButton)
 
 		await waitFor(() =>
-			expect(mockSend).toHaveBeenCalledWith('hello sindre', undefined, 'hello sindre', undefined),
+			expect(mockSend).toHaveBeenCalledWith('hi there', undefined, 'hi there', undefined),
 		)
 		await waitFor(() => expect(textarea.value).toBe(''))
 	})
@@ -158,7 +162,7 @@ describe('Chat', () => {
 		setHookResult({ status: 'ready' })
 		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'important prompt' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
@@ -171,9 +175,19 @@ describe('Chat', () => {
 		setHookResult({ status: 'starting' })
 		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		expect(textarea).toBeDisabled()
-		expect(screen.getByText(/Connecting to agent/i)).toBeInTheDocument()
+		expect(screen.getByText(/Connecting/i)).toBeInTheDocument()
+	})
+
+	it('keeps the composer enabled when the session errored so the user can retry', () => {
+		setHookResult({ status: 'error', error: new Error('Chat session did not start in time') })
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
+
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
+		expect(textarea).not.toBeDisabled()
+		// The error is surfaced in the transcript so the user sees what happened.
+		expect(screen.getByText(/did not start in time/i)).toBeInTheDocument()
 	})
 
 	it('submits on Enter and leaves the textarea clean', async () => {
@@ -181,7 +195,7 @@ describe('Chat', () => {
 		setHookResult({ status: 'ready' })
 		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'hi there' } })
 		fireEvent.keyDown(textarea, { key: 'Enter' })
 
@@ -196,7 +210,7 @@ describe('Chat', () => {
 		setHookResult({ status: 'ready' })
 		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'first line' } })
 		const event = fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true })
 
@@ -209,7 +223,7 @@ describe('Chat', () => {
 		setHookResult({ status: 'ready' })
 		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'こん' } })
 		fireEvent.keyDown(textarea, { key: 'Enter', isComposing: true })
 
@@ -221,7 +235,7 @@ describe('Chat', () => {
 		setHookResult({ status: 'ready' })
 		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		const sendButton = screen.getByRole('button', { name: /send message/i })
 		expect(sendButton).toBeDisabled()
 
@@ -238,7 +252,7 @@ describe('Chat', () => {
 			<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />,
 		)
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'hello' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
@@ -330,7 +344,7 @@ describe('Chat', () => {
 			/>,
 		)
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'summarize these' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
@@ -372,7 +386,7 @@ describe('Chat', () => {
 			/>,
 		)
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'what happened?' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
@@ -439,7 +453,7 @@ describe('Chat', () => {
 			/>,
 		)
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'summarize' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
@@ -466,7 +480,7 @@ describe('Chat', () => {
 			/>,
 		)
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'summarize' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
@@ -594,7 +608,7 @@ describe('Chat', () => {
 			wrapper: WithQueryClient,
 		})
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: '/' } })
 
 		expect(await screen.findByPlaceholderText('Choose a kind…')).toBeInTheDocument()
@@ -605,7 +619,7 @@ describe('Chat', () => {
 			wrapper: WithQueryClient,
 		})
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'hello /' } })
 
 		expect(await screen.findByPlaceholderText('Choose a kind…')).toBeInTheDocument()
@@ -616,7 +630,7 @@ describe('Chat', () => {
 			wrapper: WithQueryClient,
 		})
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'path/to' } })
 
 		expect(screen.queryByPlaceholderText('Choose a kind…')).not.toBeInTheDocument()
@@ -639,7 +653,7 @@ describe('Chat', () => {
 			{ wrapper: WithQueryClient },
 		)
 
-		const textarea = screen.getByPlaceholderText('Message agents') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'hi /' } })
 
 		// Drill into the Agent kind, then pick Reviewer. Scope to cmdk's
@@ -774,10 +788,10 @@ describe('Chat', () => {
 		expect(onConsumed).toHaveBeenCalledTimes(2)
 	})
 
-	it('merges one-shot events after session events in the transcript', () => {
+	it('merges one-shot events after chat events in the transcript', () => {
 		setHookResult({
 			status: 'ready',
-			events: [{ kind: 'text', text: 'Hi from Sindre' }],
+			events: [{ kind: 'text', text: 'Hi from the agent' }],
 		})
 		setOneShotResult({
 			status: 'streaming',
@@ -797,7 +811,7 @@ describe('Chat', () => {
 			/>,
 		)
 
-		expect(screen.getByText('Hi from Sindre')).toBeInTheDocument()
+		expect(screen.getByText('Hi from the agent')).toBeInTheDocument()
 		expect(screen.getByText('Hi from Code Reviewer')).toBeInTheDocument()
 	})
 })

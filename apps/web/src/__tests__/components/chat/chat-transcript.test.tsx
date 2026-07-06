@@ -74,12 +74,38 @@ describe('ChatTranscript', () => {
 
 	it('renders the empty state when there are no events', () => {
 		render(<ChatTranscript events={[]} starting={false} error={null} />)
-		expect(screen.getByText(/Ask the agents about your workspace/i)).toBeInTheDocument()
+		expect(screen.getByText(/Ask about your workspace/i)).toBeInTheDocument()
 	})
 
 	it('renders a connecting indicator while the session is starting', () => {
 		render(<ChatTranscript events={[]} starting={true} error={null} />)
-		expect(screen.getByText(/Connecting to agent/i)).toBeInTheDocument()
+		expect(screen.getByText(/Connecting/i)).toBeInTheDocument()
+	})
+
+	it('renders a waiting-for-response placeholder after the user turn while pending', () => {
+		const events: ChatEvent[] = [{ kind: 'user', text: 'hi there' }]
+		render(<ChatTranscript events={events} starting={false} pending error={null} />)
+
+		// The sent user turn is visible (and copyable) alongside the placeholder.
+		expect(screen.getByText('hi there')).toBeInTheDocument()
+		expect(screen.getByText(/Waiting for response/i)).toBeInTheDocument()
+	})
+
+	it('drops the waiting placeholder once an error replaces it', () => {
+		const events: ChatEvent[] = [{ kind: 'user', text: 'hi there' }]
+		render(
+			<ChatTranscript
+				events={events}
+				starting={false}
+				pending
+				error={new Error('Chat session did not start in time')}
+			/>,
+		)
+
+		expect(screen.queryByText(/Waiting for response/i)).not.toBeInTheDocument()
+		expect(screen.getByText(/did not start in time/i)).toBeInTheDocument()
+		// The user's message is still on screen so it isn't lost.
+		expect(screen.getByText('hi there')).toBeInTheDocument()
 	})
 
 	it('renders errors and error results without crashing', () => {

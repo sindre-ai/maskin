@@ -1,3 +1,11 @@
+import { readdirSync } from 'node:fs'
+
+export function listMigrationFiles(dir: string): string[] {
+	return readdirSync(dir)
+		.filter((f) => f.endsWith('.sql') && !f.endsWith('.down.sql'))
+		.sort()
+}
+
 // Splits a migration file's contents into individually-executable statements
 // on drizzle-kit's `--> statement-breakpoint` marker.
 //

@@ -10,7 +10,9 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useChatOneShot } from '@/hooks/use-chat-one-shot'
 import { useChatSession } from '@/hooks/use-chat-session'
-import type { SessionInputAttachment } from '@/lib/api'
+import { useConversationMessages } from '@/hooks/use-conversations'
+import type { MessageResponse, SessionInputAttachment } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import {
 	type ChatSelection,
 	type ChatSelectionAction,
@@ -24,6 +26,7 @@ import { cn } from '@/lib/cn'
 import { Bot, Box, Paperclip, Send } from 'lucide-react'
 
 const FILE_MAX_BYTES = 1024 * 1024 // 1 MB per upload — plenty for markdown
+const EMPTY_MESSAGES: MessageResponse[] = []
 import {
 	type ChangeEvent,
 	type FormEvent,
@@ -32,6 +35,7 @@ import {
 	useCallback,
 	useEffect,
 	useImperativeHandle,
+	useMemo,
 	useRef,
 	useState,
 } from 'react'
@@ -41,7 +45,7 @@ import {
  * reach in to start a fresh conversation (e.g. the panel's `+` button).
  */
 export interface ChatHandle {
-	/** Stops the current chat container, clears local transcript + selection. */
+	/** Stops the current agent container, clears local transcript + selection. */
 	newChat: () => void
 }
 
@@ -50,12 +54,13 @@ export type ChatSurface = 'sheet' | 'pulse-bar'
 export interface ChatProps {
 	workspaceId: string
 	agentActorId: string | null
+	conversationId?: string | null
 	surface: ChatSurface
 	/**
 	 * Composer-level selection. When `selection.agent` is set, the next send is
 	 * routed to that agent as a one-shot session instead of the persistent
-	 * chat session. Defaults to an empty selection so existing callers keep
-	 * talking to the agent.
+	 * agent session. Defaults to an empty selection so existing callers keep
+	 * talking to the default agent.
 	 */
 	selection?: ChatSelection
 	/**
@@ -101,13 +106,14 @@ export interface ChatProps {
  * - `selection.agent` set → POST a one-shot session via `useChatOneShot`,
  *   passing the message + attached object context as the action_prompt, and
  *   streams that session's logs inline as a single turn.
- * - otherwise → forwards to the persistent session via
+ * - otherwise → forwards to the persistent agent session via
  *   `useChatSession`, attaching objects (if any) as first-class attachments.
  */
 export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	{
 		workspaceId,
 		agentActorId,
+		conversationId,
 		surface,
 		selection,
 		onDispatchSelection,
@@ -125,13 +131,32 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	const selectedNotifications = activeSelection.notifications
 	const selectedFiles = activeSelection.files
 
-	const session = useChatSession({ workspaceId, agentActorId })
+	const chatSession = useChatSession({ workspaceId, agentActorId, conversationId })
 	const oneShot = useChatOneShot()
+
+	// Pre-load historical messages from the conversations API so the transcript
+	// shows past turns when the user resumes a conversation. Convert each message
+	// to a ChatEvent so the existing ChatTranscript can render them.
+	const { data: historyData } = useConversationMessages(workspaceId, conversationId ?? null)
+	// `historyData?.data` is undefined until the query resolves — fall back to
+	// a stable EMPTY_MESSAGES reference rather than a fresh `[]` literal, which
+	// would change identity every render and defeat useHistoricalEvents'
+	// memoization (cascading into an infinite render loop via onEventsChange).
+	const historicalEvents = useHistoricalEvents(historyData?.data ?? EMPTY_MESSAGES)
 
 	// Merge events from both sources while preserving arrival order, so a turn
 	// answered by the selected agent renders immediately after the user's last
-	// session turn (and vice versa).
-	const events = useMergedTranscript(workspaceId, session.events, oneShot.events)
+	// session turn (and vice versa). Historical events from the conversations API
+	// are prepended so the user sees past turns on resume.
+	const liveEvents = useMergedTranscript(workspaceId, chatSession.events, oneShot.events)
+	// Wrap in useMemo so the array reference only changes when inputs change.
+	// Without this, the spread always produces a new reference, which makes the
+	// onEventsChange useEffect fire every render → infinite setState loop.
+	const events = useMemo(() => {
+		if (historicalEvents.length > 0 && liveEvents.length === 0) return historicalEvents
+		if (liveEvents.length > 0) return [...historicalEvents, ...liveEvents]
+		return liveEvents
+	}, [historicalEvents, liveEvents])
 
 	useEffect(() => {
 		onEventsChange?.(events)
@@ -145,31 +170,32 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 				// running so any in-flight work the user kicked off there
 				// completes in the background. The watchdog will pause it
 				// once it goes idle.
-				session.reset()
+				chatSession.reset()
 				oneShot.clear()
 				onDispatchSelection?.({ type: 'clear_all' })
 			},
 		}),
-		[session, oneShot, onDispatchSelection],
+		[chatSession, oneShot, onDispatchSelection],
 	)
 
 	const showTranscript = surface === 'sheet'
 	// Lazy bootstrap: the composer is usable whenever the agent actor is
 	// present — the first send() call creates the container. Only disable
-	// while the session is actively booting (post-create, pre-
-	// running), in an error state, or finished.
+	// while the session is actively booting (post-create, pre-running).
 	// 'closed' is intentionally excluded: when the container exits the session
 	// is marked closed, but the user should still be able to send a new message
-	// — session.send() will bootstrap a fresh session in that case so the
-	// conversation continues seamlessly.
-	const sessionBlocked = session.status === 'starting' || session.status === 'error'
+	// — chatSession.send() will bootstrap a fresh session in that case so the
+	// conversation continues seamlessly. An error (e.g. the container failed to
+	// start in time) also keeps the composer enabled so the user can retry —
+	// the hook drops the dead session, so the next send re-bootstraps a fresh one.
+	const chatBlocked = chatSession.status === 'starting'
 	const oneShotBusy = oneShot.status === 'starting'
-	const disabled = selectedAgent ? oneShotBusy : sessionBlocked || !agentActorId
-	// Show the "Connecting to agent…" empty-state only while we're actively
+	const disabled = selectedAgent ? oneShotBusy : chatBlocked || !agentActorId
+	// Show the "Connecting…" empty-state only while we're actively
 	// booting a session. `idle` is now the default-empty state and shouldn't
 	// trigger the connecting copy.
-	const starting = !selectedAgent && session.status === 'starting'
-	const error = selectedAgent ? oneShot.error : session.error
+	const starting = !selectedAgent && chatSession.status === 'starting'
+	const error = selectedAgent ? oneShot.error : chatSession.error
 
 	const [pendingTurn, setPendingTurn] = useState(false)
 	const pendingBaselineRef = useRef(0)
@@ -190,7 +216,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	// Release the spinner if the underlying session/one-shot hook flips to a
 	// terminal state without ever emitting a turn-progress event (e.g. stream
 	// died mid-turn, container crashed on boot).
-	const activeStatus = selectedAgent ? oneShot.status : session.status
+	const activeStatus = selectedAgent ? oneShot.status : chatSession.status
 	useEffect(() => {
 		if (!pendingTurn) return
 		if (activeStatus === 'error' || activeStatus === 'closed') {
@@ -242,7 +268,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 								selectedFiles,
 							)
 						: content
-					await session.send(enriched, attachments, content, displayAttachments)
+					await chatSession.send(enriched, attachments, content, displayAttachments)
 				}
 				// Confirmed sent — clear the composer's chips so the same agent /
 				// objects / notifications don't ride along on the next turn. The
@@ -259,7 +285,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 			oneShot,
 			onSubmitOverride,
 			onDispatchSelection,
-			session,
+			chatSession,
 			selectedAgent,
 			selectedObjects,
 			selectedNotifications,
@@ -332,6 +358,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 				<ChatTranscript
 					events={events}
 					starting={starting}
+					pending={pendingTurn}
 					error={error}
 					className="min-h-0 flex-1"
 				/>
@@ -366,63 +393,86 @@ function isTurnProgressEvent(event: ChatEvent): boolean {
 }
 
 /**
- * Merges the persistent session transcript with any one-shot turns in arrival
+ * Merges the persistent chat transcript with any one-shot turns in arrival
  * order. Both hooks expose append-only event arrays, so we track how many of
  * each we've already merged and push the tail of whichever produced new
  * events since the last render.
  */
 function useMergedTranscript(
 	workspaceId: string,
-	sessionEvents: ChatEvent[],
+	chatEvents: ChatEvent[],
 	oneShotEvents: ChatEvent[],
 ): ChatEvent[] {
 	const [merged, setMerged] = useState<ChatEvent[]>([])
-	const sessionSeenRef = useRef(0)
+	const chatSeenRef = useRef(0)
 	const oneShotSeenRef = useRef(0)
 	const workspaceRef = useRef(workspaceId)
 
 	useEffect(() => {
 		if (workspaceRef.current === workspaceId) return
 		workspaceRef.current = workspaceId
-		sessionSeenRef.current = 0
+		chatSeenRef.current = 0
 		oneShotSeenRef.current = 0
 		setMerged([])
 	}, [workspaceId])
 
 	// Handle upstream resets — e.g. the panel's "+" button which calls
-	// session.reset() + oneShot.clear() to start a fresh conversation, or a
+	// chatSession.reset() + oneShot.clear() to start a fresh conversation, or a
 	// workspace switch. When either source shrinks below what we've already
 	// merged, rebuild `merged` from the current state of both sources. In the
 	// common case both reset together so `merged` ends up empty; in the rare
 	// single-side reset we lose strict interleaving of the remaining source,
 	// which is acceptable.
 	useEffect(() => {
-		if (sessionEvents.length < sessionSeenRef.current) {
-			sessionSeenRef.current = sessionEvents.length
+		if (chatEvents.length < chatSeenRef.current) {
+			chatSeenRef.current = chatEvents.length
 			oneShotSeenRef.current = oneShotEvents.length
-			setMerged([...sessionEvents, ...oneShotEvents])
+			setMerged([...chatEvents, ...oneShotEvents])
 			return
 		}
-		if (sessionEvents.length === sessionSeenRef.current) return
-		const fresh = sessionEvents.slice(sessionSeenRef.current)
-		sessionSeenRef.current = sessionEvents.length
+		if (chatEvents.length === chatSeenRef.current) return
+		const fresh = chatEvents.slice(chatSeenRef.current)
+		chatSeenRef.current = chatEvents.length
 		setMerged((prev) => prev.concat(fresh))
-	}, [sessionEvents, oneShotEvents])
+	}, [chatEvents, oneShotEvents])
 
 	useEffect(() => {
 		if (oneShotEvents.length < oneShotSeenRef.current) {
 			oneShotSeenRef.current = oneShotEvents.length
-			sessionSeenRef.current = sessionEvents.length
-			setMerged([...sessionEvents, ...oneShotEvents])
+			chatSeenRef.current = chatEvents.length
+			setMerged([...chatEvents, ...oneShotEvents])
 			return
 		}
 		if (oneShotEvents.length === oneShotSeenRef.current) return
 		const fresh = oneShotEvents.slice(oneShotSeenRef.current)
 		oneShotSeenRef.current = oneShotEvents.length
 		setMerged((prev) => prev.concat(fresh))
-	}, [oneShotEvents, sessionEvents])
+	}, [oneShotEvents, chatEvents])
 
 	return merged
+}
+
+/**
+ * Converts persisted conversation messages (from the conversations API) into
+ * typed ChatEvent objects so ChatTranscript can render them alongside live
+ * session events. Classified against the signed-in viewer, not a single fixed
+ * agent id — a conversation can have several other participants (agents or
+ * humans), and every one of them should render as "not me", not just the one
+ * agent this panel happens to be scoped to.
+ */
+function useHistoricalEvents(msgs: MessageResponse[]): ChatEvent[] {
+	// useMemo so the array reference only changes when data changes, not on every render.
+	return useMemo(() => {
+		if (msgs.length === 0) return []
+		const viewerActorId = getStoredActor()?.id ?? null
+		// Messages are newest-first from the API; reverse for chronological display.
+		return [...msgs].reverse().map((m): ChatEvent => {
+			if (viewerActorId && m.actorId === viewerActorId) {
+				return { kind: 'user', text: m.content }
+			}
+			return { kind: 'text', text: m.content }
+		})
+	}, [msgs])
 }
 
 function buildDisplayAttachments(selection: ChatSelection): UserAttachmentView[] | undefined {
@@ -458,7 +508,7 @@ function computePlaceholder(surface: ChatSurface, agentName: string | null | und
 	if (agentName && agentName.trim().length > 0) {
 		return `Message ${agentName.trim()}`
 	}
-	return surface === 'pulse-bar' ? 'Ask anything…' : 'Message agents'
+	return surface === 'pulse-bar' ? 'Ask anything…' : 'Message the agent'
 }
 
 export interface ComposerProps {
@@ -686,10 +736,10 @@ export function Composer({
 					onChange={handleChange}
 					onKeyDown={handleKeyDown}
 					placeholder={placeholder}
+					aria-label={textareaLabel ?? placeholder}
 					className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
 					disabled={disabled}
 					rows={1}
-					aria-label={textareaLabel}
 				/>
 				{sendError || externalError ? (
 					<p role="alert" className="px-1 text-error text-xs" aria-live="polite">

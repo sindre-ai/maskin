@@ -622,6 +622,40 @@ export const api = {
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
 	},
+	conversations: {
+		list: (workspaceId: string) =>
+			request<ConversationResponse[]>('/conversations', { workspaceId }),
+		create: (workspaceId: string, data: CreateConversationInput) =>
+			request<ConversationResponse>('/conversations', { method: 'POST', body: data, workspaceId }),
+		messages: (workspaceId: string, id: string, params?: { limit?: number; offset?: number }) => {
+			const qs = params
+				? `?${new URLSearchParams(
+						Object.entries(params).reduce<Record<string, string>>((acc, [k, v]) => {
+							if (v !== undefined) acc[k] = String(v)
+							return acc
+						}, {}),
+					)}`
+				: ''
+			return request<{ data: MessageResponse[]; total: number }>(
+				`/conversations/${id}/messages${qs}`,
+				{ workspaceId },
+			)
+		},
+		sendMessage: (workspaceId: string, id: string, data: SendMessageInput) =>
+			request<MessageResponse>(`/conversations/${id}/messages`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		markRead: (workspaceId: string, id: string) =>
+			request<{ ok: boolean }>(`/conversations/${id}/read`, { method: 'POST', workspaceId }),
+		updateTitle: (workspaceId: string, id: string, title: string | null) =>
+			request<ConversationResponse>(`/conversations/${id}`, {
+				method: 'PATCH',
+				body: { title },
+				workspaceId,
+			}),
+	},
 }
 
 export type ClaudeOAuthSlot = 'primary' | 'backup'
@@ -1065,6 +1099,7 @@ export interface CreateSessionInput {
 	actor_id: string
 	action_prompt: string
 	config?: SessionConfigInput
+	conversation_id?: string
 	auto_start?: boolean
 }
 
@@ -1073,6 +1108,7 @@ export interface SessionResponse {
 	workspaceId: string
 	actorId: string
 	triggerId: string | null
+	conversationId: string | null
 	status: string
 	containerId: string | null
 	actionPrompt: string
@@ -1308,4 +1344,42 @@ interface InstalledPackageForkResponse {
 	installedAt: string | null
 	updatedAt: string | null
 	detached: { actors: number; triggers: number; skills: number; integrations: number }
+}
+export interface ConversationParticipantActor {
+	actorId: string
+	name: string
+	type: string
+	isOnline: boolean
+}
+
+export interface ConversationResponse {
+	id: string
+	workspaceId: string
+	title: string | null
+	type: 'dm' | 'room'
+	lastMessagePreview: string | null
+	lastActivityAt: string | null
+	createdAt: string
+	participantCount: number
+	unreadCount: number
+	participants: ConversationParticipantActor[]
+}
+
+export interface CreateConversationInput {
+	title?: string | null
+	type: 'dm' | 'room'
+	participant_actor_ids: string[]
+}
+
+export interface SendMessageInput {
+	content: string
+	mentions?: string[]
+}
+
+export interface MessageResponse {
+	id: string
+	conversationId: string
+	actorId: string
+	content: string
+	createdAt: string
 }

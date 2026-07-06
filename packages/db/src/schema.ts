@@ -224,6 +224,7 @@ export const sessions = pgTable(
 			.references(() => actors.id)
 			.notNull(),
 		triggerId: uuid('trigger_id').references(() => triggers.id, { onDelete: 'set null' }),
+		conversationId: uuid('conversation_id'),
 		status: text('status').notNull(),
 		containerId: text('container_id'),
 		// Set by the SessionDispatcher (T6) on a successful production dispatch
@@ -899,3 +900,70 @@ export const sessionDispatchAttempts = pgTable(
 
 export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
 export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
+
+export const conversations = pgTable(
+	'conversations',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		title: text('title'),
+		type: text('type').notNull(),
+		lastMessagePreview: text('last_message_preview'),
+		lastActivityAt: timestamp('last_activity_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('conversations_ws_last_activity_idx').on(t.workspaceId, t.lastActivityAt),
+		index('conversations_ws_type_idx').on(t.workspaceId, t.type),
+		check('conversations_type_check', sql`${t.type} IN ('dm', 'room')`),
+	],
+)
+
+export type Conversation = typeof conversations.$inferSelect
+export type NewConversation = typeof conversations.$inferInsert
+
+// ── Conversation Participants ───────────────────────────────────────────────
+
+export const conversationParticipants = pgTable(
+	'conversation_participants',
+	{
+		conversationId: uuid('conversation_id')
+			.notNull()
+			.references(() => conversations.id, { onDelete: 'cascade' }),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		unreadCount: integer('unread_count').notNull().default(0),
+		lastReadAt: timestamp('last_read_at', { withTimezone: true }),
+	},
+	(t) => [
+		primaryKey({ columns: [t.conversationId, t.actorId] }),
+		index('conversation_participants_actor_idx').on(t.actorId),
+	],
+)
+
+export type ConversationParticipant = typeof conversationParticipants.$inferSelect
+export type NewConversationParticipant = typeof conversationParticipants.$inferInsert
+
+// ── Messages ────────────────────────────────────────────────────────────────
+
+export const messages = pgTable(
+	'messages',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		conversationId: uuid('conversation_id')
+			.notNull()
+			.references(() => conversations.id, { onDelete: 'cascade' }),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		content: text('content').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('messages_conversation_created_idx').on(t.conversationId, t.createdAt)],
+)
+
+export type Message = typeof messages.$inferSelect
+export type NewMessage = typeof messages.$inferInsert

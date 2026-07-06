@@ -114,7 +114,6 @@ export function Header() {
 	const router = useRouter()
 	const navigate = useNavigate()
 	const { workspaceId } = useWorkspace()
-
 	// Find the leaf (last non-hidden) match
 	const leafMatch = [...matches].reverse().find((m) => !hiddenRoutes.has(m.routeId))
 	const leafConfig = leafMatch ? routeConfig[leafMatch.routeId] : undefined

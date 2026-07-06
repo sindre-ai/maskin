@@ -1,8 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import postgres from 'postgres'
-import { splitStatements } from './migrate-utils.js'
+import { listMigrationFiles, splitStatements } from './migrate-utils.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const migrationsDir = join(__dirname, '..', 'drizzle')
@@ -24,10 +24,8 @@ await sql`
 // Get already-applied migrations
 const applied = new Set((await sql`SELECT name FROM "_migrations"`).map((r) => r.name))
 
-const files = readdirSync(migrationsDir)
-	.filter((f) => f.endsWith('.sql'))
-	.sort()
-
+// .down.sql files are rollback scripts — excluded here so they never run automatically.
+const files = listMigrationFiles(migrationsDir)
 for (const file of files) {
 	if (applied.has(file)) {
 		console.log(`Skipping (already applied): ${file}`)
