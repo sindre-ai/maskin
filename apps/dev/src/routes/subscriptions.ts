@@ -307,6 +307,16 @@ app.openapi(listUnreadRoute, (async (c) => {
 	// objects flagged tracks the share of comments that actually mention.
 	const mentioningUnreadCountExpr = sql<number>`coalesce(count(*) filter (where ${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), 0)::int`
 
+	// `status_changed` events carry the new-shape `data.changes` diff array
+	// (see bet/mcp-response-shape) going forward, but historical rows before
+	// that migration still carry the legacy `{previous, updated}` snapshot —
+	// read whichever is present so old terminal transitions don't drop out of
+	// the unread feed.
+	const terminalStatusExpr = sql<string>`coalesce(
+		${events.data}->'updated'->>'status',
+		jsonb_path_query_first(${events.data}, '$.changes[*] ? (@.field == "status")')->>'new'
+	)`
+
 	const rows = await db
 		.select({
 			entityType: subscriptions.entityType,
@@ -342,7 +352,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 						eq(subscriptions.entityType, 'object'),
 						eq(events.entityType, 'bet'),
 						eq(events.action, 'status_changed'),
-						inArray(sql`${events.data}->'updated'->>'status'`, [...TERMINAL_BET_STATUSES]),
+						inArray(terminalStatusExpr, [...TERMINAL_BET_STATUSES]),
 					),
 				),
 			),
