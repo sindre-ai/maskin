@@ -12,6 +12,7 @@ import { useChatOneShot } from '@/hooks/use-chat-one-shot'
 import { useChatSession } from '@/hooks/use-chat-session'
 import { useConversationMessages } from '@/hooks/use-conversations'
 import type { MessageResponse, SessionInputAttachment } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import {
 	type ChatSelection,
 	type ChatSelectionAction,
@@ -141,7 +142,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	// a stable EMPTY_MESSAGES reference rather than a fresh `[]` literal, which
 	// would change identity every render and defeat useHistoricalEvents'
 	// memoization (cascading into an infinite render loop via onEventsChange).
-	const historicalEvents = useHistoricalEvents(historyData?.data ?? EMPTY_MESSAGES, agentActorId)
+	const historicalEvents = useHistoricalEvents(historyData?.data ?? EMPTY_MESSAGES)
 
 	// Merge events from both sources while preserving arrival order, so a turn
 	// answered by the selected agent renders immediately after the user's last
@@ -180,11 +181,14 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	const showTranscript = surface === 'sheet'
 	// Lazy bootstrap: the composer is usable whenever the agent actor is
 	// present — the first send() call creates the container. Only disable
-	// while the session is actively booting (post-create, pre-
-	// running) or finished. An error (e.g. the container failed to start in
-	// time) keeps the composer enabled so the user can retry — the hook drops
-	// the dead session, so the next send re-bootstraps a fresh one.
-	const chatBlocked = chatSession.status === 'starting' || chatSession.status === 'closed'
+	// while the session is actively booting (post-create, pre-running).
+	// 'closed' is intentionally excluded: when the container exits the session
+	// is marked closed, but the user should still be able to send a new message
+	// — chatSession.send() will bootstrap a fresh session in that case so the
+	// conversation continues seamlessly. An error (e.g. the container failed to
+	// start in time) also keeps the composer enabled so the user can retry —
+	// the hook drops the dead session, so the next send re-bootstraps a fresh one.
+	const chatBlocked = chatSession.status === 'starting'
 	const oneShotBusy = oneShot.status === 'starting'
 	const disabled = selectedAgent ? oneShotBusy : chatBlocked || !agentActorId
 	// Show the "Connecting…" empty-state only while we're actively
@@ -451,22 +455,24 @@ function useMergedTranscript(
 /**
  * Converts persisted conversation messages (from the conversations API) into
  * typed ChatEvent objects so ChatTranscript can render them alongside live
- * session events. Messages authored by the agent actor become `text` events;
- * all others become `user` events.
+ * session events. Classified against the signed-in viewer, not a single fixed
+ * agent id — a conversation can have several other participants (agents or
+ * humans), and every one of them should render as "not me", not just the one
+ * agent this panel happens to be scoped to.
  */
-function useHistoricalEvents(msgs: MessageResponse[], agentActorId: string | null): ChatEvent[] {
+function useHistoricalEvents(msgs: MessageResponse[]): ChatEvent[] {
 	// useMemo so the array reference only changes when data changes, not on every render.
-	// eslint-disable-next-line react-hooks/exhaustive-deps
 	return useMemo(() => {
 		if (msgs.length === 0) return []
+		const viewerActorId = getStoredActor()?.id ?? null
 		// Messages are newest-first from the API; reverse for chronological display.
 		return [...msgs].reverse().map((m): ChatEvent => {
-			if (agentActorId && m.actorId === agentActorId) {
-				return { kind: 'text', text: m.content }
+			if (viewerActorId && m.actorId === viewerActorId) {
+				return { kind: 'user', text: m.content }
 			}
-			return { kind: 'user', text: m.content }
+			return { kind: 'text', text: m.content }
 		})
-	}, [msgs, agentActorId])
+	}, [msgs])
 }
 
 function buildDisplayAttachments(selection: ChatSelection): UserAttachmentView[] | undefined {

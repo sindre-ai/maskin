@@ -22,6 +22,7 @@ import {
 	updateConversationSchema,
 } from '@maskin/shared'
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
+import { dispatchMentionSessions } from '../lib/conversation-mentions'
 import { createApiError, formatZodError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -454,25 +455,15 @@ app.openapi(sendMessageRoute, (async (c) => {
 
 	logger.info('message sent', { conversationId: id, messageId: message.id, workspaceId })
 
-	// Fire-and-forget: spawn a session per @mentioned agent in the room context
-	for (const mention of agentMentions) {
-		sessionManager
-			.createSession(workspaceId, {
-				actorId: mention.agentId,
-				actionPrompt: `You were @mentioned in conversation "${conversation.title ?? id}".`,
-				config: { message_content: body.content },
-				conversationId: id,
-				createdBy: actorId,
-				autoStart: true,
-			})
-			.catch((err: unknown) => {
-				logger.error('Failed to spawn session for @mentioned agent in room', {
-					agentId: mention.agentId,
-					conversationId: id,
-					err,
-				})
-			})
-	}
+	dispatchMentionSessions(
+		sessionManager,
+		workspaceId,
+		id,
+		actorId,
+		conversation.title,
+		body.content,
+		agentMentions,
+	)
 
 	return c.json(serialize(message) as z.infer<typeof messageResponseSchema>, 201)
 }) as RouteHandler<typeof sendMessageRoute, Env>)

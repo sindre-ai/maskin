@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import postgres from 'postgres'
-import { listMigrationFiles, splitStatements } from './migrate-utils'
+import { listMigrationFiles, splitStatements } from './migrate-utils.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const migrationsDir = join(__dirname, '..', 'drizzle')

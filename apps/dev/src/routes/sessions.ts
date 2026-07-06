@@ -2,6 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import {
 	events,
+	actors,
 	conversationParticipants,
 	conversations,
 	messages,
@@ -19,6 +20,7 @@ import {
 } from '@maskin/shared'
 import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
+import { MENTION_TOKEN_RE, dispatchMentionSessions } from '../lib/conversation-mentions'
 import { createApiError, formatZodError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -65,6 +67,54 @@ async function loadSessionWithAuth(db: Database, sessionId: string, workspaceId:
 	return session ?? null
 }
 
+/**
+ * Resolves `@name` tokens in a conversation message against that
+ * conversation's own agent participants and fires a session per match —
+ * this is the interactive-session equivalent of the explicit-UUID
+ * `mentions[]` handling in conversations.ts's sendMessageRoute, adapted to
+ * free text since the composer has no structured mention picker wired up.
+ */
+async function dispatchConversationMentions(
+	db: Database,
+	sessionManager: SessionManager,
+	workspaceId: string,
+	actorId: string,
+	conversationId: string,
+	content: string,
+) {
+	const names = [...content.matchAll(MENTION_TOKEN_RE)]
+		.map((m) => m[1]?.toLowerCase())
+		.filter((name): name is string => !!name)
+	if (names.length === 0) return
+
+	const participants = await db
+		.select({ actorId: actors.id, name: actors.name, type: actors.type })
+		.from(conversationParticipants)
+		.innerJoin(actors, eq(actors.id, conversationParticipants.actorId))
+		.where(eq(conversationParticipants.conversationId, conversationId))
+
+	const mentions = participants
+		.filter((p) => p.type === 'agent' && names.includes(p.name.replace(/\s+/g, '').toLowerCase()))
+		.map((p) => ({ agentId: p.actorId, name: p.name }))
+	if (mentions.length === 0) return
+
+	const [conversation] = await db
+		.select({ title: conversations.title })
+		.from(conversations)
+		.where(eq(conversations.id, conversationId))
+		.limit(1)
+
+	dispatchMentionSessions(
+		sessionManager,
+		workspaceId,
+		conversationId,
+		actorId,
+		conversation?.title ?? null,
+		content,
+		mentions,
+	)
+}
+
 // POST / - Create session
 const createSessionRoute = createRoute({
 	method: 'post',
@@ -86,6 +136,10 @@ const createSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not a participant in the given conversation',
+		},
 	},
 })
 
@@ -100,6 +154,26 @@ app.openapi(createSessionRoute, (async (c) => {
 	// For interactive sessions, resolve or create the linked conversation so
 	// user/assistant turns can be persisted to conversations.messages.
 	let conversationId = body.conversation_id ?? null
+	if (conversationId) {
+		// Client-supplied conversation_id — verify it belongs to this workspace
+		// and the caller is actually a participant before linking a session to
+		// it, mirroring the auth check every route in conversations.ts performs.
+		const [membership] = await db
+			.select({ id: conversations.id })
+			.from(conversations)
+			.innerJoin(
+				conversationParticipants,
+				and(
+					eq(conversationParticipants.conversationId, conversations.id),
+					eq(conversationParticipants.actorId, actorId),
+				),
+			)
+			.where(and(eq(conversations.id, conversationId), eq(conversations.workspaceId, workspaceId)))
+			.limit(1)
+		if (!membership) {
+			return c.json(createApiError('FORBIDDEN', 'Not a participant in the given conversation'), 403)
+		}
+	}
 	if (isInteractive && !conversationId) {
 		const [conv] = await db
 			.insert(conversations)
@@ -608,15 +682,23 @@ app.openapi(inputSessionRoute, (async (c) => {
 	if (conversationId) {
 		db.insert(messages)
 			.values({ conversationId, actorId, content: body.content })
-			.then(() =>
-				db
+			.then(async () => {
+				await db
 					.update(conversations)
 					.set({
 						lastMessagePreview: body.content.slice(0, 200),
 						lastActivityAt: new Date(),
 					})
-					.where(eq(conversations.id, conversationId)),
-			)
+					.where(eq(conversations.id, conversationId))
+				await dispatchConversationMentions(
+					db,
+					sessionManager,
+					workspaceId,
+					actorId,
+					conversationId,
+					body.content,
+				)
+			})
 			.catch((err) =>
 				logger.error('Failed to write user message to conversation', { error: String(err) }),
 			)

@@ -1343,6 +1343,7 @@ interface InstalledPackageForkResponse {
 	forkedAt: string | null
 	installedAt: string | null
 	updatedAt: string | null
+	detached: { actors: number; triggers: number; skills: number; integrations: number }
 }
 export interface ConversationParticipantActor {
 	actorId: string
