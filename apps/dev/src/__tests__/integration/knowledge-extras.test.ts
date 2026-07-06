@@ -4,10 +4,11 @@ import { fileURLToPath } from 'node:url'
 import { knowledgeExtras } from '@maskin/ext-knowledge/db-schema'
 import { and, eq, isNull } from 'drizzle-orm'
 import { buildCreateRelationshipBody, insertObject, insertWorkspace } from '../factories'
-import { jsonRequest } from '../helpers'
+import { jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId, sql } from './global-setup'
 
 const { default: relationshipsRoutes } = await import('../../routes/relationships')
+const { default: objectsRoutes } = await import('../../routes/objects')
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const migrationPath = join(
@@ -37,6 +38,10 @@ const rollbackPath = join(
 
 function createApp() {
 	return createIntegrationApp({ path: '/api/relationships', module: relationshipsRoutes })
+}
+
+function createObjectsApp() {
+	return createIntegrationApp({ path: '/api/objects', module: objectsRoutes })
 }
 
 async function seedKnowledge(
@@ -322,6 +327,113 @@ describe('knowledge_extras — migration + column filters + supersede semantics'
 		expect(byId.get(retired.id)?.tInvalid).not.toBeNull()
 		expect(byId.get(draft.id)?.verificationStatus).toBe('unverified')
 		expect(byId.get(draft.id)?.tInvalid).toBeNull()
+	})
+
+	it('backfill does not guess when statuses.knowledge has been reordered/resized to an unexpected shape', async () => {
+		// A workspace can freely replace statuses.knowledge via update_extension
+		// with no positional guarantee (packages/mcp/src/tools.ts only enforces
+		// `z.array(z.string()).min(1)`). Here it's been shortened to 2 entries —
+		// index 1/2 no longer reliably mean validated/deprecated. The backfill
+		// must not guess: no object should get auto-verified or auto-invalidated
+		// from this workspace's positional lookup.
+		const reshapedWs = await insertWorkspace(db, getTestActorId(), {
+			settings: {
+				enabled_modules: ['knowledge'],
+				statuses: { knowledge: ['draft', 'validated'] },
+			},
+		})
+		const looksValidated = await seedKnowledge(reshapedWs.id, getTestActorId(), {
+			status: 'validated',
+		})
+		const looksDraft = await seedKnowledge(reshapedWs.id, getTestActorId(), { status: 'draft' })
+
+		const migrationSql = readFileSync(migrationPath, 'utf-8')
+		const insertStart = migrationSql.indexOf('INSERT INTO "knowledge_extras"')
+		expect(insertStart).toBeGreaterThan(0)
+		await sql.unsafe(migrationSql.slice(insertStart))
+
+		const rows = await db
+			.select()
+			.from(knowledgeExtras)
+			.where(eq(knowledgeExtras.workspaceId, reshapedWs.id))
+		const byId = new Map(rows.map((r) => [r.objectId, r]))
+		expect(byId.get(looksValidated.id)?.verificationStatus).toBe('unverified')
+		expect(byId.get(looksValidated.id)?.tInvalid).toBeNull()
+		expect(byId.get(looksDraft.id)?.verificationStatus).toBe('unverified')
+		expect(byId.get(looksDraft.id)?.tInvalid).toBeNull()
+	})
+
+	// ── Board route (read-path knowledge gate) ─────────────────────────────────
+
+	it('board route excludes invalidated/deprecated knowledge rows that list/search already hide', async () => {
+		const boardWs = await insertWorkspace(db, getTestActorId(), {
+			settings: { enabled_modules: ['knowledge'] },
+		})
+		const live = await seedKnowledge(boardWs.id, getTestActorId(), { status: 'validated' })
+		const invalidated = await seedKnowledge(boardWs.id, getTestActorId(), { status: 'validated' })
+		const deprecatedRow = await seedKnowledge(boardWs.id, getTestActorId(), {
+			status: 'validated',
+		})
+		await db.insert(knowledgeExtras).values([
+			{
+				objectId: live.id,
+				workspaceId: boardWs.id,
+				writerType: 'human',
+				provenanceType: 'insight',
+			},
+			{
+				objectId: invalidated.id,
+				workspaceId: boardWs.id,
+				writerType: 'human',
+				provenanceType: 'insight',
+				tInvalid: new Date(),
+			},
+			{
+				objectId: deprecatedRow.id,
+				workspaceId: boardWs.id,
+				writerType: 'human',
+				provenanceType: 'insight',
+				verificationStatus: 'deprecated',
+			},
+		])
+
+		const app = createObjectsApp()
+		const res = await app.request(
+			jsonGet('/api/objects/board?type=knowledge&groupBy=status', {
+				'x-workspace-id': boardWs.id,
+			}),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			columns: Array<{ value: string; total: number; objects: Array<{ id: string }> }>
+		}
+		const column = body.columns.find((c) => c.value === 'validated')
+		expect(column).toBeDefined()
+		const ids = column?.objects.map((o) => o.id) ?? []
+		expect(ids).toContain(live.id)
+		expect(ids).not.toContain(invalidated.id)
+		expect(ids).not.toContain(deprecatedRow.id)
+		expect(column?.total).toBe(1)
+	})
+
+	it('board route is unaffected for non-knowledge types (no join, no behavior change)', async () => {
+		const insight = await insertObject(db, workspaceId, getTestActorId(), {
+			type: 'insight',
+			status: 'new',
+		})
+
+		const app = createObjectsApp()
+		const res = await app.request(
+			jsonGet('/api/objects/board?type=insight&groupBy=status', {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			columns: Array<{ value: string; objects: Array<{ id: string }> }>
+		}
+		const column = body.columns.find((c) => c.value === 'new')
+		expect(column?.objects.map((o) => o.id)).toContain(insight.id)
 	})
 
 	// ── Bi-temporal write path (AC4) ───────────────────────────────────────────

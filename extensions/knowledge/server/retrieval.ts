@@ -146,30 +146,38 @@ const confidencePriorityExpr = sql<number>`case ${knowledgeExtras.confidence}
 	else 0
 end`
 
+// Bi-temporal + verification "live only" filters. Shared by every read path
+// that joins `knowledge_extras` on `objects.id` — retrieveKnowledge() below,
+// and the board route's grouped/paginated query in apps/dev/src/routes/
+// objects.ts — so a knowledge row invalidated/deprecated/future-dated is
+// hidden consistently everywhere, not just on list/search. Assumes the
+// caller has already LEFT JOINed `knowledge_extras`.
+export function knowledgeLiveOnlyFilters(): SQL[] {
+	return [
+		// Bi-temporal live-only. LEFT JOIN means missing extras row → t_invalid IS NULL
+		// naturally, so nothing is excluded on that account.
+		isNull(knowledgeExtras.tInvalid),
+		// In-force at query time. Rows with `t_valid > now` are scheduled for a
+		// future validity and should not be candidates yet. Missing extras row
+		// (LEFT JOIN null) keeps legacy rows retrievable.
+		or(isNull(knowledgeExtras.tValid), sql`${knowledgeExtras.tValid} <= now()`) as SQL,
+		// `deprecated` verification means the row is intentionally out of retrieval.
+		// Missing extras row (LEFT JOIN null) is treated as retrievable — the extension
+		// may not be populated for a workspace, and we don't want to hide legacy rows.
+		or(
+			isNull(knowledgeExtras.verificationStatus),
+			sql`${knowledgeExtras.verificationStatus} <> 'deprecated'`,
+		) as SQL,
+	]
+}
+
 export async function retrieveKnowledge(
 	db: Database,
 	opts: RetrieveKnowledgeOptions,
 ): Promise<KnowledgeRow[]> {
 	const filters: SQL[] = [eq(objects.workspaceId, opts.workspaceId), eq(objects.type, 'knowledge')]
 
-	// Bi-temporal live-only. LEFT JOIN means missing extras row → t_invalid IS NULL
-	// naturally, so nothing is excluded on that account.
-	filters.push(isNull(knowledgeExtras.tInvalid))
-
-	// In-force at query time. Rows with `t_valid > now` are scheduled for a
-	// future validity and should not be candidates yet. Missing extras row
-	// (LEFT JOIN null) keeps legacy rows retrievable.
-	filters.push(or(isNull(knowledgeExtras.tValid), sql`${knowledgeExtras.tValid} <= now()`) as SQL)
-
-	// `deprecated` verification means the row is intentionally out of retrieval.
-	// Missing extras row (LEFT JOIN null) is treated as retrievable — the extension
-	// may not be populated for a workspace, and we don't want to hide legacy rows.
-	filters.push(
-		or(
-			isNull(knowledgeExtras.verificationStatus),
-			sql`${knowledgeExtras.verificationStatus} <> 'deprecated'`,
-		) as SQL,
-	)
+	filters.push(...knowledgeLiveOnlyFilters())
 
 	if (opts.status && opts.status.length > 0) {
 		if (opts.status.length === 1) filters.push(eq(objects.status, opts.status[0] as string))

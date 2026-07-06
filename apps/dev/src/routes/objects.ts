@@ -11,7 +11,8 @@ import {
 	subscriptions,
 	workspaces,
 } from '@maskin/db/schema'
-import { retrieveKnowledge } from '@maskin/ext-knowledge/retrieval'
+import { knowledgeExtras } from '@maskin/ext-knowledge/db-schema'
+import { knowledgeLiveOnlyFilters, retrieveKnowledge } from '@maskin/ext-knowledge/retrieval'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
@@ -40,6 +41,7 @@ import {
 	count,
 	desc,
 	eq,
+	getTableColumns,
 	gt,
 	ilike,
 	inArray,
@@ -434,6 +436,13 @@ app.openapi(boardObjectsRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
+	// Same live-only gate as list/search (isKnowledgeModuleEnabled +
+	// knowledgeLiveOnlyFilters): invalidated/deprecated/future-dated knowledge
+	// rows must not surface on the board either, or the same object shows up
+	// live here while correctly hidden from list/search.
+	const knowledgeGated =
+		query.type === 'knowledge' && (await isKnowledgeModuleEnabled(db, workspaceId))
+
 	const baseConditions = [
 		eq(objects.workspaceId, workspaceId),
 		...buildObjectListConditions({
@@ -445,13 +454,14 @@ app.openapi(boardObjectsRoute, async (c) => {
 			updated_before: query.updated_before,
 			updated_after: query.updated_after,
 		}),
+		...(knowledgeGated ? knowledgeLiveOnlyFilters() : []),
 	]
 
-	const countRows = await db
-		.select({ value: groupExpr, total: count() })
-		.from(objects)
-		.where(and(...baseConditions))
-		.groupBy(groupExpr)
+	let countQuery = db.select({ value: groupExpr, total: count() }).from(objects).$dynamic()
+	if (knowledgeGated) {
+		countQuery = countQuery.leftJoin(knowledgeExtras, eq(knowledgeExtras.objectId, objects.id))
+	}
+	const countRows = await countQuery.where(and(...baseConditions)).groupBy(groupExpr)
 
 	const totals = new Map<string, number>()
 	for (const row of countRows as Array<{ value: unknown; total: unknown }>) {
@@ -483,9 +493,11 @@ app.openapi(boardObjectsRoute, async (c) => {
 	const columns = []
 	for (const value of columnValues) {
 		const columnConditions = [...baseConditions, eq(groupExpr, value)]
-		const rows = await db
-			.select()
-			.from(objects)
+		let rowsQuery = db.select(getTableColumns(objects)).from(objects).$dynamic()
+		if (knowledgeGated) {
+			rowsQuery = rowsQuery.leftJoin(knowledgeExtras, eq(knowledgeExtras.objectId, objects.id))
+		}
+		const rows = await rowsQuery
 			.where(and(...columnConditions))
 			.limit(query.limit)
 			.offset(query.offset)
