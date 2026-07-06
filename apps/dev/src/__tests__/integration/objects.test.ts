@@ -142,12 +142,13 @@ describe('Objects Integration', () => {
 				jsonRequest('PATCH', `/api/objects/${created.id}`, { status: 'in_progress' }),
 			)
 
+			// insertObject() writes the object row directly (no API call), so unlike
+			// the 'updated' test above there's no preceding 'created' event to skip.
 			const [statusEvent] = await db
 				.select()
 				.from(events)
 				.where(eq(events.entityId, created.id))
 				.orderBy(events.id)
-				.offset(1)
 				.limit(1)
 
 			expect(statusEvent?.action).toBe('status_changed')
