@@ -11,6 +11,8 @@ import {
 	subscriptions,
 	workspaces,
 } from '@maskin/db/schema'
+import { knowledgeExtras } from '@maskin/ext-knowledge/db-schema'
+import { knowledgeLiveOnlyFilters, retrieveKnowledge } from '@maskin/ext-knowledge/retrieval'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
@@ -39,6 +41,7 @@ import {
 	count,
 	desc,
 	eq,
+	getTableColumns,
 	gt,
 	ilike,
 	inArray,
@@ -179,6 +182,20 @@ function toCount(value: unknown) {
 	if (typeof value === 'number') return value
 	if (typeof value === 'string') return Number.parseInt(value, 10) || 0
 	return 0
+}
+
+// Column-aware knowledge retrieval is extension-owned behavior — only route
+// into it when the workspace actually has the knowledge module enabled, so a
+// workspace that has disabled it (or never enabled it) stays on the generic
+// query path even if legacy `type='knowledge'` rows still exist.
+async function isKnowledgeModuleEnabled(db: Database, workspaceId: string): Promise<boolean> {
+	const [workspace] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	const enabledModules = getEnabledModuleIds((workspace?.settings ?? {}) as Record<string, unknown>)
+	return enabledModules.includes('knowledge')
 }
 
 // POST / - Create object
@@ -339,6 +356,20 @@ app.openapi(listObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
+	if (query.type === 'knowledge' && (await isKnowledgeModuleEnabled(db, workspaceId))) {
+		const results = await retrieveKnowledge(db, {
+			workspaceId,
+			status: query.status ? query.status.split(',').filter(Boolean) : undefined,
+			driverIds: query.driver ? query.driver.split(',').filter(Boolean) : undefined,
+			ids: query.ids ? query.ids.split(',').filter(Boolean) : undefined,
+			updatedBefore: query.updated_before,
+			updatedAfter: query.updated_after,
+			limit: query.limit,
+			offset: query.offset,
+		})
+		return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
+	}
+
 	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
 
 	const orderBy = resolveOrderBy(query)
@@ -405,6 +436,13 @@ app.openapi(boardObjectsRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
+	// Same live-only gate as list/search (isKnowledgeModuleEnabled +
+	// knowledgeLiveOnlyFilters): invalidated/deprecated/future-dated knowledge
+	// rows must not surface on the board either, or the same object shows up
+	// live here while correctly hidden from list/search.
+	const knowledgeGated =
+		query.type === 'knowledge' && (await isKnowledgeModuleEnabled(db, workspaceId))
+
 	const baseConditions = [
 		eq(objects.workspaceId, workspaceId),
 		...buildObjectListConditions({
@@ -416,13 +454,14 @@ app.openapi(boardObjectsRoute, async (c) => {
 			updated_before: query.updated_before,
 			updated_after: query.updated_after,
 		}),
+		...(knowledgeGated ? knowledgeLiveOnlyFilters() : []),
 	]
 
-	const countRows = await db
-		.select({ value: groupExpr, total: count() })
-		.from(objects)
-		.where(and(...baseConditions))
-		.groupBy(groupExpr)
+	let countQuery = db.select({ value: groupExpr, total: count() }).from(objects).$dynamic()
+	if (knowledgeGated) {
+		countQuery = countQuery.leftJoin(knowledgeExtras, eq(knowledgeExtras.objectId, objects.id))
+	}
+	const countRows = await countQuery.where(and(...baseConditions)).groupBy(groupExpr)
 
 	const totals = new Map<string, number>()
 	for (const row of countRows as Array<{ value: unknown; total: unknown }>) {
@@ -454,9 +493,11 @@ app.openapi(boardObjectsRoute, async (c) => {
 	const columns = []
 	for (const value of columnValues) {
 		const columnConditions = [...baseConditions, eq(groupExpr, value)]
-		const rows = await db
-			.select()
-			.from(objects)
+		let rowsQuery = db.select(getTableColumns(objects)).from(objects).$dynamic()
+		if (knowledgeGated) {
+			rowsQuery = rowsQuery.leftJoin(knowledgeExtras, eq(knowledgeExtras.objectId, objects.id))
+		}
+		const rows = await rowsQuery
 			.where(and(...columnConditions))
 			.limit(query.limit)
 			.offset(query.offset)
@@ -500,6 +541,17 @@ app.openapi(searchObjectsRoute, async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
+
+	if (query.type === 'knowledge' && (await isKnowledgeModuleEnabled(db, workspaceId))) {
+		const results = await retrieveKnowledge(db, {
+			workspaceId,
+			q: query.q,
+			status: query.status ? query.status.split(',').filter(Boolean) : undefined,
+			limit: query.limit,
+			offset: query.offset,
+		})
+		return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
+	}
 
 	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
 
