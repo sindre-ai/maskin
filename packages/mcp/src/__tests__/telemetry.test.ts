@@ -170,43 +170,52 @@ describe('MCP telemetry wrapper', () => {
 		}
 	})
 
-	it('emits a tool_response_emitted event with non-zero response_bytes on every tool response', async () => {
-		const handler = getHandler('list_workspaces')
-		await handler({})
+	it('records a tool_call_response_size event with all six properties on every tool response', async () => {
+		// AC-T1: the bet's First test. Fires once per tool call, regardless of
+		// whether the tool surfaces `structuredContent`. `truncated` is hard-coded
+		// false until T4's token-cap wrapper lands.
+		const handler = getHandler('search_objects')
+		await handler({ workspace_id: wsId, q: 'anything' })
 
-		const sizes = recorded.filter((r) => r.event_type === 'tool_response_emitted')
-		expect(sizes).toHaveLength(1)
-		expect(sizes[0].tool_name).toBe('list_workspaces')
-		expect(sizes[0].response_bytes).toBeGreaterThan(0)
-		expect(sizes[0].has_include).toBe(false)
-		expect(typeof sizes[0].session_id).toBe('string')
+		const sizeEvents = recorded.filter((r) => r.event_type === 'tool_call_response_size')
+		expect(sizeEvents).toHaveLength(1)
+		const [evt] = sizeEvents
+		if (evt.event_type !== 'tool_call_response_size') throw new Error('narrowing')
+		expect(evt.tool_name).toBe('search_objects')
+		expect(typeof evt.session_id).toBe('string')
+		expect(typeof evt.content_bytes).toBe('number')
+		expect(typeof evt.content_tokens).toBe('number')
+		expect(typeof evt.structured_content_bytes).toBe('number')
+		expect(typeof evt.structured_content_tokens).toBe('number')
+		expect(evt.truncated).toBe(false)
+		// search_objects always produces both channels, so bytes > 0.
+		expect(evt.content_bytes).toBeGreaterThan(0)
+		expect(evt.structured_content_bytes).toBeGreaterThan(0)
+		// `bytes/4` estimator — match exactly so accidental tokenizer swaps
+		// surface in CI rather than silently changing the baseline.
+		expect(evt.content_tokens).toBe(Math.ceil(evt.content_bytes / 4))
+		expect(evt.structured_content_tokens).toBe(Math.ceil(evt.structured_content_bytes / 4))
 	})
 
-	it('sets has_include=true when get_objects is called with a non-empty include array', async () => {
-		// get_objects calls fetch per id; return an empty array for the objects
-		// lookup so the handler resolves.
-		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-			return new Response(JSON.stringify({ id: 'x', title: 't', type: 'bet' }), {
-				status: 200,
-				headers: { 'Content-Type': 'application/json' },
-			})
-		})
+	it('reports zero structured_content bytes when the tool omits structuredContent', async () => {
+		// delete_relationship returns only `content`. Confirms the bet's per-tool
+		// p95 ranking won't be polluted by phantom structured bytes.
+		const handler = getHandler('delete_relationship')
+		await handler({ workspace_id: wsId, id: '00000000-0000-0000-0000-0000000000bb' })
 
-		const handler = getHandler('get_objects')
-		await handler({
-			workspace_id: wsId,
-			ids: ['11111111-1111-1111-1111-111111111111'],
-			include: ['content'],
-		})
-
-		const sizes = recorded.filter((r) => r.event_type === 'tool_response_emitted')
-		expect(sizes).toHaveLength(1)
-		expect(sizes[0].tool_name).toBe('get_objects')
-		expect(sizes[0].has_include).toBe(true)
-		expect(sizes[0].response_bytes).toBeGreaterThan(0)
+		const sizeEvents = recorded.filter((r) => r.event_type === 'tool_call_response_size')
+		expect(sizeEvents).toHaveLength(1)
+		const [evt] = sizeEvents
+		if (evt.event_type !== 'tool_call_response_size') throw new Error('narrowing')
+		expect(evt.structured_content_bytes).toBe(0)
+		expect(evt.structured_content_tokens).toBe(0)
+		expect(evt.content_bytes).toBeGreaterThan(0)
 	})
 
-	it('does not emit a tool_response_emitted event when the underlying handler throws', async () => {
+	it('does not emit a tool_call_response_size event when the underlying handler throws', async () => {
+		// On throw the response shape is undefined; we already record the
+		// tool_call event (covered above) but skip the size event because there
+		// is no payload to measure.
 		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
 			return new Response('boom', { status: 500 })
 		})
@@ -214,8 +223,8 @@ describe('MCP telemetry wrapper', () => {
 		const handler = getHandler('list_workspaces')
 		await expect(handler({})).rejects.toThrow()
 
-		const sizes = recorded.filter((r) => r.event_type === 'tool_response_emitted')
-		expect(sizes).toHaveLength(0)
+		const sizeEvents = recorded.filter((r) => r.event_type === 'tool_call_response_size')
+		expect(sizeEvents).toHaveLength(0)
 	})
 
 	it('does not emit a mutation event when the response shape is unrecognised', async () => {

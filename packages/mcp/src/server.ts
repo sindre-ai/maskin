@@ -19,13 +19,20 @@ import {
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
+import { type CursorState, decodeCursor, encodeCursor, toSnapshotAt } from './cursor.js'
+import { applyResponseTokenCap } from './response-cap.js'
+import {
+	type SummaryRow,
+	buildContentSummary,
+	isResponseScopingEnabled,
+} from './response-scoping.js'
 import {
 	MUTATION_TOOL_KINDS,
 	type TelemetrySink,
 	createDefaultSink,
 	recordMutation,
 	recordToolCall,
-	recordToolResponseEmitted,
+	recordToolCallResponseSize,
 	recordWidgetEvent,
 } from './telemetry.js'
 import { tools } from './tools.js'
@@ -98,6 +105,123 @@ function addUrl(
 		ordered.url = buildWebAppHref(stripTrailingSlash(config.webAppBaseUrl), workspaceId, target)
 	}
 	return ordered
+}
+
+/**
+ * Build the `content` text for a list/search tool response. When response
+ * scoping is on, returns a lean markdown summary bounded by the summary
+ * byte budget (AC-T2); when off, returns `JSON.stringify(fullPayload, null, 2)`
+ * so the flag-off response is byte-identical to the pre-scoping shape
+ * (AC-T4 partial). `structuredContent` (built by the caller) is never touched
+ * either way — the full enriched payload always survives on the structured
+ * channel.
+ */
+function buildListContentText(
+	fullPayload: unknown,
+	rows: SummaryRow[],
+	emptyLabel: string,
+): string {
+	if (isResponseScopingEnabled()) {
+		return buildContentSummary(rows, { emptyLabel })
+	}
+	return JSON.stringify(fullPayload, null, 2)
+}
+
+/** Default page size when response scoping is on and the caller did not
+ *  pass an explicit limit. Kept in sync with `HERO_CARD_UI_PAGE_SIZE` — the
+ *  UI has been paging at 25 for months, so an agent that opts into the flag
+ *  gets responses shaped like what a human sees in the widget. */
+const DEFAULT_SCOPED_PAGE_SIZE = 25
+
+/** Hard cap the `/api/objects` list + search endpoints enforce on `limit`
+ *  (`objectQuerySchema` / `searchObjectsSchema` in `@maskin/shared`). The
+ *  cursor `+ 1` sentinel below must stay strictly under this ceiling, so
+ *  the effective scoped page size is capped at `MAX - 1`. */
+const LIST_ENDPOINT_MAX_LIMIT = 100
+
+/**
+ * Resolve the effective page size + cursor state for a list/search MCP
+ * tool call. When response scoping is on and the caller passes neither
+ * `limit` nor `cursor`, we cap the page at `DEFAULT_SCOPED_PAGE_SIZE`
+ * (AC-U1). When a cursor is present, its snapshot + last-seen keyset are
+ * threaded through to the API on every subsequent hop so an insert in
+ * the underlying table mid-walk cannot leak into the stream (AC-T3).
+ *
+ * `fallbackLimit` is the pre-scoping default — the value the tool used
+ * before the flag existed. Preserving it keeps the flag-off path
+ * byte-identical.
+ */
+interface ResolvedPagination {
+	/** Row cap forwarded to the API. */
+	limit: number
+	/** Decoded cursor when the caller passed one in; otherwise `null`. */
+	cursor: CursorState | null
+	/** Snapshot upper bound for the walk. On the first call this is the
+	 *  server's current time; on subsequent calls it is the value carried
+	 *  by the cursor so every hop shares one freeze. */
+	snapshotAt: string
+	/** Sort order the walk is opened in. Locked for the whole cursor
+	 *  chain so the keyset predicate stays consistent. */
+	order: 'asc' | 'desc'
+}
+
+function resolveListPagination(
+	args: {
+		limit?: number
+		cursor?: string
+	},
+	fallbackLimit: number,
+): ResolvedPagination {
+	const scoped = isResponseScopingEnabled()
+	const cursor = scoped ? decodeCursor(args.cursor) : null
+	const requested =
+		typeof args.limit === 'number' && Number.isFinite(args.limit) && args.limit > 0
+			? args.limit
+			: scoped
+				? DEFAULT_SCOPED_PAGE_SIZE
+				: fallbackLimit
+	// Under scoping we fetch `requested + 1` to detect "has more"; the API's
+	// list endpoints reject any `limit > LIST_ENDPOINT_MAX_LIMIT`, so cap the
+	// effective page at `MAX - 1` to keep the sentinel within bounds. Flag-off
+	// pays no such price — the URL sends exactly what the caller asked for.
+	const limit = scoped ? Math.min(requested, LIST_ENDPOINT_MAX_LIMIT - 1) : requested
+	const snapshotAt = cursor?.s ?? toSnapshotAt(new Date())
+	const order = cursor?.o ?? 'desc'
+	return { limit, cursor, snapshotAt, order }
+}
+
+/**
+ * Encode the next-cursor for a list tool response. Returns `null` when
+ * response scoping is off (the flag-off path must stay byte-identical) or
+ * when the caller already reached the end of the walk — `rows.length <
+ * limit + 1` means the API had nothing more to hand back.
+ *
+ * Reuses `snapshotAt` and `order` from `pagination`, so every hop of the
+ * same walk agrees on the freeze even if the underlying `objects` table
+ * accepts inserts between calls.
+ */
+function encodeNextCursor(
+	pagination: ResolvedPagination,
+	rows: Array<{ id: string; createdAt?: string | null }>,
+): { nextCursor: string | null; trimmed: Array<{ id: string; createdAt?: string | null }> } {
+	if (!isResponseScopingEnabled()) return { nextCursor: null, trimmed: rows }
+	if (rows.length <= pagination.limit) return { nextCursor: null, trimmed: rows }
+	const trimmed = rows.slice(0, pagination.limit)
+	const last = trimmed[trimmed.length - 1]
+	if (!last || !last.createdAt) return { nextCursor: null, trimmed }
+	const nextCursor = encodeCursor({
+		s: pagination.snapshotAt,
+		o: pagination.order,
+		k: { sortValue: last.createdAt, id: last.id },
+	})
+	return { nextCursor, trimmed }
+}
+
+/** Read `.url` off an enriched row without paying the TS cost each time. */
+function pickUrl(row: unknown): string | undefined {
+	if (!row || typeof row !== 'object') return undefined
+	const u = (row as { url?: unknown }).url
+	return typeof u === 'string' ? u : undefined
 }
 
 function authSetupHint(config: McpConfig): string {
@@ -707,14 +831,6 @@ function extractWorkspaceId(args: unknown): string | undefined {
 	return typeof ws === 'string' ? ws : undefined
 }
 
-/** True when the caller passed a non-empty `include` array. Generic across
- *  tools so any future opt-in expansion parameter with the same name lights up. */
-function hasIncludeArg(args: unknown): boolean {
-	if (!args || typeof args !== 'object') return false
-	const inc = (args as { include?: unknown }).include
-	return Array.isArray(inc) && inc.length > 0
-}
-
 /**
  * Inspects a mutation tool response to decide whether it actually mutated
  * something. Tools like `update_objects` aggregate per-target outcomes, so we
@@ -1314,30 +1430,32 @@ export function createMcpServer(config: McpConfig) {
 				workspace_id: extractWorkspaceId(args),
 			})
 
-			// Response-size event powers the response-shape bet's ship metric
-			// (median response_bytes over successful tool calls). We measure the
-			// full response envelope — content + structuredContent + _meta —
-			// because that is what the client actually consumes. Errored calls
-			// are covered by tool_call only; a 0-byte error frame would drag the
-			// ship-metric median down and mask a real regression.
-			let responseBytes = 0
-			try {
-				responseBytes = Buffer.byteLength(JSON.stringify(response ?? {}), 'utf8')
-			} catch {
-				// Circular / unserialisable response — skip the size event rather
-				// than fabricate a number. The tool_call event still fires.
-				responseBytes = -1
-			}
-			if (responseBytes >= 0) {
-				recordToolResponseEmitted(telemetrySink, telemetryTarget, {
-					tool_name: name,
-					response_bytes: responseBytes,
-					has_include: hasIncludeArg(args),
-					workspace_id: extractWorkspaceId(args),
-				})
-			}
+			// Token-cap guardrail (T4). Enforces `MAX_RESPONSE_TOKENS` before the
+			// telemetry event measures the shipped payload — the size event and
+			// the wire response see the same, capped shape. Skipped when scoping
+			// is off so AC-T4 flag-off byte parity holds.
+			const scoped = isResponseScopingEnabled()
+			const capped = scoped ? applyResponseTokenCap(name, response) : { response, truncated: false }
+			const finalResponse = capped.response
 
-			if (mutationKind && isSuccessfulMutationResponse(response)) {
+			// Response-size baseline for the MCP response-scoping bet's First test.
+			// Measures the two channels MCP serializes onto the wire — `content`
+			// (always present) and `structuredContent` (optional). `truncated`
+			// flips true when the token-cap wrapper dropped rows. Fires uniformly
+			// for every tool because we sit inside the single `registerAppTool`
+			// integration point.
+			const responseShape = finalResponse as
+				| { content?: unknown; structuredContent?: unknown }
+				| undefined
+			recordToolCallResponseSize(telemetrySink, telemetryTarget, {
+				tool_name: name,
+				content: responseShape?.content,
+				structured_content: responseShape?.structuredContent,
+				truncated: capped.truncated,
+				workspace_id: extractWorkspaceId(args),
+			})
+
+			if (mutationKind && isSuccessfulMutationResponse(finalResponse)) {
 				recordMutation(telemetrySink, telemetryTarget, {
 					tool_name: name,
 					mutation_kind: mutationKind,
@@ -1346,7 +1464,7 @@ export function createMcpServer(config: McpConfig) {
 				})
 			}
 
-			return response
+			return finalResponse
 		}
 
 		// biome-ignore lint/suspicious/noExplicitAny: handler signature varies by inputSchema presence; the wrapper is a pure pass-through so we forward as-is.
@@ -1890,6 +2008,20 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
+			// The snapshot-consistent cursor walk is only valid when the API
+			// orders by `createdAt` — the column the keyset seek in
+			// `buildCursorConditions` is always expressed in. A `sort` override
+			// asks for `updatedAt` ordering instead, so pairing it with a cursor
+			// would seek on a column unrelated to the ORDER BY and silently skip
+			// or duplicate rows. Fall back to plain offset pagination for that
+			// combination — the same behavior this tool had before cursors
+			// existed — rather than accept a cursor or hand back a `next_cursor`
+			// that can't be honoured consistently.
+			const sortedByCreatedAt = !args.sort
+			const pagination = resolveListPagination(
+				{ limit: args.limit, cursor: sortedByCreatedAt ? args.cursor : undefined },
+				50,
+			)
 			const params = new URLSearchParams()
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
@@ -1897,16 +2029,29 @@ export function createMcpServer(config: McpConfig) {
 			if (args.updated_before) params.set('updated_before', args.updated_before)
 			if (args.updated_after) params.set('updated_after', args.updated_after)
 			if (args.sort) {
-				// Map MCP sort enum → the route's (sort, order) pair. Keeps the MCP
-				// surface narrow while reusing the existing route contract.
 				params.set('sort', 'updatedAt')
 				params.set('order', args.sort === 'updated_at_asc' ? 'asc' : 'desc')
 			}
-			if (args.limit) params.set('limit', String(args.limit))
+			const fetchCap =
+				sortedByCreatedAt && isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			params.set('limit', String(fetchCap))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
+			if (sortedByCreatedAt && isResponseScopingEnabled()) {
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				params.set('sort', 'createdAt')
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			}
+			const raw = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as RawObject[]
+			const { nextCursor, trimmed } = sortedByCreatedAt
+				? encodeNextCursor(pagination, raw)
+				: { nextCursor: null, trimmed: raw }
+			const result = trimmed as RawObject[]
 			const offset = typeof args.offset === 'number' ? args.offset : 0
 			const heroCard = await buildCollectionHeroCard(
 				config,
@@ -1925,6 +2070,11 @@ export function createMcpServer(config: McpConfig) {
 						}),
 					)
 				: result
+			const summaryRows: SummaryRow[] = result.map((obj, idx) => ({
+				title: obj.title ?? `Untitled ${obj.type}`,
+				url: pickUrl(enriched[idx]),
+				meta: `${obj.type}${obj.status ? ` · ${obj.status}` : ''}`,
+			}))
 			return {
 				_meta: uiMeta(
 					'list_objects',
@@ -1932,11 +2082,22 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(enriched, summaryRows, 'No objects.'),
+					},
+				],
 				structuredContent: {
 					heroCard,
 					objects: enriched,
-					page: { limit: result.length, offset, returned: result.length },
+					page: {
+						limit: result.length,
+						offset,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
 			}
 		},
@@ -1951,15 +2112,28 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
+			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 20)
 			const params = new URLSearchParams()
 			params.set('q', args.q)
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
-			if (args.limit) params.set('limit', String(args.limit))
+			const fetchCap = isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			params.set('limit', String(fetchCap))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
+			if (isResponseScopingEnabled()) {
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				params.set('sort', 'createdAt')
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			}
+			const raw = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as RawObject[]
+			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
+			const result = trimmed as RawObject[]
 			const offset = typeof args.offset === 'number' ? args.offset : 0
 			const heroCard = await buildCollectionHeroCard(
 				config,
@@ -1978,6 +2152,11 @@ export function createMcpServer(config: McpConfig) {
 						}),
 					)
 				: result
+			const summaryRows: SummaryRow[] = result.map((obj, idx) => ({
+				title: obj.title ?? `Untitled ${obj.type}`,
+				url: pickUrl(enriched[idx]),
+				meta: `${obj.type}${obj.status ? ` · ${obj.status}` : ''}`,
+			}))
 			return {
 				_meta: uiMeta(
 					'search_objects',
@@ -1985,11 +2164,22 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(enriched, summaryRows, 'No matches.'),
+					},
+				],
 				structuredContent: {
 					heroCard,
 					objects: enriched,
-					page: { limit: result.length, offset, returned: result.length },
+					page: {
+						limit: result.length,
+						offset,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
 			}
 		},
@@ -2005,17 +2195,68 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.relationships, csp: CSP } },
 		},
 		async (args) => {
+			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 50)
 			const params = new URLSearchParams()
 			if (args.object_id) params.set('object_id', args.object_id)
 			if (args.source_id) params.set('source_id', args.source_id)
 			if (args.target_id) params.set('target_id', args.target_id)
 			if (args.type) params.set('type', args.type)
-			const result = await apiCall(config, 'GET', `/api/relationships?${params}`, undefined, {
+			const fetchCap = isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			params.set('limit', String(fetchCap))
+			if (typeof args.offset === 'number') params.set('offset', String(args.offset))
+			if (isResponseScopingEnabled()) {
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			}
+			const raw = (await apiCall(config, 'GET', `/api/relationships?${params}`, undefined, {
 				workspaceId: args.workspace_id,
+			})) as Array<{
+				id: string
+				sourceId: string
+				targetId: string
+				type: string
+				createdAt?: string | null
+				sourceTitle?: string | null
+				targetTitle?: string | null
+			}>
+			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
+			const result = trimmed as typeof raw
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : undefined
+			const summaryRows: SummaryRow[] = result.map((r) => {
+				const sourceLabel = r.sourceTitle && r.sourceTitle.length > 0 ? r.sourceTitle : r.sourceId
+				const targetLabel = r.targetTitle && r.targetTitle.length > 0 ? r.targetTitle : r.targetId
+				return {
+					title: `${sourceLabel} → ${targetLabel}`,
+					url:
+						baseUrl && wsId
+							? buildWebAppHref(baseUrl, wsId, { kind: 'relationship', sourceId: r.sourceId })
+							: undefined,
+					meta: r.type,
+				}
 			})
 			return {
 				_meta: meta('list_relationships', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No relationships.'),
+					},
+				],
+				structuredContent: {
+					relationships: result,
+					page: {
+						limit: result.length,
+						offset: typeof args.offset === 'number' ? args.offset : 0,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -2098,9 +2339,36 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const limit = args.limit ?? 50
-			const offset = args.offset ?? 0
-			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+			// The snapshot-consistent cursor walk is only implemented by the
+			// workspace-scoped branch of `/api/actors` — the cross-workspace
+			// branch (no `workspace_id`) runs a two-phase distinct-actor query
+			// ordered by `(name, id)` that doesn't honour `snapshot_at`/
+			// `cursor_created_at`/`cursor_id` at all. Sending a cursor there
+			// would be silently ignored server-side, so a follow-up call using
+			// the returned `next_cursor` (with no `offset` to fall back on)
+			// would re-fetch the identical first page forever. Fall back to
+			// plain offset pagination — matching this tool's pre-cursor
+			// behavior — whenever `workspace_id` is omitted.
+			const workspaceScoped = Boolean(args.workspace_id)
+			const pagination = resolveListPagination(
+				{ limit: args.limit, cursor: workspaceScoped ? args.cursor : undefined },
+				50,
+			)
+			const offset = typeof args.offset === 'number' ? args.offset : 0
+			// Under scoping we fetch `limit + 1` so the +1 sentinel drives the
+			// next-cursor decision without a second query. The API caps `limit`
+			// at 100 so the sentinel stays safely inside the ceiling.
+			const fetchCap =
+				workspaceScoped && isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			const params = new URLSearchParams({ limit: String(fetchCap), offset: String(offset) })
+			if (workspaceScoped && isResponseScopingEnabled()) {
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			}
 			const { data, response } = await apiCallWithResponse(
 				config,
 				'GET',
@@ -2108,7 +2376,15 @@ export function createMcpServer(config: McpConfig) {
 				undefined,
 				args.workspace_id ? { workspaceId: args.workspace_id } : { skipWorkspace: true },
 			)
-			const rows = Array.isArray(data) ? (data as RawActor[]) : []
+			const rawRows = Array.isArray(data) ? (data as RawActor[]) : []
+			// Trim the sentinel + seed next_cursor from the last-visible row's
+			// (createdAt, id) tuple. Flag-off callers (and the cross-workspace
+			// branch, which never gets a cursor) see the raw response.
+			const { nextCursor, trimmed } = workspaceScoped
+				? encodeNextCursor(pagination, rawRows as Array<{ id: string; createdAt?: string | null }>)
+				: { nextCursor: null, trimmed: rawRows }
+			const rows = trimmed as RawActor[]
+			const trimmedData = Array.isArray(data) ? (data as unknown[]).slice(0, rows.length) : data
 			const heroObjects = rows.map((a) => buildActorHeroCardObject(a))
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)
 			const heroCard: HeroCardPayload =
@@ -2130,11 +2406,24 @@ export function createMcpServer(config: McpConfig) {
 							}
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
 			const enriched =
-				wsId && Array.isArray(data)
-					? (data as Array<Record<string, unknown>>).map((a) =>
+				wsId && Array.isArray(trimmedData)
+					? (trimmedData as Array<Record<string, unknown>>).map((a) =>
 							addUrl(a, config, wsId, { kind: 'actor', id: a.id as string }),
 						)
-					: data
+					: trimmedData
+			const enrichedRows: Array<Record<string, unknown>> = Array.isArray(enriched)
+				? (enriched as Array<Record<string, unknown>>)
+				: []
+			const summaryRows: SummaryRow[] = rows.map((actor, idx) => {
+				const kind = actor.type ?? 'actor'
+				const metaParts = [kind]
+				if (actor.role) metaParts.push(actor.role)
+				return {
+					title: actor.name ?? `${kind} ${actor.id.slice(0, 8)}`,
+					url: pickUrl(enrichedRows[idx]),
+					meta: metaParts.join(' · '),
+				}
+			})
 			return {
 				_meta: uiMeta(
 					'list_actors',
@@ -2142,8 +2431,26 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
-				structuredContent: { heroCard },
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(enriched, summaryRows, 'No actors.'),
+					},
+				],
+				structuredContent: {
+					heroCard,
+					...(nextCursor
+						? {
+								next_cursor: nextCursor,
+								page: {
+									limit: rows.length,
+									offset,
+									returned: rows.length,
+									next_cursor: nextCursor,
+								},
+							}
+						: {}),
+				},
 			}
 		},
 	)
@@ -2801,8 +3108,50 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = await apiCall(config, 'GET', `/api/workspaces/${wsId}/skills`, undefined, {
-				workspaceId: wsId,
+			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 50)
+			const scoped = isResponseScopingEnabled()
+			const params = new URLSearchParams()
+			if (scoped) {
+				params.set('limit', String(pagination.limit + 1))
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			} else {
+				if (typeof args.limit === 'number') params.set('limit', String(args.limit))
+				if (typeof args.offset === 'number') params.set('offset', String(args.offset))
+			}
+			const qs = params.toString()
+			const raw = (await apiCall(
+				config,
+				'GET',
+				`/api/workspaces/${wsId}/skills${qs ? `?${qs}` : ''}`,
+				undefined,
+				{ workspaceId: wsId },
+			)) as Array<{
+				id: string
+				name: string
+				description?: string | null
+				isValid?: boolean
+				createdAt?: string | null
+			}>
+			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
+			const result = trimmed as typeof raw
+			const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : undefined
+			const summaryRows: SummaryRow[] = result.map((skill) => {
+				const metaParts: string[] = []
+				if (skill.isValid === false) metaParts.push('invalid')
+				const description = skill.description?.split(/\r?\n/)[0]?.trim()
+				if (description) metaParts.push(makePreview(description, 80))
+				return {
+					title: skill.name,
+					url: baseUrl
+						? buildWebAppHref(baseUrl, wsId, { kind: 'skill', name: skill.name })
+						: undefined,
+					meta: metaParts.length > 0 ? metaParts.join(' · ') : undefined,
+				}
 			})
 			return {
 				_meta: meta(
@@ -2810,7 +3159,22 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No skills.'),
+					},
+				],
+				structuredContent: {
+					skills: result,
+					page: {
+						limit: result.length,
+						offset: typeof args.offset === 'number' ? args.offset : 0,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -2968,17 +3332,64 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
+			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 50)
+			const scoped = isResponseScopingEnabled()
 			const params = new URLSearchParams()
 			if (args.q) params.set('q', args.q)
-			if (args.limit !== undefined) params.set('limit', String(args.limit))
-			if (args.offset !== undefined) params.set('offset', String(args.offset))
+			if (scoped) {
+				params.set('limit', String(pagination.limit + 1))
+				if (args.offset !== undefined) params.set('offset', String(args.offset))
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			} else {
+				if (args.limit !== undefined) params.set('limit', String(args.limit))
+				if (args.offset !== undefined) params.set('offset', String(args.offset))
+			}
 			const qs = params.toString()
-			const result = await apiCall(config, 'GET', `/api/files${qs ? `?${qs}` : ''}`, undefined, {
+			const raw = (await apiCall(config, 'GET', `/api/files${qs ? `?${qs}` : ''}`, undefined, {
 				workspaceId: wsId,
+			})) as Array<{
+				id: string
+				name: string
+				mimeType?: string | null
+				sizeBytes?: number | null
+				createdAt?: string | null
+			}>
+			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
+			const result = trimmed as typeof raw
+			const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : undefined
+			const summaryRows: SummaryRow[] = result.map((file) => {
+				const metaParts: string[] = []
+				if (file.mimeType) metaParts.push(file.mimeType)
+				if (typeof file.sizeBytes === 'number') metaParts.push(`${file.sizeBytes}B`)
+				return {
+					title: file.name,
+					url: baseUrl ? buildWebAppHref(baseUrl, wsId, { kind: 'file', id: file.id }) : undefined,
+					meta: metaParts.length > 0 ? metaParts.join(' · ') : undefined,
+				}
 			})
 			return {
 				_meta: meta('list_files', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No files.'),
+					},
+				],
+				structuredContent: {
+					files: result,
+					page: {
+						limit: result.length,
+						offset: typeof args.offset === 'number' ? args.offset : 0,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -3162,9 +3573,18 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const limit = args.limit ?? 50
-			const offset = args.offset ?? 0
-			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 50)
+			const offset = typeof args.offset === 'number' ? args.offset : 0
+			const fetchCap = isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			const params = new URLSearchParams({ limit: String(fetchCap), offset: String(offset) })
+			if (isResponseScopingEnabled()) {
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			}
 			const { data, response } = await apiCallWithResponse(
 				config,
 				'GET',
@@ -3172,7 +3592,13 @@ export function createMcpServer(config: McpConfig) {
 				undefined,
 				{ workspaceId: args.workspace_id },
 			)
-			const rows = Array.isArray(data) ? (data as RawTrigger[]) : []
+			const rawRows = Array.isArray(data) ? (data as RawTrigger[]) : []
+			const { nextCursor, trimmed } = encodeNextCursor(
+				pagination,
+				rawRows as Array<{ id: string; createdAt?: string | null }>,
+			)
+			const rows = trimmed as RawTrigger[]
+			const trimmedData = Array.isArray(data) ? (data as unknown[]).slice(0, rows.length) : data
 			const ownerIds = rows
 				.map((t) => t.targetActorId)
 				.filter((v): v is string => typeof v === 'string')
@@ -3203,14 +3629,25 @@ export function createMcpServer(config: McpConfig) {
 							}
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
 			const enriched =
-				wsId && Array.isArray(data)
-					? (data as Array<Record<string, unknown>>).map((t) =>
+				wsId && Array.isArray(trimmedData)
+					? (trimmedData as Array<Record<string, unknown>>).map((t) =>
 							addUrl(t, config, (t.workspaceId as string | undefined) ?? wsId, {
 								kind: 'trigger',
 								id: t.id as string,
 							}),
 						)
-					: data
+					: trimmedData
+			const enrichedRows: Array<Record<string, unknown>> = Array.isArray(enriched)
+				? (enriched as Array<Record<string, unknown>>)
+				: []
+			const summaryRows: SummaryRow[] = rows.map((trigger, idx) => {
+				const enabledLabel = trigger.enabled ? 'enabled' : 'disabled'
+				return {
+					title: trigger.name || `Trigger ${trigger.id.slice(0, 8)}`,
+					url: pickUrl(enrichedRows[idx]),
+					meta: `${trigger.type} · ${enabledLabel}`,
+				}
+			})
 			return {
 				_meta: uiMeta(
 					'list_triggers',
@@ -3218,8 +3655,26 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
-				structuredContent: { heroCard },
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(enriched, summaryRows, 'No triggers.'),
+					},
+				],
+				structuredContent: {
+					heroCard,
+					...(nextCursor
+						? {
+								next_cursor: nextCursor,
+								page: {
+									limit: rows.length,
+									offset,
+									returned: rows.length,
+									next_cursor: nextCursor,
+								},
+							}
+						: {}),
+				},
 			}
 		},
 	)

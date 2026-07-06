@@ -7,6 +7,7 @@ import {
 	recordMcpTelemetrySchema,
 } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
@@ -95,21 +96,21 @@ app.openapi(recordRoute, (async (c) => {
 			objectType: body.object_type ?? null,
 			mutationKind: body.mutation_kind,
 		})
-	} else if (body.event_type === 'tool_response_emitted') {
-		// Response-size event. Persisted to `mcp_telemetry` with the payload-shape
-		// fields (`response_bytes`, `has_include`) in the existing `data` jsonb
-		// column so no migration is needed for the ship-metric query. Aggregation
-		// (median by tool_name grouped on `has_include`) is out of scope for T1
-		// and lives in a follow-up task per the bet plan.
-		await db.insert(mcpTelemetry).values({
-			workspaceId,
-			eventType: 'tool_response_emitted',
-			toolName: body.tool_name,
-			sessionId: body.session_id ?? null,
-			data: {
-				response_bytes: body.response_bytes,
-				has_include: body.has_include,
-			},
+	} else if (body.event_type === 'tool_call_response_size') {
+		// PostHog-only fan-out for the MCP response-scoping bet's First test —
+		// 5-day instrumentation window doesn't earn a schema migration. The
+		// Product Analyst's baseline query reads `mcp_tool_call_response_size`
+		// rows directly from PostHog. Fire-and-forget; `capturePosthogEvent`
+		// never throws.
+		void capturePosthogEvent('mcp_tool_call_response_size', workspaceId, {
+			tool_name: body.tool_name,
+			session_id: body.session_id ?? null,
+			content_bytes: body.content_bytes,
+			content_tokens: body.content_tokens,
+			structured_content_bytes: body.structured_content_bytes,
+			structured_content_tokens: body.structured_content_tokens,
+			truncated: body.truncated,
+			workspace_id: workspaceId,
 		})
 	} else {
 		// widget_event — widget-only fields (event, widget_name, card_kind, object_id,

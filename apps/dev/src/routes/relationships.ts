@@ -2,7 +2,8 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, files, objects, relationships } from '@maskin/db/schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
-import { and, eq, inArray, or } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, or } from 'drizzle-orm'
+import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
@@ -145,14 +146,30 @@ app.openapi(listRelationshipsRoute, async (c) => {
 	if (query.source_id) conditions.push(eq(relationships.sourceId, query.source_id))
 	if (query.target_id) conditions.push(eq(relationships.targetId, query.target_id))
 	if (query.type) conditions.push(eq(relationships.type, query.type))
+	conditions.push(
+		...buildCreatedAtCursorConditions(
+			{ createdAt: relationships.createdAt, id: relationships.id },
+			query,
+		),
+	)
 
+	// When `snapshot_at` engages the cursor path, switch to a stable
+	// (createdAt, id) tuple so the keyset seek predicate agrees with the sort.
+	const cursorOn = Boolean(query.snapshot_at)
+	const orderBy = cursorOn
+		? query.order === 'asc'
+			? [asc(relationships.createdAt), asc(relationships.id)]
+			: [desc(relationships.createdAt), asc(relationships.id)]
+		: [relationships.createdAt]
+
+	const skipOffset = useKeysetSeek(query)
 	const results = await db
 		.select()
 		.from(relationships)
 		.where(conditions.length > 0 ? and(...conditions) : undefined)
 		.limit(query.limit)
-		.offset(query.offset)
-		.orderBy(relationships.createdAt)
+		.offset(skipOffset ? 0 : query.offset)
+		.orderBy(...orderBy)
 
 	const endpointIds = new Set<string>()
 	for (const r of results) {
