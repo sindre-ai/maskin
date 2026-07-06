@@ -2,19 +2,23 @@ import { z } from 'zod'
 
 // Events emitted by the MCP server to /api/telemetry/mcp.
 //
-// Three event types power the bet's success metrics:
-//   - tool_call:    every tool response. `has_rich_render` is true when the tool
-//                   returned `_meta.ui` (i.e. a widget resource was attached so a
-//                   client like Claude can render a rich card). Numerator/denominator
-//                   of the "50% of MCP tool calls render a rich card" metric.
-//   - mutation:     every successful in-chat mutation (update_objects / delete_object).
-//                   Counted per `session_id` to power the "20% of MCP sessions include
-//                   at least one in-chat mutation" metric.
-//   - widget_event: every Hero Card mount/click/error reported by `recordWidgetEvent`
-//                   in `packages/mcp/src/telemetry.ts`. Powers the bet's CTR ≥30%
-//                   success metric and the 48h rolling render-error kill criterion.
-//                   click_through rows correlate back to their parent render_success
-//                   by shared (session_id, tool_name, object_id).
+// Event types power the bet success metrics:
+//   - tool_call:              every tool response. `has_rich_render` is true when the tool
+//                             returned `_meta.ui` (i.e. a widget resource was attached so a
+//                             client like Claude can render a rich card). Numerator/denominator
+//                             of the "50% of MCP tool calls render a rich card" metric.
+//   - mutation:               every successful in-chat mutation (update_objects / delete_object).
+//                             Counted per `session_id` to power the "20% of MCP sessions include
+//                             at least one in-chat mutation" metric.
+//   - widget_event:           every Hero Card mount/click/error reported by `recordWidgetEvent`
+//                             in `packages/mcp/src/telemetry.ts`. Powers the bet's CTR ≥30%
+//                             success metric and the 48h rolling render-error kill criterion.
+//                             click_through rows correlate back to their parent render_success
+//                             by shared (session_id, tool_name, object_id).
+//   - tool_response_emitted:  byte size of the tool response envelope
+//                             (content + structuredContent + _meta). Ship metric for the
+//                             MCP response-shape bet: median(response_bytes) grouped by
+//                             tool_name; `has_include` splits default vs. opt-in expansions.
 //
 // Tool name is constrained loosely (1–128 chars, identifier-ish characters).
 // The MCP server is the producer, but we still validate at the boundary because
@@ -53,6 +57,19 @@ export const recordMcpMutationSchema = z.object({
 	mutation_kind: z.string().min(1).max(64),
 })
 
+// Response-size event for the MCP response-shape bet. `response_bytes` covers
+// the full tool response envelope (content + structuredContent + _meta); the
+// ship metric is `median(response_bytes) where tool_name = 'get_objects'` and
+// splits by `has_include` so default-fields trims can be measured independently
+// of opt-in expansions.
+export const recordMcpToolResponseEmittedSchema = z.object({
+	event_type: z.literal('tool_response_emitted'),
+	tool_name: toolNameSchema,
+	session_id: sessionIdSchema,
+	response_bytes: z.number().int().min(0).max(50_000_000),
+	has_include: z.boolean(),
+})
+
 // Widget telemetry emitted by Hero Card and any future MCP widget bundle.
 // Mirrors the `WidgetEvent` shape in `packages/mcp/src/telemetry.ts` — keep
 // the two in sync. The producer is the MCP server's `recordWidgetEvent`
@@ -76,6 +93,7 @@ export const recordMcpTelemetrySchema = z.discriminatedUnion('event_type', [
 	recordMcpToolCallSchema,
 	recordMcpMutationSchema,
 	recordMcpWidgetEventSchema,
+	recordMcpToolResponseEmittedSchema,
 ])
 
 export type RecordMcpTelemetryBody = z.infer<typeof recordMcpTelemetrySchema>

@@ -52,7 +52,21 @@ export interface WidgetEvent {
 	ts: number
 }
 
-export type TelemetryEvent = ToolCallEvent | MutationEvent | WidgetEvent
+// Response-size instrumentation for the MCP response-shape bet. `response_bytes`
+// is `Buffer.byteLength(JSON.stringify(response), 'utf8')` over the full tool
+// response object (content, structuredContent, _meta). `has_include` reports
+// whether the caller passed a non-empty `include` array — the ship metric splits
+// medians by this flag so the default-fields trim can be measured independently
+// of opt-in expansions.
+export interface ToolResponseEmittedEvent {
+	event_type: 'tool_response_emitted'
+	tool_name: string
+	session_id: string
+	response_bytes: number
+	has_include: boolean
+}
+
+export type TelemetryEvent = ToolCallEvent | MutationEvent | WidgetEvent | ToolResponseEmittedEvent
 
 /** A telemetry sink ingests events. Production default POSTs to the API; tests
  *  inject capturing sinks; deployments without telemetry endpoints can pass a
@@ -139,6 +153,29 @@ export function recordWidgetEvent(
 			card_kind: event.card_kind,
 			session_id: SESSION_ID,
 			ts: Date.now(),
+		},
+		cfg,
+	)
+}
+
+export function recordToolResponseEmitted(
+	sink: TelemetrySink,
+	target: TelemetryConfig,
+	event: {
+		tool_name: string
+		response_bytes: number
+		has_include: boolean
+		workspace_id?: string
+	},
+): void {
+	const cfg = event.workspace_id ? { ...target, workspaceId: event.workspace_id } : target
+	sink(
+		{
+			event_type: 'tool_response_emitted',
+			tool_name: event.tool_name,
+			session_id: SESSION_ID,
+			response_bytes: Math.max(0, Math.round(event.response_bytes)),
+			has_include: event.has_include,
 		},
 		cfg,
 	)

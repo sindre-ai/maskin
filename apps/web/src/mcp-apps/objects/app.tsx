@@ -149,6 +149,7 @@ function ObjectDocument({
 				onUpdateStatus={handlers.onUpdateStatus}
 				onUpdateDriver={handlers.onUpdateDriver}
 				onDelete={handlers.onDelete}
+				contentLoaded={'content' in obj}
 			/>
 		</div>
 	)
