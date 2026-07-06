@@ -757,6 +757,82 @@ describe('POST /sessions drain flag', () => {
 	})
 })
 
+describe('POST /sessions readiness gate', () => {
+	it('returns 503 and does not spawn while readyState.ready is false', async () => {
+		const { run, calls } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			readyState: { ready: false },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-not-ready',
+				image: 'maskin/agent-base:latest',
+				env: {},
+			}),
+		})
+
+		expect(res.status).toBe(503)
+		expect(calls.find((c) => c.args[0] === 'create')).toBeUndefined()
+	})
+
+	it('accepts sessions once readyState.ready is true', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			readyState: { ready: true },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({ sessionId: 'sess-ready', image: 'maskin/agent-base:latest', env: {} }),
+		})
+
+		expect(res.status).toBe(201)
+	})
+
+	it('accepts sessions when readyState is omitted entirely (existing test/caller default)', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-no-readystate',
+				image: 'maskin/agent-base:latest',
+				env: {},
+			}),
+		})
+
+		expect(res.status).toBe(201)
+	})
+})
+
 describe('reconcileOnBoot', () => {
 	function makeReconcileRunner(sandboxes: Array<{ name: string; status: string }>) {
 		const calls: Array<{ args: readonly string[] }> = []

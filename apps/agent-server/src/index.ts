@@ -81,6 +81,21 @@ export type AppDeps = {
 	 * test expects.
 	 */
 	drainState?: { draining: boolean }
+	/**
+	 * Mutable flag flipped once `main()`'s boot-time `reconcileOnBoot()` pass
+	 * finishes (success or failure). `POST /sessions` rejects new work with
+	 * 503 while `ready` is false, so a session apps/dev dispatches to this box
+	 * in the window between the HTTP listener coming up and reconcileOnBoot's
+	 * `msb list` snapshot completing can never be spawned here — otherwise
+	 * that snapshot could see the new sandbox and reconcileOnBoot's reattach
+	 * loop would call `monitorSession` on it a second time (duplicate S3
+	 * push/completion report, clobbered log routing), or worse, apps/dev could
+	 * still be mid-write on the session's DB row and report it back as an
+	 * unclaimed orphan, causing reconcileOnBoot to force-remove a sandbox that
+	 * was just created. Omitted → always ready (always accepts), which is
+	 * what every existing test expects.
+	 */
+	readyState?: { ready: boolean }
 }
 
 const LOG_FLUSH_INTERVAL_MS = 2_000
@@ -455,6 +470,13 @@ export function buildApp(deps: AppDeps): Hono {
 		if (deps.drainState?.draining) {
 			return c.json({ error: 'draining' }, 503)
 		}
+		// Reject new work until the boot-time reconcile pass has finished —
+		// otherwise this session's sandbox could be snapshotted by reconcileOnBoot
+		// mid-creation and either get a duplicate monitorSession attached or be
+		// force-removed as a false-positive orphan (see AppDeps.readyState).
+		if (deps.readyState && !deps.readyState.ready) {
+			return c.json({ error: 'starting_up' }, 503)
+		}
 		let raw: unknown
 		try {
 			raw = await c.req.json()
@@ -776,14 +798,21 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 	})
 
 	const orphanSet = new Set(result.orphan_sandboxes)
-	for (const name of result.orphan_sandboxes) {
-		await removeSandbox(name, deps.msb).catch((err) => {
-			logger.warn('reconcile-on-boot: failed to remove orphan sandbox', {
-				name,
-				error: String(err),
-			})
-		})
-	}
+	// Independent per-sandbox removals — run concurrently rather than one at a
+	// time so a box with many orphans (e.g. after a hard crash) doesn't stretch
+	// this pass out linearly. POST /sessions stays gated on this whole function
+	// finishing (see AppDeps.readyState), so a slow sequential loop here would
+	// directly extend how long new sessions get rejected after every restart.
+	await Promise.all(
+		result.orphan_sandboxes.map((name) =>
+			removeSandbox(name, deps.msb).catch((err) => {
+				logger.warn('reconcile-on-boot: failed to remove orphan sandbox', {
+					name,
+					error: String(err),
+				})
+			}),
+		),
+	)
 
 	// Everything reported that ISN'T an orphan is, by the reconciler's own
 	// logic, still claimed by a live (non-terminal) DB session row — reattach
@@ -862,6 +891,10 @@ async function main(): Promise<void> {
 	const sessionLogRouters = new Map<string, (line: string) => void>()
 	const sessionExitCodes = new Map<string, number>()
 	const drainState = { draining: false }
+	// Starts false so POST /sessions 503s until reconcileOnBoot below finishes —
+	// see AppDeps.readyState for why that gate has to be closed before any new
+	// session can be created on this box.
+	const readyState = { ready: false }
 
 	const app = buildApp({
 		env,
@@ -871,16 +904,27 @@ async function main(): Promise<void> {
 		sessionLogRouters,
 		sessionExitCodes,
 		drainState,
+		readyState,
 	})
 
 	const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, ({ port }) => {
 		logger.info('agent-server listening', { port })
 	})
 
-	// Fire-and-forget: never blocks serving new sessions on this pass finishing.
-	void reconcileOnBoot({ env, storage, msb, sessionLogRouters, sessionExitCodes }).catch((err) => {
-		logger.error('reconcile-on-boot failed unexpectedly', { error: String(err) })
-	})
+	// The HTTP listener above accepts connections immediately (health checks,
+	// VM-facing endpoints for sessions that survived the restart, etc.), but
+	// POST /sessions stays gated by `readyState` until this pass finishes —
+	// `.finally` flips it whether reconcile succeeded, failed, or no-opped
+	// (AGENT_SERVER_ID/MASKIN_BASE_URL unset), so a box is never stuck
+	// rejecting sessions forever.
+	void reconcileOnBoot({ env, storage, msb, sessionLogRouters, sessionExitCodes })
+		.catch((err) => {
+			logger.error('reconcile-on-boot failed unexpectedly', { error: String(err) })
+		})
+		.finally(() => {
+			readyState.ready = true
+			logger.info('agent-server ready to accept new sessions')
+		})
 
 	let shuttingDown = false
 	const shutdown = async (signal: string): Promise<void> => {

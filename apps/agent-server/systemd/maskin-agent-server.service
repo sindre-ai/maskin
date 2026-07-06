@@ -25,11 +25,30 @@ SyslogIdentifier=maskin-agent-server
 
 # `msb sandbox`/`msb exec` child processes live in this unit's cgroup. The
 # default KillMode=control-group would SIGTERM/SIGKILL every running microVM
-# on every `systemctl restart` (i.e. every redeploy). `mixed` signals only the
-# main PID first — Node's own shutdown handler force-exits within 10s, well
-# under TimeoutStopSec (default 90s), so the cgroup-wide kill escalation never
-# fires on a normal restart and in-flight sessions survive it.
-KillMode=mixed
+# on every `systemctl restart` (i.e. every redeploy).
+#
+# KillMode=mixed does NOT fix this: per systemd.kill(5), the cgroup-wide
+# SIGKILL sweep fires as soon as the main process exits, OR when
+# TimeoutStopSec elapses — whichever comes first. Since Node's own shutdown
+# handler deliberately force-exits within 10s (see the SIGTERM handler in
+# src/index.ts), that fast exit is exactly what triggers the sweep, so
+# `mixed` would still kill every microVM within seconds of a redeploy.
+#
+# `process` is the mode that actually leaves other cgroup members alone:
+# systemd signals (SIGTERM, then SIGKILL if it doesn't exit in time) only the
+# main PID, full stop — no escalation ever reaches the rest of the cgroup.
+# The tradeoff (why systemd's docs call this "not recommended"): nothing
+# here ever cleans up a process whose owning session's monitor is gone for
+# good (crash, not just restart). That's why this is only safe paired with
+# reconcileOnBoot() in src/index.ts — on every boot it asks apps/dev which
+# sandboxes are still claimed by a live session and force-removes (`msb
+# remove -f`) anything that isn't, so a truly abandoned microVM still gets
+# cleaned up, just on the next boot instead of immediately.
+#
+# Verify this empirically before relying on it in a real rollout: start a
+# session, `systemctl restart maskin-agent-server`, and confirm the
+# session's microVM process is still alive afterward.
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
