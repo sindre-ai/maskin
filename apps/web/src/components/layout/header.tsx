@@ -16,7 +16,6 @@ import {
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { useChat } from '@/lib/chat-context'
 import { usePageHeader } from '@/lib/page-header-context'
-import { useSindre } from '@/lib/sindre-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
 import { ArrowLeft, Bot, Layers, Plus, Sparkles, Zap } from 'lucide-react'
@@ -218,8 +217,8 @@ export function Header() {
 						variant="ghost"
 						size="icon"
 						className="h-7 w-7"
-						onClick={() => setSindreOpen(true)}
-						aria-label="Open Sindre"
+						onClick={() => setChatOpen(true)}
+						aria-label="Open chat"
 					>
 						<Sparkles size={15} />
 					</Button>

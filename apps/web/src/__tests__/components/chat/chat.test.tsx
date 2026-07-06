@@ -1,8 +1,8 @@
-import { SindreChat } from '@/components/sindre/sindre-chat'
-import type { UseSindreOneShotResult } from '@/hooks/use-sindre-one-shot'
-import type { UseSindreSessionResult } from '@/hooks/use-sindre-session'
-import type { SindreSelection, SindreSelectionAction } from '@/lib/sindre-selection'
-import type { SindreEvent } from '@/lib/sindre-stream'
+import { Chat } from '@/components/chat/chat'
+import type { UseChatOneShotResult } from '@/hooks/use-chat-one-shot'
+import type { UseChatSessionResult } from '@/hooks/use-chat-session'
+import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
+import type { ChatEvent } from '@/lib/chat-stream'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -15,7 +15,7 @@ const mockSend = vi.fn(async () => {})
 const mockOneShotSend = vi.fn(async () => {})
 const mockOneShotClear = vi.fn()
 
-let mockHookResult: UseSindreSessionResult = {
+let mockHookResult: UseChatSessionResult = {
 	sessionId: null,
 	status: 'idle',
 	events: [],
@@ -24,7 +24,7 @@ let mockHookResult: UseSindreSessionResult = {
 	reset: vi.fn(),
 }
 
-let mockOneShotResult: UseSindreOneShotResult = {
+let mockOneShotResult: UseChatOneShotResult = {
 	sessionId: null,
 	status: 'idle',
 	events: [],
@@ -37,12 +37,12 @@ vi.mock('@/hooks/use-conversations', () => ({
 	useConversationMessages: () => ({ data: null }),
 }))
 
-vi.mock('@/hooks/use-sindre-session', () => ({
-	useSindreSession: () => mockHookResult,
+vi.mock('@/hooks/use-chat-session', () => ({
+	useChatSession: () => mockHookResult,
 }))
 
-vi.mock('@/hooks/use-sindre-one-shot', () => ({
-	useSindreOneShot: () => mockOneShotResult,
+vi.mock('@/hooks/use-chat-one-shot', () => ({
+	useChatOneShot: () => mockOneShotResult,
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -64,7 +64,7 @@ global.ResizeObserver = vi.fn().mockImplementation(() => ({
 }))
 Element.prototype.scrollIntoView = vi.fn()
 
-function setHookResult(overrides: Partial<UseSindreSessionResult>) {
+function setHookResult(overrides: Partial<UseChatSessionResult>) {
 	mockHookResult = {
 		sessionId: null,
 		status: 'ready',
@@ -76,7 +76,7 @@ function setHookResult(overrides: Partial<UseSindreSessionResult>) {
 	}
 }
 
-function setOneShotResult(overrides: Partial<UseSindreOneShotResult>) {
+function setOneShotResult(overrides: Partial<UseChatOneShotResult>) {
 	mockOneShotResult = {
 		sessionId: null,
 		status: 'idle',
@@ -111,29 +111,29 @@ function WithQueryClient({ children }: { children: ReactNode }) {
 	return <QueryClientProvider client={client}>{children}</QueryClientProvider>
 }
 
-describe('SindreChat', () => {
+describe('Chat', () => {
 	it('renders transcript and composer in sheet mode', () => {
 		setHookResult({ status: 'ready' })
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
 		// Empty transcript copy
-		expect(screen.getByText(/Ask Sindre about your workspace/i)).toBeInTheDocument()
+		expect(screen.getByText(/Ask about your workspace/i)).toBeInTheDocument()
 		// Composer textarea
-		expect(screen.getByPlaceholderText('Message Sindre')).toBeInTheDocument()
+		expect(screen.getByPlaceholderText('Message the agent')).toBeInTheDocument()
 	})
 
 	it('hides the transcript in pulse-bar mode', () => {
 		setHookResult({ status: 'ready' })
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="pulse-bar" />)
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="pulse-bar" />)
 
-		expect(screen.queryByText(/Ask Sindre about your workspace/i)).not.toBeInTheDocument()
-		expect(screen.getByPlaceholderText('Ask Sindre anything…')).toBeInTheDocument()
+		expect(screen.queryByText(/Ask about your workspace/i)).not.toBeInTheDocument()
+		expect(screen.getByPlaceholderText('Ask anything…')).toBeInTheDocument()
 	})
 
 	it('renders streamed assistant text events', () => {
-		const events: SindreEvent[] = [{ kind: 'text', text: 'Looking at your workspace…' }]
+		const events: ChatEvent[] = [{ kind: 'text', text: 'Looking at your workspace…' }]
 		setHookResult({ status: 'ready', events })
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
 		expect(screen.getByText('Looking at your workspace…')).toBeInTheDocument()
 	})
@@ -141,17 +141,17 @@ describe('SindreChat', () => {
 	it('sends on submit and clears the textarea on success', async () => {
 		mockSend.mockClear()
 		setHookResult({ status: 'ready' })
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
-		fireEvent.change(textarea, { target: { value: 'hello sindre' } })
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'hi there' } })
 
 		const sendButton = screen.getByRole('button', { name: /send message/i })
 		expect(sendButton).not.toBeDisabled()
 		fireEvent.click(sendButton)
 
 		await waitFor(() =>
-			expect(mockSend).toHaveBeenCalledWith('hello sindre', undefined, 'hello sindre', undefined),
+			expect(mockSend).toHaveBeenCalledWith('hi there', undefined, 'hi there', undefined),
 		)
 		await waitFor(() => expect(textarea.value).toBe(''))
 	})
@@ -160,9 +160,9 @@ describe('SindreChat', () => {
 		mockSend.mockClear()
 		mockSend.mockRejectedValueOnce(new Error('network down'))
 		setHookResult({ status: 'ready' })
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'important prompt' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
@@ -173,18 +173,18 @@ describe('SindreChat', () => {
 
 	it('disables the composer while the session is starting', () => {
 		setHookResult({ status: 'starting' })
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		expect(textarea).toBeDisabled()
-		expect(screen.getByText(/Connecting to Sindre/i)).toBeInTheDocument()
+		expect(screen.getByText(/Connecting/i)).toBeInTheDocument()
 	})
 
 	it('keeps the composer enabled when the session errored so the user can retry', () => {
-		setHookResult({ status: 'error', error: new Error('Sindre session did not start in time') })
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+		setHookResult({ status: 'error', error: new Error('Chat session did not start in time') })
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		expect(textarea).not.toBeDisabled()
 		// The error is surfaced in the transcript so the user sees what happened.
 		expect(screen.getByText(/did not start in time/i)).toBeInTheDocument()
@@ -193,9 +193,9 @@ describe('SindreChat', () => {
 	it('submits on Enter and leaves the textarea clean', async () => {
 		mockSend.mockClear()
 		setHookResult({ status: 'ready' })
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'hi there' } })
 		fireEvent.keyDown(textarea, { key: 'Enter' })
 
@@ -208,9 +208,9 @@ describe('SindreChat', () => {
 	it('does not submit on Shift+Enter', () => {
 		mockSend.mockClear()
 		setHookResult({ status: 'ready' })
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'first line' } })
 		const event = fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true })
 
@@ -221,9 +221,9 @@ describe('SindreChat', () => {
 	it('does not submit on Enter during IME composition', () => {
 		mockSend.mockClear()
 		setHookResult({ status: 'ready' })
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'こん' } })
 		fireEvent.keyDown(textarea, { key: 'Enter', isComposing: true })
 
@@ -233,9 +233,9 @@ describe('SindreChat', () => {
 	it('does not submit when the content is empty or only whitespace', () => {
 		mockSend.mockClear()
 		setHookResult({ status: 'ready' })
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		const sendButton = screen.getByRole('button', { name: /send message/i })
 		expect(sendButton).toBeDisabled()
 
@@ -249,10 +249,10 @@ describe('SindreChat', () => {
 		mockSend.mockClear()
 		setHookResult({ status: 'ready', events: [] })
 		const { rerender } = render(
-			<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />,
+			<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />,
 		)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'hello' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
@@ -274,7 +274,7 @@ describe('SindreChat', () => {
 			status: 'ready',
 			events: [{ kind: 'text', text: 'Hi!' }],
 		})
-		rerender(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+		rerender(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 
 		await waitFor(() => {
 			const btn = screen.getByRole('button', { name: /send message/i })
@@ -285,9 +285,9 @@ describe('SindreChat', () => {
 
 	it('routes the send to one-shot when a selection.agent is set', async () => {
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				selection={{
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
@@ -326,11 +326,11 @@ describe('SindreChat', () => {
 		await waitFor(() => expect(textarea.value).toBe(''))
 	})
 
-	it('attaches selected objects to the Sindre send when no agent is picked', async () => {
+	it('attaches selected objects to the chat send when no agent is picked', async () => {
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				selection={{
 					agent: null,
@@ -344,7 +344,7 @@ describe('SindreChat', () => {
 			/>,
 		)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'summarize these' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
@@ -371,11 +371,11 @@ describe('SindreChat', () => {
 		expect(mockOneShotSend).not.toHaveBeenCalled()
 	})
 
-	it('injects notification context into the Sindre send and forwards notifications as attachments', async () => {
+	it('injects notification context into the chat send and forwards notifications as attachments', async () => {
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				selection={{
 					agent: null,
@@ -386,7 +386,7 @@ describe('SindreChat', () => {
 			/>,
 		)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'what happened?' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
@@ -403,9 +403,9 @@ describe('SindreChat', () => {
 
 	it('forwards notifications to the one-shot send when an agent is selected', async () => {
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				selection={{
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
@@ -437,11 +437,11 @@ describe('SindreChat', () => {
 
 	it('dispatches clear_all after a confirmed send so chips do not ride along', async () => {
 		mockSend.mockClear()
-		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
+		const dispatch = vi.fn<(action: ChatSelectionAction) => void>()
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				selection={{
 					agent: null,
@@ -453,7 +453,7 @@ describe('SindreChat', () => {
 			/>,
 		)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'summarize' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
@@ -464,11 +464,11 @@ describe('SindreChat', () => {
 	it('keeps selection chips when send rejects so the user can retry', async () => {
 		mockSend.mockClear()
 		mockSend.mockRejectedValueOnce(new Error('boom'))
-		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
+		const dispatch = vi.fn<(action: ChatSelectionAction) => void>()
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				selection={{
 					agent: null,
@@ -480,7 +480,7 @@ describe('SindreChat', () => {
 			/>,
 		)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'summarize' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
@@ -489,12 +489,12 @@ describe('SindreChat', () => {
 	})
 
 	it('renders a chip per notification and dispatches remove_notification on click', async () => {
-		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
+		const dispatch = vi.fn<(action: ChatSelectionAction) => void>()
 		const user = userEvent.setup()
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				selection={{
 					agent: null,
@@ -512,12 +512,12 @@ describe('SindreChat', () => {
 		expect(dispatch).toHaveBeenCalledWith({ type: 'remove_notification', id: 'notif-1' })
 	})
 
-	it('stays enabled for a one-shot send even when Sindre is not ready yet', () => {
+	it('stays enabled for a one-shot send even when the agent is not ready yet', () => {
 		setHookResult({ status: 'idle' })
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId={null}
+				agentActorId={null}
 				surface="sheet"
 				selection={{
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
@@ -535,9 +535,9 @@ describe('SindreChat', () => {
 	it('disables the composer while a one-shot session is starting', () => {
 		setOneShotResult({ status: 'starting' })
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				selection={{
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
@@ -555,9 +555,9 @@ describe('SindreChat', () => {
 	it('surfaces one-shot errors in the transcript when the agent branch is active', () => {
 		setOneShotResult({ status: 'error', error: new Error('boom') })
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				selection={{
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
@@ -574,14 +574,14 @@ describe('SindreChat', () => {
 	// ---- Task 36: composer picker entry points --------------------------------
 
 	it('renders the Agent and Items picker buttons next to the composer', () => {
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
 		expect(screen.getByRole('button', { name: /pick an agent/i })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /attach items/i })).toBeInTheDocument()
 	})
 
 	it('opens the picker pre-filtered to agents when the Agent button is clicked', async () => {
 		const user = userEvent.setup()
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />, {
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />, {
 			wrapper: WithQueryClient,
 		})
 
@@ -594,7 +594,7 @@ describe('SindreChat', () => {
 
 	it('opens the picker pre-filtered to items when the Items button is clicked', async () => {
 		const user = userEvent.setup()
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />, {
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />, {
 			wrapper: WithQueryClient,
 		})
 
@@ -604,33 +604,33 @@ describe('SindreChat', () => {
 	})
 
 	it('opens the picker at the top-level kind menu when `/` is typed at the start', async () => {
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />, {
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />, {
 			wrapper: WithQueryClient,
 		})
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: '/' } })
 
 		expect(await screen.findByPlaceholderText('Choose a kind…')).toBeInTheDocument()
 	})
 
 	it('opens the picker when `/` is typed immediately after whitespace', async () => {
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />, {
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />, {
 			wrapper: WithQueryClient,
 		})
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'hello /' } })
 
 		expect(await screen.findByPlaceholderText('Choose a kind…')).toBeInTheDocument()
 	})
 
 	it('does not open the picker when `/` is typed in the middle of a word', () => {
-		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />, {
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />, {
 			wrapper: WithQueryClient,
 		})
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'path/to' } })
 
 		expect(screen.queryByPlaceholderText('Choose a kind…')).not.toBeInTheDocument()
@@ -639,13 +639,13 @@ describe('SindreChat', () => {
 
 	it('dispatches add_agent and strips the triggering `/` when an agent is picked', async () => {
 		const user = userEvent.setup()
-		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
-		const selection: SindreSelection = { agent: null, objects: [], notifications: [], files: [] }
+		const dispatch = vi.fn<(action: ChatSelectionAction) => void>()
+		const selection: ChatSelection = { agent: null, objects: [], notifications: [], files: [] }
 
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				selection={selection}
 				onDispatchSelection={dispatch}
@@ -653,7 +653,7 @@ describe('SindreChat', () => {
 			{ wrapper: WithQueryClient },
 		)
 
-		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Message the agent') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'hi /' } })
 
 		// Drill into the Agent kind, then pick Reviewer. Scope to cmdk's
@@ -671,12 +671,12 @@ describe('SindreChat', () => {
 
 	it('dispatches add_object when the Items button path picks an object', async () => {
 		const user = userEvent.setup()
-		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
+		const dispatch = vi.fn<(action: ChatSelectionAction) => void>()
 
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				selection={{ agent: null, objects: [], notifications: [], files: [] }}
 				onDispatchSelection={dispatch}
@@ -696,15 +696,15 @@ describe('SindreChat', () => {
 	it('onSubmitOverride replaces the internal send path', async () => {
 		const override = vi.fn(async () => {})
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="pulse-bar"
 				onSubmitOverride={override}
 			/>,
 		)
 
-		const textarea = screen.getByPlaceholderText('Ask Sindre anything…') as HTMLTextAreaElement
+		const textarea = screen.getByPlaceholderText('Ask anything…') as HTMLTextAreaElement
 		fireEvent.change(textarea, { target: { value: 'intercept me' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
@@ -723,9 +723,9 @@ describe('SindreChat', () => {
 	it('autoSendMessage auto-fires a send exactly once and fires the consumed callback', async () => {
 		const onConsumed = vi.fn()
 		const { rerender } = render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				autoSendMessage={null}
 				onAutoSendConsumed={onConsumed}
@@ -735,9 +735,9 @@ describe('SindreChat', () => {
 		expect(mockSend).not.toHaveBeenCalled()
 
 		rerender(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				autoSendMessage="from bar"
 				onAutoSendConsumed={onConsumed}
@@ -752,9 +752,9 @@ describe('SindreChat', () => {
 		// Same message re-arrives (e.g. before consumer has cleared it) — must
 		// not double-send.
 		rerender(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				autoSendMessage="from bar"
 				onAutoSendConsumed={onConsumed}
@@ -766,18 +766,18 @@ describe('SindreChat', () => {
 		// This second transition from null must fire the send again — the
 		// previous sticky-ref bug silently dropped it.
 		rerender(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				autoSendMessage={null}
 				onAutoSendConsumed={onConsumed}
 			/>,
 		)
 		rerender(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				autoSendMessage="from bar"
 				onAutoSendConsumed={onConsumed}
@@ -788,19 +788,19 @@ describe('SindreChat', () => {
 		expect(onConsumed).toHaveBeenCalledTimes(2)
 	})
 
-	it('merges one-shot events after Sindre events in the transcript', () => {
+	it('merges one-shot events after chat events in the transcript', () => {
 		setHookResult({
 			status: 'ready',
-			events: [{ kind: 'text', text: 'Hi from Sindre' }],
+			events: [{ kind: 'text', text: 'Hi from the agent' }],
 		})
 		setOneShotResult({
 			status: 'streaming',
 			events: [{ kind: 'text', text: 'Hi from Code Reviewer' }],
 		})
 		render(
-			<SindreChat
+			<Chat
 				workspaceId="ws-1"
-				sindreActorId="actor-sindre"
+				agentActorId="actor-agent"
 				surface="sheet"
 				selection={{
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
@@ -811,7 +811,7 @@ describe('SindreChat', () => {
 			/>,
 		)
 
-		expect(screen.getByText('Hi from Sindre')).toBeInTheDocument()
+		expect(screen.getByText('Hi from the agent')).toBeInTheDocument()
 		expect(screen.getByText('Hi from Code Reviewer')).toBeInTheDocument()
 	})
 })

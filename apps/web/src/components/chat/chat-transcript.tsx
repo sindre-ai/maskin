@@ -1,12 +1,12 @@
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Spinner } from '@/components/ui/spinner'
+import type { ChatEvent, UserAttachmentView } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
-import type { SindreEvent, UserAttachmentView } from '@/lib/sindre-stream'
 import { Bell, Bot, Box, ChevronDown, ChevronRight, FileText, Wrench } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
-interface SindreTranscriptProps {
-	events: SindreEvent[]
+interface ChatTranscriptProps {
+	events: ChatEvent[]
 	starting: boolean
 	/**
 	 * A user turn has been sent and we're waiting for the agent's first
@@ -19,18 +19,18 @@ interface SindreTranscriptProps {
 }
 
 /**
- * Renders the Sindre transcript — assistant text as markdown, tool_use as a
+ * Renders the chat transcript — assistant text as markdown, tool_use as a
  * collapsible block (closed by default, click to inspect input), and thinking
  * as a collapsed expander. Non-renderable envelopes (user echoes, success
  * results, system, debug) fall through to nothing so the surface stays quiet.
  */
-export function SindreTranscript({
+export function ChatTranscript({
 	events,
 	starting,
 	pending = false,
 	error,
 	className,
-}: SindreTranscriptProps) {
+}: ChatTranscriptProps) {
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: pin scroll to bottom on every new event or while the waiting placeholder appears
@@ -73,13 +73,13 @@ function EmptyTranscript({ starting }: { starting: boolean }) {
 		return (
 			<div className="flex h-full items-center justify-center gap-2 text-text-muted">
 				<Spinner />
-				<span>Connecting to Sindre…</span>
+				<span>Connecting…</span>
 			</div>
 		)
 	}
 	return (
 		<div className="flex h-full items-center justify-center text-center text-text-muted">
-			Ask Sindre about your workspace — notifications, objects, bets, or how to get started.
+			Ask about your workspace — notifications, objects, bets, or how to get started.
 		</div>
 	)
 }
@@ -92,7 +92,7 @@ function TranscriptError({ error }: { error: Error }) {
 	)
 }
 
-function TranscriptRow({ event }: { event: SindreEvent }) {
+function TranscriptRow({ event }: { event: ChatEvent }) {
 	switch (event.kind) {
 		case 'user':
 			return <UserMessageBlock text={event.text} attachments={event.attachments} />
@@ -212,7 +212,7 @@ function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean })
 	const [open, setOpen] = useState(false)
 	const label = redacted ? 'Thinking (redacted)' : 'Thinking'
 	const body = redacted
-		? 'Anthropic withheld the internal reasoning for this turn. Sindre still thought about the problem — the content just isn’t available here.'
+		? 'Anthropic withheld the internal reasoning for this turn. The agent still thought about the problem — the content just isn’t available here.'
 		: text
 	return (
 		<div className="rounded-md border border-border bg-bg text-xs">

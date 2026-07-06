@@ -1,7 +1,7 @@
+import { Chat, type ChatHandle } from '@/components/chat/chat'
+import { ChatSidebarProvider } from '@/components/chat/chat-sidebar-provider'
 import { ConversationRow } from '@/components/chat/conversation-row'
 import { EmptyState } from '@/components/shared/empty-state'
-import { SindreChat, type SindreChatHandle } from '@/components/sindre/sindre-chat'
-import { SindreSidebarProvider } from '@/components/sindre/sindre-sidebar-provider'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -20,39 +20,39 @@ import {
 import { useIsMobile } from '@/hooks/use-mobile'
 import type { ConversationResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
-import { type SindreAttachment, useSindre } from '@/lib/sindre-context'
+import { type ChatAttachment, useChat } from '@/lib/chat-context'
 import {
-	buildSindreExportFilename,
-	downloadSindreMarkdown,
-	formatSindreMarkdown,
-} from '@/lib/sindre-export'
+	buildChatExportFilename,
+	downloadChatMarkdown,
+	formatChatMarkdown,
+} from '@/lib/chat-export'
 import {
-	EMPTY_SINDRE_SELECTION,
-	type SindreSelectionAgent,
-	type SindreSelectionNotification,
-	type SindreSelectionObject,
-	sindreSelectionReducer,
-} from '@/lib/sindre-selection'
-import type { SindreEvent } from '@/lib/sindre-stream'
+	type ChatSelectionAgent,
+	type ChatSelectionNotification,
+	type ChatSelectionObject,
+	EMPTY_CHAT_SELECTION,
+	chatSelectionReducer,
+} from '@/lib/chat-selection'
+import type { ChatEvent } from '@/lib/chat-stream'
 import { ChevronLeft, Copy, Download, MoreHorizontal, Pin, PinOff, Plus, X } from 'lucide-react'
 import { type PointerEvent, useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
-const SINDRE_AGENT_NAME = 'Sindre'
+const AGENT_NAME = 'Workspace Coach'
 
-interface SindrePanelProps {
+interface ChatPanelProps {
 	workspaceId: string
-	sindreActorId: string | null
+	agentActorId: string | null
 }
 
 /**
- * Right-side panel that is now conversation-first. When no conversation is
+ * Right-side panel that is conversation-first. When no conversation is
  * active it shows the conversation list (Recent DMs + Rooms). Selecting a row
- * opens SindreChat scoped to that conversation, which pre-loads historical
+ * opens the chat scoped to that conversation, which pre-loads historical
  * messages and links new sessions to the same conversation so every turn is
  * persisted.
  */
-export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
+export function ChatPanel({ workspaceId, agentActorId }: ChatPanelProps) {
 	const {
 		open,
 		setOpen,
@@ -64,11 +64,11 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 		setPinned,
 		panelWidth,
 		setPanelWidth,
-	} = useSindre()
-	const [selection, dispatch] = useReducer(sindreSelectionReducer, EMPTY_SINDRE_SELECTION)
+	} = useChat()
+	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const panelRef = useRef<HTMLDivElement | null>(null)
-	const chatRef = useRef<SindreChatHandle | null>(null)
-	const [events, setEvents] = useState<SindreEvent[]>([])
+	const chatRef = useRef<ChatHandle | null>(null)
+	const [events, setEvents] = useState<ChatEvent[]>([])
 	const isMobile = useIsMobile()
 
 	const [activeConversation, setActiveConversation] = useState<ConversationResponse | null>(null)
@@ -134,6 +134,11 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 		chatRef.current?.newChat()
 	}, [])
 
+	const handleAutoSendConsumed = useCallback(() => {
+		setPendingAutoMessage(null)
+		clearPendingMessage()
+	}, [clearPendingMessage])
+
 	const handleTitleDoubleClick = useCallback(() => {
 		if (!activeConversation) return
 		setTitleDraft(activeConversation.title ?? '')
@@ -156,12 +161,11 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 
 	const buildExportMarkdown = useCallback(() => {
 		const actor = getStoredActor()
-		return formatSindreMarkdown(events, {
+		return formatChatMarkdown(events, {
 			workspaceId,
-			frontendUrl:
-				typeof window !== 'undefined' ? window.location.origin : 'https://maskin.sindre.ai',
+			frontendUrl: typeof window !== 'undefined' ? window.location.origin : 'https://maskin.io',
 			userName: actor?.name?.trim() || 'You',
-			agentName: SINDRE_AGENT_NAME,
+			agentName: AGENT_NAME,
 		})
 	}, [events, workspaceId])
 
@@ -171,14 +175,14 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 			await navigator.clipboard.writeText(md)
 			toast.success('Conversation copied as markdown')
 		} catch (err) {
-			console.error('[sindre] clipboard copy failed', err)
+			console.error('[chat] clipboard copy failed', err)
 			toast.error('Could not copy — try Download instead')
 		}
 	}, [buildExportMarkdown])
 
 	const handleDownload = useCallback(() => {
 		const md = buildExportMarkdown()
-		downloadSindreMarkdown(md, buildSindreExportFilename(SINDRE_AGENT_NAME))
+		downloadChatMarkdown(md, buildChatExportFilename(AGENT_NAME))
 	}, [buildExportMarkdown])
 
 	useEffect(() => {
@@ -206,7 +210,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 	}, [open, pinned, setOpen])
 
 	return (
-		<SindreSidebarProvider
+		<ChatSidebarProvider
 			open={open}
 			onOpenChange={setOpen}
 			style={
@@ -362,19 +366,16 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 				</SidebarHeader>
 				<SidebarContent className="min-h-0 flex-1 p-3">
 					{activeConversation ? (
-						<SindreChat
+						<Chat
 							ref={chatRef}
 							workspaceId={workspaceId}
-							sindreActorId={sindreActorId}
+							agentActorId={agentActorId}
 							conversationId={activeConversation.id}
 							surface="sheet"
 							selection={selection}
 							onDispatchSelection={dispatch}
 							autoSendMessage={pendingAutoMessage ?? pendingMessage}
-							onAutoSendConsumed={() => {
-								setPendingAutoMessage(null)
-								clearPendingMessage()
-							}}
+							onAutoSendConsumed={handleAutoSendConsumed}
 							onEventsChange={setEvents}
 						/>
 					) : (
@@ -386,9 +387,9 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 								onSelect={handleSelectConversation}
 							/>
 							<div className="shrink-0">
-								<SindreChat
+								<Chat
 									workspaceId={workspaceId}
-									sindreActorId={sindreActorId}
+									agentActorId={agentActorId}
 									surface="pulse-bar"
 									selection={selection}
 									onDispatchSelection={dispatch}
@@ -399,7 +400,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 					)}
 				</SidebarContent>
 			</Sidebar>
-		</SindreSidebarProvider>
+		</ChatSidebarProvider>
 	)
 }
 
@@ -476,7 +477,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Thin vertical hit-target on the left edge of the Sindre panel.
+ * Thin vertical hit-target on the left edge of the chat panel.
  */
 function ResizeHandle({
 	width,
@@ -523,7 +524,7 @@ function ResizeHandle({
 	return (
 		<button
 			type="button"
-			aria-label="Resize Sindre panel"
+			aria-label="Resize chat panel"
 			onPointerDown={handlePointerDown}
 			onPointerMove={handlePointerMove}
 			onPointerUp={endDrag}
@@ -555,16 +556,16 @@ function PinToggle({ pinned, onToggle }: { pinned: boolean; onToggle: () => void
 	)
 }
 
-function attachmentToAction(attachment: SindreAttachment) {
+function attachmentToAction(attachment: ChatAttachment) {
 	if (attachment.kind === 'agent') {
-		const agent: SindreSelectionAgent = {
+		const agent: ChatSelectionAgent = {
 			id: attachment.id,
 			name: attachment.name ?? null,
 		}
 		return { type: 'add_agent' as const, agent }
 	}
 	if (attachment.kind === 'object') {
-		const object: SindreSelectionObject = {
+		const object: ChatSelectionObject = {
 			id: attachment.id,
 			title: attachment.title ?? null,
 			type: attachment.type ?? null,
@@ -572,7 +573,7 @@ function attachmentToAction(attachment: SindreAttachment) {
 		return { type: 'add_object' as const, object }
 	}
 	if (attachment.kind === 'notification') {
-		const notification: SindreSelectionNotification = {
+		const notification: ChatSelectionNotification = {
 			id: attachment.id,
 			title: attachment.title ?? null,
 		}

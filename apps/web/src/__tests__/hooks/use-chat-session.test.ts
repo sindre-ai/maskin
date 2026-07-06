@@ -111,6 +111,60 @@ describe('useChatSession — bootstrap', () => {
 		expect(result.current.sessionId).toBe('sess-new')
 	})
 
+	it('keeps the user echo and drops the dead session when the container never reaches running', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-stuck'))
+		// Container transitions to a terminal status before running — waitForRunning
+		// throws, exercising the bootstrap-failure path.
+		vi.mocked(api.sessions.get).mockResolvedValue({
+			...buildSession('sess-stuck'),
+			status: 'failed',
+		})
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		await act(async () => {
+			await expect(result.current.send('keep me')).rejects.toThrow(/before it could start/i)
+		})
+
+		expect(result.current.status).toBe('error')
+		// The user's message stays in the transcript so it's visible + copyable.
+		expect(result.current.events).toEqual([{ kind: 'user', text: 'keep me' }])
+		// The half-started session is dropped so the next send re-bootstraps fresh.
+		expect(result.current.sessionId).toBeNull()
+	})
+
+	it('echoes the user turn immediately, before the bootstrap resolves', async () => {
+		let resolveCreate: ((s: SessionResponse) => void) | null = null
+		vi.mocked(api.sessions.create).mockImplementation(
+			() =>
+				new Promise<SessionResponse>((resolve) => {
+					resolveCreate = resolve
+				}),
+		)
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		let sendPromise: Promise<void> = Promise.resolve()
+		act(() => {
+			sendPromise = result.current.send('early echo')
+		})
+
+		// The echo is present even though create() has not resolved yet.
+		await waitFor(() =>
+			expect(result.current.events).toEqual([{ kind: 'user', text: 'early echo' }]),
+		)
+
+		await act(async () => {
+			resolveCreate?.(buildSession('sess-late'))
+			await sendPromise
+		})
+	})
+
 	it('throws from send() when agentActorId is null', async () => {
 		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId: null }), {
 			wrapper: TestWrapper,

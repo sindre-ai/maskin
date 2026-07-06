@@ -1,8 +1,8 @@
-import { SindrePanel } from '@/components/sindre/sindre-panel'
-import type { UseSindreOneShotResult } from '@/hooks/use-sindre-one-shot'
-import type { UseSindreSessionResult } from '@/hooks/use-sindre-session'
+import { ChatPanel } from '@/components/chat/chat-panel'
+import type { UseChatOneShotResult } from '@/hooks/use-chat-one-shot'
+import type { UseChatSessionResult } from '@/hooks/use-chat-session'
 import type { ConversationResponse } from '@/lib/api'
-import { SindreProvider, useSindre } from '@/lib/sindre-context'
+import { ChatProvider, useChat } from '@/lib/chat-context'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -14,7 +14,7 @@ const mockSend = vi.fn(async () => {})
 const mockOneShotSend = vi.fn(async () => {})
 const mockOneShotClear = vi.fn()
 
-let mockHookResult: UseSindreSessionResult = {
+let mockHookResult: UseChatSessionResult = {
 	sessionId: null,
 	status: 'ready',
 	events: [],
@@ -23,7 +23,7 @@ let mockHookResult: UseSindreSessionResult = {
 	reset: vi.fn(),
 }
 
-let mockOneShotResult: UseSindreOneShotResult = {
+let mockOneShotResult: UseChatOneShotResult = {
 	sessionId: null,
 	status: 'idle',
 	events: [],
@@ -58,12 +58,12 @@ vi.mock('@/hooks/use-conversations', () => ({
 	useConversationMessages: () => ({ data: null }),
 }))
 
-vi.mock('@/hooks/use-sindre-session', () => ({
-	useSindreSession: () => mockHookResult,
+vi.mock('@/hooks/use-chat-session', () => ({
+	useChatSession: () => mockHookResult,
 }))
 
-vi.mock('@/hooks/use-sindre-one-shot', () => ({
-	useSindreOneShot: () => mockOneShotResult,
+vi.mock('@/hooks/use-chat-one-shot', () => ({
+	useChatOneShot: () => mockOneShotResult,
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -121,15 +121,15 @@ function Harness({ children }: { children: ReactNode }) {
 	const client = createTestQueryClient()
 	return (
 		<QueryClientProvider client={client}>
-			<SindreProvider workspaceId="ws-1">{children}</SindreProvider>
+			<ChatProvider workspaceId="ws-1">{children}</ChatProvider>
 		</QueryClientProvider>
 	)
 }
 
-type OpenerAttachments = Parameters<ReturnType<typeof useSindre>['openWithContext']>[0]
+type OpenerAttachments = Parameters<ReturnType<typeof useChat>['openWithContext']>[0]
 
 function Opener({ attachments }: { attachments?: OpenerAttachments }) {
-	const { setOpen, openWithContext } = useSindre()
+	const { setOpen, openWithContext } = useChat()
 	return (
 		<>
 			<button type="button" onClick={() => setOpen(true)}>
@@ -149,7 +149,7 @@ function OpenerWithMessage({
 	attachments?: OpenerAttachments
 	message: string
 }) {
-	const { openWithContext } = useSindre()
+	const { openWithContext } = useChat()
 	return (
 		<button type="button" onClick={() => openWithContext(attachments ?? [], message)}>
 			open-with-message
@@ -158,15 +158,15 @@ function OpenerWithMessage({
 }
 
 function PinState() {
-	const { pinned } = useSindre()
+	const { pinned } = useChat()
 	return <span data-testid="pin-state">{pinned ? 'pinned' : 'unpinned'}</span>
 }
 
-describe('SindrePanel', () => {
+describe('ChatPanel', () => {
 	it('starts collapsed so it acts like an overlay sheet by default', () => {
 		render(
 			<Harness>
-				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
 			</Harness>,
 		)
 		const panel = document.querySelector('[data-slot="sidebar-container"], [data-state]')
@@ -180,7 +180,7 @@ describe('SindrePanel', () => {
 		render(
 			<Harness>
 				<Opener />
-				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
 			</Harness>,
 		)
 
@@ -193,13 +193,13 @@ describe('SindrePanel', () => {
 		expect(screen.getAllByRole('button', { name: 'New conversation' })).toHaveLength(1)
 	})
 
-	it('shows SindreChat when a conversation is selected', async () => {
+	it('shows Chat when a conversation is selected', async () => {
 		mockConversationList = [mockConversation]
 		const user = userEvent.setup()
 		render(
 			<Harness>
 				<Opener />
-				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
 			</Harness>,
 		)
 
@@ -210,7 +210,7 @@ describe('SindrePanel', () => {
 		await screen.findByText('Conversations')
 		await user.click(screen.getByText('Test Conversation'))
 
-		expect(await screen.findByPlaceholderText('Message Sindre')).toBeInTheDocument()
+		expect(await screen.findByPlaceholderText('Message the agent')).toBeInTheDocument()
 		expect(mockMarkRead.mutate).toHaveBeenCalledWith('conv-1')
 	})
 
@@ -219,8 +219,8 @@ describe('SindrePanel', () => {
 		const user = userEvent.setup()
 		render(
 			<Harness>
-				<OpenerWithMessage message="hey sindre" attachments={[]} />
-				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<OpenerWithMessage message="hey there" attachments={[]} />
+				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
 			</Harness>,
 		)
 
@@ -230,14 +230,14 @@ describe('SindrePanel', () => {
 
 		await screen.findByText('Conversations')
 		await user.click(screen.getByText('Test Conversation'))
-		await screen.findByPlaceholderText('Message Sindre')
+		await screen.findByPlaceholderText('Message the agent')
 
 		await waitFor(() =>
-			expect(mockSend).toHaveBeenCalledWith('hey sindre', undefined, 'hey sindre', undefined),
+			expect(mockSend).toHaveBeenCalledWith('hey there', undefined, 'hey there', undefined),
 		)
 	})
 
-	it('seeds selection from pendingAttachments and renders chips in SindreChat', async () => {
+	it('seeds selection from pendingAttachments and renders chips in Chat', async () => {
 		mockConversationList = [mockConversation]
 		const user = userEvent.setup()
 		render(
@@ -248,7 +248,7 @@ describe('SindrePanel', () => {
 						{ kind: 'object', id: 'obj-1', title: 'Bet Alpha', type: 'bet' },
 					]}
 				/>
-				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
 			</Harness>,
 		)
 
@@ -272,7 +272,7 @@ describe('SindrePanel', () => {
 				<Opener
 					attachments={[{ kind: 'notification', id: 'notif-1', title: 'Build failed on main' }]}
 				/>
-				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
 			</Harness>,
 		)
 
@@ -283,7 +283,7 @@ describe('SindrePanel', () => {
 		await screen.findByText('Conversations')
 		await user.click(screen.getByText('Test Conversation'))
 
-		expect(await screen.findByPlaceholderText('Message Sindre')).toBeInTheDocument()
+		expect(await screen.findByPlaceholderText('Message the agent')).toBeInTheDocument()
 		expect(screen.getByText('Build failed on main')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /Remove Build failed on main/ })).toBeInTheDocument()
 	})
@@ -294,7 +294,7 @@ describe('SindrePanel', () => {
 			<Harness>
 				<Opener />
 				<PinState />
-				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
 			</Harness>,
 		)
 
@@ -307,7 +307,7 @@ describe('SindrePanel', () => {
 		await user.click(pinBtn)
 
 		expect(screen.getByTestId('pin-state')).toHaveTextContent('pinned')
-		expect(localStorage.getItem('maskin-sindre-pinned')).toBe('true')
+		expect(localStorage.getItem('maskin-chat-pinned')).toBe('true')
 		expect(screen.getByRole('button', { name: 'Unpin sidebar' })).toBeInTheDocument()
 	})
 
@@ -318,7 +318,7 @@ describe('SindrePanel', () => {
 				<button type="button" data-testid="outside">
 					outside
 				</button>
-				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
 			</Harness>,
 		)
 
@@ -345,7 +345,7 @@ describe('SindrePanel', () => {
 				<button type="button" data-testid="outside">
 					outside
 				</button>
-				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
 			</Harness>,
 		)
 
@@ -369,7 +369,7 @@ describe('SindrePanel', () => {
 		render(
 			<Harness>
 				<Opener />
-				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
 			</Harness>,
 		)
 

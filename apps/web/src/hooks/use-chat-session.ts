@@ -1,8 +1,8 @@
 import { api } from '@/lib/api'
 import type { SessionInputAttachment } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
+import { type ChatEvent, type UserAttachmentView, parseChatLine } from '@/lib/chat-stream'
 import { API_BASE } from '@/lib/constants'
-import { type SindreEvent, type UserAttachmentView, parseSindreLine } from '@/lib/sindre-stream'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -15,7 +15,7 @@ const IS_DEV = ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV
 // Bootstrap action_prompt is required by the create-session schema (min length 1)
 // but is intentionally ignored at runtime for interactive sessions — the first
 // real user turn arrives via POST /api/sessions/:id/input.
-const BOOTSTRAP_ACTION_PROMPT = 'Sindre interactive chat'
+const BOOTSTRAP_ACTION_PROMPT = 'Workspace Coach interactive chat'
 
 const RUNNING_POLL_INTERVAL_MS = 300
 const RUNNING_POLL_TIMEOUT_MS = 20_000
@@ -38,22 +38,22 @@ async function waitForRunning(sessionId: string, workspaceId: string): Promise<v
 		}
 		await new Promise((resolve) => setTimeout(resolve, RUNNING_POLL_INTERVAL_MS))
 	}
-	throw new Error('Sindre session did not start in time')
+	throw new Error('Chat session did not start in time')
 }
 
-export type SindreSessionStatus = 'idle' | 'starting' | 'connecting' | 'ready' | 'closed' | 'error'
+export type ChatSessionStatus = 'idle' | 'starting' | 'connecting' | 'ready' | 'closed' | 'error'
 
-export interface UseSindreSessionOptions {
+export interface UseChatSessionOptions {
 	workspaceId: string
-	sindreActorId: string | null
+	agentActorId: string | null
 	conversationId?: string | null
 	enabled?: boolean
 }
 
-export interface UseSindreSessionResult {
+export interface UseChatSessionResult {
 	sessionId: string | null
-	status: SindreSessionStatus
-	events: SindreEvent[]
+	status: ChatSessionStatus
+	events: ChatEvent[]
 	error: Error | null
 	send: (
 		content: string,
@@ -65,25 +65,29 @@ export interface UseSindreSessionResult {
 }
 
 /**
- * Drives a single long-lived interactive Claude Code session for Sindre. On
- * first send it bootstraps a session for the given Sindre actor, subscribes
+ * Drives a single long-lived interactive Claude Code session. On
+ * first send it bootstraps a session for the given agent actor, subscribes
  * to the session's stdout SSE log stream, and pipes each line through the
- * sindre-stream parser so consumers can render typed transcript events
+ * chat-stream parser so consumers can render typed transcript events
  * directly. Session id is tab-local — a reload starts a fresh session on the
  * next send.
  */
-export function useSindreSession({
+export function useChatSession({
 	workspaceId,
-	sindreActorId,
+	agentActorId,
 	conversationId,
 	enabled = true,
-}: UseSindreSessionOptions): UseSindreSessionResult {
+}: UseChatSessionOptions): UseChatSessionResult {
 	const [sessionId, setSessionId] = useState<string | null>(null)
-	const [status, setStatus] = useState<SindreSessionStatus>('idle')
-	const [events, setEvents] = useState<SindreEvent[]>([])
+	const [status, setStatus] = useState<ChatSessionStatus>('idle')
+	const [events, setEvents] = useState<ChatEvent[]>([])
 	const [error, setError] = useState<Error | null>(null)
 	const startingRef = useRef(false)
 	const prevWorkspaceIdRef = useRef(workspaceId)
+	// Always-current status for use inside the send callback (avoids adding
+	// status to the dependency array which would recreate send on every render).
+	const statusRef = useRef(status)
+	statusRef.current = status
 	// Monotonic counter bumped whenever the session is discarded (reset() or
 	// workspace switch). An in-flight send() captures the counter before
 	// bootstrap and bails out if it changed — otherwise a fast reset between
@@ -105,7 +109,7 @@ export function useSindreSession({
 	}, [workspaceId])
 
 	// Subscribe to the session's live SSE log stream and pipe stdout through
-	// the sindre-stream parser. stderr/system lines are surfaced as `debug`
+	// the chat-stream parser. stderr/system lines are surfaced as `debug`
 	// events so the UI can collapse them without losing data.
 	useEffect(() => {
 		if (!enabled) return
@@ -140,7 +144,7 @@ export function useSindreSession({
 				// mismatches. Gated on IS_DEV so production builds
 				// stay quiet.
 				if (IS_DEV) {
-					console.debug('[sindre-session] SSE envelope', {
+					console.debug('[chat-session] SSE envelope', {
 						event: msg.event,
 						data: msg.data,
 					})
@@ -150,10 +154,10 @@ export function useSindreSession({
 					return
 				}
 				if (msg.event === 'stdout') {
-					const parsed = parseSindreLine(msg.data)
+					const parsed = parseChatLine(msg.data)
 					if (parsed.length === 0) return
 					if (IS_DEV) {
-						console.debug('[sindre-session] parsed events', parsed)
+						console.debug('[chat-session] parsed events', parsed)
 					}
 					setEvents((prev) => prev.concat(parsed))
 					return
@@ -178,7 +182,7 @@ export function useSindreSession({
 			// from. Anything else that lands here (abort-before-open, DNS, bug
 			// inside onmessage) must still be logged or it vanishes silently.
 			if (controller.signal.aborted) return
-			console.error('[sindre-session] SSE connection failed', err)
+			console.error('[chat-session] SSE connection failed', err)
 			setError(err instanceof Error ? err : new Error(String(err)))
 			setStatus('error')
 		})
@@ -196,7 +200,7 @@ export function useSindreSession({
 			displayAttachments?: UserAttachmentView[],
 		) => {
 			if (!workspaceId) throw new Error('No workspace selected')
-			if (!sindreActorId) throw new Error('Sindre agent not available')
+			if (!agentActorId) throw new Error('Chat agent not available')
 
 			// Echo the user's turn immediately — before the (possibly slow)
 			// container bootstrap — so the message is visible the instant they
@@ -214,18 +218,19 @@ export function useSindreSession({
 			)
 
 			// Lazy bootstrap — only create the container on the user's first
-			// turn, so opening the panel (or re-mounting the app) never spawns
-			// a session.
-			let currentSessionId = sessionId
+			// turn, or when the previous session ended (e.g. container exited or
+			// timed out). In the latter case we treat the closed session as gone
+			// and spin up a fresh one, preserving the transcript.
+			let currentSessionId = statusRef.current === 'closed' ? null : sessionId
 			const generation = generationRef.current
 			if (!currentSessionId) {
-				if (startingRef.current) throw new Error('Sindre session is still starting')
+				if (startingRef.current) throw new Error('Chat session is still starting')
 				startingRef.current = true
 				setStatus('starting')
 				setError(null)
 				try {
 					const session = await api.sessions.create(workspaceId, {
-						actor_id: sindreActorId,
+						actor_id: agentActorId,
 						action_prompt: BOOTSTRAP_ACTION_PROMPT,
 						config: { interactive: true },
 						...(conversationId ? { conversation_id: conversationId } : {}),
@@ -235,7 +240,7 @@ export function useSindreSession({
 					// user discarded this session — don't mount an SSE stream
 					// on it.
 					if (generationRef.current !== generation) {
-						throw new Error('Sindre session was reset during bootstrap')
+						throw new Error('Chat session was reset during bootstrap')
 					}
 					currentSessionId = session.id
 					setSessionId(session.id)
@@ -244,7 +249,7 @@ export function useSindreSession({
 					// rejects with 409 "Session is not running".
 					await waitForRunning(currentSessionId, workspaceId)
 					if (generationRef.current !== generation) {
-						throw new Error('Sindre session was reset during bootstrap')
+						throw new Error('Chat session was reset during bootstrap')
 					}
 				} catch (err) {
 					if (generationRef.current === generation) {
@@ -267,13 +272,13 @@ export function useSindreSession({
 			}
 
 			if (generationRef.current !== generation) {
-				throw new Error('Sindre session was reset during bootstrap')
+				throw new Error('Chat session was reset during bootstrap')
 			}
 
 			const body = attachments && attachments.length > 0 ? { content, attachments } : { content }
 			await api.sessions.input(currentSessionId, body, workspaceId)
 		},
-		[sessionId, workspaceId, sindreActorId, conversationId],
+		[sessionId, workspaceId, agentActorId, conversationId],
 	)
 
 	const reset = useCallback(() => {

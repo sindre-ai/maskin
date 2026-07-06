@@ -1,14 +1,14 @@
-import { SindreTranscript } from '@/components/sindre/sindre-transcript'
-import type { SindreEvent } from '@/lib/sindre-stream'
+import { ChatTranscript } from '@/components/chat/chat-transcript'
+import type { ChatEvent } from '@/lib/chat-stream'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-describe('SindreTranscript', () => {
+describe('ChatTranscript', () => {
 	it('renders assistant text as markdown (bold, headings)', () => {
-		const events: SindreEvent[] = [
+		const events: ChatEvent[] = [
 			{ kind: 'text', text: '# Hello\n\nSome **bold** text and a [link](https://example.com).' },
 		]
-		render(<SindreTranscript events={events} starting={false} error={null} />)
+		render(<ChatTranscript events={events} starting={false} error={null} />)
 
 		expect(screen.getByRole('heading', { name: 'Hello' })).toBeInTheDocument()
 		expect(screen.getByText('bold')).toBeInTheDocument()
@@ -19,7 +19,7 @@ describe('SindreTranscript', () => {
 	})
 
 	it('renders tool_use as a collapsible block showing name, collapsed by default', () => {
-		const events: SindreEvent[] = [
+		const events: ChatEvent[] = [
 			{
 				kind: 'tool_use',
 				id: 'tool-1',
@@ -27,7 +27,7 @@ describe('SindreTranscript', () => {
 				input: { type: 'bet', limit: 10 },
 			},
 		]
-		render(<SindreTranscript events={events} starting={false} error={null} />)
+		render(<ChatTranscript events={events} starting={false} error={null} />)
 
 		const trigger = screen.getByRole('button', { name: /list_objects/i })
 		expect(trigger).toHaveAttribute('aria-expanded', 'false')
@@ -36,7 +36,7 @@ describe('SindreTranscript', () => {
 	})
 
 	it('expands tool_use to show formatted input when clicked', () => {
-		const events: SindreEvent[] = [
+		const events: ChatEvent[] = [
 			{
 				kind: 'tool_use',
 				id: 'tool-1',
@@ -44,7 +44,7 @@ describe('SindreTranscript', () => {
 				input: { type: 'bet', limit: 10 },
 			},
 		]
-		render(<SindreTranscript events={events} starting={false} error={null} />)
+		render(<ChatTranscript events={events} starting={false} error={null} />)
 
 		fireEvent.click(screen.getByRole('button', { name: /list_objects/i }))
 
@@ -57,10 +57,10 @@ describe('SindreTranscript', () => {
 	})
 
 	it('renders thinking collapsed by default and expands on click', () => {
-		const events: SindreEvent[] = [
+		const events: ChatEvent[] = [
 			{ kind: 'thinking', text: 'Let me inspect the workspace members…' },
 		]
-		render(<SindreTranscript events={events} starting={false} error={null} />)
+		render(<ChatTranscript events={events} starting={false} error={null} />)
 
 		const trigger = screen.getByRole('button', { name: /thinking/i })
 		expect(trigger).toHaveAttribute('aria-expanded', 'false')
@@ -73,59 +73,59 @@ describe('SindreTranscript', () => {
 	})
 
 	it('renders the empty state when there are no events', () => {
-		render(<SindreTranscript events={[]} starting={false} error={null} />)
-		expect(screen.getByText(/Ask Sindre about your workspace/i)).toBeInTheDocument()
+		render(<ChatTranscript events={[]} starting={false} error={null} />)
+		expect(screen.getByText(/Ask about your workspace/i)).toBeInTheDocument()
 	})
 
 	it('renders a connecting indicator while the session is starting', () => {
-		render(<SindreTranscript events={[]} starting={true} error={null} />)
-		expect(screen.getByText(/Connecting to Sindre/i)).toBeInTheDocument()
+		render(<ChatTranscript events={[]} starting={true} error={null} />)
+		expect(screen.getByText(/Connecting/i)).toBeInTheDocument()
 	})
 
 	it('renders a waiting-for-response placeholder after the user turn while pending', () => {
-		const events: SindreEvent[] = [{ kind: 'user', text: 'hello sindre' }]
-		render(<SindreTranscript events={events} starting={false} pending error={null} />)
+		const events: ChatEvent[] = [{ kind: 'user', text: 'hi there' }]
+		render(<ChatTranscript events={events} starting={false} pending error={null} />)
 
 		// The sent user turn is visible (and copyable) alongside the placeholder.
-		expect(screen.getByText('hello sindre')).toBeInTheDocument()
+		expect(screen.getByText('hi there')).toBeInTheDocument()
 		expect(screen.getByText(/Waiting for response/i)).toBeInTheDocument()
 	})
 
 	it('drops the waiting placeholder once an error replaces it', () => {
-		const events: SindreEvent[] = [{ kind: 'user', text: 'hello sindre' }]
+		const events: ChatEvent[] = [{ kind: 'user', text: 'hi there' }]
 		render(
-			<SindreTranscript
+			<ChatTranscript
 				events={events}
 				starting={false}
 				pending
-				error={new Error('Sindre session did not start in time')}
+				error={new Error('Chat session did not start in time')}
 			/>,
 		)
 
 		expect(screen.queryByText(/Waiting for response/i)).not.toBeInTheDocument()
 		expect(screen.getByText(/did not start in time/i)).toBeInTheDocument()
 		// The user's message is still on screen so it isn't lost.
-		expect(screen.getByText('hello sindre')).toBeInTheDocument()
+		expect(screen.getByText('hi there')).toBeInTheDocument()
 	})
 
 	it('renders errors and error results without crashing', () => {
-		const events: SindreEvent[] = [
+		const events: ChatEvent[] = [
 			{ kind: 'error', message: 'Socket closed', data: {} },
 			{ kind: 'result', subtype: 'error_max_turns', isError: true, text: 'Out of turns' },
 		]
-		render(<SindreTranscript events={events} starting={false} error={null} />)
+		render(<ChatTranscript events={events} starting={false} error={null} />)
 
 		expect(screen.getByText('Socket closed')).toBeInTheDocument()
 		expect(screen.getByText('Out of turns')).toBeInTheDocument()
 	})
 
 	it('ignores system, debug, and non-error result envelopes', () => {
-		const events: SindreEvent[] = [
+		const events: ChatEvent[] = [
 			{ kind: 'system', subtype: 'init', data: {} },
 			{ kind: 'debug', raw: 'junk' },
 			{ kind: 'result', subtype: 'success', isError: false, text: 'done' },
 		]
-		const { container } = render(<SindreTranscript events={events} starting={false} error={null} />)
+		const { container } = render(<ChatTranscript events={events} starting={false} error={null} />)
 		// None of these should produce visible text.
 		expect(screen.queryByText('junk')).not.toBeInTheDocument()
 		expect(screen.queryByText('done')).not.toBeInTheDocument()
