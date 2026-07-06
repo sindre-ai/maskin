@@ -1,5 +1,6 @@
 import {
 	AgentPortraitCard,
+	type PortraitStatus,
 	getPortraitStatus,
 	portraitStatusToFilter,
 } from '@/components/agents/agent-portrait-card'
@@ -10,7 +11,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { useActors, useAgentPause, useAgentRun } from '@/hooks/use-actors'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
-import type { ActorResponse } from '@/lib/api'
+import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -28,8 +29,6 @@ function AgentsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: actors, isLoading } = useActors(workspaceId)
 	const { data: sessions } = useWorkspaceSessions(workspaceId)
-	const runMutation = useAgentRun(workspaceId)
-	const pauseMutation = useAgentPause(workspaceId)
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
 
 	const agents = useMemo(() => (actors ?? []).filter((a) => a.type === 'agent'), [actors])
@@ -118,35 +117,58 @@ function AgentsPage() {
 					</div>
 
 					<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-						{filtered.map((agent) => {
-							const status = portraitStatuses.get(agent.id) ?? 'idle'
-							const runVars = runMutation.variables
-							const pauseVars = pauseMutation.variables
-							return (
-								<AgentPortraitCard
-									key={agent.id}
-									agent={agent as ActorResponse}
-									status={status}
-									latestSession={getLatestSession(agent.id, sessionsByAgent)}
-									onRun={() =>
-										runMutation.mutate(
-											{ id: agent.id },
-											{ onError: () => toast.error(`Couldn't start ${agent.name}`) },
-										)
-									}
-									onPause={() =>
-										pauseMutation.mutate(agent.id, {
-											onError: () => toast.error(`Couldn't pause ${agent.name}`),
-										})
-									}
-									isRunPending={runMutation.isPending && runVars?.id === agent.id}
-									isPausePending={pauseMutation.isPending && pauseVars === agent.id}
-								/>
-							)
-						})}
+						{filtered.map((agent) => (
+							<AgentPortraitCardItem
+								key={agent.id}
+								workspaceId={workspaceId}
+								agent={agent as ActorResponse}
+								status={portraitStatuses.get(agent.id) ?? 'idle'}
+								latestSession={getLatestSession(agent.id, sessionsByAgent)}
+							/>
+						))}
 					</div>
 				</>
 			)}
 		</div>
+	)
+}
+
+function AgentPortraitCardItem({
+	workspaceId,
+	agent,
+	status,
+	latestSession,
+}: {
+	workspaceId: string
+	agent: ActorResponse
+	status: PortraitStatus
+	latestSession?: SessionResponse
+}) {
+	// One mutation instance per card — sharing a single instance across the grid
+	// meant clicking Run/Pause on one agent detached the previous card's mutation
+	// (TanStack Query observers detach on `.mutate()`), silently dropping its
+	// onError toast and pending state if another agent was actioned first.
+	const runMutation = useAgentRun(workspaceId)
+	const pauseMutation = useAgentPause(workspaceId)
+
+	return (
+		<AgentPortraitCard
+			agent={agent}
+			status={status}
+			latestSession={latestSession}
+			onRun={() =>
+				runMutation.mutate(
+					{ id: agent.id },
+					{ onError: () => toast.error(`Couldn't start ${agent.name}`) },
+				)
+			}
+			onPause={() =>
+				pauseMutation.mutate(agent.id, {
+					onError: () => toast.error(`Couldn't pause ${agent.name}`),
+				})
+			}
+			isRunPending={runMutation.isPending}
+			isPausePending={pauseMutation.isPending}
+		/>
 	)
 }

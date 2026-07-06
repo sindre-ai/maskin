@@ -297,10 +297,21 @@ export function AgentDocumentView({
 					size="sm"
 					className="min-h-[44px]"
 					onClick={() =>
-						createSession.mutate({
-							actor_id: agent.id,
-							action_prompt: NEW_CONVERSATION_ACTION_PROMPT,
-						})
+						createSession.mutate(
+							{
+								actor_id: agent.id,
+								action_prompt: NEW_CONVERSATION_ACTION_PROMPT,
+							},
+							{
+								onError: (err) => {
+									toast.error(
+										err instanceof Error
+											? err.message
+											: `Couldn't start a conversation with ${agent.name}`,
+									)
+								},
+							},
+						)
 					}
 					disabled={createSession.isPending}
 				>
