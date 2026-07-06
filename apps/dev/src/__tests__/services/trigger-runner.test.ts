@@ -349,6 +349,55 @@ describe('TriggerRunner', () => {
 			expect(sessionManager.createSession).toHaveBeenCalled()
 		})
 
+		it('fires status_changed trigger on a new {changes} shape event by hydrating current from the objects table', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'task',
+					action: 'status_changed',
+					from_status: 'todo',
+					to_status: 'in_progress',
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				// fetchEventData → new {changes} shape, no previous/updated snapshot
+				[{ data: { changes: [{ field: 'status', old: 'todo', new: 'in_progress' }] } }],
+				// hydrated current row from `objects`
+				[{ status: 'in_progress', driver: null, metadata: null }],
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('does not fire on new {changes} event when the object row is missing', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'task',
+					action: 'status_changed',
+					from_status: 'todo',
+					to_status: 'in_progress',
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger],
+				[{ data: { changes: [{ field: 'status', old: 'todo', new: 'in_progress' }] } }],
+				[], // objects table lookup — row not found
+			]
+
+			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
 		it('fires status_changed trigger only when both to_status and filter match', async () => {
 			const trigger = buildTrigger({
 				workspaceId: 'ws-1',

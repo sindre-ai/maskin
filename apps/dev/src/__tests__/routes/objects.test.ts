@@ -258,6 +258,99 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
+		it("emits an 'updated' event with data.changes for a single-field edit", async () => {
+			const existing = buildObject({ title: 'Old title' })
+			const updated = { ...existing, title: 'New title' }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			// First select: existing object, second: workspace membership, third:
+			// the in-transaction FOR UPDATE re-read used to derive the event action
+			// and the terminal-notification guard.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			await app.request(jsonRequest('PATCH', `/api/objects/${existing.id}`, { title: 'New title' }))
+
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert).toBeDefined()
+			expect(eventInsert?.action).toBe('updated')
+			expect(eventInsert?.data).toEqual({
+				changes: [{ field: 'title', old: 'Old title', new: 'New title' }],
+			})
+			expect(eventInsert?.data).not.toHaveProperty('previous')
+			expect(eventInsert?.data).not.toHaveProperty('updated')
+		})
+
+		it("emits a 'status_changed' event with data.changes = [{field: 'status', …}] on status-only edit", async () => {
+			const existing = buildObject({ status: 'signal' })
+			const updated = { ...existing, status: 'active' }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			const ws = buildWorkspace({
+				id: existing.workspaceId,
+				settings: { statuses: { [existing.type]: ['signal', 'active'] } },
+			})
+			// First select: existing object, second: workspace membership, third:
+			// workspace settings, fourth: the in-transaction FOR UPDATE re-read.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws], [existing]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			await app.request(jsonRequest('PATCH', `/api/objects/${existing.id}`, { status: 'active' }))
+
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert?.action).toBe('status_changed')
+			expect(eventInsert?.data).toEqual({
+				changes: [{ field: 'status', old: 'signal', new: 'active' }],
+			})
+		})
+
+		it('emits N-element data.changes for a multi-field edit', async () => {
+			const existing = buildObject({ title: 'Old', status: 'signal' })
+			const updated = { ...existing, title: 'New', status: 'active' }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			const ws = buildWorkspace({
+				id: existing.workspaceId,
+				settings: { statuses: { [existing.type]: ['signal', 'active'] } },
+			})
+			// First select: existing object, second: workspace membership, third:
+			// workspace settings, fourth: the in-transaction FOR UPDATE re-read.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws], [existing]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, {
+					title: 'New',
+					status: 'active',
+				}),
+			)
+
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; data: { changes: unknown[] } } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert?.action).toBe('status_changed')
+			expect(eventInsert?.data.changes).toEqual(
+				expect.arrayContaining([
+					{ field: 'status', old: 'signal', new: 'active' },
+					{ field: 'title', old: 'Old', new: 'New' },
+				]),
+			)
+			expect(eventInsert?.data.changes).toHaveLength(2)
+		})
+
 		it('returns 404 when object not found', async () => {
 			const { app } = createTestApp(objectsRoutes, '/api/objects')
 
@@ -439,6 +532,31 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.events).toHaveLength(1)
+			expect(body.events[0].description).toBe('changed driver from Alice to Bob')
+		})
+
+		it('resolves actor names for driver-change events emitted in the new {changes} shape', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const alice = { id: '00000000-0000-0000-0000-0000000000a1', name: 'Alice' }
+			const bob = { id: '00000000-0000-0000-0000-0000000000b2', name: 'Bob' }
+			const driverChange = buildEvent({
+				workspaceId: wsId,
+				entityType: 'bet',
+				entityId: obj.id,
+				action: 'updated',
+				data: {
+					changes: [{ field: 'driver', old: alice.id, new: bob.id }],
+				},
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[obj], [], [driverChange], [alice, bob]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
 			expect(body.events[0].description).toBe('changed driver from Alice to Bob')
 		})
 
