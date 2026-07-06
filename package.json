@@ -8,7 +8,6 @@
 		"build": "turbo build",
 		"test": "turbo test --concurrency=4",
 		"test:integration": "turbo test:integration",
-		"test:eval": "turbo test:eval",
 		"test:e2e": "turbo test:e2e",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",

@@ -155,6 +155,7 @@ function createChain(
 	const methods = [
 		'select',
 		'from',
+		'$dynamic',
 		'where',
 		'limit',
 		'offset',

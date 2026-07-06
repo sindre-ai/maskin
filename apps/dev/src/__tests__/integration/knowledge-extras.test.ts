@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { knowledgeExtras } from '@maskin/ext-knowledge/db-schema'
+import { retrieveKnowledge } from '@maskin/ext-knowledge/retrieval'
 import { and, eq, isNull } from 'drizzle-orm'
 import { buildCreateRelationshipBody, insertObject, insertWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
@@ -568,6 +569,121 @@ describe('knowledge_extras — migration + column filters + supersede semantics'
 		// Pre-existing fields must NOT be clobbered.
 		expect(row?.confidence).toBe('high')
 		expect(row?.verificationStatus).toBe('verified')
+	})
+
+	// ── retrieveKnowledge() filter/rank behavior ───────────────────────────────
+	// Covers the production helper (apps/dev/src/routes/objects.ts list/search/
+	// board paths all flow through it), as opposed to the raw-column-filter
+	// tests above which assert the query shape directly against the table.
+
+	it('excludes rows with t_invalid set (bi-temporal live-only)', async () => {
+		const live = await seedKnowledge(workspaceId, getTestActorId(), {
+			title: 'MCP tool response trimming defaults',
+			content: 'The ecosystem has converged on field projection.',
+		})
+		const invalidated = await seedKnowledge(workspaceId, getTestActorId(), {
+			title: 'MCP tool response defaults (superseded)',
+			content: 'Older take on field projection — kept for audit.',
+		})
+		await db.insert(knowledgeExtras).values([
+			{ objectId: live.id, workspaceId, writerType: 'agent', provenanceType: 'imported' },
+			{
+				objectId: invalidated.id,
+				workspaceId,
+				writerType: 'agent',
+				provenanceType: 'imported',
+				tInvalid: new Date(),
+			},
+		])
+
+		const results = await retrieveKnowledge(db, {
+			workspaceId,
+			q: 'MCP tool response defaults projection',
+			limit: 10,
+			offset: 0,
+		})
+
+		const ids = results.map((r) => r.id)
+		expect(ids).toContain(live.id)
+		expect(ids).not.toContain(invalidated.id)
+	})
+
+	it('ranks higher verification and confidence above lower ones when multiple rows match', async () => {
+		const low = await seedKnowledge(workspaceId, getTestActorId(), {
+			title: 'Retrieval ranking — early note',
+			content: 'Draft claim about retrieval ranking behaviour.',
+		})
+		const high = await seedKnowledge(workspaceId, getTestActorId(), {
+			title: 'Retrieval ranking — confirmed pattern',
+			content: 'Verified claim about retrieval ranking behaviour.',
+		})
+		await db.insert(knowledgeExtras).values([
+			{
+				objectId: low.id,
+				workspaceId,
+				writerType: 'agent',
+				provenanceType: 'imported',
+				confidence: 'low',
+				verificationStatus: 'unverified',
+			},
+			{
+				objectId: high.id,
+				workspaceId,
+				writerType: 'agent',
+				provenanceType: 'imported',
+				confidence: 'high',
+				verificationStatus: 'verified',
+			},
+		])
+
+		const results = await retrieveKnowledge(db, {
+			workspaceId,
+			q: 'retrieval ranking behaviour',
+			limit: 10,
+			offset: 0,
+		})
+
+		expect(results[0]?.id).toBe(high.id)
+	})
+
+	it('excludes rows with verification_status=deprecated', async () => {
+		const ok = await seedKnowledge(workspaceId, getTestActorId(), {
+			title: 'Deprecation eval — active row',
+			content: 'Body about deprecation handling.',
+		})
+		const deprecated = await seedKnowledge(workspaceId, getTestActorId(), {
+			title: 'Deprecation eval — retired row',
+			content: 'Body about deprecation handling.',
+		})
+		await db.insert(knowledgeExtras).values([
+			{
+				objectId: ok.id,
+				workspaceId,
+				writerType: 'agent',
+				provenanceType: 'imported',
+				confidence: 'medium',
+				verificationStatus: 'verified',
+			},
+			{
+				objectId: deprecated.id,
+				workspaceId,
+				writerType: 'agent',
+				provenanceType: 'imported',
+				confidence: 'high',
+				verificationStatus: 'deprecated',
+			},
+		])
+
+		const results = await retrieveKnowledge(db, {
+			workspaceId,
+			q: 'deprecation eval handling',
+			limit: 10,
+			offset: 0,
+		})
+
+		const ids = results.map((r) => r.id)
+		expect(ids).toContain(ok.id)
+		expect(ids).not.toContain(deprecated.id)
 	})
 
 	// ── Reversibility (AC5) ────────────────────────────────────────────────────
