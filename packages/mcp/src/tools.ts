@@ -1,6 +1,8 @@
 import {
 	COMMENT_MAX_ATTACHMENTS,
 	COMMENT_MAX_LENGTH,
+	EXTRAS_FIELD_NAMES,
+	OBJECT_EXTRAS,
 	createCommentSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
@@ -50,6 +52,28 @@ const optionalWorkspaceId = z
 	.describe(
 		'Workspace ID to operate in. If omitted, uses the default workspace (DEFAULT_WORKSPACE_ID). Call list_workspaces to discover available workspaces.',
 	)
+
+/**
+ * One optional `<field>_eq` param per promoted column across the four extras
+ * sidecars (T3–T6), described per-field with the object type(s) it applies to.
+ * The API rejects a set `_eq` param whose `type` doesn't own that field with a
+ * 400; without `type`, every set `_eq` is a 400 too.
+ */
+function extrasEqShape(): Record<string, z.ZodOptional<z.ZodString>> {
+	const shape: Record<string, z.ZodOptional<z.ZodString>> = {}
+	for (const field of EXTRAS_FIELD_NAMES) {
+		const owners = Object.entries(OBJECT_EXTRAS)
+			.filter(([, sidecar]) => field in sidecar.fields)
+			.map(([type]) => type)
+		shape[`${field}_eq`] = z
+			.string()
+			.optional()
+			.describe(
+				`Equality filter on \`${field}\` — requires type=${owners.join(' | ')}. Joined via the object's extras sidecar.`,
+			)
+	}
+	return shape
+}
 
 export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
@@ -244,7 +268,7 @@ export const tools = {
 	},
 	search_objects: {
 		description:
-			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword.',
+			"Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a promoted metadata field on the object's extras sidecar, pass `type` plus the matching `<field>_eq` param — e.g. `type=bet&promotion_mode_eq=human_approved`. `<field>_eq` params require `type` to route to the correct sidecar and error otherwise.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z
@@ -267,6 +291,7 @@ export const tools = {
 				),
 			limit: z.number().int().min(1).max(100).default(20),
 			offset: z.number().int().min(0).default(0),
+			...extrasEqShape(),
 		}),
 	},
 	list_relationships: {

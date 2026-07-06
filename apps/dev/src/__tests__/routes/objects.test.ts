@@ -432,6 +432,82 @@ describe('Objects Routes', () => {
 			const body = await res.json()
 			expect(Array.isArray(body)).toBe(true)
 		})
+
+		it('returns 400 when a <field>_eq param is set without a type filter', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=bug&promotion_mode_eq=auto', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('type')
+			expect(body.error.details?.[0]?.field).toBe('promotion_mode_eq')
+		})
+
+		it('names every un-typed <field>_eq param in the 400 response', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonGet(
+					'/api/objects/search?q=bug&promotion_mode_eq=auto&evidence_quality_eq=evidence_backed',
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			const fields = (body.error.details ?? []).map((d: { field: string }) => d.field).sort()
+			expect(fields).toEqual(['evidence_quality_eq', 'promotion_mode_eq'])
+		})
+
+		it('returns 400 when a <field>_eq param is not promoted for the given type', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=bug&type=bet&decision_type_eq=architecture', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain("type 'bet'")
+			expect(body.error.details?.[0]?.field).toBe('decision_type_eq')
+		})
+
+		it('returns 400 when the type has no extras sidecar at all', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=bug&type=meeting&promotion_mode_eq=auto', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('no extras sidecar')
+		})
+
+		it('accepts a valid <field>_eq for the matching type and returns results', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=onboarding&type=bet&promotion_mode_eq=human_approved', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(Array.isArray(body)).toBe(true)
+		})
 	})
 
 	describe('GET /api/objects/board', () => {

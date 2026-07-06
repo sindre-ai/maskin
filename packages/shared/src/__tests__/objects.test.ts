@@ -176,6 +176,24 @@ describe('searchObjectsSchema', () => {
 		const result = searchObjectsSchema.parse({ q: 'test' })
 		expect(result.offset).toBe(0)
 	})
+
+	it('surfaces one optional <field>_eq param per promoted extras column', async () => {
+		const { EXTRAS_EQ_PARAM_NAMES } = await import('../schemas/object-extras')
+		const shape = (searchObjectsSchema as unknown as { shape: Record<string, unknown> }).shape
+		for (const name of EXTRAS_EQ_PARAM_NAMES) {
+			expect(shape[name], `missing ${name} on searchObjectsSchema`).toBeDefined()
+		}
+		expect(EXTRAS_EQ_PARAM_NAMES.length).toBe(17)
+	})
+
+	it('accepts a promoted-column filter when parsed', () => {
+		const result = searchObjectsSchema.parse({
+			q: 'onboarding',
+			type: 'bet',
+			promotion_mode_eq: 'human_approved',
+		})
+		expect(result.promotion_mode_eq).toBe('human_approved')
+	})
 })
 
 describe('objectParamsSchema', () => {

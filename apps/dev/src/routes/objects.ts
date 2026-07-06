@@ -14,7 +14,9 @@ import {
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
+	EXTRAS_FIELD_NAMES,
 	OBJECT_DIFF_FIELDS,
+	OBJECT_EXTRAS,
 	TERMINAL_BET_STATUSES,
 	boardObjectQuerySchema,
 	boardObjectResponseSchema,
@@ -25,6 +27,7 @@ import {
 	findChange,
 	formatEventDescription,
 	getChangesFromEventData,
+	isExtrasFieldForType,
 	migrateObjectTypeResponseSchema,
 	migrateObjectTypeSchema,
 	objectQuerySchema,
@@ -501,7 +504,76 @@ app.openapi(searchObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
+	const setEqParams: Array<{ field: string; value: string }> = []
+	for (const field of EXTRAS_FIELD_NAMES) {
+		const value = (query as unknown as Record<string, unknown>)[`${field}_eq`]
+		if (typeof value === 'string' && value.length > 0) {
+			setEqParams.push({ field, value })
+		}
+	}
+
+	if (setEqParams.length > 0) {
+		if (!query.type) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'`<field>_eq` params require a `type` filter to resolve the extras sidecar',
+					setEqParams.map(({ field }) => ({
+						field: `${field}_eq`,
+						message: `Set a \`type\` filter to route \`${field}_eq\` to its extras sidecar.`,
+					})),
+					'Add `type=<bet|task|insight|customer>` — each `_eq` param joins the sidecar owned by that type.',
+				),
+				400,
+			)
+		}
+		const unknown = setEqParams.filter(
+			({ field }) => !isExtrasFieldForType(query.type as string, field),
+		)
+		if (unknown.length > 0) {
+			const sidecar = OBJECT_EXTRAS[query.type as string]
+			const validForType = sidecar ? Object.keys(sidecar.fields).sort() : []
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					sidecar
+						? `Unknown \`<field>_eq\` param for type '${query.type}'`
+						: `Type '${query.type}' has no extras sidecar; \`<field>_eq\` params are not supported`,
+					unknown.map(({ field }) => ({
+						field: `${field}_eq`,
+						message: sidecar
+							? `'${field}' is not a promoted field on '${query.type}' extras.`
+							: `Type '${query.type}' has no extras sidecar.`,
+						expected: validForType.length > 0 ? validForType.join(' | ') : 'none',
+					})),
+					validForType.length > 0
+						? `Promoted fields for '${query.type}': ${validForType.join(', ')}`
+						: undefined,
+				),
+				400,
+			)
+		}
+	}
+
 	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
+
+	if (setEqParams.length > 0 && query.type) {
+		const sidecar = OBJECT_EXTRAS[query.type]
+		if (sidecar) {
+			// Table + column names come from the closed static OBJECT_EXTRAS map
+			// (safe to inline with sql.raw). The `value` is always parameter-bound
+			// and cast per PG type so T3's partial `(workspace_id, <field>)` index
+			// stays usable. `EXISTS` semantics correctly exclude objects missing
+			// a sidecar row rather than surfacing them with NULLs like LEFT JOIN.
+			for (const { field, value } of setEqParams) {
+				const col = sidecar.fields[field]
+				if (!col) continue
+				conditions.push(
+					sql`EXISTS (SELECT 1 FROM ${sql.raw(`"${sidecar.table}"`)} AS sx WHERE sx.object_id = ${objects.id} AND sx.${sql.raw(`"${col.column}"`)} = ${value}::${sql.raw(col.castType)})`,
+				)
+			}
+		}
+	}
 
 	const orderBy = resolveOrderBy(query)
 

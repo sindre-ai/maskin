@@ -1959,6 +1959,13 @@ export function createMcpServer(config: McpConfig) {
 			if (args.updated_after) params.set('updated_after', args.updated_after)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
+			// Forward every set `<field>_eq` param to the API — the schema in
+			// tools.ts declares them individually, and any name ending in `_eq`
+			// on args carries a promoted-column filter value.
+			for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+				if (!key.endsWith('_eq')) continue
+				if (typeof value === 'string' && value.length > 0) params.set(key, value)
+			}
 			const result = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as RawObject[]
