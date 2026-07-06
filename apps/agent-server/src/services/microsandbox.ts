@@ -458,6 +458,19 @@ export async function stopSandbox(name: string, deps: MicrosandboxDeps): Promise
 	await run(deps.msbBin, ['stop', name], { timeoutMs: 20_000 })
 }
 
+/**
+ * Every sandbox name `msb` currently knows about (any status), regardless of
+ * whether this process has a live in-memory monitor for it. Used by the
+ * boot-time reconcile pass (see reconcileOnBoot in index.ts) to tell apps/dev
+ * which sessions actually survived a restart.
+ */
+export async function listSandboxNames(deps: MicrosandboxDeps): Promise<string[]> {
+	const run = deps.run ?? defaultRunner()
+	const { stdout } = await run(deps.msbBin, ['list', '--format', 'json'], { timeoutMs: 10_000 })
+	const list = JSON.parse(stdout) as MsbStatusRow[]
+	return list.map((s) => s.name)
+}
+
 export async function readMsbVersion(deps: { msbBin: string; run?: CommandRunner }): Promise<
 	string | null
 > {

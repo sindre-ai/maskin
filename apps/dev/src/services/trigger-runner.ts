@@ -1,10 +1,13 @@
 import type { Database } from '@maskin/db'
 import { events, objects, sessions, triggers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
+import { readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { SessionManager } from './session-manager'
+
+const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
 
 interface TriggerFailureState {
 	count: number
@@ -167,6 +170,45 @@ export class TriggerRunner {
 			return eventData
 		}
 
+		// Lazily resolve {current, previous} for object entity events. New-shape events
+		// (`data.changes`) don't carry the full pre/post snapshots, so we hydrate `current`
+		// from the objects table and reconstruct `previous` by reversing the recorded diff.
+		let objectContext: { current?: ObjectData; previous?: ObjectData } | undefined
+		const resolveObjectContext = async (): Promise<{
+			current?: ObjectData
+			previous?: ObjectData
+		}> => {
+			const data = await getEventData()
+			if (!data) return {}
+			// Legacy `{previous, updated}` snapshot ships both sides intact.
+			if (data.previous && data.updated) {
+				return {
+					current: data.updated as ObjectData,
+					previous: data.previous as ObjectData,
+				}
+			}
+			// New `{changes}` shape ships only the diff — hydrate current from the objects
+			// table for object entities and reverse-patch to reconstruct previous.
+			const changes = readChanges(data)
+			if (!changes || !event.entity_id || !OBJECT_ENTITY_TYPES.has(event.entity_type)) return {}
+			const [row] = await this.db
+				.select()
+				.from(objects)
+				.where(eq(objects.id, event.entity_id))
+				.limit(1)
+			if (!row) return {}
+			const current = row as unknown as ObjectData
+			const previous = reversePatch(
+				current as unknown as Record<string, unknown>,
+				changes,
+			) as unknown as ObjectData
+			return { current, previous }
+		}
+		const getObjectContext = async () => {
+			if (objectContext === undefined) objectContext = await resolveObjectContext()
+			return objectContext
+		}
+
 		for (const trigger of matchingTriggers) {
 			const config = trigger.config as Record<string, unknown>
 
@@ -183,14 +225,18 @@ export class TriggerRunner {
 			}
 			if (config.action && config.action !== event.action) continue
 
-			// Check filter conditions — for status_changed events the entity lives at
-			// data.updated, not at the top level. Use getObjectFromData() + resolvePath()
-			// so dotted paths (e.g. "metadata.decision_type") also work correctly.
+			// Check filter conditions — for status_changed / updated events the entity lives
+			// on `data.updated` (legacy) or must be hydrated from the objects table (new
+			// {changes} shape). Use getObjectContext() + resolvePath() so dotted paths
+			// (e.g. "metadata.decision_type") also work correctly.
 			if (config.filter) {
 				const data = await getEventData()
 				if (!data) continue
-				const { current } = getObjectFromData(data)
-				const filterRoot = (current ?? data) as Record<string, unknown>
+				const isObjectUpdate =
+					(event.action === 'updated' || event.action === 'status_changed') &&
+					OBJECT_ENTITY_TYPES.has(event.entity_type)
+				const ctx = isObjectUpdate ? await getObjectContext() : {}
+				const filterRoot = (ctx.current ?? data) as Record<string, unknown>
 				const filter = config.filter as Record<string, unknown>
 				const matches = Object.entries(filter).every(
 					([key, value]) => resolvePath(filterRoot, key) === value,
@@ -200,8 +246,7 @@ export class TriggerRunner {
 
 			// Check status transition conditions
 			if (config.from_status || config.to_status) {
-				const data = await getEventData()
-				const { previous, current } = getObjectFromData(data)
+				const { previous, current } = await getObjectContext()
 				if (config.from_status && previous?.status !== config.from_status) continue
 				if (config.to_status && current?.status !== config.to_status) continue
 			}
@@ -212,8 +257,11 @@ export class TriggerRunner {
 			if (Array.isArray(config.conditions) && config.conditions.length > 0) {
 				const data = await getEventData()
 				if (!data) continue
-				const { current } = getObjectFromData(data)
-				const conditionRoot = (current ?? data) as Record<string, unknown>
+				const isObjectUpdate =
+					(event.action === 'updated' || event.action === 'status_changed') &&
+					OBJECT_ENTITY_TYPES.has(event.entity_type)
+				const ctx = isObjectUpdate ? await getObjectContext() : {}
+				const conditionRoot = (ctx.current ?? data) as Record<string, unknown>
 				if (!evaluateConditions(config.conditions, conditionRoot)) continue
 			}
 
