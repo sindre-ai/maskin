@@ -6,6 +6,7 @@ export { generateCodeVerifier } from './oauth/pkce'
 export { WebhookHandler } from './webhooks/handler'
 export { normalizeEvent } from './events/normalizer'
 export { createMcpSession } from './mcp/bridge'
+export { performGithubWrite, type GithubWriteRequest } from './providers/github/write-safe'
 export type {
 	ProviderConfig,
 	OAuth2Config,

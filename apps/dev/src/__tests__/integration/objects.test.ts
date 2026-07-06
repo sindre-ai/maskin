@@ -1,6 +1,12 @@
-import { events, objects } from '@maskin/db/schema'
+import { events, files, objects, relationships } from '@maskin/db/schema'
 import { eq, inArray } from 'drizzle-orm'
-import { buildCreateObjectBody, insertActor, insertObject, insertWorkspace } from '../factories'
+import {
+	buildCreateObjectBody,
+	buildFile,
+	insertActor,
+	insertObject,
+	insertWorkspace,
+} from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
@@ -532,6 +538,302 @@ describe('Objects Integration', () => {
 			const nextBody = await secondPage.json()
 			const nextTodo = nextBody.columns.find((column: { value: string }) => column.value === 'todo')
 			expect(nextTodo.objects.map((obj: { title: string }) => obj.title)).toEqual(['High'])
+		})
+
+		it('applies updated_before / updated_after to column totals and objects', async () => {
+			const app = createApp()
+			const cutoff = new Date('2026-06-20T12:00:00.000Z')
+
+			const stale = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				title: 'Stale',
+				updatedAt: new Date(cutoff.getTime() - 3600 * 1000),
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				title: 'Fresh',
+				updatedAt: new Date(cutoff.getTime() + 3600 * 1000),
+			})
+
+			const res = await app.request(
+				jsonGet(
+					`/api/objects/board?type=task&updated_before=${encodeURIComponent(cutoff.toISOString())}`,
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			const todo = body.columns.find((column: { value: string }) => column.value === 'todo')
+			expect(todo.total).toBe(1)
+			expect(todo.objects.map((obj: { id: string }) => obj.id)).toEqual([stale.id])
+		})
+	})
+
+	describe('updated_before / updated_after filters', () => {
+		// Three rows, each updated 60s apart, so a ±1s boundary is unambiguous.
+		const T = new Date('2026-06-20T12:00:00.000Z')
+		const before = new Date(T.getTime() - 60_000)
+		const after = new Date(T.getTime() + 60_000)
+
+		async function seedThree() {
+			const old = await insertObject(db, workspaceId, getTestActorId(), {
+				title: 'old',
+				updatedAt: before,
+			})
+			const mid = await insertObject(db, workspaceId, getTestActorId(), {
+				title: 'mid',
+				updatedAt: T,
+			})
+			const fresh = await insertObject(db, workspaceId, getTestActorId(), {
+				title: 'fresh',
+				updatedAt: after,
+			})
+			return { old, mid, fresh }
+		}
+
+		it('returns rows when updated_before is one second after the row (AC-T1)', async () => {
+			const app = createApp()
+			const { mid } = await seedThree()
+
+			const cutoff = new Date(T.getTime() + 1_000).toISOString()
+			const res = await app.request(
+				jsonGet(`/api/objects?updated_before=${encodeURIComponent(cutoff)}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			const ids = body.map((row) => row.id)
+			expect(ids).toContain(mid.id)
+		})
+
+		it('excludes the row when updated_before is one second before it (AC-T1)', async () => {
+			const app = createApp()
+			const { mid } = await seedThree()
+
+			const cutoff = new Date(T.getTime() - 1_000).toISOString()
+			const res = await app.request(
+				jsonGet(`/api/objects?updated_before=${encodeURIComponent(cutoff)}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			const ids = body.map((row) => row.id)
+			expect(ids).not.toContain(mid.id)
+		})
+
+		it('half-open bound excludes rows at the exact instant on both sides (AC-T9)', async () => {
+			const app = createApp()
+			const { mid } = await seedThree()
+
+			const cutoff = T.toISOString()
+			const beforeRes = await app.request(
+				jsonGet(`/api/objects?updated_before=${encodeURIComponent(cutoff)}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			const beforeBody = (await beforeRes.json()) as Array<{ id: string }>
+			expect(beforeBody.map((r) => r.id)).not.toContain(mid.id)
+
+			const afterRes = await app.request(
+				jsonGet(`/api/objects?updated_after=${encodeURIComponent(cutoff)}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			const afterBody = (await afterRes.json()) as Array<{ id: string }>
+			expect(afterBody.map((r) => r.id)).not.toContain(mid.id)
+		})
+
+		it('intersects with type and status (AC-T2)', async () => {
+			const app = createApp()
+			// Two rows updated within the same time window, different (type, status).
+			const taskTodo = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				updatedAt: before,
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'done',
+				updatedAt: before,
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'signal',
+				updatedAt: before,
+			})
+
+			const cutoff = T.toISOString()
+			const res = await app.request(
+				jsonGet(`/api/objects?type=task&status=todo&updated_before=${encodeURIComponent(cutoff)}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string; type: string; status: string }>
+			expect(body).toHaveLength(1)
+			expect(body[0].id).toBe(taskTodo.id)
+		})
+
+		it('response is unchanged when neither param is set (AC-T7)', async () => {
+			const app = createApp()
+			await seedThree()
+
+			const baseline = await app.request(jsonGet('/api/objects', { 'x-workspace-id': workspaceId }))
+			const withDefaults = await app.request(
+				jsonGet('/api/objects', { 'x-workspace-id': workspaceId }),
+			)
+			expect(baseline.status).toBe(200)
+			expect(withDefaults.status).toBe(200)
+			expect(await baseline.text()).toBe(await withDefaults.text())
+		})
+
+		it('rejects malformed updated_before with 400 (AC-T6)', async () => {
+			const app = createApp()
+			const res = await app.request(
+				jsonGet('/api/objects?updated_before=not-a-date', { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(400)
+		})
+
+		it('server-side updated_before returns the same row set as fetch-all + client filter (AC-T4)', async () => {
+			// This is the parity contract T4 is measured on: the daily sweep switches from
+			// "fetch every in_progress task, filter updated_at < now-6h in JS" to a single
+			// server-side call. Both must yield identical row sets on the same DB state.
+			const app = createApp()
+			const now = new Date('2026-06-30T12:00:00.000Z')
+			const cutoff = new Date(now.getTime() - 6 * 3600 * 1000) // now - 6h
+
+			// Stalled in_progress tasks (should be in both result sets).
+			const stalledA = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'in_progress',
+				updatedAt: new Date(cutoff.getTime() - 3600 * 1000), // 7h old
+			})
+			const stalledB = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'in_progress',
+				updatedAt: new Date(cutoff.getTime() - 24 * 3600 * 1000), // 30h old
+			})
+
+			// Fresh in_progress task (should be in neither result set).
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'in_progress',
+				updatedAt: new Date(cutoff.getTime() + 3600 * 1000), // 5h old, inside window
+			})
+
+			// Noise: stalled but wrong status / type — must not appear.
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				updatedAt: new Date(cutoff.getTime() - 3600 * 1000),
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'active',
+				updatedAt: new Date(cutoff.getTime() - 3600 * 1000),
+			})
+
+			// Pre-ship: fetch all in_progress tasks in the workspace, filter in JS.
+			const preShipRes = await app.request(
+				jsonGet('/api/objects?type=task&status=in_progress', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(preShipRes.status).toBe(200)
+			const preShipRows = (await preShipRes.json()) as Array<{ id: string; updatedAt: string }>
+			const preShipIds = preShipRows
+				.filter((row) => new Date(row.updatedAt) < cutoff)
+				.map((row) => row.id)
+				.sort()
+
+			// Post-ship: single server-side call with the same intent.
+			const postShipRes = await app.request(
+				jsonGet(
+					`/api/objects?type=task&status=in_progress&updated_before=${encodeURIComponent(cutoff.toISOString())}`,
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(postShipRes.status).toBe(200)
+			const postShipRows = (await postShipRes.json()) as Array<{ id: string }>
+			const postShipIds = postShipRows.map((row) => row.id).sort()
+
+			expect(postShipIds).toEqual(preShipIds)
+			expect(postShipIds).toEqual([stalledA.id, stalledB.id].sort())
+		})
+	})
+
+	describe('GET /api/objects/:id/graph — endpoint resolution by id', () => {
+		it('surfaces an edge and resolves its connected object by id', async () => {
+			// The read layer resolves endpoints by object/file id, not by the
+			// stored `sourceType`/`targetType` label. The DB CHECK constraint
+			// blocks non-canonical labels at write time, and the route unit tests
+			// (objects.test.ts, `resolves an edge whose sourceType label does not
+			// match the endpoint kind`) cover the legacy-label scenario with mocks.
+			// This integration test validates the id-based resolution mechanism
+			// against a real database with canonical types.
+			const app = createApp()
+			const bet = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet' })
+			const insight = await insertObject(db, workspaceId, getTestActorId(), { type: 'insight' })
+			await db.insert(relationships).values({
+				sourceType: 'object',
+				sourceId: insight.id,
+				targetType: 'object',
+				targetId: bet.id,
+				type: 'informs',
+				createdBy: getTestActorId(),
+			})
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${bet.id}/graph`, { 'x-workspace-id': workspaceId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.relationships).toHaveLength(1)
+			expect(body.relationships[0].sourceId).toBe(insight.id)
+			expect(body.relationships[0].type).toBe('informs')
+			expect(body.connected_objects).toHaveLength(1)
+			expect(body.connected_objects[0].id).toBe(insight.id)
+			expect(body.files).toEqual([])
+		})
+
+		it('buckets a file endpoint correctly with canonical target_type', async () => {
+			// An `attached` edge whose target endpoint is a file. The read layer
+			// resolves endpoints by id lookup against the `files` table, so the
+			// attachment lands in `files` regardless of what type label the edge
+			// carries. Since the DB CHECK constraint now enforces canonical labels
+			// at write time, we use `targetType: 'file'` here. The route unit test
+			// (`resolves a file endpoint even when the edge label is a legacy
+			// object type`) covers the legacy-label scenario with mocks.
+			const app = createApp()
+			const bet = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet' })
+			const [fileRow] = await db
+				.insert(files)
+				.values(buildFile({ workspaceId, createdBy: getTestActorId() }))
+				.returning()
+			await db.insert(relationships).values({
+				sourceType: 'object',
+				sourceId: bet.id,
+				targetType: 'file',
+				targetId: fileRow.id,
+				type: 'attached',
+				createdBy: getTestActorId(),
+			})
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${bet.id}/graph`, { 'x-workspace-id': workspaceId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.connected_objects).toEqual([])
+			expect(body.files).toHaveLength(1)
+			expect(body.files[0].id).toBe(fileRow.id)
 		})
 	})
 })

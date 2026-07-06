@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
 import { events, workspaces } from '@maskin/db/schema'
 import { eq, sql } from 'drizzle-orm'
+import { trackClaudeSubscriptionRecovered } from './analytics/claude-failover-events'
 import {
 	type OAuthFailoverState,
 	type OAuthSlotData,
@@ -117,7 +118,11 @@ export async function attemptPrimaryRecovery(
 	// token refresh + subscription probe with no transaction/lock open.
 	const probe = await healthCheck(precheckSlots.primary as OAuthSlotData)
 
-	return await db.transaction(async (tx) => {
+	type TxOutcome =
+		| { kind: 'recovered'; priorFailureAt?: number; priorFailureReason?: string }
+		| { kind: 'noop'; result: AttemptPrimaryRecoveryResult }
+
+	const outcome: TxOutcome = await db.transaction(async (tx) => {
 		// drizzle-orm/postgres-js's `.execute()` returns the row list directly
 		// (no `{ rows: [...] }` wrapper — that shape is node-postgres/`pg`
 		// specific). See the established cast pattern in routes/sessions.ts.
@@ -126,7 +131,10 @@ export async function attemptPrimaryRecovery(
 		)) as unknown as Array<{ settings: unknown }>
 		const row = locked[0]
 		if (!row) {
-			return { recovered: false, reason: 'no_workspace' as const }
+			return {
+				kind: 'noop',
+				result: { recovered: false, reason: 'no_workspace' as const },
+			}
 		}
 
 		const wsSettings = (row.settings as Record<string, unknown>) ?? {}
@@ -138,7 +146,10 @@ export async function attemptPrimaryRecovery(
 		// already recorded a result (or the primary slot may have been
 		// disconnected) while this call's healthCheck was in flight above.
 		if (!shouldAttemptPrimaryRecovery({ slots, failover, now, cooldownMs })) {
-			return { recovered: false, reason: 'cooldown' as const }
+			return {
+				kind: 'noop',
+				result: { recovered: false, reason: 'cooldown' as const },
+			}
 		}
 
 		if (probe.healthy) {
@@ -170,7 +181,11 @@ export async function attemptPrimaryRecovery(
 			})
 
 			logger.info('Claude primary subscription recovered', { workspaceId, slot: 'primary' })
-			return { recovered: true }
+			return {
+				kind: 'recovered',
+				priorFailureAt: failover.last_primary_failure_at,
+				priorFailureReason: failover.last_classified_reason,
+			}
 		}
 
 		const nextOAuth = writeFailoverState(oauthRaw, {
@@ -190,6 +205,25 @@ export async function attemptPrimaryRecovery(
 			workspaceId,
 			reason: probe.reason,
 		})
-		return { recovered: false, reason: 'unhealthy' as const, detail: probe.reason }
+		return {
+			kind: 'noop',
+			result: { recovered: false, reason: 'unhealthy' as const, detail: probe.reason },
+		}
 	})
+
+	if (outcome.kind === 'recovered') {
+		// PostHog forwarding — runs after the tx commits so the workspace row
+		// lock isn't held across the network fetch. Losing concurrent
+		// contenders take the `noop`/`cooldown` branch above, so this fires
+		// exactly once per successful recovery.
+		await trackClaudeSubscriptionRecovered({
+			workspaceId,
+			actorId,
+			recoveredAt: now,
+			priorFailureAt: outcome.priorFailureAt,
+			priorFailureReason: outcome.priorFailureReason,
+		})
+		return { recovered: true }
+	}
+	return outcome.result
 }

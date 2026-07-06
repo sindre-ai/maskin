@@ -98,7 +98,12 @@ export const objects = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
-	(t) => [index('objects_ws_type_status_idx').on(t.workspaceId, t.type, t.status)],
+	(t) => [
+		index('objects_ws_type_status_idx').on(t.workspaceId, t.type, t.status),
+		// Range-scan path for list_objects(updated_before/updated_after) — the
+		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0043.
+		index('objects_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
+	],
 )
 
 // ── Relationships ───────────────────────────────────────────────────────────
@@ -117,7 +122,13 @@ export const relationships = pgTable(
 			.notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 	},
-	(t) => [unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type)],
+	(t) => [
+		unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type),
+		check(
+			'relationships_source_target_type_kind',
+			sql`${t.sourceType} IN ('object', 'file') AND ${t.targetType} IN ('object', 'file')`,
+		),
+	],
 )
 
 // ── Events ──────────────────────────────────────────────────────────────────
@@ -243,6 +254,9 @@ export const sessions = pgTable(
 	},
 	(t) => [
 		index('sessions_ws_status_idx').on(t.workspaceId, t.status),
+		// Range-scan path for list_sessions(updated_before/updated_after) — the
+		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
+		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
 		index('sessions_actor_completed_idx')
 			.on(t.actorId, t.completedAt)

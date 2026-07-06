@@ -241,6 +241,24 @@ describe('sessionQuerySchema', () => {
 		const result = sessionQuerySchema.parse({ actor_id: uuid })
 		expect(result.actor_id).toBe(uuid)
 	})
+
+	it('accepts ISO-8601 updated_before and updated_after', () => {
+		const result = sessionQuerySchema.parse({
+			updated_before: '2026-06-30T00:00:00.000Z',
+			updated_after: '2026-06-01T00:00:00.000Z',
+		})
+		expect(result.updated_before).toBe('2026-06-30T00:00:00.000Z')
+		expect(result.updated_after).toBe('2026-06-01T00:00:00.000Z')
+	})
+
+	it('rejects malformed updated_before (AC-T6)', () => {
+		expect(() => sessionQuerySchema.parse({ updated_before: 'not-a-date' })).toThrow()
+		expect(() => sessionQuerySchema.parse({ updated_before: '2026-06-30' })).toThrow()
+	})
+
+	it('rejects malformed updated_after (AC-T6)', () => {
+		expect(() => sessionQuerySchema.parse({ updated_after: 'yesterday' })).toThrow()
+	})
 })
 
 describe('sessionLogQuerySchema', () => {
