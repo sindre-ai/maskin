@@ -6,6 +6,7 @@ export const MODULE_NAME = 'CRM'
 
 export const CONTACT_DISPLAY_NAME = 'Contact'
 export const COMPANY_DISPLAY_NAME = 'Company'
+export const CUSTOMER_DISPLAY_NAME = 'Customer'
 
 export const CONTACT_STATUSES = [
 	'new_lead',
@@ -26,6 +27,8 @@ export const COMPANY_STATUSES = [
 	'churned',
 	'not_a_fit',
 ]
+
+export const CUSTOMER_STATUSES = ['active', 'at_risk', 'churned']
 
 export const CRM_RELATIONSHIP_TYPES = ['relates_to', 'works_at', 'decision_maker_at']
 
@@ -73,18 +76,28 @@ export const COMPANY_FIELDS: FieldDefinition[] = [
 	{ name: 'notes', type: 'text' },
 ]
 
+export const CUSTOMER_FIELDS: FieldDefinition[] = [
+	{ name: 'segment', type: 'text' },
+	{ name: 'confidence', type: 'enum', values: ['low', 'medium', 'high'] },
+	{ name: 'last_validated', type: 'date' },
+	{ name: 'evidence_count', type: 'number' },
+]
+
 export const CRM_DEFAULT_SETTINGS: ModuleDefaultSettings = {
 	display_names: {
 		contact: CONTACT_DISPLAY_NAME,
 		company: COMPANY_DISPLAY_NAME,
+		customer: CUSTOMER_DISPLAY_NAME,
 	},
 	statuses: {
 		contact: CONTACT_STATUSES,
 		company: COMPANY_STATUSES,
+		customer: CUSTOMER_STATUSES,
 	},
 	field_definitions: {
 		contact: CONTACT_FIELDS,
 		company: COMPANY_FIELDS,
+		customer: CUSTOMER_FIELDS,
 	},
 	relationship_types: CRM_RELATIONSHIP_TYPES,
 }
