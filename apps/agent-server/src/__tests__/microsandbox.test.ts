@@ -600,7 +600,7 @@ describe('provisionBrowserSidecar', () => {
 		})
 		expect(sidecar).toEqual({
 			name: 'anko-browser-deadbeef',
-			cdpUrl: 'ws://10.0.1.1:39222',
+			cdpUrl: 'http://10.0.1.1:39222',
 		})
 		const verbs = calls.map((c) => c[0])
 		expect(verbs).toContain('create')
@@ -642,7 +642,7 @@ describe('provisionBrowserSidecar', () => {
 			{ image: 'maskin/browser-sidecar:latest' },
 		)
 
-		expect(sidecar?.cdpUrl).toBe('ws://10.0.1.1:39222')
+		expect(sidecar?.cdpUrl).toBe('http://10.0.1.1:39222')
 		const createCall = calls.find((c) => c[0] === 'create')
 		expect(createCall?.at(-1)).toBe('maskin/browser-sidecar:latest')
 	})
@@ -675,7 +675,7 @@ describe('provisionBrowserSidecar', () => {
 			{ bridgeGateway: '192.168.100.1' },
 		)
 
-		expect(sidecar?.cdpUrl).toBe('ws://192.168.100.1:40000')
+		expect(sidecar?.cdpUrl).toBe('http://192.168.100.1:40000')
 		const createCall = calls.find((c) => c[0] === 'create')
 		expect(createCall).toContain('192.168.100.1:40000:9222')
 	})
@@ -771,7 +771,7 @@ describe('cleanupBrowserSidecar', () => {
 		}
 		const clock = fakeClock()
 		await cleanupBrowserSidecar(
-			{ name: 'anko-browser-feed', cdpUrl: 'ws://10.0.0.5:9222' },
+			{ name: 'anko-browser-feed', cdpUrl: 'http://10.0.0.5:9222' },
 			{ msbBin, run, sleep: clock.sleep, now: clock.now },
 		)
 		expect(calls[0]).toEqual(['remove', '-f', '--quiet', 'anko-browser-feed'])
@@ -803,7 +803,7 @@ describe('cleanupBrowserSidecar', () => {
 		const clock = fakeClock()
 		await expect(
 			cleanupBrowserSidecar(
-				{ name: 'anko-browser-gone', cdpUrl: 'ws://10.0.0.6:9222' },
+				{ name: 'anko-browser-gone', cdpUrl: 'http://10.0.0.6:9222' },
 				{ msbBin, run, sleep: clock.sleep, now: clock.now },
 			),
 		).resolves.toBeUndefined()
@@ -831,7 +831,7 @@ describe('cleanupBrowserSidecar', () => {
 		}
 		const clock = fakeClock()
 		await cleanupBrowserSidecar(
-			{ name: 'anko-browser-slow', cdpUrl: 'ws://10.0.0.7:9222' },
+			{ name: 'anko-browser-slow', cdpUrl: 'http://10.0.0.7:9222' },
 			{ msbBin, run, sleep: clock.sleep, now: clock.now },
 		)
 		expect(listCalls).toBeGreaterThanOrEqual(3)
@@ -856,7 +856,7 @@ describe('cleanupBrowserSidecar', () => {
 		const clock = fakeClock(30_000)
 		await expect(
 			cleanupBrowserSidecar(
-				{ name: 'anko-browser-stuck', cdpUrl: 'ws://10.0.0.8:9222' },
+				{ name: 'anko-browser-stuck', cdpUrl: 'http://10.0.0.8:9222' },
 				{ msbBin, run, sleep: clock.sleep, now: clock.now },
 			),
 		).resolves.toBeUndefined()
