@@ -365,7 +365,9 @@ describe('Objects Routes', () => {
 			const existing = buildObject({ type: 'bet', status: 'active', metadata: {} })
 			const updated = { ...existing, metadata: { changelog_eligible: true } }
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			// First select: existing object, second: workspace membership, third:
+			// the in-transaction FOR UPDATE re-read.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
 			mockResults.update = [updated]
 			mockResults.insert = [{}] // event insert
 

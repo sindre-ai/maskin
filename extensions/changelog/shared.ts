@@ -16,6 +16,11 @@ export const CHANGELOG_ENTRY_FIELDS: FieldDefinition[] = [
 	{ name: 'source_bet_id', type: 'text', required: true },
 	{ name: 'hero_image_url', type: 'text' },
 	{ name: 'quality_flag', type: 'boolean' },
+	// Set explicitly by whoever/whatever flips status to `published` (the
+	// Changelog Publisher, once it exists). The public feed (public-changelog.ts)
+	// falls back to the row's updated_at when this is absent, but prefers this
+	// field so a later content edit doesn't change an entry's public publish date.
+	{ name: 'published_at', type: 'date' },
 ]
 
 /** Bet-level marker the Bet Strategist sets at `define` to opt a bet into the

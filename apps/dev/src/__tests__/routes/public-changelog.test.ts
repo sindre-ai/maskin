@@ -64,6 +64,58 @@ describe('GET /v1/changelog (JSON)', () => {
 		expect(body.entries).toEqual([])
 	})
 
+	it('orders by metadata.published_at when set, so editing an entry does not re-date or re-sort it', async () => {
+		const { app, mockResults } = createTestApp(publicChangelogRoutes, '/v1')
+		const editedButPublishedEarlier = buildEntryRow({
+			id: '33333333-3333-4333-8333-333333333333',
+			title: 'Old entry, edited today',
+			metadata: { tag: 'Fixed', published_at: '2026-06-01T09:00:00.000Z' },
+			// A later content edit bumps updated_at without touching published_at —
+			// this must not change the entry's position or reported date.
+			updatedAt: new Date('2026-07-01T09:00:00.000Z'),
+		})
+		const genuinelyNewer = buildEntryRow({
+			id: '44444444-4444-4444-8444-444444444444',
+			title: 'Newer entry, never edited',
+			metadata: { tag: 'New', published_at: '2026-06-15T09:00:00.000Z' },
+			updatedAt: new Date('2026-06-15T09:00:00.000Z'),
+		})
+		mockResults.select = [editedButPublishedEarlier, genuinelyNewer]
+
+		const res = await app.request(jsonGet('/v1/changelog'))
+		const body = (await res.json()) as { entries: Array<{ id: string; published_at: string }> }
+
+		expect(body.entries.map((e) => e.id)).toEqual([genuinelyNewer.id, editedButPublishedEarlier.id])
+		expect(body.entries[1].published_at).toBe('2026-06-01T09:00:00.000Z')
+	})
+
+	it('falls back to updated_at when metadata.published_at is absent', async () => {
+		const { app, mockResults } = createTestApp(publicChangelogRoutes, '/v1')
+		mockResults.select = [buildEntryRow()]
+
+		const res = await app.request(jsonGet('/v1/changelog'))
+		const body = (await res.json()) as { entries: Array<{ published_at: string }> }
+		expect(body.entries[0].published_at).toBe('2026-06-13T09:00:00.000Z')
+	})
+
+	it('serves tag as null when metadata.tag is not one of the known values', async () => {
+		const { app, mockResults } = createTestApp(publicChangelogRoutes, '/v1')
+		mockResults.select = [buildEntryRow({ metadata: { tag: 'NotARealTag' } })]
+
+		const res = await app.request(jsonGet('/v1/changelog'))
+		const body = (await res.json()) as { entries: Array<{ tag: string | null }> }
+		expect(body.entries[0].tag).toBeNull()
+	})
+
+	it('serves tag as null when metadata.tag is missing', async () => {
+		const { app, mockResults } = createTestApp(publicChangelogRoutes, '/v1')
+		mockResults.select = [buildEntryRow({ metadata: {} })]
+
+		const res = await app.request(jsonGet('/v1/changelog'))
+		const body = (await res.json()) as { entries: Array<{ tag: string | null }> }
+		expect(body.entries[0].tag).toBeNull()
+	})
+
 	it('serves CORS headers permitting the marketing-site origin', async () => {
 		// CORS is wired in app-factory, not in the route module — verify the
 		// route doesn't break a CORS preflight when middleware is applied at

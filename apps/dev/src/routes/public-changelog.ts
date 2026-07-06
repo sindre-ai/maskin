@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
-import { CHANGELOG_ENTRY_TYPE } from '@maskin/ext-changelog/shared'
+import { CHANGELOG_ENTRY_TAGS, CHANGELOG_ENTRY_TYPE } from '@maskin/ext-changelog/shared'
 import { and, desc, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -12,10 +12,13 @@ import { logger } from '../lib/logger'
 //   GET /v1/changelog.xml  → RSS 2.0
 //
 // Source: `changelog_entry` objects with status `published`, scoped to the
-// Sindre AI public workspace. Newest-first by published-at (the row's
-// updated_at, which advances when the Changelog Publisher flips status to
-// `published`). Hard cap at 200 entries to bound payload size — pagination
-// is deferred until traffic actually warrants it.
+// Sindre AI public workspace. Newest-first by published-at, which prefers the
+// explicit `metadata.published_at` field (set by whoever/whatever flips status
+// to `published`) and only falls back to the row's `updated_at` when that field
+// is absent — the row's updated_at otherwise advances on *any* later edit
+// (typo fix, hero image swap, etc.), which would wrongly re-date and re-sort an
+// already-published entry. Hard cap at 200 entries to bound payload size —
+// pagination is deferred until traffic actually warrants it.
 //
 // Mounted at `/v1` in app-factory.ts; `/v1/*` is outside the `/api/*` auth
 // allowlist so no auth bypass entry is needed. CORS is scoped to
@@ -35,6 +38,12 @@ type Env = {
 export const SINDRE_AI_PUBLIC_WORKSPACE_ID = 'fe944fe6-7b45-478c-afc7-b889cea63c08'
 
 const MAX_ENTRIES = 200
+// Rows are fetched (bounded, ordered by updated_at) before being re-sorted by
+// resolved published-at and truncated to MAX_ENTRIES — this bounds query cost
+// while still producing a correct top-200-by-published-at result even though
+// published_at isn't a DB column. Far larger than any realistic entry count
+// for a weekly changelog for the foreseeable future.
+const FETCH_LIMIT = 2000
 const RSS_CHANNEL_TITLE = 'Maskin changelog'
 const RSS_CHANNEL_LINK = 'https://sindre.ai/changelog'
 const RSS_CHANNEL_DESCRIPTION = 'What we shipped at Maskin, week by week.'
@@ -46,6 +55,27 @@ interface ChangelogEntry {
 	tag: string | null
 	published_at: string
 	hero_image_url?: string
+}
+
+const VALID_TAGS = CHANGELOG_ENTRY_TAGS as readonly string[]
+
+// Prefers the explicit `metadata.published_at` (set by whoever/whatever flips
+// status to `published`) so later content edits don't change an entry's public
+// date. Falls back to `updated_at`, and only to "now" if that's also missing
+// (shouldn't happen — updated_at defaults on insert — but a public feed must
+// never throw over a row-level data quirk).
+function resolvePublishedAt(
+	objectId: string,
+	meta: Record<string, unknown>,
+	updatedAt: Date | null,
+) {
+	if (typeof meta.published_at === 'string') {
+		const parsed = new Date(meta.published_at)
+		if (!Number.isNaN(parsed.getTime())) return parsed
+	}
+	if (updatedAt) return updatedAt
+	logger.warn('public-changelog: entry missing updated_at, using now()', { objectId })
+	return new Date()
 }
 
 async function loadPublishedEntries(db: Database): Promise<ChangelogEntry[]> {
@@ -65,30 +95,44 @@ async function loadPublishedEntries(db: Database): Promise<ChangelogEntry[]> {
 				eq(objects.status, 'published'),
 			),
 		)
+		// Ordered/bounded by updated_at at the DB level purely to cap query cost;
+		// the actual newest-first ordering used in the response is resolved and
+		// re-sorted below by published_at (see resolvePublishedAt).
 		.orderBy(desc(objects.updatedAt))
-		.limit(MAX_ENTRIES)
+		.limit(FETCH_LIMIT)
 
-	return rows.map((r) => {
+	const resolved = rows.map((r) => {
 		const meta = (r.metadata ?? {}) as Record<string, unknown>
+
 		const tag = typeof meta.tag === 'string' ? meta.tag : null
+		if (tag === null || !VALID_TAGS.includes(tag)) {
+			logger.warn('public-changelog: published entry has invalid tag metadata', {
+				objectId: r.id,
+				rawTag: meta.tag,
+			})
+		}
+
 		const heroImageUrl =
 			typeof meta.hero_image_url === 'string' && meta.hero_image_url.length > 0
 				? meta.hero_image_url
 				: undefined
-		// updated_at is the moment the Publisher flipped status to `published`;
-		// fall back to the current time only if the column is unexpectedly null
-		// (defaultNow on insert should make this practically unreachable).
-		const publishedAt = (r.updatedAt ?? new Date()).toISOString()
+
+		const publishedAt = resolvePublishedAt(r.id, meta, r.updatedAt)
+
 		const entry: ChangelogEntry = {
 			id: r.id,
 			title: r.title ?? '',
 			content: r.content ?? '',
-			tag,
-			published_at: publishedAt,
+			tag: tag !== null && VALID_TAGS.includes(tag) ? tag : null,
+			published_at: publishedAt.toISOString(),
 		}
 		if (heroImageUrl) entry.hero_image_url = heroImageUrl
-		return entry
+		return { entry, publishedAt }
 	})
+
+	resolved.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())
+
+	return resolved.slice(0, MAX_ENTRIES).map((r) => r.entry)
 }
 
 // Minimal XML escape covering the five characters RSS 2.0 readers care about.
