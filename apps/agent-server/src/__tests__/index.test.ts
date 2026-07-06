@@ -393,7 +393,7 @@ describe('POST /sessions browserRequired wiring', () => {
 		// Session VM env must include BROWSER_CDP_URL using the bridge gateway + forwarded port.
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
-		expect(envFlags).toContain('BROWSER_CDP_URL=ws://10.0.1.1:39222')
+		expect(envFlags).toContain('BROWSER_CDP_URL=http://10.0.1.1:39222')
 	})
 
 	it('provisions no sidecar, injects no BROWSER_CDP_URL, and omits allow@private when browserRequired is absent', async () => {
