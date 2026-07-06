@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import {
 	actors,
+	conversationParticipants,
+	conversations,
 	notifications,
 	objects,
 	relationships,
@@ -567,6 +569,27 @@ export async function insertSession(
 ) {
 	const data = buildSession({ workspaceId, actorId, createdBy, ...overrides })
 	const rows = await db.insert(sessions).values(data).returning()
+	return rows[0]
+}
+
+export async function insertConversation(
+	db: Database,
+	workspaceId: string,
+	overrides?: Record<string, unknown>,
+) {
+	const data = { workspaceId, title: null, type: 'dm', ...overrides }
+	const rows = await db.insert(conversations).values(data).returning()
+	return rows[0]
+}
+
+export async function insertConversationParticipant(
+	db: Database,
+	conversationId: string,
+	actorId: string,
+	overrides?: Record<string, unknown>,
+) {
+	const data = { conversationId, actorId, ...overrides }
+	const rows = await db.insert(conversationParticipants).values(data).returning()
 	return rows[0]
 }
 

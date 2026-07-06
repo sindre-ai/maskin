@@ -460,7 +460,8 @@ app.openapi(sendMessageRoute, (async (c) => {
 			.createSession(workspaceId, {
 				actorId: mention.agentId,
 				actionPrompt: `You were @mentioned in conversation "${conversation.title ?? id}".`,
-				config: { conversation_id: id, message_content: body.content },
+				config: { message_content: body.content },
+				conversationId: id,
 				createdBy: actorId,
 				autoStart: true,
 			})

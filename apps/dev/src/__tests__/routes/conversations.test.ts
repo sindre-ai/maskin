@@ -277,6 +277,45 @@ describe('Conversations Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it('spawns an agent session linked to the conversation when message mentions an agent', async () => {
+			const convId = randomUUID()
+			const agentId = randomUUID()
+			const conv = buildConversation({ id: convId, title: 'Room Title' })
+			const participant = buildParticipant({ conversationId: convId, actorId })
+			const msg = buildMessage({ conversationId: convId, actorId, content: 'hey @agent' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				conversationsRoutes,
+				'/api/conversations',
+				actorId,
+			)
+			mockResults.selectQueue = [
+				[conv],
+				[participant],
+				[{ id: agentId, type: 'agent', name: 'Strategist' }],
+			]
+			mockResults.insert = [msg]
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${convId}/messages`,
+					{ content: 'hey @agent', mentions: [agentId] },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			// The dedicated `conversationId` param (not `config.conversation_id`) must be set —
+			// SessionManager.createSession only persists it to sessions.conversation_id when
+			// passed at the top level, and accumulateTurnText requires that column to write
+			// the agent's reply back into conversations.messages.
+			expect(sessionManager.createSession).toHaveBeenCalledWith(
+				wsId,
+				expect.objectContaining({ actorId: agentId, conversationId: convId }),
+			)
+		})
 	})
 
 	describe('POST /api/conversations/:id/participants', () => {
