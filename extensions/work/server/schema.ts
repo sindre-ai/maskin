@@ -97,3 +97,46 @@ export const workInsightExtras = pgTable(
 
 export type WorkInsightExtras = typeof workInsightExtras.$inferSelect
 export type NewWorkInsightExtras = typeof workInsightExtras.$inferInsert
+
+// First-class metadata for task objects. Sits 1:1 with `objects` rows where
+// `type = 'task'`, keyed on `object_id` (PK + FK CASCADE). Rows stay empty in
+// workspaces that never enable the work extension, so the base-schema E2E path
+// is unaffected.
+export const workTaskExtras = pgTable(
+	'work_task_extras',
+	{
+		objectId: uuid('object_id')
+			.primaryKey()
+			.references(() => objects.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id').notNull(),
+		decisionType: text('decision_type'),
+		explorePhase: text('explore_phase'),
+		exploreCandidate: boolean('explore_candidate'),
+		exploreBetId: uuid('explore_bet_id'),
+	},
+	(t) => [
+		check(
+			'work_task_extras_decision_type_ck',
+			sql`${t.decisionType} IN ('architecture','ux','copy','pricing')`,
+		),
+		check(
+			'work_task_extras_explore_phase_ck',
+			sql`${t.explorePhase} IN ('root_cause','solution','decomposition')`,
+		),
+		index('work_task_extras_ws_decision_type_idx')
+			.on(t.workspaceId, t.decisionType)
+			.where(sql`${t.decisionType} IS NOT NULL`),
+		index('work_task_extras_ws_explore_phase_idx')
+			.on(t.workspaceId, t.explorePhase)
+			.where(sql`${t.explorePhase} IS NOT NULL`),
+		index('work_task_extras_ws_explore_candidate_idx')
+			.on(t.workspaceId, t.exploreCandidate)
+			.where(sql`${t.exploreCandidate} IS NOT NULL`),
+		index('work_task_extras_ws_explore_bet_id_idx')
+			.on(t.workspaceId, t.exploreBetId)
+			.where(sql`${t.exploreBetId} IS NOT NULL`),
+	],
+)
+
+export type WorkTaskExtras = typeof workTaskExtras.$inferSelect
+export type NewWorkTaskExtras = typeof workTaskExtras.$inferInsert
