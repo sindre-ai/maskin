@@ -319,6 +319,7 @@ describe('tool handlers', () => {
 									status: 'active',
 									content: 'Full body text',
 									metadata: { key: 'value' },
+									workspaceId: 'ws-1',
 								},
 								relationships: [
 									{
@@ -363,7 +364,7 @@ describe('tool handlers', () => {
 			// carrying only `object` (no relationships/connected_objects/events/files).
 			const first = result.structuredContent.objects[0]
 			expect(Object.keys(first).sort()).toEqual(['object'])
-			// Per-object payload: exactly the core five (url is omitted when
+			// Per-object payload: exactly the core six (url is omitted when
 			// webAppBaseUrl isn't configured on the test rig — the injection is
 			// covered separately in the `url field injection` suite).
 			expect(Object.keys(first.object).sort()).toEqual([
@@ -372,6 +373,7 @@ describe('tool handlers', () => {
 				'status',
 				'title',
 				'type',
+				'workspaceId',
 			])
 			expect(first.object.content).toBeUndefined()
 			// content[0].text is what the LLM actually reads — must also carry the lean shape.
@@ -384,6 +386,7 @@ describe('tool handlers', () => {
 				'status',
 				'title',
 				'type',
+				'workspaceId',
 			])
 		})
 

@@ -1536,10 +1536,13 @@ export function createMcpServer(config: McpConfig) {
 							}
 
 			const wsId = workspace_id ?? config.defaultWorkspaceId
-			// Default projection: strip every graph field except the core six
-			// (`id, type, title, status, contextLine, url`) so the LLM's context
-			// isn't paid to carry relationships/connected_objects/events/files/content/metadata
-			// the caller didn't ask for. `include:` opt-in expansions are wired in T4.
+			// Default projection: strip every graph field except the core seven
+			// (`id, type, title, status, contextLine, url, workspaceId`) so the LLM's
+			// context isn't paid to carry relationships/connected_objects/events/files/
+			// content/metadata the caller didn't ask for. `workspaceId` stays in the
+			// core set (unlike the other fields) because it's a small id, not bulky
+			// content, and callers/widgets need it to route follow-up requests.
+			// `include:` opt-in expansions are wired in T4.
 			const projectedResults = results.map((r) => {
 				if (!r.success) return r
 				const graph = r.result as Record<string, unknown> | null | undefined
@@ -1554,10 +1557,14 @@ export function createMcpServer(config: McpConfig) {
 					title: withUrl.title ?? null,
 					status: withUrl.status ?? null,
 					contextLine: contextLineById.get(withUrl.id as string) ?? '',
+					workspaceId: withUrl.workspaceId,
 				}
 				if (typeof withUrl.url === 'string') projectedObject.url = withUrl.url
 				if (includeSet.has('content') && 'content' in withUrl) {
 					projectedObject.content = withUrl.content
+				}
+				if (includeSet.has('metadata') && 'metadata' in withUrl) {
+					projectedObject.metadata = withUrl.metadata
 				}
 				const extras: Record<string, unknown> = {}
 				if (includeSet.has('relationships') && graph && 'relationships' in graph) {

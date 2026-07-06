@@ -45,6 +45,7 @@ const GRAPH_PAYLOAD = {
 		content: '## Brief\n\nSome markdown body',
 		driver: null,
 		metadata: {},
+		workspaceId: 'ws-default-123',
 		createdAt: '2026-06-01T00:00:00.000Z',
 		updatedAt: '2026-06-30T00:00:00.000Z',
 	},
@@ -71,7 +72,7 @@ const GRAPH_PAYLOAD = {
 	],
 }
 
-const CORE_OBJECT_KEYS = ['id', 'type', 'title', 'status', 'contextLine', 'url']
+const CORE_OBJECT_KEYS = ['id', 'type', 'title', 'status', 'contextLine', 'url', 'workspaceId']
 const EXPANSION_BLOCK_KEYS = ['relationships', 'connected_objects', 'events', 'files'] as const
 type ExpansionBlockKey = (typeof EXPANSION_BLOCK_KEYS)[number]
 

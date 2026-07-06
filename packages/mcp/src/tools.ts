@@ -136,15 +136,17 @@ export const tools = {
 	},
 	get_objects: {
 		description:
-			'Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url}` — no other fields. Opt into extra blocks with `include:` (each adds only its own block): `content` — the object\'s body/description; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. "Sales v4 (ca957490)") only when two titles collide.',
+			'Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` — no other fields. Opt into extra blocks with `include:` (each adds only its own block): `content` — the object\'s body/description; `metadata` — the object\'s custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. "Sales v4 (ca957490)") only when two titles collide.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
 			include: z
-				.array(z.enum(['content', 'relationships', 'connected_objects', 'events', 'files']))
+				.array(
+					z.enum(['content', 'metadata', 'relationships', 'connected_objects', 'events', 'files']),
+				)
 				.default([])
 				.describe(
-					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url}` per object; each listed value adds one block back.',
+					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url, workspaceId}` per object; each listed value adds one block back.',
 				),
 		}),
 	},
