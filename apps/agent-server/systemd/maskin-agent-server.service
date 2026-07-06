@@ -23,5 +23,13 @@ SyslogIdentifier=maskin-agent-server
 # microVMs. /dev/kvm and the libkrun-side privileges are most reliable when
 # the parent runs as root on a single-tenant Hetzner box.
 
+# `msb sandbox`/`msb exec` child processes live in this unit's cgroup. The
+# default KillMode=control-group would SIGTERM/SIGKILL every running microVM
+# on every `systemctl restart` (i.e. every redeploy). `mixed` signals only the
+# main PID first — Node's own shutdown handler force-exits within 10s, well
+# under TimeoutStopSec (default 90s), so the cgroup-wide kill escalation never
+# fires on a normal restart and in-flight sessions survive it.
+KillMode=mixed
+
 [Install]
 WantedBy=multi-user.target

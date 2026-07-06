@@ -17,6 +17,7 @@ import {
 	cleanupBrowserSidecar,
 	defaultRunner,
 	launchSessionExec,
+	listSandboxNames,
 	provisionBrowserSidecar,
 	readMsbVersion,
 	removeSandbox,
@@ -61,12 +62,25 @@ export type AppDeps = {
 	msb: MicrosandboxDeps
 	warmer?: ImageWarmer | null
 	/**
-	 * Test seam only. Lets tests inject a map and assert what the /stop and
-	 * /complete handlers write into it. The production entrypoint (`main()`)
-	 * never sets this — buildApp creates its own map when omitted, so this is
-	 * fully backward-compatible with the real boot path.
+	 * Shared with `main()`'s boot-time `reconcileOnBoot` pass so a reattached
+	 * `monitorSession()` call for a sandbox that survived a restart writes into
+	 * the same map the HTTP handlers below read from. Tests may also inject a
+	 * map directly to assert what the /stop and /complete handlers write into
+	 * it. Omitted → buildApp creates its own fresh map (still fully
+	 * backward-compatible for any caller that doesn't need to share it).
 	 */
 	sessionExitCodes?: Map<string, number>
+	/** Same sharing rationale as `sessionExitCodes` — see its doc comment. */
+	sessionLogRouters?: Map<string, (line: string) => void>
+	/**
+	 * Mutable flag flipped by `main()`'s SIGTERM handler. `POST /sessions`
+	 * rejects new work with 503 while `draining` is true, so a session request
+	 * that arrives in the shutdown window can't be left half-spawned (created
+	 * but never registered with `monitorSession`) when the process exits.
+	 * Omitted → never drains (always accepts), which is what every existing
+	 * test expects.
+	 */
+	drainState?: { draining: boolean }
 }
 
 const LOG_FLUSH_INTERVAL_MS = 2_000
@@ -289,10 +303,11 @@ export function buildApp(deps: AppDeps): Hono {
 	const app = new Hono()
 	const inputQueue = new InputQueue()
 	// Connects the /sessions/:id/logs/ingest endpoint to monitorSession's buffer.
-	const sessionLogRouters = new Map<string, (line: string) => void>()
+	// Injectable via deps so main()'s boot-time reconcile pass can reattach
+	// monitorSession for sandboxes that survived a restart (see AppDeps.sessionLogRouters).
+	const sessionLogRouters = deps.sessionLogRouters ?? new Map<string, (line: string) => void>()
 	// Receives exit codes from the /sessions/:id/complete and /sessions/:id/stop
-	// endpoints for monitorSession. Injectable via deps for tests; production
-	// always omits it and gets a fresh map (see AppDeps.sessionExitCodes).
+	// endpoints for monitorSession. Injectable via deps (see AppDeps.sessionExitCodes).
 	const sessionExitCodes = deps.sessionExitCodes ?? new Map<string, number>()
 
 	app.get('/health', async (c) => {
@@ -432,6 +447,14 @@ export function buildApp(deps: AppDeps): Hono {
 	app.use('/sessions/*', requireBearer)
 
 	app.post('/sessions', async (c) => {
+		// Reject new work once shutdown has begun — otherwise a session created
+		// in the ~10s shutdown window could be only half-spawned (sandbox
+		// created but never registered with monitorSession) when the process
+		// exits, leaving one more stray orphan for the next boot's reconcile
+		// pass to clean up. Already-running sessions are unaffected by this.
+		if (deps.drainState?.draining) {
+			return c.json({ error: 'draining' }, 503)
+		}
 		let raw: unknown
 		try {
 			raw = await c.req.json()
@@ -669,6 +692,131 @@ export function buildApp(deps: AppDeps): Hono {
 	return app
 }
 
+// Browser sidecar VMs (see provisionBrowserSidecar) never have their own DB
+// session row, so a bare `msb list` snapshot sent to /reconcile would always
+// report them as unclaimed — including one still attached to a live session —
+// and get force-removed. Filter them out before reporting.
+const BROWSER_SIDECAR_PREFIX = 'anko-browser-'
+
+export type ReconcileOnBootDeps = {
+	env: AgentServerEnv
+	storage: StorageProvider | null
+	msb: MicrosandboxDeps
+	sessionLogRouters: Map<string, (line: string) => void>
+	sessionExitCodes: Map<string, number>
+	fetchImpl?: typeof fetch
+}
+
+/**
+ * Runs once on boot (see main()). Tells apps/dev which sandboxes this box
+ * still has running — so sessions that are genuinely gone (a hard crash, or
+ * simply the first restart after deploying the KillMode fix below) get marked
+ * failed within seconds instead of sitting `running` until the 2-hour
+ * watchdog fires — removes any sandbox apps/dev doesn't recognize as claimed
+ * by a live session, and reattaches monitorSession for everything else so a
+ * session that survived the restart still gets its workspace pushed to S3
+ * and its completion reported once it finishes. Without this, that session's
+ * /complete signal would land on this fresh process, which has no monitor
+ * waiting for it, and the DB row would stall until the watchdog times it out
+ * even though the work already finished.
+ *
+ * No-ops (with a log line) if AGENT_SERVER_ID or MASKIN_BASE_URL aren't
+ * configured — a box that hasn't set AGENT_SERVER_ID yet still boots
+ * normally, just without this pass.
+ */
+export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> {
+	const { env } = deps
+	if (!env.AGENT_SERVER_ID || !env.MASKIN_BASE_URL) {
+		logger.info('reconcile-on-boot skipped', {
+			reason: !env.AGENT_SERVER_ID ? 'AGENT_SERVER_ID not set' : 'MASKIN_BASE_URL not set',
+		})
+		return
+	}
+	const fetchFn = deps.fetchImpl ?? fetch
+
+	let names: string[]
+	try {
+		names = await listSandboxNames(deps.msb)
+	} catch (err) {
+		logger.error('reconcile-on-boot: msb list failed, skipping this pass', { error: String(err) })
+		return
+	}
+	const claimableSandboxes = names.filter((name) => !name.startsWith(BROWSER_SIDECAR_PREFIX))
+
+	let result: { marked_failed: string[]; orphan_sandboxes: string[] }
+	try {
+		const res = await fetchFn(`${env.MASKIN_BASE_URL}/api/internal/agent-servers/reconcile`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				agent_server_id: env.AGENT_SERVER_ID,
+				sandboxes: claimableSandboxes,
+			}),
+			signal: AbortSignal.timeout(10_000),
+		})
+		if (!res.ok) {
+			logger.error('reconcile-on-boot: reconcile call failed', { status: res.status })
+			return
+		}
+		result = (await res.json()) as { marked_failed: string[]; orphan_sandboxes: string[] }
+	} catch (err) {
+		logger.error('reconcile-on-boot: reconcile call threw, skipping this pass', {
+			error: String(err),
+		})
+		return
+	}
+
+	logger.info('reconcile-on-boot complete', {
+		reportedSandboxes: claimableSandboxes.length,
+		markedFailed: result.marked_failed.length,
+		orphanCount: result.orphan_sandboxes.length,
+	})
+
+	const orphanSet = new Set(result.orphan_sandboxes)
+	for (const name of result.orphan_sandboxes) {
+		await removeSandbox(name, deps.msb).catch((err) => {
+			logger.warn('reconcile-on-boot: failed to remove orphan sandbox', {
+				name,
+				error: String(err),
+			})
+		})
+	}
+
+	// Everything reported that ISN'T an orphan is, by the reconciler's own
+	// logic, still claimed by a live (non-terminal) DB session row — reattach
+	// its monitor so it gets a normal S3 push + completion report when it
+	// eventually finishes. Sandbox name === sessionId for main sessions (see
+	// buildMsbCreateArgs), so sessionDir is derivable without any extra state.
+	// A reattached session's browserSidecar reference is lost (passed as
+	// null) — an orphaned sidecar it owned will surface as an orphan_sandbox
+	// on a later boot's reconcile pass instead of being cleaned up the moment
+	// this session ends. Accepted, self-healing gap; not worth reconstructing
+	// sidecar state across a restart here.
+	for (const name of claimableSandboxes) {
+		if (orphanSet.has(name)) continue
+		const sessionDir = join(deps.env.AGENT_SESSION_ROOT, name)
+		void monitorSession(
+			name,
+			sessionDir,
+			deps.storage,
+			deps.msb,
+			env.MASKIN_BASE_URL,
+			env.AGENT_SERVER_SECRET,
+			deps.sessionLogRouters,
+			deps.sessionExitCodes,
+			null,
+		).catch((err) => {
+			logger.error('reconcile-on-boot: reattached monitorSession crashed', {
+				sessionId: name,
+				error: String(err),
+			})
+		})
+	}
+}
+
 async function buildStorage(env: AgentServerEnv): Promise<StorageProvider | null> {
 	if (!env.S3_ENDPOINT || !env.S3_BUCKET || !env.S3_ACCESS_KEY || !env.S3_SECRET_KEY) {
 		logger.warn('S3 credentials not fully configured — session workspace persistence disabled')
@@ -708,16 +856,39 @@ async function main(): Promise<void> {
 		logger.info('image warmer disabled', { reason: 'no_image' })
 	}
 
-	const app = buildApp({ env, storage, msb, warmer })
+	// Created here (rather than inside buildApp) so the boot-time reconcile
+	// pass below can reattach monitorSession into the same maps the HTTP
+	// handlers read from — see AppDeps.sessionLogRouters/sessionExitCodes.
+	const sessionLogRouters = new Map<string, (line: string) => void>()
+	const sessionExitCodes = new Map<string, number>()
+	const drainState = { draining: false }
+
+	const app = buildApp({
+		env,
+		storage,
+		msb,
+		warmer,
+		sessionLogRouters,
+		sessionExitCodes,
+		drainState,
+	})
 
 	const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, ({ port }) => {
 		logger.info('agent-server listening', { port })
+	})
+
+	// Fire-and-forget: never blocks serving new sessions on this pass finishing.
+	void reconcileOnBoot({ env, storage, msb, sessionLogRouters, sessionExitCodes }).catch((err) => {
+		logger.error('reconcile-on-boot failed unexpectedly', { error: String(err) })
 	})
 
 	let shuttingDown = false
 	const shutdown = async (signal: string): Promise<void> => {
 		if (shuttingDown) return
 		shuttingDown = true
+		// Set before anything else so POST /sessions starts rejecting new work
+		// the instant shutdown begins, not after the warmer/server teardown below.
+		drainState.draining = true
 		logger.info('agent-server shutting down', { signal })
 		if (warmer) {
 			await warmer.shutdown().catch((err) => {
