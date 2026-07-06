@@ -251,6 +251,8 @@ export class SessionManager extends EventEmitter {
 	private stopRequested: Set<string> = new Set()
 	/** Accumulates assistant text per interactive session turn for conversation persistence. */
 	private pendingTurnText: Map<string, string> = new Map()
+	/** Carries a partial (not yet newline-terminated) stdout line across log chunks per session. */
+	private pendingLogLineBuffer: Map<string, string> = new Map()
 
 	constructor(
 		private db: Database,
@@ -1481,12 +1483,29 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Parses a stdout log line from an interactive session. Accumulates text
-	 * from `assistant` envelopes and flushes a `messages` row when a `result`
-	 * envelope (end-of-turn) is detected — but only if the session has a linked
-	 * conversation.
+	 * Parses a chunk of stdout from an interactive session. A chunk is one
+	 * Docker log frame, not one line — it can bundle multiple newline-joined
+	 * JSON envelopes or split one across frame boundaries, so lines are
+	 * buffered per session and only complete ones are parsed.
 	 */
-	private async accumulateTurnText(sessionId: string, logLine: string): Promise<void> {
+	private async accumulateTurnText(sessionId: string, logChunk: string): Promise<void> {
+		const buffered = (this.pendingLogLineBuffer.get(sessionId) ?? '') + logChunk
+		const lines = buffered.split(/\r?\n/)
+		this.pendingLogLineBuffer.set(sessionId, lines.pop() ?? '')
+
+		for (const line of lines) {
+			if (!line.trim()) continue
+			await this.accumulateTurnTextLine(sessionId, line)
+		}
+	}
+
+	/**
+	 * Parses a single complete stdout log line from an interactive session.
+	 * Accumulates text from `assistant` envelopes and flushes a `messages` row
+	 * when a `result` envelope (end-of-turn) is detected — but only if the
+	 * session has a linked conversation.
+	 */
+	private async accumulateTurnTextLine(sessionId: string, logLine: string): Promise<void> {
 		let envelope: Record<string, unknown>
 		try {
 			const parsed = JSON.parse(logLine.trim())
@@ -2916,6 +2935,7 @@ export class SessionManager extends EventEmitter {
 	/** Clear activeSessionId on any object linked to this session. */
 	private async clearActiveSession(sessionId: string): Promise<void> {
 		this.pendingTurnText.delete(sessionId)
+		this.pendingLogLineBuffer.delete(sessionId)
 		await this.db
 			.update(objects)
 			.set({ activeSessionId: null, updatedAt: new Date() })

@@ -107,11 +107,15 @@ export function ChatPanel({ workspaceId, agentActorId }: ChatPanelProps) {
 			toast.error('Not signed in — please reload and try again')
 			return
 		}
+		if (!agentActorId) {
+			toast.error('Agent not ready yet — please try again in a moment')
+			return
+		}
 		createConversation.mutate(
-			{ type: 'dm', participant_actor_ids: [actor.id] },
+			{ type: 'dm', participant_actor_ids: [actor.id, agentActorId] },
 			{ onSuccess: (c) => setActiveConversation(c) },
 		)
-	}, [createConversation])
+	}, [createConversation, agentActorId])
 
 	const handleNewConversationAndSend = useCallback(
 		async (content: string) => {
@@ -120,14 +124,18 @@ export function ChatPanel({ workspaceId, agentActorId }: ChatPanelProps) {
 				toast.error('Not signed in — please reload and try again')
 				throw new Error('Not signed in')
 			}
+			if (!agentActorId) {
+				toast.error('Agent not ready yet — please try again in a moment')
+				throw new Error('Agent not ready')
+			}
 			const c = await createConversation.mutateAsync({
 				type: 'dm',
-				participant_actor_ids: [actor.id],
+				participant_actor_ids: [actor.id, agentActorId],
 			})
 			setActiveConversation(c)
 			setPendingAutoMessage(content)
 		},
-		[createConversation],
+		[createConversation, agentActorId],
 	)
 
 	const handleNewChat = useCallback(() => {

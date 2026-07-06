@@ -428,17 +428,19 @@ app.openapi(sendMessageRoute, (async (c) => {
 			entityId: id,
 		})
 
-		// Resolve @mentioned agent actors for session dispatch — scoped to workspace members only
+		// Resolve @mentioned agent actors for session dispatch — scoped to this
+		// conversation's participants only, so a mention can never leak the
+		// message content to an agent that hasn't been added to it.
 		const mentions: Array<{ agentId: string; name: string }> = []
 		if (body.mentions?.length) {
 			const mentionedActors = await tx
 				.select({ id: actors.id, type: actors.type, name: actors.name })
 				.from(actors)
 				.innerJoin(
-					workspaceMembers,
+					conversationParticipants,
 					and(
-						eq(workspaceMembers.actorId, actors.id),
-						eq(workspaceMembers.workspaceId, workspaceId),
+						eq(conversationParticipants.actorId, actors.id),
+						eq(conversationParticipants.conversationId, id),
 					),
 				)
 				.where(inArray(actors.id, body.mentions))
