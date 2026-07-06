@@ -162,12 +162,16 @@ vi.mock('@/lib/analytics', () => ({ trackEvent: vi.fn() }))
 vi.mock('@/lib/query-keys', () => ({
 	queryKeys: {
 		objects: {
+			list: (workspaceId: string, filters?: unknown) => ['objects', workspaceId, 'list', filters],
 			listInfinite: () => ['objects'],
 			listInfinitePrefix: () => ['objects', 'infinite'],
 			listPrefix: () => ['objects', 'list'],
 			board: () => ['objects', 'board'],
 			detail: (id: string) => ['objects', 'detail', id],
 			all: () => ['objects'],
+		},
+		relationships: {
+			all: (workspaceId: string) => ['relationships', workspaceId],
 		},
 		bets: { all: () => ['bets'] },
 		imports: { detail: (id: string) => ['imports', 'detail', id] },
