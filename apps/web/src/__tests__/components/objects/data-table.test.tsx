@@ -134,30 +134,173 @@ describe('DataTable', () => {
 		expect(spinners.length).toBeGreaterThanOrEqual(1)
 	})
 
-	describe('grouping (desktop)', () => {
-		it('keeps the group expanded when selecting a child row', async () => {
+	describe('grouped rows — chevron scoping and header select-all', () => {
+		it('selects every leaf row in the group when the header checkbox is checked (desktop)', async () => {
 			const user = userEvent.setup()
 			const data = [
-				buildObjectResponse({ id: 'obj-a', title: 'Alpha', createdBy: 'actor-x' }),
-				buildObjectResponse({ id: 'obj-b', title: 'Beta', createdBy: 'actor-x' }),
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
 			]
-			renderDataTable({ data, grouping: ['createdBy'] })
+			let selection: RowSelectionState = {}
+			const onRowSelectionChange = vi.fn((updater) => {
+				selection =
+					typeof updater === 'function'
+						? (updater as (s: RowSelectionState) => RowSelectionState)(selection)
+						: updater
+			})
+			renderDataTable({ data, grouping: ['status'], rowSelection: selection, onRowSelectionChange })
 
-			// Row bodies are not rendered until the group is expanded.
-			expect(screen.queryByText('Alpha')).not.toBeInTheDocument()
+			const groupChevron = screen.getByRole('button', { expanded: false })
+			await user.click(groupChevron)
 
-			await user.click(screen.getByRole('button', { name: /\(2\)/ }))
+			const groupCheckbox = screen.getByRole('checkbox', { name: /select all in active/i })
+			await user.click(groupCheckbox)
+
+			expect(selection).toEqual({ a: true, b: true })
+		})
+
+		it('clears every leaf row in the group when the header checkbox is unchecked (desktop)', async () => {
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			let selection: RowSelectionState = { a: true, b: true }
+			const onRowSelectionChange = vi.fn((updater) => {
+				selection =
+					typeof updater === 'function'
+						? (updater as (s: RowSelectionState) => RowSelectionState)(selection)
+						: updater
+			})
+			renderDataTable({ data, grouping: ['status'], rowSelection: selection, onRowSelectionChange })
+
+			const groupChevron = screen.getByRole('button', { expanded: false })
+			await user.click(groupChevron)
+
+			const groupCheckbox = screen.getByRole('checkbox', { name: /select all in active/i })
+			expect(groupCheckbox).toHaveAttribute('data-state', 'checked')
+			await user.click(groupCheckbox)
+
+			expect(selection).toEqual({})
+		})
+
+		it('renders the indeterminate state when only some leaf rows are selected (desktop)', () => {
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			renderDataTable({
+				data,
+				grouping: ['status'],
+				rowSelection: { a: true } as RowSelectionState,
+			})
+
+			const groupCheckbox = screen.getByRole('checkbox', { name: /select all in active/i })
+			expect(groupCheckbox).toHaveAttribute('data-state', 'indeterminate')
+		})
+
+		it('does not toggle expansion when the group-header checkbox is clicked (desktop)', async () => {
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			renderDataTable({ data, grouping: ['status'] })
+
+			const groupChevron = screen.getByRole('button', { expanded: false })
+			await user.click(groupChevron)
+
+			const groupCheckbox = screen.getByRole('checkbox', { name: /select all in active/i })
+			await user.click(groupCheckbox)
+
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+			expect(screen.getByText('Beta')).toBeInTheDocument()
+			expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument()
+		})
+
+		it('keeps the group expanded after a child-row checkbox is clicked (desktop)', async () => {
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			renderDataTable({ data, grouping: ['status'] })
+
+			// Group header renders even when collapsed — open it via the chevron button.
+			const groupToggle = screen.getByRole('button', { expanded: false })
+			await user.click(groupToggle)
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+			expect(screen.getByText('Beta')).toBeInTheDocument()
+
+			const [firstRowCheckbox] = screen.getAllByRole('checkbox', { name: 'Select row' })
+			await user.click(firstRowCheckbox as HTMLElement)
+
+			// Group must still be expanded; both children remain in the DOM.
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+			expect(screen.getByText('Beta')).toBeInTheDocument()
+			expect(screen.getByRole('button', { expanded: true })).toBe(groupToggle)
+		})
+
+		it('chevron button still toggles expansion (desktop)', async () => {
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			renderDataTable({ data, grouping: ['status'] })
+
+			const groupToggle = screen.getByRole('button', { expanded: false })
+			await user.click(groupToggle)
 			expect(screen.getByText('Alpha')).toBeInTheDocument()
 
-			const [firstCheckbox] = screen.getAllByLabelText('Select row')
-			await user.click(firstCheckbox)
+			await user.click(screen.getByRole('button', { expanded: true }))
+			expect(screen.queryByText('Alpha')).not.toBeInTheDocument()
+		})
 
-			// If the child click bubbles to a row-level toggle, Alpha disappears.
+		it('selects every leaf row in the group when the header checkbox is checked (mobile)', async () => {
+			mockIsMobile.mockReturnValue(true)
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			let selection: RowSelectionState = {}
+			const onRowSelectionChange = vi.fn((updater) => {
+				selection =
+					typeof updater === 'function'
+						? (updater as (s: RowSelectionState) => RowSelectionState)(selection)
+						: updater
+			})
+			renderDataTable({ data, grouping: ['status'], rowSelection: selection, onRowSelectionChange })
+
+			const groupCheckbox = screen.getByRole('checkbox', { name: /select all in active/i })
+			await user.click(groupCheckbox)
+
+			expect(selection).toEqual({ a: true, b: true })
+		})
+
+		it('keeps the group expanded after a child-row checkbox is clicked (mobile)', async () => {
+			mockIsMobile.mockReturnValue(true)
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			renderDataTable({ data, grouping: ['status'] })
+
+			const groupToggle = screen.getByRole('button', { name: /active/i })
+			await user.click(groupToggle)
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+			expect(screen.getByText('Beta')).toBeInTheDocument()
+
+			const [firstRowCheckbox] = screen.getAllByRole('checkbox', { name: 'Select row' })
+			await user.click(firstRowCheckbox as HTMLElement)
+
 			expect(screen.getByText('Alpha')).toBeInTheDocument()
 			expect(screen.getByText('Beta')).toBeInTheDocument()
 		})
 
-		it('keeps the group expanded across a parent re-render', async () => {
+		it('keeps the group expanded across a parent re-render (autoResetExpanded: false)', async () => {
 			const user = userEvent.setup()
 			const data = [
 				buildObjectResponse({ id: 'obj-c', title: 'Gamma', createdBy: 'actor-y' }),
@@ -214,6 +357,25 @@ describe('DataTable', () => {
 				to: '/$workspaceId/objects/$objectId',
 				params: { workspaceId: 'ws-1', objectId: 'obj-7' },
 			})
+		})
+
+		// Mobile card layout renders alongside the desktop table cell, but reads
+		// its bet indicator from the same `meta.betStatuses` map. Without this
+		// the row indicator is invisible on mobile even though it renders on the
+		// data-table cell at md+ viewports.
+		it('renders the bet status indicator on a bet card', () => {
+			const bet = buildObjectResponse({ id: 'bet-mobile', title: 'Bet Mobile', type: 'bet' })
+			const betStatuses = new Map([
+				[
+					'bet-mobile',
+					{ state: 'waiting_on_human' as const, pendingAction: null, decisionsSoFar: [] },
+				],
+			])
+			renderDataTable({
+				data: [bet],
+				meta: { onSort: vi.fn(), currentSort: 'createdAt', currentOrder: 'desc', betStatuses },
+			})
+			expect(screen.getByLabelText('Status: waiting')).toBeInTheDocument()
 		})
 	})
 })

@@ -16,13 +16,15 @@
 		"type-check": "turbo type-check --concurrency=4",
 		"db:generate": "turbo db:generate",
 		"db:migrate": "turbo db:migrate",
-		"db:seed": "turbo db:seed"
+		"db:seed": "turbo db:seed",
+		"posthog:bulk-edit-commit-ios": "dotenv -e .env -- tsx scripts/posthog/bulk-edit-commit-ios.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.0",
 		"@types/node": "^25.6.0",
 		"@vitest/coverage-v8": "^3.2.4",
 		"dotenv-cli": "^11.0.0",
+		"tsx": "^4.19.0",
 		"turbo": "^2.9.6",
 		"typescript": "^5.7.0"
 	},

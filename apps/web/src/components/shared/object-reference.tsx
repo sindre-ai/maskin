@@ -25,7 +25,7 @@ export function ObjectReference({
 	showType = true,
 	className,
 }: ObjectReferenceProps) {
-	const query = useObject(providedObject ? '' : objectId)
+	const query = useObject(objectId, { enabled: !providedObject })
 	const object = providedObject ?? query.data
 	const isLoading = !providedObject && query.isLoading
 	const isMissing = !providedObject && !query.isLoading && !query.data

@@ -555,8 +555,12 @@ export type BrowserSidecar = {
  * Strategy: forward a bridge-only host TCP port to guest port 9222
  * (`-p <bridgeGateway>:<port>:9222`), then fire `msb exec` to start the entrypoint.
  * `msb create` boots the VM but does NOT run CMD/ENTRYPOINT — `msb exec` is
- * required. The session VM reaches the CDP endpoint at `ws://<bridgeGateway>:<port>`
+ * required. The session VM reaches the CDP endpoint at `http://<bridgeGateway>:<port>`
  * via `allow@private`, since the bridge gateway is a private RFC1918 address.
+ * The URL must be http:// (not ws://) — `@playwright/mcp --cdp-endpoint` performs
+ * CDP discovery via `GET {url}/json/version` to find the browser's real
+ * `webSocketDebuggerUrl` before opening a WebSocket, the same discovery this
+ * function's own readiness poll (`defaultPollCdpReady`) relies on above.
  *
  * Returns `null` on any failure — the caller falls back without browser
  * capability. We never throw past the session boundary.
@@ -654,7 +658,7 @@ export async function provisionBrowserSidecar(
 		return null
 	}
 
-	const cdpUrl = `ws://${bridgeGateway}:${hostPort}`
+	const cdpUrl = `http://${bridgeGateway}:${hostPort}`
 	logger.info('browser sidecar started', { name, cdpUrl })
 	return { name, cdpUrl }
 }
