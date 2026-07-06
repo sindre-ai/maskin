@@ -1,8 +1,13 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FORCED_STOP_EXIT_CODE, SESSION_EXIT_CODE_SENTINEL_TTL_MS, buildApp } from '../index'
+import {
+	FORCED_STOP_EXIT_CODE,
+	SESSION_EXIT_CODE_SENTINEL_TTL_MS,
+	buildApp,
+	reconcileOnBoot,
+} from '../index'
 import type { AgentServerEnv } from '../lib/env'
 import { ImageWarmer } from '../services/image-warmer'
 
@@ -393,7 +398,7 @@ describe('POST /sessions browserRequired wiring', () => {
 		// Session VM env must include BROWSER_CDP_URL using the bridge gateway + forwarded port.
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
-		expect(envFlags).toContain('BROWSER_CDP_URL=ws://10.0.1.1:39222')
+		expect(envFlags).toContain('BROWSER_CDP_URL=http://10.0.1.1:39222')
 	})
 
 	it('provisions no sidecar, injects no BROWSER_CDP_URL, and omits allow@private when browserRequired is absent', async () => {
@@ -698,5 +703,492 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 		} finally {
 			vi.useRealTimers()
 		}
+	})
+})
+
+describe('POST /sessions drain flag', () => {
+	it('returns 503 and does not spawn when draining', async () => {
+		const { run, calls } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			drainState: { draining: true },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({ sessionId: 'sess-drain', image: 'maskin/agent-base:latest', env: {} }),
+		})
+
+		expect(res.status).toBe(503)
+		expect(calls.find((c) => c.args[0] === 'create')).toBeUndefined()
+	})
+
+	it('accepts sessions normally when not draining', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			drainState: { draining: false },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-not-draining',
+				image: 'maskin/agent-base:latest',
+				env: {},
+			}),
+		})
+
+		expect(res.status).toBe(201)
+	})
+})
+
+describe('POST /sessions readiness gate', () => {
+	it('returns 503 and does not spawn while readyState.ready is false', async () => {
+		const { run, calls } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			readyState: { ready: false },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-not-ready',
+				image: 'maskin/agent-base:latest',
+				env: {},
+			}),
+		})
+
+		expect(res.status).toBe(503)
+		expect(calls.find((c) => c.args[0] === 'create')).toBeUndefined()
+	})
+
+	it('accepts sessions once readyState.ready is true', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			readyState: { ready: true },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({ sessionId: 'sess-ready', image: 'maskin/agent-base:latest', env: {} }),
+		})
+
+		expect(res.status).toBe(201)
+	})
+
+	it('accepts sessions when readyState is omitted entirely (existing test/caller default)', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-no-readystate',
+				image: 'maskin/agent-base:latest',
+				env: {},
+			}),
+		})
+
+		expect(res.status).toBe(201)
+	})
+})
+
+describe('reconcileOnBoot', () => {
+	function makeReconcileRunner(sandboxes: Array<{ name: string; status: string }>) {
+		const calls: Array<{ args: readonly string[] }> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push({ args })
+			if (args[0] === 'list') {
+				// First `list` call is listSandboxNames' boot snapshot; every call
+				// after that belongs to a reattached monitorSession's waitForCompletion
+				// poll — report those sandboxes gone so the reattached watcher
+				// resolves immediately instead of polling forever in the test.
+				const listCallCount = calls.filter((c) => c.args[0] === 'list').length
+				return { stdout: JSON.stringify(listCallCount === 1 ? sandboxes : []), stderr: '' }
+			}
+			return { stdout: '', stderr: '' }
+		}
+		return { run, calls }
+	}
+
+	it('skips entirely when AGENT_SERVER_ID is unset', async () => {
+		const { run, calls } = makeReconcileRunner([{ name: 'sess-1', status: 'Running' }])
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot, MASKIN_BASE_URL: 'http://maskin.test' })
+		const fetchImpl = vi.fn()
+
+		await reconcileOnBoot({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters: new Map(),
+			sessionExitCodes: new Map(),
+			fetchImpl,
+		})
+
+		expect(calls.length).toBe(0)
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
+	it('skips entirely when MASKIN_BASE_URL is unset', async () => {
+		const { run, calls } = makeReconcileRunner([{ name: 'sess-1', status: 'Running' }])
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const fetchImpl = vi.fn()
+
+		await reconcileOnBoot({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters: new Map(),
+			sessionExitCodes: new Map(),
+			fetchImpl,
+		})
+
+		expect(calls.length).toBe(0)
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
+	it('filters anko-browser-* sidecar names out of the reported sandbox list', async () => {
+		const { run } = makeReconcileRunner([
+			{ name: 'sess-1', status: 'Running' },
+			{ name: 'anko-browser-abc123', status: 'Running' },
+		])
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+
+		await reconcileOnBoot({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters: new Map(),
+			sessionExitCodes: new Map(),
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+
+		expect(fetchImpl).toHaveBeenCalledTimes(1)
+		const call = fetchImpl.mock.calls[0]
+		if (!call) throw new Error('fetchImpl was not called')
+		const [, init] = call
+		const body = JSON.parse(init.body as string) as { sandboxes: string[] }
+		expect(body.sandboxes).toEqual(['sess-1'])
+	})
+
+	it('removes every orphan sandbox reported by /reconcile', async () => {
+		const { run, calls } = makeReconcileRunner([
+			{ name: 'sess-1', status: 'Running' },
+			{ name: 'sess-orphan', status: 'Running' },
+		])
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const fetchImpl = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: ['some-uuid'], orphan_sandboxes: ['sess-orphan'] }),
+		}))
+
+		await reconcileOnBoot({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters: new Map(),
+			sessionExitCodes: new Map(),
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+
+		const removeCall = calls.find((c) => c.args[0] === 'remove')
+		expect(removeCall?.args).toEqual(['remove', '-f', '--quiet', 'sess-orphan'])
+	})
+
+	it('reattaches a monitor for a claimed (non-orphan) sandbox instead of removing it', async () => {
+		const { run, calls } = makeReconcileRunner([{ name: 'sess-claimed', status: 'Running' }])
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		await reconcileOnBoot({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters,
+			sessionExitCodes: new Map(),
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+
+		// Never treated as an orphan.
+		expect(calls.find((c) => c.args[0] === 'remove')).toBeUndefined()
+		// monitorSession registers a log-router entry for its sessionId
+		// synchronously, before its first await (see index.ts) — its presence
+		// here proves reconcileOnBoot actually invoked monitorSession for this
+		// sandbox with the derived sessionDir, not just that it was spared from
+		// removal. (monitorSession's own waitForCompletion poll uses a real,
+		// non-injectable timer — asserting on it finishing is exercised by the
+		// existing POST /sessions tests, not duplicated here.)
+		expect(sessionLogRouters.has('sess-claimed')).toBe(true)
+	})
+
+	it('reattaches a claimed session browser sidecar instead of leaking it', async () => {
+		const { run, calls } = makeReconcileRunner([
+			{ name: 'sess-claimed', status: 'Running' },
+			{ name: 'anko-browser-sess-claimed', status: 'Running' },
+		])
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		await reconcileOnBoot({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters,
+			sessionExitCodes: new Map(),
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+
+		// The sidecar is never sent to apps/dev...
+		const call = fetchImpl.mock.calls[0]
+		if (!call) throw new Error('fetchImpl was not called')
+		const [, init] = call
+		const body = JSON.parse(init.body as string) as { sandboxes: string[] }
+		expect(body.sandboxes).toEqual(['sess-claimed'])
+		// ...and, because it matches sess-claimed's naming convention, it's
+		// reattached rather than force-removed as an unmatched orphan sidecar.
+		expect(calls.find((c) => c.args[0] === 'remove')).toBeUndefined()
+		expect(sessionLogRouters.has('sess-claimed')).toBe(true)
+	})
+
+	it('removes a browser sidecar directly when its owning session no longer exists', async () => {
+		const { run, calls } = makeReconcileRunner([
+			{ name: 'anko-browser-orphaned-sess', status: 'Running' },
+		])
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+
+		await reconcileOnBoot({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters: new Map(),
+			sessionExitCodes: new Map(),
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+
+		// Never reported to apps/dev (no owning session to false-positive-orphan).
+		const call = fetchImpl.mock.calls[0]
+		if (!call) throw new Error('fetchImpl was not called')
+		const [, init] = call
+		const body = JSON.parse(init.body as string) as { sandboxes: string[] }
+		expect(body.sandboxes).toEqual([])
+		// Removed directly since no claimed session ever matched it.
+		const removeCall = calls.find((c) => c.args[0] === 'remove')
+		expect(removeCall?.args).toEqual(['remove', '-f', '--quiet', 'anko-browser-orphaned-sess'])
+	})
+
+	it('recovers a session exit code and re-issues its stop from an on-disk marker', async () => {
+		const sessionId = 'sess-recovered'
+		await mkdir(join(sessionRoot, sessionId), { recursive: true })
+		// Simulates POST /sessions/:id/complete having recorded exitCode 3 and
+		// scheduled its deferred stopSandbox call in the OLD process, right
+		// before that process was killed/restarted before the timer fired — the
+		// sandbox is therefore still "Running" in msb list on this boot.
+		await writeFile(join(sessionRoot, sessionId, '.exit-code'), '3', 'utf8')
+
+		const { run, calls } = makeReconcileRunner([{ name: sessionId, status: 'Running' }])
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionExitCodes = new Map<string, number>()
+
+		await reconcileOnBoot({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters: new Map(),
+			sessionExitCodes,
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+
+		// Real exit code recovered from disk instead of defaulting to 0.
+		expect(sessionExitCodes.get(sessionId)).toBe(3)
+		// The lost deferred stop is re-issued directly (idempotent — safe even
+		// if the original timer actually did fire before the process died).
+		const stopCall = calls.find((c) => c.args[0] === 'stop')
+		expect(stopCall?.args).toEqual(['stop', sessionId])
+	})
+
+	it('does not recover an exit code or re-issue a stop when no marker exists on disk', async () => {
+		const sessionId = 'sess-still-running'
+		await mkdir(join(sessionRoot, sessionId), { recursive: true })
+
+		const { run, calls } = makeReconcileRunner([{ name: sessionId, status: 'Running' }])
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionExitCodes = new Map<string, number>()
+
+		await reconcileOnBoot({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters: new Map(),
+			sessionExitCodes,
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+
+		expect(sessionExitCodes.has(sessionId)).toBe(false)
+		expect(calls.find((c) => c.args[0] === 'stop')).toBeUndefined()
+	})
+
+	it('skips the reconcile call and logs when msb list fails', async () => {
+		const run = async (): Promise<{ stdout: string; stderr: string }> => {
+			throw new Error('msb list failed')
+		}
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const fetchImpl = vi.fn()
+
+		await reconcileOnBoot({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters: new Map(),
+			sessionExitCodes: new Map(),
+			fetchImpl,
+		})
+
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
+	it('does not throw when the /reconcile call itself rejects', async () => {
+		const { run } = makeReconcileRunner([{ name: 'sess-1', status: 'Running' }])
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const fetchImpl = vi.fn(async () => {
+			throw new Error('network down')
+		})
+
+		await expect(
+			reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters: new Map(),
+				sessionExitCodes: new Map(),
+				fetchImpl,
+			}),
+		).resolves.toBeUndefined()
+	})
+
+	it('does not throw and removes nothing when /reconcile responds non-ok', async () => {
+		const { run, calls } = makeReconcileRunner([{ name: 'sess-1', status: 'Running' }])
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const fetchImpl = vi.fn(async () => ({ ok: false, status: 500 }))
+
+		await reconcileOnBoot({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters: new Map(),
+			sessionExitCodes: new Map(),
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+
+		expect(calls.find((c) => c.args[0] === 'remove')).toBeUndefined()
 	})
 })

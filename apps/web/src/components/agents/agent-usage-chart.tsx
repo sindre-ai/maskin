@@ -1,8 +1,8 @@
 import { DateRangePicker, type DateRangeValue } from '@/components/shared/date-range-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
+import { ButtonGroup } from '@/components/ui/button-group'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { pickBucket, useSessionUsage } from '@/hooks/use-session-usage'
 import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -106,12 +106,26 @@ export function AgentUsageChart({
 				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
 					Usage
 				</h3>
-				<Tabs value={view} onValueChange={(v) => setView(v as View)}>
-					<TabsList>
-						<TabsTrigger value="tokens">Tokens</TabsTrigger>
-						<TabsTrigger value="cost">Cost</TabsTrigger>
-					</TabsList>
-				</Tabs>
+				<ButtonGroup>
+					<Button
+						type="button"
+						variant={view === 'tokens' ? 'secondary' : 'ghost'}
+						size="sm"
+						aria-pressed={view === 'tokens'}
+						onClick={() => setView('tokens')}
+					>
+						Tokens
+					</Button>
+					<Button
+						type="button"
+						variant={view === 'cost' ? 'secondary' : 'ghost'}
+						size="sm"
+						aria-pressed={view === 'cost'}
+						onClick={() => setView('cost')}
+					>
+						Cost
+					</Button>
+				</ButtonGroup>
 			</div>
 
 			<div className="flex flex-wrap items-center gap-2 mb-4">

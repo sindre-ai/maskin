@@ -8,6 +8,19 @@ export const objectTypeSchema = z
 	.regex(/^[a-z][a-z0-9_]*$/)
 export type ObjectType = z.infer<typeof objectTypeSchema>
 
+/**
+ * Bet statuses that end the bet's normal lifecycle and warrant a one-time
+ * watcher signal (unread-feed entry + notification row) rather than routine
+ * status-change noise. Matches the default `bet` status list in
+ * workspaces.ts's `statuses` schema and the "terminal status" definition
+ * used by the Retro & Knowledge Author trigger (packages/db/src/seed.ts).
+ * Single source of truth for both apps/dev/src/routes/objects.ts (fan-out
+ * gate) and apps/dev/src/routes/subscriptions.ts (unread-feed join) so the
+ * two can't independently drift out of sync.
+ */
+export const TERMINAL_BET_STATUSES = ['succeeded', 'failed', 'paused'] as const
+export type TerminalBetStatus = (typeof TERMINAL_BET_STATUSES)[number]
+
 export const createObjectSchema = z.object({
 	id: z.string().uuid().optional(),
 	type: objectTypeSchema,

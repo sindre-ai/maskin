@@ -94,4 +94,23 @@ describe('parseEnv', () => {
 			parseEnv({ AGENT_SERVER_SECRET: secret, SESSION_MAX_DURATION: 'forever' }),
 		).toThrow(/SESSION_MAX_DURATION/)
 	})
+
+	it('leaves AGENT_SERVER_ID unset by default', () => {
+		const env = parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32) })
+		expect(env.AGENT_SERVER_ID).toBeUndefined()
+	})
+
+	it('accepts a valid AGENT_SERVER_ID uuid', () => {
+		const env = parseEnv({
+			AGENT_SERVER_SECRET: 'a'.repeat(32),
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		expect(env.AGENT_SERVER_ID).toBe('123e4567-e89b-12d3-a456-426614174000')
+	})
+
+	it('rejects a non-uuid AGENT_SERVER_ID', () => {
+		expect(() =>
+			parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), AGENT_SERVER_ID: 'not-a-uuid' }),
+		).toThrow()
+	})
 })
