@@ -99,6 +99,64 @@ describe('Objects Integration', () => {
 			expect(logged[1].action).toBe('updated')
 			expect(logged[2].action).toBe('deleted')
 		})
+
+		it("writes 'updated' events with data.changes and no legacy previous/updated snapshot", async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/objects', buildCreateObjectBody({ title: 'Old' }), {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			const created = await createRes.json()
+
+			await app.request(jsonRequest('PATCH', `/api/objects/${created.id}`, { title: 'New' }))
+
+			const [updateEvent] = await db
+				.select()
+				.from(events)
+				.where(eq(events.entityId, created.id))
+				.orderBy(events.id)
+				.offset(1)
+				.limit(1)
+
+			expect(updateEvent).toBeDefined()
+			expect(updateEvent?.action).toBe('updated')
+			const data = updateEvent?.data as {
+				changes?: Array<{ field: string; old: unknown; new: unknown }>
+				previous?: unknown
+				updated?: unknown
+			}
+			expect(data.changes).toEqual([{ field: 'title', old: 'Old', new: 'New' }])
+			expect(data.previous).toBeUndefined()
+			expect(data.updated).toBeUndefined()
+		})
+
+		it("writes 'status_changed' events with a single-element data.changes on status-only edit", async () => {
+			const app = createApp()
+			const created = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+			})
+
+			await app.request(
+				jsonRequest('PATCH', `/api/objects/${created.id}`, { status: 'in_progress' }),
+			)
+
+			// insertObject() writes the object row directly (no API call), so unlike
+			// the 'updated' test above there's no preceding 'created' event to skip.
+			const [statusEvent] = await db
+				.select()
+				.from(events)
+				.where(eq(events.entityId, created.id))
+				.orderBy(events.id)
+				.limit(1)
+
+			expect(statusEvent?.action).toBe('status_changed')
+			const data = statusEvent?.data as {
+				changes?: Array<{ field: string; old: unknown; new: unknown }>
+			}
+			expect(data.changes).toEqual([{ field: 'status', old: 'todo', new: 'in_progress' }])
+		})
 	})
 
 	describe('status validation', () => {

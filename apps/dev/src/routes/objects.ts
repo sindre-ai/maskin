@@ -14,13 +14,17 @@ import {
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
+	OBJECT_DIFF_FIELDS,
 	TERMINAL_BET_STATUSES,
 	boardObjectQuerySchema,
 	boardObjectResponseSchema,
 	bulkUpdateObjectsResponseSchema,
 	bulkUpdateObjectsSchema,
+	computeChanges,
 	createObjectSchema,
+	findChange,
 	formatEventDescription,
+	getChangesFromEventData,
 	migrateObjectTypeResponseSchema,
 	migrateObjectTypeSchema,
 	objectQuerySchema,
@@ -660,18 +664,17 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		.orderBy(desc(events.id))
 		.limit(100)
 
-	// Resolve actor names referenced by driver-change clauses (formatter only
-	// needs them for `data.previous.driver` / `data.updated.driver`).
+	// Resolve actor names referenced by driver-change clauses. Handles both the
+	// new `{changes: [{field: 'driver', old, new}]}` shape and the legacy
+	// `{previous, updated}` snapshot shape for historical rows.
 	const referencedActorIds = new Set<string>()
 	for (const event of objectEvents) {
-		const data = event.data as {
-			previous?: { driver?: unknown }
-			updated?: { driver?: unknown }
-		} | null
-		const prevOwner = data?.previous?.driver
-		const nextOwner = data?.updated?.driver
-		if (typeof prevOwner === 'string') referencedActorIds.add(prevOwner)
-		if (typeof nextOwner === 'string') referencedActorIds.add(nextOwner)
+		if (event.action !== 'updated' && event.action !== 'status_changed') continue
+		const changes = getChangesFromEventData(event.data, OBJECT_DIFF_FIELDS)
+		const driverChange = findChange(changes, 'driver')
+		if (!driverChange) continue
+		if (typeof driverChange.old === 'string') referencedActorIds.add(driverChange.old)
+		if (typeof driverChange.new === 'string') referencedActorIds.add(driverChange.new)
 	}
 
 	const actorsById = new Map<string, ActorRef>()
@@ -972,13 +975,21 @@ app.openapi(updateObjectRoute, async (c) => {
 		// the event record is accurate even under concurrent PATCHes.
 		const action = current.status !== row.status ? 'status_changed' : 'updated'
 
+		// Log a per-field diff instead of full pre/post snapshots. On a 100 KB-content
+		// bet, a title-only edit now ships ~200 B of event payload instead of ~200 KB —
+		// see bet/mcp-response-shape AC #4.
+		const changes = computeChanges(
+			current as unknown as Record<string, unknown>,
+			row as unknown as Record<string, unknown>,
+			OBJECT_DIFF_FIELDS,
+		)
 		await tx.insert(events).values({
 			workspaceId: current.workspaceId,
 			actorId,
 			action,
 			entityType: current.type,
 			entityId: id,
-			data: { previous: current, updated: row },
+			data: { changes },
 		})
 
 		// Fan out a notification row to every subscriber when a bet reaches a
@@ -1394,13 +1405,18 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 					plan.resultEntry.error = 'Object not found'
 					continue
 				}
+				const changes = computeChanges(
+					plan.previous as unknown as Record<string, unknown>,
+					updated as unknown as Record<string, unknown>,
+					OBJECT_DIFF_FIELDS,
+				)
 				await tx.insert(events).values({
 					workspaceId: plan.previous.workspaceId,
 					actorId,
 					action: plan.action,
 					entityType: plan.previous.type,
 					entityId: plan.id,
-					data: { previous: plan.previous, updated },
+					data: { changes },
 				})
 			}
 		})
