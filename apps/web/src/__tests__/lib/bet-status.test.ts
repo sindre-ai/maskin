@@ -17,6 +17,7 @@ function task(overrides: Partial<ChildTaskLike> & { id: string }): ChildTaskLike
 		driver: null,
 		metadata: null,
 		updatedAt: NOW.toISOString(),
+		activeSessionId: null,
 		...overrides,
 	}
 }
@@ -36,9 +37,15 @@ describe('classifyBetStatus', () => {
 		expect(result.pendingAction).toBeNull()
 	})
 
-	it('returns progressing when a child task is in_progress', () => {
+	it('returns progressing when a child task is in_progress with a live agent session', () => {
 		const tasks = [
-			task({ id: 't1', status: 'in_progress', title: 'Ship it', driver: 'agent-1' }),
+			task({
+				id: 't1',
+				status: 'in_progress',
+				title: 'Ship it',
+				driver: 'agent-1',
+				activeSessionId: 'session-1',
+			}),
 			task({ id: 't2', status: 'todo' }),
 		]
 		const result = classifyBetStatus(BET, tasks, NOW)
@@ -49,11 +56,32 @@ describe('classifyBetStatus', () => {
 		])
 	})
 
-	it('returns progressing when a child task is in_review', () => {
-		const tasks = [task({ id: 't1', status: 'in_review' })]
+	it('returns progressing when a child task is in_review with a live agent session', () => {
+		const tasks = [task({ id: 't1', status: 'in_review', activeSessionId: 'session-1' })]
 		const result = classifyBetStatus(BET, tasks, NOW)
 		expect(result.state).toBe('progressing')
 		expect(result.pendingAction?.tasks).toHaveLength(1)
+	})
+
+	it('does not treat in_progress as progressing when there is no live agent session', () => {
+		const tasks = [task({ id: 't1', status: 'in_progress', activeSessionId: null })]
+		const result = classifyBetStatus(BET, tasks, NOW)
+		expect(result.state).toBe('idle')
+		expect(result.pendingAction).toBeNull()
+	})
+
+	it('falls through to stalled when an in_progress task lost its session and gone stale', () => {
+		const oldTimestamp = new Date(NOW.getTime() - STALLED_THRESHOLD_MS - 1000).toISOString()
+		const tasks = [
+			task({
+				id: 't1',
+				status: 'in_progress',
+				activeSessionId: null,
+				updatedAt: oldTimestamp,
+			}),
+		]
+		const result = classifyBetStatus(BET, tasks, NOW)
+		expect(result.state).toBe('stalled')
 	})
 
 	it('returns waiting_on_human when an open task has metadata.human_decision', () => {
@@ -74,8 +102,8 @@ describe('classifyBetStatus', () => {
 
 	it('waiting_on_human wins over progressing when both signals are present', () => {
 		const tasks = [
-			task({ id: 't1', status: 'in_progress' }),
-			task({ id: 't2', status: 'in_review' }),
+			task({ id: 't1', status: 'in_progress', activeSessionId: 'session-1' }),
+			task({ id: 't2', status: 'in_review', activeSessionId: 'session-2' }),
 			task({ id: 't3', status: 'todo', metadata: { human_decision: true } }),
 		]
 		const result = classifyBetStatus(BET, tasks, NOW)
@@ -118,9 +146,16 @@ describe('classifyBetStatus', () => {
 		expect(result.state).toBe('idle')
 	})
 
-	it('progressing wins over stalled when a WIP task is old', () => {
+	it('progressing wins over stalled when a WIP task with a live session is old', () => {
 		const oldTimestamp = new Date(NOW.getTime() - STALLED_THRESHOLD_MS - 1000).toISOString()
-		const tasks = [task({ id: 't1', status: 'in_progress', updatedAt: oldTimestamp })]
+		const tasks = [
+			task({
+				id: 't1',
+				status: 'in_progress',
+				activeSessionId: 'session-1',
+				updatedAt: oldTimestamp,
+			}),
+		]
 		const result = classifyBetStatus(BET, tasks, NOW)
 		expect(result.state).toBe('progressing')
 	})
@@ -152,7 +187,7 @@ describe('classifyBetStatus', () => {
 
 	it('decisionsSoFar is returned alongside every state, not only waiting', () => {
 		const tasks = [
-			task({ id: 't1', status: 'in_progress' }),
+			task({ id: 't1', status: 'in_progress', activeSessionId: 'session-1' }),
 			task({
 				id: 't2',
 				status: 'done',

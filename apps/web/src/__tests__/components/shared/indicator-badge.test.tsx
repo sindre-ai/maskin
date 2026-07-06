@@ -82,6 +82,32 @@ describe('IndicatorBadgeChip', () => {
 		)
 	})
 
+	it('opens popover on click and shows "In flight" pending action for progressing', async () => {
+		const user = userEvent.setup()
+		const result: BetStatusResult = {
+			state: 'progressing',
+			pendingAction: {
+				kind: 'progressing',
+				tasks: [
+					{ id: 'task-1', title: 'Ship the release', driver: 'agent-1', status: 'in_progress' },
+				],
+			},
+			decisionsSoFar: [],
+		}
+		render(
+			<TestWrapper>
+				<IndicatorBadgeChip result={result} workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+		await user.click(screen.getByRole('button', { name: 'Status: progressing' }))
+		expect(await screen.findByText('In flight')).toBeInTheDocument()
+		expect(screen.getByText('Ship the release')).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /Open task/ })).toHaveAttribute(
+			'href',
+			'/$workspaceId/objects/$objectId',
+		)
+	})
+
 	it('shows the idle empty-state copy when state is idle with no history', async () => {
 		const user = userEvent.setup()
 		render(

@@ -17,6 +17,7 @@ function task(overrides: Partial<ChildTaskLike> & { id: string }): ChildTaskLike
 		driver: null,
 		metadata: null,
 		updatedAt: NOW.toISOString(),
+		activeSessionId: null,
 		...overrides,
 	}
 }
@@ -40,6 +41,7 @@ describe('classifier + paged fetch', () => {
 			task({
 				id: `task-${i}`,
 				status: i === IN_PROGRESS_TASK_INDEX ? 'in_progress' : 'todo',
+				activeSessionId: i === IN_PROGRESS_TASK_INDEX ? 'session-1' : null,
 			}),
 		)
 
