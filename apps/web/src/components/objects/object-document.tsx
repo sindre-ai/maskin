@@ -68,6 +68,11 @@ interface ObjectDocumentViewProps {
 	isDeleting?: boolean
 	showSaved?: boolean
 	betStatus?: ReturnType<typeof classifyBetStatus>
+	// False only when `object.content` genuinely wasn't fetched (e.g. an MCP
+	// `get_objects` response without `include: ['content']`) — as opposed to
+	// the object legitimately having no content. Callers that always fetch the
+	// full object (the webapp page) never need to set this.
+	contentLoaded?: boolean
 }
 
 export function ObjectDocumentView({
@@ -87,6 +92,7 @@ export function ObjectDocumentView({
 	isDeleting = false,
 	showSaved = false,
 	betStatus,
+	contentLoaded = true,
 }: ObjectDocumentViewProps) {
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
 	// Reset the local title draft when navigating to a different object — this
@@ -198,7 +204,13 @@ export function ObjectDocumentView({
 
 			{/* Content */}
 			<div className="mb-8">
-				<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
+				{contentLoaded ? (
+					<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
+				) : (
+					<p className="text-sm text-muted-foreground italic">
+						Content not included in this response.
+					</p>
+				)}
 			</div>
 
 			{/* Linked objects */}

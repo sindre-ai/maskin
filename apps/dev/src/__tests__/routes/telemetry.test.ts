@@ -112,6 +112,50 @@ describe('Telemetry Routes', () => {
 			expect(res.status).toBe(400)
 		})
 
+		it('records a tool_response_emitted event for a workspace member', async () => {
+			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+			mockResults.select = [memberRow]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/telemetry/mcp',
+					{
+						event_type: 'tool_response_emitted',
+						tool_name: 'get_objects',
+						session_id: 'mcp-test-3',
+						response_bytes: 12345,
+						has_include: false,
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(202)
+			expect(await res.json()).toEqual({ recorded: true })
+		})
+
+		it('returns 400 when tool_response_emitted has negative response_bytes', async () => {
+			const { app } = createTestApp(telemetryRoutes, '/api/telemetry')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/telemetry/mcp',
+					{
+						event_type: 'tool_response_emitted',
+						tool_name: 'get_objects',
+						response_bytes: -1,
+						has_include: false,
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
 		it('records a widget_event render_success for a workspace member', async () => {
 			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
 			mockResults.select = [memberRow]

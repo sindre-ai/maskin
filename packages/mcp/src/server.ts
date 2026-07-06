@@ -25,6 +25,7 @@ import {
 	createDefaultSink,
 	recordMutation,
 	recordToolCall,
+	recordToolResponseEmitted,
 	recordWidgetEvent,
 } from './telemetry.js'
 import { tools } from './tools.js'
@@ -706,6 +707,14 @@ function extractWorkspaceId(args: unknown): string | undefined {
 	return typeof ws === 'string' ? ws : undefined
 }
 
+/** True when the caller passed a non-empty `include` array. Generic across
+ *  tools so any future opt-in expansion parameter with the same name lights up. */
+function hasIncludeArg(args: unknown): boolean {
+	if (!args || typeof args !== 'object') return false
+	const inc = (args as { include?: unknown }).include
+	return Array.isArray(inc) && inc.length > 0
+}
+
 /**
  * Inspects a mutation tool response to decide whether it actually mutated
  * something. Tools like `update_objects` aggregate per-target outcomes, so we
@@ -1305,6 +1314,29 @@ export function createMcpServer(config: McpConfig) {
 				workspace_id: extractWorkspaceId(args),
 			})
 
+			// Response-size event powers the response-shape bet's ship metric
+			// (median response_bytes over successful tool calls). We measure the
+			// full response envelope — content + structuredContent + _meta —
+			// because that is what the client actually consumes. Errored calls
+			// are covered by tool_call only; a 0-byte error frame would drag the
+			// ship-metric median down and mask a real regression.
+			let responseBytes = 0
+			try {
+				responseBytes = Buffer.byteLength(JSON.stringify(response ?? {}), 'utf8')
+			} catch {
+				// Circular / unserialisable response — skip the size event rather
+				// than fabricate a number. The tool_call event still fires.
+				responseBytes = -1
+			}
+			if (responseBytes >= 0) {
+				recordToolResponseEmitted(telemetrySink, telemetryTarget, {
+					tool_name: name,
+					response_bytes: responseBytes,
+					has_include: hasIncludeArg(args),
+					workspace_id: extractWorkspaceId(args),
+				})
+			}
+
 			if (mutationKind && isSuccessfulMutationResponse(response)) {
 				recordMutation(telemetrySink, telemetryTarget, {
 					tool_name: name,
@@ -1455,7 +1487,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id } = args
+			const { workspace_id, include } = args
+			const includeSet = new Set(include ?? [])
 			const results = await Promise.all(
 				args.ids.map(async (id) => {
 					try {
@@ -1484,6 +1517,7 @@ export function createMcpServer(config: McpConfig) {
 			const heroObjects = rawObjects.map((o) =>
 				buildHeroCardObject(o, o.driver ? (actors.get(o.driver) ?? null) : null),
 			)
+			const contextLineById = new Map(heroObjects.map((h) => [h.id, h.contextLine]))
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
 					? { kind: 'empty', tool: 'get_objects' }
@@ -1502,33 +1536,74 @@ export function createMcpServer(config: McpConfig) {
 							}
 
 			const wsId = workspace_id ?? config.defaultWorkspaceId
-			const enrichedResults = wsId
-				? results.map((r) => {
-						if (!r.success) return r
-						const obj = (r.result as { object?: Record<string, unknown> })?.object
-						if (!obj) return r
-						return {
-							...r,
-							result: {
-								...(r.result as Record<string, unknown>),
-								object: addUrl(obj, config, wsId, { kind: 'object', id: obj.id as string }),
-							},
-						}
-					})
-				: results
+			// Default projection: strip every graph field except the core seven
+			// (`id, type, title, status, contextLine, url, workspaceId`) so the LLM's
+			// context isn't paid to carry relationships/connected_objects/events/files/
+			// content/metadata the caller didn't ask for. `workspaceId` stays in the
+			// core set (unlike the other fields) because it's a small id, not bulky
+			// content, and callers/widgets need it to route follow-up requests.
+			// `include:` opt-in expansions are wired in T4.
+			const projectedResults = results.map((r) => {
+				if (!r.success) return r
+				const graph = r.result as Record<string, unknown> | null | undefined
+				const rawObj = graph?.object as Record<string, unknown> | undefined
+				if (!rawObj) return r
+				const withUrl = wsId
+					? addUrl(rawObj, config, wsId, { kind: 'object', id: rawObj.id as string })
+					: rawObj
+				const projectedObject: Record<string, unknown> = {
+					id: withUrl.id,
+					type: withUrl.type,
+					title: withUrl.title ?? null,
+					status: withUrl.status ?? null,
+					contextLine: contextLineById.get(withUrl.id as string) ?? '',
+					workspaceId: withUrl.workspaceId,
+				}
+				if (typeof withUrl.url === 'string') projectedObject.url = withUrl.url
+				if (includeSet.has('content') && 'content' in withUrl) {
+					projectedObject.content = withUrl.content
+				}
+				if (includeSet.has('metadata') && 'metadata' in withUrl) {
+					projectedObject.metadata = withUrl.metadata
+				}
+				const extras: Record<string, unknown> = {}
+				if (includeSet.has('relationships') && graph && 'relationships' in graph) {
+					extras.relationships = graph.relationships
+				}
+				if (includeSet.has('connected_objects') && graph && 'connected_objects' in graph) {
+					extras.connected_objects = graph.connected_objects
+				}
+				if (includeSet.has('events') && graph && 'events' in graph) {
+					extras.events = graph.events
+				}
+				if (includeSet.has('files') && graph && 'files' in graph) {
+					extras.files = graph.files
+				}
+				return { ...r, result: { object: projectedObject, ...extras } }
+			})
+
+			// Object body lives at `structuredContent.objects[]` only (ADR-0001).
+			// `results[]` is a per-id success/error envelope so the same body isn't
+			// duplicated across `results[].result.object` and `objects[].object`.
+			const slimResults = projectedResults.map((r) =>
+				r.success
+					? { id: r.id, success: true as const }
+					: { id: r.id, success: false as const, error: r.error },
+			)
+			const canonicalObjects = projectedResults
+				.filter(
+					(r): r is { id: string; success: true; result: { object: Record<string, unknown> } } =>
+						r.success === true && (r.result as { object?: unknown } | null)?.object != null,
+				)
+				.map((r) => r.result)
 
 			return {
 				_meta: uiMeta('get_objects', config, workspace_id, pickResourceUri(heroCard)),
-				content: [{ type: 'text' as const, text: JSON.stringify(enrichedResults, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(projectedResults, null, 2) }],
 				structuredContent: {
 					heroCard,
-					results: enrichedResults,
-					objects: (enrichedResults as typeof results)
-						.filter(
-							(r): r is { id: string; success: true; result: { object: RawObject } } =>
-								r.success === true && (r.result as { object?: unknown } | null)?.object != null,
-						)
-						.map((r) => r.result),
+					results: slimResults,
+					objects: canonicalObjects,
 				},
 			}
 		},
