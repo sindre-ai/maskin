@@ -22,11 +22,11 @@ export function useObjects(workspaceId: string, filters?: Record<string, string>
 	})
 }
 
-export function useObject(id: string) {
+export function useObject(id: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.objects.detail(id),
 		queryFn: () => api.objects.get(id),
-		enabled: !!id,
+		enabled: !!id && (options?.enabled ?? true),
 	})
 }
 

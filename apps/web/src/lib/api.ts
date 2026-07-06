@@ -1,12 +1,13 @@
 import type {
 	ActorListItem,
 	ActorResponse,
+	AgentState,
 	DisplaySettingsBody,
 	SafeMetadata,
 	TriggerResponse,
 } from '@maskin/shared'
 
-export type { ActorListItem, ActorResponse, DisplaySettingsBody, TriggerResponse }
+export type { ActorListItem, ActorResponse, AgentState, DisplaySettingsBody, TriggerResponse }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
