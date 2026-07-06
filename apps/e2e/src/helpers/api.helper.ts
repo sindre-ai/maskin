@@ -110,7 +110,13 @@ export class TestAPI {
 
 	async createObject(
 		workspaceId: string,
-		data: { type: string; title: string; status?: string; content?: string },
+		data: {
+			type: string
+			title: string
+			status?: string
+			content?: string
+			metadata?: Record<string, unknown>
+		},
 	): Promise<ObjectResponse> {
 		const res = await fetch(`${this.baseURL}/api/objects`, {
 			method: 'POST',

@@ -133,6 +133,24 @@ describe('objectQuerySchema', () => {
 		const result = objectQuerySchema.parse({ driver: uuid })
 		expect(result.driver).toBe(uuid)
 	})
+
+	it('accepts ISO-8601 updated_before and updated_after', () => {
+		const result = objectQuerySchema.parse({
+			updated_before: '2026-06-30T00:00:00.000Z',
+			updated_after: '2026-06-01T00:00:00.000Z',
+		})
+		expect(result.updated_before).toBe('2026-06-30T00:00:00.000Z')
+		expect(result.updated_after).toBe('2026-06-01T00:00:00.000Z')
+	})
+
+	it('rejects malformed updated_before (AC-T6)', () => {
+		expect(() => objectQuerySchema.parse({ updated_before: 'not-a-date' })).toThrow()
+		expect(() => objectQuerySchema.parse({ updated_before: '2026-06-30' })).toThrow()
+	})
+
+	it('rejects malformed updated_after (AC-T6)', () => {
+		expect(() => objectQuerySchema.parse({ updated_after: 'yesterday' })).toThrow()
+	})
 })
 
 describe('searchObjectsSchema', () => {

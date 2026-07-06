@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint-typecheck-build:
+  lint-typecheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -26,12 +26,16 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      - name: Cache turbo build outputs
+        uses: ./.github/actions/cache-turbo
+        with:
+          job-name: lint-typecheck
+
       - run: pnpm lint
       - run: pnpm type-check
-      - run: pnpm build
 
   unit-tests:
-    needs: lint-typecheck-build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -46,10 +50,15 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      - name: Cache turbo build outputs
+        uses: ./.github/actions/cache-turbo
+        with:
+          job-name: unit-tests
+
       - run: pnpm test -- -- --run
 
   integration-tests:
-    needs: lint-typecheck-build
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -78,6 +87,12 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      - name: Cache turbo build outputs
+        uses: ./.github/actions/cache-turbo
+        with:
+          job-name: integration-tests
+
       - run: pnpm build
       - run: pnpm test:integration -- --run
         env:
@@ -85,8 +100,11 @@ jobs:
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
   verify-e2e:
-    needs: lint-typecheck-build
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
     services:
       postgres:
         image: postgres:16-alpine
@@ -114,6 +132,12 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      - name: Cache turbo build outputs
+        uses: ./.github/actions/cache-turbo
+        with:
+          job-name: verify-e2e
+
       - run: pnpm build
 
       - name: Run database migrations
@@ -121,11 +145,23 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
 
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm --filter @maskin/e2e exec playwright install --with-deps chromium
 
-      - name: Run E2E tests
-        run: pnpm --filter @maskin/e2e test:e2e
+      - name: Install Playwright OS dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
+
+      - name: Run E2E tests (shard ${{ matrix.shard }}/5)
+        run: pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/5
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
@@ -135,6 +171,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: apps/e2e/playwright-report/
           retention-days: 7
