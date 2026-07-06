@@ -253,6 +253,18 @@ export const tools = {
 				.describe('Search query — matches against title and content (case-insensitive)'),
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
 			status: z.string().optional(),
+			driver_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Filter to objects with this driver actor UUID'),
+			updated_after: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded).',
+				),
 			limit: z.number().int().min(1).max(100).default(20),
 			offset: z.number().int().min(0).default(0),
 		}),
