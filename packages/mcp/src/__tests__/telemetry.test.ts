@@ -170,6 +170,54 @@ describe('MCP telemetry wrapper', () => {
 		}
 	})
 
+	it('emits a tool_response_emitted event with non-zero response_bytes on every tool response', async () => {
+		const handler = getHandler('list_workspaces')
+		await handler({})
+
+		const sizes = recorded.filter((r) => r.event_type === 'tool_response_emitted')
+		expect(sizes).toHaveLength(1)
+		expect(sizes[0].tool_name).toBe('list_workspaces')
+		expect(sizes[0].response_bytes).toBeGreaterThan(0)
+		expect(sizes[0].has_include).toBe(false)
+		expect(typeof sizes[0].session_id).toBe('string')
+	})
+
+	it('sets has_include=true when get_objects is called with a non-empty include array', async () => {
+		// get_objects calls fetch per id; return an empty array for the objects
+		// lookup so the handler resolves.
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+			return new Response(JSON.stringify({ id: 'x', title: 't', type: 'bet' }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			})
+		})
+
+		const handler = getHandler('get_objects')
+		await handler({
+			workspace_id: wsId,
+			ids: ['11111111-1111-1111-1111-111111111111'],
+			include: ['content'],
+		})
+
+		const sizes = recorded.filter((r) => r.event_type === 'tool_response_emitted')
+		expect(sizes).toHaveLength(1)
+		expect(sizes[0].tool_name).toBe('get_objects')
+		expect(sizes[0].has_include).toBe(true)
+		expect(sizes[0].response_bytes).toBeGreaterThan(0)
+	})
+
+	it('does not emit a tool_response_emitted event when the underlying handler throws', async () => {
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+			return new Response('boom', { status: 500 })
+		})
+
+		const handler = getHandler('list_workspaces')
+		await expect(handler({})).rejects.toThrow()
+
+		const sizes = recorded.filter((r) => r.event_type === 'tool_response_emitted')
+		expect(sizes).toHaveLength(0)
+	})
+
 	it('does not emit a mutation event when the response shape is unrecognised', async () => {
 		// Default fetch stub returns `[]` so update_objects with no updates
 		// returns an empty result array. With no entry reporting success: true
