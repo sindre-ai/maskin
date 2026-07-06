@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import type { StorageProvider } from '@maskin/storage'
@@ -126,6 +126,14 @@ const COMPLETE_STOP_DELAY_MS = 2_000
 // silently overwritten. A stop racing a natural completion within
 // milliseconds is a genuine ambiguity, not a bug this fix is meant to close.
 export const FORCED_STOP_EXIT_CODE = 137
+
+// Filename of the marker written into a session's own dir the moment
+// POST /sessions/:id/complete records its exit code (see that handler below).
+// Unlike sessionExitCodes and the deferred stopSandbox timer in that handler,
+// this file lives on disk and survives a process restart, so reconcileOnBoot
+// can recover a session's real exit code and re-issue its stop on the next
+// boot if this process is killed before that timer ever fires.
+const EXIT_CODE_MARKER_FILENAME = '.exit-code'
 
 // Upper bound on how long a `sessionExitCodes` entry seeded by /stop may
 // outlive its write. monitorSession (the only reader/deleter, see its
@@ -436,6 +444,17 @@ export function buildApp(deps: AppDeps): Hono {
 		}
 		sessionExitCodes.set(id, exitCode)
 
+		// Persist the exit code to the session's own dir — see
+		// EXIT_CODE_MARKER_FILENAME's comment for why this needs to survive a
+		// restart independently of sessionExitCodes and the deferred stop below.
+		await writeFile(
+			join(deps.env.AGENT_SESSION_ROOT, id, EXIT_CODE_MARKER_FILENAME),
+			String(exitCode),
+			'utf8',
+		).catch((err) => {
+			logger.warn('failed to persist exit code marker', { sessionId: id, error: String(err) })
+		})
+
 		logger.info('completion signal received', { sessionId: id, exitCode })
 		// Graceful stop (not force-remove) so the bind-mounted /agent workspace
 		// flushes before the S3 push. Deferred (not immediate): `msb stop` tears
@@ -717,8 +736,26 @@ export function buildApp(deps: AppDeps): Hono {
 // Browser sidecar VMs (see provisionBrowserSidecar) never have their own DB
 // session row, so a bare `msb list` snapshot sent to /reconcile would always
 // report them as unclaimed — including one still attached to a live session —
-// and get force-removed. Filter them out before reporting.
+// and get force-removed. They're matched to their owning session's sandbox
+// name by this naming convention instead (see the reattach loop below) and
+// never sent to apps/dev at all.
 const BROWSER_SIDECAR_PREFIX = 'anko-browser-'
+
+/**
+ * Reads the exit-code marker written by POST /sessions/:id/complete (see
+ * EXIT_CODE_MARKER_FILENAME). Returns null if the session hasn't completed
+ * yet (still genuinely running) or the marker is missing/unreadable for any
+ * other reason — the caller treats that as "no recovery needed".
+ */
+async function readExitCodeMarker(sessionDir: string): Promise<number | null> {
+	try {
+		const raw = await readFile(join(sessionDir, EXIT_CODE_MARKER_FILENAME), 'utf8')
+		const parsed = Number.parseInt(raw, 10)
+		return Number.isFinite(parsed) ? parsed : null
+	} catch {
+		return null
+	}
+}
 
 export type ReconcileOnBootDeps = {
 	env: AgentServerEnv
@@ -742,6 +779,12 @@ export type ReconcileOnBootDeps = {
  * waiting for it, and the DB row would stall until the watchdog times it out
  * even though the work already finished.
  *
+ * Also reattaches (or removes, if orphaned) each reattached session's browser
+ * CDP sidecar VM by naming convention, and recovers a session's real exit
+ * code plus re-issues its stop from the on-disk marker POST
+ * /sessions/:id/complete writes, in case this process was killed/restarted
+ * before that handler's own deferred stopSandbox call ever fired.
+ *
  * No-ops (with a log line) if AGENT_SERVER_ID or MASKIN_BASE_URL aren't
  * configured — a box that hasn't set AGENT_SERVER_ID yet still boots
  * normally, just without this pass.
@@ -763,7 +806,12 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 		logger.error('reconcile-on-boot: msb list failed, skipping this pass', { error: String(err) })
 		return
 	}
-	const claimableSandboxes = names.filter((name) => !name.startsWith(BROWSER_SIDECAR_PREFIX))
+	// Owned by naming convention (see provisionBrowserSidecar) — matched against
+	// reattached sessions below and never reported to apps/dev.
+	const browserSidecarNames = new Set(
+		names.filter((name) => name.startsWith(BROWSER_SIDECAR_PREFIX)),
+	)
+	const claimableSandboxes = names.filter((name) => !browserSidecarNames.has(name))
 
 	let result: { marked_failed: string[]; orphan_sandboxes: string[] }
 	try {
@@ -819,14 +867,39 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 	// its monitor so it gets a normal S3 push + completion report when it
 	// eventually finishes. Sandbox name === sessionId for main sessions (see
 	// buildMsbCreateArgs), so sessionDir is derivable without any extra state.
-	// A reattached session's browserSidecar reference is lost (passed as
-	// null) — an orphaned sidecar it owned will surface as an orphan_sandbox
-	// on a later boot's reconcile pass instead of being cleaned up the moment
-	// this session ends. Accepted, self-healing gap; not worth reconstructing
-	// sidecar state across a restart here.
 	for (const name of claimableSandboxes) {
 		if (orphanSet.has(name)) continue
 		const sessionDir = join(deps.env.AGENT_SESSION_ROOT, name)
+
+		// If /complete already ran for this session before the restart, its
+		// exit code marker survived on disk even though the in-memory
+		// sessionExitCodes entry and the deferred stopSandbox timer (see POST
+		// /sessions/:id/complete) did not. Recover both here so the session
+		// doesn't wedge in "running" until SESSION_MAX_DURATION and doesn't
+		// silently report exit code 0 for a run that actually failed.
+		const recoveredExitCode = await readExitCodeMarker(sessionDir)
+		if (recoveredExitCode !== null) {
+			deps.sessionExitCodes.set(name, recoveredExitCode)
+			await stopSandbox(name, deps.msb).catch((err) => {
+				logger.warn('reconcile-on-boot: failed to re-issue stop for completed session', {
+					sessionId: name,
+					error: String(err),
+				})
+			})
+		}
+
+		// Reattach the sidecar this session provisioned, if any, so its normal
+		// end-of-session cleanupBrowserSidecar call still fires instead of
+		// leaking the Chromium VM (see BROWSER_SIDECAR_PREFIX above). cdpUrl is
+		// irrelevant here — it was only ever needed to inject BROWSER_CDP_URL
+		// into the session VM at spawn time, and cleanupBrowserSidecar only
+		// reads `.name`.
+		const sidecarName = `${BROWSER_SIDECAR_PREFIX}${name.slice(0, 16)}`
+		const browserSidecar: BrowserSidecar | null = browserSidecarNames.has(sidecarName)
+			? { name: sidecarName, cdpUrl: '' }
+			: null
+		if (browserSidecar) browserSidecarNames.delete(sidecarName)
+
 		void monitorSession(
 			name,
 			sessionDir,
@@ -836,13 +909,30 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 			env.AGENT_SERVER_SECRET,
 			deps.sessionLogRouters,
 			deps.sessionExitCodes,
-			null,
+			browserSidecar,
 		).catch((err) => {
 			logger.error('reconcile-on-boot: reattached monitorSession crashed', {
 				sessionId: name,
 				error: String(err),
 			})
 		})
+	}
+
+	// Any browser sidecar left unmatched belongs to a session that's either an
+	// orphan itself or no longer exists at all (e.g. it crashed between
+	// provisioning the sidecar and finishing) — remove it directly since it
+	// never has its own DB row for apps/dev to reconcile.
+	if (browserSidecarNames.size > 0) {
+		await Promise.all(
+			Array.from(browserSidecarNames, (name) =>
+				removeSandbox(name, deps.msb).catch((err) => {
+					logger.warn('reconcile-on-boot: failed to remove orphan browser sidecar', {
+						name,
+						error: String(err),
+					})
+				}),
+			),
+		)
 	}
 }
 
