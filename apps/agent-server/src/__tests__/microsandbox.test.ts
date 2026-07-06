@@ -8,6 +8,7 @@ import {
 	cleanupBrowserSidecar,
 	ensureSessionSkeleton,
 	formatOverflowEnvFile,
+	listSandboxNames,
 	provisionBrowserSidecar,
 	removeSandbox,
 	sanitizeEnvForMicroVM,
@@ -569,6 +570,39 @@ describe('waitForCompletion', () => {
 			60_000,
 		)
 		expect(calls).toBe(3)
+	})
+})
+
+describe('listSandboxNames', () => {
+	const msbBin = '/usr/local/bin/msb'
+
+	it('returns every sandbox name regardless of status', async () => {
+		const run = async (): Promise<{ stdout: string; stderr: string }> => ({
+			stdout: JSON.stringify([
+				{ name: 'sess-1', status: 'Running' },
+				{ name: 'sess-2', status: 'Stopped' },
+				{ name: 'anko-browser-abc123', status: 'Running' },
+			]),
+			stderr: '',
+		})
+		const names = await listSandboxNames({ msbBin, run })
+		expect(names).toEqual(['sess-1', 'sess-2', 'anko-browser-abc123'])
+	})
+
+	it('returns an empty array when msb reports no sandboxes', async () => {
+		const run = async (): Promise<{ stdout: string; stderr: string }> => ({
+			stdout: JSON.stringify([]),
+			stderr: '',
+		})
+		const names = await listSandboxNames({ msbBin, run })
+		expect(names).toEqual([])
+	})
+
+	it('propagates an error from a failing msb list call', async () => {
+		const run = async (): Promise<{ stdout: string; stderr: string }> => {
+			throw new Error('msb list failed')
+		}
+		await expect(listSandboxNames({ msbBin, run })).rejects.toThrow('msb list failed')
 	})
 })
 
