@@ -2,13 +2,14 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, objects, subscriptions } from '@maskin/db/schema'
 import {
+	TERMINAL_BET_STATUSES,
 	markReadBodySchema,
 	subscribeBodySchema,
 	subscribersQuerySchema,
 	unreadQuerySchema,
 	unsubscribeBodySchema,
 } from '@maskin/shared'
-import { and, count, desc, eq, gt, inArray, max, ne, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gt, inArray, max, ne, or, sql } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -78,10 +79,16 @@ const subscribersResponseSchema = z.object({
 const unreadItemSchema = z.object({
 	entity_type: z.string(),
 	entity_id: z.string().uuid(),
+	// Total unread activity count. Includes both comments (action='commented') and
+	// terminal bet status transitions (action='status_changed', status in
+	// succeeded/failed). A bet with only a terminal transition and no comments will
+	// have unread_count=1 and mentioning_unread_count=0.
 	unread_count: z.number(),
-	// True when at least one unread comment on the entity @-mentions the
-	// current actor — drives the "Mentioned" badge on the For You card.
-	mentions_you: z.boolean(),
+	// Count of unread events that actually @-mention the current actor. Per-event
+	// grain — not a bool_or rollup — so a single buried mention among nine
+	// agent→agent comments yields 1. The For You card surfaces the "Mentioned"
+	// pill when > 0.
+	mentioning_unread_count: z.number(),
 	latest_event_id: z.number().nullable(),
 	latest_activity_at: z.string().nullable(),
 	object: objectResponseSchema.optional(),
@@ -292,19 +299,20 @@ app.openapi(listUnreadRoute, (async (c) => {
 	]
 	if (entity_type) subConditions.push(eq(subscriptions.entityType, entity_type))
 
-	// Aggregate flag: does any unread comment on the entity contain the
-	// current actor in its data->'mentions' array? Uses @> with a jsonb
-	// array of the actor id (the stable form), and coalesces to false for
-	// rows where the left-join produced no events (defensive — the HAVING
-	// clause filters those out, but bool_or on an empty set is NULL).
-	const mentionsYouExpr = sql<boolean>`coalesce(bool_or(${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), false)`
+	// Per-event mention count: how many of the unread events on this entity
+	// actually @-mention the current actor. Replaces the object-level bool_or
+	// that previously flagged the whole object as "mentions you" the moment a
+	// single buried mention existed, dragging agent-to-agent comments into
+	// human For You with it. Counted at the event grain, so the share of
+	// objects flagged tracks the share of comments that actually mention.
+	const mentioningUnreadCountExpr = sql<number>`coalesce(count(*) filter (where ${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), 0)::int`
 
 	const rows = await db
 		.select({
 			entityType: subscriptions.entityType,
 			entityId: subscriptions.entityId,
 			unreadCount: count(events.id),
-			mentionsYou: mentionsYouExpr,
+			mentioningUnreadCount: mentioningUnreadCountExpr,
 			latestEventId: max(events.id),
 			latestActivityAt: max(events.createdAt),
 		})
@@ -313,11 +321,30 @@ app.openapi(listUnreadRoute, (async (c) => {
 			events,
 			and(
 				eq(events.workspaceId, subscriptions.workspaceId),
-				eq(events.entityType, subscriptions.entityType),
 				eq(events.entityId, subscriptions.entityId),
-				eq(events.action, 'commented'),
 				ne(events.actorId, actorId),
 				gt(events.id, lastReadExpr),
+				// Two surfaces land in the unread feed:
+				// (1) comments on the subscribed entity (events.entity_type matches the
+				//     subscription's polymorphic type, e.g. 'object'), and
+				// (2) the bet's own terminal-status transition (events.entity_type is
+				//     the object's concrete type, e.g. 'bet', while the subscription's
+				//     entityType is 'object'). The entityType guard on this arm is
+				//     explicit to prevent other subscribable entity types from
+				//     accidentally matching bet terminal events via entityId alone.
+				// TERMINAL_BET_STATUSES (succeeded/failed/paused) is the single
+				// source of truth shared with the notification fan-out gate in
+				// objects.ts — without (2) a watcher misses the terminal signal, see
+				// T2 on bet/notif-cascade-fix.
+				or(
+					and(eq(events.entityType, subscriptions.entityType), eq(events.action, 'commented')),
+					and(
+						eq(subscriptions.entityType, 'object'),
+						eq(events.entityType, 'bet'),
+						eq(events.action, 'status_changed'),
+						inArray(sql`${events.data}->'updated'->>'status'`, [...TERMINAL_BET_STATUSES]),
+					),
+				),
 			),
 		)
 		.where(and(...subConditions))
@@ -345,7 +372,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 			entity_type: r.entityType,
 			entity_id: r.entityId,
 			unread_count: r.unreadCount,
-			mentions_you: Boolean(r.mentionsYou),
+			mentioning_unread_count: Number(r.mentioningUnreadCount),
 			latest_event_id: r.latestEventId,
 			latest_activity_at:
 				r.latestActivityAt instanceof Date ? r.latestActivityAt.toISOString() : r.latestActivityAt,

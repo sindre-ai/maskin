@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import postgres from 'postgres'
-import { listMigrationFiles } from './migrate-utils'
+import { listMigrationFiles, splitStatements } from './migrate-utils'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const migrationsDir = join(__dirname, '..', 'drizzle')
@@ -35,17 +35,21 @@ for (const file of files) {
 	const content = readFileSync(join(migrationsDir, file), 'utf-8')
 	console.log(`Running migration: ${file}`)
 
-	try {
-		await sql.unsafe(content)
-	} catch (err: unknown) {
-		const code = (err as { code?: string }).code
-		// 42P07 = relation already exists, 42701 = column already exists,
-		// 42710 = object (e.g. constraint) already exists.
-		// This handles existing DBs that predate migration tracking.
-		if (code === '42P07' || code === '42701' || code === '42710') {
-			console.log(`  Already applied (marking as done): ${file}`)
-		} else {
-			throw err
+	// Run each statement as its own simple-query message rather than sending the
+	// whole file in one call — see migrate-utils.ts for why.
+	for (const statement of splitStatements(content)) {
+		try {
+			await sql.unsafe(statement)
+		} catch (err: unknown) {
+			const code = (err as { code?: string }).code
+			// 42P07 = relation already exists, 42701 = column already exists,
+			// 42710 = object (e.g. constraint) already exists.
+			// This handles existing DBs that predate migration tracking.
+			if (code === '42P07' || code === '42701' || code === '42710') {
+				console.log(`  Already applied (marking as done): ${file}`)
+			} else {
+				throw err
+			}
 		}
 	}
 
