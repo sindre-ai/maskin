@@ -1955,6 +1955,8 @@ export function createMcpServer(config: McpConfig) {
 			params.set('q', args.q)
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
+			if (args.driver_id) params.set('driver', args.driver_id)
+			if (args.updated_after) params.set('updated_after', args.updated_after)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
 			const result = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {

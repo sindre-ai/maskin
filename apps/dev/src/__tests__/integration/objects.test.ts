@@ -768,6 +768,135 @@ describe('Objects Integration', () => {
 		})
 	})
 
+	describe('GET /api/objects/search — driver + updated_after filters', () => {
+		it('filters by driver alongside q, returning only rows owned by that driver', async () => {
+			const app = createApp()
+			const alice = await insertActor(db)
+			const bob = await insertActor(db)
+
+			const aliceHit = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'checkout latency bet',
+				driver: alice.id,
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'checkout latency bet',
+				driver: bob.id,
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'signup drop-off bet',
+				driver: alice.id,
+			})
+
+			const res = await app.request(
+				jsonGet(`/api/objects/search?q=checkout&driver=${alice.id}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			expect(body.map((r) => r.id).sort()).toEqual([aliceHit.id].sort())
+		})
+
+		it('excludes rows at or before updated_after (half-open bound)', async () => {
+			const app = createApp()
+			const T = new Date('2026-06-20T12:00:00.000Z')
+			const before = new Date(T.getTime() - 60_000)
+			const after = new Date(T.getTime() + 60_000)
+
+			const oldHit = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'onboarding flow',
+				updatedAt: before,
+			})
+			const freshHit = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'onboarding flow',
+				updatedAt: after,
+			})
+
+			const cutoff = T.toISOString()
+			const res = await app.request(
+				jsonGet(`/api/objects/search?q=onboarding&updated_after=${encodeURIComponent(cutoff)}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			const ids = body.map((r) => r.id)
+			expect(ids).toContain(freshHit.id)
+			expect(ids).not.toContain(oldHit.id)
+		})
+
+		it('composes driver and updated_after additively with q and type', async () => {
+			const app = createApp()
+			const alice = await insertActor(db)
+			const bob = await insertActor(db)
+			const T = new Date('2026-06-20T12:00:00.000Z')
+			const before = new Date(T.getTime() - 60_000)
+			const after = new Date(T.getTime() + 60_000)
+
+			// The only row matching all four predicates.
+			const target = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'onboarding checklist',
+				driver: alice.id,
+				updatedAt: after,
+			})
+			// Wrong driver — should be excluded.
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'onboarding checklist',
+				driver: bob.id,
+				updatedAt: after,
+			})
+			// Right driver but stale — should be excluded.
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'onboarding checklist',
+				driver: alice.id,
+				updatedAt: before,
+			})
+			// Wrong type — should be excluded.
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'onboarding checklist',
+				driver: alice.id,
+				updatedAt: after,
+			})
+			// No text match — should be excluded.
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'billing dashboard',
+				driver: alice.id,
+				updatedAt: after,
+			})
+
+			const cutoff = T.toISOString()
+			const res = await app.request(
+				jsonGet(
+					`/api/objects/search?q=onboarding&type=task&driver=${alice.id}&updated_after=${encodeURIComponent(cutoff)}`,
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			expect(body.map((r) => r.id)).toEqual([target.id])
+		})
+
+		it('rejects malformed updated_after with 400', async () => {
+			const app = createApp()
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=anything&updated_after=not-a-date', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(400)
+		})
+	})
+
 	describe('GET /api/objects/:id/graph — endpoint resolution by id', () => {
 		it('surfaces an edge and resolves its connected object by id', async () => {
 			// The read layer resolves endpoints by object/file id, not by the
