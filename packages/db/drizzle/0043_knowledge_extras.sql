@@ -53,6 +53,16 @@ CREATE INDEX IF NOT EXISTS "knowledge_extras_ws_provenance_type_idx"
 -- values fall back to safe defaults (writer_type -> 'system', provenance_type
 -- -> 'imported', confidence -> NULL) so the CHECK constraints never trip on
 -- legacy data.
+--
+-- `objects.status` values are workspace-configurable (workspaces.settings.
+-- statuses.knowledge can rename the default ['draft','validated','deprecated']
+-- labels), so the validated/deprecated equivalents are read per-workspace from
+-- that array by position (index 1 = validated-equivalent, index 2 = deprecated-
+-- equivalent — the position the knowledge module seeds on enable, see
+-- extensions/knowledge/shared.ts KNOWLEDGE_STATUSES / buildEnableModuleSettings
+-- in packages/mcp/src/server.ts) rather than the hardcoded English labels. A
+-- missing settings array (legacy workspace, or module enabled outside that
+-- flow) falls back to the default labels.
 INSERT INTO "knowledge_extras" (
 	"object_id",
 	"workspace_id",
@@ -68,12 +78,19 @@ SELECT
 	o.id,
 	o.workspace_id,
 	COALESCE(o.created_at, now()),
-	CASE WHEN o.status = 'deprecated' THEN now() END,
+	CASE
+		WHEN o.status = COALESCE(w.settings->'statuses'->'knowledge'->>2, 'deprecated')
+		THEN now()
+	END,
 	CASE
 		WHEN (o.metadata->>'confidence') IN ('low','medium','high')
 		THEN o.metadata->>'confidence'
 	END,
-	CASE WHEN o.status = 'validated' THEN 'verified' ELSE 'unverified' END,
+	CASE
+		WHEN o.status = COALESCE(w.settings->'statuses'->'knowledge'->>1, 'validated')
+		THEN 'verified'
+		ELSE 'unverified'
+	END,
 	CASE WHEN a.type IN ('human','agent','system') THEN a.type ELSE 'system' END,
 	CASE
 		WHEN COALESCE(o.metadata->>'source_type','imported')
@@ -84,5 +101,6 @@ SELECT
 	NULL
 FROM "objects" o
 LEFT JOIN "actors" a ON a.id = o.created_by
+LEFT JOIN "workspaces" w ON w.id = o.workspace_id
 WHERE o.type = 'knowledge'
 ON CONFLICT ("object_id") DO NOTHING;

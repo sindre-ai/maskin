@@ -293,6 +293,37 @@ describe('knowledge_extras — migration + column filters + supersede semantics'
 		expect(byId.get(draft.id)?.writerType).toBe('human') // integration actor is human
 	})
 
+	it('backfill maps workspace-renamed knowledge statuses by position, not the hardcoded English labels', async () => {
+		// This workspace renamed the default ['draft','validated','deprecated']
+		// labels to ['draft','confirmed','retired'] but kept the same positions —
+		// the backfill must read the workspace's own settings.statuses.knowledge
+		// array rather than assuming the literal strings 'validated'/'deprecated'.
+		const renamedWs = await insertWorkspace(db, getTestActorId(), {
+			settings: {
+				enabled_modules: ['knowledge'],
+				statuses: { knowledge: ['draft', 'confirmed', 'retired'] },
+			},
+		})
+		const confirmed = await seedKnowledge(renamedWs.id, getTestActorId(), { status: 'confirmed' })
+		const retired = await seedKnowledge(renamedWs.id, getTestActorId(), { status: 'retired' })
+		const draft = await seedKnowledge(renamedWs.id, getTestActorId(), { status: 'draft' })
+
+		const migrationSql = readFileSync(migrationPath, 'utf-8')
+		const insertStart = migrationSql.indexOf('INSERT INTO "knowledge_extras"')
+		expect(insertStart).toBeGreaterThan(0)
+		await sql.unsafe(migrationSql.slice(insertStart))
+
+		const rows = await db
+			.select()
+			.from(knowledgeExtras)
+			.where(eq(knowledgeExtras.workspaceId, renamedWs.id))
+		const byId = new Map(rows.map((r) => [r.objectId, r]))
+		expect(byId.get(confirmed.id)?.verificationStatus).toBe('verified')
+		expect(byId.get(retired.id)?.tInvalid).not.toBeNull()
+		expect(byId.get(draft.id)?.verificationStatus).toBe('unverified')
+		expect(byId.get(draft.id)?.tInvalid).toBeNull()
+	})
+
 	// ── Bi-temporal write path (AC4) ───────────────────────────────────────────
 
 	it('creating a supersedes edge between two knowledge objects stamps t_invalid on the target', async () => {
