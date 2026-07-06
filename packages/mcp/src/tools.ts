@@ -83,7 +83,7 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. Call get_workspace_schema first to discover valid statuses, metadata fields, and relationship types. Status defaults — insight: new|processing|clustered|discarded, bet: signal|proposed|active|completed|succeeded|failed|paused, task: todo|in_progress|done|blocked. To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
+			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. Call get_workspace_schema first to discover valid statuses, metadata fields, and relationship types. Status defaults — insight: new|processing|clustered|scored|parked|discarded, bet: signal|qualified|define|active|live|succeeded|failed|paused, task: todo|in_progress|in_review|validated|done|discarded. To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			nodes: z
@@ -200,7 +200,7 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or driver. Returns paginated results ordered by creation date.',
+			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, or last-updated window. Returns paginated results ordered by creation date unless `sort` is set.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
@@ -210,6 +210,26 @@ export const tools = {
 				.uuid()
 				.optional()
 				.describe('Filter to objects with this driver actor UUID'),
+			updated_before: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Half-open: returns rows with `updated_at < updated_before` (the bound itself is excluded). Use to scan for stalled work, e.g. `updated_before = now - 6h`.',
+				),
+			updated_after: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded). Composes with `updated_before` for a non-overlapping window.',
+				),
+			sort: z
+				.enum(['updated_at_asc', 'updated_at_desc'])
+				.optional()
+				.describe(
+					'Sort by `updated_at`. Use `updated_at_asc` to walk oldest-stalled-first; `updated_at_desc` for most-recently-touched first. Omit to keep the default `createdAt desc` order.',
+				),
 			limit: z.number().int().min(1).max(100).default(50),
 			offset: z.number().int().min(0).default(0),
 		}),
@@ -715,7 +735,7 @@ export const tools = {
 		}),
 	},
 	list_sessions: {
-		description: 'List sessions with optional filters',
+		description: 'List sessions with optional filters (status, actor, last-updated window).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			status: z
@@ -731,6 +751,20 @@ export const tools = {
 				])
 				.optional(),
 			actor_id: z.string().uuid().optional(),
+			updated_before: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Half-open: returns rows with `updated_at < updated_before` (the bound itself is excluded). Use to scan for stalled sessions, e.g. `updated_before = now - 6h`.',
+				),
+			updated_after: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded). Composes with `updated_before` for a non-overlapping window.',
+				),
 			limit: z.number().int().min(1).max(100).default(20),
 			offset: z.number().int().min(0).default(0),
 		}),

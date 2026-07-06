@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildApp } from '../index'
+import { FORCED_STOP_EXIT_CODE, SESSION_EXIT_CODE_SENTINEL_TTL_MS, buildApp } from '../index'
 import type { AgentServerEnv } from '../lib/env'
 import { ImageWarmer } from '../services/image-warmer'
 
@@ -393,7 +393,7 @@ describe('POST /sessions browserRequired wiring', () => {
 		// Session VM env must include BROWSER_CDP_URL using the bridge gateway + forwarded port.
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
-		expect(envFlags).toContain('BROWSER_CDP_URL=ws://10.0.1.1:39222')
+		expect(envFlags).toContain('BROWSER_CDP_URL=http://10.0.1.1:39222')
 	})
 
 	it('provisions no sidecar, injects no BROWSER_CDP_URL, and omits allow@private when browserRequired is absent', async () => {
@@ -515,5 +515,188 @@ describe('POST /sessions/:id/complete', () => {
 		expect(res.status).toBe(400)
 		await new Promise((r) => setTimeout(r, 0))
 		expect(calls.find((c) => c.args[0] === 'stop')).toBeUndefined()
+	})
+})
+
+describe('POST /sessions/:id/stop', () => {
+	it('returns 401 without a bearer token', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
+
+		const res = await app.request('/sessions/sess-stop/stop', { method: 'POST' })
+
+		expect(res.status).toBe(401)
+	})
+
+	it('stops the sandbox immediately (not deferred) given a valid bearer token', async () => {
+		const { run, calls } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
+
+		const res = await app.request('/sessions/sess-stop/stop', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+		})
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ok: true })
+		expect(calls.find((c) => c.args[0] === 'stop')?.args).toEqual(['stop', 'sess-stop'])
+	})
+
+	it('is idempotent — swallows a stop failure (e.g. sandbox already gone) and still returns ok', async () => {
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const run = async (_bin: string, args: readonly string[]) => {
+			if (args[0] === 'stop') throw new Error('sandbox not found')
+			return { stdout: '', stderr: '' }
+		}
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
+
+		const res = await app.request('/sessions/sess-gone/stop', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+		})
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ok: true })
+	})
+
+	it('rejects an invalid session id with 400 and does not shell out', async () => {
+		const { run, calls } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
+
+		const res = await app.request('/sessions/-bad/stop', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+		})
+
+		expect(res.status).toBe(400)
+		expect(calls.find((c) => c.args[0] === 'stop')).toBeUndefined()
+	})
+})
+
+describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', () => {
+	it('seeds the forced-stop sentinel into sessionExitCodes before stopping the sandbox', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const sessionExitCodes = new Map<string, number>()
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionExitCodes,
+		})
+
+		const res = await app.request('/sessions/sess-stop/stop', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+		})
+
+		expect(res.status).toBe(200)
+		expect(sessionExitCodes.get('sess-stop')).toBe(FORCED_STOP_EXIT_CODE)
+	})
+
+	it('still seeds the sentinel even when the underlying stopSandbox call fails', async () => {
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const run = async (_bin: string, args: readonly string[]) => {
+			if (args[0] === 'stop') throw new Error('sandbox not found')
+			return { stdout: '', stderr: '' }
+		}
+		const sessionExitCodes = new Map<string, number>()
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionExitCodes,
+		})
+
+		const res = await app.request('/sessions/sess-gone/stop', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+		})
+
+		expect(res.status).toBe(200)
+		expect(sessionExitCodes.get('sess-gone')).toBe(FORCED_STOP_EXIT_CODE)
+	})
+
+	it('does not seed a sentinel for an invalid session id (rejected before the handler body runs)', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const sessionExitCodes = new Map<string, number>()
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionExitCodes,
+		})
+
+		const res = await app.request('/sessions/-bad/stop', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+		})
+
+		expect(res.status).toBe(400)
+		expect(sessionExitCodes.size).toBe(0)
+	})
+
+	it('self-cleans an orphaned sentinel after the TTL elapses (no live monitor ever consumed it)', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const sessionExitCodes = new Map<string, number>()
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionExitCodes,
+		})
+
+		vi.useFakeTimers()
+		try {
+			const res = await app.request('/sessions/sess-orphan/stop', {
+				method: 'POST',
+				headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+			})
+			expect(res.status).toBe(200)
+			expect(sessionExitCodes.get('sess-orphan')).toBe(FORCED_STOP_EXIT_CODE)
+
+			await vi.advanceTimersByTimeAsync(SESSION_EXIT_CODE_SENTINEL_TTL_MS)
+
+			expect(sessionExitCodes.has('sess-orphan')).toBe(false)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('does not clobber a value a live monitor already wrote over the sentinel before the TTL fires', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const sessionExitCodes = new Map<string, number>()
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionExitCodes,
+		})
+
+		vi.useFakeTimers()
+		try {
+			const res = await app.request('/sessions/sess-raced/stop', {
+				method: 'POST',
+				headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+			})
+			expect(res.status).toBe(200)
+
+			// Simulate /complete reporting a real exit code for this session before
+			// the cleanup timer fires — the sentinel's cleanup must not delete a
+			// value it didn't write.
+			sessionExitCodes.set('sess-raced', 0)
+
+			await vi.advanceTimersByTimeAsync(SESSION_EXIT_CODE_SENTINEL_TTL_MS)
+
+			expect(sessionExitCodes.get('sess-raced')).toBe(0)
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 })

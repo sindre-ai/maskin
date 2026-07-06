@@ -3,6 +3,20 @@ import { getTestActorId, sql } from './global-setup'
 
 // These tests assert DB-level semantics that the application relies on but that
 // mocked unit tests cannot verify. Each maps directly to a known-pitfall entry.
+
+async function getIndexColumns(relname: string): Promise<string[]> {
+	const rows = await sql<{ column: string; ord: number }[]>`
+		SELECT a.attname AS column, k.n AS ord
+		FROM pg_index i
+		JOIN pg_class c ON c.oid = i.indexrelid
+		JOIN unnest(i.indkey) WITH ORDINALITY AS k(attnum, n) ON TRUE
+		JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+		WHERE c.relname = ${relname}
+		ORDER BY k.n
+	`
+	return rows.map((r) => r.column)
+}
+
 describe('Migration semantics — pg_constraint / pg_trigger assertions', () => {
 	it('relationships enforces UNIQUE(source_id, target_id, type)', async () => {
 		// Regression for the unique-constraint class of bugs: if the constraint were
@@ -42,6 +56,43 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 		expect(row?.confdeltype, 'sessions.trigger_id FK must be ON DELETE SET NULL').toBe('n')
 	})
 
+	it('notifications.session_id FK is ON DELETE SET NULL', async () => {
+		// Regression: without SET NULL, deleting a session (e.g. cascading from an
+		// actor delete) 500s with a FK violation for any notification that still
+		// references it. Migration 0041 fixed this.
+		const [row] = await sql`
+			SELECT c.confdeltype
+			FROM pg_constraint c
+			WHERE c.conrelid = 'public.notifications'::regclass
+				AND c.contype = 'f'
+				AND c.conkey = ARRAY[
+					(SELECT attnum FROM pg_attribute
+					 WHERE attrelid = 'public.notifications'::regclass AND attname = 'session_id')
+				]::int2[]
+		`
+		// 'n' = SET NULL; 'a' = NO ACTION; 'r' = RESTRICT; 'c' = CASCADE
+		expect(row?.confdeltype, 'notifications.session_id FK must be ON DELETE SET NULL').toBe('n')
+	})
+
+	it('agent_files.session_id FK is ON DELETE SET NULL', async () => {
+		// Regression: without SET NULL, deleting a session (e.g. cascading from an
+		// actor delete) 500s with a FK violation for any agent_files row that still
+		// references it — routinely true for any agent that has completed a session
+		// and pushed learnings/skills back to storage. Migration 0042 fixed this.
+		const [row] = await sql`
+			SELECT c.confdeltype
+			FROM pg_constraint c
+			WHERE c.conrelid = 'public.agent_files'::regclass
+				AND c.contype = 'f'
+				AND c.conkey = ARRAY[
+					(SELECT attnum FROM pg_attribute
+					 WHERE attrelid = 'public.agent_files'::regclass AND attname = 'session_id')
+				]::int2[]
+		`
+		// 'n' = SET NULL; 'a' = NO ACTION; 'r' = RESTRICT; 'c' = CASCADE
+		expect(row?.confdeltype, 'agent_files.session_id FK must be ON DELETE SET NULL').toBe('n')
+	})
+
 	it('notify_event() trigger body does not include the data column', async () => {
 		// Regression for the 8KB NOTIFY payload limit (migration 0006). If `data`
 		// is re-added to the NOTIFY payload, large event rows will silently roll back.
@@ -53,6 +104,53 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 		expect(row.prosrc, "notify_event must not include 'data' in pg_notify payload").not.toMatch(
 			/'data'|"data"|NEW\.data/,
 		)
+	})
+
+	it('objects has composite (workspace_id, updated_at) index objects_ws_updated_at_idx', async () => {
+		// AC-T8: migrations 0043 must build the (workspace_id, updated_at) composite
+		// index on objects. Without it, list_objects(updated_before=…) falls back to
+		// a sequential scan once a workspace grows past a few thousand rows.
+		expect(await getIndexColumns('objects_ws_updated_at_idx')).toEqual([
+			'workspace_id',
+			'updated_at',
+		])
+	})
+
+	it('sessions has composite (workspace_id, updated_at) index sessions_ws_updated_at_idx', async () => {
+		// AC-T8: same as objects, on sessions (migration 0044).
+		expect(await getIndexColumns('sessions_ws_updated_at_idx')).toEqual([
+			'workspace_id',
+			'updated_at',
+		])
+	})
+
+	it('DROP INDEX CONCURRENTLY IF EXISTS succeeds for both updated_at indexes', async () => {
+		// AC-T8 rollback half: the operational down-migration is `DROP INDEX
+		// CONCURRENTLY IF EXISTS` (per MIGRATIONS.md Rule 1). Verify it runs in
+		// autocommit (postgres.unsafe()) and the indexes really go away, then
+		// re-create them so sibling tests keep the schema they expect.
+		//
+		// Recreate happens in `finally` so a failed drop or assertion doesn't
+		// leave these indexes permanently missing for the rest of the suite.
+		try {
+			await sql.unsafe('DROP INDEX CONCURRENTLY IF EXISTS "objects_ws_updated_at_idx"')
+			await sql.unsafe('DROP INDEX CONCURRENTLY IF EXISTS "sessions_ws_updated_at_idx"')
+
+			const gone = await sql<{ relname: string }[]>`
+				SELECT relname FROM pg_class
+				WHERE relname IN ('objects_ws_updated_at_idx', 'sessions_ws_updated_at_idx')
+			`
+			expect(gone).toEqual([])
+		} finally {
+			// Idempotent IF NOT EXISTS keeps this safe even if test ordering changes
+			// or the drop above only partially succeeded.
+			await sql.unsafe(
+				'CREATE INDEX CONCURRENTLY IF NOT EXISTS "objects_ws_updated_at_idx" ON "objects" ("workspace_id", "updated_at")',
+			)
+			await sql.unsafe(
+				'CREATE INDEX CONCURRENTLY IF NOT EXISTS "sessions_ws_updated_at_idx" ON "sessions" ("workspace_id", "updated_at")',
+			)
+		}
 	})
 
 	it('inserting an event with >8KB content succeeds (notify payload truncation does not roll back)', async () => {

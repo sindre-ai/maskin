@@ -359,6 +359,90 @@ describe('tool handlers', () => {
 			expect(calledUrl).toContain('limit=10')
 			expect(calledUrl).toContain('offset=5')
 		})
+
+		it('forwards updated_before and updated_after to the route', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({
+				updated_before: '2026-06-30T12:00:00.000Z',
+				updated_after: '2026-06-29T12:00:00.000Z',
+			})
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('updated_before=2026-06-30T12%3A00%3A00.000Z')
+			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
+		})
+
+		// Tool-level proof that sort=updated_at_asc surfaces rows in ascending
+		// updated_at order: the dispatcher routes the MCP sort to the route's
+		// (sort=updatedAt, order=asc) contract, and the mocked route returns
+		// rows in that order. The route's actual ordering is covered by T2's
+		// integration tests against real Postgres.
+		it('maps sort=updated_at_asc to sort=updatedAt&order=asc and returns rows in that order', async () => {
+			const ascRows = [
+				{ id: 'oldest', updatedAt: '2026-06-20T00:00:00.000Z' },
+				{ id: 'middle', updatedAt: '2026-06-25T00:00:00.000Z' },
+				{ id: 'newest', updatedAt: '2026-06-30T00:00:00.000Z' },
+			]
+			mockFetchSuccess(ascRows)
+
+			const handler = getHandler('list_objects')
+			const result = (await handler({ sort: 'updated_at_asc' })) as {
+				structuredContent: { objects: Array<{ id: string }> }
+			}
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('sort=updatedAt')
+			expect(calledUrl).toContain('order=asc')
+			expect(result.structuredContent.objects.map((o) => o.id)).toEqual([
+				'oldest',
+				'middle',
+				'newest',
+			])
+		})
+
+		it('maps sort=updated_at_desc to sort=updatedAt&order=desc', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({ sort: 'updated_at_desc' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('sort=updatedAt')
+			expect(calledUrl).toContain('order=desc')
+		})
+
+		it('omits sort + order when no sort is passed (additive only)', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({ type: 'task' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).not.toContain('sort=')
+			expect(calledUrl).not.toContain('order=')
+		})
+	})
+
+	describe('list_sessions handler', () => {
+		it('forwards updated_before and updated_after to the route', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_sessions')
+			await handler({
+				updated_before: '2026-06-30T12:00:00.000Z',
+				updated_after: '2026-06-29T12:00:00.000Z',
+			})
+
+			const sessionsCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => (c[0] as string).includes('/api/sessions?'))
+			expect(sessionsCall).toBeDefined()
+			const calledUrl = sessionsCall?.[0] as string
+			expect(calledUrl).toContain('updated_before=2026-06-30T12%3A00%3A00.000Z')
+			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
+		})
 	})
 
 	describe('update_objects handler — file attachments', () => {
