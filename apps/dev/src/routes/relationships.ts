@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, relationships } from '@maskin/db/schema'
+import { events, files, objects, relationships } from '@maskin/db/schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
 import { and, eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
@@ -62,12 +62,24 @@ app.openapi(createRelationshipRoute, async (c) => {
 
 	const body = c.req.valid('json')
 
+	// Resolve sourceType/targetType server-side per T1 convention B:
+	// 'file' when the endpoint id lives in files, 'object' otherwise.
+	// Caller-supplied type labels are ignored.
+	const endpointIds = [body.source_id, body.target_id]
+	const fileRows = await db
+		.select({ id: files.id })
+		.from(files)
+		.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, endpointIds)))
+	const fileIds = new Set(fileRows.map((r) => r.id))
+	const sourceType = fileIds.has(body.source_id) ? 'file' : 'object'
+	const targetType = fileIds.has(body.target_id) ? 'file' : 'object'
+
 	const [created] = await db
 		.insert(relationships)
 		.values({
-			sourceType: body.source_type,
+			sourceType,
 			sourceId: body.source_id,
-			targetType: body.target_type,
+			targetType,
 			targetId: body.target_id,
 			type: body.type,
 			createdBy: actorId,
