@@ -169,6 +169,9 @@ function ForYouDashboard() {
 	const [northStarDismissed, setNorthStarDismissed] = useState(() =>
 		Boolean(localStorage.getItem(`north_star_answered_${workspaceId}`)),
 	)
+	// Hidden while the sparse composer has focus so it doesn't compete with the
+	// composer for vertical space once the on-screen keyboard is up on mobile.
+	const [composerFocused, setComposerFocused] = useState(false)
 
 	if (isLoading || betsLoading) {
 		return (
@@ -192,9 +195,13 @@ function ForYouDashboard() {
 
 	const isSparse = visibleRegular.length + onboardingItems.length < 3
 
-	const northStarCard = showNorthStarPrompt ? (
-		<NorthStarPromptCard workspaceId={workspaceId} onDismiss={() => setNorthStarDismissed(true)} />
-	) : null
+	const northStarCard =
+		showNorthStarPrompt && !composerFocused ? (
+			<NorthStarPromptCard
+				workspaceId={workspaceId}
+				onDismiss={() => setNorthStarDismissed(true)}
+			/>
+		) : null
 
 	if (items.length === 0) {
 		return (
@@ -241,7 +248,7 @@ function ForYouDashboard() {
 						className="py-2 md:py-8"
 						compact
 					/>
-					<SparseComposer itemsCount={0} />
+					<SparseComposer itemsCount={0} onFocusChange={setComposerFocused} />
 				</div>
 				{composer}
 			</>
@@ -305,7 +312,10 @@ function ForYouDashboard() {
 						/>
 					))}
 					{isSparse ? (
-						<SparseComposer itemsCount={visibleRegular.length + onboardingItems.length} />
+						<SparseComposer
+							itemsCount={visibleRegular.length + onboardingItems.length}
+							onFocusChange={setComposerFocused}
+						/>
 					) : null}
 				</div>
 			</div>

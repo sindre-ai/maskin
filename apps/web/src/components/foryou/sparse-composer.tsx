@@ -13,6 +13,10 @@ const QUICK_START_CHIPS = [
 
 interface SparseComposerProps {
 	itemsCount: number
+	/** Notified when focus enters/leaves the composer — used on the For You
+	 *  page to yield vertical space back to the composer (e.g. hiding the
+	 *  North Star prompt) while the on-screen keyboard is up on mobile. */
+	onFocusChange?: (focused: boolean) => void
 }
 
 /**
@@ -23,7 +27,7 @@ interface SparseComposerProps {
  * Reuses `<Composer>` directly so behaviour (Enter-to-send, slash picker,
  * selection chips, error display) stays in one place.
  */
-export function SparseComposer({ itemsCount }: SparseComposerProps) {
+export function SparseComposer({ itemsCount, onFocusChange }: SparseComposerProps) {
 	const { openWithContext } = useChat()
 	const { workspaceId } = useWorkspace()
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
@@ -32,6 +36,7 @@ export function SparseComposer({ itemsCount }: SparseComposerProps) {
 	const mountedItemsCount = useRef(itemsCount)
 	const [chipSending, setChipSending] = useState(false)
 	const [chipError, setChipError] = useState<string | null>(null)
+	const [focused, setFocused] = useState(false)
 
 	useEffect(() => {
 		trackForyouSparseComposerShown({ items_count: mountedItemsCount.current })
@@ -78,7 +83,22 @@ export function SparseComposer({ itemsCount }: SparseComposerProps) {
 	const showChips = itemsCount === 0
 
 	return (
-		<div className="mx-auto space-y-2 md:max-w-2xl">
+		<div
+			className="mx-auto space-y-2 md:max-w-2xl"
+			onFocus={() => {
+				if (focused) return
+				setFocused(true)
+				onFocusChange?.(true)
+			}}
+			onBlur={(e) => {
+				// Ignore focus moving between the composer's own controls (textarea,
+				// slash-picker buttons, send button) — only report unfocused once
+				// focus actually leaves the whole composer.
+				if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+				setFocused(false)
+				onFocusChange?.(false)
+			}}
+		>
 			{showChips ? (
 				<div className="flex flex-wrap gap-2" data-testid="sparse-composer-chips">
 					{QUICK_START_CHIPS.map((text) => (
