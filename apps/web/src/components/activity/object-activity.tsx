@@ -148,10 +148,9 @@ export function ObjectActivity({
 		}
 	}, [events, object])
 
-	// Only the current (last) phase is expanded by default; users can toggle any other.
+	// All phases are expanded by default; users can toggle any phase closed.
 	const [phaseOverrides, setPhaseOverrides] = useState<Record<number, boolean>>({})
-	const currentPhaseIndex = phases.length - 1
-	const isPhaseOpen = (index: number) => phaseOverrides[index] ?? index === currentPhaseIndex
+	const isPhaseOpen = (index: number) => phaseOverrides[index] ?? true
 	const togglePhase = (index: number) => {
 		setPhaseOverrides((prev) => ({ ...prev, [index]: !isPhaseOpen(index) }))
 	}
@@ -195,7 +194,6 @@ export function ObjectActivity({
 									status={phase.status}
 									startedAt={phase.startedAt}
 									isOpen={open}
-									eventCount={phase.events.length}
 									onToggle={() => togglePhase(index)}
 								/>
 								<CollapsibleContent>

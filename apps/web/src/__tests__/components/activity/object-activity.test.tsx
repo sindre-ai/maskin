@@ -95,7 +95,7 @@ describe('ObjectActivity', () => {
 		expect(screen.getByText('set the status to Active')).toBeInTheDocument()
 	})
 
-	it('collapses past phases and only expands the current phase by default', () => {
+	it('renders all phases expanded by default', () => {
 		// Events arrive from the API newest-first
 		const events = [
 			buildEventResponse({
@@ -116,14 +116,12 @@ describe('ObjectActivity', () => {
 		]
 		render(<ObjectActivity workspaceId="ws-1" object={object} events={events} />)
 
-		// Current (active) phase content is visible
+		// Both current and past phase content is visible by default
 		expect(screen.getByText('Comment in active phase')).toBeInTheDocument()
-		// Past (signal) phase content is collapsed and shows event count summary
-		expect(screen.queryByText('Comment in signal phase')).not.toBeInTheDocument()
-		expect(screen.getByText('· 1 event')).toBeInTheDocument()
+		expect(screen.getByText('Comment in signal phase')).toBeInTheDocument()
 	})
 
-	it('expands a past phase when its divider is clicked', async () => {
+	it('collapses a phase when its divider is clicked', async () => {
 		const user = userEvent.setup()
 		const events = [
 			buildEventResponse({
@@ -139,11 +137,13 @@ describe('ObjectActivity', () => {
 		]
 		render(<ObjectActivity workspaceId="ws-1" object={object} events={events} />)
 
-		expect(screen.queryByText('Comment in signal phase')).not.toBeInTheDocument()
+		// Past phase content is visible by default
+		expect(screen.getByText('Comment in signal phase')).toBeInTheDocument()
 
+		// Clicking the phase divider toggles it closed
 		const signalTrigger = screen.getByRole('button', { name: /signal/ })
 		await user.click(signalTrigger)
 
-		expect(screen.getByText('Comment in signal phase')).toBeInTheDocument()
+		expect(screen.queryByText('Comment in signal phase')).not.toBeInTheDocument()
 	})
 })
