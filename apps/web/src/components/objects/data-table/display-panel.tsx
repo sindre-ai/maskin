@@ -17,6 +17,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
 import type { VisibilityState } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, Check, ChevronDown, SlidersHorizontal } from 'lucide-react'
 
@@ -167,6 +168,16 @@ export function DisplayPanel({
 	const activeStatuses = statusFilter ? statusFilter.split(',').filter(Boolean) : []
 	const activeDrivers = driverFilter ? driverFilter.split(',').filter(Boolean) : []
 	const metadataFields = fieldDefinitions ?? []
+	// Fields whose name can't be inlined into a `metadata.<field>` filter (must
+	// start with a letter, letters/numbers/underscores only — same rule the
+	// backend enforces in extractMetadataFilters). Rendering a filter row for
+	// one of these would look like it works, then have the typed value vanish
+	// from the URL with no explanation the moment it's applied — excluded here
+	// instead, with a visible note, so the limitation is never silent.
+	const filterableMetadataFields = metadataFields.filter((field) =>
+		SAFE_METADATA_FIELD_NAME_RE.test(field.name),
+	)
+	const unfilterableFieldCount = metadataFields.length - filterableMetadataFields.length
 	// Counted from `metadataFilters` directly, not from `metadataFields` — the
 	// active type's field rows (e.g. on the "All" tab, where `fieldDefinitions`
 	// is undefined) can be empty while a metadata filter from another tab is
@@ -519,7 +530,7 @@ export function DisplayPanel({
 
 								{/* Metadata filters — one row per custom field of the active type */}
 								{showMetadataFilters &&
-									metadataFields.map((field) => {
+									filterableMetadataFields.map((field) => {
 										const current = metadataFilters?.[field.name] ?? ''
 										return (
 											<div key={field.name} className="flex items-center gap-2">
@@ -553,6 +564,13 @@ export function DisplayPanel({
 											</div>
 										)
 									})}
+								{unfilterableFieldCount > 0 && (
+									<p className="text-[11px] text-text-secondary">
+										{unfilterableFieldCount} field{unfilterableFieldCount === 1 ? '' : 's'} can't be
+										filtered — field names must start with a letter and contain only letters,
+										numbers, and underscores.
+									</p>
+								)}
 							</div>
 							<Separator />
 						</>

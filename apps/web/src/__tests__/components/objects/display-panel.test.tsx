@@ -283,5 +283,52 @@ describe('DisplayPanel', () => {
 			await user.click(screen.getByRole('button', { name: /reset/i }))
 			expect(onResetFilters).toHaveBeenCalled()
 		})
+
+		it('excludes a field whose name cannot be filtered and explains why, instead of rendering a row that would silently fail', async () => {
+			// Field names are workspace-defined and unconstrained (spaces, hyphens,
+			// etc. are all valid `create_workspace_field` names), but a filter row
+			// only works for names matching SAFE_METADATA_FIELD_NAME_RE — anything
+			// else gets dropped by the URL search-param validator with no error.
+			// Rendering an input for it would look like a working filter that then
+			// silently discards whatever the user types.
+			const user = userEvent.setup()
+			renderPanel({
+				fieldDefinitions: [
+					{ name: 'region', type: 'text' },
+					{ name: 'deal size', type: 'text' },
+				],
+				metadataFilters: {},
+				onMetadataFilterChange: vi.fn(),
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByText('region')).toBeInTheDocument()
+			expect(screen.queryByText('deal size')).toBeNull()
+			expect(screen.getByText(/1 field can't be filtered/i)).toBeInTheDocument()
+		})
+
+		it('pluralizes the excluded-field note for more than one unfilterable field', async () => {
+			const user = userEvent.setup()
+			renderPanel({
+				fieldDefinitions: [
+					{ name: 'deal size', type: 'text' },
+					{ name: 'cost-per-lead', type: 'number' },
+				],
+				metadataFilters: {},
+				onMetadataFilterChange: vi.fn(),
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByText(/2 fields can't be filtered/i)).toBeInTheDocument()
+		})
+
+		it('shows no excluded-field note when every field definition is filterable', async () => {
+			const user = userEvent.setup()
+			renderPanel({
+				fieldDefinitions: [{ name: 'region', type: 'text' }],
+				metadataFilters: {},
+				onMetadataFilterChange: vi.fn(),
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.queryByText(/can't be filtered/i)).toBeNull()
+		})
 	})
 })

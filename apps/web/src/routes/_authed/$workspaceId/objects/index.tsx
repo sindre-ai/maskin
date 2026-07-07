@@ -31,7 +31,7 @@ import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
-import { ALL_TYPES_KEY } from '@maskin/shared'
+import { ALL_TYPES_KEY, SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
 import {
 	type InfiniteData,
 	keepPreviousData,
@@ -58,7 +58,8 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 		// dropping them, since the filter value is always compared as text.
 		const metadataFilters: Record<string, string> = {}
 		for (const [key, value] of Object.entries(search)) {
-			if (!/^metadata\.[a-zA-Z][a-zA-Z0-9_]*$/.test(key)) continue
+			if (!key.startsWith('metadata.')) continue
+			if (!SAFE_METADATA_FIELD_NAME_RE.test(key.slice('metadata.'.length))) continue
 			if (typeof value === 'string') metadataFilters[key] = value
 			else if (typeof value === 'number' || typeof value === 'boolean') {
 				metadataFilters[key] = String(value)

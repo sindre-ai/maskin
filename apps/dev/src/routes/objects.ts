@@ -15,6 +15,7 @@ import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
 	OBJECT_DIFF_FIELDS,
+	SAFE_METADATA_FIELD_NAME_RE,
 	TERMINAL_BET_STATUSES,
 	boardObjectQuerySchema,
 	boardObjectResponseSchema,
@@ -80,10 +81,6 @@ type Env = {
 const app = new OpenAPIHono<Env>()
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-// Only alphanumeric + underscore field names are safe to inline via sql.raw
-// (sort, groupBy, and metadata filter keys all key off this same check).
-const SAFE_METADATA_FIELD_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]*$/
 
 // Keep in sync with KNOWN_SORT_COLUMNS in packages/shared/src/schemas/objects.ts
 const sortColumns: Record<string, Column | SQL> = {
