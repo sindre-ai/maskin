@@ -611,4 +611,70 @@ describe('UnreadThreadCard', () => {
 			lastEventId: 20,
 		})
 	})
+
+	it('renders the latest-activity timestamp in font-mono tabular-nums (AC-U2)', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ latest_activity_at: new Date(Date.now() - 5 * 60_000).toISOString() })}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const timeEl = screen.getByText(/ago|now/) as HTMLElement
+		expect(timeEl.tagName).toBe('TIME')
+		expect(timeEl).toHaveClass('font-mono')
+		expect(timeEl).toHaveClass('tabular-nums')
+	})
+
+	// Regression lock for the 375px header-overflow fix: a long title used to push
+	// the time/badge/button cluster off-screen. `basis-full` (with `sm:basis-auto`)
+	// on the title cell, plus `flex-wrap` on the header row, is what keeps the
+	// right-side controls in-frame on mobile while collapsing back to one line on sm+.
+	it('keeps the title row on its own line at mobile breakpoints', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		const { container } = render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({
+					object: buildObjectResponse({
+						id: 'obj-1',
+						title: 'A very long onboarding bet title that would overflow at 375px',
+						type: 'bet',
+					}),
+				})}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const titleLink = screen.getByText(/A very long onboarding bet/)
+		const titleCell = titleLink.parentElement
+		expect(titleCell?.className).toMatch(/basis-full/)
+		expect(titleCell?.className).toMatch(/sm:basis-auto/)
+		const headerRow = container.querySelector('.border-b')
+		expect(headerRow?.className).toMatch(/flex-wrap/)
+	})
+
+	it('title link is min-w-0 flex-1 truncate so siblings stay in-frame on mobile', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem()}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const titleLink = screen.getByText('Onboarding A/B')
+		expect(titleLink.className).toMatch(/min-w-0/)
+		expect(titleLink.className).toMatch(/flex-1/)
+		expect(titleLink.className).toMatch(/truncate/)
+	})
 })

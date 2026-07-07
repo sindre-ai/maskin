@@ -3,7 +3,7 @@ import { cn } from '@/lib/cn'
 
 export function TypeBadge({ type, className }: { type: string; className?: string }) {
 	return (
-		<Badge variant="ghost" className={cn('font-normal', className)}>
+		<Badge variant="ghost" className={cn('font-medium', className)}>
 			{type}
 		</Badge>
 	)
