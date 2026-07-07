@@ -17,6 +17,21 @@ export function workspaceSkillKey(workspaceId: string, skillId: string): string 
 	return `${WORKSPACE_SKILLS_PREFIX}/${workspaceId}/skills/${skillId}/SKILL.md`
 }
 
+// All folder-skill entries (SKILL.md + bundled files) live under this prefix.
+// `workspaceSkillKey` is the SKILL.md sub-path of this prefix — a folder skill
+// reuses the same SKILL.md key so single-file readers stay valid.
+export function workspaceSkillPrefix(workspaceId: string, skillId: string): string {
+	return `${WORKSPACE_SKILLS_PREFIX}/${workspaceId}/skills/${skillId}/`
+}
+
+export function workspaceSkillFileKey(
+	workspaceId: string,
+	skillId: string,
+	relativePath: string,
+): string {
+	return `${workspaceSkillPrefix(workspaceId, skillId)}${relativePath}`
+}
+
 export type PullWorkspaceSkillsResult = {
 	pulled: number
 	skipped: number
@@ -330,6 +345,43 @@ export class AgentStorageManager {
 	async deleteWorkspaceSkill(workspaceId: string, skillId: string): Promise<void> {
 		const storageKey = workspaceSkillKey(workspaceId, skillId)
 		await this.storage.delete(storageKey)
+	}
+
+	/**
+	 * Write a single bundled file under the folder-skill prefix at
+	 * `<relativePath>` (e.g. `SKILL.md`, `reference/style.md`). Used by the
+	 * folder-upload path to land each entry from the extracted zip.
+	 */
+	async putWorkspaceSkillFile(
+		workspaceId: string,
+		skillId: string,
+		relativePath: string,
+		data: Buffer,
+	): Promise<string> {
+		const key = workspaceSkillFileKey(workspaceId, skillId, relativePath)
+		await this.storage.put(key, data)
+		return key
+	}
+
+	/**
+	 * Remove every object under a folder skill's prefix. Used by the replace
+	 * flow so the prior bundle's files don't survive into the new bundle.
+	 */
+	async clearWorkspaceSkillFolder(workspaceId: string, skillId: string): Promise<void> {
+		const prefix = workspaceSkillPrefix(workspaceId, skillId)
+		const keys = await this.storage.list(prefix)
+		for (const key of keys) {
+			try {
+				await this.storage.delete(key)
+			} catch (err) {
+				logger.warn('Failed to delete workspace skill file during replace', {
+					workspaceId,
+					skillId,
+					key,
+					error: String(err),
+				})
+			}
+		}
 	}
 
 	/**
