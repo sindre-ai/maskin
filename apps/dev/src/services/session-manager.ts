@@ -1204,7 +1204,11 @@ export class SessionManager extends EventEmitter {
 		// baked in. The bare GITHUB_TOKEN is aliased from the first installation
 		// so existing agent configs using ${GITHUB_TOKEN} continue to work.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
-		const resolvedGithubInstalls: Array<{ ownerLogin: string; token: string }> = []
+		const resolvedGithubInstalls: Array<{
+			ownerLogin: string
+			token: string
+			integrationId: string
+		}> = []
 		for (const integration of activeIntegrations) {
 			try {
 				const resolved = getProvider(integration.provider)
@@ -1215,7 +1219,11 @@ export class SessionManager extends EventEmitter {
 					if (!ownerLogin) continue
 
 					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
-					resolvedGithubInstalls.push({ ownerLogin, token: accessToken })
+					resolvedGithubInstalls.push({
+						ownerLogin,
+						token: accessToken,
+						integrationId: integration.id,
+					})
 				} else {
 					// Slack: only inject the bot token. A user token (xoxp-) here means
 					// the install granted user scopes instead of bot scopes — posting
@@ -1285,6 +1293,15 @@ export class SessionManager extends EventEmitter {
 		if (primaryGithubToken) {
 			envVars.GITHUB_TOKEN = primaryGithubToken
 		}
+		// GITHUB_INTEGRATION_ID lets the container's git credential helper
+		// (docker/agent-base/github-credential-helper.sh) mint a fresh installation
+		// token via GET /api/integrations/:id/github-token on every git operation,
+		// instead of relying on the GITHUB_TOKEN value above going stale after
+		// GitHub's 1-hour installation-token TTL for sessions that outlive it.
+		const primaryGithubIntegrationId = resolvedGithubInstalls[0]?.integrationId
+		if (primaryGithubIntegrationId) {
+			envVars.GITHUB_INTEGRATION_ID = primaryGithubIntegrationId
+		}
 
 		// Merge user-provided env vars, filtering out reserved keys
 		const RESERVED_ENV_KEYS = new Set([
@@ -1318,6 +1335,9 @@ export class SessionManager extends EventEmitter {
 		// user-supplied PAT (no GitHub integration configured) must pass through.
 		if (primaryGithubToken) {
 			RESERVED_ENV_KEYS.add('GITHUB_TOKEN')
+		}
+		if (primaryGithubIntegrationId) {
+			RESERVED_ENV_KEYS.add('GITHUB_INTEGRATION_ID')
 		}
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {

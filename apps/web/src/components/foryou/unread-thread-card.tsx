@@ -254,9 +254,12 @@ export function UnreadThreadCard({
 				onPointerUp={handlePointerUp}
 				onPointerCancel={handlePointerCancel}
 			>
-				{/* Header: bet context pill + type badge + title | time + @you + unread */}
-				<div className="flex items-center gap-2 px-3 py-2.5 border-b border-border">
-					<div className="flex min-w-0 flex-1 items-center gap-1.5">
+				{/* Header: bet context pill + type badge + title | time + @you + unread.
+				    Title cell takes the full row on mobile (basis-full) so a long title
+				    gets room to breathe instead of squeezing the time/badge/button
+				    cluster off-screen at 375px; collapses to a single inline cell at sm+. */}
+				<div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-3 py-2.5 border-b border-border">
+					<div className="flex min-w-0 basis-full items-center gap-1.5 sm:basis-auto sm:flex-1">
 						{objectType === 'bet' && (
 							<TooltipProvider>
 								<Tooltip>
@@ -286,7 +289,7 @@ export function UnreadThreadCard({
 						{item.latest_activity_at && (
 							<RelativeTime
 								date={item.latest_activity_at}
-								className="text-xs text-muted-foreground"
+								className="text-xs font-mono tabular-nums text-muted-foreground"
 							/>
 						)}
 						{item.mentioning_unread_count > 0 && (

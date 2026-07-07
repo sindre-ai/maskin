@@ -4,6 +4,30 @@
 @custom-variant dark (&:is(.dark *));
 @custom-variant can-hover (@media (hover: hover));
 
+/* Metric-tuned fallback fonts.
+   Render box is matched to Schibsted Grotesk / JetBrains Mono before the
+   webfont arrives so the layout doesn't shift on font swap. Values are a
+   conservative first pass — T8 will pin them against measured CLS. */
+@font-face {
+	font-family: "Schibsted Grotesk Fallback";
+	src: local("Arial"), local("Helvetica Neue"), local("Helvetica");
+	font-display: swap;
+	size-adjust: 100%;
+	ascent-override: 96%;
+	descent-override: 22%;
+	line-gap-override: 0%;
+}
+
+@font-face {
+	font-family: "JetBrains Mono Fallback";
+	src: local("Menlo"), local("Consolas"), local("Courier New");
+	font-display: swap;
+	size-adjust: 95%;
+	ascent-override: 100%;
+	descent-override: 24%;
+	line-gap-override: 0%;
+}
+
 @theme inline {
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
@@ -94,8 +118,9 @@
 }
 
 @theme {
-	--font-sans: "Inter", system-ui, sans-serif;
-	--font-mono: "JetBrains Mono", ui-monospace, monospace;
+	--font-sans: "Schibsted Grotesk", "Schibsted Grotesk Fallback", system-ui, -apple-system,
+		"Segoe UI", Roboto, sans-serif;
+	--font-mono: "JetBrains Mono", "JetBrains Mono Fallback", ui-monospace, Menlo, Consolas, monospace;
 
 	--radius-sm: calc(var(--radius) - 4px);
 	--radius-md: calc(var(--radius) - 2px);
@@ -288,6 +313,16 @@
 	}
 	body {
 		@apply bg-background text-foreground font-sans antialiased;
+	}
+
+	/* Tabular numerals on mono surfaces — keeps numeric columns column-aligned
+	   without each call site having to remember the utility class (AC-U4). */
+	code,
+	kbd,
+	samp,
+	pre,
+	.font-mono {
+		font-variant-numeric: tabular-nums;
 	}
 
 	/* Slim scrollbars — claude.ai-style thin track. Firefox uses the
