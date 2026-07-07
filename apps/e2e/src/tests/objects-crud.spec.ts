@@ -8,8 +8,14 @@ test.describe('Objects CRUD', () => {
 		await page.getByRole('button', { name: 'Create new' }).click()
 
 		// The picker shows a type selector when opened from the header (no defaultType).
-		// Select "Object" then enter a title and submit.
-		await page.getByText('Object').click()
+		// Select "Object" then enter a title and submit. The radio input itself is
+		// sr-only (its label is the clickable tile), and "Object" text elsewhere on
+		// the page (nav, empty states) is still in the DOM behind the dialog overlay
+		// — scope to the "Type" radiogroup to disambiguate.
+		await page
+			.getByRole('radiogroup', { name: 'Type' })
+			.getByText('Object', { exact: true })
+			.click()
 		await page.getByPlaceholder('What are you creating?').fill('E2E Test Object')
 		await page.getByRole('button', { name: 'Create' }).click()
 
@@ -75,7 +81,10 @@ test.describe('Objects CRUD', () => {
 		await page.getByRole('button', { name: 'Create new' }).click()
 
 		// Select Object type and verify the title input appears
-		await page.getByText('Object').click()
+		await page
+			.getByRole('radiogroup', { name: 'Type' })
+			.getByText('Object', { exact: true })
+			.click()
 		await expect(page.getByPlaceholder('What are you creating?')).toBeVisible()
 	})
 })

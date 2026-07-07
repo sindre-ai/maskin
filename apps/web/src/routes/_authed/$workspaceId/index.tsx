@@ -224,7 +224,8 @@ function ForYouDashboard() {
 								Browse objects
 							</Button>
 						}
-						className="py-4 md:py-8"
+						className="py-2 md:py-8"
+						compact
 					/>
 					<SparseComposer itemsCount={0} />
 				</div>
