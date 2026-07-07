@@ -95,8 +95,16 @@ export function ObjectActivity({
 	const view: TimelineView =
 		(displaySettings?.settings?.timelineView as TimelineView | undefined) ?? DEFAULT_TIMELINE_VIEW
 
+	// `undefined` means the GET hasn't resolved yet; the hook returns `null`
+	// (not undefined) once a 404 confirms no row exists. Gating writes on the
+	// undefined window prevents a fast toggle from PUTing only `{ timelineView }`
+	// and silently clobbering the existing view/sort/order/columnVisibility on
+	// the shared `user_display_settings` row for this object_type.
+	const settingsLoading = displaySettings === undefined
+
 	const handleViewChange = useCallback(
 		(next: TimelineView) => {
+			if (settingsLoading) return
 			if (next === view) return
 			const prevSettings = (displaySettings?.settings ?? {}) as Record<string, unknown>
 			updateDisplaySettings.mutate({
@@ -104,7 +112,7 @@ export function ObjectActivity({
 				settings: { ...prevSettings, timelineView: next },
 			})
 		},
-		[displaySettings, object.type, updateDisplaySettings, view],
+		[displaySettings, object.type, settingsLoading, updateDisplaySettings, view],
 	)
 
 	// Latest commented-event id on this object — used as the high-water-mark
@@ -294,7 +302,13 @@ export function ObjectActivity({
 					<UnreadBadge count={unreadCount} className="ml-2 normal-case tracking-normal" />
 				</h3>
 				<div className="flex items-center gap-2">
-					{relationships && <TimelineViewToggle value={view} onChange={handleViewChange} />}
+					{relationships && (
+						<TimelineViewToggle
+							value={view}
+							onChange={handleViewChange}
+							disabled={settingsLoading}
+						/>
+					)}
 					{unreadCount > 0 && (
 						<Button
 							variant="ghost"
@@ -413,12 +427,21 @@ export function ObjectActivity({
 function TimelineViewToggle({
 	value,
 	onChange,
+	disabled = false,
 }: {
 	value: TimelineView
 	onChange: (next: TimelineView) => void
+	disabled?: boolean
 }) {
 	return (
-		<fieldset className="inline-flex items-center rounded-md border border-border bg-background p-0.5 m-0">
+		<fieldset
+			disabled={disabled}
+			aria-busy={disabled || undefined}
+			className={cn(
+				'inline-flex items-center rounded-md border border-border bg-background p-0.5 m-0',
+				disabled && 'opacity-60',
+			)}
+		>
 			<legend className="sr-only">Relationship view</legend>
 			{(['timeline', 'table'] as const).map((option) => {
 				const active = value === option
@@ -426,7 +449,8 @@ function TimelineViewToggle({
 					<label
 						key={option}
 						className={cn(
-							'h-6 px-2 text-[11px] font-medium rounded-sm transition-colors capitalize cursor-pointer inline-flex items-center',
+							'h-6 px-2 text-[11px] font-medium rounded-sm transition-colors capitalize inline-flex items-center',
+							disabled ? 'cursor-not-allowed' : 'cursor-pointer',
 							active
 								? 'bg-secondary text-foreground'
 								: 'text-muted-foreground hover:text-foreground',
@@ -437,6 +461,7 @@ function TimelineViewToggle({
 							name="timeline-view"
 							value={option}
 							checked={active}
+							disabled={disabled}
 							onChange={() => onChange(option)}
 							className="sr-only"
 						/>

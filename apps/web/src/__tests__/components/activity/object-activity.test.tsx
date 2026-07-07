@@ -28,9 +28,17 @@ vi.mock('@/hooks/use-files', () => ({
 	useFiles: () => ({ data: [] }),
 }))
 
+const displaySettingsMock = vi.hoisted(() => ({
+	data: null as { settings?: Record<string, unknown> } | null | undefined,
+}))
+const updateDisplaySettingsMutate = vi.hoisted(() => vi.fn())
+
 vi.mock('@/hooks/use-user-display-settings', () => ({
-	useUserDisplaySettings: () => ({ data: null }),
-	useUpdateUserDisplaySettings: () => ({ mutate: vi.fn(), isPending: false }),
+	useUserDisplaySettings: () => ({ data: displaySettingsMock.data }),
+	useUpdateUserDisplaySettings: () => ({
+		mutate: updateDisplaySettingsMutate,
+		isPending: false,
+	}),
 }))
 
 vi.mock('@/lib/auth', () => ({
@@ -45,6 +53,11 @@ vi.mock('@tanstack/react-router', async () => {
 const object = buildObjectResponse({ id: 'obj-1', status: 'signal' })
 
 describe('ObjectActivity', () => {
+	beforeEach(() => {
+		displaySettingsMock.data = null
+		updateDisplaySettingsMutate.mockClear()
+	})
+
 	it('shows "No activity yet" when events is empty', () => {
 		render(<ObjectActivity workspaceId="ws-1" object={object} events={[]} />)
 		expect(screen.getByText('No activity yet')).toBeInTheDocument()
@@ -281,6 +294,37 @@ describe('ObjectActivity', () => {
 			)
 			expect(screen.getByRole('radio', { name: /timeline/i })).toBeChecked()
 			expect(screen.getByRole('radio', { name: /table/i })).not.toBeChecked()
+		})
+
+		it('does not PUT user_display_settings while the GET is still loading', async () => {
+			// `useUserDisplaySettings` returns `data: undefined` until the GET
+			// resolves; `null` only after a 404 confirms no row exists. Without
+			// gating, a fast Table click in that window would PUT
+			// `{ timelineView: 'table' }` only and silently overwrite the existing
+			// view/sort/order/columnVisibility on the shared row for this
+			// object_type. Assert the click is a no-op during the loading window.
+			displaySettingsMock.data = undefined
+			const user = userEvent.setup()
+			const rel = buildRelationshipResponse({
+				id: 'rel-loading',
+				sourceId: 'bet-1',
+				targetId: 'obj-link',
+				type: 'informs',
+				createdAt: '2026-06-23T10:00:00Z',
+			})
+			render(
+				<ObjectActivity
+					workspaceId="ws-1"
+					object={bet}
+					events={[]}
+					relationships={[rel]}
+					connectedObjects={[]}
+				/>,
+			)
+			const tableRadio = screen.getByRole('radio', { name: /table/i })
+			expect(tableRadio).toBeDisabled()
+			await user.click(tableRadio)
+			expect(updateDisplaySettingsMutate).not.toHaveBeenCalled()
 		})
 	})
 
