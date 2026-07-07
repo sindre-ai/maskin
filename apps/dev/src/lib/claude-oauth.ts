@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
 import { CLAUDE_OAUTH_CLIENT_ID, CLAUDE_TOKEN_URL } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
+import { type OAuthSlotKind, resolveActiveSlot, writeSlot } from './claude-oauth-slots'
 import { decrypt, encrypt } from './crypto'
 import { logger } from './logger'
 
@@ -105,6 +106,42 @@ export function encryptOAuthTokens(tokens: ClaudeOAuthTokens): EncryptedOAuthDat
 }
 
 /**
+ * Persist a freshly-refreshed encrypted token blob into the given slot on a
+ * workspace, without clobbering any other slot or failover state a concurrent
+ * refresh may have written. Wraps the read-modify-write in a transaction with
+ * `SELECT ... FOR UPDATE` so two parallel refreshes targeting different slots
+ * on the same workspace row serialize at the DB level — each one sees the
+ * other's fresh data on its locked re-read and merges its slot on top via
+ * `writeSlot`. The lock spans only the brief read+update; the network refresh
+ * happens beforehand.
+ */
+export async function persistRefreshedSlot(
+	db: Database,
+	workspaceId: string,
+	slot: OAuthSlotKind,
+	encrypted: EncryptedOAuthData,
+): Promise<void> {
+	await db.transaction(async (tx) => {
+		const [latest] = await tx
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!latest) return
+		const latestSettings = (latest.settings as Record<string, unknown>) ?? {}
+		const nextOAuth = writeSlot(latestSettings.claude_oauth, slot, encrypted)
+		await tx
+			.update(workspaces)
+			.set({
+				settings: { ...latestSettings, claude_oauth: nextOAuth },
+				updatedAt: new Date(),
+			})
+			.where(eq(workspaces.id, workspaceId))
+	})
+}
+
+/**
  * Load, refresh if needed, and persist OAuth tokens for a workspace.
  * Returns the fresh access token or null if no OAuth is configured.
  */
@@ -115,24 +152,16 @@ export async function getValidOAuthToken(
 ): Promise<{ accessToken: string; tokens: ClaudeOAuthTokens } | null> {
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	const wsSettings = (ws?.settings as Record<string, unknown>) ?? {}
-	const oauthData = wsSettings.claude_oauth as EncryptedOAuthData | undefined
+	const active = resolveActiveSlot(wsSettings.claude_oauth)
 
-	if (!oauthData?.encryptedAccessToken || !oauthData?.encryptedRefreshToken) {
-		return null
-	}
+	if (!active) return null
 
-	const tokens = decryptOAuthData(oauthData)
+	const tokens = decryptOAuthData(active.data)
 	const { tokens: fresh, refreshed } = await refreshClaudeTokenIfNeeded(tokens, bufferMs)
 
 	if (refreshed) {
-		await db
-			.update(workspaces)
-			.set({
-				settings: { ...wsSettings, claude_oauth: encryptOAuthTokens(fresh) },
-				updatedAt: new Date(),
-			})
-			.where(eq(workspaces.id, workspaceId))
-		logger.info('Refreshed Claude OAuth token', { workspaceId })
+		await persistRefreshedSlot(db, workspaceId, active.slot, encryptOAuthTokens(fresh))
+		logger.info('Refreshed Claude OAuth token', { workspaceId, slot: active.slot })
 	}
 
 	return { accessToken: fresh.accessToken, tokens: fresh }

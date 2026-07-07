@@ -15,7 +15,7 @@ describe('Relationships Routes', () => {
 	describe('POST /api/relationships', () => {
 		it('creates a relationship and returns 201', async () => {
 			const rel = buildRelationship()
-			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
+			const { app, mockResults, calls } = createTestApp(relationshipsRoutes, '/api/relationships')
 			mockResults.insert = [rel]
 
 			const res = await app.request(
@@ -28,6 +28,37 @@ describe('Relationships Routes', () => {
 			const body = await res.json()
 			expect(body.id).toBe(rel.id)
 			expect(body.type).toBe('informs')
+		})
+
+		it('resolves canonical types server-side, ignoring caller-supplied labels', async () => {
+			const rel = buildRelationship()
+			// No select mock needed — files query returns [] by default,
+			// so both endpoints resolve to 'object'
+			const { app, mockResults, calls } = createTestApp(relationshipsRoutes, '/api/relationships')
+			mockResults.insert = [rel]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/relationships',
+					{
+						source_type: 'insight',
+						source_id: '00000000-0000-0000-0000-000000000001',
+						target_type: 'bet',
+						target_id: '00000000-0000-0000-0000-000000000002',
+						type: 'informs',
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+
+			// Verify the values passed to the insert are the canonical types,
+			// not the caller-supplied 'insight'/'bet'
+			const insertValues = calls.inserts[0] as Record<string, unknown>
+			expect(insertValues.sourceType).toBe('object')
+			expect(insertValues.targetType).toBe('object')
 		})
 	})
 

@@ -66,6 +66,21 @@ describe('ObjectDocumentView', () => {
 		expect(screen.getByText('Alice')).toBeInTheDocument()
 	})
 
+	it('wraps the provenance cluster on its own row below the sm breakpoint', () => {
+		// Creator + createdAt must group into a sub-div with basis-full so
+		// 375px never spills into a jagged partial wrap; sm:basis-auto lets
+		// them flow inline again on wider phones.
+		const object = buildObjectResponse()
+		const creator = buildActorResponse({ name: 'Alice' })
+		render(<ObjectDocumentView {...baseProps} object={object} creator={creator} />)
+		const creatorLabel = screen.getByText('Alice')
+		// creator span → provenance cluster (has basis-full sm:basis-auto)
+		const cluster = creatorLabel.parentElement
+		expect(cluster).not.toBeNull()
+		expect(cluster?.className).toContain('basis-full')
+		expect(cluster?.className).toContain('sm:basis-auto')
+	})
+
 	it('calls onUpdateTitle on blur when title changed', async () => {
 		const user = userEvent.setup()
 		const onUpdateTitle = vi.fn()
@@ -95,6 +110,22 @@ describe('ObjectDocumentView', () => {
 		expect(onUpdateTitle).not.toHaveBeenCalled()
 	})
 
+	it('updates displayed title when rerendered with a different object', () => {
+		const objectA = buildObjectResponse({
+			id: '11111111-1111-1111-1111-111111111111',
+			title: 'Object A title',
+		})
+		const objectB = buildObjectResponse({
+			id: '22222222-2222-2222-2222-222222222222',
+			title: 'Object B title',
+		})
+		const { rerender } = render(<ObjectDocumentView {...baseProps} object={objectA} />)
+		expect(screen.getByDisplayValue('Object A title')).toBeInTheDocument()
+		rerender(<ObjectDocumentView {...baseProps} object={objectB} />)
+		expect(screen.getByDisplayValue('Object B title')).toBeInTheDocument()
+		expect(screen.queryByDisplayValue('Object A title')).not.toBeInTheDocument()
+	})
+
 	it('shows "Saved" indicator when showSaved is true', () => {
 		const object = buildObjectResponse()
 		render(<ObjectDocumentView {...baseProps} object={object} showSaved />)
@@ -117,6 +148,51 @@ describe('ObjectDocumentView', () => {
 		const object = buildObjectResponse({ activeSessionId: null })
 		render(<ObjectDocumentView {...baseProps} object={object} />)
 		expect(screen.queryByText('agent working')).not.toBeInTheDocument()
+	})
+
+	describe('updated chip', () => {
+		it('renders an "updated" chip when updatedAt is materially after createdAt', () => {
+			const createdAt = '2026-06-01T10:00:00.000Z'
+			const updatedAt = '2026-06-01T10:05:00.000Z'
+			const object = buildObjectResponse({ createdAt, updatedAt })
+			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
+			const timeEls = container.querySelectorAll('time')
+			expect(timeEls.length).toBe(2)
+			expect(timeEls[0].getAttribute('datetime')).toBe(createdAt)
+			expect(timeEls[1].getAttribute('datetime')).toBe(updatedAt)
+			const chipParent = timeEls[1].parentElement
+			expect(chipParent?.textContent?.startsWith('updated ')).toBe(true)
+			expect(chipParent?.className).toContain('text-[11px]')
+			expect(chipParent?.className).toContain('text-muted-foreground')
+		})
+
+		it('suppresses the updated chip when updatedAt is null', () => {
+			const object = buildObjectResponse({
+				createdAt: '2026-06-01T10:00:00.000Z',
+				updatedAt: null,
+			})
+			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(container.querySelectorAll('time').length).toBe(1)
+			expect(container.textContent).not.toMatch(/updated \d/)
+		})
+
+		it('suppresses the updated chip when updatedAt − createdAt < 60s', () => {
+			const object = buildObjectResponse({
+				createdAt: '2026-06-01T10:00:00.000Z',
+				updatedAt: '2026-06-01T10:00:30.000Z',
+			})
+			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(container.querySelectorAll('time').length).toBe(1)
+		})
+
+		it('renders the chip when createdAt is null but updatedAt is present', () => {
+			const updatedAt = '2026-06-01T10:00:00.000Z'
+			const object = buildObjectResponse({ createdAt: null, updatedAt })
+			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
+			const timeEls = container.querySelectorAll('time')
+			expect(timeEls.length).toBe(1)
+			expect(timeEls[0].getAttribute('datetime')).toBe(updatedAt)
+		})
 	})
 
 	describe('OwnerSelect', () => {

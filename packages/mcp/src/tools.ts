@@ -55,54 +55,27 @@ export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
 	get_started: {
 		description:
-			'THE ONBOARDING TOOL FOR MASKIN. Call this whenever a user asks to set up, configure, initialize, or onboard a Maskin workspace — including prompts like "configure my Maskin workspace with the X template", "set up Maskin", "onboard me to Maskin", "get me started in Maskin". It does NOT set up a development environment, run servers, or install dependencies — it configures a Maskin workspace over the MCP API (settings, statuses, fields, seed objects). Flow: (1) call with just { template } to get a PREVIEW — the tool returns the template summary plus a few light tailoring questions for you to ask the user (workspace name, what they\'re building, near-term goal). (2) Ask the user those questions in one message. (3) Call again with { template, confirm: true, workspace_name?, seed_overrides? } using whatever the user told you. If the user said nothing, just call with { template, confirm: true } — defaults are fine.',
+			'THE ONBOARDING TOOL FOR MASKIN. Call this whenever a user asks to set up, configure, initialize, or onboard a Maskin workspace. Lists available marketplace packages and installs one. Flow: (1) call with no args (or just workspace_id) to get a PREVIEW of available packages. (2) Ask the user which package they want and what to name the workspace. (3) Call again with { package_id, confirm: true, workspace_name? } to install.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			use_case: z
+			package_id: z
 				.string()
+				.uuid()
 				.optional()
 				.describe(
-					"What the user wants Maskin for, in their own words. E.g. 'product development', 'growth/launch', or a freeform description.",
+					'The catalog package ID to install. Get this from the preview list returned when called without confirm.',
 				),
-			template: z
-				.enum(['development', 'growth', 'custom'])
-				.optional()
-				.describe(
-					"Pick a starting template. 'development' = product team shipping software. 'growth' = founder running a pipeline with CRM. 'custom' = walk through a questionnaire. Omit to let the tool decide from use_case.",
-				),
-			team_type: z
-				.string()
-				.optional()
-				.describe('Optional hint about the team, e.g. "solo founder", "2-person product team".'),
 			workspace_name: z
 				.string()
 				.optional()
 				.describe(
 					'Rename the workspace on confirm. Use whatever the user told you — a product name, a team name, anything. Only applied when confirm is true.',
 				),
-			seed_overrides: z
-				.record(
-					z.object({
-						title: z.string().optional(),
-						content: z.string().optional(),
-						metadata: z.record(z.unknown()).optional(),
-					}),
-				)
-				.optional()
-				.describe(
-					'Optional per-node overrides for the template seed objects, keyed by the $id shown in the preview (e.g. "bet1", "task1"). Use this to tailor the example bet/task titles and content to what the user is actually building or their stated goals. Leave any $id out to keep the default.',
-				),
-			custom_settings: z
-				.record(z.unknown())
-				.optional()
-				.describe(
-					"When template is 'custom', pass the tailored workspace settings object here (display_names, statuses, field_definitions, custom_extensions, relationship_types).",
-				),
 			confirm: z
 				.boolean()
 				.optional()
 				.describe(
-					'Set true to actually apply the chosen template. Without this, the tool returns a preview plus tailoring questions you should ask the user.',
+					'Set true to install the chosen package. Without this, the tool returns the list of available packages.',
 				),
 		}),
 	},
@@ -110,7 +83,7 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. Call get_workspace_schema first to discover valid statuses, metadata fields, and relationship types. Status defaults — insight: new|processing|clustered|discarded, bet: signal|proposed|active|completed|succeeded|failed|paused, task: todo|in_progress|done|blocked. To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
+			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. Call get_workspace_schema first to discover valid statuses, metadata fields, and relationship types. Status defaults — insight: new|processing|clustered|scored|parked|discarded, bet: signal|qualified|define|active|live|succeeded|failed|paused, task: todo|in_progress|in_review|validated|done|discarded. To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			nodes: z
@@ -163,10 +136,18 @@ export const tools = {
 	},
 	get_objects: {
 		description:
-			'Get one or more objects by ID, each with all its relationships, connected objects, recent activity, and attached files. Returns the full context around each object: inbound/outbound relationships (each carrying sourceTitle and targetTitle), details of connected objects, the most recent events on the object (lifecycle changes plus comments — comments are events with action="commented" and content in event.data.content, replies link via event.data.parentEventId; comment events carry data.attachmentFileIds for any files the commenter attached), and a top-level `files` array with full metadata (id, name, mimeType, sizeBytes, url) for every file referenced by this object — both files attached directly to the object and files attached in comments. Cross-reference comment attachmentFileIds with the `files` array to get viewer URLs without an extra round-trip. When referring to these objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
+			'Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` — no other fields. Opt into extra blocks with `include:` (each adds only its own block): `content` — the object\'s body/description; `metadata` — the object\'s custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. "Sales v4 (ca957490)") only when two titles collide.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
+			include: z
+				.array(
+					z.enum(['content', 'metadata', 'relationships', 'connected_objects', 'events', 'files']),
+				)
+				.default([])
+				.describe(
+					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url, workspaceId}` per object; each listed value adds one block back.',
+				),
 		}),
 	},
 	update_objects: {
@@ -227,7 +208,7 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or driver. Returns paginated results ordered by creation date.',
+			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, or last-updated window. Returns paginated results ordered by creation date unless `sort` is set. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `offset` still works for backward compatibility.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
@@ -237,13 +218,39 @@ export const tools = {
 				.uuid()
 				.optional()
 				.describe('Filter to objects with this driver actor UUID'),
-			limit: z.number().int().min(1).max(100).default(50),
-			offset: z.number().int().min(0).default(0),
+			updated_before: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Half-open: returns rows with `updated_at < updated_before` (the bound itself is excluded). Use to scan for stalled work, e.g. `updated_before = now - 6h`.',
+				),
+			updated_after: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded). Composes with `updated_before` for a non-overlapping window.',
+				),
+			sort: z
+				.enum(['updated_at_asc', 'updated_at_desc'])
+				.optional()
+				.describe(
+					'Sort by `updated_at`. Use `updated_at_asc` to walk oldest-stalled-first; `updated_at_desc` for most-recently-touched first. Omit to keep the default `createdAt desc` order.',
+				),
+			limit: z.number().int().min(1).max(100).optional(),
+			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted after that first call cannot leak into the stream.',
+				),
 		}),
 	},
 	search_objects: {
 		description:
-			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword.',
+			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z
@@ -252,13 +259,19 @@ export const tools = {
 				.describe('Search query — matches against title and content (case-insensitive)'),
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
 			status: z.string().optional(),
-			limit: z.number().int().min(1).max(100).default(20),
-			offset: z.number().int().min(0).default(0),
+			limit: z.number().int().min(1).max(100).optional(),
+			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	list_relationships: {
 		description:
-			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters.',
+			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
@@ -271,6 +284,14 @@ export const tools = {
 			source_id: z.string().uuid().optional(),
 			target_id: z.string().uuid().optional(),
 			type: z.string().optional(),
+			limit: z.number().int().min(1).max(100).optional(),
+			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	delete_relationship: {
@@ -347,7 +368,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. Results are paginated (default 50, max 100).",
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. When response scoping is enabled the workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -356,8 +377,14 @@ export const tools = {
 				.describe(
 					'Optional workspace ID to scope the listing to. If omitted, returns actors across all workspaces the caller belongs to (each with their workspace memberships).',
 				),
-			limit: z.number().int().min(1).max(100).default(50),
-			offset: z.number().int().min(0).default(0),
+			limit: z.number().int().min(1).max(100).optional(),
+			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. Only meaningful when `workspace_id` is set — the cross-workspace listing (no `workspace_id`) does not support cursor pagination and never returns a `next_cursor`; use `offset` to page it instead. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	get_actor: {
@@ -502,9 +529,17 @@ export const tools = {
 	// NOT the same as per-agent skills (those live under an agent's own file store).
 	list_workspace_skills: {
 		description:
-			'List shared workspace skills — SKILL.md files stored once per workspace and attachable to any agent in the workspace. These are workspace-scoped and reusable across agents, NOT per-agent skills. Returns lightweight rows without the SKILL.md body; call get_workspace_skill to fetch full content.',
+			'List shared workspace skills — SKILL.md files stored once per workspace and attachable to any agent in the workspace. These are workspace-scoped and reusable across agents, NOT per-agent skills. Returns lightweight rows without the SKILL.md body; call get_workspace_skill to fetch full content. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			limit: z.number().int().min(1).max(100).optional(),
+			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	get_workspace_skill: {
@@ -588,12 +623,19 @@ export const tools = {
 		}),
 	},
 	list_files: {
-		description: 'List files in the workspace, newest first. Pass `q` to filter by name substring.',
+		description:
+			'List files in the workspace, newest first. Pass `q` to filter by name substring. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
 			limit: z.number().int().min(1).max(200).optional(),
 			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	get_file: {
@@ -703,11 +745,18 @@ export const tools = {
 		}),
 	},
 	list_triggers: {
-		description: 'List all triggers in the workspace. Results are paginated (default 50, max 100).',
+		description:
+			'List all triggers in the workspace. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `limit`/`offset` still work for backward compatibility (default 50, max 100).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			limit: z.number().int().min(1).max(100).default(50),
-			offset: z.number().int().min(0).default(0),
+			limit: z.number().int().min(1).max(100).optional(),
+			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	// ─── Sessions ────────────────────────────────────────────
@@ -732,10 +781,17 @@ export const tools = {
 				.describe('Container configuration overrides'),
 			trigger_id: z.string().uuid().optional().describe('Trigger that initiated this session'),
 			auto_start: z.boolean().default(true).describe('Start the session immediately'),
+			source_session_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'ID of a prior session whose workspace should be restored at startup. Use this when continuing a task that a previous session started but could not finish (e.g. code was written but could not be pushed).',
+				),
 		}),
 	},
 	list_sessions: {
-		description: 'List sessions with optional filters',
+		description: 'List sessions with optional filters (status, actor, last-updated window).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			status: z
@@ -751,6 +807,20 @@ export const tools = {
 				])
 				.optional(),
 			actor_id: z.string().uuid().optional(),
+			updated_before: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Half-open: returns rows with `updated_at < updated_before` (the bound itself is excluded). Use to scan for stalled sessions, e.g. `updated_before = now - 6h`.',
+				),
+			updated_after: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded). Composes with `updated_before` for a non-overlapping window.',
+				),
 			limit: z.number().int().min(1).max(100).default(20),
 			offset: z.number().int().min(0).default(0),
 		}),

@@ -25,7 +25,7 @@ features:
 oauth_config:
   # The OAuth redirect must match apps/dev's callback route exactly. Replace
   # REPLACE_WITH_ENV_URL with the target environment's public host before
-  # uploading (prod: maskin.sindre.ai). Dropping this breaks the connect flow.
+  # uploading (prod: maskin.io). Dropping this breaks the connect flow.
   redirect_urls:
     - https://REPLACE_WITH_ENV_URL/api/integrations/slack/callback
   pkce_enabled: false

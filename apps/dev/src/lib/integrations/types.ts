@@ -136,6 +136,8 @@ export interface ProviderConfig {
 		mapping?: EventMapping
 	}
 	mcp?: McpConfig
+	/** How to display externalId in the integrations UI. 'email' → "Connected as <id>", 'installation' (default) → "Connected · Installation <id>" */
+	externalIdDisplay?: 'email' | 'installation'
 }
 
 // ── Custom handler interfaces ──────────────────────────────────────────────
@@ -249,4 +251,5 @@ export interface PreDisconnectContext {
 	db: unknown
 	integrationId: string
 	workspaceId: string
+	credentials: StoredCredentials
 }

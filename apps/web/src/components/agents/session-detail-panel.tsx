@@ -1,5 +1,6 @@
-import { MarkdownContent } from '@/components/shared/markdown-content'
-import { type AffectedObject, useSessionAffectedObjects } from '@/hooks/use-events'
+import { AgentOutput } from '@/components/shared/agent-output'
+import { ObjectReference } from '@/components/shared/object-reference'
+import { useSessionAffectedObjects } from '@/hooks/use-events'
 import { useCreateSession, useSessionLogs } from '@/hooks/use-sessions'
 import { trackEvent } from '@/lib/analytics'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
@@ -257,52 +258,6 @@ function SessionStatusBadge({ status }: { status: string }) {
 	)
 }
 
-function formatAction(actions: string[]): string {
-	return actions
-		.map((a) => {
-			if (a === 'status_changed') return 'status changed'
-			return a
-		})
-		.join(', ')
-}
-
-function AffectedObjectsList({
-	objects,
-	workspaceId,
-}: { objects: AffectedObject[]; workspaceId: string }) {
-	if (objects.length === 0) {
-		return <p className="text-sm text-muted-foreground py-2 text-center">No objects affected</p>
-	}
-
-	return (
-		<div className="space-y-1">
-			{objects.map((obj) => (
-				<Link
-					key={obj.entityId}
-					to="/$workspaceId/objects/$objectId"
-					params={{ workspaceId, objectId: obj.entityId }}
-					className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors group"
-				>
-					<FileText
-						size={14}
-						className="mt-0.5 shrink-0 text-muted-foreground group-hover:text-foreground"
-					/>
-					<div className="min-w-0 flex-1">
-						<p className="text-sm truncate group-hover:text-foreground">
-							{obj.title || obj.entityId}
-						</p>
-						<p className="text-[11px] text-muted-foreground">
-							<span className="capitalize">{obj.entityType}</span>
-							{' — '}
-							{formatAction(obj.actions)}
-						</p>
-					</div>
-				</Link>
-			))}
-		</div>
-	)
-}
-
 function ExpandableTitle({ text }: { text: string }) {
 	const [expanded, setExpanded] = useState(false)
 	const isLong = text.length > 120
@@ -362,7 +317,7 @@ function RestartSessionButton({
 	return (
 		<button
 			type="button"
-			className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+			className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed min-h-[44px] inline-flex items-center"
 			disabled={createSession.isPending}
 			onClick={() => {
 				trackEvent('session_restart_clicked', {
@@ -485,7 +440,7 @@ export function SessionDetailPanel({
 											: 'border-border bg-secondary/30',
 									)}
 								>
-									<MarkdownContent content={lastResult.text} size="sm" />
+									<AgentOutput content={lastResult.text} size="sm" />
 								</div>
 							</div>
 						)}
@@ -503,8 +458,21 @@ export function SessionDetailPanel({
 								<div className="flex items-center justify-center py-4">
 									<Spinner />
 								</div>
+							) : affectedObjects.length === 0 ? (
+								<p className="text-sm text-muted-foreground py-2 text-center">
+									No objects affected
+								</p>
 							) : (
-								<AffectedObjectsList objects={affectedObjects} workspaceId={workspaceId} />
+								<div className="space-y-1">
+									{affectedObjects.map((obj) => (
+										<ObjectReference
+											key={obj.entityId}
+											objectId={obj.entityId}
+											workspaceId={workspaceId}
+											variant="block"
+										/>
+									))}
+								</div>
 							)}
 						</div>
 

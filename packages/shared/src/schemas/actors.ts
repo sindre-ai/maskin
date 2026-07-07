@@ -71,10 +71,11 @@ export const actorResponseSchema = z.object({
 	llm_provider: z.string().nullable(),
 	llm_config: jsonbObject,
 	isSystem: z.boolean(),
-	agentState: agentStateSchema,
-	agentStateUpdatedAt: z.string().nullable(),
+	agentState: agentStateSchema.default('idle'),
+	agentStateUpdatedAt: z.string().nullable().default(null),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	installedPackageId: z.string().uuid().nullable().optional(),
 })
 
 export type ActorResponse = z.infer<typeof actorResponseSchema>
@@ -92,6 +93,10 @@ export const actorListItemSchema = z.object({
 	description: z.string().nullable(),
 	isSystem: z.boolean(),
 	agentState: agentStateSchema,
+	// Surfaced so MCP list_actors can seed a `(createdAt, id)` next-cursor
+	// without a second query, and so the AC-T3 integration test can pull
+	// the seek partner off the response.
+	createdAt: z.string().nullable().optional(),
 	role: z.string().optional(),
 	workspaces: z
 		.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() }))

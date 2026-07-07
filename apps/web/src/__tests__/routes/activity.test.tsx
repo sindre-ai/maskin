@@ -33,6 +33,11 @@ vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
 }))
 
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: () => null,
+	isCreateShortcut: () => false,
+}))
+
 import { Route } from '@/routes/_authed/$workspaceId/activity'
 
 const RouteOptions = Route as unknown as {

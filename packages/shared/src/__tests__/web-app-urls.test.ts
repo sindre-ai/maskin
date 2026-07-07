@@ -13,11 +13,11 @@ const ws = 'ws-123'
 
 describe('stripTrailingSlash', () => {
 	it('removes exactly one trailing slash when present', () => {
-		expect(stripTrailingSlash('https://maskin.sindre.ai/')).toBe('https://maskin.sindre.ai')
+		expect(stripTrailingSlash('https://maskin.io/')).toBe('https://maskin.io')
 	})
 
 	it('returns the input unchanged when there is no trailing slash', () => {
-		expect(stripTrailingSlash('https://maskin.sindre.ai')).toBe('https://maskin.sindre.ai')
+		expect(stripTrailingSlash('https://maskin.io')).toBe('https://maskin.io')
 	})
 
 	it('preserves the empty string', () => {
@@ -25,7 +25,7 @@ describe('stripTrailingSlash', () => {
 	})
 
 	it('strips only a single slash so callers can detect over-trimmed input themselves', () => {
-		expect(stripTrailingSlash('https://maskin.sindre.ai//')).toBe('https://maskin.sindre.ai/')
+		expect(stripTrailingSlash('https://maskin.io//')).toBe('https://maskin.io/')
 	})
 })
 
@@ -124,6 +124,19 @@ describe('buildWebAppPath', () => {
 		).toBe('/ws-123/objects/obj-a')
 	})
 
+	it('builds file detail path from the id', () => {
+		expect(buildWebAppPath(ws, { kind: 'file', id: 'file-1' })).toBe('/ws-123/files/file-1')
+	})
+
+	it('routes skill links to the settings skills list (no per-skill detail route yet)', () => {
+		expect(buildWebAppPath(ws, { kind: 'skill', name: 'my-skill' })).toBe('/ws-123/settings/skills')
+		// `name` is recorded on the target for forward-compat but ignored by the
+		// current URL builder — every skill resolves to the shared settings list.
+		expect(buildWebAppPath(ws, { kind: 'skill', name: 'other-skill' })).toBe(
+			'/ws-123/settings/skills',
+		)
+	})
+
 	it('builds settings index and section paths', () => {
 		expect(buildWebAppPath(ws, { kind: 'settings' })).toBe('/ws-123/settings')
 		const sections = ['integrations', 'keys', 'mcp', 'members', 'skills', 'objects'] as const
@@ -145,6 +158,8 @@ describe('buildWebAppPath', () => {
 			{ kind: 'notification', id: 'x' },
 			{ kind: 'extension', id: 'x' },
 			{ kind: 'relationship', sourceId: 'x' },
+			{ kind: 'file', id: 'x' },
+			{ kind: 'skill', name: 'x' },
 			{ kind: 'settings' },
 		]
 		for (const t of targets) {
@@ -176,17 +191,17 @@ describe('buildWebAppHref', () => {
 
 describe('resolveWebAppBaseUrl', () => {
 	it('falls back to the production host when no env vars are set', () => {
-		expect(resolveWebAppBaseUrl({})).toBe('https://maskin.sindre.ai')
-		expect(DEFAULT_WEB_APP_BASE_URL).toBe('https://maskin.sindre.ai')
+		expect(resolveWebAppBaseUrl({})).toBe('https://maskin.io')
+		expect(DEFAULT_WEB_APP_BASE_URL).toBe('https://maskin.io')
 	})
 
 	it('produces the workspace-scoped object URL when joined with the path builder', () => {
 		// This is the contract the bug report cares about: the helper must yield
-		// `https://maskin.sindre.ai/<workspaceId>/objects/<id>` by default,
+		// `https://maskin.io/<workspaceId>/objects/<id>` by default,
 		// not `https://app.maskin.ai/objects/<id>`.
 		const base = resolveWebAppBaseUrl({})
 		expect(buildWebAppHref(base, ws, { kind: 'object', id: 'obj-1' })).toBe(
-			'https://maskin.sindre.ai/ws-123/objects/obj-1',
+			'https://maskin.io/ws-123/objects/obj-1',
 		)
 	})
 
@@ -214,9 +229,7 @@ describe('resolveWebAppBaseUrl', () => {
 	it('treats empty strings as unset', () => {
 		// An env injection that produces `WEB_APP_URL=""` shouldn't silently
 		// shadow the FRONTEND_URL fallback or the production default.
-		expect(resolveWebAppBaseUrl({ WEB_APP_URL: '', FRONTEND_URL: '' })).toBe(
-			'https://maskin.sindre.ai',
-		)
+		expect(resolveWebAppBaseUrl({ WEB_APP_URL: '', FRONTEND_URL: '' })).toBe('https://maskin.io')
 		expect(
 			resolveWebAppBaseUrl({ WEB_APP_URL: '', FRONTEND_URL: 'https://other.example.com' }),
 		).toBe('https://other.example.com')
@@ -224,7 +237,7 @@ describe('resolveWebAppBaseUrl', () => {
 
 	it('accepts undefined env values', () => {
 		expect(resolveWebAppBaseUrl({ WEB_APP_URL: undefined, FRONTEND_URL: undefined })).toBe(
-			'https://maskin.sindre.ai',
+			'https://maskin.io',
 		)
 	})
 })

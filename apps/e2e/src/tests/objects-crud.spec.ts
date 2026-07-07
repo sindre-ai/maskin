@@ -1,39 +1,26 @@
 import { expect, test } from '../fixtures/auth.fixture'
 
 test.describe('Objects CRUD', () => {
-	test('can create a new bet', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}/objects?create=true`)
+	test('can create an object via the header create picker', async ({ page, account }) => {
+		await page.goto(`/${account.workspaceId}/objects`)
 
-		// The create form should be open
-		await expect(page.getByPlaceholder("What's this about?")).toBeVisible()
+		// Header "Create new" button opens the CreatePicker dialog
+		await page.getByRole('button', { name: 'Create new' }).click()
 
-		// Type defaults to 'bet', so just fill in the title
-		await page.getByPlaceholder("What's this about?").fill('E2E Test Bet')
-		await page.getByPlaceholder('Describe it...').fill('This is a test bet')
-		await page.getByRole('button', { name: 'Create', exact: true }).click()
+		// The picker shows a type selector when opened from the header (no defaultType).
+		// Select "Object" then enter a title and submit. The radio input itself is
+		// sr-only (its label is the clickable tile), and "Object" text elsewhere on
+		// the page (nav, empty states) is still in the DOM behind the dialog overlay
+		// — scope to the "Type" radiogroup to disambiguate.
+		await page
+			.getByRole('radiogroup', { name: 'Type' })
+			.getByText('Object', { exact: true })
+			.click()
+		await page.getByPlaceholder('What are you creating?').fill('E2E Test Object')
+		await page.getByRole('button', { name: 'Create' }).click()
 
 		// Should navigate to the object detail page
-		await expect(page.getByText('E2E Test Bet')).toBeVisible({ timeout: 10000 })
-	})
-
-	test('can create an insight', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}/objects?create=true`)
-
-		await page.getByRole('button', { name: 'insight', exact: true }).click()
-		await page.getByPlaceholder("What's this about?").fill('E2E Test Insight')
-		await page.getByRole('button', { name: 'Create', exact: true }).click()
-
-		await expect(page.getByText('E2E Test Insight')).toBeVisible({ timeout: 10000 })
-	})
-
-	test('can create a task', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}/objects?create=true`)
-
-		await page.getByRole('button', { name: 'task', exact: true }).click()
-		await page.getByPlaceholder("What's this about?").fill('E2E Test Task')
-		await page.getByRole('button', { name: 'Create', exact: true }).click()
-
-		await expect(page.getByText('E2E Test Task')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByText('E2E Test Object')).toBeVisible({ timeout: 10000 })
 	})
 
 	test('can view an object created via API', async ({ page, account }) => {
@@ -56,18 +43,15 @@ test.describe('Objects CRUD', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
-		await expect(page.getByText('Original Title')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByPlaceholder('Untitled')).toBeVisible({ timeout: 10000 })
 
-		// Click the title to start editing
-		await page.getByText('Original Title').click()
-
-		// The title should now be an input — clear and type new value
-		const titleInput = page.locator('input[type="text"]').first()
+		// The title textbox is always editable — clear and type new value
+		const titleInput = page.getByPlaceholder('Untitled')
 		await titleInput.fill('Updated Title')
-		await titleInput.press('Enter')
+		await titleInput.press('Tab')
 
 		// Verify the title was updated
-		await expect(page.getByText('Updated Title')).toBeVisible()
+		await expect(page.getByPlaceholder('Untitled')).toHaveValue('Updated Title')
 	})
 
 	test('can delete an object', async ({ page, account }) => {
@@ -80,20 +64,27 @@ test.describe('Objects CRUD', () => {
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
 		await expect(page.getByText('Object To Delete')).toBeVisible({ timeout: 10000 })
 
-		// Click Delete, then Confirm
-		await page.getByRole('button', { name: 'Delete', exact: true }).click()
+		// Delete is inside the "More actions" dropdown
+		await page.getByRole('button', { name: 'More actions' }).click()
+		await page.getByRole('menuitem', { name: 'Delete' }).click()
 		await expect(page.getByText('Delete this insight?')).toBeVisible()
-		await page.getByRole('button', { name: 'Confirm' }).click()
+		await page.getByRole('button', { name: 'Delete' }).last().click()
 
 		// Should redirect back to workspace
 		await expect(page).not.toHaveURL(/objects\//, { timeout: 10000 })
 	})
 
-	test('can open create form via + Create button', async ({ page, account }) => {
+	test('can open create form via header create picker', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}/objects`)
 
-		await page.getByRole('button', { name: '+ Create' }).click()
+		// The header + button opens the CreatePicker dialog
+		await page.getByRole('button', { name: 'Create new' }).click()
 
-		await expect(page.getByPlaceholder("What's this about?")).toBeVisible()
+		// Select Object type and verify the title input appears
+		await page
+			.getByRole('radiogroup', { name: 'Type' })
+			.getByText('Object', { exact: true })
+			.click()
+		await expect(page.getByPlaceholder('What are you creating?')).toBeVisible()
 	})
 })

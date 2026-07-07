@@ -8,6 +8,8 @@ import type { ColumnInfo } from '@/components/objects/data-table/data-table-cont
 import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
 import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
+import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
+import { FilterChip } from '@/components/shared/filter-chip'
 import { RouteError } from '@/components/shared/route-error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -23,9 +25,12 @@ import {
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
+import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
+import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
+import { ALL_TYPES_KEY } from '@maskin/shared'
 import {
 	type InfiniteData,
 	keepPreviousData,
@@ -77,6 +82,7 @@ function ObjectsPage() {
 	} = searchParams
 
 	const [importOpen, setImportOpen] = useState(false)
+	const [createPickerOpen, setCreatePickerOpen] = useState(false)
 	const { startTracking: trackImport } = useImportToast(workspaceId)
 	const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
@@ -109,6 +115,18 @@ function ObjectsPage() {
 	useEffect(() => {
 		setRowSelection({})
 	}, [workspaceId])
+
+	// Linear-style `C` shortcut opens the create picker with the active type
+	// tab pre-selected. Guarded so typing into filters/search never triggers it.
+	useEffect(() => {
+		function onKeydown(event: KeyboardEvent) {
+			if (!isCreateShortcut(event)) return
+			event.preventDefault()
+			setCreatePickerOpen(true)
+		}
+		window.addEventListener('keydown', onKeydown)
+		return () => window.removeEventListener('keydown', onKeydown)
+	}, [])
 
 	const searchParamsRef = useRef(searchParams)
 	searchParamsRef.current = searchParams
@@ -176,8 +194,7 @@ function ObjectsPage() {
 	}, [settings, typeFilter, tabs])
 
 	// Board view needs a single active object type with at least one configured
-	// status. The All tab has no slot for "all types" in the persistence row
-	// (Task 5 keyed the row by object_type), so List is the only option there.
+	// status, so List is the only option on the All tab.
 	const boardSupported = Boolean(typeFilter && (statusesByType[typeFilter]?.length ?? 0) > 0)
 	// Effective view: even if the user previously chose Board for this type, an
 	// unsupported context (All tab, type with zero configured statuses) renders
@@ -247,10 +264,52 @@ function ObjectsPage() {
 		[sort, order, updateSearch],
 	)
 
+	// Bet status indicator wiring — the Title cell renders `IndicatorBadgeRow`
+	// beside each bet's title. It classifies over child tasks; the overview
+	// only loads a flat page of objects, so pull the workspace's full task
+	// list and `breaks_into` relationships once and group them here. Both
+	// queries page through the endpoints (`limit=50` default would silently
+	// misclassify any bet whose child tasks fell into the second page as
+	// `idle`) and are gated on whether any bets are actually visible so tabs
+	// like `insight` never pay for tasks + rels they don't render.
+	const hasVisibleBets = useMemo(
+		() => visibleObjects.some((o) => o.type === 'bet'),
+		[visibleObjects],
+	)
+	const { data: workspaceTasks } = useQuery({
+		queryKey: queryKeys.objects.list(workspaceId, { type: 'task' }),
+		queryFn: () =>
+			fetchAllPages<ObjectResponse>(({ limit, offset }) =>
+				api.objects.list(workspaceId, {
+					type: 'task',
+					limit: String(limit),
+					offset: String(offset),
+				}),
+			),
+		enabled: hasVisibleBets,
+	})
+	const { data: breaksIntoRels } = useQuery({
+		queryKey: [...queryKeys.relationships.all(workspaceId), { type: 'breaks_into' }] as const,
+		queryFn: () =>
+			fetchAllPages(({ limit, offset }) =>
+				api.relationships.list(workspaceId, {
+					type: 'breaks_into',
+					limit: String(limit),
+					offset: String(offset),
+				}),
+			),
+		enabled: hasVisibleBets,
+	})
+	const betStatuses = useMemo<Map<string, BetStatusResult>>(() => {
+		if (!hasVisibleBets || !workspaceTasks || !breaksIntoRels) return new Map()
+		const bets = visibleObjects.filter((o) => o.type === 'bet')
+		return buildBetStatuses(bets, workspaceTasks, breaksIntoRels, new Date())
+	}, [hasVisibleBets, workspaceTasks, breaksIntoRels, visibleObjects])
+
 	// Table meta — sort state passed via meta to avoid re-creating columns on every sort change
 	const tableMeta: ObjectsTableMeta = useMemo(
-		() => ({ onSort: handleSort, currentSort: sort, currentOrder: order }),
-		[handleSort, sort, order],
+		() => ({ onSort: handleSort, currentSort: sort, currentOrder: order, betStatuses }),
+		[handleSort, sort, order, betStatuses],
 	)
 
 	// Columns — stable across sort changes since sort state is in meta
@@ -315,10 +374,12 @@ function ObjectsPage() {
 	// Per-actor display settings (persistence layer from Task 5).
 	// Hydration policy: when the user lands on a tab with persisted settings
 	// and the URL is in its default shape, apply the saved view. Once any
-	// tracked field changes we write the whole blob back. The All tab is not
-	// persisted because the persistence row is keyed by `object_type` —
-	// there is no slot for "all types".
-	const displaySettingsQuery = useUserDisplaySettings(workspaceId, typeFilter ?? '')
+	// tracked field changes we write the whole blob back. The All tab uses
+	// the `__all__` sentinel slot so its column-visibility toggles persist
+	// the same way per-type tabs do — without that, the user's choices in
+	// the display menu reset to defaults on every navigation away and back.
+	const displaySettingsKey = typeFilter ?? ALL_TYPES_KEY
+	const displaySettingsQuery = useUserDisplaySettings(workspaceId, displaySettingsKey)
 	const updateDisplaySettings = useUpdateUserDisplaySettings(workspaceId)
 	// `useMutation` returns a new object reference on every render, but the
 	// `mutate` function itself is stable. Pinning the stable callable into a
@@ -347,16 +408,15 @@ function ObjectsPage() {
 	)
 
 	useEffect(() => {
-		if (!typeFilter) return
-		if (hydratedTypesRef.current.has(typeFilter)) return
+		if (hydratedTypesRef.current.has(displaySettingsKey)) return
 		if (!displaySettingsQuery.isSuccess) return
 		// Mark hydrated even if there are no persisted settings yet — that lets
 		// the write-through effect start tracking once the user makes their
 		// first change, without re-running this hydrate block.
-		hydratedTypesRef.current.add(typeFilter)
+		hydratedTypesRef.current.add(displaySettingsKey)
 		const persisted = displaySettingsQuery.data
 		if (!persisted) {
-			// No saved view for this type — fall back to the route default.
+			// No saved view for this key — fall back to the route default.
 			setView('list')
 			return
 		}
@@ -364,31 +424,33 @@ function ObjectsPage() {
 		// View hydrates regardless of urlIsInDefaultShape: `view` is route-local
 		// (not in the URL), so the URL's shape can't conflict with it.
 		setView(s.view ?? 'list')
-		if (!urlIsInDefaultShape) return
-		const updates: Record<string, string | undefined> = {}
-		if (s.sort) updates.sort = s.sort
-		if (s.order) updates.order = s.order
-		if (s.groupBy) updates.groupBy = s.groupBy
-		if (s.filters?.status) updates.status = s.filters.status
-		if (s.filters?.driver) updates.driver = s.filters.driver
-		if (Object.keys(updates).length > 0) updateSearch(updates)
+		if (urlIsInDefaultShape) {
+			const updates: Record<string, string | undefined> = {}
+			if (s.sort) updates.sort = s.sort
+			if (s.order) updates.order = s.order
+			if (s.groupBy) updates.groupBy = s.groupBy
+			if (s.filters?.status) updates.status = s.filters.status
+			if (s.filters?.driver) updates.driver = s.filters.driver
+			if (Object.keys(updates).length > 0) updateSearch(updates)
+		}
 		// Persisted blob wins: the saved map REPLACES the route's initial
 		// columnVisibility defaults (e.g. `{ createdBy: false }`). The user's
 		// last toggle is canonical — never merge old defaults back on top.
+		// This applies on the All tab too — `__all__` is its own row, so
+		// switching between All and a type tab restores each side's own state.
 		if (s.columnVisibility) setColumnVisibility(s.columnVisibility)
 	}, [
-		typeFilter,
+		displaySettingsKey,
 		displaySettingsQuery.isSuccess,
 		displaySettingsQuery.data,
 		urlIsInDefaultShape,
 		updateSearch,
 	])
 
-	// Write-through. Only fires after this type has been hydrated so the
+	// Write-through. Only fires after this key has been hydrated so the
 	// initial apply doesn't immediately re-write the same blob back.
 	useEffect(() => {
-		if (!typeFilter) return
-		if (!hydratedTypesRef.current.has(typeFilter)) return
+		if (!hydratedTypesRef.current.has(displaySettingsKey)) return
 		const settings: DisplaySettingsBody = {
 			view,
 			sort,
@@ -402,16 +464,38 @@ function ObjectsPage() {
 		if (filters.status || filters.driver) settings.filters = filters
 
 		const handle = setTimeout(() => {
-			updateMutateRef.current({ objectType: typeFilter, settings })
+			updateMutateRef.current({ objectType: displaySettingsKey, settings })
 		}, 500)
 		return () => clearTimeout(handle)
-	}, [typeFilter, view, sort, order, groupBy, statusFilter, driverFilter, columnVisibility])
+	}, [displaySettingsKey, view, sort, order, groupBy, statusFilter, driverFilter, columnVisibility])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
 
 	const clearIdsFilter = useCallback(() => {
 		updateSearch({ ids: undefined })
 	}, [updateSearch])
+
+	// Human-readable labels for the active status/driver chips. Mirror the
+	// DisplayPanel picker's collapsing rule: single value → the value, >1 →
+	// "{N} statuses/drivers". Keeps the chip strip readable at any selection
+	// size without spilling the toolbar row.
+	const activeStatuses = useMemo(
+		() => (statusFilter ? statusFilter.split(',').filter(Boolean) : []),
+		[statusFilter],
+	)
+	const activeDrivers = useMemo(
+		() => (driverFilter ? driverFilter.split(',').filter(Boolean) : []),
+		[driverFilter],
+	)
+	const statusChipValue =
+		activeStatuses.length === 1
+			? (activeStatuses[0]?.replace(/_/g, ' ') ?? '')
+			: `${activeStatuses.length} statuses`
+	const driverChipValue =
+		activeDrivers.length === 1
+			? (actors?.find((a) => a.id === activeDrivers[0])?.name ?? '1 driver')
+			: `${activeDrivers.length} drivers`
+	const hasChipFilters = activeStatuses.length > 0 || activeDrivers.length > 0
 
 	const bulkOwnerOptions = useMemo(
 		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),
@@ -646,7 +730,10 @@ function ObjectsPage() {
 				tabs={tabs}
 				typeFilter={typeFilter}
 				onTypeFilterChange={(value) => {
-					if (typeFilter) hydratedTypesRef.current.delete(typeFilter)
+					// Clear the outgoing key (real type or `__all__`) so the destination
+					// tab re-hydrates from its own persisted row instead of inheriting
+					// the previous tab's settings.
+					hydratedTypesRef.current.delete(displaySettingsKey)
 					navigate({
 						to: '/$workspaceId/objects',
 						params: { workspaceId },
@@ -701,9 +788,43 @@ function ObjectsPage() {
 				}}
 				boardSupported={boardSupported}
 				onImportClick={() => setImportOpen(true)}
+				onNewClick={() => setCreatePickerOpen(true)}
 			/>
 
+			{hasChipFilters && (
+				<div className="flex items-center gap-2 mx-6 mb-3 flex-wrap">
+					{activeStatuses.length > 0 && (
+						<FilterChip
+							label="Status"
+							value={statusChipValue}
+							onRemove={() => updateSearch({ status: undefined })}
+						/>
+					)}
+					{activeDrivers.length > 0 && (
+						<FilterChip
+							label="Driver"
+							value={driverChipValue}
+							onRemove={() => updateSearch({ driver: undefined })}
+						/>
+					)}
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+						onClick={() => updateSearch({ status: undefined, driver: undefined })}
+					>
+						Clear all
+					</Button>
+				</div>
+			)}
+
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
+			<CreatePicker
+				open={createPickerOpen}
+				onOpenChange={setCreatePickerOpen}
+				defaultType="object"
+				defaultObjectSubtype={typeFilter}
+			/>
 
 			{effectiveView === 'board' && typeFilter ? (
 				<div className="pb-4 flex-1 min-h-0 overflow-x-auto overflow-y-hidden md:px-6">

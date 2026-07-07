@@ -136,6 +136,7 @@ export class ContainerManager {
 			}),
 			HostConfig: {
 				Memory: options.memoryMb * 1024 * 1024,
+				MemorySwap: -1,
 				CpuShares: options.cpuShares,
 				Binds: options.binds,
 				NetworkMode: options.networkMode ?? 'bridge',
@@ -352,6 +353,12 @@ export class ContainerManager {
 			startedAt: info.State.StartedAt ?? null,
 			finishedAt: info.State.FinishedAt ?? null,
 		}
+	}
+
+	async getIpOnNetwork(containerId: string, networkName: string): Promise<string | null> {
+		const container = this.docker.getContainer(containerId)
+		const info = await container.inspect()
+		return info.NetworkSettings?.Networks?.[networkName]?.IPAddress ?? null
 	}
 
 	async exec(containerId: string, cmd: string[]): Promise<{ exitCode: number; output: string }> {

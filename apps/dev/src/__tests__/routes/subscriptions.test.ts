@@ -244,7 +244,7 @@ describe('Subscriptions Routes', () => {
 						entityType: 'object',
 						entityId: obj.id,
 						unreadCount: 3,
-						mentionsYou: false,
+						mentioningUnreadCount: 0,
 						latestEventId: 100,
 						latestActivityAt: new Date('2026-01-01T00:00:00Z'),
 					},
@@ -261,11 +261,12 @@ describe('Subscriptions Routes', () => {
 			expect(body.items).toHaveLength(1)
 			expect(body.items[0].entity_id).toBe(obj.id)
 			expect(body.items[0].unread_count).toBe(3)
-			expect(body.items[0].mentions_you).toBe(false)
+			expect(body.items[0].mentioning_unread_count).toBe(0)
+			expect(body.items[0]).not.toHaveProperty('mentions_you')
 			expect(body.items[0].object?.id).toBe(obj.id)
 		})
 
-		it('surfaces mentions_you=true when the aggregate flag is set', async () => {
+		it('surfaces the per-event mentioning count when at least one unread event mentions the actor', async () => {
 			const obj = buildObject({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
 			mockResults.selectQueue = [
@@ -273,8 +274,8 @@ describe('Subscriptions Routes', () => {
 					{
 						entityType: 'object',
 						entityId: obj.id,
-						unreadCount: 1,
-						mentionsYou: true,
+						unreadCount: 10,
+						mentioningUnreadCount: 1,
 						latestEventId: 200,
 						latestActivityAt: new Date('2026-01-02T00:00:00Z'),
 					},
@@ -286,7 +287,11 @@ describe('Subscriptions Routes', () => {
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.items[0].mentions_you).toBe(true)
+			// One mentioning event among ten unread events surfaces as the literal
+			// per-event count, not as a "the whole object is mentioned" boolean.
+			expect(body.items[0].mentioning_unread_count).toBe(1)
+			expect(body.items[0].unread_count).toBe(10)
+			expect(body.items[0]).not.toHaveProperty('mentions_you')
 		})
 
 		it('rejects unknown entity_type filter with 400', async () => {
