@@ -162,19 +162,28 @@ export function DisplayPanel({
 	const activeStatuses = statusFilter ? statusFilter.split(',').filter(Boolean) : []
 	const activeDrivers = driverFilter ? driverFilter.split(',').filter(Boolean) : []
 	const metadataFields = fieldDefinitions ?? []
-	const activeMetadataFields = metadataFields.filter(
-		(f) => (metadataFilters?.[f.name] ?? '') !== '',
-	)
+	// Counted from `metadataFilters` directly, not from `metadataFields` — the
+	// active type's field rows (e.g. on the "All" tab, where `fieldDefinitions`
+	// is undefined) can be empty while a metadata filter from another tab is
+	// still applied. Gating the count on the rendered rows made that filter
+	// invisible (no badge, no Reset) even though it kept narrowing results.
+	const activeMetadataFilterCount = Object.values(metadataFilters ?? {}).filter(
+		(value) => value !== '',
+	).length
 	const activeFilterCount =
 		(activeStatuses.length > 0 ? 1 : 0) +
 		(activeDrivers.length > 0 ? 1 : 0) +
-		activeMetadataFields.length
+		activeMetadataFilterCount
 	const hasActiveFilters = activeFilterCount > 0
 
 	const showMetadataFilters = !!onMetadataFilterChange && metadataFields.length > 0
 	const showOrdering = !!sort && !!order && !!onSortChange && !!onOrderChange && columns.length > 0
 	const showGrouping = !!onGroupByChange && columns.length > 0
-	const showFilters = !!onStatusFilterChange || !!onDriverFilterChange || showMetadataFilters
+	const showFilters =
+		!!onStatusFilterChange ||
+		!!onDriverFilterChange ||
+		showMetadataFilters ||
+		activeMetadataFilterCount > 0
 	const hideableColumns = columns.filter((col) => col.canHide)
 	const showProperties = !!onColumnVisibilityChange && hideableColumns.length > 0
 	const orderingColumns =

@@ -50,10 +50,16 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 		// Pass through dynamic `metadata.<field>` filter keys so they persist in
 		// the URL and survive `updateSearch()` merges. Fixed keys are plucked
 		// explicitly below; unlisted keys would otherwise be dropped.
+		// Number/boolean metadata fields (e.g. a bare `metadata.priority=5` or
+		// `metadata.active=true` from a hand-typed or externally-built URL) parse
+		// to a JS number/boolean here — coerce back to string rather than
+		// dropping them, since the filter value is always compared as text.
 		const metadataFilters: Record<string, string> = {}
 		for (const [key, value] of Object.entries(search)) {
-			if (/^metadata\.[a-zA-Z][a-zA-Z0-9_]*$/.test(key) && typeof value === 'string') {
-				metadataFilters[key] = value
+			if (!/^metadata\.[a-zA-Z][a-zA-Z0-9_]*$/.test(key)) continue
+			if (typeof value === 'string') metadataFilters[key] = value
+			else if (typeof value === 'number' || typeof value === 'boolean') {
+				metadataFilters[key] = String(value)
 			}
 		}
 		return {

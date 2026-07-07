@@ -265,5 +265,23 @@ describe('DisplayPanel', () => {
 			})
 			expect(screen.getByText('1')).toBeInTheDocument()
 		})
+
+		it('still counts and can reset a metadata filter when the active tab has no field definitions for it', async () => {
+			// Mirrors the "All" objects tab: fieldDefinitions is empty there because
+			// field definitions are per-type, but a metadata filter set on another
+			// tab is still applied to the query and must stay visible/clearable.
+			const user = userEvent.setup()
+			const onResetFilters = vi.fn()
+			renderPanel({
+				fieldDefinitions: [],
+				metadataFilters: { region: 'emea' },
+				onMetadataFilterChange: vi.fn(),
+				onResetFilters,
+			})
+			expect(screen.getByText('1')).toBeInTheDocument()
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			await user.click(screen.getByRole('button', { name: /reset/i }))
+			expect(onResetFilters).toHaveBeenCalled()
+		})
 	})
 })
