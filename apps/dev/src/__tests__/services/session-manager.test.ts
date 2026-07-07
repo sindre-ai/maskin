@@ -703,6 +703,9 @@ describe('SessionManager', () => {
 			expect(createArgs.env.GITHUB_TOKEN_VAERKSTED_AI).toBe('ghs_token_vaerksted_ai')
 			// bare GITHUB_TOKEN is aliased from the first installation
 			expect(createArgs.env.GITHUB_TOKEN).toBe('ghs_token_sindre_ai')
+			// GITHUB_INTEGRATION_ID lets the container's credential helper mint fresh
+			// tokens mid-session; it's also aliased from the first installation
+			expect(createArgs.env.GITHUB_INTEGRATION_ID).toBe(integrationA.id)
 			// each installation gets its own auto-injected MCP server entry
 			const mcpKeys = createArgs.env.MCP_SERVERS_JSON
 				? Object.keys(
@@ -780,6 +783,7 @@ describe('SessionManager', () => {
 			const githubKeys = Object.keys(createArgs.env).filter((k) => k.startsWith('GITHUB_TOKEN_'))
 			expect(githubKeys).toEqual([])
 			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
+			expect(createArgs.env.GITHUB_INTEGRATION_ID).toBeUndefined()
 		})
 
 		describe('Slack auto-inject + xoxb- guard', () => {

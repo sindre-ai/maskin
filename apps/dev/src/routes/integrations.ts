@@ -704,6 +704,84 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)
 
+// ── GET /api/integrations/:id/github-token ─────────────────────────────────
+
+const githubTokenRoute = createRoute({
+	method: 'get',
+	path: '/{id}/github-token',
+	tags: ['integrations'],
+	summary: 'Mint a fresh GitHub App installation access token',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			description: 'Freshly minted installation access token (1-hour GitHub-imposed TTL)',
+			content: { 'application/json': { schema: z.object({ token: z.string() }) } },
+		},
+		400: {
+			description: 'Failed to mint token',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		401: {
+			description: 'Integration authorization revoked',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'GitHub integration not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(githubTokenRoute, (async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [integration] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.id, id),
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'github'),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+	if (!integration) return c.json(createApiError('NOT_FOUND', 'GitHub integration not found'), 404)
+
+	try {
+		const provider = getProvider('github')
+		const tokenManager = new TokenManager()
+		// GitHub App installation tokens expire after exactly 1 hour with no refresh
+		// token. getValidToken's customAuth branch mints a brand new one on every
+		// call (no caching), so a caller hitting this route just-in-time always gets
+		// a live token — unlike the value baked into a session's env vars once at
+		// container launch, which goes stale for any session running past ~1 hour.
+		const token = await tokenManager.getValidToken(db, integration.id, provider)
+		return c.json({ token })
+	} catch (err) {
+		if (isAuthRevokedError(err)) {
+			return c.json(
+				createApiError(
+					'AUTH_REVOKED',
+					'GitHub integration authorization has been revoked — please reconnect',
+				),
+				401,
+			)
+		}
+		logger.warn('GitHub token mint failed', {
+			integrationId: integration.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('BAD_REQUEST', 'Failed to mint GitHub access token'), 400)
+	}
+}) as RouteHandler<typeof githubTokenRoute, Env>)
+
 // ── GET /api/integrations/:id/slack/conversations ──────────────────────────
 
 const slackConversationTypeSchema = z.enum(['public_channel', 'private_channel', 'im', 'mpim'])
