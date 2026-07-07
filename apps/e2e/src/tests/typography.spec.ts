@@ -35,6 +35,56 @@ async function createObjectWithContent(
 	})
 }
 
+// The "For You" unread feed only surfaces subscribed entities with a comment
+// or terminal bet-status event authored by *another* actor (see
+// apps/dev/src/routes/subscriptions.ts) — a bare `createObject` call by the
+// viewing actor can never populate it. Mock the endpoint directly instead,
+// the same way foryou-mark-all-read.spec.ts and unread-mentioned-pill.spec.ts do,
+// so these typography assertions stay deterministic.
+interface UnreadFixture {
+	entity_type: 'object'
+	entity_id: string
+	unread_count: number
+	mentioning_unread_count: number
+	latest_event_id: number
+	latest_activity_at: string
+	object: {
+		id: string
+		title: string
+		type: string
+		status: string
+		workspaceId: string
+	}
+}
+
+function buildUnreadItem(workspaceId: string, entityId: string, title: string): UnreadFixture {
+	return {
+		entity_type: 'object',
+		entity_id: entityId,
+		unread_count: 1,
+		mentioning_unread_count: 0,
+		latest_event_id: 1,
+		latest_activity_at: new Date().toISOString(),
+		object: {
+			id: entityId,
+			title,
+			type: 'bet',
+			status: 'active',
+			workspaceId,
+		},
+	}
+}
+
+async function mockUnreadFeed(page: Page, workspaceId: string, items: UnreadFixture[]) {
+	await page.route('**/api/subscriptions/unread*', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ items }),
+		})
+	})
+}
+
 /* ───── 1. Font-load URL integrity (AC-T2) ───── */
 
 test.describe('Typography — font load', () => {
@@ -179,12 +229,9 @@ test.describe('Typography — object detail', () => {
 
 test.describe('Typography — notification feed', () => {
 	test('thread timestamps render in font-mono with tabular-nums', async ({ page, account }) => {
-		// Create a bet so we have something in the notification feed
-		await account.api.createObject(account.workspaceId, {
-			type: 'bet',
-			title: 'Feed Test Bet',
-			status: 'active',
-		})
+		await mockUnreadFeed(page, account.workspaceId, [
+			buildUnreadItem(account.workspaceId, 'feed-test-bet', 'Feed Test Bet'),
+		])
 
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}`)
@@ -249,6 +296,10 @@ test.describe('Typography — timeline', () => {
 
 test.describe('Typography — tabular-nums', () => {
 	test('elements with font-mono class have tabular-nums applied', async ({ page, account }) => {
+		await mockUnreadFeed(page, account.workspaceId, [
+			buildUnreadItem(account.workspaceId, 'mono-class-test-bet', 'Mono Class Test Bet'),
+		])
+
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}`)
 		await waitForApp(page)
@@ -268,13 +319,9 @@ test.describe('Typography — tabular-nums', () => {
 	})
 
 	test('unread badge count uses tabular-nums', async ({ page, account }) => {
-		// Create an object so the "for you" feed has at least one unread thread
-		// card to render an unread badge on.
-		await account.api.createObject(account.workspaceId, {
-			type: 'bet',
-			title: 'Tabular Nums Badge Test',
-			status: 'active',
-		})
+		await mockUnreadFeed(page, account.workspaceId, [
+			buildUnreadItem(account.workspaceId, 'badge-test-bet', 'Tabular Nums Badge Test'),
+		])
 
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}`)
