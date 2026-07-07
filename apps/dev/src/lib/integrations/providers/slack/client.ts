@@ -178,6 +178,53 @@ export async function listSlackUsers(
 	return all
 }
 
+/**
+ * POST a body to a Slack web API method with the bot token. Slack returns a
+ * JSON envelope `{ ok, error?, ... }` on every endpoint; throws when `ok` is
+ * false so the caller can decide whether to swallow or surface the error.
+ */
+export async function slackPost<T extends SlackResponse>(
+	path: string,
+	accessToken: string,
+	body: Record<string, unknown>,
+): Promise<T> {
+	let res: Response
+	try {
+		res = await fetch(`${SLACK_API_BASE}/${path}`, {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				'Content-Type': 'application/json; charset=utf-8',
+			},
+			body: JSON.stringify(body),
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+		})
+	} catch (err) {
+		if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+			throw new Error(`Slack ${path} timed out after ${REQUEST_TIMEOUT_MS}ms`)
+		}
+		throw err
+	}
+	const json = (await res.json()) as T
+	if (!json.ok) {
+		throw new Error(`Slack ${path} failed: ${json.error ?? 'unknown error'}`)
+	}
+	return json
+}
+
+/**
+ * Publish an App Home view for one user. Slack rate-limits this at tier 4
+ * (~1/s/user); upstream callers should debounce.
+ *
+ * https://api.slack.com/methods/views.publish
+ */
+export async function slackViewsPublish(
+	accessToken: string,
+	args: { user_id: string; view: Record<string, unknown> },
+): Promise<void> {
+	await slackPost('views.publish', accessToken, args)
+}
+
 /** Reset caches (used in tests). */
 export function _resetSlackCaches(): void {
 	conversationCache.clear()

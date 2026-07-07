@@ -11,6 +11,7 @@ import { TokenManager } from '../../oauth/token-manager'
 import { getProvider } from '../../registry'
 import type { NormalizedEvent, WebhookFanOutContext } from '../../types'
 import { maybePromptAccountLink } from './account-link'
+import { publishAppHomeView } from './webhooks'
 
 /**
  * Slack file object shape from Events API message payloads. Slack returns many
@@ -303,8 +304,52 @@ async function maybePromptAccountLinkForMention(
  * When the event has no files, the original normalized event is returned
  * unchanged — no behavior change for the vast majority of Slack events.
  */
+async function handleAppHomeOpened(ctx: WebhookFanOutContext): Promise<void> {
+	const data = ctx.normalized.data
+	const event = data.event as Record<string, unknown> | undefined
+	if (!event) return
+	// Slack fires app_home_opened on Home, Messages, and About tabs. We only
+	// rebuild the For You feed when the user is actually looking at it.
+	const tab = event.tab as string | undefined
+	if (tab !== undefined && tab !== 'home') return
+	const slackUserId = event.user as string | undefined
+	const teamId =
+		(data.team_id as string | undefined) ??
+		((event.view as Record<string, unknown> | undefined)?.team_id as string | undefined)
+	if (!slackUserId || !teamId) {
+		logger.warn('Slack App Home: payload missing user or team_id', {
+			integrationId: ctx.integrationId,
+		})
+		return
+	}
+	try {
+		await publishAppHomeView({
+			db: ctx.db as Database,
+			teamId,
+			slackUserId,
+		})
+	} catch (err) {
+		// publishAppHomeView already swallows API errors; this is the
+		// outer net for DB / token-manager failures.
+		logger.error('Slack App Home: handler failed', {
+			integrationId: ctx.integrationId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+}
+
 export async function slackWebhookFanOut(ctx: WebhookFanOutContext): Promise<NormalizedEvent[]> {
 	const db = ctx.db as Database
+
+	// App Home opens are pure side-effects: publish the For You view and drop
+	// the event so we don't pollute the events log with one row per tab switch.
+	// Returning [] tells the route to commit the delivery claim with zero
+	// inserts, so the next `app_home_opened` for the same Slack event_id still
+	// short-circuits via the dedup ledger.
+	if (ctx.normalized.entityType === 'slack.app_home_opened') {
+		await handleAppHomeOpened(ctx)
+		return []
+	}
 
 	// First-touch account-link prompt: when an unlinked Slack user @mentions the
 	// bot or DMs it, post an ephemeral picker so the user can choose which
