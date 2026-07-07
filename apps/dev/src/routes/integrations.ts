@@ -20,10 +20,15 @@ import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import {
+	dispatchAccountLinkAction,
+	dispatchMaskinWorkspaceCommand,
+} from '../lib/integrations/providers/slack/account-link'
+import {
 	type SlackConversationType,
 	listSlackConversations,
 	listSlackUsers,
 } from '../lib/integrations/providers/slack/client'
+import { config as slackProviderConfig } from '../lib/integrations/providers/slack/config'
 import { getProvider, listProviders } from '../lib/integrations/registry'
 import type { ResolvedProvider, StoredCredentials } from '../lib/integrations/types'
 import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
@@ -859,6 +864,108 @@ export default app
 const webhookHandler = new WebhookHandler()
 
 export const webhookApp = new OpenAPIHono<Env>()
+
+// ── Slack slash command: /maskin workspace <name> ─────────────────────────
+//
+// Slack POSTs form-encoded payloads here, signed with the same `v0` HMAC as
+// the Events API. The literal route MUST be declared before `/:provider` so
+// it wins over the catch-all param route.
+//
+// Per AC-U3 the slash command is the per-Slack-workspace override: it
+// switches `slack_user_links.default_workspace_id` to the named Maskin
+// workspace. Returns an immediate ephemeral via the response body — no
+// follow-up POST to `response_url` needed for this surface.
+webhookApp.post('/slack-commands', async (c) => {
+	const db = c.get('db')
+	const body = await c.req.text()
+
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	const webhookConfig = slackProviderConfig.webhook
+	if (!webhookConfig || 'type' in webhookConfig) {
+		// Should be unreachable — slack config is always timestamp-scheme.
+		return c.json(createApiError('INTERNAL_ERROR', 'Slack webhook config missing'), 500)
+	}
+	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+		logger.warn('Slack slash-command signature verification failed')
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid Slack signature'), 401)
+	}
+
+	const params = new URLSearchParams(body)
+	const payload = {
+		team_id: params.get('team_id') ?? undefined,
+		user_id: params.get('user_id') ?? undefined,
+		command: params.get('command') ?? undefined,
+		text: params.get('text') ?? undefined,
+		response_url: params.get('response_url') ?? undefined,
+	}
+
+	const result = await dispatchMaskinWorkspaceCommand(db, payload)
+	// Slack expects either {text} (channel-visible) or {response_type:'ephemeral', text}.
+	// Ephemeral is the safe default for personal routing decisions.
+	return c.json({ response_type: 'ephemeral', text: result.responseText })
+})
+
+// ── Slack account-link interactivity ──────────────────────────────────────
+//
+// Slack POSTs Block Kit `block_actions` payloads here when the user interacts
+// with the account-link picker (form-encoded with a `payload` field). The
+// dispatcher returns 200 with an ephemeral body so Slack's 3s timeout is
+// always met.
+//
+// This is a dedicated endpoint rather than reusing the generic
+// `/slack-interactive` (T6) because T6 isn't on bet/slack-app yet; once it is,
+// the dispatcher in T6's handler can call `dispatchAccountLinkAction` first
+// and fall through to the status/driver dispatcher.
+webhookApp.post('/slack-actions-account-link', async (c) => {
+	const db = c.get('db')
+	const body = await c.req.text()
+
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	const webhookConfig = slackProviderConfig.webhook
+	if (!webhookConfig || 'type' in webhookConfig) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Slack webhook config missing'), 500)
+	}
+	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+		logger.warn('Slack interactive signature verification failed')
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid Slack signature'), 401)
+	}
+
+	const params = new URLSearchParams(body)
+	const rawPayload = params.get('payload')
+	if (!rawPayload) {
+		return c.json({ response_type: 'ephemeral', text: 'Missing payload.' })
+	}
+	let payload: Record<string, unknown>
+	try {
+		payload = JSON.parse(rawPayload) as Record<string, unknown>
+	} catch {
+		return c.json({ response_type: 'ephemeral', text: 'Could not parse Slack payload.' })
+	}
+
+	const result = await dispatchAccountLinkAction(db, payload)
+	if (result.kind === 'unhandled') {
+		// Acknowledge with no body — Slack treats this as a no-op for elements
+		// this handler doesn't own (lets T6's status/driver edits keep working
+		// once they share the same Interactivity URL).
+		return c.json({})
+	}
+	const text =
+		result.message ??
+		(result.kind === 'linked'
+			? 'Linked.'
+			: result.kind === 'noop'
+				? 'OK.'
+				: 'Could not complete account-link.')
+	return c.json({ response_type: 'ephemeral', replace_original: false, text })
+})
 
 webhookApp.post('/:provider', async (c) => {
 	const db = c.get('db')
