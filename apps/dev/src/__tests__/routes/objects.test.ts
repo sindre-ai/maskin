@@ -432,6 +432,54 @@ describe('Objects Routes', () => {
 			const body = await res.json()
 			expect(Array.isArray(body)).toBe(true)
 		})
+
+		it('returns 400 when a metadata.<field> filter has an unsafe field name', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=bug&metadata.bad-field=auto', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('bad-field')
+			expect(body.error.details?.[0]?.field).toBe('metadata.bad-field')
+		})
+
+		it('accepts a valid metadata.<field> filter and returns results', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(
+				jsonGet(
+					'/api/objects/search?q=onboarding&type=bet&metadata.promotion_mode=human_approved',
+					{
+						'x-workspace-id': wsId,
+					},
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(Array.isArray(body)).toBe(true)
+		})
+
+		it('does not require a type filter to apply a metadata.<field> filter', async () => {
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=bug&metadata.segment=enterprise', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+		})
 	})
 
 	describe('GET /api/objects/board', () => {

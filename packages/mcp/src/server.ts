@@ -2036,6 +2036,9 @@ export function createMcpServer(config: McpConfig) {
 				sortedByCreatedAt && isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
 			params.set('limit', String(fetchCap))
 			if (args.offset) params.set('offset', String(args.offset))
+			for (const [field, value] of Object.entries(args.metadata_eq ?? {})) {
+				if (typeof value === 'string' && value.length > 0) params.set(`metadata.${field}`, value)
+			}
 			if (sortedByCreatedAt && isResponseScopingEnabled()) {
 				params.set('snapshot_at', pagination.snapshotAt)
 				params.set('order', pagination.order)
@@ -2117,9 +2120,14 @@ export function createMcpServer(config: McpConfig) {
 			params.set('q', args.q)
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
+			if (args.driver_id) params.set('driver', args.driver_id)
+			if (args.updated_after) params.set('updated_after', args.updated_after)
 			const fetchCap = isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
 			params.set('limit', String(fetchCap))
 			if (args.offset) params.set('offset', String(args.offset))
+			for (const [field, value] of Object.entries(args.metadata_eq ?? {})) {
+				if (typeof value === 'string' && value.length > 0) params.set(`metadata.${field}`, value)
+			}
 			if (isResponseScopingEnabled()) {
 				params.set('snapshot_at', pagination.snapshotAt)
 				params.set('order', pagination.order)

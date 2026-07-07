@@ -202,6 +202,20 @@ describe('validateSearch', () => {
 		expect(result.status).toBeUndefined()
 		expect(result.q).toBeUndefined()
 	})
+
+	it('coerces number/boolean metadata.<field> values to strings instead of dropping them', () => {
+		// The router's default search parser JSON-parses query values, so a
+		// bare `metadata.priority=5` or `metadata.active=true` (e.g. from a
+		// hand-typed or externally-built URL) arrives here as a number/boolean.
+		const result = RouteOptions.validateSearch({
+			'metadata.priority': 5,
+			'metadata.active': true,
+			'metadata.region': 'emea',
+		})
+		expect(result['metadata.priority']).toBe('5')
+		expect(result['metadata.active']).toBe('true')
+		expect(result['metadata.region']).toBe('emea')
+	})
 })
 
 describe('ObjectsPage', () => {

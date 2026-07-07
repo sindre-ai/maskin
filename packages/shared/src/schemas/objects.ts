@@ -87,6 +87,18 @@ export const migrateObjectTypeResponseSchema = z.object({
 	count: z.number().int().nonnegative(),
 })
 
+/**
+ * Field names safe to inline via `sql.raw` in `metadata->>'field'` expressions
+ * (sort, groupBy, and `metadata.<field>` equality filters) — must start with a
+ * letter and contain only letters, numbers, and underscores. Shared by the
+ * backend query builder (`apps/dev/src/routes/objects.ts`) and the frontend
+ * route (`objects/index.tsx` search validation, `display-panel.tsx` filter
+ * rows) so both sides agree on exactly the same set of filterable field names
+ * — a field name accepted by one side and rejected by the other is how a
+ * filter can silently vanish instead of erroring.
+ */
+export const SAFE_METADATA_FIELD_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]*$/
+
 /** Known built-in sort columns — keep in sync with sortColumns in apps/dev/src/routes/objects.ts */
 export const KNOWN_SORT_COLUMNS = [
 	'createdAt',
@@ -170,6 +182,9 @@ export const searchObjectsSchema = z.object({
 	q: z.string().min(1),
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
+	driver: z.string().optional(),
+	/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */
+	updated_after: z.string().datetime({ offset: true }).optional(),
 	sort: sortFieldSchema,
 	order: z.enum(['asc', 'desc']).default('desc'),
 	limit: z.coerce.number().int().min(1).max(100).default(20),

@@ -557,6 +557,100 @@ describe('tool handlers', () => {
 			expect(calledUrl).not.toContain('sort=')
 			expect(calledUrl).not.toContain('order=')
 		})
+
+		it('forwards each metadata_eq entry as metadata.<field>=<value>', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({ metadata_eq: { segment: 'enterprise', confidence: 'high' } })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('metadata.segment=enterprise')
+			expect(calledUrl).toContain('metadata.confidence=high')
+		})
+
+		it('omits metadata.* params when metadata_eq is not supplied', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({ type: 'task' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).not.toContain('metadata.')
+		})
+	})
+
+	describe('search_objects handler', () => {
+		it('forwards driver_id as driver and updated_after to the route', async () => {
+			mockFetchSuccess([])
+			const driverId = '550e8400-e29b-41d4-a716-446655440000'
+
+			const handler = getHandler('search_objects')
+			await handler({
+				q: 'bet',
+				driver_id: driverId,
+				updated_after: '2026-06-29T12:00:00.000Z',
+			})
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('/api/objects/search?')
+			expect(calledUrl).toContain('q=bet')
+			expect(calledUrl).toContain(`driver=${driverId}`)
+			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
+		})
+
+		it('omits driver and updated_after when the params are not supplied', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('search_objects')
+			await handler({ q: 'bet' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('/api/objects/search?')
+			expect(calledUrl).toContain('q=bet')
+			expect(calledUrl).not.toContain('driver=')
+			expect(calledUrl).not.toContain('updated_after=')
+		})
+
+		it('composes driver_id and updated_after additively with type + q', async () => {
+			mockFetchSuccess([])
+			const driverId = '550e8400-e29b-41d4-a716-446655440000'
+
+			const handler = getHandler('search_objects')
+			await handler({
+				q: 'onboarding',
+				type: 'task',
+				driver_id: driverId,
+				updated_after: '2026-06-29T12:00:00.000Z',
+			})
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('q=onboarding')
+			expect(calledUrl).toContain('type=task')
+			expect(calledUrl).toContain(`driver=${driverId}`)
+			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
+		})
+
+		it('forwards each metadata_eq entry as metadata.<field>=<value>', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('search_objects')
+			await handler({ q: 'bet', metadata_eq: { promotion_mode: 'human_approved' } })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('q=bet')
+			expect(calledUrl).toContain('metadata.promotion_mode=human_approved')
+		})
+
+		it('omits metadata.* params when metadata_eq is not supplied', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('search_objects')
+			await handler({ q: 'bet' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).not.toContain('metadata.')
+		})
 	})
 
 	describe('list_sessions handler', () => {

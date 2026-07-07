@@ -51,6 +51,19 @@ const optionalWorkspaceId = z
 		'Workspace ID to operate in. If omitted, uses the default workspace (DEFAULT_WORKSPACE_ID). Call list_workspaces to discover available workspaces.',
 	)
 
+/**
+ * Equality filter on custom metadata fields — object types define their own
+ * fields at runtime (see `create_workspace_field`), so this is a generic
+ * field→value map rather than a static enumeration. Forwarded to the API as
+ * `metadata.<field>=<value>` query params (see `apps/dev/src/routes/objects.ts`).
+ */
+const metadataEqSchema = z
+	.record(z.string(), z.string())
+	.optional()
+	.describe(
+		'Equality filter on custom metadata fields, e.g. {"segment": "enterprise"}. Call get_workspace_schema first to see which fields exist per object type.',
+	)
+
 export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
 	get_started: {
@@ -208,7 +221,7 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, or last-updated window. Returns paginated results ordered by creation date unless `sort` is set. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `offset` still works for backward compatibility.',
+			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date unless `sort` is set. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `offset` still works for backward compatibility.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
@@ -246,11 +259,12 @@ export const tools = {
 				.describe(
 					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted after that first call cannot leak into the stream.',
 				),
+			metadata_eq: metadataEqSchema,
 		}),
 	},
 	search_objects: {
 		description:
-			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z
@@ -259,6 +273,18 @@ export const tools = {
 				.describe('Search query — matches against title and content (case-insensitive)'),
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
 			status: z.string().optional(),
+			driver_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Filter to objects with this driver actor UUID'),
+			updated_after: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded).',
+				),
 			limit: z.number().int().min(1).max(100).optional(),
 			offset: z.number().int().min(0).optional(),
 			cursor: z
@@ -267,6 +293,7 @@ export const tools = {
 				.describe(
 					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
 				),
+			metadata_eq: metadataEqSchema,
 		}),
 	},
 	list_relationships: {

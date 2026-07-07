@@ -455,6 +455,39 @@ describe('Objects Integration', () => {
 			// Deterministic tiebreaker: ascending id within the tied bucket.
 			expect(collected).toEqual([...collected].sort())
 		})
+
+		it('filters by metadata.<field>, matching only rows with that value', async () => {
+			const app = createApp()
+
+			const match = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				metadata: { segment: 'enterprise' },
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				metadata: { segment: 'smb' },
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				metadata: {},
+			})
+
+			const res = await app.request(
+				jsonGet('/api/objects?metadata.segment=enterprise', { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			expect(body.map((r) => r.id)).toEqual([match.id])
+		})
+
+		it('rejects an unsafe metadata.<field> name with 400 instead of a DB error', async () => {
+			const app = createApp()
+
+			const res = await app.request(
+				jsonGet('/api/objects?metadata.bad-field=x', { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(400)
+		})
 	})
 
 	describe('GET /api/objects/board', () => {
@@ -569,6 +602,34 @@ describe('Objects Integration', () => {
 			const todo = body.columns.find((column: { value: string }) => column.value === 'todo')
 			expect(todo.total).toBe(1)
 			expect(todo.objects.map((obj: { id: string }) => obj.id)).toEqual([stale.id])
+		})
+
+		it('applies a metadata.<field> filter to column totals and objects', async () => {
+			const app = createApp()
+
+			const match = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				title: 'Human approved',
+				metadata: { promotion_mode: 'human_approved' },
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				title: 'Auto',
+				metadata: { promotion_mode: 'auto' },
+			})
+
+			const res = await app.request(
+				jsonGet('/api/objects/board?type=task&metadata.promotion_mode=human_approved', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			const todo = body.columns.find((column: { value: string }) => column.value === 'todo')
+			expect(todo.total).toBe(1)
+			expect(todo.objects.map((obj: { id: string }) => obj.id)).toEqual([match.id])
 		})
 	})
 
@@ -765,6 +826,233 @@ describe('Objects Integration', () => {
 
 			expect(postShipIds).toEqual(preShipIds)
 			expect(postShipIds).toEqual([stalledA.id, stalledB.id].sort())
+		})
+	})
+
+	describe('GET /api/objects/search — driver + updated_after filters', () => {
+		it('filters by driver alongside q, returning only rows owned by that driver', async () => {
+			const app = createApp()
+			const alice = await insertActor(db)
+			const bob = await insertActor(db)
+
+			const aliceHit = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'checkout latency bet',
+				driver: alice.id,
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'checkout latency bet',
+				driver: bob.id,
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'signup drop-off bet',
+				driver: alice.id,
+			})
+
+			const res = await app.request(
+				jsonGet(`/api/objects/search?q=checkout&driver=${alice.id}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			expect(body.map((r) => r.id).sort()).toEqual([aliceHit.id].sort())
+		})
+
+		it('excludes rows at or before updated_after (half-open bound)', async () => {
+			const app = createApp()
+			const T = new Date('2026-06-20T12:00:00.000Z')
+			const before = new Date(T.getTime() - 60_000)
+			const after = new Date(T.getTime() + 60_000)
+
+			const oldHit = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'onboarding flow',
+				updatedAt: before,
+			})
+			const freshHit = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'onboarding flow',
+				updatedAt: after,
+			})
+
+			const cutoff = T.toISOString()
+			const res = await app.request(
+				jsonGet(`/api/objects/search?q=onboarding&updated_after=${encodeURIComponent(cutoff)}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			const ids = body.map((r) => r.id)
+			expect(ids).toContain(freshHit.id)
+			expect(ids).not.toContain(oldHit.id)
+		})
+
+		it('composes driver and updated_after additively with q and type', async () => {
+			const app = createApp()
+			const alice = await insertActor(db)
+			const bob = await insertActor(db)
+			const T = new Date('2026-06-20T12:00:00.000Z')
+			const before = new Date(T.getTime() - 60_000)
+			const after = new Date(T.getTime() + 60_000)
+
+			// The only row matching all four predicates.
+			const target = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'onboarding checklist',
+				driver: alice.id,
+				updatedAt: after,
+			})
+			// Wrong driver — should be excluded.
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'onboarding checklist',
+				driver: bob.id,
+				updatedAt: after,
+			})
+			// Right driver but stale — should be excluded.
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'onboarding checklist',
+				driver: alice.id,
+				updatedAt: before,
+			})
+			// Wrong type — should be excluded.
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'onboarding checklist',
+				driver: alice.id,
+				updatedAt: after,
+			})
+			// No text match — should be excluded.
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'billing dashboard',
+				driver: alice.id,
+				updatedAt: after,
+			})
+
+			const cutoff = T.toISOString()
+			const res = await app.request(
+				jsonGet(
+					`/api/objects/search?q=onboarding&type=task&driver=${alice.id}&updated_after=${encodeURIComponent(cutoff)}`,
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			expect(body.map((r) => r.id)).toEqual([target.id])
+		})
+
+		it('rejects malformed updated_after with 400', async () => {
+			const app = createApp()
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=anything&updated_after=not-a-date', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(400)
+		})
+	})
+
+	describe('GET /api/objects/search — metadata.<field> filters', () => {
+		it('filters by a single metadata.<field>, excluding rows with a different value', async () => {
+			const app = createApp()
+
+			const match = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'onboarding revamp',
+				metadata: { promotion_mode: 'human_approved' },
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'onboarding revamp',
+				metadata: { promotion_mode: 'auto' },
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'onboarding revamp',
+				metadata: {},
+			})
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=onboarding&metadata.promotion_mode=human_approved', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			expect(body.map((r) => r.id)).toEqual([match.id])
+		})
+
+		it('composes multiple metadata.<field> filters additively (AND)', async () => {
+			const app = createApp()
+
+			const target = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'onboarding revamp',
+				metadata: { promotion_mode: 'human_approved', evidence_quality: 'evidence_backed' },
+			})
+			// Right promotion_mode, wrong evidence_quality — excluded.
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'onboarding revamp',
+				metadata: { promotion_mode: 'human_approved', evidence_quality: 'gut_feeling' },
+			})
+			// Wrong promotion_mode, right evidence_quality — excluded.
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'onboarding revamp',
+				metadata: { promotion_mode: 'auto', evidence_quality: 'evidence_backed' },
+			})
+
+			const res = await app.request(
+				jsonGet(
+					'/api/objects/search?q=onboarding&metadata.promotion_mode=human_approved&metadata.evidence_quality=evidence_backed',
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			expect(body.map((r) => r.id)).toEqual([target.id])
+		})
+
+		it('does not require a type filter — metadata exists on every object type', async () => {
+			const app = createApp()
+
+			const match = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'insight',
+				title: 'onboarding learnings',
+				metadata: { theme: 'activation' },
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'insight',
+				title: 'onboarding learnings',
+				metadata: { theme: 'retention' },
+			})
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=onboarding&metadata.theme=activation', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			expect(body.map((r) => r.id)).toEqual([match.id])
+		})
+
+		it('rejects an unsafe metadata.<field> name with 400 instead of a DB error', async () => {
+			const app = createApp()
+
+			const res = await app.request(
+				jsonGet("/api/objects/search?q=onboarding&metadata.bad'field=x", {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(400)
 		})
 	})
 

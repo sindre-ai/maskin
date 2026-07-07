@@ -1,3 +1,4 @@
+import type { FieldDefinition } from '@/components/objects/field-value-input'
 import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,6 +30,9 @@ interface DataTableToolbarProps {
 	driverFilter?: string
 	onDriverFilterChange: (value: string | undefined) => void
 	actors?: ActorListItem[]
+	fieldDefinitions?: FieldDefinition[]
+	metadataFilters?: Record<string, string>
+	onMetadataFilterChange?: (field: string, value: string | undefined) => void
 	onResetFilters?: () => void
 	sort: string
 	onSortChange: (value: string) => void
@@ -61,6 +65,9 @@ export function DataTableToolbar({
 	driverFilter,
 	onDriverFilterChange,
 	actors,
+	fieldDefinitions,
+	metadataFilters,
+	onMetadataFilterChange,
 	onResetFilters,
 	sort,
 	onSortChange,
@@ -131,6 +138,9 @@ export function DataTableToolbar({
 				driverFilter={driverFilter}
 				onDriverFilterChange={onDriverFilterChange}
 				actors={actors}
+				fieldDefinitions={fieldDefinitions}
+				metadataFilters={metadataFilters}
+				onMetadataFilterChange={onMetadataFilterChange}
 				onResetFilters={onResetFilters}
 				sort={sort}
 				onSortChange={onSortChange}

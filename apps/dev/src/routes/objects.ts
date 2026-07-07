@@ -15,6 +15,7 @@ import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
 	OBJECT_DIFF_FIELDS,
+	SAFE_METADATA_FIELD_NAME_RE,
 	TERMINAL_BET_STATUSES,
 	boardObjectQuerySchema,
 	boardObjectResponseSchema,
@@ -98,8 +99,7 @@ function resolveSortColumn(sortField: string): Column | SQL | null {
 	if (sortColumns[sortField]) return sortColumns[sortField]
 	if (sortField.startsWith('metadata.')) {
 		const fieldName = sortField.slice(9)
-		// Safety check: only allow alphanumeric + underscore field names to prevent SQL injection via sql.raw
-		if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) return null
+		if (!SAFE_METADATA_FIELD_NAME_RE.test(fieldName)) return null
 		return sql`${objects.metadata}->>'${sql.raw(fieldName)}'`
 	}
 	return null
@@ -117,6 +117,40 @@ function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
 	const sortExpr = resolveSortColumn(query.sort) ?? objects.createdAt
 	const primary = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 	return [primary, asc(objects.id)]
+}
+
+/**
+ * Parses `metadata.<fieldName>=<value>` query keys into filter conditions
+ * `metadata->>'<fieldName>' = '<value>'` (plain text equality). Field names
+ * are workspace-defined custom properties (see `create_workspace_field`) so
+ * they can't be enumerated ahead of time — validated per-key against
+ * `SAFE_METADATA_FIELD_NAME_RE` instead, since they're inlined via `sql.raw`.
+ *
+ * Returns the first invalid field name found (caller should 400), or the
+ * parsed list of filters otherwise.
+ */
+function extractMetadataFilters(
+	rawQuery: Record<string, string | string[] | undefined>,
+): { ok: true; filters: { field: string; value: string }[] } | { ok: false; invalidField: string } {
+	const filters: { field: string; value: string }[] = []
+	for (const [key, rawValue] of Object.entries(rawQuery)) {
+		if (!key.startsWith('metadata.')) continue
+		const field = key.slice('metadata.'.length)
+		const value = Array.isArray(rawValue) ? rawValue[0] : rawValue
+		if (!SAFE_METADATA_FIELD_NAME_RE.test(field)) return { ok: false, invalidField: field }
+		if (typeof value === 'string' && value.length > 0) filters.push({ field, value })
+	}
+	return { ok: true, filters }
+}
+
+function invalidMetadataFieldError(fieldName: string) {
+	return createApiError('BAD_REQUEST', `Invalid metadata filter field name: '${fieldName}'`, [
+		{
+			field: `metadata.${fieldName}`,
+			message:
+				'Field names must start with a letter and contain only letters, numbers, and underscores.',
+		},
+	])
 }
 
 /**
@@ -186,15 +220,18 @@ function buildCursorConditions(query: {
 	return conditions
 }
 
-function buildObjectListConditions(query: {
-	type?: string
-	status?: string
-	driver?: string
-	ids?: string
-	q?: string
-	updated_before?: string
-	updated_after?: string
-}) {
+function buildObjectListConditions(
+	query: {
+		type?: string
+		status?: string
+		driver?: string
+		ids?: string
+		q?: string
+		updated_before?: string
+		updated_after?: string
+	},
+	metadataFilters: { field: string; value: string }[] = [],
+) {
 	const conditions: SQL[] = []
 	if (query.type) conditions.push(eq(objects.type, query.type))
 	if (query.status) {
@@ -220,6 +257,10 @@ function buildObjectListConditions(query: {
 	// Half-open contract — Zod has already validated these as ISO-8601 strings.
 	if (query.updated_before) conditions.push(lt(objects.updatedAt, new Date(query.updated_before)))
 	if (query.updated_after) conditions.push(gt(objects.updatedAt, new Date(query.updated_after)))
+	// Field name pre-validated by extractMetadataFilters; value is parameter-bound.
+	for (const { field, value } of metadataFilters) {
+		conditions.push(sql`${objects.metadata}->>'${sql.raw(field)}' = ${value}`)
+	}
 	return conditions
 }
 
@@ -230,7 +271,7 @@ function resolveBoardGroupExpression(groupBy?: string): SQL {
 	if (groupBy === 'type') return sql`${objects.type}`
 	if (groupBy.startsWith('metadata.')) {
 		const fieldName = groupBy.slice('metadata.'.length)
-		if (/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) {
+		if (SAFE_METADATA_FIELD_NAME_RE.test(fieldName)) {
 			return sql`coalesce(${objects.metadata}->>'${sql.raw(fieldName)}', '')`
 		}
 	}
@@ -407,9 +448,14 @@ app.openapi(listObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
+	const parsedMetadataFilters = extractMetadataFilters(c.req.query())
+	if (!parsedMetadataFilters.ok) {
+		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
+	}
+
 	const conditions = [
 		eq(objects.workspaceId, workspaceId),
-		...buildObjectListConditions(query),
+		...buildObjectListConditions(query, parsedMetadataFilters.filters),
 		...buildCursorConditions(query),
 	]
 
@@ -481,17 +527,25 @@ app.openapi(boardObjectsRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
+	const parsedMetadataFilters = extractMetadataFilters(rawQuery)
+	if (!parsedMetadataFilters.ok) {
+		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
+	}
+
 	const baseConditions = [
 		eq(objects.workspaceId, workspaceId),
-		...buildObjectListConditions({
-			type: query.type,
-			status: query.status,
-			driver: query.driver,
-			ids: query.ids,
-			q: query.q,
-			updated_before: query.updated_before,
-			updated_after: query.updated_after,
-		}),
+		...buildObjectListConditions(
+			{
+				type: query.type,
+				status: query.status,
+				driver: query.driver,
+				ids: query.ids,
+				q: query.q,
+				updated_before: query.updated_before,
+				updated_after: query.updated_after,
+			},
+			parsedMetadataFilters.filters,
+		),
 	]
 
 	const countRows = await db
@@ -577,9 +631,14 @@ app.openapi(searchObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
+	const parsedMetadataFilters = extractMetadataFilters(c.req.query())
+	if (!parsedMetadataFilters.ok) {
+		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
+	}
+
 	const conditions = [
 		eq(objects.workspaceId, workspaceId),
-		...buildObjectListConditions(query),
+		...buildObjectListConditions(query, parsedMetadataFilters.filters),
 		...buildCursorConditions(query),
 	]
 

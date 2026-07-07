@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+	SAFE_METADATA_FIELD_NAME_RE,
 	createObjectSchema,
 	objectParamsSchema,
 	objectQuerySchema,
@@ -190,5 +191,21 @@ describe('objectParamsSchema', () => {
 
 	it('rejects missing id', () => {
 		expect(() => objectParamsSchema.parse({})).toThrow()
+	})
+})
+
+describe('SAFE_METADATA_FIELD_NAME_RE', () => {
+	it('accepts letters, numbers, and underscores starting with a letter', () => {
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('segment')).toBe(true)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('deal_size_2')).toBe(true)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('A1')).toBe(true)
+	})
+
+	it('rejects names with spaces, punctuation, or a leading digit', () => {
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('deal size')).toBe(false)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('cost-per-lead')).toBe(false)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('2024_target')).toBe(false)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test("bad'field")).toBe(false)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('')).toBe(false)
 	})
 })
