@@ -42,4 +42,27 @@ describe('displaySettingsBodySchema', () => {
 		for (let i = 0; i < 201; i++) vis[`col_${i}`] = true
 		expect(() => displaySettingsBodySchema.parse({ columnVisibility: vis })).toThrow(/at most 200/)
 	})
+
+	describe('timelineView (AC-T7)', () => {
+		it('accepts timelineView=timeline', () => {
+			expect(displaySettingsBodySchema.parse({ timelineView: 'timeline' }).timelineView).toBe(
+				'timeline',
+			)
+		})
+
+		it('accepts timelineView=table alongside other settings', () => {
+			const parsed = displaySettingsBodySchema.parse({
+				view: 'list',
+				sort: 'createdAt',
+				order: 'desc',
+				timelineView: 'table',
+			})
+			expect(parsed.timelineView).toBe('table')
+			expect(parsed.view).toBe('list')
+		})
+
+		it('rejects unknown timelineView values', () => {
+			expect(() => displaySettingsBodySchema.parse({ timelineView: 'graph' })).toThrow()
+		})
+	})
 })
