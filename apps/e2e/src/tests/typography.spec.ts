@@ -1,5 +1,5 @@
-import { expect, test } from '../fixtures/auth.fixture'
 import type { Page } from '@playwright/test'
+import { expect, test } from '../fixtures/auth.fixture'
 import { VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -22,14 +22,15 @@ async function waitForApp(page: Page) {
 	await page.waitForTimeout(500)
 }
 
-async function createObjectWithContent(api: import('../helpers/api.helper').TestAPI, workspaceId: string) {
+async function createObjectWithContent(
+	api: import('../helpers/api.helper').TestAPI,
+	workspaceId: string,
+) {
 	return api.createObject(workspaceId, {
 		type: 'bet',
 		title: 'Typography Test Bet',
 		status: 'active',
-		content:
-			'A long-form description that exercises the 75-character measure cap on ' +
-			'viewports at or above 1280 pixels. '.repeat(8),
+		content: `A long-form description that exercises the 75-character measure cap on ${'viewports at or above 1280 pixels. '.repeat(8)}`,
 	})
 }
 
@@ -59,15 +60,13 @@ test.describe('Typography — font load', () => {
 		// Weights ≤500 — the URL must NOT request wght@600;700 or a range like 400..700
 		const wghtMatch = href.match(/wght@([\d;]+)/)
 		expect(wghtMatch).not.toBeNull()
-		const weights = wghtMatch![1]!.split(';').map(Number)
+		const weights = wghtMatch[1]?.split(';').map(Number) ?? []
 		for (const w of weights) {
 			expect(w).toBeLessThanOrEqual(500)
 		}
 
 		// No variable-range syntax (the ".." range operator)
 		expect(href).not.toContain('..')
-
-		
 	})
 
 	test('rendered body font-family includes Schibsted Grotesk', async ({ page, account }) => {
@@ -86,7 +85,10 @@ test.describe('Typography — font load', () => {
 		// Listen on response to capture actual transferred size
 		page.on('response', (res) => {
 			if (res.url().includes('fonts.gstatic.com') && res.url().endsWith('.woff2')) {
-				requests.push({ url: res.url(), bodySize: res.headers()['content-length'] ? Number(res.headers()['content-length']) : 0 })
+				requests.push({
+					url: res.url(),
+					bodySize: res.headers()['content-length'] ? Number(res.headers()['content-length']) : 0,
+				})
 			}
 		})
 
@@ -228,14 +230,12 @@ test.describe('Typography — timeline', () => {
 
 		// Timeline/activity timestamps should have mono font
 		const monoInTimeline = timeLayout.filter(
-			(t) =>
-				t.fontFamily.includes('JetBrains Mono') ||
-				t.className.includes('font-mono'),
+			(t) => t.fontFamily.includes('JetBrains Mono') || t.className.includes('font-mono'),
 		)
 		// At minimum the timeline should have some <time> elements with mono
 		// (strict assertion depends on activity existing)
 		if (monoInTimeline.length > 0) {
-			expect(monoInTimeline[0]!.fontVariantNumeric).toMatch(/tabular-nums|tabular/)
+			expect(monoInTimeline[0]?.fontVariantNumeric).toMatch(/tabular-nums|tabular/)
 		}
 	})
 })
@@ -289,7 +289,24 @@ test.describe('Typography — offline fallback', () => {
 	}) => {
 		// Block all Google Fonts requests so the webfont never arrives
 		await page.route('**/fonts.googleapis.com/**', (route) => route.abort())
-		expect(hidden).toBe('visible')
+
+		await setTheme(page, 'light')
+		await page.goto(`/${account.workspaceId}`)
+		await waitForApp(page)
+
+		// After blocking Google Fonts, body font-family must not load webfont
+		const fontFamily = await page.evaluate(() =>
+			getComputedStyle(document.body).getPropertyValue('font-family'),
+		)
+		expect(fontFamily).not.toContain('Schibsted Grotesk')
+
+		// Should resolve to one of the fallback families
+		const fallbackMatch =
+			fontFamily.includes('system-ui') ||
+			fontFamily.includes('-apple-system') ||
+			fontFamily.includes('Segoe UI') ||
+			fontFamily.includes('sans-serif')
+		expect(fallbackMatch).toBe(true)
 
 		// Screenshot the fallback state for visual review
 		await page.screenshot({
@@ -304,7 +321,17 @@ test.describe('Typography — offline fallback', () => {
 	}) => {
 		await page.route('**/fonts.googleapis.com/**', (route) => route.abort())
 
-		for (const fam of monoFamilies) {
+		await setTheme(page, 'light')
+		await page.goto(`/${account.workspaceId}`)
+		await waitForApp(page)
+
+		// Check mono elements' resolved font-family
+		const families = await page.evaluate(() => {
+			const els = Array.from(document.querySelectorAll<HTMLElement>('.font-mono'))
+			return els.slice(0, 3).map((el) => getComputedStyle(el).getPropertyValue('font-family'))
+		})
+
+		for (const fam of families) {
 			// Must not reference JetBrains Mono (not loaded)
 			expect(fam).not.toContain('JetBrains Mono')
 			// Should resolve to one of the fallback chains

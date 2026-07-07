@@ -19,7 +19,4 @@ export const SHIP_GATE_VIEWPORTS: NamedViewport[] = [
 ]
 
 /** Viewports that exercise the xl: breakpoint (≥1280px) for 75ch assertion. */
-export const XL_VIEWPORTS: NamedViewport[] = [
-	VIEWPORTS.desktopXl,
-	VIEWPORTS.desktop,
-]
+export const XL_VIEWPORTS: NamedViewport[] = [VIEWPORTS.desktopXl, VIEWPORTS.desktop]
