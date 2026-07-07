@@ -612,6 +612,142 @@ describe('Workspace Skills Routes', () => {
 		})
 	})
 
+	describe('GET /:workspaceId/skills/:skillId/download', () => {
+		const skillId = '00000000-0000-0000-0000-0000000000d0'
+
+		function downloadRequest(wsId: string, sId: string) {
+			return new Request(`http://localhost/api/workspaces/${wsId}/skills/${sId}/download`)
+		}
+
+		it('rebuilds the folder skill zip and round-trips through adm-zip', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const folderSkill = buildWorkspaceSkill({
+				id: skillId,
+				workspaceId,
+				name: 'docx',
+				isFolder: true,
+				fileCount: 3,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [folderSkill]]
+
+			const prefix = `workspaces/${workspaceId}/skills/${skillId}/`
+			const fileContents: Record<string, Buffer> = {
+				[`${prefix}SKILL.md`]: Buffer.from(folderSkill.content, 'utf-8'),
+				[`${prefix}reference/style.md`]: Buffer.from('Style guide', 'utf-8'),
+				[`${prefix}scripts/run.py`]: Buffer.from('print("hi")', 'utf-8'),
+			}
+			;(agentStorage.listWorkspaceSkillFiles as ReturnType<typeof vi.fn>).mockResolvedValue(
+				Object.keys(fileContents).map((key) => ({
+					relativePath: key.slice(prefix.length),
+					key,
+				})),
+			)
+			;(agentStorage.getWorkspaceSkillFile as ReturnType<typeof vi.fn>).mockImplementation(
+				async (key: string) => fileContents[key] ?? Buffer.from(''),
+			)
+
+			const res = await app.request(downloadRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('Content-Type')).toBe('application/zip')
+			expect(res.headers.get('Content-Disposition')).toContain('filename="docx.zip"')
+
+			// Round-trip: the response zip must contain every entry under the
+			// same relative paths the upload endpoint would later receive.
+			const buf = Buffer.from(await res.arrayBuffer())
+			const zip = new AdmZip(buf)
+			const entries = zip.getEntries().map((e) => e.entryName)
+			expect(entries.sort()).toEqual(['SKILL.md', 'reference/style.md', 'scripts/run.py'].sort())
+			const skillMd = zip.getEntry('SKILL.md')?.getData().toString('utf-8')
+			expect(skillMd).toBe(folderSkill.content)
+		})
+
+		it('returns 404 for single-file skills', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const singleFile = buildWorkspaceSkill({
+				id: skillId,
+				workspaceId,
+				name: 'plain',
+				isFolder: false,
+				fileCount: null,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [singleFile]]
+
+			const res = await app.request(downloadRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when the skill row does not exist in the workspace', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[buildWorkspaceMember()], []]
+
+			const res = await app.request(downloadRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when the folder skill prefix is empty', async () => {
+			// Row says folder but no files in storage — guard against handing
+			// back an empty zip that would re-upload as a malformed bundle.
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const folderSkill = buildWorkspaceSkill({
+				id: skillId,
+				workspaceId,
+				isFolder: true,
+				fileCount: 3,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [folderSkill]]
+			;(agentStorage.listWorkspaceSkillFiles as ReturnType<typeof vi.fn>).mockResolvedValue([])
+
+			const res = await app.request(downloadRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 403 when caller is not a workspace member', async () => {
+			const { app } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+
+			const res = await app.request(downloadRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(403)
+		})
+
+		it('encodes skill names with spaces using RFC 5987', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const folderSkill = buildWorkspaceSkill({
+				id: skillId,
+				workspaceId,
+				name: 'with-special',
+				isFolder: true,
+				fileCount: 1,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [folderSkill]]
+			const prefix = `workspaces/${workspaceId}/skills/${skillId}/`
+			;(agentStorage.listWorkspaceSkillFiles as ReturnType<typeof vi.fn>).mockResolvedValue([
+				{ relativePath: 'SKILL.md', key: `${prefix}SKILL.md` },
+			])
+			;(agentStorage.getWorkspaceSkillFile as ReturnType<typeof vi.fn>).mockResolvedValue(
+				Buffer.from(folderSkill.content, 'utf-8'),
+			)
+
+			const res = await app.request(downloadRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(200)
+			const disposition = res.headers.get('Content-Disposition') ?? ''
+			expect(disposition).toContain("filename*=UTF-8''with-special.zip")
+		})
+	})
+
 	describe('DELETE /:workspaceId/skills/:name', () => {
 		it('returns 200 and deletes both S3 object and DB row', async () => {
 			const { app, mockResults, agentStorage } = createSkillsTestApp(

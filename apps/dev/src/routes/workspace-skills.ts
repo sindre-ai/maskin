@@ -9,6 +9,7 @@ import {
 	skillNameSchema,
 	updateWorkspaceSkillSchema,
 } from '@maskin/shared'
+import AdmZip from 'adm-zip'
 import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError } from '../lib/errors'
@@ -732,6 +733,112 @@ app.openapi(uploadWorkspaceSkillRoute, (async (c) => {
 	} as z.infer<typeof workspaceSkillUploadResponseSchema>
 	return c.json(response, 201)
 }) as RouteHandler<typeof uploadWorkspaceSkillRoute, Env>)
+
+// GET /:workspaceId/skills/:skillId/download — Rebuild and download the folder
+// skill as a zip. Powers the Download .zip control on the settings page and is
+// the user-facing escape hatch before a destructive Replace re-upload.
+//
+// Only valid for folder skills. Single-file skills 404 here — the existing
+// `GET /:workspaceId/skills/:name` already returns the SKILL.md body.
+const downloadWorkspaceSkillRoute = createRoute({
+	method: 'get',
+	path: '/{workspaceId}/skills/{skillId}/download',
+	tags: ['Workspace Skills'],
+	summary: 'Download a folder skill as a zip',
+	request: {
+		params: z.object({
+			workspaceId: z.string().uuid(),
+			skillId: z.string().uuid(),
+		}),
+	},
+	responses: {
+		200: {
+			content: { 'application/zip': { schema: z.any() } },
+			description: 'Folder skill zip',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not a workspace member',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Folder skill not found',
+		},
+	},
+})
+
+// RFC 5987 — encode the filename so a name with spaces or non-ASCII still lands
+// as a usable download. Falls back to a sanitised ASCII filename for older
+// clients via the unquoted `filename=` parameter.
+function buildContentDisposition(skillName: string): string {
+	const asciiFallback = skillName.replace(/[^A-Za-z0-9._-]+/g, '_')
+	const utf8 = encodeURIComponent(skillName)
+	return `attachment; filename="${asciiFallback}.zip"; filename*=UTF-8''${utf8}.zip`
+}
+
+app.openapi(downloadWorkspaceSkillRoute, (async (c) => {
+	const db = c.get('db')
+	const callerActorId = c.get('actorId')
+	const storage = c.get('agentStorage')
+	const { workspaceId, skillId } = c.req.valid('param')
+
+	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
+	if (!member) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	const [skill] = await db
+		.select()
+		.from(workspaceSkills)
+		.where(and(eq(workspaceSkills.id, skillId), eq(workspaceSkills.workspaceId, workspaceId)))
+		.limit(1)
+
+	if (!skill) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
+	}
+
+	// Single-file skills aren't a bundle — the existing GET-by-name endpoint
+	// already returns their SKILL.md. 404 keeps the contract tight; the UI only
+	// surfaces the Download .zip control for folder skills.
+	if (!skill.isFolder) {
+		return c.json(createApiError('NOT_FOUND', 'Download is only available for folder skills'), 404)
+	}
+
+	const files = await storage.listWorkspaceSkillFiles(workspaceId, skillId)
+	if (files.length === 0) {
+		// Row says folder but the prefix is empty — possible if a prior write
+		// only partially landed. Surface as 404 rather than handing back an
+		// empty zip, so the user gets a clear signal instead of a corrupt
+		// round-trip.
+		logger.warn('Folder skill has no files in storage', { workspaceId, skillId })
+		return c.json(createApiError('NOT_FOUND', 'Folder skill is empty'), 404)
+	}
+
+	// Rebuild the zip in memory. The upload path caps each bundle at
+	// SKILL_BUNDLE_MAX_UNCOMPRESSED_BYTES (10MB) so the buffer here is
+	// bounded by the same limit. AdmZip mirrors the parser T2 uses on
+	// upload, which keeps the round-trip (download → re-upload via T2)
+	// byte-identical for the entry layout.
+	const zip = new AdmZip()
+	for (const { relativePath, key } of files) {
+		const data = await storage.getWorkspaceSkillFile(key)
+		zip.addFile(relativePath, data)
+	}
+	const zipBuffer = zip.toBuffer()
+
+	logger.info('Folder skill download', {
+		workspaceId,
+		skillId,
+		name: skill.name,
+		fileCount: files.length,
+		sizeBytes: zipBuffer.length,
+	})
+
+	c.header('Content-Type', 'application/zip')
+	c.header('Content-Disposition', buildContentDisposition(skill.name))
+	c.header('Content-Length', String(zipBuffer.length))
+	return c.body(zipBuffer, 200)
+}) as RouteHandler<typeof downloadWorkspaceSkillRoute, Env>)
 
 // PUT /:workspaceId/skills/:name — Update a workspace skill's content
 const updateWorkspaceSkillRoute = createRoute({
