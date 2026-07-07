@@ -19,6 +19,7 @@ vi.mock('@maskin/db/schema', async (importOriginal) => {
 		actors: { __isTaggedActors: true },
 		slackUserLinks: { __isTaggedSlackUserLinks: true },
 		integrations: { __isTaggedIntegrations: true },
+		workspaces: { __isTaggedWorkspaces: true },
 	}
 })
 
@@ -41,11 +42,16 @@ interface IntegrationRow {
 	id: string
 }
 
+interface WorkspaceRow {
+	name: string
+}
+
 function tableName(table: unknown): string {
 	if (table && typeof table === 'object') {
 		if ('__isTaggedSlackUserLinks' in table) return 'slack_user_links'
 		if ('__isTaggedNotifications' in table) return 'notifications'
 		if ('__isTaggedIntegrations' in table) return 'integrations'
+		if ('__isTaggedWorkspaces' in table) return 'workspaces'
 	}
 	return 'unknown'
 }
@@ -54,10 +60,12 @@ function makeFakeDb(opts: {
 	link?: LinkRow | null
 	inbox?: InboxRow[]
 	integration?: IntegrationRow | null
+	workspace?: WorkspaceRow | null
 }) {
 	const link = opts.link ?? null
 	const inbox = opts.inbox ?? []
 	const integration = opts.integration ?? { id: 'int-1' }
+	const workspace = opts.workspace === undefined ? { name: 'Acme' } : opts.workspace
 
 	return {
 		select: (_cols?: unknown) => ({
@@ -85,6 +93,13 @@ function makeFakeDb(opts: {
 					return {
 						where: () => ({
 							limit: () => Promise.resolve(integration ? [integration] : []),
+						}),
+					}
+				}
+				if (name === 'workspaces') {
+					return {
+						where: () => ({
+							limit: () => Promise.resolve(workspace ? [workspace] : []),
 						}),
 					}
 				}
@@ -143,7 +158,7 @@ describe('publishAppHomeView', () => {
 		expect(accessory?.text.text).toBe('Connect Maskin')
 	})
 
-	it('renders the linked-state view with a Falu-red agent subscript per row', async () => {
+	it('renders the linked-state view with a Falu-red agent + workspace subscript per row', async () => {
 		const { publishAppHomeView } = await import(
 			'../../../../lib/integrations/providers/slack/webhooks'
 		)
@@ -170,6 +185,7 @@ describe('publishAppHomeView', () => {
 		const db = makeFakeDb({
 			link: { actorId: 'actor-1', defaultWorkspaceId: 'ws-1' },
 			inbox,
+			workspace: { name: 'Acme' },
 		})
 
 		await publishAppHomeView({ db: db as never, teamId: 'T1', slackUserId: 'U1' })
@@ -186,14 +202,47 @@ describe('publishAppHomeView', () => {
 		expect(ctaButton?.text.text).toBe('Open For You in Maskin ↗')
 		expect(ctaButton?.url).toContain('/ws-1/inbox')
 
-		// Each row is followed by a Falu-red context block.
+		// Each row is followed by a Falu-red context block carrying both the
+		// agent display name and the linked Maskin workspace name.
 		const contextBlocks = body.view.blocks.filter((b) => b.type === 'context') as Array<{
 			elements: Array<{ text: string }>
 		}>
 		expect(contextBlocks).toHaveLength(2)
 		const subscripts = contextBlocks.map((c) => c.elements[0]?.text)
-		expect(subscripts[0]).toBe('<#7C1F1A|↳ Workspace Coach>')
-		expect(subscripts[1]).toBe('<#7C1F1A|↳ Architect>')
+		expect(subscripts[0]).toBe('<#7C1F1A|↳ Workspace Coach (Acme)>')
+		expect(subscripts[1]).toBe('<#7C1F1A|↳ Architect (Acme)>')
+	})
+
+	it('renders the agent-only subscript when the workspace row is missing', async () => {
+		const { publishAppHomeView } = await import(
+			'../../../../lib/integrations/providers/slack/webhooks'
+		)
+		const inbox: InboxRow[] = [
+			{
+				id: 'n1',
+				title: 'Brief incomplete',
+				content: null,
+				objectId: 'obj-1',
+				sourceActorName: 'Workspace Coach',
+				createdAt: '2026-06-22T20:00:00Z',
+				updatedAt: '2026-06-22T20:00:00Z',
+			},
+		]
+		const db = makeFakeDb({
+			link: { actorId: 'actor-1', defaultWorkspaceId: 'ws-1' },
+			inbox,
+			workspace: null,
+		})
+
+		await publishAppHomeView({ db: db as never, teamId: 'T1', slackUserId: 'U1' })
+
+		const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as { body: string }).body) as {
+			view: { blocks: Array<Record<string, unknown>> }
+		}
+		const contextBlock = body.view.blocks.find((b) => b.type === 'context') as
+			| { elements: Array<{ text: string }> }
+			| undefined
+		expect(contextBlock?.elements[0]?.text).toBe('<#7C1F1A|↳ Workspace Coach>')
 	})
 
 	it('renders an empty-state body when the inbox is empty', async () => {
@@ -303,12 +352,25 @@ describe('publishAppHomeView', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2)
 	})
 
-	it('falls back to the unknown-actor name when the source actor is not a fixed agent role', async () => {
+	it('renders the actor display name verbatim — no fixed allow-list', async () => {
 		const { _internal } = await import('../../../../lib/integrations/providers/slack/webhooks')
-		expect(_internal.formatAgentSubscript('Workspace Coach')).toBe('↳ Workspace Coach')
-		expect(_internal.formatAgentSubscript('Strategist')).toBe('↳ Strategist')
-		expect(_internal.formatAgentSubscript('Custom Bot')).toBe('↳ Custom Bot')
-		expect(_internal.formatAgentSubscript(null)).toBe('')
+		expect(_internal.formatAgentSubscript('Workspace Coach', 'Acme')).toBe(
+			'↳ Workspace Coach (Acme)',
+		)
+		expect(_internal.formatAgentSubscript('Strategist', 'Acme')).toBe('↳ Strategist (Acme)')
+		expect(_internal.formatAgentSubscript('Custom Bot', 'Acme')).toBe('↳ Custom Bot (Acme)')
+		expect(_internal.formatAgentSubscript(null, 'Acme')).toBe('')
+		expect(_internal.formatAgentSubscript('Workspace Coach', null)).toBe('↳ Workspace Coach')
+		expect(_internal.formatAgentSubscript('Workspace Coach', undefined)).toBe('↳ Workspace Coach')
+	})
+
+	it('escapes mrkdwn metacharacters in the actor + workspace names', async () => {
+		const { _internal } = await import('../../../../lib/integrations/providers/slack/webhooks')
+		// `|` would close the `<#HEX|text>` link early; `<` / `>` could open a
+		// sibling tag. All three must be escaped before they reach the wrapper.
+		expect(_internal.formatAgentSubscript('Pipe|Bot', 'Sharp<Acme>')).toBe(
+			'↳ Pipe&#124;Bot (Sharp&lt;Acme&gt;)',
+		)
 	})
 
 	it('app_home_opened normalizer round-trip emits slack.app_home_opened', async () => {
