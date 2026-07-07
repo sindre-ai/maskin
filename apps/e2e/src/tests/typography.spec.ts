@@ -1,3 +1,4 @@
+import { argosScreenshot } from '@argos-ci/playwright'
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { VIEWPORTS } from '../helpers/viewports'
@@ -100,7 +101,7 @@ test.describe('Typography — font load', () => {
 		await page.waitForTimeout(2000)
 
 		const totalKB = requests.reduce((sum, r) => sum + r.bodySize, 0) / 1024
-		expect(totalKB).toBeLessThan(200)
+		expect(totalKB).toBeLessThan(120)
 		expect(requests.length).toBeGreaterThanOrEqual(1)
 
 		// Verify only wght@400 and wght@500 variants are loaded
@@ -350,12 +351,6 @@ test.describe('Typography — offline fallback', () => {
 
 test.describe('Typography — CLS budget', () => {
 	test('cumulative layout shift stays under 0.05 on cold cache', async ({ page, account }) => {
-		// Force cold cache via new context
-		const ctx = await page.context()
-		await ctx.addInitScript(() => {
-			// Clear any cached fonts
-		})
-
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}`, { waitUntil: 'commit' })
 
@@ -384,26 +379,29 @@ test.describe('Typography — CLS budget', () => {
 	})
 })
 
-/* ───── 8. Dark-mode screenshots for Sebk's bet-qa pass ───── */
+/* ───── 8. Paired light/dark screenshots for Argos visual diffing (AC-T1) ───── */
 
-test.describe('Typography — dark mode screenshots', () => {
+test.describe('Typography — visual regression screenshots', () => {
 	for (const [label, viewport] of Object.entries({
 		'mobile-375': VIEWPORTS.mobile,
 		'tablet-768': VIEWPORTS.tabletPortrait,
 		'desktop-1280': VIEWPORTS.desktopXl,
-	})) {
+	}) as [string, { width: number; height: number }][]) {
+		test(`light mode screenshot at ${label}`, async ({ page, account }) => {
+			await setTheme(page, 'light')
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await page.goto(`/${account.workspaceId}`)
+			await waitForApp(page)
+			await argosScreenshot(page, `typography-${label}-light`)
+		})
+
 		test(`dark mode screenshot at ${label}`, async ({ page, account }) => {
 			await setTheme(page, 'dark')
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}`)
 			await waitForApp(page)
+			await argosScreenshot(page, `typography-${label}-dark`)
 
-			await page.screenshot({
-				path: `typography-dark-${label}-${viewport.width}x${viewport.height}-${Date.now()}.png`,
-				fullPage: false,
-			})
-
-			// Assert the page is in dark mode
 			const isDark = await page.evaluate(() => document.documentElement.classList.contains('dark'))
 			expect(isDark).toBe(true)
 		})
