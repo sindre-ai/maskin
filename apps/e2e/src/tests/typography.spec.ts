@@ -60,7 +60,7 @@ test.describe('Typography — font load', () => {
 		// Weights ≤500 — the URL must NOT request wght@600;700 or a range like 400..700
 		const wghtMatch = href.match(/wght@([\d;]+)/)
 		expect(wghtMatch).not.toBeNull()
-		const weights = wghtMatch[1]?.split(';').map(Number) ?? []
+		const weights = wghtMatch?.[1]?.split(';').map(Number) ?? []
 		for (const w of weights) {
 			expect(w).toBeLessThanOrEqual(500)
 		}
