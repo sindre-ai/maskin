@@ -176,6 +176,29 @@ export const integrations = pgTable(
 	],
 )
 
+// ── Slack User Links ───────────────────────────────────────────────────────
+// Per-(Slack team, Slack user) routing into a Maskin actor + default
+// workspace. Read by the Slack webhook route on every @mention; written by
+// the OAuth account-link step (T2) and reaped on disconnect (T5). See
+// drizzle/0040_slack_user_links.sql.
+
+export const slackUserLinks = pgTable(
+	'slack_user_links',
+	{
+		slackTeamId: text('slack_team_id').notNull(),
+		slackUserId: text('slack_user_id').notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		defaultWorkspaceId: uuid('default_workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+	},
+	(t) => [primaryKey({ columns: [t.slackTeamId, t.slackUserId] })],
+)
+
 // ── Triggers ────────────────────────────────────────────────────────────────
 
 export const triggers = pgTable('triggers', {
