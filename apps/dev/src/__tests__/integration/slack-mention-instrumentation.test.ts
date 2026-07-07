@@ -1,7 +1,13 @@
 import { createHmac } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, workspaceMembers, workspaces } from '@maskin/db/schema'
+import {
+	events,
+	integrations,
+	slackUserLinks,
+	workspaceMembers,
+	workspaces,
+} from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
@@ -111,6 +117,16 @@ describe('Slack mention instrumentation — webhook round-trip', () => {
 			credentials: 'encrypted',
 			config: { system_actor_id: actorId },
 			createdBy: actorId,
+		})
+		// T11 identity split: a DM only dispatches to the mentioning user's
+		// personal-link workspace. Give the test's Slack user a link row so the
+		// DM assertion below still lands in `workspaceId` — without this row
+		// the DM would drop and post the re-link picker instead.
+		await db.insert(slackUserLinks).values({
+			slackTeamId: 'T_INTEGRATION',
+			slackUserId: 'U_SLACK_USER',
+			actorId,
+			defaultWorkspaceId: workspaceId,
 		})
 	})
 
