@@ -10,6 +10,7 @@ function makeWrapper(callTool: McpAppContextValue['callTool']) {
 	const value: McpAppContextValue = {
 		isConnected: true,
 		toolResult: null,
+		toolHistory: [],
 		callTool,
 	}
 	return ({ children }: { children: ReactNode }) => (

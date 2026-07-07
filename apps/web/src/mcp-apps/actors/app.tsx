@@ -1,6 +1,7 @@
-import { AgentCard } from '@/components/agents/agent-card'
+import type { AgentStatus } from '@/components/agents/agent-card'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
+import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -12,6 +13,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
+import { cn } from '@/lib/cn'
 import { Pencil } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ContentFold } from '../shared/content-fold'
@@ -100,7 +102,7 @@ function ActorListView({ actors }: { actors: ActorResponse[] }) {
 			{agents.length > 0 && (
 				<div className="space-y-2">
 					{agents.map((agent) => (
-						<AgentCard
+						<AgentRow
 							key={agent.id}
 							agent={agent}
 							status={deriveAgentStatus(agent.id, sessionsByAgent)}
@@ -129,6 +131,61 @@ function ActorListView({ actors }: { actors: ActorResponse[] }) {
 				</div>
 			)}
 		</div>
+	)
+}
+
+function AgentRow({
+	agent,
+	status,
+	latestSession,
+}: {
+	agent: ActorResponse
+	status: AgentStatus
+	latestSession?: SessionResponse
+}) {
+	const roleDescription = agent.systemPrompt?.split('\n')[0]?.trim()
+	return (
+		<div
+			className={cn(
+				'rounded-lg border bg-card p-4 shadow-md',
+				status === 'working' && 'border-accent bg-accent/5',
+				status === 'failed' && 'border-error',
+				status === 'idle' && 'border-border',
+			)}
+		>
+			<div className="flex items-center justify-between mb-1">
+				<div className="flex items-center gap-2">
+					<ActorAvatar name={agent.name} type="agent" size="md" />
+					<span className="text-sm font-medium text-foreground">{agent.name}</span>
+					<AgentStatusDot status={status} />
+				</div>
+				<div className="flex items-center gap-3">
+					<span className="text-xs text-muted-foreground capitalize">{status}</span>
+					<WebAppLink target={{ kind: 'agent', id: agent.id }} label="Open in Maskin" />
+				</div>
+			</div>
+			{roleDescription && (
+				<p className="text-xs text-muted-foreground mb-2 ml-9 line-clamp-1">{roleDescription}</p>
+			)}
+			{latestSession?.createdAt && (
+				<p className="text-xs text-muted-foreground ml-9">
+					Last session <RelativeTime date={latestSession.createdAt} /> ({latestSession.status})
+				</p>
+			)}
+		</div>
+	)
+}
+
+function AgentStatusDot({ status }: { status: AgentStatus }) {
+	return (
+		<span
+			className={cn(
+				'inline-block size-2 rounded-full',
+				status === 'working' && 'bg-accent animate-pulse',
+				status === 'failed' && 'bg-error',
+				status === 'idle' && 'bg-muted-foreground/40',
+			)}
+		/>
 	)
 }
 
