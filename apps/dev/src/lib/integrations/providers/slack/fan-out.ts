@@ -12,6 +12,7 @@ import { getProvider } from '../../registry'
 import type { NormalizedEvent, WebhookFanOutContext } from '../../types'
 import { maybePromptAccountLink } from './account-link'
 import { extractMentionFields, handleSlackMention, isMentionEntityType } from './mention'
+import { handleLinkShared } from './unfurl'
 import { publishAppHomeView } from './webhooks'
 
 /**
@@ -349,6 +350,21 @@ export async function slackWebhookFanOut(ctx: WebhookFanOutContext): Promise<Nor
 	// short-circuits via the dedup ledger.
 	if (ctx.normalized.entityType === 'slack.app_home_opened') {
 		await handleAppHomeOpened(ctx)
+		return []
+	}
+
+	// link_shared is the same shape: submit the unfurl, drop the event. Every
+	// URL preview goes through the same batch, so re-delivery of the same Slack
+	// event_id short-circuits via the dedup ledger as well.
+	if (ctx.normalized.entityType === 'slack.link_shared') {
+		try {
+			await handleLinkShared(db, ctx.integrationId, ctx.normalized)
+		} catch (err) {
+			logger.error('Slack link_shared: handler failed', {
+				integrationId: ctx.integrationId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
 		return []
 	}
 
