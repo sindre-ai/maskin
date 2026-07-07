@@ -24,6 +24,7 @@ import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/githu
 import {
 	dispatchAccountLinkAction,
 	dispatchMaskinWorkspaceCommand,
+	maybePromptAccountLink,
 } from '../lib/integrations/providers/slack/account-link'
 import {
 	type SlackConversationType,
@@ -31,6 +32,12 @@ import {
 	listSlackUsers,
 } from '../lib/integrations/providers/slack/client'
 import { config as slackProviderConfig } from '../lib/integrations/providers/slack/config'
+import {
+	extractChannelId,
+	extractMentioningSlackUserId,
+	getMentionSurface,
+	resolveMentionDispatch,
+} from '../lib/integrations/providers/slack/identity'
 import {
 	handleSlackInteractivePayload,
 	parseSlackInteractivePayload,
@@ -1249,6 +1256,63 @@ webhookApp.post('/:provider', async (c) => {
 		return c.json({ ok: true, skipped: true })
 	}
 
+	// Slack DM vs channel identity split (AC-U1, AC-T2). Every candidate
+	// integration bound to this Slack team is a channel-surface target; a DM
+	// gets narrowed to the mentioning user's `slack_user_links` workspace, or
+	// dropped with an AC-U5 re-link prompt if no personal link exists. Channel
+	// mentions pass through unchanged so multi-workspace fan-out still lands
+	// one event per bound workspace.
+	let dispatchList = eligible
+	if (providerName === 'slack') {
+		const surface = getMentionSurface(normalized)
+		if (surface !== null) {
+			const slackUserId = extractMentioningSlackUserId(normalized)
+			const slackTeamId = normalized.installationId
+			const channelId = extractChannelId(normalized)
+			if (slackUserId && slackTeamId) {
+				const resolution = await resolveMentionDispatch(
+					db,
+					slackTeamId,
+					slackUserId,
+					surface,
+					eligible,
+				)
+				dispatchList = resolution.targets
+				if (resolution.needsRelinkPrompt && channelId) {
+					// DM landed with no personal link — post the re-link picker so the
+					// user can pick a workspace explicitly (AC-U5), then drop the
+					// event. Any active integration for the team owns a bot token
+					// that can post the ephemeral (bot tokens are team-scoped on
+					// Slack's side), so we prompt off the first eligible one.
+					const promptIntegration = eligible[0]
+					if (promptIntegration) {
+						const frontendUrl = process.env.FRONTEND_URL || 'https://maskin.io'
+						void maybePromptAccountLink({
+							db,
+							integrationId: promptIntegration.id,
+							integrationCredentials: promptIntegration.credentials,
+							slackTeamId,
+							slackUserId,
+							channelId,
+							frontendUrl,
+						}).catch((err) => {
+							logger.warn('Slack DM re-link prompt failed', {
+								integrationId: promptIntegration.id,
+								slackTeamId,
+								slackUserId,
+								error: err instanceof Error ? err.message : String(err),
+							})
+						})
+					}
+				}
+			}
+		}
+	}
+
+	if (dispatchList.length === 0) {
+		return c.json({ ok: true, skipped: true })
+	}
+
 	// Some providers (Gmail) deliver pointer-style webhooks where one push expands
 	// into N concrete events. webhookFanOut returns the list to insert; if absent
 	// we insert the single normalized event as-is. Run fan-out per integration so
@@ -1266,7 +1330,7 @@ webhookApp.post('/:provider', async (c) => {
 	const asyncProcessing = resolved.asyncProcessing === true
 
 	const perWorkspaceResults: Outcome[] = await Promise.all(
-		eligible.map(async (integration): Promise<Outcome> => {
+		dispatchList.map(async (integration): Promise<Outcome> => {
 			const config = integration.config as IntegrationConfig
 			const systemActorId = config.system_actor_id as string
 
