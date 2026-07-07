@@ -4,6 +4,7 @@ import {
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
+	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
 	trackObjectAttachedFile,
@@ -143,6 +144,36 @@ describe('v1 taxonomy helpers', () => {
 			'agent_session_completed',
 			expect.objectContaining({ outcome: 'failed', flow_id: 'evt-77' }),
 		)
+	})
+
+	it('chat_session_started carries the entry point alongside the property contract', () => {
+		const capture = captureSpy()
+
+		trackChatSessionStarted({
+			entity_id: 'sess-7',
+			entity_type: 'session',
+			entry_point: 'sindre_session',
+		})
+		trackChatSessionStarted({
+			entity_id: 'sess-8',
+			entity_type: 'session',
+			entry_point: 'agent_one_shot',
+		})
+
+		expect(capture).toHaveBeenNthCalledWith(1, 'chat_session_started', {
+			entity_id: 'sess-7',
+			entity_type: 'session',
+			source: 'web',
+			flow_id: null,
+			entry_point: 'sindre_session',
+		})
+		expect(capture).toHaveBeenNthCalledWith(2, 'chat_session_started', {
+			entity_id: 'sess-8',
+			entity_type: 'session',
+			source: 'web',
+			flow_id: null,
+			entry_point: 'agent_one_shot',
+		})
 	})
 
 	it('comment_posted captures is_reply and attachment_count', () => {

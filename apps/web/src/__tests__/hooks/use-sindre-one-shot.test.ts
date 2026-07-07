@@ -31,7 +31,13 @@ vi.mock('@/lib/auth', () => ({
 	getApiKey: () => 'test-api-key',
 }))
 
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return { ...actual, trackChatSessionStarted: vi.fn() }
+})
+
 import { useSindreOneShot } from '@/hooks/use-sindre-one-shot'
+import { trackChatSessionStarted } from '@/lib/analytics'
 import type { SessionResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { TestWrapper } from '../setup'
@@ -114,6 +120,59 @@ describe('useSindreOneShot — send', () => {
 			action_prompt: 'what is this?\n\n---\nContext notifications:\n- Build failed — id: notif-1',
 			auto_start: true,
 		})
+	})
+
+	it('emits chat_session_started with entry_point=agent_one_shot on each fresh send', async () => {
+		vi.mocked(api.sessions.create)
+			.mockResolvedValueOnce(buildSession('sess-a'))
+			.mockResolvedValueOnce(buildSession('sess-b'))
+
+		const { result } = renderHook(() => useSindreOneShot(), { wrapper: TestWrapper })
+
+		await act(async () => {
+			await result.current.send({
+				workspaceId: 'ws-1',
+				agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
+				content: 'first',
+			})
+		})
+		await act(async () => {
+			await result.current.send({
+				workspaceId: 'ws-1',
+				agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
+				content: 'second',
+			})
+		})
+
+		expect(trackChatSessionStarted).toHaveBeenCalledTimes(2)
+		expect(trackChatSessionStarted).toHaveBeenNthCalledWith(1, {
+			entity_id: 'sess-a',
+			entity_type: 'session',
+			entry_point: 'agent_one_shot',
+		})
+		expect(trackChatSessionStarted).toHaveBeenNthCalledWith(2, {
+			entity_id: 'sess-b',
+			entity_type: 'session',
+			entry_point: 'agent_one_shot',
+		})
+	})
+
+	it('does not emit chat_session_started when one-shot session creation fails', async () => {
+		vi.mocked(api.sessions.create).mockRejectedValue(new Error('boom'))
+
+		const { result } = renderHook(() => useSindreOneShot(), { wrapper: TestWrapper })
+
+		await act(async () => {
+			await expect(
+				result.current.send({
+					workspaceId: 'ws-1',
+					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
+					content: 'first',
+				}),
+			).rejects.toThrow('boom')
+		})
+
+		expect(trackChatSessionStarted).not.toHaveBeenCalled()
 	})
 
 	it('skips the context block when there are no attached objects', async () => {
