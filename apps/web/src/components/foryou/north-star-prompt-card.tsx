@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button'
-import { trackEvent } from '@/lib/analytics'
+import { trackNorthStarPromptImpression, trackNorthStarPromptResponse } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { useEffect, useRef, useState } from 'react'
 
@@ -16,7 +16,7 @@ export function NorthStarPromptCard({ workspaceId, onDismiss }: NorthStarPromptC
 	useEffect(() => {
 		if (impressionFired.current) return
 		impressionFired.current = true
-		trackEvent('north_star_prompt_impression', { workspace_id: workspaceId })
+		trackNorthStarPromptImpression({ workspace_id: workspaceId })
 	}, [workspaceId])
 
 	async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -25,7 +25,7 @@ export function NorthStarPromptCard({ workspaceId, onDismiss }: NorthStarPromptC
 		if (!trimmed || isSubmitting) return
 		setIsSubmitting(true)
 		try {
-			trackEvent('north_star_prompt_response', { workspace_id: workspaceId })
+			trackNorthStarPromptResponse({ workspace_id: workspaceId })
 			await api.workspaces.update(workspaceId, {
 				settings: { north_star_metric: trimmed },
 			})
