@@ -97,6 +97,20 @@ export function trackAgentSessionStarted(p: BaseProps & { entity_type: 'session'
 	trackEvent('agent_session_started', fillBase(p))
 }
 
+// Operator opened a chat with Maskin (Sindre, or a one-shot agent via the `/`
+// picker). Powers the founder-substitution measurement on the
+// `Chat — Maskin becomes the operator's default AI client` bet: counted against
+// surveyed Claude / ChatGPT session starts to track displacement over time.
+// `entity_id` is the container session id so PostHog can join back to the
+// sessions table. `workspace_id` + `actor_id` ride as super-properties.
+export type ChatSessionEntryPoint = 'sindre_session' | 'agent_one_shot'
+
+export function trackChatSessionStarted(
+	p: BaseProps & { entity_type: 'session'; entry_point: ChatSessionEntryPoint },
+): void {
+	trackEvent('chat_session_started', { ...fillBase(p), entry_point: p.entry_point })
+}
+
 export function trackAgentSessionCompleted(
 	p: BaseProps & { entity_type: 'session'; outcome: 'completed' | 'failed' | 'timeout' },
 ): void {
