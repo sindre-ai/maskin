@@ -11,7 +11,6 @@ import {
 	subscriptions,
 	workspaces,
 } from '@maskin/db/schema'
-import { knowledgeExtras } from '@maskin/ext-knowledge/db-schema'
 import { knowledgeLiveOnlyFilters, retrieveKnowledge } from '@maskin/ext-knowledge/retrieval'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
@@ -457,11 +456,11 @@ app.openapi(boardObjectsRoute, async (c) => {
 		...(knowledgeGated ? knowledgeLiveOnlyFilters() : []),
 	]
 
-	let countQuery = db.select({ value: groupExpr, total: count() }).from(objects).$dynamic()
-	if (knowledgeGated) {
-		countQuery = countQuery.leftJoin(knowledgeExtras, eq(knowledgeExtras.objectId, objects.id))
-	}
-	const countRows = await countQuery.where(and(...baseConditions)).groupBy(groupExpr)
+	const countRows = await db
+		.select({ value: groupExpr, total: count() })
+		.from(objects)
+		.where(and(...baseConditions))
+		.groupBy(groupExpr)
 
 	const totals = new Map<string, number>()
 	for (const row of countRows as Array<{ value: unknown; total: unknown }>) {
@@ -493,11 +492,9 @@ app.openapi(boardObjectsRoute, async (c) => {
 	const columns = []
 	for (const value of columnValues) {
 		const columnConditions = [...baseConditions, eq(groupExpr, value)]
-		let rowsQuery = db.select(getTableColumns(objects)).from(objects).$dynamic()
-		if (knowledgeGated) {
-			rowsQuery = rowsQuery.leftJoin(knowledgeExtras, eq(knowledgeExtras.objectId, objects.id))
-		}
-		const rows = await rowsQuery
+		const rows = await db
+			.select(getTableColumns(objects))
+			.from(objects)
 			.where(and(...columnConditions))
 			.limit(query.limit)
 			.offset(query.offset)

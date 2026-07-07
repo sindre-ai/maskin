@@ -1,9 +1,8 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database, Transaction } from '@maskin/db'
-import { events, actors, files, objects, relationships } from '@maskin/db/schema'
-import { knowledgeExtras } from '@maskin/ext-knowledge/db-schema'
+import { events, files, objects, relationships } from '@maskin/db/schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
-import { and, eq, inArray, or } from 'drizzle-orm'
+import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -29,13 +28,17 @@ const app = new OpenAPIHono<Env>()
 // otherwise a failure here would leave an already-committed relationship
 // behind a 500 response, and an idempotency-key retry would then hit the
 // relationships unique constraint instead of the original error.
-async function stampKnowledgeInvalid(tx: Transaction, sourceId: string, targetId: string) {
+async function stampKnowledgeInvalid(
+	tx: Transaction,
+	sourceId: string,
+	targetId: string,
+	actorId: string,
+) {
 	const endpoints = await tx
 		.select({
 			id: objects.id,
 			type: objects.type,
 			workspaceId: objects.workspaceId,
-			createdBy: objects.createdBy,
 		})
 		.from(objects)
 		.where(inArray(objects.id, [sourceId, targetId]))
@@ -43,29 +46,26 @@ async function stampKnowledgeInvalid(tx: Transaction, sourceId: string, targetId
 	const target = endpoints.find((e) => e.id === targetId)
 	if (source?.type !== 'knowledge' || target?.type !== 'knowledge') return
 
-	const [actor] = await tx
-		.select({ type: actors.type })
-		.from(actors)
-		.where(eq(actors.id, target.createdBy))
-		.limit(1)
-	const writerType =
-		actor?.type === 'human' || actor?.type === 'agent' || actor?.type === 'system'
-			? actor.type
-			: 'system'
 	const now = new Date()
+	// Merge one key into whatever metadata the target already has — knowledge
+	// objects carry confidence/verification_status/etc. as ordinary metadata
+	// keys, same as every other type's custom fields, so this never clobbers them.
 	await tx
-		.insert(knowledgeExtras)
-		.values({
-			objectId: target.id,
-			workspaceId: target.workspaceId,
-			tInvalid: now,
-			writerType,
-			provenanceType: 'imported',
+		.update(objects)
+		.set({
+			metadata: sql`coalesce(${objects.metadata}, '{}'::jsonb) || jsonb_build_object('t_invalid', ${now.toISOString()}::text)`,
+			updatedAt: now,
 		})
-		.onConflictDoUpdate({
-			target: knowledgeExtras.objectId,
-			set: { tInvalid: now },
-		})
+		.where(eq(objects.id, target.id))
+
+	await tx.insert(events).values({
+		workspaceId: target.workspaceId,
+		actorId,
+		action: 'updated',
+		entityType: 'knowledge',
+		entityId: target.id,
+		data: { t_invalid: now.toISOString() },
+	})
 }
 
 // POST /api/relationships
@@ -148,13 +148,13 @@ app.openapi(createRelationshipRoute, async (c) => {
 			})
 
 			// Bi-temporal invalidation: creating a supersedes/contradicts edge between
-			// two knowledge objects stamps t_invalid on the target's extras row rather
+			// two knowledge objects stamps t_invalid in the target's metadata rather
 			// than deleting the old row. The target stays queryable via t_invalid.
 			// Runs in the same transaction so a failure here rolls back the
 			// relationship + event inserts too, instead of leaving them committed
 			// behind a 500 response.
 			if (row.type === 'supersedes' || row.type === 'contradicts') {
-				await stampKnowledgeInvalid(tx, row.sourceId, row.targetId)
+				await stampKnowledgeInvalid(tx, row.sourceId, row.targetId, actorId)
 			}
 
 			return row

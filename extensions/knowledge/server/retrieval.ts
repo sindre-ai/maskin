@@ -1,24 +1,23 @@
 import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
-import { type SQL, and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm'
-import { knowledgeExtras } from './schema'
+import { type SQL, and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 
-// Column-aware retrieval for `type='knowledge'` objects. Left-joins
-// `knowledge_extras` on `object_id` and filters/ranks by the first-class
-// columns promoted in migration `0047_knowledge_extras.sql`:
+// Column-aware retrieval for `type='knowledge'` objects. Reads/filters/ranks
+// directly off `objects.metadata` — knowledge rows are ordinary `objects` rows,
+// no side table. The fields this cares about (`t_valid`, `t_invalid`,
+// `verification_status`, `confidence`) are just metadata keys, same storage
+// as every other type's custom fields.
 //
-//  - bi-temporal live-only: rows with `t_invalid IS NOT NULL` are excluded,
-//    and rows scheduled for a future validity (`t_valid > now`) are excluded
-//    so the candidate set reflects what is in-force right now.
+//  - bi-temporal live-only: rows with a `t_invalid` key are excluded, and rows
+//    scheduled for a future validity (`t_valid > now`) are excluded so the
+//    candidate set reflects what is in-force right now.
 //  - `verification_status='deprecated'` rows are excluded.
 //  - order: token-score DESC (when `q` is provided) → verification priority
 //    (verified > pending > unverified > contested) → confidence priority
-//    (high > medium > low > NULL) → `t_valid` DESC NULLS LAST (recency is a
-//    first-class tiebreaker now that the column is promoted) → `created_at`
-//    DESC (objects with no knowledge_extras row — e.g. everything created
-//    before its first supersede/contradict — tie on all of the above, so
-//    this keeps them newest-first instead of falling through to `id ASC`)
-//    → id ASC.
+//    (high > medium > low > NULL) → `t_valid` DESC NULLS LAST (recency
+//    tiebreaker) → `created_at` DESC (objects with no `t_valid` metadata key
+//    tie on all of the above, so this keeps them newest-first instead of
+//    falling through to `id ASC`) → id ASC.
 //
 // Callers on `search_objects` / list flow through here when `type='knowledge'`
 // so eval and runtime retrieval stay on one path.
@@ -128,10 +127,25 @@ export type RetrieveKnowledgeOptions = {
 
 export type KnowledgeRow = typeof objects.$inferSelect
 
+const metaTInvalid = sql`(${objects.metadata}->>'t_invalid')`
+const metaTValid = sql`(${objects.metadata}->>'t_valid')`
+const metaVerificationStatus = sql`(${objects.metadata}->>'verification_status')`
+const metaConfidence = sql`(${objects.metadata}->>'confidence')`
+
+// `metadata` is end-user-writable via PATCH /api/objects/:id — safeMetadataSchema
+// only constrains value *shape* (scalars/arrays of scalars), not content. A
+// malformed `t_valid`/`t_invalid` string must not blow up the whole query with a
+// Postgres cast error, so every `::timestamptz` cast is guarded by an ISO-8601
+// prefix check first. Non-matching / missing values fall through to NULL, same
+// as a missing column did under the old knowledge_extras join.
+const ISO_DATE_PREFIX = '^\\d{4}-\\d{2}-\\d{2}'
+function safeTimestamp(expr: SQL): SQL {
+	return sql`(case when ${expr} ~ ${ISO_DATE_PREFIX} then (${expr})::timestamptz else null end)`
+}
+
 // Verification / confidence rank expressions used both in the ORDER BY and
-// (for verification) as the deprecated-exclusion filter. Kept as SQL fragments
-// so Postgres does the comparison on the same tuple LEFT-JOIN returns.
-const verificationPriorityExpr = sql<number>`case ${knowledgeExtras.verificationStatus}
+// (for verification) as the deprecated-exclusion filter.
+const verificationPriorityExpr = sql<number>`case ${metaVerificationStatus}
 	when 'verified' then 3
 	when 'pending' then 2
 	when 'unverified' then 1
@@ -139,7 +153,7 @@ const verificationPriorityExpr = sql<number>`case ${knowledgeExtras.verification
 	else 1
 end`
 
-const confidencePriorityExpr = sql<number>`case ${knowledgeExtras.confidence}
+const confidencePriorityExpr = sql<number>`case ${metaConfidence}
 	when 'high' then 3
 	when 'medium' then 2
 	when 'low' then 1
@@ -147,27 +161,23 @@ const confidencePriorityExpr = sql<number>`case ${knowledgeExtras.confidence}
 end`
 
 // Bi-temporal + verification "live only" filters. Shared by every read path
-// that joins `knowledge_extras` on `objects.id` — retrieveKnowledge() below,
-// and the board route's grouped/paginated query in apps/dev/src/routes/
-// objects.ts — so a knowledge row invalidated/deprecated/future-dated is
-// hidden consistently everywhere, not just on list/search. Assumes the
-// caller has already LEFT JOINed `knowledge_extras`.
+// that filters on knowledge metadata — retrieveKnowledge() below, and the
+// board route's grouped/paginated query in apps/dev/src/routes/objects.ts —
+// so a knowledge row invalidated/deprecated/future-dated is hidden
+// consistently everywhere, not just on list/search.
 export function knowledgeLiveOnlyFilters(): SQL[] {
 	return [
-		// Bi-temporal live-only. LEFT JOIN means missing extras row → t_invalid IS NULL
-		// naturally, so nothing is excluded on that account.
-		isNull(knowledgeExtras.tInvalid),
-		// In-force at query time. Rows with `t_valid > now` are scheduled for a
-		// future validity and should not be candidates yet. Missing extras row
-		// (LEFT JOIN null) keeps legacy rows retrievable.
-		or(isNull(knowledgeExtras.tValid), sql`${knowledgeExtras.tValid} <= now()`) as SQL,
+		// Bi-temporal live-only. Missing `t_invalid` key → NULL → naturally live,
+		// same as a missing extras row used to be under the old LEFT JOIN.
+		sql`${metaTInvalid} IS NULL`,
+		// In-force at query time. Rows with a future `t_valid` are scheduled for a
+		// future validity and should not be candidates yet. Missing/malformed
+		// `t_valid` keeps legacy rows retrievable.
+		sql`(${safeTimestamp(metaTValid)} IS NULL OR ${safeTimestamp(metaTValid)} <= now())`,
 		// `deprecated` verification means the row is intentionally out of retrieval.
-		// Missing extras row (LEFT JOIN null) is treated as retrievable — the extension
-		// may not be populated for a workspace, and we don't want to hide legacy rows.
-		or(
-			isNull(knowledgeExtras.verificationStatus),
-			sql`${knowledgeExtras.verificationStatus} <> 'deprecated'`,
-		) as SQL,
+		// Missing key is treated as retrievable — the extension may not have
+		// populated this metadata for a workspace, and we don't want to hide legacy rows.
+		sql`(${metaVerificationStatus} IS NULL OR ${metaVerificationStatus} <> 'deprecated')`,
 	]
 }
 
@@ -219,10 +229,11 @@ export async function retrieveKnowledge(
 	orderBy.push(desc(verificationPriorityExpr))
 	orderBy.push(desc(confidencePriorityExpr))
 	// `t_valid` DESC NULLS LAST — most-recent live row wins the tiebreak, with
-	// legacy rows (no extras row) sorting last so they don't shadow a promoted row.
-	orderBy.push(sql`${knowledgeExtras.tValid} desc nulls last`)
-	// Rows with no knowledge_extras row tie on verification/confidence/t_valid
-	// (all fall to their NULL-equivalent defaults), so without this the result
+	// legacy rows (no `t_valid` metadata key) sorting last so they don't shadow
+	// a promoted row.
+	orderBy.push(sql`${safeTimestamp(metaTValid)} desc nulls last`)
+	// Rows with no `t_valid`/verification/confidence metadata tie on all of the
+	// above (fall to their NULL-equivalent defaults), so without this the result
 	// would collapse to `id ASC` — an arbitrary UUID order, not newest-first.
 	// `created_at DESC` restores the pre-migration default ordering for those rows.
 	orderBy.push(desc(objects.createdAt))
@@ -244,7 +255,6 @@ export async function retrieveKnowledge(
 			updatedAt: objects.updatedAt,
 		})
 		.from(objects)
-		.leftJoin(knowledgeExtras, eq(knowledgeExtras.objectId, objects.id))
 		.where(and(...filters))
 		.orderBy(...orderBy)
 		.limit(opts.limit)

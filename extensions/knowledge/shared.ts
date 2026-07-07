@@ -17,6 +17,23 @@ export const KNOWLEDGE_FIELDS: FieldDefinition[] = [
 	},
 	{ name: 'tags', type: 'text' },
 	{ name: 'last_validated_at', type: 'date' },
+	{
+		name: 'verification_status',
+		type: 'enum',
+		values: ['unverified', 'pending', 'verified', 'deprecated', 'contested'],
+	},
+	{
+		name: 'writer_type',
+		type: 'enum',
+		values: ['human', 'agent', 'system'],
+	},
+	{
+		name: 'provenance_type',
+		type: 'enum',
+		values: ['insight', 'meeting', 'slack', 'agent-write', 'manual', 'imported'],
+	},
+	{ name: 't_valid', type: 'date' },
+	{ name: 't_invalid', type: 'date' },
 ]
 
 export const KNOWLEDGE_DEFAULT_SETTINGS: ModuleDefaultSettings = {
