@@ -227,12 +227,16 @@ export function useChatSession({
 					}
 					currentSessionId = session.id
 					setSessionId(session.id)
-					// Founder-substitution measurement: fire exactly once per
-					// fresh container — guarded by the `sessionId` transition
-					// from null to set, so subsequent sends on the persistent
-					// session don't re-fire. `reset()` bumps generationRef and
-					// nulls sessionId, so the next first-send legitimately
-					// counts as a new chat session start.
+					// Founder-substitution measurement: fires once per fresh
+					// container. Guarded by entering this bootstrap branch,
+					// which happens both on the first send (`sessionId` is
+					// null) and after the previous container closes
+					// (`currentSessionId` above is forced to null when
+					// `statusRef.current === 'closed'`, even though `sessionId`
+					// still holds the old, closed session's id) — both are
+					// legitimate new chat-session starts. `reset()`
+					// additionally bumps `generationRef` and nulls `sessionId`
+					// directly.
 					trackChatSessionStarted({
 						entity_id: session.id,
 						entity_type: 'session',
