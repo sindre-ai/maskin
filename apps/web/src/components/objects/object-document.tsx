@@ -28,7 +28,7 @@ import type {
 } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { Check, User } from 'lucide-react'
+import { Check, PanelRight, User } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionBanner } from '../activity/action-banner'
 import { ObjectActivity } from '../activity/object-activity'
@@ -42,9 +42,7 @@ import { StatusBadge } from '../shared/status-badge'
 import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
-import { LinkedObjects } from './linked-objects'
-import { MetadataProperties } from './metadata-properties'
-import { ObjectFiles } from './object-files'
+import { PropertiesDrawer } from './properties-drawer'
 
 interface ObjectDocumentViewProps {
 	object: ObjectResponse
@@ -52,11 +50,6 @@ interface ObjectDocumentViewProps {
 	statuses: string[]
 	creator?: ActorResponse
 	members?: MemberResponse[]
-	relationships?: {
-		asSource: RelationshipResponse[]
-		asTarget: RelationshipResponse[]
-	}
-	connectedObjects?: ObjectResponse[]
 	events?: EventResponse[]
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
@@ -73,8 +66,6 @@ export function ObjectDocumentView({
 	statuses,
 	creator,
 	members,
-	relationships,
-	connectedObjects,
 	events,
 	onUpdateTitle,
 	onUpdateContent,
@@ -176,37 +167,9 @@ export function ObjectDocumentView({
 				<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
 			</div>
 
-			{/* Properties */}
-			<div className="mb-6 w-full">
-				<MetadataProperties object={object} />
-			</div>
-
-			{/* Content */}
+			{/* Content (hypothesis / description) */}
 			<div className="mb-8">
 				<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
-			</div>
-
-			{/* Linked objects */}
-			{relationships && (
-				<div className="border-t border-border pt-6 mb-8">
-					<LinkedObjects
-						objectId={object.id}
-						objectType={object.type}
-						asSource={relationships.asSource}
-						asTarget={relationships.asTarget}
-						connectedObjects={connectedObjects}
-					/>
-				</div>
-			)}
-
-			{/* Files */}
-			<div className="border-t border-border pt-6 mb-8">
-				<ObjectFiles
-					workspaceId={workspaceId}
-					objectId={object.id}
-					objectType={object.type}
-					relationships={relationships}
-				/>
 			</div>
 
 			{/* Activity */}
@@ -330,6 +293,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	}, [handleDelete])
 
 	const [menuOpen, setMenuOpen] = useState(false)
+	const [drawerOpen, setDrawerOpen] = useState(false)
 
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
@@ -346,19 +310,31 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		return () => document.removeEventListener('keydown', handler)
 	}, [])
 
-	const menuActions = (
-		<AuxiliaryActionMenu
-			object={object}
-			onDeleteRequest={openDeleteConfirm}
-			workspaceId={workspaceId}
-			open={menuOpen}
-			onOpenChange={setMenuOpen}
-		/>
+	const headerActions = (
+		<>
+			<Button
+				variant="ghost"
+				size="icon"
+				className="h-7 w-7"
+				onClick={() => setDrawerOpen((v) => !v)}
+				aria-label="Properties"
+				aria-expanded={drawerOpen}
+			>
+				<PanelRight size={15} />
+			</Button>
+			<AuxiliaryActionMenu
+				object={object}
+				onDeleteRequest={openDeleteConfirm}
+				workspaceId={workspaceId}
+				open={menuOpen}
+				onOpenChange={setMenuOpen}
+			/>
+		</>
 	)
 
 	return (
 		<>
-			<PageHeader actions={menuActions} />
+			<PageHeader actions={headerActions} />
 			<DeleteConfirmDialog
 				open={confirmDelete}
 				onOpenChange={handleDeleteOpenChange}
@@ -374,8 +350,6 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				statuses={statuses}
 				creator={creator}
 				members={members}
-				relationships={relationships}
-				connectedObjects={graph?.connected_objects}
 				events={events}
 				onUpdateTitle={handleUpdateTitle}
 				onUpdateContent={handleUpdateContent}
@@ -383,6 +357,13 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onUpdateDriver={handleUpdateDriver}
 				onDelete={handleDelete}
 				isDeleting={deleteObject.isPending}
+			/>
+			<PropertiesDrawer
+				open={drawerOpen}
+				onOpenChange={setDrawerOpen}
+				object={object}
+				workspaceId={workspaceId}
+				relationships={relationships}
 			/>
 		</>
 	)
