@@ -11,6 +11,7 @@ import { TokenManager } from '../../oauth/token-manager'
 import { getProvider } from '../../registry'
 import type { NormalizedEvent, WebhookFanOutContext } from '../../types'
 import { maybePromptAccountLink } from './account-link'
+import { extractMentionFields, handleSlackMention, isMentionEntityType } from './mention'
 import { publishAppHomeView } from './webhooks'
 
 /**
@@ -349,6 +350,24 @@ export async function slackWebhookFanOut(ctx: WebhookFanOutContext): Promise<Nor
 	if (ctx.normalized.entityType === 'slack.app_home_opened') {
 		await handleAppHomeOpened(ctx)
 		return []
+	}
+
+	// `app_mention` / `message.im` (DM) deliveries get an in-thread ephemeral
+	// "working…" ack inside Slack's 3s budget. The handler runs before file
+	// fan-out so the user sees the ack while attachments are still being
+	// persisted. Errors from the handler are swallowed internally — a failed
+	// ack must not drop the event itself.
+	if (isMentionEntityType(ctx.normalized.entityType)) {
+		const fields = extractMentionFields(ctx.normalized.data)
+		if (fields) {
+			await handleSlackMention({
+				db,
+				integrationId: ctx.integrationId,
+				workspaceId: ctx.workspaceId,
+				...fields,
+			})
+		}
+		// Fall through so attachments and trigger pipeline still see the event.
 	}
 
 	// First-touch account-link prompt: when an unlinked Slack user @mentions the
