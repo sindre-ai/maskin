@@ -192,10 +192,15 @@ function ForYouDashboard() {
 
 	const isSparse = visibleRegular.length + onboardingItems.length < 3
 
-	if (!showNorthStarPrompt && items.length === 0) {
+	const northStarCard = showNorthStarPrompt ? (
+		<NorthStarPromptCard workspaceId={workspaceId} onDismiss={() => setNorthStarDismissed(true)} />
+	) : null
+
+	if (items.length === 0) {
 		return (
 			<>
 				<div className="flex flex-col gap-2">
+					{northStarCard}
 					<div className="flex items-center justify-end">
 						<Button
 							size="sm"
@@ -246,12 +251,7 @@ function ForYouDashboard() {
 	return (
 		<>
 			<div className={cn('flex flex-col gap-4', activeId && 'pb-28')}>
-				{showNorthStarPrompt && (
-					<NorthStarPromptCard
-						workspaceId={workspaceId}
-						onDismiss={() => setNorthStarDismissed(true)}
-					/>
-				)}
+				{northStarCard}
 				<div className="flex items-center justify-between">
 					<div className="flex items-center gap-2">
 						<span className="text-sm font-medium text-foreground">For You</span>
