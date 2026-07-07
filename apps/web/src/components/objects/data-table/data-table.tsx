@@ -1,5 +1,4 @@
 import { EmptyState } from '@/components/shared/empty-state'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Spinner } from '@/components/ui/spinner'
 
 const DATE_GROUP_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -42,39 +41,6 @@ function resolveGroupLabel(
 	}
 	return formatGroupDate(rawValue)
 }
-
-// Hit zone for the group-header select-all checkbox — matches T1's iOS 44×44 target on
-// the row-level checkboxes so the new control isn't the one missed tap in the chain.
-const GROUP_SELECT_TAP_TARGET =
-	"relative before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
-
-function getGroupSelectState<T>(row: Row<T>): boolean | 'indeterminate' {
-	const leaves = row.getLeafRows()
-	if (leaves.length === 0) return false
-	let selected = 0
-	for (const leaf of leaves) {
-		if (leaf.getCanSelect() && leaf.getIsSelected()) selected++
-	}
-	if (selected === 0) return false
-	if (selected === leaves.length) return true
-	return 'indeterminate'
-}
-
-function toggleGroupSelection<T>(table: TanstackTable<T>, row: Row<T>, value: boolean): void {
-	const ids = row
-		.getLeafRows()
-		.filter((leaf) => leaf.getCanSelect())
-		.map((leaf) => leaf.id)
-	if (ids.length === 0) return
-	table.setRowSelection((prev) => {
-		const next = { ...prev }
-		for (const id of ids) {
-			if (value) next[id] = true
-			else delete next[id]
-		}
-		return next
-	})
-}
 import {
 	Table,
 	TableBody,
@@ -92,9 +58,7 @@ import {
 	type ColumnDef,
 	type GroupingState,
 	type OnChangeFn,
-	type Row,
 	type RowSelectionState,
-	type Table as TanstackTable,
 	type VisibilityState,
 	flexRender,
 	getCoreRowModel,
@@ -107,7 +71,6 @@ import { ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useRef } from 'react'
 import type { ObjectsTableMeta } from './columns'
 import { ObjectCard } from './object-card'
-import { useDragSelect } from './use-drag-select'
 
 interface DataTableProps {
 	data: ObjectResponse[]
@@ -167,26 +130,11 @@ export function DataTable({
 		getGroupedRowModel: grouping?.length ? getGroupedRowModel() : undefined,
 		getExpandedRowModel: grouping?.length ? getExpandedRowModel() : undefined,
 		groupedColumnMode: 'remove',
-		// Exclude synthetic group-header rows from selection — otherwise the
-		// page-level "select all" checkbox sweeps in group pseudo-ids (e.g.
-		// "status:active") alongside real object ids, and those bogus ids get
-		// sent straight into bulk-update/delete mutations.
-		enableRowSelection: (row) => !row.getIsGrouped(),
-		autoResetExpanded: false,
+		enableRowSelection: true,
 		getRowId: (row) => row.id,
 	})
 
 	const { rows } = table.getRowModel()
-
-	// The scroll container only mounts once loading/empty placeholders give way
-	// to the real list below — gate attachment on that so the hook's listener
-	// effect actually re-runs once the container exists (scrollRef's identity
-	// never changes, so it can't signal that transition on its own).
-	const { mode: dragMode } = useDragSelect({
-		scrollRef: parentRef,
-		table,
-		enabled: !isLoading && data.length > 0,
-	})
 
 	const virtualizer = useVirtualizer({
 		count: rows.length,
@@ -239,13 +187,7 @@ export function DataTable({
 
 	if (isMobile) {
 		return (
-			<div
-				ref={parentRef}
-				className={cn(
-					'flex-1 min-h-0 overflow-auto rounded-md border',
-					dragMode === 'drag' ? 'touch-none' : 'touch-pan-y',
-				)}
-			>
+			<div ref={parentRef} className="flex-1 min-h-0 overflow-auto rounded-md border">
 				{virtualItems.length === 0 ? (
 					<div className="h-24 flex items-center justify-center text-sm text-muted-foreground">
 						No results.
@@ -274,30 +216,20 @@ export function DataTable({
 										className="absolute left-0 right-0"
 										style={{ transform: `translateY(${virtualItem.start}px)` }}
 									>
-										<div className="flex w-full items-center gap-2 border-b border-border bg-muted/30 px-4 py-2 hover:bg-muted/50">
-											<Checkbox
-												checked={getGroupSelectState(row)}
-												onCheckedChange={(value) => toggleGroupSelection(table, row, !!value)}
-												onClick={(e) => e.stopPropagation()}
-												aria-label={`Select all in ${displayValue}`}
-												className={cn('shrink-0', GROUP_SELECT_TAP_TARGET)}
+										<button
+											type="button"
+											onClick={() => row.toggleExpanded()}
+											className="flex w-full items-center gap-2 border-b border-border bg-muted/30 px-4 py-2 text-left hover:bg-muted/50"
+										>
+											<ChevronRight
+												size={14}
+												className={cn('transition-transform', row.getIsExpanded() && 'rotate-90')}
 											/>
-											<button
-												type="button"
-												onClick={() => row.toggleExpanded()}
-												aria-expanded={row.getIsExpanded()}
-												className="flex flex-1 items-center gap-2 text-left"
-											>
-												<ChevronRight
-													size={14}
-													className={cn('transition-transform', row.getIsExpanded() && 'rotate-90')}
-												/>
-												<span className="font-medium text-sm">{displayValue}</span>
-												<span className="text-muted-foreground text-xs">
-													({row.subRows.length})
-												</span>
-											</button>
-										</div>
+											<span className="font-medium text-sm">{displayValue}</span>
+											<span className="text-muted-foreground text-xs tabular-nums">
+												({row.subRows.length})
+											</span>
+										</button>
 									</li>
 								)
 							}
@@ -306,17 +238,8 @@ export function DataTable({
 								<li
 									key={row.id}
 									data-index={virtualItem.index}
-									data-drag-row={row.id}
 									ref={virtualizer.measureElement}
-									className={cn(
-										'absolute left-0 right-0',
-										'data-[drag-active-end=true]:before:content-[""]',
-										'data-[drag-active-end=true]:before:absolute',
-										'data-[drag-active-end=true]:before:inset-y-0',
-										'data-[drag-active-end=true]:before:left-0',
-										'data-[drag-active-end=true]:before:w-[3px]',
-										'data-[drag-active-end=true]:before:bg-primary',
-									)}
+									className="absolute left-0 right-0"
 									style={{ transform: `translateY(${virtualItem.start}px)` }}
 								>
 									<ObjectCard
@@ -326,11 +249,6 @@ export function DataTable({
 										isSelected={row.getIsSelected()}
 										onSelect={(selected) => row.toggleSelected(selected)}
 										onClick={() => handleRowClick(row.original.id)}
-										betStatus={
-											row.original.type === 'bet'
-												? meta?.betStatuses?.get(row.original.id)
-												: undefined
-										}
 									/>
 								</li>
 							)
@@ -348,13 +266,7 @@ export function DataTable({
 	}
 
 	return (
-		<div
-			ref={parentRef}
-			className={cn(
-				'flex-1 min-h-0 overflow-auto rounded-md border',
-				dragMode === 'drag' ? 'touch-none' : 'touch-pan-y',
-			)}
-		>
+		<div ref={parentRef} className="flex-1 min-h-0 overflow-auto rounded-md border">
 			<Table>
 				<TableHeader className="sticky top-0 z-10 bg-background">
 					{table.getHeaderGroups().map((headerGroup) => (
@@ -404,35 +316,22 @@ export function DataTable({
 											key={row.id}
 											data-index={virtualItem.index}
 											ref={virtualizer.measureElement}
-											className="bg-muted/30 hover:bg-muted/50"
+											className="bg-muted/30 hover:bg-muted/50 cursor-pointer"
+											onClick={() => row.toggleExpanded()}
 										>
 											<TableCell colSpan={columns.length}>
 												<div className="flex items-center gap-2">
-													<Checkbox
-														checked={getGroupSelectState(row)}
-														onCheckedChange={(value) => toggleGroupSelection(table, row, !!value)}
-														onClick={(e) => e.stopPropagation()}
-														aria-label={`Select all in ${displayValue}`}
-														className={cn('shrink-0', GROUP_SELECT_TAP_TARGET)}
+													<ChevronRight
+														size={14}
+														className={cn(
+															'transition-transform',
+															row.getIsExpanded() && 'rotate-90',
+														)}
 													/>
-													<button
-														type="button"
-														onClick={() => row.toggleExpanded()}
-														aria-expanded={row.getIsExpanded()}
-														className="flex flex-1 items-center gap-2 text-left"
-													>
-														<ChevronRight
-															size={14}
-															className={cn(
-																'transition-transform',
-																row.getIsExpanded() && 'rotate-90',
-															)}
-														/>
-														<span className="font-medium text-sm">{displayValue}</span>
-														<span className="text-muted-foreground text-xs">
-															({row.subRows.length})
-														</span>
-													</button>
+													<span className="font-medium text-sm">{displayValue}</span>
+													<span className="text-muted-foreground text-xs tabular-nums">
+														({row.subRows.length})
+													</span>
 												</div>
 											</TableCell>
 										</TableRow>
@@ -443,18 +342,9 @@ export function DataTable({
 									<TableRow
 										key={row.id}
 										data-index={virtualItem.index}
-										data-drag-row={row.id}
 										ref={virtualizer.measureElement}
 										data-state={row.getIsSelected() && 'selected'}
-										className={cn(
-											'cursor-pointer relative',
-											'data-[drag-active-end=true]:before:content-[""]',
-											'data-[drag-active-end=true]:before:absolute',
-											'data-[drag-active-end=true]:before:inset-y-0',
-											'data-[drag-active-end=true]:before:left-0',
-											'data-[drag-active-end=true]:before:w-[3px]',
-											'data-[drag-active-end=true]:before:bg-primary',
-										)}
+										className="cursor-pointer"
 										onClick={() => handleRowClick(row.original.id)}
 									>
 										{row.getVisibleCells().map((cell) => (

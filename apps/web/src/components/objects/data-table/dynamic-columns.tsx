@@ -18,7 +18,7 @@ function renderFieldValue(value: unknown, type: string): React.ReactNode {
 		case 'boolean':
 			return <span className="text-sm">{value ? 'Yes' : 'No'}</span>
 		case 'number':
-			return <span className="text-sm">{String(value)}</span>
+			return <span className="text-sm tabular-nums">{String(value)}</span>
 		default:
 			return <span className="text-sm">{String(value)}</span>
 	}

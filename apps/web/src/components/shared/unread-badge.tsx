@@ -12,7 +12,7 @@ export function UnreadBadge({
 		<span
 			aria-label={`${count} unread`}
 			className={cn(
-				'inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1.5 text-xs font-medium text-accent-foreground',
+				'inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1.5 text-xs font-medium text-accent-foreground tabular-nums',
 				className,
 			)}
 		>
