@@ -1,4 +1,5 @@
 import { NewConversationComposer } from '@/components/foryou/new-conversation-composer'
+import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { PersistentReplyBar } from '@/components/foryou/persistent-reply-bar'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
@@ -7,6 +8,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
+import { useBets } from '@/hooks/use-bets'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import type { UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -32,6 +34,7 @@ function ForYouDashboard() {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const { data, isLoading } = useUnread(workspaceId)
+	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
 
@@ -163,7 +166,14 @@ function ForYouDashboard() {
 		return () => window.removeEventListener('keydown', onKeydown)
 	}, [handleMarkAllRead])
 
-	if (isLoading) {
+	const [northStarDismissed, setNorthStarDismissed] = useState(() =>
+		Boolean(localStorage.getItem(`north_star_answered_${workspaceId}`)),
+	)
+	// Hidden while the sparse composer has focus so it doesn't compete with the
+	// composer for vertical space once the on-screen keyboard is up on mobile.
+	const [composerFocused, setComposerFocused] = useState(false)
+
+	if (isLoading || betsLoading) {
 		return (
 			<div className="space-y-4">
 				<CardSkeleton />
@@ -172,6 +182,8 @@ function ForYouDashboard() {
 			</div>
 		)
 	}
+
+	const showNorthStarPrompt = (bets?.length ?? 0) === 0 && !northStarDismissed
 
 	const composer = (
 		<NewConversationComposer
@@ -183,10 +195,19 @@ function ForYouDashboard() {
 
 	const isSparse = visibleRegular.length + onboardingItems.length < 3
 
+	const northStarCard =
+		showNorthStarPrompt && !composerFocused ? (
+			<NorthStarPromptCard
+				workspaceId={workspaceId}
+				onDismiss={() => setNorthStarDismissed(true)}
+			/>
+		) : null
+
 	if (items.length === 0) {
 		return (
 			<>
 				<div className="flex flex-col gap-2">
+					{northStarCard}
 					<div className="flex items-center justify-end">
 						<Button
 							size="sm"
@@ -227,7 +248,7 @@ function ForYouDashboard() {
 						className="py-2 md:py-8"
 						compact
 					/>
-					<SparseComposer itemsCount={0} />
+					<SparseComposer itemsCount={0} onFocusChange={setComposerFocused} />
 				</div>
 				{composer}
 			</>
@@ -237,6 +258,7 @@ function ForYouDashboard() {
 	return (
 		<>
 			<div className={cn('flex flex-col gap-4', activeId && 'pb-28')}>
+				{northStarCard}
 				<div className="flex items-center justify-between">
 					<div className="flex items-center gap-2">
 						<span className="text-sm font-medium text-foreground">For You</span>
@@ -290,7 +312,10 @@ function ForYouDashboard() {
 						/>
 					))}
 					{isSparse ? (
-						<SparseComposer itemsCount={visibleRegular.length + onboardingItems.length} />
+						<SparseComposer
+							itemsCount={visibleRegular.length + onboardingItems.length}
+							onFocusChange={setComposerFocused}
+						/>
 					) : null}
 				</div>
 			</div>

@@ -5,6 +5,7 @@ import type { UnreadItem } from '@/lib/api'
 import { buildObjectResponse } from '../factories'
 
 const mockUseUnread = vi.fn()
+const mockUseBets = vi.fn()
 const mockMarkReadMutate = vi.fn()
 const mockToast = vi.fn()
 const mockSetComposerOpen = vi.fn()
@@ -42,6 +43,14 @@ vi.mock('@/lib/new-conversation-context', () => ({
 		open: mockComposerOpen,
 		setOpen: mockSetComposerOpen,
 	}),
+}))
+
+vi.mock('@/hooks/use-bets', () => ({
+	useBets: (...args: unknown[]) => mockUseBets(...args),
+}))
+
+vi.mock('@/components/foryou/north-star-prompt-card', () => ({
+	NorthStarPromptCard: () => <div data-testid="north-star-prompt-card" />,
 }))
 
 vi.mock('@/components/foryou/unread-thread-card', () => ({
@@ -110,6 +119,8 @@ function buildUnreadItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 describe('ForYouDashboard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		// Default: workspace has existing bets so NorthStarPromptCard stays hidden
+		mockUseBets.mockReturnValue({ data: [{ id: 'bet-1' }], isLoading: false })
 		mockComposerOpen = false
 	})
 
