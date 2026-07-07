@@ -221,7 +221,7 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date unless `sort` is set.',
+			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date unless `sort` is set. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `offset` still works for backward compatibility.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
@@ -251,14 +251,20 @@ export const tools = {
 				.describe(
 					'Sort by `updated_at`. Use `updated_at_asc` to walk oldest-stalled-first; `updated_at_desc` for most-recently-touched first. Omit to keep the default `createdAt desc` order.',
 				),
-			limit: z.number().int().min(1).max(100).default(50),
-			offset: z.number().int().min(0).default(0),
+			limit: z.number().int().min(1).max(100).optional(),
+			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted after that first call cannot leak into the stream.',
+				),
 			metadata_eq: metadataEqSchema,
 		}),
 	},
 	search_objects: {
 		description:
-			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type.',
+			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z
@@ -279,14 +285,20 @@ export const tools = {
 				.describe(
 					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded).',
 				),
-			limit: z.number().int().min(1).max(100).default(20),
-			offset: z.number().int().min(0).default(0),
+			limit: z.number().int().min(1).max(100).optional(),
+			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 			metadata_eq: metadataEqSchema,
 		}),
 	},
 	list_relationships: {
 		description:
-			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters.',
+			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
@@ -299,6 +311,14 @@ export const tools = {
 			source_id: z.string().uuid().optional(),
 			target_id: z.string().uuid().optional(),
 			type: z.string().optional(),
+			limit: z.number().int().min(1).max(100).optional(),
+			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	delete_relationship: {
@@ -375,7 +395,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. Results are paginated (default 50, max 100).",
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. When response scoping is enabled the workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -384,8 +404,14 @@ export const tools = {
 				.describe(
 					'Optional workspace ID to scope the listing to. If omitted, returns actors across all workspaces the caller belongs to (each with their workspace memberships).',
 				),
-			limit: z.number().int().min(1).max(100).default(50),
-			offset: z.number().int().min(0).default(0),
+			limit: z.number().int().min(1).max(100).optional(),
+			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. Only meaningful when `workspace_id` is set — the cross-workspace listing (no `workspace_id`) does not support cursor pagination and never returns a `next_cursor`; use `offset` to page it instead. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	get_actor: {
@@ -530,9 +556,17 @@ export const tools = {
 	// NOT the same as per-agent skills (those live under an agent's own file store).
 	list_workspace_skills: {
 		description:
-			'List shared workspace skills — SKILL.md files stored once per workspace and attachable to any agent in the workspace. These are workspace-scoped and reusable across agents, NOT per-agent skills. Returns lightweight rows without the SKILL.md body; call get_workspace_skill to fetch full content.',
+			'List shared workspace skills — SKILL.md files stored once per workspace and attachable to any agent in the workspace. These are workspace-scoped and reusable across agents, NOT per-agent skills. Returns lightweight rows without the SKILL.md body; call get_workspace_skill to fetch full content. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			limit: z.number().int().min(1).max(100).optional(),
+			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	get_workspace_skill: {
@@ -616,12 +650,19 @@ export const tools = {
 		}),
 	},
 	list_files: {
-		description: 'List files in the workspace, newest first. Pass `q` to filter by name substring.',
+		description:
+			'List files in the workspace, newest first. Pass `q` to filter by name substring. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
 			limit: z.number().int().min(1).max(200).optional(),
 			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	get_file: {
@@ -731,11 +772,18 @@ export const tools = {
 		}),
 	},
 	list_triggers: {
-		description: 'List all triggers in the workspace. Results are paginated (default 50, max 100).',
+		description:
+			'List all triggers in the workspace. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `limit`/`offset` still work for backward compatibility (default 50, max 100).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			limit: z.number().int().min(1).max(100).default(50),
-			offset: z.number().int().min(0).default(0),
+			limit: z.number().int().min(1).max(100).optional(),
+			offset: z.number().int().min(0).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	// ─── Sessions ────────────────────────────────────────────

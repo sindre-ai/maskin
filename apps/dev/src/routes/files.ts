@@ -10,7 +10,8 @@ import {
 	updateFileSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, desc, eq, ilike, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, inArray } from 'drizzle-orm'
+import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError } from '../lib/errors'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
@@ -46,6 +47,11 @@ const listQuerySchema = z.object({
 	ids: z.string().optional(),
 	limit: z.coerce.number().int().positive().max(200).optional(),
 	offset: z.coerce.number().int().nonnegative().optional(),
+	order: z.enum(['asc', 'desc']).optional(),
+	// Snapshot-consistent cursor pagination — mirrors `objectQuerySchema`.
+	snapshot_at: z.string().datetime().optional(),
+	cursor_created_at: z.string().datetime().optional(),
+	cursor_id: z.string().uuid().optional(),
 })
 
 // -- POST / — Create file -----------------------------------------------------
@@ -210,7 +216,21 @@ app.openapi(listFilesRoute, (async (c) => {
 	const conditions = [eq(files.workspaceId, workspaceId)]
 	if (query.q) conditions.push(ilike(files.name, `%${query.q}%`))
 	if (ids?.length) conditions.push(inArray(files.id, ids))
+	conditions.push(
+		...buildCreatedAtCursorConditions({ createdAt: files.createdAt, id: files.id }, query),
+	)
 
+	// The historical sort was `createdAt desc`. Under the cursor path append
+	// `id asc` as a tiebreaker so the (createdAt, id) keyset seek remains a
+	// strict-past comparison — flag-off callers keep the exact old orderBy.
+	const cursorOn = Boolean(query.snapshot_at)
+	const orderBy = cursorOn
+		? query.order === 'asc'
+			? [asc(files.createdAt), asc(files.id)]
+			: [desc(files.createdAt), asc(files.id)]
+		: [desc(files.createdAt)]
+
+	const skipOffset = useKeysetSeek(query)
 	const rows = await db
 		.select({
 			id: files.id,
@@ -226,9 +246,9 @@ app.openapi(listFilesRoute, (async (c) => {
 		})
 		.from(files)
 		.where(and(...conditions))
-		.orderBy(desc(files.createdAt))
+		.orderBy(...orderBy)
 		.limit(limit)
-		.offset(offset)
+		.offset(skipOffset ? 0 : offset)
 
 	return c.json(serializeArray(rows) as z.infer<typeof fileListItemSchema>[], 200)
 }) as RouteHandler<typeof listFilesRoute, Env>)

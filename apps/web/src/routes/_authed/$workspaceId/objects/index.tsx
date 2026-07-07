@@ -9,6 +9,8 @@ import { DataTableToolbar } from '@/components/objects/data-table/data-table-too
 import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import type { FieldDefinition } from '@/components/objects/field-value-input'
+import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
+import { FilterChip } from '@/components/shared/filter-chip'
 import { RouteError } from '@/components/shared/route-error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -99,6 +101,7 @@ function ObjectsPage() {
 	} = searchParams
 
 	const [importOpen, setImportOpen] = useState(false)
+	const [createPickerOpen, setCreatePickerOpen] = useState(false)
 	const { startTracking: trackImport } = useImportToast(workspaceId)
 	const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
@@ -131,6 +134,18 @@ function ObjectsPage() {
 	useEffect(() => {
 		setRowSelection({})
 	}, [workspaceId])
+
+	// Linear-style `C` shortcut opens the create picker with the active type
+	// tab pre-selected. Guarded so typing into filters/search never triggers it.
+	useEffect(() => {
+		function onKeydown(event: KeyboardEvent) {
+			if (!isCreateShortcut(event)) return
+			event.preventDefault()
+			setCreatePickerOpen(true)
+		}
+		window.addEventListener('keydown', onKeydown)
+		return () => window.removeEventListener('keydown', onKeydown)
+	}, [])
 
 	const searchParamsRef = useRef(searchParams)
 	searchParamsRef.current = searchParams
@@ -531,6 +546,28 @@ function ObjectsPage() {
 		updateSearch({ ids: undefined })
 	}, [updateSearch])
 
+	// Human-readable labels for the active status/driver chips. Mirror the
+	// DisplayPanel picker's collapsing rule: single value → the value, >1 →
+	// "{N} statuses/drivers". Keeps the chip strip readable at any selection
+	// size without spilling the toolbar row.
+	const activeStatuses = useMemo(
+		() => (statusFilter ? statusFilter.split(',').filter(Boolean) : []),
+		[statusFilter],
+	)
+	const activeDrivers = useMemo(
+		() => (driverFilter ? driverFilter.split(',').filter(Boolean) : []),
+		[driverFilter],
+	)
+	const statusChipValue =
+		activeStatuses.length === 1
+			? (activeStatuses[0]?.replace(/_/g, ' ') ?? '')
+			: `${activeStatuses.length} statuses`
+	const driverChipValue =
+		activeDrivers.length === 1
+			? (actors?.find((a) => a.id === activeDrivers[0])?.name ?? '1 driver')
+			: `${activeDrivers.length} drivers`
+	const hasChipFilters = activeStatuses.length > 0 || activeDrivers.length > 0
+
 	const bulkOwnerOptions = useMemo(
 		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),
 		[actors],
@@ -834,9 +871,43 @@ function ObjectsPage() {
 				}}
 				boardSupported={boardSupported}
 				onImportClick={() => setImportOpen(true)}
+				onNewClick={() => setCreatePickerOpen(true)}
 			/>
 
+			{hasChipFilters && (
+				<div className="flex items-center gap-2 mx-6 mb-3 flex-wrap">
+					{activeStatuses.length > 0 && (
+						<FilterChip
+							label="Status"
+							value={statusChipValue}
+							onRemove={() => updateSearch({ status: undefined })}
+						/>
+					)}
+					{activeDrivers.length > 0 && (
+						<FilterChip
+							label="Driver"
+							value={driverChipValue}
+							onRemove={() => updateSearch({ driver: undefined })}
+						/>
+					)}
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+						onClick={() => updateSearch({ status: undefined, driver: undefined })}
+					>
+						Clear all
+					</Button>
+				</div>
+			)}
+
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
+			<CreatePicker
+				open={createPickerOpen}
+				onOpenChange={setCreatePickerOpen}
+				defaultType="object"
+				defaultObjectSubtype={typeFilter}
+			/>
 
 			{effectiveView === 'board' && typeFilter ? (
 				<div className="pb-4 flex-1 min-h-0 overflow-x-auto overflow-y-hidden md:px-6">
