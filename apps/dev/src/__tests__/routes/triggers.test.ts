@@ -98,6 +98,22 @@ describe('Triggers Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
+		it('persists actionPrompt update', async () => {
+			const trigger = buildTrigger()
+			const updated = { ...trigger, actionPrompt: 'New prompt' }
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { actionPrompt: 'New prompt' }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.actionPrompt).toBe('New prompt')
+		})
+
 		it('returns 404 when trigger not found', async () => {
 			const { app } = createTestApp(triggersRoutes, '/api/triggers')
 
