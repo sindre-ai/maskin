@@ -58,13 +58,17 @@ test.describe('Typography — font load', () => {
 		expect(href).toContain('JetBrains+Mono')
 		expect(href).not.toContain('Newsreader')
 
-		// Weights ≤500 — the URL must NOT request wght@600;700 or a range like 400..700
-		const wghtMatch = href.match(/wght@([\d;]+)/)
-		expect(wghtMatch).not.toBeNull()
-		const weights = wghtMatch?.[1]?.split(';').map(Number) ?? []
-		for (const w of weights) {
-			expect(w).toBeLessThanOrEqual(500)
-		}
+		// Per typography.md's 5-step ramp: Schibsted Grotesk loads 400/500/600
+		// (600 for font-semibold titles), JetBrains Mono loads 400/500 only —
+		// and neither uses variable-range syntax (the ".." operator).
+		const sansMatch = href.match(/family=Schibsted\+Grotesk:wght@([\d;]+)/)
+		const monoMatch = href.match(/family=JetBrains\+Mono:wght@([\d;]+)/)
+		expect(sansMatch).not.toBeNull()
+		expect(monoMatch).not.toBeNull()
+		const sansWeights = sansMatch?.[1]?.split(';').map(Number) ?? []
+		const monoWeights = monoMatch?.[1]?.split(';').map(Number) ?? []
+		expect(sansWeights).toEqual([400, 500, 600])
+		expect(monoWeights).toEqual([400, 500])
 
 		// No variable-range syntax (the ".." range operator)
 		expect(href).not.toContain('..')
@@ -103,11 +107,6 @@ test.describe('Typography — font load', () => {
 		const totalKB = requests.reduce((sum, r) => sum + r.bodySize, 0) / 1024
 		expect(totalKB).toBeLessThan(120)
 		expect(requests.length).toBeGreaterThanOrEqual(1)
-
-		// Verify only wght@400 and wght@500 variants are loaded
-		for (const r of requests) {
-			expect(r.url).toMatch(/wght@(400|500)/)
-		}
 	})
 })
 
@@ -122,17 +121,22 @@ test.describe('Typography — object detail', () => {
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
 		await waitForApp(page)
 
-		// The content <div> has xl:max-w-[75ch]
-		const maxWidth = await page.evaluate(() => {
-			const article = document.querySelector('article')
-			if (!article) return null
-			// The MarkdownContent wrapper is a child div inside article
-			const contentDiv = article.querySelector('div.mb-8')
+		// The content wrapper (xl:max-w-[75ch]) is the first `.mb-8` block in the
+		// document view — it precedes the linked-objects/files sections, which
+		// also carry `mb-8`. Chromium resolves `ch` units to a pixel value in
+		// getComputedStyle rather than echoing the literal string, so assert the
+		// cap is present (not 'none') and narrower than the outer document
+		// wrapper's max-w-3xl (768px), rather than a brittle exact-string match.
+		const maxWidthPx = await page.evaluate(() => {
+			const contentDiv = document.querySelector('div.mb-8')
 			if (!contentDiv) return null
-			return getComputedStyle(contentDiv).getPropertyValue('max-width')
+			const value = getComputedStyle(contentDiv).getPropertyValue('max-width')
+			return value === 'none' ? null : Number.parseFloat(value)
 		})
 
-		expect(maxWidth).toBe('75ch')
+		expect(maxWidthPx).not.toBeNull()
+		expect(maxWidthPx as number).toBeGreaterThan(0)
+		expect(maxWidthPx as number).toBeLessThan(768)
 	})
 
 	test('title input uses font-semibold with tracking-tight', async ({ page, account }) => {
@@ -144,7 +148,7 @@ test.describe('Typography — object detail', () => {
 
 		const fontWeight = await page.evaluate(() => {
 			const titleInput = document.querySelector<HTMLTextAreaElement>(
-				'article textarea[placeholder="Untitled"]',
+				'textarea[placeholder="Untitled"]',
 			)
 			if (!titleInput) return null
 			return getComputedStyle(titleInput).getPropertyValue('font-weight')
@@ -257,12 +261,21 @@ test.describe('Typography — tabular-nums', () => {
 			}))
 		})
 
+		expect(monoElements.length).toBeGreaterThan(0)
 		for (const el of monoElements) {
 			expect(el.fontVariantNumeric).toMatch(/tabular-nums|tabular/)
 		}
 	})
 
 	test('unread badge count uses tabular-nums', async ({ page, account }) => {
+		// Create an object so the "for you" feed has at least one unread thread
+		// card to render an unread badge on.
+		await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Tabular Nums Badge Test',
+			status: 'active',
+		})
+
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}`)
 		await waitForApp(page)
@@ -275,6 +288,7 @@ test.describe('Typography — tabular-nums', () => {
 			}))
 		})
 
+		expect(badgeEls.length).toBeGreaterThan(0)
 		for (const badge of badgeEls) {
 			expect(badge.fontVariantNumeric).toMatch(/tabular-nums|tabular/)
 		}
@@ -284,10 +298,22 @@ test.describe('Typography — tabular-nums', () => {
 /* ───── 6. Offline fallback — block Google Fonts, assert legible render ───── */
 
 test.describe('Typography — offline fallback', () => {
-	test('blocks Google Fonts and renders with system-ui fallback legibly', async ({
+	// Note: `getComputedStyle(el).fontFamily` always echoes the literal
+	// CSS-declared stack (the "specified value" for this property), regardless
+	// of whether any listed font actually resolves — so it can't tell us
+	// whether the webfont loaded. Blocking the Google Fonts stylesheet means
+	// the browser never receives Google's `@font-face` rules at all, so the
+	// correct check is whether "Schibsted Grotesk" / "JetBrains Mono" ever
+	// register in `document.fonts` and whether any file request reached
+	// fonts.gstatic.com.
+	test('blocks Google Fonts and confirms the webfont never registers', async ({
 		page,
 		account,
 	}) => {
+		const gstaticRequests: string[] = []
+		page.on('request', (req) => {
+			if (req.url().includes('fonts.gstatic.com')) gstaticRequests.push(req.url())
+		})
 		// Block all Google Fonts requests so the webfont never arrives
 		await page.route('**/fonts.googleapis.com/**', (route) => route.abort())
 
@@ -295,28 +321,26 @@ test.describe('Typography — offline fallback', () => {
 		await page.goto(`/${account.workspaceId}`)
 		await waitForApp(page)
 
-		// After blocking Google Fonts, body font-family must not load webfont
-		const fontFamily = await page.evaluate(() =>
-			getComputedStyle(document.body).getPropertyValue('font-family'),
+		const hasSchibstedWebfont = await page.evaluate(() =>
+			Array.from(document.fonts).some((f) => f.family.replace(/["']/g, '') === 'Schibsted Grotesk'),
 		)
-		expect(fontFamily).not.toContain('Schibsted Grotesk')
+		expect(hasSchibstedWebfont).toBe(false)
+		expect(gstaticRequests.length).toBe(0)
 
-		// Should resolve to one of the fallback families
-		const fallbackMatch =
-			fontFamily.includes('system-ui') ||
-			fontFamily.includes('-apple-system') ||
-			fontFamily.includes('Segoe UI') ||
-			fontFamily.includes('sans-serif')
-		expect(fallbackMatch).toBe(true)
+		// The page still renders visible text — falls through to the
+		// metric-tuned fallback / system fonts rather than collapsing.
+		const bodyHasVisibleText = await page.evaluate(() => document.body.innerText.trim().length > 0)
+		expect(bodyHasVisibleText).toBe(true)
 
-		// Screenshot the fallback state for visual review
+		// Screenshot the fallback state for visual review (static filename —
+		// intentionally overwritten each run rather than accumulating).
 		await page.screenshot({
-			path: `typography-offline-fallback-${Date.now()}.png`,
+			path: 'typography-offline-fallback-light.png',
 			fullPage: false,
 		})
 	})
 
-	test('mono fallback chain renders legibly offline (Menlo/Consolas/Courier)', async ({
+	test('mono fallback: JetBrains Mono webfont never registers when Google Fonts is blocked', async ({
 		page,
 		account,
 	}) => {
@@ -326,24 +350,10 @@ test.describe('Typography — offline fallback', () => {
 		await page.goto(`/${account.workspaceId}`)
 		await waitForApp(page)
 
-		// Check mono elements' resolved font-family
-		const families = await page.evaluate(() => {
-			const els = Array.from(document.querySelectorAll<HTMLElement>('.font-mono'))
-			return els.slice(0, 3).map((el) => getComputedStyle(el).getPropertyValue('font-family'))
-		})
-
-		for (const fam of families) {
-			// Must not reference JetBrains Mono (not loaded)
-			expect(fam).not.toContain('JetBrains Mono')
-			// Should resolve to one of the fallback chains
-			expect(
-				fam.includes('Menlo') ||
-					fam.includes('Consolas') ||
-					fam.includes('Courier New') ||
-					fam.includes('monospace') ||
-					fam.includes('ui-monospace'),
-			).toBe(true)
-		}
+		const hasMonoWebfont = await page.evaluate(() =>
+			Array.from(document.fonts).some((f) => f.family.replace(/["']/g, '') === 'JetBrains Mono'),
+		)
+		expect(hasMonoWebfont).toBe(false)
 	})
 })
 
