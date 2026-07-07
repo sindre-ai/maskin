@@ -67,6 +67,11 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 	)
 }
 
+// Bordered picker toggle used inside this popover (View, Properties). The
+// `border-accent bg-accent text-accent-foreground` active state is reserved for
+// picker toggles inside popovers. Filter state that lives in the page toolbar
+// (FilterTabs active, FilterChip) uses the plain `bg-muted text-foreground
+// font-medium` style instead.
 function PillButton({
 	active,
 	disabled,
@@ -202,7 +207,19 @@ export function DisplayPanel({
 				? (driverOptions.find((a) => a.id === activeDrivers[0])?.name ?? '1 driver')
 				: `${activeDrivers.length} drivers`
 
-	return (
+	// Inline sort/group reading rendered as a sibling next to the Display
+	// trigger — Linear's Display-options pattern. Filter chips communicate
+	// hidden rows; sort/group are self-evident from the rendered list, so
+	// they surface as a subtle text reading rather than another chip. Renders
+	// only when non-default; collapses <640px so the toolbar stays clean on
+	// mobile (the iconOnly variant already carries the filter count pill).
+	const isNonDefaultSort = !!sort && (sort !== 'createdAt' || order !== 'desc')
+	const hasGrouping = !!groupBy
+	const showInlineReading = !iconOnly && (isNonDefaultSort || hasGrouping)
+	const inlineSortLabel = sortLabel ?? sort
+	const inlineGroupLabel = groupLabel ?? groupBy
+
+	const trigger = (
 		<ResponsivePopover>
 			<ResponsivePopoverTrigger asChild>
 				{iconOnly ? (
@@ -498,5 +515,35 @@ export function DisplayPanel({
 				</div>
 			</ResponsivePopoverContent>
 		</ResponsivePopover>
+	)
+
+	if (!showInlineReading) return trigger
+
+	return (
+		<div className="inline-flex items-center gap-2">
+			{trigger}
+			<span
+				className="hidden sm:inline-flex items-center gap-1 text-xs"
+				aria-label="Active display settings"
+			>
+				{isNonDefaultSort && (
+					<>
+						<span className="capitalize text-foreground">{inlineSortLabel}</span>
+						{order === 'asc' ? (
+							<ArrowUp size={12} className="text-foreground" />
+						) : (
+							<ArrowDown size={12} className="text-foreground" />
+						)}
+					</>
+				)}
+				{isNonDefaultSort && hasGrouping && <span className="text-muted-foreground">·</span>}
+				{hasGrouping && (
+					<>
+						<span className="text-muted-foreground">grouped by</span>
+						<span className="capitalize text-foreground">{inlineGroupLabel}</span>
+					</>
+				)}
+			</span>
+		</div>
 	)
 }

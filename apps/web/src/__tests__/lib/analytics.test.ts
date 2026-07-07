@@ -1,4 +1,5 @@
 import {
+	trackAgentCreated,
 	trackAgentSessionCompleted,
 	trackAgentSessionStarted,
 	trackBetArchived,
@@ -7,7 +8,9 @@ import {
 	trackCommentPosted,
 	trackEvent,
 	trackObjectAttachedFile,
+	trackObjectCreated,
 	trackRelationshipCreated,
+	trackTriggerCreated,
 	trackTriggerFired,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
@@ -193,6 +196,44 @@ describe('v1 taxonomy helpers', () => {
 		expect(capture).toHaveBeenCalledWith(
 			'relationship_created',
 			expect.objectContaining({ relationship_type: 'informs' }),
+		)
+	})
+
+	it('object_created carries object_subtype and the shared base contract', () => {
+		const capture = captureSpy()
+
+		trackObjectCreated({
+			entity_id: 'obj-42',
+			entity_type: 'object',
+			object_subtype: 'bet',
+		})
+
+		expect(capture).toHaveBeenCalledWith(
+			'object_created',
+			expect.objectContaining({
+				entity_id: 'obj-42',
+				entity_type: 'object',
+				object_subtype: 'bet',
+				source: 'web',
+			}),
+		)
+	})
+
+	it('agent_created and trigger_created fire under their fixed entity types', () => {
+		const capture = captureSpy()
+
+		trackAgentCreated({ entity_id: 'agent-5', entity_type: 'agent' })
+		trackTriggerCreated({ entity_id: 'trg-2', entity_type: 'trigger' })
+
+		expect(capture).toHaveBeenNthCalledWith(
+			1,
+			'agent_created',
+			expect.objectContaining({ entity_id: 'agent-5', entity_type: 'agent' }),
+		)
+		expect(capture).toHaveBeenNthCalledWith(
+			2,
+			'trigger_created',
+			expect.objectContaining({ entity_id: 'trg-2', entity_type: 'trigger', source: 'web' }),
 		)
 	})
 

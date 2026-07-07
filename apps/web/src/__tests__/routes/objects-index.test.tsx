@@ -117,6 +117,11 @@ vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
 }))
 
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: () => null,
+	isCreateShortcut: () => false,
+}))
+
 vi.mock('@/lib/api', () => ({
 	api: { objects: { list: vi.fn(), search: vi.fn() } },
 }))
