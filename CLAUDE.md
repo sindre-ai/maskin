@@ -27,6 +27,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `.claude/rules/input-validation.md` — input validation requirements at system boundaries (HTTP params, env vars, DB triggers)
 - `.claude/rules/structural-verification.md` — file placement and build configuration verification checklist
 - `.claude/rules/known-pitfalls.md` — registry of recurring bugs to check against before submitting code
+- `.claude/rules/verification.md` — mandatory runtime-verification gates: integration tests for DB/route changes, E2E specs for frontend changes
 - `packages/db/MIGRATIONS.md` — migration conventions for hot tables (CONCURRENTLY indexes, chunked backfills); read before editing a `.sql` file produced by `pnpm db:generate`
 
 ## Architecture
@@ -34,6 +35,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Backend (`apps/dev`): Hono.js + OpenAPIHono + Drizzle ORM + PostgreSQL, runs on port 3000
 - Frontend (`apps/web`): Vite + React 19 + TanStack Router + TanStack Query + Tailwind CSS 4, runs on port 5173, proxies `/api` to backend
 - Auth: API keys (plain text, `ank_` prefix). Bearer token in Authorization header. `authMiddleware` in `packages/auth` also enforces workspace membership when `X-Workspace-Id` is present — header-based routes don't need their own `isWorkspaceMember()` check; only by-ID routes (where the workspace is derived from the resource) do.
+- **Reviewer pitfall — do not flag missing `isWorkspaceMember` on header-scoped routes.** A route that reads its workspace from `X-Workspace-Id` is already protected: `authMiddleware` queries `workspaceMembers` and returns 404 before the handler runs. Only flag a missing membership check when the workspace is derived from the resource ID (e.g. `GET /objects/:id` where the workspace comes from the object row, not the header). Adding a redundant `isWorkspaceMember` call inside a header-scoped route is harmless defense-in-depth, but its absence is not a security hole.
 - Real-time: PG NOTIFY → SSE bridge (packages/realtime) — events table has a DB trigger that fires NOTIFY on insert
 - Agent execution: Docker-based container sessions in `apps/dev/src/services/session-manager.ts` — spins up ephemeral containers running Claude Code, Codex, or custom CLIs. Persistent agent files (skills, learnings, memory) stored in S3-compatible storage (SeaweedFS for dev). Sessions are trackable, streamable via SSE, pausable/resumable via snapshots.
 - Container management: `apps/dev/src/services/container-manager.ts` wraps dockerode
@@ -80,6 +82,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Frontend data fetching: TanStack Query hooks in `apps/web/src/hooks/`, API client in `apps/web/src/lib/api.ts`
 - Frontend SSE: real-time cache invalidation via `apps/web/src/lib/sse-invalidation.ts`
 - UI components: Radix UI primitives + custom components in `apps/web/src/components/ui/`
+- **Frontend responsiveness is non-negotiable**: every UI surface must work at 375px (mobile), 768px (iPad portrait), and 1024px (iPad landscape). Use Tailwind breakpoints (`md:`, `lg:`) — never hardcode widths or skip mobile collapse. Full guidelines in `apps/web/CLAUDE.md` under "Responsive (mobile + iPad)".
 - All external inputs validated at system boundaries — see `.claude/rules/input-validation.md` for specifics
 - PG NOTIFY payloads must stay under 8KB — truncate large fields in DB triggers
 

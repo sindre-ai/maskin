@@ -110,7 +110,13 @@ export class TestAPI {
 
 	async createObject(
 		workspaceId: string,
-		data: { type: string; title: string; status?: string; content?: string },
+		data: {
+			type: string
+			title: string
+			status?: string
+			content?: string
+			metadata?: Record<string, unknown>
+		},
 	): Promise<ObjectResponse> {
 		const res = await fetch(`${this.baseURL}/api/objects`, {
 			method: 'POST',
@@ -157,6 +163,19 @@ export class TestAPI {
 			body: JSON.stringify({ name }),
 		})
 		if (!res.ok) throw new Error(`createWorkspace failed: ${res.status}`)
+		return res.json()
+	}
+
+	async updateWorkspace(
+		id: string,
+		data: { name?: string; settings?: Record<string, unknown> },
+	): Promise<WorkspaceResponse> {
+		const res = await fetch(`${this.baseURL}/api/workspaces/${id}`, {
+			method: 'PATCH',
+			headers: this.headers(),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`updateWorkspace failed: ${res.status}`)
 		return res.json()
 	}
 
@@ -255,12 +274,14 @@ export class TestAPI {
 }
 
 export async function createTestActor(
-	data: { name: string; email?: string } = { name: `E2E Test ${Date.now()}` },
+	data: { name: string; email?: string; password?: string } = { name: `E2E Test ${Date.now()}` },
 ): Promise<CreateActorResponse> {
+	const email = data.email ?? `e2e-${Date.now()}@test.invalid`
+	const password = data.password ?? 'e2e-test-password-123'
 	const res = await fetch(`${BASE_URL}/api/actors`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ type: 'human', ...data }),
+		body: JSON.stringify({ type: 'human', ...data, email, password }),
 	})
 	if (!res.ok) throw new Error(`createTestActor failed: ${res.status}`)
 	return res.json()

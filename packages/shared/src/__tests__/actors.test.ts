@@ -189,7 +189,7 @@ describe('actorResponseSchema', () => {
 	const validResponse = {
 		id: uuid,
 		type: 'agent',
-		name: 'Sindre',
+		name: 'Workspace Coach',
 		email: null,
 		description: null,
 		system_prompt: 'You are a helper',
@@ -198,6 +198,8 @@ describe('actorResponseSchema', () => {
 		llm_provider: 'anthropic',
 		llm_config: null,
 		isSystem: true,
+		agentState: 'idle',
+		agentStateUpdatedAt: null,
 		createdAt: '2026-04-17T10:34:29.083Z',
 		updatedAt: '2026-04-17T10:34:29.083Z',
 	}

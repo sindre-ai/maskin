@@ -34,6 +34,8 @@ export function buildActor(overrides?: Record<string, unknown>) {
 		llmProvider: null,
 		llmConfig: null,
 		isSystem: false,
+		agentState: 'idle' as const,
+		agentStateUpdatedAt: null,
 		createdBy: null,
 		createdAt: new Date(),
 		updatedAt: new Date(),
@@ -57,6 +59,7 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 			field_definitions: {},
 			relationship_types: ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates'],
 		},
+		onboardingEnabled: true,
 		createdBy: randomUUID(),
 		createdAt: new Date(),
 		updatedAt: new Date(),
@@ -255,6 +258,7 @@ export function buildSession(overrides?: Record<string, unknown>) {
 		interactive: false,
 		result: null,
 		snapshotPath: null,
+		currentActivity: null,
 		startedAt: new Date(),
 		completedAt: null,
 		timeoutAt: null,
@@ -348,6 +352,24 @@ export function buildAgentSkill(overrides?: Record<string, unknown>) {
 	}
 }
 
+export function buildAgentFile(overrides?: Record<string, unknown>) {
+	const n = next()
+	const actorId = randomUUID()
+	const workspaceId = randomUUID()
+	return {
+		actorId,
+		workspaceId,
+		fileType: 'memory',
+		path: `memory/note-${n}.md`,
+		storageKey: `agents/${actorId}/memory/note-${n}.md`,
+		sizeBytes: 64,
+		sessionId: null,
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		...overrides,
+	}
+}
+
 export function buildWorkspaceSkill(overrides?: Record<string, unknown>) {
 	const n = next()
 	const name = `ws-skill-${n}`
@@ -381,6 +403,7 @@ export function buildFile(overrides?: Record<string, unknown>) {
 		mimeType: 'text/markdown',
 		sizeBytes: 16,
 		storageKey: `workspaces/${workspaceId}/files/${id}`,
+		annotations: [],
 		createdBy: randomUUID(),
 		createdAt: new Date(),
 		updatedAt: new Date(),

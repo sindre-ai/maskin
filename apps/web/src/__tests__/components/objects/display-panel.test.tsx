@@ -2,7 +2,7 @@ import {
 	DisplayPanel,
 	type DisplayPanelColumn,
 } from '@/components/objects/data-table/display-panel'
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -21,8 +21,8 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof DisplayPanel
 		statusFilter: undefined,
 		onStatusFilterChange: vi.fn(),
 		statuses: ['active', 'closed'],
-		ownerFilter: undefined,
-		onOwnerFilterChange: vi.fn(),
+		driverFilter: undefined,
+		onDriverFilterChange: vi.fn(),
 		actors: [],
 		sort: 'createdAt',
 		onSortChange: vi.fn(),
@@ -53,7 +53,7 @@ describe('DisplayPanel', () => {
 	})
 
 	it('shows badge with count 2 when both status and owner are set', () => {
-		renderPanel({ statusFilter: 'active', ownerFilter: 'actor-1' })
+		renderPanel({ statusFilter: 'active', driverFilter: 'actor-1' })
 		expect(screen.getByText('2')).toBeInTheDocument()
 	})
 
@@ -145,11 +145,11 @@ describe('DisplayPanel', () => {
 
 	it('clears both filters when Reset is clicked', async () => {
 		const user = userEvent.setup()
-		const { props } = renderPanel({ statusFilter: 'active', ownerFilter: 'a1' })
+		const { props } = renderPanel({ statusFilter: 'active', driverFilter: 'a1' })
 		await user.click(screen.getByRole('button', { name: /display/i }))
 		await user.click(screen.getByRole('button', { name: /reset/i }))
 		expect(props.onStatusFilterChange).toHaveBeenCalledWith(undefined)
-		expect(props.onOwnerFilterChange).toHaveBeenCalledWith(undefined)
+		expect(props.onDriverFilterChange).toHaveBeenCalledWith(undefined)
 	})
 
 	it('renders one pill per hideable column in Properties', async () => {
@@ -173,13 +173,162 @@ describe('DisplayPanel', () => {
 		expect(props.onColumnVisibilityChange).toHaveBeenCalledWith('status', false)
 	})
 
-	it('shows "+ Status" / "+ Owner" affordances when no filter is set', async () => {
+	it('hides the View section when showView=false', async () => {
+		const user = userEvent.setup()
+		renderPanel({ showView: false })
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		expect(screen.queryByText('View')).toBeNull()
+		expect(screen.queryByRole('button', { name: 'List' })).toBeNull()
+		expect(screen.queryByRole('button', { name: 'Board' })).toBeNull()
+		// Other sections still render.
+		expect(screen.getByText('Ordering')).toBeInTheDocument()
+	})
+
+	it('shows "+ Status" / "+ Driver" affordances when no filter is set', async () => {
 		const user = userEvent.setup()
 		renderPanel({
 			actors: [{ id: 'a1', name: 'Alice', type: 'human', createdAt: '', updatedAt: '' } as never],
 		})
 		await user.click(screen.getByRole('button', { name: /display/i }))
 		expect(screen.getByRole('button', { name: /\+ Status/i })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /\+ Owner/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /\+ Driver/i })).toBeInTheDocument()
+	})
+
+	describe('metadata filters', () => {
+		it('renders one filter row per field definition', async () => {
+			const user = userEvent.setup()
+			renderPanel({
+				fieldDefinitions: [
+					{ name: 'region', type: 'text' },
+					{ name: 'tier', type: 'enum', values: ['gold', 'silver'] },
+				],
+				metadataFilters: {},
+				onMetadataFilterChange: vi.fn(),
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByText('region')).toBeInTheDocument()
+			expect(screen.getByText('tier')).toBeInTheDocument()
+		})
+
+		it('does not render metadata rows when there are no field definitions', async () => {
+			const user = userEvent.setup()
+			renderPanel({ fieldDefinitions: [], metadataFilters: {}, onMetadataFilterChange: vi.fn() })
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.queryByPlaceholderText('Any')).toBeNull()
+		})
+
+		it('calls onMetadataFilterChange when typing in a text metadata filter', async () => {
+			const user = userEvent.setup()
+			const onMetadataFilterChange = vi.fn()
+			renderPanel({
+				fieldDefinitions: [{ name: 'region', type: 'text' }],
+				metadataFilters: {},
+				onMetadataFilterChange,
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			fireEvent.change(screen.getByPlaceholderText('Any'), { target: { value: 'emea' } })
+			expect(onMetadataFilterChange).toHaveBeenCalledWith('region', 'emea')
+		})
+
+		it('calls onMetadataFilterChange with the selected enum value', async () => {
+			const user = userEvent.setup()
+			const onMetadataFilterChange = vi.fn()
+			renderPanel({
+				fieldDefinitions: [{ name: 'tier', type: 'enum', values: ['gold', 'silver'] }],
+				metadataFilters: {},
+				onMetadataFilterChange,
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			await user.click(screen.getByRole('combobox'))
+			await user.click(screen.getByRole('option', { name: 'gold' }))
+			expect(onMetadataFilterChange).toHaveBeenCalledWith('tier', 'gold')
+		})
+
+		it('clears a metadata filter via the Clear button when a value is set', async () => {
+			const user = userEvent.setup()
+			const onMetadataFilterChange = vi.fn()
+			renderPanel({
+				fieldDefinitions: [{ name: 'region', type: 'text' }],
+				metadataFilters: { region: 'emea' },
+				onMetadataFilterChange,
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			await user.click(screen.getByRole('button', { name: /clear region filter/i }))
+			expect(onMetadataFilterChange).toHaveBeenCalledWith('region', undefined)
+		})
+
+		it('counts an active metadata filter in the badge', () => {
+			renderPanel({
+				fieldDefinitions: [{ name: 'region', type: 'text' }],
+				metadataFilters: { region: 'emea' },
+				onMetadataFilterChange: vi.fn(),
+			})
+			expect(screen.getByText('1')).toBeInTheDocument()
+		})
+
+		it('still counts and can reset a metadata filter when the active tab has no field definitions for it', async () => {
+			// Mirrors the "All" objects tab: fieldDefinitions is empty there because
+			// field definitions are per-type, but a metadata filter set on another
+			// tab is still applied to the query and must stay visible/clearable.
+			const user = userEvent.setup()
+			const onResetFilters = vi.fn()
+			renderPanel({
+				fieldDefinitions: [],
+				metadataFilters: { region: 'emea' },
+				onMetadataFilterChange: vi.fn(),
+				onResetFilters,
+			})
+			expect(screen.getByText('1')).toBeInTheDocument()
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			await user.click(screen.getByRole('button', { name: /reset/i }))
+			expect(onResetFilters).toHaveBeenCalled()
+		})
+
+		it('excludes a field whose name cannot be filtered and explains why, instead of rendering a row that would silently fail', async () => {
+			// Field names are workspace-defined and unconstrained (spaces, hyphens,
+			// etc. are all valid `create_workspace_field` names), but a filter row
+			// only works for names matching SAFE_METADATA_FIELD_NAME_RE — anything
+			// else gets dropped by the URL search-param validator with no error.
+			// Rendering an input for it would look like a working filter that then
+			// silently discards whatever the user types.
+			const user = userEvent.setup()
+			renderPanel({
+				fieldDefinitions: [
+					{ name: 'region', type: 'text' },
+					{ name: 'deal size', type: 'text' },
+				],
+				metadataFilters: {},
+				onMetadataFilterChange: vi.fn(),
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByText('region')).toBeInTheDocument()
+			expect(screen.queryByText('deal size')).toBeNull()
+			expect(screen.getByText(/1 field can't be filtered/i)).toBeInTheDocument()
+		})
+
+		it('pluralizes the excluded-field note for more than one unfilterable field', async () => {
+			const user = userEvent.setup()
+			renderPanel({
+				fieldDefinitions: [
+					{ name: 'deal size', type: 'text' },
+					{ name: 'cost-per-lead', type: 'number' },
+				],
+				metadataFilters: {},
+				onMetadataFilterChange: vi.fn(),
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByText(/2 fields can't be filtered/i)).toBeInTheDocument()
+		})
+
+		it('shows no excluded-field note when every field definition is filterable', async () => {
+			const user = userEvent.setup()
+			renderPanel({
+				fieldDefinitions: [{ name: 'region', type: 'text' }],
+				metadataFilters: {},
+				onMetadataFilterChange: vi.fn(),
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.queryByText(/can't be filtered/i)).toBeNull()
+		})
 	})
 })

@@ -2,8 +2,15 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
-import type { FileDetail } from '@/lib/api'
-import { useState } from 'react'
+import { useAutoSave } from '@/hooks/use-auto-save'
+import { useUpdateFile } from '@/hooks/use-files'
+import { compileAnnotations, hydrateAnnotations } from '@/lib/annotations'
+import type { AnnotationJson } from '@/lib/annotations'
+import type { FileAnnotation, FileDetail } from '@/lib/api'
+import { base64ToBytes, decodeBase64Utf8 } from '@/lib/file-utils'
+import { Bot, Check, Clipboard, Pin } from 'lucide-react'
+import { useCallback, useState } from 'react'
+import { type Annotation, AnnotationOverlay } from './annotation-overlay'
 
 // MIME types whose bytes the browser would happily execute (or interpret as HTML)
 // if we let them anywhere near `dangerouslySetInnerHTML` or an `<img src>`. HTML
@@ -39,24 +46,6 @@ export function isPlainText(mimeType: string): boolean {
 		mimeType === 'application/xml' ||
 		mimeType === 'application/x-yaml'
 	)
-}
-
-export function base64ToBytes(base64: string): Uint8Array {
-	if (typeof atob === 'undefined') return new Uint8Array()
-	try {
-		const binary = atob(base64)
-		const bytes = new Uint8Array(binary.length)
-		for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-		return bytes
-	} catch {
-		return new Uint8Array()
-	}
-}
-
-export function decodeBase64Utf8(base64: string): string {
-	const bytes = base64ToBytes(base64)
-	if (bytes.length === 0) return ''
-	return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
 }
 
 type ViewMode = 'rendered' | 'source'
@@ -118,8 +107,44 @@ function fileText(file: FileDetail): string {
 	return file.encoding === 'utf8' ? file.content : decodeBase64Utf8(file.content)
 }
 
-export function FileBody({ file }: { file: FileDetail }) {
+export interface FileBodyProps {
+	file: FileDetail
+	onReviseWithAnnotations?: (json: AnnotationJson) => void
+	isRevising?: boolean
+}
+
+export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: FileBodyProps) {
 	const [mode, setMode] = useState<ViewMode>('rendered')
+	// Open straight into pin-visible mode when the file already has annotations,
+	// so other humans see existing review comments without hunting for the toggle.
+	const [annotateMode, setAnnotateMode] = useState((file.annotations?.length ?? 0) > 0)
+	const [annotations, setAnnotations] = useState<Annotation[]>(() =>
+		hydrateAnnotations(file.annotations),
+	)
+
+	// Persist annotations to the file so other humans and agents see them. The
+	// overlay only exists for HTML files, so auto-save is gated to that case.
+	// Debounced + dedup'd by useAutoSave, including the async selector/bounds
+	// resolution that lands after a pin is placed.
+	const updateFile = useUpdateFile(file.workspaceId)
+	const { showSaved } = useAutoSave<FileAnnotation[]>({
+		isActive: isHtml(file.mimeType),
+		isValid: true,
+		buildPayload: useCallback(() => annotations, [annotations]),
+		onSave: useCallback(
+			(payload: FileAnnotation[]) =>
+				updateFile.mutate({ id: file.id, data: { annotations: payload } }),
+			[updateFile, file.id],
+		),
+	})
+
+	const handleCopyAnnotations = useCallback(() => {
+		navigator.clipboard.writeText(JSON.stringify(compileAnnotations(annotations), null, 2))
+	}, [annotations])
+
+	const handleReviseWithAnnotations = useCallback(() => {
+		onReviseWithAnnotations?.(compileAnnotations(annotations))
+	}, [annotations, onReviseWithAnnotations])
 
 	if (isMarkdown(file.mimeType)) {
 		const text = fileText(file)
@@ -137,11 +162,66 @@ export function FileBody({ file }: { file: FileDetail }) {
 		const text = fileText(file)
 		return (
 			<div className="space-y-3">
-				<div className="flex justify-end">
-					<ViewToggle mode={mode} onChange={setMode} />
+				<div className="flex items-center justify-end gap-2">
+					{showSaved && (
+						<span className="flex items-center gap-1 text-xs text-muted-foreground mr-auto">
+							<Check size={14} /> Saved
+						</span>
+					)}
+					{annotations.length > 0 && (
+						<>
+							{onReviseWithAnnotations && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={handleReviseWithAnnotations}
+									disabled={isRevising}
+								>
+									<Bot size={14} />
+									{isRevising ? 'Starting…' : 'Revise with annotations'}
+								</Button>
+							)}
+							<Button type="button" variant="ghost" size="sm" onClick={handleCopyAnnotations}>
+								<Clipboard size={14} />
+								Copy annotation JSON
+							</Button>
+						</>
+					)}
+					{mode === 'rendered' && (
+						<Button
+							type="button"
+							variant={annotateMode ? 'secondary' : 'ghost'}
+							size="sm"
+							onClick={() => setAnnotateMode((v) => !v)}
+						>
+							<Pin size={14} />
+							{annotateMode
+								? 'Exit annotate'
+								: annotations.length > 0
+									? `Annotate (${annotations.length})`
+									: 'Annotate'}
+						</Button>
+					)}
+					<ViewToggle
+						mode={mode}
+						onChange={(m) => {
+							setMode(m)
+							setAnnotateMode(false)
+						}}
+					/>
 				</div>
 				{mode === 'rendered' ? (
-					<HtmlPreview html={text} name={file.name} />
+					annotateMode ? (
+						<AnnotationOverlay
+							html={text}
+							name={file.name}
+							annotations={annotations}
+							onAnnotationsChange={setAnnotations}
+						/>
+					) : (
+						<HtmlPreview html={text} name={file.name} />
+					)
 				) : (
 					<SourceView text={text} />
 				)}

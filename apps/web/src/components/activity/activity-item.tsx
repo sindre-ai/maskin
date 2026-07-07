@@ -1,7 +1,13 @@
 import { useActor } from '@/hooks/use-actors'
 import type { ActorListItem, ActorResponse, EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { formatEventDescription, isErrorEvent } from '@maskin/shared'
+import {
+	OBJECT_DIFF_FIELDS,
+	findChange,
+	formatEventDescription,
+	getChangesFromEventData,
+	isErrorEvent,
+} from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
@@ -29,6 +35,11 @@ function getEntityTitle(event: EventResponse): string | null {
 	const data = event.data
 	if (!data) return null
 	if (typeof data.title === 'string') return data.title
+	if (event.action === 'updated' || event.action === 'status_changed') {
+		const changes = getChangesFromEventData(data, OBJECT_DIFF_FIELDS)
+		const titleChange = findChange(changes, 'title')
+		if (titleChange && typeof titleChange.new === 'string') return titleChange.new
+	}
 	if (typeof data.updated === 'object' && data.updated && 'title' in data.updated) {
 		return (data.updated as Record<string, unknown>).title as string
 	}
@@ -83,9 +94,14 @@ export function ActivityItemView({
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 			<div className="flex-1 min-w-0">
 				<div className="flex items-baseline gap-1.5 text-sm flex-wrap">
-					<span className={cn('font-medium', isAgent ? 'text-primary' : 'text-foreground')}>
-						{actor?.name ?? 'Unknown'}
-					</span>
+					{isAgent ? (
+						<span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-1.5 py-0.5 text-xs font-medium shrink-0">
+							{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
+							<span>{actor?.name ?? 'Agent'}</span>
+						</span>
+					) : (
+						<span className="font-medium text-foreground">{actor?.name ?? 'Unknown'}</span>
+					)}
 					<span className="text-muted-foreground break-words min-w-0">{description}</span>
 					{showTitle &&
 						(workspaceId && isObjectEntity(event.entityType) ? (

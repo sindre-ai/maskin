@@ -1,12 +1,13 @@
 import type {
 	ActorListItem,
 	ActorResponse,
+	AgentState,
 	DisplaySettingsBody,
 	SafeMetadata,
 	TriggerResponse,
 } from '@maskin/shared'
 
-export type { ActorListItem, ActorResponse, DisplaySettingsBody, TriggerResponse }
+export type { ActorListItem, ActorResponse, AgentState, DisplaySettingsBody, TriggerResponse }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -202,6 +203,21 @@ export const api = {
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
 	},
 
+	landingEvents: {
+		emit: (events: Array<{ name: string; anonId: string; props?: Record<string, unknown> }>) =>
+			request<void>('/public/landing-events', { method: 'POST', body: { events } }),
+	},
+
+	// Public landing-page handoffs. The /drafts endpoint is unauthenticated and
+	// called from sindre.ai; only /claim is reachable from the web app.
+	publicBetStrategist: {
+		claim: (workspaceId: string, guestSessionId: string) =>
+			request<{ claimed: Array<{ id: string; title: string | null; content: string | null }> }>(
+				'/public/bet-strategist/claim',
+				{ method: 'POST', body: { workspace_id: workspaceId, guestSessionId } },
+			),
+	},
+
 	actors: {
 		list: (workspaceId?: string) => request<ActorListItem[]>('/actors', { workspaceId }),
 		get: (id: string) => request<ActorResponse>(`/actors/${id}`),
@@ -217,6 +233,14 @@ export const api = {
 			request<{ api_key: string }>(`/actors/${id}/api-keys`, { method: 'POST' }),
 		reset: (id: string, workspaceId: string) =>
 			request<ActorResponse>(`/actors/${id}/reset`, { method: 'POST', workspaceId }),
+		pause: (id: string, workspaceId: string) =>
+			request<ActorResponse>(`/actors/${id}/pause`, { method: 'POST', workspaceId }),
+		run: (id: string, workspaceId: string, body?: RunAgentInput) =>
+			request<ActorResponse>(`/actors/${id}/run`, {
+				method: 'POST',
+				body: body ?? {},
+				workspaceId,
+			}),
 		delete: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/actors/${id}`, { method: 'DELETE', workspaceId }),
 	},
@@ -423,9 +447,68 @@ export const api = {
 			}),
 		status: (workspaceId: string) =>
 			request<ClaudeOAuthStatusResponse>('/claude-oauth/status', { workspaceId }),
-		disconnect: (workspaceId: string) =>
-			request<{ success: boolean }>('/claude-oauth', {
+		disconnect: (workspaceId: string, slot?: ClaudeOAuthSlot) =>
+			request<{ success: boolean }>(slot ? `/claude-oauth?slot=${slot}` : '/claude-oauth', {
 				method: 'DELETE',
+				workspaceId,
+			}),
+		swap: (workspaceId: string) =>
+			request<{ success: boolean }>('/claude-oauth/swap', { method: 'POST', workspaceId }),
+	},
+
+	catalogPackages: {
+		list: (params?: { type?: string; use_case?: string; q?: string }) => {
+			const qs = params
+				? `?${new URLSearchParams(
+						Object.entries(params).filter(([, v]) => v !== undefined) as [string, string][],
+					)}`
+				: ''
+			return request<CatalogPackagesListResponse>(`/catalog/packages${qs}`)
+		},
+		get: (id: string) => request<CatalogPackageDetailResponse>(`/catalog/packages/${id}`),
+	},
+
+	catalogItems: {
+		install: (itemId: string, workspaceId: string) =>
+			request<CatalogItemInstallResponse>(`/catalog/items/${encodeURIComponent(itemId)}/install`, {
+				method: 'POST',
+				body: { workspaceId },
+				workspaceId,
+			}),
+		installed: (workspaceId: string) =>
+			request<CatalogItemsInstalledResponse>(
+				`/catalog/items/installed?workspaceId=${encodeURIComponent(workspaceId)}`,
+				{ workspaceId },
+			),
+		uninstall: (itemId: string, workspaceId: string, keepProvisionedItems: boolean) =>
+			request<{ deleted: boolean }>(`/catalog/items/${encodeURIComponent(itemId)}/uninstall`, {
+				method: 'DELETE',
+				body: { workspaceId, keepProvisionedItems },
+				workspaceId,
+			}),
+	},
+
+	installedPackages: {
+		list: (workspaceId: string) =>
+			request<InstalledPackagesListResponse>(
+				`/installed-packages?workspaceId=${encodeURIComponent(workspaceId)}`,
+				{ workspaceId },
+			),
+		install: (workspaceId: string, packageId: string) =>
+			request<InstalledPackageInstallResponse>('/installed-packages', {
+				method: 'POST',
+				body: { packageId, workspaceId },
+				workspaceId,
+			}),
+		fork: (workspaceId: string, installedPackageId: string) =>
+			request<InstalledPackageForkResponse>(`/installed-packages/${installedPackageId}/fork`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		uninstall: (workspaceId: string, installedPackageId: string, keepProvisionedItems: boolean) =>
+			request<{ deleted: boolean }>(`/installed-packages/${installedPackageId}`, {
+				method: 'DELETE',
+				body: { keepProvisionedItems },
 				workspaceId,
 			}),
 	},
@@ -510,15 +593,20 @@ export const api = {
 	},
 
 	files: {
-		list: (workspaceId: string, params?: { q?: string; limit?: number; offset?: number }) => {
-			const qs = params
-				? `?${new URLSearchParams(
-						Object.entries(params).reduce<Record<string, string>>((acc, [k, v]) => {
-							if (v !== undefined && v !== '') acc[k] = String(v)
-							return acc
-						}, {}),
-					)}`
-				: ''
+		list: (
+			workspaceId: string,
+			params?: { q?: string; ids?: string[]; limit?: number; offset?: number },
+		) => {
+			if (!params) return request<FileListItem[]>('/files', { workspaceId })
+			const { ids, ...rest } = params
+			const searchParams = new URLSearchParams(
+				Object.entries(rest).reduce<Record<string, string>>((acc, [k, v]) => {
+					if (v !== undefined && v !== '') acc[k] = String(v)
+					return acc
+				}, {}),
+			)
+			if (ids?.length) searchParams.set('ids', ids.join(','))
+			const qs = searchParams.size > 0 ? `?${searchParams}` : ''
 			return request<FileListItem[]>(`/files${qs}`, { workspaceId })
 		},
 		get: (workspaceId: string, id: string) => request<FileDetail>(`/files/${id}`, { workspaceId }),
@@ -536,8 +624,17 @@ export const api = {
 	},
 }
 
+export type ClaudeOAuthSlot = 'primary' | 'backup'
+
+export interface ClaudeOAuthSlotInfo {
+	subscription_type?: string
+	expires_at: number
+	fingerprint?: string
+}
+
 export interface ClaudeOAuthExchangeResponse {
 	success: boolean
+	slot?: ClaudeOAuthSlot
 	subscription_type?: string
 	expires_at: number
 }
@@ -547,6 +644,15 @@ export interface ClaudeOAuthStatusResponse {
 	subscription_type?: string
 	expires_at?: number
 	valid: boolean
+	slots: {
+		primary?: ClaudeOAuthSlotInfo
+		backup?: ClaudeOAuthSlotInfo
+	}
+	active_slot: ClaudeOAuthSlot
+	last_primary_failure_at?: number
+	last_classified_reason?: string
+	last_backup_failure_at?: number
+	last_backup_classified_reason?: string
 }
 
 export interface ClaudeOAuthImportInput {
@@ -555,6 +661,7 @@ export interface ClaudeOAuthImportInput {
 	expiresAt: number
 	subscriptionType?: string
 	scopes?: string[]
+	slot?: ClaudeOAuthSlot
 }
 
 // Types derived from backend response schemas
@@ -566,7 +673,7 @@ export interface ObjectResponse {
 	content: string | null
 	status: string
 	metadata: SafeMetadata | null
-	owner: string | null
+	driver: string | null
 	activeSessionId: string | null
 	createdBy: string
 	createdAt: string | null
@@ -597,7 +704,9 @@ export interface UnreadItem {
 	entity_type: string
 	entity_id: string
 	unread_count: number
-	mentions_you: boolean
+	// Count of unread events on the entity that actually @-mention the viewer.
+	// Drives the "Mentioned" pill on the For You card when > 0.
+	mentioning_unread_count: number
 	latest_event_id: number | null
 	latest_activity_at: string | null
 	object?: ObjectResponse
@@ -625,7 +734,7 @@ export interface CreateObjectInput {
 	content?: string
 	status: string
 	metadata?: SafeMetadata
-	owner?: string
+	driver?: string
 }
 
 export interface UpdateObjectInput {
@@ -633,14 +742,14 @@ export interface UpdateObjectInput {
 	content?: string
 	status?: string
 	metadata?: SafeMetadata
-	owner?: string | null
+	driver?: string | null
 }
 
 export interface BulkUpdateObjectsInput {
 	ids: string[]
 	patch: {
 		status?: string
-		owner?: string | null
+		driver?: string | null
 		metadata?: SafeMetadata
 	}
 }
@@ -671,6 +780,10 @@ export interface MigrateObjectTypeResponse {
 
 export interface ActorWithKey extends ActorResponse {
 	api_key: string
+	// Set when the actor is created with `auto_create_workspace` (default for
+	// humans on signup). Used by the signup → guest-draft handoff to pick the
+	// workspace to claim into.
+	workspace_id?: string
 }
 
 export interface LoginInput {
@@ -700,6 +813,10 @@ export interface UpdateActorInput {
 	memory?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+}
+
+export interface RunAgentInput {
+	action_prompt?: string
 }
 
 export interface WorkspaceResponse {
@@ -796,6 +913,7 @@ export interface ProviderInfo {
 	displayName: string
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key'
 	events: ProviderEventDefinition[]
+	externalIdDisplay?: 'email' | 'installation'
 }
 
 export interface SlackConversation {
@@ -898,10 +1016,20 @@ export interface FileListItem {
 	updatedAt: string
 }
 
+export interface FileAnnotation {
+	id: string
+	pinNumber?: number
+	selector: string
+	bounds: { x: number; y: number; w: number; h: number }
+	comment: string
+	position?: { x: number; y: number }
+}
+
 export interface FileDetail extends FileListItem {
 	content: string
 	encoding: 'base64' | 'utf8'
 	url: string
+	annotations: FileAnnotation[]
 }
 
 export interface CreateFileInput {
@@ -918,6 +1046,7 @@ export interface UpdateFileInput {
 	mime_type?: string
 	content?: string
 	encoding?: 'base64' | 'utf8'
+	annotations?: FileAnnotation[]
 }
 
 export interface SessionConfigInput {
@@ -956,6 +1085,7 @@ export interface SessionResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+	currentActivity: string | null
 }
 
 export interface SessionInputAttachment {
@@ -1081,4 +1211,101 @@ export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
 	csvOptions?: CsvOptions
+}
+
+export type CatalogItemType = 'actor' | 'trigger' | 'skill' | 'integration'
+
+export interface CatalogPackageSummary {
+	id: string
+	name: string
+	slug: string
+	description: string
+	version: string
+	use_case: string | null
+	item_types: CatalogItemType[]
+	created_at: string | null
+	updated_at: string | null
+}
+
+export interface CatalogPackageItem {
+	id: string
+	package_id: string
+	item_type: CatalogItemType
+	source_item_id: string
+	item_snapshot: Record<string, unknown>
+	created_at: string | null
+}
+
+export interface CatalogPackageCounts {
+	total: number
+	by_type: Record<CatalogItemType, number>
+	by_use_case: Record<string, number>
+}
+
+export interface CatalogPackagesListResponse {
+	packages: CatalogPackageSummary[]
+	counts: CatalogPackageCounts
+}
+
+export interface CatalogPackageDetailResponse {
+	package: CatalogPackageSummary
+	items: CatalogPackageItem[]
+}
+
+export interface CatalogItemInstallResponse {
+	id: string
+	item_type: CatalogItemType
+	name: string
+}
+
+export interface CatalogItemInstalledEntry {
+	catalog_item_id: string
+	entity_id: string
+	entity_type: 'actor' | 'trigger' | 'skill' | 'integration'
+}
+
+export interface CatalogItemsInstalledResponse {
+	items: CatalogItemInstalledEntry[]
+}
+
+export interface InstalledPackageRow {
+	id: string
+	workspaceId: string
+	sourcePackageId: string
+	packageName: string
+	installedVersion: string
+	isLocked: boolean
+	forkedAt: string | null
+	installedAt: string | null
+	updatedAt: string | null
+	availableVersion: string
+	hasUpdate: boolean
+}
+
+export interface InstalledPackagesListResponse {
+	installs: InstalledPackageRow[]
+}
+
+interface InstalledPackageInstallResponse {
+	id: string
+	workspaceId: string
+	sourcePackageId: string
+	installedVersion: string
+	isLocked: boolean
+	forkedAt: string | null
+	installedAt: string | null
+	updatedAt: string | null
+	provisioned: { actors: number; triggers: number; skills: number; integrations: number }
+}
+
+interface InstalledPackageForkResponse {
+	id: string
+	workspaceId: string
+	sourcePackageId: string
+	installedVersion: string
+	isLocked: boolean
+	forkedAt: string | null
+	installedAt: string | null
+	updatedAt: string | null
+	detached: { actors: number; triggers: number; skills: number; integrations: number }
 }

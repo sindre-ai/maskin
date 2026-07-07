@@ -1,3 +1,10 @@
+import {
+	type FieldChange,
+	OBJECT_DIFF_FIELDS,
+	findChange,
+	getChangesFromEventData,
+} from './changes'
+
 export interface ActorRef {
 	id: string
 	name: string
@@ -60,53 +67,47 @@ export function isErrorEvent(event: EventLike): boolean {
  * so the row only needs to indicate the actor moved here.
  */
 export function formatStatusTransitionShort(event: EventLike): string {
-	const data = event.data as { updated?: Record<string, unknown> } | null
-	const next = data?.updated?.status
+	const changes = getChangesFromEventData(event.data, OBJECT_DIFF_FIELDS)
+	const next = findChange(changes, 'status')?.new
 	return `set the status to ${prettyStatus(next)}`
 }
 
 function formatObjectUpdate(event: EventLike, ctx?: FormatContext): string | null {
-	const data = event.data as {
-		previous?: Record<string, unknown>
-		updated?: Record<string, unknown>
-	} | null
-	const previous = data?.previous
-	const updated = data?.updated
-	if (!previous || !updated) return null
+	const changes = getChangesFromEventData(event.data, OBJECT_DIFF_FIELDS)
+	if (!changes || changes.length === 0) return null
 
 	const clauses: string[] = []
 
-	if (changed(previous.status, updated.status)) {
-		clauses.push(
-			`changed status from ${prettyStatus(previous.status)} to ${prettyStatus(updated.status)}`,
-		)
+	// Iterate the canonical field order so clauses are always {status, driver,
+	// title, content, metadata, …} regardless of how the emitter ordered them.
+	for (const field of OBJECT_DIFF_FIELDS) {
+		const change = changes.find((c) => c.field === field)
+		if (!change) continue
+		switch (change.field) {
+			case 'status':
+				clauses.push(
+					`changed status from ${prettyStatus(change.old)} to ${prettyStatus(change.new)}`,
+				)
+				break
+			case 'driver':
+				clauses.push(
+					`changed driver from ${driverLabel(change.old, ctx)} to ${driverLabel(change.new, ctx)}`,
+				)
+				break
+			case 'title':
+				clauses.push(titleClause(change.old, change.new))
+				break
+			case 'content':
+				clauses.push('updated content')
+				break
+			case 'metadata':
+				clauses.push(...metadataClauses(change.old, change.new))
+				break
+		}
 	}
-
-	if (changed(previous.owner, updated.owner)) {
-		clauses.push(
-			`changed owner from ${ownerLabel(previous.owner, ctx)} to ${ownerLabel(updated.owner, ctx)}`,
-		)
-	}
-
-	if (changed(previous.title, updated.title)) {
-		clauses.push(titleClause(previous.title, updated.title))
-	}
-
-	if (changed(previous.content, updated.content)) {
-		clauses.push('updated content')
-	}
-
-	const metaClauses = metadataClauses(previous.metadata, updated.metadata)
-	clauses.push(...metaClauses)
 
 	if (clauses.length === 0) return null
 	return joinClauses(clauses)
-}
-
-function changed(a: unknown, b: unknown): boolean {
-	if (a === b) return false
-	if (a == null && b == null) return false
-	return true
 }
 
 function joinClauses(clauses: string[]): string {
@@ -128,7 +129,7 @@ function prettyStatus(value: unknown): string {
 		.join(' ')
 }
 
-function ownerLabel(value: unknown, ctx?: FormatContext): string {
+function driverLabel(value: unknown, ctx?: FormatContext): string {
 	if (value == null || value === '') return 'no one'
 	if (typeof value !== 'string') return 'unknown'
 	const actor = ctx?.actorsById?.get(value)
@@ -169,3 +170,6 @@ function shallowEqual(a: unknown, b: unknown): boolean {
 	}
 	return false
 }
+
+// Re-export FieldChange for consumers that read event data shape-agnostically.
+export type { FieldChange }

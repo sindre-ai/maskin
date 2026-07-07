@@ -2,7 +2,7 @@ import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { Button } from '@/components/ui/button'
 import { useCreateFile, useFiles } from '@/hooks/use-files'
 import { useCreateRelationship } from '@/hooks/use-relationships'
-import type { FileListItem, RelationshipResponse } from '@/lib/api'
+import type { RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
 import { Loader2, Plus, Upload } from 'lucide-react'
@@ -24,29 +24,31 @@ export function ObjectFiles({
 	objectType,
 	relationships,
 }: ObjectFilesProps) {
-	const fileIds = useMemo(() => {
+	// Collect endpoint ids from `attached` relationships in either direction,
+	// then let `useFiles` resolve them against the `files` table. We deliberately
+	// do NOT filter by `sourceType`/`targetType === 'file'`: some legacy edges
+	// were written with a specialised label (e.g. `'bet'`, `'insight'`) even when
+	// the endpoint is a file, and the label-based filter would silently drop the
+	// attachment. `type === 'attached'` is the semantic file-attach type; the
+	// `files.list` query returns only rows that actually live in `files`, so
+	// non-file endpoints self-filter out.
+	const candidateFileIds = useMemo(() => {
 		if (!relationships) return [] as string[]
 		const ids = new Set<string>()
 		for (const rel of relationships.asSource) {
-			if (rel.targetType === 'file') ids.add(rel.targetId)
+			if (rel.type !== 'attached') continue
+			if (rel.targetId !== objectId) ids.add(rel.targetId)
+			if (rel.sourceId !== objectId) ids.add(rel.sourceId)
 		}
 		for (const rel of relationships.asTarget) {
-			if (rel.sourceType === 'file') ids.add(rel.sourceId)
+			if (rel.type !== 'attached') continue
+			if (rel.sourceId !== objectId) ids.add(rel.sourceId)
+			if (rel.targetId !== objectId) ids.add(rel.targetId)
 		}
 		return [...ids]
-	}, [relationships])
+	}, [relationships, objectId])
 
-	const { data: workspaceFiles } = useFiles(workspaceId)
-	const files = useMemo(() => {
-		if (!workspaceFiles || fileIds.length === 0) return [] as FileListItem[]
-		const lookup = new Map(workspaceFiles.map((f) => [f.id, f] as const))
-		const result: FileListItem[] = []
-		for (const id of fileIds) {
-			const file = lookup.get(id)
-			if (file) result.push(file)
-		}
-		return result
-	}, [workspaceFiles, fileIds])
+	const { data: files = [] } = useFiles(workspaceId, { ids: candidateFileIds })
 
 	const createFile = useCreateFile(workspaceId)
 	const createRelationship = useCreateRelationship(workspaceId, objectId)
@@ -105,7 +107,7 @@ export function ObjectFiles({
 	)
 
 	const hasFiles = files.length > 0
-	const totalCount = fileIds.length
+	const totalCount = files.length
 
 	return (
 		<div

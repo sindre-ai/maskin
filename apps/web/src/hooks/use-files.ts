@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type CreateFileInput, type FileDetail, api } from '../lib/api'
+import { type CreateFileInput, type FileDetail, type UpdateFileInput, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useFile(workspaceId: string, fileId: string | null) {
@@ -11,11 +11,14 @@ export function useFile(workspaceId: string, fileId: string | null) {
 	})
 }
 
-export function useFiles(workspaceId: string, params?: { q?: string }) {
+export function useFiles(workspaceId: string, params?: { q?: string; ids?: string[] }) {
 	return useQuery({
 		queryKey: [...queryKeys.files.all(workspaceId), 'list', params],
 		queryFn: () => api.files.list(workspaceId, params),
-		enabled: !!workspaceId,
+		// Skip the query when ids is explicitly empty — callers pass [] when an object has no
+		// attachments yet, and we don't want to fetch all workspace files in that case.
+		// Equivalent to: params?.ids === undefined || params.ids.length > 0
+		enabled: !!workspaceId && !(params?.ids !== undefined && params.ids.length === 0),
 	})
 }
 
@@ -28,6 +31,15 @@ export function useCreateFile(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (data: CreateFileInput) => api.files.create(workspaceId, data),
+		onSuccess: (file) => primeFileCaches(queryClient, file),
+	})
+}
+
+export function useUpdateFile(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, data }: { id: string; data: UpdateFileInput }) =>
+			api.files.update(workspaceId, id, data),
 		onSuccess: (file) => primeFileCaches(queryClient, file),
 	})
 }

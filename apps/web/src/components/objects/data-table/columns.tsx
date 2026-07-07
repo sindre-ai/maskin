@@ -1,13 +1,23 @@
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
+import { IndicatorBadgeRow } from '@/components/shared/indicator-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { ActorListItem, ObjectResponse } from '@/lib/api'
+import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import type { ColumnDef, Table } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
+
+/**
+ * Expands a small visual control's hit zone to 44×44 (iOS HIG minimum) via a
+ * centered, transparent `::before` pseudo-element. The visual size of the
+ * control is unchanged — only the touchable area grows.
+ */
+const TAP_TARGET_44 =
+	"relative before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
 
 /** Returns a YYYY-MM-DD string for grouping by day */
 function toDateKey(iso: string | null | undefined): string {
@@ -22,6 +32,7 @@ export interface ObjectsTableMeta {
 	onSort: (columnId: string) => void
 	currentSort: string
 	currentOrder: 'asc' | 'desc'
+	betStatuses?: Map<string, BetStatusResult>
 }
 
 interface ColumnOptions {
@@ -95,15 +106,22 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 					}
 					onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
 					aria-label="Select all"
+					className={TAP_TARGET_44}
 				/>
 			),
 			cell: ({ row }) => (
-				<Checkbox
-					checked={row.getIsSelected()}
-					onCheckedChange={(value) => row.toggleSelected(!!value)}
-					aria-label="Select row"
-					onClick={(e) => e.stopPropagation()}
-				/>
+				<span
+					data-drag-checkbox=""
+					className="inline-flex touch-none select-none items-center justify-center"
+				>
+					<Checkbox
+						checked={row.getIsSelected()}
+						onCheckedChange={(value) => row.toggleSelected(!!value)}
+						aria-label="Select row"
+						onClick={(e) => e.stopPropagation()}
+						className={TAP_TARGET_44}
+					/>
+				</span>
 			),
 			enableSorting: false,
 			enableHiding: false,
@@ -112,21 +130,30 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 		{
 			accessorKey: 'title',
 			header: sortableHeader('Title', 'title'),
-			cell: ({ row }) => (
-				<div className="flex items-center gap-2">
-					<Link
-						to="/$workspaceId/objects/$objectId"
-						params={{ workspaceId, objectId: row.original.id }}
-						className="font-medium truncate max-w-[150px] sm:max-w-[300px] text-foreground hover:underline"
-						onClick={(e) => e.stopPropagation()}
-					>
-						{row.getValue('title') || 'Untitled'}
-					</Link>
-					{row.original.activeSessionId && (
-						<AgentWorkingBadge sessionId={row.original.activeSessionId} workspaceId={workspaceId} />
-					)}
-				</div>
-			),
+			cell: ({ row, table }) => {
+				const meta = table.options.meta as ObjectsTableMeta | undefined
+				const isBet = row.original.type === 'bet'
+				const betStatus = isBet ? meta?.betStatuses?.get(row.original.id) : undefined
+				return (
+					<div className="flex items-center gap-2">
+						<Link
+							to="/$workspaceId/objects/$objectId"
+							params={{ workspaceId, objectId: row.original.id }}
+							className="font-medium truncate max-w-[150px] sm:max-w-[300px] text-foreground hover:underline"
+							onClick={(e) => e.stopPropagation()}
+						>
+							{row.getValue('title') || 'Untitled'}
+						</Link>
+						{betStatus && <IndicatorBadgeRow result={betStatus} />}
+						{row.original.activeSessionId && (
+							<AgentWorkingBadge
+								sessionId={row.original.activeSessionId}
+								workspaceId={workspaceId}
+							/>
+						)}
+					</div>
+				)
+			},
 			enableHiding: false,
 		},
 		{
@@ -141,12 +168,12 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			enableSorting: false,
 		},
 		{
-			accessorKey: 'owner',
-			header: 'Owner',
+			accessorKey: 'driver',
+			header: 'Driver',
 			cell: ({ row }) => {
-				const ownerId = row.getValue('owner') as string | null
-				if (!ownerId) return <span className="text-muted-foreground">—</span>
-				const actor = actors?.find((a) => a.id === ownerId)
+				const driverId = row.getValue('driver') as string | null
+				if (!driverId) return <span className="text-muted-foreground">—</span>
+				const actor = actors?.find((a) => a.id === driverId)
 				return <span className="text-sm">{actor?.name ?? '—'}</span>
 			},
 			enableSorting: false,

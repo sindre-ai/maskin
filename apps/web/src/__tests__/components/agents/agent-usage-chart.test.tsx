@@ -39,6 +39,8 @@ const agent: ActorResponse = {
 	llm_provider: null,
 	llm_config: null,
 	isSystem: false,
+	agentState: 'idle',
+	agentStateUpdatedAt: null,
 	createdAt: '2026-01-01T00:00:00Z',
 	updatedAt: '2026-01-01T00:00:00Z',
 }
@@ -96,8 +98,8 @@ describe('AgentUsageChart', () => {
 	it('renders Tokens and Cost view toggle buttons', () => {
 		vi.mocked(api.sessions.usage).mockResolvedValue(emptyUsage)
 		render(<AgentUsageChart agent={agent} workspaceId="ws-1" />, { wrapper: TestWrapper })
-		expect(screen.getByRole('tab', { name: /Tokens/i })).toBeInTheDocument()
-		expect(screen.getByRole('tab', { name: /Cost/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Tokens/i, pressed: true })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Cost/i, pressed: false })).toBeInTheDocument()
 	})
 
 	it('renders preset range buttons', () => {

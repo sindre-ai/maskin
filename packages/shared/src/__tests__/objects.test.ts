@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+	SAFE_METADATA_FIELD_NAME_RE,
 	createObjectSchema,
 	objectParamsSchema,
 	objectQuerySchema,
@@ -49,7 +50,7 @@ describe('createObjectSchema', () => {
 			content: 'Details',
 			status: 'active',
 			metadata: { priority: 'high' },
-			owner: uuid,
+			driver: uuid,
 		})
 		expect(result.id).toBe(uuid)
 		expect(result.title).toBe('My bet')
@@ -72,7 +73,7 @@ describe('createObjectSchema', () => {
 
 	it('rejects invalid uuid for owner', () => {
 		expect(() =>
-			createObjectSchema.parse({ type: 'task', status: 'todo', owner: 'not-uuid' }),
+			createObjectSchema.parse({ type: 'task', status: 'todo', driver: 'not-uuid' }),
 		).toThrow()
 	})
 })
@@ -89,13 +90,13 @@ describe('updateObjectSchema', () => {
 	})
 
 	it('accepts null owner to clear assignment', () => {
-		const result = updateObjectSchema.parse({ owner: null })
-		expect(result.owner).toBeNull()
+		const result = updateObjectSchema.parse({ driver: null })
+		expect(result.driver).toBeNull()
 	})
 
 	it('accepts uuid owner', () => {
-		const result = updateObjectSchema.parse({ owner: uuid })
-		expect(result.owner).toBe(uuid)
+		const result = updateObjectSchema.parse({ driver: uuid })
+		expect(result.driver).toBe(uuid)
 	})
 })
 
@@ -130,8 +131,26 @@ describe('objectQuerySchema', () => {
 	})
 
 	it('accepts optional owner filter', () => {
-		const result = objectQuerySchema.parse({ owner: uuid })
-		expect(result.owner).toBe(uuid)
+		const result = objectQuerySchema.parse({ driver: uuid })
+		expect(result.driver).toBe(uuid)
+	})
+
+	it('accepts ISO-8601 updated_before and updated_after', () => {
+		const result = objectQuerySchema.parse({
+			updated_before: '2026-06-30T00:00:00.000Z',
+			updated_after: '2026-06-01T00:00:00.000Z',
+		})
+		expect(result.updated_before).toBe('2026-06-30T00:00:00.000Z')
+		expect(result.updated_after).toBe('2026-06-01T00:00:00.000Z')
+	})
+
+	it('rejects malformed updated_before (AC-T6)', () => {
+		expect(() => objectQuerySchema.parse({ updated_before: 'not-a-date' })).toThrow()
+		expect(() => objectQuerySchema.parse({ updated_before: '2026-06-30' })).toThrow()
+	})
+
+	it('rejects malformed updated_after (AC-T6)', () => {
+		expect(() => objectQuerySchema.parse({ updated_after: 'yesterday' })).toThrow()
 	})
 })
 
@@ -172,5 +191,21 @@ describe('objectParamsSchema', () => {
 
 	it('rejects missing id', () => {
 		expect(() => objectParamsSchema.parse({})).toThrow()
+	})
+})
+
+describe('SAFE_METADATA_FIELD_NAME_RE', () => {
+	it('accepts letters, numbers, and underscores starting with a letter', () => {
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('segment')).toBe(true)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('deal_size_2')).toBe(true)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('A1')).toBe(true)
+	})
+
+	it('rejects names with spaces, punctuation, or a leading digit', () => {
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('deal size')).toBe(false)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('cost-per-lead')).toBe(false)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('2024_target')).toBe(false)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test("bad'field")).toBe(false)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('')).toBe(false)
 	})
 })

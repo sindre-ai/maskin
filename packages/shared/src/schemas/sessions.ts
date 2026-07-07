@@ -80,6 +80,7 @@ export const sessionConfigSchema = z.object({
 	interactive: z.boolean().default(false),
 	mention: sessionMentionContextSchema.optional(),
 	thread_reply: sessionThreadReplyContextSchema.optional(),
+	browserRequired: z.boolean().default(false),
 })
 
 export const createSessionSchema = z.object({
@@ -88,12 +89,17 @@ export const createSessionSchema = z.object({
 	config: sessionConfigSchema.partial().default({}),
 	trigger_id: z.string().uuid().optional(),
 	auto_start: z.boolean().default(true),
+	source_session_id: z.string().uuid().optional(),
 })
 
 export const sessionQuerySchema = z.object({
 	status: sessionStatusSchema.optional(),
 	actor_id: z.string().uuid().optional(),
 	mention_object_id: z.string().uuid().optional(),
+	/** Half-open: rows satisfy `updated_at < updated_before`. Bound excluded. */
+	updated_before: z.string().datetime({ offset: true }).optional(),
+	/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */
+	updated_after: z.string().datetime({ offset: true }).optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(20),
 	offset: z.coerce.number().int().min(0).default(0),
 })
@@ -153,3 +159,63 @@ export const sessionUsageResponseSchema = z.object({
 	totals: sessionUsageTotalsSchema,
 })
 export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
+
+/**
+ * Reason codes for classified session failures. Credit/rate-limit codes are
+ * detected from the session stdout tail; infrastructure codes are written by
+ * out-of-band reconcilers.
+ *
+ * CLI banner codes (Claude Code exits with a user-visible banner):
+ * - session_limit         "You've hit your session limit"
+ * - weekly_limit          "You've hit your weekly limit"
+ * - opus_limit            "You've hit your Opus limit"
+ * - server_rate_limit     "Server is temporarily limiting requests"
+ * - request_rejected_429  "Request rejected (429)"
+ * - credit_balance_low    "Credit balance is too low"
+ * - not_logged_in         "Not logged in" — Claude Code credentials not connected
+ *
+ * Anthropic HTTP error codes (matched from stdout tail):
+ * - billing_error         402 — credit balance exhausted
+ * - max_plan_rate_limit   402 — Max plan temporary rate limit
+ * - rate_limit_error      429 — Anthropic rate limit
+ *
+ * OpenRouter HTTP error codes:
+ * - insufficient_credits  402 — OpenRouter credit balance exhausted
+ *
+ * Infrastructure codes (written by reconcilers, not detected from stdout):
+ * - agent_server_lost     The agent-server restarted and no longer holds
+ *                         the microsandbox for this session — the work is
+ *                         irrecoverable and the row is closed out.
+ */
+export const failureReasonCodeSchema = z.enum([
+	'session_limit',
+	'weekly_limit',
+	'opus_limit',
+	'server_rate_limit',
+	'request_rejected_429',
+	'credit_balance_low',
+	'not_logged_in',
+	'billing_error',
+	'max_plan_rate_limit',
+	'rate_limit_error',
+	'insufficient_credits',
+	'agent_server_lost',
+])
+export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
+
+export const sessionResultFailureReasonSchema = z.object({
+	provider: z.string(),
+	reason_code: failureReasonCodeSchema,
+	human_message: z.string(),
+	http_status: z.number().int().nullable(),
+	reset_at: z.string().nullable(),
+	verbatim_output: z.string().nullable(),
+})
+export type SessionResultFailureReason = z.infer<typeof sessionResultFailureReasonSchema>
+
+export const sessionResultSchema = z.object({
+	exit_code: z.number().int().nullable().optional(),
+	error: z.string().optional(),
+	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
+})
+export type SessionResult = z.infer<typeof sessionResultSchema>

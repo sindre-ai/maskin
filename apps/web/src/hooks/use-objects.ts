@@ -22,11 +22,11 @@ export function useObjects(workspaceId: string, filters?: Record<string, string>
 	})
 }
 
-export function useObject(id: string) {
+export function useObject(id: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.objects.detail(id),
 		queryFn: () => api.objects.get(id),
-		enabled: !!id,
+		enabled: !!id && (options?.enabled ?? true),
 	})
 }
 
@@ -115,7 +115,7 @@ function applyOptimisticBulkPatch(
 		if (!idSet.has(obj.id)) return obj
 		const next: ObjectResponse = { ...obj, updatedAt: stamped }
 		if (patch.status !== undefined) next.status = patch.status
-		if (patch.owner !== undefined) next.owner = patch.owner
+		if (patch.driver !== undefined) next.driver = patch.driver
 		if (patch.metadata !== undefined) {
 			next.metadata = { ...(obj.metadata ?? {}), ...patch.metadata }
 		}

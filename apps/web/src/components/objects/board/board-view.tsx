@@ -64,7 +64,7 @@ const BOARD_MANUAL_SORT = 'boardOrder'
 const SKELETON_CARDS_PER_COLUMN = 2
 const LONG_PRESS_MS = 500
 const LONG_PRESS_MOVE_TOLERANCE = 8
-type PendingBoardPatch = Pick<BulkUpdateObjectsInput['patch'], 'status' | 'owner' | 'metadata'>
+type PendingBoardPatch = Pick<BulkUpdateObjectsInput['patch'], 'status' | 'driver' | 'metadata'>
 interface DragPreview {
 	groupValue: string
 	insertIndex: number
@@ -134,7 +134,7 @@ function getGroupPatch(
 	toGroupValue: string,
 ): PendingBoardPatch | null {
 	if (!groupBy || groupBy === 'status') return { status: toGroupValue }
-	if (groupBy === 'owner') return { owner: toGroupValue === 'No value' ? null : toGroupValue }
+	if (groupBy === 'driver') return { driver: toGroupValue === 'No value' ? null : toGroupValue }
 	if (groupBy.startsWith('metadata.')) {
 		const key = groupBy.slice('metadata.'.length)
 		return {
@@ -283,7 +283,7 @@ export function BoardView({
 					return {
 						...object,
 						...(pending.status ? { status: pending.status } : {}),
-						...(pending.owner !== undefined ? { owner: pending.owner } : {}),
+						...(pending.driver !== undefined ? { driver: pending.driver } : {}),
 						...(pending.metadata
 							? { metadata: { ...(object.metadata ?? {}), ...pending.metadata } }
 							: {}),
@@ -355,7 +355,7 @@ export function BoardView({
 				if (!object) continue
 
 				const statusMatches = pending.status === undefined || object.status === pending.status
-				const ownerMatches = pending.owner === undefined || object.owner === pending.owner
+				const ownerMatches = pending.driver === undefined || object.driver === pending.driver
 				const metadataMatches = Object.entries(pending.metadata ?? {}).every(([key, value]) => {
 					const metadata = object.metadata as Record<string, unknown> | null
 					return metadata?.[key] === value

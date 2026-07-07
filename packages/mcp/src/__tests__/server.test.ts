@@ -8,7 +8,8 @@ vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
 }))
 
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
-	McpServer: vi.fn().mockImplementation(() => ({})),
+	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() })),
+	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
 }))
 
 vi.mock('node:fs', () => ({
@@ -16,6 +17,7 @@ vi.mock('node:fs', () => ({
 }))
 
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import {
 	HERO_CARD_TYPE_DEFAULTS,
 	type HeroCardTypeAnnotation,
@@ -302,7 +304,7 @@ describe('tool handlers', () => {
 			expect(parsed[0].success).toBe(true)
 		})
 
-		it('keeps graph context model-visible while the heroCard stays object-only', async () => {
+		it('default response is the lean core-fields projection — no graph context leaks to the model', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
 				if (urlStr.includes('/api/objects/bet-1/graph')) {
@@ -310,7 +312,15 @@ describe('tool handlers', () => {
 						ok: true,
 						json: () =>
 							Promise.resolve({
-								object: { id: 'bet-1', type: 'bet', title: 'Bet 1', status: 'active' },
+								object: {
+									id: 'bet-1',
+									type: 'bet',
+									title: 'Bet 1',
+									status: 'active',
+									content: 'Full body text',
+									metadata: { key: 'value' },
+									workspaceId: 'ws-1',
+								},
 								relationships: [
 									{
 										id: 'rel-1',
@@ -323,6 +333,8 @@ describe('tool handlers', () => {
 								connected_objects: [
 									{ id: 'task-1', type: 'task', title: 'Task 1', status: 'todo' },
 								],
+								events: [{ id: 'evt-1', action: 'commented' }],
+								files: [{ id: 'file-1', name: 'note.md' }],
 							}),
 					} as Response
 				}
@@ -331,16 +343,140 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('get_objects')
 			const result = (await handler({ ids: ['bet-1'] })) as {
+				content: Array<{ text: string }>
 				structuredContent: {
 					heroCard: { object?: { id: string }; relationships?: unknown }
-					objects: Array<{ relationships: unknown[]; connected_objects: unknown[] }>
+					results: Array<{ id: string; success: boolean }>
+					objects: Array<{
+						object: Record<string, unknown>
+						relationships?: unknown
+						connected_objects?: unknown
+						events?: unknown
+						files?: unknown
+					}>
 				}
 			}
 
 			expect(result.structuredContent.heroCard.object?.id).toBe('bet-1')
 			expect(result.structuredContent.heroCard.relationships).toBeUndefined()
+
+			// Canonical object body lives at `objects[]` — one entry per successful id,
+			// carrying only `object` (no relationships/connected_objects/events/files).
+			const first = result.structuredContent.objects[0]
+			expect(Object.keys(first).sort()).toEqual(['object'])
+			// Per-object payload: exactly the core six (url is omitted when
+			// webAppBaseUrl isn't configured on the test rig — the injection is
+			// covered separately in the `url field injection` suite).
+			expect(Object.keys(first.object).sort()).toEqual([
+				'contextLine',
+				'id',
+				'status',
+				'title',
+				'type',
+				'workspaceId',
+			])
+			expect(first.object.content).toBeUndefined()
+			// content[0].text is what the LLM actually reads — must also carry the lean shape.
+			const parsed = JSON.parse(result.content[0].text) as Array<{
+				result: { object: Record<string, unknown> }
+			}>
+			expect(Object.keys(parsed[0].result.object).sort()).toEqual([
+				'contextLine',
+				'id',
+				'status',
+				'title',
+				'type',
+				'workspaceId',
+			])
+		})
+
+		it('opts back into extra blocks when include: is passed', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/bet-2/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: { id: 'bet-2', type: 'bet', title: 'Bet 2', status: 'active' },
+								relationships: [
+									{
+										id: 'rel-2',
+										sourceId: 'bet-2',
+										targetId: 'task-2',
+										type: 'breaks_into',
+										targetTitle: 'Task 2',
+									},
+								],
+								connected_objects: [
+									{ id: 'task-2', type: 'task', title: 'Task 2', status: 'todo' },
+								],
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({
+				ids: ['bet-2'],
+				include: ['relationships', 'connected_objects'],
+			})) as {
+				structuredContent: {
+					objects: Array<{ relationships?: unknown[]; connected_objects?: unknown[] }>
+				}
+			}
+
 			expect(result.structuredContent.objects[0].relationships).toHaveLength(1)
 			expect(result.structuredContent.objects[0].connected_objects).toHaveLength(1)
+		})
+
+		it('emits each object body exactly once across heroCard, results, and objects', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				const match = urlStr.match(/\/api\/objects\/([^/]+)\/graph/)
+				const id = match?.[1] ?? 'unknown'
+				return {
+					ok: true,
+					json: () =>
+						Promise.resolve({
+							object: { id, type: 'bet', title: `Bet ${id}`, status: 'active' },
+							relationships: [],
+							connected_objects: [],
+						}),
+				} as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['bet-a', 'bet-b'] })) as {
+				structuredContent: {
+					heroCard: {
+						object?: { id: string }
+						objects?: Array<{ id: string; relationships?: unknown; connected_objects?: unknown }>
+					}
+					results: Array<{ id: string; success: boolean; result?: unknown }>
+					objects: Array<{ object: { id: string }; relationships?: unknown }>
+				}
+			}
+
+			// heroCard entries must be the lean HeroCardObject shape — no full body.
+			const heroEntries = result.structuredContent.heroCard.objects ?? []
+			for (const entry of heroEntries) {
+				expect(entry.relationships).toBeUndefined()
+				expect(entry.connected_objects).toBeUndefined()
+			}
+
+			// results[] is now a per-id envelope — no object body nested under .result.
+			for (const r of result.structuredContent.results) {
+				expect(r).not.toHaveProperty('result')
+				expect(typeof r.id).toBe('string')
+				expect(typeof r.success).toBe('boolean')
+			}
+
+			// objects[] is the canonical body location — exactly one entry per id.
+			const bodyIds = result.structuredContent.objects.map((o) => o.object.id)
+			expect(bodyIds).toEqual(['bet-a', 'bet-b'])
+			expect(new Set(bodyIds).size).toBe(bodyIds.length)
 		})
 	})
 
@@ -356,6 +492,184 @@ describe('tool handlers', () => {
 			expect(calledUrl).toContain('type=task')
 			expect(calledUrl).toContain('limit=10')
 			expect(calledUrl).toContain('offset=5')
+		})
+
+		it('forwards updated_before and updated_after to the route', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({
+				updated_before: '2026-06-30T12:00:00.000Z',
+				updated_after: '2026-06-29T12:00:00.000Z',
+			})
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('updated_before=2026-06-30T12%3A00%3A00.000Z')
+			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
+		})
+
+		// Tool-level proof that sort=updated_at_asc surfaces rows in ascending
+		// updated_at order: the dispatcher routes the MCP sort to the route's
+		// (sort=updatedAt, order=asc) contract, and the mocked route returns
+		// rows in that order. The route's actual ordering is covered by T2's
+		// integration tests against real Postgres.
+		it('maps sort=updated_at_asc to sort=updatedAt&order=asc and returns rows in that order', async () => {
+			const ascRows = [
+				{ id: 'oldest', updatedAt: '2026-06-20T00:00:00.000Z' },
+				{ id: 'middle', updatedAt: '2026-06-25T00:00:00.000Z' },
+				{ id: 'newest', updatedAt: '2026-06-30T00:00:00.000Z' },
+			]
+			mockFetchSuccess(ascRows)
+
+			const handler = getHandler('list_objects')
+			const result = (await handler({ sort: 'updated_at_asc' })) as {
+				structuredContent: { objects: Array<{ id: string }> }
+			}
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('sort=updatedAt')
+			expect(calledUrl).toContain('order=asc')
+			expect(result.structuredContent.objects.map((o) => o.id)).toEqual([
+				'oldest',
+				'middle',
+				'newest',
+			])
+		})
+
+		it('maps sort=updated_at_desc to sort=updatedAt&order=desc', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({ sort: 'updated_at_desc' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('sort=updatedAt')
+			expect(calledUrl).toContain('order=desc')
+		})
+
+		it('omits sort + order when no sort is passed (additive only)', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({ type: 'task' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).not.toContain('sort=')
+			expect(calledUrl).not.toContain('order=')
+		})
+
+		it('forwards each metadata_eq entry as metadata.<field>=<value>', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({ metadata_eq: { segment: 'enterprise', confidence: 'high' } })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('metadata.segment=enterprise')
+			expect(calledUrl).toContain('metadata.confidence=high')
+		})
+
+		it('omits metadata.* params when metadata_eq is not supplied', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({ type: 'task' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).not.toContain('metadata.')
+		})
+	})
+
+	describe('search_objects handler', () => {
+		it('forwards driver_id as driver and updated_after to the route', async () => {
+			mockFetchSuccess([])
+			const driverId = '550e8400-e29b-41d4-a716-446655440000'
+
+			const handler = getHandler('search_objects')
+			await handler({
+				q: 'bet',
+				driver_id: driverId,
+				updated_after: '2026-06-29T12:00:00.000Z',
+			})
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('/api/objects/search?')
+			expect(calledUrl).toContain('q=bet')
+			expect(calledUrl).toContain(`driver=${driverId}`)
+			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
+		})
+
+		it('omits driver and updated_after when the params are not supplied', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('search_objects')
+			await handler({ q: 'bet' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('/api/objects/search?')
+			expect(calledUrl).toContain('q=bet')
+			expect(calledUrl).not.toContain('driver=')
+			expect(calledUrl).not.toContain('updated_after=')
+		})
+
+		it('composes driver_id and updated_after additively with type + q', async () => {
+			mockFetchSuccess([])
+			const driverId = '550e8400-e29b-41d4-a716-446655440000'
+
+			const handler = getHandler('search_objects')
+			await handler({
+				q: 'onboarding',
+				type: 'task',
+				driver_id: driverId,
+				updated_after: '2026-06-29T12:00:00.000Z',
+			})
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('q=onboarding')
+			expect(calledUrl).toContain('type=task')
+			expect(calledUrl).toContain(`driver=${driverId}`)
+			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
+		})
+
+		it('forwards each metadata_eq entry as metadata.<field>=<value>', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('search_objects')
+			await handler({ q: 'bet', metadata_eq: { promotion_mode: 'human_approved' } })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('q=bet')
+			expect(calledUrl).toContain('metadata.promotion_mode=human_approved')
+		})
+
+		it('omits metadata.* params when metadata_eq is not supplied', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('search_objects')
+			await handler({ q: 'bet' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).not.toContain('metadata.')
+		})
+	})
+
+	describe('list_sessions handler', () => {
+		it('forwards updated_before and updated_after to the route', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_sessions')
+			await handler({
+				updated_before: '2026-06-30T12:00:00.000Z',
+				updated_after: '2026-06-29T12:00:00.000Z',
+			})
+
+			const sessionsCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => (c[0] as string).includes('/api/sessions?'))
+			expect(sessionsCall).toBeDefined()
+			const calledUrl = sessionsCall?.[0] as string
+			expect(calledUrl).toContain('updated_before=2026-06-30T12%3A00%3A00.000Z')
+			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
 		})
 	})
 
@@ -790,83 +1104,94 @@ describe('tool handlers', () => {
 	})
 
 	describe('get_started handler', () => {
-		const workspace = { id: 'ws-1', name: 'My Workspace', settings: {} }
+		const workspace = { id: 'ws-1', name: 'My Workspace' }
+		const packages = [
+			{
+				id: 'pkg-dev-1',
+				name: 'Development',
+				description: 'Product team shipping software',
+				use_case: 'development',
+				item_types: ['actor', 'trigger'],
+			},
+			{
+				id: 'pkg-growth-1',
+				name: 'Growth',
+				description: 'Founder running a launch pipeline',
+				use_case: 'growth',
+				item_types: ['actor'],
+			},
+		]
 
-		it('asks the user to pick when no use_case or template is given', async () => {
-			mockFetchSuccess([workspace])
+		it('lists marketplace packages when no package_id is given', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ packages }),
+				} as Response)
 
 			const handler = getHandler('get_started')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 			const text = result.content[0].text
 
 			expect(text).toContain('My Workspace')
-			expect(text).toContain('development')
-			expect(text).toContain('growth')
-			expect(text).toContain('custom')
-		})
-
-		it('maps use_case keywords to growth template', async () => {
-			mockFetchSuccess([workspace])
-
-			const handler = getHandler('get_started')
-			const result = (await handler({ use_case: 'planning our launch pipeline' })) as {
-				content: Array<{ text: string }>
-			}
-			const text = result.content[0].text
-
-			expect(text).toContain('Preview')
-			expect(text).toContain('Growth')
-			expect(text).toContain('contact')
-		})
-
-		it('previews development template and prompts for tailoring questions', async () => {
-			mockFetchSuccess([workspace])
-
-			const handler = getHandler('get_started')
-			const result = (await handler({ template: 'development' })) as {
-				content: Array<{ text: string }>
-			}
-			const text = result.content[0].text
-
-			expect(text).toContain('Preview')
 			expect(text).toContain('Development')
+			expect(text).toContain('Growth')
+			expect(text).toContain('pkg-dev-1')
+			expect(text).toContain('package_id')
 			expect(text).toContain('confirm: true')
-			expect(text).toContain('ASK THE USER')
-			expect(text).toContain('workspace_name')
-			expect(text).toContain('seed_overrides')
 		})
 
-		it('applies template with confirm: true — PATCH settings and POST graph', async () => {
+		it('returns empty-marketplace message when catalog has no packages', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ packages: [] }),
+				} as Response)
+
+			const handler = getHandler('get_started')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const text = result.content[0].text
+
+			expect(text).toContain('marketplace')
+			expect(text).not.toContain('package_id')
+		})
+
+		it('installs package when package_id and confirm: true are provided', async () => {
 			const fetchSpy = vi
 				.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ id: 'ws-1' }),
+					json: () => Promise.resolve({ provisioned: { actors: 3, triggers: 5, skills: 2 } }),
 				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ objects: [{ id: 'o1' }], relationships: [{ id: 'r1' }] }),
+					json: () => Promise.resolve({ connected: false }),
 				} as Response)
 
 			const handler = getHandler('get_started')
 			const result = (await handler({
-				template: 'development',
+				package_id: 'pkg-dev-1',
 				confirm: true,
 			})) as { content: Array<{ text: string }> }
 			const text = result.content[0].text
 
-			expect(text).toContain('Development')
-			expect(text).toContain('template applied')
+			expect(text).toContain('installed')
+			expect(text).toContain('My Workspace')
 
-			const calls = fetchSpy.mock.calls
-			expect(calls[1][0]).toBe('http://localhost:3000/api/workspaces/ws-1')
-			expect((calls[1][1] as RequestInit).method).toBe('PATCH')
-			expect(calls[2][0]).toBe('http://localhost:3000/api/graph')
-			expect((calls[2][1] as RequestInit).method).toBe('POST')
+			const installCall = fetchSpy.mock.calls.find(
+				([, opts]) => (opts as RequestInit)?.method === 'POST',
+			)
+			if (!installCall) throw new Error('install call not found')
+			const installBody = JSON.parse((installCall[1] as RequestInit).body as string)
+			expect(installBody.packageId).toBe('pkg-dev-1')
+			expect(installBody.workspaceId).toBe('ws-1')
 		})
 
-		it('renames workspace and applies seed_overrides on confirm', async () => {
+		it('renames workspace before installing when workspace_name is provided', async () => {
 			const fetchSpy = vi
 				.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
@@ -876,43 +1201,25 @@ describe('tool handlers', () => {
 				} as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ id: 'ws-1' }),
+					json: () => Promise.resolve({ provisioned: { actors: 2, triggers: 3, skills: 0 } }),
 				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ objects: [{ id: 'o1' }], relationships: [] }),
+					json: () => Promise.resolve({ connected: false }),
 				} as Response)
 
 			const handler = getHandler('get_started')
-			await handler({
-				template: 'development',
-				confirm: true,
-				workspace_name: 'Acme',
-				seed_overrides: {
-					bet1: { title: 'Ship MVP by June' },
-				},
-			})
+			await handler({ package_id: 'pkg-dev-1', confirm: true, workspace_name: 'Acme' })
 
-			const calls = fetchSpy.mock.calls
-			// 1st: GET workspaces; 2nd: PATCH rename; 3rd: PATCH settings; 4th: POST graph
-			const renameBody = JSON.parse((calls[1][1] as RequestInit).body as string)
-			expect(renameBody).toEqual({ name: 'Acme' })
-			const graphBody = JSON.parse((calls[3][1] as RequestInit).body as string)
-			const bet1 = graphBody.nodes.find((n: { $id: string }) => n.$id === 'bet1')
-			expect(bet1.title).toBe('Ship MVP by June')
-		})
-
-		it('asks a questionnaire when template is custom and no custom_settings', async () => {
-			mockFetchSuccess([workspace])
-
-			const handler = getHandler('get_started')
-			const result = (await handler({ template: 'custom' })) as {
-				content: Array<{ text: string }>
-			}
-			const text = result.content[0].text
-
-			expect(text).toContain('Custom workspace')
-			expect(text).toContain('custom_settings')
+			const patchCall = fetchSpy.mock.calls.find(
+				([u, opts]) =>
+					(opts as RequestInit)?.method === 'PATCH' &&
+					(u as string).includes('/api/workspaces/ws-1'),
+			)
+			if (!patchCall) throw new Error('patch call not found')
+			const patchBody = JSON.parse((patchCall[1] as RequestInit).body as string)
+			expect(patchBody).toEqual({ name: 'Acme' })
 		})
 
 		it('degrades gracefully when workspaces fetch fails', async () => {
@@ -1947,7 +2254,7 @@ describe('tool handlers', () => {
 									type: 'bet',
 									title: 'Test bet',
 									status: 'active',
-									owner: 'actor-1',
+									driver: 'actor-1',
 									createdAt: new Date().toISOString(),
 								},
 							}),
@@ -1965,13 +2272,14 @@ describe('tool handlers', () => {
 			const handler = getHandler('get_objects')
 			const result = (await handler({ ids: ['bet-9'] })) as {
 				_meta: { ui?: { resourceUri?: string } }
-				structuredContent: { heroCard: { kind: string; object?: { owner?: unknown } } }
+				structuredContent: { heroCard: { kind: string; object?: { driver?: unknown } } }
 			}
 
 			expect(result.structuredContent.heroCard.kind).toBe('single')
-			expect(result.structuredContent.heroCard.object?.owner).toEqual({
+			expect(result.structuredContent.heroCard.object?.driver).toEqual({
 				id: 'actor-1',
 				name: 'Sebastian',
+				type: null,
 			})
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
 		})
@@ -1989,7 +2297,7 @@ describe('tool handlers', () => {
 									type: 'task',
 									title: 'Test task',
 									status: 'in_progress',
-									owner: 'actor-2',
+									driver: 'actor-2',
 								},
 							}),
 					} as Response
@@ -2007,14 +2315,14 @@ describe('tool handlers', () => {
 			const result = (await handler({ ids: ['task-9'] })) as {
 				_meta: { ui?: { resourceUri?: string } }
 				structuredContent: {
-					heroCard: { kind: string; object?: { contextLine?: string; owner?: unknown } }
+					heroCard: { kind: string; object?: { contextLine?: string; driver?: unknown } }
 				}
 			}
 
 			expect(result.structuredContent.heroCard.kind).toBe('single')
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
 			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
-				'in_progress · owner Magnus',
+				'in_progress · driver Magnus',
 			)
 		})
 
@@ -2031,7 +2339,7 @@ describe('tool handlers', () => {
 									type: 'insight',
 									title: 'Pricing pain',
 									status: 'clustered',
-									owner: null,
+									driver: null,
 									metadata: { anchors: ['#3', '#6'], cluster_size: 4 },
 								},
 							}),
@@ -2068,7 +2376,7 @@ describe('tool handlers', () => {
 									type: 'customer',
 									title: 'Acme Inc.',
 									status: 'engaged',
-									owner: null,
+									driver: null,
 								},
 							}),
 					} as Response
@@ -2086,7 +2394,7 @@ describe('tool handlers', () => {
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/objects')
 		})
 
-		it('resolves hero-card owner names via a batched ?ids= lookup, not the full actor list', async () => {
+		it('resolves hero-card driver names via a batched ?ids= lookup, not the full actor list', async () => {
 			const calls: string[] = []
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
@@ -2096,14 +2404,14 @@ describe('tool handlers', () => {
 						ok: true,
 						json: () =>
 							Promise.resolve([
-								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', owner: 'actor-1' },
-								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', owner: 'actor-2' },
+								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', driver: 'actor-1' },
+								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', driver: 'actor-2' },
 								{
 									id: 'bet-3',
 									type: 'bet',
 									title: 'Bet Three',
 									status: 'active',
-									owner: 'actor-1',
+									driver: 'actor-1',
 								},
 							]),
 					} as Response
@@ -2126,7 +2434,7 @@ describe('tool handlers', () => {
 				structuredContent: {
 					heroCard: {
 						kind: string
-						objects?: Array<{ owner?: { id: string; name: string | null } }>
+						objects?: Array<{ driver?: { id: string; name: string | null; type: string | null } }>
 					}
 				}
 			}
@@ -2136,17 +2444,17 @@ describe('tool handlers', () => {
 			// Single batched request, not the unbounded full-workspace fetch.
 			expect(calls.filter((u) => u.includes('/api/actors'))).toHaveLength(1)
 			expect(actorCall).toContain('?ids=')
-			// Owner IDs are deduped — actor-1 appears twice in the result rows.
+			// Driver IDs are deduped — actor-1 appears twice in the result rows.
 			const idsParam = new URL(actorCall as string).searchParams.get('ids') ?? ''
 			const ids = idsParam.split(',').filter(Boolean)
 			expect(ids.sort()).toEqual(['actor-1', 'actor-2'])
 
 			expect(result.structuredContent.heroCard.kind).toBe('list')
-			const owners = result.structuredContent.heroCard.objects?.map((o) => o.owner)
-			expect(owners).toEqual([
-				{ id: 'actor-1', name: 'Alice' },
-				{ id: 'actor-2', name: 'Bob' },
-				{ id: 'actor-1', name: 'Alice' },
+			const drivers = result.structuredContent.heroCard.objects?.map((o) => o.driver)
+			expect(drivers).toEqual([
+				{ id: 'actor-1', name: 'Alice', type: null },
+				{ id: 'actor-2', name: 'Bob', type: null },
+				{ id: 'actor-1', name: 'Alice', type: null },
 			])
 		})
 
@@ -2158,8 +2466,8 @@ describe('tool handlers', () => {
 						ok: true,
 						json: () =>
 							Promise.resolve([
-								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', owner: 'actor-1' },
-								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', owner: 'actor-2' },
+								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', driver: 'actor-1' },
+								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', driver: 'actor-2' },
 							]),
 					} as Response
 				}
@@ -2175,13 +2483,15 @@ describe('tool handlers', () => {
 			const handler = getHandler('search_objects')
 			const result = (await handler({ q: 'bet' })) as {
 				structuredContent: {
-					heroCard: { objects?: Array<{ owner?: { id: string; name: string | null } }> }
+					heroCard: {
+						objects?: Array<{ driver?: { id: string; name: string | null; type: string | null } }>
+					}
 				}
 			}
-			const owners = result.structuredContent.heroCard.objects?.map((o) => o.owner)
-			expect(owners).toEqual([
-				{ id: 'actor-1', name: 'Alice' },
-				{ id: 'actor-2', name: null },
+			const drivers = result.structuredContent.heroCard.objects?.map((o) => o.driver)
+			expect(drivers).toEqual([
+				{ id: 'actor-1', name: 'Alice', type: null },
+				{ id: 'actor-2', name: null, type: null },
 			])
 		})
 
@@ -2279,7 +2589,7 @@ describe('tool handlers', () => {
 						json: () =>
 							Promise.resolve([
 								{ id: 'a-1', type: 'human', name: 'Sebastian', email: 's@x.test' },
-								{ id: 'a-2', type: 'agent', name: 'Sindre', role: 'admin' },
+								{ id: 'a-2', type: 'agent', name: 'Workspace Coach', role: 'admin' },
 							]),
 					} as Response
 				}
@@ -2453,7 +2763,7 @@ describe('tool handlers', () => {
 				if (urlStr.includes('/api/actors')) {
 					return {
 						ok: true,
-						json: () => Promise.resolve([{ id: 'actor-1', name: 'Sindre' }]),
+						json: () => Promise.resolve([{ id: 'actor-1', name: 'Workspace Coach' }]),
 					} as Response
 				}
 				return { ok: true, json: () => Promise.resolve({}) } as Response
@@ -2469,7 +2779,7 @@ describe('tool handlers', () => {
 						objects?: Array<{
 							type: string
 							status: string | null
-							owner: { name: string | null } | null
+							driver: { name: string | null } | null
 						}>
 					}
 				}
@@ -2480,7 +2790,7 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.totalCount).toBe(2)
 			expect(result.structuredContent.heroCard.objects?.[0]?.type).toBe('trigger')
 			expect(result.structuredContent.heroCard.objects?.[0]?.status).toBe('enabled')
-			expect(result.structuredContent.heroCard.objects?.[0]?.owner?.name).toBe('Sindre')
+			expect(result.structuredContent.heroCard.objects?.[0]?.driver?.name).toBe('Workspace Coach')
 			expect(result.structuredContent.heroCard.objects?.[1]?.status).toBe('disabled')
 		})
 
@@ -2531,7 +2841,7 @@ describe('tool handlers', () => {
 									type: 'organization',
 									title: 'Acme Co',
 									status: 'qualifying',
-									owner: 'actor-1',
+									driver: 'actor-1',
 									updatedAt,
 								},
 							}),
@@ -2552,7 +2862,7 @@ describe('tool handlers', () => {
 				structuredContent: {
 					heroCard: {
 						kind: string
-						object?: { type: string; contextLine: string; owner?: unknown }
+						object?: { type: string; contextLine: string; driver?: unknown }
 					}
 				}
 			}
@@ -2579,7 +2889,7 @@ describe('tool handlers', () => {
 									type: 'person',
 									title: 'Jane Doe',
 									status: 'engaged',
-									owner: null,
+									driver: null,
 									updatedAt,
 								},
 							}),
@@ -2743,6 +3053,526 @@ describe('tool handlers', () => {
 				event: 'click_through',
 				widget_name: 'hero-card',
 			})
+		})
+	})
+
+	describe('update_actor handler', () => {
+		const actorId = '550e8400-e29b-41d4-a716-446655440000'
+		const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
+		const skillId2 = '660e8400-e29b-41d4-a716-446655440002'
+		const mockActor = { id: actorId, name: 'Test Actor' }
+		const mockSkill = { id: skillId1, name: 'My Skill' }
+
+		it('returns actor directly when no skill ops are requested', async () => {
+			mockFetchSuccess(mockActor)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({ id: actorId, name: 'Updated' })) as {
+				content: Array<{ text: string }>
+			}
+
+			expect(fetch).toHaveBeenCalledTimes(1)
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual(mockActor)
+		})
+
+		it('attaches skills and wraps response under actor key', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockSkill),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledTimes(2)
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.actor).toEqual(mockActor)
+			expect(parsed.attached_skills).toHaveLength(1)
+			expect(parsed.attached_skills[0]).toEqual(mockSkill)
+			expect(parsed.detached_skills).toBeUndefined()
+			expect(parsed.partial_failure).toBeUndefined()
+		})
+
+		it('detaches skills and includes detached_skills in response', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ deleted: true }),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				detach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.actor).toEqual(mockActor)
+			expect(parsed.detached_skills).toHaveLength(1)
+			expect(parsed.detached_skills[0]).toEqual({ skill_id: skillId1, deleted: true })
+			expect(parsed.attached_skills).toBeUndefined()
+		})
+
+		it('handles attach and detach simultaneously', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockSkill),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ deleted: true }),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				attach_skill_ids: [skillId1],
+				detach_skill_ids: [skillId2],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.actor).toEqual(mockActor)
+			expect(parsed.attached_skills).toHaveLength(1)
+			expect(parsed.detached_skills).toHaveLength(1)
+			expect(parsed.detached_skills[0]).toEqual({ skill_id: skillId2, deleted: true })
+			expect(parsed.partial_failure).toBeUndefined()
+		})
+
+		it('sets partial_failure and records error string when a skill op fails', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: false,
+					status: 404,
+					text: () => Promise.resolve('Not found'),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.partial_failure).toBe(true)
+			expect(parsed.attached_skills[0].skill_id).toBe(skillId1)
+			expect(typeof parsed.attached_skills[0].error).toBe('string')
+			expect(parsed.attached_skills[0].error).not.toBe('')
+		})
+
+		it('surfaces a non-Error rejection as a string rather than undefined', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockRejectedValueOnce('plain string rejection')
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.partial_failure).toBe(true)
+			expect(parsed.attached_skills[0].error).toBe('plain string rejection')
+		})
+
+		it('throws when the same skill ID appears in both attach and detach arrays', async () => {
+			const handler = getHandler('update_actor')
+			await expect(
+				handler({ id: actorId, attach_skill_ids: [skillId1], detach_skill_ids: [skillId1] }),
+			).rejects.toThrow(/attach_skill_ids and detach_skill_ids/)
+		})
+	})
+})
+
+describe('url field injection', () => {
+	const testUuid = '550e8400-e29b-41d4-a716-446655440000'
+
+	let urlHandlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
+
+	const configWithUrl = {
+		...config,
+		webAppBaseUrl: 'https://maskin.example.com',
+	}
+
+	function getUrlHandler(name: string) {
+		const handler = urlHandlers.get(name)
+		if (!handler) throw new Error(`Handler ${name} not registered`)
+		return handler
+	}
+
+	beforeEach(() => {
+		vi.mocked(McpServer).mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() }))
+		vi.mocked(registerAppTool).mockReset()
+		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+			urlHandlers.set(
+				name as string,
+				handler as (args: Record<string, unknown>) => Promise<unknown>,
+			)
+		})
+		urlHandlers = new Map()
+		createMcpServer(configWithUrl)
+	})
+
+	afterEach(() => {
+		vi.useRealTimers()
+		vi.restoreAllMocks()
+	})
+
+	it('omits url when webAppBaseUrl is not configured', async () => {
+		const noUrlHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+		vi.mocked(registerAppTool).mockReset()
+		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+			noUrlHandlers.set(
+				name as string,
+				handler as (args: Record<string, unknown>) => Promise<unknown>,
+			)
+		})
+		createMcpServer(config)
+
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve([{ id: 'obj-1', type: 'bet' }]),
+		} as Response)
+
+		const handler = noUrlHandlers.get('list_objects')
+		if (!handler) throw new Error('list_objects handler not registered')
+		const result = (await handler({})) as { content: Array<{ text: string }> }
+		const parsed = JSON.parse(result.content[0].text) as Array<Record<string, unknown>>
+		expect(parsed[0].url).toBeUndefined()
+	})
+
+	it('normalizes trailing slash in webAppBaseUrl', async () => {
+		const trailingHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+		vi.mocked(registerAppTool).mockReset()
+		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+			trailingHandlers.set(
+				name as string,
+				handler as (args: Record<string, unknown>) => Promise<unknown>,
+			)
+		})
+		createMcpServer({ ...config, webAppBaseUrl: 'https://maskin.example.com/' })
+
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve([{ id: 'obj-1', type: 'bet' }]),
+		} as Response)
+
+		const handler = trailingHandlers.get('list_objects')
+		if (!handler) throw new Error('list_objects handler not registered')
+		const result = (await handler({})) as { content: Array<{ text: string }> }
+		const parsed = JSON.parse(result.content[0].text) as Array<{ url: string }>
+		expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/objects/obj-1')
+	})
+
+	describe('object url', () => {
+		it('list_objects — content and structuredContent.objects include url', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve([{ id: 'obj-1', type: 'bet' }]),
+			} as Response)
+
+			const handler = getUrlHandler('list_objects')
+			const result = (await handler({})) as {
+				content: Array<{ text: string }>
+				structuredContent: { objects: Array<{ id: string; url?: string }> }
+			}
+
+			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
+			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/objects/obj-1')
+			expect(result.structuredContent.objects[0].url).toBe(
+				'https://maskin.example.com/ws-default-123/objects/obj-1',
+			)
+		})
+
+		it('get_objects — url added inside result.object in content and structuredContent', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () =>
+					Promise.resolve({
+						object: { id: 'obj-2', type: 'insight', title: 'Test' },
+						relationships: [],
+						connected_objects: [],
+					}),
+			} as Response)
+
+			const handler = getUrlHandler('get_objects')
+			const result = (await handler({ ids: ['obj-2'] })) as {
+				content: Array<{ text: string }>
+				structuredContent: { objects: Array<{ object: { id: string; url?: string } }> }
+			}
+
+			const text = JSON.parse(result.content[0].text) as Array<{
+				success: boolean
+				result: { object: { id: string; url: string } }
+			}>
+			expect(text[0].result.object.url).toBe(
+				'https://maskin.example.com/ws-default-123/objects/obj-2',
+			)
+			expect(result.structuredContent.objects[0].object.url).toBe(
+				'https://maskin.example.com/ws-default-123/objects/obj-2',
+			)
+		})
+
+		it('create_objects — url added to each graph node', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () =>
+					Promise.resolve({
+						nodes: [{ $id: 'bet-1', id: 'obj-3', type: 'bet' }],
+						edges: [],
+					}),
+			} as Response)
+
+			const handler = getUrlHandler('create_objects')
+			const result = (await handler({
+				nodes: [{ $id: 'bet-1', type: 'bet', status: 'active' }],
+				edges: [],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as {
+				nodes: Array<{ id: string; url: string }>
+			}
+			expect(parsed.nodes[0].url).toBe('https://maskin.example.com/ws-default-123/objects/obj-3')
+		})
+
+		it('update_objects — url added to patched object result', async () => {
+			const objectId = '11111111-1111-1111-1111-111111111111'
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: objectId, type: 'task', title: 'Updated' }),
+			} as Response)
+
+			const handler = getUrlHandler('update_objects')
+			const result = (await handler({
+				updates: [{ id: objectId, title: 'Updated' }],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as Array<{
+				type: string
+				success: boolean
+				result: { url: string }
+			}>
+			const objectEntry = parsed.find((e) => e.type === 'object' && e.success)
+			expect(objectEntry?.result.url).toBe(
+				`https://maskin.example.com/ws-default-123/objects/${objectId}`,
+			)
+		})
+	})
+
+	describe('actor url', () => {
+		it('create_actor — url added to result', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: 'actor-1', type: 'agent', name: 'Bot' }),
+			} as Response)
+
+			const handler = getUrlHandler('create_actor')
+			const result = (await handler({ type: 'agent', name: 'Bot' })) as {
+				content: Array<{ text: string }>
+			}
+
+			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-1')
+		})
+
+		it('get_actor — url added to result', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: testUuid, type: 'human', name: 'Alice' }),
+			} as Response)
+
+			const handler = getUrlHandler('get_actor')
+			const result = (await handler({ id: testUuid })) as {
+				content: Array<{ text: string }>
+			}
+
+			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
+			expect(parsed.url).toBe(`https://maskin.example.com/ws-default-123/agents/${testUuid}`)
+		})
+
+		it('list_actors — url added to each actor in content', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve([{ id: 'actor-2', type: 'agent', name: 'Worker' }]),
+			} as Response)
+
+			const handler = getUrlHandler('list_actors')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
+			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/agents/actor-2')
+		})
+	})
+
+	describe('trigger url', () => {
+		it('create_trigger — url added to result', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: 'trig-1', name: 'Daily', workspaceId: 'ws-default-123' }),
+			} as Response)
+
+			const handler = getUrlHandler('create_trigger')
+			const result = (await handler({
+				name: 'Daily',
+				type: 'cron',
+				config: { expression: '0 0 * * *' },
+				action_prompt: 'Check',
+				target_actor_id: testUuid,
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/triggers/trig-1')
+		})
+
+		it('list_triggers — url added to each trigger in content', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () =>
+					Promise.resolve([{ id: 'trig-2', name: 'Weekly', workspaceId: 'ws-default-123' }]),
+			} as Response)
+
+			const handler = getUrlHandler('list_triggers')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
+			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/triggers/trig-2')
+		})
+	})
+
+	describe('session url', () => {
+		it('create_session — url links to actor page when actorId present', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: 'sess-1', actorId: 'actor-9', status: 'pending' }),
+			} as Response)
+
+			const handler = getUrlHandler('create_session')
+			const result = (await handler({
+				actor_id: testUuid,
+				action_prompt: 'Fix bugs',
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-9')
+		})
+
+		it('create_session — url falls back to activity when actorId absent', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: 'sess-2', status: 'pending' }),
+			} as Response)
+
+			const handler = getUrlHandler('create_session')
+			const result = (await handler({
+				actor_id: testUuid,
+				action_prompt: 'Fix bugs',
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/activity')
+		})
+
+		it('list_sessions — url added to each session', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve([{ id: 'sess-3', actorId: 'actor-8', status: 'running' }]),
+				} as Response)
+				.mockResolvedValue({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve([]),
+				} as Response)
+
+			const handler = getUrlHandler('list_sessions')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
+			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/agents/actor-8')
+		})
+
+		it('run_agent — url added to session in response', async () => {
+			vi.useFakeTimers()
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ id: 'sess-4', actorId: 'actor-7', status: 'pending' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ id: 'sess-4', actorId: 'actor-7', status: 'completed' }),
+				} as Response)
+				.mockResolvedValue({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve([]),
+				} as Response)
+
+			const handler = getUrlHandler('run_agent')
+			const resultPromise = handler({
+				actor_id: testUuid,
+				action_prompt: 'Deploy',
+				poll_interval_seconds: 5,
+				timeout_seconds: 60,
+			})
+
+			await vi.advanceTimersByTimeAsync(5000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text) as {
+				session: { id: string; url: string }
+			}
+			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-7')
 		})
 	})
 })

@@ -26,6 +26,10 @@ const mockContainerManager = {
 	start: vi.fn().mockResolvedValue(undefined),
 	stop: vi.fn().mockResolvedValue(undefined),
 	remove: vi.fn().mockResolvedValue(undefined),
+	pullImage: vi.fn().mockResolvedValue(undefined),
+	createNetwork: vi.fn().mockResolvedValue('anko-net-test'),
+	removeNetwork: vi.fn().mockResolvedValue(undefined),
+	getIpOnNetwork: vi.fn().mockResolvedValue('172.20.0.2'),
 	exec: vi.fn().mockResolvedValue({ exitCode: 0, output: '' }),
 	copyTo: vi.fn().mockResolvedValue(undefined),
 	copyFrom: vi.fn().mockResolvedValue({}),
@@ -78,12 +82,20 @@ vi.mock('../../services/workspace-briefing', () => ({
 	workspaceLedgerKey: vi.fn().mockReturnValue('agents/ws/_workspace/learnings.md'),
 }))
 
+const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
+	mockClassifyCreditExhaustion: vi.fn(),
+}))
+
+vi.mock('../../lib/credit-classifier', () => ({
+	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+}))
+
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
 import { getProvider } from '../../lib/integrations/registry'
 import { AgentStorageManager } from '../../services/agent-storage'
-import { SessionManager } from '../../services/session-manager'
+import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
 import { buildIntegration, buildSession } from '../factories'
 import { createTestContext } from '../setup'
 
@@ -190,7 +202,7 @@ describe('SessionManager', () => {
 			const agent = {
 				id: session.actorId,
 				type: 'agent',
-				systemPrompt: 'You are Sindre.',
+				systemPrompt: 'You are Workspace Coach.',
 				llmProvider: null,
 				llmConfig: null,
 				apiKey: 'ank_test_agent_key',
@@ -339,6 +351,267 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('startSession() — browser sidecar provisioning', () => {
+		function buildTestSession(overrides: Record<string, unknown> = {}) {
+			return buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+				...overrides,
+			})
+		}
+
+		function buildTestAgent(actorId: string, tools: Record<string, unknown> | null = null) {
+			return {
+				id: actorId,
+				type: 'agent' as const,
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools,
+			}
+		}
+
+		function buildTestWorkspace(workspaceId: string) {
+			return { id: workspaceId, settings: {} }
+		}
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+			manager.setBrowserSidecarBuildContext('/repo/docker/browser-sidecar')
+		})
+
+		it('provisions a browser sidecar when browserRequired is true (AC-T1 Docker leg)', async () => {
+			const session = buildTestSession({ config: { browserRequired: true } })
+			const agent = buildTestAgent(session.actorId)
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace llm keys
+				[], // launchContainer: integrations
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.ensureImage).toHaveBeenCalledWith(
+				'browser-sidecar:latest',
+				'/repo/docker/browser-sidecar',
+			)
+			expect(mockContainerManager.pullImage).not.toHaveBeenCalled()
+			expect(mockContainerManager.createNetwork).toHaveBeenCalled()
+
+			const browserCreateCall = mockContainerManager.create.mock.calls[0]?.[0] as Record<
+				string,
+				unknown
+			>
+			expect(browserCreateCall.image).toBe('browser-sidecar:latest')
+			expect(browserCreateCall.name).toMatch(/^anko-browser-/)
+			expect(browserCreateCall.networkMode).toMatch(/^anko-net-/)
+			expect(browserCreateCall.memoryMb).toBe(512)
+			expect(browserCreateCall.cpuShares).toBe(512)
+
+			const agentCreateCall = mockContainerManager.create.mock.calls[1]?.[0] as {
+				env: Record<string, string>
+				networkMode?: string
+			}
+			expect(agentCreateCall.env.BROWSER_CDP_URL).toBe('http://172.20.0.2:9222')
+			expect(agentCreateCall.networkMode).toMatch(/^anko-net-/)
+		})
+
+		it('does not provision a sidecar when browserRequired is absent (AC-T6 Docker leg)', async () => {
+			const session = buildTestSession({ config: {} })
+			const agent = buildTestAgent(session.actorId)
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace llm keys
+				[], // launchContainer: integrations
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.ensureImage).not.toHaveBeenCalled()
+			expect(mockContainerManager.pullImage).not.toHaveBeenCalled()
+			expect(mockContainerManager.createNetwork).not.toHaveBeenCalled()
+
+			const agentCreateCall = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+				networkMode?: string
+			}
+			expect(agentCreateCall.env.BROWSER_CDP_URL).toBeUndefined()
+			expect(agentCreateCall.networkMode).toBeUndefined()
+		})
+
+		it('provisions a sidecar when MCP config references BROWSER_CDP_URL', async () => {
+			const session = buildTestSession({ config: {} })
+			const agent = buildTestAgent(session.actorId, {
+				mcpServers: {
+					playwright: {
+						command: 'npx',
+						args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
+					},
+				},
+			})
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace llm keys
+				[], // launchContainer: integrations
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.ensureImage).toHaveBeenCalledWith(
+				'browser-sidecar:latest',
+				'/repo/docker/browser-sidecar',
+			)
+			const agentCreateCall = mockContainerManager.create.mock.calls[1]?.[0] as {
+				env: Record<string, string>
+				networkMode?: string
+			}
+			expect(agentCreateCall.env.BROWSER_CDP_URL).toBe('http://172.20.0.2:9222')
+			expect(agentCreateCall.networkMode).toMatch(/^anko-net-/)
+		})
+	})
+
+	describe('cleanupBrowserSidecar() — teardown SLA (AC-T5)', () => {
+		// Access the private map + method through a structural cast so the test
+		// can exercise the orchestration without standing up the whole
+		// startSession flow. JS has no real private and this is the established
+		// pattern in this repo for poking at session-manager internals.
+		type Internals = {
+			activeSessions: Map<
+				string,
+				{
+					tempDir: string
+					browserContainerId?: string
+					networkName?: string
+				}
+			>
+			cleanupBrowserSidecar(sessionId: string): Promise<void>
+		}
+
+		function notFound404(): Error {
+			const err = new Error('(HTTP code 404) no such container - No such container: anko-browser-x')
+			;(err as { statusCode?: number }).statusCode = 404
+			return err
+		}
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+		})
+
+		it('stops + removes the sidecar and confirms the container is gone (delta 0)', async () => {
+			const internals = manager as unknown as Internals
+			const sessionId = 'sess-cleanup-fast'
+			internals.activeSessions.set(sessionId, {
+				tempDir: '/tmp/x',
+				browserContainerId: 'browser-fast',
+				networkName: 'anko-net-fast',
+			})
+			// First inspect after remove already 404s — the happy path.
+			mockContainerManager.inspect.mockRejectedValueOnce(notFound404())
+
+			const started = Date.now()
+			await internals.cleanupBrowserSidecar(sessionId)
+			const elapsed = Date.now() - started
+
+			expect(mockContainerManager.stop).toHaveBeenCalledWith('browser-fast')
+			expect(mockContainerManager.remove).toHaveBeenCalledWith('browser-fast')
+			expect(mockContainerManager.inspect).toHaveBeenCalledWith('browser-fast')
+			expect(mockContainerManager.removeNetwork).toHaveBeenCalledWith('anko-net-fast')
+			// Bookkeeping cleared so the next session-end signal is a no-op.
+			expect(internals.activeSessions.get(sessionId)?.browserContainerId).toBeUndefined()
+			expect(internals.activeSessions.get(sessionId)?.networkName).toBeUndefined()
+			// AC-T5: well inside the 60s budget.
+			expect(elapsed).toBeLessThan(60_000)
+		})
+
+		it('keeps polling until inspect returns 404 (slow Docker daemon)', async () => {
+			const internals = manager as unknown as Internals
+			const sessionId = 'sess-cleanup-slow'
+			internals.activeSessions.set(sessionId, {
+				tempDir: '/tmp/x',
+				browserContainerId: 'browser-slow',
+			})
+			// inspect reports the container alive twice, then 404 — wait loop must
+			// keep going across the early polls.
+			mockContainerManager.inspect
+				.mockResolvedValueOnce({ running: false, exitCode: 0 })
+				.mockResolvedValueOnce({ running: false, exitCode: 0 })
+				.mockRejectedValueOnce(notFound404())
+
+			await internals.cleanupBrowserSidecar(sessionId)
+
+			expect(mockContainerManager.inspect.mock.calls.length).toBeGreaterThanOrEqual(3)
+		})
+
+		it('no-ops when there is no sidecar to clean up (the common path)', async () => {
+			const internals = manager as unknown as Internals
+			const sessionId = 'sess-no-sidecar'
+			internals.activeSessions.set(sessionId, { tempDir: '/tmp/x' })
+
+			await internals.cleanupBrowserSidecar(sessionId)
+
+			expect(mockContainerManager.stop).not.toHaveBeenCalled()
+			expect(mockContainerManager.remove).not.toHaveBeenCalled()
+			expect(mockContainerManager.inspect).not.toHaveBeenCalled()
+			expect(mockContainerManager.removeNetwork).not.toHaveBeenCalled()
+		})
+
+		it('is idempotent — a second call after teardown does nothing', async () => {
+			const internals = manager as unknown as Internals
+			const sessionId = 'sess-cleanup-idempotent'
+			internals.activeSessions.set(sessionId, {
+				tempDir: '/tmp/x',
+				browserContainerId: 'browser-idem',
+				networkName: 'anko-net-idem',
+			})
+			mockContainerManager.inspect.mockRejectedValueOnce(notFound404())
+
+			await internals.cleanupBrowserSidecar(sessionId)
+			const stopCallsAfterFirst = mockContainerManager.stop.mock.calls.length
+			const removeCallsAfterFirst = mockContainerManager.remove.mock.calls.length
+
+			await internals.cleanupBrowserSidecar(sessionId)
+
+			expect(mockContainerManager.stop.mock.calls.length).toBe(stopCallsAfterFirst)
+			expect(mockContainerManager.remove.mock.calls.length).toBe(removeCallsAfterFirst)
+		})
+	})
+
 	describe('startSession() — GitHub installations', () => {
 		const githubProviderConfig = {
 			config: {
@@ -368,6 +641,7 @@ describe('SessionManager', () => {
 				[{ count: 0 }], // hasCapacity: running count
 				[opts.agent], // launchContainer: agent lookup
 				[opts.workspace], // launchContainer: workspace lookup (llm keys)
+				[opts.workspace], // resolveLlmRoute -> resolveClaudeCredentialsWithFailover: workspace lookup
 				opts.integrationRows, // launchContainer: integrations lookup
 			]
 		}
@@ -395,7 +669,7 @@ describe('SessionManager', () => {
 			}
 		}
 
-		it('produces per-owner env vars and MCP entries for two GitHub installations', async () => {
+		it('produces per-owner env vars and auto-injects MCP server entries for two GitHub installations', async () => {
 			const wsId = randomUUID()
 			const integrationA = buildIntegration({
 				workspaceId: wsId,
@@ -427,26 +701,21 @@ describe('SessionManager', () => {
 
 			expect(createArgs.env.GITHUB_TOKEN_SINDRE_AI).toBe('ghs_token_sindre_ai')
 			expect(createArgs.env.GITHUB_TOKEN_VAERKSTED_AI).toBe('ghs_token_vaerksted_ai')
-			expect(createArgs.env.GITHUB_TOKEN).toBeUndefined()
-
-			const mcpConfig = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
-				mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>
-			}
-			expect(Object.keys(mcpConfig.mcpServers).sort()).toEqual([
-				'github-sindre-ai',
-				'github-vaerksted-ai',
-			])
-			expect(mcpConfig.mcpServers['github-sindre-ai'].command).toBe('npx')
-			expect(mcpConfig.mcpServers['github-sindre-ai'].args).toEqual([
-				'-y',
-				'@modelcontextprotocol/server-github',
-			])
-			expect(mcpConfig.mcpServers['github-sindre-ai'].env.GITHUB_TOKEN).toBe(
-				'${GITHUB_TOKEN_SINDRE_AI}',
-			)
-			expect(mcpConfig.mcpServers['github-vaerksted-ai'].env.GITHUB_TOKEN).toBe(
-				'${GITHUB_TOKEN_VAERKSTED_AI}',
-			)
+			// bare GITHUB_TOKEN is aliased from the first installation
+			expect(createArgs.env.GITHUB_TOKEN).toBe('ghs_token_sindre_ai')
+			// each installation gets its own auto-injected MCP server entry
+			const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+				? Object.keys(
+						(
+							JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+								mcpServers: Record<string, unknown>
+							}
+						).mcpServers,
+					)
+				: []
+			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(2)
+			expect(mcpKeys).toContain('github-sindre-ai')
+			expect(mcpKeys).toContain('github-vaerksted-ai')
 		})
 
 		it('lazily backfills owner_login and persists it when the row is missing it', async () => {
@@ -476,10 +745,18 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.GITHUB_TOKEN_ACME_ORG).toBe('ghs_token_acme')
-			const mcpConfig = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
-				mcpServers: Record<string, unknown>
-			}
-			expect(Object.keys(mcpConfig.mcpServers)).toEqual(['github-acme-org'])
+			expect(createArgs.env.GITHUB_TOKEN).toBe('ghs_token_acme')
+			const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+				? Object.keys(
+						(
+							JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+								mcpServers: Record<string, unknown>
+							}
+						).mcpServers,
+					)
+				: []
+			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(1)
+			expect(mcpKeys).toContain('github-acme-org')
 		})
 
 		it('skips the integration when owner_login backfill fails (does not kill the session)', async () => {
@@ -503,6 +780,127 @@ describe('SessionManager', () => {
 			const githubKeys = Object.keys(createArgs.env).filter((k) => k.startsWith('GITHUB_TOKEN_'))
 			expect(githubKeys).toEqual([])
 			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
+		})
+
+		describe('Slack auto-inject + xoxb- guard', () => {
+			const slackProviderConfig = {
+				config: {
+					name: 'slack',
+					mcp: {
+						envKey: 'SLACK_BOT_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+							headers: {
+								Authorization: 'Bearer ${MASKIN_API_KEY}',
+								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+							},
+						},
+					},
+				},
+			}
+
+			it('injects SLACK_BOT_TOKEN and the auto-inject MCP server when the stored token is a bot token', async () => {
+				const integration = buildIntegration({ provider: 'slack', externalId: 'T-abc' })
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('xoxb-real-bot-token')
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBe('xoxb-real-bot-token')
+				expect(createArgs.env.MCP_SERVERS_JSON).toBeDefined()
+				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, { type: string; url: string }>
+				}
+				expect(parsed.mcpServers['integration-slack']).toEqual({
+					type: 'http',
+					url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+					headers: {
+						Authorization: 'Bearer ${MASKIN_API_KEY}',
+						'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+					},
+				})
+			})
+
+			it('refuses to inject when the stored Slack token is not a bot (xoxb-) token — guards against posting as a user', async () => {
+				const integration = buildIntegration({ provider: 'slack', externalId: 'T-abc' })
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+				// The stored credential is a user token — wrong scopes, do not inject
+				mockGetValidToken.mockResolvedValueOnce('xoxp-user-token')
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBeUndefined()
+				const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+					? Object.keys(
+							(
+								JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+									mcpServers: Record<string, unknown>
+								}
+							).mcpServers,
+						)
+					: []
+				expect(mcpKeys).not.toContain('integration-slack')
+			})
+		})
+
+		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {
+			const integration = buildIntegration({
+				provider: 'github',
+				externalId: 'install-aaa',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const fixtures = buildLaunchFixtures([integration])
+			// Agent has opted into the GitHub MCP server for this org
+			fixtures.agent.tools = {
+				mcpServers: {
+					'github-sindre-ai': {
+						type: 'stdio',
+						command: 'npx',
+						args: ['-y', '@modelcontextprotocol/server-github'],
+						env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
+					},
+				},
+			}
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_real_token')
+
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+
+			// Token env var is present for envsubst to substitute into the MCP config
+			expect(createArgs.env.GITHUB_TOKEN_SINDRE_AI).toBe('ghs_real_token')
+
+			// AGENT_MCP_JSON carries the MCP config with the placeholder intact —
+			// the container entrypoint runs envsubst to resolve it at startup
+			expect(createArgs.env.AGENT_MCP_JSON).toBeDefined()
+			const agentMcp = JSON.parse(createArgs.env.AGENT_MCP_JSON) as {
+				mcpServers: Record<string, { env: Record<string, string> }>
+			}
+			expect(agentMcp.mcpServers['github-sindre-ai']).toBeDefined()
+			expect(agentMcp.mcpServers['github-sindre-ai'].env.GITHUB_TOKEN).toBe(
+				'${GITHUB_TOKEN_SINDRE_AI}',
+			)
 		})
 	})
 
@@ -545,6 +943,254 @@ describe('SessionManager', () => {
 			mockResults.select = [session]
 
 			await expect(manager.stopSession(session.id)).rejects.toThrow('not found or has no container')
+		})
+
+		it('routes to the agent-server and marks the session terminal when agentServerId is set', async () => {
+			const session = buildSession({
+				status: 'running',
+				agentServerId: 'agent-server-1',
+				containerId: 'sandbox-name',
+			})
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			// 1st select: stopSession's own session lookup. 2nd: the agent_servers
+			// row lookup. markRemoteSessionComplete no longer does its own SELECT —
+			// it does a single CAS UPDATE ... RETURNING instead (see updateQueue
+			// below); the subsequent hasOtherActiveSessions select falls through to
+			// the unset static `mockResults.select` default of [], i.e. "no other
+			// active sessions", which drives the actors-table update below.
+			mockResults.selectQueue = [[session], [server]]
+			// 1st update: markRemoteSessionComplete's CAS on `sessions` — its
+			// .returning() must yield the row so workspaceId/actorId are available
+			// for the events insert. 2nd update: the actors.agentState sync inside
+			// hasOtherActiveSessions' branch — its return value is unused by the
+			// code, so an empty array is fine.
+			mockResults.updateQueue = [[session], []]
+
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				}),
+			)
+
+			try {
+				await manager.stopSession(session.id)
+
+				expect(fetchSpy).toHaveBeenCalledWith(
+					`${server.url}/sessions/${session.id}/stop`,
+					expect.objectContaining({
+						method: 'POST',
+						headers: expect.objectContaining({ Authorization: `Bearer ${server.secret}` }),
+					}),
+				)
+				// Local Docker must never be touched for a remotely-dispatched session.
+				expect(mockContainerManager.stop).not.toHaveBeenCalled()
+
+				const statusUpdate = calls.updates.find(
+					(u) => (u as Record<string, unknown>).status === 'failed',
+				) as Record<string, unknown> | undefined
+				expect(statusUpdate).toBeDefined()
+			} finally {
+				fetchSpy.mockRestore()
+			}
+		})
+
+		it('throws when the session references a missing agent server', async () => {
+			const session = buildSession({ status: 'running', agentServerId: 'ghost-server' })
+			mockResults.selectQueue = [[session], []]
+
+			await expect(manager.stopSession(session.id)).rejects.toThrow(
+				'Agent server ghost-server not found',
+			)
+		})
+
+		it('sanitizes an AgentServerHttpError from the remote stop call — no internal URL or response body leaks to the caller', async () => {
+			const session = buildSession({
+				status: 'running',
+				agentServerId: 'agent-server-1',
+				containerId: 'sandbox-name',
+			})
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			mockResults.selectQueue = [[session], [server]]
+
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				new Response('internal stack trace: secrets.db line 42', {
+					status: 500,
+				}),
+			)
+
+			try {
+				const err = await manager.stopSession(session.id).catch((e) => e)
+				expect(err).toBeInstanceOf(Error)
+				const message = (err as Error).message
+				expect(message).toBe(`Failed to stop session ${session.id}: agent-server returned HTTP 500`)
+				expect(message).not.toContain(server.url)
+				expect(message).not.toContain('secrets.db')
+			} finally {
+				fetchSpy.mockRestore()
+			}
+		})
+
+		it('sanitizes an AgentServerAuthError from the remote stop call', async () => {
+			const session = buildSession({
+				status: 'running',
+				agentServerId: 'agent-server-1',
+				containerId: 'sandbox-name',
+			})
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			mockResults.selectQueue = [[session], [server]]
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValue(new Response('', { status: 401 }))
+
+			try {
+				await expect(manager.stopSession(session.id)).rejects.toThrow(
+					`Failed to stop session ${session.id}: agent-server rejected bearer token`,
+				)
+			} finally {
+				fetchSpy.mockRestore()
+			}
+		})
+
+		it('sanitizes a raw network/fetch error from the remote stop call — no internal host leaks to the caller', async () => {
+			const session = buildSession({
+				status: 'running',
+				agentServerId: 'agent-server-1',
+				containerId: 'sandbox-name',
+			})
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			mockResults.selectQueue = [[session], [server]]
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockRejectedValue(new TypeError('fetch failed: connect ECONNREFUSED 10.2.0.5:3001'))
+
+			try {
+				const err = await manager.stopSession(session.id).catch((e) => e)
+				expect(err).toBeInstanceOf(Error)
+				const message = (err as Error).message
+				expect(message).toBe(`Failed to stop session ${session.id}: agent-server request failed`)
+				expect(message).not.toContain('10.2.0.5')
+				expect(message).not.toContain(server.url)
+			} finally {
+				fetchSpy.mockRestore()
+			}
+		})
+	})
+
+	describe('markRemoteSessionComplete()', () => {
+		it('no-ops without writing an event when the CAS update matches no row (already terminal / lost the race)', async () => {
+			mockResults.update = [] // .returning() → no row: UPDATE matched nothing
+			const initialInsertCount = calls.inserts.length
+
+			await manager.markRemoteSessionComplete('some-session-id', 1)
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
+		})
+
+		it('inserts exactly one session_failed event when the CAS update matches a row (nonzero exit code)', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.updateQueue = [[session], []]
+
+			await manager.markRemoteSessionComplete(session.id, 137)
+
+			const eventInsert = calls.inserts.find(
+				(v) => (v as Record<string, unknown>).action === 'session_failed',
+			)
+			expect(eventInsert).toBeDefined()
+		})
+
+		it('retries the CAS update on a thrown DB error and succeeds once a retry clears', async () => {
+			const session = buildSession({ status: 'running' })
+			// hasOtherActiveSessions' SELECT — a non-empty result means "yes, other
+			// active sessions exist", so the actors-table update branch is skipped
+			// and doesn't consume an extra update() call, keeping the retry count
+			// below attributable only to the CAS update.
+			mockResults.select = [{ id: 'other-session' }]
+			// 1st and 2nd CAS attempts throw; 3rd (final, within CAS_UPDATE_RETRIES)
+			// succeeds and returns the row via .returning().
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				undefined,
+			]
+			mockResults.updateQueue = [[session]]
+
+			await manager.markRemoteSessionComplete(session.id, 137)
+
+			const eventInsert = calls.inserts.find(
+				(v) => (v as Record<string, unknown>).action === 'session_failed',
+			)
+			expect(eventInsert).toBeDefined()
+		})
+
+		it('gives up and no-ops after exhausting retries when the fallback lookup also finds no session', async () => {
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			// The fallback lookup after CAS retries are exhausted finds nothing
+			// (unconfigured select defaults to []) — nothing left to clean up.
+			const initialInsertCount = calls.inserts.length
+
+			await expect(
+				manager.markRemoteSessionComplete('some-session-id', 137),
+			).resolves.toBeUndefined()
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
+		})
+
+		it('still runs terminal side effects via a fallback lookup when CAS retries are exhausted but the session is still running (Bug 2 regression)', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			// 1st select: the fallback lookup after CAS retries are exhausted,
+			// finds the session still 'running'. 2nd select: hasOtherActiveSessions'
+			// check — a non-empty result skips the actors-table update branch.
+			mockResults.selectQueue = [[session], [{ id: 'other-session' }]]
+
+			await manager.markRemoteSessionComplete(session.id, 137)
+
+			const eventInsert = calls.inserts.find(
+				(v) => (v as Record<string, unknown>).action === 'session_failed',
+			)
+			expect(eventInsert).toBeDefined()
+		})
+
+		it('no-ops via the fallback lookup when a concurrent call already resolved the session', async () => {
+			const session = buildSession({ status: 'failed' })
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			mockResults.selectQueue = [[session]]
+			const initialInsertCount = calls.inserts.length
+
+			await manager.markRemoteSessionComplete(session.id, 137)
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
 		})
 	})
 
@@ -590,6 +1236,24 @@ describe('SessionManager', () => {
 
 			await expect(manager.pauseSession(session.id)).rejects.toThrow('copy failed')
 			// Status should be reverted to running (via the catch block's db.update call)
+		})
+
+		it('clears currentActivity to null on successful pause', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'container-abc',
+				currentActivity: 'Searching codebase',
+			})
+			mockResults.select = [session]
+			mockResults.insert = []
+			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
+
+			await manager.pauseSession(session.id)
+
+			const pauseUpdate = calls.updates.find(
+				(u) => (u as Record<string, unknown>).status === 'paused',
+			)
+			expect(pauseUpdate).toMatchObject({ currentActivity: null })
 		})
 
 		it('marks session failed when container is already gone (no snapshot attempt)', async () => {
@@ -711,7 +1375,7 @@ describe('SessionManager', () => {
 			const agent = {
 				id: session.actorId,
 				type: 'agent',
-				systemPrompt: 'You are Sindre.',
+				systemPrompt: 'You are Workspace Coach.',
 				llmProvider: null,
 				llmConfig: null,
 				apiKey: 'ank_test_agent_key',
@@ -1005,16 +1669,19 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[orphan], // 2. runningSessions (idle check)
-				[], // 3. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
+				[], // 2. stuckAgentSessions (no stuck sessions)
+				[orphan], // 3. runningSessions (idle check)
+				[], // 4. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
+				// markSessionFailedAfterContainerLoss → existing session select (new in this branch):
+				[], // 5. existing session lookup (undefined → skip telemetry, update still fires)
 				// markSessionFailedAfterContainerLoss → drainQueue → hasCapacity:
-				[{ settings: {} }], // 4. drainQueue > workspace lookup
-				[{ count: 0 }], // 5. drainQueue > running count
-				[], // 6. drainQueue > nextQueued (empty = break)
-				[], // 7. expiredPaused
-				[], // 8. stuckPending
-				[], // 9. stuckStarting
-				[], // 10. final queuedSessions
+				[{ settings: {} }], // 6. drainQueue > workspace lookup
+				[{ count: 0 }], // 7. drainQueue > running count
+				[], // 8. drainQueue > nextQueued (empty = break)
+				[], // 9. expiredPaused
+				[], // 10. stuckPending
+				[], // 11. stuckStarting
+				[], // 12. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
@@ -1028,14 +1695,15 @@ describe('SessionManager', () => {
 			expect(failedUpdate).toBeDefined()
 		})
 
-		it('skips auto-pause when inspect reports the container is no longer running', async () => {
-			// Container died but the exit watcher hasn't noticed yet (e.g., inspect was
-			// transiently failing). The watchdog should leave the session alone this tick
-			// instead of pausing — watchContainerExit / the timeout reaper will catch it.
+		it('skips auto-pause when inspect reports the container is no longer running (agent-server session)', async () => {
+			// For agent-server sessions the containerId is a remote msb sandbox name —
+			// local Docker inspect is meaningless. The watchdog must skip (continue)
+			// instead of marking failed; the agent-server's exit callback owns cleanup.
 			const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
 			const stale = buildSession({
 				status: 'running',
 				containerId: 'container-dead',
+				agentServerId: 'server-1',
 				startedAt: twentyMinutesAgo,
 				interactive: false,
 			})
@@ -1044,19 +1712,21 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[stale], // 2. runningSessions
-				[], // 3. lastLog (empty → falls back to startedAt, which is >10min old)
-				[], // 4. expiredPaused
-				[], // 5. stuckPending
-				[], // 6. stuckStarting
-				[], // 7. final queuedSessions
+				[], // 2. stuckAgentSessions (no stuck sessions)
+				[stale], // 3. runningSessions
+				[], // 4. lastLog (empty → falls back to startedAt, which is >10min old)
+				// isContainerAlive → inspect mock returns { running: false } (consumed here)
+				// stale.agentServerId is set → continue, no markSessionFailedAfterContainerLoss
+				[], // 5. expiredPaused
+				[], // 6. stuckPending
+				[], // 7. stuckStarting
+				[], // 8. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
 
 			expect(pauseSpy).not.toHaveBeenCalled()
-			// No 'failed' update should have happened either — we explicitly defer to
-			// watchContainerExit so the session isn't yanked out from under it.
+			// No 'failed' update — agent-server sessions are deferred to the server's exit callback.
 			const failedUpdate = calls.updates.find(
 				(u): u is { status: string } =>
 					typeof u === 'object' && u !== null && (u as { status?: string }).status === 'failed',
@@ -1152,5 +1822,626 @@ describe('SessionManager', () => {
 			)
 			expect(recovered).toBeDefined()
 		})
+	})
+
+	describe('handleCompletion() — agentState sync', () => {
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(null)
+		})
+
+		it('sets agentState to idle when session completes (exitCode 0)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate?.agentState).toBe('idle')
+		})
+
+		it('sets agentState to failed when session fails (exitCode non-zero)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 1)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate?.agentState).toBe('failed')
+		})
+
+		it('does not touch agentState when the agent has another active session', async () => {
+			const session = buildSession({ status: 'running' })
+			const otherSession = buildSession({ actorId: session.actorId, status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[otherSession], // hasOtherActiveSessions: agent still has live work
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate).toBeUndefined()
+		})
+	})
+
+	describe('handleCompletion() — credit-exhaustion classification', () => {
+		const knownReason = {
+			provider: 'anthropic',
+			reason_code: 'billing_error',
+			human_message: 'Anthropic billing error — credit balance may be exhausted',
+			http_status: 402,
+			reset_at: null,
+			verbatim_output: null,
+		}
+
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(knownReason)
+		})
+
+		afterEach(() => {
+			vi.unstubAllEnvs()
+		})
+
+		it('writes failure_reason to both the DB result payload and the event data payload', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail: 'billing_error',
+			})
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 1)
+
+			// DB sessions.result must contain failure_reason
+			const sessionUpdate = calls.updates.find(
+				(u): u is { result: { exit_code: number; failure_reason: unknown } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'result' in (u as Record<string, unknown>) &&
+					typeof (u as Record<string, unknown>).result === 'object',
+			)
+			expect(sessionUpdate?.result).toMatchObject({ failure_reason: knownReason })
+
+			// Event insert data must contain failure_reason
+			const eventInsert = calls.inserts.find(
+				(i): i is { action: string; data: { exit_code: number; failure_reason: unknown } } =>
+					typeof i === 'object' &&
+					i !== null &&
+					typeof (i as Record<string, unknown>).action === 'string' &&
+					(i as { action: string }).action.startsWith('session_'),
+			)
+			expect(eventInsert?.data).toMatchObject({ failure_reason: knownReason })
+		})
+
+		it('omits failure_reason when exitCode is 0 and no credit signal is present', async () => {
+			const session = buildSession({ status: 'running' })
+			mockClassifyCreditExhaustion.mockReturnValue(null)
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			expect(mockClassifyCreditExhaustion).toHaveBeenCalledWith('', {
+				includeAmbiguousSignals: false,
+			})
+			const sessionUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate?.result as Record<string, unknown>).not.toHaveProperty('failure_reason')
+		})
+
+		it('does not fail a successful session on an ambiguous credit-exhaustion substring', async () => {
+			// Regression test: exitCode 0 must not run the ambiguous (bare-substring)
+			// classifier branches — only the literal CLI banner strings can fail a
+			// clean exit. Simulate the real classifier's behavior for this input via
+			// the mock: since `includeAmbiguousSignals` will be false for exitCode 0,
+			// the classifier must return null even though `stdoutTail` contains a
+			// substring ('billing_error') that would match an ambiguous signal.
+			const session = buildSession({ status: 'running' })
+			mockClassifyCreditExhaustion.mockImplementation(
+				(_tail: string, options?: { includeAmbiguousSignals?: boolean }) =>
+					options?.includeAmbiguousSignals === false ? null : knownReason,
+			)
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail: 'Tool result: {"error":"billing_error: connection refused"}',
+			})
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			expect(mockClassifyCreditExhaustion).toHaveBeenCalledWith(
+				'Tool result: {"error":"billing_error: connection refused"}',
+				{ includeAmbiguousSignals: false },
+			)
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: Record<string, unknown> } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({ status: 'completed' })
+			expect(sessionUpdate?.result).not.toHaveProperty('failure_reason')
+		})
+
+		it('marks exitCode 0 sessions failed when Claude prints a limit banner', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail: "You've hit your limit · resets 3:20pm (UTC)",
+			})
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			expect(mockClassifyCreditExhaustion).toHaveBeenCalledWith(
+				"You've hit your limit · resets 3:20pm (UTC)",
+				{ includeAmbiguousSignals: false },
+			)
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: { exit_code: number; failure_reason: unknown } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({
+				status: 'failed',
+				result: { exit_code: 0, failure_reason: knownReason },
+			})
+			const eventInsert = calls.inserts.find(
+				(i): i is { action: string; data: { exit_code: number; failure_reason: unknown } } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { action?: string }).action === 'session_failed',
+			)
+			expect(eventInsert?.data).toMatchObject({ exit_code: 0, failure_reason: knownReason })
+		})
+
+		it('fails over primary OAuth runtime limits to backup and starts one retry session', async () => {
+			vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
+			const session = buildSession({
+				status: 'running',
+				config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+			})
+			const retrySession = buildSession({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				createdBy: session.createdBy,
+				status: 'pending',
+				sourceSessionId: session.id,
+				config: {
+					llm_route: 'claude_oauth',
+					llm_oauth_slot: 'backup',
+					claude_oauth_runtime_failover_retry_of: session.id,
+				},
+			})
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail:
+					'{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour"}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
+			})
+			const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[], // hasOtherActiveSessions
+				[], // existing runtime failover retry lookup
+				[
+					{
+						id: session.workspaceId,
+						settings: {
+							claude_oauth: {
+								primary: {
+									encryptedAccessToken: 'primary-access',
+									encryptedRefreshToken: 'primary-refresh',
+									expiresAt: 1_800_000_000_000,
+								},
+								backup: {
+									encryptedAccessToken: 'backup-access',
+									encryptedRefreshToken: 'backup-refresh',
+									expiresAt: 1_900_000_000_000,
+								},
+							},
+						},
+					},
+				], // recordRuntimeClaudeOAuthFailover locked workspace read
+			]
+			mockResults.insertQueue = [
+				[], // completion event
+				[], // failover event
+				[], // retry notice system log
+				[retrySession], // createSession row insert
+				[], // createSession event
+				[], // terminal system log
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const failoverUpdate = calls.updates.find(
+				(u): u is { settings: { claude_oauth: { failover: { active_slot: string } } } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					typeof (u as { settings?: unknown }).settings === 'object' &&
+					Boolean(
+						(
+							(u as { settings: { claude_oauth?: { failover?: unknown } } }).settings.claude_oauth
+								?.failover as Record<string, unknown> | undefined
+						)?.active_slot,
+					),
+			)
+			expect(failoverUpdate?.settings.claude_oauth.failover).toMatchObject({
+				active_slot: 'backup',
+				last_classified_reason: 'quota_exhausted_5h',
+			})
+			const retryInsert = calls.inserts.find(
+				(i): i is { config: Record<string, unknown>; actionPrompt: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { actionPrompt?: unknown }).actionPrompt === session.actionPrompt,
+			)
+			expect(retryInsert?.config).toMatchObject({
+				llm_oauth_slot: 'backup',
+				claude_oauth_runtime_failover_retry_of: session.id,
+			})
+			expect(retryInsert).toMatchObject({ sourceSessionId: session.id })
+			expect(startSpy).toHaveBeenCalledWith(retrySession.id)
+		})
+
+		it('records backup OAuth runtime limits without starting another retry session', async () => {
+			vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
+			const sourceSessionId = randomUUID()
+			const session = buildSession({
+				status: 'running',
+				sourceSessionId,
+				config: {
+					llm_route: 'claude_oauth',
+					llm_oauth_slot: 'backup',
+					claude_oauth_runtime_failover_retry_of: sourceSessionId,
+				},
+			})
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail:
+					'{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour"}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
+			})
+			const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[], // hasOtherActiveSessions
+				[
+					{
+						id: session.workspaceId,
+						settings: {
+							claude_oauth: {
+								primary: {
+									encryptedAccessToken: 'primary-access',
+									encryptedRefreshToken: 'primary-refresh',
+									expiresAt: 1_800_000_000_000,
+								},
+								backup: {
+									encryptedAccessToken: 'backup-access',
+									encryptedRefreshToken: 'backup-refresh',
+									expiresAt: 1_900_000_000_000,
+								},
+								failover: {
+									active_slot: 'backup',
+									last_primary_failure_at: 1_783_005_600_000,
+									last_classified_reason: 'quota_exhausted_5h',
+								},
+							},
+						},
+					},
+				], // recordRuntimeClaudeOAuthBackupExhausted locked workspace read
+			]
+			mockResults.insertQueue = [
+				[], // completion event
+				[], // backup exhausted event
+				[], // backup exhausted system log
+				[], // terminal system log
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const backupUpdate = calls.updates.find(
+				(
+					u,
+				): u is {
+					settings: {
+						claude_oauth: {
+							failover: {
+								active_slot: string
+								last_backup_classified_reason: string
+							}
+						}
+					}
+				} =>
+					typeof u === 'object' &&
+					u !== null &&
+					typeof (u as { settings?: unknown }).settings === 'object' &&
+					Boolean(
+						(
+							(u as { settings: { claude_oauth?: { failover?: unknown } } }).settings.claude_oauth
+								?.failover as Record<string, unknown> | undefined
+						)?.last_backup_classified_reason,
+					),
+			)
+			expect(backupUpdate?.settings.claude_oauth.failover).toMatchObject({
+				active_slot: 'backup',
+				last_classified_reason: 'quota_exhausted_5h',
+				last_backup_classified_reason: 'quota_exhausted_5h',
+			})
+			const backupEvent = calls.inserts.find(
+				(i): i is { action: string; data: { source_session_id: string } } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { action?: string }).action === 'claude_subscription_backup_exhausted',
+			)
+			expect(backupEvent?.data).toMatchObject({ source_session_id: session.id })
+			const retryInsert = calls.inserts.find(
+				(i): i is { config: Record<string, unknown>; actionPrompt: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { actionPrompt?: unknown }).actionPrompt === session.actionPrompt,
+			)
+			expect(retryInsert).toBeUndefined()
+			expect(startSpy).not.toHaveBeenCalled()
+		})
+
+		it('does not fail over to backup on a runtime limit when the failover flag is off', async () => {
+			// Regression test: MASKIN_CLAUDE_FAILOVER_ENABLED gates session-start
+			// failover (resolveClaudeCredentialsWithFailover) but previously did
+			// NOT gate this runtime mid-session retry path — an operator using
+			// the flag as an incident kill-switch would still see failover
+			// triggered here. Flag left unset (default off) for this test.
+			const session = buildSession({
+				status: 'running',
+				config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+			})
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail:
+					'{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour"}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
+			})
+			const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[], // hasOtherActiveSessions
+			]
+			mockResults.insertQueue = [
+				[], // completion event
+				[], // terminal system log
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const failoverUpdate = calls.updates.find(
+				(u): u is { settings: { claude_oauth?: { failover?: unknown } } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					typeof (u as { settings?: unknown }).settings === 'object' &&
+					Boolean(
+						(u as { settings: { claude_oauth?: { failover?: unknown } } }).settings.claude_oauth
+							?.failover,
+					),
+			)
+			expect(failoverUpdate).toBeUndefined()
+			const failoverEvent = calls.inserts.find(
+				(i): i is { action: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					((i as { action?: string }).action === 'claude_subscription_failover_triggered' ||
+						(i as { action?: string }).action === 'claude_subscription_backup_exhausted'),
+			)
+			expect(failoverEvent).toBeUndefined()
+			const retryInsert = calls.inserts.find(
+				(i): i is { config: Record<string, unknown>; actionPrompt: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { actionPrompt?: unknown }).actionPrompt === session.actionPrompt,
+			)
+			expect(retryInsert).toBeUndefined()
+			expect(startSpy).not.toHaveBeenCalled()
+		})
+
+		it('does not call classifier when exitCode is null (OOM kill)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(
+						sessionId: string,
+						containerId: string,
+						exitCode: number | null,
+					): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', null)
+
+			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
+		})
+	})
+})
+
+describe('mergeLaunchRouteConfig()', () => {
+	it('returns null when the route and oauth slot are unchanged', () => {
+		expect(
+			mergeLaunchRouteConfig(
+				{ llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+				'claude_oauth',
+				'primary',
+			),
+		).toBeNull()
+	})
+
+	it('merges in the new route and oauth slot when they change', () => {
+		expect(mergeLaunchRouteConfig({}, 'claude_oauth', 'backup')).toMatchObject({
+			llm_route: 'claude_oauth',
+			llm_oauth_slot: 'backup',
+		})
+	})
+
+	it('clears a stale claude_oauth_runtime_failover_retry_of marker once the slot resolves back to primary', () => {
+		// Regression test: a retry session created during a runtime failover is
+		// stamped with llm_oauth_slot: 'backup' + claude_oauth_runtime_failover_retry_of.
+		// If primary recovers before that retry session's container actually
+		// launches, the slot resolves back to 'primary' here — the stale
+		// retry_of marker must not survive, or maybeRetryClaudeOAuthOnBackup's
+		// gate (`llm_oauth_slot === 'backup' || typeof retry_of === 'string'`)
+		// would misclassify a later, unrelated primary failure as
+		// "backup already exhausted".
+		const existingConfig = {
+			llm_route: 'claude_oauth',
+			llm_oauth_slot: 'backup',
+			claude_oauth_runtime_failover_retry_of: 'source-session-id',
+		}
+		const updated = mergeLaunchRouteConfig(existingConfig, 'claude_oauth', 'primary')
+		expect(updated).toMatchObject({ llm_route: 'claude_oauth', llm_oauth_slot: 'primary' })
+		expect(updated?.claude_oauth_runtime_failover_retry_of).toBeUndefined()
+	})
+
+	it('preserves other config fields untouched', () => {
+		const existingConfig = {
+			llm_route: 'agent_override',
+			runtime: 'claude-code',
+			env_vars: { FOO: 'bar' },
+		}
+		const updated = mergeLaunchRouteConfig(existingConfig, 'claude_oauth', 'primary')
+		expect(updated).toMatchObject({
+			runtime: 'claude-code',
+			env_vars: { FOO: 'bar' },
+			llm_route: 'claude_oauth',
+			llm_oauth_slot: 'primary',
+		})
+	})
+
+	it('returns null when only the route is unchanged and no oauth slot is taken (non-OAuth route)', () => {
+		expect(
+			mergeLaunchRouteConfig({ llm_route: 'workspace_api_key' }, 'workspace_api_key', undefined),
+		).toBeNull()
 	})
 })

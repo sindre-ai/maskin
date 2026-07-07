@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import {
 	buildCreateObjectBody,
 	buildEvent,
@@ -204,6 +205,38 @@ describe('Objects Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it('returns null activeSessionCurrentActivity when object has no active session', async () => {
+			const obj = buildObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(jsonGet(`/api/objects/${obj.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.activeSessionCurrentActivity).toBeNull()
+		})
+
+		it('embeds activeSessionCurrentActivity when session is active', async () => {
+			const sessionId = randomUUID()
+			const obj = buildObject({ activeSessionId: sessionId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[obj], // object lookup
+				[obj], // isWorkspaceMember
+				[], // isSubscribed
+				[], // getUnreadCount
+				[], // getSubscriberCount
+				[{ currentActivity: 'Searching codebase' }], // session currentActivity query
+			]
+
+			const res = await app.request(jsonGet(`/api/objects/${obj.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.activeSessionCurrentActivity).toBe('Searching codebase')
+		})
 	})
 
 	describe('PATCH /api/objects/:id', () => {
@@ -211,7 +244,10 @@ describe('Objects Routes', () => {
 			const existing = buildObject()
 			const updated = { ...existing, title: 'Updated title' }
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			// First select: existing object, second: workspace membership, third:
+			// the in-transaction FOR UPDATE re-read used to derive the event action
+			// and the terminal-notification guard.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
 			mockResults.update = [updated]
 			mockResults.insert = [{}] // event insert
 
@@ -220,6 +256,99 @@ describe('Objects Routes', () => {
 			)
 
 			expect(res.status).toBe(200)
+		})
+
+		it("emits an 'updated' event with data.changes for a single-field edit", async () => {
+			const existing = buildObject({ title: 'Old title' })
+			const updated = { ...existing, title: 'New title' }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			// First select: existing object, second: workspace membership, third:
+			// the in-transaction FOR UPDATE re-read used to derive the event action
+			// and the terminal-notification guard.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			await app.request(jsonRequest('PATCH', `/api/objects/${existing.id}`, { title: 'New title' }))
+
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert).toBeDefined()
+			expect(eventInsert?.action).toBe('updated')
+			expect(eventInsert?.data).toEqual({
+				changes: [{ field: 'title', old: 'Old title', new: 'New title' }],
+			})
+			expect(eventInsert?.data).not.toHaveProperty('previous')
+			expect(eventInsert?.data).not.toHaveProperty('updated')
+		})
+
+		it("emits a 'status_changed' event with data.changes = [{field: 'status', …}] on status-only edit", async () => {
+			const existing = buildObject({ status: 'signal' })
+			const updated = { ...existing, status: 'active' }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			const ws = buildWorkspace({
+				id: existing.workspaceId,
+				settings: { statuses: { [existing.type]: ['signal', 'active'] } },
+			})
+			// First select: existing object, second: workspace membership, third:
+			// workspace settings, fourth: the in-transaction FOR UPDATE re-read.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws], [existing]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			await app.request(jsonRequest('PATCH', `/api/objects/${existing.id}`, { status: 'active' }))
+
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert?.action).toBe('status_changed')
+			expect(eventInsert?.data).toEqual({
+				changes: [{ field: 'status', old: 'signal', new: 'active' }],
+			})
+		})
+
+		it('emits N-element data.changes for a multi-field edit', async () => {
+			const existing = buildObject({ title: 'Old', status: 'signal' })
+			const updated = { ...existing, title: 'New', status: 'active' }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			const ws = buildWorkspace({
+				id: existing.workspaceId,
+				settings: { statuses: { [existing.type]: ['signal', 'active'] } },
+			})
+			// First select: existing object, second: workspace membership, third:
+			// workspace settings, fourth: the in-transaction FOR UPDATE re-read.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws], [existing]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, {
+					title: 'New',
+					status: 'active',
+				}),
+			)
+
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; data: { changes: unknown[] } } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert?.action).toBe('status_changed')
+			expect(eventInsert?.data.changes).toEqual(
+				expect.arrayContaining([
+					{ field: 'status', old: 'signal', new: 'active' },
+					{ field: 'title', old: 'Old', new: 'New' },
+				]),
+			)
+			expect(eventInsert?.data.changes).toHaveLength(2)
 		})
 
 		it('returns 404 when object not found', async () => {
@@ -265,7 +394,9 @@ describe('Objects Routes', () => {
 				},
 			}
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			// First select: existing object, second: workspace membership, third:
+			// the in-transaction FOR UPDATE re-read.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
 			mockResults.update = [merged]
 			mockResults.insert = [{}] // event insert
 
@@ -300,6 +431,54 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(Array.isArray(body)).toBe(true)
+		})
+
+		it('returns 400 when a metadata.<field> filter has an unsafe field name', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=bug&metadata.bad-field=auto', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('bad-field')
+			expect(body.error.details?.[0]?.field).toBe('metadata.bad-field')
+		})
+
+		it('accepts a valid metadata.<field> filter and returns results', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(
+				jsonGet(
+					'/api/objects/search?q=onboarding&type=bet&metadata.promotion_mode=human_approved',
+					{
+						'x-workspace-id': wsId,
+					},
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(Array.isArray(body)).toBe(true)
+		})
+
+		it('does not require a type filter to apply a metadata.<field> filter', async () => {
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=bug&metadata.segment=enterprise', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
 		})
 	})
 
@@ -355,8 +534,11 @@ describe('Objects Routes', () => {
 				action: 'created',
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select: target object, second: relationships, third: connected objects, fourth: events
-			mockResults.selectQueue = [[obj], [rel], [connectedObj], [comment, lifecycleEvent]]
+			// 1) target object, 2) relationships, 3) files-membership lookup
+			// (endpoints checked against `files` table so the read layer resolves by
+			// id — returns [] here because `connectedObj` is not a file),
+			// 4) connected objects, 5) events.
+			mockResults.selectQueue = [[obj], [rel], [], [connectedObj], [comment, lifecycleEvent]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -373,23 +555,23 @@ describe('Objects Routes', () => {
 			expect(body.events[1].description).toBe('proposed bet')
 		})
 
-		it('resolves actor names for owner-change events in description', async () => {
+		it('resolves actor names for driver-change events in description', async () => {
 			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
 			const alice = { id: '00000000-0000-0000-0000-0000000000a1', name: 'Alice' }
 			const bob = { id: '00000000-0000-0000-0000-0000000000b2', name: 'Bob' }
-			const ownerChange = buildEvent({
+			const driverChange = buildEvent({
 				workspaceId: wsId,
 				entityType: 'bet',
 				entityId: obj.id,
 				action: 'updated',
 				data: {
-					previous: { owner: alice.id },
-					updated: { owner: bob.id },
+					previous: { driver: alice.id },
+					updated: { driver: bob.id },
 				},
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
 			// 1: object, 2: relationships (empty → skips connected_objects fetch), 3: events, 4: actors
-			mockResults.selectQueue = [[obj], [], [ownerChange], [alice, bob]]
+			mockResults.selectQueue = [[obj], [], [driverChange], [alice, bob]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -398,7 +580,32 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.events).toHaveLength(1)
-			expect(body.events[0].description).toBe('changed owner from Alice to Bob')
+			expect(body.events[0].description).toBe('changed driver from Alice to Bob')
+		})
+
+		it('resolves actor names for driver-change events emitted in the new {changes} shape', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const alice = { id: '00000000-0000-0000-0000-0000000000a1', name: 'Alice' }
+			const bob = { id: '00000000-0000-0000-0000-0000000000b2', name: 'Bob' }
+			const driverChange = buildEvent({
+				workspaceId: wsId,
+				entityType: 'bet',
+				entityId: obj.id,
+				action: 'updated',
+				data: {
+					changes: [{ field: 'driver', old: alice.id, new: bob.id }],
+				},
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[obj], [], [driverChange], [alice, bob]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.events[0].description).toBe('changed driver from Alice to Bob')
 		})
 
 		it('returns 404 when object not found', async () => {
@@ -424,11 +631,12 @@ describe('Objects Routes', () => {
 				type: 'attached',
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// Queue order matches handler call order: 1) object, 2) relationships
-			// (file-typed endpoint → skips connected_objects), 3) events, 4-6) the
-			// three subscription queries fired in parallel (isSubscribed,
-			// getUnreadCount, getSubscriberCount), 7) files.
-			mockResults.selectQueue = [[obj], [rel], [], [], [], [], [file]]
+			// Queue order matches handler call order: 1) object, 2) relationships,
+			// 3) files-membership lookup (endpoint resolves to the `files` table so
+			// it is bucketed as a file — skips connected_objects), 4) events,
+			// 5-7) the three subscription queries fired in parallel (isSubscribed,
+			// getUnreadCount, getSubscriberCount), 8) files summary.
+			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [file]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -481,6 +689,72 @@ describe('Objects Routes', () => {
 			const body = await res.json()
 			expect(body.files).toEqual([])
 		})
+
+		it('resolves an edge whose sourceType label does not match the endpoint kind', async () => {
+			// Regression for the bet: prior to id-based endpoint resolution, an
+			// `informs` edge written with a specialised `sourceType` (`'insight'`)
+			// still surfaced as expected because the label wasn't `'file'` — but
+			// symmetric cases where a file endpoint was mislabeled would drop.
+			// This test locks in that the read path never depends on the label:
+			// the endpoint is resolved via the `files` table, and anything that
+			// isn't a file is treated as an object endpoint.
+			const bet = buildObject({ workspaceId: wsId, type: 'bet' })
+			const insight = buildObject({ workspaceId: wsId, type: 'insight' })
+			const rel = buildRelationship({
+				sourceType: 'insight', // non-canonical — T1 convention would be 'object'
+				sourceId: insight.id,
+				targetType: 'bet', // non-canonical — T1 convention would be 'object'
+				targetId: bet.id,
+				type: 'informs',
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1) bet, 2) relationships, 3) files-membership lookup (endpoint is
+			// not a file → []), 4) connected objects (insight), 5) events.
+			mockResults.selectQueue = [[bet], [rel], [], [insight], []]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${bet.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.relationships).toHaveLength(1)
+			expect(body.relationships[0].id).toBe(rel.id)
+			expect(body.connected_objects).toHaveLength(1)
+			expect(body.connected_objects[0].id).toBe(insight.id)
+		})
+
+		it('resolves a file endpoint even when the edge label is a legacy object type', async () => {
+			// The mirror case: an `attached` edge whose file endpoint is stamped
+			// with a legacy label (e.g. `'bet'`) rather than the canonical
+			// `'file'`. The endpoint id lives in the `files` table, so the read
+			// layer buckets it as a file — the attachment surfaces in
+			// `files`, not as a broken row in `connected_objects`.
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const file = buildFile({ workspaceId: wsId })
+			const rel = buildRelationship({
+				sourceType: 'bet',
+				sourceId: obj.id,
+				targetType: 'bet', // legacy mislabel — endpoint is a file
+				targetId: file.id,
+				type: 'attached',
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1) object, 2) relationships, 3) files-membership lookup returns the
+			// file (endpoint id resolves to `files.id`), so no connected_objects
+			// fetch, 4) events, 5-7) subscription queries, 8) files summary.
+			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [file]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.connected_objects).toEqual([])
+			expect(body.files).toHaveLength(1)
+			expect(body.files[0].id).toBe(file.id)
+		})
 	})
 
 	describe('DELETE /api/objects/:id', () => {
@@ -532,8 +806,9 @@ describe('Objects Routes', () => {
 			const updated = { ...existing, status: 'in_progress' }
 			const ws = buildWorkspace({ id: existing.workspaceId })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select: existing object, second: workspace membership, third: workspace settings
-			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
+			// First select: existing object, second: workspace membership, third:
+			// workspace settings, fourth: the in-transaction FOR UPDATE re-read.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws], [existing]]
 			mockResults.update = [updated]
 			mockResults.insert = [{}] // event insert
 

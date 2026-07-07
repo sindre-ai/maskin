@@ -1,17 +1,15 @@
+import type { FieldDefinition } from '@/components/objects/field-value-input'
+import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { ActorListItem } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
-import { Search, Upload } from 'lucide-react'
+import { Plus, Search, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ColumnInfo } from './data-table-controls'
 import { DisplayPanel, type DisplayPanelView } from './display-panel'
 
-interface Tab {
-	label: string
-	value: string | undefined
-}
+type Tab = FilterTabItem<string | undefined>
 
 interface DataTableToolbarProps {
 	// Column visibility
@@ -29,9 +27,12 @@ interface DataTableToolbarProps {
 	statusFilter?: string
 	onStatusFilterChange: (value: string | undefined) => void
 	statusesByType: Record<string, string[]>
-	ownerFilter?: string
-	onOwnerFilterChange: (value: string | undefined) => void
+	driverFilter?: string
+	onDriverFilterChange: (value: string | undefined) => void
 	actors?: ActorListItem[]
+	fieldDefinitions?: FieldDefinition[]
+	metadataFilters?: Record<string, string>
+	onMetadataFilterChange?: (field: string, value: string | undefined) => void
 	onResetFilters?: () => void
 	sort: string
 	onSortChange: (value: string) => void
@@ -45,6 +46,8 @@ interface DataTableToolbarProps {
 	boardSupported?: boolean
 	// Import
 	onImportClick: () => void
+	// New — opens the shared create picker
+	onNewClick: () => void
 }
 
 export function DataTableToolbar({
@@ -59,9 +62,12 @@ export function DataTableToolbar({
 	statusFilter,
 	onStatusFilterChange,
 	statusesByType,
-	ownerFilter,
-	onOwnerFilterChange,
+	driverFilter,
+	onDriverFilterChange,
 	actors,
+	fieldDefinitions,
+	metadataFilters,
+	onMetadataFilterChange,
 	onResetFilters,
 	sort,
 	onSortChange,
@@ -73,6 +79,7 @@ export function DataTableToolbar({
 	onViewChange,
 	boardSupported,
 	onImportClick,
+	onNewClick,
 }: DataTableToolbarProps) {
 	const [localSearch, setLocalSearch] = useState(search ?? '')
 	const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -96,23 +103,12 @@ export function DataTableToolbar({
 	return (
 		<div className="flex items-center gap-2 md:gap-3 mb-4 flex-wrap">
 			{/* Type tabs */}
-			<div className="flex gap-1 overflow-x-auto">
-				{tabs.map((tab) => (
-					<button
-						key={tab.label}
-						type="button"
-						className={cn(
-							'rounded px-3 py-1 text-sm whitespace-nowrap transition-colors',
-							typeFilter === tab.value
-								? 'bg-muted text-foreground font-medium'
-								: 'text-muted-foreground hover:text-foreground',
-						)}
-						onClick={() => onTypeFilterChange(tab.value)}
-					>
-						{tab.label}
-					</button>
-				))}
-			</div>
+			<FilterTabs
+				tabs={tabs}
+				value={typeFilter}
+				onChange={onTypeFilterChange}
+				aria-label="Type filter"
+			/>
 
 			{/* Search */}
 			<div className="relative flex-1 min-w-0 max-w-full sm:max-w-xs">
@@ -139,9 +135,12 @@ export function DataTableToolbar({
 				statusFilter={statusFilter}
 				onStatusFilterChange={onStatusFilterChange}
 				statusesByType={statusesByType}
-				ownerFilter={ownerFilter}
-				onOwnerFilterChange={onOwnerFilterChange}
+				driverFilter={driverFilter}
+				onDriverFilterChange={onDriverFilterChange}
 				actors={actors}
+				fieldDefinitions={fieldDefinitions}
+				metadataFilters={metadataFilters}
+				onMetadataFilterChange={onMetadataFilterChange}
 				onResetFilters={onResetFilters}
 				sort={sort}
 				onSortChange={onSortChange}
@@ -151,11 +150,21 @@ export function DataTableToolbar({
 				onGroupByChange={onGroupByChange}
 			/>
 
-			{/* Import */}
-			<Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={onImportClick}>
-				<Upload size={14} />
-				Import
-			</Button>
+			{/* Actions — Import is occasional, New is primary. Ordered per the
+			 * 2026-05-30 button hierarchy call. `basis-full` below xl keeps the
+			 * action cluster on its own predictable row when there isn't enough
+			 * inline room (iPad landscape included); `xl:basis-auto` restores
+			 * the single-row layout on wider viewports. */}
+			<div className="ml-auto flex basis-full items-center justify-end gap-2 xl:basis-auto">
+				<Button variant="ghost" size="sm" className="gap-1.5" onClick={onImportClick}>
+					<Upload size={14} />
+					Import
+				</Button>
+				<Button size="sm" className="gap-1.5" onClick={onNewClick}>
+					<Plus size={14} />
+					New
+				</Button>
+			</div>
 		</div>
 	)
 }

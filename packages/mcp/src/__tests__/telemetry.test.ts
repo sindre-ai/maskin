@@ -10,7 +10,8 @@ vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
 	RESOURCE_MIME_TYPE: 'text/html',
 }))
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
-	McpServer: vi.fn().mockImplementation(() => ({})),
+	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() })),
+	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
 }))
 vi.mock('node:fs', () => ({
 	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
@@ -167,6 +168,63 @@ describe('MCP telemetry wrapper', () => {
 				`${name} is a write tool but is missing from MUTATION_TOOL_KINDS`,
 			).toBeDefined()
 		}
+	})
+
+	it('records a tool_call_response_size event with all six properties on every tool response', async () => {
+		// AC-T1: the bet's First test. Fires once per tool call, regardless of
+		// whether the tool surfaces `structuredContent`. `truncated` is hard-coded
+		// false until T4's token-cap wrapper lands.
+		const handler = getHandler('search_objects')
+		await handler({ workspace_id: wsId, q: 'anything' })
+
+		const sizeEvents = recorded.filter((r) => r.event_type === 'tool_call_response_size')
+		expect(sizeEvents).toHaveLength(1)
+		const [evt] = sizeEvents
+		if (evt.event_type !== 'tool_call_response_size') throw new Error('narrowing')
+		expect(evt.tool_name).toBe('search_objects')
+		expect(typeof evt.session_id).toBe('string')
+		expect(typeof evt.content_bytes).toBe('number')
+		expect(typeof evt.content_tokens).toBe('number')
+		expect(typeof evt.structured_content_bytes).toBe('number')
+		expect(typeof evt.structured_content_tokens).toBe('number')
+		expect(evt.truncated).toBe(false)
+		// search_objects always produces both channels, so bytes > 0.
+		expect(evt.content_bytes).toBeGreaterThan(0)
+		expect(evt.structured_content_bytes).toBeGreaterThan(0)
+		// `bytes/4` estimator — match exactly so accidental tokenizer swaps
+		// surface in CI rather than silently changing the baseline.
+		expect(evt.content_tokens).toBe(Math.ceil(evt.content_bytes / 4))
+		expect(evt.structured_content_tokens).toBe(Math.ceil(evt.structured_content_bytes / 4))
+	})
+
+	it('reports zero structured_content bytes when the tool omits structuredContent', async () => {
+		// delete_relationship returns only `content`. Confirms the bet's per-tool
+		// p95 ranking won't be polluted by phantom structured bytes.
+		const handler = getHandler('delete_relationship')
+		await handler({ workspace_id: wsId, id: '00000000-0000-0000-0000-0000000000bb' })
+
+		const sizeEvents = recorded.filter((r) => r.event_type === 'tool_call_response_size')
+		expect(sizeEvents).toHaveLength(1)
+		const [evt] = sizeEvents
+		if (evt.event_type !== 'tool_call_response_size') throw new Error('narrowing')
+		expect(evt.structured_content_bytes).toBe(0)
+		expect(evt.structured_content_tokens).toBe(0)
+		expect(evt.content_bytes).toBeGreaterThan(0)
+	})
+
+	it('does not emit a tool_call_response_size event when the underlying handler throws', async () => {
+		// On throw the response shape is undefined; we already record the
+		// tool_call event (covered above) but skip the size event because there
+		// is no payload to measure.
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+			return new Response('boom', { status: 500 })
+		})
+
+		const handler = getHandler('list_workspaces')
+		await expect(handler({})).rejects.toThrow()
+
+		const sizeEvents = recorded.filter((r) => r.event_type === 'tool_call_response_size')
+		expect(sizeEvents).toHaveLength(0)
 	})
 
 	it('does not emit a mutation event when the response shape is unrecognised', async () => {

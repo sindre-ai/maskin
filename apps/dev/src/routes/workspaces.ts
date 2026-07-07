@@ -1,24 +1,43 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { actors, workspaceMembers, workspaces } from '@maskin/db/schema'
 import {
-	SINDRE_DEFAULT,
+	events,
+	actors,
+	workspaceMembers,
+	workspaceOnboardingPrompts,
+	workspaces,
+} from '@maskin/db/schema'
+import {
+	WORKSPACE_ADMIN_DIFF_FIELDS,
+	WORKSPACE_COACH_DEFAULT,
+	computeChanges,
 	createWorkspaceSchema,
+	updateWorkspaceAdminSchema,
 	updateWorkspaceSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
+import type { AgentStorageManager } from '../services/agent-storage'
+import type { SessionManager } from '../services/session-manager'
+import {
+	SeedAgentError,
+	bootstrapDefaultAgents,
+	seedDefaultAgentActors,
+} from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		actorType: string
+		agentStorage: AgentStorageManager
+		sessionManager: SessionManager
 	}
 }
 
@@ -75,56 +94,79 @@ app.openapi(createWorkspaceRoute, async (c) => {
 
 	const settings = workspaceSettingsSchema.parse(body.settings ?? {})
 
-	const workspace = await db.transaction(async (tx) => {
-		const [ws] = await tx
-			.insert(workspaces)
-			.values({
-				name: body.name,
-				settings,
-				createdBy: actorId,
+	let workspace: typeof workspaces.$inferSelect | null
+	try {
+		workspace = await db.transaction(async (tx) => {
+			const [ws] = await tx
+				.insert(workspaces)
+				.values({
+					name: body.name,
+					settings,
+					createdBy: actorId,
+				})
+				.returning()
+
+			if (!ws) return null
+
+			// Auto-add creator as owner
+			await tx.insert(workspaceMembers).values({
+				workspaceId: ws.id,
+				actorId,
+				role: 'owner',
 			})
-			.returning()
 
-		if (!ws) return null
+			// Seed all five default agents (Coach, Driver, Strategist, Insights Triage,
+			// Research Agent) inside the same transaction. If any one fails the tx
+			// rolls back — no half-seeded workspace lingers behind a partial success.
+			// Skills, workspace_skill files, and triggers are seeded post-commit
+			// because they hit S3 and can't be rolled back inside a DB transaction.
+			await seedDefaultAgentActors(tx, ws.id, actorId)
 
-		// Auto-add creator as owner
-		await tx.insert(workspaceMembers).values({
-			workspaceId: ws.id,
-			actorId,
-			role: 'owner',
+			return ws
 		})
-
-		// Seed Sindre — the built-in meta-agent shipped with every workspace.
-		// apiKey is required (see comment in actors.ts) — without it the agent's
-		// container has no identity to authenticate MCP writes with.
-		const [sindre] = await tx
-			.insert(actors)
-			.values({
-				type: SINDRE_DEFAULT.type,
-				name: SINDRE_DEFAULT.name,
-				isSystem: SINDRE_DEFAULT.isSystem,
-				systemPrompt: SINDRE_DEFAULT.systemPrompt,
-				llmProvider: SINDRE_DEFAULT.llmProvider,
-				llmConfig: SINDRE_DEFAULT.llmConfig,
-				tools: SINDRE_DEFAULT.tools,
-				apiKey: generateApiKey().key,
-				createdBy: actorId,
+	} catch (err) {
+		if (err instanceof SeedAgentError) {
+			logger.error('Workspace create rolled back — default agent seed failed', {
+				agentId: err.agentId,
+				errorClass: err.errorClass,
+				cause: err.cause instanceof Error ? err.cause.message : String(err.cause),
 			})
-			.returning()
-
-		if (!sindre) throw new Error('Failed to seed Sindre actor')
-
-		await tx.insert(workspaceMembers).values({
-			workspaceId: ws.id,
-			actorId: sindre.id,
-			role: 'member',
-		})
-
-		return ws
-	})
+			return c.json(
+				createApiError(
+					'INTERNAL_ERROR',
+					`Failed to seed default agent "${err.agentId}": ${err.errorClass}`,
+					[
+						{ field: 'agent_id', message: err.agentId },
+						{ field: 'error_class', message: err.errorClass },
+					],
+				),
+				500,
+			)
+		}
+		throw err
+	}
 
 	if (!workspace) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace'), 500)
+	}
+
+	// Post-commit: emit workspace_created for the bet's activation-cohort query.
+	// Fire-and-forget by design — the analytics client never throws (see posthog.ts).
+	void capturePosthogEvent('workspace_created', workspace.id, {
+		workspace_id: workspace.id,
+		workspace_name: workspace.name,
+		created_by: actorId,
+	})
+
+	// Post-commit: seed the five agents' skills + triggers. The actor + member
+	// rows are already committed by seedDefaultAgentActors, so this call is a
+	// no-op for actors (name check hits every one) and only writes
+	// workspace_skills + agent_skills + triggers.
+	const agentStorage = c.get('agentStorage')
+	if (agentStorage) {
+		bootstrapDefaultAgents(db, agentStorage, workspace.id, actorId).catch((err) =>
+			logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
+		)
 	}
 
 	return c.json(serialize(workspace) as z.infer<typeof workspaceResponseSchema>, 201)
@@ -184,6 +226,10 @@ const updateWorkspaceRoute = createRoute({
 			description: 'Workspace updated',
 			content: { 'application/json': { schema: workspaceResponseSchema } },
 		},
+		400: {
+			description: 'Invalid request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Workspace not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -193,8 +239,26 @@ const updateWorkspaceRoute = createRoute({
 
 app.openapi(updateWorkspaceRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
+
+	// claude_oauth has its own locked, slot-aware, audited read-modify-write
+	// routes (POST /api/claude-oauth/import, DELETE /api/claude-oauth,
+	// POST /api/claude-oauth/swap) built to prevent concurrent writers from
+	// clobbering the other slot or failover state. This route does a shallow,
+	// unlocked settings merge, so it must not be allowed to touch claude_oauth
+	// at all — otherwise any PATCH body containing `settings.claude_oauth`
+	// (including `{}`) would silently overwrite both slots.
+	if (body.settings && 'claude_oauth' in body.settings) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'claude_oauth cannot be updated via PATCH /api/workspaces/:id — use /api/claude-oauth instead',
+			),
+			400,
+		)
+	}
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
@@ -229,8 +293,126 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
+	await db.insert(events).values({
+		workspaceId: id,
+		actorId,
+		action: 'updated',
+		entityType: 'workspace',
+		entityId: id,
+		data: { updated },
+	})
+
 	return c.json(serialize(updated) as z.infer<typeof workspaceResponseSchema>)
 }) as RouteHandler<typeof updateWorkspaceRoute, Env>)
+
+// PATCH /api/workspaces/admin/:id — flip onboarding_enabled without a code deploy
+const updateWorkspaceOnboardingRoute = createRoute({
+	method: 'patch',
+	path: '/admin/{id}',
+	tags: ['workspaces'],
+	summary: 'Set onboarding_enabled flag (owner only)',
+	request: {
+		params: idParamSchema,
+		body: {
+			content: {
+				'application/json': {
+					schema: updateWorkspaceAdminSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Workspace updated',
+			content: { 'application/json': { schema: workspaceResponseSchema } },
+		},
+		403: {
+			description: 'Caller is not the workspace owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+const ONBOARDING_PROMPT_TYPES = [
+	'product_vision',
+	'icp',
+	'first_bet_hypothesis',
+	'north_star_metric',
+	'customer_evidence',
+] as const
+
+app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const body = c.req.valid('json')
+
+	const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	if (!(await isWorkspaceOwner(db, actorId, id))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a workspace owner'), 403)
+	}
+
+	const [updated] = await db
+		.update(workspaces)
+		.set({ onboardingEnabled: body.onboarding_enabled, updatedAt: new Date() })
+		.where(eq(workspaces.id, id))
+		.returning()
+
+	if (!updated) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	if (body.onboarding_enabled) {
+		await db
+			.insert(workspaceOnboardingPrompts)
+			.values(ONBOARDING_PROMPT_TYPES.map((promptType) => ({ workspaceId: id, promptType })))
+			.onConflictDoNothing()
+
+		const [coach] = await db
+			.select({ id: actors.id })
+			.from(actors)
+			.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+			.where(
+				and(eq(workspaceMembers.workspaceId, id), eq(actors.name, WORKSPACE_COACH_DEFAULT.name)),
+			)
+			.limit(1)
+
+		if (coach) {
+			c.get('sessionManager')
+				.createSession(id, {
+					actorId: coach.id,
+					actionPrompt:
+						'A workspace has been enabled for onboarding (onboarding_enabled flipped to true). Run the workspace-observer-onboarding skill.\n\nBefore starting: check whether this workspace already has an onboarding_session object. If one exists, exit silently.\n\nIf none exists, follow the workspace-observer-onboarding skill to:\n1. Create the onboarding_session object.\n2. Subscribe the workspace owner.\n3. Post the five context prompts in sequence, waiting for each reply before the next.\n4. Capture each reply as a knowledge object.\n5. Close the session when all prompts are answered (or after 24h).',
+					createdBy: actorId,
+				})
+				.catch((err) =>
+					logger.error('Failed to create onboarding session', { workspaceId: id, err }),
+				)
+		}
+	}
+
+	const changes = computeChanges(
+		existing as unknown as Record<string, unknown>,
+		updated as unknown as Record<string, unknown>,
+		WORKSPACE_ADMIN_DIFF_FIELDS,
+	)
+	await db.insert(events).values({
+		workspaceId: id,
+		actorId,
+		action: 'updated',
+		entityType: 'workspace',
+		entityId: id,
+		data: { changes },
+	})
+
+	return c.json(serialize(updated) as z.infer<typeof workspaceResponseSchema>)
+}) as RouteHandler<typeof updateWorkspaceOnboardingRoute, Env>)
 
 // POST /api/workspaces/:id/members
 const addMemberRoute = createRoute({

@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, relationships, workspaces } from '@maskin/db/schema'
+import { events, files, objects, relationships, workspaces } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { createGraphSchema } from '@maskin/shared'
 import { eq, inArray } from 'drizzle-orm'
@@ -189,7 +189,7 @@ app.openapi(createGraphRoute, async (c) => {
 						content: node.content,
 						status: node.status,
 						metadata: node.metadata,
-						owner: node.owner,
+						driver: node.driver,
 						createdBy: actorId,
 					})
 					.returning()
@@ -213,20 +213,39 @@ app.openapi(createGraphRoute, async (c) => {
 			// 2. Resolve edge references and create relationships
 			const createdEdges: (typeof relationships.$inferSelect)[] = []
 
+			// Collect pre-existing endpoint ids to determine file vs object membership
+			const externalEndpointIds = new Set<string>()
+			for (const edge of body.edges) {
+				const sourceId = idMap.get(edge.source) ?? edge.source
+				const targetId = idMap.get(edge.target) ?? edge.target
+				if (!createdNodes.find((n) => n.id === sourceId)) externalEndpointIds.add(sourceId)
+				if (!createdNodes.find((n) => n.id === targetId)) externalEndpointIds.add(targetId)
+			}
+			const fileIds = new Set<string>()
+			if (externalEndpointIds.size > 0) {
+				const fileRows = await tx
+					.select({ id: files.id })
+					.from(files)
+					.where(inArray(files.id, [...externalEndpointIds]))
+				for (const row of fileRows) fileIds.add(row.id)
+			}
+
 			for (const edge of body.edges) {
 				const sourceId = idMap.get(edge.source) ?? edge.source
 				const targetId = idMap.get(edge.target) ?? edge.target
 
-				// Look up the type for each side
-				const sourceNode = createdNodes.find((n) => n.id === sourceId)
-				const targetNode = createdNodes.find((n) => n.id === targetId)
+				// Derive type from file membership per T1 convention B
+				const isSourceNew = createdNodes.find((n) => n.id === sourceId)
+				const isTargetNew = createdNodes.find((n) => n.id === targetId)
+				const sourceType = isSourceNew ? 'object' : fileIds.has(sourceId) ? 'file' : 'object'
+				const targetType = isTargetNew ? 'object' : fileIds.has(targetId) ? 'file' : 'object'
 
 				const [created] = await tx
 					.insert(relationships)
 					.values({
-						sourceType: sourceNode?.type ?? 'object',
+						sourceType,
 						sourceId,
-						targetType: targetNode?.type ?? 'object',
+						targetType,
 						targetId,
 						type: edge.type,
 						createdBy: actorId,

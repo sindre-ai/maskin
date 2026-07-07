@@ -1,4 +1,4 @@
-import type { AgentStatus } from '@/components/agents/agent-card'
+export type AgentStatus = 'working' | 'idle' | 'failed'
 
 interface SessionLike {
 	actorId: string
@@ -6,7 +6,7 @@ interface SessionLike {
 	createdAt: string | null
 }
 
-const ACTIVE_STATUSES = new Set(['running', 'starting', 'pending'])
+export const ACTIVE_STATUSES = new Set(['running', 'starting', 'pending'])
 
 export function groupSessionsByAgent<T extends SessionLike>(sessions: T[]): Map<string, T[]> {
 	const map = new Map<string, T[]>()

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -6,9 +6,7 @@ import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
-	WORKSPACE_TEMPLATES,
-	type WorkspaceTemplate,
-	type WorkspaceTemplateId,
+	type WebAppTarget,
 	buildWebAppHref,
 	resolveWebAppBaseUrl,
 	stripTrailingSlash,
@@ -21,12 +19,20 @@ import {
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
+import { type CursorState, decodeCursor, encodeCursor, toSnapshotAt } from './cursor.js'
+import { applyResponseTokenCap } from './response-cap.js'
+import {
+	type SummaryRow,
+	buildContentSummary,
+	isResponseScopingEnabled,
+} from './response-scoping.js'
 import {
 	MUTATION_TOOL_KINDS,
 	type TelemetrySink,
 	createDefaultSink,
 	recordMutation,
 	recordToolCall,
+	recordToolCallResponseSize,
 	recordWidgetEvent,
 } from './telemetry.js'
 import { tools } from './tools.js'
@@ -83,6 +89,141 @@ function uiMeta(
 	return { ...meta(toolName, config, workspaceId), ui: { resourceUri, csp: CSP } }
 }
 
+function addUrl(
+	entity: Record<string, unknown>,
+	config: McpConfig,
+	workspaceId: string,
+	target: WebAppTarget,
+): Record<string, unknown> {
+	// Hoist title/name to the front so they appear before id/url in JSON output.
+	const { title, name, ...rest } = entity
+	const ordered: Record<string, unknown> = {}
+	if (title !== undefined) ordered.title = title
+	if (name !== undefined) ordered.name = name
+	Object.assign(ordered, rest)
+	if (config.webAppBaseUrl) {
+		ordered.url = buildWebAppHref(stripTrailingSlash(config.webAppBaseUrl), workspaceId, target)
+	}
+	return ordered
+}
+
+/**
+ * Build the `content` text for a list/search tool response. When response
+ * scoping is on, returns a lean markdown summary bounded by the summary
+ * byte budget (AC-T2); when off, returns `JSON.stringify(fullPayload, null, 2)`
+ * so the flag-off response is byte-identical to the pre-scoping shape
+ * (AC-T4 partial). `structuredContent` (built by the caller) is never touched
+ * either way — the full enriched payload always survives on the structured
+ * channel.
+ */
+function buildListContentText(
+	fullPayload: unknown,
+	rows: SummaryRow[],
+	emptyLabel: string,
+): string {
+	if (isResponseScopingEnabled()) {
+		return buildContentSummary(rows, { emptyLabel })
+	}
+	return JSON.stringify(fullPayload, null, 2)
+}
+
+/** Default page size when response scoping is on and the caller did not
+ *  pass an explicit limit. Kept in sync with `HERO_CARD_UI_PAGE_SIZE` — the
+ *  UI has been paging at 25 for months, so an agent that opts into the flag
+ *  gets responses shaped like what a human sees in the widget. */
+const DEFAULT_SCOPED_PAGE_SIZE = 25
+
+/** Hard cap the `/api/objects` list + search endpoints enforce on `limit`
+ *  (`objectQuerySchema` / `searchObjectsSchema` in `@maskin/shared`). The
+ *  cursor `+ 1` sentinel below must stay strictly under this ceiling, so
+ *  the effective scoped page size is capped at `MAX - 1`. */
+const LIST_ENDPOINT_MAX_LIMIT = 100
+
+/**
+ * Resolve the effective page size + cursor state for a list/search MCP
+ * tool call. When response scoping is on and the caller passes neither
+ * `limit` nor `cursor`, we cap the page at `DEFAULT_SCOPED_PAGE_SIZE`
+ * (AC-U1). When a cursor is present, its snapshot + last-seen keyset are
+ * threaded through to the API on every subsequent hop so an insert in
+ * the underlying table mid-walk cannot leak into the stream (AC-T3).
+ *
+ * `fallbackLimit` is the pre-scoping default — the value the tool used
+ * before the flag existed. Preserving it keeps the flag-off path
+ * byte-identical.
+ */
+interface ResolvedPagination {
+	/** Row cap forwarded to the API. */
+	limit: number
+	/** Decoded cursor when the caller passed one in; otherwise `null`. */
+	cursor: CursorState | null
+	/** Snapshot upper bound for the walk. On the first call this is the
+	 *  server's current time; on subsequent calls it is the value carried
+	 *  by the cursor so every hop shares one freeze. */
+	snapshotAt: string
+	/** Sort order the walk is opened in. Locked for the whole cursor
+	 *  chain so the keyset predicate stays consistent. */
+	order: 'asc' | 'desc'
+}
+
+function resolveListPagination(
+	args: {
+		limit?: number
+		cursor?: string
+	},
+	fallbackLimit: number,
+): ResolvedPagination {
+	const scoped = isResponseScopingEnabled()
+	const cursor = scoped ? decodeCursor(args.cursor) : null
+	const requested =
+		typeof args.limit === 'number' && Number.isFinite(args.limit) && args.limit > 0
+			? args.limit
+			: scoped
+				? DEFAULT_SCOPED_PAGE_SIZE
+				: fallbackLimit
+	// Under scoping we fetch `requested + 1` to detect "has more"; the API's
+	// list endpoints reject any `limit > LIST_ENDPOINT_MAX_LIMIT`, so cap the
+	// effective page at `MAX - 1` to keep the sentinel within bounds. Flag-off
+	// pays no such price — the URL sends exactly what the caller asked for.
+	const limit = scoped ? Math.min(requested, LIST_ENDPOINT_MAX_LIMIT - 1) : requested
+	const snapshotAt = cursor?.s ?? toSnapshotAt(new Date())
+	const order = cursor?.o ?? 'desc'
+	return { limit, cursor, snapshotAt, order }
+}
+
+/**
+ * Encode the next-cursor for a list tool response. Returns `null` when
+ * response scoping is off (the flag-off path must stay byte-identical) or
+ * when the caller already reached the end of the walk — `rows.length <
+ * limit + 1` means the API had nothing more to hand back.
+ *
+ * Reuses `snapshotAt` and `order` from `pagination`, so every hop of the
+ * same walk agrees on the freeze even if the underlying `objects` table
+ * accepts inserts between calls.
+ */
+function encodeNextCursor(
+	pagination: ResolvedPagination,
+	rows: Array<{ id: string; createdAt?: string | null }>,
+): { nextCursor: string | null; trimmed: Array<{ id: string; createdAt?: string | null }> } {
+	if (!isResponseScopingEnabled()) return { nextCursor: null, trimmed: rows }
+	if (rows.length <= pagination.limit) return { nextCursor: null, trimmed: rows }
+	const trimmed = rows.slice(0, pagination.limit)
+	const last = trimmed[trimmed.length - 1]
+	if (!last || !last.createdAt) return { nextCursor: null, trimmed }
+	const nextCursor = encodeCursor({
+		s: pagination.snapshotAt,
+		o: pagination.order,
+		k: { sortValue: last.createdAt, id: last.id },
+	})
+	return { nextCursor, trimmed }
+}
+
+/** Read `.url` off an enriched row without paying the TS cost each time. */
+function pickUrl(row: unknown): string | undefined {
+	if (!row || typeof row !== 'object') return undefined
+	const u = (row as { url?: unknown }).url
+	return typeof u === 'string' ? u : undefined
+}
+
 function authSetupHint(config: McpConfig): string {
 	return config.transport === 'http'
 		? 'Set an `Authorization: Bearer <YOUR_MASKIN_API_KEY>` header on the MCP request (see https://sindre.ai/docs/get-started/).'
@@ -123,6 +264,36 @@ type ApiCallOptions = {
 	idempotencyKey?: string
 }
 
+const MUTATING_METHODS = new Set(['POST', 'PATCH', 'DELETE', 'PUT'])
+
+/**
+ * Derive a deterministic Idempotency-Key from the host session id + the call
+ * shape. When the MCP server runs inside an agent container, `SESSION_ID` is
+ * injected by the host session-manager. A snapshotted session restored later
+ * replays the same tool calls; deriving the key from `(sessionId, method, path,
+ * sha256(body))` means the API ledger short-circuits the duplicate without
+ * the agent having to thread a tool_use_id through.
+ *
+ * Returns `undefined` outside an agent session (no SESSION_ID) so a developer
+ * running the MCP server locally does not accidentally dedup their own retries
+ * across processes.
+ */
+export function deriveIdempotencyKey(
+	method: string,
+	path: string,
+	body: unknown,
+): string | undefined {
+	const sessionId = process.env.SESSION_ID
+	if (!sessionId) return undefined
+	if (!MUTATING_METHODS.has(method)) return undefined
+	const payload = body === undefined ? '' : JSON.stringify(body)
+	const hash = createHash('sha256')
+		.update(`${method}:${path}:${payload}`)
+		.digest('hex')
+		.slice(0, 32)
+	return `mcp:${sessionId}:${hash}`
+}
+
 async function apiFetch(
 	config: McpConfig,
 	method: string,
@@ -148,8 +319,9 @@ async function apiFetch(
 	if (effectiveWorkspaceId) {
 		headers['X-Workspace-Id'] = effectiveWorkspaceId
 	}
-	if (options?.idempotencyKey) {
-		headers['Idempotency-Key'] = options.idempotencyKey
+	const idempotencyKey = options?.idempotencyKey ?? deriveIdempotencyKey(method, path, body)
+	if (idempotencyKey) {
+		headers['Idempotency-Key'] = idempotencyKey
 	}
 
 	const response = await fetch(url, {
@@ -322,59 +494,6 @@ function buildEnableModuleSettings(
 	}
 
 	return updatedSettings
-}
-
-/**
- * Merge default settings from all enabled modules into the given settings.
- * Existing keys win — module defaults only fill in types not already specified.
- * Used when applying a template so that module-provided types (e.g. CRM contact/company)
- * pick up their statuses/display_names/field_definitions without inline duplication.
- */
-export function mergeEnabledModuleDefaults(
-	settings: Record<string, unknown>,
-): Record<string, unknown> {
-	const enabledModules = Array.isArray(settings.enabled_modules)
-		? (settings.enabled_modules as string[])
-		: ['work']
-
-	const displayNames = { ...((settings.display_names ?? {}) as Record<string, string>) }
-	const statuses = { ...((settings.statuses ?? {}) as Record<string, string[]>) }
-	const fieldDefs = { ...((settings.field_definitions ?? {}) as Record<string, unknown[]>) }
-	const relTypes = new Set<string>(
-		Array.isArray(settings.relationship_types) ? (settings.relationship_types as string[]) : [],
-	)
-
-	for (const moduleId of enabledModules) {
-		const defaults = getModuleDefaultSettings(moduleId)
-		if (!defaults) continue
-
-		if (defaults.display_names) {
-			for (const [type, name] of Object.entries(defaults.display_names)) {
-				if (!(type in displayNames)) displayNames[type] = name
-			}
-		}
-		if (defaults.statuses) {
-			for (const [type, sts] of Object.entries(defaults.statuses)) {
-				if (!(type in statuses)) statuses[type] = sts
-			}
-		}
-		if (defaults.field_definitions) {
-			for (const [type, fields] of Object.entries(defaults.field_definitions)) {
-				if (!(type in fieldDefs)) fieldDefs[type] = fields
-			}
-		}
-		if (defaults.relationship_types) {
-			for (const rt of defaults.relationship_types) relTypes.add(rt)
-		}
-	}
-
-	return {
-		...settings,
-		display_names: displayNames,
-		statuses: statuses,
-		field_definitions: fieldDefs,
-		relationship_types: [...relTypes],
-	}
 }
 
 /** Compute the set of relationship types still referenced by remaining extensions. */
@@ -782,6 +901,7 @@ function extractObjectType(toolName: string, args: unknown): string | undefined 
 export interface HeroCardActor {
 	id: string
 	name: string | null
+	type: string | null
 }
 
 export interface HeroCardObject {
@@ -789,9 +909,18 @@ export interface HeroCardObject {
 	type: string
 	title: string | null
 	status: string | null
-	owner: HeroCardActor | null
+	driver: HeroCardActor | null
 	contextLine: string
 	badges?: string[]
+	// Full detail fields — populated by get_actor, ignored by list display
+	description?: string | null
+	systemPrompt?: string | null
+	tools?: Record<string, unknown> | null
+	llmProvider?: string | null
+	llmConfig?: Record<string, unknown> | null
+	// Full detail fields — populated by list_triggers
+	actionPrompt?: string | null
+	config?: Record<string, unknown> | null
 }
 
 export type HeroCardKind = 'single' | 'list' | 'empty'
@@ -816,7 +945,7 @@ interface RawObject {
 	type: string
 	title?: string | null
 	status?: string | null
-	owner?: string | null
+	driver?: string | null
 	createdAt?: string | null
 	updatedAt?: string | null
 	metadata?: Record<string, unknown> | null
@@ -912,7 +1041,7 @@ function anchorLabel(meta: Record<string, unknown> | null | undefined): string |
  */
 export function buildContextLine(
 	obj: RawObject,
-	owner: HeroCardActor | null,
+	driver: HeroCardActor | null,
 	nowMs = Date.now(),
 	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): string {
@@ -924,7 +1053,7 @@ export function buildContextLine(
 		return age ? `last touch ${age} · ${status}` : status
 	}
 	const age = ageLabel(obj.createdAt, nowMs)
-	const ownerName = owner?.name
+	const driverName = driver?.name
 	switch (obj.type) {
 		case 'bet': {
 			const duration = (obj.metadata?.duration_weeks ?? obj.metadata?.duration) as
@@ -942,7 +1071,7 @@ export function buildContextLine(
 			return durationLabel ? `${status} · ${durationLabel}` : status
 		}
 		case 'task':
-			return ownerName ? `${status} · owner ${ownerName}` : status
+			return driverName ? `${status} · driver ${driverName}` : status
 		case 'insight': {
 			const cluster = obj.metadata?.cluster_size as number | undefined
 			const evidence = obj.metadata?.evidence_quality as string | undefined
@@ -960,7 +1089,7 @@ export function buildContextLine(
 
 export function buildHeroCardObject(
 	obj: RawObject,
-	owner: HeroCardActor | null,
+	driver: HeroCardActor | null,
 	nowMs = Date.now(),
 	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): HeroCardObject {
@@ -969,8 +1098,8 @@ export function buildHeroCardObject(
 		type: obj.type,
 		title: obj.title ?? null,
 		status: obj.status ?? null,
-		owner,
-		contextLine: buildContextLine(obj, owner, nowMs, annotations),
+		driver,
+		contextLine: buildContextLine(obj, driver, nowMs, annotations),
 	}
 }
 
@@ -1010,6 +1139,11 @@ interface RawActor {
 	email?: string | null
 	role?: string | null
 	isSystem?: boolean | null
+	description?: string | null
+	system_prompt?: string | null
+	tools?: Record<string, unknown> | null
+	llm_provider?: string | null
+	llm_config?: Record<string, unknown> | null
 }
 
 interface RawWorkspace {
@@ -1028,16 +1162,24 @@ function buildActorContextLine(actor: RawActor): string {
 	return parts.join(' · ')
 }
 
-function buildActorHeroCardObject(actor: RawActor): HeroCardObject {
+function buildActorHeroCardObject(actor: RawActor, includeDetails = false): HeroCardObject {
 	const status = actor.isSystem ? 'system' : (actor.role ?? actor.type ?? null)
-	return {
+	const obj: HeroCardObject = {
 		id: actor.id,
 		type: 'actor',
 		title: actor.name ?? null,
 		status,
-		owner: null,
+		driver: null,
 		contextLine: buildActorContextLine(actor),
 	}
+	if (includeDetails) {
+		obj.description = actor.description ?? null
+		obj.systemPrompt = actor.system_prompt ?? null
+		obj.tools = actor.tools ?? null
+		obj.llmProvider = actor.llm_provider ?? null
+		obj.llmConfig = actor.llm_config ?? null
+	}
+	return obj
 }
 
 function buildWorkspaceContextLine(workspace: RawWorkspace): string {
@@ -1053,7 +1195,7 @@ function buildWorkspaceHeroCardObject(workspace: RawWorkspace): HeroCardObject {
 		type: 'workspace',
 		title: workspace.name ?? null,
 		status: workspace.role ?? 'active',
-		owner: null,
+		driver: null,
 		contextLine: buildWorkspaceContextLine(workspace),
 	}
 }
@@ -1072,10 +1214,10 @@ async function buildCollectionHeroCard(
 	offset = 0,
 ): Promise<HeroCardPayload> {
 	if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty', tool }
-	const ownerIds = rows.map((o) => o.owner).filter((v): v is string => typeof v === 'string')
-	const actors = await resolveActors(config, ownerIds, workspaceId)
+	const driverIds = rows.map((o) => o.driver).filter((v): v is string => typeof v === 'string')
+	const actors = await resolveActors(config, driverIds, workspaceId)
 	const heroObjects = rows.map((o) =>
-		buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null),
+		buildHeroCardObject(o, o.driver ? (actors.get(o.driver) ?? null) : null),
 	)
 	if (heroObjects.length === 1) return { kind: 'single', tool, object: heroObjects[0] }
 	const uiObjects = heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE)
@@ -1102,6 +1244,7 @@ interface RawTrigger {
 	target_actor_id?: string | null
 	createdAt?: string | null
 	updatedAt?: string | null
+	actionPrompt?: string | null
 }
 
 function formatRelativeFuture(targetMs: number, nowMs: number): string {
@@ -1168,7 +1311,7 @@ function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): strin
 
 function buildTriggerHeroCardObject(
 	trigger: RawTrigger,
-	owner: HeroCardActor | null,
+	driver: HeroCardActor | null,
 	nowMs = Date.now(),
 ): HeroCardObject {
 	return {
@@ -1176,15 +1319,17 @@ function buildTriggerHeroCardObject(
 		type: 'trigger',
 		title: trigger.name ?? null,
 		status: trigger.enabled ? 'enabled' : 'disabled',
-		owner,
+		driver,
 		contextLine: buildTriggerContextLine(trigger, nowMs),
+		actionPrompt: trigger.actionPrompt ?? null,
+		config: trigger.config,
 	}
 }
 
 /**
- * Resolve actor names for a set of actor IDs in one shot. Used to fill owner
- * names into HeroCardObject. Best-effort: missing actors come back as
- * `{ id, name: null }` so the widget renders without owner instead of failing.
+ * Resolve actor names and types for a set of actor IDs in one shot. Used to
+ * fill driver info into HeroCardObject. Best-effort: missing actors come back
+ * as `{ id, name: null, type: null }` so the widget renders without driver instead of failing.
  */
 // Hero-card responses typically resolve a single tool call's owner set (≤50
 // objects). Cap defensively at 200 to match the server-side `?ids=` limit and
@@ -1204,8 +1349,8 @@ async function resolveActors(
 		const query = `?ids=${queryIds.map(encodeURIComponent).join(',')}`
 		const result = (await apiCall(config, 'GET', `/api/actors${query}`, undefined, {
 			workspaceId,
-		})) as Array<{ id: string; name: string | null }>
-		for (const a of result) out.set(a.id, { id: a.id, name: a.name ?? null })
+		})) as Array<{ id: string; name: string | null; type?: string | null }>
+		for (const a of result) out.set(a.id, { id: a.id, name: a.name ?? null, type: a.type ?? null })
 		console.log(
 			`[MCP] Resolved ${out.size}/${queryIds.length} hero-card actor names (requested ${uniq.length})`,
 		)
@@ -1213,7 +1358,7 @@ async function resolveActors(
 		console.error('[MCP] Failed to resolve actors for hero-card:', err)
 	}
 	for (const id of uniq) {
-		if (!out.has(id)) out.set(id, { id, name: null })
+		if (!out.has(id)) out.set(id, { id, name: null, type: null })
 	}
 	return out
 }
@@ -1285,7 +1430,32 @@ export function createMcpServer(config: McpConfig) {
 				workspace_id: extractWorkspaceId(args),
 			})
 
-			if (mutationKind && isSuccessfulMutationResponse(response)) {
+			// Token-cap guardrail (T4). Enforces `MAX_RESPONSE_TOKENS` before the
+			// telemetry event measures the shipped payload — the size event and
+			// the wire response see the same, capped shape. Skipped when scoping
+			// is off so AC-T4 flag-off byte parity holds.
+			const scoped = isResponseScopingEnabled()
+			const capped = scoped ? applyResponseTokenCap(name, response) : { response, truncated: false }
+			const finalResponse = capped.response
+
+			// Response-size baseline for the MCP response-scoping bet's First test.
+			// Measures the two channels MCP serializes onto the wire — `content`
+			// (always present) and `structuredContent` (optional). `truncated`
+			// flips true when the token-cap wrapper dropped rows. Fires uniformly
+			// for every tool because we sit inside the single `registerAppTool`
+			// integration point.
+			const responseShape = finalResponse as
+				| { content?: unknown; structuredContent?: unknown }
+				| undefined
+			recordToolCallResponseSize(telemetrySink, telemetryTarget, {
+				tool_name: name,
+				content: responseShape?.content,
+				structured_content: responseShape?.structuredContent,
+				truncated: capped.truncated,
+				workspace_id: extractWorkspaceId(args),
+			})
+
+			if (mutationKind && isSuccessfulMutationResponse(finalResponse)) {
 				recordMutation(telemetrySink, telemetryTarget, {
 					tool_name: name,
 					mutation_kind: mutationKind,
@@ -1294,7 +1464,7 @@ export function createMcpServer(config: McpConfig) {
 				})
 			}
 
-			return response
+			return finalResponse
 		}
 
 		// biome-ignore lint/suspicious/noExplicitAny: handler signature varies by inputSchema presence; the wrapper is a pure pass-through so we forward as-is.
@@ -1404,9 +1574,20 @@ export function createMcpServer(config: McpConfig) {
 				await Promise.all(tasks)
 			}
 
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			const enrichedNodes =
+				wsId && Array.isArray(graphResult.nodes)
+					? graphResult.nodes.map((node) =>
+							addUrl(node as Record<string, unknown>, config, wsId, {
+								kind: 'object',
+								id: node.id,
+							}),
+						)
+					: graphResult.nodes
+			const enrichedResult = { ...graphResult, nodes: enrichedNodes }
 			const responseBody = fileAttachments.length
-				? { ...graphResult, file_attachments: fileAttachments }
-				: graphResult
+				? { ...enrichedResult, file_attachments: fileAttachments }
+				: enrichedResult
 
 			return {
 				_meta: meta('create_objects', config, (args as { workspace_id?: string }).workspace_id),
@@ -1424,7 +1605,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id } = args
+			const { workspace_id, include } = args
+			const includeSet = new Set(include ?? [])
 			const results = await Promise.all(
 				args.ids.map(async (id) => {
 					try {
@@ -1446,13 +1628,14 @@ export function createMcpServer(config: McpConfig) {
 					r.success === true && (r.result as { object?: unknown } | null)?.object != null,
 			)
 			const rawObjects = successful.map((r) => r.result.object)
-			const ownerIds = rawObjects
-				.map((o) => o.owner)
+			const driverIds = rawObjects
+				.map((o) => o.driver)
 				.filter((v): v is string => typeof v === 'string')
-			const actors = await resolveActors(config, ownerIds, workspace_id)
+			const actors = await resolveActors(config, driverIds, workspace_id)
 			const heroObjects = rawObjects.map((o) =>
-				buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null),
+				buildHeroCardObject(o, o.driver ? (actors.get(o.driver) ?? null) : null),
 			)
+			const contextLineById = new Map(heroObjects.map((h) => [h.id, h.contextLine]))
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
 					? { kind: 'empty', tool: 'get_objects' }
@@ -1470,13 +1653,75 @@ export function createMcpServer(config: McpConfig) {
 								},
 							}
 
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			// Default projection: strip every graph field except the core seven
+			// (`id, type, title, status, contextLine, url, workspaceId`) so the LLM's
+			// context isn't paid to carry relationships/connected_objects/events/files/
+			// content/metadata the caller didn't ask for. `workspaceId` stays in the
+			// core set (unlike the other fields) because it's a small id, not bulky
+			// content, and callers/widgets need it to route follow-up requests.
+			// `include:` opt-in expansions are wired in T4.
+			const projectedResults = results.map((r) => {
+				if (!r.success) return r
+				const graph = r.result as Record<string, unknown> | null | undefined
+				const rawObj = graph?.object as Record<string, unknown> | undefined
+				if (!rawObj) return r
+				const withUrl = wsId
+					? addUrl(rawObj, config, wsId, { kind: 'object', id: rawObj.id as string })
+					: rawObj
+				const projectedObject: Record<string, unknown> = {
+					id: withUrl.id,
+					type: withUrl.type,
+					title: withUrl.title ?? null,
+					status: withUrl.status ?? null,
+					contextLine: contextLineById.get(withUrl.id as string) ?? '',
+					workspaceId: withUrl.workspaceId,
+				}
+				if (typeof withUrl.url === 'string') projectedObject.url = withUrl.url
+				if (includeSet.has('content') && 'content' in withUrl) {
+					projectedObject.content = withUrl.content
+				}
+				if (includeSet.has('metadata') && 'metadata' in withUrl) {
+					projectedObject.metadata = withUrl.metadata
+				}
+				const extras: Record<string, unknown> = {}
+				if (includeSet.has('relationships') && graph && 'relationships' in graph) {
+					extras.relationships = graph.relationships
+				}
+				if (includeSet.has('connected_objects') && graph && 'connected_objects' in graph) {
+					extras.connected_objects = graph.connected_objects
+				}
+				if (includeSet.has('events') && graph && 'events' in graph) {
+					extras.events = graph.events
+				}
+				if (includeSet.has('files') && graph && 'files' in graph) {
+					extras.files = graph.files
+				}
+				return { ...r, result: { object: projectedObject, ...extras } }
+			})
+
+			// Object body lives at `structuredContent.objects[]` only (ADR-0001).
+			// `results[]` is a per-id success/error envelope so the same body isn't
+			// duplicated across `results[].result.object` and `objects[].object`.
+			const slimResults = projectedResults.map((r) =>
+				r.success
+					? { id: r.id, success: true as const }
+					: { id: r.id, success: false as const, error: r.error },
+			)
+			const canonicalObjects = projectedResults
+				.filter(
+					(r): r is { id: string; success: true; result: { object: Record<string, unknown> } } =>
+						r.success === true && (r.result as { object?: unknown } | null)?.object != null,
+				)
+				.map((r) => r.result)
+
 			return {
 				_meta: uiMeta('get_objects', config, workspace_id, pickResourceUri(heroCard)),
-				content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(projectedResults, null, 2) }],
 				structuredContent: {
 					heroCard,
-					results,
-					objects: successful.map((r) => r.result),
+					results: slimResults,
+					objects: canonicalObjects,
 				},
 			}
 		},
@@ -1525,7 +1770,18 @@ export function createMcpServer(config: McpConfig) {
 							try {
 								const result = await apiCall(config, 'PATCH', `/api/objects/${id}`, body, wsOpts)
 								objectType = (result as { type?: unknown })?.type as string | undefined
-								out.push({ type: 'object', id, success: true, result })
+								const urlWsId = wsOpts.workspaceId ?? config.defaultWorkspaceId
+								out.push({
+									type: 'object',
+									id,
+									success: true,
+									result: urlWsId
+										? addUrl(result as Record<string, unknown>, config, urlWsId, {
+												kind: 'object',
+												id,
+											})
+										: result,
+								})
 							} catch (error) {
 								out.push({ type: 'object', id, success: false, error: String(error) })
 							}
@@ -1752,14 +2008,53 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
+			// The snapshot-consistent cursor walk is only valid when the API
+			// orders by `createdAt` — the column the keyset seek in
+			// `buildCursorConditions` is always expressed in. A `sort` override
+			// asks for `updatedAt` ordering instead, so pairing it with a cursor
+			// would seek on a column unrelated to the ORDER BY and silently skip
+			// or duplicate rows. Fall back to plain offset pagination for that
+			// combination — the same behavior this tool had before cursors
+			// existed — rather than accept a cursor or hand back a `next_cursor`
+			// that can't be honoured consistently.
+			const sortedByCreatedAt = !args.sort
+			const pagination = resolveListPagination(
+				{ limit: args.limit, cursor: sortedByCreatedAt ? args.cursor : undefined },
+				50,
+			)
 			const params = new URLSearchParams()
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
-			if (args.limit) params.set('limit', String(args.limit))
+			if (args.driver) params.set('driver', args.driver)
+			if (args.updated_before) params.set('updated_before', args.updated_before)
+			if (args.updated_after) params.set('updated_after', args.updated_after)
+			if (args.sort) {
+				params.set('sort', 'updatedAt')
+				params.set('order', args.sort === 'updated_at_asc' ? 'asc' : 'desc')
+			}
+			const fetchCap =
+				sortedByCreatedAt && isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			params.set('limit', String(fetchCap))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
+			for (const [field, value] of Object.entries(args.metadata_eq ?? {})) {
+				if (typeof value === 'string' && value.length > 0) params.set(`metadata.${field}`, value)
+			}
+			if (sortedByCreatedAt && isResponseScopingEnabled()) {
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				params.set('sort', 'createdAt')
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			}
+			const raw = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as RawObject[]
+			const { nextCursor, trimmed } = sortedByCreatedAt
+				? encodeNextCursor(pagination, raw)
+				: { nextCursor: null, trimmed: raw }
+			const result = trimmed as RawObject[]
 			const offset = typeof args.offset === 'number' ? args.offset : 0
 			const heroCard = await buildCollectionHeroCard(
 				config,
@@ -1769,6 +2064,20 @@ export function createMcpServer(config: McpConfig) {
 				result.length,
 				offset,
 			)
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const enriched = wsId
+				? result.map((obj) =>
+						addUrl(obj as unknown as Record<string, unknown>, config, wsId, {
+							kind: 'object',
+							id: obj.id,
+						}),
+					)
+				: result
+			const summaryRows: SummaryRow[] = result.map((obj, idx) => ({
+				title: obj.title ?? `Untitled ${obj.type}`,
+				url: pickUrl(enriched[idx]),
+				meta: `${obj.type}${obj.status ? ` · ${obj.status}` : ''}`,
+			}))
 			return {
 				_meta: uiMeta(
 					'list_objects',
@@ -1776,11 +2085,22 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(enriched, summaryRows, 'No objects.'),
+					},
+				],
 				structuredContent: {
 					heroCard,
-					objects: result,
-					page: { limit: result.length, offset, returned: result.length },
+					objects: enriched,
+					page: {
+						limit: result.length,
+						offset,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
 			}
 		},
@@ -1795,15 +2115,33 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
+			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 20)
 			const params = new URLSearchParams()
 			params.set('q', args.q)
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
-			if (args.limit) params.set('limit', String(args.limit))
+			if (args.driver_id) params.set('driver', args.driver_id)
+			if (args.updated_after) params.set('updated_after', args.updated_after)
+			const fetchCap = isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			params.set('limit', String(fetchCap))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
+			for (const [field, value] of Object.entries(args.metadata_eq ?? {})) {
+				if (typeof value === 'string' && value.length > 0) params.set(`metadata.${field}`, value)
+			}
+			if (isResponseScopingEnabled()) {
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				params.set('sort', 'createdAt')
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			}
+			const raw = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as RawObject[]
+			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
+			const result = trimmed as RawObject[]
 			const offset = typeof args.offset === 'number' ? args.offset : 0
 			const heroCard = await buildCollectionHeroCard(
 				config,
@@ -1813,6 +2151,20 @@ export function createMcpServer(config: McpConfig) {
 				result.length,
 				offset,
 			)
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const enriched = wsId
+				? result.map((obj) =>
+						addUrl(obj as unknown as Record<string, unknown>, config, wsId, {
+							kind: 'object',
+							id: obj.id,
+						}),
+					)
+				: result
+			const summaryRows: SummaryRow[] = result.map((obj, idx) => ({
+				title: obj.title ?? `Untitled ${obj.type}`,
+				url: pickUrl(enriched[idx]),
+				meta: `${obj.type}${obj.status ? ` · ${obj.status}` : ''}`,
+			}))
 			return {
 				_meta: uiMeta(
 					'search_objects',
@@ -1820,11 +2172,22 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(enriched, summaryRows, 'No matches.'),
+					},
+				],
 				structuredContent: {
 					heroCard,
-					objects: result,
-					page: { limit: result.length, offset, returned: result.length },
+					objects: enriched,
+					page: {
+						limit: result.length,
+						offset,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
 			}
 		},
@@ -1840,17 +2203,68 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.relationships, csp: CSP } },
 		},
 		async (args) => {
+			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 50)
 			const params = new URLSearchParams()
 			if (args.object_id) params.set('object_id', args.object_id)
 			if (args.source_id) params.set('source_id', args.source_id)
 			if (args.target_id) params.set('target_id', args.target_id)
 			if (args.type) params.set('type', args.type)
-			const result = await apiCall(config, 'GET', `/api/relationships?${params}`, undefined, {
+			const fetchCap = isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			params.set('limit', String(fetchCap))
+			if (typeof args.offset === 'number') params.set('offset', String(args.offset))
+			if (isResponseScopingEnabled()) {
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			}
+			const raw = (await apiCall(config, 'GET', `/api/relationships?${params}`, undefined, {
 				workspaceId: args.workspace_id,
+			})) as Array<{
+				id: string
+				sourceId: string
+				targetId: string
+				type: string
+				createdAt?: string | null
+				sourceTitle?: string | null
+				targetTitle?: string | null
+			}>
+			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
+			const result = trimmed as typeof raw
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : undefined
+			const summaryRows: SummaryRow[] = result.map((r) => {
+				const sourceLabel = r.sourceTitle && r.sourceTitle.length > 0 ? r.sourceTitle : r.sourceId
+				const targetLabel = r.targetTitle && r.targetTitle.length > 0 ? r.targetTitle : r.targetId
+				return {
+					title: `${sourceLabel} → ${targetLabel}`,
+					url:
+						baseUrl && wsId
+							? buildWebAppHref(baseUrl, wsId, { kind: 'relationship', sourceId: r.sourceId })
+							: undefined,
+					meta: r.type,
+				}
 			})
 			return {
 				_meta: meta('list_relationships', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No relationships.'),
+					},
+				],
+				structuredContent: {
+					relationships: result,
+					page: {
+						limit: result.length,
+						offset: typeof args.offset === 'number' ? args.offset : 0,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -1909,9 +2323,17 @@ export function createMcpServer(config: McpConfig) {
 				}
 			}
 
+			const wsId = targetWorkspace ?? config.defaultWorkspaceId
+			const withUrl =
+				wsId && result.id
+					? addUrl(result as unknown as Record<string, unknown>, config, wsId, {
+							kind: 'actor',
+							id: result.id,
+						})
+					: result
 			return {
 				_meta: meta('create_actor', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
 			}
 		},
 	)
@@ -1925,9 +2347,36 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const limit = args.limit ?? 50
-			const offset = args.offset ?? 0
-			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+			// The snapshot-consistent cursor walk is only implemented by the
+			// workspace-scoped branch of `/api/actors` — the cross-workspace
+			// branch (no `workspace_id`) runs a two-phase distinct-actor query
+			// ordered by `(name, id)` that doesn't honour `snapshot_at`/
+			// `cursor_created_at`/`cursor_id` at all. Sending a cursor there
+			// would be silently ignored server-side, so a follow-up call using
+			// the returned `next_cursor` (with no `offset` to fall back on)
+			// would re-fetch the identical first page forever. Fall back to
+			// plain offset pagination — matching this tool's pre-cursor
+			// behavior — whenever `workspace_id` is omitted.
+			const workspaceScoped = Boolean(args.workspace_id)
+			const pagination = resolveListPagination(
+				{ limit: args.limit, cursor: workspaceScoped ? args.cursor : undefined },
+				50,
+			)
+			const offset = typeof args.offset === 'number' ? args.offset : 0
+			// Under scoping we fetch `limit + 1` so the +1 sentinel drives the
+			// next-cursor decision without a second query. The API caps `limit`
+			// at 100 so the sentinel stays safely inside the ceiling.
+			const fetchCap =
+				workspaceScoped && isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			const params = new URLSearchParams({ limit: String(fetchCap), offset: String(offset) })
+			if (workspaceScoped && isResponseScopingEnabled()) {
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			}
 			const { data, response } = await apiCallWithResponse(
 				config,
 				'GET',
@@ -1935,8 +2384,16 @@ export function createMcpServer(config: McpConfig) {
 				undefined,
 				args.workspace_id ? { workspaceId: args.workspace_id } : { skipWorkspace: true },
 			)
-			const rows = Array.isArray(data) ? (data as RawActor[]) : []
-			const heroObjects = rows.map(buildActorHeroCardObject)
+			const rawRows = Array.isArray(data) ? (data as RawActor[]) : []
+			// Trim the sentinel + seed next_cursor from the last-visible row's
+			// (createdAt, id) tuple. Flag-off callers (and the cross-workspace
+			// branch, which never gets a cursor) see the raw response.
+			const { nextCursor, trimmed } = workspaceScoped
+				? encodeNextCursor(pagination, rawRows as Array<{ id: string; createdAt?: string | null }>)
+				: { nextCursor: null, trimmed: rawRows }
+			const rows = trimmed as RawActor[]
+			const trimmedData = Array.isArray(data) ? (data as unknown[]).slice(0, rows.length) : data
+			const heroObjects = rows.map((a) => buildActorHeroCardObject(a))
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
@@ -1955,6 +2412,26 @@ export function createMcpServer(config: McpConfig) {
 										offset + Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE) < totalCount,
 								},
 							}
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const enriched =
+				wsId && Array.isArray(trimmedData)
+					? (trimmedData as Array<Record<string, unknown>>).map((a) =>
+							addUrl(a, config, wsId, { kind: 'actor', id: a.id as string }),
+						)
+					: trimmedData
+			const enrichedRows: Array<Record<string, unknown>> = Array.isArray(enriched)
+				? (enriched as Array<Record<string, unknown>>)
+				: []
+			const summaryRows: SummaryRow[] = rows.map((actor, idx) => {
+				const kind = actor.type ?? 'actor'
+				const metaParts = [kind]
+				if (actor.role) metaParts.push(actor.role)
+				return {
+					title: actor.name ?? `${kind} ${actor.id.slice(0, 8)}`,
+					url: pickUrl(enrichedRows[idx]),
+					meta: metaParts.join(' · '),
+				}
+			})
 			return {
 				_meta: uiMeta(
 					'list_actors',
@@ -1962,8 +2439,26 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
-				structuredContent: { heroCard },
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(enriched, summaryRows, 'No actors.'),
+					},
+				],
+				structuredContent: {
+					heroCard,
+					...(nextCursor
+						? {
+								next_cursor: nextCursor,
+								page: {
+									limit: rows.length,
+									offset,
+									returned: rows.length,
+									next_cursor: nextCursor,
+								},
+							}
+						: {}),
+				},
 			}
 		},
 	)
@@ -1983,12 +2478,19 @@ export function createMcpServer(config: McpConfig) {
 			const heroCard: HeroCardPayload = {
 				kind: 'single',
 				tool: 'get_actor',
-				object: buildActorHeroCardObject(result),
+				object: buildActorHeroCardObject(result, true),
 			}
 			const workspaceId = (args as { workspace_id?: string }).workspace_id
+			const wsId = workspaceId ?? config.defaultWorkspaceId
+			const withUrl = wsId
+				? addUrl(result as unknown as Record<string, unknown>, config, wsId, {
+						kind: 'actor',
+						id: result.id,
+					})
+				: result
 			return {
 				_meta: uiMeta('get_actor', config, workspaceId, UI_RESOURCES.heroCard),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
 				structuredContent: { heroCard },
 			}
 		},
@@ -2003,13 +2505,93 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const { id, ...body } = args
-			const result = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
+			const { id, attach_skill_ids, detach_skill_ids, ...body } = args
+			const attachIds = attach_skill_ids ?? []
+			const detachIds = detach_skill_ids ?? []
+			const hasSkillOps = attachIds.length > 0 || detachIds.length > 0
+
+			const overlapping = attachIds.filter((sid) => detachIds.includes(sid))
+			if (overlapping.length > 0) {
+				throw new Error(
+					`Skill IDs appear in both attach_skill_ids and detach_skill_ids: ${overlapping.join(', ')}`,
+				)
+			}
+
+			// Run actor PATCH first so a failure here throws before any skill ops fire.
+			const actor = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
 				skipWorkspace: true,
 			})
+
+			if (!hasSkillOps) {
+				const wsId = (args as { workspace_id?: string }).workspace_id ?? config.defaultWorkspaceId
+				const actorId = (actor as { id?: string }).id
+				const withUrl =
+					wsId && actorId
+						? addUrl(actor as Record<string, unknown>, config, wsId, { kind: 'actor', id: actorId })
+						: actor
+				return {
+					_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
+				}
+			}
+
+			// Skill ops run concurrently but with allSettled so a single failure doesn't
+			// discard the results of operations that already succeeded.
+			const skillSettled = await Promise.allSettled([
+				...attachIds.map((skillId) =>
+					apiCall(
+						config,
+						'POST',
+						`/api/actors/${id}/workspace-skills`,
+						{ workspaceSkillId: skillId },
+						{ skipWorkspace: true },
+					),
+				),
+				...detachIds.map((skillId) =>
+					apiCall(config, 'DELETE', `/api/actors/${id}/workspace-skills/${skillId}`, undefined, {
+						skipWorkspace: true,
+					}),
+				),
+			])
+
+			const toErrorEntry = (reason: unknown, skillId: string) => ({
+				skill_id: skillId,
+				error: reason instanceof Error ? reason.message : String(reason),
+			})
+			const toAttachEntry = (s: PromiseSettledResult<unknown>, skillId: string) =>
+				s.status === 'fulfilled' ? s.value : toErrorEntry(s.reason, skillId)
+			const toDetachEntry = (s: PromiseSettledResult<unknown>, skillId: string) =>
+				s.status === 'fulfilled'
+					? { skill_id: skillId, deleted: true }
+					: toErrorEntry(s.reason, skillId)
+
+			const attachCount = attachIds.length
+			const wsId2 = (args as { workspace_id?: string }).workspace_id ?? config.defaultWorkspaceId
+			const actorId = (actor as { id?: string }).id
+			const actorWithUrl =
+				wsId2 && actorId
+					? addUrl(actor as Record<string, unknown>, config, wsId2, { kind: 'actor', id: actorId })
+					: actor
+			const output: Record<string, unknown> = { actor: actorWithUrl }
+			if (attachIds.length) {
+				output.attached_skills = skillSettled
+					.slice(0, attachCount)
+					// biome-ignore lint/style/noNonNullAssertion: slice bounds match attachIds
+					.map((s, i) => toAttachEntry(s, attachIds[i]!))
+			}
+			if (detachIds.length) {
+				output.detached_skills = skillSettled
+					.slice(attachCount)
+					// biome-ignore lint/style/noNonNullAssertion: slice bounds match detachIds
+					.map((s, i) => toDetachEntry(s, detachIds[i]!))
+			}
+			if (skillSettled.some((s) => s.status === 'rejected')) {
+				output.partial_failure = true
+			}
+
 			return {
 				_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }],
 			}
 		},
 	)
@@ -2534,8 +3116,50 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = await apiCall(config, 'GET', `/api/workspaces/${wsId}/skills`, undefined, {
-				workspaceId: wsId,
+			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 50)
+			const scoped = isResponseScopingEnabled()
+			const params = new URLSearchParams()
+			if (scoped) {
+				params.set('limit', String(pagination.limit + 1))
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			} else {
+				if (typeof args.limit === 'number') params.set('limit', String(args.limit))
+				if (typeof args.offset === 'number') params.set('offset', String(args.offset))
+			}
+			const qs = params.toString()
+			const raw = (await apiCall(
+				config,
+				'GET',
+				`/api/workspaces/${wsId}/skills${qs ? `?${qs}` : ''}`,
+				undefined,
+				{ workspaceId: wsId },
+			)) as Array<{
+				id: string
+				name: string
+				description?: string | null
+				isValid?: boolean
+				createdAt?: string | null
+			}>
+			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
+			const result = trimmed as typeof raw
+			const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : undefined
+			const summaryRows: SummaryRow[] = result.map((skill) => {
+				const metaParts: string[] = []
+				if (skill.isValid === false) metaParts.push('invalid')
+				const description = skill.description?.split(/\r?\n/)[0]?.trim()
+				if (description) metaParts.push(makePreview(description, 80))
+				return {
+					title: skill.name,
+					url: baseUrl
+						? buildWebAppHref(baseUrl, wsId, { kind: 'skill', name: skill.name })
+						: undefined,
+					meta: metaParts.length > 0 ? metaParts.join(' · ') : undefined,
+				}
 			})
 			return {
 				_meta: meta(
@@ -2543,7 +3167,22 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No skills.'),
+					},
+				],
+				structuredContent: {
+					skills: result,
+					page: {
+						limit: result.length,
+						offset: typeof args.offset === 'number' ? args.offset : 0,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -2701,17 +3340,64 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
+			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 50)
+			const scoped = isResponseScopingEnabled()
 			const params = new URLSearchParams()
 			if (args.q) params.set('q', args.q)
-			if (args.limit !== undefined) params.set('limit', String(args.limit))
-			if (args.offset !== undefined) params.set('offset', String(args.offset))
+			if (scoped) {
+				params.set('limit', String(pagination.limit + 1))
+				if (args.offset !== undefined) params.set('offset', String(args.offset))
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			} else {
+				if (args.limit !== undefined) params.set('limit', String(args.limit))
+				if (args.offset !== undefined) params.set('offset', String(args.offset))
+			}
 			const qs = params.toString()
-			const result = await apiCall(config, 'GET', `/api/files${qs ? `?${qs}` : ''}`, undefined, {
+			const raw = (await apiCall(config, 'GET', `/api/files${qs ? `?${qs}` : ''}`, undefined, {
 				workspaceId: wsId,
+			})) as Array<{
+				id: string
+				name: string
+				mimeType?: string | null
+				sizeBytes?: number | null
+				createdAt?: string | null
+			}>
+			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
+			const result = trimmed as typeof raw
+			const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : undefined
+			const summaryRows: SummaryRow[] = result.map((file) => {
+				const metaParts: string[] = []
+				if (file.mimeType) metaParts.push(file.mimeType)
+				if (typeof file.sizeBytes === 'number') metaParts.push(`${file.sizeBytes}B`)
+				return {
+					title: file.name,
+					url: baseUrl ? buildWebAppHref(baseUrl, wsId, { kind: 'file', id: file.id }) : undefined,
+					meta: metaParts.length > 0 ? metaParts.join(' · ') : undefined,
+				}
 			})
 			return {
 				_meta: meta('list_files', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No files.'),
+					},
+				],
+				structuredContent: {
+					files: result,
+					page: {
+						limit: result.length,
+						offset: typeof args.offset === 'number' ? args.offset : 0,
+						returned: result.length,
+						...(nextCursor ? { next_cursor: nextCursor } : {}),
+					},
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -2867,9 +3553,21 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'POST', '/api/triggers', body, {
 				workspaceId: workspace_id,
 			})
+			const wsId =
+				(result as { workspaceId?: string }).workspaceId ??
+				workspace_id ??
+				config.defaultWorkspaceId
+			const triggerId = (result as { id?: string }).id
+			const withUrl =
+				wsId && triggerId
+					? addUrl(result as Record<string, unknown>, config, wsId, {
+							kind: 'trigger',
+							id: triggerId,
+						})
+					: result
 			return {
 				_meta: meta('create_trigger', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
 			}
 		},
 	)
@@ -2883,9 +3581,18 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const limit = args.limit ?? 50
-			const offset = args.offset ?? 0
-			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 50)
+			const offset = typeof args.offset === 'number' ? args.offset : 0
+			const fetchCap = isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
+			const params = new URLSearchParams({ limit: String(fetchCap), offset: String(offset) })
+			if (isResponseScopingEnabled()) {
+				params.set('snapshot_at', pagination.snapshotAt)
+				params.set('order', pagination.order)
+				if (pagination.cursor) {
+					params.set('cursor_created_at', pagination.cursor.k.sortValue)
+					params.set('cursor_id', pagination.cursor.k.id)
+				}
+			}
 			const { data, response } = await apiCallWithResponse(
 				config,
 				'GET',
@@ -2893,7 +3600,13 @@ export function createMcpServer(config: McpConfig) {
 				undefined,
 				{ workspaceId: args.workspace_id },
 			)
-			const rows = Array.isArray(data) ? (data as RawTrigger[]) : []
+			const rawRows = Array.isArray(data) ? (data as RawTrigger[]) : []
+			const { nextCursor, trimmed } = encodeNextCursor(
+				pagination,
+				rawRows as Array<{ id: string; createdAt?: string | null }>,
+			)
+			const rows = trimmed as RawTrigger[]
+			const trimmedData = Array.isArray(data) ? (data as unknown[]).slice(0, rows.length) : data
 			const ownerIds = rows
 				.map((t) => t.targetActorId)
 				.filter((v): v is string => typeof v === 'string')
@@ -2922,6 +3635,27 @@ export function createMcpServer(config: McpConfig) {
 										offset + Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE) < totalCount,
 								},
 							}
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const enriched =
+				wsId && Array.isArray(trimmedData)
+					? (trimmedData as Array<Record<string, unknown>>).map((t) =>
+							addUrl(t, config, (t.workspaceId as string | undefined) ?? wsId, {
+								kind: 'trigger',
+								id: t.id as string,
+							}),
+						)
+					: trimmedData
+			const enrichedRows: Array<Record<string, unknown>> = Array.isArray(enriched)
+				? (enriched as Array<Record<string, unknown>>)
+				: []
+			const summaryRows: SummaryRow[] = rows.map((trigger, idx) => {
+				const enabledLabel = trigger.enabled ? 'enabled' : 'disabled'
+				return {
+					title: trigger.name || `Trigger ${trigger.id.slice(0, 8)}`,
+					url: pickUrl(enrichedRows[idx]),
+					meta: `${trigger.type} · ${enabledLabel}`,
+				}
+			})
 			return {
 				_meta: uiMeta(
 					'list_triggers',
@@ -2929,8 +3663,26 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
-				structuredContent: { heroCard },
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(enriched, summaryRows, 'No triggers.'),
+					},
+				],
+				structuredContent: {
+					heroCard,
+					...(nextCursor
+						? {
+								next_cursor: nextCursor,
+								page: {
+									limit: rows.length,
+									offset,
+									returned: rows.length,
+									next_cursor: nextCursor,
+								},
+							}
+						: {}),
+				},
 			}
 		},
 	)
@@ -2948,9 +3700,16 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'PATCH', `/api/triggers/${id}`, body, {
 				workspaceId: workspace_id,
 			})
+			const wsId =
+				(result as { workspaceId?: string }).workspaceId ??
+				workspace_id ??
+				config.defaultWorkspaceId
+			const withUrl = wsId
+				? addUrl(result as Record<string, unknown>, config, wsId, { kind: 'trigger', id })
+				: result
 			return {
 				_meta: meta('update_trigger', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
 			}
 		},
 	)
@@ -3241,14 +4000,18 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'POST', '/api/sessions', body, {
 				workspaceId: workspace_id,
 			})) as SessionRow
-			const enriched = await enrichSessionActorName(
-				config,
-				workspace_id ?? config.defaultWorkspaceId,
-				result,
-			)
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			const enriched = await enrichSessionActorName(config, wsId, result)
+			const withUrl = wsId
+				? addUrl(enriched as Record<string, unknown>, config, wsId, {
+						kind: 'session',
+						id: enriched.id,
+						actorId: (enriched as { actorId?: string }).actorId,
+					})
+				: enriched
 			return {
 				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
 			}
 		},
 	)
@@ -3265,6 +4028,8 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.status) params.set('status', args.status)
 			if (args.actor_id) params.set('actor_id', args.actor_id)
+			if (args.updated_before) params.set('updated_before', args.updated_before)
+			if (args.updated_after) params.set('updated_after', args.updated_after)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
@@ -3275,9 +4040,18 @@ export function createMcpServer(config: McpConfig) {
 				wsId ? fetchActorNameMap(config, wsId) : Promise.resolve({} as Record<string, string>),
 			])
 			const enriched = result.map((s) => attachActorName(s, names))
+			const withUrls = wsId
+				? enriched.map((s) =>
+						addUrl(s as Record<string, unknown>, config, wsId, {
+							kind: 'session',
+							id: s.id,
+							actorId: (s as { actorId?: string }).actorId,
+						}),
+					)
+				: enriched
 			return {
 				_meta: meta('list_sessions', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrls, null, 2) }],
 			}
 		},
 	)
@@ -3301,6 +4075,13 @@ export function createMcpServer(config: McpConfig) {
 				wsOpts,
 			)) as SessionRow
 			const enriched = await enrichSessionActorName(config, wsId, session)
+			const sessionWithUrl = wsId
+				? addUrl(enriched as Record<string, unknown>, config, wsId, {
+						kind: 'session',
+						id: enriched.id,
+						actorId: (enriched as { actorId?: string }).actorId,
+					})
+				: enriched
 
 			if (args.include_logs) {
 				const params = new URLSearchParams()
@@ -3315,14 +4096,17 @@ export function createMcpServer(config: McpConfig) {
 				return {
 					_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
 					content: [
-						{ type: 'text' as const, text: JSON.stringify({ session: enriched, logs }, null, 2) },
+						{
+							type: 'text' as const,
+							text: JSON.stringify({ session: sessionWithUrl, logs }, null, 2),
+						},
 					],
 				}
 			}
 
 			return {
 				_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(sessionWithUrl, null, 2) }],
 			}
 		},
 	)
@@ -3339,14 +4123,18 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as SessionRow
-			const enriched = await enrichSessionActorName(
-				config,
-				args.workspace_id ?? config.defaultWorkspaceId,
-				result,
-			)
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const enriched = await enrichSessionActorName(config, wsId, result)
+			const withUrl = wsId
+				? addUrl(enriched as Record<string, unknown>, config, wsId, {
+						kind: 'session',
+						id: enriched.id,
+						actorId: (enriched as { actorId?: string }).actorId,
+					})
+				: enriched
 			return {
 				_meta: meta('stop_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
 			}
 		},
 	)
@@ -3363,14 +4151,18 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/pause`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as SessionRow
-			const enriched = await enrichSessionActorName(
-				config,
-				args.workspace_id ?? config.defaultWorkspaceId,
-				result,
-			)
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const enriched = await enrichSessionActorName(config, wsId, result)
+			const withUrl = wsId
+				? addUrl(enriched as Record<string, unknown>, config, wsId, {
+						kind: 'session',
+						id: enriched.id,
+						actorId: (enriched as { actorId?: string }).actorId,
+					})
+				: enriched
 			return {
 				_meta: meta('pause_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
 			}
 		},
 	)
@@ -3387,14 +4179,18 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as SessionRow
-			const enriched = await enrichSessionActorName(
-				config,
-				args.workspace_id ?? config.defaultWorkspaceId,
-				result,
-			)
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const enriched = await enrichSessionActorName(config, wsId, result)
+			const withUrl = wsId
+				? addUrl(enriched as Record<string, unknown>, config, wsId, {
+						kind: 'session',
+						id: enriched.id,
+						actorId: (enriched as { actorId?: string }).actorId,
+					})
+				: enriched
 			return {
 				_meta: meta('resume_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
 			}
 		},
 	)
@@ -3454,10 +4250,22 @@ export function createMcpServer(config: McpConfig) {
 				wsOpts,
 			)
 
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			const currentWithUrl = wsId
+				? addUrl(current as Record<string, unknown>, config, wsId, {
+						kind: 'session',
+						id: (current as { id?: string }).id ?? sessionId,
+						actorId: (current as { actorId?: string }).actorId,
+					})
+				: current
+
 			return {
 				_meta: meta('run_agent', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
-					{ type: 'text' as const, text: JSON.stringify({ session: current, logs }, null, 2) },
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ session: currentWithUrl, logs }, null, 2),
+					},
 				],
 			}
 		},
@@ -4327,7 +5135,7 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Bet success metrics (read-only) ─────────────────────
-	// Sindre-callable surface for the MCP widget UX bet's success/kill metrics.
+	// Agent-callable surface for the MCP widget UX bet's success/kill metrics.
 	// Wraps GET /api/telemetry/mcp/summary and returns only the bet-first widget
 	// window — kept narrow so agents pull evidence without reading unrelated
 	// rich-render / mutation aggregates they have no context for.
@@ -4382,11 +5190,11 @@ export function createMcpServer(config: McpConfig) {
 			})
 
 			// Resolve workspace
-			let workspace: { id: string; name: string; settings: Record<string, unknown> } | undefined
+			let workspace: { id: string; name: string } | undefined
 			try {
 				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 					skipWorkspace: true,
-				})) as Array<{ id: string; name: string; settings: Record<string, unknown> }>
+				})) as Array<{ id: string; name: string }>
 				const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
 				workspace =
 					(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
@@ -4394,7 +5202,7 @@ export function createMcpServer(config: McpConfig) {
 			} catch {
 				const setupSteps =
 					config.transport === 'http'
-						? "  1. Sign in at https://maskin.sindre.ai and create a workspace\n  2. Copy your Maskin API key from Settings → API keys and your Workspace ID from Settings → Workspace\n  3. Reconnect Claude with `claude mcp add maskin --transport http --url https://maskin.sindre.ai/mcp --header 'Authorization: Bearer <YOUR_MASKIN_API_KEY>' --header 'X-Workspace-Id: <YOUR_WORKSPACE_ID>'`\n  4. Run /reload-plugins, then call get_started again\n\nFull guide: https://sindre.ai/docs/get-started/"
+						? "  1. Sign in at https://maskin.io and create a workspace\n  2. Copy your Maskin API key from Settings → API keys and your Workspace ID from Settings → Workspace\n  3. Reconnect Claude with `claude mcp add maskin --transport http --url https://maskin.io/mcp --header 'Authorization: Bearer <YOUR_MASKIN_API_KEY>' --header 'X-Workspace-Id: <YOUR_WORKSPACE_ID>'`\n  4. Run /reload-plugins, then call get_started again"
 						: '  1. Call create_actor to get an API key\n  2. Restart with API_KEY set\n  3. Call get_started again'
 				return textResponse(
 					`👋 Welcome to Maskin!\n\nI can't reach your workspace yet. To finish setup:\n${setupSteps}\n\nOr pass a workspace_id directly if you have one.`,
@@ -4403,116 +5211,54 @@ export function createMcpServer(config: McpConfig) {
 
 			if (!workspace) {
 				return textResponse(
-					'👋 Welcome to Maskin!\n\nNo workspace found on this account. Call create_workspace first with a name, then run get_started again to apply a template.',
+					'👋 Welcome to Maskin!\n\nNo workspace found on this account. Call create_workspace first with a name, then run get_started again.',
 				)
 			}
 
-			// Pick template
-			const pickTemplate = (): WorkspaceTemplateId | 'custom' | null => {
-				if (args.template) return args.template
-				const hint = (args.use_case ?? '').toLowerCase()
-				if (!hint) return null
-				if (/growth|launch|market|sales|outreach|pipeline|crm|lead/.test(hint)) return 'growth'
-				if (/dev|engineering|product|build|ship|feature|spec|sprint|backlog/.test(hint))
-					return 'development'
-				return null
-			}
-
-			const chosen = pickTemplate()
-
-			if (chosen === null) {
-				return textResponse(
-					`👋 Welcome to Maskin, let's set up "${workspace.name}".\n\nPick a starting template by calling get_started again with one of:\n\n  • template: "development" — for product teams shipping software (bets, tasks, insights with dev statuses)\n  • template: "growth" — for founders running a pipeline (adds contact + company with a light CRM)\n  • template: "custom" — I'll ask a few questions and tailor the workspace\n\nOr just tell me the use_case in your own words and I'll pick for you.`,
-				)
-			}
-
-			if (chosen === 'custom') {
-				if (!args.custom_settings) {
-					return textResponse(
-						`🧵 Custom workspace setup for "${workspace.name}"\n\nTell me a bit about how you work and I'll tailor the settings:\n\n  1. What kinds of things do you want to track? (e.g. bets, tasks, insights, contacts, campaigns, experiments…)\n  2. For each one, what are the statuses it moves through?\n  3. Are there any custom fields that matter? (e.g. deadline, priority, impact/effort, source)\n  4. Any common relationship types? (default: informs, breaks_into, blocks, relates_to)\n\nWhen you have answers, call get_started again with:\n  template: "custom"\n  custom_settings: { display_names, statuses, field_definitions, relationship_types, custom_extensions }\n  confirm: true\n\nReference shape: call get_workspace_schema to see the current settings object.`,
-					)
-				}
-				// custom settings provided — apply on confirm
-				if (!args.confirm) {
-					return textResponse(
-						`📋 Preview — custom settings for "${workspace.name}"\n\n${JSON.stringify(args.custom_settings, null, 2)}\n\nCall get_started again with the same args plus confirm: true to apply.`,
-					)
-				}
+			// PREVIEW: list marketplace packages so the user can pick one.
+			if (!args.package_id || !args.confirm) {
+				let packages: Array<{
+					id: string
+					name: string
+					description: string
+					use_case: string | null
+					item_types: string[]
+				}> = []
 				try {
-					await apiCall(
-						config,
-						'PATCH',
-						`/api/workspaces/${workspace.id}`,
-						{ settings: args.custom_settings },
-						{ workspaceId: workspace.id },
-					)
-					return textResponse(
-						`✅ Custom settings applied to "${workspace.name}".\n\nNext steps:\n  1. Call get_workspace_schema to verify\n  2. Use create_objects to add your first items\n  3. Call list_objects to see what's in the workspace`,
-					)
-				} catch (err) {
-					return textResponse(`❌ Failed to apply custom settings: ${String(err)}`)
-				}
-			}
-
-			// dev or growth template
-			const template: WorkspaceTemplate = WORKSPACE_TEMPLATES[chosen]
-			const mergedSettings = mergeEnabledModuleDefaults(
-				template.settings as Record<string, unknown>,
-			)
-
-			if (!args.confirm) {
-				const previewLines: string[] = []
-				const statuses = (mergedSettings.statuses ?? {}) as Record<string, string[]>
-				const fields = (mergedSettings.field_definitions ?? {}) as Record<
-					string,
-					Array<{ name: string; type: string; values?: string[] }>
-				>
-				const displayNames = (mergedSettings.display_names ?? {}) as Record<string, string>
-				for (const [type, typeStatuses] of Object.entries(statuses)) {
-					const name = displayNames[type] ?? type
-					const line = `  • ${name} (${type}): ${typeStatuses.join(' → ')}`
-					const typeFields = fields[type]
-					if (typeFields && typeFields.length > 0) {
-						const fieldDesc = typeFields
-							.map((f) =>
-								f.values && f.values.length > 0
-									? `${f.name} [${f.values.join('|')}]`
-									: `${f.name} (${f.type})`,
-							)
-							.join(', ')
-						previewLines.push(`${line}\n      Fields: ${fieldDesc}`)
-					} else {
-						previewLines.push(line)
+					const result = (await apiCall(config, 'GET', '/api/catalog/packages', undefined, {
+						skipWorkspace: true,
+					})) as {
+						packages: Array<{
+							id: string
+							name: string
+							description: string
+							use_case: string | null
+							item_types: string[]
+						}>
 					}
+					packages = result.packages ?? []
+				} catch (err) {
+					return textResponse(`❌ Failed to fetch marketplace packages: ${String(err)}`)
 				}
-				const extLines = Object.entries(template.settings.custom_extensions ?? {}).map(
-					([id, ext]) => `  • ${ext.name} (${id}): types [${ext.types.join(', ')}]`,
-				)
-				const seedLines = template.seedNodes.map(
-					(n) => `  • [${n.$id}] ${displayNames[n.type] ?? n.type}: ${n.title}`,
-				)
+
+				if (packages.length === 0) {
+					return textResponse(
+						`👋 Welcome to Maskin!\n\nThe marketplace has no packages yet. Once packages are published you'll be able to install them here.\n\nIn the meantime, use the marketplace UI in the app to browse and install packages as they become available.`,
+					)
+				}
+
+				const packageLines = packages.map((p) => {
+					const types = p.item_types.length > 0 ? ` [${p.item_types.join(', ')}]` : ''
+					const useCase = p.use_case ? ` · ${p.use_case}` : ''
+					return `  • ${p.name}${useCase}${types}\n    ${p.description}\n    id: ${p.id}`
+				})
 
 				return textResponse(
-					`📋 Preview — "${template.name}" template for workspace "${workspace.name}"
-
-${template.description}
-
-Object types & statuses:
-${previewLines.join('\n')}
-${extLines.length > 0 ? `\nCustom extensions:\n${extLines.join('\n')}\n` : ''}
-Seed examples (${template.seedNodes.length} objects + ${template.seedEdges.length} relationships):
-${seedLines.join('\n')}
-
-Before applying, ASK THE USER these questions in one message so we can tailor the workspace. They can answer any, all, or none:
-  1. What should I name the workspace? (currently "${workspace.name}")
-  2. What are you building or working on?
-  3. Any near-term goal or milestone I should reflect in the starter examples?
-
-Then call get_started again with confirm: true, and (if the user told you anything) pass workspace_name and/or seed_overrides keyed by the [$id] shown above. If the user said "just apply it" or gave nothing, call with only { template: "${template.id}", confirm: true }.`,
+					`👋 Welcome to Maskin! Let's set up "${workspace.name}".\n\nAvailable packages:\n\n${packageLines.join('\n\n')}\n\nAsk the user:\n  1. Which package would they like to install?\n  2. What should the workspace be named? (currently "${workspace.name}")\n\nThen call get_started again with:\n  package_id: "<id from above>"\n  confirm: true\n  workspace_name: "<name if they want to rename>"`,
 				)
 			}
 
-			// Apply: optional rename → merge settings → seed objects via /api/graph
+			// INSTALL: rename workspace (if requested), then install the package.
 			if (args.workspace_name && args.workspace_name.trim() !== workspace.name) {
 				try {
 					await apiCall(
@@ -4530,140 +5276,31 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 				}
 			}
 
+			let installSummary = ''
 			try {
-				await apiCall(
-					config,
-					'PATCH',
-					`/api/workspaces/${workspace.id}`,
-					{ settings: mergedSettings },
-					{ workspaceId: workspace.id },
-				)
-			} catch (err) {
-				return textResponse(
-					`❌ Failed to apply template settings: ${String(err)}\n\nNothing was seeded. You can retry or run create_workspace-specific tools manually.`,
-				)
-			}
-
-			const overrides = args.seed_overrides ?? {}
-			const tailoredNodes = template.seedNodes.map((n) => {
-				const o = overrides[n.$id]
-				if (!o) return n
-				return {
-					...n,
-					title: o.title ?? n.title,
-					content: o.content ?? n.content,
-					metadata: o.metadata ? { ...n.metadata, ...o.metadata } : n.metadata,
-				}
-			})
-
-			let seedSummary = ''
-			try {
-				const graphResult = (await apiCall(
+				const result = (await apiCall(
 					config,
 					'POST',
-					'/api/graph',
-					{ nodes: tailoredNodes, edges: template.seedEdges },
+					'/api/installed-packages',
+					{ packageId: args.package_id, workspaceId: workspace.id },
 					{ workspaceId: workspace.id },
-				)) as { objects?: Array<{ id: string }>; relationships?: Array<{ id: string }> }
-				const createdObjects = graphResult.objects?.length ?? tailoredNodes.length
-				const createdEdges = graphResult.relationships?.length ?? template.seedEdges.length
-				seedSummary = `Seeded ${createdObjects} example objects and ${createdEdges} relationships.`
+				)) as { provisioned?: { actors: number; triggers: number; skills: number } }
+				const p = result.provisioned
+				if (p) {
+					const parts = [
+						p.actors > 0 ? `${p.actors} agent${p.actors === 1 ? '' : 's'}` : '',
+						p.triggers > 0 ? `${p.triggers} trigger${p.triggers === 1 ? '' : 's'}` : '',
+						p.skills > 0 ? `${p.skills} skill${p.skills === 1 ? '' : 's'}` : '',
+					].filter(Boolean)
+					installSummary =
+						parts.length > 0 ? `Installed: ${parts.join(', ')}.` : 'Package installed.'
+				}
 			} catch (err) {
-				seedSummary = `Settings applied, but seeding examples failed: ${String(err)}. You can re-run get_started or add objects manually.`
+				return textResponse(`❌ Failed to install package: ${String(err)}`)
 			}
 
-			// Create seed agents (if any). Track $id → real UUID so triggers can resolve
-			// their target actor, and so {{self_id}} placeholders in system prompts can
-			// be substituted with the real actor id in a second PATCH.
-			const actorIdMap: Record<string, string> = {}
-			let agentsCreated = 0
-			if (template.seedAgents && template.seedAgents.length > 0) {
-				for (const agent of template.seedAgents) {
-					try {
-						const created = (await apiCall(
-							config,
-							'POST',
-							'/api/actors',
-							{
-								type: 'agent',
-								name: agent.name,
-								system_prompt: agent.systemPrompt,
-								tools: agent.tools,
-							},
-							{ workspaceId: workspace.id },
-						)) as { id: string }
-						actorIdMap[agent.$id] = created.id
-						// Add the agent to the workspace so it shows up in the UI's
-						// agents page (which inner-joins workspace_members) and can be
-						// invoked as a workspace member by triggers and humans.
-						// Non-fatal: if this fails, the agent still exists and triggers
-						// (which FK to actors only) can still fire it.
-						try {
-							await apiCall(
-								config,
-								'POST',
-								`/api/workspaces/${workspace.id}/members`,
-								{ actor_id: created.id, role: 'member' },
-								{ workspaceId: workspace.id },
-							)
-						} catch (err) {
-							seedSummary += ` Failed to add agent "${agent.name}" to workspace members: ${String(err)}.`
-						}
-						// Second pass: substitute {{self_id}} in the system prompt.
-						if (agent.systemPrompt.includes('{{self_id}}')) {
-							const substituted = agent.systemPrompt.replaceAll('{{self_id}}', created.id)
-							await apiCall(
-								config,
-								'PATCH',
-								`/api/actors/${created.id}`,
-								{ system_prompt: substituted },
-								{ workspaceId: workspace.id },
-							)
-						}
-						agentsCreated++
-					} catch (err) {
-						seedSummary += ` Failed to create agent "${agent.name}": ${String(err)}.`
-					}
-				}
-			}
-
-			// Create seed triggers, resolving targetActor$id to a real UUID.
-			let triggersCreated = 0
-			if (template.seedTriggers && template.seedTriggers.length > 0) {
-				for (const trigger of template.seedTriggers) {
-					const targetActorId = actorIdMap[trigger.targetActor$id] ?? trigger.targetActor$id
-					try {
-						const substitutedPrompt = trigger.actionPrompt.replaceAll('{{self_id}}', targetActorId)
-						await apiCall(
-							config,
-							'POST',
-							'/api/triggers',
-							{
-								name: trigger.name,
-								type: trigger.type,
-								config: trigger.config,
-								action_prompt: substitutedPrompt,
-								target_actor_id: targetActorId,
-								enabled: trigger.enabled,
-							},
-							{ workspaceId: workspace.id },
-						)
-						triggersCreated++
-					} catch (err) {
-						seedSummary += ` Failed to create trigger "${trigger.name}": ${String(err)}.`
-					}
-				}
-			}
-
-			if (agentsCreated > 0 || triggersCreated > 0) {
-				seedSummary += ` Created ${agentsCreated} agents and ${triggersCreated} triggers that drive the pipeline.`
-			}
-
+			// Build magic login link (only safe on localhost).
 			const frontendUrl = stripTrailingSlash(process.env.FRONTEND_URL ?? 'http://localhost:5173')
-			// Magic-link auto-auth is only safe on localhost: the URL carries the raw
-			// API key in its fragment, so it must not end up in shared browser history,
-			// agent transcripts, or forwarded links. For any non-local frontend, emit a
-			// plain URL and let the user sign in normally.
 			const isLocalFrontend = (() => {
 				try {
 					const host = new URL(frontendUrl).hostname
@@ -4682,12 +5319,7 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 						`/api/workspaces/${workspace.id}/members`,
 						undefined,
 						{ workspaceId: workspace.id },
-					)) as Array<{
-						actorId: string
-						name: string | null
-						email: string | null
-						type: string
-					}>
+					)) as Array<{ actorId: string; name: string | null; email: string | null; type: string }>
 					const human = members.find((m) => m.type === 'human') ?? members[0]
 					if (human) {
 						magicParams.set('actor_id', human.actorId)
@@ -4703,9 +5335,8 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 			const workspaceUrl = `${frontendUrl}/${workspace.id}${magicSuffix}`
 			const keysUrl = `${frontendUrl}/${workspace.id}/settings/keys${magicSuffix}`
 
-			// Check whether the user has already imported Claude subscription credentials.
-			// Agent sessions can't run without them, so onboarding should ask the user to
-			// add them before the pipeline kicks off. Best-effort — ignore failures.
+			// Check Claude subscription credentials. Agent sessions can't run without
+			// them, so onboarding should prompt the user to add them. Best-effort.
 			let claudeOauthConnected = false
 			try {
 				const oauthStatus = (await apiCall(config, 'GET', '/api/claude-oauth/status', undefined, {
@@ -4720,50 +5351,18 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 				? ''
 				: `
 
-INSTRUCTIONS FOR THE "Connect your Claude subscription" SECTION — render this BEFORE "How to get the machine moving". The agents in this workspace run Claude sessions, which need the user's Claude subscription credentials (you can't import them via MCP — the user has to paste them). Render EXACTLY this format:
+INSTRUCTIONS FOR THE "Connect your Claude subscription" SECTION — render this BEFORE anything else. The agents in this workspace run Claude sessions, which need the user's Claude subscription credentials (you can't import them via MCP — the user has to paste them). Render EXACTLY this format:
 
   🔑 Connect your Claude subscription
      Open ${keysUrl} → "Import credentials" and paste the output of the terminal command shown there. Agents can't run until this is done.
 
-Then on a NEW line, ask: "Let me know once that's done and I'll kick things off." Do NOT proceed to the "How to get the machine moving" steps until the user confirms credentials are imported (or explicitly says to skip). If they skip, flag that agent sessions will fail until credentials are added.`
-
-			const devPipelineGuidance =
-				chosen === 'development'
-					? `
-
-The development pipeline is wired up end-to-end: Bet Planner → Senior Developer → Code Reviewer → CTO → Development Driver. The user steers; the agents build.
-
-INSTRUCTIONS FOR THE "How to get the machine moving" SECTION — do NOT print this block verbatim. Render EXACTLY this format (no extra prose, no per-step explanations):
-
-  How to get the machine moving — just say yes and I'll:
-    1. Connect GitHub
-    2. Sharpen the starter tasks
-    3. Kick off task 1 (Senior Developer picks it up)
-    4. Hand off to Code Reviewer + CTO for review and merge
-
-  Should I start now?
-
-Then STOP. Do not explain each step — one line each, nothing more. Wait for the user to say yes/go/start before taking any action.
-
-When the user confirms (yes / go / start / do it / sure), execute the steps in order: (a) call connect_integration for provider "github" — ask only for the repo URL if needed; (b) set the seed bet's \`github_link\` metadata to that repo URL; (c) use update_objects to rewrite task1 + task2 into concrete tickets with specific files/areas, acceptance criteria, and dependencies, tailored to what the user told you earlier; (d) move task1 to "in_progress"; (e) briefly confirm each step as you go ("✅ GitHub connected", "✅ Repo attached to bet", etc.). After step (d), tell the user the pipeline is running and they'll be pinged when the PR needs review — then on a NEW line, offer to use the wait time productively with something like: "Want to set up anything else while the agents work? A couple of options: connect Slack so you can drop feedback/insights into the workspace and chat with agents from where you already are, or wire up another integration. Or we can just wait." Keep this offer short (one short paragraph, not a bulleted list).
-
-If the user says "not now" or steers elsewhere, follow their direction.`
-					: `
-
-INSTRUCTIONS FOR THE "How to get the machine moving" SECTION — do NOT print verbatim. Render a terse list of 2–3 one-line items (a few words each) tailored to what the user told you earlier. End with "Should I start now?" on its own line. Do not explain each item. Wait for the user to confirm before acting.`
+Then on a NEW line, ask: "Let me know once that's done and I'll kick things off." Do NOT proceed to next steps until the user confirms credentials are imported (or explicitly says to skip). If they skip, flag that agent sessions will fail until credentials are added.`
 
 			return textResponse(
-				`✅ "${template.name}" template applied to workspace "${workspace.name}". ${seedSummary}
+				`✅ Package installed in workspace "${workspace.name}". ${installSummary}
 
-🌐 Open the workspace in your browser: ${workspaceUrl}
-
-Template pitch (use to describe what the user just got — rephrase in your own voice, don't quote verbatim):
-${template.pitch}
-
-INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, excited message with these parts in order:
-  1. An enthusiastic opener grounded in the template pitch above. Frame it as "you now have your own [AI team / execution machine / growth engine]" — make it feel like a capability unlock, not a config change. 2–3 sentences.
-  2. The workspace URL above as a clickable link.
-  3. ${claudeOauthConnected ? 'A "How to get the machine moving" section — see the template-specific guidance below.' : 'A "Connect your Claude subscription" section (see guidance below) BEFORE the "How to get the machine moving" section.'}${claudeCredsBlock}${devPipelineGuidance}`,
+🌐 Open the workspace: ${workspaceUrl}
+${claudeCredsBlock}`,
 			)
 		},
 	)

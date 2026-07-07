@@ -7,6 +7,7 @@ import {
 	recordMcpTelemetrySchema,
 } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
@@ -94,6 +95,22 @@ app.openapi(recordRoute, (async (c) => {
 			sessionId: body.session_id ?? null,
 			objectType: body.object_type ?? null,
 			mutationKind: body.mutation_kind,
+		})
+	} else if (body.event_type === 'tool_call_response_size') {
+		// PostHog-only fan-out for the MCP response-scoping bet's First test —
+		// 5-day instrumentation window doesn't earn a schema migration. The
+		// Product Analyst's baseline query reads `mcp_tool_call_response_size`
+		// rows directly from PostHog. Fire-and-forget; `capturePosthogEvent`
+		// never throws.
+		void capturePosthogEvent('mcp_tool_call_response_size', workspaceId, {
+			tool_name: body.tool_name,
+			session_id: body.session_id ?? null,
+			content_bytes: body.content_bytes,
+			content_tokens: body.content_tokens,
+			structured_content_bytes: body.structured_content_bytes,
+			structured_content_tokens: body.structured_content_tokens,
+			truncated: body.truncated,
+			workspace_id: workspaceId,
 		})
 	} else {
 		// widget_event — widget-only fields (event, widget_name, card_kind, object_id,

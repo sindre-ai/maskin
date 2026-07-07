@@ -1,3 +1,4 @@
+import { ForkDialog } from '@/components/marketplace/fork-dialog'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
@@ -11,18 +12,26 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useActors, useDeleteActor, useResetActor, useUpdateActor } from '@/hooks/use-actors'
+import {
+	useActors,
+	useAgentPause,
+	useAgentRun,
+	useDeleteActor,
+	useResetActor,
+	useUpdateActor,
+} from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
+import { useInstalledPackages } from '@/hooks/use-installed-packages'
 import {
 	useActiveSessionsForActor,
 	useActorSessionsInfinite,
 	useCreateSession,
-	useSession,
 	useSessionErrorLog,
 	useSessionLogs,
 } from '@/hooks/use-sessions'
 import type { ActorListItem, ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
+import { useChat } from '@/lib/chat-context'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -39,15 +48,17 @@ import {
 	Trash2,
 	XCircle,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
+import { ObjectReference } from '../shared/object-reference'
 import { RelativeTime } from '../shared/relative-time'
 import { TypeBadge } from '../shared/type-badge'
+import { AgentRunPauseButton } from './agent-run-pause-button'
 import { AgentUsageChart } from './agent-usage-chart'
-import { InstructionLog } from './instruction-log'
 import { McpServers } from './mcp-servers'
-import { SessionDetailPanel } from './session-detail-panel'
+import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-detail-panel'
 import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
 import { Skills } from './skills'
 
@@ -67,7 +78,15 @@ interface AgentDocumentViewProps {
 	onUpdateLlmConfig: (config: Record<string, unknown>) => void
 	onUpdateTools: (tools: Record<string, unknown>) => void
 	onUpdateMemory: (memory: Record<string, unknown>) => void
+	onRun: () => void
+	onPause: () => void
+	onNewConversation: () => void
+	isRunPending?: boolean
+	isPausePending?: boolean
 	showSaved?: boolean
+	isManaged?: boolean
+	onForkPackage?: () => void
+	managedPackageName?: string
 }
 
 function useConfigExpanded() {
@@ -103,7 +122,15 @@ export function AgentDocumentView({
 	onUpdateLlmConfig,
 	onUpdateTools,
 	onUpdateMemory,
+	onRun,
+	onPause,
+	onNewConversation,
+	isRunPending = false,
+	isPausePending = false,
 	showSaved = false,
+	isManaged = false,
+	onForkPackage,
+	managedPackageName,
 }: AgentDocumentViewProps) {
 	const [nameDraft, setNameDraft] = useState(agent.name)
 	const [descriptionDraft, setDescriptionDraft] = useState(agent.description ?? '')
@@ -160,8 +187,6 @@ export function AgentDocumentView({
 	}, [memoryDraft, onUpdateMemory])
 
 	const [selectedSession, setSelectedSession] = useState<SessionResponse | null>(null)
-	const [viewSessionId, setViewSessionId] = useState<string | null>(null)
-	const { data: fetchedSession } = useSession(viewSessionId, workspaceId)
 
 	const { data: actors } = useActors(workspaceId)
 	const actorsById = useMemo(() => {
@@ -169,29 +194,6 @@ export function AgentDocumentView({
 		for (const actor of actors ?? []) map.set(actor.id, actor)
 		return map
 	}, [actors])
-
-	// When a session is fetched by ID (from instruction log), select it
-	useEffect(() => {
-		if (fetchedSession && viewSessionId) {
-			setSelectedSession(fetchedSession)
-			setViewSessionId(null)
-		}
-	}, [fetchedSession, viewSessionId])
-
-	const handleViewSession = useCallback(
-		(sessionId: string) => {
-			// Check if we already have the session in our local data
-			const existing =
-				recentSessions?.find((s) => s.id === sessionId) ??
-				activeSessions?.find((s) => s.id === sessionId)
-			if (existing) {
-				setSelectedSession(existing)
-			} else {
-				setViewSessionId(sessionId)
-			}
-		},
-		[recentSessions, activeSessions],
-	)
 
 	// Filter out active sessions from recent sessions to avoid duplicates
 	const activeIds = useMemo(
@@ -204,21 +206,24 @@ export function AgentDocumentView({
 	)
 
 	return (
-		<div className="max-w-3xl mx-auto">
+		<div className="w-full min-w-0 max-w-3xl mx-auto">
 			{/* Name */}
 			<div className="flex items-start gap-2 mb-2">
 				<textarea
 					value={nameDraft}
 					onChange={(e) => {
+						if (isManaged) return
 						setNameDraft(e.target.value)
 						e.target.style.height = 'auto'
 						e.target.style.height = `${e.target.scrollHeight}px`
 					}}
-					onBlur={handleNameBlur}
-					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+					onBlur={isManaged ? undefined : handleNameBlur}
+					onKeyDown={(e) => !isManaged && e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Agent name"
+					aria-label="Agent name"
 					rows={1}
-					className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
+					readOnly={isManaged}
+					className={`w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none ${isManaged ? 'cursor-default select-text' : ''}`}
 					ref={(el) => {
 						if (el) {
 							el.style.height = 'auto'
@@ -237,12 +242,14 @@ export function AgentDocumentView({
 			<Input
 				type="text"
 				value={descriptionDraft}
-				onChange={(e) => setDescriptionDraft(e.target.value)}
-				onBlur={handleDescriptionBlur}
-				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+				onChange={(e) => !isManaged && setDescriptionDraft(e.target.value)}
+				onBlur={isManaged ? undefined : handleDescriptionBlur}
+				onKeyDown={(e) => !isManaged && e.key === 'Enter' && e.currentTarget.blur()}
 				placeholder="Short description shown on the Agents page"
+				aria-label="Short description"
 				maxLength={80}
-				className="mb-3 border-none bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0"
+				readOnly={isManaged}
+				className={`mb-3 border-none bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0 ${isManaged ? 'cursor-default' : ''}`}
 			/>
 
 			{/* Metadata badges row */}
@@ -250,6 +257,7 @@ export function AgentDocumentView({
 				<TypeBadge type="agent" />
 				<span className="flex items-center gap-1.5 text-xs">
 					<span
+						aria-hidden="true"
 						className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-success animate-pulse' : 'bg-text-muted'}`}
 					/>
 					<span className="text-muted-foreground">{isActive ? 'active' : 'idle'}</span>
@@ -258,10 +266,37 @@ export function AgentDocumentView({
 					<span className="text-[11px] text-muted-foreground">{agent.llm_provider}</span>
 				)}
 				<RelativeTime date={agent.createdAt} className="text-[11px] text-muted-foreground" />
+				{isManaged && (
+					<span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+						<span>🔒</span>
+						<span>Managed{managedPackageName ? ` · ${managedPackageName}` : ''}</span>
+						<button
+							type="button"
+							onClick={onForkPackage}
+							className="text-primary hover:underline cursor-pointer"
+						>
+							Fork to edit
+						</button>
+					</span>
+				)}
 			</div>
 
-			{/* Instruction Log */}
-			<InstructionLog agent={agent} workspaceId={workspaceId} onViewSession={handleViewSession} />
+			{/* Run/Pause + New Conversation */}
+			<div className="flex items-center gap-2 mb-6">
+				<AgentRunPauseButton
+					isActive={isActive}
+					onRun={onRun}
+					onPause={onPause}
+					isRunPending={isRunPending}
+					isPausePending={isPausePending}
+				/>
+				<Button variant="outline" size="sm" className="min-h-[44px]" onClick={onNewConversation}>
+					New Conversation
+				</Button>
+			</div>
+
+			{/* Usage chart */}
+			<AgentUsageChart agent={agent} workspaceId={workspaceId} />
 
 			{/* Currently Working On */}
 			{activeSessions && activeSessions.length > 0 && (
@@ -318,28 +353,43 @@ export function AgentDocumentView({
 				}}
 			/>
 
-			{/* Usage chart */}
-			<AgentUsageChart agent={agent} workspaceId={workspaceId} />
-
 			{/* Configuration (collapsible) */}
 			<Collapsible open={configExpanded} onOpenChange={setConfigExpanded}>
-				<CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground mb-4 hover:text-foreground transition-colors cursor-pointer">
+				<CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground mb-4 hover:text-foreground transition-colors cursor-pointer">
 					{configExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
 					Configuration
+					{isManaged && (
+						<span className="ml-auto flex items-center gap-1 normal-case tracking-normal font-normal text-[11px] text-muted-foreground">
+							<span>🔒</span>
+							<span>Managed{managedPackageName ? ` · ${managedPackageName}` : ''}</span>
+							<button
+								type="button"
+								onClick={(e) => {
+									e.stopPropagation()
+									onForkPackage?.()
+								}}
+								className="text-primary hover:underline cursor-pointer"
+							>
+								Fork to edit
+							</button>
+						</span>
+					)}
 				</CollapsibleTrigger>
 				<CollapsibleContent>
-					{/* System Prompt */}
-					<Section title="System Prompt">
+					{/* Instructions */}
+					<Section title="Instructions">
 						<Textarea
 							value={systemPromptDraft}
 							onChange={(e) => {
+								if (isManaged) return
 								setSystemPromptDraft(e.target.value)
 								setSystemPromptDirty(true)
 							}}
-							onBlur={handleSystemPromptBlur}
+							onBlur={isManaged ? undefined : handleSystemPromptBlur}
 							placeholder="Instructions for the agent..."
-							className="min-h-[120px] font-mono text-sm"
+							className={`min-h-[120px] font-mono text-sm ${isManaged ? 'cursor-default' : ''}`}
 							autoResize
+							readOnly={isManaged}
 						/>
 					</Section>
 
@@ -350,7 +400,8 @@ export function AgentDocumentView({
 								<Label>Provider</Label>
 								<Select
 									value={agent.llm_provider ?? 'anthropic'}
-									onValueChange={onUpdateLlmProvider}
+									onValueChange={isManaged ? undefined : onUpdateLlmProvider}
+									disabled={isManaged}
 								>
 									<SelectTrigger>
 										<SelectValue />
@@ -366,9 +417,10 @@ export function AgentDocumentView({
 								<Input
 									type="text"
 									value={modelDraft}
-									onChange={(e) => setModelDraft(e.target.value)}
-									onBlur={handleModelBlur}
+									onChange={(e) => !isManaged && setModelDraft(e.target.value)}
+									onBlur={isManaged ? undefined : handleModelBlur}
 									placeholder="e.g. claude-opus-4-7"
+									readOnly={isManaged}
 								/>
 							</div>
 						</div>
@@ -376,12 +428,12 @@ export function AgentDocumentView({
 
 					{/* MCP Servers */}
 					<Section title="MCP Servers">
-						<McpServers tools={agent.tools} onUpdate={onUpdateTools} />
+						<McpServers tools={agent.tools} onUpdate={onUpdateTools} readOnly={isManaged} />
 					</Section>
 
 					{/* Skills */}
 					<Section title="Skills">
-						<Skills actorId={agent.id} />
+						<Skills actorId={agent.id} readOnly={isManaged} />
 					</Section>
 
 					{/* Memory */}
@@ -389,14 +441,16 @@ export function AgentDocumentView({
 						<Textarea
 							value={memoryDraft}
 							onChange={(e) => {
+								if (isManaged) return
 								setMemoryDraft(e.target.value)
 								setMemoryDirty(true)
 							}}
 							placeholder="{}"
-							className="min-h-[100px] font-mono text-sm"
+							className={`min-h-[100px] font-mono text-sm ${isManaged ? 'cursor-default' : ''}`}
+							readOnly={isManaged}
 						/>
 						{memoryError && <p className="text-xs text-error mt-1">{memoryError}</p>}
-						{memoryDirty && (
+						{!isManaged && memoryDirty && (
 							<div className="flex justify-end mt-2">
 								<button
 									type="button"
@@ -462,17 +516,17 @@ function ActiveSessionCard({
 	return (
 		<button
 			type="button"
-			className="flex w-full items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 min-w-0 text-left hover:bg-secondary transition-colors cursor-pointer"
+			className="flex w-full items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 min-h-[44px] min-w-0 text-left hover:bg-secondary transition-colors cursor-pointer"
 			onClick={() => onSelect?.(session)}
 		>
-			{idle ? <PauseCircle size={14} className="shrink-0 text-muted-foreground" /> : <Spinner />}
+			{idle ? <PauseCircle size={14} className="shrink-0 text-foreground/60" /> : <Spinner />}
 			<span className="text-sm truncate flex-1 min-w-0">{session.actionPrompt}</span>
 			{preview && (
-				<span className="text-xs text-muted-foreground truncate max-w-[120px] sm:max-w-[200px]">
+				<span className="text-xs text-foreground/60 truncate max-w-[120px] sm:max-w-[200px]">
 					{preview}
 				</span>
 			)}
-			{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
+			{duration && <span className="text-xs text-foreground/60 shrink-0">{duration}</span>}
 		</button>
 	)
 }
@@ -495,6 +549,28 @@ function SessionStatusIcon({ status }: { status: string }) {
 	}
 }
 
+export function getSessionSummary(session: SessionResponse): string {
+	const MAX = 120
+	const prompt = session.actionPrompt ?? ''
+	const truncated = prompt.length > MAX ? `${prompt.slice(0, MAX)}…` : prompt
+	const fallback = truncated || 'Untitled session'
+
+	switch (session.status) {
+		case 'running':
+		case 'starting':
+			return fallback === 'Untitled session' ? fallback : `Working on: ${fallback}`
+		case 'paused':
+		case 'snapshotting':
+			return fallback === 'Untitled session' ? fallback : `Paused: ${fallback}`
+		case 'completed':
+		case 'failed':
+		case 'timeout':
+			return fallback
+		default:
+			return fallback
+	}
+}
+
 function SessionRow({
 	session,
 	workspaceId,
@@ -513,35 +589,52 @@ function SessionRow({
 
 	const result = session.result as Record<string, unknown> | null
 	const errorMessage = typeof result?.error === 'string' ? result.error : undefined
-	const exitCode = typeof result?.exit_code === 'number' ? result.exit_code : undefined
+	const rawExitCode = result?.exit_code
+	const exitCode: number | null | undefined =
+		typeof rawExitCode === 'number' || rawExitCode === null ? rawExitCode : undefined
 	const hasResultError = !!errorMessage || (exitCode !== undefined && exitCode !== 0)
+	const failureReason = parseFailureReason(result)
 
 	const { data: stderrLog } = useSessionErrorLog(
 		session.id,
 		workspaceId,
-		showError && !hasResultError,
+		showError && !hasResultError && !failureReason,
 	)
 
 	const errorDetail =
-		errorMessage ?? (exitCode !== undefined ? `Process exited with code ${exitCode}` : null)
+		errorMessage ??
+		(exitCode !== undefined
+			? exitCode !== null
+				? `Process exited with code ${exitCode}`
+				: 'Container process was killed'
+			: null)
 	const displayError = errorDetail ?? stderrLog
+
+	const resultObjects = Array.isArray(result?.objects)
+		? (result.objects as unknown[]).filter(
+				(item): item is { id: string } =>
+					typeof item === 'object' &&
+					item !== null &&
+					typeof (item as Record<string, unknown>).id === 'string',
+			)
+		: []
 
 	return (
 		<div>
-			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements inner button actions */}
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements keyboard-accessible inner buttons and sr-only open button */}
 			<div
-				className="flex items-center gap-2.5 rounded-md px-3 py-1.5 min-w-0 hover:bg-secondary/50 transition-colors cursor-pointer"
+				className="flex items-center gap-2.5 rounded-md px-3 py-1.5 min-h-[44px] min-w-0 hover:bg-secondary/50 transition-colors cursor-pointer"
 				onClick={() => onSelect?.(session)}
 			>
 				<SessionStatusIcon status={session.status} />
 				<span className={`text-sm truncate flex-1 min-w-0 ${isFailed ? 'text-error' : ''}`}>
-					{session.actionPrompt || 'Untitled session'}
+					{getSessionSummary(session)}
 				</span>
 				{isFailed && (
 					<>
 						<button
 							type="button"
-							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
+							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer min-h-[44px] inline-flex items-center"
 							onClick={(e) => {
 								e.stopPropagation()
 								setShowError((v) => !v)
@@ -551,7 +644,7 @@ function SessionRow({
 						</button>
 						<button
 							type="button"
-							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
+							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer min-h-[44px] inline-flex items-center"
 							onClick={(e) => {
 								e.stopPropagation()
 								createSession.mutate({
@@ -561,7 +654,7 @@ function SessionRow({
 							}}
 							disabled={createSession.isPending}
 						>
-							{createSession.isPending ? 'Retrying…' : 'Retry'}
+							{createSession.isPending ? 'Restarting…' : 'Restart'}
 						</button>
 					</>
 				)}
@@ -571,10 +664,30 @@ function SessionRow({
 					className="text-xs text-muted-foreground shrink-0"
 				/>
 			</div>
-			{showError && displayError && (
-				<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap">
-					{displayError}
-				</pre>
+			{showError &&
+				(failureReason ? (
+					<div className="mx-3 mt-1">
+						<FailureCard failureReason={failureReason} workspaceId={workspaceId} />
+					</div>
+				) : (
+					displayError && (
+						<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap break-words">
+							{displayError}
+						</pre>
+					)
+				))}
+			{resultObjects.length > 0 && (
+				<div className="flex flex-wrap gap-1.5 px-3 pb-1.5 pt-0.5">
+					{resultObjects.map((item) => (
+						<ObjectReference
+							key={item.id}
+							variant="inline"
+							objectId={item.id}
+							workspaceId={workspaceId}
+							showStatus={false}
+						/>
+					))}
+				</div>
 			)}
 		</div>
 	)
@@ -585,6 +698,9 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const updateActor = useUpdateActor(workspaceId)
 	const deleteActor = useDeleteActor(workspaceId)
 	const resetActor = useResetActor(workspaceId)
+	const run = useAgentRun(workspaceId)
+	const pause = useAgentPause(workspaceId)
+	const { openWithContext } = useChat()
 	const navigate = useNavigate()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
@@ -600,6 +716,15 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 		() => (allEvents ?? []).filter((e) => e.actorId === agent.id),
 		[allEvents, agent.id],
 	)
+
+	// Managed package detection
+	const isManaged = !!agent.installedPackageId
+	const { data: installedPackagesData } = useInstalledPackages(workspaceId)
+	const installRecord = useMemo(
+		() => installedPackagesData?.installs.find((i) => i.id === agent.installedPackageId) ?? null,
+		[installedPackagesData, agent.installedPackageId],
+	)
+	const [forkOpen, setForkOpen] = useState(false)
 
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const [confirmReset, setConfirmReset] = useState(false)
@@ -660,6 +785,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				size="icon"
 				className="h-7 w-7 text-muted-foreground hover:text-error"
 				onClick={() => setConfirmDelete(true)}
+				aria-label="Delete agent"
 			>
 				<Trash2 size={15} />
 			</Button>
@@ -742,7 +868,37 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				onUpdateLlmConfig={handleUpdateLlmConfig}
 				onUpdateTools={handleUpdateTools}
 				onUpdateMemory={handleUpdateMemory}
+				onRun={() =>
+					run.mutate(
+						{ id: agent.id },
+						{ onError: () => toast.error(`Couldn't start ${agent.name}`) },
+					)
+				}
+				onNewConversation={() =>
+					openWithContext([{ kind: 'agent', id: agent.id, name: agent.name }])
+				}
+				onPause={() =>
+					pause.mutate(agent.id, {
+						onError: () => toast.error(`Couldn't pause ${agent.name}`),
+					})
+				}
+				isRunPending={run.isPending}
+				isPausePending={pause.isPending}
+				isManaged={isManaged}
+				onForkPackage={() => setForkOpen(true)}
+				managedPackageName={installRecord?.packageName}
 			/>
+			{isManaged && installRecord && (
+				<ForkDialog
+					open={forkOpen}
+					onOpenChange={setForkOpen}
+					workspaceId={workspaceId}
+					installedPackageId={installRecord.id}
+					packageName={installRecord.packageName}
+					installedVersion={installRecord.installedVersion}
+					pendingVersion={installRecord.hasUpdate ? installRecord.availableVersion : null}
+				/>
+			)}
 		</>
 	)
 }

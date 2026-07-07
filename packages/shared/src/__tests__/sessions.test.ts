@@ -8,6 +8,8 @@ import {
 	sessionLogQuerySchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
+	sessionResultFailureReasonSchema,
+	sessionResultSchema,
 	sessionRuntimeSchema,
 	sessionStatusSchema,
 	sessionUsageQuerySchema,
@@ -120,6 +122,7 @@ describe('sessionConfigSchema', () => {
 		expect(result.mcps).toEqual([])
 		expect(result.env_vars).toEqual({})
 		expect(result.interactive).toBe(false)
+		expect(result.browserRequired).toBe(false)
 	})
 
 	it('accepts interactive=true', () => {
@@ -238,6 +241,24 @@ describe('sessionQuerySchema', () => {
 		const result = sessionQuerySchema.parse({ actor_id: uuid })
 		expect(result.actor_id).toBe(uuid)
 	})
+
+	it('accepts ISO-8601 updated_before and updated_after', () => {
+		const result = sessionQuerySchema.parse({
+			updated_before: '2026-06-30T00:00:00.000Z',
+			updated_after: '2026-06-01T00:00:00.000Z',
+		})
+		expect(result.updated_before).toBe('2026-06-30T00:00:00.000Z')
+		expect(result.updated_after).toBe('2026-06-01T00:00:00.000Z')
+	})
+
+	it('rejects malformed updated_before (AC-T6)', () => {
+		expect(() => sessionQuerySchema.parse({ updated_before: 'not-a-date' })).toThrow()
+		expect(() => sessionQuerySchema.parse({ updated_before: '2026-06-30' })).toThrow()
+	})
+
+	it('rejects malformed updated_after (AC-T6)', () => {
+		expect(() => sessionQuerySchema.parse({ updated_after: 'yesterday' })).toThrow()
+	})
 })
 
 describe('sessionLogQuerySchema', () => {
@@ -304,5 +325,91 @@ describe('sessionUsageQuerySchema', () => {
 
 	it('rejects non-ISO datetimes', () => {
 		expect(() => sessionUsageQuerySchema.parse({ ...valid, from: 'yesterday' })).toThrow()
+	})
+})
+
+describe('sessionResultFailureReasonSchema', () => {
+	const full = {
+		provider: 'anthropic',
+		reason_code: 'billing_error',
+		human_message: 'Your Anthropic credits are exhausted.',
+		http_status: 402,
+		reset_at: '2026-07-01T00:00:00.000Z',
+		verbatim_output: 'Error: credit limit reached',
+	}
+
+	it('accepts a fully populated failure reason', () => {
+		const result = sessionResultFailureReasonSchema.parse(full)
+		expect(result.provider).toBe('anthropic')
+		expect(result.reason_code).toBe('billing_error')
+		expect(result.http_status).toBe(402)
+	})
+
+	it('accepts nullable fields as null', () => {
+		const result = sessionResultFailureReasonSchema.parse({
+			...full,
+			http_status: null,
+			reset_at: null,
+			verbatim_output: null,
+		})
+		expect(result.http_status).toBeNull()
+		expect(result.reset_at).toBeNull()
+		expect(result.verbatim_output).toBeNull()
+	})
+
+	it('rejects unknown reason_code values', () => {
+		expect(() =>
+			sessionResultFailureReasonSchema.parse({ ...full, reason_code: 'credit_exhausted' }),
+		).toThrow()
+	})
+
+	it('rejects missing required fields', () => {
+		expect(() => sessionResultFailureReasonSchema.parse({ provider: 'anthropic' })).toThrow()
+	})
+})
+
+describe('sessionResultSchema', () => {
+	it('accepts a completed result with exit_code only', () => {
+		const result = sessionResultSchema.parse({ exit_code: 0 })
+		expect(result.exit_code).toBe(0)
+		expect(result.failure_reason).toBeUndefined()
+	})
+
+	it('accepts a failed result with error only', () => {
+		const result = sessionResultSchema.parse({ error: 'Session timed out' })
+		expect(result.error).toBe('Session timed out')
+	})
+
+	it('accepts failure_reason: null (unclassified)', () => {
+		const result = sessionResultSchema.parse({ exit_code: 1, failure_reason: null })
+		expect(result.failure_reason).toBeNull()
+	})
+
+	it('accepts a result with a populated failure_reason', () => {
+		const result = sessionResultSchema.parse({
+			exit_code: 1,
+			failure_reason: {
+				provider: 'openrouter',
+				reason_code: 'insufficient_credits',
+				human_message: 'Out of credits.',
+				http_status: 402,
+				reset_at: null,
+				verbatim_output: null,
+			},
+		})
+		expect(result.failure_reason?.provider).toBe('openrouter')
+		expect(result.failure_reason?.reason_code).toBe('insufficient_credits')
+	})
+
+	it('accepts exit_code: null (OOM kill)', () => {
+		const result = sessionResultSchema.parse({ exit_code: null })
+		expect(result.exit_code).toBeNull()
+	})
+
+	it('accepts an empty object (all fields optional)', () => {
+		const result = sessionResultSchema.parse({})
+		expect(result.exit_code).toBeUndefined()
+		expect(result.error).toBeUndefined()
+		expect(result.failure_reason).toBeUndefined()
 	})
 })

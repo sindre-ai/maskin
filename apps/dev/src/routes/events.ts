@@ -1,12 +1,13 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, files, notifications, objects, subscriptions } from '@maskin/db/schema'
+import { events, actors, files, objects, subscriptions } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
+import { insertNotificationsWithEvents } from '../lib/notifications'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
 import type { SessionManager } from '../services/session-manager'
@@ -206,7 +207,7 @@ app.openapi(createCommentRoute, (async (c) => {
 	// missing, on a different object, not a comment, or cyclic), drop
 	// parentEventId so the comment posts at top level rather than becoming an
 	// un-renderable orphan.
-	const parentEventId = await resolveRootParentEventId(
+	const { parentEventId, opActorId } = await resolveRootParentEventId(
 		db,
 		workspaceId,
 		body.entity_id,
@@ -227,6 +228,7 @@ app.openapi(createCommentRoute, (async (c) => {
 					mentions: body.mentions,
 					parentEventId,
 					attachmentFileIds: body.attachment_file_ids,
+					metadata: body.metadata,
 				},
 			})
 			.returning()
@@ -248,41 +250,27 @@ app.openapi(createCommentRoute, (async (c) => {
 			const agentActors = mentionedActors.filter((a) => a.type === 'agent')
 
 			if (agentActors.length > 0) {
-				const createdNotifications = await tx
-					.insert(notifications)
-					.values(
-						agentActors.map((agent) => ({
-							workspaceId,
-							type: 'needs_input' as const,
-							title: '@mentioned by comment',
-							content: body.content,
-							sourceActorId: actorId,
-							targetActorId: agent.id,
-							objectId: body.entity_id,
-							status: 'pending' as const,
-						})),
-					)
-					.returning()
+				const createdNotifications = await insertNotificationsWithEvents(tx, {
+					workspaceId,
+					actorId,
+					rows: agentActors.map((agent) => ({
+						workspaceId,
+						type: 'needs_input' as const,
+						title: '@mentioned by comment',
+						content: body.content,
+						sourceActorId: actorId,
+						targetActorId: agent.id,
+						objectId: body.entity_id,
+						status: 'pending' as const,
+					})),
+				})
 
-				if (createdNotifications.length > 0) {
-					await tx.insert(events).values(
-						createdNotifications.map((notification) => ({
-							workspaceId,
-							actorId,
-							action: 'created',
-							entityType: 'notification',
-							entityId: notification.id,
-							data: notification,
-						})),
-					)
-
-					for (const notification of createdNotifications) {
-						if (notification.targetActorId) {
-							mentions.push({
-								agentId: notification.targetActorId,
-								notificationId: notification.id,
-							})
-						}
+				for (const notification of createdNotifications) {
+					if (notification.targetActorId) {
+						mentions.push({
+							agentId: notification.targetActorId,
+							notificationId: notification.id,
+						})
 					}
 				}
 			}
@@ -304,6 +292,25 @@ app.openapi(createCommentRoute, (async (c) => {
 			.onConflictDoNothing({
 				target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
 			})
+
+		// Auto-subscribe the thread OP when this is a reply, so they're
+		// notified of all follow-up messages — Slack participant model. Skip
+		// when the OP is the same as the current commenter (already subscribed
+		// above). onConflictDoNothing preserves any existing source.
+		if (parentEventId !== undefined && opActorId && opActorId !== actorId) {
+			await tx
+				.insert(subscriptions)
+				.values({
+					workspaceId,
+					actorId: opActorId,
+					entityType: created.entityType,
+					entityId: created.entityId,
+					source: 'commenter',
+				})
+				.onConflictDoNothing({
+					target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
+				})
+		}
 
 		// Auto-subscribe @-mentioned actors so the comment reaches their For You
 		// page even if they weren't already subscribed. Dedup the mention list
@@ -334,6 +341,14 @@ app.openapi(createCommentRoute, (async (c) => {
 
 		return { comment: created, agentMentions: mentions, mentionedSubscriberCount }
 	})
+
+	if (parentEventId !== undefined && opActorId && opActorId !== actorId) {
+		logger.info('Auto-subscribed thread OP to commented object', {
+			objectId: body.entity_id,
+			commentEventId: comment.id,
+			opActorId,
+		})
+	}
 
 	if (mentionedSubscriberCount > 0) {
 		logger.info('Auto-subscribed @-mentioned actors to commented object', {
@@ -405,20 +420,22 @@ app.openapi(createCommentRoute, (async (c) => {
 	return c.json(serializeArray([comment])[0] as z.infer<typeof eventResponseSchema>, 201)
 }) as RouteHandler<typeof createCommentRoute, Env>)
 
+type ResolvedParent = { parentEventId: number | undefined; opActorId: string | null }
+
 async function resolveRootParentEventId(
 	db: Database,
 	workspaceId: string,
 	entityId: string,
 	parentEventId: number | undefined,
-): Promise<number | undefined> {
-	if (parentEventId === undefined) return undefined
+): Promise<ResolvedParent> {
+	if (parentEventId === undefined) return { parentEventId: undefined, opActorId: null }
 
 	const seen = new Set<number>()
 	let current: number = parentEventId
 	while (!seen.has(current)) {
 		seen.add(current)
-		const rows: Array<{ id: number; data: unknown }> = await db
-			.select({ id: events.id, data: events.data })
+		const rows: Array<{ id: number; actorId: string; data: unknown }> = await db
+			.select({ id: events.id, actorId: events.actorId, data: events.data })
 			.from(events)
 			.where(
 				and(
@@ -431,13 +448,14 @@ async function resolveRootParentEventId(
 			)
 			.limit(1)
 		const parent = rows[0]
-		if (!parent) return undefined
+		if (!parent) return { parentEventId: undefined, opActorId: null }
 		const parentData = parent.data as { parentEventId?: number | null } | null
 		const nextId = parentData?.parentEventId
-		if (nextId === undefined || nextId === null) return parent.id
+		if (nextId === undefined || nextId === null)
+			return { parentEventId: parent.id, opActorId: parent.actorId ?? null }
 		current = nextId
 	}
-	return undefined
+	return { parentEventId: undefined, opActorId: null }
 }
 
 function buildMentionPrompt(ctx: {

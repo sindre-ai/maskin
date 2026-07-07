@@ -1,3 +1,21 @@
+export function base64ToBytes(base64: string): Uint8Array {
+	if (typeof atob === 'undefined') return new Uint8Array()
+	try {
+		const binary = atob(base64)
+		const bytes = new Uint8Array(binary.length)
+		for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+		return bytes
+	} catch {
+		return new Uint8Array()
+	}
+}
+
+export function decodeBase64Utf8(base64: string): string {
+	const bytes = base64ToBytes(base64)
+	if (bytes.length === 0) return ''
+	return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+}
+
 export function readFileAsBase64(file: File): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const reader = new FileReader()
