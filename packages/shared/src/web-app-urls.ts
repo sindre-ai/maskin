@@ -30,14 +30,18 @@
  * | notification     | /{ws}                                | notification / pulse |
  * | extension        | /{ws}/settings                       | extension / settings |
  * | relationship     | /{ws}/objects/{sourceId}             | relationship         |
+ * | file             | /{ws}/files/{id}                     | file                 |
+ * | skill            | /{ws}/settings/skills                | skill                |
  * | workspace        | /{ws}                                | workspace            |
  *
  * Types stored in the unified `objects` table all resolve through the
  * `object` kind. Types backed by their own table (actor, trigger, session,
- * notification, extension, relationship, workspace) each have a dedicated
- * kind; the resulting URL falls back to the closest existing route when no
- * dedicated detail page exists yet (sessions, notifications, extensions,
- * relationships are surfaced inside the parent context today).
+ * notification, extension, relationship, file, skill, workspace) each have a
+ * dedicated kind; the resulting URL falls back to the closest existing route
+ * when no dedicated detail page exists yet (sessions, notifications,
+ * extensions, relationships, skills are surfaced inside the parent context
+ * today — skills land on the settings list, matching the trigger/session
+ * fallback pattern).
  *
  * Unauthenticated callers hitting any `/{ws}/...` URL are redirected through
  * the `/login` route by `apps/web/src/routes/_authed.tsx`'s auth guard, then
@@ -120,6 +124,14 @@ export type WebAppTarget =
 	 * (relationships render inside the source object's detail view), so we
 	 * link to the source object. Callers must pass `sourceId`. */
 	| { kind: 'relationship'; sourceId: string; targetId?: string; type?: string }
+	/** File detail page. Resolves to `/{ws}/files/{id}` — the TanStack Router
+	 * route file exists at `apps/web/src/routes/_authed/$workspaceId/files/$fileId.tsx`. */
+	| { kind: 'file'; id: string }
+	/** Workspace skill. No per-skill detail route yet — the URL falls back
+	 * to the settings skills list, matching the trigger/session fallback
+	 * pattern. `name` is the skill's stable identifier and is recorded here
+	 * for forward-compat even though the current URL builder ignores it. */
+	| { kind: 'skill'; name: string }
 	/** Workspace settings (root or a specific section). */
 	| { kind: 'settings'; section?: WebAppSettingsSection }
 
@@ -193,6 +205,10 @@ export function buildWebAppPath(workspaceId: string, target: WebAppTarget): stri
 			return `${root}/settings`
 		case 'relationship':
 			return `${root}/objects/${target.sourceId}`
+		case 'file':
+			return `${root}/files/${target.id}`
+		case 'skill':
+			return `${root}/settings/skills`
 		case 'settings':
 			return target.section ? `${root}/settings/${target.section}` : `${root}/settings`
 		default: {

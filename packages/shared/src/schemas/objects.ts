@@ -8,6 +8,19 @@ export const objectTypeSchema = z
 	.regex(/^[a-z][a-z0-9_]*$/)
 export type ObjectType = z.infer<typeof objectTypeSchema>
 
+/**
+ * Bet statuses that end the bet's normal lifecycle and warrant a one-time
+ * watcher signal (unread-feed entry + notification row) rather than routine
+ * status-change noise. Matches the default `bet` status list in
+ * workspaces.ts's `statuses` schema and the "terminal status" definition
+ * used by the Retro & Knowledge Author trigger (packages/db/src/seed.ts).
+ * Single source of truth for both apps/dev/src/routes/objects.ts (fan-out
+ * gate) and apps/dev/src/routes/subscriptions.ts (unread-feed join) so the
+ * two can't independently drift out of sync.
+ */
+export const TERMINAL_BET_STATUSES = ['succeeded', 'failed', 'paused'] as const
+export type TerminalBetStatus = (typeof TERMINAL_BET_STATUSES)[number]
+
 export const createObjectSchema = z.object({
 	id: z.string().uuid().optional(),
 	type: objectTypeSchema,
@@ -91,6 +104,30 @@ export const KNOWN_SORT_COLUMNS = [
  * Avoid .refine() here — ZodEffects breaks @hono/zod-openapi query param extraction. */
 const sortFieldSchema = z.string().max(200).default('createdAt')
 
+/** Snapshot-consistent cursor pagination fields (behind `MCP_RESPONSE_SCOPING`).
+ *  All three are optional and additive — leaving them unset preserves the
+ *  legacy offset/limit shape byte-for-byte. When `snapshot_at` is set, the
+ *  server applies `created_at <= snapshot_at` as an upper bound so inserts
+ *  after the walk began cannot leak into the paginated stream. When the
+ *  keyset pair (`cursor_created_at`, `cursor_id`) is set, the server seeks
+ *  strictly past that (created_at, id) tuple in `createdAt` order and
+ *  ignores `offset`. */
+const snapshotAtSchema = z
+	.string()
+	.datetime()
+	.optional()
+	.describe(
+		'ISO timestamp captured at first-call time. When set, the server applies `created_at <= snapshot_at` so a row inserted mid-pagination cannot leak into the current walk.',
+	)
+const cursorIdSchema = z.string().uuid().optional()
+const cursorCreatedAtSchema = z
+	.string()
+	.datetime()
+	.optional()
+	.describe(
+		'Keyset seek: the `created_at` of the last row returned. The server pages strictly past `(cursor_created_at, cursor_id)` in `createdAt` order. Requires `cursor_id`.',
+	)
+
 export const objectQuerySchema = z.object({
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
@@ -104,6 +141,9 @@ export const objectQuerySchema = z.object({
 	order: z.enum(['asc', 'desc']).default('desc'),
 	limit: z.coerce.number().int().min(1).max(100).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
+	snapshot_at: snapshotAtSchema,
+	cursor_created_at: cursorCreatedAtSchema,
+	cursor_id: cursorIdSchema,
 })
 
 export const boardObjectQuerySchema = objectQuerySchema.extend({
@@ -134,6 +174,9 @@ export const searchObjectsSchema = z.object({
 	order: z.enum(['asc', 'desc']).default('desc'),
 	limit: z.coerce.number().int().min(1).max(100).default(20),
 	offset: z.coerce.number().int().min(0).default(0),
+	snapshot_at: snapshotAtSchema,
+	cursor_created_at: cursorCreatedAtSchema,
+	cursor_id: cursorIdSchema,
 })
 
 export const objectParamsSchema = z.object({

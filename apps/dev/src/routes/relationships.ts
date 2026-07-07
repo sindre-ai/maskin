@@ -1,8 +1,9 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, relationships } from '@maskin/db/schema'
+import { events, files, objects, relationships } from '@maskin/db/schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
-import { and, eq, inArray, or } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, or } from 'drizzle-orm'
+import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
@@ -62,12 +63,24 @@ app.openapi(createRelationshipRoute, async (c) => {
 
 	const body = c.req.valid('json')
 
+	// Resolve sourceType/targetType server-side per T1 convention B:
+	// 'file' when the endpoint id lives in files, 'object' otherwise.
+	// Caller-supplied type labels are ignored.
+	const endpointIds = [body.source_id, body.target_id]
+	const fileRows = await db
+		.select({ id: files.id })
+		.from(files)
+		.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, endpointIds)))
+	const fileIds = new Set(fileRows.map((r) => r.id))
+	const sourceType = fileIds.has(body.source_id) ? 'file' : 'object'
+	const targetType = fileIds.has(body.target_id) ? 'file' : 'object'
+
 	const [created] = await db
 		.insert(relationships)
 		.values({
-			sourceType: body.source_type,
+			sourceType,
 			sourceId: body.source_id,
-			targetType: body.target_type,
+			targetType,
 			targetId: body.target_id,
 			type: body.type,
 			createdBy: actorId,
@@ -133,14 +146,30 @@ app.openapi(listRelationshipsRoute, async (c) => {
 	if (query.source_id) conditions.push(eq(relationships.sourceId, query.source_id))
 	if (query.target_id) conditions.push(eq(relationships.targetId, query.target_id))
 	if (query.type) conditions.push(eq(relationships.type, query.type))
+	conditions.push(
+		...buildCreatedAtCursorConditions(
+			{ createdAt: relationships.createdAt, id: relationships.id },
+			query,
+		),
+	)
 
+	// When `snapshot_at` engages the cursor path, switch to a stable
+	// (createdAt, id) tuple so the keyset seek predicate agrees with the sort.
+	const cursorOn = Boolean(query.snapshot_at)
+	const orderBy = cursorOn
+		? query.order === 'asc'
+			? [asc(relationships.createdAt), asc(relationships.id)]
+			: [desc(relationships.createdAt), asc(relationships.id)]
+		: [relationships.createdAt]
+
+	const skipOffset = useKeysetSeek(query)
 	const results = await db
 		.select()
 		.from(relationships)
 		.where(conditions.length > 0 ? and(...conditions) : undefined)
 		.limit(query.limit)
-		.offset(query.offset)
-		.orderBy(relationships.createdAt)
+		.offset(skipOffset ? 0 : query.offset)
+		.orderBy(...orderBy)
 
 	const endpointIds = new Set<string>()
 	for (const r of results) {
