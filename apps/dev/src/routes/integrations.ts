@@ -29,6 +29,11 @@ import {
 	listSlackUsers,
 } from '../lib/integrations/providers/slack/client'
 import { config as slackProviderConfig } from '../lib/integrations/providers/slack/config'
+import {
+	handleSlackInteractivePayload,
+	parseSlackInteractivePayload,
+	slackInteractiveDeliveryId,
+} from '../lib/integrations/providers/slack/interactive'
 import { getProvider, listProviders } from '../lib/integrations/registry'
 import type { ResolvedProvider, StoredCredentials } from '../lib/integrations/types'
 import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
@@ -863,6 +868,16 @@ export default app
 
 const webhookHandler = new WebhookHandler()
 
+/**
+ * Sentinel `workspace_id` used on `webhook_deliveries` rows for the Slack
+ * interactive dedup ledger. Slack `trigger_id` is globally unique per
+ * click; collapsing dedup to a single scope means a retry of the same
+ * click is caught regardless of which maskin workspace the block_id
+ * points at. The column is `notNull` with no FK, so a non-routable UUID
+ * is safe.
+ */
+const SLACK_INTERACTIVE_DEDUP_WORKSPACE_ID = '00000000-0000-0000-0000-000000000000'
+
 export const webhookApp = new OpenAPIHono<Env>()
 
 // ── Slack slash command: /maskin workspace <name> ─────────────────────────
@@ -915,11 +930,6 @@ webhookApp.post('/slack-commands', async (c) => {
 // with the account-link picker (form-encoded with a `payload` field). The
 // dispatcher returns 200 with an ephemeral body so Slack's 3s timeout is
 // always met.
-//
-// This is a dedicated endpoint rather than reusing the generic
-// `/slack-interactive` (T6) because T6 isn't on bet/slack-app yet; once it is,
-// the dispatcher in T6's handler can call `dispatchAccountLinkAction` first
-// and fall through to the status/driver dispatcher.
 webhookApp.post('/slack-actions-account-link', async (c) => {
 	const db = c.get('db')
 	const body = await c.req.text()
@@ -952,9 +962,6 @@ webhookApp.post('/slack-actions-account-link', async (c) => {
 
 	const result = await dispatchAccountLinkAction(db, payload)
 	if (result.kind === 'unhandled') {
-		// Acknowledge with no body — Slack treats this as a no-op for elements
-		// this handler doesn't own (lets T6's status/driver edits keep working
-		// once they share the same Interactivity URL).
 		return c.json({})
 	}
 	const text =
@@ -965,6 +972,107 @@ webhookApp.post('/slack-actions-account-link', async (c) => {
 				? 'OK.'
 				: 'Could not complete account-link.')
 	return c.json({ response_type: 'ephemeral', replace_original: false, text })
+})
+
+// Slack Interactivity Request URL. Registered before the generic
+// `/:provider` route so the path-literal wins over the param. Slack signs
+// these the same way as Events API POSTs (`v0=...` over
+// `v0:{timestamp}:{body}`) but the body is `application/x-www-form-urlencoded`
+// with a single `payload` field, not JSON. See
+// `lib/integrations/providers/slack/interactive.ts` for the contract the
+// unfurl pipeline (T5) emits.
+webhookApp.post('/slack-interactive', async (c) => {
+	const db = c.get('db')
+
+	const body = await c.req.text()
+
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	let slackProvider: ResolvedProvider
+	try {
+		slackProvider = getProvider('slack')
+	} catch {
+		return c.json(createApiError('INTERNAL_ERROR', 'Slack provider not registered'), 500)
+	}
+
+	const webhookConfig = slackProvider.config.webhook
+	if (!webhookConfig || 'type' in webhookConfig) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Slack provider webhook config missing'), 500)
+	}
+
+	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+		logger.warn('Slack interactive: signature verification failed')
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+	}
+
+	const payload = parseSlackInteractivePayload(body)
+	if (!payload) {
+		// Unparseable payload: ack 200 so Slack doesn't retry into the same wall.
+		return c.json({ ok: true, skipped: 'unparseable' })
+	}
+
+	// Best-effort dedup. Slack retries interactive POSTs on any non-2xx
+	// response inside 3s; `trigger_id` is unique per click, so a retry that
+	// reaches us after we've already committed the side-effect is caught
+	// here and short-circuited before we double-fire the audit event.
+	const deliveryId = slackInteractiveDeliveryId(payload)
+	const dedupWorkspaceId = SLACK_INTERACTIVE_DEDUP_WORKSPACE_ID
+
+	if (deliveryId) {
+		try {
+			const rows = await db
+				.insert(webhookDeliveries)
+				.values({
+					provider: 'slack-interactive',
+					externalId: deliveryId,
+					workspaceId: dedupWorkspaceId,
+					processedAt: new Date(),
+				})
+				.onConflictDoNothing({
+					target: [
+						webhookDeliveries.provider,
+						webhookDeliveries.externalId,
+						webhookDeliveries.workspaceId,
+					],
+				})
+				.returning({ id: webhookDeliveries.id })
+
+			if (rows.length === 0) {
+				logger.info('Slack interactive: duplicate delivery short-circuited', {
+					deliveryId,
+				})
+				return c.json({ ok: true, skipped: 'duplicate' })
+			}
+		} catch (err) {
+			// Fail-open: a dedup outage must not block legitimate user actions.
+			logger.error('Slack interactive: dedup claim failed; processing without dedup', {
+				deliveryId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	try {
+		const result = await handleSlackInteractivePayload(db, payload)
+		if (result.updated) {
+			logger.info('Slack interactive: object change committed', {
+				workspaceId: result.workspaceId,
+				objectId: result.objectId,
+				actorId: result.actorId,
+			})
+		}
+	} catch (err) {
+		logger.error('Slack interactive: handler crashed', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+		// Still ack 200 so Slack doesn't retry — a retry would hit the same
+		// crash and the user already saw their selection land in the picker.
+	}
+
+	return c.json({ ok: true })
 })
 
 webhookApp.post('/:provider', async (c) => {
