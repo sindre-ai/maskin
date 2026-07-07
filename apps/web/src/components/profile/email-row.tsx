@@ -14,17 +14,10 @@ import { useCancelEmailChange, useRequestEmailChange } from '@/hooks/use-auth'
 import { trackEvent } from '@/lib/analytics'
 import { type ActorResponse, ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { newIdempotencyKey } from '@/lib/idempotency'
 import { AlertTriangle } from 'lucide-react'
 import { type FormEvent, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-
-// Fallback so non-secure-context jsdom tests still get a unique-ish key. The
-// API treats `Idempotency-Key` as an opaque string, so the format doesn't
-// matter as long as a double-tap submits the same value.
-function newIdempotencyKey(): string {
-	if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
-	return `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
 
 type RequestEmailChangeMutation = ReturnType<typeof useRequestEmailChange>
 

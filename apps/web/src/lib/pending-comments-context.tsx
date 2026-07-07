@@ -3,6 +3,7 @@ import { useUploadFile } from '@/hooks/use-files'
 import { trackObjectAttachedFile } from '@/lib/analytics'
 import { type CreateCommentInput, api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { newIdempotencyKey } from '@/lib/idempotency'
 import { queryKeys } from '@/lib/query-keys'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -68,13 +69,6 @@ interface ContextValue {
 }
 
 const PendingCommentsContext = createContext<ContextValue | null>(null)
-
-function randomId(): string {
-	if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-		return crypto.randomUUID()
-	}
-	return `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
 
 const COMPLETED_DROP_MS = 1200
 
@@ -210,7 +204,7 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 		(draftId, file) => {
 			const entry = entriesRef.current.get(draftId)
 			if (!entry) return
-			const fileTempId = randomId()
+			const fileTempId = newIdempotencyKey()
 			const newFile: PendingFile = {
 				tempId: fileTempId,
 				name: file.name,
