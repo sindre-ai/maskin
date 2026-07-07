@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { EXTRAS_EQ_PARAM_NAMES } from './object-extras'
 import { safeMetadataSchema } from './primitives'
 
 export const objectTypeSchema = z
@@ -140,34 +139,18 @@ export const boardObjectResponseSchema = z.object({
 	columns: z.array(boardObjectColumnSchema),
 })
 
-/**
- * Per-field `<field>_eq` params for /objects/search. Every promoted column
- * across the four extras sidecars (T3–T6) surfaces here as one optional
- * string param — the handler resolves the target sidecar from `type` and
- * casts each value per PG type. See `object-extras.ts` for the mapping.
- * Zod validates every value as a string; PG rejects a bad cast at query
- * time (e.g. `merge_blocked_eq=maybe` → invalid input syntax for boolean).
- * Shape is typed as a mapped record over the literal `<field>_eq` tuple so
- * `.extend()` preserves each key on the inferred query type.
- */
-const extrasEqShape = Object.fromEntries(
-	EXTRAS_EQ_PARAM_NAMES.map((name) => [name, z.string().optional()]),
-) as { [K in (typeof EXTRAS_EQ_PARAM_NAMES)[number]]: z.ZodOptional<z.ZodString> }
-
-export const searchObjectsSchema = z
-	.object({
-		q: z.string().min(1),
-		type: objectTypeSchema.optional(),
-		status: z.string().optional(),
-		driver: z.string().optional(),
-		/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */
-		updated_after: z.string().datetime({ offset: true }).optional(),
-		sort: sortFieldSchema,
-		order: z.enum(['asc', 'desc']).default('desc'),
-		limit: z.coerce.number().int().min(1).max(100).default(20),
-		offset: z.coerce.number().int().min(0).default(0),
-	})
-	.extend(extrasEqShape)
+export const searchObjectsSchema = z.object({
+	q: z.string().min(1),
+	type: objectTypeSchema.optional(),
+	status: z.string().optional(),
+	driver: z.string().optional(),
+	/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */
+	updated_after: z.string().datetime({ offset: true }).optional(),
+	sort: sortFieldSchema,
+	order: z.enum(['asc', 'desc']).default('desc'),
+	limit: z.coerce.number().int().min(1).max(100).default(20),
+	offset: z.coerce.number().int().min(0).default(0),
+})
 
 export const objectParamsSchema = z.object({
 	id: z.string().uuid(),

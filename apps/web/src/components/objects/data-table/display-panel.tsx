@@ -1,3 +1,4 @@
+import { type FieldDefinition, FieldValueInput } from '@/components/objects/field-value-input'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -44,6 +45,11 @@ export interface DisplayPanelProps {
 	driverFilter?: string
 	onDriverFilterChange?: (value: string | undefined) => void
 	actors?: ActorListItem[]
+	// Metadata filters — one row per custom field definition of the active type.
+	// The parent passes these only when exactly one object type is selected.
+	fieldDefinitions?: FieldDefinition[]
+	metadataFilters?: Record<string, string>
+	onMetadataFilterChange?: (field: string, value: string | undefined) => void
 	onResetFilters?: () => void
 	// Ordering
 	sort?: string
@@ -140,6 +146,9 @@ export function DisplayPanel({
 	driverFilter,
 	onDriverFilterChange,
 	actors,
+	fieldDefinitions,
+	metadataFilters,
+	onMetadataFilterChange,
 	onResetFilters,
 	sort,
 	onSortChange,
@@ -152,12 +161,20 @@ export function DisplayPanel({
 }: DisplayPanelProps) {
 	const activeStatuses = statusFilter ? statusFilter.split(',').filter(Boolean) : []
 	const activeDrivers = driverFilter ? driverFilter.split(',').filter(Boolean) : []
-	const activeFilterCount = (activeStatuses.length > 0 ? 1 : 0) + (activeDrivers.length > 0 ? 1 : 0)
+	const metadataFields = fieldDefinitions ?? []
+	const activeMetadataFields = metadataFields.filter(
+		(f) => (metadataFilters?.[f.name] ?? '') !== '',
+	)
+	const activeFilterCount =
+		(activeStatuses.length > 0 ? 1 : 0) +
+		(activeDrivers.length > 0 ? 1 : 0) +
+		activeMetadataFields.length
 	const hasActiveFilters = activeFilterCount > 0
 
+	const showMetadataFilters = !!onMetadataFilterChange && metadataFields.length > 0
 	const showOrdering = !!sort && !!order && !!onSortChange && !!onOrderChange && columns.length > 0
 	const showGrouping = !!onGroupByChange && columns.length > 0
-	const showFilters = !!onStatusFilterChange || !!onDriverFilterChange
+	const showFilters = !!onStatusFilterChange || !!onDriverFilterChange || showMetadataFilters
 	const hideableColumns = columns.filter((col) => col.canHide)
 	const showProperties = !!onColumnVisibilityChange && hideableColumns.length > 0
 	const orderingColumns =
@@ -364,6 +381,9 @@ export function DisplayPanel({
 												} else {
 													onStatusFilterChange?.(undefined)
 													onDriverFilterChange?.(undefined)
+													for (const f of metadataFields) {
+														onMetadataFilterChange?.(f.name, undefined)
+													}
 												}
 											}}
 										>
@@ -470,6 +490,43 @@ export function DisplayPanel({
 										)}
 									</div>
 								)}
+
+								{/* Metadata filters — one row per custom field of the active type */}
+								{showMetadataFilters &&
+									metadataFields.map((field) => {
+										const current = metadataFilters?.[field.name] ?? ''
+										return (
+											<div key={field.name} className="flex items-center gap-2">
+												<span
+													className="w-16 shrink-0 truncate text-xs capitalize text-text-secondary"
+													title={field.name}
+												>
+													{field.name.replace(/_/g, ' ')}
+												</span>
+												<FieldValueInput
+													type={field.type}
+													fieldDef={field}
+													value={current}
+													onChange={(value) =>
+														onMetadataFilterChange?.(field.name, value || undefined)
+													}
+													placeholder="Any"
+													className="flex-1"
+												/>
+												{current !== '' && (
+													<button
+														type="button"
+														aria-label={`Clear ${field.name} filter`}
+														title={`Clear ${field.name} filter`}
+														onClick={() => onMetadataFilterChange?.(field.name, undefined)}
+														className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
+													>
+														Clear
+													</button>
+												)}
+											</div>
+										)
+									})}
 							</div>
 							<Separator />
 						</>

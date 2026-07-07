@@ -8,6 +8,7 @@ import type { ColumnInfo } from '@/components/objects/data-table/data-table-cont
 import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
 import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
+import type { FieldDefinition } from '@/components/objects/field-value-input'
 import { RouteError } from '@/components/shared/route-error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -45,19 +46,31 @@ import { toast } from 'sonner'
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	component: ObjectsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
-	validateSearch: (search: Record<string, unknown>) => ({
-		type: typeof search.type === 'string' ? search.type : undefined,
-		status: typeof search.status === 'string' ? search.status : undefined,
-		driver: typeof search.driver === 'string' ? search.driver : undefined,
-		sort: typeof search.sort === 'string' ? search.sort : 'createdAt',
-		order:
-			typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
-				? (search.order as 'asc' | 'desc')
-				: 'desc',
-		q: typeof search.q === 'string' ? search.q : undefined,
-		groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
-		ids: typeof search.ids === 'string' ? search.ids : undefined,
-	}),
+	validateSearch: (search: Record<string, unknown>) => {
+		// Pass through dynamic `metadata.<field>` filter keys so they persist in
+		// the URL and survive `updateSearch()` merges. Fixed keys are plucked
+		// explicitly below; unlisted keys would otherwise be dropped.
+		const metadataFilters: Record<string, string> = {}
+		for (const [key, value] of Object.entries(search)) {
+			if (/^metadata\.[a-zA-Z][a-zA-Z0-9_]*$/.test(key) && typeof value === 'string') {
+				metadataFilters[key] = value
+			}
+		}
+		return {
+			type: typeof search.type === 'string' ? search.type : undefined,
+			status: typeof search.status === 'string' ? search.status : undefined,
+			driver: typeof search.driver === 'string' ? search.driver : undefined,
+			sort: typeof search.sort === 'string' ? search.sort : 'createdAt',
+			order:
+				typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
+					? (search.order as 'asc' | 'desc')
+					: 'desc',
+			q: typeof search.q === 'string' ? search.q : undefined,
+			groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
+			ids: typeof search.ids === 'string' ? search.ids : undefined,
+			...metadataFilters,
+		}
+	},
 })
 
 const PAGE_SIZE = 50
@@ -132,6 +145,34 @@ function ObjectsPage() {
 		]
 	}, [enabledModules, customExtensions])
 
+	// `searchParams` is a fresh object every render (TanStack Router doesn't
+	// give it referential stability here — every other filter in this file
+	// destructures a primitive off it for that reason). Serialize the active
+	// `metadata.*` entries into a stable string first, then derive the object
+	// from that string, so `metadataFilters` only gets a new reference when
+	// the actual filter content changes — anything else re-fires effects
+	// (write-through, urlIsInDefaultShape) on every render, looping writes.
+	const metadataFiltersKey = useMemo(() => {
+		return Object.entries(searchParams)
+			.filter(([key, value]) => key.startsWith('metadata.') && typeof value === 'string' && value)
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([key, value]) => `${key}=${encodeURIComponent(value as string)}`)
+			.join('&')
+	}, [searchParams])
+
+	// Active metadata filters, keyed by field name (URL key `metadata.<field>`
+	// with the prefix stripped). Drives the Display-panel rows and the API params.
+	const metadataFilters = useMemo(() => {
+		const m: Record<string, string> = {}
+		if (!metadataFiltersKey) return m
+		for (const pair of metadataFiltersKey.split('&')) {
+			const eqIdx = pair.indexOf('=')
+			const key = pair.slice(0, eqIdx)
+			m[key.slice('metadata.'.length)] = decodeURIComponent(pair.slice(eqIdx + 1))
+		}
+		return m
+	}, [metadataFiltersKey])
+
 	// Build API filters
 	const filters = useMemo(() => {
 		const f: Record<string, string> = {}
@@ -139,10 +180,13 @@ function ObjectsPage() {
 		if (statusFilter) f.status = statusFilter
 		if (driverFilter) f.driver = driverFilter
 		if (idsFilter) f.ids = idsFilter
+		for (const [field, value] of Object.entries(metadataFilters)) {
+			f[`metadata.${field}`] = value
+		}
 		f.sort = sort
 		f.order = order
 		return f
-	}, [typeFilter, statusFilter, driverFilter, idsFilter, sort, order])
+	}, [typeFilter, statusFilter, driverFilter, idsFilter, sort, order, metadataFilters])
 
 	// Infinite query — use search endpoint when q is present
 	const infiniteQuery = useInfiniteQuery({
@@ -217,8 +261,13 @@ function ObjectsPage() {
 
 	// Field definitions for dynamic columns
 	const fieldDefinitions = settings?.field_definitions as
-		| Record<string, Array<{ name: string; type: 'text' | 'number' | 'date' | 'enum' | 'boolean' }>>
+		| Record<string, FieldDefinition[]>
 		| undefined
+
+	// Metadata filter rows only apply when a single object type is selected — the
+	// field definitions (and thus the filterable fields) are per-type. On the
+	// "All" tab this is undefined so the Display panel renders no metadata rows.
+	const typeFieldDefinitions = typeFilter ? (fieldDefinitions?.[typeFilter] ?? []) : undefined
 
 	// Update search params helper — uses ref to stay stable across param changes
 	const updateSearch = useCallback(
@@ -382,13 +431,15 @@ function ObjectsPage() {
 			(!searchParams.order || searchParams.order === 'desc') &&
 			!searchParams.groupBy &&
 			!searchParams.status &&
-			!searchParams.driver,
+			!searchParams.driver &&
+			Object.keys(metadataFilters).length === 0,
 		[
 			searchParams.sort,
 			searchParams.order,
 			searchParams.groupBy,
 			searchParams.status,
 			searchParams.driver,
+			metadataFilters,
 		],
 	)
 
@@ -416,6 +467,9 @@ function ObjectsPage() {
 			if (s.groupBy) updates.groupBy = s.groupBy
 			if (s.filters?.status) updates.status = s.filters.status
 			if (s.filters?.driver) updates.driver = s.filters.driver
+			for (const [field, value] of Object.entries(s.filters?.metadata ?? {})) {
+				updates[`metadata.${field}`] = value
+			}
 			if (Object.keys(updates).length > 0) updateSearch(updates)
 		}
 		// Persisted blob wins: the saved map REPLACES the route's initial
@@ -443,16 +497,27 @@ function ObjectsPage() {
 			groupBy: groupBy ?? null,
 			columnVisibility,
 		}
-		const filters: { status?: string; driver?: string } = {}
+		const filters: { status?: string; driver?: string; metadata?: Record<string, string> } = {}
 		if (statusFilter) filters.status = statusFilter
 		if (driverFilter) filters.driver = driverFilter
-		if (filters.status || filters.driver) settings.filters = filters
+		if (Object.keys(metadataFilters).length > 0) filters.metadata = metadataFilters
+		if (filters.status || filters.driver || filters.metadata) settings.filters = filters
 
 		const handle = setTimeout(() => {
 			updateMutateRef.current({ objectType: displaySettingsKey, settings })
 		}, 500)
 		return () => clearTimeout(handle)
-	}, [displaySettingsKey, view, sort, order, groupBy, statusFilter, driverFilter, columnVisibility])
+	}, [
+		displaySettingsKey,
+		view,
+		sort,
+		order,
+		groupBy,
+		statusFilter,
+		driverFilter,
+		metadataFilters,
+		columnVisibility,
+	])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
 
@@ -721,7 +786,19 @@ function ObjectsPage() {
 				driverFilter={driverFilter}
 				onDriverFilterChange={(value) => updateSearch({ driver: value })}
 				actors={actors}
-				onResetFilters={() => updateSearch({ status: undefined, driver: undefined })}
+				fieldDefinitions={typeFieldDefinitions}
+				metadataFilters={metadataFilters}
+				onMetadataFilterChange={(field, value) => updateSearch({ [`metadata.${field}`]: value })}
+				onResetFilters={() => {
+					const cleared: Record<string, string | undefined> = {
+						status: undefined,
+						driver: undefined,
+					}
+					for (const key of Object.keys(searchParams)) {
+						if (key.startsWith('metadata.')) cleared[key] = undefined
+					}
+					updateSearch(cleared)
+				}}
 				sort={sort}
 				onSortChange={(value) =>
 					updateSearch({

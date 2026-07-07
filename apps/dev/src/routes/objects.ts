@@ -14,9 +14,7 @@ import {
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
-	EXTRAS_FIELD_NAMES,
 	OBJECT_DIFF_FIELDS,
-	OBJECT_EXTRAS,
 	TERMINAL_BET_STATUSES,
 	boardObjectQuerySchema,
 	boardObjectResponseSchema,
@@ -27,7 +25,6 @@ import {
 	findChange,
 	formatEventDescription,
 	getChangesFromEventData,
-	isExtrasFieldForType,
 	migrateObjectTypeResponseSchema,
 	migrateObjectTypeSchema,
 	objectQuerySchema,
@@ -83,6 +80,10 @@ const app = new OpenAPIHono<Env>()
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+// Only alphanumeric + underscore field names are safe to inline via sql.raw
+// (sort, groupBy, and metadata filter keys all key off this same check).
+const SAFE_METADATA_FIELD_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]*$/
+
 // Keep in sync with KNOWN_SORT_COLUMNS in packages/shared/src/schemas/objects.ts
 const sortColumns: Record<string, Column | SQL> = {
 	createdAt: objects.createdAt,
@@ -100,8 +101,7 @@ function resolveSortColumn(sortField: string): Column | SQL | null {
 	if (sortColumns[sortField]) return sortColumns[sortField]
 	if (sortField.startsWith('metadata.')) {
 		const fieldName = sortField.slice(9)
-		// Safety check: only allow alphanumeric + underscore field names to prevent SQL injection via sql.raw
-		if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) return null
+		if (!SAFE_METADATA_FIELD_NAME_RE.test(fieldName)) return null
 		return sql`${objects.metadata}->>'${sql.raw(fieldName)}'`
 	}
 	return null
@@ -121,15 +121,52 @@ function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
 	return [primary, asc(objects.id)]
 }
 
-function buildObjectListConditions(query: {
-	type?: string
-	status?: string
-	driver?: string
-	ids?: string
-	q?: string
-	updated_before?: string
-	updated_after?: string
-}) {
+/**
+ * Parses `metadata.<fieldName>=<value>` query keys into filter conditions
+ * `metadata->>'<fieldName>' = '<value>'` (plain text equality). Field names
+ * are workspace-defined custom properties (see `create_workspace_field`) so
+ * they can't be enumerated ahead of time — validated per-key against
+ * `SAFE_METADATA_FIELD_NAME_RE` instead, since they're inlined via `sql.raw`.
+ *
+ * Returns the first invalid field name found (caller should 400), or the
+ * parsed list of filters otherwise.
+ */
+function extractMetadataFilters(
+	rawQuery: Record<string, string | string[] | undefined>,
+): { ok: true; filters: { field: string; value: string }[] } | { ok: false; invalidField: string } {
+	const filters: { field: string; value: string }[] = []
+	for (const [key, rawValue] of Object.entries(rawQuery)) {
+		if (!key.startsWith('metadata.')) continue
+		const field = key.slice('metadata.'.length)
+		const value = Array.isArray(rawValue) ? rawValue[0] : rawValue
+		if (!SAFE_METADATA_FIELD_NAME_RE.test(field)) return { ok: false, invalidField: field }
+		if (typeof value === 'string' && value.length > 0) filters.push({ field, value })
+	}
+	return { ok: true, filters }
+}
+
+function invalidMetadataFieldError(fieldName: string) {
+	return createApiError('BAD_REQUEST', `Invalid metadata filter field name: '${fieldName}'`, [
+		{
+			field: `metadata.${fieldName}`,
+			message:
+				'Field names must start with a letter and contain only letters, numbers, and underscores.',
+		},
+	])
+}
+
+function buildObjectListConditions(
+	query: {
+		type?: string
+		status?: string
+		driver?: string
+		ids?: string
+		q?: string
+		updated_before?: string
+		updated_after?: string
+	},
+	metadataFilters: { field: string; value: string }[] = [],
+) {
 	const conditions: SQL[] = []
 	if (query.type) conditions.push(eq(objects.type, query.type))
 	if (query.status) {
@@ -155,6 +192,10 @@ function buildObjectListConditions(query: {
 	// Half-open contract — Zod has already validated these as ISO-8601 strings.
 	if (query.updated_before) conditions.push(lt(objects.updatedAt, new Date(query.updated_before)))
 	if (query.updated_after) conditions.push(gt(objects.updatedAt, new Date(query.updated_after)))
+	// Field name pre-validated by extractMetadataFilters; value is parameter-bound.
+	for (const { field, value } of metadataFilters) {
+		conditions.push(sql`${objects.metadata}->>'${sql.raw(field)}' = ${value}`)
+	}
 	return conditions
 }
 
@@ -165,7 +206,7 @@ function resolveBoardGroupExpression(groupBy?: string): SQL {
 	if (groupBy === 'type') return sql`${objects.type}`
 	if (groupBy.startsWith('metadata.')) {
 		const fieldName = groupBy.slice('metadata.'.length)
-		if (/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) {
+		if (SAFE_METADATA_FIELD_NAME_RE.test(fieldName)) {
 			return sql`coalesce(${objects.metadata}->>'${sql.raw(fieldName)}', '')`
 		}
 	}
@@ -342,7 +383,15 @@ app.openapi(listObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
+	const parsedMetadataFilters = extractMetadataFilters(c.req.query())
+	if (!parsedMetadataFilters.ok) {
+		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
+	}
+
+	const conditions = [
+		eq(objects.workspaceId, workspaceId),
+		...buildObjectListConditions(query, parsedMetadataFilters.filters),
+	]
 
 	const orderBy = resolveOrderBy(query)
 
@@ -408,17 +457,25 @@ app.openapi(boardObjectsRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
+	const parsedMetadataFilters = extractMetadataFilters(rawQuery)
+	if (!parsedMetadataFilters.ok) {
+		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
+	}
+
 	const baseConditions = [
 		eq(objects.workspaceId, workspaceId),
-		...buildObjectListConditions({
-			type: query.type,
-			status: query.status,
-			driver: query.driver,
-			ids: query.ids,
-			q: query.q,
-			updated_before: query.updated_before,
-			updated_after: query.updated_after,
-		}),
+		...buildObjectListConditions(
+			{
+				type: query.type,
+				status: query.status,
+				driver: query.driver,
+				ids: query.ids,
+				q: query.q,
+				updated_before: query.updated_before,
+				updated_after: query.updated_after,
+			},
+			parsedMetadataFilters.filters,
+		),
 	]
 
 	const countRows = await db
@@ -504,76 +561,15 @@ app.openapi(searchObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const setEqParams: Array<{ field: string; value: string }> = []
-	for (const field of EXTRAS_FIELD_NAMES) {
-		const value = (query as unknown as Record<string, unknown>)[`${field}_eq`]
-		if (typeof value === 'string' && value.length > 0) {
-			setEqParams.push({ field, value })
-		}
+	const parsedMetadataFilters = extractMetadataFilters(c.req.query())
+	if (!parsedMetadataFilters.ok) {
+		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
 	}
 
-	if (setEqParams.length > 0) {
-		if (!query.type) {
-			return c.json(
-				createApiError(
-					'BAD_REQUEST',
-					'`<field>_eq` params require a `type` filter to resolve the extras sidecar',
-					setEqParams.map(({ field }) => ({
-						field: `${field}_eq`,
-						message: `Set a \`type\` filter to route \`${field}_eq\` to its extras sidecar.`,
-					})),
-					'Add `type=<bet|task|insight|customer>` — each `_eq` param joins the sidecar owned by that type.',
-				),
-				400,
-			)
-		}
-		const unknown = setEqParams.filter(
-			({ field }) => !isExtrasFieldForType(query.type as string, field),
-		)
-		if (unknown.length > 0) {
-			const sidecar = OBJECT_EXTRAS[query.type as string]
-			const validForType = sidecar ? Object.keys(sidecar.fields).sort() : []
-			return c.json(
-				createApiError(
-					'BAD_REQUEST',
-					sidecar
-						? `Unknown \`<field>_eq\` param for type '${query.type}'`
-						: `Type '${query.type}' has no extras sidecar; \`<field>_eq\` params are not supported`,
-					unknown.map(({ field }) => ({
-						field: `${field}_eq`,
-						message: sidecar
-							? `'${field}' is not a promoted field on '${query.type}' extras.`
-							: `Type '${query.type}' has no extras sidecar.`,
-						expected: validForType.length > 0 ? validForType.join(' | ') : 'none',
-					})),
-					validForType.length > 0
-						? `Promoted fields for '${query.type}': ${validForType.join(', ')}`
-						: undefined,
-				),
-				400,
-			)
-		}
-	}
-
-	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
-
-	if (setEqParams.length > 0 && query.type) {
-		const sidecar = OBJECT_EXTRAS[query.type]
-		if (sidecar) {
-			// Table + column names come from the closed static OBJECT_EXTRAS map
-			// (safe to inline with sql.raw). The `value` is always parameter-bound
-			// and cast per PG type so T3's partial `(workspace_id, <field>)` index
-			// stays usable. `EXISTS` semantics correctly exclude objects missing
-			// a sidecar row rather than surfacing them with NULLs like LEFT JOIN.
-			for (const { field, value } of setEqParams) {
-				const col = sidecar.fields[field]
-				if (!col) continue
-				conditions.push(
-					sql`EXISTS (SELECT 1 FROM ${sql.raw(`"${sidecar.table}"`)} AS sx WHERE sx.object_id = ${objects.id} AND sx.${sql.raw(`"${col.column}"`)} = ${value}::${sql.raw(col.castType)})`,
-				)
-			}
-		}
-	}
+	const conditions = [
+		eq(objects.workspaceId, workspaceId),
+		...buildObjectListConditions(query, parsedMetadataFilters.filters),
+	]
 
 	const orderBy = resolveOrderBy(query)
 

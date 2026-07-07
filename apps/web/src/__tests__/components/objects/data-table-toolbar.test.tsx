@@ -3,8 +3,13 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { displayPanelProps } = vi.hoisted(() => ({ displayPanelProps: vi.fn() }))
+
 vi.mock('@/components/objects/data-table/display-panel', () => ({
-	DisplayPanel: () => <button type="button">MockDisplay</button>,
+	DisplayPanel: (props: Record<string, unknown>) => {
+		displayPanelProps(props)
+		return <button type="button">MockDisplay</button>
+	},
 }))
 
 function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableToolbar>> = {}) {
@@ -84,6 +89,17 @@ describe('DataTableToolbar', () => {
 	it('renders the mocked Display panel', () => {
 		renderToolbar()
 		expect(screen.getByRole('button', { name: 'MockDisplay' })).toBeInTheDocument()
+	})
+
+	it('forwards metadata filter props through to the Display panel', () => {
+		const fieldDefinitions = [{ name: 'region', type: 'text' as const }]
+		const metadataFilters = { region: 'emea' }
+		const onMetadataFilterChange = vi.fn()
+		renderToolbar({ fieldDefinitions, metadataFilters, onMetadataFilterChange })
+		const props = displayPanelProps.mock.calls.at(-1)?.[0] as Record<string, unknown>
+		expect(props.fieldDefinitions).toEqual(fieldDefinitions)
+		expect(props.metadataFilters).toEqual(metadataFilters)
+		expect(props.onMetadataFilterChange).toBe(onMetadataFilterChange)
 	})
 
 	it('shows current search value in input', () => {

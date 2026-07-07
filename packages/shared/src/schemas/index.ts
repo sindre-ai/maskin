@@ -1,6 +1,5 @@
 export * from './primitives'
 export * from './objects'
-export * from './object-extras'
 export * from './actors'
 export * from './workspaces'
 export * from './relationships'

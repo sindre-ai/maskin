@@ -46,6 +46,19 @@ describe('displaySettingsBodySchema', () => {
 		for (let i = 0; i < 201; i++) vis[`col_${i}`] = true
 		expect(() => displaySettingsBodySchema.parse({ columnVisibility: vis })).toThrow(/at most 200/)
 	})
+
+	it('accepts filters.metadata as a field->value record', () => {
+		const result = displaySettingsBodySchema.parse({
+			filters: { status: 'active', metadata: { segment: 'enterprise', confidence: 'high' } },
+		})
+		expect(result.filters?.metadata).toEqual({ segment: 'enterprise', confidence: 'high' })
+	})
+
+	it('rejects a filters.metadata map with more than 50 entries', () => {
+		const metadata: Record<string, string> = {}
+		for (let i = 0; i < 51; i++) metadata[`field_${i}`] = 'x'
+		expect(() => displaySettingsBodySchema.parse({ filters: { metadata } })).toThrow(/at most 50/)
+	})
 })
 
 describe('userDisplaySettingsParamsSchema', () => {

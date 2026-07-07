@@ -219,6 +219,16 @@ describe('list_objects schema', () => {
 	it('rejects unknown sort values', () => {
 		expect(() => schema.parse({ sort: 'created_at_asc' })).toThrow()
 	})
+
+	it('accepts metadata_eq as a field->value record', () => {
+		const result = schema.parse({ metadata_eq: { segment: 'enterprise', confidence: 'high' } })
+		expect(result.metadata_eq).toEqual({ segment: 'enterprise', confidence: 'high' })
+	})
+
+	it('omits metadata_eq when not supplied', () => {
+		const result = schema.parse({})
+		expect(result.metadata_eq).toBeUndefined()
+	})
 })
 
 describe('search_objects schema', () => {
@@ -278,6 +288,16 @@ describe('search_objects schema', () => {
 		expect(result.type).toBe('bet')
 		expect(result.driver_id).toBe(uuid)
 		expect(result.updated_after).toBe('2026-06-29T12:00:00.000Z')
+	})
+
+	it('accepts metadata_eq as a field->value record', () => {
+		const result = schema.parse({ q: 'bet', metadata_eq: { promotion_mode: 'human_approved' } })
+		expect(result.metadata_eq).toEqual({ promotion_mode: 'human_approved' })
+	})
+
+	it('omits metadata_eq when not supplied', () => {
+		const result = schema.parse({ q: 'bet' })
+		expect(result.metadata_eq).toBeUndefined()
 	})
 })
 

@@ -13,10 +13,6 @@
 			"types": "./server/index.ts",
 			"default": "./server/index.ts"
 		},
-		"./db-schema": {
-			"types": "./server/schema.ts",
-			"default": "./server/schema.ts"
-		},
 		"./web": {
 			"types": "./web/index.ts",
 			"default": "./web/index.ts"
@@ -27,9 +23,7 @@
 		}
 	},
 	"dependencies": {
-		"@maskin/db": "workspace:*",
-		"@maskin/module-sdk": "workspace:*",
-		"drizzle-orm": "^0.45.2"
+		"@maskin/module-sdk": "workspace:*"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0"

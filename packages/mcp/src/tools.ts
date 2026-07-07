@@ -1,8 +1,6 @@
 import {
 	COMMENT_MAX_ATTACHMENTS,
 	COMMENT_MAX_LENGTH,
-	EXTRAS_FIELD_NAMES,
-	OBJECT_EXTRAS,
 	createCommentSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
@@ -54,26 +52,17 @@ const optionalWorkspaceId = z
 	)
 
 /**
- * One optional `<field>_eq` param per promoted column across the four extras
- * sidecars (T3–T6), described per-field with the object type(s) it applies to.
- * The API rejects a set `_eq` param whose `type` doesn't own that field with a
- * 400; without `type`, every set `_eq` is a 400 too.
+ * Equality filter on custom metadata fields — object types define their own
+ * fields at runtime (see `create_workspace_field`), so this is a generic
+ * field→value map rather than a static enumeration. Forwarded to the API as
+ * `metadata.<field>=<value>` query params (see `apps/dev/src/routes/objects.ts`).
  */
-function extrasEqShape(): Record<string, z.ZodOptional<z.ZodString>> {
-	const shape: Record<string, z.ZodOptional<z.ZodString>> = {}
-	for (const field of EXTRAS_FIELD_NAMES) {
-		const owners = Object.entries(OBJECT_EXTRAS)
-			.filter(([, sidecar]) => field in sidecar.fields)
-			.map(([type]) => type)
-		shape[`${field}_eq`] = z
-			.string()
-			.optional()
-			.describe(
-				`Equality filter on \`${field}\` — requires type=${owners.join(' | ')}. Joined via the object's extras sidecar.`,
-			)
-	}
-	return shape
-}
+const metadataEqSchema = z
+	.record(z.string(), z.string())
+	.optional()
+	.describe(
+		'Equality filter on custom metadata fields, e.g. {"segment": "enterprise"}. Call get_workspace_schema first to see which fields exist per object type.',
+	)
 
 export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
@@ -232,7 +221,7 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, or last-updated window. Returns paginated results ordered by creation date unless `sort` is set.',
+			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date unless `sort` is set.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
@@ -264,11 +253,12 @@ export const tools = {
 				),
 			limit: z.number().int().min(1).max(100).default(50),
 			offset: z.number().int().min(0).default(0),
+			metadata_eq: metadataEqSchema,
 		}),
 	},
 	search_objects: {
 		description:
-			"Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a promoted metadata field on the object's extras sidecar, pass `type` plus the matching `<field>_eq` param — e.g. `type=bet&promotion_mode_eq=human_approved`. `<field>_eq` params require `type` to route to the correct sidecar and error otherwise.",
+			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z
@@ -291,7 +281,7 @@ export const tools = {
 				),
 			limit: z.number().int().min(1).max(100).default(20),
 			offset: z.number().int().min(0).default(0),
-			...extrasEqShape(),
+			metadata_eq: metadataEqSchema,
 		}),
 	},
 	list_relationships: {

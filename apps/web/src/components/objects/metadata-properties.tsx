@@ -1,12 +1,6 @@
+import { type FieldDefinition, FieldValueInput } from '@/components/objects/field-value-input'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { useUpdateObject } from '@/hooks/use-objects'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
@@ -15,13 +9,6 @@ import { useWorkspace } from '@/lib/workspace-context'
 import type { SafeJsonValue, SafeMetadata } from '@maskin/shared'
 import { X } from 'lucide-react'
 import { useState } from 'react'
-
-interface FieldDefinition {
-	name: string
-	type: 'text' | 'number' | 'date' | 'enum' | 'boolean'
-	required?: boolean
-	values?: string[]
-}
 
 export function MetadataPropertiesView({
 	object,
@@ -254,119 +241,63 @@ function PropertyEditor({
 }) {
 	const [draft, setDraft] = useState(String(value ?? ''))
 
-	const inputClass = 'h-6 text-xs px-2 py-0.5'
-
-	const handleKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Enter') handleSave()
-		if (e.key === 'Escape') onCancel()
-	}
-
-	const handleSave = () => {
+	const commit = (raw: string) => {
 		switch (type) {
 			case 'number': {
-				const num = Number(draft)
+				const num = Number(raw)
 				if (!Number.isNaN(num)) onSave(num)
 				else onCancel()
 				break
 			}
 			case 'boolean':
-				onSave(draft === 'true')
+				onSave(raw === 'true')
 				break
 			case 'date':
-				onSave(draft || null)
+				onSave(raw || null)
 				break
 			default:
-				onSave(draft)
+				onSave(raw)
 		}
 	}
 
-	switch (type) {
-		case 'boolean':
-			return (
-				<Select
-					defaultOpen
-					value={draft}
-					onValueChange={(v) => {
-						setDraft(v)
-						onSave(v === 'true')
-					}}
-					onOpenChange={(open) => {
-						if (!open) onCancel()
-					}}
-				>
-					<SelectTrigger>
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="true">Yes</SelectItem>
-						<SelectItem value="false">No</SelectItem>
-					</SelectContent>
-				</Select>
-			)
-		case 'date':
-			return (
-				<Input
-					type="date"
-					value={draft ? draft.slice(0, 10) : ''}
-					onChange={(e) => {
-						setDraft(e.target.value)
-						onSave(e.target.value)
-					}}
-					className={`${inputClass} w-full sm:w-32`}
-					autoFocus
-					onBlur={onCancel}
-				/>
-			)
-		case 'enum':
-			return (
-				<Select
-					defaultOpen
-					value={draft}
-					onValueChange={(v) => {
-						setDraft(v)
-						onSave(v)
-					}}
-					onOpenChange={(open) => {
-						if (!open) onCancel()
-					}}
-				>
-					<SelectTrigger>
-						<SelectValue placeholder="Select..." />
-					</SelectTrigger>
-					<SelectContent>
-						{(fieldDef?.values ?? []).map((v) => (
-							<SelectItem key={v} value={v}>
-								{v}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
-			)
-		case 'number':
-			return (
-				<Input
-					type="number"
-					value={draft}
-					onChange={(e) => setDraft(e.target.value)}
-					onBlur={handleSave}
-					onKeyDown={handleKeyDown}
-					className={`${inputClass} w-full sm:w-24`}
-					autoFocus
-				/>
-			)
-		default:
-			return (
-				<Input
-					type="text"
-					value={draft}
-					onChange={(e) => setDraft(e.target.value)}
-					onBlur={handleSave}
-					onKeyDown={handleKeyDown}
-					className={`${inputClass} w-full`}
-					autoFocus
-				/>
-			)
-	}
+	const isSelect = type === 'boolean' || type === 'enum'
+	// Selects and the date picker commit as soon as a value is chosen; free-text
+	// inputs commit on blur / Enter so the user can finish typing first.
+	const commitsOnChange = isSelect || type === 'date'
+	const inputWidth =
+		type === 'date' ? 'w-full sm:w-32' : type === 'number' ? 'w-full sm:w-24' : 'w-full'
+
+	return (
+		<FieldValueInput
+			type={type as FieldDefinition['type']}
+			value={draft}
+			fieldDef={fieldDef}
+			placeholder="Select..."
+			onChange={(v) => {
+				setDraft(v)
+				if (commitsOnChange) commit(v)
+			}}
+			autoFocus={!isSelect}
+			selectDefaultOpen={isSelect}
+			onSelectOpenChange={
+				isSelect
+					? (open) => {
+							if (!open) onCancel()
+						}
+					: undefined
+			}
+			onBlur={commitsOnChange ? onCancel : () => commit(draft)}
+			onKeyDown={
+				commitsOnChange
+					? undefined
+					: (e) => {
+							if (e.key === 'Enter') commit(draft)
+							if (e.key === 'Escape') onCancel()
+						}
+			}
+			className={isSelect ? undefined : `h-6 text-xs px-2 py-0.5 ${inputWidth}`}
+		/>
+	)
 }
 
 function AddPropertyMenu({

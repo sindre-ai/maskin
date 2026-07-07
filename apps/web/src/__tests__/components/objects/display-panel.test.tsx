@@ -2,7 +2,7 @@ import {
 	DisplayPanel,
 	type DisplayPanelColumn,
 } from '@/components/objects/data-table/display-panel'
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -192,5 +192,78 @@ describe('DisplayPanel', () => {
 		await user.click(screen.getByRole('button', { name: /display/i }))
 		expect(screen.getByRole('button', { name: /\+ Status/i })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /\+ Driver/i })).toBeInTheDocument()
+	})
+
+	describe('metadata filters', () => {
+		it('renders one filter row per field definition', async () => {
+			const user = userEvent.setup()
+			renderPanel({
+				fieldDefinitions: [
+					{ name: 'region', type: 'text' },
+					{ name: 'tier', type: 'enum', values: ['gold', 'silver'] },
+				],
+				metadataFilters: {},
+				onMetadataFilterChange: vi.fn(),
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByText('region')).toBeInTheDocument()
+			expect(screen.getByText('tier')).toBeInTheDocument()
+		})
+
+		it('does not render metadata rows when there are no field definitions', async () => {
+			const user = userEvent.setup()
+			renderPanel({ fieldDefinitions: [], metadataFilters: {}, onMetadataFilterChange: vi.fn() })
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.queryByPlaceholderText('Any')).toBeNull()
+		})
+
+		it('calls onMetadataFilterChange when typing in a text metadata filter', async () => {
+			const user = userEvent.setup()
+			const onMetadataFilterChange = vi.fn()
+			renderPanel({
+				fieldDefinitions: [{ name: 'region', type: 'text' }],
+				metadataFilters: {},
+				onMetadataFilterChange,
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			fireEvent.change(screen.getByPlaceholderText('Any'), { target: { value: 'emea' } })
+			expect(onMetadataFilterChange).toHaveBeenCalledWith('region', 'emea')
+		})
+
+		it('calls onMetadataFilterChange with the selected enum value', async () => {
+			const user = userEvent.setup()
+			const onMetadataFilterChange = vi.fn()
+			renderPanel({
+				fieldDefinitions: [{ name: 'tier', type: 'enum', values: ['gold', 'silver'] }],
+				metadataFilters: {},
+				onMetadataFilterChange,
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			await user.click(screen.getByRole('combobox'))
+			await user.click(screen.getByRole('option', { name: 'gold' }))
+			expect(onMetadataFilterChange).toHaveBeenCalledWith('tier', 'gold')
+		})
+
+		it('clears a metadata filter via the Clear button when a value is set', async () => {
+			const user = userEvent.setup()
+			const onMetadataFilterChange = vi.fn()
+			renderPanel({
+				fieldDefinitions: [{ name: 'region', type: 'text' }],
+				metadataFilters: { region: 'emea' },
+				onMetadataFilterChange,
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			await user.click(screen.getByRole('button', { name: /clear region filter/i }))
+			expect(onMetadataFilterChange).toHaveBeenCalledWith('region', undefined)
+		})
+
+		it('counts an active metadata filter in the badge', () => {
+			renderPanel({
+				fieldDefinitions: [{ name: 'region', type: 'text' }],
+				metadataFilters: { region: 'emea' },
+				onMetadataFilterChange: vi.fn(),
+			})
+			expect(screen.getByText('1')).toBeInTheDocument()
+		})
 	})
 })
