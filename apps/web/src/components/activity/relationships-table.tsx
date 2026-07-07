@@ -82,7 +82,8 @@ export function RelationshipsTable({
 									</Link>
 								) : (
 									<span className="text-muted-foreground line-through truncate flex-1 min-w-0">
-										{rel.targetTitle ?? rel.sourceTitle ?? `Unknown (${linkedId.slice(0, 8)})`}
+										{(direction === 'outbound' ? rel.targetTitle : rel.sourceTitle) ??
+											`Unknown (${linkedId.slice(0, 8)})`}
 									</span>
 								)}
 								{linked && <TypeBadge type={linked.type} />}

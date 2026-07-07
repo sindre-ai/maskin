@@ -52,8 +52,11 @@ export function RelationshipNode({
 }: RelationshipNodeProps) {
 	const verb = relationshipVerb(rel.type, direction)
 	const linkedId = direction === 'outbound' ? rel.targetId : rel.sourceId
-	const title =
-		linked?.title ?? rel.targetTitle ?? rel.sourceTitle ?? `Unknown (${linkedId.slice(0, 8)})`
+	// Prefer the denormalized title for whichever side `linkedId` actually
+	// refers to — falling back to the *other* side's title would show the
+	// currently-viewed object's own title instead of the missing link's.
+	const linkedTitle = direction === 'outbound' ? rel.targetTitle : rel.sourceTitle
+	const title = linked?.title ?? linkedTitle ?? `Unknown (${linkedId.slice(0, 8)})`
 	const isMissing = !linked
 
 	return (

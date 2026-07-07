@@ -76,6 +76,31 @@ describe('RelationshipsTable', () => {
 		expect(screen.getByText('Deleted insight')).toBeInTheDocument()
 	})
 
+	it("shows sourceTitle, not the viewed object's own targetTitle, for a missing inbound link", () => {
+		// The backend denormalizes both endpoints' titles onto every relationship,
+		// including the currently-viewed object's own title as `targetTitle`.
+		// For an inbound edge the missing object is the source — the fallback
+		// must read `sourceTitle`, not `targetTitle`.
+		const rel = buildRelationshipResponse({
+			id: 'r-missing-inbound',
+			type: 'informs',
+			sourceId: 'gone',
+			targetId: 'bet-1',
+			sourceTitle: 'Deleted insight',
+			targetTitle: 'My own bet title',
+		})
+		render(
+			<RelationshipsTable
+				objectId="bet-1"
+				relationships={[rel]}
+				objectsById={new Map()}
+				workspaceId="ws-1"
+			/>,
+		)
+		expect(screen.getByText('Deleted insight')).toBeInTheDocument()
+		expect(screen.queryByText('My own bet title')).not.toBeInTheDocument()
+	})
+
 	it('calls onDelete with the relationship id when remove button is clicked', async () => {
 		const user = userEvent.setup()
 		const onDelete = vi.fn()
