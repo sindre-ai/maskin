@@ -646,6 +646,39 @@ describe('delete_workspace_skill schema', () => {
 	})
 })
 
+describe('update_workspace schema', () => {
+	const schema = tools.update_workspace.inputSchema
+
+	it('accepts id with optional name and settings', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.id).toBe(uuid)
+	})
+
+	it('accepts north_star_metric in settings', () => {
+		const result = schema.parse({
+			id: uuid,
+			settings: { north_star_metric: 'Weekly active users' },
+		})
+		expect(result.settings?.north_star_metric).toBe('Weekly active users')
+	})
+
+	it('accepts additional workspace settings alongside north_star_metric', () => {
+		const result = schema.parse({
+			id: uuid,
+			settings: {
+				north_star_metric: 'DAU',
+				tags: ['onboarding'],
+				llm_keys: { provider: 'anthropic' },
+			},
+		})
+		expect(result.settings?.north_star_metric).toBe('DAU')
+	})
+
+	it('rejects missing id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+})
+
 describe('add_workspace_member schema', () => {
 	const schema = tools.add_workspace_member.inputSchema
 

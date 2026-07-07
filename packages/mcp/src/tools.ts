@@ -356,11 +356,17 @@ export const tools = {
 		}),
 	},
 	update_workspace: {
-		description: 'Update a workspace by ID (name and/or settings)',
+		description:
+			'Update a workspace by ID (name and/or settings). Settings are shallow-merged into existing workspace settings (deep-merged for llm_keys). Supported settings keys include: north_star_metric (onboarding prompt answer), llm_keys, tags, and other workspace-level configuration.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
-			settings: z.record(z.unknown()).optional(),
+			settings: z
+				.record(z.unknown())
+				.optional()
+				.describe(
+					'Partial settings to merge. Supported keys: north_star_metric (string, onboarding answer), llm_keys, tags, and others. Values are shallow-merged into existing settings; llm_keys receives a deep merge.',
+				),
 		}),
 	},
 	list_workspaces: {
