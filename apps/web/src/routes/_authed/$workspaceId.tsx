@@ -1,8 +1,8 @@
+import { ChatPanel } from '@/components/chat/chat-panel'
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { RouteError } from '@/components/shared/route-error'
-import { SindrePanel } from '@/components/sindre/sindre-panel'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useActors } from '@/hooks/use-actors'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -10,6 +10,8 @@ import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { ChatProvider, useChat } from '@/lib/chat-context'
+import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
 import {
@@ -17,7 +19,6 @@ import {
 	registerWorkspaceProperties,
 	setCapturingEnabled,
 } from '@/lib/posthog'
-import { SindreProvider, useSindre } from '@/lib/sindre-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -60,11 +61,11 @@ function WorkspaceLayout() {
 		[workspaces, workspaceId],
 	)
 
-	// Resolve the per-workspace Sindre meta-agent by name (matches SINDRE_DEFAULT
-	// in packages/shared/src/templates/sindre-agent.ts). Null until actors load
-	// or when the workspace is missing Sindre (e.g. pre-backfill).
-	const sindreActorId = useMemo(
-		() => actors?.find((a) => a.type === 'agent' && a.name === 'Sindre')?.id ?? null,
+	// Resolve the per-workspace Workspace Coach agent by name (matches WORKSPACE_COACH_DEFAULT
+	// in packages/shared/src/templates/workspace-coach-agent.ts). Null until actors load
+	// or when the workspace is missing Workspace Coach (e.g. pre-backfill).
+	const agentActorId = useMemo(
+		() => actors?.find((a) => a.type === 'agent' && a.name === 'Workspace Coach')?.id ?? null,
 		[actors],
 	)
 
@@ -111,27 +112,29 @@ function WorkspaceLayout() {
 
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
-			<SindreProvider workspaceId={workspaceId}>
-				<PendingPromptBootstrap sindreActorId={sindreActorId} />
-				<GuestDraftClaimBootstrap workspaceId={workspaceId} />
-				<PendingCommentsProvider workspaceId={workspaceId}>
-					<PageHeaderProvider>
-						<SindrePinShell>
-							<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
-								<AppSidebar />
-								<SidebarInset className="min-w-0">
-									<Header />
-									<div className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8">
-										<Outlet />
-									</div>
-								</SidebarInset>
-							</SidebarProvider>
-						</SindrePinShell>
-					</PageHeaderProvider>
-					<CommandPalette />
-					<SindrePanel workspaceId={workspaceId} sindreActorId={sindreActorId} />
-				</PendingCommentsProvider>
-			</SindreProvider>
+			<ChatProvider workspaceId={workspaceId}>
+				<NewConversationProvider>
+					<PendingPromptBootstrap agentActorId={agentActorId} />
+					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
+					<PendingCommentsProvider workspaceId={workspaceId}>
+						<PageHeaderProvider>
+							<ChatPinShell>
+								<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
+									<AppSidebar />
+									<SidebarInset className="min-w-0">
+										<Header />
+										<div className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8">
+											<Outlet />
+										</div>
+									</SidebarInset>
+								</SidebarProvider>
+							</ChatPinShell>
+						</PageHeaderProvider>
+						<CommandPalette />
+						<ChatPanel workspaceId={workspaceId} agentActorId={agentActorId} />
+					</PendingCommentsProvider>
+				</NewConversationProvider>
+			</ChatProvider>
 		</WorkspaceContext.Provider>
 	)
 }
@@ -175,35 +178,35 @@ function GuestDraftClaimBootstrap({ workspaceId }: { workspaceId: string }) {
 }
 
 /**
- * Reads `maskin_pending_prompt` from localStorage once Sindre's actor ID
- * resolves, then opens the Sindre panel with that prompt as the first message.
+ * Reads `maskin_pending_prompt` from localStorage once the agent's actor ID
+ * resolves, then opens the chat panel with that prompt as the first message.
  * Fires at most once per mount — the ref guard prevents a re-trigger if
- * `sindreActorId` changes identity while remaining non-null.
+ * `agentActorId` changes identity while remaining non-null.
  */
-function PendingPromptBootstrap({ sindreActorId }: { sindreActorId: string | null }) {
-	const { openWithContext } = useSindre()
+function PendingPromptBootstrap({ agentActorId }: { agentActorId: string | null }) {
+	const { openWithContext } = useChat()
 	const firedRef = useRef(false)
 
 	useEffect(() => {
-		if (!sindreActorId || firedRef.current) return
+		if (!agentActorId || firedRef.current) return
 		const prompt = localStorage.getItem('maskin_pending_prompt')
 		if (!prompt) return
 		firedRef.current = true
 		localStorage.removeItem('maskin_pending_prompt')
 		openWithContext([], prompt)
-	}, [sindreActorId, openWithContext])
+	}, [agentActorId, openWithContext])
 
 	return null
 }
 
 /**
- * Wraps the main layout so that when Sindre is pinned AND open, the layout
- * gets a right margin equal to the Sindre panel width — the panel is always
+ * Wraps the main layout so that when the chat panel is pinned AND open, the layout
+ * gets a right margin equal to the chat panel width — the panel is always
  * fixed-positioned, so this margin is what makes it "push content aside"
  * instead of floating over it.
  */
-function SindrePinShell({ children }: { children: ReactNode }) {
-	const { pinned, open, panelWidth } = useSindre()
+function ChatPinShell({ children }: { children: ReactNode }) {
+	const { pinned, open, panelWidth } = useChat()
 	const isMobile = useIsMobile()
 	// On mobile the panel overlays the viewport and the pin toggle is hidden,
 	// so a stale `pinned=true` from desktop must not apply a margin that would

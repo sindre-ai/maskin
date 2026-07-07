@@ -1,13 +1,17 @@
 import {
+	trackAgentCreated,
 	trackAgentSessionCompleted,
 	trackAgentSessionStarted,
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
+	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
 	trackObjectAttachedFile,
+	trackObjectCreated,
 	trackRelationshipCreated,
+	trackTriggerCreated,
 	trackTriggerFired,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
@@ -145,7 +149,37 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
-	it('comment_posted captures is_reply and attachment_count', () => {
+	it('chat_session_started carries the entry point alongside the property contract', () => {
+		const capture = captureSpy()
+
+		trackChatSessionStarted({
+			entity_id: 'sess-7',
+			entity_type: 'session',
+			entry_point: 'sindre_session',
+		})
+		trackChatSessionStarted({
+			entity_id: 'sess-8',
+			entity_type: 'session',
+			entry_point: 'agent_one_shot',
+		})
+
+		expect(capture).toHaveBeenNthCalledWith(1, 'chat_session_started', {
+			entity_id: 'sess-7',
+			entity_type: 'session',
+			source: 'web',
+			flow_id: null,
+			entry_point: 'sindre_session',
+		})
+		expect(capture).toHaveBeenNthCalledWith(2, 'chat_session_started', {
+			entity_id: 'sess-8',
+			entity_type: 'session',
+			source: 'web',
+			flow_id: null,
+			entry_point: 'agent_one_shot',
+		})
+	})
+
+	it('comment_posted captures is_reply, attachment_count, and content', () => {
 		const capture = captureSpy()
 
 		trackCommentPosted({
@@ -153,6 +187,7 @@ describe('v1 taxonomy helpers', () => {
 			entity_type: 'task',
 			is_reply: true,
 			attachment_count: 2,
+			content: 'first line\nsecond line',
 			flow_id: 'draft-99',
 		})
 
@@ -163,6 +198,7 @@ describe('v1 taxonomy helpers', () => {
 				entity_type: 'task',
 				is_reply: true,
 				attachment_count: 2,
+				content: 'first line\nsecond line',
 				flow_id: 'draft-99',
 			}),
 		)
@@ -191,6 +227,44 @@ describe('v1 taxonomy helpers', () => {
 		expect(capture).toHaveBeenCalledWith(
 			'relationship_created',
 			expect.objectContaining({ relationship_type: 'informs' }),
+		)
+	})
+
+	it('object_created carries object_subtype and the shared base contract', () => {
+		const capture = captureSpy()
+
+		trackObjectCreated({
+			entity_id: 'obj-42',
+			entity_type: 'object',
+			object_subtype: 'bet',
+		})
+
+		expect(capture).toHaveBeenCalledWith(
+			'object_created',
+			expect.objectContaining({
+				entity_id: 'obj-42',
+				entity_type: 'object',
+				object_subtype: 'bet',
+				source: 'web',
+			}),
+		)
+	})
+
+	it('agent_created and trigger_created fire under their fixed entity types', () => {
+		const capture = captureSpy()
+
+		trackAgentCreated({ entity_id: 'agent-5', entity_type: 'agent' })
+		trackTriggerCreated({ entity_id: 'trg-2', entity_type: 'trigger' })
+
+		expect(capture).toHaveBeenNthCalledWith(
+			1,
+			'agent_created',
+			expect.objectContaining({ entity_id: 'agent-5', entity_type: 'agent' }),
+		)
+		expect(capture).toHaveBeenNthCalledWith(
+			2,
+			'trigger_created',
+			expect.objectContaining({ entity_id: 'trg-2', entity_type: 'trigger', source: 'web' }),
 		)
 	})
 

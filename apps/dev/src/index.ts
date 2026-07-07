@@ -85,7 +85,6 @@ try {
 		error: err instanceof Error ? err.message : String(err),
 	})
 }
-
 const agentStorage = new AgentStorageManager(storageProvider, db)
 
 const runtimeTelemetry = new RuntimeTelemetry({
@@ -96,6 +95,9 @@ const runtimeTelemetry = new RuntimeTelemetry({
 const sessionManager = new SessionManager(db, storageProvider, runtimeTelemetry)
 sessionManager.setAgentBaseBuildContext(
 	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
+)
+sessionManager.setBrowserSidecarBuildContext(
+	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/browser-sidecar'),
 )
 runtimeTelemetry.startGaugeLoop(() => sessionManager.getConcurrencyByAgentServer())
 
@@ -149,6 +151,7 @@ if (process.env.NODE_ENV === 'production') {
 				env: spec.env,
 				memoryMib: spec.memoryMib,
 				cpus: spec.cpus,
+				...(spec.browserRequired && { browserRequired: true }),
 				sourceSessionId: session.sourceSessionId ?? undefined,
 			}
 		},
@@ -173,7 +176,7 @@ logger.info(`Starting server on port ${port}`)
 
 let bootstrap: DevBootstrapResult | null = null
 try {
-	bootstrap = await maybeBootstrapDev(db)
+	bootstrap = await maybeBootstrapDev(db, agentStorage)
 	if (bootstrap) {
 		logger.info('Dev bootstrap created default actor + workspace', {
 			actorEmail: bootstrap.actorEmail,
@@ -226,6 +229,11 @@ ${mcpSetup}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `
 	process.stdout.write(banner)
+	sessionManager.warmBrowserSidecarImage().catch((err) => {
+		logger.error('Failed to prepare browser-sidecar image; browser sessions will retry on demand', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+	})
 })
 
 export default app

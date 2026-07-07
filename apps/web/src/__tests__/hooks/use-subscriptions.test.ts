@@ -62,7 +62,7 @@ describe('useSubscriptions', () => {
 						entity_type: 'object',
 						entity_id: 'obj-1',
 						unread_count: 3,
-						mentions_you: false,
+						mentioning_unread_count: 0,
 						latest_event_id: 42,
 						latest_activity_at: null,
 					},

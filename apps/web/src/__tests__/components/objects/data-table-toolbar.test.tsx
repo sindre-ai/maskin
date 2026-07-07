@@ -3,8 +3,13 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { displayPanelProps } = vi.hoisted(() => ({ displayPanelProps: vi.fn() }))
+
 vi.mock('@/components/objects/data-table/display-panel', () => ({
-	DisplayPanel: () => <button type="button">MockDisplay</button>,
+	DisplayPanel: (props: Record<string, unknown>) => {
+		displayPanelProps(props)
+		return <button type="button">MockDisplay</button>
+	},
 }))
 
 function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableToolbar>> = {}) {
@@ -34,6 +39,7 @@ function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableT
 		groupBy: undefined,
 		onGroupByChange: vi.fn(),
 		onImportClick: vi.fn(),
+		onNewClick: vi.fn(),
 		...overrides,
 	}
 	return { ...render(<DataTableToolbar {...props} />), props }
@@ -73,6 +79,19 @@ describe('DataTableToolbar', () => {
 		expect(screen.getByRole('button', { name: /import/i })).toBeInTheDocument()
 	})
 
+	it('keeps the action cluster on its own row below the xl breakpoint', () => {
+		// Actions cluster must sit on `basis-full` (own row) up to <1280px so
+		// iPad landscape (1024px) wraps predictably, and `xl:basis-auto`
+		// restores the inline single-row layout on wider viewports.
+		renderToolbar()
+		const importBtn = screen.getByRole('button', { name: /import/i })
+		const cluster = importBtn.parentElement
+		expect(cluster).not.toBeNull()
+		expect(cluster?.className).toContain('basis-full')
+		expect(cluster?.className).toContain('xl:basis-auto')
+		expect(cluster?.className).toContain('justify-end')
+	})
+
 	it('calls onImportClick when Import is clicked', async () => {
 		const user = userEvent.setup()
 		const { props } = renderToolbar()
@@ -84,6 +103,17 @@ describe('DataTableToolbar', () => {
 	it('renders the mocked Display panel', () => {
 		renderToolbar()
 		expect(screen.getByRole('button', { name: 'MockDisplay' })).toBeInTheDocument()
+	})
+
+	it('forwards metadata filter props through to the Display panel', () => {
+		const fieldDefinitions = [{ name: 'region', type: 'text' as const }]
+		const metadataFilters = { region: 'emea' }
+		const onMetadataFilterChange = vi.fn()
+		renderToolbar({ fieldDefinitions, metadataFilters, onMetadataFilterChange })
+		const props = displayPanelProps.mock.calls.at(-1)?.[0] as Record<string, unknown>
+		expect(props.fieldDefinitions).toEqual(fieldDefinitions)
+		expect(props.metadataFilters).toEqual(metadataFilters)
+		expect(props.onMetadataFilterChange).toBe(onMetadataFilterChange)
 	})
 
 	it('shows current search value in input', () => {

@@ -96,6 +96,7 @@ describe('ContainerManager', () => {
 				Env: ['FOO=bar', 'BAZ=qux'],
 				HostConfig: {
 					Memory: 512 * 1024 * 1024,
+					MemorySwap: -1,
 					CpuShares: 1024,
 					Binds: ['/host:/container'],
 					NetworkMode: 'bridge',

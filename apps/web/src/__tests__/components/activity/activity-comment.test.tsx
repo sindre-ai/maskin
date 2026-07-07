@@ -244,6 +244,22 @@ describe('ActivityComment', () => {
 		expect(container.querySelector('strong')?.textContent).toBe('important')
 	})
 
+	it('renders the comment timestamp in a fixed-width tabular-nums mono column (AC-U3)', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			createdAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+			data: { content: 'Hello' },
+		})
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+		const timeEl = screen.getByText(/ago|now/) as HTMLElement
+		expect(timeEl.tagName).toBe('TIME')
+		expect(timeEl).toHaveClass('font-mono')
+		expect(timeEl).toHaveClass('tabular-nums')
+		expect(timeEl).toHaveClass('w-14')
+		expect(timeEl).toHaveClass('text-right')
+		expect(timeEl).toHaveClass('shrink-0')
+	})
+
 	it('clicking Reply on the last reply opens the input on the parent thread', async () => {
 		const user = userEvent.setup()
 		const event = buildEventResponse({

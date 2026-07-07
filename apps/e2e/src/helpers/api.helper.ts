@@ -110,7 +110,13 @@ export class TestAPI {
 
 	async createObject(
 		workspaceId: string,
-		data: { type: string; title: string; status?: string; content?: string },
+		data: {
+			type: string
+			title: string
+			status?: string
+			content?: string
+			metadata?: Record<string, unknown>
+		},
 	): Promise<ObjectResponse> {
 		const res = await fetch(`${this.baseURL}/api/objects`, {
 			method: 'POST',
@@ -176,6 +182,19 @@ export class TestAPI {
 			body: JSON.stringify({ name }),
 		})
 		if (!res.ok) throw new Error(`createWorkspace failed: ${res.status}`)
+		return res.json()
+	}
+
+	async updateWorkspace(
+		id: string,
+		data: { name?: string; settings?: Record<string, unknown> },
+	): Promise<WorkspaceResponse> {
+		const res = await fetch(`${this.baseURL}/api/workspaces/${id}`, {
+			method: 'PATCH',
+			headers: this.headers(),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`updateWorkspace failed: ${res.status}`)
 		return res.json()
 	}
 

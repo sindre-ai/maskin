@@ -24,7 +24,7 @@ type SessionMutation = 'pause_session' | 'resume_session' | 'stop_session'
 /**
  * Server-side session payload, optionally enriched with `actorName` by the MCP
  * server's session handlers (it inlines the actor's display name so cards can
- * show "Sindre" instead of a raw UUID).
+ * show the agent name instead of a raw UUID).
  */
 type EnrichedSession = SessionResponse & { actorName?: string }
 

@@ -68,6 +68,40 @@ If the provider has an `mcp` field in its config, add a matching entry to `INTEG
 
 The env value `${PROVIDER_TOKEN}` is a placeholder — at runtime the session manager injects `{PROVIDER}_TOKEN` (uppercase provider name + `_TOKEN`) from OAuth credentials into the container environment.
 
+### MCP decision rule — hosted before custom
+
+**Always check whether the provider offers a hosted MCP server before writing any custom tool code.**
+
+Several major providers run their own MCP endpoints that accept a standard OAuth bearer token — the same token Maskin already holds from its integration flow. Using these is dramatically less code and stays up to date automatically.
+
+Known hosted MCP endpoints (HTTP, bearer token in Authorization header):
+
+| Provider | MCP URL | envKey |
+|----------|---------|--------|
+| Gmail | `https://gmailmcp.googleapis.com/mcp/v1` | `GMAIL_TOKEN` |
+| Google Calendar | `https://calendarmcp.googleapis.com/mcp/v1` | `GOOGLE_CALENDAR_TOKEN` |
+| Linear | `https://mcp.linear.app/mcp` | `LINEAR_TOKEN` |
+| PostHog | `https://mcp.posthog.com/mcp` | `POSTHOG_TOKEN` |
+
+For these providers the `mcp` field in `config.ts` is:
+```typescript
+mcp: {
+  command: 'npx',
+  args: ['-y', 'mcp-remote', 'https://<provider>mcp.googleapis.com/mcp/v1'],
+  envKey: 'PROVIDER_TOKEN',
+},
+```
+And the `INTEGRATION_MCP_PRESETS` entry is:
+```typescript
+'provider-name': {
+  type: 'http',
+  url: 'https://<provider>mcp.googleapis.com/mcp/v1',
+  headers: { Authorization: 'Bearer ${PROVIDER_TOKEN}' },
+},
+```
+
+**Do not build a custom in-process MCP route** (`apps/dev/src/lib/integrations/mcp/`, `apps/dev/src/routes/integrations-{provider}-mcp.ts`) for a provider that already has a hosted endpoint. Custom routes were replaced by this pattern — see PRs #880 and #891 for examples of custom Google Calendar MCP code that was closed in favour of the hosted endpoint.
+
 ## Auth Types
 
 | Type | When to use | What to implement |
