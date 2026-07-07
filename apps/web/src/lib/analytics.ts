@@ -161,6 +161,19 @@ export function trackForyouSparseComposerSubmit(p: { items_count: number }): voi
 	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
 }
 
+// Ship-metric events for the For You onboarding prompt bet — response rate =
+// count(north_star_prompt_response) / count(north_star_prompt_impression),
+// filtered to workspaces with no prior bets. `workspace_id` is passed on the
+// event (not via super properties) so the PostHog cohort filter can key off it
+// without depending on the workspace mount having already registered.
+export function trackNorthStarPromptImpression(p: { workspace_id: string }): void {
+	trackEvent('north_star_prompt_impression', { workspace_id: p.workspace_id })
+}
+
+export function trackNorthStarPromptResponse(p: { workspace_id: string }): void {
+	trackEvent('north_star_prompt_response', { workspace_id: p.workspace_id })
+}
+
 // Ship-metric event for the iOS bulk-select ergonomics bet. Fires once per
 // bulk action bar commit so we can read `avg(selected_count)` filtered by
 // `platform_device='ios'` in PostHog. Intentionally lighter than the v1

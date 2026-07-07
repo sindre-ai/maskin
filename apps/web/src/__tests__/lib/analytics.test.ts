@@ -8,6 +8,8 @@ import {
 	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
+	trackNorthStarPromptImpression,
+	trackNorthStarPromptResponse,
 	trackObjectAttachedFile,
 	trackObjectCreated,
 	trackRelationshipCreated,
@@ -286,5 +288,25 @@ describe('v1 taxonomy helpers', () => {
 				parent_entity_type: 'bet',
 			}),
 		)
+	})
+
+	it('north_star_prompt_impression fires with workspace_id via posthog.capture', () => {
+		const capture = captureSpy()
+
+		trackNorthStarPromptImpression({ workspace_id: 'ws-42' })
+
+		expect(capture).toHaveBeenCalledWith('north_star_prompt_impression', {
+			workspace_id: 'ws-42',
+		})
+	})
+
+	it('north_star_prompt_response fires with workspace_id via posthog.capture', () => {
+		const capture = captureSpy()
+
+		trackNorthStarPromptResponse({ workspace_id: 'ws-42' })
+
+		expect(capture).toHaveBeenCalledWith('north_star_prompt_response', {
+			workspace_id: 'ws-42',
+		})
 	})
 })
