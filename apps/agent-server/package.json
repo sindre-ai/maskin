@@ -4,6 +4,9 @@
 	"private": true,
 	"license": "Apache-2.0",
 	"type": "module",
+	"exports": {
+		"./session-workspace": "./src/services/session-workspace.ts"
+	},
 	"scripts": {
 		"dev": "tsx watch src/index.ts",
 		"build": "node build.mjs",

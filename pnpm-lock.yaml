@@ -139,6 +139,9 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@maskin/agent-server':
+        specifier: workspace:*
+        version: link:../agent-server
       '@types/bcryptjs':
         specifier: ^3.0.0
         version: 3.0.0
