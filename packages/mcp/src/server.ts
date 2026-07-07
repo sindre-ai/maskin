@@ -676,6 +676,15 @@ export function createMcpServer(config: McpConfig) {
 			try {
 				response = await handler(args, extra)
 			} catch (err) {
+				// Failure path: no response to inspect, so `has_rich_render` is
+				// taken from the tool *definition*'s `_meta.ui`. The rich-render
+				// metric therefore reports "this tool advertises rich render,"
+				// not "this call rendered rich." A tool that only attaches
+				// `_meta.ui` on the response (permitted by the envelope but
+				// unused today) would be counted `false` on failure and produce
+				// a soft denominator bias. Intentional — see task 146553f7 /
+				// PR #381 CONDITIONAL PASS Should #3: cheaper than making the
+				// column nullable while no response-only-rich tools exist.
 				recordToolCall(telemetrySink, telemetryTarget, {
 					tool_name: name,
 					has_rich_render: defHasRichRender,
