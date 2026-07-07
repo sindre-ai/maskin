@@ -185,7 +185,7 @@ describe('TriggerForm', () => {
 			expect.objectContaining({
 				name: expect.any(String),
 				type: 'event',
-				action_prompt: expect.any(String),
+				actionPrompt: expect.any(String),
 				target_actor_id: 'agent-1',
 			}),
 		)

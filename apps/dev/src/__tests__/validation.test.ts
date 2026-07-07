@@ -333,7 +333,7 @@ describe('Trigger validation', () => {
 			name: 'Daily cluster',
 			type: 'cron',
 			config: { expression: '*/30 * * * *' },
-			action_prompt: 'Cluster new insights into bets',
+			actionPrompt: 'Cluster new insights into bets',
 			target_actor_id: '550e8400-e29b-41d4-a716-446655440000',
 		})
 		expect(result.success).toBe(true)
@@ -344,7 +344,7 @@ describe('Trigger validation', () => {
 			name: 'On new insight',
 			type: 'event',
 			config: { entity_type: 'insight', action: 'created' },
-			action_prompt: 'Process this insight',
+			actionPrompt: 'Process this insight',
 			target_actor_id: '550e8400-e29b-41d4-a716-446655440000',
 		})
 		expect(result.success).toBe(true)
@@ -355,7 +355,7 @@ describe('Trigger validation', () => {
 			name: 'Test',
 			type: 'webhook',
 			config: {},
-			action_prompt: 'Do something',
+			actionPrompt: 'Do something',
 			target_actor_id: '550e8400-e29b-41d4-a716-446655440000',
 		})
 		expect(result.success).toBe(false)

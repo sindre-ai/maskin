@@ -238,7 +238,7 @@ export function buildCreateTriggerBody(overrides?: Record<string, unknown>) {
 		name: `Trigger ${n}`,
 		type: 'event',
 		config: { entity_type: 'task', action: 'created' },
-		action_prompt: `Handle trigger ${n}`,
+		actionPrompt: `Handle trigger ${n}`,
 		target_actor_id: randomUUID(),
 		...overrides,
 	}

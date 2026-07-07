@@ -57,7 +57,7 @@ interface ConditionRow {
 export interface TriggerFormPayload {
 	name: string
 	type: 'cron' | 'event' | 'reminder'
-	action_prompt: string
+	actionPrompt: string
 	target_actor_id: string
 	config: Record<string, unknown>
 	enabled?: boolean
@@ -510,7 +510,7 @@ export function TriggerForm({
 		return {
 			name: name.trim(),
 			type,
-			action_prompt: prompt.trim(),
+			actionPrompt: prompt.trim(),
 			target_actor_id: targetActorId,
 			config,
 			enabled,

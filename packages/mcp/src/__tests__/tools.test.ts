@@ -640,7 +640,7 @@ describe('create_trigger schema', () => {
 			name: 'Daily',
 			type: 'cron',
 			config: { expression: '0 0 * * *' },
-			action_prompt: 'Check',
+			actionPrompt: 'Check',
 			target_actor_id: uuid,
 		})
 		expect(result.enabled).toBe(true)
@@ -651,7 +651,7 @@ describe('create_trigger schema', () => {
 			name: 'On create',
 			type: 'event',
 			config: { entity_type: 'task', action: 'created' },
-			action_prompt: 'Process',
+			actionPrompt: 'Process',
 			target_actor_id: uuid,
 		})
 		expect(result.type).toBe('event')
@@ -663,7 +663,7 @@ describe('create_trigger schema', () => {
 				name: 'X',
 				type: 'webhook',
 				config: {},
-				action_prompt: 'Y',
+				actionPrompt: 'Y',
 				target_actor_id: uuid,
 			}),
 		).toThrow()

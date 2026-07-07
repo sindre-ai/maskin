@@ -59,7 +59,7 @@ function TriggerDetailPage() {
 				id: triggerId,
 				name: payload.name,
 				type: payload.type,
-				action_prompt: payload.action_prompt,
+				actionPrompt: payload.actionPrompt,
 				target_actor_id: payload.target_actor_id,
 				config: payload.config as never,
 				enabled: payload.enabled,
@@ -75,7 +75,7 @@ function TriggerDetailPage() {
 			id: triggerId,
 			data: {
 				name: payload.name,
-				action_prompt: payload.action_prompt,
+				actionPrompt: payload.actionPrompt,
 				target_actor_id: payload.target_actor_id,
 				config: payload.config as never,
 			},

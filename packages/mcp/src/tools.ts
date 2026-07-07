@@ -752,20 +752,20 @@ export const tools = {
 				.describe(
 					'For cron triggers: { "expression": "*/5 * * * *" }. For event triggers: { "entity_type": "object", "action": "created"|"updated"|"deleted"|"status_changed", "filter": { ... } }',
 				),
-			action_prompt: z.string(),
+			actionPrompt: z.string(),
 			target_actor_id: z.string().uuid(),
 			enabled: z.boolean().default(true),
 		}),
 	},
 	update_trigger: {
 		description:
-			'Update a trigger by ID. Can change name, schedule/event config, action_prompt, target agent, or enabled/disabled state.',
+			'Update a trigger by ID. Can change name, schedule/event config, actionPrompt, target agent, or enabled/disabled state.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
 			config: z.record(z.unknown()).optional(),
-			action_prompt: z.string().min(1).optional(),
+			actionPrompt: z.string().min(1).optional(),
 			target_actor_id: z.string().uuid().optional(),
 			enabled: z.boolean().optional(),
 		}),

@@ -99,6 +99,37 @@ describe('Triggers Integration', () => {
 		})
 	})
 
+	describe('actionPrompt round-trip persistence', () => {
+		it('reflects updated actionPrompt in list response after PATCH', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const createRes = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({ target_actor_id: targetActorId }),
+					headers,
+				),
+			)
+			expect(createRes.status).toBe(201)
+			const created = await createRes.json()
+
+			const newPrompt = 'Updated action prompt — regression anchor for write path'
+			const patchRes = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${created.id}`, { actionPrompt: newPrompt }, headers),
+			)
+			expect(patchRes.status).toBe(200)
+
+			const listRes = await app.request(jsonGet('/api/triggers', headers))
+			expect(listRes.status).toBe(200)
+			const list = await listRes.json()
+			const found = list.find((t: { id: string }) => t.id === created.id)
+			expect(found).toBeDefined()
+			expect(found.actionPrompt).toBe(newPrompt)
+		})
+	})
+
 	describe('event matching config', () => {
 		it('stores trigger with complex event config', async () => {
 			const app = createApp()
