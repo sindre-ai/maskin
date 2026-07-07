@@ -29,8 +29,12 @@ export function capture(name: string, props: Record<string, unknown>): void {
 	if (!initialized) return
 	try {
 		posthog.capture(name, props)
-	} catch {
-		// Analytics must never break the UI.
+	} catch (err) {
+		// Analytics must never break the UI, but a swallowed capture() failure
+		// here is otherwise untraceable — no console.info fallback runs in this
+		// branch (that's gated on !initialized), so this is the only place a
+		// dropped event would ever surface.
+		console.error('[posthog] capture failed', name, err)
 	}
 }
 
