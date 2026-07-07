@@ -5,10 +5,12 @@ export type AnalyticsProps = Record<string, string | number | boolean | null | u
 
 export function trackEvent(name: string, props: AnalyticsProps = {}): void {
 	try {
-		if (isPosthogReady()) {
-			capture(name, props)
-			return
-		}
+		capture(name, props)
+	} catch {
+		// Analytics must never break the UI.
+	}
+	if (isPosthogReady()) return
+	try {
 		const actor = getStoredActor()
 		const payload = {
 			ts: new Date().toISOString(),

@@ -25,15 +25,17 @@ export function isPosthogReady(): boolean {
 	return initialized
 }
 
+// Always attempt posthog.capture — do not gate on the module-local `initialized`
+// flag. posthog-js safely handles a capture() called before init (it queues the
+// event and flushes on init), and gating on our own flag has been the source of
+// silent event drops in production: if `initPosthog()` runs but the flag isn't
+// yet visible to a caller in another module realm (HMR reload, dev-server race,
+// lazy re-import), the event goes to `console.info` and never reaches PostHog.
+// The `try/catch` still keeps analytics from breaking the UI.
 export function capture(name: string, props: Record<string, unknown>): void {
-	if (!initialized) return
 	try {
 		posthog.capture(name, props)
 	} catch (err) {
-		// Analytics must never break the UI, but a swallowed capture() failure
-		// here is otherwise untraceable — no console.info fallback runs in this
-		// branch (that's gated on !initialized), so this is the only place a
-		// dropped event would ever surface.
 		console.error('[posthog] capture failed', name, err)
 	}
 }
