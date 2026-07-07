@@ -153,6 +153,31 @@ describe('Workspaces Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it('returns 400 and does not touch the DB when settings.claude_oauth is present', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.update = [{ ...ws, name: 'should not be used' }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: {
+						claude_oauth: {
+							primary: {
+								encryptedAccessToken: 'token',
+								encryptedRefreshToken: 'refresh',
+								expiresAt: 1234567890,
+							},
+						},
+					},
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(calls.updates).toHaveLength(0)
+		})
 	})
 
 	describe('PATCH /api/workspaces/admin/:id', () => {

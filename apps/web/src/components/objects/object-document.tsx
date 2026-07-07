@@ -26,6 +26,7 @@ import type {
 	ObjectResponse,
 	RelationshipResponse,
 } from '@/lib/api'
+import { classifyBetStatus } from '@/lib/bet-status'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Check, User } from 'lucide-react'
@@ -35,6 +36,7 @@ import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentWorkingBadge } from '../shared/agent-working-badge'
+import { IndicatorBadgeChip } from '../shared/indicator-badge'
 import { MarkdownContent } from '../shared/markdown-content'
 import { RelativeTime } from '../shared/relative-time'
 import { SourceBadge } from '../shared/source-badge'
@@ -65,6 +67,12 @@ interface ObjectDocumentViewProps {
 	onDelete: () => void
 	isDeleting?: boolean
 	showSaved?: boolean
+	betStatus?: ReturnType<typeof classifyBetStatus>
+	// False only when `object.content` genuinely wasn't fetched (e.g. an MCP
+	// `get_objects` response without `include: ['content']`) — as opposed to
+	// the object legitimately having no content. Callers that always fetch the
+	// full object (the webapp page) never need to set this.
+	contentLoaded?: boolean
 }
 
 export function ObjectDocumentView({
@@ -83,8 +91,18 @@ export function ObjectDocumentView({
 	onDelete,
 	isDeleting = false,
 	showSaved = false,
+	betStatus,
+	contentLoaded = true,
 }: ObjectDocumentViewProps) {
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
+	// Reset the local title draft when navigating to a different object — this
+	// component instance is reused across route param changes, so the useState
+	// initializer alone would leave the textarea stuck on the previous title.
+	const [trackedObjectId, setTrackedObjectId] = useState(object.id)
+	if (trackedObjectId !== object.id) {
+		setTrackedObjectId(object.id)
+		setTitleDraft(object.title ?? '')
+	}
 
 	const handleTitleBlur = useCallback(() => {
 		if (titleDraft !== object.title) {
@@ -154,6 +172,9 @@ export function ObjectDocumentView({
 				) : (
 					<StatusBadge status={object.status} />
 				)}
+				{object.type === 'bet' && betStatus && (
+					<IndicatorBadgeChip result={betStatus} workspaceId={workspaceId} />
+				)}
 				{members && (
 					<OwnerSelect
 						members={members}
@@ -183,7 +204,13 @@ export function ObjectDocumentView({
 
 			{/* Content */}
 			<div className="mb-8">
-				<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
+				{contentLoaded ? (
+					<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
+				) : (
+					<p className="text-sm text-muted-foreground italic">
+						Content not included in this response.
+					</p>
+				)}
 			</div>
 
 			{/* Linked objects */}
@@ -242,6 +269,22 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 
 	const settings = workspace.settings as Record<string, unknown>
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[object.type] ?? []
+
+	// Bets get a `waiting/progressing/stalled/idle` chip in the header. Classify
+	// over child tasks derived from `breaks_into` relationships already loaded
+	// by `useObjectGraph` — no extra API call.
+	const betStatus = useMemo(() => {
+		if (object.type !== 'bet' || !graph) return undefined
+		const childTaskIds = new Set<string>()
+		for (const rel of graph.relationships) {
+			if (rel.type !== 'breaks_into' || rel.sourceId !== object.id) continue
+			childTaskIds.add(rel.targetId)
+		}
+		const childTasks = graph.connected_objects.filter(
+			(o) => o.type === 'task' && childTaskIds.has(o.id),
+		)
+		return classifyBetStatus(object, childTasks)
+	}, [object, graph])
 
 	const handleUpdateTitle = useCallback(
 		(title: string) => {
@@ -383,6 +426,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onUpdateDriver={handleUpdateDriver}
 				onDelete={handleDelete}
 				isDeleting={deleteObject.isPending}
+				betStatus={betStatus}
 			/>
 		</>
 	)

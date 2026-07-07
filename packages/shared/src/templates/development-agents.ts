@@ -439,7 +439,7 @@ The handbook lives as a single \`knowledge\` object titled **"Maskin Development
 
 Pull, in this order:
 
-- The handbook itself (\`get_objects\` on its id, or \`search_objects\` on type=\`knowledge\`, title contains "Workspace Handbook"). Read its \`metadata.last_updated_at\` (ISO timestamp) and \`metadata.handbook_version\` (integer). If absent, treat as bootstrap and stop — bootstrap is not this skill's job.
+- The handbook itself (\`get_objects\` on its id with \`include: ['metadata']\`, or \`search_objects\` on type=\`knowledge\`, title contains "Workspace Handbook"). Read its \`metadata.last_updated_at\` (ISO timestamp) and \`metadata.handbook_version\` (integer). If absent, treat as bootstrap and stop — bootstrap is not this skill's job.
 - Live workspace state:
   - \`list_actors\` — production agents only; ignore actors whose name starts with \`[ARCHIVED]\`, \`[DISABLED]\`, or contains \`Test\` / \`E2E\` / \`Tester\` unless the handbook already lists them.
   - \`list_workspace_skills\` — full set.
