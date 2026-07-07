@@ -35,6 +35,12 @@ interface SessionStartedEvent {
 	sessionId: string
 	agentServerUrl: string
 	sessionStartLatencyMs: number
+	/**
+	 * Workspace backlog (count of `queued` sessions) observed at the moment this
+	 * session transitions to running. Lets PostHog correlate session-start spikes
+	 * with bulk fan-outs the dispatcher-concurrency-cap bet is designed to absorb.
+	 */
+	queueDepth: number
 }
 
 interface SessionEndedEvent {
@@ -42,6 +48,12 @@ interface SessionEndedEvent {
 	endReason: RuntimeEndReason
 	durationMs: number
 	agentServerUrl?: string
+	/**
+	 * True when the session never reached a runnable state and was terminated by
+	 * the watchdog zombie-cleanup. This is the bet's ship-metric signal — flip it
+	 * elsewhere and you'll inflate the kill-criterion count.
+	 */
+	stuckInStarting?: boolean
 }
 
 interface CrossSessionCheckEvent {
@@ -92,6 +104,7 @@ export class RuntimeTelemetry {
 		sessionId,
 		agentServerUrl,
 		sessionStartLatencyMs,
+		queueDepth,
 	}: SessionStartedEvent): void {
 		this.capture({
 			distinctId: sessionId,
@@ -100,6 +113,7 @@ export class RuntimeTelemetry {
 				session_id: sessionId,
 				agent_server_url: agentServerUrl,
 				session_start_latency_ms: sessionStartLatencyMs,
+				queue_depth: queueDepth,
 			},
 		})
 	}
@@ -109,6 +123,7 @@ export class RuntimeTelemetry {
 		endReason,
 		durationMs,
 		agentServerUrl,
+		stuckInStarting,
 	}: SessionEndedEvent): void {
 		this.capture({
 			distinctId: sessionId,
@@ -118,6 +133,7 @@ export class RuntimeTelemetry {
 				end_reason: endReason,
 				duration_ms: durationMs,
 				...(agentServerUrl ? { agent_server_url: agentServerUrl } : {}),
+				...(stuckInStarting ? { stuck_in_starting: true } : {}),
 			},
 		})
 	}

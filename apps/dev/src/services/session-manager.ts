@@ -518,10 +518,12 @@ export class SessionManager extends EventEmitter {
 			const sessionStartLatencyMs = session.createdAt
 				? startedAt.getTime() - session.createdAt.getTime()
 				: 0
+			const queueDepth = await this.countQueuedSessions(session.workspaceId)
 			this.telemetry.recordSessionStarted({
 				sessionId,
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 				sessionStartLatencyMs,
+				queueDepth,
 			})
 			// Per-session isolation is structural in Docker (separate cgroup, separate
 			// bind-mounted /agent tempDir). The future agent-server runtime (T2) will
@@ -965,6 +967,28 @@ export class SessionManager extends EventEmitter {
 			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 			throw err
+		}
+	}
+
+	/**
+	 * Workspace backlog for the `runtime_session_started.queue_depth` telemetry
+	 * property — `queued` rows only (rows already claimed into `pending`/`starting`
+	 * are no longer waiting for a slot). Fail-open: a DB hiccup must not break
+	 * the session-start path, so we log and return 0.
+	 */
+	private async countQueuedSessions(workspaceId: string): Promise<number> {
+		try {
+			const [row] = await this.db
+				.select({ count: countFn() })
+				.from(sessions)
+				.where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'queued')))
+			return Number(row?.count ?? 0)
+		} catch (err) {
+			logger.warn('Failed to count queued sessions for telemetry', {
+				workspaceId,
+				error: String(err),
+			})
+			return 0
 		}
 	}
 
@@ -2373,6 +2397,7 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				stuckInStarting: true,
 			})
 
 			await this.cleanupBrowserSidecar(session.id).catch(() => {})
