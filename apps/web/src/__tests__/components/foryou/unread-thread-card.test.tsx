@@ -91,7 +91,7 @@ describe('UnreadThreadCard', () => {
 		expect(screen.getByLabelText('3 unread')).toBeInTheDocument()
 	})
 
-	it('renders a status chip alongside the type badge', () => {
+	it('renders a dot+word status pill in the card head using the object status', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		render(
 			<UnreadThreadCard
@@ -101,7 +101,7 @@ describe('UnreadThreadCard', () => {
 						id: 'obj-1',
 						title: 'Onboarding A/B',
 						type: 'bet',
-						status: 'active',
+						status: 'in_progress',
 					}),
 				})}
 				isActive={false}
@@ -110,7 +110,10 @@ describe('UnreadThreadCard', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.getByText('active')).toBeInTheDocument()
+		const pill = screen.getByLabelText('Status in progress')
+		expect(pill).toBeInTheDocument()
+		expect(pill.className).toContain('text-status-in_progress-text')
+		expect(pill.querySelector('[data-testid="status-dot"]')).not.toBeNull()
 	})
 
 	it('renders the object body content as a 2-line insight preview', () => {
