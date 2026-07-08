@@ -898,6 +898,10 @@ export interface WorkspaceSkillListItem {
 	storageKey: string
 	sizeBytes: number
 	isValid: boolean
+	// Optional so a row from a backend that hasn't shipped T2 yet still types — falsy
+	// values fall through to the single-file render path.
+	isFolder?: boolean
+	fileCount?: number | null
 	createdBy: string | null
 	createdAt: string
 	updatedAt: string
