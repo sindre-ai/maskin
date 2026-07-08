@@ -775,23 +775,27 @@ describe('Integrations Routes', () => {
 
 			expect(res.status).toBe(302)
 
-			// Refresh-shaped update: sets credentials + config but does NOT touch status.
+			// Refresh-shaped update: re-activates the existing row with fresh
+			// credentials + config but does NOT set externalId — that's how it
+			// differs from promoting the pending row, which rewrites externalId.
+			// (status IS set since the refresh branch also revives revoked rows.)
 			const refreshCall = calls.updates.find(
 				(u) =>
 					u &&
 					typeof u === 'object' &&
-					!('status' in (u as Record<string, unknown>)) &&
-					'credentials' in (u as Record<string, unknown>),
-			)
+					'credentials' in (u as Record<string, unknown>) &&
+					!('externalId' in (u as Record<string, unknown>)),
+			) as { status?: string } | undefined
 			expect(refreshCall).toBeDefined()
+			expect(refreshCall?.status).toBe('active')
 
-			// No activate-shaped update — this is the exact bug: activating the
+			// No promote-shaped update — this is the exact bug: activating the
 			// pending row here would set external_id to a value already used by
 			// existingActive and violate the unique constraint.
-			const activateCalls = calls.updates.filter(
-				(u) => u && typeof u === 'object' && (u as { status?: string }).status === 'active',
+			const promoteCalls = calls.updates.filter(
+				(u) => u && typeof u === 'object' && 'externalId' in (u as Record<string, unknown>),
 			)
-			expect(activateCalls).toHaveLength(0)
+			expect(promoteCalls).toHaveLength(0)
 		})
 	})
 
