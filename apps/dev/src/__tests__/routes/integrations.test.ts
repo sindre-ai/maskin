@@ -685,9 +685,7 @@ describe('Integrations Routes', () => {
 					typeof u === 'object' &&
 					'credentials' in (u as Record<string, unknown>) &&
 					!('externalId' in (u as Record<string, unknown>)),
-			) as
-				| { status?: string; credentials?: string; config?: { owner_login?: string } }
-				| undefined
+			) as { status?: string; credentials?: string; config?: { owner_login?: string } } | undefined
 			expect(refreshCall).toBeDefined()
 			expect(refreshCall?.status).toBe('active')
 			expect(refreshCall?.config).toEqual({
