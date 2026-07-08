@@ -1,4 +1,8 @@
-import { AgentDocument, AgentDocumentView } from '@/components/agents/agent-document'
+import {
+	AgentDocument,
+	AgentDocumentView,
+	getSessionSummary,
+} from '@/components/agents/agent-document'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildActorResponse, buildEventResponse, buildSessionResponse } from '../../factories'
@@ -7,12 +11,20 @@ import { createWorkspaceWrapper } from '../../setup'
 const deleteMutate = vi.fn()
 const resetMutate = vi.fn()
 const navigateMock = vi.fn()
+const openWithContextMock = vi.fn()
+
+vi.mock('@/lib/chat-context', () => ({
+	useChat: () => ({ openWithContext: openWithContextMock }),
+	ChatProvider: ({ children }: { children: React.ReactNode }) => children,
+}))
 
 vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: [] }),
 	useDeleteActor: () => ({ mutate: deleteMutate, isPending: false }),
 	useResetActor: () => ({ mutate: resetMutate, isPending: false }),
 	useUpdateActor: () => ({ mutate: vi.fn(), isPending: false }),
+	useAgentRun: () => ({ mutate: vi.fn(), isPending: false }),
+	useAgentPause: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/use-events', () => ({
@@ -45,10 +57,6 @@ vi.mock('@/components/layout/page-header', () => ({
 	PageHeader: ({ actions }: { actions?: React.ReactNode }) => (
 		<div data-testid="page-header">{actions}</div>
 	),
-}))
-
-vi.mock('@/components/agents/instruction-log', () => ({
-	InstructionLog: () => null,
 }))
 
 vi.mock('@/components/agents/session-detail-panel', () => ({
@@ -104,6 +112,9 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 		onUpdateLlmConfig: vi.fn(),
 		onUpdateTools: vi.fn(),
 		onUpdateMemory: vi.fn(),
+		onRun: vi.fn(),
+		onPause: vi.fn(),
+		onNewConversation: vi.fn(),
 		...overrides,
 	}
 }
@@ -213,6 +224,16 @@ describe('AgentDocumentView', () => {
 		expect(onUpdateName).not.toHaveBeenCalled()
 	})
 
+	it('calls onNewConversation when the New Conversation button is clicked', async () => {
+		const user = userEvent.setup()
+		const onNewConversation = vi.fn()
+		render(<AgentDocumentView {...baseProps({ onNewConversation })} />)
+
+		await user.click(screen.getByText('New Conversation'))
+
+		expect(onNewConversation).toHaveBeenCalledTimes(1)
+	})
+
 	it('renders Configuration collapsible trigger', () => {
 		render(<AgentDocumentView {...baseProps()} />)
 		expect(screen.getByText('Configuration')).toBeInTheDocument()
@@ -296,7 +317,7 @@ describe('AgentDocument — header actions', () => {
 	})
 
 	it('shows a Reset button and hides the delete button when agent.isSystem is true', () => {
-		const agent = buildActorResponse({ name: 'Sindre', type: 'agent', isSystem: true })
+		const agent = buildActorResponse({ name: 'Workspace Coach', type: 'agent', isSystem: true })
 		render(<AgentDocument agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
 		expect(screen.getByText('Reset to default')).toBeInTheDocument()
@@ -306,7 +327,7 @@ describe('AgentDocument — header actions', () => {
 
 	it('prompts for confirmation and calls reset mutation when confirmed', async () => {
 		const user = userEvent.setup()
-		const agent = buildActorResponse({ id: 'actor-sindre', type: 'agent', isSystem: true })
+		const agent = buildActorResponse({ id: 'actor-workspace-coach', type: 'agent', isSystem: true })
 		render(<AgentDocument agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
 		await user.click(screen.getByText('Reset to default'))
@@ -314,7 +335,7 @@ describe('AgentDocument — header actions', () => {
 
 		await user.click(screen.getByText('Confirm'))
 		expect(resetMutate).toHaveBeenCalledWith(
-			'actor-sindre',
+			'actor-workspace-coach',
 			expect.objectContaining({ onSuccess: expect.any(Function) }),
 		)
 		expect(deleteMutate).not.toHaveBeenCalled()
@@ -330,5 +351,83 @@ describe('AgentDocument — header actions', () => {
 
 		expect(screen.getByText('Reset to default')).toBeInTheDocument()
 		expect(resetMutate).not.toHaveBeenCalled()
+	})
+})
+
+describe('AgentDocument — New Conversation', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		localStorage.clear()
+	})
+
+	it('opens the chat panel with this agent selected instead of starting a session', async () => {
+		const user = userEvent.setup()
+		const agent = buildActorResponse({ id: 'actor-scout', name: 'Scout', type: 'agent' })
+		render(<AgentDocument agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await user.click(screen.getByText('New Conversation'))
+
+		expect(openWithContextMock).toHaveBeenCalledWith([
+			{ kind: 'agent', id: 'actor-scout', name: 'Scout' },
+		])
+	})
+})
+
+describe('getSessionSummary', () => {
+	it('prefixes "Working on:" for running status', () => {
+		const session = buildSessionResponse({ status: 'running', actionPrompt: 'Scanning logs' })
+		expect(getSessionSummary(session)).toBe('Working on: Scanning logs')
+	})
+
+	it('returns "Untitled session" for running with no prompt', () => {
+		const session = buildSessionResponse({ status: 'running', actionPrompt: '' })
+		expect(getSessionSummary(session)).toBe('Untitled session')
+	})
+
+	it('prefixes "Working on:" for starting status', () => {
+		const session = buildSessionResponse({ status: 'starting', actionPrompt: 'Booting up' })
+		expect(getSessionSummary(session)).toBe('Working on: Booting up')
+	})
+
+	it('prefixes "Paused:" for paused status', () => {
+		const session = buildSessionResponse({ status: 'paused', actionPrompt: 'Halfway done' })
+		expect(getSessionSummary(session)).toBe('Paused: Halfway done')
+	})
+
+	it('prefixes "Paused:" for snapshotting status', () => {
+		const session = buildSessionResponse({ status: 'snapshotting', actionPrompt: 'Saving state' })
+		expect(getSessionSummary(session)).toBe('Paused: Saving state')
+	})
+
+	it('returns just the prompt for completed status', () => {
+		const session = buildSessionResponse({ status: 'completed', actionPrompt: 'All done' })
+		expect(getSessionSummary(session)).toBe('All done')
+	})
+
+	it('returns just the prompt for failed status', () => {
+		const session = buildSessionResponse({ status: 'failed', actionPrompt: 'Crashed' })
+		expect(getSessionSummary(session)).toBe('Crashed')
+	})
+
+	it('returns just the prompt for timeout status', () => {
+		const session = buildSessionResponse({ status: 'timeout', actionPrompt: 'Timed out' })
+		expect(getSessionSummary(session)).toBe('Timed out')
+	})
+
+	it('returns just the prompt for an unrecognised status', () => {
+		const session = buildSessionResponse({ status: 'unknown', actionPrompt: 'Mystery' })
+		expect(getSessionSummary(session)).toBe('Mystery')
+	})
+
+	it('does not truncate a prompt of exactly 120 characters', () => {
+		const prompt = 'a'.repeat(120)
+		const session = buildSessionResponse({ status: 'completed', actionPrompt: prompt })
+		expect(getSessionSummary(session)).toBe(prompt)
+	})
+
+	it('truncates a prompt longer than 120 characters and appends an ellipsis', () => {
+		const prompt = 'a'.repeat(121)
+		const session = buildSessionResponse({ status: 'completed', actionPrompt: prompt })
+		expect(getSessionSummary(session)).toBe(`${'a'.repeat(120)}…`)
 	})
 })

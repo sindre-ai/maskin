@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, vi } from 'vitest'
 import type { ResolvedProvider } from '../../lib/integrations/types'
 import { buildIntegration, buildWorkspaceMember } from '../factories'
@@ -702,6 +702,99 @@ describe('Integrations Routes', () => {
 			)
 			expect(promoteCalls).toHaveLength(0)
 		})
+
+		it('re-connecting a resolveExternalId provider (e.g. Google Calendar) refreshes the existing row instead of hitting the unique constraint', async () => {
+			// Regression test: resolveExternalId-based providers (Google Calendar's
+			// account email) derive a STABLE externalId, same as GitHub's
+			// installation_id. Reconnecting must hit the existing-active-row refresh
+			// path — not the plain "activate the pending row" path, which would try
+			// to UPDATE ... SET external_id = <the same email already in use> and
+			// violate the (workspace_id, provider, external_id) unique constraint.
+			const providerName = 'test-email-provider'
+			const stableEmail = 'magnus@meshfirm.com'
+
+			const testProvider: ResolvedProvider = {
+				config: {
+					name: providerName,
+					displayName: 'Test Email Provider',
+					auth: {
+						type: 'oauth2',
+						config: {
+							authorizationUrl: 'http://example.test/auth',
+							tokenUrl: 'http://example.test/token',
+							scopes: [],
+							clientIdEnv: 'TEST_CLIENT_ID',
+							clientSecretEnv: 'TEST_CLIENT_SECRET',
+						},
+					},
+				},
+				customAuth: {
+					getInstallUrl: () => 'http://example.test/auth',
+					handleCallback: async () => ({ accessToken: 'test-token' }),
+					getAccessToken: async () => 'test-token',
+				},
+				resolveExternalId: async () => stableEmail,
+			}
+			vi.mocked(getProvider).mockReturnValueOnce(testProvider)
+
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'reconnect-email-nonce'
+			const state = encrypt(
+				JSON.stringify({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					ts: Date.now(),
+					nonce,
+				}),
+			)
+			const pendingIntegration = buildIntegration({
+				workspaceId: wsId,
+				provider: providerName,
+				status: 'pending',
+				externalId: nonce,
+			})
+			const existingActive = buildIntegration({
+				workspaceId: wsId,
+				provider: providerName,
+				status: 'active',
+				externalId: stableEmail,
+				config: { system_actor_id: 'system-actor-id' },
+			})
+			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+			const systemActor = { id: 'system-actor-id', type: 'system', name: 'Test Email Provider' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[pendingIntegration], // pending integration lookup
+				[member], // membership check
+				[systemActor], // system actor lookup
+				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
+				[existingActive], // existing-active-row lookup — finds the already-active integration by email
+			]
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${providerName}/callback?state=${encodeURIComponent(state)}`),
+			)
+
+			expect(res.status).toBe(302)
+
+			// Refresh-shaped update: sets credentials + config but does NOT touch status.
+			const refreshCall = calls.updates.find(
+				(u) =>
+					u &&
+					typeof u === 'object' &&
+					!('status' in (u as Record<string, unknown>)) &&
+					'credentials' in (u as Record<string, unknown>),
+			)
+			expect(refreshCall).toBeDefined()
+
+			// No activate-shaped update — this is the exact bug: activating the
+			// pending row here would set external_id to a value already used by
+			// existingActive and violate the unique constraint.
+			const activateCalls = calls.updates.filter(
+				(u) => u && typeof u === 'object' && (u as { status?: string }).status === 'active',
+			)
+			expect(activateCalls).toHaveLength(0)
+		})
 	})
 
 	describe('DELETE /api/integrations/:id', () => {
@@ -746,6 +839,119 @@ describe('Integrations Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('GET /api/integrations/:id/github-token', () => {
+		const { privateKey: testPrivateKeyPem } = generateKeyPairSync('rsa', {
+			modulusLength: 2048,
+			publicKeyEncoding: { type: 'spki', format: 'pem' },
+			privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+		})
+		const originalAppId = process.env.GITHUB_APP_ID
+		const originalKey = process.env.GITHUB_APP_PRIVATE_KEY
+
+		beforeAll(() => {
+			process.env.GITHUB_APP_ID = '12345'
+			process.env.GITHUB_APP_PRIVATE_KEY = testPrivateKeyPem
+		})
+
+		afterAll(() => {
+			process.env.GITHUB_APP_ID = originalAppId
+			process.env.GITHUB_APP_PRIVATE_KEY = originalKey
+		})
+
+		it('returns a freshly minted token for an active GitHub integration', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				status: 'active',
+				credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValue(
+					new Response(JSON.stringify({ token: 'ghs_fresh_token' }), { status: 200 }),
+				)
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${integration.id}/github-token`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toEqual({ token: 'ghs_fresh_token' })
+			// Every call mints a new token (no caching) — this route exists precisely
+			// so a caller mid-session gets a live token instead of a stale one.
+			expect(fetchSpy).toHaveBeenCalledWith(
+				'https://api.github.com/app/installations/42/access_tokens',
+				expect.objectContaining({ method: 'POST' }),
+			)
+			fetchSpy.mockRestore()
+		})
+
+		it('returns 404 when integration is not GitHub', async () => {
+			const integration = buildIntegration({ workspaceId: wsId, provider: 'slack' })
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [] // filter on provider='github' returns nothing
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${integration.id}/github-token`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when integration belongs to a different workspace', async () => {
+			const integration = buildIntegration({
+				workspaceId: 'other-workspace-id',
+				provider: 'github',
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${integration.id}/github-token`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 400 when GitHub API rejects the token mint', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				status: 'active',
+				credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValue(new Response('Bad credentials', { status: 401 }))
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${integration.id}/github-token`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			fetchSpy.mockRestore()
 		})
 	})
 

@@ -10,7 +10,7 @@ const workExtension: ModuleDefinition = {
 			type: 'insight',
 			label: 'Insight',
 			icon: 'lightbulb',
-			defaultStatuses: ['new', 'processing', 'clustered', 'discarded'],
+			defaultStatuses: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
 		},
 		{
 			type: 'bet',
@@ -18,9 +18,10 @@ const workExtension: ModuleDefinition = {
 			icon: 'target',
 			defaultStatuses: [
 				'signal',
-				'proposed',
+				'qualified',
+				'define',
 				'active',
-				'completed',
+				'live',
 				'succeeded',
 				'failed',
 				'paused',
@@ -30,7 +31,7 @@ const workExtension: ModuleDefinition = {
 			type: 'task',
 			label: 'Task',
 			icon: 'check-square',
-			defaultStatuses: ['todo', 'in_progress', 'done', 'blocked'],
+			defaultStatuses: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 		},
 	],
 	defaultSettings: {
@@ -40,9 +41,9 @@ const workExtension: ModuleDefinition = {
 			task: 'Task',
 		},
 		statuses: {
-			insight: ['new', 'processing', 'clustered', 'discarded'],
-			bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
-			task: ['todo', 'in_progress', 'done', 'blocked'],
+			insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
+			bet: ['signal', 'qualified', 'define', 'active', 'live', 'succeeded', 'failed', 'paused'],
+			task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 		},
 	},
 }

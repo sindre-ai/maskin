@@ -20,7 +20,7 @@ afterEach(() => {
 })
 
 describe('posthog helper', () => {
-	it('capture and register are no-ops until posthog is initialised', () => {
+	it('register is a no-op until posthog is initialised, but capture always forwards to posthog', () => {
 		const capSpy = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
 		const regSpy = vi.spyOn(posthog, 'register').mockImplementation((() => {}) as never)
 
@@ -28,7 +28,11 @@ describe('posthog helper', () => {
 		capture('bet_opened', { bet_id: 'b1' })
 		registerWorkspaceProperties({ workspace_id: 'w1', actor_id: 'a1', actor_type: 'human' })
 
-		expect(capSpy).not.toHaveBeenCalled()
+		// posthog-js is safe to call before init (it buffers), and the module-local
+		// `initialized` flag has historically gone stale across HMR / dev races —
+		// so capture no longer gates on it.
+		expect(capSpy).toHaveBeenCalledTimes(1)
+		expect(capSpy).toHaveBeenCalledWith('bet_opened', { bet_id: 'b1' })
 		expect(regSpy).not.toHaveBeenCalled()
 	})
 

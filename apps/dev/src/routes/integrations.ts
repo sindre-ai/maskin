@@ -16,6 +16,7 @@ import { trackSlackMentionReceived } from '../lib/analytics/catalog-events'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
+import { isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
@@ -133,6 +134,7 @@ app.openapi(listProvidersRoute, (async (c) => {
 		displayName: p.config.displayName,
 		authType: p.config.auth.type,
 		events: p.config.events?.definitions ?? [],
+		externalIdDisplay: p.config.externalIdDisplay,
 	}))
 
 	return c.json(providers as z.infer<typeof providerInfoSchema>[])
@@ -670,6 +672,7 @@ const deleteIntegrationRoute = createRoute({
 
 app.openapi(deleteIntegrationRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -685,13 +688,19 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	// credentials are still readable so the provider can call its remote API
 	// (e.g. Gmail's users.stop) with a valid token. Provider implementations
 	// are responsible for swallowing errors so disconnect always proceeds.
+	//
+	// Credentials are decrypted lazily (only when a preDisconnect hook exists) and
+	// only for non-pending integrations — pending rows have credentials: '' because
+	// the OAuth flow was never completed and there is nothing to revoke at the provider.
 	try {
 		const resolved = getProvider(existing.provider)
-		if (resolved.preDisconnect) {
+		if (resolved.preDisconnect && existing.status !== 'pending') {
+			const credentials: StoredCredentials = JSON.parse(decrypt(existing.credentials))
 			await resolved.preDisconnect({
 				db,
 				integrationId: existing.id,
 				workspaceId: existing.workspaceId,
+				credentials,
 			})
 		}
 	} catch (err) {
@@ -701,13 +710,102 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		})
 	}
 
-	await db
-		.update(integrations)
-		.set({ status: 'revoked', updatedAt: new Date() })
-		.where(eq(integrations.id, id))
+	await db.transaction(async (tx) => {
+		await tx
+			.update(integrations)
+			.set({ status: 'revoked', updatedAt: new Date() })
+			.where(eq(integrations.id, id))
+
+		await tx.insert(events).values({
+			workspaceId: existing.workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: { status: 'revoked', reason: 'user_disconnected' },
+		})
+	})
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)
+
+// ── GET /api/integrations/:id/github-token ─────────────────────────────────
+
+const githubTokenRoute = createRoute({
+	method: 'get',
+	path: '/{id}/github-token',
+	tags: ['integrations'],
+	summary: 'Mint a fresh GitHub App installation access token',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			description: 'Freshly minted installation access token (1-hour GitHub-imposed TTL)',
+			content: { 'application/json': { schema: z.object({ token: z.string() }) } },
+		},
+		400: {
+			description: 'Failed to mint token',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		401: {
+			description: 'Integration authorization revoked',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'GitHub integration not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(githubTokenRoute, (async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [integration] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.id, id),
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'github'),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+	if (!integration) return c.json(createApiError('NOT_FOUND', 'GitHub integration not found'), 404)
+
+	try {
+		const provider = getProvider('github')
+		const tokenManager = new TokenManager()
+		// GitHub App installation tokens expire after exactly 1 hour with no refresh
+		// token. getValidToken's customAuth branch mints a brand new one on every
+		// call (no caching), so a caller hitting this route just-in-time always gets
+		// a live token — unlike the value baked into a session's env vars once at
+		// container launch, which goes stale for any session running past ~1 hour.
+		const token = await tokenManager.getValidToken(db, integration.id, provider)
+		return c.json({ token })
+	} catch (err) {
+		if (isAuthRevokedError(err)) {
+			return c.json(
+				createApiError(
+					'AUTH_REVOKED',
+					'GitHub integration authorization has been revoked — please reconnect',
+				),
+				401,
+			)
+		}
+		logger.warn('GitHub token mint failed', {
+			integrationId: integration.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('BAD_REQUEST', 'Failed to mint GitHub access token'), 400)
+	}
+}) as RouteHandler<typeof githubTokenRoute, Env>)
 
 // ── GET /api/integrations/:id/slack/conversations ──────────────────────────
 
@@ -744,6 +842,10 @@ const listSlackConversationsRoute = createRoute({
 		},
 		400: {
 			description: 'Bad request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		401: {
+			description: 'Integration authorization revoked',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -792,6 +894,15 @@ app.openapi(listSlackConversationsRoute, (async (c) => {
 		const conversations = await listSlackConversations(integration.id, accessToken, types)
 		return c.json(conversations)
 	} catch (err) {
+		if (isAuthRevokedError(err)) {
+			return c.json(
+				createApiError(
+					'AUTH_REVOKED',
+					'Slack integration authorization has been revoked — please reconnect',
+				),
+				401,
+			)
+		}
 		logger.warn('Slack conversations.list failed', {
 			integrationId: integration.id,
 			error: err instanceof Error ? err.message : String(err),
@@ -827,6 +938,10 @@ const listSlackUsersRoute = createRoute({
 			description: 'Bad request',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		401: {
+			description: 'Integration authorization revoked',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Integration not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -860,6 +975,15 @@ app.openapi(listSlackUsersRoute, (async (c) => {
 		const users = await listSlackUsers(integration.id, accessToken)
 		return c.json(users)
 	} catch (err) {
+		if (isAuthRevokedError(err)) {
+			return c.json(
+				createApiError(
+					'AUTH_REVOKED',
+					'Slack integration authorization has been revoked — please reconnect',
+				),
+				401,
+			)
+		}
 		logger.warn('Slack users.list failed', {
 			integrationId: integration.id,
 			error: err instanceof Error ? err.message : String(err),

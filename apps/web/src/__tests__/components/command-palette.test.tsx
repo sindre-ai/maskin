@@ -17,7 +17,7 @@ function installGlobalDomMocks() {
 installGlobalDomMocks()
 
 const mockNavigate = vi.fn()
-const mockSetSindreOpen = vi.fn()
+const mockSetChatOpen = vi.fn()
 
 vi.mock('@/hooks/use-objects', () => ({
 	useObjects: vi.fn(() => ({ data: [] })),
@@ -27,8 +27,8 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
-vi.mock('@/lib/sindre-context', () => ({
-	useSindre: () => ({ setOpen: mockSetSindreOpen }),
+vi.mock('@/lib/chat-context', () => ({
+	useChat: () => ({ setOpen: mockSetChatOpen }),
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -129,38 +129,34 @@ describe('CommandPalette', () => {
 		expect(screen.queryByPlaceholderText('Search objects, navigate...')).not.toBeInTheDocument()
 	})
 
-	it('Ctrl+N navigates to create new object', async () => {
+	it('does not bind Ctrl+N or Meta+N to anything (reserved by the browser for New Window)', async () => {
 		const user = userEvent.setup()
-		// Mock crypto.randomUUID
-		const mockUUID = '00000000-0000-0000-0000-000000000001'
-		vi.spyOn(crypto, 'randomUUID').mockReturnValue(
-			mockUUID as `${string}-${string}-${string}-${string}-${string}`,
-		)
-
 		render(<CommandPalette />)
-		await user.keyboard('{Control>}n{/Control}')
 
-		expect(mockNavigate).toHaveBeenCalledWith({ to: `/ws-1/objects/${mockUUID}` })
-		vi.restoreAllMocks()
+		await user.keyboard('{Control>}n{/Control}')
+		await user.keyboard('{Meta>}n{/Meta}')
+
+		expect(mockNavigate).not.toHaveBeenCalled()
+		expect(screen.queryByPlaceholderText('Search objects, navigate...')).not.toBeInTheDocument()
 	})
 
-	it('Ctrl+J opens Sindre sheet without opening the palette', async () => {
+	it('Ctrl+J opens the chat sheet without opening the palette', async () => {
 		const user = userEvent.setup()
 		render(<CommandPalette />)
 
 		await user.keyboard('{Control>}j{/Control}')
 
-		expect(mockSetSindreOpen).toHaveBeenCalledWith(true)
+		expect(mockSetChatOpen).toHaveBeenCalledWith(true)
 		expect(screen.queryByPlaceholderText('Search objects, navigate...')).not.toBeInTheDocument()
 	})
 
-	it('Meta+J opens Sindre sheet without opening the palette', async () => {
+	it('Meta+J opens the chat sheet without opening the palette', async () => {
 		const user = userEvent.setup()
 		render(<CommandPalette />)
 
 		await user.keyboard('{Meta>}j{/Meta}')
 
-		expect(mockSetSindreOpen).toHaveBeenCalledWith(true)
+		expect(mockSetChatOpen).toHaveBeenCalledWith(true)
 		expect(screen.queryByPlaceholderText('Search objects, navigate...')).not.toBeInTheDocument()
 	})
 
@@ -173,18 +169,18 @@ describe('CommandPalette', () => {
 
 		await user.keyboard('{Control>}j{/Control}')
 
-		expect(mockSetSindreOpen).toHaveBeenCalledWith(true)
+		expect(mockSetChatOpen).toHaveBeenCalledWith(true)
 		expect(screen.queryByPlaceholderText('Search objects, navigate...')).not.toBeInTheDocument()
 	})
 
-	it('Talk to Sindre action opens the sheet and closes the palette', async () => {
+	it('Chat with agents action opens the sheet and closes the palette', async () => {
 		const user = userEvent.setup()
 		render(<CommandPalette />)
 
 		await user.keyboard('{Control>}k{/Control}')
-		await user.click(screen.getByText('Talk to Sindre…'))
+		await user.click(screen.getByText('Chat with agents…'))
 
-		expect(mockSetSindreOpen).toHaveBeenCalledWith(true)
+		expect(mockSetChatOpen).toHaveBeenCalledWith(true)
 		expect(screen.queryByPlaceholderText('Search objects, navigate...')).not.toBeInTheDocument()
 	})
 })

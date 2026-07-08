@@ -101,6 +101,10 @@ vi.mock('@/components/objects/data-table/dynamic-columns', () => ({ getDynamicCo
 vi.mock('@/components/imports/import-dialog', () => ({ ImportDialog: () => null }))
 vi.mock('@/hooks/use-imports', () => ({ useImportToast: () => ({ startTracking: vi.fn() }) }))
 vi.mock('@/components/shared/route-error', () => ({ RouteError: () => <div>Error</div> }))
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: () => null,
+	isCreateShortcut: () => false,
+}))
 
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 

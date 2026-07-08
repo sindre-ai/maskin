@@ -3,6 +3,7 @@ dist/
 dist-mcp/
 .dist-mcp-tmp/
 .turbo/
+.tanstack/
 *.env
 .env.*
 !.env.example
