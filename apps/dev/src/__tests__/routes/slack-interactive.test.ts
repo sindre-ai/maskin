@@ -15,12 +15,26 @@ vi.mock('../../lib/integrations/webhooks/handler', () => ({
 const mockHandlePayload = vi.fn()
 const mockParsePayload = vi.fn()
 const mockDeliveryId = vi.fn()
+const mockSendEphemeral = vi.fn()
 vi.mock('../../lib/integrations/providers/slack/interactive', () => ({
 	handleSlackInteractivePayload: (...args: unknown[]) => mockHandlePayload(...args),
 	parseSlackInteractivePayload: (...args: unknown[]) => mockParsePayload(...args),
 	slackInteractiveDeliveryId: (...args: unknown[]) => mockDeliveryId(...args),
+	sendEphemeralResponse: (...args: unknown[]) => mockSendEphemeral(...args),
 	SUPPORTED_ACTION_IDS: ['status_select', 'driver_select'],
 }))
+
+// Keep the real `ownsAccountLinkInteraction` (pure block-prefix predicate) but
+// stub the dispatcher so these tests stay DB-free.
+const mockDispatchAccountLink = vi.fn()
+vi.mock('../../lib/integrations/providers/slack/account-link', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../lib/integrations/providers/slack/account-link')>()
+	return {
+		...actual,
+		dispatchAccountLinkAction: (...args: unknown[]) => mockDispatchAccountLink(...args),
+	}
+})
 
 const { webhookApp } = await import('../../routes/integrations')
 const { createTestApp } = await import('../setup')
@@ -56,6 +70,8 @@ describe('POST /api/webhooks/slack-interactive', () => {
 		mockHandlePayload.mockReset()
 		mockParsePayload.mockReset()
 		mockDeliveryId.mockReset()
+		mockSendEphemeral.mockReset()
+		mockDispatchAccountLink.mockReset()
 		mockGetProvider.mockReturnValue({ config: { webhook: SLACK_WEBHOOK_CONFIG } })
 	})
 
@@ -133,6 +149,88 @@ describe('POST /api/webhooks/slack-interactive', () => {
 		expect(res.status).toBe(200)
 		const body = (await res.json()) as { skipped?: string }
 		expect(body.skipped).toBe('duplicate')
+		expect(mockHandlePayload).not.toHaveBeenCalled()
+	})
+
+	it('routes account-link picker actions to the link dispatcher, not the object-edit handler', async () => {
+		mockVerify.mockReturnValue(true)
+		const payload = {
+			type: 'block_actions',
+			team: { id: 'T1' },
+			user: { id: 'U1' },
+			trigger_id: 'trg-link-1',
+			response_url: 'https://hooks.slack.test/response/xyz',
+			actions: [
+				{
+					action_id: 'maskin_account_link:confirm',
+					block_id: 'maskin_account_link:confirm:T1:U1',
+				},
+			],
+		}
+		mockParsePayload.mockReturnValue(payload)
+		mockDeliveryId.mockReturnValue('T1:trg-link-1')
+		mockDispatchAccountLink.mockResolvedValue({ kind: 'linked' })
+
+		const { app, mockResults } = createTestApp(webhookApp, '/api/webhooks')
+		mockResults.insert = [{ id: 'claim-link-1' }]
+
+		const res = await app.request(makeInteractiveRequest('payload=%7B%7D'))
+
+		expect(res.status).toBe(200)
+		expect(mockDispatchAccountLink).toHaveBeenCalledTimes(1)
+		expect(mockHandlePayload).not.toHaveBeenCalled()
+		expect(mockSendEphemeral).toHaveBeenCalledWith('https://hooks.slack.test/response/xyz', {
+			text: 'Linked your Maskin account.',
+		})
+	})
+
+	it('sends no ephemeral feedback for pre-confirm picker interactions (noop)', async () => {
+		mockVerify.mockReturnValue(true)
+		mockParsePayload.mockReturnValue({
+			type: 'block_actions',
+			team: { id: 'T1' },
+			user: { id: 'U1' },
+			trigger_id: 'trg-link-2',
+			response_url: 'https://hooks.slack.test/response/xyz',
+			actions: [
+				{
+					action_id: 'maskin_account_link:workspace_select',
+					block_id: 'maskin_account_link:picker:T1:U1',
+				},
+			],
+		})
+		mockDeliveryId.mockReturnValue('T1:trg-link-2')
+		mockDispatchAccountLink.mockResolvedValue({ kind: 'noop' })
+
+		const { app, mockResults } = createTestApp(webhookApp, '/api/webhooks')
+		mockResults.insert = [{ id: 'claim-link-2' }]
+
+		const res = await app.request(makeInteractiveRequest('payload=%7B%7D'))
+
+		expect(res.status).toBe(200)
+		expect(mockDispatchAccountLink).toHaveBeenCalledTimes(1)
+		expect(mockSendEphemeral).not.toHaveBeenCalled()
+		expect(mockHandlePayload).not.toHaveBeenCalled()
+	})
+
+	it('still acks 200 when the account-link dispatcher throws', async () => {
+		mockVerify.mockReturnValue(true)
+		mockParsePayload.mockReturnValue({
+			type: 'block_actions',
+			team: { id: 'T1' },
+			user: { id: 'U1' },
+			trigger_id: 'trg-link-3',
+			actions: [{ action_id: 'maskin_account_link:confirm', block_id: 'maskin_account_link:x' }],
+		})
+		mockDeliveryId.mockReturnValue('T1:trg-link-3')
+		mockDispatchAccountLink.mockRejectedValue(new Error('link boom'))
+
+		const { app, mockResults } = createTestApp(webhookApp, '/api/webhooks')
+		mockResults.insert = [{ id: 'claim-link-3' }]
+
+		const res = await app.request(makeInteractiveRequest('payload=%7B%7D'))
+
+		expect(res.status).toBe(200)
 		expect(mockHandlePayload).not.toHaveBeenCalled()
 	})
 

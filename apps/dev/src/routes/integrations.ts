@@ -25,6 +25,7 @@ import {
 	dispatchAccountLinkAction,
 	dispatchMaskinWorkspaceCommand,
 	maybePromptAccountLink,
+	ownsAccountLinkInteraction,
 } from '../lib/integrations/providers/slack/account-link'
 import {
 	type SlackConversationType,
@@ -41,6 +42,7 @@ import {
 import {
 	handleSlackInteractivePayload,
 	parseSlackInteractivePayload,
+	sendEphemeralResponse,
 	slackInteractiveDeliveryId,
 } from '../lib/integrations/providers/slack/interactive'
 import { getProvider, listProviders } from '../lib/integrations/registry'
@@ -540,58 +542,49 @@ app.openapi(callbackRoute, (async (c) => {
 	const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
 	if (ownerLogin) activeConfig.owner_login = ownerLogin
 
-	// Re-connecting an already-active installation: refresh the existing row in
-	// place and drop the pending nonce row. Without this, we'd UPDATE the pending
-	// row to externalId=installation_id and hit the (workspace_id, provider,
-	// external_id) unique constraint at commit time. Only meaningful for providers
-	// whose externalId is stable across connects (GitHub installations); standard
-	// OAuth2 nonce-derived externalIds can't collide.
+	// Re-connecting an installation whose externalId is stable across connects
+	// (GitHub installation ids, Slack team ids via resolveExternalId): refresh
+	// the existing row in place — whatever its status — and drop the pending
+	// nonce row. Without this, the UPDATE below trips the partial unique index
+	// on (workspace_id, provider, external_id): a previous row for the same
+	// installation — active, or revoked by a disconnect — blocks re-activation
+	// with a 23505 at commit time. Nonce-derived externalIds are random per
+	// connect and never collide, so this lookup simply misses for providers
+	// without stable ids.
 	let integrationId = pendingIntegration.id
-	if (credentials.installation_id) {
-		const [existingActive] = await db
-			.select()
-			.from(integrations)
-			.where(
-				and(
-					eq(integrations.workspaceId, stateData.workspaceId),
-					eq(integrations.provider, providerName),
-					eq(integrations.externalId, externalId),
-					eq(integrations.status, 'active'),
-				),
-			)
-			.limit(1)
+	const [existingSameInstall] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, stateData.workspaceId),
+				eq(integrations.provider, providerName),
+				eq(integrations.externalId, externalId),
+			),
+		)
+		.limit(1)
 
-		if (existingActive) {
-			await db
-				.update(integrations)
-				.set({
-					credentials: encryptedCredentials,
-					config: activeConfig,
-					updatedAt: new Date(),
-				})
-				.where(eq(integrations.id, existingActive.id))
-
-			await db.delete(integrations).where(eq(integrations.id, pendingIntegration.id))
-
-			integrationId = existingActive.id
-			logger.info(`Refreshed existing ${providerName} installation`, {
-				integrationId,
-				workspaceId: stateData.workspaceId,
-				externalId,
-				ownerLogin,
+	if (existingSameInstall) {
+		await db
+			.update(integrations)
+			.set({
+				status: 'active',
+				credentials: encryptedCredentials,
+				config: activeConfig,
+				updatedAt: new Date(),
 			})
-		} else {
-			await db
-				.update(integrations)
-				.set({
-					status: 'active',
-					externalId,
-					credentials: encryptedCredentials,
-					config: activeConfig,
-					updatedAt: new Date(),
-				})
-				.where(eq(integrations.id, integrationId))
-		}
+			.where(eq(integrations.id, existingSameInstall.id))
+
+		await db.delete(integrations).where(eq(integrations.id, pendingIntegration.id))
+
+		integrationId = existingSameInstall.id
+		logger.info(`Refreshed existing ${providerName} installation`, {
+			integrationId,
+			workspaceId: stateData.workspaceId,
+			externalId,
+			previousStatus: existingSameInstall.status,
+			ownerLogin,
+		})
 	} else {
 		await db
 			.update(integrations)
@@ -1137,6 +1130,38 @@ webhookApp.post('/slack-interactive', async (c) => {
 				error: err instanceof Error ? err.message : String(err),
 			})
 		}
+	}
+
+	// The account-link picker (T2) posts its block_actions to this same URL —
+	// a Slack app has exactly one Interactivity Request URL, so both surfaces
+	// share it. Route by block ownership: picker payloads go to the link
+	// dispatcher, everything else falls through to the object-edit handler.
+	if (ownsAccountLinkInteraction(payload)) {
+		try {
+			const linkResult = await dispatchAccountLinkAction(
+				db,
+				payload as Parameters<typeof dispatchAccountLinkAction>[1],
+			)
+			// `noop` covers picker interactions before the confirm click (select,
+			// checkbox) — no feedback wanted. Slack ignores the HTTP body on
+			// block_actions POSTs, so visible feedback must go via response_url.
+			if (linkResult.kind !== 'noop' && linkResult.kind !== 'unhandled' && payload.response_url) {
+				await sendEphemeralResponse(payload.response_url, {
+					text:
+						linkResult.message ??
+						(linkResult.kind === 'linked'
+							? 'Linked your Maskin account.'
+							: 'Could not complete account-link.'),
+				})
+			}
+		} catch (err) {
+			logger.error('Slack interactive: account-link dispatch crashed', {
+				error: err instanceof Error ? err.message : String(err),
+			})
+			// Ack 200 either way — Slack retries on non-2xx and the retry would
+			// hit the same crash.
+		}
+		return c.json({ ok: true })
 	}
 
 	try {

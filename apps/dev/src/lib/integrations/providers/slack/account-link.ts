@@ -395,6 +395,23 @@ export interface AccountLinkAction {
 }
 
 /**
+ * Whether an interactivity payload belongs to the account-link picker. Slack
+ * apps get exactly one Interactivity Request URL, so the shared interactive
+ * route uses this to decide between `dispatchAccountLinkAction` and the
+ * object-edit handler. Every element the picker emits carries the
+ * `maskin_account_link` prefix on its block_id and action_id.
+ */
+export function ownsAccountLinkInteraction(payload: {
+	actions?: Array<{ action_id?: string; block_id?: string }>
+}): boolean {
+	return (payload.actions ?? []).some(
+		(a) =>
+			(a.block_id ?? '').startsWith(BLOCK_ID_PREFIX) ||
+			(a.action_id ?? '').startsWith(BLOCK_ID_PREFIX),
+	)
+}
+
+/**
  * Apply an inbound interactive payload to the `slack_user_links` table. Only
  * acts on payloads whose block_ids start with `BLOCK_ID_PREFIX`, so the route
  * can call this unconditionally on every interactivity POST. Returns the
