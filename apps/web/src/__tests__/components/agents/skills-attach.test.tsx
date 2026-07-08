@@ -375,4 +375,202 @@ describe('Skills — Workspace Skills section', () => {
 
 		expect(mockDetach).toHaveBeenCalledWith('skill-abc')
 	})
+
+	it('renders a folder badge with file count on a folder-skill row', () => {
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildWorkspaceSkill({ id: 'skill-docx', name: 'docx' })],
+			isLoading: false,
+		})
+		mockUseAgentSkillAttachments.mockReturnValue({
+			data: [
+				buildAttachedSkill({
+					id: 'skill-docx',
+					name: 'docx',
+					description: 'Generate Word documents',
+					isFolder: true,
+					fileCount: 3,
+				}),
+			],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		expect(screen.getByLabelText('Folder skill with 3 files')).toBeInTheDocument()
+		expect(screen.getByText('3 files')).toBeInTheDocument()
+		// Single-file affordances are still present — folder rows reuse the row, no extra editor.
+		expect(screen.getByRole('button', { name: 'Remove docx' })).toBeInTheDocument()
+	})
+
+	it('uses singular "file" wording when a folder skill has exactly one bundled file', () => {
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildWorkspaceSkill({ id: 'skill-one', name: 'one-shot' })],
+			isLoading: false,
+		})
+		mockUseAgentSkillAttachments.mockReturnValue({
+			data: [
+				buildAttachedSkill({
+					id: 'skill-one',
+					name: 'one-shot',
+					isFolder: true,
+					fileCount: 1,
+				}),
+			],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		expect(screen.getByLabelText('Folder skill with 1 file')).toBeInTheDocument()
+		expect(screen.getByText('1 file')).toBeInTheDocument()
+	})
+
+	it('does not render a folder badge on a single-file (isFolder=false) attached row', () => {
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildWorkspaceSkill({ id: 'skill-md', name: 'deploy' })],
+			isLoading: false,
+		})
+		mockUseAgentSkillAttachments.mockReturnValue({
+			data: [
+				buildAttachedSkill({
+					id: 'skill-md',
+					name: 'deploy',
+					description: 'Ship it',
+					isFolder: false,
+					fileCount: null,
+				}),
+			],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		expect(screen.queryByText(/file(s)?$/)).not.toBeInTheDocument()
+		expect(screen.queryByLabelText(/Folder skill with/)).not.toBeInTheDocument()
+		// The row keeps its original shape — name, description, Remove.
+		expect(screen.getByRole('button', { name: 'Remove deploy' })).toBeInTheDocument()
+		expect(screen.getByText('Ship it')).toBeInTheDocument()
+	})
+
+	it('shows the folder badge on folder skills inside the attach dropdown', async () => {
+		const user = userEvent.setup()
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [
+				buildWorkspaceSkill({
+					id: 'skill-docx',
+					name: 'docx',
+					description: 'Generate Word documents',
+					isFolder: true,
+					fileCount: 4,
+				}),
+				buildWorkspaceSkill({ id: 'skill-md', name: 'deploy', description: 'Ship it' }),
+			],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		await user.click(screen.getByRole('button', { name: 'Attach workspace skill' }))
+
+		// Folder row in the dropdown surfaces the badge so users see what they're attaching.
+		expect(screen.getByLabelText('Folder skill with 4 files')).toBeInTheDocument()
+		expect(screen.getByText('4 files')).toBeInTheDocument()
+		// Single-file row in the dropdown has no badge.
+		const deployOption = screen.getByRole('option', { name: /deploy/ })
+		expect(deployOption.textContent).not.toMatch(/file(s)?$/)
+	})
+
+	it('renders folder and single-file workspace skills in the same attached list', () => {
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [
+				buildWorkspaceSkill({ id: 'skill-docx', name: 'docx', isFolder: true, fileCount: 3 }),
+				buildWorkspaceSkill({ id: 'skill-md', name: 'deploy' }),
+			],
+			isLoading: false,
+		})
+		mockUseAgentSkillAttachments.mockReturnValue({
+			data: [
+				buildAttachedSkill({
+					id: 'skill-docx',
+					name: 'docx',
+					description: 'Generate Word documents',
+					isFolder: true,
+					fileCount: 3,
+				}),
+				buildAttachedSkill({ id: 'skill-md', name: 'deploy', description: 'Ship it' }),
+			],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		// Both rows render; the folder row carries the badge, the single-file row doesn't.
+		expect(screen.getByLabelText('Folder skill with 3 files')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Remove docx' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Remove deploy' })).toBeInTheDocument()
+		expect(screen.getByText('Ship it')).toBeInTheDocument()
+		// Header count covers both regardless of type.
+		expect(screen.getByRole('heading', { name: /workspace.*2/i })).toBeInTheDocument()
+	})
+
+	it('sorts the dropdown alphabetically across mixed folder and single-file skills', async () => {
+		const user = userEvent.setup()
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [
+				buildWorkspaceSkill({ id: 'a', name: 'zeta' }),
+				buildWorkspaceSkill({ id: 'b', name: 'Alpha', isFolder: true, fileCount: 2 }),
+				buildWorkspaceSkill({ id: 'c', name: 'mango' }),
+				buildWorkspaceSkill({ id: 'd', name: 'docx', isFolder: true, fileCount: 5 }),
+			],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		await user.click(screen.getByRole('button', { name: 'Attach workspace skill' }))
+
+		const labels = screen
+			.getAllByRole('option')
+			.map((el) => el.querySelector('p.font-medium')?.textContent?.trim())
+		expect(labels).toEqual(['Alpha', 'docx', 'mango', 'zeta'])
+	})
+
+	it('shows a loading line while the workspace-skill or attachment query is in flight', () => {
+		mockUseWorkspaceSkills.mockReturnValue({ data: undefined, isLoading: true })
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		expect(screen.getByText('Loading workspace skills...')).toBeInTheDocument()
+		// Empty-state copy and the attach trigger both wait for the load to settle.
+		expect(screen.queryByText(/No workspace skills in this workspace yet/)).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Attach workspace skill' })).not.toBeInTheDocument()
+	})
 })
