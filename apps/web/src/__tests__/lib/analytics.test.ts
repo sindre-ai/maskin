@@ -32,7 +32,24 @@ afterEach(() => {
 })
 
 describe('trackEvent', () => {
-	it('emits a console.info line tagged [analytics] with name and props', () => {
+	it('always forwards to posthog.capture — even before posthog is initialised', () => {
+		// Regression guard: prior versions silently dropped events when the
+		// module-local `initialized` flag was false, which is exactly how the
+		// north_star_prompt_impression / _response events were being lost in prod
+		// (see task Instrument north_star_prompt_* on the For You onboarding
+		// prompt bet). posthog-js is safe to call before init; do it anyway.
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackEvent('objects_control_changed', { source: 'objects-page', control: 'status_filter' })
+
+		expect(capture).toHaveBeenCalledTimes(1)
+		expect(capture).toHaveBeenCalledWith('objects_control_changed', {
+			source: 'objects-page',
+			control: 'status_filter',
+		})
+	})
+
+	it('also emits a console.info line tagged [analytics] when posthog is not initialised, for local dev diagnostics', () => {
 		trackEvent('objects_control_changed', { source: 'objects-page', control: 'status_filter' })
 
 		expect(console.info).toHaveBeenCalledTimes(1)
@@ -68,7 +85,7 @@ describe('trackEvent', () => {
 		Storage.prototype.getItem = original
 	})
 
-	it('routes through posthog.capture once posthog is initialised', () => {
+	it('routes through posthog.capture and skips the console fallback once posthog is initialised', () => {
 		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
 		__setInitializedForTesting(true)
 
