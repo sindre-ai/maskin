@@ -24,18 +24,6 @@ vi.mock('@/components/shared/subscribe-toggle', () => ({
 	SubscribeToggle: () => <div data-testid="subscribe-toggle" />,
 }))
 
-vi.mock('@/components/objects/metadata-properties', () => ({
-	MetadataProperties: () => <div data-testid="metadata-properties" />,
-}))
-
-vi.mock('@/components/objects/linked-objects', () => ({
-	LinkedObjects: () => <div data-testid="linked-objects" />,
-}))
-
-vi.mock('@/components/objects/object-files', () => ({
-	ObjectFiles: () => <div data-testid="object-files" />,
-}))
-
 const baseProps = {
 	workspaceId: 'ws-1',
 	statuses: ['proposed', 'active', 'done'],
@@ -136,6 +124,18 @@ describe('ObjectDocumentView', () => {
 		const object = buildObjectResponse()
 		render(<ObjectDocumentView {...baseProps} object={object} />)
 		expect(screen.queryByText('Saved')).not.toBeInTheDocument()
+	})
+
+	it('does not render Properties, Files, or Linked Objects in the body', () => {
+		const object = buildObjectResponse({ title: 'A bet' })
+		render(<ObjectDocumentView {...baseProps} object={object} />)
+		// AC-U5: the main reading path holds no property grid; properties + files
+		// live in a right drawer (rendered by the parent ObjectDocument, not the View).
+		// Linked objects are no longer here at all — they move into the timeline
+		// in the sibling "Relationships into the timeline" task.
+		expect(screen.queryByTestId('metadata-properties')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('object-files')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('linked-objects')).not.toBeInTheDocument()
 	})
 
 	it('shows AgentWorkingBadge when activeSessionId present', () => {

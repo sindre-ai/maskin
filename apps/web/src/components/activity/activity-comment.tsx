@@ -12,6 +12,7 @@ import { AgentOutput } from '../shared/agent-output'
 import { AttachedFileCard } from '../shared/attached-file-card'
 import { RelativeTime } from '../shared/relative-time'
 import { CommentInput } from './comment-input'
+import { CommentTaskList, hasTaskList } from './comment-task-list'
 import { DecisionChips, hasDecisionChips } from './decision-chips'
 import { MentionSessionCard } from './mention-session-card'
 
@@ -152,7 +153,9 @@ function CommentRow({
 						onMentionClick={handleMentionClick}
 						size="sm"
 						className="mt-1"
+						renderVisuals
 					/>
+					{hasTaskList(event) && <CommentTaskList event={event} workspaceId={workspaceId} />}
 					{attachmentFileIds.length > 0 && (
 						<ul className="mt-1.5 space-y-1">
 							{attachmentFileIds.map((fileId) => {

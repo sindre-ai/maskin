@@ -3,6 +3,16 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
+vi.mock('recharts', async () => {
+	const actual = await vi.importActual<typeof import('recharts')>('recharts')
+	return {
+		...actual,
+		ResponsiveContainer: ({ children }: { children: React.ReactNode }) => (
+			<div style={{ width: 600, height: 200 }}>{children}</div>
+		),
+	}
+})
+
 describe('MarkdownContent', () => {
 	it('renders markdown content', () => {
 		render(<MarkdownContent content="**bold text**" />)
@@ -65,6 +75,35 @@ describe('MarkdownContent', () => {
 		expect(container.querySelector('h1')).toBeNull()
 		expect(screen.getByText('Heading text')).toBeInTheDocument()
 		expect(screen.getByText('body')).toBeInTheDocument()
+	})
+
+	it('renders a chart fenced block as a visual only when renderVisuals is on', () => {
+		const spec = JSON.stringify({
+			type: 'bar',
+			x: 'day',
+			series: ['v'],
+			data: [{ day: 'Mon', v: 1 }],
+			caption: 'visual-on',
+		})
+		const md = `before\n\n\`\`\`chart\n${spec}\n\`\`\`\n\nafter`
+
+		const { rerender, container } = render(<MarkdownContent content={md} />)
+		// renderVisuals defaults to false outside ActivityComment — the block
+		// must stay a plain <pre><code> in object-document body markdown.
+		expect(container.querySelector('pre')).not.toBeNull()
+		expect(screen.queryByText('visual-on')).toBeNull()
+
+		rerender(<MarkdownContent content={md} renderVisuals />)
+		expect(screen.getByText('visual-on')).toBeInTheDocument()
+		expect(container.querySelector('pre')).toBeNull()
+	})
+
+	it('shows the inline fallback note when a chart spec is malformed', () => {
+		const md = 'lead\n\n```chart\n{not valid json\n```\n\ntail'
+		render(<MarkdownContent content={md} renderVisuals />)
+		expect(screen.getByText(/Couldn’t render chart/)).toBeInTheDocument()
+		expect(screen.getByText('lead')).toBeInTheDocument()
+		expect(screen.getByText('tail')).toBeInTheDocument()
 	})
 
 	it('renders @mentions as chips inside formatted markdown', () => {

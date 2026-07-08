@@ -34,11 +34,13 @@ export function FilterTabs<T extends string | undefined>({
 		>
 			{tabs.map((tab) => {
 				const isActive = tab.value === value
+				const accessibleName = tab.count !== undefined ? `${tab.label} (${tab.count})` : tab.label
 				return (
 					<button
 						key={tab.label}
 						type="button"
 						aria-pressed={isActive}
+						aria-label={accessibleName}
 						className={cn(
 							'rounded px-3 py-1 text-sm whitespace-nowrap transition-colors',
 							isActive

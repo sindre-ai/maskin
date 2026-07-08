@@ -5,6 +5,7 @@ import { PersistentReplyBar } from '@/components/foryou/persistent-reply-bar'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
 import { UnreadThreadCard } from '@/components/foryou/unread-thread-card'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FilterTabs } from '@/components/shared/filter-tabs'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
@@ -26,8 +27,32 @@ export const Route = createFileRoute('/_authed/$workspaceId/')({
 
 const UNDO_WINDOW_MS = 15_000
 
+type FeedFilter = 'all' | 'mentions'
+
 function itemKey(item: UnreadItem): string {
 	return `${item.entity_type}:${item.entity_id}`
+}
+
+type GroupKey = 'today' | 'yesterday' | 'earlier'
+const GROUP_LABEL: Record<GroupKey, string> = {
+	today: 'Today',
+	yesterday: 'Yesterday',
+	earlier: 'Earlier',
+}
+
+// Buckets an item into Today / Yesterday / Earlier by local-day boundary against
+// its latest_activity_at. Items missing a timestamp fall into "Earlier" so they
+// stay grouped at the bottom instead of pretending to be recent.
+function groupForItem(item: UnreadItem, nowMs: number): GroupKey {
+	if (!item.latest_activity_at) return 'earlier'
+	const then = new Date(item.latest_activity_at)
+	if (Number.isNaN(then.getTime())) return 'earlier'
+	const today = new Date(nowMs)
+	today.setHours(0, 0, 0, 0)
+	if (then.getTime() >= today.getTime()) return 'today'
+	const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000)
+	if (then.getTime() >= yesterday.getTime()) return 'yesterday'
+	return 'earlier'
 }
 
 function ForYouDashboard() {
@@ -40,6 +65,7 @@ function ForYouDashboard() {
 
 	const [activeId, setActiveId] = useState<string | null>(null)
 	const [activeReplyTarget, setActiveReplyTarget] = useState<number | null>(null)
+	const [filter, setFilter] = useState<FeedFilter>('all')
 	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
 
 	// Items currently hidden by an in-flight "Mark all as read" toast. Kept in
@@ -78,6 +104,35 @@ function ForYouDashboard() {
 		return sortedRegular.filter((item) => !pendingKeys.has(itemKey(item)))
 	}, [sortedRegular, pendingKeys])
 
+	const mentionCount = useMemo(
+		() => visibleRegular.filter((item) => item.mentioning_unread_count > 0).length,
+		[visibleRegular],
+	)
+
+	const filteredRegular = useMemo(
+		() =>
+			filter === 'mentions'
+				? visibleRegular.filter((item) => item.mentioning_unread_count > 0)
+				: visibleRegular,
+		[visibleRegular, filter],
+	)
+
+	// Bucket into Today / Yesterday / Earlier — recomputed once per render.
+	// The ordering inside each bucket is inherited from `sortedRegular` (mentions
+	// on top, then stable), so no extra sort is needed here.
+	const groupedRegular = useMemo(() => {
+		const nowMs = Date.now()
+		const buckets: Record<GroupKey, UnreadItem[]> = {
+			today: [],
+			yesterday: [],
+			earlier: [],
+		}
+		for (const item of filteredRegular) {
+			buckets[groupForItem(item, nowMs)].push(item)
+		}
+		return buckets
+	}, [filteredRegular])
+
 	const activeItem = useMemo(
 		() => (activeId ? items.find((item) => item.entity_id === activeId) : null),
 		[activeId, items],
@@ -108,8 +163,6 @@ function ForYouDashboard() {
 		},
 		[markRead],
 	)
-
-	const totalUnread = items.reduce((sum, item) => sum + (item.unread_count ?? 0), 0)
 
 	// Optimistically hides the visible regular threads, then commits the mutations
 	// (one per thread — non-batched by design, typical inboxes are small and a
@@ -193,7 +246,7 @@ function ForYouDashboard() {
 		/>
 	)
 
-	const isSparse = visibleRegular.length + onboardingItems.length < 3
+	const isSparse = filteredRegular.length + onboardingItems.length < 3
 
 	const northStarCard =
 		showNorthStarPrompt && !composerFocused ? (
@@ -257,22 +310,32 @@ function ForYouDashboard() {
 
 	return (
 		<>
-			<div className={cn('flex flex-col gap-4', activeId && 'pb-28')}>
+			<div className={cn('flex flex-col gap-3', activeId && 'pb-28')}>
 				{northStarCard}
-				<div className="flex items-center justify-between">
-					<div className="flex items-center gap-2">
-						<span className="text-sm font-medium text-foreground">For You</span>
-						{totalUnread > 0 && (
-							<span className="min-w-[18px] rounded-full bg-foreground px-1.5 py-0.5 text-center text-[10px] font-semibold text-background">
-								{totalUnread}
-							</span>
-						)}
+
+				{/* Page head — h1 + subtitle + filters + Mark-all-read + New (AC-U7).
+				    On mobile the head stacks; from sm+ the actions sit on the same row. */}
+				<header className="mb-1 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+					<div>
+						<h1 className="text-2xl font-semibold leading-tight tracking-tight">For You</h1>
+						<p className="mt-0.5 text-sm text-muted-foreground">
+							Unread threads on things you follow
+						</p>
 					</div>
-					<div className="flex items-center gap-1">
+					<div className="flex flex-wrap items-center gap-2">
+						<FilterTabs
+							aria-label="Filter unread feed"
+							value={filter}
+							onChange={setFilter}
+							tabs={[
+								{ label: 'All', value: 'all', count: visibleRegular.length },
+								{ label: 'Mentions', value: 'mentions', count: mentionCount },
+							]}
+						/>
 						<Button
 							variant="ghost"
 							size="sm"
-							className="h-7 px-2 text-xs min-h-[44px] sm:min-h-0"
+							className="h-7 px-2 text-xs min-h-[36px] sm:min-h-0"
 							onClick={handleMarkAllRead}
 							disabled={visibleRegular.length === 0}
 							title="Mark all as read (Alt+U)"
@@ -289,33 +352,54 @@ function ForYouDashboard() {
 							New
 						</Button>
 					</div>
-				</div>
-				<div className="space-y-4">
-					{onboardingItems.map((item) => (
-						<OnboardingPromptCard
-							key={`${item.entity_type}-${item.entity_id}`}
-							workspaceId={workspaceId}
-							item={item}
-						/>
-					))}
-					{visibleRegular.map((item) => (
-						<UnreadThreadCard
-							key={`${item.entity_type}-${item.entity_id}`}
-							workspaceId={workspaceId}
-							item={item}
-							isActive={activeId === item.entity_id}
-							onActivate={() => {
-								setActiveId(item.entity_id)
-								setActiveReplyTarget(null)
-							}}
-							onReplyTargetChange={setActiveReplyTarget}
-						/>
-					))}
+				</header>
+
+				<div className="flex flex-col">
+					{onboardingItems.length > 0 && (
+						<div className="mb-3 space-y-3">
+							{onboardingItems.map((item) => (
+								<OnboardingPromptCard
+									key={`${item.entity_type}-${item.entity_id}`}
+									workspaceId={workspaceId}
+									item={item}
+								/>
+							))}
+						</div>
+					)}
+					{(['today', 'yesterday', 'earlier'] as const).map((group) => {
+						const rows = groupedRegular[group]
+						if (rows.length === 0) return null
+						return (
+							<section key={group} aria-label={GROUP_LABEL[group]}>
+								<h2 className="mt-4 mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground first:mt-0">
+									{GROUP_LABEL[group]}
+								</h2>
+								{rows.map((item) => (
+									<UnreadThreadCard
+										key={`${item.entity_type}-${item.entity_id}`}
+										workspaceId={workspaceId}
+										item={item}
+										isActive={activeId === item.entity_id}
+										onActivate={() => {
+											setActiveId(item.entity_id)
+											setActiveReplyTarget(null)
+										}}
+										onReplyTargetChange={setActiveReplyTarget}
+									/>
+								))}
+							</section>
+						)
+					})}
+					{filter === 'mentions' && filteredRegular.length === 0 && (
+						<p className="py-10 text-center text-sm text-muted-foreground">No unread mentions.</p>
+					)}
 					{isSparse ? (
-						<SparseComposer
-							itemsCount={visibleRegular.length + onboardingItems.length}
-							onFocusChange={setComposerFocused}
-						/>
+						<div className="mt-4">
+							<SparseComposer
+								itemsCount={filteredRegular.length + onboardingItems.length}
+								onFocusChange={setComposerFocused}
+							/>
+						</div>
 					) : null}
 				</div>
 			</div>

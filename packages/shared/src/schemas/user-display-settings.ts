@@ -55,6 +55,7 @@ export const displaySettingsBodySchema = z
 				message: `columnVisibility may have at most ${COLUMN_VISIBILITY_MAX_ENTRIES} entries`,
 			})
 			.optional(),
+		timelineView: z.enum(['timeline', 'table']).optional(),
 	})
 	.strict()
 
