@@ -67,6 +67,27 @@ export const slackEventNormalizer: CustomEventNormalizer = (payload, _headers) =
 	}
 }
 
+// ── mrkdwn escape ──────────────────────────────────────────────────────────
+
+/**
+ * Escape free-text fields before they're interpolated into Slack mrkdwn.
+ *
+ * Slack's documented escape rules (https://api.slack.com/reference/surfaces/formatting#escaping)
+ * cover `&`, `<`, `>`. `|` is the delimiter inside the `<URL|text>` link form;
+ * Slack documents no escape for it, so when the result is used as link text we
+ * strip it — `<URL|a|b>` otherwise renders the second segment as visible junk
+ * and a crafted title like `<@U123|Sebastian>` would inject a fake user
+ * mention into the rendered subscript.
+ *
+ * Order matters: `&` must be replaced first so an already-escaped `<` doesn't
+ * double-encode to `&amp;lt;`.
+ */
+export function escapeSlackMrkdwn(input: string, opts: { forLinkText?: boolean } = {}): string {
+	let s = input.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+	if (opts.forLinkText) s = s.replace(/\|/g, '')
+	return s
+}
+
 // ── App Home — `For You` tab ───────────────────────────────────────────────
 
 /**
@@ -270,8 +291,8 @@ function buildLinkedView({ workspaceId, workspaceName, rows }: LinkedViewArgs): 
 	const blocks: Array<Record<string, unknown>> = [header, cta, { type: 'divider' }]
 	for (const row of rows) {
 		const objectLink = row.objectId
-			? `<${frontendBaseUrl()}/${workspaceId}/objects/${row.objectId}|${row.title}>`
-			: row.title
+			? `<${frontendBaseUrl()}/${workspaceId}/objects/${row.objectId}|${escapeSlackMrkdwn(row.title, { forLinkText: true })}>`
+			: escapeSlackMrkdwn(row.title)
 		blocks.push({
 			type: 'section',
 			text: { type: 'mrkdwn', text: `*${objectLink}*` },
