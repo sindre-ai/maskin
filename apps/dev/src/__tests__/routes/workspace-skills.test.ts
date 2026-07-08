@@ -748,6 +748,78 @@ describe('Workspace Skills Routes', () => {
 		})
 	})
 
+	describe('GET /:workspaceId/skills/:skillId/files', () => {
+		const skillId = '00000000-0000-0000-0000-0000000000f1'
+
+		function filesRequest(wsId: string, sId: string) {
+			return new Request(`http://localhost/api/workspaces/${wsId}/skills/${sId}/files`)
+		}
+
+		it('returns the relative paths and sizes for a folder skill, sorted', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const folderSkill = buildWorkspaceSkill({
+				id: skillId,
+				workspaceId,
+				name: 'docx',
+				isFolder: true,
+				fileCount: 3,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [folderSkill]]
+			;(agentStorage.listWorkspaceSkillFilesWithSize as ReturnType<typeof vi.fn>).mockResolvedValue(
+				[
+					{ relativePath: 'scripts/run.py', sizeBytes: 22 },
+					{ relativePath: 'SKILL.md', sizeBytes: 100 },
+					{ relativePath: 'reference/style.md', sizeBytes: 50 },
+				],
+			)
+
+			const res = await app.request(filesRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toEqual([
+				{ relativePath: 'SKILL.md', sizeBytes: 100 },
+				{ relativePath: 'reference/style.md', sizeBytes: 50 },
+				{ relativePath: 'scripts/run.py', sizeBytes: 22 },
+			])
+		})
+
+		it('returns 404 for single-file skills', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const singleFile = buildWorkspaceSkill({
+				id: skillId,
+				workspaceId,
+				isFolder: false,
+				fileCount: null,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [singleFile]]
+
+			const res = await app.request(filesRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when the skill row does not exist', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[buildWorkspaceMember()], []]
+
+			const res = await app.request(filesRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 403 when caller is not a workspace member', async () => {
+			const { app } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+
+			const res = await app.request(filesRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(403)
+		})
+	})
+
 	describe('DELETE /:workspaceId/skills/:name', () => {
 		it('returns 200 and deletes both S3 object and DB row', async () => {
 			const { app, mockResults, agentStorage } = createSkillsTestApp(

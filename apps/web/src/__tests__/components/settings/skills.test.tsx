@@ -29,25 +29,41 @@ vi.mock('@/lib/workspace-context', () => ({
 
 const mockUseWorkspaceSkills = vi.fn()
 const mockUseWorkspaceSkill = vi.fn()
+const mockUseWorkspaceSkillFiles = vi.fn()
 const mockCreateMutate = vi.fn()
+const mockCreateMutateAsync = vi.fn()
 const mockUpdateMutate = vi.fn()
 const mockDeleteMutate = vi.fn()
+const mockUploadMutate = vi.fn()
+const mockUploadMutateAsync = vi.fn()
 const createPending = { value: false }
 const updatePending = { value: false }
 const deletePending = { value: false }
+const uploadPending = { value: false }
 
 vi.mock('@/hooks/use-workspace-skills', () => ({
 	useWorkspaceSkills: (...args: unknown[]) => mockUseWorkspaceSkills(...args),
 	useWorkspaceSkill: (...args: unknown[]) => mockUseWorkspaceSkill(...args),
-	useCreateWorkspaceSkill: () => ({ mutate: mockCreateMutate, isPending: createPending.value }),
+	useWorkspaceSkillFiles: (...args: unknown[]) => mockUseWorkspaceSkillFiles(...args),
+	useCreateWorkspaceSkill: () => ({
+		mutate: mockCreateMutate,
+		mutateAsync: mockCreateMutateAsync,
+		isPending: createPending.value,
+	}),
 	useUpdateWorkspaceSkill: () => ({ mutate: mockUpdateMutate, isPending: updatePending.value }),
 	useDeleteWorkspaceSkill: () => ({ mutate: mockDeleteMutate, isPending: deletePending.value }),
+	useUploadWorkspaceSkill: () => ({
+		mutate: mockUploadMutate,
+		mutateAsync: mockUploadMutateAsync,
+		isPending: uploadPending.value,
+	}),
 }))
 
 // Route is imported after the mocks so the component picks up the mocked hooks.
 import {
 	Route,
 	deriveNameFromFileName,
+	formatSize,
 	sortSkills,
 	toSkillUpload,
 	uniqueName,
@@ -71,6 +87,8 @@ const buildSkill = (overrides: Record<string, unknown> = {}) => ({
 	storageKey: 'workspaces/ws-1/skills/deploy/SKILL.md',
 	sizeBytes: 100,
 	isValid: true,
+	isFolder: false,
+	fileCount: null,
 	createdBy: 'actor-1',
 	createdAt: '2026-04-23T00:00:00Z',
 	updatedAt: '2026-04-23T00:00:00Z',
@@ -85,11 +103,15 @@ describe('Settings > Skills', () => {
 		createPending.value = false
 		updatePending.value = false
 		deletePending.value = false
+		uploadPending.value = false
 		mockUseWorkspaceSkills.mockReturnValue({ data: [], isLoading: false })
 		mockUseWorkspaceSkill.mockReturnValue({ data: null, isLoading: false })
+		mockUseWorkspaceSkillFiles.mockReturnValue({ data: [], isLoading: false, error: null })
 		mockCreateMutate.mockImplementation((_vars, opts) => opts?.onSuccess?.())
+		mockCreateMutateAsync.mockResolvedValue({})
 		mockUpdateMutate.mockImplementation((_vars, opts) => opts?.onSuccess?.())
 		mockDeleteMutate.mockImplementation((_vars, opts) => opts?.onSuccess?.())
+		mockUploadMutateAsync.mockResolvedValue({ id: 'skill-1', isFolder: true, fileCount: 3 })
 	})
 
 	it('shows empty state when there are no skills', () => {
@@ -97,7 +119,7 @@ describe('Settings > Skills', () => {
 		expect(screen.getByText('No skills yet')).toBeInTheDocument()
 		expect(
 			screen.getByText(
-				"Create a skill, browse for SKILL.md files, or drag and drop them here. Files that don't match the SKILL.md format are still added so you can fix them.",
+				"Create a skill, browse for SKILL.md or .zip bundles, or drag and drop them here. Files that don't match the SKILL.md format are still added so you can fix them.",
 			),
 		).toBeInTheDocument()
 	})
@@ -309,6 +331,96 @@ describe('Settings > Skills', () => {
 		expect(rendered).toEqual(['deploy', 'review', 'archive'])
 	})
 
+	it('renders a folder badge with file count for folder skills', () => {
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildSkill({ name: 'docx', isFolder: true, fileCount: 3, description: 'docx skill' })],
+			isLoading: false,
+		})
+		renderPage()
+		expect(screen.getByText('docx')).toBeInTheDocument()
+		expect(screen.getByText('3 files')).toBeInTheDocument()
+	})
+
+	it('expands the folder row inline on click instead of opening the edit dialog', async () => {
+		const user = userEvent.setup()
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildSkill({ name: 'docx', isFolder: true, fileCount: 2, description: 'docx skill' })],
+			isLoading: false,
+		})
+		mockUseWorkspaceSkillFiles.mockReturnValue({
+			data: [
+				{ relativePath: 'SKILL.md', sizeBytes: 512 },
+				{ relativePath: 'reference/style.md', sizeBytes: 2048 },
+			],
+			isLoading: false,
+			error: null,
+		})
+		renderPage()
+
+		await user.click(screen.getByText('docx'))
+
+		// No edit dialog — folder click toggles expand.
+		expect(screen.queryByRole('heading', { name: 'Edit skill' })).not.toBeInTheDocument()
+		// File tree renders with sizes and Download / Replace controls.
+		expect(screen.getByText('SKILL.md')).toBeInTheDocument()
+		expect(screen.getByText('reference/style.md')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Download docx as zip' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Replace bundle for docx' })).toBeInTheDocument()
+	})
+
+	it('routes a .zip file through the multipart upload mutation', async () => {
+		const user = userEvent.setup()
+		renderPage()
+
+		const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+		const zipFile = new File(['PK fake-zip-bytes'], 'docx.zip', { type: 'application/zip' })
+
+		// The drop-zone's `accept` includes `application/zip`, so the file's
+		// MIME passes user-event's filter — handleFiles runs as it would in
+		// the browser.
+		await user.upload(fileInput, [zipFile])
+
+		await waitFor(() => expect(mockUploadMutateAsync).toHaveBeenCalledTimes(1))
+		const [zipPayload] = mockUploadMutateAsync.mock.calls[0]
+		expect(zipPayload.file).toBe(zipFile)
+		// First upload of a brand-new bundle — no replace, no skillId on the call.
+		expect(zipPayload.skillId).toBeUndefined()
+	})
+
+	it('passes skillId through the upload mutation when Replace bundle is used', async () => {
+		const user = userEvent.setup()
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildSkill({ id: 'skill-42', name: 'docx', isFolder: true, fileCount: 3 })],
+			isLoading: false,
+		})
+		renderPage()
+
+		// Expand the folder row to surface the Replace bundle button + input.
+		await user.click(screen.getByText('docx'))
+
+		// Wait for the Replace button to render (proves expansion happened) before
+		// grabbing the hidden per-row input that sits next to it.
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Replace bundle for docx' })).toBeInTheDocument(),
+		)
+		// The SkillRow's expanded Replace input renders inside the row markup,
+		// above the page-level picker at the end of SkillsPage's tree — so it
+		// shows up first in document order. Use accept to disambiguate instead
+		// of relying on positional indices.
+		const replaceInput = Array.from(
+			document.querySelectorAll<HTMLInputElement>('input[type="file"]'),
+		).find((el) => !el.multiple) as HTMLInputElement
+		expect(replaceInput).toBeTruthy()
+
+		const newZip = new File(['PK new'], 'docx-v2.zip', { type: 'application/zip' })
+		await user.upload(replaceInput, [newZip])
+
+		await waitFor(() => expect(mockUploadMutateAsync).toHaveBeenCalledTimes(1))
+		const [payload] = mockUploadMutateAsync.mock.calls[0]
+		expect(payload.file).toBe(newZip)
+		expect(payload.skillId).toBe('skill-42')
+	})
+
 	it('confirms deletion and calls delete mutation', async () => {
 		const user = userEvent.setup()
 		mockUseWorkspaceSkills.mockReturnValue({
@@ -423,6 +535,28 @@ describe('settings/skills helpers', () => {
 			const raw = '---\nname: Not Valid!\ndescription: d\n---\n\nbody'
 			const result = toSkillUpload(raw, 'fallback-name.md')
 			expect(result.baseName).toBe('fallback-name')
+		})
+	})
+
+	describe('formatSize', () => {
+		it('renders bytes under 1KB as raw B', () => {
+			expect(formatSize(0)).toBe('0 B')
+			expect(formatSize(512)).toBe('512 B')
+		})
+
+		it('renders KB with one decimal under 1MB', () => {
+			expect(formatSize(1024)).toBe('1.0 KB')
+			expect(formatSize(1536)).toBe('1.5 KB')
+		})
+
+		it('renders MB with one decimal above 1MB', () => {
+			expect(formatSize(1024 * 1024)).toBe('1.0 MB')
+			expect(formatSize(5 * 1024 * 1024)).toBe('5.0 MB')
+		})
+
+		it('returns a placeholder for negative or non-finite values', () => {
+			expect(formatSize(-1)).toBe('—')
+			expect(formatSize(Number.NaN)).toBe('—')
 		})
 	})
 

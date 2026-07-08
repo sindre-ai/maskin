@@ -37,15 +37,28 @@ import {
 	useCreateWorkspaceSkill,
 	useDeleteWorkspaceSkill,
 	useUpdateWorkspaceSkill,
+	useUploadWorkspaceSkill,
 	useWorkspaceSkill,
+	useWorkspaceSkillFiles,
 	useWorkspaceSkills,
 } from '@/hooks/use-workspace-skills'
-import { ApiError, type WorkspaceSkillListItem } from '@/lib/api'
+import { ApiError, type WorkspaceSkillListItem, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { parseSkillMd, skillNameSchema } from '@maskin/shared'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
-import { AlertTriangle, FileUp, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
+import {
+	AlertTriangle,
+	ChevronRight,
+	Download,
+	FileUp,
+	Folder,
+	MoreHorizontal,
+	Pencil,
+	Plus,
+	RefreshCw,
+	Trash2,
+} from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 type SkillSort = 'name' | 'createdAt' | 'updatedAt'
@@ -84,6 +97,13 @@ Instructions for the agent...
 
 const MAX_UPLOAD_RETRIES = 5
 
+// The drop-zone, file picker, and Replace bundle picker all accept the same
+// set. Browsers vary on `.zip` MIME — Safari sends 'application/zip', Chrome
+// sometimes sends 'application/x-zip-compressed', so we list both extension
+// and MIME forms to keep the OS picker permissive.
+const SKILL_UPLOAD_ACCEPT =
+	'.md,.markdown,text/markdown,.zip,application/zip,application/x-zip-compressed'
+
 type DialogState =
 	| { kind: 'closed' }
 	| { kind: 'create' }
@@ -99,6 +119,7 @@ function SkillsPage() {
 	const { data: skills, isLoading } = useWorkspaceSkills(workspaceId)
 	const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' })
 	const createMutation = useCreateWorkspaceSkill(workspaceId)
+	const uploadMutation = useUploadWorkspaceSkill(workspaceId)
 	const [isDragging, setIsDragging] = useState(false)
 	const [isUploading, setIsUploading] = useState(false)
 	const [summary, setSummary] = useState<UploadSummary | null>(null)
@@ -129,12 +150,29 @@ function SkillsPage() {
 			setIsUploading(true)
 			setSummary(null)
 
-			// Track names claimed by in-flight uploads so two invalid files that
-			// sanitise to the same base name get unique suffixes.
+			// Track names claimed by in-flight .md uploads so two invalid files that
+			// sanitise to the same base name get unique suffixes. Zip uploads go
+			// through the multipart endpoint, which derives the name server-side.
 			const claimed = new Set(existingNames)
 			const result: UploadSummary = { imported: 0, failed: [] }
 
 			const uploads = fileList.map(async (file) => {
+				const isZip = /\.zip$/i.test(file.name)
+				if (isZip) {
+					try {
+						// Server is the source of truth for is_folder / is_valid — the
+						// row lands either way, malformed bundles surface via AlertTriangle
+						// on the row instead of bouncing here.
+						await uploadMutation.mutateAsync({ file })
+						result.imported++
+					} catch (err) {
+						const reason =
+							err instanceof ApiError || err instanceof Error ? err.message : 'Upload failed'
+						result.failed.push({ name: file.name, reason })
+					}
+					return
+				}
+
 				const text = await file.text()
 				const { baseName, content } = toSkillUpload(text, file.name)
 				let name = uniqueName(baseName, claimed)
@@ -147,8 +185,6 @@ function SkillsPage() {
 						return
 					} catch (err) {
 						if (err instanceof ApiError && err.status === 409) {
-							// Race with another tab / another file that sanitised the
-							// same way — pick the next suffix and retry.
 							claimed.add(name)
 							name = uniqueName(baseName, claimed)
 							claimed.add(name)
@@ -167,7 +203,7 @@ function SkillsPage() {
 			setIsUploading(false)
 			setSummary(result)
 		},
-		[createMutation, existingNames],
+		[createMutation, uploadMutation, existingNames],
 	)
 
 	const openFilePicker = useCallback(() => inputRef.current?.click(), [])
@@ -177,7 +213,6 @@ function SkillsPage() {
 			if (e.target.files && e.target.files.length > 0) {
 				void handleFiles(e.target.files)
 			}
-			// Reset so the same file can be re-selected later.
 			e.target.value = ''
 		},
 		[handleFiles],
@@ -244,10 +279,10 @@ function SkillsPage() {
 							isUploading
 								? 'Uploading skill files...'
 								: isDragging
-									? 'Drop SKILL.md files to import'
+									? 'Drop SKILL.md files or skill bundles (.zip) to import'
 									: 'No skills yet'
 						}
-						description="Create a skill, browse for SKILL.md files, or drag and drop them here. Files that don't match the SKILL.md format are still added so you can fix them."
+						description="Create a skill, browse for SKILL.md or .zip bundles, or drag and drop them here. Files that don't match the SKILL.md format are still added so you can fix them."
 						action={
 							<div className="flex items-center gap-2">
 								<Button variant="outline" size="sm" onClick={openFilePicker} disabled={isUploading}>
@@ -268,6 +303,7 @@ function SkillsPage() {
 						<SkillRow
 							key={skill.id}
 							skill={skill}
+							workspaceId={workspaceId}
 							onEdit={() => setDialog({ kind: 'edit', name: skill.name })}
 							onDelete={() => setDialog({ kind: 'delete', name: skill.name })}
 						/>
@@ -293,7 +329,7 @@ function SkillsPage() {
 			<input
 				ref={inputRef}
 				type="file"
-				accept=".md,.markdown,text/markdown"
+				accept={SKILL_UPLOAD_ACCEPT}
 				multiple
 				className="hidden"
 				onChange={handleFileChange}
@@ -320,65 +356,218 @@ function SkillsPage() {
 
 function SkillRow({
 	skill,
+	workspaceId,
 	onEdit,
 	onDelete,
 }: {
 	skill: WorkspaceSkillListItem
+	workspaceId: string
 	onEdit: () => void
 	onDelete: () => void
 }) {
+	const [expanded, setExpanded] = useState(false)
+	const replaceInputRef = useRef<HTMLInputElement>(null)
+	const uploadMutation = useUploadWorkspaceSkill(workspaceId)
+	const [downloading, setDownloading] = useState(false)
+	const [downloadError, setDownloadError] = useState<string | null>(null)
+
+	const handleRowClick = () => {
+		if (skill.isFolder) {
+			setExpanded((v) => !v)
+		} else {
+			onEdit()
+		}
+	}
+
+	const handleReplaceClick = (e: React.MouseEvent) => {
+		e.stopPropagation()
+		replaceInputRef.current?.click()
+	}
+
+	const handleReplaceFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+		const file = e.target.files?.[0]
+		e.target.value = ''
+		if (!file) return
+		try {
+			await uploadMutation.mutateAsync({ file, skillId: skill.id })
+		} catch {
+			// Errors land on the mutation; toast/banner left to a future surface.
+			// The row stays expanded so the user sees the row didn't change shape.
+		}
+	}
+
+	const handleDownload = async (e: React.MouseEvent) => {
+		e.stopPropagation()
+		setDownloadError(null)
+		setDownloading(true)
+		try {
+			const { blob, filename } = await api.workspaceSkills.download(workspaceId, skill.id)
+			triggerBlobDownload(blob, filename)
+		} catch (err) {
+			setDownloadError(err instanceof Error ? err.message : 'Download failed')
+		} finally {
+			setDownloading(false)
+		}
+	}
+
 	return (
-		// biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements the inner kebab button, which keyboard users tab to and activate to reach Edit/Delete
-		<div
-			onClick={onEdit}
-			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 cursor-pointer transition-colors hover:border-border-hover hover:bg-bg-hover"
-		>
-			<div className="flex-1 min-w-0">
-				<div className="flex items-center gap-2">
-					{!skill.isValid && (
-						<span
-							className="shrink-0 text-warning"
-							title="Invalid SKILL.md format — edit to fix"
-							aria-label="Invalid SKILL.md format"
-						>
-							<AlertTriangle size={14} />
-						</span>
-					)}
-					<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
+		<div className="rounded-lg border border-border bg-card transition-colors hover:border-border-hover">
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements the inner kebab button, which keyboard users tab to and activate to reach Edit/Delete */}
+			<div
+				onClick={handleRowClick}
+				className="flex items-center gap-3 p-4 cursor-pointer hover:bg-bg-hover rounded-lg"
+			>
+				{skill.isFolder && (
+					<ChevronRight
+						size={14}
+						className={cn(
+							'shrink-0 text-muted-foreground transition-transform',
+							expanded && 'rotate-90',
+						)}
+						aria-hidden="true"
+					/>
+				)}
+				<div className="flex-1 min-w-0">
+					<div className="flex items-center gap-2 flex-wrap">
+						{!skill.isValid && (
+							<span
+								className="shrink-0 text-warning"
+								title="Invalid SKILL.md format — edit to fix"
+								aria-label="Invalid SKILL.md format"
+							>
+								<AlertTriangle size={14} />
+							</span>
+						)}
+						<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
+						{skill.isFolder && (
+							<span
+								className="shrink-0 inline-flex items-center gap-1 rounded-md bg-bg-surface px-1.5 py-0.5 text-xs text-muted-foreground"
+								title={`${skill.fileCount ?? 0} files in bundle`}
+							>
+								<Folder size={12} aria-hidden="true" />
+								{skill.fileCount ?? 0} files
+							</span>
+						)}
+					</div>
+					{skill.description ? (
+						<p className="text-xs text-muted-foreground truncate">{skill.description}</p>
+					) : !skill.isValid ? (
+						<p className="text-xs text-warning truncate">
+							{skill.isFolder
+								? 'Missing SKILL.md at root — re-upload to fix'
+								: "Won't be loaded by agents until the format is fixed"}
+						</p>
+					) : null}
 				</div>
-				{skill.description ? (
-					<p className="text-xs text-muted-foreground truncate">{skill.description}</p>
-				) : !skill.isValid ? (
-					<p className="text-xs text-warning truncate">
-						Won't be loaded by agents until the format is fixed
-					</p>
-				) : null}
+				<RelativeTime date={skill.updatedAt} className="text-xs text-muted-foreground shrink-0" />
+				<DropdownMenu>
+					<DropdownMenuTrigger asChild>
+						<Button
+							variant="ghost"
+							size="icon"
+							className="text-muted-foreground"
+							aria-label={`Actions for ${skill.name}`}
+							onClick={(e) => e.stopPropagation()}
+						>
+							<MoreHorizontal size={16} />
+						</Button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+						<DropdownMenuItem onClick={onEdit}>
+							<Pencil size={14} className="mr-2" />
+							Edit
+						</DropdownMenuItem>
+						<DropdownMenuItem onClick={onDelete} className="text-error focus:text-error">
+							<Trash2 size={14} className="mr-2" />
+							Delete
+						</DropdownMenuItem>
+					</DropdownMenuContent>
+				</DropdownMenu>
 			</div>
-			<RelativeTime date={skill.updatedAt} className="text-xs text-muted-foreground shrink-0" />
-			<DropdownMenu>
-				<DropdownMenuTrigger asChild>
-					<Button
-						variant="ghost"
-						size="icon"
-						className="text-muted-foreground"
-						aria-label={`Actions for ${skill.name}`}
-						onClick={(e) => e.stopPropagation()}
-					>
-						<MoreHorizontal size={16} />
-					</Button>
-				</DropdownMenuTrigger>
-				<DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-					<DropdownMenuItem onClick={onEdit}>
-						<Pencil size={14} className="mr-2" />
-						Edit
-					</DropdownMenuItem>
-					<DropdownMenuItem onClick={onDelete} className="text-error focus:text-error">
-						<Trash2 size={14} className="mr-2" />
-						Delete
-					</DropdownMenuItem>
-				</DropdownMenuContent>
-			</DropdownMenu>
+
+			{skill.isFolder && expanded && (
+				<div className="border-t border-border px-4 py-3 space-y-3">
+					<FolderFileTree
+						workspaceId={workspaceId}
+						skillId={skill.id}
+						expectedCount={skill.fileCount ?? 0}
+					/>
+					<div className="flex flex-wrap items-center gap-2">
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={handleDownload}
+							disabled={downloading || uploadMutation.isPending}
+							aria-label={`Download ${skill.name} as zip`}
+						>
+							<Download size={14} className="mr-1" />
+							{downloading ? 'Preparing...' : 'Download .zip'}
+						</Button>
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={handleReplaceClick}
+							disabled={uploadMutation.isPending}
+							aria-label={`Replace bundle for ${skill.name}`}
+						>
+							<RefreshCw size={14} className="mr-1" />
+							{uploadMutation.isPending ? 'Uploading...' : 'Replace bundle'}
+						</Button>
+						<input
+							ref={replaceInputRef}
+							type="file"
+							accept=".zip,application/zip,application/x-zip-compressed"
+							className="hidden"
+							onChange={handleReplaceFile}
+						/>
+					</div>
+					{downloadError && <p className="text-xs text-error">{downloadError}</p>}
+				</div>
+			)}
 		</div>
+	)
+}
+
+function FolderFileTree({
+	workspaceId,
+	skillId,
+	expectedCount,
+}: {
+	workspaceId: string
+	skillId: string
+	expectedCount: number
+}) {
+	const { data, isLoading, error } = useWorkspaceSkillFiles(workspaceId, skillId, true)
+
+	if (isLoading) {
+		return (
+			<p className="text-xs text-muted-foreground">
+				Loading {expectedCount} file{expectedCount === 1 ? '' : 's'}...
+			</p>
+		)
+	}
+	if (error) {
+		return (
+			<p className="text-xs text-error">
+				{error instanceof Error ? error.message : 'Failed to load files'}
+			</p>
+		)
+	}
+	if (!data || data.length === 0) {
+		return <p className="text-xs text-muted-foreground">No files in this bundle.</p>
+	}
+
+	return (
+		<ul className="space-y-1" aria-label="Bundle files">
+			{data.map((file) => (
+				<li key={file.relativePath} className="flex items-center justify-between gap-2 font-mono">
+					<span className="text-foreground text-xs truncate">{file.relativePath}</span>
+					<span className="text-muted-foreground text-xs shrink-0">
+						{formatSize(file.sizeBytes)}
+					</span>
+				</li>
+			))}
+		</ul>
 	)
 }
 
@@ -603,4 +792,22 @@ export function uniqueName(base: string, taken: Set<string>): string {
 		if (!taken.has(candidate)) return candidate
 	}
 	return `${base}-${Date.now()}`.slice(0, 64)
+}
+
+export function formatSize(bytes: number): string {
+	if (!Number.isFinite(bytes) || bytes < 0) return '—'
+	if (bytes < 1024) return `${bytes} B`
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+	return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function triggerBlobDownload(blob: Blob, filename: string): void {
+	const url = URL.createObjectURL(blob)
+	const a = document.createElement('a')
+	a.href = url
+	a.download = filename
+	document.body.appendChild(a)
+	a.click()
+	document.body.removeChild(a)
+	URL.revokeObjectURL(url)
 }

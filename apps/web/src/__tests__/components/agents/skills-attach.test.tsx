@@ -59,6 +59,8 @@ function buildWorkspaceSkill(
 		storageKey: 'workspaces/ws-1/skills/deploy/SKILL.md',
 		sizeBytes: 512,
 		isValid: true,
+		isFolder: false,
+		fileCount: null,
 		createdBy: 'actor-1',
 		createdAt: '2026-01-01T00:00:00Z',
 		updatedAt: '2026-01-01T00:00:00Z',
