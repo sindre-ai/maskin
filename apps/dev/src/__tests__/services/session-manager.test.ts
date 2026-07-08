@@ -100,6 +100,7 @@ function createMockStorageProvider() {
 		put: vi.fn().mockResolvedValue(undefined),
 		get: vi.fn().mockResolvedValue(Buffer.from('snapshot data')),
 		list: vi.fn().mockResolvedValue([]),
+		listWithMetadata: vi.fn().mockResolvedValue([]),
 		delete: vi.fn().mockResolvedValue(undefined),
 		exists: vi.fn().mockResolvedValue(false),
 		ensureBucket: vi.fn().mockResolvedValue(undefined),

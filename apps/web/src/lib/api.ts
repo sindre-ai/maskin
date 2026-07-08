@@ -519,6 +519,60 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		upload: async (
+			workspaceId: string,
+			file: File,
+			opts?: { skillId?: string },
+		): Promise<WorkspaceSkillUploadResult> => {
+			const apiKey = getApiKey()
+			const formData = new FormData()
+			formData.append('file', file)
+			const qs = opts?.skillId ? `?skillId=${encodeURIComponent(opts.skillId)}` : ''
+			const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/skills/upload${qs}`, {
+				method: 'POST',
+				headers: {
+					...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+					'X-Workspace-Id': workspaceId,
+				},
+				body: formData,
+			})
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({ error: res.statusText }))
+				const message =
+					typeof data.error === 'object' ? data.error.message : data.error || res.statusText
+				throw new ApiError(res.status, message)
+			}
+			return res.json()
+		},
+		listFiles: (workspaceId: string, skillId: string) =>
+			request<WorkspaceSkillFileEntry[]>(`/workspaces/${workspaceId}/skills/${skillId}/files`, {
+				workspaceId,
+			}),
+		download: async (
+			workspaceId: string,
+			skillId: string,
+		): Promise<{ blob: Blob; filename: string }> => {
+			const apiKey = getApiKey()
+			const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/skills/${skillId}/download`, {
+				headers: {
+					...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+					'X-Workspace-Id': workspaceId,
+				},
+			})
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({ error: res.statusText }))
+				const message =
+					typeof data.error === 'object' ? data.error.message : data.error || res.statusText
+				throw new ApiError(res.status, message)
+			}
+			const disposition = res.headers.get('content-disposition') ?? ''
+			// Prefer the RFC 5987 filename* parameter (UTF-8) over the ASCII fallback
+			// so non-ASCII skill names round-trip cleanly.
+			const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1]
+			const ascii = /filename="([^"]+)"/.exec(disposition)?.[1]
+			const filename = (utf8 ? decodeURIComponent(utf8) : ascii) ?? `${skillId}.zip`
+			return { blob: await res.blob(), filename }
+		},
 		listForActor: (actorId: string) =>
 			request<AttachedWorkspaceSkill[]>(`/actors/${actorId}/workspace-skills`),
 		attach: (actorId: string, workspaceSkillId: string) =>
@@ -898,6 +952,8 @@ export interface WorkspaceSkillListItem {
 	storageKey: string
 	sizeBytes: number
 	isValid: boolean
+	isFolder: boolean
+	fileCount: number | null
 	createdBy: string | null
 	createdAt: string
 	updatedAt: string
@@ -905,6 +961,15 @@ export interface WorkspaceSkillListItem {
 
 export interface WorkspaceSkillDetail extends WorkspaceSkillListItem {
 	content: string
+}
+
+export interface WorkspaceSkillUploadResult extends WorkspaceSkillDetail {
+	error: { kind: string; message: string } | null
+}
+
+export interface WorkspaceSkillFileEntry {
+	relativePath: string
+	sizeBytes: number
 }
 
 export interface AttachedWorkspaceSkill extends WorkspaceSkillListItem {

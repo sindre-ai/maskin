@@ -840,6 +840,86 @@ app.openapi(downloadWorkspaceSkillRoute, (async (c) => {
 	return c.body(zipBuffer, 200)
 }) as RouteHandler<typeof downloadWorkspaceSkillRoute, Env>)
 
+// GET /:workspaceId/skills/:skillId/files — Lightweight file listing for a
+// folder skill. Powers the settings page's inline expandable file tree;
+// returns relative paths and sizes so the row can render `name + size`
+// without round-tripping the bundle bytes.
+const workspaceSkillFileEntrySchema = z.object({
+	relativePath: z.string(),
+	sizeBytes: z.number().int().nonnegative(),
+})
+
+const listWorkspaceSkillFilesRoute = createRoute({
+	method: 'get',
+	path: '/{workspaceId}/skills/{skillId}/files',
+	tags: ['Workspace Skills'],
+	summary: 'List the files bundled in a folder skill',
+	request: {
+		params: z.object({
+			workspaceId: z.string().uuid(),
+			skillId: z.string().uuid(),
+		}),
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: z.array(workspaceSkillFileEntrySchema) } },
+			description: 'Folder skill file entries (relativePath + sizeBytes)',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not a workspace member',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Skill not found or not a folder skill',
+		},
+	},
+})
+
+app.openapi(listWorkspaceSkillFilesRoute, (async (c) => {
+	const db = c.get('db')
+	const callerActorId = c.get('actorId')
+	const storage = c.get('agentStorage')
+	const { workspaceId, skillId } = c.req.valid('param')
+
+	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
+	if (!member) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	const [skill] = await db
+		.select({ id: workspaceSkills.id, isFolder: workspaceSkills.isFolder })
+		.from(workspaceSkills)
+		.where(and(eq(workspaceSkills.id, skillId), eq(workspaceSkills.workspaceId, workspaceId)))
+		.limit(1)
+
+	if (!skill) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
+	}
+
+	// Single-file skills don't have a bundle to enumerate — surface a clean 404
+	// so the UI only calls this endpoint for folder skills.
+	if (!skill.isFolder) {
+		return c.json(
+			createApiError('NOT_FOUND', 'File listing is only available for folder skills'),
+			404,
+		)
+	}
+
+	const entries = await storage.listWorkspaceSkillFilesWithSize(workspaceId, skillId)
+	// Stable order so the tree doesn't shuffle between renders. SKILL.md is the
+	// bundle's entry point — surface it at the top, then sort the rest
+	// alphabetically (case-sensitive, so a `reference/` group stays contiguous
+	// with the rest of the lowercased paths).
+	entries.sort((a, b) => {
+		if (a.relativePath === 'SKILL.md') return -1
+		if (b.relativePath === 'SKILL.md') return 1
+		return a.relativePath < b.relativePath ? -1 : a.relativePath > b.relativePath ? 1 : 0
+	})
+
+	return c.json(entries, 200)
+}) as RouteHandler<typeof listWorkspaceSkillFilesRoute, Env>)
+
 // PUT /:workspaceId/skills/:name — Update a workspace skill's content
 const updateWorkspaceSkillRoute = createRoute({
 	method: 'put',
