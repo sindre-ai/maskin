@@ -41,8 +41,11 @@ test.describe('Relationships into the timeline (AC-U11/U12)', () => {
 			await expect(insightLink).toBeVisible({ timeout: 10000 })
 
 			// AC-U12 + AC-T7: toggle to Table — choice persists across reload.
+			// The radio input is `sr-only` inside a wrapping <label>, so the label
+			// is the actual click target; force the check past the visibility
+			// check on the visually-hidden input.
 			const tableToggle = page.getByRole('radio', { name: /table/i })
-			await tableToggle.check()
+			await tableToggle.check({ force: true })
 			await expect(tableToggle).toBeChecked()
 
 			await page.reload()
@@ -54,7 +57,7 @@ test.describe('Relationships into the timeline (AC-U11/U12)', () => {
 			// Toggle back to Timeline so the SSE assertion below targets the
 			// inline projection, not the table.
 			const timelineToggle = page.getByRole('radio', { name: /timeline/i })
-			await timelineToggle.check()
+			await timelineToggle.check({ force: true })
 			await expect(timelineToggle).toBeChecked()
 
 			// AC-T8: a new relationship POSTed after the page is open appears
