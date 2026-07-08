@@ -41,12 +41,14 @@ test.describe('Relationships into the timeline (AC-U11/U12)', () => {
 			await expect(insightLink).toBeVisible({ timeout: 10000 })
 
 			// AC-U12 + AC-T7: toggle to Table — choice persists across reload.
-			// The radio input is `sr-only` inside a wrapping <label>, so the label
-			// is the actual click target; force the check past the visibility
-			// check on the visually-hidden input.
-			const tableToggle = page.getByRole('radio', { name: /table/i })
-			await tableToggle.check({ force: true })
-			await expect(tableToggle).toBeChecked()
+			// The sr-only radio is fully controlled: its checked prop flips only
+			// after the display-settings mutation's optimistic cache write
+			// re-renders. `check()` asserts the state once, synchronously after
+			// the click, and races that re-render — so click the wrapping
+			// <label> and let the retrying `toBeChecked()` absorb the update.
+			const viewToggle = page.getByRole('group', { name: 'Relationship view' })
+			await viewToggle.getByText('table', { exact: true }).click()
+			await expect(viewToggle.getByRole('radio', { name: /table/i })).toBeChecked()
 
 			await page.reload()
 			await expect(page.getByText('Relationships timeline bet')).toBeVisible({ timeout: 10000 })
@@ -56,9 +58,8 @@ test.describe('Relationships into the timeline (AC-U11/U12)', () => {
 
 			// Toggle back to Timeline so the SSE assertion below targets the
 			// inline projection, not the table.
-			const timelineToggle = page.getByRole('radio', { name: /timeline/i })
-			await timelineToggle.check({ force: true })
-			await expect(timelineToggle).toBeChecked()
+			await viewToggle.getByText('timeline', { exact: true }).click()
+			await expect(viewToggle.getByRole('radio', { name: /timeline/i })).toBeChecked()
 
 			// AC-T8: a new relationship POSTed after the page is open appears
 			// without a manual reload via the existing SSE invalidation channel.
