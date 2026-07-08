@@ -20,7 +20,11 @@ test.describe('Bet detail — properties drawer', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			await expect(page.getByDisplayValue('Drawer parity bet')).toBeVisible({ timeout: 10000 })
+			// Title lives in a textarea (object-document.tsx). Wait for it to hydrate
+			// before probing the drawer.
+			await expect(page.locator('textarea').first()).toHaveValue('Drawer parity bet', {
+				timeout: 10000,
+			})
 
 			// Body shows hypothesis text.
 			await expect(
