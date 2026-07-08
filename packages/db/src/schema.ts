@@ -293,6 +293,8 @@ export const workspaceSkills = pgTable(
 		storageKey: text('storage_key').notNull(),
 		sizeBytes: integer('size_bytes').notNull(),
 		isValid: boolean('is_valid').notNull().default(true),
+		isFolder: boolean('is_folder').notNull().default(false),
+		fileCount: integer('file_count'),
 		createdBy: uuid('created_by').references(() => actors.id),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

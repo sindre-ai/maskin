@@ -366,6 +366,8 @@ export function buildWorkspaceSkill(overrides?: Record<string, unknown>) {
 		storageKey: `workspaces/${workspaceId}/skills/${id}/SKILL.md`,
 		sizeBytes: 128,
 		isValid: true,
+		isFolder: false,
+		fileCount: null,
 		createdBy: randomUUID(),
 		createdAt: new Date(),
 		updatedAt: new Date(),

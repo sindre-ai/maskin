@@ -5,13 +5,26 @@ vi.mock('node:fs/promises', () => ({
 	writeFile: vi.fn().mockResolvedValue(undefined),
 	readFile: vi.fn().mockResolvedValue(Buffer.from('file content')),
 	readdir: vi.fn().mockResolvedValue([]),
+	rm: vi.fn().mockResolvedValue(undefined),
 	stat: vi.fn().mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
+}))
+
+const { capturePosthogEventMock } = vi.hoisted(() => ({
+	capturePosthogEventMock: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: capturePosthogEventMock,
 }))
 
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { StorageProvider } from '@maskin/storage'
-import { AgentStorageManager, workspaceSkillKey } from '../../services/agent-storage'
+import {
+	AgentStorageManager,
+	workspaceSkillFileKey,
+	workspaceSkillKey,
+	workspaceSkillPrefix,
+} from '../../services/agent-storage'
 import { createTestContext } from '../setup'
 
 function createMockStorage() {
@@ -307,11 +320,32 @@ describe('AgentStorageManager', () => {
 		describe('pullWorkspaceSkillsForAgent()', () => {
 			const deployCheckId = '22222222-2222-2222-2222-222222222222'
 			const prReviewId = '33333333-3333-3333-3333-333333333333'
+			const docxId = '44444444-4444-4444-4444-444444444444'
+
+			beforeEach(() => {
+				// vi.clearAllMocks() clears call history but not implementations,
+				// so a per-test stat.mockImplementation() bleeds into later tests.
+				// Reset to the default ENOENT before each case so collision-rule
+				// tests stay isolated from the "agent-local wins" override below.
+				;(stat as ReturnType<typeof vi.fn>).mockRejectedValue(
+					Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+				)
+			})
 
 			it('downloads each attached skill into skills/<name>/SKILL.md', async () => {
 				mockResults.select = [
-					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, deployCheckId) },
-					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, prReviewId) },
+					{
+						id: deployCheckId,
+						name: 'deploy-check',
+						storageKey: workspaceSkillKey(workspaceId, deployCheckId),
+						isFolder: false,
+					},
+					{
+						id: prReviewId,
+						name: 'pr-review',
+						storageKey: workspaceSkillKey(workspaceId, prReviewId),
+						isFolder: false,
+					},
 				]
 				storage.get.mockResolvedValue(Buffer.from('body', 'utf-8'))
 
@@ -344,8 +378,18 @@ describe('AgentStorageManager', () => {
 				// The session continues with whatever skills did load; operators see
 				// the divergence via the per-skill error log written by the manager.
 				mockResults.select = [
-					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, deployCheckId) },
-					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, prReviewId) },
+					{
+						id: deployCheckId,
+						name: 'deploy-check',
+						storageKey: workspaceSkillKey(workspaceId, deployCheckId),
+						isFolder: false,
+					},
+					{
+						id: prReviewId,
+						name: 'pr-review',
+						storageKey: workspaceSkillKey(workspaceId, prReviewId),
+						isFolder: false,
+					},
 				]
 				storage.get.mockRejectedValueOnce(new Error('NoSuchKey'))
 				storage.get.mockResolvedValueOnce(Buffer.from('body', 'utf-8'))
@@ -369,8 +413,18 @@ describe('AgentStorageManager', () => {
 
 			it('skips skills whose folder already exists on disk (agent-local wins)', async () => {
 				mockResults.select = [
-					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, deployCheckId) },
-					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, prReviewId) },
+					{
+						id: deployCheckId,
+						name: 'deploy-check',
+						storageKey: workspaceSkillKey(workspaceId, deployCheckId),
+						isFolder: false,
+					},
+					{
+						id: prReviewId,
+						name: 'pr-review',
+						storageKey: workspaceSkillKey(workspaceId, prReviewId),
+						isFolder: false,
+					},
 				]
 				// deploy-check exists locally, pr-review does not
 				const existingFolder = join('/tmp/agent/skills/deploy-check')
@@ -394,6 +448,204 @@ describe('AgentStorageManager', () => {
 					join('/tmp/agent/skills/deploy-check/SKILL.md'),
 					expect.any(Buffer),
 				)
+			})
+
+			it('fires agent_skill_file_read once per single-file skill with is_folder=false', async () => {
+				// Single-file path is the bet's second ship-metric branch — the
+				// dashboard splits single vs folder by `is_folder`, so this event
+				// must fire even when the legacy SKILL.md path is taken.
+				mockResults.select = [
+					{
+						id: deployCheckId,
+						name: 'deploy-check',
+						storageKey: workspaceSkillKey(workspaceId, deployCheckId),
+						isFolder: false,
+					},
+				]
+				storage.get.mockResolvedValue(Buffer.from('body', 'utf-8'))
+
+				await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
+
+				expect(capturePosthogEventMock).toHaveBeenCalledTimes(1)
+				expect(capturePosthogEventMock).toHaveBeenCalledWith(
+					'agent_skill_file_read',
+					actorId,
+					expect.objectContaining({
+						workspace_id: workspaceId,
+						actor_id: actorId,
+						skill_id: deployCheckId,
+						is_folder: false,
+						file_path: 'SKILL.md',
+					}),
+				)
+			})
+
+			describe('folder skills', () => {
+				const prefix = workspaceSkillPrefix(workspaceId, docxId)
+				const folderRow = {
+					id: docxId,
+					name: 'docx',
+					storageKey: workspaceSkillKey(workspaceId, docxId),
+					isFolder: true,
+				}
+
+				it('lists the prefix, writes every entry under skills/<name>/ preserving subdirs', async () => {
+					mockResults.select = [folderRow]
+					storage.list.mockResolvedValueOnce([
+						`${prefix}SKILL.md`,
+						`${prefix}reference/style.md`,
+						`${prefix}scripts/build.sh`,
+					])
+					storage.get.mockResolvedValue(Buffer.from('body', 'utf-8'))
+
+					const result = await manager.pullWorkspaceSkillsForAgent(
+						actorId,
+						workspaceId,
+						'/tmp/agent',
+					)
+
+					expect(result.pulled).toBe(1)
+					expect(result.failures).toEqual([])
+					expect(storage.list).toHaveBeenCalledWith(prefix)
+					expect(storage.get).toHaveBeenCalledTimes(3)
+					expect(storage.get).toHaveBeenCalledWith(
+						workspaceSkillFileKey(workspaceId, docxId, 'SKILL.md'),
+					)
+					expect(storage.get).toHaveBeenCalledWith(
+						workspaceSkillFileKey(workspaceId, docxId, 'reference/style.md'),
+					)
+					expect(storage.get).toHaveBeenCalledWith(
+						workspaceSkillFileKey(workspaceId, docxId, 'scripts/build.sh'),
+					)
+					expect(writeFile).toHaveBeenCalledWith(
+						join('/tmp/agent/skills/docx/SKILL.md'),
+						expect.any(Buffer),
+					)
+					expect(writeFile).toHaveBeenCalledWith(
+						join('/tmp/agent/skills/docx/reference/style.md'),
+						expect.any(Buffer),
+					)
+					expect(writeFile).toHaveBeenCalledWith(
+						join('/tmp/agent/skills/docx/scripts/build.sh'),
+						expect.any(Buffer),
+					)
+					// mkdir is called for the subdirs so writeFile doesn't ENOENT
+					expect(mkdir).toHaveBeenCalledWith(join('/tmp/agent/skills/docx/reference'), {
+						recursive: true,
+					})
+					expect(mkdir).toHaveBeenCalledWith(join('/tmp/agent/skills/docx/scripts'), {
+						recursive: true,
+					})
+				})
+
+				it('fires agent_skill_file_read once per bundled file with is_folder=true', async () => {
+					mockResults.select = [folderRow]
+					storage.list.mockResolvedValueOnce([`${prefix}SKILL.md`, `${prefix}reference/style.md`])
+					storage.get.mockResolvedValue(Buffer.from('body', 'utf-8'))
+
+					await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
+
+					expect(capturePosthogEventMock).toHaveBeenCalledTimes(2)
+					expect(capturePosthogEventMock).toHaveBeenCalledWith(
+						'agent_skill_file_read',
+						actorId,
+						expect.objectContaining({
+							workspace_id: workspaceId,
+							actor_id: actorId,
+							skill_id: docxId,
+							is_folder: true,
+							file_path: 'SKILL.md',
+						}),
+					)
+					expect(capturePosthogEventMock).toHaveBeenCalledWith(
+						'agent_skill_file_read',
+						actorId,
+						expect.objectContaining({
+							skill_id: docxId,
+							is_folder: true,
+							file_path: 'reference/style.md',
+						}),
+					)
+				})
+
+				it('records a per-skill failure when the prefix is empty (partial-write guard)', async () => {
+					// A folder-skill row with no S3 entries means a prior replace
+					// flow crashed mid-upload. We surface this as a per-skill
+					// failure rather than silently booting with an empty skill.
+					mockResults.select = [folderRow]
+					storage.list.mockResolvedValueOnce([])
+
+					const result = await manager.pullWorkspaceSkillsForAgent(
+						actorId,
+						workspaceId,
+						'/tmp/agent',
+					)
+
+					expect(result.pulled).toBe(0)
+					expect(result.failures).toHaveLength(1)
+					expect(result.failures[0]?.name).toBe('docx')
+					expect(writeFile).not.toHaveBeenCalled()
+					expect(capturePosthogEventMock).not.toHaveBeenCalled()
+				})
+
+				it('isolates a per-entry storage.get failure to the affected skill', async () => {
+					// One bad object inside a folder skill must NOT crash the
+					// whole pull — other attached skills still hydrate. The bad
+					// folder is recorded as a failure so operators see it.
+					const otherSingleFile = {
+						id: deployCheckId,
+						name: 'deploy-check',
+						storageKey: workspaceSkillKey(workspaceId, deployCheckId),
+						isFolder: false,
+					}
+					mockResults.select = [folderRow, otherSingleFile]
+					storage.list.mockResolvedValueOnce([`${prefix}SKILL.md`, `${prefix}reference/style.md`])
+					storage.get.mockImplementation(async (key: string) => {
+						if (key === workspaceSkillFileKey(workspaceId, docxId, 'reference/style.md')) {
+							throw new Error('NoSuchKey')
+						}
+						return Buffer.from('body', 'utf-8')
+					})
+
+					const result = await manager.pullWorkspaceSkillsForAgent(
+						actorId,
+						workspaceId,
+						'/tmp/agent',
+					)
+
+					expect(result.pulled).toBe(1)
+					expect(result.failures).toHaveLength(1)
+					expect(result.failures[0]?.name).toBe('docx')
+					// deploy-check single-file skill still hydrates
+					expect(writeFile).toHaveBeenCalledWith(
+						join('/tmp/agent/skills/deploy-check/SKILL.md'),
+						expect.any(Buffer),
+					)
+				})
+
+				it('respects the agent-local wins collision rule for folder skills', async () => {
+					mockResults.select = [folderRow]
+					const existingFolder = join('/tmp/agent/skills/docx')
+					;(stat as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
+						if (path === existingFolder) {
+							return { isDirectory: () => true } as { isDirectory: () => boolean }
+						}
+						throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+					})
+
+					const result = await manager.pullWorkspaceSkillsForAgent(
+						actorId,
+						workspaceId,
+						'/tmp/agent',
+					)
+
+					expect(result.pulled).toBe(0)
+					expect(result.skipped).toBe(1)
+					expect(storage.list).not.toHaveBeenCalled()
+					expect(storage.get).not.toHaveBeenCalled()
+					expect(writeFile).not.toHaveBeenCalled()
+					expect(capturePosthogEventMock).not.toHaveBeenCalled()
+				})
 			})
 		})
 	})
