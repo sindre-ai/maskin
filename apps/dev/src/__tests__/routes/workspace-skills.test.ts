@@ -575,7 +575,66 @@ describe('Workspace Skills Routes', () => {
 				uploadRequest(workspaceId, 'docx.zip', buf, `?skillId=${existing.id}`),
 			)
 			expect(res.status).toBe(201)
-			expect(agentStorage.clearWorkspaceSkillFolder).toHaveBeenCalledWith(workspaceId, existing.id)
+			// Stale files are pruned AFTER the new bundle is written, keeping the
+			// paths the new bundle contains.
+			expect(agentStorage.clearWorkspaceSkillFolder).toHaveBeenCalledWith(
+				workspaceId,
+				existing.id,
+				{ keepRelativePaths: new Set(['SKILL.md']) },
+			)
+		})
+
+		it('rejects a malformed bundle with 400 when replacing an existing skill', async () => {
+			// A replace must never land the empty/invalid placeholder — that would
+			// overwrite the row and wipe the previous bundle's files from storage.
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const existing = buildWorkspaceSkill({
+				workspaceId,
+				name: 'docx',
+				isFolder: true,
+				fileCount: 2,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [existing]]
+
+			const buf = makeBundleBuffer({ 'README.md': 'no skill md here' })
+
+			const res = await app.request(
+				uploadRequest(workspaceId, 'broken.zip', buf, `?skillId=${existing.id}`),
+			)
+			expect(res.status).toBe(400)
+			expect(agentStorage.putWorkspaceSkill).not.toHaveBeenCalled()
+			expect(agentStorage.putWorkspaceSkillFile).not.toHaveBeenCalled()
+			expect(agentStorage.clearWorkspaceSkillFolder).not.toHaveBeenCalled()
+		})
+
+		it('returns 500 and does not clear the old bundle when a storage write fails', async () => {
+			// Storage writes run after the DB commit; a failure must not reach the
+			// stale-file prune, so the previous bundle stays intact on S3.
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const existing = buildWorkspaceSkill({
+				workspaceId,
+				name: 'docx',
+				isFolder: true,
+				fileCount: 2,
+			})
+			const updated = { ...existing, fileCount: 1, updatedAt: new Date() }
+			mockResults.selectQueue = [[buildWorkspaceMember()], [existing], [existing], [updated]]
+			mockResults.update = [updated]
+			vi.mocked(agentStorage.putWorkspaceSkill).mockRejectedValueOnce(new Error('S3 down'))
+
+			const buf = makeBundleBuffer({ 'docx/SKILL.md': SKILL_MD })
+
+			const res = await app.request(
+				uploadRequest(workspaceId, 'docx.zip', buf, `?skillId=${existing.id}`),
+			)
+			expect(res.status).toBe(500)
+			expect(agentStorage.clearWorkspaceSkillFolder).not.toHaveBeenCalled()
 		})
 
 		it('returns 400 for unsupported file types', async () => {

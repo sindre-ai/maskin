@@ -55,6 +55,11 @@ function createMemoryStorage(): StorageProvider & { _store: Map<string, Buffer> 
 		async list(prefix) {
 			return [...store.keys()].filter((k) => k.startsWith(prefix))
 		},
+		async listWithMetadata(prefix) {
+			return [...store.entries()]
+				.filter(([k]) => k.startsWith(prefix))
+				.map(([key, buf]) => ({ key, size: buf.length }))
+		},
 		async delete(key) {
 			store.delete(key)
 		},
@@ -455,6 +460,34 @@ describe('Workspace Skills Integration', () => {
 			expect(
 				storage._store.has(workspaceSkillFileKey(workspaceId, first.id, 'reference/new.md')),
 			).toBe(true)
+		})
+
+		it('rejects a malformed bundle on replace and leaves the existing bundle intact', async () => {
+			const app = createSkillsApp(storage)
+			const zip = new AdmZip()
+			zip.addFile('docx/SKILL.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8'))
+			zip.addFile('docx/reference/keep.md', Buffer.from('keep me', 'utf-8'))
+			const firstRes = await app.request(uploadRequest('docx.zip', zip.toBuffer()))
+			expect(firstRes.status).toBe(201)
+			const first = await firstRes.json()
+
+			// Replace with a zip that has no SKILL.md — must be rejected without
+			// touching the row or the stored bundle.
+			const badZip = new AdmZip()
+			badZip.addFile('README.md', Buffer.from('not a skill', 'utf-8'))
+			const res = await app.request(
+				uploadRequest('docx.zip', badZip.toBuffer(), `?skillId=${first.id}`),
+			)
+			expect(res.status).toBe(400)
+
+			expect(storage._store.has(workspaceSkillKey(workspaceId, first.id))).toBe(true)
+			expect(
+				storage._store.has(workspaceSkillFileKey(workspaceId, first.id, 'reference/keep.md')),
+			).toBe(true)
+			const [row] = await db.select().from(workspaceSkills).where(eq(workspaceSkills.id, first.id))
+			expect(row?.isValid).toBe(true)
+			expect(row?.fileCount).toBe(2)
+			expect(row?.content).toContain('Docx skill body.')
 		})
 	})
 

@@ -381,9 +381,11 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 // POST /:workspaceId/skills/upload — Multipart upload for `.md` or `.zip` bundles.
 //
 // One drop-zone in the UI lands both shapes here; the server sniffs the
-// filename to decide single-file vs folder path. Malformed bundles are
-// persisted with `isValid: false` so the existing AlertTriangle UI surfaces
-// them, instead of being rejected with a 4xx.
+// filename to decide single-file vs folder path. On a NEW upload, malformed
+// bundles are persisted with `isValid: false` so the existing AlertTriangle UI
+// surfaces them, instead of being rejected with a 4xx. On a replace
+// (?skillId=...) a malformed bundle is rejected with 400 — landing the
+// placeholder would destroy the existing bundle.
 const uploadWorkspaceSkillRoute = createRoute({
 	method: 'post',
 	path: '/{workspaceId}/skills/upload',
@@ -412,7 +414,8 @@ const uploadWorkspaceSkillRoute = createRoute({
 		},
 		400: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Invalid request — missing file, unsupported extension, or oversize zip',
+			description:
+				'Invalid request — missing file, unsupported extension, oversize zip, or malformed bundle when replacing an existing skill',
 		},
 		403: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -522,17 +525,28 @@ app.openapi(uploadWorkspaceSkillRoute, (async (c) => {
 	if (isFolderUpload) {
 		const result = extractSkillBundle(buffer)
 		if (!result.ok) {
+			logger.warn('Folder skill upload malformed', {
+				workspaceId,
+				filename,
+				replace: Boolean(replaceRow),
+				error: describeBundleError(result.error),
+			})
+			if (replaceRow) {
+				// A replace must never destroy the existing bundle: reject the
+				// malformed zip outright instead of landing the empty/invalid
+				// placeholder the create path uses (which would overwrite the row
+				// and clear the previous bundle's files).
+				return c.json(
+					createApiError('BAD_REQUEST', `Invalid skill bundle: ${result.error.message}`),
+					400,
+				)
+			}
 			bundleError = describeBundleError(result.error)
 			// Land the SKILL.md row as an empty/invalid placeholder so the UI can
 			// render the error inline. file_count stays 0 because we never wrote
 			// any bundled file.
 			skillMdContent = ''
 			fileCount = 0
-			logger.warn('Folder skill upload malformed', {
-				workspaceId,
-				filename,
-				error: bundleError,
-			})
 		} else {
 			skillMdContent = result.bundle.skillMd.content
 			fileCount = result.bundle.entries.length
@@ -584,7 +598,12 @@ app.openapi(uploadWorkspaceSkillRoute, (async (c) => {
 	const skillId = replaceRow?.id ?? randomUUID()
 	const storageKey = workspaceSkillKey(workspaceId, skillId)
 
-	// --- Persist DB row, then write S3, all inside one tx for atomicity ---
+	// --- Persist the DB row first; storage writes follow after commit. S3 is
+	// not transactional, so interleaving it with the tx could roll back the row
+	// while the old bundle was already deleted. Instead: commit the row, write
+	// the new files, then prune stale ones last. If a storage write fails we
+	// mark the row invalid so the divergence is visible and repairable by
+	// re-uploading — the prior bundle's files are still intact at that point.
 	let row: typeof workspaceSkills.$inferSelect | undefined
 	try {
 		row = await db.transaction(async (tx) => {
@@ -617,10 +636,6 @@ app.openapi(uploadWorkspaceSkillRoute, (async (c) => {
 					.returning()
 				persisted = updated[0]
 				if (!persisted) return undefined
-
-				// Clear the prior bundle's files (single-file's SKILL.md, or every
-				// file under a previous folder skill) so stale paths don't survive.
-				await storage.clearWorkspaceSkillFolder(workspaceId, replaceRow.id)
 			} else {
 				const inserted = await tx
 					.insert(workspaceSkills)
@@ -640,18 +655,6 @@ app.openapi(uploadWorkspaceSkillRoute, (async (c) => {
 					.returning()
 				persisted = inserted[0]
 				if (!persisted) throw new Error('INSERT returned no row')
-			}
-
-			// SKILL.md write — present in both single-file and folder skills.
-			await storage.putWorkspaceSkill(workspaceId, skillId, skillMdContent)
-
-			// Folder skill: write every other entry under the same prefix. SKILL.md
-			// itself is written by putWorkspaceSkill above so we skip it here.
-			if (bundleEntries) {
-				for (const entry of bundleEntries) {
-					if (entry.path === 'SKILL.md') continue
-					await storage.putWorkspaceSkillFile(workspaceId, skillId, entry.path, entry.data)
-				}
 			}
 
 			return persisted
@@ -675,6 +678,51 @@ app.openapi(uploadWorkspaceSkillRoute, (async (c) => {
 
 	if (!row) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace skill to replace not found'), 404)
+	}
+
+	try {
+		// SKILL.md write — present in both single-file and folder skills.
+		await storage.putWorkspaceSkill(workspaceId, skillId, skillMdContent)
+
+		// Folder skill: write every other entry under the same prefix. SKILL.md
+		// itself is written by putWorkspaceSkill above so we skip it here.
+		if (bundleEntries) {
+			for (const entry of bundleEntries) {
+				if (entry.path === 'SKILL.md') continue
+				await storage.putWorkspaceSkillFile(workspaceId, skillId, entry.path, entry.data)
+			}
+		}
+
+		if (replaceRow) {
+			// Prune files from the prior bundle that the new one no longer contains
+			// (also covers folder → single-file replaces). Runs after the new files
+			// are written so a failure above leaves the old bundle intact.
+			const newPaths = new Set(['SKILL.md', ...(bundleEntries?.map((e) => e.path) ?? [])])
+			await storage.clearWorkspaceSkillFolder(workspaceId, replaceRow.id, {
+				keepRelativePaths: newPaths,
+			})
+		}
+	} catch (err) {
+		logger.error('Workspace skill storage write failed after commit', {
+			workspaceId,
+			skillId,
+			filename,
+			isFolder: isFolderUpload,
+			error: String(err),
+		})
+		try {
+			await db
+				.update(workspaceSkills)
+				.set({ isValid: false, updatedAt: new Date() })
+				.where(eq(workspaceSkills.id, skillId))
+		} catch (markErr) {
+			logger.error('Failed to mark workspace skill invalid after storage failure', {
+				workspaceId,
+				skillId,
+				error: String(markErr),
+			})
+		}
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to write skill files to storage'), 500)
 	}
 
 	// Audit event — same shape as the JSON create path so existing listeners

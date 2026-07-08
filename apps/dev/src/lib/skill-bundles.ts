@@ -116,7 +116,44 @@ export function extractSkillBundle(buffer: Buffer): ExtractSkillBundleResult {
 			: normalised
 		if (relative === '') continue
 
-		const data = entry.getData()
+		// Zip-bomb guard: reject on the declared uncompressed size BEFORE
+		// decompressing — getData() allocates the full declared size up front,
+		// so checking afterwards would let a tiny zip allocate gigabytes.
+		const declaredBytes = entry.header.size
+		if (declaredBytes > SKILL_BUNDLE_MAX_ENTRY_BYTES) {
+			return {
+				ok: false,
+				error: {
+					kind: 'too_large',
+					message: `Entry ${relative} is ${declaredBytes} bytes (limit ${SKILL_BUNDLE_MAX_ENTRY_BYTES})`,
+				},
+			}
+		}
+		if (totalBytes + declaredBytes > SKILL_BUNDLE_MAX_UNCOMPRESSED_BYTES) {
+			return {
+				ok: false,
+				error: {
+					kind: 'too_large',
+					message: `Bundle exceeds ${SKILL_BUNDLE_MAX_UNCOMPRESSED_BYTES} bytes uncompressed`,
+				},
+			}
+		}
+
+		// A header lying LOW about its size is caught by adm-zip's inflater
+		// (maxOutputLength = declared size) — surface that as zip_invalid
+		// instead of an uncaught throw.
+		let data: Buffer
+		try {
+			data = entry.getData()
+		} catch (err) {
+			return {
+				ok: false,
+				error: {
+					kind: 'zip_invalid',
+					message: `Failed to decompress entry ${relative}: ${err instanceof Error ? err.message : String(err)}`,
+				},
+			}
+		}
 		if (data.length > SKILL_BUNDLE_MAX_ENTRY_BYTES) {
 			return {
 				ok: false,

@@ -406,13 +406,20 @@ export class AgentStorageManager {
 	}
 
 	/**
-	 * Remove every object under a folder skill's prefix. Used by the replace
-	 * flow so the prior bundle's files don't survive into the new bundle.
+	 * Remove every object under a folder skill's prefix, except the relative
+	 * paths in `keepRelativePaths`. Used by the replace flow AFTER the new
+	 * bundle is written so the prior bundle's stale files don't survive —
+	 * deleting last means a failed replace leaves the old bundle intact.
 	 */
-	async clearWorkspaceSkillFolder(workspaceId: string, skillId: string): Promise<void> {
+	async clearWorkspaceSkillFolder(
+		workspaceId: string,
+		skillId: string,
+		options: { keepRelativePaths?: Set<string> } = {},
+	): Promise<void> {
 		const prefix = workspaceSkillPrefix(workspaceId, skillId)
 		const keys = await this.storage.list(prefix)
 		for (const key of keys) {
+			if (options.keepRelativePaths?.has(key.slice(prefix.length))) continue
 			try {
 				await this.storage.delete(key)
 			} catch (err) {
@@ -481,31 +488,50 @@ export class AgentStorageManager {
 			}
 
 			try {
+				// Fetch every file BEFORE touching the local folder: a storage
+				// failure must not destroy an existing copy (resume passes
+				// `overwrite: true` after restoring the snapshot) or leave a
+				// partial folder behind.
+				const files = isFolder
+					? await this.fetchFolderSkillFiles(workspaceId, skillId)
+					: [{ relativePath: 'SKILL.md', data: await this.storage.get(storageKey) }]
+
 				if (options.overwrite) {
 					await rm(skillFolder, { recursive: true, force: true })
 				}
-				await mkdir(skillFolder, { recursive: true })
+				try {
+					for (const { relativePath, data } of files) {
+						const destPath = join(skillFolder, relativePath)
+						await mkdir(dirname(destPath), { recursive: true })
+						await writeFile(destPath, data)
+					}
+				} catch (err) {
+					// A partial folder would satisfy folderExists() and read as a
+					// complete agent-local skill on the next pull — remove it.
+					await rm(skillFolder, { recursive: true, force: true }).catch(() => {})
+					throw err
+				}
 
-				if (isFolder) {
-					await this.hydrateFolderSkill({
-						actorId,
-						workspaceId,
-						skillId,
-						name,
-						skillFolder,
-					})
-				} else {
-					const data = await this.storage.get(storageKey)
-					await writeFile(join(skillFolder, 'SKILL.md'), data)
-					// Ship-metric event — fires on every successful read so the
-					// dashboard can split single-file vs folder. Fire-and-forget so
-					// an analytics outage cannot fail the pull.
+				// Ship-metric event, one per file, so the dashboard can split
+				// single-file vs folder and see which files inside a bundle are
+				// actually read by agents (vs. dead weight). Fire-and-forget so an
+				// analytics outage cannot fail the pull.
+				for (const { relativePath } of files) {
 					void capturePosthogEvent('agent_skill_file_read', actorId, {
 						workspace_id: workspaceId,
 						actor_id: actorId,
 						skill_id: skillId,
-						is_folder: false,
-						file_path: 'SKILL.md',
+						is_folder: isFolder,
+						file_path: relativePath,
+					})
+				}
+				if (isFolder) {
+					logger.info('Hydrated folder skill onto agent disk', {
+						actorId,
+						workspaceId,
+						skillId,
+						name,
+						fileCount: files.length,
 					})
 				}
 				pulled++
@@ -532,50 +558,26 @@ export class AgentStorageManager {
 		return { pulled, skipped, failures }
 	}
 
-	// Hydrate a folder skill by listing every entry under its S3 prefix and
-	// writing each one under `skills/<name>/<relativePath>` on agent disk,
-	// preserving the upload-time directory layout. Throws on any per-entry
-	// failure so the caller's per-skill try/catch records the whole skill as a
-	// failure — partial hydration would leave the skill broken on disk.
-	private async hydrateFolderSkill(args: {
-		actorId: string
-		workspaceId: string
-		skillId: string
-		name: string
-		skillFolder: string
-	}): Promise<void> {
-		const { actorId, workspaceId, skillId, name, skillFolder } = args
+	// Fetch every entry of a folder skill into memory (bundles are capped at
+	// 10MB at upload time, so buffering is fine). Fetching before any disk
+	// write keeps hydration all-or-nothing: a failed fetch leaves the agent's
+	// existing copy untouched. Throws on an empty prefix — that's a
+	// partial-write artefact (e.g. a replace flow that crashed mid-upload) and
+	// must surface as a per-skill failure instead of the agent silently
+	// booting with an empty skill folder.
+	private async fetchFolderSkillFiles(
+		workspaceId: string,
+		skillId: string,
+	): Promise<{ relativePath: string; data: Buffer }[]> {
 		const entries = await this.listWorkspaceSkillFiles(workspaceId, skillId)
 		if (entries.length === 0) {
-			// A folder skill row with an empty prefix is a partial-write artefact
-			// (e.g. T2's replace flow deleted the prior bundle but the new upload
-			// crashed mid-flight). Surface as a per-skill failure so operators
-			// see the divergence instead of the agent silently booting with an
-			// empty skill folder.
 			throw new Error(`Folder skill has no files at prefix (skillId=${skillId})`)
 		}
+		const files: { relativePath: string; data: Buffer }[] = []
 		for (const { relativePath, key } of entries) {
-			const destPath = join(skillFolder, relativePath)
-			await mkdir(dirname(destPath), { recursive: true })
-			const data = await this.getWorkspaceSkillFile(key)
-			await writeFile(destPath, data)
-			// One event per bundled file so the dashboard can see which files
-			// inside a bundle are actually read by agents (vs. dead weight).
-			void capturePosthogEvent('agent_skill_file_read', actorId, {
-				workspace_id: workspaceId,
-				actor_id: actorId,
-				skill_id: skillId,
-				is_folder: true,
-				file_path: relativePath,
-			})
+			files.push({ relativePath, data: await this.getWorkspaceSkillFile(key) })
 		}
-		logger.info('Hydrated folder skill onto agent disk', {
-			actorId,
-			workspaceId,
-			skillId,
-			name,
-			fileCount: entries.length,
-		})
+		return files
 	}
 
 	private async upsertFileRecord(
