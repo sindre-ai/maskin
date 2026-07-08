@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto'
-import { integrations } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { integrations, triggers, workspaceMembers } from '@maskin/db/schema'
+import { and, eq, sql } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { insertWorkspace } from '../factories'
+import { SLACK_DEFAULT_TRIGGER_MARKER } from '../../lib/integrations/providers/slack/default-triggers'
+import { insertActor, insertWorkspace } from '../factories'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
 const { default: integrationsRoutes } = await import('../../routes/integrations')
@@ -118,13 +119,34 @@ async function slackRowsForTeam(workspaceId: string, teamId: string) {
 		)
 }
 
+async function seededTriggers(workspaceId: string) {
+	return db
+		.select()
+		.from(triggers)
+		.where(
+			and(
+				eq(triggers.workspaceId, workspaceId),
+				sql`${triggers.metadata}->>'seeded_by' = ${SLACK_DEFAULT_TRIGGER_MARKER}`,
+			),
+		)
+}
+
 describe('Slack OAuth reconnect lifecycle (integration)', () => {
 	let workspaceId: string
 	let teamId: string
+	let observerId: string
 
 	beforeEach(async () => {
 		const ws = await insertWorkspace(db, getTestActorId())
 		workspaceId = ws.id
+		// The default-trigger seeding targets the bootstrap observer agent.
+		const observer = await insertActor(db, { type: 'agent', name: 'Workspace Observer' })
+		observerId = observer.id
+		await db.insert(workspaceMembers).values({
+			workspaceId,
+			actorId: observerId,
+			role: 'member',
+		})
 		teamId = `T${randomBytes(4).toString('hex').toUpperCase()}`
 		mockSlackOAuthFetch(teamId)
 	})
@@ -139,6 +161,18 @@ describe('Slack OAuth reconnect lifecycle (integration)', () => {
 		expect(firstRow).toBeDefined()
 		expect(firstRow?.status).toBe('active')
 
+		// postInstall seeded the default mention/DM responder triggers targeting
+		// the Workspace Observer agent.
+		const seededAfterConnect = await seededTriggers(workspaceId)
+		expect(seededAfterConnect).toHaveLength(2)
+		expect(
+			new Set(seededAfterConnect.map((t) => (t.config as { entity_type: string }).entity_type)),
+		).toEqual(new Set(['slack.direct_message', 'slack.app_mention']))
+		for (const trigger of seededAfterConnect) {
+			expect(trigger.targetActorId).toBe(observerId)
+			expect(trigger.enabled).toBe(true)
+		}
+
 		// Disconnect soft-deletes: the row stays, flipped to 'revoked'.
 		const deleteRes = await app.request(
 			new Request(`http://localhost/api/integrations/${firstRow?.id}`, {
@@ -150,10 +184,16 @@ describe('Slack OAuth reconnect lifecycle (integration)', () => {
 		const [revokedRow] = await slackRowsForTeam(workspaceId, teamId)
 		expect(revokedRow?.status).toBe('revoked')
 
+		// preDisconnect removed the seeded triggers with the integration.
+		expect(await seededTriggers(workspaceId)).toHaveLength(0)
+
 		// Reconnect must succeed and reactivate the same row — this returned a
 		// 500 (unique constraint 23505) before the fix.
 		const secondCallback = await connectAndCallback(app, workspaceId)
 		expect(secondCallback.status).toBe(302)
+
+		// Reconnect re-seeds the defaults.
+		expect(await seededTriggers(workspaceId)).toHaveLength(2)
 
 		const rowsAfter = await slackRowsForTeam(workspaceId, teamId)
 		expect(rowsAfter).toHaveLength(1)
@@ -192,5 +232,9 @@ describe('Slack OAuth reconnect lifecycle (integration)', () => {
 		expect(rowsAfter[0]?.id).toBe(firstRow?.id)
 		expect(rowsAfter[0]?.status).toBe('active')
 		expect(rowsAfter[0]?.credentials).not.toBe(firstRow?.credentials)
+
+		// Seeding is idempotent: reconnecting while active must not duplicate the
+		// default triggers.
+		expect(await seededTriggers(workspaceId)).toHaveLength(2)
 	})
 })
