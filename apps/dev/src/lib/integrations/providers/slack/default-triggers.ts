@@ -12,10 +12,11 @@ import type { PostInstallContext, PreDisconnectContext } from '../../types'
 export const SLACK_DEFAULT_TRIGGER_MARKER = 'slack-integration-default'
 
 /**
- * The agent every workspace gets from `bootstrapWorkspaceObserver` — the only
- * actor we can rely on existing when an arbitrary workspace connects Slack.
+ * The real-time operational agent from the Development template — it already
+ * owns live triage (unsticking stalled objects, reacting to runtime alerts),
+ * which is the same job as responding to an incoming Slack message.
  */
-const DEFAULT_TARGET_AGENT_NAME = 'Workspace Observer'
+const DEFAULT_TARGET_AGENT_NAME = 'Workspace Driver'
 
 const DEFAULT_TRIGGERS: ReadonlyArray<{ entityType: string; name: string }> = [
 	{ entityType: 'slack.direct_message', name: 'Slack: respond to direct messages' },
@@ -31,12 +32,12 @@ Handle the request using your Maskin tools, then ALWAYS post your answer back to
  * Slack, so mentions get an agent response out of the box instead of silently
  * accumulating unconsumed events. Runs as part of the provider's postInstall:
  * idempotent across reconnects (marker check) and fail-soft — a workspace
- * without the observer agent skips seeding rather than failing the install.
+ * without the target agent skips seeding rather than failing the install.
  */
 export async function seedSlackDefaultTriggers(ctx: PostInstallContext): Promise<void> {
 	const db = ctx.db as Database
 	try {
-		const [observer] = await db
+		const [targetAgent] = await db
 			.select({ id: actors.id })
 			.from(actors)
 			.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
@@ -48,8 +49,8 @@ export async function seedSlackDefaultTriggers(ctx: PostInstallContext): Promise
 				),
 			)
 			.limit(1)
-		if (!observer) {
-			logger.warn('Slack default triggers: no Workspace Observer agent in workspace; skipping', {
+		if (!targetAgent) {
+			logger.warn('Slack default triggers: no Workspace Driver agent in workspace; skipping', {
 				workspaceId: ctx.workspaceId,
 				integrationId: ctx.integrationId,
 			})
@@ -96,7 +97,7 @@ export async function seedSlackDefaultTriggers(ctx: PostInstallContext): Promise
 					type: 'event',
 					config: { entity_type: def.entityType, action: 'created' },
 					actionPrompt: DEFAULT_ACTION_PROMPT,
-					targetActorId: observer.id,
+					targetActorId: targetAgent.id,
 					enabled: true,
 					createdBy: systemActorId,
 					metadata: { seeded_by: SLACK_DEFAULT_TRIGGER_MARKER, integration_id: ctx.integrationId },
@@ -117,7 +118,7 @@ export async function seedSlackDefaultTriggers(ctx: PostInstallContext): Promise
 		logger.info('Slack default triggers seeded', {
 			workspaceId: ctx.workspaceId,
 			integrationId: ctx.integrationId,
-			targetActorId: observer.id,
+			targetActorId: targetAgent.id,
 		})
 	} catch (err) {
 		// Fail-soft: a seeding hiccup must not fail the install — the user can
