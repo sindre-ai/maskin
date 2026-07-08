@@ -155,6 +155,10 @@ vi.mock('@/components/objects/data-table/dynamic-columns', () => ({ getDynamicCo
 vi.mock('@/components/imports/import-dialog', () => ({ ImportDialog: () => null }))
 vi.mock('@/hooks/use-imports', () => ({ useImportToast: () => ({ startTracking: vi.fn() }) }))
 vi.mock('@/components/shared/route-error', () => ({ RouteError: () => <div>Error</div> }))
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: () => null,
+	isCreateShortcut: () => false,
+}))
 vi.mock('@/lib/api', () => ({
 	api: { objects: { list: vi.fn(), search: vi.fn() } },
 }))
@@ -162,12 +166,16 @@ vi.mock('@/lib/analytics', () => ({ trackEvent: vi.fn() }))
 vi.mock('@/lib/query-keys', () => ({
 	queryKeys: {
 		objects: {
+			list: (workspaceId: string, filters?: unknown) => ['objects', workspaceId, 'list', filters],
 			listInfinite: () => ['objects'],
 			listInfinitePrefix: () => ['objects', 'infinite'],
 			listPrefix: () => ['objects', 'list'],
 			board: () => ['objects', 'board'],
 			detail: (id: string) => ['objects', 'detail', id],
 			all: () => ['objects'],
+		},
+		relationships: {
+			all: (workspaceId: string) => ['relationships', workspaceId],
 		},
 		bets: { all: () => ['bets'] },
 		imports: { detail: (id: string) => ['imports', 'detail', id] },

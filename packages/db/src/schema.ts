@@ -1,6 +1,7 @@
 import type { AgentState, FileAnnotation, SessionResult } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {
+	type AnyPgColumn,
 	bigint,
 	bigserial,
 	boolean,
@@ -36,6 +37,10 @@ export const actors = pgTable('actors', {
 	isSystem: boolean('is_system').notNull().default(false),
 	agentState: text('agent_state').notNull().default('idle').$type<AgentState>(),
 	agentStateUpdatedAt: timestamp('agent_state_updated_at', { withTimezone: true }),
+	// Per-row marker keys for managed-package installs. Nullable everywhere;
+	// install-provisioned rows carry { installed_package_id, source_item_id }
+	// so the T5 version-push cron can find them. See catalogPackages comment.
+	metadata: jsonb('metadata'),
 	// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
 	createdBy: uuid('created_by').references((): any => actors.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
@@ -93,7 +98,12 @@ export const objects = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
-	(t) => [index('objects_ws_type_status_idx').on(t.workspaceId, t.type, t.status)],
+	(t) => [
+		index('objects_ws_type_status_idx').on(t.workspaceId, t.type, t.status),
+		// Range-scan path for list_objects(updated_before/updated_after) — the
+		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0043.
+		index('objects_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
+	],
 )
 
 // ── Relationships ───────────────────────────────────────────────────────────
@@ -112,7 +122,13 @@ export const relationships = pgTable(
 			.notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 	},
-	(t) => [unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type)],
+	(t) => [
+		unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type),
+		check(
+			'relationships_source_target_type_kind',
+			sql`${t.sourceType} IN ('object', 'file') AND ${t.targetType} IN ('object', 'file')`,
+		),
+	],
 )
 
 // ── Events ──────────────────────────────────────────────────────────────────
@@ -153,6 +169,8 @@ export const integrations = pgTable(
 		externalId: text('external_id'),
 		credentials: text('credentials').notNull(),
 		config: jsonb('config').notNull().default({}),
+		// Per-row marker keys for managed-package installs; nullable everywhere.
+		metadata: jsonb('metadata'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -184,6 +202,8 @@ export const triggers = pgTable('triggers', {
 		.references(() => actors.id)
 		.notNull(),
 	enabled: boolean('enabled').notNull().default(true),
+	// Per-row marker keys for managed-package installs; nullable everywhere.
+	metadata: jsonb('metadata'),
 	createdBy: uuid('created_by')
 		.references(() => actors.id)
 		.notNull(),
@@ -206,11 +226,16 @@ export const sessions = pgTable(
 		triggerId: uuid('trigger_id').references(() => triggers.id, { onDelete: 'set null' }),
 		status: text('status').notNull(),
 		containerId: text('container_id'),
+		// Set by the SessionDispatcher (T6) on a successful production dispatch
+		// to apps/agent-server. NULL for local-dev sessions launched via Docker
+		// directly from session-manager.
+		agentServerId: uuid('agent_server_id').references((): AnyPgColumn => agentServers.id),
 		actionPrompt: text('action_prompt').notNull(),
 		config: jsonb('config').notNull().default({}),
 		interactive: boolean('interactive').notNull().default(false),
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
+		sourceSessionId: uuid('source_session_id'),
 		startedAt: timestamp('started_at', { withTimezone: true }),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
 		timeoutAt: timestamp('timeout_at', { withTimezone: true }),
@@ -229,10 +254,18 @@ export const sessions = pgTable(
 	},
 	(t) => [
 		index('sessions_ws_status_idx').on(t.workspaceId, t.status),
+		// Range-scan path for list_sessions(updated_before/updated_after) — the
+		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
+		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
 		index('sessions_actor_completed_idx')
 			.on(t.actorId, t.completedAt)
 			.where(sql`${t.completedAt} IS NOT NULL`),
+		// Hot path for the dispatcher's least-loaded lookup: counts active
+		// sessions grouped by agent_server_id.
+		index('sessions_agent_server_active_idx')
+			.on(t.agentServerId, t.status)
+			.where(sql`${t.agentServerId} IS NOT NULL`),
 	],
 )
 
@@ -268,7 +301,7 @@ export const agentFiles = pgTable(
 		path: text('path').notNull(),
 		storageKey: text('storage_key').notNull(),
 		sizeBytes: integer('size_bytes'),
-		sessionId: uuid('session_id').references(() => sessions.id),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
@@ -293,8 +326,13 @@ export const workspaceSkills = pgTable(
 		storageKey: text('storage_key').notNull(),
 		sizeBytes: integer('size_bytes').notNull(),
 		isValid: boolean('is_valid').notNull().default(true),
+<<<<<<< HEAD
 		isFolder: boolean('is_folder').notNull().default(false),
 		fileCount: integer('file_count'),
+=======
+		// Per-row marker keys for managed-package installs; nullable everywhere.
+		metadata: jsonb('metadata'),
+>>>>>>> 02cd67b6eedb871e1e313e8c4224fe7be693b94b
 		createdBy: uuid('created_by').references(() => actors.id),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -492,7 +530,7 @@ export const notifications = pgTable(
 			.notNull(),
 		targetActorId: uuid('target_actor_id').references(() => actors.id),
 		objectId: uuid('object_id').references(() => objects.id, { onDelete: 'set null' }),
-		sessionId: uuid('session_id').references(() => sessions.id),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
 		status: text('status').notNull(),
 		resolvedAt: timestamp('resolved_at', { withTimezone: true }),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
@@ -574,6 +612,35 @@ export const webhookDeliveries = pgTable(
 	],
 )
 
+// ── Idempotency Records ─────────────────────────────────────────────────────
+// Outbound-side idempotency ledger for the API's `Idempotency-Key` header.
+// Replaces the previous in-memory cache so that a session snapshot + replay
+// (T11/T12 of the session-infra-scale bet) does NOT double-fire side effects:
+// the snapshotted agent re-emits the same tool call with the same derived key,
+// the ledger short-circuits the duplicate and returns the original response.
+//
+// `key` is the cache key (`{actorId|anon}:{idempotency-key-header}`).
+// `actorId` is stored separately so cleanup queries can scope by actor and
+// so the row is interpretable in audit. Anonymous calls (signup) carry NULL.
+// `status` + `response` mirror what the original handler returned; replays
+// re-emit them as-is.
+// `createdAt` drives the 24h sliding TTL — see webhook-deliveries-cleaner.ts
+// for the established cleanup pattern.
+
+export const idempotencyRecords = pgTable(
+	'idempotency_records',
+	{
+		key: text('key').primaryKey(),
+		actorId: uuid('actor_id'),
+		method: text('method').notNull(),
+		path: text('path').notNull(),
+		status: integer('status').notNull(),
+		response: jsonb('response').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('idempotency_records_created_at_idx').on(t.createdAt)],
+)
+
 // ── User Display Settings ───────────────────────────────────────────────────
 //
 // Per-actor, per-workspace, per-object-type display preferences for the
@@ -644,3 +711,196 @@ export const workspaceOnboardingPrompts = pgTable(
 
 export type WorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferSelect
 export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferInsert
+
+// ── Catalog Packages ──────────────────────────────────────────────────────────
+//
+// Vetted, installable loops (formerly "bundles") of actors, triggers, skills,
+// and integrations. Any workspace can install a package and Maskin pushes
+// version updates to locked installs via the cron in T5. A package is a single
+// row here; the elements it ships with live in `catalog_package_items` as
+// frozen snapshots, one per published version.
+//
+// Re-provisioning convention — every actor/trigger/skill/integration row
+// created by an install must carry `metadata.installed_package_id` (the
+// `installed_packages.id` row) and `metadata.source_item_id` (the
+// `catalog_package_items.source_item_id` it was provisioned from). The
+// version-push cron uses both keys to find what to update and to resolve
+// intra-package wiring (e.g. a trigger whose `target_actor_id` points at an
+// agent in the same loop) against the snapshot graph instead of the live
+// publisher workspace. Carried as a nullable `metadata jsonb` column on each
+// of the four element tables (added by 0035_install_metadata.sql) so non-
+// install rows pay nothing and install rows are findable by a partial
+// expression index on `metadata->>'installed_package_id'`.
+
+export const catalogPackages = pgTable('catalog_packages', {
+	id: uuid('id').defaultRandom().primaryKey(),
+	name: text('name').notNull(),
+	slug: text('slug').notNull().unique(),
+	description: text('description').notNull(),
+	version: text('version').notNull(),
+	useCase: text('use_case'),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export type CatalogPackage = typeof catalogPackages.$inferSelect
+export type NewCatalogPackage = typeof catalogPackages.$inferInsert
+
+// ── Catalog Package Items ─────────────────────────────────────────────────────
+//
+// Frozen snapshots of each element that ships with a published package.
+// `source_item_id` is the original actor/trigger/skill/integration id in the
+// publishing workspace — kept so intra-package wiring inside `item_snapshot`
+// (e.g. a `target_actor_id` referencing another item in the same package) can
+// be resolved against this set of rows during install and re-provisioning.
+
+export const catalogPackageItems = pgTable(
+	'catalog_package_items',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		packageId: uuid('package_id')
+			.notNull()
+			.references(() => catalogPackages.id, { onDelete: 'cascade' }),
+		itemType: text('item_type').notNull(),
+		sourceItemId: uuid('source_item_id').notNull(),
+		itemSnapshot: jsonb('item_snapshot').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('catalog_package_items_package_idx').on(t.packageId),
+		index('catalog_package_items_package_source_idx').on(t.packageId, t.sourceItemId),
+		check(
+			'catalog_package_items_item_type_check',
+			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration')`,
+		),
+	],
+)
+
+export type CatalogPackageItem = typeof catalogPackageItems.$inferSelect
+export type NewCatalogPackageItem = typeof catalogPackageItems.$inferInsert
+
+// ── Installed Packages ────────────────────────────────────────────────────────
+//
+// One row per package installed into a workspace. `is_locked` defaults to true
+// — Maskin owns the install and pushes version updates via the cron in T5
+// until the workspace explicitly forks. Forking sets `forked_at` and flips
+// `is_locked` to false; the row is preserved so install lineage survives the
+// fork. The `source_locked_idx` keys the cron's "all locked installs of this
+// package" lookup; the `(workspace_id, source_package_id)` unique key prevents
+// double-installs of the same catalog package into one workspace.
+
+export const installedPackages = pgTable(
+	'installed_packages',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		sourcePackageId: uuid('source_package_id')
+			.notNull()
+			.references(() => catalogPackages.id),
+		installedVersion: text('installed_version').notNull(),
+		isLocked: boolean('is_locked').notNull().default(true),
+		forkedAt: timestamp('forked_at', { withTimezone: true }),
+		installedAt: timestamp('installed_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('installed_packages_ws_source_uniq').on(t.workspaceId, t.sourcePackageId),
+		index('installed_packages_source_locked_idx').on(t.sourcePackageId, t.isLocked),
+	],
+)
+
+export type InstalledPackage = typeof installedPackages.$inferSelect
+export type NewInstalledPackage = typeof installedPackages.$inferInsert
+
+// ── Loop Active Days ──────────────────────────────────────────────────────────
+//
+// One row per (installed_package_id, UTC day) that has emitted a
+// `loop_active_day` PostHog event. The PRIMARY KEY is the idempotency
+// guarantee: the session-completion path runs INSERT ... ON CONFLICT DO
+// NOTHING and only fires the analytics event when the insert actually
+// added a row. The ON DELETE CASCADE drops the rows automatically when an
+// install is deleted, so an install re-created later for the same
+// workspace + package can emit `loop_active_day` again from day one.
+
+export const loopActiveDays = pgTable(
+	'loop_active_days',
+	{
+		installedPackageId: uuid('installed_package_id')
+			.notNull()
+			.references(() => installedPackages.id, { onDelete: 'cascade' }),
+		utcDay: text('utc_day').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.installedPackageId, t.utcDay] })],
+)
+
+export type LoopActiveDay = typeof loopActiveDays.$inferSelect
+export type NewLoopActiveDay = typeof loopActiveDays.$inferInsert
+
+// ── Agent Servers ─────────────────────────────────────────────────────────
+//
+// Pool of microsandbox-running hosts. `SessionDispatcher` in apps/dev picks
+// an `active` row with capacity (least-loaded) and routes session-start over
+// HTTPS, using `secret` as the bearer token. v1 seeds one row for the Finland
+// host via env-var-backed `seed-agent-servers.ts`; adding a second host is
+// a single row insert with no code change.
+
+export const agentServers = pgTable(
+	'agent_servers',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		url: text('url').notNull().unique(),
+		secret: text('secret').notNull(),
+		maxConcurrentSessions: integer('max_concurrent_sessions').notNull(),
+		status: text('status').notNull().$type<'active' | 'draining' | 'disabled'>(),
+		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check('agent_servers_status_check', sql`${t.status} IN ('active', 'draining', 'disabled')`),
+	],
+)
+
+export type AgentServer = typeof agentServers.$inferSelect
+export type NewAgentServer = typeof agentServers.$inferInsert
+
+// ── Session Dispatch Attempts ───────────────────────────────────────────────
+//
+// Postgres-backed dispatch queue for session-start calls from apps/dev to
+// apps/agent-server. Absorbs backpressure when no agent-server has capacity
+// and retries failed dispatches with exponential backoff. The same
+// `idempotency_key` is reused across every retry of a given session — the
+// receiver and downstream side-effect layer (per the idempotency middleware)
+// dedupe any double-fire.
+//
+// One row per session_id (UNIQUE). Re-enqueueing the same session is an
+// UPSERT. Status moves pending → row deleted on dispatch, or pending →
+// failed on permanent failure or after max_attempts is exhausted.
+
+export const sessionDispatchAttempts = pgTable(
+	'session_dispatch_attempts',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		sessionId: uuid('session_id')
+			.notNull()
+			.references(() => sessions.id, { onDelete: 'cascade' }),
+		idempotencyKey: text('idempotency_key').notNull(),
+		attempt: integer('attempt').notNull().default(0),
+		maxAttempts: integer('max_attempts').notNull().default(5),
+		status: text('status').notNull().default('pending'),
+		nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+		lastError: text('last_error'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('session_dispatch_attempts_session_id_uniq').on(t.sessionId),
+		check('session_dispatch_attempts_status_check', sql`${t.status} IN ('pending','failed')`),
+		index('session_dispatch_attempts_ready_idx').on(t.status, t.nextAttemptAt),
+	],
+)
+
+export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
+export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert

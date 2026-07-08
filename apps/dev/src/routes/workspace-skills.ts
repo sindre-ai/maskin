@@ -9,9 +9,14 @@ import {
 	skillNameSchema,
 	updateWorkspaceSkillSchema,
 } from '@maskin/shared'
+<<<<<<< HEAD
 import AdmZip from 'adm-zip'
 import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+=======
+import { and, asc, desc, eq } from 'drizzle-orm'
+import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+>>>>>>> 02cd67b6eedb871e1e313e8c4224fe7be693b94b
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
@@ -105,6 +110,18 @@ const workspaceIdAndNameParam = z.object({
 	name: skillNameSchema,
 })
 
+// Snapshot-consistent cursor pagination — mirrors `objectQuerySchema`.
+// `limit`/`offset` stay optional so the historical "return everything" path
+// remains the default for existing callers.
+const listWorkspaceSkillsQuerySchema = z.object({
+	limit: z.coerce.number().int().min(1).max(100).optional(),
+	offset: z.coerce.number().int().min(0).optional(),
+	order: z.enum(['asc', 'desc']).optional(),
+	snapshot_at: z.string().datetime().optional(),
+	cursor_created_at: z.string().datetime().optional(),
+	cursor_id: z.string().uuid().optional(),
+})
+
 // -- Routes --
 
 // GET /:workspaceId/skills — List workspace skills (without content)
@@ -115,6 +132,7 @@ const listWorkspaceSkillsRoute = createRoute({
 	summary: 'List workspace skills',
 	request: {
 		params: workspaceIdParam,
+		query: listWorkspaceSkillsQuerySchema,
 	},
 	responses: {
 		200: {
@@ -132,13 +150,32 @@ app.openapi(listWorkspaceSkillsRoute, (async (c) => {
 	const db = c.get('db')
 	const callerActorId = c.get('actorId')
 	const { workspaceId } = c.req.valid('param')
+	const query = c.req.valid('query')
 
 	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
-	const rows = await db
+	const cursorConditions = buildCreatedAtCursorConditions(
+		{ createdAt: workspaceSkills.createdAt, id: workspaceSkills.id },
+		query,
+	)
+	const listWhere = cursorConditions.length
+		? and(eq(workspaceSkills.workspaceId, workspaceId), ...cursorConditions)
+		: eq(workspaceSkills.workspaceId, workspaceId)
+
+	// Historical behaviour: no ORDER BY, return every row for the workspace.
+	// Under the cursor path we need a stable `(createdAt, id)` sort so the
+	// keyset seek predicate agrees with the walk direction. When neither
+	// `limit` nor `snapshot_at` is present the query is byte-identical to the
+	// pre-scoping shape — same select, same where, no orderBy/limit/offset.
+	const cursorOn = Boolean(query.snapshot_at)
+	const skipOffset = useKeysetSeek(query)
+	const effectiveLimit = query.limit
+	const effectiveOffset = skipOffset ? undefined : query.offset
+
+	const baseSelect = db
 		.select({
 			id: workspaceSkills.id,
 			workspaceId: workspaceSkills.workspaceId,
@@ -154,7 +191,21 @@ app.openapi(listWorkspaceSkillsRoute, (async (c) => {
 			updatedAt: workspaceSkills.updatedAt,
 		})
 		.from(workspaceSkills)
-		.where(eq(workspaceSkills.workspaceId, workspaceId))
+		.where(listWhere)
+
+	const rows = await (cursorOn
+		? query.order === 'asc'
+			? baseSelect
+					.orderBy(asc(workspaceSkills.createdAt), asc(workspaceSkills.id))
+					.limit(effectiveLimit ?? 100)
+					.offset(effectiveOffset ?? 0)
+			: baseSelect
+					.orderBy(desc(workspaceSkills.createdAt), asc(workspaceSkills.id))
+					.limit(effectiveLimit ?? 100)
+					.offset(effectiveOffset ?? 0)
+		: effectiveLimit !== undefined
+			? baseSelect.limit(effectiveLimit).offset(effectiveOffset ?? 0)
+			: baseSelect)
 
 	return c.json(serializeArray(rows) as z.infer<typeof workspaceSkillListItemSchema>[], 200)
 }) as RouteHandler<typeof listWorkspaceSkillsRoute, Env>)

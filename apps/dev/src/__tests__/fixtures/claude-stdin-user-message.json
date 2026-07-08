@@ -2,6 +2,6 @@
 	"type": "user",
 	"message": {
 		"role": "user",
-		"content": "Hello Sindre — what's in this workspace?"
+		"content": "Hello Workspace Coach — what's in this workspace?"
 	}
 }

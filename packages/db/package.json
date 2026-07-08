@@ -16,12 +16,17 @@
 		"./connection": {
 			"types": "./src/connection.ts",
 			"default": "./dist/connection.js"
+		},
+		"./migrate-utils": {
+			"types": "./src/migrate-utils.ts",
+			"default": "./dist/migrate-utils.js"
 		}
 	},
 	"scripts": {
 		"db:generate": "drizzle-kit generate",
 		"db:migrate": "tsx src/migrate.ts",
 		"db:seed": "tsx src/seed.ts",
+		"db:seed-agent-servers": "tsx src/seed-agent-servers.ts",
 		"build": "tsc",
 		"type-check": "tsc --noEmit"
 	},

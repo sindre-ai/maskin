@@ -29,7 +29,8 @@
 			"coverage",
 			"routeTree.gen.ts",
 			".claude",
-			".codex"
+			".codex",
+			"maskin.io"
 		]
 	}
 }

@@ -83,12 +83,42 @@ describe('CommentInput', () => {
 		})
 	})
 
+	it('does NOT submit on Enter when the primary pointer is coarse (iOS/mobile)', async () => {
+		const originalMatchMedia = window.matchMedia
+		window.matchMedia = ((query: string) =>
+			({
+				matches: query === '(pointer: coarse)',
+				media: query,
+				onchange: null,
+				addEventListener: () => {},
+				removeEventListener: () => {},
+				addListener: () => {},
+				removeListener: () => {},
+				dispatchEvent: () => false,
+			}) as unknown as MediaQueryList) as typeof window.matchMedia
+
+		try {
+			const user = userEvent.setup()
+			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+			const textarea = screen.getByPlaceholderText(
+				'Write a comment... Use @ to mention an agent',
+			) as HTMLTextAreaElement
+			await user.type(textarea, 'Line one{Enter}Line two')
+
+			expect(mockMutate).not.toHaveBeenCalled()
+			expect(textarea.value).toBe('Line one\nLine two')
+		} finally {
+			window.matchMedia = originalMatchMedia
+		}
+	})
+
 	it('hides system actors from the @mention dropdown', async () => {
 		const user = userEvent.setup()
 		mockUseActors.mockReturnValue({
 			data: [
 				{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false },
-				{ id: 'actor-3', name: 'Sindre', type: 'agent', email: null, isSystem: true },
+				{ id: 'actor-3', name: 'Workspace Coach', type: 'agent', email: null, isSystem: true },
 			],
 		})
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
@@ -97,7 +127,41 @@ describe('CommentInput', () => {
 		await user.type(textarea, '@')
 
 		expect(screen.getByText('Bob')).toBeInTheDocument()
-		expect(screen.queryByText('Sindre')).not.toBeInTheDocument()
+		expect(screen.queryByText('Workspace Coach')).not.toBeInTheDocument()
+	})
+
+	it('opens the @mention dropdown below the input by default', async () => {
+		const user = userEvent.setup()
+		mockUseActors.mockReturnValue({
+			data: [{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false }],
+		})
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'@',
+		)
+
+		const dropdown = screen.getByText('Bob').closest('div[class*="absolute"]')
+		expect(dropdown).toHaveClass('mt-1')
+		expect(dropdown).not.toHaveClass('bottom-full')
+	})
+
+	it('opens the @mention dropdown above the input when mentionDropdownPlacement="above"', async () => {
+		const user = userEvent.setup()
+		mockUseActors.mockReturnValue({
+			data: [{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false }],
+		})
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" mentionDropdownPlacement="above" />)
+
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'@',
+		)
+
+		const dropdown = screen.getByText('Bob').closest('div[class*="absolute"]')
+		expect(dropdown).toHaveClass('bottom-full', 'mb-1')
+		expect(dropdown).not.toHaveClass('mt-1')
 	})
 
 	it('renders an inline highlight chip for typed @mentions', async () => {

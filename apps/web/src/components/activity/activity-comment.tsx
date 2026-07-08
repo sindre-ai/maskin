@@ -8,21 +8,15 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { Reply } from 'lucide-react'
 import { useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
+import { AgentOutput } from '../shared/agent-output'
 import { AttachedFileCard } from '../shared/attached-file-card'
-import { MarkdownContent } from '../shared/markdown-content'
 import { RelativeTime } from '../shared/relative-time'
 import { CommentInput } from './comment-input'
+import { CommentTaskList, hasTaskList } from './comment-task-list'
 import { DecisionChips, hasDecisionChips } from './decision-chips'
 import { MentionSessionCard } from './mention-session-card'
 
 const COMMENT_DISALLOWED_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
-
-const COMMENT_PROSE_OVERRIDES = cn(
-	'mt-1',
-	'[&_p]:!text-foreground [&_li]:!text-foreground [&_blockquote]:!text-foreground',
-	'[&_p]:!my-1.5 [&_ul]:!my-1 [&_ol]:!my-1 [&_blockquote]:!my-1 [&_pre]:!my-1',
-	'[&_p]:!leading-normal [&_li]:!leading-normal',
-)
 
 interface ActivityCommentProps {
 	event: EventResponse
@@ -138,23 +132,30 @@ function CommentRow({
 					)}
 				</div>
 				<div className="flex-1 min-w-0">
-					<div className="flex items-baseline gap-1.5 flex-wrap">
-						{nameEl}
-						<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
-						{isDecisionPoint && (
-							<span className="text-[10px] font-medium leading-none px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground">
-								Needs you
-							</span>
-						)}
+					<div className="flex items-baseline gap-2">
+						<div className="flex-1 min-w-0 flex items-baseline gap-1.5 flex-wrap">
+							{nameEl}
+							{isDecisionPoint && (
+								<span className="text-[10px] font-medium leading-none px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground">
+									Needs you
+								</span>
+							)}
+						</div>
+						<RelativeTime
+							date={event.createdAt}
+							className="text-muted-foreground text-xs font-mono tabular-nums w-14 shrink-0 text-right"
+						/>
 					</div>
-					<MarkdownContent
+					<AgentOutput
 						content={content}
 						disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
 						mentionActors={actors}
 						onMentionClick={handleMentionClick}
 						size="sm"
-						className={COMMENT_PROSE_OVERRIDES}
+						className="mt-1"
+						renderVisuals
 					/>
+					{hasTaskList(event) && <CommentTaskList event={event} workspaceId={workspaceId} />}
 					{attachmentFileIds.length > 0 && (
 						<ul className="mt-1.5 space-y-1">
 							{attachmentFileIds.map((fileId) => {

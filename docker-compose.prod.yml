@@ -36,8 +36,9 @@ services:
     build:
       context: .
       dockerfile: apps/dev/Dockerfile
-    ports:
-      - "3000:3000"
+    # No host port publish: Coolify's Traefik proxy routes the domain to this
+    # container over the internal network (ports_exposes=3000). Publishing host
+    # :3000 collides with the production app when both run on the same server.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:

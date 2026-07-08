@@ -71,6 +71,7 @@ export const actorResponseSchema = z.object({
 	agentStateUpdatedAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	installedPackageId: z.string().uuid().nullable().optional(),
 })
 
 export const actorWithKeySchema = actorResponseSchema.extend({
@@ -160,6 +161,7 @@ export const providerInfoSchema = z.object({
 	displayName: z.string(),
 	authType: z.enum(['oauth2', 'oauth2_custom', 'api_key']),
 	events: z.array(providerEventSchema),
+	externalIdDisplay: z.enum(['email', 'installation']).optional(),
 })
 
 export const sessionResponseSchema = z.object({

@@ -127,5 +127,87 @@ describe('User Display Settings Routes', () => {
 
 			expect(res.status).toBe(400)
 		})
+
+		it('persists timelineView=table for a bet (AC-T7 round-trip)', async () => {
+			const row = buildUserDisplaySettings({
+				workspaceId: wsId,
+				actorId,
+				objectType: 'bet',
+				settings: { timelineView: 'table' },
+			})
+			const { app, mockResults } = createTestApp(
+				userDisplaySettingsRoutes,
+				'/api/user-display-settings',
+			)
+			mockResults.insert = [row]
+
+			const res = await app.request(
+				jsonRequest(
+					'PUT',
+					'/api/user-display-settings/bet',
+					{ settings: { timelineView: 'table' } },
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toMatchObject({
+				object_type: 'bet',
+				settings: { timelineView: 'table' },
+			})
+		})
+
+		it('rejects unknown timelineView values', async () => {
+			const { app } = createTestApp(userDisplaySettingsRoutes, '/api/user-display-settings')
+
+			const res = await app.request(
+				jsonRequest(
+					'PUT',
+					'/api/user-display-settings/bet',
+					{ settings: { timelineView: 'graph' } },
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('accepts the All-tab sentinel key for upsert and GET', async () => {
+			// The Objects page's All tab persists its column-visibility state
+			// under the `__all__` slot — there is no concrete object type to
+			// key the row by. Both PUT and GET must route through the same
+			// validation as a real type.
+			const row = buildUserDisplaySettings({
+				workspaceId: wsId,
+				actorId,
+				objectType: '__all__',
+				settings: { columnVisibility: { createdBy: false, 'metadata.foo': true } },
+			})
+			const { app, mockResults } = createTestApp(
+				userDisplaySettingsRoutes,
+				'/api/user-display-settings',
+			)
+			mockResults.insert = [row]
+			mockResults.select = [row]
+
+			const putRes = await app.request(
+				jsonRequest(
+					'PUT',
+					'/api/user-display-settings/__all__',
+					{ settings: { columnVisibility: { createdBy: false, 'metadata.foo': true } } },
+					headers,
+				),
+			)
+			expect(putRes.status).toBe(200)
+			expect(await putRes.json()).toMatchObject({ object_type: '__all__' })
+
+			const getRes = await app.request(jsonGet('/api/user-display-settings/__all__', headers))
+			expect(getRes.status).toBe(200)
+			expect(await getRes.json()).toMatchObject({
+				object_type: '__all__',
+				settings: { columnVisibility: { createdBy: false, 'metadata.foo': true } },
+			})
+		})
 	})
 })
