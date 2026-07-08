@@ -326,13 +326,10 @@ export const workspaceSkills = pgTable(
 		storageKey: text('storage_key').notNull(),
 		sizeBytes: integer('size_bytes').notNull(),
 		isValid: boolean('is_valid').notNull().default(true),
-<<<<<<< HEAD
 		isFolder: boolean('is_folder').notNull().default(false),
 		fileCount: integer('file_count'),
-=======
 		// Per-row marker keys for managed-package installs; nullable everywhere.
 		metadata: jsonb('metadata'),
->>>>>>> 02cd67b6eedb871e1e313e8c4224fe7be693b94b
 		createdBy: uuid('created_by').references(() => actors.id),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
