@@ -44,7 +44,10 @@ export function useUpdateUserDisplaySettings(workspaceId: string) {
 		}) => api.userDisplaySettings.upsert(workspaceId, objectType, settings),
 		onMutate: async ({ objectType, settings }) => {
 			const detailKey = queryKeys.userDisplaySettings.detail(workspaceId, objectType)
-			await queryClient.cancelQueries({ queryKey: detailKey })
+			// Optimistic write must land before the first await so React re-renders
+			// with the new settings on the same tick as the event that triggered
+			// the mutation — otherwise a controlled input reads stale cache data
+			// and briefly flips back to the previous checked state.
 			const previous = queryClient.getQueryData<UserDisplaySettingsResponse | null>(detailKey)
 			queryClient.setQueryData<UserDisplaySettingsResponse | null>(detailKey, {
 				object_type: objectType,
@@ -52,6 +55,7 @@ export function useUpdateUserDisplaySettings(workspaceId: string) {
 				settings,
 				updated_at: new Date().toISOString(),
 			})
+			await queryClient.cancelQueries({ queryKey: detailKey })
 			return { previous }
 		},
 		onError: (_err, { objectType }, context) => {
