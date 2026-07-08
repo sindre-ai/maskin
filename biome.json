@@ -6,7 +6,15 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true
+			"recommended": true,
+			"complexity": {
+				"noExcessiveCognitiveComplexity": {
+					"level": "warn",
+					"options": {
+						"maxAllowedComplexity": 15
+					}
+				}
+			}
 		}
 	},
 	"formatter": {
@@ -30,7 +38,8 @@
 			"routeTree.gen.ts",
 			".claude",
 			".codex",
-			"maskin.io"
+			"maskin.io",
+			".maskin/fitness-baseline.json"
 		]
 	}
 }

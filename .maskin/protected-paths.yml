@@ -49,5 +49,12 @@ protected_paths:
   # --- CI/CD workflows ---
   - ".github/workflows/**"
 
+  # --- architectural fitness rules (root-level dep-cruiser config) ---
+  # The rest of the fitness suite lives under `.maskin/` and is covered by
+  # the `.maskin/**` glob below. This root-level file is not, so it's
+  # explicitly listed here — loosening a module boundary is a decision that
+  # takes two humans, same as editing `.maskin/fitness-rules.yml`.
+  - ".dependency-cruiser.cjs"
+
   # --- the risk-classifier's own floor configuration (self-protecting) ---
   - ".maskin/**"
