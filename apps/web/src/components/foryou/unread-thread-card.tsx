@@ -1,7 +1,7 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
-import { UnreadBadge } from '@/components/shared/unread-badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
@@ -11,7 +11,7 @@ import type { EventResponse, UnreadItem } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
-import { CheckIcon } from 'lucide-react'
+import { CheckIcon, XIcon } from 'lucide-react'
 import {
 	type MouseEvent as ReactMouseEvent,
 	useCallback,
@@ -217,14 +217,14 @@ export function UnreadThreadCard({
 
 	const title = item.object?.title ?? 'Untitled'
 	const objectType = item.object?.type
+	const objectStatus = item.object?.status
+	const insightPreview = (item.object?.content ?? '').trim()
+	const isUnread = item.unread_count > 0
+	const isMention = item.mentioning_unread_count > 0
 
 	return (
 		// Outer wrapper holds the green swipe-reveal background; the card translates over it.
-		<div
-			ref={cardRef}
-			data-testid="unread-thread-card"
-			className="relative overflow-hidden rounded-lg"
-		>
+		<div ref={cardRef} data-testid="unread-thread-card" className="relative overflow-hidden">
 			{/* Green background revealed on swipe-right */}
 			<div
 				aria-hidden
@@ -238,14 +238,18 @@ export function UnreadThreadCard({
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: card click supplements inner buttons/links, which keyboard users tab to and activate directly */}
 			<div
 				className={cn(
-					'relative rounded-lg border bg-card cursor-pointer touch-pan-y',
+					// Hairline top-rule for the shared-rhythm feel; no outer ring or bg-card shell.
+					'group relative border-t border-border bg-background pt-3 pb-2.5 pl-3 pr-3 cursor-pointer touch-pan-y',
 					isDragging
 						? 'transition-none'
 						: 'transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]',
 					swipePending ? 'opacity-35' : 'transition-opacity duration-200',
-					isActive
-						? 'border-ring shadow-[0_0_0_1px_hsl(var(--ring))]'
-						: 'border-border hover:shadow-sm',
+					// Unread accent as a 2px left border (bg-primary in default mode; bg-warning
+					// when the viewer was @-mentioned in an unread event).
+					isUnread && 'border-l-2 pl-[10px]',
+					isUnread && !isMention && 'border-l-primary',
+					isUnread && isMention && 'border-l-warning',
+					isActive && 'bg-secondary/40',
 				)}
 				style={{ transform: `translateX(${dragOffset}px)` }}
 				onClick={handleCardClick}
@@ -254,59 +258,111 @@ export function UnreadThreadCard({
 				onPointerUp={handlePointerUp}
 				onPointerCancel={handlePointerCancel}
 			>
-				{/* Header: bet context pill + type badge + title | time + @you + unread.
-				    Title cell takes the full row on mobile (basis-full) so a long title
-				    gets room to breathe instead of squeezing the time/badge/button
-				    cluster off-screen at 375px; collapses to a single inline cell at sm+. */}
-				<div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-3 py-2.5 border-b border-border">
-					<div className="flex min-w-0 basis-full items-center gap-1.5 sm:basis-auto sm:flex-1">
-						{objectType === 'bet' && (
-							<TooltipProvider>
-								<Tooltip>
-									<TooltipTrigger asChild>
-										<span className="inline-flex shrink-0 items-center rounded bg-type-bet-bg px-1.5 py-0.5 text-[10px] font-semibold text-type-bet-text">
-											B
-										</span>
-									</TooltipTrigger>
-									<TooltipContent side="bottom" className="text-xs">
-										{title}
-									</TooltipContent>
-								</Tooltip>
-							</TooltipProvider>
-						)}
-						{objectType && <TypeBadge type={objectType} />}
-						<Link
-							to="/$workspaceId/objects/$objectId"
-							params={{ workspaceId, objectId }}
-							className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
-							title={title}
-							onClick={(e) => e.stopPropagation()}
-						>
-							{title}
-						</Link>
-					</div>
-					<div className="flex shrink-0 items-center gap-1.5">
-						{item.latest_activity_at && (
-							<RelativeTime
-								date={item.latest_activity_at}
-								className="text-xs font-mono tabular-nums text-muted-foreground"
-							/>
-						)}
-						{item.mentioning_unread_count > 0 && (
+				{/* Card head — type + state chip + spacer + per-card dismiss.
+				    Dismiss is hover/focus-only on hoverable devices (a corner ✓ on desktop);
+				    on touch, swipe-left mark-read replaces it. */}
+				<div className="flex items-center gap-1.5">
+					{objectType === 'bet' && (
+						<TooltipProvider>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<span className="inline-flex shrink-0 items-center rounded bg-type-bet-bg px-1.5 py-0.5 text-[10px] font-semibold text-type-bet-text">
+										B
+									</span>
+								</TooltipTrigger>
+								<TooltipContent side="bottom" className="text-xs">
+									{title}
+								</TooltipContent>
+							</Tooltip>
+						</TooltipProvider>
+					)}
+					{objectType && <TypeBadge type={objectType} />}
+					{objectStatus && <StatusBadge status={objectStatus} />}
+					<span className="flex-1" />
+					<button
+						type="button"
+						aria-label="Mark as read"
+						title="Mark as read"
+						onClick={(e) => {
+							e.stopPropagation()
+							handleMarkRead()
+						}}
+						disabled={markRead.isPending}
+						/* Desktop-only: hidden on touch (no hover), fades in on hover/focus with mouse. */
+						className="hidden can-hover:inline-grid h-7 w-7 place-items-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-secondary hover:text-foreground disabled:opacity-40"
+					>
+						<XIcon size={14} />
+					</button>
+				</div>
+
+				{/* Title on its own row, left-aligned.
+				    basis-full flex-wrap kept for regression: long titles push the meta
+				    row below on mobile (375px), single line at sm+. */}
+				<Link
+					to="/$workspaceId/objects/$objectId"
+					params={{ workspaceId, objectId }}
+					className={cn(
+						'mt-2 block truncate text-[15px] font-semibold leading-snug hover:underline',
+						isUnread ? 'text-foreground' : 'text-muted-foreground',
+					)}
+					title={title}
+					onClick={(e) => e.stopPropagation()}
+				>
+					{title}
+				</Link>
+
+				{/* Meta row: mention flag → unread count → timestamp. */}
+				<div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+					{isMention && (
+						<>
 							<span
 								aria-label="Mentioned"
 								title="You were @-mentioned in an unread comment"
-								className="rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-medium text-accent-foreground"
+								className="font-semibold text-warning"
 							>
-								@you
+								@mention
 							</span>
-						)}
-						<UnreadBadge count={item.unread_count} />
-					</div>
+							<span aria-hidden className="opacity-50">
+								·
+							</span>
+						</>
+					)}
+					{item.unread_count > 0 && (
+						<>
+							<span
+								aria-label={`${item.unread_count} unread`}
+								className={cn(
+									'tabular-nums',
+									isUnread ? 'font-medium text-foreground' : 'text-muted-foreground',
+								)}
+							>
+								{item.unread_count} new
+							</span>
+							<span aria-hidden className="opacity-50">
+								·
+							</span>
+						</>
+					)}
+					{item.latest_activity_at && (
+						<RelativeTime
+							date={item.latest_activity_at}
+							className="font-mono tabular-nums text-muted-foreground"
+						/>
+					)}
 				</div>
 
-				{/* Thread — all messages inline, page scrolls naturally */}
-				<div className="px-3 py-2.5">
+				{/* 2-line insight preview from the object body (the "what this thread is about"
+				    hook that leads before the agent take, per AC-U7). */}
+				{insightPreview && (
+					<p className="mt-2 line-clamp-2 text-[13.5px] leading-relaxed text-muted-foreground">
+						{insightPreview}
+					</p>
+				)}
+
+				{/* Thread — all messages inline, page scrolls naturally.
+				    Dashed hairline separates the insight preview above from the agent take
+				    to match the prototype's `border-t dashed` rhythm. */}
+				<div className="mt-2.5 border-t border-dashed border-border pt-2.5">
 					{nodes.length === 0 ? (
 						<p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>
 					) : (
@@ -339,12 +395,12 @@ export function UnreadThreadCard({
 				</div>
 
 				{/* Quick-reply chips — one-tap sends immediately with a toast */}
-				<div className="flex gap-1.5 overflow-x-auto border-t border-border px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+				<div className="mt-2 flex gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 					{QUICK_REPLY_CHIPS.map((chip) => (
 						<button
 							key={chip}
 							type="button"
-							className="shrink-0 whitespace-nowrap rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground hover:bg-accent hover:text-foreground active:bg-foreground active:text-background disabled:opacity-50"
+							className="shrink-0 whitespace-nowrap rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground hover:bg-secondary hover:text-foreground active:bg-foreground active:text-background disabled:opacity-50"
 							onClick={(e) => {
 								e.stopPropagation()
 								quickReply.mutate(
@@ -365,7 +421,7 @@ export function UnreadThreadCard({
 				</div>
 
 				{/* Footer: Reply + Mark read */}
-				<div className="flex items-center gap-1 border-t border-border px-2 py-1.5">
+				<div className="mt-1.5 flex items-center gap-1">
 					<Button
 						size="sm"
 						variant="outline"
@@ -398,8 +454,9 @@ export function UnreadThreadCard({
 function NewDivider() {
 	return (
 		<div className="my-2 flex items-center gap-2" aria-label="Unread divider">
-			<div className="h-px flex-1 bg-error" />
-			<span className="text-xs font-medium text-error">New</span>
+			<div className="h-px flex-1 bg-warning/55" />
+			<span className="text-[10.5px] font-semibold uppercase tracking-wider text-warning">New</span>
+			<div className="h-px flex-1 bg-warning/55" />
 		</div>
 	)
 }
