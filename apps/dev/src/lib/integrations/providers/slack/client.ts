@@ -225,6 +225,27 @@ export async function slackViewsPublish(
 	await slackPost('views.publish', accessToken, args)
 }
 
+/**
+ * Submit unfurls for links shared in a channel. Slack expects either
+ * (channel, ts) OR (unfurl_id, source) to identify the message the unfurls
+ * belong to; the newer webhook payload carries both, so callers should pass
+ * whichever they have.
+ *
+ * https://api.slack.com/methods/chat.unfurl
+ */
+export async function slackChatUnfurl(
+	accessToken: string,
+	args: {
+		channel?: string
+		ts?: string
+		unfurl_id?: string
+		source?: string
+		unfurls: Record<string, { blocks: Array<Record<string, unknown>> }>
+	},
+): Promise<void> {
+	await slackPost('chat.unfurl', accessToken, args)
+}
+
 /** Reset caches (used in tests). */
 export function _resetSlackCaches(): void {
 	conversationCache.clear()

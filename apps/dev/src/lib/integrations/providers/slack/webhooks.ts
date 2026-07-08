@@ -23,6 +23,7 @@ const eventMapping: Record<string, { entityType: string; action: string }> = {
 	channel_rename: { entityType: 'slack.channel', action: 'renamed' },
 	member_joined_channel: { entityType: 'slack.member', action: 'joined' },
 	app_home_opened: { entityType: 'slack.app_home_opened', action: 'opened' },
+	link_shared: { entityType: 'slack.link_shared', action: 'shared' },
 }
 
 /**
