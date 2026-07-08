@@ -6,6 +6,7 @@ const EVENT_TYPE_MAP: Record<string, string> = {
 	issues: 'github.issue',
 	push: 'github.push',
 	pull_request_review: 'github.review',
+	deployment_status: 'github.deployment_status',
 }
 
 export const githubEventNormalizer: CustomEventNormalizer = (
@@ -33,6 +34,10 @@ export const githubEventNormalizer: CustomEventNormalizer = (
 		(body.pull_request as Record<string, unknown>)?.merged
 	) {
 		action = 'merged'
+	} else if (githubEvent === 'deployment_status') {
+		// Pre-handler already filtered to state=success + environment=production,
+		// so the only shape that reaches normalization is a production success.
+		action = 'succeeded'
 	} else {
 		action = (body.action as string) || 'unknown'
 	}
@@ -54,7 +59,13 @@ export const githubEventNormalizer: CustomEventNormalizer = (
 			data.pr_url = pr.html_url
 			data.pr_diff_url = pr.diff_url
 			data.pr_head_sha = (pr.head as Record<string, unknown>)?.sha
+			data.pr_head_ref = (pr.head as Record<string, unknown>)?.ref
 			data.pr_base_branch = (pr.base as Record<string, unknown>)?.ref
+			// merge_commit_sha is populated by GitHub after the PR merges — this
+			// is the commit that lands on the base branch and matches what a
+			// downstream deployment_status webhook will carry as its SHA.
+			// deploy-attribution Pass 1 keys off this field.
+			data.merge_commit_sha = pr.merge_commit_sha
 		}
 	}
 
@@ -70,7 +81,13 @@ export const githubEventNormalizer: CustomEventNormalizer = (
 	if (githubEvent === 'push') {
 		data.ref = body.ref
 		data.commits_count = (body.commits as unknown[])?.length
-		data.head_commit = (body.head_commit as Record<string, unknown>)?.message
+		const headCommit = body.head_commit as Record<string, unknown> | undefined
+		data.head_commit = headCommit?.message
+		// head_commit_sha is the tip commit of the push — for a push to the
+		// default branch this equals the SHA a subsequent deployment_status
+		// webhook will attribute against. deploy-attribution Pass 1 keys off
+		// this field.
+		data.head_commit_sha = headCommit?.id
 	}
 
 	if (githubEvent === 'pull_request_review') {
@@ -78,6 +95,29 @@ export const githubEventNormalizer: CustomEventNormalizer = (
 		if (review) {
 			data.review_state = review.state
 			data.review_body = review.body
+		}
+	}
+
+	if (githubEvent === 'deployment_status') {
+		const deployment = body.deployment as Record<string, unknown> | undefined
+		const deploymentStatus = body.deployment_status as Record<string, unknown> | undefined
+		if (deployment) {
+			data.deployment_sha = deployment.sha
+			data.deployment_environment = deployment.environment
+			data.deployment_ref = deployment.ref
+		}
+		if (deploymentStatus) {
+			data.deployment_state = deploymentStatus.state
+			data.deployment_status_created_at = deploymentStatus.created_at
+			data.deployment_status_updated_at = deploymentStatus.updated_at
+			data.deployment_target_url = deploymentStatus.target_url ?? deploymentStatus.log_url
+		}
+		// Lift the per-delivery UUID onto `data` so the unattributed log line in
+		// deployment-status.ts and the T4 aging sweep can correlate stuck deploys
+		// back to `webhook_deliveries` without a second header lookup.
+		const deliveryId = headers['x-github-delivery']
+		if (typeof deliveryId === 'string' && deliveryId.length > 0) {
+			data.delivery_id = deliveryId
 		}
 	}
 

@@ -87,4 +87,17 @@ describe('WebhookDeliveriesCleaner', () => {
 		// same shape as the default.
 		await expect(cleaner.tick()).resolves.toBeUndefined()
 	})
+
+	// Regression guard: GitHub deployment_status attribution (bet/deploy-event)
+	// needs a 30-day dedup window. If somebody drops the default back to 14d,
+	// redelivered production-deploy webhooks past the 14-day mark would be
+	// treated as fresh events and trigger a re-attribution run.
+	it('defaults to a 30-day retention window', async () => {
+		const { db } = makeFakeDb([])
+		const cleaner = new WebhookDeliveriesCleaner(db as never)
+		// biome-ignore lint/complexity/useLiteralKeys: touching a private via bracket keeps the type-check clean without an `any` cast.
+		expect((cleaner as unknown as { retentionMs: number })['retentionMs']).toBe(
+			30 * 24 * 60 * 60 * 1000,
+		)
+	})
 })

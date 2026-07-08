@@ -1,5 +1,11 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { getTestActorId, sql } from './global-setup'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const migrationsDir = join(__dirname, '..', '..', '..', '..', '..', 'packages', 'db', 'drizzle')
 
 // These tests assert DB-level semantics that the application relies on but that
 // mocked unit tests cannot verify. Each maps directly to a known-pitfall entry.
@@ -183,5 +189,84 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 			RETURNING id
 		`
 		expect(event?.id, 'Event INSERT must succeed despite large data payload').toBeTruthy()
+	})
+
+	it('0041 backfill sets awaiting_deploy=true on bet/task rows, preserves live_started_at', async () => {
+		// Regression for AC-T5 on the ‘Live’ ≠ ‘deployed’ bet: the migration
+		// must (a) add awaiting_deploy=true to every existing bet/task row that
+		// does not yet carry the key, and (b) leave live_started_at (and every
+		// other metadata key) untouched. Applied at boot in global-setup; the
+		// assertion below re-applies the backfill against freshly seeded
+		// pre-migration-shape rows to prove the SQL still behaves that way.
+		const actorId = getTestActorId()
+		const [workspace] = await sql`
+			INSERT INTO workspaces (name, settings, created_by)
+			VALUES ('backfill-test-ws', '{}', ${actorId})
+			RETURNING id
+		`
+		await sql`
+			INSERT INTO workspace_members (workspace_id, actor_id, role)
+			VALUES (${workspace.id}, ${actorId}, 'owner')
+		`
+
+		// Three shapes of pre-migration bet/task row:
+		//   1. bet with live_started_at set, no awaiting_deploy key.
+		//   2. task with metadata NULL.
+		//   3. bet already carrying awaiting_deploy=false — must NOT be overwritten.
+		const [betWithLiveStart] = await sql`
+			INSERT INTO objects (workspace_id, type, status, metadata, created_by)
+			VALUES (
+				${workspace.id},
+				'bet',
+				'live',
+				${sql.json({ live_started_at: '2026-06-10', posthog_query: 'q1' })},
+				${actorId}
+			)
+			RETURNING id
+		`
+		const [taskNullMetadata] = await sql`
+			INSERT INTO objects (workspace_id, type, status, metadata, created_by)
+			VALUES (${workspace.id}, 'task', 'in_progress', NULL, ${actorId})
+			RETURNING id
+		`
+		const [betExplicitFalse] = await sql`
+			INSERT INTO objects (workspace_id, type, status, metadata, created_by)
+			VALUES (
+				${workspace.id},
+				'bet',
+				'active',
+				${sql.json({ awaiting_deploy: false })},
+				${actorId}
+			)
+			RETURNING id
+		`
+
+		// Re-run the actual migration file. Idempotent by design.
+		const migrationSql = readFileSync(
+			join(migrationsDir, '0041_deployed_at_awaiting_deploy.sql'),
+			'utf-8',
+		)
+		await sql.unsafe(migrationSql)
+
+		const [row1] = await sql`SELECT metadata FROM objects WHERE id = ${betWithLiveStart.id}`
+		expect(row1.metadata.awaiting_deploy, 'awaiting_deploy backfilled to true').toBe(true)
+		expect(row1.metadata.live_started_at, 'live_started_at preserved').toBe('2026-06-10')
+		expect(row1.metadata.posthog_query, 'other keys preserved').toBe('q1')
+		expect(row1.metadata.deployed_at, 'deployed_at left absent').toBeUndefined()
+
+		const [row2] = await sql`SELECT metadata FROM objects WHERE id = ${taskNullMetadata.id}`
+		expect(row2.metadata.awaiting_deploy, 'NULL metadata upgraded to object with key').toBe(true)
+
+		const [row3] = await sql`SELECT metadata FROM objects WHERE id = ${betExplicitFalse.id}`
+		expect(row3.metadata.awaiting_deploy, 'pre-set false is not overwritten').toBe(false)
+
+		// Fleet-wide invariant: no bet/task row is left without the key.
+		const [{ count }] = await sql`
+			SELECT COUNT(*)::int AS count
+			FROM objects
+			WHERE type IN ('bet', 'task')
+				AND (metadata IS NULL OR NOT metadata ? 'awaiting_deploy')
+		`
+		expect(count, 'zero bet/task rows without awaiting_deploy').toBe(0)
 	})
 })
