@@ -304,7 +304,7 @@ describe('tool handlers', () => {
 			expect(parsed[0].success).toBe(true)
 		})
 
-		it('keeps graph context model-visible while the heroCard stays object-only', async () => {
+		it('default response is the lean core-fields projection — no graph context leaks to the model', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
 				if (urlStr.includes('/api/objects/bet-1/graph')) {
@@ -312,7 +312,15 @@ describe('tool handlers', () => {
 						ok: true,
 						json: () =>
 							Promise.resolve({
-								object: { id: 'bet-1', type: 'bet', title: 'Bet 1', status: 'active' },
+								object: {
+									id: 'bet-1',
+									type: 'bet',
+									title: 'Bet 1',
+									status: 'active',
+									content: 'Full body text',
+									metadata: { key: 'value' },
+									workspaceId: 'ws-1',
+								},
 								relationships: [
 									{
 										id: 'rel-1',
@@ -325,6 +333,8 @@ describe('tool handlers', () => {
 								connected_objects: [
 									{ id: 'task-1', type: 'task', title: 'Task 1', status: 'todo' },
 								],
+								events: [{ id: 'evt-1', action: 'commented' }],
+								files: [{ id: 'file-1', name: 'note.md' }],
 							}),
 					} as Response
 				}
@@ -333,16 +343,140 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('get_objects')
 			const result = (await handler({ ids: ['bet-1'] })) as {
+				content: Array<{ text: string }>
 				structuredContent: {
 					heroCard: { object?: { id: string }; relationships?: unknown }
-					objects: Array<{ relationships: unknown[]; connected_objects: unknown[] }>
+					results: Array<{ id: string; success: boolean }>
+					objects: Array<{
+						object: Record<string, unknown>
+						relationships?: unknown
+						connected_objects?: unknown
+						events?: unknown
+						files?: unknown
+					}>
 				}
 			}
 
 			expect(result.structuredContent.heroCard.object?.id).toBe('bet-1')
 			expect(result.structuredContent.heroCard.relationships).toBeUndefined()
+
+			// Canonical object body lives at `objects[]` — one entry per successful id,
+			// carrying only `object` (no relationships/connected_objects/events/files).
+			const first = result.structuredContent.objects[0]
+			expect(Object.keys(first).sort()).toEqual(['object'])
+			// Per-object payload: exactly the core six (url is omitted when
+			// webAppBaseUrl isn't configured on the test rig — the injection is
+			// covered separately in the `url field injection` suite).
+			expect(Object.keys(first.object).sort()).toEqual([
+				'contextLine',
+				'id',
+				'status',
+				'title',
+				'type',
+				'workspaceId',
+			])
+			expect(first.object.content).toBeUndefined()
+			// content[0].text is what the LLM actually reads — must also carry the lean shape.
+			const parsed = JSON.parse(result.content[0].text) as Array<{
+				result: { object: Record<string, unknown> }
+			}>
+			expect(Object.keys(parsed[0].result.object).sort()).toEqual([
+				'contextLine',
+				'id',
+				'status',
+				'title',
+				'type',
+				'workspaceId',
+			])
+		})
+
+		it('opts back into extra blocks when include: is passed', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/bet-2/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: { id: 'bet-2', type: 'bet', title: 'Bet 2', status: 'active' },
+								relationships: [
+									{
+										id: 'rel-2',
+										sourceId: 'bet-2',
+										targetId: 'task-2',
+										type: 'breaks_into',
+										targetTitle: 'Task 2',
+									},
+								],
+								connected_objects: [
+									{ id: 'task-2', type: 'task', title: 'Task 2', status: 'todo' },
+								],
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({
+				ids: ['bet-2'],
+				include: ['relationships', 'connected_objects'],
+			})) as {
+				structuredContent: {
+					objects: Array<{ relationships?: unknown[]; connected_objects?: unknown[] }>
+				}
+			}
+
 			expect(result.structuredContent.objects[0].relationships).toHaveLength(1)
 			expect(result.structuredContent.objects[0].connected_objects).toHaveLength(1)
+		})
+
+		it('emits each object body exactly once across heroCard, results, and objects', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				const match = urlStr.match(/\/api\/objects\/([^/]+)\/graph/)
+				const id = match?.[1] ?? 'unknown'
+				return {
+					ok: true,
+					json: () =>
+						Promise.resolve({
+							object: { id, type: 'bet', title: `Bet ${id}`, status: 'active' },
+							relationships: [],
+							connected_objects: [],
+						}),
+				} as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['bet-a', 'bet-b'] })) as {
+				structuredContent: {
+					heroCard: {
+						object?: { id: string }
+						objects?: Array<{ id: string; relationships?: unknown; connected_objects?: unknown }>
+					}
+					results: Array<{ id: string; success: boolean; result?: unknown }>
+					objects: Array<{ object: { id: string }; relationships?: unknown }>
+				}
+			}
+
+			// heroCard entries must be the lean HeroCardObject shape — no full body.
+			const heroEntries = result.structuredContent.heroCard.objects ?? []
+			for (const entry of heroEntries) {
+				expect(entry.relationships).toBeUndefined()
+				expect(entry.connected_objects).toBeUndefined()
+			}
+
+			// results[] is now a per-id envelope — no object body nested under .result.
+			for (const r of result.structuredContent.results) {
+				expect(r).not.toHaveProperty('result')
+				expect(typeof r.id).toBe('string')
+				expect(typeof r.success).toBe('boolean')
+			}
+
+			// objects[] is the canonical body location — exactly one entry per id.
+			const bodyIds = result.structuredContent.objects.map((o) => o.object.id)
+			expect(bodyIds).toEqual(['bet-a', 'bet-b'])
+			expect(new Set(bodyIds).size).toBe(bodyIds.length)
 		})
 	})
 
@@ -422,6 +556,100 @@ describe('tool handlers', () => {
 			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
 			expect(calledUrl).not.toContain('sort=')
 			expect(calledUrl).not.toContain('order=')
+		})
+
+		it('forwards each metadata_eq entry as metadata.<field>=<value>', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({ metadata_eq: { segment: 'enterprise', confidence: 'high' } })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('metadata.segment=enterprise')
+			expect(calledUrl).toContain('metadata.confidence=high')
+		})
+
+		it('omits metadata.* params when metadata_eq is not supplied', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({ type: 'task' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).not.toContain('metadata.')
+		})
+	})
+
+	describe('search_objects handler', () => {
+		it('forwards driver_id as driver and updated_after to the route', async () => {
+			mockFetchSuccess([])
+			const driverId = '550e8400-e29b-41d4-a716-446655440000'
+
+			const handler = getHandler('search_objects')
+			await handler({
+				q: 'bet',
+				driver_id: driverId,
+				updated_after: '2026-06-29T12:00:00.000Z',
+			})
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('/api/objects/search?')
+			expect(calledUrl).toContain('q=bet')
+			expect(calledUrl).toContain(`driver=${driverId}`)
+			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
+		})
+
+		it('omits driver and updated_after when the params are not supplied', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('search_objects')
+			await handler({ q: 'bet' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('/api/objects/search?')
+			expect(calledUrl).toContain('q=bet')
+			expect(calledUrl).not.toContain('driver=')
+			expect(calledUrl).not.toContain('updated_after=')
+		})
+
+		it('composes driver_id and updated_after additively with type + q', async () => {
+			mockFetchSuccess([])
+			const driverId = '550e8400-e29b-41d4-a716-446655440000'
+
+			const handler = getHandler('search_objects')
+			await handler({
+				q: 'onboarding',
+				type: 'task',
+				driver_id: driverId,
+				updated_after: '2026-06-29T12:00:00.000Z',
+			})
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('q=onboarding')
+			expect(calledUrl).toContain('type=task')
+			expect(calledUrl).toContain(`driver=${driverId}`)
+			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
+		})
+
+		it('forwards each metadata_eq entry as metadata.<field>=<value>', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('search_objects')
+			await handler({ q: 'bet', metadata_eq: { promotion_mode: 'human_approved' } })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('q=bet')
+			expect(calledUrl).toContain('metadata.promotion_mode=human_approved')
+		})
+
+		it('omits metadata.* params when metadata_eq is not supplied', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('search_objects')
+			await handler({ q: 'bet' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).not.toContain('metadata.')
 		})
 	})
 

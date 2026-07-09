@@ -118,6 +118,15 @@ describe('useObject', () => {
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Not found')
 	})
+
+	it('does not fetch when enabled is false', () => {
+		const { result } = renderHook(() => useObject('obj-3', { enabled: false }), {
+			wrapper: TestWrapper,
+		})
+
+		expect(result.current.fetchStatus).toBe('idle')
+		expect(api.objects.get).not.toHaveBeenCalled()
+	})
 })
 
 describe('useObjectGraph', () => {

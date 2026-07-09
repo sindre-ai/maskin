@@ -24,18 +24,6 @@ vi.mock('@/components/shared/subscribe-toggle', () => ({
 	SubscribeToggle: () => <div data-testid="subscribe-toggle" />,
 }))
 
-vi.mock('@/components/objects/metadata-properties', () => ({
-	MetadataProperties: () => <div data-testid="metadata-properties" />,
-}))
-
-vi.mock('@/components/objects/linked-objects', () => ({
-	LinkedObjects: () => <div data-testid="linked-objects" />,
-}))
-
-vi.mock('@/components/objects/object-files', () => ({
-	ObjectFiles: () => <div data-testid="object-files" />,
-}))
-
 const baseProps = {
 	workspaceId: 'ws-1',
 	statuses: ['proposed', 'active', 'done'],
@@ -64,6 +52,21 @@ describe('ObjectDocumentView', () => {
 		const creator = buildActorResponse({ name: 'Alice' })
 		render(<ObjectDocumentView {...baseProps} object={object} creator={creator} />)
 		expect(screen.getByText('Alice')).toBeInTheDocument()
+	})
+
+	it('wraps the provenance cluster on its own row below the sm breakpoint', () => {
+		// Creator + createdAt must group into a sub-div with basis-full so
+		// 375px never spills into a jagged partial wrap; sm:basis-auto lets
+		// them flow inline again on wider phones.
+		const object = buildObjectResponse()
+		const creator = buildActorResponse({ name: 'Alice' })
+		render(<ObjectDocumentView {...baseProps} object={object} creator={creator} />)
+		const creatorLabel = screen.getByText('Alice')
+		// creator span → provenance cluster (has basis-full sm:basis-auto)
+		const cluster = creatorLabel.parentElement
+		expect(cluster).not.toBeNull()
+		expect(cluster?.className).toContain('basis-full')
+		expect(cluster?.className).toContain('sm:basis-auto')
 	})
 
 	it('calls onUpdateTitle on blur when title changed', async () => {
@@ -123,6 +126,18 @@ describe('ObjectDocumentView', () => {
 		expect(screen.queryByText('Saved')).not.toBeInTheDocument()
 	})
 
+	it('does not render Properties, Files, or Linked Objects in the body', () => {
+		const object = buildObjectResponse({ title: 'A bet' })
+		render(<ObjectDocumentView {...baseProps} object={object} />)
+		// AC-U5: the main reading path holds no property grid; properties + files
+		// live in a right drawer (rendered by the parent ObjectDocument, not the View).
+		// Linked objects are no longer here at all — they move into the timeline
+		// in the sibling "Relationships into the timeline" task.
+		expect(screen.queryByTestId('metadata-properties')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('object-files')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('linked-objects')).not.toBeInTheDocument()
+	})
+
 	it('shows AgentWorkingBadge when activeSessionId present', () => {
 		const object = buildObjectResponse({ activeSessionId: 'session-1' })
 		render(<ObjectDocumentView {...baseProps} object={object} />)
@@ -133,6 +148,51 @@ describe('ObjectDocumentView', () => {
 		const object = buildObjectResponse({ activeSessionId: null })
 		render(<ObjectDocumentView {...baseProps} object={object} />)
 		expect(screen.queryByText('agent working')).not.toBeInTheDocument()
+	})
+
+	describe('updated chip', () => {
+		it('renders an "updated" chip when updatedAt is materially after createdAt', () => {
+			const createdAt = '2026-06-01T10:00:00.000Z'
+			const updatedAt = '2026-06-01T10:05:00.000Z'
+			const object = buildObjectResponse({ createdAt, updatedAt })
+			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
+			const timeEls = container.querySelectorAll('time')
+			expect(timeEls.length).toBe(2)
+			expect(timeEls[0].getAttribute('datetime')).toBe(createdAt)
+			expect(timeEls[1].getAttribute('datetime')).toBe(updatedAt)
+			const chipParent = timeEls[1].parentElement
+			expect(chipParent?.textContent?.startsWith('updated ')).toBe(true)
+			expect(chipParent?.className).toContain('text-[11px]')
+			expect(chipParent?.className).toContain('text-muted-foreground')
+		})
+
+		it('suppresses the updated chip when updatedAt is null', () => {
+			const object = buildObjectResponse({
+				createdAt: '2026-06-01T10:00:00.000Z',
+				updatedAt: null,
+			})
+			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(container.querySelectorAll('time').length).toBe(1)
+			expect(container.textContent).not.toMatch(/updated \d/)
+		})
+
+		it('suppresses the updated chip when updatedAt − createdAt < 60s', () => {
+			const object = buildObjectResponse({
+				createdAt: '2026-06-01T10:00:00.000Z',
+				updatedAt: '2026-06-01T10:00:30.000Z',
+			})
+			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(container.querySelectorAll('time').length).toBe(1)
+		})
+
+		it('renders the chip when createdAt is null but updatedAt is present', () => {
+			const updatedAt = '2026-06-01T10:00:00.000Z'
+			const object = buildObjectResponse({ createdAt: null, updatedAt })
+			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
+			const timeEls = container.querySelectorAll('time')
+			expect(timeEls.length).toBe(1)
+			expect(timeEls[0].getAttribute('datetime')).toBe(updatedAt)
+		})
 	})
 
 	describe('OwnerSelect', () => {

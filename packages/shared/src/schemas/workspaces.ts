@@ -127,6 +127,9 @@ export const workspaceSettingsSchema = z.object({
 			small_fast_model: z.string().nullable().optional(),
 		})
 		.optional(),
+	// North Star onboarding prompt answer — stored when a user submits the
+	// "What's your product's North Star metric?" card on the For You page.
+	north_star_metric: z.string().optional(),
 })
 
 export const createWorkspaceSchema = z.object({

@@ -14,13 +14,18 @@ import {
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
+	OBJECT_DIFF_FIELDS,
+	SAFE_METADATA_FIELD_NAME_RE,
 	TERMINAL_BET_STATUSES,
 	boardObjectQuerySchema,
 	boardObjectResponseSchema,
 	bulkUpdateObjectsResponseSchema,
 	bulkUpdateObjectsSchema,
+	computeChanges,
 	createObjectSchema,
+	findChange,
 	formatEventDescription,
+	getChangesFromEventData,
 	migrateObjectTypeResponseSchema,
 	migrateObjectTypeSchema,
 	objectQuerySchema,
@@ -39,6 +44,7 @@ import {
 	ilike,
 	inArray,
 	lt,
+	lte,
 	ne,
 	or,
 	sql,
@@ -93,8 +99,7 @@ function resolveSortColumn(sortField: string): Column | SQL | null {
 	if (sortColumns[sortField]) return sortColumns[sortField]
 	if (sortField.startsWith('metadata.')) {
 		const fieldName = sortField.slice(9)
-		// Safety check: only allow alphanumeric + underscore field names to prevent SQL injection via sql.raw
-		if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) return null
+		if (!SAFE_METADATA_FIELD_NAME_RE.test(fieldName)) return null
 		return sql`${objects.metadata}->>'${sql.raw(fieldName)}'`
 	}
 	return null
@@ -114,15 +119,119 @@ function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
 	return [primary, asc(objects.id)]
 }
 
-function buildObjectListConditions(query: {
-	type?: string
-	status?: string
-	driver?: string
-	ids?: string
-	q?: string
-	updated_before?: string
-	updated_after?: string
-}) {
+/**
+ * Parses `metadata.<fieldName>=<value>` query keys into filter conditions
+ * `metadata->>'<fieldName>' = '<value>'` (plain text equality). Field names
+ * are workspace-defined custom properties (see `create_workspace_field`) so
+ * they can't be enumerated ahead of time — validated per-key against
+ * `SAFE_METADATA_FIELD_NAME_RE` instead, since they're inlined via `sql.raw`.
+ *
+ * Returns the first invalid field name found (caller should 400), or the
+ * parsed list of filters otherwise.
+ */
+function extractMetadataFilters(
+	rawQuery: Record<string, string | string[] | undefined>,
+): { ok: true; filters: { field: string; value: string }[] } | { ok: false; invalidField: string } {
+	const filters: { field: string; value: string }[] = []
+	for (const [key, rawValue] of Object.entries(rawQuery)) {
+		if (!key.startsWith('metadata.')) continue
+		const field = key.slice('metadata.'.length)
+		const value = Array.isArray(rawValue) ? rawValue[0] : rawValue
+		if (!SAFE_METADATA_FIELD_NAME_RE.test(field)) return { ok: false, invalidField: field }
+		if (typeof value === 'string' && value.length > 0) filters.push({ field, value })
+	}
+	return { ok: true, filters }
+}
+
+function invalidMetadataFieldError(fieldName: string) {
+	return createApiError('BAD_REQUEST', `Invalid metadata filter field name: '${fieldName}'`, [
+		{
+			field: `metadata.${fieldName}`,
+			message:
+				'Field names must start with a letter and contain only letters, numbers, and underscores.',
+		},
+	])
+}
+
+/**
+ * True when a caller-supplied keyset pair will actually be applied as a seek
+ * predicate. The seek is always expressed in `createdAt` order, so it only
+ * produces a result set consistent with `resolveOrderBy`'s ORDER BY when the
+ * walk is actually sorted by `createdAt` (the default) — pairing the seek
+ * with `sort=updatedAt` (or any other column) would filter on a column
+ * unrelated to the ORDER BY, silently skipping or duplicating rows across
+ * pages. A lone `cursor_id` is also ignored so a malformed cursor cannot
+ * silently degrade to an unbounded seek.
+ */
+function isCursorSeekActive(query: {
+	sort?: string
+	cursor_created_at?: string
+	cursor_id?: string
+}): boolean {
+	if (!query.cursor_created_at || !query.cursor_id) return false
+	return (resolveSortColumn(query.sort ?? 'createdAt') ?? objects.createdAt) === objects.createdAt
+}
+
+/**
+ * Snapshot-consistent cursor predicates for `objects` list/search endpoints.
+ *
+ * `snapshot_at` (upper bound on `created_at`) is the "freeze" — every hop
+ * of the same walk carries the same value so an insert on `objects` after
+ * the walk began cannot leak into the paginated stream.
+ *
+ * `cursor_created_at` + `cursor_id` is the keyset seek — the next page
+ * starts strictly past this `(created_at, id)` tuple in `createdAt` order.
+ * Callers must always pair the two; a lone `cursor_id` is ignored so a
+ * malformed cursor cannot silently degrade to unbounded seek.
+ *
+ * The keyset predicate matches the sort order the list handlers use
+ * (`createdAt` desc/asc, `id` asc tiebreaker — see `resolveOrderBy`), so it
+ * only fires when the walk is actually sorted by `createdAt` — see
+ * `isCursorSeekActive`.
+ */
+function buildCursorConditions(query: {
+	sort?: string
+	order?: string
+	snapshot_at?: string
+	cursor_created_at?: string
+	cursor_id?: string
+}): SQL[] {
+	const conditions: SQL[] = []
+	if (query.snapshot_at) {
+		conditions.push(lte(objects.createdAt, new Date(query.snapshot_at)))
+	}
+	if (isCursorSeekActive(query)) {
+		const lastCa = new Date(query.cursor_created_at as string)
+		const lastId = query.cursor_id as string
+		if (query.order === 'asc') {
+			const seek = or(
+				gt(objects.createdAt, lastCa),
+				and(eq(objects.createdAt, lastCa), gt(objects.id, lastId)),
+			)
+			if (seek) conditions.push(seek)
+		} else {
+			const seek = or(
+				lt(objects.createdAt, lastCa),
+				and(eq(objects.createdAt, lastCa), gt(objects.id, lastId)),
+			)
+			if (seek) conditions.push(seek)
+		}
+	}
+	return conditions
+}
+
+function buildObjectListConditions(
+	query: {
+		type?: string
+		status?: string
+		driver?: string
+		ids?: string
+		q?: string
+		updated_before?: string
+		updated_after?: string
+	},
+	metadataFilters: { field: string; value: string }[] = [],
+) {
 	const conditions: SQL[] = []
 	if (query.type) conditions.push(eq(objects.type, query.type))
 	if (query.status) {
@@ -148,6 +257,10 @@ function buildObjectListConditions(query: {
 	// Half-open contract — Zod has already validated these as ISO-8601 strings.
 	if (query.updated_before) conditions.push(lt(objects.updatedAt, new Date(query.updated_before)))
 	if (query.updated_after) conditions.push(gt(objects.updatedAt, new Date(query.updated_after)))
+	// Field name pre-validated by extractMetadataFilters; value is parameter-bound.
+	for (const { field, value } of metadataFilters) {
+		conditions.push(sql`${objects.metadata}->>'${sql.raw(field)}' = ${value}`)
+	}
 	return conditions
 }
 
@@ -158,7 +271,7 @@ function resolveBoardGroupExpression(groupBy?: string): SQL {
 	if (groupBy === 'type') return sql`${objects.type}`
 	if (groupBy.startsWith('metadata.')) {
 		const fieldName = groupBy.slice('metadata.'.length)
-		if (/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) {
+		if (SAFE_METADATA_FIELD_NAME_RE.test(fieldName)) {
 			return sql`coalesce(${objects.metadata}->>'${sql.raw(fieldName)}', '')`
 		}
 	}
@@ -335,16 +448,29 @@ app.openapi(listObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
+	const parsedMetadataFilters = extractMetadataFilters(c.req.query())
+	if (!parsedMetadataFilters.ok) {
+		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
+	}
+
+	const conditions = [
+		eq(objects.workspaceId, workspaceId),
+		...buildObjectListConditions(query, parsedMetadataFilters.filters),
+		...buildCursorConditions(query),
+	]
 
 	const orderBy = resolveOrderBy(query)
 
+	// When the keyset seek is engaged, `offset` no longer makes sense — the
+	// predicate itself skips past the last-seen row. Ignoring it also keeps
+	// the walk snapshot-consistent when a caller accidentally forwards both.
+	const useKeyset = isCursorSeekActive(query)
 	const results = await db
 		.select()
 		.from(objects)
 		.where(and(...conditions))
 		.limit(query.limit)
-		.offset(query.offset)
+		.offset(useKeyset ? 0 : query.offset)
 		.orderBy(...orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
@@ -401,17 +527,25 @@ app.openapi(boardObjectsRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
+	const parsedMetadataFilters = extractMetadataFilters(rawQuery)
+	if (!parsedMetadataFilters.ok) {
+		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
+	}
+
 	const baseConditions = [
 		eq(objects.workspaceId, workspaceId),
-		...buildObjectListConditions({
-			type: query.type,
-			status: query.status,
-			driver: query.driver,
-			ids: query.ids,
-			q: query.q,
-			updated_before: query.updated_before,
-			updated_after: query.updated_after,
-		}),
+		...buildObjectListConditions(
+			{
+				type: query.type,
+				status: query.status,
+				driver: query.driver,
+				ids: query.ids,
+				q: query.q,
+				updated_before: query.updated_before,
+				updated_after: query.updated_after,
+			},
+			parsedMetadataFilters.filters,
+		),
 	]
 
 	const countRows = await db
@@ -497,16 +631,26 @@ app.openapi(searchObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
+	const parsedMetadataFilters = extractMetadataFilters(c.req.query())
+	if (!parsedMetadataFilters.ok) {
+		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
+	}
+
+	const conditions = [
+		eq(objects.workspaceId, workspaceId),
+		...buildObjectListConditions(query, parsedMetadataFilters.filters),
+		...buildCursorConditions(query),
+	]
 
 	const orderBy = resolveOrderBy(query)
 
+	const useKeyset = isCursorSeekActive(query)
 	const results = await db
 		.select()
 		.from(objects)
 		.where(and(...conditions))
 		.limit(query.limit)
-		.offset(query.offset)
+		.offset(useKeyset ? 0 : query.offset)
 		.orderBy(...orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
@@ -601,18 +745,17 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		.orderBy(desc(events.id))
 		.limit(100)
 
-	// Resolve actor names referenced by driver-change clauses (formatter only
-	// needs them for `data.previous.driver` / `data.updated.driver`).
+	// Resolve actor names referenced by driver-change clauses. Handles both the
+	// new `{changes: [{field: 'driver', old, new}]}` shape and the legacy
+	// `{previous, updated}` snapshot shape for historical rows.
 	const referencedActorIds = new Set<string>()
 	for (const event of objectEvents) {
-		const data = event.data as {
-			previous?: { driver?: unknown }
-			updated?: { driver?: unknown }
-		} | null
-		const prevOwner = data?.previous?.driver
-		const nextOwner = data?.updated?.driver
-		if (typeof prevOwner === 'string') referencedActorIds.add(prevOwner)
-		if (typeof nextOwner === 'string') referencedActorIds.add(nextOwner)
+		if (event.action !== 'updated' && event.action !== 'status_changed') continue
+		const changes = getChangesFromEventData(event.data, OBJECT_DIFF_FIELDS)
+		const driverChange = findChange(changes, 'driver')
+		if (!driverChange) continue
+		if (typeof driverChange.old === 'string') referencedActorIds.add(driverChange.old)
+		if (typeof driverChange.new === 'string') referencedActorIds.add(driverChange.new)
 	}
 
 	const actorsById = new Map<string, ActorRef>()
@@ -913,13 +1056,21 @@ app.openapi(updateObjectRoute, async (c) => {
 		// the event record is accurate even under concurrent PATCHes.
 		const action = current.status !== row.status ? 'status_changed' : 'updated'
 
+		// Log a per-field diff instead of full pre/post snapshots. On a 100 KB-content
+		// bet, a title-only edit now ships ~200 B of event payload instead of ~200 KB —
+		// see bet/mcp-response-shape AC #4.
+		const changes = computeChanges(
+			current as unknown as Record<string, unknown>,
+			row as unknown as Record<string, unknown>,
+			OBJECT_DIFF_FIELDS,
+		)
 		await tx.insert(events).values({
 			workspaceId: current.workspaceId,
 			actorId,
 			action,
 			entityType: current.type,
 			entityId: id,
-			data: { previous: current, updated: row },
+			data: { changes },
 		})
 
 		// Fan out a notification row to every subscriber when a bet reaches a
@@ -1335,13 +1486,18 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 					plan.resultEntry.error = 'Object not found'
 					continue
 				}
+				const changes = computeChanges(
+					plan.previous as unknown as Record<string, unknown>,
+					updated as unknown as Record<string, unknown>,
+					OBJECT_DIFF_FIELDS,
+				)
 				await tx.insert(events).values({
 					workspaceId: plan.previous.workspaceId,
 					actorId,
 					action: plan.action,
 					entityType: plan.previous.type,
 					entityId: plan.id,
-					data: { previous: plan.previous, updated },
+					data: { changes },
 				})
 			}
 		})

@@ -15,6 +15,7 @@ function createMockStorage(overrides?: Partial<StorageProvider>): StorageProvide
 		put: vi.fn().mockResolvedValue(undefined),
 		get: vi.fn().mockResolvedValue(Buffer.from('')),
 		list: vi.fn().mockResolvedValue([]),
+		listWithMetadata: vi.fn().mockResolvedValue([]),
 		delete: vi.fn().mockResolvedValue(undefined),
 		exists: vi.fn().mockResolvedValue(false),
 		ensureBucket: vi.fn().mockResolvedValue(undefined),

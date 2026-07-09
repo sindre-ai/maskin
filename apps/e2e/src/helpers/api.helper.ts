@@ -135,6 +135,20 @@ export class TestAPI {
 		return res.json()
 	}
 
+	async updateObject(
+		id: string,
+		workspaceId: string,
+		patch: Partial<{ status: string; title: string; content: string }>,
+	): Promise<ObjectResponse> {
+		const res = await fetch(`${this.baseURL}/api/objects/${id}`, {
+			method: 'PATCH',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(patch),
+		})
+		if (!res.ok) throw new Error(`updateObject failed: ${res.status}`)
+		return res.json()
+	}
+
 	async deleteObject(id: string, workspaceId: string): Promise<void> {
 		const res = await fetch(`${this.baseURL}/api/objects/${id}`, {
 			method: 'DELETE',
@@ -145,7 +159,12 @@ export class TestAPI {
 
 	async createComment(
 		workspaceId: string,
-		data: { entity_id: string; content: string; parent_event_id?: number },
+		data: {
+			entity_id: string
+			content: string
+			parent_event_id?: number
+			metadata?: Record<string, unknown>
+		},
 	): Promise<EventResponse> {
 		const res = await fetch(`${this.baseURL}/api/events`, {
 			method: 'POST',
@@ -163,6 +182,19 @@ export class TestAPI {
 			body: JSON.stringify({ name }),
 		})
 		if (!res.ok) throw new Error(`createWorkspace failed: ${res.status}`)
+		return res.json()
+	}
+
+	async updateWorkspace(
+		id: string,
+		data: { name?: string; settings?: Record<string, unknown> },
+	): Promise<WorkspaceResponse> {
+		const res = await fetch(`${this.baseURL}/api/workspaces/${id}`, {
+			method: 'PATCH',
+			headers: this.headers(),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`updateWorkspace failed: ${res.status}`)
 		return res.json()
 	}
 

@@ -164,10 +164,18 @@ describe('create_objects schema', () => {
 describe('list_objects schema', () => {
 	const schema = tools.list_objects.inputSchema
 
-	it('defaults limit to 50 and offset to 0', () => {
+	// Limit + offset are optional at the tool-schema layer so the server can
+	// pick the scoped default (25) when the flag is on; the API applies its
+	// own fallback when neither the client nor the server sets one.
+	it('leaves limit and offset undefined when not passed', () => {
 		const result = schema.parse({})
-		expect(result.limit).toBe(50)
-		expect(result.offset).toBe(0)
+		expect(result.limit).toBeUndefined()
+		expect(result.offset).toBeUndefined()
+	})
+
+	it('accepts an optional cursor for snapshot-consistent pagination', () => {
+		const result = schema.parse({ cursor: 'anything' })
+		expect(result.cursor).toBe('anything')
 	})
 
 	it('accepts optional type filter', () => {
@@ -219,6 +227,16 @@ describe('list_objects schema', () => {
 	it('rejects unknown sort values', () => {
 		expect(() => schema.parse({ sort: 'created_at_asc' })).toThrow()
 	})
+
+	it('accepts metadata_eq as a field->value record', () => {
+		const result = schema.parse({ metadata_eq: { segment: 'enterprise', confidence: 'high' } })
+		expect(result.metadata_eq).toEqual({ segment: 'enterprise', confidence: 'high' })
+	})
+
+	it('omits metadata_eq when not supplied', () => {
+		const result = schema.parse({})
+		expect(result.metadata_eq).toBeUndefined()
+	})
 })
 
 describe('search_objects schema', () => {
@@ -227,7 +245,11 @@ describe('search_objects schema', () => {
 	it('requires q with min 1 char', () => {
 		const result = schema.parse({ q: 'test' })
 		expect(result.q).toBe('test')
-		expect(result.limit).toBe(20)
+	})
+
+	it('accepts an optional cursor for snapshot-consistent pagination', () => {
+		const result = schema.parse({ q: 'test', cursor: 'anything' })
+		expect(result.cursor).toBe('anything')
 	})
 
 	it('rejects empty q', () => {
@@ -236,6 +258,58 @@ describe('search_objects schema', () => {
 
 	it('rejects missing q', () => {
 		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('accepts driver_id as a uuid', () => {
+		const result = schema.parse({ q: 'bet', driver_id: uuid })
+		expect(result.driver_id).toBe(uuid)
+	})
+
+	it('rejects non-uuid driver_id', () => {
+		const result = schema.safeParse({ q: 'bet', driver_id: 'not-uuid' })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['driver_id'])
+		}
+	})
+
+	it('accepts updated_after as ISO-8601 with offset', () => {
+		const result = schema.parse({
+			q: 'bet',
+			updated_after: '2026-06-29T12:00:00+02:00',
+		})
+		expect(result.updated_after).toBe('2026-06-29T12:00:00+02:00')
+	})
+
+	it('rejects malformed updated_after with a Zod error', () => {
+		const result = schema.safeParse({ q: 'bet', updated_after: 'yesterday' })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['updated_after'])
+		}
+	})
+
+	it('accepts driver_id and updated_after composed with type + q', () => {
+		const result = schema.parse({
+			q: 'bet',
+			type: 'bet',
+			driver_id: uuid,
+			updated_after: '2026-06-29T12:00:00.000Z',
+		})
+		expect(result.q).toBe('bet')
+		expect(result.type).toBe('bet')
+		expect(result.driver_id).toBe(uuid)
+		expect(result.updated_after).toBe('2026-06-29T12:00:00.000Z')
+	})
+
+	it('accepts metadata_eq as a field->value record', () => {
+		const result = schema.parse({ q: 'bet', metadata_eq: { promotion_mode: 'human_approved' } })
+		expect(result.metadata_eq).toEqual({ promotion_mode: 'human_approved' })
+	})
+
+	it('omits metadata_eq when not supplied', () => {
+		const result = schema.parse({ q: 'bet' })
+		expect(result.metadata_eq).toBeUndefined()
 	})
 })
 
@@ -723,6 +797,39 @@ describe('delete_workspace_skill schema', () => {
 
 	it('rejects invalid name format', () => {
 		expect(() => schema.parse({ name: 'Invalid Name' })).toThrow()
+	})
+})
+
+describe('update_workspace schema', () => {
+	const schema = tools.update_workspace.inputSchema
+
+	it('accepts id with optional name and settings', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.id).toBe(uuid)
+	})
+
+	it('accepts north_star_metric in settings', () => {
+		const result = schema.parse({
+			id: uuid,
+			settings: { north_star_metric: 'Weekly active users' },
+		})
+		expect(result.settings?.north_star_metric).toBe('Weekly active users')
+	})
+
+	it('accepts additional workspace settings alongside north_star_metric', () => {
+		const result = schema.parse({
+			id: uuid,
+			settings: {
+				north_star_metric: 'DAU',
+				tags: ['onboarding'],
+				llm_keys: { provider: 'anthropic' },
+			},
+		})
+		expect(result.settings?.north_star_metric).toBe('DAU')
+	})
+
+	it('rejects missing id', () => {
+		expect(() => schema.parse({})).toThrow()
 	})
 })
 

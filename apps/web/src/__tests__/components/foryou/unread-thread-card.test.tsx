@@ -91,7 +91,53 @@ describe('UnreadThreadCard', () => {
 		expect(screen.getByLabelText('3 unread')).toBeInTheDocument()
 	})
 
-	it('renders a "Mentioned" badge when at least one unread event mentions the viewer', () => {
+	it('renders a status chip alongside the type badge', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({
+					object: buildObjectResponse({
+						id: 'obj-1',
+						title: 'Onboarding A/B',
+						type: 'bet',
+						status: 'active',
+					}),
+				})}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByText('active')).toBeInTheDocument()
+	})
+
+	it('renders the object body content as a 2-line insight preview', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({
+					object: buildObjectResponse({
+						id: 'obj-1',
+						title: 'Onboarding A/B',
+						type: 'bet',
+						content: 'This is the insight preview text that should render above the take.',
+					}),
+				})}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const preview = screen.getByText(/insight preview text/)
+		expect(preview).toBeInTheDocument()
+		expect(preview.className).toMatch(/line-clamp-2/)
+	})
+
+	it('renders a "Mentioned" flag when at least one unread event mentions the viewer', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		render(
 			<UnreadThreadCard
@@ -106,7 +152,56 @@ describe('UnreadThreadCard', () => {
 		expect(screen.getByLabelText('Mentioned')).toBeInTheDocument()
 	})
 
-	it('omits the "Mentioned" badge when no unread events mention the viewer', () => {
+	it('promotes the unread left-border accent to warning tone when the viewer is @mentioned', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		const { container } = render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ mentioning_unread_count: 1, unread_count: 1 })}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const card = container.firstChild?.childNodes[1] as HTMLElement
+		expect(card.className).toMatch(/border-l-warning/)
+	})
+
+	it('applies the default primary left-border accent for unread non-mention items', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		const { container } = render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ mentioning_unread_count: 0, unread_count: 1 })}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const card = container.firstChild?.childNodes[1] as HTMLElement
+		expect(card.className).toMatch(/border-l-primary/)
+	})
+
+	it('omits the unread left-border accent entirely when the thread has no unread events', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		const { container } = render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ mentioning_unread_count: 0, unread_count: 0 })}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const card = container.firstChild?.childNodes[1] as HTMLElement
+		expect(card.className).not.toMatch(/border-l-primary/)
+		expect(card.className).not.toMatch(/border-l-warning/)
+	})
+
+	it('omits the "Mentioned" flag when no unread events mention the viewer', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		render(
 			<UnreadThreadCard
@@ -205,7 +300,7 @@ describe('UnreadThreadCard', () => {
 		expect(screen.queryByRole('button', { name: /^reply$/i })).not.toBeInTheDocument()
 	})
 
-	it('applies active ring styling when isActive is true', () => {
+	it('applies an active-selection background tint when isActive is true', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		const { container } = render(
 			<UnreadThreadCard
@@ -219,10 +314,10 @@ describe('UnreadThreadCard', () => {
 		)
 		// The outer wrapper is the firstChild; the inner card is the second child of the wrapper.
 		const card = container.firstChild?.childNodes[1] as HTMLElement
-		expect(card.className).toMatch(/border-ring/)
+		expect(card.className).toMatch(/bg-secondary/)
 	})
 
-	it('does not apply ring styling when isActive is false', () => {
+	it('does not apply the active-selection tint when isActive is false', () => {
 		mockUseEntityEvents.mockReturnValue({ data: [] })
 		const { container } = render(
 			<UnreadThreadCard
@@ -235,7 +330,7 @@ describe('UnreadThreadCard', () => {
 			{ wrapper: TestWrapper },
 		)
 		const card = container.firstChild?.childNodes[1] as HTMLElement
-		expect(card.className).not.toMatch(/border-ring/)
+		expect(card.className).not.toMatch(/bg-secondary\/40/)
 	})
 
 	it('calls onActivate when the card body is clicked', async () => {
@@ -356,7 +451,10 @@ describe('UnreadThreadCard', () => {
 			{ wrapper: TestWrapper },
 		)
 
-		await user.click(screen.getByRole('button', { name: /mark as read/i }))
+		// Two "Mark as read" buttons exist (corner ✓ + footer). Either one drives
+		// the same handler, so we can pick the footer button by index.
+		const buttons = screen.getAllByRole('button', { name: /mark as read/i })
+		await user.click(buttons[buttons.length - 1])
 		expect(mockMarkReadMutate).toHaveBeenCalledWith({
 			entityType: 'object',
 			entityId: 'obj-1',
@@ -428,7 +526,7 @@ describe('UnreadThreadCard', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.getByRole('button', { name: /mark as read/i })).toBeInTheDocument()
+		expect(screen.getAllByRole('button', { name: /mark as read/i }).length).toBeGreaterThan(0)
 	})
 
 	it('fires create-comment mutation with the right payload when a quick-reply chip is tapped', async () => {
@@ -610,5 +708,69 @@ describe('UnreadThreadCard', () => {
 			entityId: 'obj-1',
 			lastEventId: 20,
 		})
+	})
+
+	it('renders the latest-activity timestamp in font-mono tabular-nums (AC-U2)', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ latest_activity_at: new Date(Date.now() - 5 * 60_000).toISOString() })}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const timeEl = screen.getByText(/ago|now/) as HTMLElement
+		expect(timeEl.tagName).toBe('TIME')
+		expect(timeEl).toHaveClass('font-mono')
+		expect(timeEl).toHaveClass('tabular-nums')
+	})
+
+	// Regression lock for the minimal redesign: title is left-aligned on its own row
+	// (not squeezed into the head with badges and controls), so a long title can't
+	// push time/badges off-screen at 375px. `block truncate` on the title link
+	// enforces the row and clips overflow.
+	it('places the title on its own row with block + truncate', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({
+					object: buildObjectResponse({
+						id: 'obj-1',
+						title: 'A very long onboarding bet title that would overflow at 375px',
+						type: 'bet',
+					}),
+				})}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const titleLink = screen.getByText(/A very long onboarding bet/)
+		expect(titleLink.className).toMatch(/\bblock\b/)
+		expect(titleLink.className).toMatch(/truncate/)
+	})
+
+	it('renders the per-card dismiss button in the card head, labelled Mark as read', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ latest_event_id: 55 })}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		// Two "Mark as read" buttons now: the corner ✓ (hidden on touch via can-hover:)
+		// and the always-visible footer button. Both share the same aria-label so
+		// keyboard users find either.
+		const dismissButtons = screen.getAllByRole('button', { name: /mark as read/i })
+		expect(dismissButtons.length).toBeGreaterThanOrEqual(2)
 	})
 })
