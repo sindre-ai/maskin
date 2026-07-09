@@ -6,7 +6,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 //
 // DoD:
 // 1. Clicking the button fires a single Sonner toast with `Undo`; tapping
-//    `Undo` within 15s restores every cleared thread to unread.
+//    `Undo` within 5s restores every cleared thread to unread.
 // 2. Otherwise mutations commit on auto-close/dismiss.
 // 3. The button label includes the count it will clear; count updates as new
 //    items arrive.
@@ -94,7 +94,7 @@ test.describe('For You — Mark all as read', () => {
 		await expect(page.getByRole('button', { name: /mark all as read/i })).toHaveCount(0)
 	})
 
-	test('Undo within 15s restores every hidden thread and fires no mutations', async ({
+	test('Undo within 5s restores every hidden thread and fires no mutations', async ({
 		page,
 		account,
 	}) => {
@@ -139,6 +139,26 @@ test.describe('For You — Mark all as read', () => {
 			const box = await button.boundingBox()
 			if (!box) throw new Error(`button has no layout box at ${viewport.label}`)
 			expect(box.x + box.width).toBeLessThanOrEqual(viewport.width)
+		})
+	}
+})
+
+test.describe('For You — Mark all as read tap target', () => {
+	test.use({ hasTouch: true })
+
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`button ≥44×44 CSS pixels on coarse pointers at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await mockUnread(page, account.workspaceId, 2)
+			await page.goto(`/${account.workspaceId}`)
+			const button = page.getByRole('button', { name: /mark all as read/i })
+			await expect(button).toBeVisible()
+			const box = await button.boundingBox()
+			if (!box) throw new Error(`button has no layout box at ${viewport.label}`)
+			expect(box.height).toBeGreaterThanOrEqual(44)
 		})
 	}
 })

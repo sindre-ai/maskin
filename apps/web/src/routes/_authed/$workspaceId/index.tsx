@@ -25,7 +25,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-const UNDO_WINDOW_MS = 15_000
+const UNDO_WINDOW_MS = 5_000
 
 type FeedFilter = 'all' | 'mentions'
 
@@ -335,7 +335,7 @@ function ForYouDashboard() {
 						<Button
 							variant="ghost"
 							size="sm"
-							className="h-7 px-2 text-xs min-h-[36px] sm:min-h-0"
+							className="h-7 px-2 text-xs pointer-coarse:min-h-11"
 							onClick={handleMarkAllRead}
 							disabled={visibleRegular.length === 0}
 							title="Mark all as read (Alt+U)"
