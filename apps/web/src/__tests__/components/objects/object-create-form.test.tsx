@@ -80,6 +80,20 @@ describe('ObjectCreateForm', () => {
 		expect(screen.getByPlaceholderText('Untitled')).toBeInTheDocument()
 	})
 
+	it('renders a hover + focus-visible edit affordance on the title textarea', () => {
+		// OD1: the create-form title <textarea> mirrors object-document's title
+		// affordance so operators get the same editable cue on both surfaces.
+		mockGetTabs.mockReturnValue([{ label: 'Bet', value: 'bet' }])
+		render(<ObjectCreateForm objectId="new-1" onAutoCreate={vi.fn()} />)
+		const textarea = screen.getByPlaceholderText('Untitled')
+		expect(textarea.className).toContain('border')
+		expect(textarea.className).toContain('border-transparent')
+		expect(textarea.className).toContain('hover:border-border')
+		expect(textarea.className).toContain('focus-visible:ring-2')
+		expect(textarea.className).toContain('focus-visible:ring-ring/40')
+		expect(textarea.className).toContain('bg-transparent')
+	})
+
 	it('renders type selector buttons', () => {
 		mockGetTabs.mockReturnValue([
 			{ label: 'Bet', value: 'bet' },

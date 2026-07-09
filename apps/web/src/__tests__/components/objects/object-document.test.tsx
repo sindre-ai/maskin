@@ -69,6 +69,21 @@ describe('ObjectDocumentView', () => {
 		expect(cluster?.className).toContain('sm:basis-auto')
 	})
 
+	it('renders a hover + focus-visible edit affordance on the title textarea', () => {
+		// OD1: the title <textarea> must carry a persistent transparent border so
+		// hover can colour it in without shifting layout, plus a focus-visible ring
+		// so keyboard users get an indicator while click-focus stays quiet.
+		const object = buildObjectResponse({ title: 'A bet' })
+		render(<ObjectDocumentView {...baseProps} object={object} />)
+		const textarea = screen.getByDisplayValue('A bet')
+		expect(textarea.className).toContain('border')
+		expect(textarea.className).toContain('border-transparent')
+		expect(textarea.className).toContain('hover:border-border')
+		expect(textarea.className).toContain('focus-visible:ring-2')
+		expect(textarea.className).toContain('focus-visible:ring-ring/40')
+		expect(textarea.className).toContain('bg-transparent')
+	})
+
 	it('calls onUpdateTitle on blur when title changed', async () => {
 		const user = userEvent.setup()
 		const onUpdateTitle = vi.fn()
