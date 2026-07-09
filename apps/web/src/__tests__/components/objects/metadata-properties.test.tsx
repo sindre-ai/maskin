@@ -1,5 +1,5 @@
 import { MetadataPropertiesView } from '@/components/objects/metadata-properties'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildObjectResponse, buildWorkspaceWithRole } from '../../factories'
 
@@ -104,5 +104,20 @@ describe('MetadataPropertiesView', () => {
 		})
 		render(<MetadataPropertiesView {...baseProps} object={object} />)
 		expect(screen.getAllByRole('link')).toHaveLength(1)
+	})
+
+	it('commits a text property edit on blur', async () => {
+		const user = userEvent.setup()
+		const onUpdateMetadata = vi.fn()
+		const object = buildObjectResponse({ id: 'obj-1', metadata: { team: 'alpha' } })
+		render(
+			<MetadataPropertiesView {...baseProps} object={object} onUpdateMetadata={onUpdateMetadata} />,
+		)
+		await user.click(screen.getByText('alpha'))
+		const input = screen.getByDisplayValue('alpha')
+		await user.clear(input)
+		await user.type(input, 'beta')
+		fireEvent.blur(input)
+		expect(onUpdateMetadata).toHaveBeenCalledWith('obj-1', { team: 'beta' })
 	})
 })

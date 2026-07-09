@@ -217,6 +217,25 @@ CREDS_EOF
   echo "[system] Claude OAuth credentials written to $creds_dir/.credentials.json"
 }
 
+# Point git's github.com credential helper at our just-in-time token script
+# instead of relying on GITHUB_TOKEN staying valid for the whole session.
+# GitHub App installation tokens expire after exactly 1 hour, so a session
+# running longer than that would otherwise start failing git push/fetch/clone
+# partway through. Skipped entirely if no GitHub integration is configured
+# (GITHUB_INTEGRATION_ID unset), same as the GITHUB_TOKEN injection it backs.
+setup_github_credential_helper() {
+  if [ -z "$GITHUB_INTEGRATION_ID" ]; then
+    return
+  fi
+
+  # Reset any pre-existing helper chain for this host so ours is authoritative,
+  # then add ours. An empty value clears the list per git-credential(1).
+  git config --global credential."https://github.com".helper ""
+  git config --global --add credential."https://github.com".helper "/agent-github-credential-helper.sh"
+
+  echo "[system] GitHub credential helper configured for github.com"
+}
+
 # Run the agent
 run_agent() {
   # Pipe output to the agent-server's log ingest endpoint so the Maskin UI
@@ -380,5 +399,6 @@ install_runtime
 build_context
 setup_mcps
 setup_claude_credentials
+setup_github_credential_helper
 
 run_agent

@@ -8,6 +8,19 @@ export const objectTypeSchema = z
 	.regex(/^[a-z][a-z0-9_]*$/)
 export type ObjectType = z.infer<typeof objectTypeSchema>
 
+/**
+ * Bet statuses that end the bet's normal lifecycle and warrant a one-time
+ * watcher signal (unread-feed entry + notification row) rather than routine
+ * status-change noise. Matches the default `bet` status list in
+ * workspaces.ts's `statuses` schema and the "terminal status" definition
+ * used by the Retro & Knowledge Author trigger (packages/db/src/seed.ts).
+ * Single source of truth for both apps/dev/src/routes/objects.ts (fan-out
+ * gate) and apps/dev/src/routes/subscriptions.ts (unread-feed join) so the
+ * two can't independently drift out of sync.
+ */
+export const TERMINAL_BET_STATUSES = ['succeeded', 'failed', 'paused'] as const
+export type TerminalBetStatus = (typeof TERMINAL_BET_STATUSES)[number]
+
 export const createObjectSchema = z.object({
 	id: z.string().uuid().optional(),
 	type: objectTypeSchema,
@@ -74,6 +87,18 @@ export const migrateObjectTypeResponseSchema = z.object({
 	count: z.number().int().nonnegative(),
 })
 
+/**
+ * Field names safe to inline via `sql.raw` in `metadata->>'field'` expressions
+ * (sort, groupBy, and `metadata.<field>` equality filters) — must start with a
+ * letter and contain only letters, numbers, and underscores. Shared by the
+ * backend query builder (`apps/dev/src/routes/objects.ts`) and the frontend
+ * route (`objects/index.tsx` search validation, `display-panel.tsx` filter
+ * rows) so both sides agree on exactly the same set of filterable field names
+ * — a field name accepted by one side and rejected by the other is how a
+ * filter can silently vanish instead of erroring.
+ */
+export const SAFE_METADATA_FIELD_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]*$/
+
 /** Known built-in sort columns — keep in sync with sortColumns in apps/dev/src/routes/objects.ts */
 export const KNOWN_SORT_COLUMNS = [
 	'createdAt',
@@ -91,15 +116,46 @@ export const KNOWN_SORT_COLUMNS = [
  * Avoid .refine() here — ZodEffects breaks @hono/zod-openapi query param extraction. */
 const sortFieldSchema = z.string().max(200).default('createdAt')
 
+/** Snapshot-consistent cursor pagination fields (behind `MCP_RESPONSE_SCOPING`).
+ *  All three are optional and additive — leaving them unset preserves the
+ *  legacy offset/limit shape byte-for-byte. When `snapshot_at` is set, the
+ *  server applies `created_at <= snapshot_at` as an upper bound so inserts
+ *  after the walk began cannot leak into the paginated stream. When the
+ *  keyset pair (`cursor_created_at`, `cursor_id`) is set, the server seeks
+ *  strictly past that (created_at, id) tuple in `createdAt` order and
+ *  ignores `offset`. */
+const snapshotAtSchema = z
+	.string()
+	.datetime()
+	.optional()
+	.describe(
+		'ISO timestamp captured at first-call time. When set, the server applies `created_at <= snapshot_at` so a row inserted mid-pagination cannot leak into the current walk.',
+	)
+const cursorIdSchema = z.string().uuid().optional()
+const cursorCreatedAtSchema = z
+	.string()
+	.datetime()
+	.optional()
+	.describe(
+		'Keyset seek: the `created_at` of the last row returned. The server pages strictly past `(cursor_created_at, cursor_id)` in `createdAt` order. Requires `cursor_id`.',
+	)
+
 export const objectQuerySchema = z.object({
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
 	driver: z.string().optional(),
 	ids: z.string().optional(),
+	/** Half-open: rows satisfy `updated_at < updated_before`. Bound excluded. */
+	updated_before: z.string().datetime({ offset: true }).optional(),
+	/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */
+	updated_after: z.string().datetime({ offset: true }).optional(),
 	sort: sortFieldSchema,
 	order: z.enum(['asc', 'desc']).default('desc'),
 	limit: z.coerce.number().int().min(1).max(100).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
+	snapshot_at: snapshotAtSchema,
+	cursor_created_at: cursorCreatedAtSchema,
+	cursor_id: cursorIdSchema,
 })
 
 export const boardObjectQuerySchema = objectQuerySchema.extend({
@@ -126,10 +182,16 @@ export const searchObjectsSchema = z.object({
 	q: z.string().min(1),
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
+	driver: z.string().optional(),
+	/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */
+	updated_after: z.string().datetime({ offset: true }).optional(),
 	sort: sortFieldSchema,
 	order: z.enum(['asc', 'desc']).default('desc'),
 	limit: z.coerce.number().int().min(1).max(100).default(20),
 	offset: z.coerce.number().int().min(0).default(0),
+	snapshot_at: snapshotAtSchema,
+	cursor_created_at: cursorCreatedAtSchema,
+	cursor_id: cursorIdSchema,
 })
 
 export const objectParamsSchema = z.object({

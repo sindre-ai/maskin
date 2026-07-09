@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, vi } from 'vitest'
 import type { ResolvedProvider } from '../../lib/integrations/types'
 import { buildIntegration, buildWorkspaceMember } from '../factories'
@@ -675,26 +675,30 @@ describe('Integrations Routes', () => {
 
 			expect(res.status).toBe(302)
 
-			// Refresh-shaped update: sets credentials + config but does NOT touch status
-			// (that's how we distinguish "in-place refresh" from "activate pending").
+			// Refresh-shaped update: re-activates the existing row with fresh
+			// credentials + config but does NOT set externalId — that's how it
+			// differs from promoting the pending row, which rewrites externalId.
+			// (status IS set since the refresh branch also revives revoked rows.)
 			const refreshCall = calls.updates.find(
 				(u) =>
 					u &&
 					typeof u === 'object' &&
-					!('status' in (u as Record<string, unknown>)) &&
-					'credentials' in (u as Record<string, unknown>),
-			) as { credentials?: string; config?: { owner_login?: string } } | undefined
+					'credentials' in (u as Record<string, unknown>) &&
+					!('externalId' in (u as Record<string, unknown>)),
+			) as { status?: string; credentials?: string; config?: { owner_login?: string } } | undefined
 			expect(refreshCall).toBeDefined()
+			expect(refreshCall?.status).toBe('active')
 			expect(refreshCall?.config).toEqual({
 				system_actor_id: 'system-actor-id',
 				owner_login: 'owner-300',
 			})
 
-			// No activate-shaped update — the pending row was NOT promoted to active.
-			const activateCalls = calls.updates.filter(
-				(u) => u && typeof u === 'object' && (u as { status?: string }).status === 'active',
+			// No promote-shaped update — the pending row was deleted, not rewritten
+			// to the installation's externalId.
+			const promoteCalls = calls.updates.filter(
+				(u) => u && typeof u === 'object' && 'externalId' in (u as Record<string, unknown>),
 			)
-			expect(activateCalls).toHaveLength(0)
+			expect(promoteCalls).toHaveLength(0)
 		})
 
 		it('re-connecting a resolveExternalId provider (e.g. Google Calendar) refreshes the existing row instead of hitting the unique constraint', async () => {
@@ -771,23 +775,27 @@ describe('Integrations Routes', () => {
 
 			expect(res.status).toBe(302)
 
-			// Refresh-shaped update: sets credentials + config but does NOT touch status.
+			// Refresh-shaped update: re-activates the existing row with fresh
+			// credentials + config but does NOT set externalId — that's how it
+			// differs from promoting the pending row, which rewrites externalId.
+			// (status IS set since the refresh branch also revives revoked rows.)
 			const refreshCall = calls.updates.find(
 				(u) =>
 					u &&
 					typeof u === 'object' &&
-					!('status' in (u as Record<string, unknown>)) &&
-					'credentials' in (u as Record<string, unknown>),
-			)
+					'credentials' in (u as Record<string, unknown>) &&
+					!('externalId' in (u as Record<string, unknown>)),
+			) as { status?: string } | undefined
 			expect(refreshCall).toBeDefined()
+			expect(refreshCall?.status).toBe('active')
 
-			// No activate-shaped update — this is the exact bug: activating the
+			// No promote-shaped update — this is the exact bug: activating the
 			// pending row here would set external_id to a value already used by
 			// existingActive and violate the unique constraint.
-			const activateCalls = calls.updates.filter(
-				(u) => u && typeof u === 'object' && (u as { status?: string }).status === 'active',
+			const promoteCalls = calls.updates.filter(
+				(u) => u && typeof u === 'object' && 'externalId' in (u as Record<string, unknown>),
 			)
-			expect(activateCalls).toHaveLength(0)
+			expect(promoteCalls).toHaveLength(0)
 		})
 	})
 
@@ -833,6 +841,119 @@ describe('Integrations Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('GET /api/integrations/:id/github-token', () => {
+		const { privateKey: testPrivateKeyPem } = generateKeyPairSync('rsa', {
+			modulusLength: 2048,
+			publicKeyEncoding: { type: 'spki', format: 'pem' },
+			privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+		})
+		const originalAppId = process.env.GITHUB_APP_ID
+		const originalKey = process.env.GITHUB_APP_PRIVATE_KEY
+
+		beforeAll(() => {
+			process.env.GITHUB_APP_ID = '12345'
+			process.env.GITHUB_APP_PRIVATE_KEY = testPrivateKeyPem
+		})
+
+		afterAll(() => {
+			process.env.GITHUB_APP_ID = originalAppId
+			process.env.GITHUB_APP_PRIVATE_KEY = originalKey
+		})
+
+		it('returns a freshly minted token for an active GitHub integration', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				status: 'active',
+				credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValue(
+					new Response(JSON.stringify({ token: 'ghs_fresh_token' }), { status: 200 }),
+				)
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${integration.id}/github-token`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toEqual({ token: 'ghs_fresh_token' })
+			// Every call mints a new token (no caching) — this route exists precisely
+			// so a caller mid-session gets a live token instead of a stale one.
+			expect(fetchSpy).toHaveBeenCalledWith(
+				'https://api.github.com/app/installations/42/access_tokens',
+				expect.objectContaining({ method: 'POST' }),
+			)
+			fetchSpy.mockRestore()
+		})
+
+		it('returns 404 when integration is not GitHub', async () => {
+			const integration = buildIntegration({ workspaceId: wsId, provider: 'slack' })
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [] // filter on provider='github' returns nothing
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${integration.id}/github-token`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when integration belongs to a different workspace', async () => {
+			const integration = buildIntegration({
+				workspaceId: 'other-workspace-id',
+				provider: 'github',
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${integration.id}/github-token`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 400 when GitHub API rejects the token mint', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				status: 'active',
+				credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValue(new Response('Bad credentials', { status: 401 }))
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${integration.id}/github-token`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			fetchSpy.mockRestore()
 		})
 	})
 

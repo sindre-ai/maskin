@@ -26,6 +26,9 @@ const columnIdSchema = z.string().min(1).max(256)
 // Comfortably under any reasonable body limit and well above the realistic
 // upper bound (the objects table has a few dozen columns at most).
 const COLUMN_VISIBILITY_MAX_ENTRIES = 200
+// Metadata filter keys are workspace-defined field names, same bound as
+// columnIdSchema; realistic field-definition counts per type are a handful.
+const METADATA_FILTERS_MAX_ENTRIES = 50
 
 export const displaySettingsBodySchema = z
 	.object({
@@ -37,6 +40,12 @@ export const displaySettingsBodySchema = z
 			.object({
 				status: filterStringSchema.optional(),
 				driver: filterStringSchema.optional(),
+				metadata: z
+					.record(columnIdSchema, filterStringSchema)
+					.refine((v) => Object.keys(v).length <= METADATA_FILTERS_MAX_ENTRIES, {
+						message: `metadata filters may have at most ${METADATA_FILTERS_MAX_ENTRIES} entries`,
+					})
+					.optional(),
 			})
 			.strict()
 			.optional(),
@@ -46,6 +55,7 @@ export const displaySettingsBodySchema = z
 				message: `columnVisibility may have at most ${COLUMN_VISIBILITY_MAX_ENTRIES} entries`,
 			})
 			.optional(),
+		timelineView: z.enum(['timeline', 'table']).optional(),
 	})
 	.strict()
 
