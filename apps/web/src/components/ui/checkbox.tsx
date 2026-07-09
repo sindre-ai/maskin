@@ -7,11 +7,13 @@ import { cn } from '@/lib/cn'
 type CheckboxSize = 'sm' | 'touch'
 
 // AC-T6: at ≤1024px viewports the visible checkbox must read as ≥44×44 CSS px,
-// centered on the visible box. The arbitrary 1024px breakpoint matches the AC
-// text literally — Tailwind's `lg:` activates at 1024px, which would shrink iPad
-// landscape back to 16px and violate the AC.
-const TOUCH_ROOT = 'max-[1024px]:h-11 max-[1024px]:w-11 max-[1024px]:rounded-md'
-const TOUCH_INDICATOR = 'max-[1024px]:h-6 max-[1024px]:w-6'
+// centered on the visible box. Tailwind v4 compiles `max-[value]:` to
+// `@media not all and (min-width: value)`, which is EXCLUSIVE of value — at
+// exactly 1024px (iPad landscape) that condition is false and the touch size
+// never applies. Bumping the arbitrary value by a hair keeps 1024px itself
+// inside the "not min-width" range without affecting any other breakpoint.
+const TOUCH_ROOT = 'max-[1024.02px]:h-11 max-[1024.02px]:w-11 max-[1024.02px]:rounded-md'
+const TOUCH_INDICATOR = 'max-[1024.02px]:h-6 max-[1024.02px]:w-6'
 
 interface CheckboxProps extends React.ComponentPropsWithoutRef<typeof CheckboxPrimitive.Root> {
 	size?: CheckboxSize
