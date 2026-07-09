@@ -176,7 +176,7 @@ function CommentRow({
 						onClick={onReply}
 						aria-label="Reply"
 						/* Always visible on touch (no hover capability); fades behind hover/focus on mouse devices. */
-						className="opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground self-end shrink-0 p-1 -m-1"
+						className="opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground self-end shrink-0 p-1 -m-1 pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11"
 					>
 						<Reply size={14} />
 					</button>

@@ -149,6 +149,25 @@ describe('ActivityComment', () => {
 		expect(reply.className).not.toMatch(/\bsm:opacity-0\b/)
 	})
 
+	it('grows the Reply hit box to 44×44 on coarse pointers (WCAG 2.5.5)', () => {
+		// F2: the inline Reply button used to be ~24px effective — below the 44px
+		// floor on touch. `pointer-coarse:min-h-11 pointer-coarse:min-w-11` grows
+		// the hit box only when the pointer is coarse; desktop stays at its
+		// hover-revealed 24px footprint. The `inline-flex items-center
+		// justify-center` companions keep the icon centred once the box grows.
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: 'Test' },
+		})
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+		const reply = screen.getByRole('button', { name: 'Reply' })
+		expect(reply.className).toContain('pointer-coarse:min-h-11')
+		expect(reply.className).toContain('pointer-coarse:min-w-11')
+		expect(reply.className).toContain('pointer-coarse:inline-flex')
+		expect(reply.className).toContain('pointer-coarse:items-center')
+		expect(reply.className).toContain('pointer-coarse:justify-center')
+	})
+
 	it('shows the Reply action button only on the last reply when replies exist', () => {
 		const event = buildEventResponse({
 			id: 1,

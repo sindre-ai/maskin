@@ -99,12 +99,12 @@ export function Header() {
 	return (
 		<header className="relative flex h-11 shrink-0 items-center gap-2 after:pointer-events-none after:absolute after:top-full after:right-0 after:left-0 after:z-10 after:h-8 after:bg-gradient-to-b after:from-background after:to-transparent after:content-['']">
 			<div className="flex w-full min-w-0 items-center gap-1 px-3 lg:gap-2 lg:px-4">
-				<SidebarTrigger className="md:hidden -ml-1 h-7 w-7 shrink-0" />
+				<SidebarTrigger className="md:hidden -ml-1 h-7 w-7 shrink-0 pointer-coarse:min-h-11 pointer-coarse:min-w-11" />
 				{crumbs.length > 1 && (
 					<Button
 						variant="ghost"
 						size="icon"
-						className="md:hidden -ml-1 h-7 w-7 shrink-0"
+						className="md:hidden -ml-1 h-7 w-7 shrink-0 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
 						onClick={() => router.history.back()}
 					>
 						<ArrowLeft />
@@ -116,7 +116,7 @@ export function Header() {
 						<Button
 							variant="ghost"
 							size="icon"
-							className="-ml-1 h-7 w-7"
+							className="-ml-1 h-7 w-7 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
 							onClick={() => router.history.back()}
 						>
 							<ArrowLeft />
@@ -152,7 +152,7 @@ export function Header() {
 					<Button
 						variant="ghost"
 						size="icon"
-						className="h-7 w-7"
+						className="h-7 w-7 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
 						onClick={() => setCreateOpen(true)}
 						aria-label="Create new"
 						title="Create new…"
@@ -162,7 +162,7 @@ export function Header() {
 					<Button
 						variant="ghost"
 						size="icon"
-						className="h-7 w-7"
+						className="h-7 w-7 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
 						onClick={() => setChatOpen(true)}
 						aria-label="Open chat"
 					>

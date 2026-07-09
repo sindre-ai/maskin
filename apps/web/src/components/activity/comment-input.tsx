@@ -399,7 +399,7 @@ export function CommentInput({
 				<Button
 					size="icon"
 					variant="ghost"
-					className="shrink-0 h-8 w-8"
+					className="shrink-0 h-8 w-8 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
 					disabled={attachmentLimitReached}
 					title={
 						attachmentLimitReached
@@ -414,7 +414,7 @@ export function CommentInput({
 				<Button
 					size="icon"
 					variant="ghost"
-					className="shrink-0 h-8 w-8"
+					className="shrink-0 h-8 w-8 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
 					disabled={!content.trim() || createComment.isPending || overLimit}
 					title={isUploadingAny ? 'Send (uploads continue in background)' : 'Send'}
 					aria-label="Send comment"
