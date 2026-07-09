@@ -1,10 +1,10 @@
 {
-  "default_branch": "main",
-  "branches": {
-    "main": {
-      "db_file": "tokensave.db",
-      "created_at": "1783500430",
-      "last_synced_at": "1783500430"
-    }
-  }
+	"default_branch": "main",
+	"branches": {
+		"main": {
+			"db_file": "tokensave.db",
+			"created_at": "1783500430",
+			"last_synced_at": "1783500430"
+		}
+	}
 }
