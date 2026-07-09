@@ -37,8 +37,10 @@ vi.mock('@/components/shared/agent-working-badge', () => ({
 // useIsMobile is overridden per-test via `mockIsMobile`. Default desktop so the
 // existing table-render assertions keep passing without changes.
 const mockIsMobile = vi.fn(() => false)
+const mockIsTouchViewport = vi.fn(() => false)
 vi.mock('@/hooks/use-mobile', () => ({
 	useIsMobile: () => mockIsMobile(),
+	useIsTouchViewport: () => mockIsTouchViewport(),
 }))
 
 // DataTable fetches actors for the mobile card view's owner label.

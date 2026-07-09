@@ -9,14 +9,6 @@ import { Link } from '@tanstack/react-router'
 import type { ColumnDef, Table } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
 
-/**
- * Expands a small visual control's hit zone to 44×44 (iOS HIG minimum) via a
- * centered, transparent `::before` pseudo-element. The visual size of the
- * control is unchanged — only the touchable area grows.
- */
-const TAP_TARGET_44 =
-	"relative before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
-
 /** Returns a YYYY-MM-DD string for grouping by day */
 function toDateKey(iso: string | null | undefined): string {
 	if (!iso) return ''
@@ -97,32 +89,29 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			id: 'select',
 			header: ({ table }) => (
 				<Checkbox
+					size="touch"
 					checked={
 						table.getIsAllPageRowsSelected() ||
 						(table.getIsSomePageRowsSelected() && 'indeterminate')
 					}
 					onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
 					aria-label="Select all"
-					className={TAP_TARGET_44}
 				/>
 			),
 			cell: ({ row }) => (
-				<span
+				<Checkbox
+					size="touch"
 					data-drag-checkbox=""
-					className="inline-flex touch-none select-none items-center justify-center"
-				>
-					<Checkbox
-						checked={row.getIsSelected()}
-						onCheckedChange={(value) => row.toggleSelected(!!value)}
-						aria-label="Select row"
-						onClick={(e) => e.stopPropagation()}
-						className={TAP_TARGET_44}
-					/>
-				</span>
+					checked={row.getIsSelected()}
+					onCheckedChange={(value) => row.toggleSelected(!!value)}
+					aria-label="Select row"
+					onClick={(e) => e.stopPropagation()}
+					className="touch-none select-none"
+				/>
 			),
 			enableSorting: false,
 			enableHiding: false,
-			size: 40,
+			size: 60,
 		},
 		{
 			accessorKey: 'title',
