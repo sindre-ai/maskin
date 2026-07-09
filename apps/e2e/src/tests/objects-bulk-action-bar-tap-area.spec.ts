@@ -69,7 +69,7 @@ test.describe('BulkActionBar tap targets — coarse pointer (touch)', () => {
 			const bulkBar = await openBulkBar(page, account)
 
 			for (const name of NAMED_BUTTONS) {
-				const button = bulkBar.getByRole('button', { name })
+				const button = bulkBar.getByRole('button', { name, exact: true })
 				await assertMin44(button, name, viewport.label)
 			}
 		})
@@ -89,7 +89,7 @@ test.describe('BulkActionBar tap targets — fine pointer (desktop)', () => {
 
 		// Copy link is a size-8 icon button on desktop — the pointer-coarse
 		// bump must NOT apply, so it stays below 44px.
-		const copyLink = bulkBar.getByRole('button', { name: 'Copy link' })
+		const copyLink = bulkBar.getByRole('button', { name: 'Copy link', exact: true })
 		await expect(copyLink).toBeVisible()
 		const box = await copyLink.boundingBox()
 		if (!box) throw new Error('Copy link boundingBox missing on desktop')
