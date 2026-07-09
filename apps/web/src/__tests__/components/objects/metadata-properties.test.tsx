@@ -106,6 +106,15 @@ describe('MetadataPropertiesView', () => {
 		expect(screen.getAllByRole('link')).toHaveLength(1)
 	})
 
+	it('renders branch as plain text when repo is not a github.com URL', () => {
+		const object = buildObjectResponse({
+			metadata: { branch: 'main', repo: 'javascript:alert(document.cookie)' },
+		})
+		render(<MetadataPropertiesView {...baseProps} object={object} />)
+		expect(screen.getByText('main')).toBeInTheDocument()
+		expect(screen.queryByRole('link')).not.toBeInTheDocument()
+	})
+
 	it('commits a text property edit on blur', async () => {
 		const user = userEvent.setup()
 		const onUpdateMetadata = vi.fn()

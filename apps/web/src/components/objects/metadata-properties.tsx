@@ -491,6 +491,13 @@ export function buildValueHref(
 	if (key !== 'branch' || typeof value !== 'string' || !value) return undefined
 	const repo = metadata.repo
 	if (typeof repo !== 'string' || !repo) return undefined
+	let repoUrl: URL
+	try {
+		repoUrl = new URL(repo)
+	} catch {
+		return undefined
+	}
+	if (repoUrl.protocol !== 'https:' || repoUrl.hostname !== 'github.com') return undefined
 	const base = repo.replace(/\/+$/, '')
 	return `${base}/tree/${encodeURIComponent(value)}`
 }
