@@ -222,7 +222,7 @@ export function BulkActionBar({
 									type="button"
 									variant="outline"
 									size="icon"
-									className="size-8"
+									className="size-8 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
 									onClick={() => {
 										emitCommit('copy')
 										onCopyLink()
@@ -242,7 +242,7 @@ export function BulkActionBar({
 									type="button"
 									variant="outline"
 									size="icon"
-									className="size-8"
+									className="size-8 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
 									onClick={() => {
 										emitCommit('copy')
 										onCopyTitle()
@@ -262,7 +262,7 @@ export function BulkActionBar({
 									type="button"
 									variant="outline"
 									size="icon"
-									className="size-8"
+									className="size-8 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
 									onClick={() => {
 										emitCommit('copy')
 										onCopyTitleAsLink()
@@ -282,7 +282,7 @@ export function BulkActionBar({
 									type="button"
 									variant="outline"
 									size="icon"
-									className="size-8"
+									className="size-8 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
 									onClick={() => {
 										emitCommit('copy')
 										onOpenLinks()
@@ -300,7 +300,7 @@ export function BulkActionBar({
 							type="button"
 							variant="outline"
 							size="sm"
-							className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+							className="pointer-coarse:min-h-11 pointer-coarse:min-w-11 text-destructive hover:bg-destructive/10 hover:text-destructive"
 							onClick={() => setConfirmOpen(true)}
 							aria-label="Delete selected"
 						>
@@ -312,7 +312,7 @@ export function BulkActionBar({
 						type="button"
 						variant="ghost"
 						size="icon"
-						className="size-8 rounded-full"
+						className="size-8 rounded-full pointer-coarse:min-h-11 pointer-coarse:min-w-11"
 						onClick={onClear}
 						aria-label="Clear selection"
 					>
