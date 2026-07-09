@@ -1,6 +1,6 @@
 import { BulkActionBar } from '@/components/objects/bulk-action-bar'
-import { useBulkUpdateObjects } from '@/hooks/use-objects'
-import type { BulkUpdateObjectsResponse, ObjectResponse } from '@/lib/api'
+import { useBulkResultHandlers, useBulkUpdateObjects } from '@/hooks/use-objects'
+import type { ObjectResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { RowSelectionState } from '@tanstack/react-table'
@@ -68,35 +68,10 @@ function Harness({
 	const clearSelection = useCallback(() => setRowSelection({}), [])
 
 	const bulkUpdate = useBulkUpdateObjects(workspaceId)
-
-	const reportBulkResult = useCallback(
-		(response: BulkUpdateObjectsResponse, total: number) => {
-			const okCount = response.results.filter((r) => r.ok).length
-			const failed = total - okCount
-			if (failed === 0) {
-				toast.success(`${okCount} object${okCount === 1 ? '' : 's'} updated`)
-				clearSelection()
-			} else {
-				const firstError = response.results.find((r) => !r.ok)?.error
-				toast.error(`${okCount} of ${total} updated; ${failed} failed`, {
-					description: firstError,
-				})
-			}
-		},
-		[clearSelection],
+	const { reportBulkResult, retainOnlyFailed } = useBulkResultHandlers(
+		clearSelection,
+		setRowSelection,
 	)
-
-	const retainOnlyFailed = useCallback((response: BulkUpdateObjectsResponse) => {
-		const failedIds = new Set(response.results.filter((r) => !r.ok).map((r) => r.id))
-		if (failedIds.size === 0) return
-		setRowSelection((prev) => {
-			const next: RowSelectionState = {}
-			for (const id of Object.keys(prev)) {
-				if (failedIds.has(id)) next[id] = prev[id] as boolean
-			}
-			return next
-		})
-	}, [])
 
 	const handleStatus = useCallback(
 		(status: string) => {
@@ -106,7 +81,7 @@ function Harness({
 				{
 					onSuccess: (data) => {
 						retainOnlyFailed(data)
-						reportBulkResult(data, ids.length)
+						reportBulkResult(data, ids.length, 'updated')
 					},
 					onError: () => toast.error('Failed to update objects'),
 				},

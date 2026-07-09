@@ -18,7 +18,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useImportToast } from '@/hooks/use-imports'
-import { useBulkUpdateObjects } from '@/hooks/use-objects'
+import { useBulkResultHandlers, useBulkUpdateObjects } from '@/hooks/use-objects'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -577,43 +577,12 @@ function ObjectsPage() {
 	const bulkUpdate = useBulkUpdateObjects(workspaceId)
 	const queryClient = useQueryClient()
 
-	const reportBulkResult = useCallback(
-		(
-			response: { results: Array<{ id: string; ok: boolean; error?: string }> },
-			total: number,
-			verb: 'updated' | 'deleted',
-		) => {
-			const okCount = response.results.filter((r) => r.ok).length
-			const failed = total - okCount
-			if (failed === 0) {
-				toast.success(`${okCount} object${okCount === 1 ? '' : 's'} ${verb}`)
-				clearSelection()
-			} else {
-				const firstError = response.results.find((r) => !r.ok)?.error
-				toast.error(`${okCount} of ${total} ${verb}; ${failed} failed`, {
-					description: firstError,
-				})
-			}
-		},
-		[clearSelection],
-	)
-
 	// Matches the handleBulkDelete pattern: on partial success, prune selection
 	// to the ids that still need attention so the bulk bar stays pinned to the
 	// failed rows and the operator can retry them without re-selecting.
-	const retainOnlyFailed = useCallback(
-		(response: { results: Array<{ id: string; ok: boolean }> }) => {
-			const failedIds = new Set(response.results.filter((r) => !r.ok).map((r) => r.id))
-			if (failedIds.size === 0) return
-			setRowSelection((prev) => {
-				const next: RowSelectionState = {}
-				for (const id of Object.keys(prev)) {
-					if (failedIds.has(id)) next[id] = prev[id] as boolean
-				}
-				return next
-			})
-		},
-		[],
+	const { reportBulkResult, retainOnlyFailed } = useBulkResultHandlers(
+		clearSelection,
+		setRowSelection,
 	)
 
 	const handleBulkStatusChange = useCallback(
