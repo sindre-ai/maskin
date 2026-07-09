@@ -295,6 +295,16 @@ describe('ForYouDashboard', () => {
 		expect(screen.queryByRole('button', { name: /mark all as read/i })).not.toBeInTheDocument()
 	})
 
+	it('"Mark all as read" button meets the ≥44px tap target on coarse pointers', () => {
+		mockUseUnread.mockReturnValue({
+			data: { items: [buildUnreadItem({ entity_id: 'obj-1' })] },
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		const button = screen.getByRole('button', { name: /mark all as read/i })
+		expect(button.className).toContain('pointer-coarse:min-h-11')
+	})
+
 	it('clicking "Mark all as read" hides items and opens a toast with an Undo action', () => {
 		mockUseUnread.mockReturnValue({
 			data: {
@@ -308,7 +318,7 @@ describe('ForYouDashboard', () => {
 		// Items disappear from the list immediately (optimistic hide).
 		expect(screen.queryAllByTestId('unread-thread-card')).toHaveLength(0)
 
-		// Sonner was invoked with a 15s Undo action.
+		// Sonner was invoked with a 5s Undo action.
 		expect(mockToast).toHaveBeenCalledTimes(1)
 		const [message, opts] = mockToast.mock.calls[0] as [
 			string,
@@ -320,7 +330,7 @@ describe('ForYouDashboard', () => {
 			},
 		]
 		expect(message).toContain('2 threads')
-		expect(opts.duration).toBe(15_000)
+		expect(opts.duration).toBe(5_000)
 		expect(opts.action.label).toBe('Undo')
 		// No mutations have fired yet — they wait for auto-close/dismiss.
 		expect(mockMarkReadMutate).not.toHaveBeenCalled()
