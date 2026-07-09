@@ -16,3 +16,4 @@ coverage/
 .pnpmfile.cjs
 .worktrees/
 .playwright-mcp/
+.tokensave/

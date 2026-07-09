@@ -40,7 +40,10 @@ vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: [] }) }))
 vi.mock('@/hooks/use-enabled-modules', () => ({ useEnabledModules: () => [] }))
 vi.mock('@/hooks/use-custom-extensions', () => ({ useCustomExtensions: () => [] }))
 vi.mock('@maskin/module-sdk', () => ({ getEnabledObjectTypeTabs: () => [] }))
-vi.mock('@/hooks/use-objects', () => ({ useBulkUpdateObjects: () => ({ mutate: vi.fn() }) }))
+vi.mock('@/hooks/use-objects', () => ({
+	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
+	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
+}))
 
 // Track upsert calls via globalThis to dodge vi.mock hoist.
 ;(globalThis as unknown as { __dsUpsertCalls?: number }).__dsUpsertCalls = 0
