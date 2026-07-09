@@ -184,4 +184,94 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 		`
 		expect(event?.id, 'Event INSERT must succeed despite large data payload').toBeTruthy()
 	})
+
+	// ── slack_user_links (migration 0040) ─────────────────────────────────────
+	// Covers AC-T4: additive migration leaves existing Slack integrations rows
+	// untouched and the rollback drops cleanly.
+
+	it('slack_user_links exists, is empty after migration, and integrations rows are unchanged', async () => {
+		const actorId = getTestActorId()
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, created_by) VALUES ('slack-link-test', ${actorId})
+			RETURNING id
+		`
+		await sql`
+			INSERT INTO workspace_members (workspace_id, actor_id, role)
+			VALUES (${ws.id}, ${actorId}, 'owner')
+		`
+		const [integration] = await sql`
+			INSERT INTO integrations
+				(workspace_id, provider, status, external_id, credentials, config, created_by)
+			VALUES (${ws.id}, 'slack', 'active', 'T123', 'enc:placeholder', '{}'::jsonb, ${actorId})
+			RETURNING id, workspace_id, provider, status, external_id, credentials, config, metadata, created_by, created_at, updated_at
+		`
+
+		const links = await sql`SELECT * FROM slack_user_links`
+		expect(links.length, 'slack_user_links must be empty post-migration').toBe(0)
+
+		const [after] = await sql`
+			SELECT id, workspace_id, provider, status, external_id, credentials, config, metadata, created_by, created_at, updated_at
+			FROM integrations WHERE id = ${integration.id}
+		`
+		expect(after, 'pre-existing integrations row must be byte-for-byte unchanged').toEqual(
+			integration,
+		)
+	})
+
+	it('slack_user_links FKs are ON DELETE CASCADE', async () => {
+		const rows = await sql`
+			SELECT
+				(SELECT attname FROM pg_attribute
+				 WHERE attrelid = c.conrelid AND attnum = c.conkey[1]) AS column_name,
+				c.confdeltype
+			FROM pg_constraint c
+			WHERE c.conrelid = 'public.slack_user_links'::regclass
+				AND c.contype = 'f'
+		`
+		const byColumn = Object.fromEntries(rows.map((r) => [r.column_name, r.confdeltype]))
+		// 'c' = CASCADE
+		expect(byColumn.actor_id, 'actor_id FK must be ON DELETE CASCADE').toBe('c')
+		expect(byColumn.default_workspace_id, 'default_workspace_id FK must be ON DELETE CASCADE').toBe(
+			'c',
+		)
+	})
+
+	it('slack_user_links rollback drops the table and leaves integrations rows untouched', async () => {
+		const actorId = getTestActorId()
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, created_by) VALUES ('slack-rollback-test', ${actorId})
+			RETURNING id
+		`
+		await sql`
+			INSERT INTO workspace_members (workspace_id, actor_id, role)
+			VALUES (${ws.id}, ${actorId}, 'owner')
+		`
+		const [integration] = await sql`
+			INSERT INTO integrations
+				(workspace_id, provider, status, external_id, credentials, config, created_by)
+			VALUES (${ws.id}, 'slack', 'active', 'T456', 'enc:placeholder', '{}'::jsonb, ${actorId})
+			RETURNING id
+		`
+
+		// DDL is transactional in Postgres — run the rollback inside a tx that we
+		// abort, so the table is restored for subsequent tests in this suite.
+		await sql
+			.begin(async (tx) => {
+				await tx`DROP TABLE slack_user_links`
+
+				const [dropped] = await tx`SELECT to_regclass('public.slack_user_links') AS r`
+				expect(dropped.r, 'slack_user_links must be gone after rollback').toBeNull()
+
+				const stillThere = await tx`SELECT id FROM integrations WHERE id = ${integration.id}`
+				expect(stillThere.length, 'integrations row must survive the rollback').toBe(1)
+
+				throw new Error('__abort__')
+			})
+			.catch((err) => {
+				if ((err as Error).message !== '__abort__') throw err
+			})
+
+		const [restored] = await sql`SELECT to_regclass('public.slack_user_links') AS r`
+		expect(restored.r, 'tx abort must restore the schema for later tests').not.toBeNull()
+	})
 })
