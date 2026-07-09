@@ -46,6 +46,25 @@ async function assertCommentComposerVisible(page: Page, surface: string, viewpor
 	).toBeVisible({ timeout: 5000 })
 }
 
+// iOS Safari auto-zooms any input with computed font-size < 16px on focus,
+// breaking the comment flow (see bet "Fix iOS comment input zoom and viewport
+// jump on focus"). Guard the threshold directly so a regression is caught here
+// instead of only on a real device.
+async function assertCommentComposerFontSizeSafeForIOS(
+	page: Page,
+	surface: string,
+	viewport: NamedViewport,
+) {
+	const composer = page.getByPlaceholder('Write a comment... Use @ to mention an agent').first()
+	const fontSizePx = await composer.evaluate((el) =>
+		Number.parseFloat(getComputedStyle(el).fontSize),
+	)
+	expect(
+		fontSizePx,
+		`${surface}: comment composer font-size must be >=16px at ${viewport.label} to avoid iOS Safari zoom-on-focus`,
+	).toBeGreaterThanOrEqual(16)
+}
+
 interface Surface {
 	name: string
 	path: (workspaceId: string, ids: SeedIds) => string
@@ -197,6 +216,25 @@ test.describe('Mobile + iPad QA — critical controls ship gate', () => {
 
 			await assertCommentComposerVisible(page, 'Object detail', viewport)
 			await assertReplyButtonVisibleOnObjectDetail(page, 'Object detail', viewport)
+		})
+	}
+})
+
+test.describe('Mobile + iPad QA — iOS zoom-on-focus regression gate', () => {
+	// Brief: at every ship-gate viewport (375 / 768 / 1024), the comment composer's
+	// computed font-size must stay >=16px so iOS Safari never auto-zooms on focus.
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`comment composer font-size stays >=16px @ ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			const ids = await seedObjects(account)
+
+			await page.goto(`/${account.workspaceId}/objects/${ids.betId}`)
+			await expect(page.getByText('Mobile QA Bet')).toBeVisible({ timeout: 10000 })
+
+			await assertCommentComposerFontSizeSafeForIOS(page, 'Object detail', viewport)
 		})
 	}
 })
