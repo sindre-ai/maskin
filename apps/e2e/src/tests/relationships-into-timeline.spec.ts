@@ -42,10 +42,15 @@ test.describe('Relationships into the timeline (AC-U11/U12)', () => {
 
 			// AC-U12 + AC-T7: toggle to Table — choice persists across reload.
 			// The radio input is `sr-only` inside a wrapping <label>, so the label
-			// is the actual click target; force the check past the visibility
-			// check on the visually-hidden input.
+			// is the actual click target; force the click past the visibility
+			// check on the visually-hidden input. Use .click() rather than
+			// .check() — the toggle's checked state round-trips through an
+			// optimistic mutation (see useUpdateUserDisplaySettings), so it can
+			// flip a tick after the click; .check() verifies the new state once
+			// and throws on that race, while the toBeChecked() assertion below
+			// polls until it settles.
 			const tableToggle = page.getByRole('radio', { name: /table/i })
-			await tableToggle.check({ force: true })
+			await tableToggle.click({ force: true })
 			await expect(tableToggle).toBeChecked()
 
 			await page.reload()
@@ -57,7 +62,7 @@ test.describe('Relationships into the timeline (AC-U11/U12)', () => {
 			// Toggle back to Timeline so the SSE assertion below targets the
 			// inline projection, not the table.
 			const timelineToggle = page.getByRole('radio', { name: /timeline/i })
-			await timelineToggle.check({ force: true })
+			await timelineToggle.click({ force: true })
 			await expect(timelineToggle).toBeChecked()
 
 			// AC-T8: a new relationship POSTed after the page is open appears
