@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { unzipSync } from 'fflate'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -67,6 +68,7 @@ import {
 	sortSkills,
 	toSkillUpload,
 	uniqueName,
+	zipFolderFiles,
 } from '@/routes/_authed/$workspaceId/settings/skills'
 
 const SkillsPage = Route.options.component as () => React.ReactElement
@@ -95,6 +97,25 @@ const buildSkill = (overrides: Record<string, unknown> = {}) => ({
 	...overrides,
 })
 
+function buildFolderFile(relativePath: string, content: string): File {
+	const file = new File([content], relativePath.split('/').pop() ?? relativePath, {
+		type: 'text/plain',
+	})
+	Object.defineProperty(file, 'webkitRelativePath', { value: relativePath })
+	return file
+}
+
+// jsdom's Blob/File implementation doesn't have .arrayBuffer()/.text() —
+// FileReader is the one read API it fully implements.
+function readAsUint8Array(file: File): Promise<Uint8Array> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader()
+		reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer))
+		reader.onerror = () => reject(reader.error ?? new Error('read failed'))
+		reader.readAsArrayBuffer(file)
+	})
+}
+
 describe('Settings > Skills', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
@@ -119,7 +140,7 @@ describe('Settings > Skills', () => {
 		expect(screen.getByText('No skills yet')).toBeInTheDocument()
 		expect(
 			screen.getByText(
-				"Create a skill, browse for SKILL.md or .zip bundles, or drag and drop them here. Files that don't match the SKILL.md format are still added so you can fix them.",
+				"Create a skill, browse for SKILL.md or .zip bundles, import a folder directly, or drag and drop files here. Files that don't match the SKILL.md format are still added so you can fix them.",
 			),
 		).toBeInTheDocument()
 	})
@@ -368,6 +389,20 @@ describe('Settings > Skills', () => {
 		expect(screen.getByRole('button', { name: 'Replace bundle for docx' })).toBeInTheDocument()
 	})
 
+	it('shows a single Import button with From file and From folder options', async () => {
+		const user = userEvent.setup()
+		renderPage()
+
+		// Empty state renders the action twice (header + empty-state body).
+		expect(screen.queryByRole('button', { name: 'Import from file' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Import folder' })).not.toBeInTheDocument()
+
+		await user.click(screen.getAllByRole('button', { name: 'Import' })[0])
+
+		expect(screen.getByRole('menuitem', { name: 'From file' })).toBeInTheDocument()
+		expect(screen.getByRole('menuitem', { name: 'From folder' })).toBeInTheDocument()
+	})
+
 	it('routes a .zip file through the multipart upload mutation', async () => {
 		const user = userEvent.setup()
 		renderPage()
@@ -385,6 +420,49 @@ describe('Settings > Skills', () => {
 		expect(zipPayload.file).toBe(zipFile)
 		// First upload of a brand-new bundle — no replace, no skillId on the call.
 		expect(zipPayload.skillId).toBeUndefined()
+	})
+
+	it('zips a folder selection client-side and routes it through the multipart upload mutation', async () => {
+		const user = userEvent.setup()
+		renderPage()
+
+		const folderInput = document.querySelector('input[webkitdirectory]') as HTMLInputElement
+		expect(folderInput).toBeTruthy()
+
+		const files = [
+			buildFolderFile('my-skill/SKILL.md', '---\nname: my-skill\n---\nbody'),
+			buildFolderFile('my-skill/reference/style.md', 'reference content'),
+		]
+
+		await user.upload(folderInput, files)
+
+		await waitFor(() => expect(mockUploadMutateAsync).toHaveBeenCalledTimes(1))
+		const [payload] = mockUploadMutateAsync.mock.calls[0]
+		expect(payload.file).toBeInstanceOf(File)
+		expect(payload.file.name).toBe('my-skill.zip')
+		expect(payload.skillId).toBeUndefined()
+
+		// The zip preserves the folder-relative paths (including the root
+		// folder name) so the server's wrapper-stripping logic can apply.
+		const buffer = await readAsUint8Array(payload.file)
+		const unzipped = unzipSync(buffer)
+		expect(Object.keys(unzipped).sort()).toEqual([
+			'my-skill/SKILL.md',
+			'my-skill/reference/style.md',
+		])
+	})
+
+	it('shows a friendly error and skips upload when a folder selection is empty', async () => {
+		const user = userEvent.setup()
+		renderPage()
+
+		const folderInput = document.querySelector('input[webkitdirectory]') as HTMLInputElement
+		const emptyFile = buildFolderFile('my-skill/empty.md', '')
+
+		await user.upload(folderInput, [emptyFile])
+
+		await waitFor(() => expect(screen.getByText(/Folder is empty/)).toBeInTheDocument())
+		expect(mockUploadMutateAsync).not.toHaveBeenCalled()
 	})
 
 	it('passes skillId through the upload mutation when Replace bundle is used', async () => {
@@ -418,6 +496,35 @@ describe('Settings > Skills', () => {
 		await waitFor(() => expect(mockUploadMutateAsync).toHaveBeenCalledTimes(1))
 		const [payload] = mockUploadMutateAsync.mock.calls[0]
 		expect(payload.file).toBe(newZip)
+		expect(payload.skillId).toBe('skill-42')
+	})
+
+	it('zips a folder selection and passes skillId when Replace with folder is used', async () => {
+		const user = userEvent.setup()
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildSkill({ id: 'skill-42', name: 'docx', isFolder: true, fileCount: 3 })],
+			isLoading: false,
+		})
+		renderPage()
+
+		await user.click(screen.getByText('docx'))
+		await waitFor(() =>
+			expect(
+				screen.getByRole('button', { name: 'Replace bundle for docx with a folder' }),
+			).toBeInTheDocument(),
+		)
+
+		const replaceFolderInput = document.querySelector(
+			'input[webkitdirectory][multiple]',
+		) as HTMLInputElement
+		expect(replaceFolderInput).toBeTruthy()
+
+		const files = [buildFolderFile('docx/SKILL.md', '---\nname: docx\n---\nbody')]
+		await user.upload(replaceFolderInput, files)
+
+		await waitFor(() => expect(mockUploadMutateAsync).toHaveBeenCalledTimes(1))
+		const [payload] = mockUploadMutateAsync.mock.calls[0]
+		expect(payload.file.name).toBe('docx.zip')
 		expect(payload.skillId).toBe('skill-42')
 	})
 
@@ -557,6 +664,52 @@ describe('settings/skills helpers', () => {
 		it('returns a placeholder for negative or non-finite values', () => {
 			expect(formatSize(-1)).toBe('—')
 			expect(formatSize(Number.NaN)).toBe('—')
+		})
+	})
+
+	describe('zipFolderFiles', () => {
+		it('zips files preserving folder-relative paths, named after the root folder', async () => {
+			const files = [
+				buildFolderFile('my-skill/SKILL.md', '---\nname: my-skill\n---\nbody'),
+				buildFolderFile('my-skill/reference/style.md', 'reference content'),
+			]
+
+			const result = await zipFolderFiles(files)
+			if ('error' in result) throw new Error(`expected success, got error: ${result.error}`)
+			expect(result.file.name).toBe('my-skill.zip')
+
+			const unzipped = unzipSync(await readAsUint8Array(result.file))
+			expect(Object.keys(unzipped).sort()).toEqual([
+				'my-skill/SKILL.md',
+				'my-skill/reference/style.md',
+			])
+		})
+
+		it('rejects an empty file selection', async () => {
+			const result = await zipFolderFiles([buildFolderFile('my-skill/empty.md', '')])
+			expect(result).toEqual({ error: 'Folder is empty' })
+		})
+
+		it('rejects a selection with more than 500 entries', async () => {
+			const files = Array.from({ length: 501 }, (_, i) => buildFolderFile(`my-skill/f${i}.md`, 'x'))
+			const result = await zipFolderFiles(files)
+			expect('error' in result && result.error).toMatch(/Folder has 501 files \(limit 500\)/)
+		})
+
+		it('rejects a single entry larger than 5 MB', async () => {
+			const oversized = buildFolderFile('my-skill/big.bin', 'x'.repeat(5 * 1024 * 1024 + 1))
+			const result = await zipFolderFiles([oversized])
+			expect('error' in result && result.error).toMatch(/limit 5\.0 MB/)
+		})
+
+		it('rejects a folder whose total uncompressed size exceeds 10 MB', async () => {
+			const files = [
+				buildFolderFile('my-skill/a.bin', 'x'.repeat(5 * 1024 * 1024)),
+				buildFolderFile('my-skill/b.bin', 'x'.repeat(5 * 1024 * 1024)),
+				buildFolderFile('my-skill/c.bin', 'x'),
+			]
+			const result = await zipFolderFiles(files)
+			expect('error' in result && result.error).toMatch(/Folder exceeds 10\.0 MB uncompressed/)
 		})
 	})
 

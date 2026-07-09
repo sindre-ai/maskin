@@ -47,12 +47,15 @@ import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { parseSkillMd, skillNameSchema } from '@maskin/shared'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
+import { zipSync } from 'fflate'
 import {
 	AlertTriangle,
+	ChevronDown,
 	ChevronRight,
 	Download,
 	FileUp,
 	Folder,
+	FolderUp,
 	MoreHorizontal,
 	Pencil,
 	Plus,
@@ -104,6 +107,14 @@ const MAX_UPLOAD_RETRIES = 5
 const SKILL_UPLOAD_ACCEPT =
 	'.md,.markdown,text/markdown,.zip,application/zip,application/x-zip-compressed'
 
+// Mirrors apps/dev/src/lib/skill-bundles.ts (SKILL_BUNDLE_MAX_*). Not shared
+// code — apps/web can't import from apps/dev — so this is a client-side
+// pre-check that fails fast with a friendly message; the server enforces the
+// real limits regardless.
+const FOLDER_MAX_UNCOMPRESSED_BYTES = 10 * 1024 * 1024 // 10 MB
+const FOLDER_MAX_ENTRY_BYTES = 5 * 1024 * 1024 // 5 MB
+const FOLDER_MAX_ENTRIES = 500
+
 type DialogState =
 	| { kind: 'closed' }
 	| { kind: 'create' }
@@ -124,6 +135,7 @@ function SkillsPage() {
 	const [isUploading, setIsUploading] = useState(false)
 	const [summary, setSummary] = useState<UploadSummary | null>(null)
 	const inputRef = useRef<HTMLInputElement>(null)
+	const folderInputRef = useRef<HTMLInputElement>(null)
 
 	const rawList = skills ?? []
 	const existingNames = rawList.map((s) => s.name)
@@ -207,6 +219,7 @@ function SkillsPage() {
 	)
 
 	const openFilePicker = useCallback(() => inputRef.current?.click(), [])
+	const openFolderPicker = useCallback(() => folderInputRef.current?.click(), [])
 
 	const handleFileChange = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {
@@ -214,6 +227,28 @@ function SkillsPage() {
 				void handleFiles(e.target.files)
 			}
 			e.target.value = ''
+		},
+		[handleFiles],
+	)
+
+	const handleFolderChange = useCallback(
+		async (e: React.ChangeEvent<HTMLInputElement>) => {
+			const files = e.target.files ? Array.from(e.target.files) : []
+			e.target.value = ''
+			if (files.length === 0) return
+
+			setIsUploading(true)
+			setSummary(null)
+			const result = await zipFolderFiles(files)
+			if ('error' in result) {
+				setIsUploading(false)
+				const folderName = files[0].webkitRelativePath.split('/')[0] || files[0].name
+				setSummary({ imported: 0, failed: [{ name: folderName, reason: result.error }] })
+				return
+			}
+			// handleFiles owns isUploading/summary from here — it routes the zipped
+			// folder through the same multipart path a hand-zipped .zip takes.
+			await handleFiles([result.file])
 		},
 		[handleFiles],
 	)
@@ -243,10 +278,11 @@ function SkillsPage() {
 				onOrderChange={(value) => updateSort({ order: value })}
 				showView={false}
 			/>
-			<Button variant="outline" size="sm" onClick={openFilePicker} disabled={isUploading}>
-				<FileUp size={14} className="mr-1" />
-				Import from file
-			</Button>
+			<ImportSkillButton
+				onImportFile={openFilePicker}
+				onImportFolder={openFolderPicker}
+				disabled={isUploading}
+			/>
 			<Button size="sm" onClick={() => setDialog({ kind: 'create' })}>
 				<Plus size={14} className="mr-1" />
 				Create skill
@@ -282,13 +318,14 @@ function SkillsPage() {
 									? 'Drop SKILL.md files or skill bundles (.zip) to import'
 									: 'No skills yet'
 						}
-						description="Create a skill, browse for SKILL.md or .zip bundles, or drag and drop them here. Files that don't match the SKILL.md format are still added so you can fix them."
+						description="Create a skill, browse for SKILL.md or .zip bundles, import a folder directly, or drag and drop files here. Files that don't match the SKILL.md format are still added so you can fix them."
 						action={
-							<div className="flex items-center gap-2">
-								<Button variant="outline" size="sm" onClick={openFilePicker} disabled={isUploading}>
-									<FileUp size={14} className="mr-1" />
-									Import from file
-								</Button>
+							<div className="flex flex-wrap items-center gap-2">
+								<ImportSkillButton
+									onImportFile={openFilePicker}
+									onImportFolder={openFolderPicker}
+									disabled={isUploading}
+								/>
 								<Button size="sm" onClick={() => setDialog({ kind: 'create' })}>
 									<Plus size={14} className="mr-1" />
 									Create skill
@@ -334,6 +371,17 @@ function SkillsPage() {
 				className="hidden"
 				onChange={handleFileChange}
 			/>
+			<input
+				ref={folderInputRef}
+				type="file"
+				// @ts-expect-error — webkitdirectory is a non-standard but universally
+				// supported attribute (Chrome, Firefox, Safari, Edge) with no React/DOM
+				// typing; it's not part of the `accept`-based file filtering above.
+				webkitdirectory=""
+				multiple
+				className="hidden"
+				onChange={handleFolderChange}
+			/>
 
 			{(dialog.kind === 'create' || dialog.kind === 'edit') && (
 				<SkillDialog
@@ -354,6 +402,38 @@ function SkillsPage() {
 	)
 }
 
+function ImportSkillButton({
+	onImportFile,
+	onImportFolder,
+	disabled,
+}: {
+	onImportFile: () => void
+	onImportFolder: () => void
+	disabled: boolean
+}) {
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild>
+				<Button variant="outline" size="sm" disabled={disabled}>
+					<FileUp size={14} className="mr-1" />
+					Import
+					<ChevronDown size={14} className="ml-1" />
+				</Button>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent align="start">
+				<DropdownMenuItem onClick={onImportFile}>
+					<FileUp size={14} className="mr-2" />
+					From file
+				</DropdownMenuItem>
+				<DropdownMenuItem onClick={onImportFolder}>
+					<FolderUp size={14} className="mr-2" />
+					From folder
+				</DropdownMenuItem>
+			</DropdownMenuContent>
+		</DropdownMenu>
+	)
+}
+
 function SkillRow({
 	skill,
 	workspaceId,
@@ -367,9 +447,11 @@ function SkillRow({
 }) {
 	const [expanded, setExpanded] = useState(false)
 	const replaceInputRef = useRef<HTMLInputElement>(null)
+	const replaceFolderInputRef = useRef<HTMLInputElement>(null)
 	const uploadMutation = useUploadWorkspaceSkill(workspaceId)
 	const [downloading, setDownloading] = useState(false)
 	const [downloadError, setDownloadError] = useState<string | null>(null)
+	const [replaceError, setReplaceError] = useState<string | null>(null)
 
 	const handleRowClick = () => {
 		if (skill.isFolder) {
@@ -384,15 +466,38 @@ function SkillRow({
 		replaceInputRef.current?.click()
 	}
 
+	const handleReplaceFolderClick = (e: React.MouseEvent) => {
+		e.stopPropagation()
+		replaceFolderInputRef.current?.click()
+	}
+
 	const handleReplaceFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
 		const file = e.target.files?.[0]
 		e.target.value = ''
 		if (!file) return
+		setReplaceError(null)
 		try {
 			await uploadMutation.mutateAsync({ file, skillId: skill.id })
-		} catch {
-			// Errors land on the mutation; toast/banner left to a future surface.
-			// The row stays expanded so the user sees the row didn't change shape.
+		} catch (err) {
+			setReplaceError(err instanceof Error ? err.message : 'Replace failed')
+			// Row stays expanded so the user sees the error next to the controls.
+		}
+	}
+
+	const handleReplaceFolder = async (e: React.ChangeEvent<HTMLInputElement>) => {
+		const files = e.target.files ? Array.from(e.target.files) : []
+		e.target.value = ''
+		if (files.length === 0) return
+		setReplaceError(null)
+		const result = await zipFolderFiles(files)
+		if ('error' in result) {
+			setReplaceError(result.error)
+			return
+		}
+		try {
+			await uploadMutation.mutateAsync({ file: result.file, skillId: skill.id })
+		} catch (err) {
+			setReplaceError(err instanceof Error ? err.message : 'Replace failed')
 		}
 	}
 
@@ -513,6 +618,16 @@ function SkillRow({
 							<RefreshCw size={14} className="mr-1" />
 							{uploadMutation.isPending ? 'Uploading...' : 'Replace bundle'}
 						</Button>
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={handleReplaceFolderClick}
+							disabled={uploadMutation.isPending}
+							aria-label={`Replace bundle for ${skill.name} with a folder`}
+						>
+							<FolderUp size={14} className="mr-1" />
+							{uploadMutation.isPending ? 'Uploading...' : 'Replace with folder'}
+						</Button>
 						<input
 							ref={replaceInputRef}
 							type="file"
@@ -520,8 +635,19 @@ function SkillRow({
 							className="hidden"
 							onChange={handleReplaceFile}
 						/>
+						<input
+							ref={replaceFolderInputRef}
+							type="file"
+							// @ts-expect-error — webkitdirectory has no React/DOM typing; see the
+							// page-level folder input above for the same suppression.
+							webkitdirectory=""
+							multiple
+							className="hidden"
+							onChange={handleReplaceFolder}
+						/>
 					</div>
 					{downloadError && <p className="text-xs text-error">{downloadError}</p>}
+					{replaceError && <p className="text-xs text-error">{replaceError}</p>}
 				</div>
 			)}
 		</div>
@@ -792,6 +918,52 @@ export function uniqueName(base: string, taken: Set<string>): string {
 		if (!taken.has(candidate)) return candidate
 	}
 	return `${base}-${Date.now()}`.slice(0, 64)
+}
+
+// FileReader rather than File.prototype.arrayBuffer()/.text() — the older
+// callback API has the widest support across browsers and DOM
+// implementations (notably, jsdom's Blob/File implementation doesn't
+// implement the newer promise-returning methods at all).
+function readFileAsUint8Array(file: File): Promise<Uint8Array> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader()
+		reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer))
+		reader.onerror = () => reject(reader.error ?? new Error(`Failed to read ${file.name}`))
+		reader.readAsArrayBuffer(file)
+	})
+}
+
+// Zips a `webkitdirectory`-selected FileList into a single .zip File, using
+// each file's folder-relative path as its zip entry name. The server already
+// strips a single top-level wrapper directory (see extractSkillBundle), so
+// zipping the files exactly as `webkitRelativePath` reports them — root
+// folder name included — lands as a valid wrapped bundle.
+export async function zipFolderFiles(files: File[]): Promise<{ file: File } | { error: string }> {
+	const nonEmpty = files.filter((f) => f.size > 0)
+	if (nonEmpty.length === 0) return { error: 'Folder is empty' }
+	if (nonEmpty.length > FOLDER_MAX_ENTRIES) {
+		return { error: `Folder has ${nonEmpty.length} files (limit ${FOLDER_MAX_ENTRIES})` }
+	}
+
+	const entries: Record<string, Uint8Array> = {}
+	let totalBytes = 0
+	for (const file of nonEmpty) {
+		const path = file.webkitRelativePath || file.name
+		if (file.size > FOLDER_MAX_ENTRY_BYTES) {
+			return {
+				error: `${path} is ${formatSize(file.size)} (limit ${formatSize(FOLDER_MAX_ENTRY_BYTES)})`,
+			}
+		}
+		totalBytes += file.size
+		if (totalBytes > FOLDER_MAX_UNCOMPRESSED_BYTES) {
+			return { error: `Folder exceeds ${formatSize(FOLDER_MAX_UNCOMPRESSED_BYTES)} uncompressed` }
+		}
+		entries[path] = await readFileAsUint8Array(file)
+	}
+
+	const rootName = (nonEmpty[0].webkitRelativePath || nonEmpty[0].name).split('/')[0] || 'skill'
+	const zipped = zipSync(entries)
+	return { file: new File([zipped], `${rootName}.zip`, { type: 'application/zip' }) }
 }
 
 export function formatSize(bytes: number): string {
