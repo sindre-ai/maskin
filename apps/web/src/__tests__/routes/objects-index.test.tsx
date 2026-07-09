@@ -124,8 +124,12 @@ vi.mock('@/lib/api', () => ({
 vi.mock('@/lib/query-keys', () => ({
 	queryKeys: {
 		objects: {
+			list: (workspaceId: string, filters?: unknown) => ['objects', workspaceId, 'list', filters],
 			listInfinite: () => ['objects'],
 			board: () => ['objects', 'board'],
+		},
+		relationships: {
+			all: (workspaceId: string) => ['relationships', workspaceId],
 		},
 		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		userDisplaySettings: {

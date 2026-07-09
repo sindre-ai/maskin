@@ -1,9 +1,11 @@
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
+import { IndicatorBadgeRow } from '@/components/shared/indicator-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { ActorListItem, ObjectResponse } from '@/lib/api'
+import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import type { ColumnDef, Table } from '@tanstack/react-table'
@@ -22,6 +24,7 @@ export interface ObjectsTableMeta {
 	onSort: (columnId: string) => void
 	currentSort: string
 	currentOrder: 'asc' | 'desc'
+	betStatuses?: Map<string, BetStatusResult>
 }
 
 interface ColumnOptions {
@@ -116,21 +119,30 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 		{
 			accessorKey: 'title',
 			header: sortableHeader('Title', 'title'),
-			cell: ({ row }) => (
-				<div className="flex items-center gap-2">
-					<Link
-						to="/$workspaceId/objects/$objectId"
-						params={{ workspaceId, objectId: row.original.id }}
-						className="font-medium truncate max-w-[150px] sm:max-w-[300px] text-foreground hover:underline"
-						onClick={(e) => e.stopPropagation()}
-					>
-						{row.getValue('title') || 'Untitled'}
-					</Link>
-					{row.original.activeSessionId && (
-						<AgentWorkingBadge sessionId={row.original.activeSessionId} workspaceId={workspaceId} />
-					)}
-				</div>
-			),
+			cell: ({ row, table }) => {
+				const meta = table.options.meta as ObjectsTableMeta | undefined
+				const isBet = row.original.type === 'bet'
+				const betStatus = isBet ? meta?.betStatuses?.get(row.original.id) : undefined
+				return (
+					<div className="flex items-center gap-2">
+						<Link
+							to="/$workspaceId/objects/$objectId"
+							params={{ workspaceId, objectId: row.original.id }}
+							className="font-medium truncate max-w-[150px] sm:max-w-[300px] text-foreground hover:underline"
+							onClick={(e) => e.stopPropagation()}
+						>
+							{row.getValue('title') || 'Untitled'}
+						</Link>
+						{betStatus && <IndicatorBadgeRow result={betStatus} />}
+						{row.original.activeSessionId && (
+							<AgentWorkingBadge
+								sessionId={row.original.activeSessionId}
+								workspaceId={workspaceId}
+							/>
+						)}
+					</div>
+				)
+			},
 			enableHiding: false,
 		},
 		{
