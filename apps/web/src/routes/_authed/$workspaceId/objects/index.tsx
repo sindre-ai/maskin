@@ -18,7 +18,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useImportToast } from '@/hooks/use-imports'
-import { useBulkUpdateObjects } from '@/hooks/use-objects'
+import { useBulkResultHandlers, useBulkUpdateObjects } from '@/hooks/use-objects'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -577,25 +577,12 @@ function ObjectsPage() {
 	const bulkUpdate = useBulkUpdateObjects(workspaceId)
 	const queryClient = useQueryClient()
 
-	const reportBulkResult = useCallback(
-		(
-			response: { results: Array<{ id: string; ok: boolean; error?: string }> },
-			total: number,
-			verb: 'updated' | 'deleted',
-		) => {
-			const okCount = response.results.filter((r) => r.ok).length
-			const failed = total - okCount
-			if (failed === 0) {
-				toast.success(`${okCount} object${okCount === 1 ? '' : 's'} ${verb}`)
-				clearSelection()
-			} else {
-				const firstError = response.results.find((r) => !r.ok)?.error
-				toast.error(`${okCount} of ${total} ${verb}; ${failed} failed`, {
-					description: firstError,
-				})
-			}
-		},
-		[clearSelection],
+	// Matches the handleBulkDelete pattern: on partial success, prune selection
+	// to the ids that still need attention so the bulk bar stays pinned to the
+	// failed rows and the operator can retry them without re-selecting.
+	const { reportBulkResult, retainOnlyFailed } = useBulkResultHandlers(
+		clearSelection,
+		setRowSelection,
 	)
 
 	const handleBulkStatusChange = useCallback(
@@ -605,12 +592,15 @@ function ObjectsPage() {
 			bulkUpdate.mutate(
 				{ ids, patch: { status } },
 				{
-					onSuccess: (data) => reportBulkResult(data, ids.length, 'updated'),
+					onSuccess: (data) => {
+						retainOnlyFailed(data)
+						reportBulkResult(data, ids.length, 'updated')
+					},
 					onError: () => toast.error('Failed to update objects'),
 				},
 			)
 		},
-		[selectedIds, bulkUpdate, reportBulkResult],
+		[selectedIds, bulkUpdate, reportBulkResult, retainOnlyFailed],
 	)
 
 	const handleBulkOwnerChange = useCallback(
@@ -620,12 +610,15 @@ function ObjectsPage() {
 			bulkUpdate.mutate(
 				{ ids, patch: { driver: ownerId } },
 				{
-					onSuccess: (data) => reportBulkResult(data, ids.length, 'updated'),
+					onSuccess: (data) => {
+						retainOnlyFailed(data)
+						reportBulkResult(data, ids.length, 'updated')
+					},
 					onError: () => toast.error('Failed to update objects'),
 				},
 			)
 		},
-		[selectedIds, bulkUpdate, reportBulkResult],
+		[selectedIds, bulkUpdate, reportBulkResult, retainOnlyFailed],
 	)
 
 	// Build the path the app uses for object detail pages — kept relative so we can

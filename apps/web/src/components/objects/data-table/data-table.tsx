@@ -84,7 +84,7 @@ import {
 	TableRow,
 } from '@/components/ui/table'
 import { useActors } from '@/hooks/use-actors'
-import { useIsMobile } from '@/hooks/use-mobile'
+import { useIsMobile, useIsTouchViewport } from '@/hooks/use-mobile'
 import type { ActorListItem, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNavigate } from '@tanstack/react-router'
@@ -146,6 +146,7 @@ export function DataTable({
 }: DataTableProps) {
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
+	const isTouchViewport = useIsTouchViewport()
 	const { data: actorsFetched } = useActors(workspaceId, { enabled: isMobile })
 	// On mobile, fetch actors locally for the ObjectCard. On desktop, use actors passed from parent.
 	const actors = isMobile ? actorsFetched : actorsProp
@@ -191,7 +192,9 @@ export function DataTable({
 	const virtualizer = useVirtualizer({
 		count: rows.length,
 		getScrollElement: () => parentRef.current,
-		estimateSize: () => (isMobile ? 96 : 48),
+		// At ≤1024px the row checkbox is 44px (AC-T6); bump row height so the
+		// touch target isn't crushed against the row borders or other columns.
+		estimateSize: () => (isMobile ? 96 : isTouchViewport ? 60 : 48),
 		overscan: isMobile ? 10 : 20,
 	})
 

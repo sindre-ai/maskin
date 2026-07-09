@@ -156,4 +156,33 @@ describe('getStaticColumns', () => {
 		await user.click(screen.getByRole('button', { name: /title/i }))
 		expect(onSort).toHaveBeenCalledWith('title')
 	})
+
+	it('row and header select checkboxes render as touch-size (data-size="touch")', () => {
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const data = [buildObjectResponse()]
+		render(<TestTable data={data} columns={columns} />)
+
+		const selectRow = screen.getByRole('checkbox', { name: 'Select row' })
+		const selectAll = screen.getByRole('checkbox', { name: 'Select all' })
+		expect(selectRow).toHaveAttribute('data-size', 'touch')
+		expect(selectAll).toHaveAttribute('data-size', 'touch')
+	})
+
+	it('clicking the row select checkbox toggles selection (AC-U1 — tap inside the 44pt region)', async () => {
+		const user = userEvent.setup()
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const data = [buildObjectResponse()]
+		render(<TestTable data={data} columns={columns} />)
+
+		const selectRow = screen.getByRole('checkbox', { name: 'Select row' })
+		expect(selectRow).toHaveAttribute('aria-checked', 'false')
+		await user.click(selectRow)
+		expect(selectRow).toHaveAttribute('aria-checked', 'true')
+	})
+
+	it('renders the select column at width 60 to fit the 44pt touch target', () => {
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const selectCol = columns.find((c) => c.id === 'select')
+		expect(selectCol?.size).toBe(60)
+	})
 })
