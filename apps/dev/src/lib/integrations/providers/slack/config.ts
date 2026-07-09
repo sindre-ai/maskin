@@ -9,23 +9,34 @@ export const config: ProviderConfig = {
 		config: {
 			authorizationUrl: 'https://slack.com/oauth/v2/authorize',
 			tokenUrl: 'https://slack.com/api/oauth.v2.access',
+			// Bot scopes match the Marketplace listing exactly — AC-T8 enforces this
+			// alignment server-side; the listing itself is a separate human follow-up
+			// and must be verified against this array before submission.
+			//
+			// The `conversations.history`-equivalent scopes are deliberately excluded
+			// in phase 1: the bot should only see what it's @mentioned in, not the
+			// full backlog of every channel it lives in. `im:history` is the single
+			// exception — DMs are an explicit invitation. If a later phase needs
+			// `channels:history` / `groups:history` / `mpim:history`, add them here
+			// AND re-submit the Marketplace listing, never one or the other.
 			scopes: [
-				'channels:read',
-				'channels:history',
+				'app_mentions:read',
 				'channels:join',
-				'groups:read',
-				'groups:history',
-				'im:read',
-				'im:history',
-				'im:write',
-				'mpim:read',
-				'mpim:history',
+				'channels:read',
 				'chat:write',
 				'chat:write.customize',
-				'users:read',
-				'app_mentions:read',
+				'commands',
+				'groups:read',
+				'im:history',
+				'im:read',
+				'im:write',
+				'links:read',
+				'links:write',
+				'mpim:read',
 				'reactions:read',
 				'reactions:write',
+				'team:read',
+				'users:read',
 			],
 			clientIdEnv: 'SLACK_CLIENT_ID',
 			clientSecretEnv: 'SLACK_CLIENT_SECRET',
