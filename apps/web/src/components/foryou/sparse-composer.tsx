@@ -107,7 +107,7 @@ export function SparseComposer({ itemsCount, onFocusChange }: SparseComposerProp
 							type="button"
 							size="sm"
 							variant="outline"
-							className="h-7 rounded-full px-3 text-xs"
+							className="h-7 rounded-full px-3 text-xs pointer-coarse:min-h-11"
 							disabled={chipSending}
 							onClick={() => void handleChipClick(text)}
 						>
