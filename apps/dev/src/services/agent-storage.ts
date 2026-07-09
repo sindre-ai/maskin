@@ -1,9 +1,10 @@
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { Database } from '@maskin/db'
 import { agentFiles, agentSkills, workspaceSkills } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { logger } from '../lib/logger'
 import { appendToLedger } from './workspace-briefing'
 
@@ -15,6 +16,21 @@ export const WORKSPACE_SKILLS_PREFIX = 'workspaces'
 // cannot then delete the winner's object.
 export function workspaceSkillKey(workspaceId: string, skillId: string): string {
 	return `${WORKSPACE_SKILLS_PREFIX}/${workspaceId}/skills/${skillId}/SKILL.md`
+}
+
+// All folder-skill entries (SKILL.md + bundled files) live under this prefix.
+// `workspaceSkillKey` is the SKILL.md sub-path of this prefix — a folder skill
+// reuses the same SKILL.md key so single-file readers stay valid.
+export function workspaceSkillPrefix(workspaceId: string, skillId: string): string {
+	return `${WORKSPACE_SKILLS_PREFIX}/${workspaceId}/skills/${skillId}/`
+}
+
+export function workspaceSkillFileKey(
+	workspaceId: string,
+	skillId: string,
+	relativePath: string,
+): string {
+	return `${workspaceSkillPrefix(workspaceId, skillId)}${relativePath}`
 }
 
 export type PullWorkspaceSkillsResult = {
@@ -333,6 +349,91 @@ export class AgentStorageManager {
 	}
 
 	/**
+	 * Write a single bundled file under the folder-skill prefix at
+	 * `<relativePath>` (e.g. `SKILL.md`, `reference/style.md`). Used by the
+	 * folder-upload path to land each entry from the extracted zip.
+	 */
+	async putWorkspaceSkillFile(
+		workspaceId: string,
+		skillId: string,
+		relativePath: string,
+		data: Buffer,
+	): Promise<string> {
+		const key = workspaceSkillFileKey(workspaceId, skillId, relativePath)
+		await this.storage.put(key, data)
+		return key
+	}
+
+	/**
+	 * List every file under a folder skill's prefix as `(relativePath, key)`
+	 * pairs. Used by the download endpoint to rebuild the bundle zip from S3.
+	 * `relativePath` is the path the upload path would later receive again on
+	 * round-trip (i.e. `SKILL.md`, `reference/style.md`).
+	 */
+	async listWorkspaceSkillFiles(
+		workspaceId: string,
+		skillId: string,
+	): Promise<{ relativePath: string; key: string }[]> {
+		const prefix = workspaceSkillPrefix(workspaceId, skillId)
+		const keys = await this.storage.list(prefix)
+		return keys.map((key) => ({ relativePath: key.slice(prefix.length), key }))
+	}
+
+	/**
+	 * Same as `listWorkspaceSkillFiles` but carries the object size for each
+	 * entry. Used by the settings page's inline file tree, where each row
+	 * displays a per-file size next to its relative path.
+	 */
+	async listWorkspaceSkillFilesWithSize(
+		workspaceId: string,
+		skillId: string,
+	): Promise<{ relativePath: string; sizeBytes: number }[]> {
+		const prefix = workspaceSkillPrefix(workspaceId, skillId)
+		const entries = await this.storage.listWithMetadata(prefix)
+		return entries.map(({ key, size }) => ({
+			relativePath: key.slice(prefix.length),
+			sizeBytes: size,
+		}))
+	}
+
+	/**
+	 * Fetch a single bundled file by its absolute storage key. Thin pass-through
+	 * to the storage provider so route handlers don't have to import the
+	 * provider directly.
+	 */
+	async getWorkspaceSkillFile(key: string): Promise<Buffer> {
+		return this.storage.get(key)
+	}
+
+	/**
+	 * Remove every object under a folder skill's prefix, except the relative
+	 * paths in `keepRelativePaths`. Used by the replace flow AFTER the new
+	 * bundle is written so the prior bundle's stale files don't survive —
+	 * deleting last means a failed replace leaves the old bundle intact.
+	 */
+	async clearWorkspaceSkillFolder(
+		workspaceId: string,
+		skillId: string,
+		options: { keepRelativePaths?: Set<string> } = {},
+	): Promise<void> {
+		const prefix = workspaceSkillPrefix(workspaceId, skillId)
+		const keys = await this.storage.list(prefix)
+		for (const key of keys) {
+			if (options.keepRelativePaths?.has(key.slice(prefix.length))) continue
+			try {
+				await this.storage.delete(key)
+			} catch (err) {
+				logger.warn('Failed to delete workspace skill file during replace', {
+					workspaceId,
+					skillId,
+					key,
+					error: String(err),
+				})
+			}
+		}
+	}
+
+	/**
 	 * Collision rule — agent-local wins unless `overwrite: true`. If a
 	 * `skills/<name>/` folder already exists on disk, the workspace skill for
 	 * that name is skipped so per-agent tweaks survive. On resume we pass
@@ -347,8 +448,10 @@ export class AgentStorageManager {
 	): Promise<PullWorkspaceSkillsResult> {
 		const rows = await this.db
 			.select({
+				id: workspaceSkills.id,
 				name: workspaceSkills.name,
 				storageKey: workspaceSkills.storageKey,
+				isFolder: workspaceSkills.isFolder,
 			})
 			.from(agentSkills)
 			.innerJoin(workspaceSkills, eq(workspaceSkills.id, agentSkills.workspaceSkillId))
@@ -372,7 +475,7 @@ export class AgentStorageManager {
 		let skipped = 0
 		const failures: { name: string; storageKey: string; error: string }[] = []
 
-		for (const { name, storageKey } of rows) {
+		for (const { id: skillId, name, storageKey, isFolder } of rows) {
 			const skillFolder = join(skillsDir, name)
 			if (!options.overwrite && (await folderExists(skillFolder))) {
 				skipped++
@@ -385,12 +488,52 @@ export class AgentStorageManager {
 			}
 
 			try {
-				const data = await this.storage.get(storageKey)
+				// Fetch every file BEFORE touching the local folder: a storage
+				// failure must not destroy an existing copy (resume passes
+				// `overwrite: true` after restoring the snapshot) or leave a
+				// partial folder behind.
+				const files = isFolder
+					? await this.fetchFolderSkillFiles(workspaceId, skillId)
+					: [{ relativePath: 'SKILL.md', data: await this.storage.get(storageKey) }]
+
 				if (options.overwrite) {
 					await rm(skillFolder, { recursive: true, force: true })
 				}
-				await mkdir(skillFolder, { recursive: true })
-				await writeFile(join(skillFolder, 'SKILL.md'), data)
+				try {
+					for (const { relativePath, data } of files) {
+						const destPath = join(skillFolder, relativePath)
+						await mkdir(dirname(destPath), { recursive: true })
+						await writeFile(destPath, data)
+					}
+				} catch (err) {
+					// A partial folder would satisfy folderExists() and read as a
+					// complete agent-local skill on the next pull — remove it.
+					await rm(skillFolder, { recursive: true, force: true }).catch(() => {})
+					throw err
+				}
+
+				// Ship-metric event, one per file, so the dashboard can split
+				// single-file vs folder and see which files inside a bundle are
+				// actually read by agents (vs. dead weight). Fire-and-forget so an
+				// analytics outage cannot fail the pull.
+				for (const { relativePath } of files) {
+					void capturePosthogEvent('agent_skill_file_read', actorId, {
+						workspace_id: workspaceId,
+						actor_id: actorId,
+						skill_id: skillId,
+						is_folder: isFolder,
+						file_path: relativePath,
+					})
+				}
+				if (isFolder) {
+					logger.info('Hydrated folder skill onto agent disk', {
+						actorId,
+						workspaceId,
+						skillId,
+						name,
+						fileCount: files.length,
+					})
+				}
 				pulled++
 			} catch (err) {
 				logger.error('Failed to pull workspace skill', {
@@ -413,6 +556,28 @@ export class AgentStorageManager {
 		})
 
 		return { pulled, skipped, failures }
+	}
+
+	// Fetch every entry of a folder skill into memory (bundles are capped at
+	// 10MB at upload time, so buffering is fine). Fetching before any disk
+	// write keeps hydration all-or-nothing: a failed fetch leaves the agent's
+	// existing copy untouched. Throws on an empty prefix — that's a
+	// partial-write artefact (e.g. a replace flow that crashed mid-upload) and
+	// must surface as a per-skill failure instead of the agent silently
+	// booting with an empty skill folder.
+	private async fetchFolderSkillFiles(
+		workspaceId: string,
+		skillId: string,
+	): Promise<{ relativePath: string; data: Buffer }[]> {
+		const entries = await this.listWorkspaceSkillFiles(workspaceId, skillId)
+		if (entries.length === 0) {
+			throw new Error(`Folder skill has no files at prefix (skillId=${skillId})`)
+		}
+		const files: { relativePath: string; data: Buffer }[] = []
+		for (const { relativePath, key } of entries) {
+			files.push({ relativePath, data: await this.getWorkspaceSkillFile(key) })
+		}
+		return files
 	}
 
 	private async upsertFileRecord(

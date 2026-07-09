@@ -278,10 +278,20 @@ export function ObjectActivity({
 	}, [events, object, relationships, includeRelationshipsInTimeline])
 
 	// All phases are expanded by default; users can toggle any phase closed.
-	const [phaseOverrides, setPhaseOverrides] = useState<Record<number, boolean>>({})
-	const isPhaseOpen = (index: number) => phaseOverrides[index] ?? true
-	const togglePhase = (index: number) => {
-		setPhaseOverrides((prev) => ({ ...prev, [index]: !isPhaseOpen(index) }))
+	// Keyed by phase identity (status + startedAt) — not by array index — so
+	// the collapsed state stays pinned to the specific phase the user closed
+	// when the phases array reshapes (e.g. Timeline↔Table toggle drops
+	// relationship-only phases out of the Timeline projection, which would
+	// otherwise slide index-based overrides onto the wrong surviving phase
+	// and leave the section looking blank until refresh).
+	const phaseKey = (phase: { status: string; startedAt: string | null }) =>
+		`${phase.status}::${phase.startedAt ?? ''}`
+	const [phaseOverrides, setPhaseOverrides] = useState<Record<string, boolean>>({})
+	const isPhaseOpen = (phase: { status: string; startedAt: string | null }) =>
+		phaseOverrides[phaseKey(phase)] ?? true
+	const togglePhase = (phase: { status: string; startedAt: string | null }) => {
+		const key = phaseKey(phase)
+		setPhaseOverrides((prev) => ({ ...prev, [key]: !(prev[key] ?? true) }))
 	}
 
 	const tableViewRelationships = relationships ?? []
@@ -334,7 +344,7 @@ export function ObjectActivity({
 						<p className="text-sm text-muted-foreground py-4 text-center">No activity yet</p>
 					)}
 				{phases.map((phase, index) => {
-					const open = isPhaseOpen(index)
+					const open = isPhaseOpen(phase)
 					return (
 						<Collapsible key={`${phase.status}-${phase.startedAt ?? index}`} asChild open={open}>
 							<section>
@@ -342,7 +352,7 @@ export function ObjectActivity({
 									status={phase.status}
 									startedAt={phase.startedAt}
 									isOpen={open}
-									onToggle={() => togglePhase(index)}
+									onToggle={() => togglePhase(phase)}
 								/>
 								<CollapsibleContent>
 									<div className="space-y-1">

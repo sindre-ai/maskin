@@ -58,7 +58,10 @@ vi.mock('@/hooks/use-custom-extensions', () => ({ useCustomExtensions: () => [] 
 vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: () => [{ label: 'Tasks', value: 'task' }],
 }))
-vi.mock('@/hooks/use-objects', () => ({ useBulkUpdateObjects: () => ({ mutate: vi.fn() }) }))
+vi.mock('@/hooks/use-objects', () => ({
+	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
+	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
+}))
 
 vi.mock('@tanstack/react-query', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@tanstack/react-query')>()

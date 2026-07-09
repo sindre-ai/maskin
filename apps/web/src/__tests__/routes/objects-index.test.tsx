@@ -74,6 +74,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 
 vi.mock('@/hooks/use-objects', () => ({
 	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
+	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
 }))
 
 vi.mock('@/hooks/use-user-display-settings', () => ({

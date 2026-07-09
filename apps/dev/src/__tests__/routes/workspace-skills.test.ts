@@ -1,3 +1,4 @@
+import AdmZip from 'adm-zip'
 import {
 	buildCreateWorkspaceSkillBody,
 	buildUpdateWorkspaceSkillBody,
@@ -8,6 +9,23 @@ import { jsonGet, jsonRequest } from '../helpers'
 import { createSkillsTestApp } from '../setup'
 
 const { default: workspaceSkillsRoutes } = await import('../../routes/workspace-skills')
+
+function makeBundleBuffer(entries: Record<string, string>): Buffer {
+	const zip = new AdmZip()
+	for (const [path, content] of Object.entries(entries)) {
+		zip.addFile(path, Buffer.from(content, 'utf-8'))
+	}
+	return zip.toBuffer()
+}
+
+function uploadRequest(workspaceId: string, fileName: string, body: Buffer, query = '') {
+	const formData = new FormData()
+	formData.append('file', new File([body], fileName))
+	return new Request(`http://localhost/api/workspaces/${workspaceId}/skills/upload${query}`, {
+		method: 'POST',
+		body: formData,
+	})
+}
 
 const workspaceId = '00000000-0000-0000-0000-000000000001'
 
@@ -407,6 +425,457 @@ describe('Workspace Skills Routes', () => {
 			expect(putCall?.[1]).toBe(existing.id)
 			expect(putCall?.[2]).toContain('NEW')
 			expect(putCall?.[2]).toContain('name: my-skill')
+		})
+	})
+
+	describe('POST /:workspaceId/skills/upload', () => {
+		const SKILL_MD = '---\nname: docx\ndescription: Docx skill\n---\n\nDoc body.'
+
+		it('persists a single SKILL.md upload and emits is_folder=false', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const inserted = buildWorkspaceSkill({
+				workspaceId,
+				name: 'docx',
+				content: SKILL_MD,
+				isFolder: false,
+				fileCount: null,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [inserted]]
+			mockResults.insert = [inserted]
+
+			const res = await app.request(
+				uploadRequest(workspaceId, 'docx.md', Buffer.from(SKILL_MD, 'utf-8')),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.isFolder).toBe(false)
+			expect(body.fileCount).toBeNull()
+			expect(body.isValid).toBe(true)
+			expect(body.error).toBeNull()
+			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalled()
+			// Single-file upload must NOT touch the folder helpers.
+			expect(agentStorage.putWorkspaceSkillFile).not.toHaveBeenCalled()
+			expect(agentStorage.clearWorkspaceSkillFolder).not.toHaveBeenCalled()
+		})
+
+		it('persists a folder zip upload and writes each bundled file', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const inserted = buildWorkspaceSkill({
+				workspaceId,
+				name: 'docx',
+				content: SKILL_MD,
+				isFolder: true,
+				fileCount: 3,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [inserted]]
+			mockResults.insert = [inserted]
+
+			const buf = makeBundleBuffer({
+				'docx/SKILL.md': SKILL_MD,
+				'docx/reference/style.md': 'Style guide',
+				'docx/scripts/run.py': 'print("hi")',
+			})
+
+			const res = await app.request(uploadRequest(workspaceId, 'docx.zip', buf))
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.isFolder).toBe(true)
+			expect(body.fileCount).toBe(3)
+			expect(body.error).toBeNull()
+
+			// SKILL.md goes through putWorkspaceSkill; bundled files through
+			// putWorkspaceSkillFile. We expect both helpers to fire — and the
+			// bundled-file helper to be called for entries OTHER than SKILL.md.
+			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledTimes(1)
+			const bundleCalls = vi.mocked(agentStorage.putWorkspaceSkillFile).mock.calls
+			const bundlePaths = bundleCalls.map((args) => args[2]).sort()
+			expect(bundlePaths).toEqual(['reference/style.md', 'scripts/run.py'])
+		})
+
+		it('persists malformed bundles with isValid=false instead of returning 4xx', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const inserted = buildWorkspaceSkill({
+				workspaceId,
+				name: 'broken',
+				content: '',
+				isFolder: true,
+				fileCount: 0,
+				isValid: false,
+				description: null,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [inserted]]
+			mockResults.insert = [inserted]
+
+			const buf = makeBundleBuffer({ 'README.md': 'no skill md here' })
+
+			const res = await app.request(uploadRequest(workspaceId, 'broken.zip', buf))
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.isValid).toBe(false)
+			expect(body.error).toEqual({
+				kind: 'no_skill_md',
+				message: expect.stringContaining('SKILL.md'),
+			})
+		})
+
+		it('rejects oversize zip-bombs at the per-entry cap', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[buildWorkspaceMember()]]
+			// 6MB of zeros compresses to roughly nothing but exceeds the 5MB per-entry cap.
+			const huge = Buffer.alloc(6 * 1024 * 1024, 0)
+			const zip = new AdmZip()
+			zip.addFile('SKILL.md', Buffer.from(SKILL_MD, 'utf-8'))
+			zip.addFile('huge.bin', huge)
+			const buf = zip.toBuffer()
+
+			// The persist path still tries to INSERT the malformed row.
+			const inserted = buildWorkspaceSkill({
+				workspaceId,
+				name: 'bomb',
+				isFolder: true,
+				fileCount: 0,
+				isValid: false,
+			})
+			mockResults.insert = [inserted]
+
+			const res = await app.request(uploadRequest(workspaceId, 'bomb.zip', buf))
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.error.kind).toBe('too_large')
+			expect(body.isValid).toBe(false)
+		})
+
+		it('replaces an existing folder skill in place when ?skillId is set', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const existing = buildWorkspaceSkill({
+				workspaceId,
+				name: 'docx',
+				isFolder: true,
+				fileCount: 2,
+			})
+			const updated = { ...existing, fileCount: 1, updatedAt: new Date() }
+
+			// replace lookup, tx lock, tx re-fetch
+			mockResults.selectQueue = [[buildWorkspaceMember()], [existing], [existing], [updated]]
+			mockResults.update = [updated]
+
+			const buf = makeBundleBuffer({ 'docx/SKILL.md': SKILL_MD })
+
+			const res = await app.request(
+				uploadRequest(workspaceId, 'docx.zip', buf, `?skillId=${existing.id}`),
+			)
+			expect(res.status).toBe(201)
+			// Stale files are pruned AFTER the new bundle is written, keeping the
+			// paths the new bundle contains.
+			expect(agentStorage.clearWorkspaceSkillFolder).toHaveBeenCalledWith(
+				workspaceId,
+				existing.id,
+				{ keepRelativePaths: new Set(['SKILL.md']) },
+			)
+		})
+
+		it('rejects a malformed bundle with 400 when replacing an existing skill', async () => {
+			// A replace must never land the empty/invalid placeholder — that would
+			// overwrite the row and wipe the previous bundle's files from storage.
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const existing = buildWorkspaceSkill({
+				workspaceId,
+				name: 'docx',
+				isFolder: true,
+				fileCount: 2,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [existing]]
+
+			const buf = makeBundleBuffer({ 'README.md': 'no skill md here' })
+
+			const res = await app.request(
+				uploadRequest(workspaceId, 'broken.zip', buf, `?skillId=${existing.id}`),
+			)
+			expect(res.status).toBe(400)
+			expect(agentStorage.putWorkspaceSkill).not.toHaveBeenCalled()
+			expect(agentStorage.putWorkspaceSkillFile).not.toHaveBeenCalled()
+			expect(agentStorage.clearWorkspaceSkillFolder).not.toHaveBeenCalled()
+		})
+
+		it('returns 500 and does not clear the old bundle when a storage write fails', async () => {
+			// Storage writes run after the DB commit; a failure must not reach the
+			// stale-file prune, so the previous bundle stays intact on S3.
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const existing = buildWorkspaceSkill({
+				workspaceId,
+				name: 'docx',
+				isFolder: true,
+				fileCount: 2,
+			})
+			const updated = { ...existing, fileCount: 1, updatedAt: new Date() }
+			mockResults.selectQueue = [[buildWorkspaceMember()], [existing], [existing], [updated]]
+			mockResults.update = [updated]
+			vi.mocked(agentStorage.putWorkspaceSkill).mockRejectedValueOnce(new Error('S3 down'))
+
+			const buf = makeBundleBuffer({ 'docx/SKILL.md': SKILL_MD })
+
+			const res = await app.request(
+				uploadRequest(workspaceId, 'docx.zip', buf, `?skillId=${existing.id}`),
+			)
+			expect(res.status).toBe(500)
+			expect(agentStorage.clearWorkspaceSkillFolder).not.toHaveBeenCalled()
+		})
+
+		it('returns 400 for unsupported file types', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[buildWorkspaceMember()]]
+
+			const res = await app.request(
+				uploadRequest(workspaceId, 'bad.txt', Buffer.from('hi', 'utf-8')),
+			)
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 403 for non-workspace members', async () => {
+			const { app } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const res = await app.request(
+				uploadRequest(workspaceId, 'docx.md', Buffer.from(SKILL_MD, 'utf-8')),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 404 when replacing a missing skill', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[buildWorkspaceMember()], []]
+
+			const res = await app.request(
+				uploadRequest(
+					workspaceId,
+					'docx.md',
+					Buffer.from(SKILL_MD, 'utf-8'),
+					'?skillId=00000000-0000-0000-0000-0000000000aa',
+				),
+			)
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('GET /:workspaceId/skills/:skillId/download', () => {
+		const skillId = '00000000-0000-0000-0000-0000000000d0'
+
+		function downloadRequest(wsId: string, sId: string) {
+			return new Request(`http://localhost/api/workspaces/${wsId}/skills/${sId}/download`)
+		}
+
+		it('rebuilds the folder skill zip and round-trips through adm-zip', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const folderSkill = buildWorkspaceSkill({
+				id: skillId,
+				workspaceId,
+				name: 'docx',
+				isFolder: true,
+				fileCount: 3,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [folderSkill]]
+
+			const prefix = `workspaces/${workspaceId}/skills/${skillId}/`
+			const fileContents: Record<string, Buffer> = {
+				[`${prefix}SKILL.md`]: Buffer.from(folderSkill.content, 'utf-8'),
+				[`${prefix}reference/style.md`]: Buffer.from('Style guide', 'utf-8'),
+				[`${prefix}scripts/run.py`]: Buffer.from('print("hi")', 'utf-8'),
+			}
+			;(agentStorage.listWorkspaceSkillFiles as ReturnType<typeof vi.fn>).mockResolvedValue(
+				Object.keys(fileContents).map((key) => ({
+					relativePath: key.slice(prefix.length),
+					key,
+				})),
+			)
+			;(agentStorage.getWorkspaceSkillFile as ReturnType<typeof vi.fn>).mockImplementation(
+				async (key: string) => fileContents[key] ?? Buffer.from(''),
+			)
+
+			const res = await app.request(downloadRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('Content-Type')).toBe('application/zip')
+			expect(res.headers.get('Content-Disposition')).toContain('filename="docx.zip"')
+
+			// Round-trip: the response zip must contain every entry under the
+			// same relative paths the upload endpoint would later receive.
+			const buf = Buffer.from(await res.arrayBuffer())
+			const zip = new AdmZip(buf)
+			const entries = zip.getEntries().map((e) => e.entryName)
+			expect(entries.sort()).toEqual(['SKILL.md', 'reference/style.md', 'scripts/run.py'].sort())
+			const skillMd = zip.getEntry('SKILL.md')?.getData().toString('utf-8')
+			expect(skillMd).toBe(folderSkill.content)
+		})
+
+		it('returns 404 for single-file skills', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const singleFile = buildWorkspaceSkill({
+				id: skillId,
+				workspaceId,
+				name: 'plain',
+				isFolder: false,
+				fileCount: null,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [singleFile]]
+
+			const res = await app.request(downloadRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when the skill row does not exist in the workspace', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[buildWorkspaceMember()], []]
+
+			const res = await app.request(downloadRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when the folder skill prefix is empty', async () => {
+			// Row says folder but no files in storage — guard against handing
+			// back an empty zip that would re-upload as a malformed bundle.
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const folderSkill = buildWorkspaceSkill({
+				id: skillId,
+				workspaceId,
+				isFolder: true,
+				fileCount: 3,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [folderSkill]]
+			;(agentStorage.listWorkspaceSkillFiles as ReturnType<typeof vi.fn>).mockResolvedValue([])
+
+			const res = await app.request(downloadRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 403 when caller is not a workspace member', async () => {
+			const { app } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+
+			const res = await app.request(downloadRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(403)
+		})
+
+		it('encodes skill names with spaces using RFC 5987', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const folderSkill = buildWorkspaceSkill({
+				id: skillId,
+				workspaceId,
+				name: 'with-special',
+				isFolder: true,
+				fileCount: 1,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [folderSkill]]
+			const prefix = `workspaces/${workspaceId}/skills/${skillId}/`
+			;(agentStorage.listWorkspaceSkillFiles as ReturnType<typeof vi.fn>).mockResolvedValue([
+				{ relativePath: 'SKILL.md', key: `${prefix}SKILL.md` },
+			])
+			;(agentStorage.getWorkspaceSkillFile as ReturnType<typeof vi.fn>).mockResolvedValue(
+				Buffer.from(folderSkill.content, 'utf-8'),
+			)
+
+			const res = await app.request(downloadRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(200)
+			const disposition = res.headers.get('Content-Disposition') ?? ''
+			expect(disposition).toContain("filename*=UTF-8''with-special.zip")
+		})
+	})
+
+	describe('GET /:workspaceId/skills/:skillId/files', () => {
+		const skillId = '00000000-0000-0000-0000-0000000000f1'
+
+		function filesRequest(wsId: string, sId: string) {
+			return new Request(`http://localhost/api/workspaces/${wsId}/skills/${sId}/files`)
+		}
+
+		it('returns the relative paths and sizes for a folder skill, sorted', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const folderSkill = buildWorkspaceSkill({
+				id: skillId,
+				workspaceId,
+				name: 'docx',
+				isFolder: true,
+				fileCount: 3,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [folderSkill]]
+			;(agentStorage.listWorkspaceSkillFilesWithSize as ReturnType<typeof vi.fn>).mockResolvedValue(
+				[
+					{ relativePath: 'scripts/run.py', sizeBytes: 22 },
+					{ relativePath: 'SKILL.md', sizeBytes: 100 },
+					{ relativePath: 'reference/style.md', sizeBytes: 50 },
+				],
+			)
+
+			const res = await app.request(filesRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toEqual([
+				{ relativePath: 'SKILL.md', sizeBytes: 100 },
+				{ relativePath: 'reference/style.md', sizeBytes: 50 },
+				{ relativePath: 'scripts/run.py', sizeBytes: 22 },
+			])
+		})
+
+		it('returns 404 for single-file skills', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const singleFile = buildWorkspaceSkill({
+				id: skillId,
+				workspaceId,
+				isFolder: false,
+				fileCount: null,
+			})
+			mockResults.selectQueue = [[buildWorkspaceMember()], [singleFile]]
+
+			const res = await app.request(filesRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when the skill row does not exist', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[buildWorkspaceMember()], []]
+
+			const res = await app.request(filesRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 403 when caller is not a workspace member', async () => {
+			const { app } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+
+			const res = await app.request(filesRequest(workspaceId, skillId))
+
+			expect(res.status).toBe(403)
 		})
 	})
 

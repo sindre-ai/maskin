@@ -12,6 +12,7 @@ import {
 	trackLoopActiveDay,
 	trackPackageForked,
 	trackPackageInstalled,
+	trackSlackMentionReceived,
 	utcDayString,
 } from '../../../lib/analytics/catalog-events'
 
@@ -74,6 +75,41 @@ describe('trackPackageForked', () => {
 			workspace_id: 'ws-1',
 			actor_id: 'actor-1',
 		})
+	})
+})
+
+describe('trackSlackMentionReceived', () => {
+	it('emits slack_mention_received with the workspace as distinct id and contracted props', async () => {
+		await trackSlackMentionReceived({
+			actorId: 'actor-1',
+			workspaceId: 'ws-1',
+			channelType: 'channel',
+			slackTeamId: 'T123',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledOnce()
+		expect(capturePosthogEventMock).toHaveBeenCalledWith('slack_mention_received', 'ws-1', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			channel_type: 'channel',
+			agent: 'workspace_coach',
+			slack_team_id: 'T123',
+		})
+	})
+
+	it('does not include a raw Slack user id (PII guard)', async () => {
+		// Anonymisation contract: only the resolved Maskin actor id is sent —
+		// `slack_user_id` is deliberately omitted from the prop bag. This test
+		// fails if a future refactor leaks it in.
+		await trackSlackMentionReceived({
+			actorId: 'actor-1',
+			workspaceId: 'ws-1',
+			channelType: 'im',
+			slackTeamId: 'T123',
+		})
+		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+		expect(props).not.toHaveProperty('slack_user_id')
+		expect(props).not.toHaveProperty('user_id')
 	})
 })
 

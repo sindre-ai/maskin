@@ -1,5 +1,7 @@
 import type { createObjectSchema, updateObjectSchema } from '@maskin/shared'
 import { type InfiniteData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { RowSelectionState } from '@tanstack/react-table'
+import { type Dispatch, type SetStateAction, useCallback } from 'react'
 import { toast } from 'sonner'
 import type { z } from 'zod'
 import { trackBetArchived, trackBetCreated, trackBetStatusChanged } from '../lib/analytics'
@@ -189,6 +191,60 @@ export function useBulkUpdateObjects(workspaceId: string) {
 			}
 		},
 	})
+}
+
+export interface BulkOperationResponse {
+	results: Array<{ id: string; ok: boolean; error?: string }>
+}
+
+// Shared toast + selection-retention logic for bulk object mutations (status
+// change, owner change, delete). Guards against a malformed `results` shape
+// so an API contract drift can't throw inside a query-observer onSuccess
+// callback — TanStack Query swallows that exception (`void Promise.reject(e)`)
+// with no user-visible signal, leaving the toast unshown and the selection
+// un-trimmed despite the mutation having actually completed.
+export function useBulkResultHandlers(
+	clearSelection: () => void,
+	setRowSelection: Dispatch<SetStateAction<RowSelectionState>>,
+) {
+	const reportBulkResult = useCallback(
+		(response: BulkOperationResponse, total: number, verb: 'updated' | 'deleted') => {
+			if (!Array.isArray(response?.results)) {
+				toast.error(`Failed to ${verb === 'deleted' ? 'delete' : 'update'} objects`)
+				return
+			}
+			const okCount = response.results.filter((r) => r.ok).length
+			const failed = total - okCount
+			if (failed === 0) {
+				toast.success(`${okCount} object${okCount === 1 ? '' : 's'} ${verb}`)
+				clearSelection()
+			} else {
+				const firstError = response.results.find((r) => !r.ok)?.error
+				toast.error(`${okCount} of ${total} ${verb}; ${failed} failed`, {
+					description: firstError,
+				})
+			}
+		},
+		[clearSelection],
+	)
+
+	const retainOnlyFailed = useCallback(
+		(response: BulkOperationResponse) => {
+			if (!Array.isArray(response?.results)) return
+			const failedIds = new Set(response.results.filter((r) => !r.ok).map((r) => r.id))
+			if (failedIds.size === 0) return
+			setRowSelection((prev) => {
+				const next: RowSelectionState = {}
+				for (const id of Object.keys(prev)) {
+					if (failedIds.has(id)) next[id] = prev[id] as boolean
+				}
+				return next
+			})
+		},
+		[setRowSelection],
+	)
+
+	return { reportBulkResult, retainOnlyFailed }
 }
 
 export function useMigrateObjectType(workspaceId: string) {

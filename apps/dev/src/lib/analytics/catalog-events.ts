@@ -68,6 +68,37 @@ export async function trackPackageUninstalled(p: PackageUninstalledProps): Promi
 	})
 }
 
+// ── Slack-app ship metric ───────────────────────────────────────────────────
+//
+// The "Maskin Slack App" bet's success metric is weekly active @Maskin
+// mentions across ≥3 connected teams plus a downstream conversion rate. We
+// fire `slack_mention_received` once per dedup'd inbound mention/DM — the
+// distinct id is the workspace, mirroring the existing managed-catalog
+// events so PostHog-side weekly-active joins stay simple.
+//
+// Anonymisation: we deliberately omit `slack_user_id` — only the resolved
+// Maskin actor id is sent. The Slack user id is PII we don't need for the
+// bet's success calculation, and not sending it is the cheap way to keep
+// PostHog out of "we shipped a Slack user id to a third-party analytics
+// service" territory.
+
+interface SlackMentionReceivedProps {
+	actorId: string
+	workspaceId: string
+	channelType: 'channel' | 'group' | 'im'
+	slackTeamId: string
+}
+
+export async function trackSlackMentionReceived(p: SlackMentionReceivedProps): Promise<void> {
+	await capturePosthogEvent('slack_mention_received', p.workspaceId, {
+		workspace_id: p.workspaceId,
+		actor_id: p.actorId,
+		channel_type: p.channelType,
+		agent: 'workspace_coach',
+		slack_team_id: p.slackTeamId,
+	})
+}
+
 interface LoopActiveDayProps {
 	installedPackageId: string
 	packageId: string
