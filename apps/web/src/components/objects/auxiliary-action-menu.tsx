@@ -148,7 +148,7 @@ export function AuxiliaryActionMenu({
 		<Button
 			variant="ghost"
 			size="icon"
-			className="h-7 w-7 text-muted-foreground"
+			className="h-7 w-7 text-muted-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11"
 			aria-label="More actions"
 		>
 			<MoreHorizontal size={15} />
