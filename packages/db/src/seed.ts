@@ -1617,6 +1617,28 @@ Check out the PR branch. Review for:
 - Style, naming, formatting — Biome handles this
 - Non-blocking improvements — leave as follow-up tasks
 
+## Step 2.5: Tag every finding
+
+Every finding you write — in the \`## Specialist Review\` section on the task, in inline PR comments, or in task comments — MUST lead with a bracketed category tag so the defect class is countable across PRs. Pick the most specific tag; fall back to \`[other]\` when nothing fits.
+
+### Documentation-grounding defects
+
+Count the model-memory failure modes the docs-lookup pipeline targets. Never remove or rename these strings — a workspace metric greps the exact spelling.
+
+- \`[wrong-api]\` — code calls an API, method, function, or symbol that does not exist (or exists with different behaviour) on the library + version present in the diff. Umbrella when the two more specific tags below don't clearly apply.
+- \`[hallucinated-signature]\` — the call's argument count, positional/keyword names, or types don't match the real signature on the version pinned in \`package.json\`, the lockfile, or the import.
+- \`[version-mismatch]\` — the code targets an API shape that only exists on a version other than the one pinned or imported (e.g. writing v3 code against a v2 install).
+
+Precedence: prefer \`[hallucinated-signature]\` or \`[version-mismatch]\` over the umbrella \`[wrong-api]\` when either clearly fits.
+
+### Existing tags stay
+
+Any bracketed category prefix already in use (\`[testing]\`, \`[api-contract]\`, \`[input-validation]\`, \`[maintainability]\`, \`[security]\`, \`[perf]\`, \`[logic]\`, etc.) continues to apply. This taxonomy addition only extends the set — no removals, no renames.
+
+### Example
+
+\`[hallucinated-signature] setSessionSnapshot() is called with a string as the second arg, but the signature in @maskin/sessions@2.1.0 takes an options object. Fix: pass { includeAgentFiles: true }.\`
+
 ## Step 3: Run checks
 
 Run \`pnpm lint\`, \`pnpm type-check\`, \`pnpm test -- --run\` on the PR branch. Treat any failure as a critical issue.
@@ -1645,7 +1667,8 @@ If checks cannot be fixed (e.g. requires domain knowledge you don't have): post 
 - Merge the PR — that is the Auto-Merge Bot's job.
 - Nitpick style.
 - Block on non-critical issues.
-- Hand off without running lint/type-check/tests.`,
+- Hand off without running lint/type-check/tests.
+- Post a finding without a bracketed category tag prefix.`,
 				llmProvider: 'anthropic',
 				llmConfig: { model: 'claude-sonnet-4-6' },
 				tools: {
@@ -2061,6 +2084,28 @@ Check out the PR branch. Review for:
 - Style, naming, formatting — Biome handles this
 - Non-blocking improvements — leave as follow-up tasks
 
+## Step 2.5: Tag every finding
+
+Every finding you write — in the \`## Specialist Review\` section on the task, in inline PR comments, or in task comments — MUST lead with a bracketed category tag so the defect class is countable across PRs. Pick the most specific tag; fall back to \`[other]\` when nothing fits.
+
+### Documentation-grounding defects
+
+Count the model-memory failure modes the docs-lookup pipeline targets. Never remove or rename these strings — a workspace metric greps the exact spelling.
+
+- \`[wrong-api]\` — code calls an API, method, function, or symbol that does not exist (or exists with different behaviour) on the library + version present in the diff. Umbrella when the two more specific tags below don't clearly apply.
+- \`[hallucinated-signature]\` — the call's argument count, positional/keyword names, or types don't match the real signature on the version pinned in \`package.json\`, the lockfile, or the import.
+- \`[version-mismatch]\` — the code targets an API shape that only exists on a version other than the one pinned or imported (e.g. writing v3 code against a v2 install).
+
+Precedence: prefer \`[hallucinated-signature]\` or \`[version-mismatch]\` over the umbrella \`[wrong-api]\` when either clearly fits.
+
+### Existing tags stay
+
+Any bracketed category prefix already in use (\`[testing]\`, \`[api-contract]\`, \`[input-validation]\`, \`[maintainability]\`, \`[security]\`, \`[perf]\`, \`[logic]\`, etc.) continues to apply. This taxonomy addition only extends the set — no removals, no renames.
+
+### Example
+
+\`[hallucinated-signature] setSessionSnapshot() is called with a string as the second arg, but the signature in @maskin/sessions@2.1.0 takes an options object. Fix: pass { includeAgentFiles: true }.\`
+
 ## Step 3: Run checks
 
 Run \`pnpm lint\`, \`pnpm type-check\`, \`pnpm test -- --run\` on the PR branch. Treat any failure as a critical issue.
@@ -2089,7 +2134,8 @@ If checks cannot be fixed (e.g. requires domain knowledge you don't have): post 
 - Merge the PR — that is the Auto-Merge Bot's job.
 - Nitpick style.
 - Block on non-critical issues.
-- Hand off without running lint/type-check/tests.`,
+- Hand off without running lint/type-check/tests.
+- Post a finding without a bracketed category tag prefix.`,
 				llmProvider: 'anthropic',
 				llmConfig: { model: 'claude-sonnet-4-6' },
 				tools: {
