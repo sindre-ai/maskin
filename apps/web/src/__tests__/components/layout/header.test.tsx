@@ -62,8 +62,50 @@ describe('Header', () => {
 		] as ReturnType<typeof useMatches>)
 
 		render(<Header />)
+		// Full crumb chain lives in the desktop container (parent Settings + leaf Members)
 		expect(screen.getByText('Settings')).toBeInTheDocument()
-		expect(screen.getByText('Members')).toBeInTheDocument()
+		// Leaf renders in both the desktop chain and the mobile leaf-only container
+		expect(screen.getAllByText('Members')).toHaveLength(2)
+	})
+
+	it('renders the leaf crumb in a mobile-only container so it is visible below md', () => {
+		vi.mocked(useMatches).mockReturnValue([
+			{
+				routeId: '/_authed/$workspaceId/settings/',
+				pathname: '/ws-1/settings',
+				params: { workspaceId: 'ws-1' },
+			},
+			{
+				routeId: '/_authed/$workspaceId/settings/members',
+				pathname: '/ws-1/settings/members',
+				params: { workspaceId: 'ws-1' },
+			},
+		] as ReturnType<typeof useMatches>)
+
+		render(<Header />)
+		const mobileLeaf = screen.getAllByText('Members').find((el) => {
+			// walk up to the flex-container that gates on md:hidden
+			let node: HTMLElement | null = el
+			while (node) {
+				if (node.className && /\bmd:hidden\b/.test(node.className)) return true
+				node = node.parentElement
+			}
+			return false
+		})
+		expect(mobileLeaf).toBeDefined()
+	})
+
+	it('renders the desktop crumb row visible at rest (no opacity-0 hover-only wrapper)', () => {
+		vi.mocked(useMatches).mockReturnValue([
+			{ routeId: '/_authed/$workspaceId/', pathname: '/ws-1', params: { workspaceId: 'ws-1' } },
+		] as ReturnType<typeof useMatches>)
+
+		const { container } = render(<Header />)
+		// The desktop crumb container must not gate visibility on hover — no `opacity-0` at rest,
+		// and no `transition-opacity` residue anywhere in the header.
+		const html = container.innerHTML
+		expect(html).not.toMatch(/\bopacity-0\b/)
+		expect(html).not.toMatch(/\btransition-opacity\b/)
 	})
 
 	it('renders a chat launcher that opens the panel without navigating', () => {
