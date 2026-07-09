@@ -121,8 +121,6 @@ curl -X POST https://<host>/api/graph \
   }'
 ```
 
-Both endpoints accept an `Idempotency-Key` header — safe to retry.
-
 ---
 
 ## `get_objects`
@@ -288,7 +286,7 @@ curl -X POST https://<host>/api/relationships \
   -d '{"source_id":"<insight-uuid>","target_id":"<bet-uuid>","type":"informs"}'
 ```
 
-REST splits the two writes across two endpoints and two transactions; the MCP tool does both in one atomic call. Both endpoints accept `Idempotency-Key`.
+REST splits the two writes across two endpoints and two transactions; the MCP tool does both in one atomic call.
 
 ---
 
