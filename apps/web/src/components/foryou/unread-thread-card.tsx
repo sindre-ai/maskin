@@ -277,7 +277,7 @@ export function UnreadThreadCard({
 						</TooltipProvider>
 					)}
 					{objectType && <TypeBadge type={objectType} />}
-					{objectStatus && <StatusBadge status={objectStatus} />}
+					{objectStatus && <StatusBadge status={objectStatus} variant="dot-word" />}
 					<span className="flex-1" />
 					<button
 						type="button"
