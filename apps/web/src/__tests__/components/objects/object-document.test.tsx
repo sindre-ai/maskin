@@ -84,6 +84,22 @@ describe('ObjectDocumentView', () => {
 		expect(textarea.className).toContain('bg-transparent')
 	})
 
+	it('renders a coarse-pointer mobile edit affordance on the title textarea', () => {
+		// OD7: on touch devices, the OD1 hover affordance never fires, so mobile
+		// operators can't tell the title is editable. A dashed bottom-border shows
+		// idle-editability; on focus it solidifies. Desktop styling is untouched
+		// (pointer-coarse: only), and the placeholder reads as a hint, not a value.
+		const object = buildObjectResponse({ title: 'A bet' })
+		render(<ObjectDocumentView {...baseProps} object={object} />)
+		const textarea = screen.getByDisplayValue('A bet')
+		expect(textarea.className).toContain('pointer-coarse:border-dashed')
+		expect(textarea.className).toContain('pointer-coarse:border-b-border/60')
+		expect(textarea.className).toContain('pointer-coarse:focus:border-solid')
+		expect(textarea.className).toContain('pointer-coarse:focus:border-b-border')
+		expect(textarea.className).toContain('placeholder:text-muted-foreground')
+		expect(textarea.getAttribute('placeholder')).toBe('Untitled')
+	})
+
 	it('calls onUpdateTitle on blur when title changed', async () => {
 		const user = userEvent.setup()
 		const onUpdateTitle = vi.fn()
