@@ -29,7 +29,7 @@ Every first-class thing you work with in a Maskin workspace — a bet, a task, a
 }
 ```
 
-Returns the created node with a server-assigned UUID. `$id` is a client-side temporary handle used to reference the node from `edges` in the same call — it never appears in the returned data.
+Returns the created node with a server-assigned UUID. `$id` is a client-side temporary handle used to reference the node from `edges` in the same call — the response echoes it back on each node so you can pair the returned UUID with the handle you sent.
 
 ---
 
@@ -44,7 +44,7 @@ For a single object, pass one node and no edges. For a graph — a bet with thre
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `nodes` | `array` (1–50) | yes | Objects to create. |
-| `nodes[].$id` | `string` | yes | Client-side temporary ID for cross-referencing in `edges`. Never sent back to you. |
+| `nodes[].$id` | `string` | yes | Client-side temporary ID for cross-referencing in `edges`. Echoed back on each returned node so you can pair the server-assigned UUID with the handle you sent. |
 | `nodes[].type` | `string` | yes | Object type (e.g. `insight`, `bet`, `task`, `meeting`). Must be a type enabled on the workspace. |
 | `nodes[].status` | `string` | yes | Must be a valid status for `type` in this workspace. Defaults: insight → `new\|processing\|clustered\|scored\|parked\|discarded`; bet → `signal\|qualified\|define\|active\|live\|succeeded\|failed\|paused`; task → `todo\|in_progress\|in_review\|validated\|done\|discarded`. |
 | `nodes[].title` | `string` | no | Human-readable title. |
@@ -286,7 +286,7 @@ curl -X POST https://<host>/api/relationships \
   -d '{"source_id":"<insight-uuid>","target_id":"<bet-uuid>","type":"informs"}'
 ```
 
-REST splits the two writes across two endpoints and two transactions; the MCP tool does both in one atomic call.
+The MCP tool wraps both surfaces (`PATCH /api/objects/:id` for the field update, `POST /api/relationships` for the edge) and fans them out in parallel — each is still its own request and its own DB transaction, so a partial failure leaves whichever writes already succeeded. The MCP response reports per-item `success`/`error` so you can see exactly which side failed.
 
 ---
 
@@ -310,7 +310,7 @@ Hard-delete a single object by ID.
 3. Deletes the `objects` row itself.
 4. Inserts a `deleted` row in the workspace `events` log so the SSE feed and audit trail stay honest.
 
-There is no soft-delete flag, no undo, and no restore endpoint. Related edges in the `relationships` table cascade via foreign key. Comments and files are not automatically deleted — they become orphaned by object ID and should be cleaned up separately if needed.
+There is no soft-delete flag, no undo, and no restore endpoint. Nothing else is touched: the `relationships` table's `source_id` / `target_id` columns are polymorphic (they can point at objects or files) and have no foreign key on `objects.id`, so related edges are **not** cascaded — they, along with comments (events) and files, become orphaned by object ID and should be cleaned up separately if needed.
 
 ### Minimal example
 
