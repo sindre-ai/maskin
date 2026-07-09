@@ -536,9 +536,16 @@ describe('Workspace Skills Integration', () => {
 			const entryNames = downloaded.getEntries().map((e) => e.entryName)
 			expect(entryNames.sort()).toEqual(['SKILL.md', 'reference/style.md', 'scripts/run.py'].sort())
 
-			// Re-upload the downloaded zip — same `file_count`, still folder skill.
+			// Re-upload the downloaded zip as a Replace of the same skill — same
+			// `file_count`, still folder skill. A round-trip re-upload keeps the
+			// SKILL.md frontmatter `name: docx` unchanged, so uploading it as a
+			// brand-new skill (no `?skillId=`) would collide with the original on
+			// the workspace's unique name constraint. Replacing is also the real
+			// user flow this proves: Download .zip → edit → Replace.
 			// This is the DoD round-trip: the downloaded zip must re-upload cleanly.
-			const reuploadRes = await app.request(uploadRequest('docx-roundtrip.zip', zipBuffer))
+			const reuploadRes = await app.request(
+				uploadRequest('docx-roundtrip.zip', zipBuffer, `?skillId=${uploaded.id}`),
+			)
 			expect(reuploadRes.status).toBe(201)
 			const reuploaded = await reuploadRes.json()
 			expect(reuploaded.isFolder).toBe(true)
