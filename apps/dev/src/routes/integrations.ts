@@ -1308,6 +1308,19 @@ webhookApp.post('/slack-interactive', async (c) => {
 	return c.json({ ok: true })
 })
 
+// `asyncProcessing` providers (Slack) hand fan-out + events insert off to the
+// event loop so the route can ack fast — the caller never gets a handle on
+// that background promise. Track it here so integration tests (running
+// against real Postgres, where the work is genuine socket I/O spanning many
+// event-loop turns, not a single microtask) can deterministically wait for it
+// instead of racing an arbitrary number of `setImmediate`/timer ticks.
+const pendingAsyncWebhookWork = new Set<Promise<unknown>>()
+
+/** Exported for tests only — await all in-flight asyncProcessing work. */
+export async function __flushAsyncWebhookProcessingForTests(): Promise<void> {
+	await Promise.all(pendingAsyncWebhookWork)
+}
+
 webhookApp.post('/:provider', async (c) => {
 	const db = c.get('db')
 	const providerName = c.req.param('provider')
@@ -1436,7 +1449,7 @@ webhookApp.post('/:provider', async (c) => {
 					const promptIntegration = eligible[0]
 					if (promptIntegration) {
 						const frontendUrl = process.env.FRONTEND_URL || 'https://maskin.io'
-						void maybePromptAccountLink({
+						const promptTask = maybePromptAccountLink({
 							db,
 							integrationId: promptIntegration.id,
 							integrationCredentials: promptIntegration.credentials,
@@ -1444,14 +1457,19 @@ webhookApp.post('/:provider', async (c) => {
 							slackUserId,
 							channelId,
 							frontendUrl,
-						}).catch((err) => {
-							logger.warn('Slack DM re-link prompt failed', {
-								integrationId: promptIntegration.id,
-								slackTeamId,
-								slackUserId,
-								error: err instanceof Error ? err.message : String(err),
-							})
 						})
+							.catch((err) => {
+								logger.warn('Slack DM re-link prompt failed', {
+									integrationId: promptIntegration.id,
+									slackTeamId,
+									slackUserId,
+									error: err instanceof Error ? err.message : String(err),
+								})
+							})
+							.finally(() => {
+								pendingAsyncWebhookWork.delete(promptTask)
+							})
+						pendingAsyncWebhookWork.add(promptTask)
 					}
 				}
 			}
@@ -1637,13 +1655,18 @@ webhookApp.post('/:provider', async (c) => {
 				// The delivery claim above already committed, so a Slack retry that
 				// arrives while this background task is still running is recognised as
 				// a duplicate and skipped.
-				void runFanOutAndInsert().catch((err) => {
-					logger.error(`Async ${providerName} processing crashed`, {
-						integrationId: integration.id,
-						workspaceId: integration.workspaceId,
-						error: err instanceof Error ? err.message : String(err),
+				const task = runFanOutAndInsert()
+					.catch((err) => {
+						logger.error(`Async ${providerName} processing crashed`, {
+							integrationId: integration.id,
+							workspaceId: integration.workspaceId,
+							error: err instanceof Error ? err.message : String(err),
+						})
 					})
-				})
+					.finally(() => {
+						pendingAsyncWebhookWork.delete(task)
+					})
+				pendingAsyncWebhookWork.add(task)
 				return { kind: 'queued' }
 			}
 

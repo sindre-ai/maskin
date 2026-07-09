@@ -76,10 +76,12 @@ async function createWebhookApp(storage: StorageProvider) {
 }
 
 // Slack ingest runs `asyncProcessing: true` — the route acks before the
-// fan-out + events insert finishes. Yield once so the chained microtasks
-// settle before we assert DB state.
-function flushAsyncProcessing(): Promise<void> {
-	return new Promise<void>((resolve) => setImmediate(resolve))
+// fan-out + events insert finishes. The background work is genuine Postgres
+// I/O spanning many event-loop turns, so a fixed-tick `setImmediate` yield
+// isn't enough; await the route's own tracked in-flight promises instead.
+async function flushAsyncProcessing(): Promise<void> {
+	const { __flushAsyncWebhookProcessingForTests } = await import('../../routes/integrations')
+	await __flushAsyncWebhookProcessingForTests()
 }
 
 describe('Slack mention instrumentation — webhook round-trip', () => {
