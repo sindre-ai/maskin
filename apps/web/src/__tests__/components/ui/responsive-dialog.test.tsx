@@ -54,6 +54,13 @@ describe('ResponsiveDialog', () => {
 		expect(screen.getByText('title text')).toBeInTheDocument()
 	})
 
+	it('pads the mobile sheet bottom past the iOS home indicator', () => {
+		mockUseIsMobile.mockReturnValue(true)
+		render(<Fixture />)
+		const dialog = screen.getByRole('dialog')
+		expect(dialog.className).toContain('pb-[max(1.5rem,env(safe-area-inset-bottom))]')
+	})
+
 	it('does not render content when closed', () => {
 		mockUseIsMobile.mockReturnValue(false)
 		render(

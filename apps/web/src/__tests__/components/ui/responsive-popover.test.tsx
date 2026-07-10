@@ -50,6 +50,13 @@ describe('ResponsivePopover', () => {
 		expect(screen.getByText('popover body')).toBeInTheDocument()
 	})
 
+	it('pads the mobile sheet bottom past the iOS home indicator', () => {
+		mockUseIsMobile.mockReturnValue(true)
+		render(<Fixture />)
+		const dialog = screen.getByRole('dialog')
+		expect(dialog.className).toContain('pb-[max(1rem,env(safe-area-inset-bottom))]')
+	})
+
 	it('does not render content when closed', () => {
 		mockUseIsMobile.mockReturnValue(true)
 		render(

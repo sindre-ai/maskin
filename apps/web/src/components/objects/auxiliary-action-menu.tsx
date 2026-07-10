@@ -159,7 +159,10 @@ export function AuxiliaryActionMenu({
 		return (
 			<Sheet open={open} onOpenChange={handleOpenChange}>
 				<SheetTrigger asChild>{trigger}</SheetTrigger>
-				<SheetContent side="bottom" className="rounded-t-xl px-0 pb-6">
+				<SheetContent
+					side="bottom"
+					className="rounded-t-xl px-0 pb-[max(1.5rem,env(safe-area-inset-bottom))]"
+				>
 					<SheetHeader className="px-4">
 						<SheetTitle>Actions</SheetTitle>
 					</SheetHeader>
