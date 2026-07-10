@@ -96,12 +96,14 @@ export function MetadataPropertiesView({
 		<div className="space-y-1 w-full">
 			{metaEntries.map(([key, value]) => {
 				const fieldDef = fieldDefs.find((f) => f.name === key)
+				const href = buildValueHref(key, value, metadata)
 				return (
 					<PropertyRow
 						key={key}
 						name={key}
 						value={value}
 						fieldDef={fieldDef}
+						href={href}
 						onUpdate={(v) => handleUpdate(key, v)}
 						onRemove={() => handleRemove(key)}
 					/>
@@ -172,17 +174,21 @@ function PropertyRow({
 	name,
 	value,
 	fieldDef,
+	href,
 	onUpdate,
 	onRemove,
 }: {
 	name: string
 	value: SafeJsonValue
 	fieldDef?: FieldDefinition
+	href?: string
 	onUpdate: (value: SafeJsonValue) => void
 	onRemove: () => void
 }) {
 	const [editing, setEditing] = useState(false)
 	const type = fieldDef?.type ?? inferType(value)
+	const displayClass =
+		'block w-full text-xs text-muted-foreground hover:text-foreground text-left whitespace-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
 
 	return (
 		<div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-accent/50 hover:text-accent-foreground group">
@@ -201,12 +207,17 @@ function PropertyRow({
 						}}
 						onCancel={() => setEditing(false)}
 					/>
-				) : (
-					<button
-						type="button"
-						className="block w-full text-xs text-muted-foreground hover:text-foreground text-left whitespace-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-						onClick={() => setEditing(true)}
+				) : href ? (
+					<a
+						href={href}
+						target="_blank"
+						rel="noopener noreferrer"
+						className={`${displayClass} underline decoration-dotted underline-offset-2`}
 					>
+						{formatDisplay(value, type)}
+					</a>
+				) : (
+					<button type="button" className={displayClass} onClick={() => setEditing(true)}>
 						{formatDisplay(value, type)}
 					</button>
 				)}
@@ -470,6 +481,25 @@ function FieldTypeIcon({ type }: { type: string }) {
 	}
 	const Icon = icons[type] ?? Type
 	return <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+}
+
+export function buildValueHref(
+	key: string,
+	value: SafeJsonValue,
+	metadata: SafeMetadata,
+): string | undefined {
+	if (key !== 'branch' || typeof value !== 'string' || !value) return undefined
+	const repo = metadata.repo
+	if (typeof repo !== 'string' || !repo) return undefined
+	let repoUrl: URL
+	try {
+		repoUrl = new URL(repo)
+	} catch {
+		return undefined
+	}
+	if (repoUrl.protocol !== 'https:' || repoUrl.hostname !== 'github.com') return undefined
+	const base = repo.replace(/\/+$/, '')
+	return `${base}/tree/${encodeURIComponent(value)}`
 }
 
 function inferType(value: unknown): string {
