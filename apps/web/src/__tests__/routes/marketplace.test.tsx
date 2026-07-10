@@ -203,4 +203,18 @@ describe('MarketplacePage', () => {
 		expect(aside?.className).toMatch(/hidden/)
 		expect(aside?.className).toMatch(/md:block/)
 	})
+
+	it('mobile filter chips carry the pointer-coarse ≥44px tap-target floor', () => {
+		render(<MarketplacePage />)
+		const chipNav = screen.getByRole('navigation', { name: 'Marketplace filters' })
+		const chipButtons = chipNav.querySelectorAll<HTMLButtonElement>('button[type="button"]')
+		expect(chipButtons.length).toBeGreaterThan(0)
+		for (const chip of chipButtons) {
+			expect(chip.className).toContain('pointer-coarse:min-h-11')
+			expect(chip.className).toContain('pointer-coarse:inline-flex')
+			expect(chip.className).toContain('pointer-coarse:items-center')
+			expect(chip.className).toContain('py-1')
+			expect(chip.className).toContain('text-xs')
+		}
+	})
 })

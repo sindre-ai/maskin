@@ -294,7 +294,7 @@ function ChipStrip({
 						type="button"
 						onClick={() => onSelect(item.value)}
 						className={cn(
-							'shrink-0 rounded-full border px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors',
+							'shrink-0 rounded-full border px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors pointer-coarse:min-h-11 pointer-coarse:inline-flex pointer-coarse:items-center',
 							isActive
 								? 'border-foreground bg-foreground text-background'
 								: 'border-border bg-background text-muted-foreground hover:text-foreground',
