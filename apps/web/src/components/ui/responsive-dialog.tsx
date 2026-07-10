@@ -74,7 +74,7 @@ const ResponsiveDialogContent = React.forwardRef<
 				ref={ref}
 				side="bottom"
 				className={cn(
-					'flex max-h-[85dvh] w-full max-w-none flex-col rounded-t-lg rounded-b-none',
+					'flex max-h-[85dvh] w-full max-w-none flex-col rounded-t-lg rounded-b-none pb-[max(1.5rem,env(safe-area-inset-bottom))]',
 					className,
 				)}
 				{...props}
