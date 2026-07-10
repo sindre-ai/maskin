@@ -154,7 +154,7 @@ Do not introduce custom breakpoints. The `useIsMobile()` hook in `src/hooks/use-
 
 **Tables.** Tables live inside `overflow-auto` wrappers (see `data-table.tsx`, `related-objects-table.tsx`). Column widths use truncate + `max-w-[150px] sm:max-w-[300px]` so cells get more space on larger screens. Don't add `table-fixed` without explicit need.
 
-**Viewport meta** is set in `apps/web/index.html` (`width=device-width, initial-scale=1.0`). Do not change it without a product reason.
+**Viewport meta** is set in `apps/web/index.html` (`width=device-width, initial-scale=1.0, viewport-fit=cover`). The `viewport-fit=cover` token is what makes iOS `env(safe-area-inset-*)` resolve to non-zero on devices with a notch / home indicator / dynamic island — the top scaffolds and bottom bars rely on it. Do not change it without a product reason; in particular, do not revert to the older two-token form (`width=device-width, initial-scale=1.0`) or the safe-area padding across the app collapses to zero.
 
 ### Responsive (mobile + iPad)
 The app is targeted at three reference viewports: **375px** (iPhone portrait), **768px** (iPad portrait), **1024px** (iPad landscape). Every surface must work at all three.
@@ -189,7 +189,7 @@ Do not introduce custom breakpoints. The `useIsMobile()` hook in `src/hooks/use-
 
 **Tables.** Tables live inside `overflow-auto` wrappers (see `data-table.tsx`, `related-objects-table.tsx`). Column widths use truncate + `max-w-[150px] sm:max-w-[300px]` so cells get more space on larger screens. Don't add `table-fixed` without explicit need.
 
-**Viewport meta** is set in `apps/web/index.html` (`width=device-width, initial-scale=1.0`). Do not change it without a product reason.
+**Viewport meta** is set in `apps/web/index.html` (`width=device-width, initial-scale=1.0, viewport-fit=cover`). The `viewport-fit=cover` token is what makes iOS `env(safe-area-inset-*)` resolve to non-zero on devices with a notch / home indicator / dynamic island — the top scaffolds and bottom bars rely on it. Do not change it without a product reason; in particular, do not revert to the older two-token form (`width=device-width, initial-scale=1.0`) or the safe-area padding across the app collapses to zero.
 
 ## File Organization
 ```
