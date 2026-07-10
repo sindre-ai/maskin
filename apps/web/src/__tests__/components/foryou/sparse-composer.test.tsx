@@ -76,6 +76,17 @@ describe('SparseComposer', () => {
 		expect(screen.queryByTestId('sparse-composer-chips')).not.toBeInTheDocument()
 	})
 
+	// Locks in the coarse-pointer 44px tap-target variant on the quick-start
+	// chips so a future refactor can't silently shrink the hit box below the
+	// WCAG 2.5.5 / Maskin 44px floor. Desktop (fine pointer) rendering must
+	// stay unchanged — the base `h-7` still wins there.
+	it('quick-start chips carry the pointer-coarse min-height floor for touch tap targets', () => {
+		render(<SparseComposer itemsCount={0} />)
+		const chip = screen.getByRole('button', { name: 'Help me plan a new bet' })
+		expect(chip.className).toContain('pointer-coarse:min-h-11')
+		expect(chip.className).toContain('h-7')
+	})
+
 	it('submits via openWithContext with empty attachments and clears the input', async () => {
 		const user = userEvent.setup()
 		render(<SparseComposer itemsCount={0} />)
