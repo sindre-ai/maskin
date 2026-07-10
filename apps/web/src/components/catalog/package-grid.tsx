@@ -1,5 +1,7 @@
 import { ItemCard } from '@/components/marketplace/item-card'
 import { PackageCard } from '@/components/marketplace/package-card'
+import { EmptyState } from '@/components/shared/empty-state'
+import { Button } from '@/components/ui/button'
 import type {
 	CatalogItemInstalledEntry,
 	CatalogItemType,
@@ -28,6 +30,7 @@ export function PackageGrid({
 	installLookup,
 	installedItemLookup,
 	className,
+	onResetFilters,
 }: {
 	packages: CatalogPackageSummary[]
 	items?: CatalogPackageItem[]
@@ -39,6 +42,10 @@ export function PackageGrid({
 	/** Receives a catalog item ID and returns its individual-install entry. */
 	installedItemLookup?: (itemId: string) => CatalogItemInstalledEntry | undefined
 	className?: string
+	/** When set, a filter-narrowed empty result renders an `<EmptyState>` with a
+	 *  Reset button that invokes this callback. Omit to keep the legacy null-render
+	 *  behaviour (e.g. for the fully empty catalog). */
+	onResetFilters?: () => void
 }) {
 	const filter = typeFilter ?? 'all'
 
@@ -60,7 +67,27 @@ export function PackageGrid({
 		.filter((s) => s.pkgCards.length > 0 || s.itemCards.length > 0)
 
 	const hasPackages = showPackagesSection && multiTypePkgs.length > 0
-	if (!hasPackages && typedSections.length === 0) return null
+	if (!hasPackages && typedSections.length === 0) {
+		if (!onResetFilters) return null
+		return (
+			<EmptyState
+				className={className}
+				title="No matches for this filter combo"
+				description="Clear the use case to see the full catalog again."
+				action={
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						className="pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+						onClick={onResetFilters}
+					>
+						Reset filters
+					</Button>
+				}
+			/>
+		)
+	}
 
 	return (
 		<div className={cn('space-y-8', className)}>
