@@ -97,7 +97,7 @@ export function Header() {
 	}
 
 	return (
-		<header className="relative flex h-11 shrink-0 items-center gap-2 after:pointer-events-none after:absolute after:top-full after:right-0 after:left-0 after:z-10 after:h-8 after:bg-gradient-to-b after:from-background after:to-transparent after:content-['']">
+		<header className="relative flex h-[calc(theme(spacing.11)+env(safe-area-inset-top))] shrink-0 items-center gap-2 pt-[env(safe-area-inset-top)] after:pointer-events-none after:absolute after:top-full after:right-0 after:left-0 after:z-10 after:h-8 after:bg-gradient-to-b after:from-background after:to-transparent after:content-['']">
 			<div className="flex w-full min-w-0 items-center gap-1 px-3 lg:gap-2 lg:px-4">
 				<SidebarTrigger className="md:hidden -ml-1 h-7 w-7 shrink-0 pointer-coarse:min-h-11 pointer-coarse:min-w-11" />
 				{crumbs.length > 1 && (
