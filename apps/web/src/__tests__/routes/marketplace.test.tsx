@@ -2,11 +2,13 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const mockUseSearch = vi.fn<() => { error?: string }>(() => ({}))
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
 		createFileRoute: () => (options: Record<string, unknown>) => options,
+		useSearch: () => mockUseSearch(),
 	}
 })
 
@@ -50,10 +52,13 @@ describe('MarketplacePage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockUseQueries.mockReturnValue([])
+		mockUseSearch.mockReturnValue({})
 		mockUseCatalogPackages.mockReturnValue({
 			data: { packages: [], counts: COUNTS },
 			isLoading: false,
 			isError: false,
+			isFetching: false,
+			refetch: vi.fn(),
 		})
 	})
 
@@ -100,10 +105,69 @@ describe('MarketplacePage', () => {
 			data: undefined,
 			isLoading: false,
 			isError: true,
+			isFetching: false,
+			refetch: vi.fn(),
 		})
 		render(<MarketplacePage />)
 		expect(screen.getAllByRole('button', { name: /^Agents$/ }).length).toBeGreaterThanOrEqual(1)
 		expect(screen.getByText(/Couldn't load the catalog/i)).toBeInTheDocument()
+	})
+
+	it('renders a Retry button in the error state that re-fires the catalog query', async () => {
+		const refetch = vi.fn()
+		mockUseCatalogPackages.mockReturnValue({
+			data: undefined,
+			isLoading: false,
+			isError: true,
+			isFetching: false,
+			refetch,
+		})
+		render(<MarketplacePage />)
+		const retry = screen.getByRole('button', { name: /^Retry$/ })
+		expect(retry).toBeInTheDocument()
+		expect(retry.className).toContain('pointer-coarse:min-h-11')
+		expect(retry.className).toContain('pointer-coarse:min-w-11')
+		await userEvent.setup().click(retry)
+		expect(refetch).toHaveBeenCalledTimes(1)
+	})
+
+	it('shows the diagnostic line when the ?error= search param is present', () => {
+		mockUseSearch.mockReturnValue({ error: '503 — try again in a minute' })
+		mockUseCatalogPackages.mockReturnValue({
+			data: undefined,
+			isLoading: false,
+			isError: true,
+			isFetching: false,
+			refetch: vi.fn(),
+		})
+		render(<MarketplacePage />)
+		expect(screen.getByText('503 — try again in a minute')).toBeInTheDocument()
+	})
+
+	it('omits the diagnostic line when the ?error= search param is absent', () => {
+		mockUseCatalogPackages.mockReturnValue({
+			data: undefined,
+			isLoading: false,
+			isError: true,
+			isFetching: false,
+			refetch: vi.fn(),
+		})
+		render(<MarketplacePage />)
+		expect(screen.getByText(/Couldn't load the catalog/i)).toBeInTheDocument()
+		expect(screen.queryByText(/503|Network error/)).not.toBeInTheDocument()
+	})
+
+	it('shows a Retrying… label while the query is re-fetching', () => {
+		mockUseCatalogPackages.mockReturnValue({
+			data: undefined,
+			isLoading: false,
+			isError: true,
+			isFetching: true,
+			refetch: vi.fn(),
+		})
+		render(<MarketplacePage />)
+		const retry = screen.getByRole('button', { name: /Retrying/ })
+		expect(retry).toBeDisabled()
 	})
 
 	it('places a multi-type package in the Packages section, not in Agents or Triggers', () => {

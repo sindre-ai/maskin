@@ -1,5 +1,6 @@
 import { PackageGrid } from '@/components/catalog/package-grid'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
 import { useCatalogPackages, useInstalledCatalogItems } from '@/hooks/use-catalog-packages'
 import { useInstalledPackages } from '@/hooks/use-installed-packages'
 import type {
@@ -15,12 +16,15 @@ import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useQueries } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useSearch } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/marketplace')({
 	component: MarketplacePage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
+	validateSearch: (search: Record<string, unknown>) => ({
+		error: typeof search.error === 'string' && search.error.length > 0 ? search.error : undefined,
+	}),
 })
 
 type TypeFilter = 'all' | 'packages' | CatalogItemType
@@ -61,10 +65,11 @@ const SUBHEAD =
 
 function MarketplacePage() {
 	const { workspaceId } = useWorkspace()
+	const { error: errorParam } = useSearch({ from: '/_authed/$workspaceId/marketplace' })
 	const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
 	const [useCaseFilter, setUseCaseFilter] = useState<UseCaseFilter>('all')
 
-	const { data, isLoading, isError } = useCatalogPackages()
+	const { data, isLoading, isError, isFetching, refetch } = useCatalogPackages()
 	const counts = data?.counts
 	const packages = data?.packages ?? []
 	const useCaseItems = useMemo(() => buildUseCaseItems(counts), [counts])
@@ -190,9 +195,22 @@ function MarketplacePage() {
 
 				<section className="flex-1 min-w-0">
 					{isError ? (
-						<p className="text-sm text-muted-foreground">
-							Couldn't load the catalog right now. Try refreshing.
-						</p>
+						<div className="flex flex-col items-start gap-3">
+							<p className="text-sm text-muted-foreground">
+								Couldn't load the catalog right now. Try refreshing.
+							</p>
+							{errorParam ? <p className="text-xs text-muted-foreground/80">{errorParam}</p> : null}
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								onClick={() => refetch()}
+								disabled={isFetching}
+								className="pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+							>
+								{isFetching ? 'Retrying…' : 'Retry'}
+							</Button>
+						</div>
 					) : isLoading ? (
 						<p className="text-sm text-muted-foreground">Loading catalog…</p>
 					) : isEmpty ? (
