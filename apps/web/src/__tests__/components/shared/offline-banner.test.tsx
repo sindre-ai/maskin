@@ -20,4 +20,11 @@ describe('OfflineBanner', () => {
 		render(<OfflineBanner />)
 		expect(screen.getByText(/you are offline/i)).toBeInTheDocument()
 	})
+
+	it('adds iOS safe-area top padding so the banner clears the notch when viewport-fit=cover', () => {
+		vi.mocked(useOnlineStatus).mockReturnValue(false)
+		const { container } = render(<OfflineBanner />)
+		const banner = container.firstChild as HTMLElement
+		expect(banner.className).toMatch(/pt-\[calc\(0\.5rem\+env\(safe-area-inset-top\)\)\]/)
+	})
 })

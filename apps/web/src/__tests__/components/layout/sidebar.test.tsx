@@ -37,8 +37,16 @@ const setOpenMobile = vi.fn()
 vi.mock('@/components/ui/sidebar', () => ({
 	Sidebar: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	SidebarContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-	SidebarFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-	SidebarHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+	SidebarFooter: ({ children, className }: { children: React.ReactNode; className?: string }) => (
+		<div data-testid="sidebar-footer" className={className}>
+			{children}
+		</div>
+	),
+	SidebarHeader: ({ children, className }: { children: React.ReactNode; className?: string }) => (
+		<div data-testid="sidebar-header" className={className}>
+			{children}
+		</div>
+	),
 	SidebarGroup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	SidebarMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	SidebarMenuButton: ({
@@ -134,6 +142,21 @@ describe('AppSidebar', () => {
 		} as unknown as ReturnType<typeof useUnread>)
 		render(<AppSidebar />)
 		expect(screen.getByLabelText('3 unread')).toBeInTheDocument()
+	})
+
+	it('adds iOS safe-area top padding on the sidebar header so it clears the notch', () => {
+		vi.mocked(useEnabledModules).mockReturnValue(['work'])
+		render(<AppSidebar />)
+		const header = screen.getByTestId('sidebar-header')
+		expect(header.className).toMatch(/\bmin-h-11\b/)
+		expect(header.className).toMatch(/pt-\[env\(safe-area-inset-top\)\]/)
+	})
+
+	it('adds iOS safe-area bottom padding on the sidebar footer so NavUser clears the home indicator', () => {
+		vi.mocked(useEnabledModules).mockReturnValue(['work'])
+		render(<AppSidebar />)
+		const footer = screen.getByTestId('sidebar-footer')
+		expect(footer.className).toMatch(/pb-\[env\(safe-area-inset-bottom\)\]/)
 	})
 
 	it('hides the unread badge when there are no unread threads', () => {

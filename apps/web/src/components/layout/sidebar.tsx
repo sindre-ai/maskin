@@ -51,7 +51,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 
 	return (
 		<Sidebar collapsible="icon" {...props}>
-			<SidebarHeader className="h-11 justify-center">
+			<SidebarHeader className="min-h-11 justify-center pt-[env(safe-area-inset-top)]">
 				<SidebarMenu>
 					<SidebarMenuItem>
 						<SidebarTrigger />
@@ -94,7 +94,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 					</SidebarMenu>
 				</SidebarGroup>
 			</SidebarContent>
-			<SidebarFooter>
+			<SidebarFooter className="pb-[env(safe-area-inset-bottom)]">
 				<div className="px-2 group-data-[collapsible=icon]:hidden">
 					<AgentPulse workspaceId={workspaceId} />
 				</div>
