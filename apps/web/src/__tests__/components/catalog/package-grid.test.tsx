@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('sonner', () => ({
@@ -133,6 +134,52 @@ describe('PackageGrid', () => {
 		const { container } = render(<PackageGrid packages={[]} workspaceId="ws-1" />, {
 			wrapper: TestWrapper,
 		})
+		expect(container.firstChild).toBeNull()
+	})
+
+	it('renders the zero-results EmptyState when onResetFilters is provided and no packages match', () => {
+		const onResetFilters = vi.fn()
+		render(<PackageGrid packages={[]} workspaceId="ws-1" onResetFilters={onResetFilters} />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByText('No matches for this filter combo')).toBeInTheDocument()
+		const reset = screen.getByRole('button', { name: 'Reset filters' })
+		expect(reset).toBeInTheDocument()
+		// Tap-target floor: same additive pattern used across the bet.
+		expect(reset.className).toContain('pointer-coarse:min-h-11')
+		expect(reset.className).toContain('pointer-coarse:min-w-11')
+	})
+
+	it('fires onResetFilters when the Reset filters button is clicked', async () => {
+		const onResetFilters = vi.fn()
+		render(<PackageGrid packages={[]} workspaceId="ws-1" onResetFilters={onResetFilters} />, {
+			wrapper: TestWrapper,
+		})
+		await userEvent.setup().click(screen.getByRole('button', { name: 'Reset filters' }))
+		expect(onResetFilters).toHaveBeenCalledTimes(1)
+	})
+
+	it('also renders the EmptyState when packages exist but typeFilter narrows to zero sections', () => {
+		const onResetFilters = vi.fn()
+		const packages = [buildPackage({ id: 'a', name: 'Agent Only', item_types: ['actor'] })]
+		render(
+			<PackageGrid
+				packages={packages}
+				typeFilter="integration"
+				workspaceId="ws-1"
+				onResetFilters={onResetFilters}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByText('No matches for this filter combo')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Reset filters' })).toBeInTheDocument()
+	})
+
+	it('still renders null when no onResetFilters is passed (backward-compatible)', () => {
+		const { container } = render(
+			<PackageGrid packages={[]} workspaceId="ws-1" typeFilter="integration" />,
+			{ wrapper: TestWrapper },
+		)
 		expect(container.firstChild).toBeNull()
 	})
 })

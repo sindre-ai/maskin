@@ -225,6 +225,10 @@ function MarketplacePage() {
 							workspaceId={workspaceId}
 							installLookup={(id) => installsByPackage.get(id)}
 							installedItemLookup={(id) => installedItemsById.get(id)}
+							onResetFilters={() => {
+								setTypeFilter('all')
+								setUseCaseFilter('all')
+							}}
 						/>
 					)}
 				</section>

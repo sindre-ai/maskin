@@ -258,6 +258,46 @@ describe('MarketplacePage', () => {
 		expect(screen.getByText(/No packages yet/i)).toBeInTheDocument()
 	})
 
+	it('shows the zero-results EmptyState and Reset filters button when a filter narrows the catalog to nothing', async () => {
+		// Catalog has one actor-only package; picking the Integrations type filter
+		// yields zero matching sections and PackageGrid should surface the reset.
+		mockUseCatalogPackages.mockReturnValue({
+			data: {
+				packages: [
+					{
+						id: 'p1',
+						name: 'Solo Agent',
+						slug: 'solo-agent',
+						description: 'Just an agent',
+						version: '1.0.0',
+						use_case: 'Discovery',
+						item_types: ['actor'],
+						created_at: null,
+						updated_at: null,
+					},
+				],
+				counts: COUNTS,
+			},
+			isLoading: false,
+			isError: false,
+		})
+		render(<MarketplacePage />)
+		const user = userEvent.setup()
+		// Pick the desktop-sidebar Integrations button (last in DOM order).
+		const integrationsButtons = screen.getAllByRole('button', { name: /^Integrations\s3/ })
+		await user.click(integrationsButtons[integrationsButtons.length - 1])
+
+		expect(screen.getByText('No matches for this filter combo')).toBeInTheDocument()
+		const reset = screen.getByRole('button', { name: 'Reset filters' })
+		expect(reset).toBeInTheDocument()
+
+		// Clicking Reset should widen both filters back to All — verify the actor
+		// package renders again in its Agents section.
+		await user.click(reset)
+		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent('Solo Agent')
+		expect(screen.queryByText('No matches for this filter combo')).not.toBeInTheDocument()
+	})
+
 	it('hides the desktop sidebar via the md:hidden / hidden md:block split', () => {
 		render(<MarketplacePage />)
 		const chipNav = screen.getByRole('navigation', { name: 'Marketplace filters' })
