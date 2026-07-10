@@ -151,7 +151,7 @@ export function ChatPanel({ workspaceId, agentActorId }: ChatPanelProps) {
 					onWidthChange={setPanelWidth}
 					visible={open && !isMobile}
 				/>
-				<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
+				<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2">
 					<div className="flex items-center gap-1">
 						<h2 className="font-semibold text-base">Chat</h2>
 						<DropdownMenu>

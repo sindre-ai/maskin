@@ -131,4 +131,12 @@ describe('Header', () => {
 		const trigger = screen.getByRole('button', { name: /toggle sidebar/i })
 		expect(trigger.className).toMatch(/\bmd:hidden\b/)
 	})
+
+	it('adds iOS safe-area top padding so the h-11 bar clears the notch (min-h-11 + pt-env)', () => {
+		const { container } = render(<Header />)
+		const header = container.querySelector('header')
+		expect(header).not.toBeNull()
+		expect(header?.className).toMatch(/\bmin-h-11\b/)
+		expect(header?.className).toMatch(/pt-\[env\(safe-area-inset-top\)\]/)
+	})
 })
