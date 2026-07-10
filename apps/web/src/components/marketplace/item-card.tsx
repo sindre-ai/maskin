@@ -108,7 +108,7 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 						<Button
 							size="sm"
 							variant="default"
-							className="h-7 text-xs"
+							className="h-7 text-xs pointer-coarse:min-h-11"
 							disabled={installMutation.isPending}
 							onClick={() => installMutation.mutate(item.id)}
 						>
