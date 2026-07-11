@@ -930,7 +930,7 @@ A bet is a wager with a fixed live period. Commit to the end date before any wor
 
 Every new bet is created by one of:
 
-1. **Bet Council promote-door** — \`strategic-intake-review\` routes a \`clustered\` insight through Promote (composite ≥30 + autonomy gate passes) or through Escalate (Sebk accepts a recommendation). The Strategist creates the bet at \`qualified\` with \`metadata.promotion_mode\` set, and \`informs\` edges to the source insight(s).
+1. **Bet Council promote-door** — \`strategic-intake-review\` routes a \`clustered\` insight through Promote (composite ≥30 + autonomy gate passes) or through Escalate (the workspace owner accepts a recommendation). The Strategist creates the bet at \`qualified\` with \`metadata.promotion_mode\` set, and \`informs\` edges to the source insight(s).
 2. **Fast-track event** — an urgent + reversible + classified trigger (customer-blocking bug / security / churn-risk / external-deadline) routes through the fast-track lane in \`strategic-intake-review\`. Bet is created at \`qualified\` with \`promotion_mode=human_approved\`, flagged for retroactive D1+D6 reconciliation at the next council.
 
 Bets do not appear from nowhere. If you find a \`qualified\` bet without an \`informs\` edge to a source insight (or to a fast-track trigger event), surface it to the Pipeline Monitor.
@@ -1001,7 +1001,7 @@ Leave a line for the outcome to be filled during active.]
 
 Every bet carries \`metadata.promotion_mode\` from the moment of creation. Set it before any other field.
 
-- **\`human_approved\`** — Sebk approved this bet's creation (either by accepting an Escalate-door recommendation, or as the default during council dormancy). This is the value for every bet until the council has logged ≥10 calibration promotions. Always set on fast-tracked bets.
+- **\`human_approved\`** — the workspace owner approved this bet's creation (either by accepting an Escalate-door recommendation, or as the default during council dormancy). This is the value for every bet until the council has logged ≥10 calibration promotions. Always set on fast-tracked bets.
 - **\`auto\`** — only valid after ≥10 human-approved calibration promotions have landed AND the four-condition autonomy gate (Reversible · Effort=1 · Unambiguous alignment · Corroboration sub-A ≥4) passed for this specific bet. Until then: do not use.
 
 Setting \`promotion_mode=auto\` without the calibration threshold met is a bug. Surface it to the Pipeline Monitor.
@@ -1010,7 +1010,7 @@ The Commitment gate below cross-checks that the four autonomy-gate inputs (rever
 
 ## Commitment gate (\`→ active\`)
 
-The bet leaves \`define\` only when ALL of the following are true. The first six are shaping prerequisites; the last four mirror the autonomy gate so that whether the bet was promoted by Sebk or by the auto path, the same four facts hold when work starts.
+The bet leaves \`define\` only when ALL of the following are true. The first six are shaping prerequisites; the last four mirror the autonomy gate so that whether the bet was promoted by the workspace owner or by the auto path, the same four facts hold when work starts.
 
 **Shaping prerequisites:**
 
@@ -1026,13 +1026,13 @@ The bet leaves \`define\` only when ALL of the following are true. The first six
 **Autonomy-gate parity** (re-evaluated at commit, not just at promotion):
 
 8. **Reversibility (two-way door).** The bet is still a two-way door: it can be paused or unwound within one cycle at low sunk cost. If shaping turned it into a one-way door (e.g. an irrevocable platform commitment surfaced during \`define\`), pause and re-route to Escalate before \`active\`.
-9. **Appetite ceiling.** Effort is still bounded at the appetite committed at promotion (small=1 / medium=3 / large=5). If shaping reveals the appetite needs to grow (e.g. small → medium), Sebk must approve the new ceiling before \`active\`. Auto-promoted bets MUST stay at Effort=1; if shaping pushes them above small, revert \`promotion_mode\` to \`human_approved\` and surface to Sebk.
+9. **Appetite ceiling.** Effort is still bounded at the appetite committed at promotion (small=1 / medium=3 / large=5). If shaping reveals the appetite needs to grow (e.g. small → medium), the workspace owner must approve the new ceiling before \`active\`. Auto-promoted bets MUST stay at Effort=1; if shaping pushes them above small, revert \`promotion_mode\` to \`human_approved\` and surface to the workspace owner (resolve via \`list_actors\`).
 10. **Strategic alignment unchanged.** D1 ≥ 4 still holds and no new conflict against another active bet has appeared since promotion. The portfolio moves; re-check.
-11. **Corroboration floor still met.** D2 sub-A ≥ 4 still holds (≥3 independent sources, at least one behavioural/analytics). If recency decay or de-duplication during shaping dropped sub-A below 4, this bet should not be auto-running — revert \`promotion_mode\` to \`human_approved\` and surface to Sebk.
+11. **Corroboration floor still met.** D2 sub-A ≥ 4 still holds (≥3 independent sources, at least one behavioural/analytics). If recency decay or de-duplication during shaping dropped sub-A below 4, this bet should not be auto-running — revert \`promotion_mode\` to \`human_approved\` and surface to the workspace owner (resolve via \`list_actors\`).
 
 Items 8–11 are the four conditions the council's autonomy gate evaluates. Re-checking them at \`→ active\` is what keeps commitment and auto-promotion consistent: the council does not get to be the only point in the lifecycle where reversibility, appetite, alignment, and corroboration are tested.
 
-If any of 8–11 fails on a bet with \`promotion_mode=auto\`, downgrade to \`human_approved\` and notify Sebk before continuing.
+If any of 8–11 fails on a bet with \`promotion_mode=auto\`, downgrade to \`human_approved\` and notify the workspace owner (resolve via \`list_actors\`) before continuing.
 
 ## Measurement gate (\`→ live\`)
 
@@ -1046,7 +1046,7 @@ Pick **2, 4, or 6 weeks**. Shape scope to fit — never the reverse. Default at 
 
 ## End-to-end flow
 
-1. Council promote-door (or fast-track) creates the bet at \`qualified\` with \`promotion_mode\` set, \`informs\` edges to source insight(s), and Sebk @-mentioned in the digest.
+1. Council promote-door (or fast-track) creates the bet at \`qualified\` with \`promotion_mode\` set, \`informs\` edges to source insight(s), and the workspace owner @-mentioned in the digest (resolved via \`list_actors\`).
 2. Strategist or assignee picks up at \`qualified\` and shapes through \`define\`. Sets \`metadata.repo\`. Runs the Commitment gate (including the autonomy-gate parity checks) before \`→ active\`.
 3. On \`active\`: first test runs before broader scope. Bet Steward posts build note.
 4. On tasks done + test passed: Bet Steward recommends \`→ live\`.
@@ -1466,20 +1466,21 @@ If you're writing headers, bullet points, bold labels, or more than 4 sentences 
 
 Any comment that requires a human decision — a direction pick, an approval, a checklist item, an open question, or a flag asking for a call — **must @mention the relevant human at the end**.
 
-**Always call \`list_actors\` first and use \`actor.title\` verbatim.** Never hardcode a human UUID *or* a name — actor records change, display names vary, and the lookup is the rule, not a fallback. Match the topic to the domain map below, then mention the actor whose \`title\` (from \`list_actors\`) matches. Address them by that exact \`title\` in the prose, and pass their UUID in the \`mentions\` array.
+**Always call \`list_actors\` first to resolve the UUID AND the display name.** Never hardcode a human UUID, and never write a founder's name from memory — actor records change (workspaces get renamed, humans update their handles), and the lookup is the rule, not a fallback. Use the \`title\` field returned by \`list_actors\` as the name you type in the comment; use the \`id\` field in the \`mentions\` array. That is how the mention renders correctly to the human seeing it.
 
-Domain map (resolve the actor at runtime; never remember the name):
-- **Design, UX, business, strategy** → the workspace owner (\`type: human\`, role \`owner\`).
-- **Architecture, dev, PRs** → the workspace admin (\`type: human\`, role \`admin\`).
+Match the topic to the domain map, then resolve the actor whose role fits — do not remember an individual's name across sessions:
 
-If a topic spans both, pick the one the *decision* sits in, not the one the *context* sits in — a copy decision in an architecture diff still goes to the owner; a perf fix on a design surface still goes to the admin. One mention per comment unless the decision genuinely requires both.
+- **Design, UX, business, strategy** → the workspace owner (owner-role human actor from \`list_actors\`).
+- **Architecture, dev, PRs** → the technical admin (admin-role human actor from \`list_actors\`).
+
+If a topic spans both, pick the one the *decision* sits in, not the one the *context* sits in — a copy decision in an architecture diff still goes to the owner; a perf fix on a design surface still goes to the technical admin. One mention per comment unless the decision genuinely requires both.
 
 **Exception — design proposals and architecture decisions:** when a Designer or Architect is posting a proposal ready for approval (task moving to \`in_review\`), @mention the **Strategist** instead of a founder. The same \`list_actors\` call resolves the Strategist — match on the actor's title. The Strategist is the first decision-maker for design and architecture proposals and will escalate to a founder only if genuinely needed.
 
-Pass the resolved UUIDs in the \`mentions\` array on \`create_comment\`. Do not post a decision-required comment without a mention — it will be invisible.
+Pass the resolved UUIDs in the \`mentions\` array on \`create_comment\`, and write the human's current \`actor.title\` (not a remembered display name) in the prose. Do not post a decision-required comment without a mention — it will be invisible.
 
-**Bad:** hardcoding a UUID, or posting "pick a direction and reply" with an empty \`mentions\` array.
-**Good:** \`list_actors\` → match domain → pass the resolved UUID in \`mentions\`.
+**Bad:** hardcoding a UUID, writing a founder's name from memory, or posting "pick a direction and reply" with an empty \`mentions\` array.
+**Good:** \`list_actors\` → match domain → write \`actor.title\` in prose AND pass the resolved UUID in \`mentions\`.
 
 ---
 
@@ -1506,6 +1507,8 @@ Comments are conversation. One thought. Direct. No structure.
 
 **Good:**
 > Ahmad still hasn't booked, auto FU fires tomorrow. Task has a 3-slot nudge ready (Mon/Tue/Wed 10:00 or 14:00). Approve, edit, or kill. @Sebk
+
+(The name \`Sebk\` in these examples is what \`actor.title\` currently returns for the workspace owner — resolve via \`list_actors\` every session, never write a display name from memory.)
 
 **Bad:**
 > I have reviewed the dependency check and can confirm that the blocking task \`abc123\` is not yet in a \`done\` status. As a result, I am unable to proceed with the review at this time. I have updated the task status to \`blocked\` accordingly.
@@ -1607,7 +1610,7 @@ This is the most common place agents over-format. When presenting directions or 
 - Max 2–3 sentences per option
 - One ask at the end — not a checklist of open questions
 - Never use ✅ ⚠️ 🔴 as structural bullets — if something's a risk, say it in a sentence
-- Always @mention the relevant decision-maker — for design/arch proposals this is the Strategist; for bet/product decisions this is Sebk
+- Always @mention the relevant decision-maker (resolved via \`list_actors\`, never hardcoded) — for design/arch proposals this is the Strategist; for bet/product decisions this is the workspace owner
 
 ---
 

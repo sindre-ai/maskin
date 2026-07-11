@@ -2844,7 +2844,7 @@ Edge: \`informs\` from the source insight → the new bet.
 
 Then \`update_objects\` on the source insight: \`status: "promoted"\`, \`metadata.promoted_to_bet_id = <new bet id>\`.
 
-## STEP 4 — One digest comment, @-mention Sebk
+## STEP 4 — One digest comment, @-mention the workspace owner (resolve via \`list_actors\`)
 
 \`create_comment\` on the new bet, exactly once. \`mentions: []\`. Fast-track digest format from \`strategic-intake-review\`.
 
@@ -2910,7 +2910,7 @@ Idempotency: if you already posted a disposition comment for this same insight o
    - Request changes: post what needs to change, @mention the task assignee.
    - Escalate: post why this exceeds your authority, @mention the relevant founder. This should be rare.
 
-Do NOT route every design or architecture in_review to Sebk or Magnus. You are the first decision-maker; escalate only when genuinely needed. Do NOT hardcode any actor UUID — always resolve actors via \`list_actors\`.`,
+Do NOT route every design or architecture in_review to a founder. You are the first decision-maker; escalate only when genuinely needed. Do NOT hardcode any actor UUID and do NOT write a founder's name from memory — always resolve actors via \`list_actors\` and use \`actor.title\` for the name.`,
 				targetActorId: DEV_ACTOR_STRATEGIST,
 				enabled: true,
 			},
@@ -2949,11 +2949,11 @@ For each cluster:
 - Four-door route:
   · Discard: D1=0, OR Opportunity Score <6 for existing-capability clusters, OR noise. → insight.status = discarded.
   · Park: composite <18 and not vetoed. → insight.status = parked (decay timer handled by Pipeline Monitor).
-  · Escalate: composite ≥18 AND (composite <30 OR autonomy gate fails). → insight.status = scored, with "what would have to be true" surfaced in the digest. Do NOT create a bet. Sebk's reply is the create-bet trigger.
+  · Escalate: composite ≥18 AND (composite <30 OR autonomy gate fails). → insight.status = scored, with "what would have to be true" surfaced in the digest. Do NOT create a bet. The workspace owner's reply is the create-bet trigger.
   · Promote: composite ≥30 AND autonomy gate passes (all four conditions). → insight.status = promoted; create the bet at status="qualified".
 
 STEP 5 — Promotion mode (DORMANCY RULE — hardcoded).
-For every bet you create in this pass, set metadata.promotion_mode = "human_approved". Never "auto", regardless of whether the autonomy gate computed pass. Log the gate's computed pass/fail in each Promote-line of the digest so Sebk can calibrate against his own call later.
+For every bet you create in this pass, set metadata.promotion_mode = "human_approved". Never "auto", regardless of whether the autonomy gate computed pass. Log the gate's computed pass/fail in each Promote-line of the digest so the workspace owner can calibrate against their own call later.
 
 STEP 6 — Fast-track reconciliation.
 Find every bet created via the fast-track lane since the previous council digest. Fast-tracked bets carry metadata.fast_tracked=true. For each, score D1 and D6 retroactively and decide Keep / Park / Discard. Include one reconciliation line per item in the digest's "Fast-track reconciliation since last council" block. If there are no fast-tracked items, write "None since last council." — do not skip the block.
@@ -3005,7 +3005,7 @@ For each bet in \`signal\`, apply the six-dimension scoring rubric from \`strate
 
 Apply the four-door routing per the skill:
 - **Promote** → move to \`qualified\` (composite ≥ threshold, all gates pass)
-- **Escalate** → leave in \`signal\`, flag for Sebk with a specific question
+- **Escalate** → leave in \`signal\`, flag for the workspace owner (resolve via \`list_actors\`) with a specific question
 - **Park** → update metadata with \`scored: true\` and \`park_reason\`, leave in \`signal\`
 - **Discard** → move to \`parked\` status (or add discard metadata)
 
@@ -3023,7 +3023,7 @@ Post ONE comment on the Bet Council bet (id: 425c1a6e-1908-49ef-a0b0-be83409ef4a
 - mentions: []
 - The council digest per the \`strategic-intake-review\` format
 
-For each **Escalated** bet, also post a comment directly on that bet with Sebk's @mention and the specific question.
+For each **Escalated** bet, also post a comment directly on that bet with an @mention of the workspace owner (resolve via \`list_actors\` — use the actor's UUID in \`mentions\` and their \`title\` in prose) and the specific question.
 
 ## STEP 5 — Update calibration counter
 Read the current count of bets where \`metadata.promotion_mode = "human_approved"\` and \`status = "qualified"\`. Log the current calibration count (X/10) in the digest.
@@ -3514,7 +3514,7 @@ Load \`maskin-voice\` first.
 1. Get all events from the last 24h where \`type = comment_created\`.
 2. For each comment, check if it @mentions a human founder — look at the \`mentions\` array and cross-reference with workspace owners (check workspace members list for owner actor IDs).
 3. For each such comment, check if the @mention was appropriate:
-   - Appropriate: the task has \`decision_type: ux\` (→ Sebk) or \`decision_type: architecture\` (→ Magnus), or the context genuinely required founder attention (gate override, circuit breaker, unresolvable blocker).
+   - Appropriate: the task has \`decision_type: ux\` (→ the workspace owner) or \`decision_type: architecture\` (→ the technical admin), resolved via \`list_actors\` in every session, or the context genuinely required founder attention (gate override, circuit breaker, unresolvable blocker).
    - Wrong mention: the agent @mentioned a founder for a routine handoff, a status update, or something another agent should handle.
 4. Tally: total comments scanned, founder @mentions found, wrong mentions, wrong-mention rate.
 5. Create ONE \`insight\` object:
@@ -4197,7 +4197,7 @@ Triggering event: {triggering_event}`,
 					'Daily 5:30 AM digest of all human actions in the workspace from the previous day.',
 				type: 'cron',
 				config: { expression: '30 5 * * *' },
-				actionPrompt: `Load the maskin-voice skill before writing anything. Every morning at 7:30am Copenhagen time, produce the daily human-actions digest and send it as a Slack message to Sebk.
+				actionPrompt: `Load the maskin-voice skill before writing anything. Every morning at 7:30am Copenhagen time, produce the daily human-actions digest and send it as a Slack message to the workspace owner (resolve via \`list_actors\` — never write a display name from memory; use \`actor.title\` for the greeting).
 
 **SWEEP — last 24 hours of human-authored events:**
 
