@@ -585,6 +585,10 @@ You look at the event log, object statuses, relationships, and agent sessions to
 
 5. **Positive patterns**: What IS working well. Which workflows are smooth. Which agent configurations produce consistently good results. Don't just find problems — identify what to keep doing.
 
+6. **Loop health**: Loops are a sibling primitive to bets — a graduated \`succeeded\` bet that codified a standing capability, with statuses \`holding | at-risk | breached\` and metadata \`floor\`, \`cadence\`, \`source_bet_id\`, \`last_breach_at\`. Loop → source bet is a \`derived_from\` edge, not metadata. Loops in \`at-risk\` or \`breached\` are briefing-worthy alongside stalled bets: they signal a standing commitment the team is missing. Surface them in your daily observation the same way you surface a bet that has been \`active\` too long — one insight per Loop, name the floor + cadence + \`metadata.last_breach_at\` so the reader can act.
+
+   Always list Loops with a \`type='loop'\` filter — e.g. \`list_objects(type='loop', status='at-risk')\` and \`list_objects(type='loop', status='breached')\`. Never grep bet metadata for a "loop" flag; there is no such flag. Loops in \`holding\` are healthy and NOT briefing-worthy on their own — only \`at-risk\` and \`breached\` warrant an insight.
+
 ## Step 0: Read the skills
 
 Before creating any insight or writing any output, call get_workspace_skill on:
@@ -1053,7 +1057,37 @@ Pick **2, 4, or 6 weeks**. Shape scope to fit — never the reverse. Default at 
 5. On \`live\`: Bet Steward posts day-one note (review date, baseline, where evidence will come from). Daily scan begins.
 6. On review date: Bet Steward runs \`bet-verdict\`, adds \`## Experiment verdict\` to the bet.
 7. Human transitions to \`succeeded\` or \`failed\`.
-8. On terminal: Bet Steward adds \`## Retro\`. Knowledge Writer creates a knowledge article.`,
+8. On terminal: Bet Steward adds \`## Retro\`. Knowledge Writer creates a knowledge article.
+9. On \`succeeded\` where the bet codifies a standing capability: propose graduating it to a Loop (see below). A human approves the graduation — you never create the Loop object yourself.
+
+## Graduation to Loops (on \`succeeded\`)
+
+A \`bet\` proves that a capability *can* be delivered. A \`loop\` is the standing commitment that the capability *keeps* being delivered — a sibling primitive to \`bet\`, not a bet status. When a \`succeeded\` bet codifies a repeatable outcome the team wants to hold themselves to (customer bugs fixed <1 day, weekly launch note shipped, onboarding completion rate ≥60%, etc.), it graduates into a Loop. Bets that succeeded on a one-off outcome do NOT graduate — they close and stay closed.
+
+**How to tell it should graduate:** the \`## Success\` line describes a metric that only makes sense on a recurring cadence (weekly / monthly / per-cycle), AND the team would notice if the metric silently dropped after the bet closed. If both are true, propose graduation. If the outcome was a one-shot deliverable (a launch, a schema migration, a fixed bug), do not propose graduation.
+
+**Auto-graduation is out.** You propose. The human approves and creates the Loop. Never call \`create_objects(type='loop')\` yourself. This is the bet's explicit \`Not doing: auto-approving graduations\` line — respect it.
+
+**What to post (comment on the succeeded bet):**
+
+> **Proposal — graduate to Loop.** This bet codifies a standing capability: [one-sentence restatement of the recurring outcome]. Suggested Loop shape:
+> - \`type: 'loop'\` (never a \`bet.standing\` extension — it's a separate primitive)
+> - \`status: 'holding'\` (Loops start at \`holding\`; the health scan moves them to \`at-risk\` / \`breached\` when the floor is missed inside the cadence window)
+> - \`metadata.floor\`: [the number that must not be breached, e.g. "<1 day median time-to-fix"]
+> - \`metadata.cadence\`: [the window the floor is evaluated on, e.g. "weekly", "rolling 7d"]
+> - \`metadata.source_bet_id\`: this bet's id (also link the Loop to this bet via a \`derived_from\` edge — Loop → source bet)
+> - \`metadata.last_breach_at\`: leave unset until the health scan stamps it
+>
+> @[owner] — approve and I'll wait for the human-created Loop to appear, then link it back.
+
+**After graduation is approved (Loop object appears in the workspace):** confirm the Loop carries a \`derived_from\` edge back to this bet (create it yourself if the human forgot — the edge is provenance, not the metadata field \`source_bet_id\`, which is a text pointer). Both should be present.
+
+**Reads use \`type='loop'\` — never \`metadata_eq\`.** When you list or search Loops (e.g. checking whether a graduation candidate already exists), always filter with \`list_objects(type='loop', ...)\`. \`type\` is polymorphic text on the objects table; there is no \`loop\` subtype hidden inside \`bet\` metadata to grep for. Loops with \`status\` in \`holding | at-risk | breached\` are the only valid states.
+
+**What Loops are NOT:**
+- Not a \`bet\` in status \`live\`. A \`live\` bet is still measuring the wager; a Loop is the standing commitment after the wager cleared.
+- Not a way to keep a failed bet on life support. Failed → \`decision-quality-retro\`, not graduation.
+- Not for internal process rituals with no observable metric. If there is no floor, there is no Loop.`,
 			},
 			{
 				name: 'workspace-context',
@@ -1925,6 +1959,7 @@ When a bet transitions to \`succeeded\`, \`failed\`, or \`paused\`:
 1. Load \`decision-quality-retro\`.
 2. Draft the retro.
 3. Post as a comment on the bet.
+4. **On \`succeeded\` only — check for Loop graduation.** If the \`## Success\` metric describes a recurring outcome the team wants to keep hitting (rolling window, per-cycle, weekly/monthly), load \`shape-and-run-a-bet\` → *Graduation to Loops* and post the proposal comment on the bet. Do NOT create a \`type: 'loop'\` object yourself — the bet is explicit: humans approve graduations. If the succeeded bet was one-shot (a launch, a migration, a fixed bug), skip this step.
 
 ## \`blocks\` edge semantics — one rule
 
@@ -2233,6 +2268,15 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 		enabled: true,
 		actionPrompt:
 			'Analyze CTO validation sessions from the past 7 days. When the CTO finds issues, both the Senior Developer (author) AND the Code Reviewer (reviewer) missed something — these sessions reveal systemic gaps.\n\n1. Find CTO sessions (last 7d). Read each and note: task, bet, verdict (PASS/FAIL/CONDITIONAL PASS), and specifically what was wrong (for FAIL/CONDITIONAL PASS).\n2. Classify failure types — unwired integrations, missing infrastructure, silent failures, version mismatches, incomplete flows, missing dependencies.\n3. Attribution — Senior Developer gap, Code Reviewer gap, systemic gap (neither could reasonably catch alone).\n4. Look for patterns across sessions and against prior analyses.\n5. Create insights for notable findings. Tag with metadata tags "cto-validation-pattern".\n6. If no notable patterns, exit silently.',
+	},
+	{
+		name: 'Daily Loop Health Scan',
+		type: 'cron',
+		config: { expression: '0 7 * * *' },
+		targetActor$id: 'workspace_coach',
+		enabled: true,
+		actionPrompt:
+			"Run a Loop-health scan. Loops are the workspace's standing commitments (sibling primitive to bets); this scan checks each Loop against its floor and cadence and stamps `metadata.last_breach_at` when the floor is missed inside the cadence window.\n\n1. `list_objects(type='loop')` — always filter by `type`, never by `metadata_eq('is_loop', ...)` or a bet subtype. Read every returned object with `get_objects(include=['metadata', 'relationships'])`. Loops carry `metadata.floor` (the number that must not be breached), `metadata.cadence` (the window it's evaluated on — e.g. `weekly`, `rolling 7d`), `metadata.source_bet_id` (text pointer to the bet it graduated from), and `metadata.last_breach_at` (the timestamp you stamp when a breach is detected). Loops link back to their source bet via a `derived_from` edge — read it, not a metadata field, for provenance.\n2. Skip Loops missing `floor` or `cadence` — a partial Loop cannot be evaluated. Post ONE insight naming the incomplete Loop and stop scanning that one. Do not stamp `last_breach_at`.\n3. For each fully-shaped Loop, parse `cadence` into a lookback window (`weekly` → 7 days, `monthly` → 30 days, `rolling Nd` → N days). Pull the relevant evidence for the `floor` — usually a PostHog query, sometimes a workspace object count. If you cannot fetch the evidence (missing PostHog wiring, unclear metric), post ONE insight naming the ambiguity and skip.\n4. If the floor is met inside the cadence window: the Loop is healthy. If status is `at-risk` or `breached` but the current window is clean, propose recovery in an insight — do NOT change the Loop's status yourself.\n5. If the floor is missed inside the cadence window: `update_objects` on the Loop to set `metadata.last_breach_at` to the ISO timestamp of the breach. Then:\n   - If prior status was `holding`: propose moving it to `at-risk` in an insight — do not flip it yourself.\n   - If prior status was `at-risk` and the window is still breached: propose moving it to `breached` in an insight.\n   - If prior status was already `breached`: refresh `last_breach_at` silently; no new insight unless the miss widened materially.\n6. All insights are tagged `metadata.source = 'workspace_observer'` and `metadata.tags` includes `loop-health`. Link each insight to the Loop via a `relates_to` edge and (if resolvable) to the source bet via `informs`.\n7. Exit silently if every Loop is healthy — Loops in `holding` are not briefing-worthy on their own.\n\nRules: never create a `type: 'loop'` object during this scan (graduation belongs to a human); never treat a `bet` as a Loop even if it looks like one; never overwrite `metadata.last_breach_at` with an older timestamp.",
 	},
 	{
 		name: 'Strategist research on signup',
