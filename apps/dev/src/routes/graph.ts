@@ -3,7 +3,8 @@ import type { Database } from '@maskin/db'
 import { events, files, objects, relationships, workspaces } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { createGraphSchema } from '@maskin/shared'
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
+import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -240,7 +241,11 @@ app.openapi(createGraphRoute, async (c) => {
 				const sourceType = isSourceNew ? 'object' : fileIds.has(sourceId) ? 'file' : 'object'
 				const targetType = isTargetNew ? 'object' : fileIds.has(targetId) ? 'file' : 'object'
 
-				const [created] = await tx
+				// Idempotent on (source_id, target_id, type). A duplicate edge in the
+				// same graph payload — or one already present in the DB — resolves to
+				// the existing row without re-firing the audit event or T2's
+				// `workspace_knowledge_referenced` ship-metric emit.
+				const insertedEdges = await tx
 					.insert(relationships)
 					.values({
 						sourceType,
@@ -250,21 +255,52 @@ app.openapi(createGraphRoute, async (c) => {
 						type: edge.type,
 						createdBy: actorId,
 					})
+					.onConflictDoNothing({
+						target: [relationships.sourceId, relationships.targetId, relationships.type],
+					})
 					.returning()
 
+				let created = insertedEdges[0]
+				const isNewInsert = Boolean(created)
 				if (!created) {
-					throw new Error(`Failed to create edge from '${edge.source}' to '${edge.target}'`)
+					const [existing] = await tx
+						.select()
+						.from(relationships)
+						.where(
+							and(
+								eq(relationships.sourceId, sourceId),
+								eq(relationships.targetId, targetId),
+								eq(relationships.type, edge.type),
+							),
+						)
+						.limit(1)
+					if (!existing) {
+						throw new Error(`Failed to create edge from '${edge.source}' to '${edge.target}'`)
+					}
+					created = existing
 				}
 				createdEdges.push(created)
 
-				await tx.insert(events).values({
-					workspaceId,
-					actorId,
-					action: 'created',
-					entityType: 'relationship',
-					entityId: created.id,
-					data: created,
-				})
+				if (isNewInsert) {
+					await tx.insert(events).values({
+						workspaceId,
+						actorId,
+						action: 'created',
+						entityType: 'relationship',
+						entityId: created.id,
+						data: created,
+					})
+
+					// Ship-metric auto-emit when a fresh `derived_from` edge points at
+					// a `knowledge` object.
+					await maybeEmitKnowledgeReferenceFromEdge(tx, {
+						workspaceId,
+						actorId,
+						edgeType: created.type,
+						sourceId: created.sourceId,
+						targetId: created.targetId,
+					})
+				}
 			}
 
 			return { nodes: createdNodes, edges: createdEdges }
