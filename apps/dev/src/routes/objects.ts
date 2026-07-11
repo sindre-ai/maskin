@@ -187,20 +187,25 @@ function isCursorSeekActive(query: {
  * The keyset predicate matches the sort order the list handlers use
  * (`createdAt` desc/asc, `id` asc tiebreaker — see `resolveOrderBy`), so it
  * only fires when the walk is actually sorted by `createdAt` — see
- * `isCursorSeekActive`.
+ * `isCursorSeekActive`. Callers pass `includeKeyset=false` to force the
+ * predicate off when the ORDER BY is overridden downstream (e.g. by
+ * `searchRankExpr`) so the seek and the walk order can't drift out of sync.
  */
-function buildCursorConditions(query: {
-	sort?: string
-	order?: string
-	snapshot_at?: string
-	cursor_created_at?: string
-	cursor_id?: string
-}): SQL[] {
+function buildCursorConditions(
+	query: {
+		sort?: string
+		order?: string
+		snapshot_at?: string
+		cursor_created_at?: string
+		cursor_id?: string
+	},
+	includeKeyset = true,
+): SQL[] {
 	const conditions: SQL[] = []
 	if (query.snapshot_at) {
 		conditions.push(lte(objects.createdAt, new Date(query.snapshot_at)))
 	}
-	if (isCursorSeekActive(query)) {
+	if (includeKeyset && isCursorSeekActive(query)) {
 		const lastCa = new Date(query.cursor_created_at as string)
 		const lastId = query.cursor_id as string
 		if (query.order === 'asc') {
@@ -576,10 +581,17 @@ app.openapi(listObjectsRoute, async (c) => {
 		query,
 		parsedMetadataFilters.filters,
 	)
+	// When `q` tokenizes to a non-empty set the ORDER BY switches to
+	// rank-by-token-hits, and the `(createdAt, id)` keyset seek in
+	// `buildCursorConditions` no longer matches the walk order — silently
+	// skipping or duplicating rows across pages. Disable the seek and the
+	// paired `offset` fall-through together so callers that pair `q` with a
+	// cursor drop back to offset pagination on the same snapshot.
+	const useKeyset = isCursorSeekActive(query) && !searchRankExpr
 	const conditions = [
 		eq(objects.workspaceId, workspaceId),
 		...filterConditions,
-		...buildCursorConditions(query),
+		...buildCursorConditions(query, useKeyset),
 	]
 
 	// When `q` tokenized to a non-empty set, rank rows by count of token hits
@@ -590,7 +602,6 @@ app.openapi(listObjectsRoute, async (c) => {
 	// When the keyset seek is engaged, `offset` no longer makes sense — the
 	// predicate itself skips past the last-seen row. Ignoring it also keeps
 	// the walk snapshot-consistent when a caller accidentally forwards both.
-	const useKeyset = isCursorSeekActive(query)
 	const results = await db
 		.select()
 		.from(objects)
@@ -764,15 +775,19 @@ app.openapi(searchObjectsRoute, async (c) => {
 		query,
 		parsedMetadataFilters.filters,
 	)
+	// See `listObjectsRoute` — when the rank ORDER BY takes over, the
+	// `(createdAt, id)` seek predicate no longer matches the walk order.
+	// Disable seek + offset fall-through together so callers pairing `q`
+	// with a cursor drop to offset pagination on the same snapshot.
+	const useKeyset = isCursorSeekActive(query) && !searchRankExpr
 	const conditions = [
 		eq(objects.workspaceId, workspaceId),
 		...filterConditions,
-		...buildCursorConditions(query),
+		...buildCursorConditions(query, useKeyset),
 	]
 
 	const orderBy = searchRankExpr ? tokenRankOrderBy(searchRankExpr) : resolveOrderBy(query)
 
-	const useKeyset = isCursorSeekActive(query)
 	const results = await db
 		.select()
 		.from(objects)
