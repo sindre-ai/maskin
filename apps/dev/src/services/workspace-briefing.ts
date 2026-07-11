@@ -10,7 +10,20 @@ const MAX_ACTIVE_BETS = 10
 const MAX_PAUSED_BETS = 5
 const MAX_CLOSED_BETS = 5
 const MAX_OPEN_INSIGHTS = 10
+const MAX_LOOPS = 10
 const MAX_LEDGER_LINES = 20
+
+// Loops are ordered by how loud a signal they carry: `breached` (floor
+// already broken) first, then `at-risk`, then `holding` (steady-state). This
+// mirrors the bet convention where terminal transitions surface ahead of
+// lifecycle noise — the DoD on T2 (Loops primitive) requires at-risk and
+// breached appear ahead of holding using the composer's existing per-type
+// grouping.
+const LOOP_STATUS_PRIORITY: Record<string, number> = {
+	breached: 0,
+	'at-risk': 1,
+	holding: 2,
+}
 const CLOSED_BETS_DAYS = 30
 const LEDGER_MAX_LINES = 1000
 const TITLE_MAX = 120
@@ -163,11 +176,12 @@ export async function renderWorkspaceBriefing(
 	const betLabel = displayNames.bet ?? 'Bet'
 	const taskLabel = displayNames.task ?? 'Task'
 	const insightLabel = displayNames.insight ?? 'Insight'
+	const loopLabel = displayNames.loop ?? 'Loop'
 
 	const since = new Date(Date.now() - CLOSED_BETS_DAYS * 24 * 60 * 60 * 1000)
 
 	// Independent queries run in parallel — they don't depend on each other.
-	const [activeBets, pausedBets, closedBets, openInsights] = await Promise.all([
+	const [activeBets, pausedBets, closedBets, openInsights, loops] = await Promise.all([
 		db
 			.select()
 			.from(objects)
@@ -217,7 +231,28 @@ export async function renderWorkspaceBriefing(
 			)
 			.orderBy(desc(objects.createdAt))
 			.limit(MAX_OPEN_INSIGHTS),
+		// Loops — polymorphic filter on `type='loop'`, never `metadata_eq`, so
+		// the week-4 kill signal on the parent bet can read this as usage of
+		// the primitive rather than a bespoke query path.
+		db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')))
+			.orderBy(desc(objects.updatedAt))
+			.limit(MAX_LOOPS),
 	])
+
+	// In-memory sort by health priority (breached → at-risk → holding), then
+	// by recency within a status tier. Unknown statuses sort last so a future
+	// schema addition doesn't silently jump the queue.
+	const sortedLoops = [...loops].sort((a, b) => {
+		const aRank = LOOP_STATUS_PRIORITY[a.status] ?? Number.POSITIVE_INFINITY
+		const bRank = LOOP_STATUS_PRIORITY[b.status] ?? Number.POSITIVE_INFINITY
+		if (aRank !== bRank) return aRank - bRank
+		const aTime = a.updatedAt instanceof Date ? a.updatedAt.getTime() : 0
+		const bTime = b.updatedAt instanceof Date ? b.updatedAt.getTime() : 0
+		return bTime - aTime
+	})
 
 	// Child task progress for active bets: one batched relationship query, one
 	// batched object query.
@@ -310,6 +345,27 @@ export async function renderWorkspaceBriefing(
 		}
 	}
 	out.push('')
+
+	// Silent when empty — matches the paused-bets pattern. An empty Loop set
+	// (the day-1 state before any bet has graduated) should not shout at the
+	// reader with a placeholder line.
+	if (sortedLoops.length > 0) {
+		out.push(`## ${loopLabel}s`)
+		out.push('')
+		for (const loop of sortedLoops) {
+			const meta = (loop.metadata as Record<string, unknown> | null) ?? {}
+			const floor =
+				typeof meta.floor === 'string' && meta.floor.length > 0
+					? ` · floor: ${truncate(meta.floor, 60)}`
+					: ''
+			const cadence =
+				typeof meta.cadence === 'string' && meta.cadence.length > 0
+					? ` · cadence: ${truncate(meta.cadence, 40)}`
+					: ''
+			out.push(`- **${truncate(loop.title, TITLE_MAX)}** [${loop.status}]${floor}${cadence}`)
+		}
+		out.push('')
+	}
 
 	out.push(`## Open ${insightLabel.toLowerCase()}s`)
 	out.push('')

@@ -2,6 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, objects, subscriptions } from '@maskin/db/schema'
 import {
+	SIGNALLING_LOOP_STATUSES,
 	TERMINAL_BET_STATUSES,
 	markReadBodySchema,
 	subscribeBodySchema,
@@ -334,7 +335,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 				eq(events.entityId, subscriptions.entityId),
 				ne(events.actorId, actorId),
 				gt(events.id, lastReadExpr),
-				// Two surfaces land in the unread feed:
+				// Three surfaces land in the unread feed:
 				// (1) comments on the subscribed entity (events.entity_type matches the
 				//     subscription's polymorphic type, e.g. 'object'), and
 				// (2) the bet's own terminal-status transition (events.entity_type is
@@ -346,6 +347,13 @@ app.openapi(listUnreadRoute, (async (c) => {
 				// source of truth shared with the notification fan-out gate in
 				// objects.ts — without (2) a watcher misses the terminal signal, see
 				// T2 on bet/notif-cascade-fix.
+				// (3) a loop's transition into a signalling status (at-risk or
+				//     breached). Same shape as (2), just parametrised on a different
+				//     concrete type + status list — SIGNALLING_LOOP_STATUSES from
+				//     @maskin/shared is the source of truth. Routine `holding`
+				//     transitions are excluded so lifecycle noise doesn't page a
+				//     watcher; at-risk/breached rank above holding for free because
+				//     they are the only Loop statuses that produce a feed entry.
 				or(
 					and(eq(events.entityType, subscriptions.entityType), eq(events.action, 'commented')),
 					and(
@@ -353,6 +361,12 @@ app.openapi(listUnreadRoute, (async (c) => {
 						eq(events.entityType, 'bet'),
 						eq(events.action, 'status_changed'),
 						inArray(terminalStatusExpr, [...TERMINAL_BET_STATUSES]),
+					),
+					and(
+						eq(subscriptions.entityType, 'object'),
+						eq(events.entityType, 'loop'),
+						eq(events.action, 'status_changed'),
+						inArray(terminalStatusExpr, [...SIGNALLING_LOOP_STATUSES]),
 					),
 				),
 			),

@@ -21,6 +21,19 @@ export type ObjectType = z.infer<typeof objectTypeSchema>
 export const TERMINAL_BET_STATUSES = ['succeeded', 'failed', 'paused'] as const
 export type TerminalBetStatus = (typeof TERMINAL_BET_STATUSES)[number]
 
+/**
+ * Loop statuses that signal an operational commitment is at risk or already
+ * broken and warrant a one-time watcher signal (unread-feed entry), rather
+ * than the routine `holding` state. Analogue of `TERMINAL_BET_STATUSES` for
+ * the `loop` type — the two share the same "trigger a For You entry on this
+ * status_changed" convention so the feed doesn't need a Loop-only ranker.
+ * Single source of truth for `apps/dev/src/routes/subscriptions.ts` and any
+ * downstream consumer that needs to distinguish signalling Loop transitions
+ * from lifecycle noise.
+ */
+export const SIGNALLING_LOOP_STATUSES = ['at-risk', 'breached'] as const
+export type SignallingLoopStatus = (typeof SIGNALLING_LOOP_STATUSES)[number]
+
 export const createObjectSchema = z.object({
 	id: z.string().uuid().optional(),
 	type: objectTypeSchema,
