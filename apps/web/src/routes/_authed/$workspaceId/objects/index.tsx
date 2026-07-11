@@ -30,7 +30,7 @@ import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
 import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
+import { getAllWebModules, getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { ALL_TYPES_KEY, SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
 import {
 	type InfiniteData,
@@ -281,10 +281,29 @@ function ObjectsPage() {
 	)
 	const visibleObjects = effectiveView === 'board' ? boardInitialObjects : allObjects
 
-	// Field definitions for dynamic columns
-	const fieldDefinitions = settings?.field_definitions as
-		| Record<string, FieldDefinition[]>
-		| undefined
+	// Field definitions for dynamic columns. Layer enabled-module defaults under
+	// workspace overrides so extension-provided types (e.g. knowledge) ship with
+	// their column set even when the workspace hasn't customised field_definitions.
+	const fieldDefinitions = useMemo(() => {
+		const workspaceFields = settings?.field_definitions as
+			| Record<string, FieldDefinition[]>
+			| undefined
+		const merged: Record<string, FieldDefinition[]> = {}
+		for (const mod of getAllWebModules()) {
+			if (!enabledModules.includes(mod.id)) continue
+			const modFields = mod.defaultSettings?.field_definitions
+			if (!modFields) continue
+			for (const [type, fields] of Object.entries(modFields)) {
+				merged[type] = fields
+			}
+		}
+		if (workspaceFields) {
+			for (const [type, fields] of Object.entries(workspaceFields)) {
+				merged[type] = fields
+			}
+		}
+		return Object.keys(merged).length > 0 ? merged : undefined
+	}, [settings, enabledModules])
 
 	// Metadata filter rows only apply when a single object type is selected — the
 	// field definitions (and thus the filterable fields) are per-type. On the

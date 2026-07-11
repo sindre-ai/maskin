@@ -42,6 +42,7 @@ vi.mock('@/hooks/use-custom-extensions', () => ({
 
 vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: () => [],
+	getAllWebModules: () => [],
 }))
 
 vi.mock('@tanstack/react-query', async (importOriginal) => {
