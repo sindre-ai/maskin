@@ -220,7 +220,104 @@ function buildCursorConditions(query: {
 	return conditions
 }
 
-function buildObjectListConditions(
+// Shared stopword set for `q` tokenization — kept verbatim in sync with the
+// offline eval harness so a post-merge run against the seeded fixtures returns
+// the same rows in the same order as the pre-merge T1 numbers.
+const SEARCH_STOPWORDS: ReadonlySet<string> = new Set([
+	'a',
+	'an',
+	'and',
+	'are',
+	'as',
+	'at',
+	'be',
+	'been',
+	'but',
+	'by',
+	'can',
+	'could',
+	'did',
+	'do',
+	'does',
+	'for',
+	'from',
+	'has',
+	'have',
+	'how',
+	'i',
+	'if',
+	'in',
+	'into',
+	'is',
+	'it',
+	'its',
+	'just',
+	'not',
+	'of',
+	'on',
+	'or',
+	'over',
+	'past',
+	'per',
+	'should',
+	'so',
+	'than',
+	'that',
+	'the',
+	'their',
+	'them',
+	'then',
+	'there',
+	'they',
+	'this',
+	'to',
+	'up',
+	'was',
+	'we',
+	'were',
+	'what',
+	'when',
+	'where',
+	'which',
+	'while',
+	'who',
+	'why',
+	'will',
+	'with',
+	'you',
+	'your',
+])
+
+/**
+ * Tokenizer for the `q` search parameter. Ports the offline-eval harness rule
+ * verbatim so a post-merge run reproduces T1's numbers against the same seeded
+ * fixtures:
+ *   lowercase → replace `[^a-z0-9\s_-]+` with space → split on whitespace →
+ *   drop tokens shorter than 3 chars or in the shared stopword set → dedupe
+ *   preserving first-seen order.
+ * Empty / whitespace / punctuation-only / all-stopword inputs collapse to `[]`,
+ * which the caller uses to fall through to an unfiltered result set.
+ */
+export function tokenizeSearchQuery(q: string): string[] {
+	if (!q) return []
+	const normalized = q.toLowerCase().replace(/[^a-z0-9\s_-]+/g, ' ')
+	const seen = new Set<string>()
+	const tokens: string[] = []
+	for (const token of normalized.split(/\s+/)) {
+		if (token.length < 3) continue
+		if (SEARCH_STOPWORDS.has(token)) continue
+		if (seen.has(token)) continue
+		seen.add(token)
+		tokens.push(token)
+	}
+	return tokens
+}
+
+function tokenIlikePattern(token: string): string {
+	return `%${token.replace(/[%_\\]/g, '\\$&')}%`
+}
+
+export function buildObjectListConditions(
 	query: {
 		type?: string
 		status?: string
@@ -231,8 +328,9 @@ function buildObjectListConditions(
 		updated_after?: string
 	},
 	metadataFilters: { field: string; value: string }[] = [],
-) {
+): { conditions: SQL[]; searchRankExpr: SQL | null } {
 	const conditions: SQL[] = []
+	let searchRankExpr: SQL | null = null
 	if (query.type) conditions.push(eq(objects.type, query.type))
 	if (query.status) {
 		const statuses = query.status.split(',').filter(Boolean)
@@ -249,10 +347,22 @@ function buildObjectListConditions(
 		if (idList.length > 0) conditions.push(inArray(objects.id, idList))
 	}
 	if (query.q) {
-		const escaped = query.q.replace(/[%_\\]/g, '\\$&')
-		const pattern = `%${escaped}%`
-		const textMatch = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
-		if (textMatch) conditions.push(textMatch)
+		const tokens = tokenizeSearchQuery(query.q)
+		if (tokens.length > 0) {
+			const perTokenMatches: SQL[] = []
+			const perTokenHits: SQL[] = []
+			for (const token of tokens) {
+				const pattern = tokenIlikePattern(token)
+				const match = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
+				if (match) perTokenMatches.push(match)
+				perTokenHits.push(
+					sql`(case when ${objects.title} ilike ${pattern} or ${objects.content} ilike ${pattern} then 1 else 0 end)`,
+				)
+			}
+			const combined = or(...perTokenMatches)
+			if (combined) conditions.push(combined)
+			searchRankExpr = sql.join(perTokenHits, sql` + `)
+		}
 	}
 	// Half-open contract — Zod has already validated these as ISO-8601 strings.
 	if (query.updated_before) conditions.push(lt(objects.updatedAt, new Date(query.updated_before)))
@@ -261,7 +371,16 @@ function buildObjectListConditions(
 	for (const { field, value } of metadataFilters) {
 		conditions.push(sql`${objects.metadata}->>'${sql.raw(field)}' = ${value}`)
 	}
-	return conditions
+	return { conditions, searchRankExpr }
+}
+
+/**
+ * Ordering when a tokenized `q` produced a rank expression: token-hit count
+ * DESC, then title ASC (T1's deterministic tie-break), then id ASC to keep
+ * pagination stable across ties.
+ */
+export function tokenRankOrderBy(rankExpr: SQL): SQL[] {
+	return [desc(rankExpr), asc(objects.title), asc(objects.id)]
 }
 
 function resolveBoardGroupExpression(groupBy?: string): SQL {
@@ -453,13 +572,20 @@ app.openapi(listObjectsRoute, async (c) => {
 		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
 	}
 
+	const { conditions: filterConditions, searchRankExpr } = buildObjectListConditions(
+		query,
+		parsedMetadataFilters.filters,
+	)
 	const conditions = [
 		eq(objects.workspaceId, workspaceId),
-		...buildObjectListConditions(query, parsedMetadataFilters.filters),
+		...filterConditions,
 		...buildCursorConditions(query),
 	]
 
-	const orderBy = resolveOrderBy(query)
+	// When `q` tokenized to a non-empty set, rank rows by count of token hits
+	// (DESC, title ASC tie-break) and let ranking override caller-supplied
+	// sort — this is how the offline eval harness scores the fixture.
+	const orderBy = searchRankExpr ? tokenRankOrderBy(searchRankExpr) : resolveOrderBy(query)
 
 	// When the keyset seek is engaged, `offset` no longer makes sense — the
 	// predicate itself skips past the last-seen row. Ignoring it also keeps
@@ -532,21 +658,19 @@ app.openapi(boardObjectsRoute, async (c) => {
 		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
 	}
 
-	const baseConditions = [
-		eq(objects.workspaceId, workspaceId),
-		...buildObjectListConditions(
-			{
-				type: query.type,
-				status: query.status,
-				driver: query.driver,
-				ids: query.ids,
-				q: query.q,
-				updated_before: query.updated_before,
-				updated_after: query.updated_after,
-			},
-			parsedMetadataFilters.filters,
-		),
-	]
+	const { conditions: boardFilterConditions } = buildObjectListConditions(
+		{
+			type: query.type,
+			status: query.status,
+			driver: query.driver,
+			ids: query.ids,
+			q: query.q,
+			updated_before: query.updated_before,
+			updated_after: query.updated_after,
+		},
+		parsedMetadataFilters.filters,
+	)
+	const baseConditions = [eq(objects.workspaceId, workspaceId), ...boardFilterConditions]
 
 	const countRows = await db
 		.select({ value: groupExpr, total: count() })
@@ -636,13 +760,17 @@ app.openapi(searchObjectsRoute, async (c) => {
 		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
 	}
 
+	const { conditions: filterConditions, searchRankExpr } = buildObjectListConditions(
+		query,
+		parsedMetadataFilters.filters,
+	)
 	const conditions = [
 		eq(objects.workspaceId, workspaceId),
-		...buildObjectListConditions(query, parsedMetadataFilters.filters),
+		...filterConditions,
 		...buildCursorConditions(query),
 	]
 
-	const orderBy = resolveOrderBy(query)
+	const orderBy = searchRankExpr ? tokenRankOrderBy(searchRankExpr) : resolveOrderBy(query)
 
 	const useKeyset = isCursorSeekActive(query)
 	const results = await db
