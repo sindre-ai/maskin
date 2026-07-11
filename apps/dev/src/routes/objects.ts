@@ -58,6 +58,7 @@ import {
 	idParamSchema,
 	objectGraphResponseSchema,
 	objectResponseSchema,
+	traverseGraphResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
@@ -863,6 +864,194 @@ app.openapi(getObjectGraphRoute, async (c) => {
 			events: serializedEvents,
 			files: filesSummary,
 		} as z.infer<typeof objectGraphResponseSchema>,
+		200,
+	)
+})
+
+// GET /{id}/graph/traverse - Bounded multi-hop BFS across the relationships
+// table starting at {id}. Returns nodes (objects only) + edges as flat lists.
+// Bounds: depth cap, node cap, and their product ceiling (5000). Cycles are
+// broken by a visited set keyed on object id, so a workspace with a
+// `supersedes`/`contradicts` loop returns a bounded, terminating response.
+const TRAVERSE_MAX_DEPTH = 10
+const TRAVERSE_MAX_NODES = 1000
+const TRAVERSE_WORK_CEILING = 5000
+const traverseGraphQuerySchema = z
+	.object({
+		max_depth: z.coerce.number().int().min(1).max(TRAVERSE_MAX_DEPTH).default(3),
+		max_nodes: z.coerce.number().int().min(1).max(TRAVERSE_MAX_NODES).default(200),
+		direction: z.enum(['outbound', 'inbound', 'both']).default('both'),
+		// Comma-separated allow-list of edge types. Empty/absent means no filter.
+		// String rather than array so it composes with URLSearchParams query encoding.
+		edge_types: z
+			.string()
+			.optional()
+			.transform((v) =>
+				v
+					? v
+							.split(',')
+							.map((s) => s.trim())
+							.filter(Boolean)
+					: [],
+			),
+	})
+	.refine((v) => v.max_depth * v.max_nodes <= TRAVERSE_WORK_CEILING, {
+		message: `max_depth * max_nodes must not exceed ${TRAVERSE_WORK_CEILING}`,
+		path: ['max_nodes'],
+	})
+
+const traverseGraphRoute = createRoute({
+	method: 'get',
+	path: '/{id}/graph/traverse',
+	tags: ['Objects'],
+	summary: 'Bounded multi-hop graph traversal from an object',
+	description:
+		"Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on object id, so cyclic edges (e.g. `supersedes` loops) terminate. Only object endpoints inside the caller's workspace are followed — file endpoints and cross-workspace ids are skipped.",
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+		query: traverseGraphQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: traverseGraphResponseSchema } },
+			description: 'Bounded subgraph reachable from the start object',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object not found in this workspace',
+		},
+	},
+})
+
+app.openapi(traverseGraphRoute, async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const query = c.req.valid('query')
+
+	const [start] = await db
+		.select({ id: objects.id, type: objects.type, title: objects.title })
+		.from(objects)
+		.where(and(eq(objects.id, id), eq(objects.workspaceId, workspaceId)))
+		.limit(1)
+
+	if (!start) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	const nodesById = new Map<string, { id: string; type: string; title: string | null }>()
+	nodesById.set(start.id, { id: start.id, type: start.type, title: start.title ?? null })
+
+	const edgesByKey = new Map<string, { source: string; target: string; type: string }>()
+	const edgeKey = (source: string, target: string, type: string) =>
+		`${source}\u0000${target}\u0000${type}`
+
+	let frontier = new Set<string>([start.id])
+	const visited = new Set<string>([start.id])
+	let truncated = false
+	let truncatedReason: 'max_nodes' | 'max_depth' | null = null
+
+	const followOutbound = query.direction === 'outbound' || query.direction === 'both'
+	const followInbound = query.direction === 'inbound' || query.direction === 'both'
+	const edgeTypeFilter = query.edge_types.length > 0 ? new Set(query.edge_types) : null
+
+	for (let depth = 0; depth < query.max_depth; depth++) {
+		if (frontier.size === 0) break
+
+		const frontierIds = [...frontier]
+		const directionClauses: SQL[] = []
+		if (followOutbound) directionClauses.push(inArray(relationships.sourceId, frontierIds))
+		if (followInbound) directionClauses.push(inArray(relationships.targetId, frontierIds))
+		if (directionClauses.length === 0) break
+
+		const whereClauses: SQL[] = [
+			// biome-ignore lint/style/noNonNullAssertion: at least one clause pushed above
+			directionClauses.length === 1 ? directionClauses[0]! : or(...directionClauses)!,
+		]
+		if (edgeTypeFilter) whereClauses.push(inArray(relationships.type, [...edgeTypeFilter]))
+
+		const rels = await db
+			.select({
+				sourceId: relationships.sourceId,
+				targetId: relationships.targetId,
+				type: relationships.type,
+			})
+			.from(relationships)
+			.where(and(...whereClauses))
+
+		if (rels.length === 0) break
+
+		const candidateIds = new Set<string>()
+		for (const r of rels) {
+			if (frontier.has(r.sourceId) && followOutbound) candidateIds.add(r.targetId)
+			if (frontier.has(r.targetId) && followInbound) candidateIds.add(r.sourceId)
+		}
+		for (const seen of visited) candidateIds.delete(seen)
+
+		let discovered: { id: string; type: string; title: string | null }[] = []
+		if (candidateIds.size > 0) {
+			// Workspace scoping + file/object filter in one query: only rows in
+			// `objects` with matching workspaceId come back. File endpoints and
+			// cross-workspace ids drop out here.
+			const rows = await db
+				.select({ id: objects.id, type: objects.type, title: objects.title })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, [...candidateIds])))
+			discovered = rows.map((r) => ({ id: r.id, type: r.type, title: r.title ?? null }))
+		}
+
+		const discoveredIds = new Set(discovered.map((n) => n.id))
+		let hitNodeCap = false
+		for (const n of discovered) {
+			if (nodesById.size >= query.max_nodes) {
+				hitNodeCap = true
+				break
+			}
+			nodesById.set(n.id, n)
+			visited.add(n.id)
+		}
+
+		// Record edges whose *both* endpoints are in the visited set (either
+		// already-known nodes or nodes we just admitted). Edges dangling into
+		// a truncated candidate are dropped so the response is self-consistent.
+		for (const r of rels) {
+			const sourceKept = nodesById.has(r.sourceId)
+			const targetKept = nodesById.has(r.targetId)
+			if (!sourceKept || !targetKept) continue
+			const key = edgeKey(r.sourceId, r.targetId, r.type)
+			if (!edgesByKey.has(key)) {
+				edgesByKey.set(key, { source: r.sourceId, target: r.targetId, type: r.type })
+			}
+		}
+
+		if (hitNodeCap) {
+			truncated = true
+			truncatedReason = 'max_nodes'
+			break
+		}
+
+		// Next frontier is only the newly discovered, kept nodes.
+		const nextFrontier = new Set<string>()
+		for (const idFound of discoveredIds) {
+			if (nodesById.has(idFound)) nextFrontier.add(idFound)
+		}
+		frontier = nextFrontier
+
+		// If depth cap will stop expansion but more edges could exist, flag it.
+		if (depth === query.max_depth - 1 && frontier.size > 0) {
+			truncated = true
+			truncatedReason = 'max_depth'
+		}
+	}
+
+	return c.json(
+		{
+			nodes: [...nodesById.values()],
+			edges: [...edgesByKey.values()],
+			truncated,
+			truncated_reason: truncatedReason,
+		} satisfies z.infer<typeof traverseGraphResponseSchema>,
 		200,
 	)
 })
