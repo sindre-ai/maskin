@@ -264,7 +264,7 @@ export const tools = {
 	},
 	search_objects: {
 		description:
-			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type. Walks multi-page results via `offset` — matches are ranked by token-hit count, which the snapshot-consistent cursor cannot follow. Under response scoping the default page is 25.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z
@@ -291,7 +291,7 @@ export const tools = {
 				.string()
 				.optional()
 				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+					'Accepted for backward compatibility but ignored on this tool — results are ranked by token-hit count, so the snapshot-consistent cursor cannot be followed. Walk multi-page results via `offset` instead.',
 				),
 			metadata_eq: metadataEqSchema,
 		}),
