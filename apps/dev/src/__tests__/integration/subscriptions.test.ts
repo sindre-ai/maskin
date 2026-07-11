@@ -740,6 +740,148 @@ describe('Subscriptions Integration', () => {
 			expect(detail.subscriber_count).toBe(1)
 		}
 	})
+
+	it('a Loop watcher receives the at-risk transition in the unread feed', async () => {
+		// T2 on bet/loops-primitive: when a Loop transitions into an
+		// attention-worthy status (at-risk / breached), every subscribed
+		// actor must see it in /api/subscriptions/unread — mirrors the bet
+		// terminal-status behaviour. Uses `type='loop'` in the polymorphic
+		// filter path, never `metadata_eq`.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const loopRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({
+					type: 'loop',
+					title: 'Customer bugs fixed <1 day',
+					status: 'holding',
+				}),
+				headersA,
+			),
+		)
+		expect(loopRes.status).toBe(201)
+		const loop = await loopRes.json()
+
+		// B subscribes; no comments are ever posted — only the status flip
+		// should surface in unread.
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: loop.id },
+				headersB,
+			),
+		)
+
+		const patchRes = await appA.request(
+			jsonRequest('PATCH', `/api/objects/${loop.id}`, { status: 'at-risk' }, headersA),
+		)
+		expect(patchRes.status).toBe(200)
+
+		const unreadB = await appB
+			.request(jsonGet('/api/subscriptions/unread', headersB))
+			.then((r) => r.json())
+		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === loop.id)
+		expect(itemB).toBeDefined()
+		expect(itemB.unread_count).toBe(1)
+		// The object hydration branch fetches the row so consumers can render
+		// the health-state chip inline — same code path bets already use.
+		expect(itemB.object?.status).toBe('at-risk')
+	})
+
+	it('a Loop transitioning back to holding does NOT surface in the unread feed', async () => {
+		// Symmetric guard for the bet's "non-terminal changes don't page" test.
+		// LOOP_ATTENTION_STATUSES = ['at-risk','breached'] only. A transition
+		// into 'holding' is quiet news and must not enter the feed.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const loopRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({
+					type: 'loop',
+					title: 'Recovering loop',
+					status: 'at-risk',
+				}),
+				headersA,
+			),
+		)
+		const loop = await loopRes.json()
+
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: loop.id },
+				headersB,
+			),
+		)
+
+		const patchRes = await appA.request(
+			jsonRequest('PATCH', `/api/objects/${loop.id}`, { status: 'holding' }, headersA),
+		)
+		expect(patchRes.status).toBe(200)
+
+		const unreadB = await appB
+			.request(jsonGet('/api/subscriptions/unread', headersB))
+			.then((r) => r.json())
+		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === loop.id)
+		expect(itemB).toBeUndefined()
+	})
+
+	it('a Loop breach fires the unread signal even with no comments in between', async () => {
+		// Failure mode covered: an unattended Loop that breaches without any
+		// commentary must still surface — mirrors the "silent bet" case above.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const loopRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({
+					type: 'loop',
+					title: 'Silent loop',
+					status: 'holding',
+				}),
+				headersA,
+			),
+		)
+		const loop = await loopRes.json()
+
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: loop.id },
+				headersB,
+			),
+		)
+
+		const patchRes = await appA.request(
+			jsonRequest('PATCH', `/api/objects/${loop.id}`, { status: 'breached' }, headersA),
+		)
+		expect(patchRes.status).toBe(200)
+
+		const unreadB = await appB
+			.request(jsonGet('/api/subscriptions/unread', headersB))
+			.then((r) => r.json())
+		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === loop.id)
+		expect(itemB).toBeDefined()
+		expect(itemB.unread_count).toBe(1)
+		expect(itemB.object?.status).toBe('breached')
+	})
 })
 
 // Silence "unused import" complaints for helpers we kept around for future tests.

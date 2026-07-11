@@ -185,6 +185,7 @@ describe('renderWorkspaceBriefing', () => {
 			[], // paused bets
 			[], // closed bets
 			[], // open insights
+			[], // loops
 		]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
@@ -199,7 +200,7 @@ describe('renderWorkspaceBriefing', () => {
 		const { db, mockResults } = createTestContext()
 		const storage = createMockStorage()
 		const ws = buildWorkspace()
-		mockResults.selectQueue = [[ws], [], [], [], []]
+		mockResults.selectQueue = [[ws], [], [], [], [], []]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
 		expect(result).toContain('No active bets')
@@ -211,7 +212,7 @@ describe('renderWorkspaceBriefing', () => {
 		const storage = createMockStorage()
 		const ws = buildWorkspace()
 		const insight = buildObject({ workspaceId: ws.id, type: 'insight', status: 'new' })
-		mockResults.selectQueue = [[ws], [], [], [], [insight]]
+		mockResults.selectQueue = [[ws], [], [], [], [insight], []]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
 		expect(result).toContain('Consider proposing one from an open insight')
@@ -235,6 +236,7 @@ describe('renderWorkspaceBriefing', () => {
 			[], // paused bets
 			[], // closed bets
 			[], // open insights
+			[], // loops
 			[], // child relationships
 		]
 
@@ -261,6 +263,7 @@ describe('renderWorkspaceBriefing', () => {
 			[], // paused
 			[], // closed
 			[], // insights
+			[], // loops
 			[rel1, rel2], // child relationships
 			[task1, task2], // child tasks
 		]
@@ -280,7 +283,7 @@ describe('renderWorkspaceBriefing', () => {
 			title: 'Shipped onboarding',
 			metadata: { verdict: 'Doubled day-1 activation, kept.' },
 		})
-		mockResults.selectQueue = [[ws], [], [], [closed], []]
+		mockResults.selectQueue = [[ws], [], [], [closed], [], []]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
 		expect(result).toContain('**Shipped onboarding** [succeeded] — Doubled day-1 activation')
@@ -296,7 +299,7 @@ describe('renderWorkspaceBriefing', () => {
 			status: 'paused',
 			title: 'Self-serve onboarding',
 		})
-		mockResults.selectQueue = [[ws], [], [paused], [], []]
+		mockResults.selectQueue = [[ws], [], [paused], [], [], []]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
 		expect(result).toContain('## Paused bets')
@@ -308,7 +311,7 @@ describe('renderWorkspaceBriefing', () => {
 		const { db, mockResults } = createTestContext()
 		const storage = createMockStorage()
 		const ws = buildWorkspace()
-		mockResults.selectQueue = [[ws], [], [], [], []]
+		mockResults.selectQueue = [[ws], [], [], [], [], []]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
 		expect(result).not.toContain('## Paused bets')
@@ -323,7 +326,7 @@ describe('renderWorkspaceBriefing', () => {
 				.mockResolvedValue(Buffer.from('2026-04-20 · session abcd1234 · tried the outreach bet\n')),
 		})
 		const ws = buildWorkspace()
-		mockResults.selectQueue = [[ws], [], [], [], []]
+		mockResults.selectQueue = [[ws], [], [], [], [], []]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
 		expect(result).toContain('Recent workspace learnings')
@@ -339,10 +342,97 @@ describe('renderWorkspaceBriefing', () => {
 				display_names: { insight: 'Signal', bet: 'Initiative', task: 'Action' },
 			},
 		})
-		mockResults.selectQueue = [[ws], [], [], [], []]
+		mockResults.selectQueue = [[ws], [], [], [], [], []]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
 		expect(result).toContain('## Active initiatives')
 		expect(result).toContain('## Open signals')
+	})
+
+	it('omits the Loops section entirely when no loops exist', async () => {
+		const { db, mockResults } = createTestContext()
+		const storage = createMockStorage()
+		const ws = buildWorkspace()
+		mockResults.selectQueue = [[ws], [], [], [], [], []]
+
+		const result = await renderWorkspaceBriefing(db, storage, ws.id)
+		expect(result).not.toContain('## Loops')
+	})
+
+	it('renders a Loops section with health state, floor and cadence when loops exist', async () => {
+		const { db, mockResults } = createTestContext()
+		const storage = createMockStorage()
+		const ws = buildWorkspace()
+		const loop = buildObject({
+			workspaceId: ws.id,
+			type: 'loop',
+			status: 'at-risk',
+			title: 'Customer bugs fixed < 1 day',
+			metadata: { floor: '< 24h median', cadence: 'weekly' },
+		})
+		mockResults.selectQueue = [[ws], [], [], [], [], [loop]]
+
+		const result = await renderWorkspaceBriefing(db, storage, ws.id)
+		expect(result).toContain('## Loops')
+		expect(result).toContain('**Customer bugs fixed < 1 day** [at-risk]')
+		expect(result).toContain('floor: < 24h median')
+		expect(result).toContain('cadence: weekly')
+	})
+
+	it('renders attention-worthy Loops (breached/at-risk) ahead of holding — mock order preserved from DB sort', async () => {
+		// The service asks the DB for loops with a CASE-based ORDER BY that
+		// ranks at-risk/breached above holding. The mock DB returns exactly
+		// the queued array, so the test asserts the rendering preserves the
+		// order the DB hands back — the SQL-side ordering itself is covered
+		// by the integration test.
+		const { db, mockResults } = createTestContext()
+		const storage = createMockStorage()
+		const ws = buildWorkspace()
+		const breached = buildObject({
+			workspaceId: ws.id,
+			type: 'loop',
+			status: 'breached',
+			title: 'Breached loop',
+		})
+		const atRisk = buildObject({
+			workspaceId: ws.id,
+			type: 'loop',
+			status: 'at-risk',
+			title: 'At-risk loop',
+		})
+		const holding = buildObject({
+			workspaceId: ws.id,
+			type: 'loop',
+			status: 'holding',
+			title: 'Holding loop',
+		})
+		mockResults.selectQueue = [[ws], [], [], [], [], [breached, atRisk, holding]]
+
+		const result = await renderWorkspaceBriefing(db, storage, ws.id)
+		const breachedIdx = result.indexOf('Breached loop')
+		const atRiskIdx = result.indexOf('At-risk loop')
+		const holdingIdx = result.indexOf('Holding loop')
+		expect(breachedIdx).toBeGreaterThan(-1)
+		expect(atRiskIdx).toBeGreaterThan(breachedIdx)
+		expect(holdingIdx).toBeGreaterThan(atRiskIdx)
+	})
+
+	it('respects a custom loop display_name', async () => {
+		const { db, mockResults } = createTestContext()
+		const storage = createMockStorage()
+		const ws = buildWorkspace({
+			name: 'Custom loops',
+			settings: { display_names: { loop: 'Standard' } },
+		})
+		const loop = buildObject({
+			workspaceId: ws.id,
+			type: 'loop',
+			status: 'holding',
+			title: 'Some standard',
+		})
+		mockResults.selectQueue = [[ws], [], [], [], [], [loop]]
+
+		const result = await renderWorkspaceBriefing(db, storage, ws.id)
+		expect(result).toContain('## Standards')
 	})
 })

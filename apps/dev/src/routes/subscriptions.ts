@@ -2,6 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, objects, subscriptions } from '@maskin/db/schema'
 import {
+	LOOP_ATTENTION_STATUSES,
 	TERMINAL_BET_STATUSES,
 	markReadBodySchema,
 	subscribeBodySchema,
@@ -334,7 +335,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 				eq(events.entityId, subscriptions.entityId),
 				ne(events.actorId, actorId),
 				gt(events.id, lastReadExpr),
-				// Two surfaces land in the unread feed:
+				// Three surfaces land in the unread feed:
 				// (1) comments on the subscribed entity (events.entity_type matches the
 				//     subscription's polymorphic type, e.g. 'object'), and
 				// (2) the bet's own terminal-status transition (events.entity_type is
@@ -346,6 +347,13 @@ app.openapi(listUnreadRoute, (async (c) => {
 				// source of truth shared with the notification fan-out gate in
 				// objects.ts — without (2) a watcher misses the terminal signal, see
 				// T2 on bet/notif-cascade-fix.
+				// (3) a Loop transitioning into an attention-worthy status
+				//     (at-risk / breached) — mirrors (2) for the Loop primitive.
+				//     Uses `type='loop'` in the polymorphic filter path per T2 on
+				//     bet/loops-primitive; a transition back to `holding` is
+				//     quiet news and does not land in the feed.
+				//     LOOP_ATTENTION_STATUSES is the single source of truth shared
+				//     with the briefing composer's health-priority sort.
 				or(
 					and(eq(events.entityType, subscriptions.entityType), eq(events.action, 'commented')),
 					and(
@@ -353,6 +361,12 @@ app.openapi(listUnreadRoute, (async (c) => {
 						eq(events.entityType, 'bet'),
 						eq(events.action, 'status_changed'),
 						inArray(terminalStatusExpr, [...TERMINAL_BET_STATUSES]),
+					),
+					and(
+						eq(subscriptions.entityType, 'object'),
+						eq(events.entityType, 'loop'),
+						eq(events.action, 'status_changed'),
+						inArray(terminalStatusExpr, [...LOOP_ATTENTION_STATUSES]),
 					),
 				),
 			),

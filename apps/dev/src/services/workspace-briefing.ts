@@ -1,8 +1,8 @@
 import type { Database } from '@maskin/db'
 import { objects, relationships, workspaces } from '@maskin/db/schema'
-import { buildWebAppHref, stripTrailingSlash } from '@maskin/shared'
+import { LOOP_ATTENTION_STATUSES, buildWebAppHref, stripTrailingSlash } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, desc, eq, gte, inArray, ne } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 
@@ -10,6 +10,7 @@ const MAX_ACTIVE_BETS = 10
 const MAX_PAUSED_BETS = 5
 const MAX_CLOSED_BETS = 5
 const MAX_OPEN_INSIGHTS = 10
+const MAX_LOOPS = 10
 const MAX_LEDGER_LINES = 20
 const CLOSED_BETS_DAYS = 30
 const LEDGER_MAX_LINES = 1000
@@ -163,11 +164,19 @@ export async function renderWorkspaceBriefing(
 	const betLabel = displayNames.bet ?? 'Bet'
 	const taskLabel = displayNames.task ?? 'Task'
 	const insightLabel = displayNames.insight ?? 'Insight'
+	const loopLabel = displayNames.loop ?? 'Loop'
 
 	const since = new Date(Date.now() - CLOSED_BETS_DAYS * 24 * 60 * 60 * 1000)
 
+	// Loops sort with attention-worthy statuses (breached, at-risk) ahead of
+	// holding so the briefing surfaces "your standing commitments that need
+	// you" at the top of the section. Uses `inArray` so `LOOP_ATTENTION_STATUSES`
+	// stays the single source of truth shared with the unread-feed join in
+	// routes/subscriptions.ts — no drift between the two surfaces.
+	const loopHealthPriority = sql<number>`case when ${inArray(objects.status, [...LOOP_ATTENTION_STATUSES])} then 1 else 0 end`
+
 	// Independent queries run in parallel — they don't depend on each other.
-	const [activeBets, pausedBets, closedBets, openInsights] = await Promise.all([
+	const [activeBets, pausedBets, closedBets, openInsights, loops] = await Promise.all([
 		db
 			.select()
 			.from(objects)
@@ -217,6 +226,12 @@ export async function renderWorkspaceBriefing(
 			)
 			.orderBy(desc(objects.createdAt))
 			.limit(MAX_OPEN_INSIGHTS),
+		db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')))
+			.orderBy(desc(loopHealthPriority), desc(objects.updatedAt))
+			.limit(MAX_LOOPS),
 	])
 
 	// Child task progress for active bets: one batched relationship query, one
@@ -310,6 +325,24 @@ export async function renderWorkspaceBriefing(
 		}
 	}
 	out.push('')
+
+	if (loops.length > 0) {
+		out.push(`## ${loopLabel}s`)
+		out.push('')
+		for (const loop of loops) {
+			const meta = (loop.metadata as Record<string, unknown> | null) ?? {}
+			const floor =
+				typeof meta.floor === 'string' && meta.floor.length > 0
+					? ` · floor: ${truncate(meta.floor, 60)}`
+					: ''
+			const cadence =
+				typeof meta.cadence === 'string' && meta.cadence.length > 0
+					? ` · cadence: ${truncate(meta.cadence, 40)}`
+					: ''
+			out.push(`- **${truncate(loop.title, TITLE_MAX)}** [${loop.status}]${floor}${cadence}`)
+		}
+		out.push('')
+	}
 
 	out.push(`## Open ${insightLabel.toLowerCase()}s`)
 	out.push('')
