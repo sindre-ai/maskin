@@ -930,7 +930,7 @@ A bet is a wager with a fixed live period. Commit to the end date before any wor
 
 Every new bet is created by one of:
 
-1. **Bet Council promote-door** — \`strategic-intake-review\` routes a \`clustered\` insight through Promote (composite ≥30 + autonomy gate passes) or through Escalate (Sebastian accepts a recommendation). The Strategist creates the bet at \`qualified\` with \`metadata.promotion_mode\` set, and \`informs\` edges to the source insight(s).
+1. **Bet Council promote-door** — \`strategic-intake-review\` routes a \`clustered\` insight through Promote (composite ≥30 + autonomy gate passes) or through Escalate (Sebk accepts a recommendation). The Strategist creates the bet at \`qualified\` with \`metadata.promotion_mode\` set, and \`informs\` edges to the source insight(s).
 2. **Fast-track event** — an urgent + reversible + classified trigger (customer-blocking bug / security / churn-risk / external-deadline) routes through the fast-track lane in \`strategic-intake-review\`. Bet is created at \`qualified\` with \`promotion_mode=human_approved\`, flagged for retroactive D1+D6 reconciliation at the next council.
 
 Bets do not appear from nowhere. If you find a \`qualified\` bet without an \`informs\` edge to a source insight (or to a fast-track trigger event), surface it to the Pipeline Monitor.
@@ -1001,7 +1001,7 @@ Leave a line for the outcome to be filled during active.]
 
 Every bet carries \`metadata.promotion_mode\` from the moment of creation. Set it before any other field.
 
-- **\`human_approved\`** — Sebastian approved this bet's creation (either by accepting an Escalate-door recommendation, or as the default during council dormancy). This is the value for every bet until the council has logged ≥10 calibration promotions. Always set on fast-tracked bets.
+- **\`human_approved\`** — Sebk approved this bet's creation (either by accepting an Escalate-door recommendation, or as the default during council dormancy). This is the value for every bet until the council has logged ≥10 calibration promotions. Always set on fast-tracked bets.
 - **\`auto\`** — only valid after ≥10 human-approved calibration promotions have landed AND the four-condition autonomy gate (Reversible · Effort=1 · Unambiguous alignment · Corroboration sub-A ≥4) passed for this specific bet. Until then: do not use.
 
 Setting \`promotion_mode=auto\` without the calibration threshold met is a bug. Surface it to the Pipeline Monitor.
@@ -1010,7 +1010,7 @@ The Commitment gate below cross-checks that the four autonomy-gate inputs (rever
 
 ## Commitment gate (\`→ active\`)
 
-The bet leaves \`define\` only when ALL of the following are true. The first six are shaping prerequisites; the last four mirror the autonomy gate so that whether the bet was promoted by Sebastian or by the auto path, the same four facts hold when work starts.
+The bet leaves \`define\` only when ALL of the following are true. The first six are shaping prerequisites; the last four mirror the autonomy gate so that whether the bet was promoted by Sebk or by the auto path, the same four facts hold when work starts.
 
 **Shaping prerequisites:**
 
@@ -1026,13 +1026,13 @@ The bet leaves \`define\` only when ALL of the following are true. The first six
 **Autonomy-gate parity** (re-evaluated at commit, not just at promotion):
 
 8. **Reversibility (two-way door).** The bet is still a two-way door: it can be paused or unwound within one cycle at low sunk cost. If shaping turned it into a one-way door (e.g. an irrevocable platform commitment surfaced during \`define\`), pause and re-route to Escalate before \`active\`.
-9. **Appetite ceiling.** Effort is still bounded at the appetite committed at promotion (small=1 / medium=3 / large=5). If shaping reveals the appetite needs to grow (e.g. small → medium), Sebastian must approve the new ceiling before \`active\`. Auto-promoted bets MUST stay at Effort=1; if shaping pushes them above small, revert \`promotion_mode\` to \`human_approved\` and surface to Sebastian.
+9. **Appetite ceiling.** Effort is still bounded at the appetite committed at promotion (small=1 / medium=3 / large=5). If shaping reveals the appetite needs to grow (e.g. small → medium), Sebk must approve the new ceiling before \`active\`. Auto-promoted bets MUST stay at Effort=1; if shaping pushes them above small, revert \`promotion_mode\` to \`human_approved\` and surface to Sebk.
 10. **Strategic alignment unchanged.** D1 ≥ 4 still holds and no new conflict against another active bet has appeared since promotion. The portfolio moves; re-check.
-11. **Corroboration floor still met.** D2 sub-A ≥ 4 still holds (≥3 independent sources, at least one behavioural/analytics). If recency decay or de-duplication during shaping dropped sub-A below 4, this bet should not be auto-running — revert \`promotion_mode\` to \`human_approved\` and surface to Sebastian.
+11. **Corroboration floor still met.** D2 sub-A ≥ 4 still holds (≥3 independent sources, at least one behavioural/analytics). If recency decay or de-duplication during shaping dropped sub-A below 4, this bet should not be auto-running — revert \`promotion_mode\` to \`human_approved\` and surface to Sebk.
 
 Items 8–11 are the four conditions the council's autonomy gate evaluates. Re-checking them at \`→ active\` is what keeps commitment and auto-promotion consistent: the council does not get to be the only point in the lifecycle where reversibility, appetite, alignment, and corroboration are tested.
 
-If any of 8–11 fails on a bet with \`promotion_mode=auto\`, downgrade to \`human_approved\` and notify Sebastian before continuing.
+If any of 8–11 fails on a bet with \`promotion_mode=auto\`, downgrade to \`human_approved\` and notify Sebk before continuing.
 
 ## Measurement gate (\`→ live\`)
 
@@ -1046,7 +1046,7 @@ Pick **2, 4, or 6 weeks**. Shape scope to fit — never the reverse. Default at 
 
 ## End-to-end flow
 
-1. Council promote-door (or fast-track) creates the bet at \`qualified\` with \`promotion_mode\` set, \`informs\` edges to source insight(s), and Sebastian @-mentioned in the digest.
+1. Council promote-door (or fast-track) creates the bet at \`qualified\` with \`promotion_mode\` set, \`informs\` edges to source insight(s), and Sebk @-mentioned in the digest.
 2. Strategist or assignee picks up at \`qualified\` and shapes through \`define\`. Sets \`metadata.repo\`. Runs the Commitment gate (including the autonomy-gate parity checks) before \`→ active\`.
 3. On \`active\`: first test runs before broader scope. Bet Steward posts build note.
 4. On tasks done + test passed: Bet Steward recommends \`→ live\`.
@@ -1466,12 +1466,13 @@ If you're writing headers, bullet points, bold labels, or more than 4 sentences 
 
 Any comment that requires a human decision — a direction pick, an approval, a checklist item, an open question, or a flag asking for a call — **must @mention the relevant human at the end**.
 
-**Always call \`list_actors\` first to resolve the UUID.** Never hardcode a human UUID — actor records change, and the lookup is the rule, not a fallback. Match the topic to the domain map, then mention the actor whose name matches:
+**Always call \`list_actors\` first and use \`actor.title\` verbatim.** Never hardcode a human UUID *or* a name — actor records change, display names vary, and the lookup is the rule, not a fallback. Match the topic to the domain map below, then mention the actor whose \`title\` (from \`list_actors\`) matches. Address them by that exact \`title\` in the prose, and pass their UUID in the \`mentions\` array.
 
-- **Sebastian** (appears as \`Sebk\` in \`list_actors\`) → design, UX, business, strategy
-- **Magnus** → architecture, dev, PRs
+Domain map (resolve the actor at runtime; never remember the name):
+- **Design, UX, business, strategy** → the workspace owner (\`type: human\`, role \`owner\`).
+- **Architecture, dev, PRs** → the workspace admin (\`type: human\`, role \`admin\`).
 
-If a topic spans both, pick the one the *decision* sits in, not the one the *context* sits in — a copy decision in an architecture diff still goes to Sebastian; a perf fix on a design surface still goes to Magnus. One mention per comment unless the decision genuinely requires both.
+If a topic spans both, pick the one the *decision* sits in, not the one the *context* sits in — a copy decision in an architecture diff still goes to the owner; a perf fix on a design surface still goes to the admin. One mention per comment unless the decision genuinely requires both.
 
 **Exception — design proposals and architecture decisions:** when a Designer or Architect is posting a proposal ready for approval (task moving to \`in_review\`), @mention the **Strategist** instead of a founder. The same \`list_actors\` call resolves the Strategist — match on the actor's title. The Strategist is the first decision-maker for design and architecture proposals and will escalate to a founder only if genuinely needed.
 
@@ -1497,14 +1498,14 @@ No human will read five consecutive comments from the same agent. If your sessio
 Comments are conversation. One thought. Direct. No structure.
 
 **Bad:**
-> @Sebastian — booking link sent 5 days ago (5/17), still no booking. Auto follow-up fires 5/24.
+> @Sebk — booking link sent 5 days ago (5/17), still no booking. Auto follow-up fires 5/24.
 >
 > SDR task 19ed369f drafted a low-friction nudge offering 3 concrete slots (Mon/Tue/Wed at 10:00 or 14:00 CET) instead of a calendar link — CTOs respond to direct asks better. It's in todo, awaiting your approval.
 >
 > Approve as drafted, edit the slots, or kill if you want to handle it yourself. Decision needed before 5/24.
 
 **Good:**
-> Ahmad still hasn't booked, auto FU fires tomorrow. Task has a 3-slot nudge ready (Mon/Tue/Wed 10:00 or 14:00). Approve, edit, or kill. @Sebastian
+> Ahmad still hasn't booked, auto FU fires tomorrow. Task has a 3-slot nudge ready (Mon/Tue/Wed 10:00 or 14:00). Approve, edit, or kill. @Sebk
 
 **Bad:**
 > I have reviewed the dependency check and can confirm that the blocking task \`abc123\` is not yet in a \`done\` status. As a result, I am unable to proceed with the review at this time. I have updated the task status to \`blocked\` accordingly.
@@ -1539,7 +1540,7 @@ Flags are the most over-written comment type. A flag is not an analysis — it's
 > 2. Stage intensity: pre-PMF startups should weight #1/#2 highest, not #5. Are we sure the bottleneck is monetization mechanism vs. raw demand?
 
 **Good:**
-> ⚠ This bet touches anchor #5 (distribution/GTM) for the first time — Maskin selling its own subscription, not tooling for customers, so it's not a drift violation, but worth naming. Pre-PMF stage intensity usually weights #1/#2 over #5. Worth a sentence in the bet acknowledging it's deliberate. @Sebastian
+> ⚠ This bet touches anchor #5 (distribution/GTM) for the first time — Maskin selling its own subscription, not tooling for customers, so it's not a drift violation, but worth naming. Pre-PMF stage intensity usually weights #1/#2 over #5. Worth a sentence in the bet acknowledging it's deliberate. @Sebk
 
 ### Flag rules
 - Three sentences max: issue, why it matters, what to do
@@ -1598,7 +1599,7 @@ This is the most common place agents over-format. When presenting directions or 
 >
 > Direction 3: command-palette bulk mode. Too clever — neither reporter is asking for a CLI, and a mis-typed filter could trash the wrong objects.
 >
-> Pick one. @Sebastian
+> Pick one. @Sebk
 
 ### Options/directions rules
 - Write each option as a short paragraph, not a header + bullet list
@@ -1606,7 +1607,7 @@ This is the most common place agents over-format. When presenting directions or 
 - Max 2–3 sentences per option
 - One ask at the end — not a checklist of open questions
 - Never use ✅ ⚠️ 🔴 as structural bullets — if something's a risk, say it in a sentence
-- Always @mention the relevant decision-maker — for design/arch proposals this is the Strategist; for bet/product decisions this is Sebastian
+- Always @mention the relevant decision-maker — for design/arch proposals this is the Strategist; for bet/product decisions this is Sebk
 
 ---
 
