@@ -890,7 +890,7 @@ export function Composer({
 						type="button"
 						size="sm"
 						variant="ghost"
-						className="h-7 gap-1 px-2 text-xs text-text-secondary"
+						className="relative h-7 gap-1 px-2 text-xs text-text-secondary before:absolute before:-inset-3 before:h-11 before:w-11 before:content-['']"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={disabled}
 						aria-label="Attach image"

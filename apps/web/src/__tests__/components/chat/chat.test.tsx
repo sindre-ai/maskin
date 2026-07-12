@@ -134,6 +134,26 @@ describe('Chat', () => {
 		expect(screen.getByPlaceholderText('Ask anything…')).toBeInTheDocument()
 	})
 
+	// AC-T8: the Attach button exposes a 44 px hit surface via a `::before`
+	// pseudo-element (`before:h-11`/`before:w-11`) without enlarging the visible
+	// glyph. A `size="touch"`-style revert would enlarge the visible element and
+	// re-open the PR #1040 regression on the chat surface — assert `data-size`
+	// stays absent so a class-string revert also fails cheaply here.
+	it('carries the 44 px ::before tap-target hit surface on the Attach button', () => {
+		setHookResult({ status: 'ready' })
+		render(<Chat workspaceId="ws-1" agentActorId="actor-agent" surface="sheet" />)
+
+		const attach = screen.getByRole('button', { name: /attach image/i })
+		expect(attach.className).toMatch(/(^|\s)relative(\s|$)/)
+		expect(attach.className).toContain('before:absolute')
+		expect(attach.className).toContain('before:-inset-3')
+		expect(attach.className).toContain('before:h-11')
+		expect(attach.className).toContain('before:w-11')
+		expect(attach.className).toContain("before:content-['']")
+		expect(attach.getAttribute('data-size')).toBeNull()
+		expect(attach.className).not.toMatch(/data-size=/)
+	})
+
 	it('renders streamed assistant text events', () => {
 		const events: ChatEvent[] = [{ kind: 'text', text: 'Looking at your workspace…' }]
 		setHookResult({ status: 'ready', events })
