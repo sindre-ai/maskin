@@ -265,6 +265,27 @@ export function useBulkResultHandlers(
 	return { reportBulkResult, retainOnlyFailed }
 }
 
+// Stamp / unstamp the "Verified" chip on a Knowledge Author write. Server-side
+// this is a scoped write on `metadata.verified_by` + `metadata.verified_at`
+// wrapped with a dedicated `verified` / `unverified` timeline event; server
+// enforces the "human admin/owner only" rule so the mutation is safe to
+// surface behind a client-side visibility guard.
+export function useVerifyObject(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, verified }: { id: string; verified: boolean }) =>
+			api.objects.verify(id, verified),
+		onSuccess: (data) => {
+			queryClient.setQueryData(queryKeys.objects.detail(data.id), data)
+		},
+		onSettled: (_data, _err, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+		},
+	})
+}
+
 export function useMigrateObjectType(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({

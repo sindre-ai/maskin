@@ -45,6 +45,10 @@ export function formatEventDescription(event: EventLike, ctx?: FormatContext): s
 			return 'paused session'
 		case 'trigger_fired':
 			return 'fired trigger'
+		case 'verified':
+			return `verified ${entityType}`
+		case 'unverified':
+			return `unverified ${entityType}`
 		case 'updated':
 		case 'status_changed':
 			if (OBJECT_ENTITY_TYPES.has(entityType)) {

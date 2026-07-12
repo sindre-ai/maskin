@@ -21,6 +21,7 @@ import {
 	useKnowledgeReferences,
 	useObjectGraph,
 	useUpdateObject,
+	useVerifyObject,
 } from '@/hooks/use-objects'
 import { useDeleteRelationship } from '@/hooks/use-relationships'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
@@ -51,6 +52,7 @@ import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { PropertiesDrawer } from './properties-drawer'
+import { VerifiedChip, isKnowledgeAuthorWrite } from './verified-chip'
 
 interface ObjectDocumentViewProps {
 	object: ObjectResponse
@@ -67,6 +69,8 @@ interface ObjectDocumentViewProps {
 	onUpdateDriver: (driver: string | null) => void
 	onDeleteRelationship?: (relationshipId: string) => void
 	onDelete: () => void
+	onToggleVerified?: (verified: boolean) => void
+	isVerifying?: boolean
 	isDeleting?: boolean
 	showSaved?: boolean
 	betStatus?: ReturnType<typeof classifyBetStatus>
@@ -127,6 +131,8 @@ export function ObjectDocumentView({
 	onUpdateDriver,
 	onDeleteRelationship,
 	onDelete,
+	onToggleVerified,
+	isVerifying = false,
 	isDeleting = false,
 	showSaved = false,
 	betStatus,
@@ -215,6 +221,14 @@ export function ObjectDocumentView({
 				{object.type === 'bet' && betStatus && (
 					<IndicatorBadgeChip result={betStatus} workspaceId={workspaceId} />
 				)}
+				{isKnowledgeAuthorWrite(object) && onToggleVerified && (
+					<VerifiedChip
+						object={object}
+						members={members}
+						onToggle={onToggleVerified}
+						isPending={isVerifying}
+					/>
+				)}
 				{members && (
 					<OwnerSelect
 						members={members}
@@ -278,6 +292,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const updateObject = useUpdateObject(workspaceId)
+	const verifyObject = useVerifyObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const deleteRelationship = useDeleteRelationship(workspaceId, object.id)
 	const { data: creator } = useActor(object.createdBy)
@@ -359,6 +374,13 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 			updateObject.mutate({ id: object.id, data: { driver } })
 		},
 		[object.id, updateObject],
+	)
+
+	const handleToggleVerified = useCallback(
+		(verified: boolean) => {
+			verifyObject.mutate({ id: object.id, verified })
+		},
+		[object.id, verifyObject],
 	)
 
 	const [confirmDelete, setConfirmDelete] = useState(false)
@@ -486,6 +508,8 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onUpdateDriver={handleUpdateDriver}
 				onDeleteRelationship={handleDeleteRelationship}
 				onDelete={handleDelete}
+				onToggleVerified={handleToggleVerified}
+				isVerifying={verifyObject.isPending}
 				isDeleting={deleteObject.isPending}
 				betStatus={betStatus}
 			/>

@@ -908,6 +908,159 @@ describe('Objects Routes', () => {
 		})
 	})
 
+	describe('POST /api/objects/:id/verification', () => {
+		// A Knowledge Author write — knowledge object with `provenance` containing "writer".
+		function buildKnowledgeWrite(overrides?: Record<string, unknown>) {
+			return buildObject({
+				type: 'knowledge',
+				metadata: { provenance: 'writer, claude-sonnet' },
+				...overrides,
+			})
+		}
+
+		it('stamps verification and emits a verified event on the object timeline', async () => {
+			const existing = buildKnowledgeWrite()
+			const updated = { ...existing }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing], // initial fetch
+				[buildWorkspaceMember()], // isWorkspaceMember
+				[{ role: 'admin', type: 'human' }], // isWorkspaceHumanAdminOrOwner
+				[existing], // in-tx FOR UPDATE re-read
+			]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(200)
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert?.action).toBe('verified')
+			expect((eventInsert?.data as { verified?: boolean }).verified).toBe(true)
+			const patchSet = calls.updates[0] as { metadata: Record<string, unknown> }
+			expect(patchSet.metadata.verified_by).toBeTruthy()
+			expect(typeof patchSet.metadata.verified_at).toBe('string')
+		})
+
+		it('unstamps verification and clears the metadata fields', async () => {
+			const existing = buildKnowledgeWrite({
+				metadata: {
+					provenance: 'writer',
+					verified_by: 'actor-x',
+					verified_at: '2026-06-01T00:00:00.000Z',
+				},
+			})
+			const updated = { ...existing }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember()],
+				[{ role: 'owner', type: 'human' }],
+				[existing],
+			]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: false }),
+			)
+
+			expect(res.status).toBe(200)
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert?.action).toBe('unverified')
+			const patchSet = calls.updates[0] as { metadata: Record<string, unknown> }
+			expect(patchSet.metadata.verified_by).toBeUndefined()
+			expect(patchSet.metadata.verified_at).toBeUndefined()
+			// Provenance and other unrelated metadata are preserved.
+			expect(patchSet.metadata.provenance).toBe('writer')
+		})
+
+		it('returns 409 when the object is not a knowledge type', async () => {
+			const existing = buildObject({ type: 'task' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(409)
+		})
+
+		it('returns 409 when the knowledge object has no writer provenance', async () => {
+			const existing = buildObject({
+				type: 'knowledge',
+				metadata: { provenance: 'human-review' },
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(409)
+		})
+
+		it('returns 403 when caller is a member but not admin/owner', async () => {
+			const existing = buildKnowledgeWrite()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember({ role: 'member' })],
+				[], // isWorkspaceHumanAdminOrOwner: no matching row
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 403 when caller is an agent (even with admin role)', async () => {
+			const existing = buildKnowledgeWrite()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember({ role: 'admin' })],
+				// The join filters agents out server-side; helper returns [] here.
+				[],
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 404 when the object does not exist', async () => {
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[]]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects/00000000-0000-0000-0000-000000000099/verification', {
+					verified: true,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
 	describe('POST /api/objects/migrate-type', () => {
 		it('returns 200 and migrates rows to the new type', async () => {
 			const ws = buildWorkspace({ id: wsId })

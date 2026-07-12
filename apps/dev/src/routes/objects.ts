@@ -62,7 +62,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../lib/workspace-auth'
 import {
 	autoSubscribe,
 	getSubscriberCount,
@@ -1171,6 +1171,153 @@ app.openapi(updateObjectRoute, async (c) => {
 
 	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
 })
+
+// POST /{id}/verification — human-only stamp/unstamp on a Knowledge Author write.
+// Object-level (not per-field). Sets `metadata.verified_by` + `metadata.verified_at`
+// on stamp, clears both on unstamp — so the chip state persists across sessions
+// via metadata rather than ephemeral UI. Emits a dedicated `verified` /
+// `unverified` event action so the object timeline reads "verified by <human>"
+// instead of the generic "updated custom field: verified_by".
+const verifyObjectRoute = createRoute({
+	method: 'post',
+	path: '/{id}/verification',
+	tags: ['Objects'],
+	summary: 'Stamp or unstamp verification on a Knowledge Author write',
+	request: {
+		params: idParamSchema,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({ verified: z.boolean() }),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: objectResponseSchema } },
+			description: 'Verification state updated',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller is not a workspace human admin/owner',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object is not a Knowledge Author write',
+		},
+	},
+})
+
+app.openapi(verifyObjectRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { verified } = c.req.valid('json')
+
+	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
+
+	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	if (existing.type !== 'knowledge' || !hasWriterProvenance(existing.metadata)) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Verification is only available on Knowledge Author writes (knowledge objects with provenance:writer).',
+			),
+			409,
+		)
+	}
+
+	if (!(await isWorkspaceHumanAdminOrOwner(db, actorId, existing.workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace human admins or owners can stamp verification.'),
+			403,
+		)
+	}
+
+	let updated: typeof objects.$inferSelect | undefined
+
+	await db.transaction(async (tx) => {
+		const [current] = await tx
+			.select()
+			.from(objects)
+			.where(eq(objects.id, id))
+			.for('update')
+			.limit(1)
+		if (!current) return
+
+		const currentMeta = (current.metadata ?? {}) as Record<string, unknown>
+		let nextMeta: Record<string, unknown>
+
+		if (verified) {
+			nextMeta = {
+				...currentMeta,
+				verified_by: actorId,
+				verified_at: new Date().toISOString(),
+			}
+		} else {
+			// Omit `verified_by` + `verified_at` by rebuilding the object without them
+			// so unstamping leaves no residual keys in the jsonb payload.
+			const { verified_by: _vb, verified_at: _va, ...rest } = currentMeta
+			nextMeta = rest
+		}
+
+		const [row] = await tx
+			.update(objects)
+			.set({ metadata: nextMeta, updatedAt: new Date() })
+			.where(eq(objects.id, id))
+			.returning()
+		if (!row) return
+
+		updated = row
+
+		await tx.insert(events).values({
+			workspaceId: current.workspaceId,
+			actorId,
+			action: verified ? 'verified' : 'unverified',
+			entityType: current.type,
+			entityId: id,
+			data: {
+				verified,
+				verified_by: verified ? actorId : (currentMeta.verified_by ?? null),
+				verified_at: verified ? nextMeta.verified_at : (currentMeta.verified_at ?? null),
+			},
+		})
+	})
+
+	if (!updated) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
+})
+
+// A knowledge object counts as a "Knowledge Author write" — and gets the
+// Verified chip + stamp control — when its `provenance` metadata field
+// contains the "writer" tag. `provenance` is the comma-separated text field
+// T3 added to KNOWLEDGE_FIELDS; the sibling T2 pipeline additionally stamps
+// `provenance:writer` into `metadata.tags`, but the object-detail surface
+// keys off the `provenance` column that's rendered on the Objects page.
+function hasWriterProvenance(metadata: unknown): boolean {
+	if (!metadata || typeof metadata !== 'object') return false
+	const raw = (metadata as Record<string, unknown>).provenance
+	if (typeof raw !== 'string') return false
+	return raw
+		.split(',')
+		.map((tag) => tag.trim().toLowerCase())
+		.includes('writer')
+}
 
 function isTerminalBetStatus(status: string): boolean {
 	return (TERMINAL_BET_STATUSES as readonly string[]).includes(status)

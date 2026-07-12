@@ -83,6 +83,16 @@ describe('formatEventDescription', () => {
 		expect(formatEventDescription(event)).toBe('fired trigger')
 	})
 
+	it('returns "verified {type}" for a verification stamp', () => {
+		const event = buildEvent({ action: 'verified', entityType: 'knowledge' })
+		expect(formatEventDescription(event)).toBe('verified knowledge')
+	})
+
+	it('returns "unverified {type}" for a verification reversal', () => {
+		const event = buildEvent({ action: 'unverified', entityType: 'knowledge' })
+		expect(formatEventDescription(event)).toBe('unverified knowledge')
+	})
+
 	it('falls back to "updated {type}" when status_changed has no data', () => {
 		const event = buildEvent({ action: 'status_changed', entityType: 'bet' })
 		expect(formatEventDescription(event)).toBe('updated bet')

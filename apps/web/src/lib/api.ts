@@ -181,6 +181,11 @@ export const api = {
 			request<ObjectResponse>('/objects', { method: 'POST', body: data, workspaceId }),
 		update: (id: string, data: UpdateObjectInput) =>
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
+		verify: (id: string, verified: boolean) =>
+			request<ObjectResponse>(`/objects/${id}/verification`, {
+				method: 'POST',
+				body: { verified },
+			}),
 		delete: (id: string) => request<{ deleted: boolean }>(`/objects/${id}`, { method: 'DELETE' }),
 		search: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
