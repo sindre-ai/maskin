@@ -838,6 +838,133 @@ describe('Subscriptions Integration', () => {
 		expect(itemB).toBeUndefined()
 	})
 
+	it('a Loop born at at-risk surfaces in a watcher subscribed at creation time', async () => {
+		// QA on bet/loops-primitive: seeded Loops created directly at
+		// `at-risk`/`breached` via `POST /api/objects` never surfaced in For You,
+		// because the T2 unread-feed OR-arm gated on `status_changed` events
+		// and a Loop born at an attention-worthy status only emits `created`.
+		// Locks the fix — a `created` event with initial status ∈
+		// LOOP_ATTENTION_STATUSES enters the feed for a subscribed watcher.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		// B subscribes preemptively via manual subscribe so the Loop is under
+		// watch at the moment of birth. In the QA case, the watcher subscribes
+		// after seeding — same net effect on the unread join.
+		const loopRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({
+					type: 'loop',
+					title: 'Seeded at-risk loop',
+					status: 'at-risk',
+				}),
+				headersA,
+			),
+		)
+		expect(loopRes.status).toBe(201)
+		const loop = await loopRes.json()
+
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: loop.id },
+				headersB,
+			),
+		)
+
+		const unreadB = await appB
+			.request(jsonGet('/api/subscriptions/unread', headersB))
+			.then((r) => r.json())
+		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === loop.id)
+		expect(itemB).toBeDefined()
+		expect(itemB.unread_count).toBe(1)
+		expect(itemB.object?.status).toBe('at-risk')
+	})
+
+	it('a Loop born at breached surfaces in a subscribed watcher', async () => {
+		// Symmetric to the at-risk-birth case above. LOOP_ATTENTION_STATUSES
+		// carries both, so the same OR-arm must catch both.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const loopRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({
+					type: 'loop',
+					title: 'Seeded breached loop',
+					status: 'breached',
+				}),
+				headersA,
+			),
+		)
+		const loop = await loopRes.json()
+
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: loop.id },
+				headersB,
+			),
+		)
+
+		const unreadB = await appB
+			.request(jsonGet('/api/subscriptions/unread', headersB))
+			.then((r) => r.json())
+		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === loop.id)
+		expect(itemB).toBeDefined()
+		expect(itemB.unread_count).toBe(1)
+		expect(itemB.object?.status).toBe('breached')
+	})
+
+	it('a Loop born at holding does NOT surface in the feed', async () => {
+		// Guard on the new `created` arm: only at-risk/breached births should
+		// enter the feed. A Loop created at `holding` is quiet news, same as a
+		// `holding` recovery in the transition arm above.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const loopRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({
+					type: 'loop',
+					title: 'Quiet holding loop',
+					status: 'holding',
+				}),
+				headersA,
+			),
+		)
+		const loop = await loopRes.json()
+
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: loop.id },
+				headersB,
+			),
+		)
+
+		const unreadB = await appB
+			.request(jsonGet('/api/subscriptions/unread', headersB))
+			.then((r) => r.json())
+		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === loop.id)
+		expect(itemB).toBeUndefined()
+	})
+
 	it('a Loop breach fires the unread signal even with no comments in between', async () => {
 		// Failure mode covered: an unattended Loop that breaches without any
 		// commentary must still surface — mirrors the "silent bet" case above.
