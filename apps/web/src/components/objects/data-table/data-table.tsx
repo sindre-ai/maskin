@@ -365,6 +365,7 @@ export function DataTable({
 							{headerGroup.headers.map((header) => (
 								<TableHead
 									key={header.id}
+									className={cn(header.column.id === 'title' && 'w-full')}
 									style={{ width: header.getSize() !== 150 ? header.getSize() : undefined }}
 								>
 									{header.isPlaceholder
@@ -461,7 +462,10 @@ export function DataTable({
 										onClick={() => handleRowClick(row.original.id)}
 									>
 										{row.getVisibleCells().map((cell) => (
-											<TableCell key={cell.id}>
+											<TableCell
+												key={cell.id}
+												className={cn(cell.column.id === 'title' && 'max-w-0')}
+											>
 												{cell.getIsAggregated()
 													? null
 													: flexRender(cell.column.columnDef.cell, cell.getContext())}

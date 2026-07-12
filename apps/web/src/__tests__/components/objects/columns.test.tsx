@@ -185,4 +185,15 @@ describe('getStaticColumns', () => {
 		const selectCol = columns.find((c) => c.id === 'select')
 		expect(selectCol?.size).toBe(60)
 	})
+
+	it('renders the title Link without a max-width cap so it can grow to fill the row', () => {
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const data = [buildObjectResponse({ title: 'Growable Title' })]
+		render(<TestTable data={data} columns={columns} />)
+
+		const link = screen.getByText('Growable Title')
+		expect(link.className).not.toMatch(/max-w-\[/)
+		expect(link.className).toMatch(/\btruncate\b/)
+		expect(link.className).toMatch(/\bmin-w-0\b/)
+	})
 })
