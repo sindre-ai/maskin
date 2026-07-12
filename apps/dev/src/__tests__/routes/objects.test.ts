@@ -757,6 +757,40 @@ describe('Objects Routes', () => {
 		})
 	})
 
+	describe('GET /api/objects/:id/references', () => {
+		it('returns the unique-context count with the 7-day window', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'knowledge' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// One SELECT: the COUNT DISTINCT aggregate. The mock DB harness returns
+			// whatever we queue for the aggregate row.
+			mockResults.selectQueue = [[{ unique_contexts: 3 }]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/references`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toEqual({ window_days: 7, unique_contexts: 3 })
+		})
+
+		it('returns 0 when no reference events exist', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'knowledge' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// Empty aggregate row — the coalesce in the handler falls back to 0.
+			mockResults.selectQueue = [[{ unique_contexts: null }]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/references`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.unique_contexts).toBe(0)
+			expect(body.window_days).toBe(7)
+		})
+	})
+
 	describe('DELETE /api/objects/:id', () => {
 		it('returns 200 when deleted', async () => {
 			const existing = buildObject()

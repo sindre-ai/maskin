@@ -40,6 +40,24 @@ export function useObjectGraph(workspaceId: string, id: string) {
 	})
 }
 
+// Powers the "Referenced by N contexts/week" chip on the knowledge doc
+// header. DoD is happy with async freshness up to 5 minutes — a longer stale
+// window plus the SSE-driven cache invalidation that fires on any new
+// `workspace_knowledge_referenced` event keeps this cheap without stalling
+// the chip after a real cite.
+export function useKnowledgeReferences(
+	workspaceId: string,
+	id: string,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
+	return useQuery({
+		queryKey: queryKeys.objects.references(id),
+		queryFn: () => api.objects.references(id, workspaceId),
+		enabled: enabled && !!id && !!workspaceId,
+		staleTime: 5 * 60 * 1000,
+	})
+}
+
 export function useCreateObject(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({

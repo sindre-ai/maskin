@@ -24,6 +24,18 @@ vi.mock('@/components/shared/subscribe-toggle', () => ({
 	SubscribeToggle: () => <div data-testid="subscribe-toggle" />,
 }))
 
+// The knowledge doc-header chip reads live counts through `useKnowledgeReferences`.
+// Mock the whole use-objects module here so the ObjectDocumentView tests below
+// can drive chip visibility deterministically (0 → hidden, N>0 → visible).
+const mockUseKnowledgeReferences = vi.fn()
+vi.mock('@/hooks/use-objects', async () => {
+	const actual = await vi.importActual<typeof import('@/hooks/use-objects')>('@/hooks/use-objects')
+	return {
+		...actual,
+		useKnowledgeReferences: (...args: unknown[]) => mockUseKnowledgeReferences(...args),
+	}
+})
+
 const baseProps = {
 	workspaceId: 'ws-1',
 	statuses: ['proposed', 'active', 'done'],
@@ -263,6 +275,58 @@ describe('ObjectDocumentView', () => {
 			await user.click(screen.getByRole('option', { name: /Unassigned/ }))
 
 			expect(onUpdateDriver).toHaveBeenCalledWith(null)
+		})
+	})
+
+	describe('Referenced-by-N-contexts chip on knowledge headers', () => {
+		beforeEach(() => {
+			mockUseKnowledgeReferences.mockReset()
+		})
+
+		it('renders the chip on knowledge objects when count > 0', () => {
+			mockUseKnowledgeReferences.mockReturnValue({
+				data: { window_days: 7, unique_contexts: 3 },
+			})
+			const object = buildObjectResponse({ type: 'knowledge', title: 'About Maskin' })
+			render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(screen.getByText('Referenced by 3 contexts/week')).toBeInTheDocument()
+		})
+
+		it('singularises the label at count === 1', () => {
+			mockUseKnowledgeReferences.mockReturnValue({
+				data: { window_days: 7, unique_contexts: 1 },
+			})
+			const object = buildObjectResponse({ type: 'knowledge' })
+			render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(screen.getByText('Referenced by 1 context/week')).toBeInTheDocument()
+		})
+
+		it('hides the chip when count is 0 (empty state stays invisible)', () => {
+			mockUseKnowledgeReferences.mockReturnValue({
+				data: { window_days: 7, unique_contexts: 0 },
+			})
+			const object = buildObjectResponse({ type: 'knowledge' })
+			render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(screen.queryByText(/Referenced by/)).not.toBeInTheDocument()
+		})
+
+		it('hides the chip while the count is still loading (no data yet)', () => {
+			mockUseKnowledgeReferences.mockReturnValue({ data: undefined })
+			const object = buildObjectResponse({ type: 'knowledge' })
+			render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(screen.queryByText(/Referenced by/)).not.toBeInTheDocument()
+		})
+
+		it('does not render on non-knowledge object types', () => {
+			mockUseKnowledgeReferences.mockReturnValue({
+				data: { window_days: 7, unique_contexts: 9 },
+			})
+			const object = buildObjectResponse({ type: 'bet' })
+			render(<ObjectDocumentView {...baseProps} object={object} />)
+			// The chip is not rendered on bets even though the hook would
+			// return a positive count — the header prov row must stay
+			// knowledge-only. The chip's own render guard is a safety net.
+			expect(screen.queryByText(/Referenced by/)).not.toBeInTheDocument()
 		})
 	})
 })

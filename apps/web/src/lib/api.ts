@@ -175,6 +175,8 @@ export const api = {
 		get: (id: string) => request<ObjectResponse>(`/objects/${id}`),
 		graph: (id: string, workspaceId: string) =>
 			request<ObjectGraphResponse>(`/objects/${id}/graph`, { workspaceId }),
+		references: (id: string, workspaceId: string) =>
+			request<KnowledgeReferencesResponse>(`/objects/${id}/references`, { workspaceId }),
 		create: (workspaceId: string, data: CreateObjectInput) =>
 			request<ObjectResponse>('/objects', { method: 'POST', body: data, workspaceId }),
 		update: (id: string, data: UpdateObjectInput) =>
@@ -917,6 +919,11 @@ export interface ObjectGraphResponse {
 	relationships: RelationshipResponse[]
 	connected_objects: ObjectResponse[]
 	events: EventResponse[]
+}
+
+export interface KnowledgeReferencesResponse {
+	window_days: number
+	unique_contexts: number
 }
 
 export interface CreateRelationshipInput {

@@ -16,7 +16,12 @@ import {
 } from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useDeleteObject, useObjectGraph, useUpdateObject } from '@/hooks/use-objects'
+import {
+	useDeleteObject,
+	useKnowledgeReferences,
+	useObjectGraph,
+	useUpdateObject,
+} from '@/hooks/use-objects'
 import { useDeleteRelationship } from '@/hooks/use-relationships'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { trackEvent } from '@/lib/analytics'
@@ -70,6 +75,32 @@ interface ObjectDocumentViewProps {
 	// the object legitimately having no content. Callers that always fetch the
 	// full object (the webapp page) never need to set this.
 	contentLoaded?: boolean
+}
+
+// Renders "Referenced by N contexts/week" alongside the other prov-row chips
+// on knowledge object headers. Hidden when N is 0 (per DoD — the empty state
+// stays invisible so the row doesn't grow a permanent "Never referenced"
+// footprint). Also hidden while the count is loading or on API failure — the
+// chip is decorative, not load-bearing, so it must never block the header
+// from rendering.
+function KnowledgeReferencesChip({
+	workspaceId,
+	objectId,
+}: {
+	workspaceId: string
+	objectId: string
+}) {
+	const { data } = useKnowledgeReferences(workspaceId, objectId)
+	const count = data?.unique_contexts ?? 0
+	if (count <= 0) return null
+	return (
+		<span
+			className="text-[11px] text-muted-foreground"
+			title="Unique bets/tasks/insights that cited this knowledge object in the last 7 days (rolling window)"
+		>
+			Referenced by {count} {count === 1 ? 'context' : 'contexts'}/week
+		</span>
+	)
 }
 
 function shouldShowUpdatedChip(createdAt: string | null, updatedAt: string | null): boolean {
@@ -209,6 +240,9 @@ export function ObjectDocumentView({
 						<span className="text-[11px] text-muted-foreground">
 							updated <RelativeTime date={object.updatedAt} />
 						</span>
+					)}
+					{object.type === 'knowledge' && (
+						<KnowledgeReferencesChip workspaceId={workspaceId} objectId={object.id} />
 					)}
 				</div>
 			</div>

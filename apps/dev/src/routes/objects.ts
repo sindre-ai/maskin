@@ -867,6 +867,73 @@ app.openapi(getObjectGraphRoute, async (c) => {
 	)
 })
 
+// GET /{id}/references - Count of unique consumer contexts that referenced this
+// knowledge object in the last 7 rolling days. Reads T2's per-cite audit rows
+// from the `events` table (action = 'workspace_knowledge_referenced'), joined
+// by `data->>'consumer_context_id'` (the bet/task/insight the caller was
+// reasoning on, per ADR Decision 5). The knowledge doc-header chip renders
+// this as "Referenced by N contexts/week". Uses `events_ws_entity_id_idx
+// (workspace_id, entity_id, id)` — no full scan.
+const getObjectReferencesRoute = createRoute({
+	method: 'get',
+	path: '/{id}/references',
+	tags: ['Objects'],
+	summary: 'Reference-count for the knowledge doc-header chip (7-day rolling)',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						window_days: z.number(),
+						unique_contexts: z.number(),
+					}),
+				},
+			},
+			description: 'Reference counts for the last N rolling days',
+		},
+	},
+})
+
+app.openapi(getObjectReferencesRoute, async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const WINDOW_DAYS = 7
+
+	// Count DISTINCT non-null consumer_context_id across the last-7-day window
+	// for this workspace + object. Cast the JSONB extract to text so DISTINCT
+	// works on the same collation as the index-covered columns; the extract
+	// itself yields `text`, so this is a cheap noop that keeps the plan stable.
+	// The workspace_id + entity_id predicates are index-covered; action + time
+	// filter runs as a heap filter on the (small) per-object result set.
+	const [row] = await db
+		.select({
+			unique_contexts: sql<number>`COUNT(DISTINCT (${events.data}->>'consumer_context_id'))::int`,
+		})
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, workspaceId),
+				eq(events.entityId, id),
+				eq(events.action, 'workspace_knowledge_referenced'),
+				gt(events.createdAt, sql`NOW() - INTERVAL '${sql.raw(String(WINDOW_DAYS))} days'`),
+			),
+		)
+
+	return c.json(
+		{
+			window_days: WINDOW_DAYS,
+			unique_contexts: row?.unique_contexts ?? 0,
+		},
+		200,
+	)
+})
+
 // GET /{id} - Get object by ID
 const getObjectRoute = createRoute({
 	method: 'get',
