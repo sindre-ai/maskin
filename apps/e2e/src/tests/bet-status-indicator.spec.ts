@@ -158,7 +158,7 @@ test.describe('Bet status indicator', () => {
 		const indicator = page.getByLabel('Status: waiting').first()
 		await expect(indicator).toBeVisible()
 
-		await page.getByRole('button', { name: 'Display' }).click()
+		await page.getByRole('button', { name: 'Display', exact: true }).click()
 		const betStatusPill = page.getByRole('button', { name: /^Bet status$/ })
 		await expect(betStatusPill).toBeVisible()
 		await betStatusPill.click()
