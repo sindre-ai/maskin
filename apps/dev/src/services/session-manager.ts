@@ -1357,11 +1357,11 @@ export class SessionManager extends EventEmitter {
 		}
 
 		// Mint fresh ~1h installation tokens from the sindre-ai-agents App for the
-		// three unattended-agent identities `github`, `github-sindre-ai`, and
-		// `github-vaerksted-ai`. Consumed by each identity's MCP `github` tools
-		// config once the runtime actor-config flip is done (a separate
-		// `update_actor` call, mirroring T2's github_approver deferral). See parent
-		// bet [GitHub App per role for unattended agents]
+		// four unattended-agent identities `github_approver`, `github`,
+		// `github-sindre-ai`, and `github-vaerksted-ai`. Consumed by each identity's
+		// MCP `github` tools config once the runtime actor-config flip is done (a
+		// separate `update_actor` call). See parent bet
+		// [GitHub App per role for unattended agents]
 		// (https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/9e819672-7bcf-4212-b1b2-a88d83a960b5).
 		// Guarded: no App creds → skip cleanly (session-start keeps working before
 		// Magnus completes the org walkthrough); per-identity mint failure logs
@@ -1374,6 +1374,7 @@ export class SessionManager extends EventEmitter {
 		// flagged in the parent bet's knowledge.
 		const agentAppInstallationId = readAgentAppInstallationId()
 		const agentIdentities: Array<{ envKey: string; identity: string }> = [
+			{ envKey: 'AGENT_GITHUB_APPROVER_TOKEN', identity: 'github_approver' },
 			{ envKey: 'AGENT_GITHUB_TOKEN', identity: 'github' },
 			{ envKey: 'AGENT_GITHUB_SINDRE_AI_TOKEN', identity: 'github-sindre-ai' },
 			{ envKey: 'AGENT_GITHUB_VAERKSTED_AI_TOKEN', identity: 'github-vaerksted-ai' },
