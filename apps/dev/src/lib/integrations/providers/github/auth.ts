@@ -1,50 +1,8 @@
-import { createPrivateKey, createSign } from 'node:crypto'
-import { getEnvOrThrow } from '../../env'
 import type { CustomAuthHandler, StoredCredentials } from '../../types'
-
-function createJwt(appId: string, privateKeyPem: string): string {
-	const now = Math.floor(Date.now() / 1000)
-	const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url')
-	const payload = Buffer.from(
-		JSON.stringify({
-			iat: now - 60,
-			exp: now + 600,
-			iss: Number(appId),
-		}),
-	).toString('base64url')
-
-	// Use createPrivateKey to normalize any PEM format (PKCS#1 or PKCS#8) for OpenSSL 3
-	const key = createPrivateKey(privateKeyPem)
-	const signature = createSign('RSA-SHA256').update(`${header}.${payload}`).sign(key, 'base64url')
-
-	return `${header}.${payload}.${signature}`
-}
-
-/**
- * Parse a PEM private key from env, handling multiple formats:
- * 1. Literal \n sequences (common in .env files)
- * 2. Spaces instead of newlines (Coolify and other platforms collapse newlines to spaces)
- * 3. Base64-encoded PEM
- */
-function parsePrivateKey(raw: string): string {
-	if (raw.includes('-----BEGIN')) {
-		const normalized = raw.replace(/\\n/g, '\n').replace(/\\r/g, '')
-		const match = normalized.match(/(-----BEGIN [\w ]+-----)\s+([\s\S]+?)\s+(-----END [\w ]+-----)/)
-		if (match) {
-			const [, header, body = '', footer] = match
-			const bodyLines = body.split(/\s+/).join('\n')
-			return `${header}\n${bodyLines}\n${footer}\n`
-		}
-		return normalized
-	}
-	return Buffer.from(raw, 'base64').toString('utf8')
-}
+import { mintAppJwtFromEnv } from './app-jwt'
 
 function mintAppJwt(): string {
-	const appId = getEnvOrThrow('GITHUB_APP_ID')
-	const privateKeyRaw = getEnvOrThrow('GITHUB_APP_PRIVATE_KEY')
-	const privateKey = parsePrivateKey(privateKeyRaw)
-	return createJwt(appId, privateKey)
+	return mintAppJwtFromEnv('GITHUB_APP_ID', 'GITHUB_APP_PRIVATE_KEY')
 }
 
 export const githubAuth: CustomAuthHandler = {
