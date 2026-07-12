@@ -186,6 +186,11 @@ export const api = {
 				method: 'POST',
 				body: { verified },
 			}),
+		undoWrite: (id: string, eventId: number) =>
+			request<ObjectResponse>(`/objects/${id}/undo-write`, {
+				method: 'POST',
+				body: { eventId },
+			}),
 		delete: (id: string) => request<{ deleted: boolean }>(`/objects/${id}`, { method: 'DELETE' }),
 		search: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''

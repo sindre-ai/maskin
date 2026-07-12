@@ -14,6 +14,8 @@ import {
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
+	DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME,
+	KNOWLEDGE_WRITE_UNDO_WINDOW_MS,
 	OBJECT_DIFF_FIELDS,
 	SAFE_METADATA_FIELD_NAME_RE,
 	TERMINAL_BET_STATUSES,
@@ -29,6 +31,7 @@ import {
 	migrateObjectTypeResponseSchema,
 	migrateObjectTypeSchema,
 	objectQuerySchema,
+	reversePatch,
 	searchObjectsSchema,
 	updateObjectSchema,
 } from '@maskin/shared'
@@ -1301,6 +1304,193 @@ app.openapi(verifyObjectRoute, async (c) => {
 	}
 
 	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
+})
+
+// POST /{id}/undo-write — human-only single-write reversal of a Knowledge
+// Author update to a knowledge object. Safety valve for Direction A: writes
+// land as normal activity events with no gating, and this endpoint lets a
+// workspace human admin/owner roll one back within 7 days.
+//
+// Reversal is partial-field: only fields in the original event's `changes`
+// list are restored to their `old` value. Other fields the object has picked
+// up in the meantime (including from concurrent authors) are untouched. This
+// is the "not object delete" guarantee from the DoD — we never destroy the
+// object, we surgically undo one write. A `knowledge_write_undone` event is
+// inserted so the reversal is itself a first-class timeline row.
+const undoWriteRoute = createRoute({
+	method: 'post',
+	path: '/{id}/undo-write',
+	tags: ['Objects'],
+	summary: 'Undo a Knowledge Author write on a knowledge object',
+	request: {
+		params: idParamSchema,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({ eventId: z.number().int().positive() }),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: objectResponseSchema } },
+			description: 'Write reversed',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller is not a workspace human admin/owner',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object or event not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Event is not an undoable Knowledge Author write',
+		},
+		410: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Undo window has expired',
+		},
+	},
+})
+
+app.openapi(undoWriteRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { eventId } = c.req.valid('json')
+
+	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
+
+	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	if (existing.type !== 'knowledge') {
+		return c.json(createApiError('CONFLICT', 'Undo is only available on knowledge objects.'), 409)
+	}
+
+	// Fetch the event + its actor together so we can enforce the Knowledge
+	// Author identity in one round-trip. The join is scoped by workspace so an
+	// event id from a different workspace can't leak.
+	const [eventRow] = await db
+		.select({
+			id: events.id,
+			workspaceId: events.workspaceId,
+			actorId: events.actorId,
+			action: events.action,
+			entityType: events.entityType,
+			entityId: events.entityId,
+			data: events.data,
+			createdAt: events.createdAt,
+			authorType: actors.type,
+			authorName: actors.name,
+		})
+		.from(events)
+		.innerJoin(actors, eq(actors.id, events.actorId))
+		.where(
+			and(
+				eq(events.id, eventId),
+				eq(events.entityId, id),
+				eq(events.workspaceId, existing.workspaceId),
+			),
+		)
+		.limit(1)
+
+	if (!eventRow) {
+		return c.json(createApiError('NOT_FOUND', 'Event not found for this object'), 404)
+	}
+
+	if (eventRow.action !== 'updated' && eventRow.action !== 'status_changed') {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Only field-level Knowledge Author writes (updated / status_changed) can be undone.',
+			),
+			409,
+		)
+	}
+
+	if (
+		eventRow.authorType !== 'agent' ||
+		eventRow.authorName !== DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME
+	) {
+		return c.json(createApiError('CONFLICT', 'Event is not a Knowledge Author write.'), 409)
+	}
+
+	const originalCreatedAt = eventRow.createdAt ?? new Date(0)
+	const ageMs = Date.now() - originalCreatedAt.getTime()
+	if (ageMs > KNOWLEDGE_WRITE_UNDO_WINDOW_MS) {
+		return c.json(
+			createApiError('CONFLICT', 'The 7-day undo window for this write has expired.'),
+			410,
+		)
+	}
+
+	const changes = getChangesFromEventData(eventRow.data, OBJECT_DIFF_FIELDS)
+	if (!changes || changes.length === 0) {
+		return c.json(createApiError('CONFLICT', 'This write has no field diff to reverse.'), 409)
+	}
+
+	if (!(await isWorkspaceHumanAdminOrOwner(db, actorId, existing.workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace human admins or owners can undo a write.'),
+			403,
+		)
+	}
+
+	let reverted: typeof objects.$inferSelect | undefined
+
+	await db.transaction(async (tx) => {
+		const [current] = await tx
+			.select()
+			.from(objects)
+			.where(eq(objects.id, id))
+			.for('update')
+			.limit(1)
+		if (!current) return
+
+		// reversePatch restores only the fields carried by the original event's
+		// changes list — anything else on the object (including writes that
+		// happened after the KA write) survives.
+		const patched = reversePatch(current as unknown as Record<string, unknown>, changes)
+		const updateSet: Partial<typeof objects.$inferInsert> = { updatedAt: new Date() }
+		for (const change of changes) {
+			const field = change.field as keyof typeof objects.$inferInsert
+			// biome-ignore lint/suspicious/noExplicitAny: field is validated against OBJECT_DIFF_FIELDS
+			;(updateSet as any)[field] = patched[change.field]
+		}
+
+		const [row] = await tx.update(objects).set(updateSet).where(eq(objects.id, id)).returning()
+		if (!row) return
+
+		reverted = row
+
+		await tx.insert(events).values({
+			workspaceId: current.workspaceId,
+			actorId,
+			action: 'knowledge_write_undone',
+			entityType: current.type,
+			entityId: id,
+			data: {
+				original_event_id: eventRow.id,
+				original_actor_id: eventRow.actorId,
+				changes,
+			},
+		})
+	})
+
+	if (!reverted) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	return c.json(serialize(reverted) as z.infer<typeof objectResponseSchema>, 200)
 })
 
 // A knowledge object counts as a "Knowledge Author write" — and gets the

@@ -93,6 +93,11 @@ describe('formatEventDescription', () => {
 		expect(formatEventDescription(event)).toBe('unverified knowledge')
 	})
 
+	it('returns "undid a Knowledge Author write" for a knowledge_write_undone event', () => {
+		const event = buildEvent({ action: 'knowledge_write_undone', entityType: 'knowledge' })
+		expect(formatEventDescription(event)).toBe('undid a Knowledge Author write')
+	})
+
 	it('falls back to "updated {type}" when status_changed has no data', () => {
 		const event = buildEvent({ action: 'status_changed', entityType: 'bet' })
 		expect(formatEventDescription(event)).toBe('updated bet')

@@ -286,6 +286,27 @@ export function useVerifyObject(workspaceId: string) {
 	})
 }
 
+// Roll back a single Knowledge Author write on a knowledge object. Server
+// re-verifies the KA identity, the 7-day window, and the caller's role, so
+// the mutation is safe to expose behind the client-side visibility guard.
+// Invalidates detail + graph + list on settle so the SSE-refreshed timeline
+// picks up the reversal + reversal event row without a manual refresh.
+export function useUndoKnowledgeWrite(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, eventId }: { id: string; eventId: number }) =>
+			api.objects.undoWrite(id, eventId),
+		onSuccess: (data) => {
+			queryClient.setQueryData(queryKeys.objects.detail(data.id), data)
+		},
+		onSettled: (_data, _err, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+		},
+	})
+}
+
 export function useMigrateObjectType(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
