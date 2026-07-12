@@ -955,6 +955,96 @@ describe('Integrations Routes', () => {
 			expect(res.status).toBe(400)
 			fetchSpy.mockRestore()
 		})
+
+		it('narrows the minted token to `?repo=` + tool permissions when tool + repo are supplied', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				status: 'active',
+				credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValue(new Response(JSON.stringify({ token: 'ghs_scoped' }), { status: 200 }))
+
+			const res = await app.request(
+				jsonGet(
+					`/api/integrations/${integration.id}/github-token?tool=create_pull_request&repo=sindre-ai/maskin`,
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const call = fetchSpy.mock.calls[0]
+			const init = call?.[1] as RequestInit
+			const body = JSON.parse((init.body as string) ?? '{}')
+			expect(body).toEqual({
+				repositories: ['maskin'],
+				permissions: { pull_requests: 'write', metadata: 'read' },
+			})
+			fetchSpy.mockRestore()
+		})
+
+		it('rejects the mint with 400 when the tool is not in the scope mapping — no silent fallback', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				status: 'active',
+				credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const fetchSpy = vi.spyOn(globalThis, 'fetch')
+
+			const res = await app.request(
+				jsonGet(
+					`/api/integrations/${integration.id}/github-token?tool=transfer_repository&repo=sindre-ai/maskin`,
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = (await res.json()) as { error?: { message?: string } }
+			expect(body.error?.message).toContain('transfer_repository')
+			expect(fetchSpy).not.toHaveBeenCalled()
+			fetchSpy.mockRestore()
+		})
+
+		it('sends no body when neither `tool` nor `repo` is supplied — legacy credential-helper path', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				status: 'active',
+				credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValue(new Response(JSON.stringify({ token: 'ghs_wide' }), { status: 200 }))
+
+			await app.request(
+				jsonGet(`/api/integrations/${integration.id}/github-token`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			const call = fetchSpy.mock.calls[0]
+			const init = call?.[1] as RequestInit
+			expect(init.body).toBeUndefined()
+			fetchSpy.mockRestore()
+		})
 	})
 
 	describe('GET /api/integrations/:id/slack/conversations', () => {

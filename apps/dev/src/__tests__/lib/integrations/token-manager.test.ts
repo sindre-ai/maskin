@@ -173,7 +173,34 @@ describe('TokenManager', () => {
 		const token = await manager.getValidToken(db, 'integration-1', customProvider)
 
 		expect(token).toBe('github-token-abc')
-		expect(customProvider.customAuth?.getAccessToken).toHaveBeenCalledWith(creds)
+		// getValidToken forwards the per-request scope arg (undefined here) — the
+		// GitHub-App narrowing path (T4) plumbs through this same signature.
+		expect(customProvider.customAuth?.getAccessToken).toHaveBeenCalledWith(creds, undefined)
+	})
+
+	it('forwards scope to customAuth.getAccessToken so per-request narrowing reaches the provider', async () => {
+		const creds = makeCredentials({ installation_id: 'inst-42' })
+		const { db } = createMockDb(makeIntegration(creds))
+		const customProvider: ResolvedProvider = {
+			config: {
+				name: 'github',
+				displayName: 'GitHub',
+				auth: { type: 'oauth2_custom' },
+			},
+			customAuth: {
+				getInstallUrl: vi.fn(),
+				handleCallback: vi.fn(),
+				getAccessToken: vi.fn().mockResolvedValue('ghs_scoped'),
+			},
+		}
+		const scope = {
+			repositories: ['maskin'],
+			permissions: { pull_requests: 'write' as const },
+		}
+
+		await manager.getValidToken(db, 'integration-1', customProvider, scope)
+
+		expect(customProvider.customAuth?.getAccessToken).toHaveBeenCalledWith(creds, scope)
 	})
 
 	it('returns API key directly for api_key providers', async () => {
