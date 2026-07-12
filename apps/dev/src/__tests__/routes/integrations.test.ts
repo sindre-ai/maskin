@@ -1018,6 +1018,31 @@ describe('Integrations Routes', () => {
 			fetchSpy.mockRestore()
 		})
 
+		it('rejects `?repo=` without `?tool=` with 400 — half-narrowed intent would still mint install-wide permissions', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				status: 'active',
+				credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const fetchSpy = vi.spyOn(globalThis, 'fetch')
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${integration.id}/github-token?repo=sindre-ai/maskin`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			expect(fetchSpy).not.toHaveBeenCalled()
+			fetchSpy.mockRestore()
+		})
+
 		it('sends no body when neither `tool` nor `repo` is supplied — legacy credential-helper path', async () => {
 			const { encrypt } = await import('../../lib/crypto')
 

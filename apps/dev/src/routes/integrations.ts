@@ -802,7 +802,21 @@ app.openapi(githubTokenRoute, (async (c) => {
 	// Derive per-request scope before we mint. An unmapped `tool` fails the
 	// call — silently minting a full-install-scope token would defeat the whole
 	// point of this endpoint.
+	//
+	// `repo` without `tool` is also rejected: `repo` alone can't produce a
+	// narrowed token (permissions would still be install-wide), and honouring
+	// only half the caller's intent risks making a caller believe they narrowed
+	// when they didn't. Callers who want the install-wide token must send neither.
 	let scope: ReturnType<typeof deriveScope> | undefined
+	if (repo && !tool) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'`repo` supplied without `tool` — either send both to narrow, or send neither to fall back to the installation-wide token. Silently honouring only the repo would mint a token still holding install-wide permissions.',
+			),
+			400,
+		)
+	}
 	if (tool) {
 		try {
 			scope = deriveScope({ toolName: tool, repo })
