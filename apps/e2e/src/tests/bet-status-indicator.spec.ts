@@ -128,4 +128,44 @@ test.describe('Bet status indicator', () => {
 			await expect(page.getByLabel('Status: waiting').first()).toBeVisible()
 		})
 	}
+
+	// Guards the Display-menu toggle for the bet-status indicator: hiding
+	// "Bet status" in Properties hides the row indicator; toggling it back
+	// on brings it back. Same pattern as the neighboring column toggles.
+	test('display menu toggles the bet status indicator off and on', async ({ page, account }) => {
+		const bet = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Toggle bet indicator',
+			status: 'active',
+		})
+		const decision = await account.api.createObject(account.workspaceId, {
+			type: 'task',
+			title: 'Approve pricing tier',
+			status: 'todo',
+			metadata: { human_decision: true },
+		})
+		await account.api.createRelationship(account.workspaceId, {
+			source_type: 'bet',
+			source_id: bet.id,
+			target_type: 'task',
+			target_id: decision.id,
+			type: 'breaks_into',
+		})
+
+		await page.goto(`/${account.workspaceId}/objects`)
+		await expect(page.getByText('Toggle bet indicator')).toBeVisible({ timeout: 10000 })
+
+		const indicator = page.getByLabel('Status: waiting').first()
+		await expect(indicator).toBeVisible()
+
+		await page.getByRole('button', { name: 'Display' }).click()
+		const betStatusPill = page.getByRole('button', { name: /^Bet status$/ })
+		await expect(betStatusPill).toBeVisible()
+		await betStatusPill.click()
+
+		await expect(page.getByLabel('Status: waiting')).toHaveCount(0)
+
+		await betStatusPill.click()
+		await expect(page.getByLabel('Status: waiting').first()).toBeVisible()
+	})
 })
