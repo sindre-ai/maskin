@@ -25,6 +25,10 @@ export interface ObjectsTableMeta {
 	currentSort: string
 	currentOrder: 'asc' | 'desc'
 	betStatuses?: Map<string, BetStatusResult>
+	// Bet status is rendered in the Title cell rather than as its own column, so
+	// the display menu toggles it via this flag instead of column visibility.
+	// Absent/true → visible, matching the default-visible behavior of a real column.
+	showBetStatusIndicator?: boolean
 }
 
 interface ColumnOptions {
@@ -122,7 +126,9 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			cell: ({ row, table }) => {
 				const meta = table.options.meta as ObjectsTableMeta | undefined
 				const isBet = row.original.type === 'bet'
-				const betStatus = isBet ? meta?.betStatuses?.get(row.original.id) : undefined
+				const showBetStatus = meta?.showBetStatusIndicator !== false
+				const betStatus =
+					isBet && showBetStatus ? meta?.betStatuses?.get(row.original.id) : undefined
 				return (
 					<div className="flex items-center gap-2 min-w-0">
 						<Link

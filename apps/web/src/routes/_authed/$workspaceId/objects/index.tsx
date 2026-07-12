@@ -392,10 +392,21 @@ function ObjectsPage() {
 		return buildBetStatuses(bets, workspaceTasks, breaksIntoRels, new Date())
 	}, [hasVisibleBets, workspaceTasks, breaksIntoRels, visibleObjects])
 
+	// Bet status is rendered inside the Title cell (not as its own column), so
+	// its show/hide toggle lives in the same `columnVisibility` map as the real
+	// columns and is threaded into the cell via `showBetStatusIndicator`.
+	const showBetStatusIndicator = columnVisibility.betStatusIndicator !== false
+
 	// Table meta — sort state passed via meta to avoid re-creating columns on every sort change
 	const tableMeta: ObjectsTableMeta = useMemo(
-		() => ({ onSort: handleSort, currentSort: sort, currentOrder: order, betStatuses }),
-		[handleSort, sort, order, betStatuses],
+		() => ({
+			onSort: handleSort,
+			currentSort: sort,
+			currentOrder: order,
+			betStatuses,
+			showBetStatusIndicator,
+		}),
+		[handleSort, sort, order, betStatuses, showBetStatusIndicator],
 	)
 
 	// Columns — stable across sort changes since sort state is in meta
@@ -420,7 +431,7 @@ function ObjectsPage() {
 			createdAt: 'Created',
 			updatedAt: 'Updated',
 		}
-		return columns
+		const base = columns
 			.filter((col) => {
 				const id = 'accessorKey' in col ? String(col.accessorKey) : col.id
 				return id !== 'select'
@@ -433,7 +444,14 @@ function ObjectsPage() {
 					: (staticNames[id] ?? id)
 				return { id, label, canHide }
 			})
-	}, [columns])
+		// Synthetic entry: bet status lives inside the Title cell, so it has no
+		// column of its own. Only surface the toggle on tabs where bets can appear
+		// — hiding it on `insight` / `task` tabs where it would do nothing.
+		if (!typeFilter || typeFilter === 'bet') {
+			base.push({ id: 'betStatusIndicator', label: 'Bet status', canHide: true })
+		}
+		return base
+	}, [columns, typeFilter])
 
 	// Grouping state
 	const groupingState: GroupingState = groupBy ? [groupBy] : []
