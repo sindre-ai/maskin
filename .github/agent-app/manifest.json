@@ -1,0 +1,16 @@
+{
+  "name": "sindre-ai-agents",
+  "url": "https://sindre.ai",
+  "description": "Installation-token identity for sindre-ai's unattended agents (github, github_approver, github-sindre-ai, github-vaerksted-ai). Each MCP tool call mints a fresh ~1h installation token; per-request scope narrowing is added by follow-up work. Distinct from the customer-facing sindre-maskin App (apps/dev/src/lib/integrations/providers/github/auth.ts) — different revocation surface, different keys.",
+  "public": false,
+  "default_events": [],
+  "default_permissions": {
+    "contents": "write",
+    "pull_requests": "write",
+    "checks": "read",
+    "metadata": "read"
+  },
+  "hook_attributes": {
+    "active": false
+  }
+}
