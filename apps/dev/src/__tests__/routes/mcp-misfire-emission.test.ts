@@ -249,6 +249,108 @@ describe('MCP misfire emission via /mcp response sniffing', () => {
 		expect(recordMcpMisfire).not.toHaveBeenCalled()
 	})
 
+	it('classifies tools/call errors surfaced as result.isError:true (SDK >= 1.29)', async () => {
+		// Real production shape captured by probing https://maskin.io/mcp with a
+		// bogus tool name — the MCP SDK wraps the error in a result payload
+		// with `isError: true` instead of a top-level `error` field.
+		mockHandleRequest.mockImplementation(async (_req, res) => {
+			res.end(
+				JSON.stringify({
+					jsonrpc: '2.0',
+					id: 11,
+					result: {
+						isError: true,
+						content: [
+							{
+								type: 'text',
+								text: 'MCP error -32602: Tool imaginary_tool_from_probe not found',
+							},
+						],
+					},
+				}),
+			)
+		})
+
+		const app = await createApp()
+		const { env } = createEnv()
+		const body = {
+			jsonrpc: '2.0',
+			id: 11,
+			method: 'tools/call',
+			params: {
+				name: 'imaginary_tool_from_probe',
+				arguments: { workspace_id: 'probe', some_field: 'v' },
+			},
+		}
+		await app.request(
+			jsonPostRequest('/mcp', body, {
+				Authorization: 'Bearer ank_test',
+				'X-Workspace-Id': '00000000-0000-0000-0000-000000000001',
+			}),
+			undefined,
+			env,
+		)
+		await flushMicrotasks()
+
+		expect(recordMcpMisfire).toHaveBeenCalledWith(
+			expect.anything(),
+			'00000000-0000-0000-0000-000000000001',
+			expect.objectContaining({
+				kind: 'tool_not_found',
+				toolName: 'imaginary_tool_from_probe',
+				requestedShape: { workspace_id: 'string', some_field: 'string' },
+			}),
+		)
+	})
+
+	it('classifies schema-validation errors from result.isError:true shape', async () => {
+		mockHandleRequest.mockImplementation(async (_req, res) => {
+			res.end(
+				JSON.stringify({
+					jsonrpc: '2.0',
+					id: 12,
+					result: {
+						isError: true,
+						content: [
+							{
+								type: 'text',
+								text: 'MCP error -32602: Input validation error: Invalid arguments for tool list_objects: [\n  { "code": "invalid_type", "message": "Expected number, received string" }\n]',
+							},
+						],
+					},
+				}),
+			)
+		})
+
+		const app = await createApp()
+		const { env } = createEnv()
+		const body = {
+			jsonrpc: '2.0',
+			id: 12,
+			method: 'tools/call',
+			params: { name: 'list_objects', arguments: { limit: 'not-a-number' } },
+		}
+		await app.request(
+			jsonPostRequest('/mcp', body, {
+				Authorization: 'Bearer ank_test',
+				'X-Workspace-Id': '00000000-0000-0000-0000-000000000001',
+			}),
+			undefined,
+			env,
+		)
+		await flushMicrotasks()
+
+		expect(recordMcpMisfire).toHaveBeenCalledWith(
+			expect.anything(),
+			'00000000-0000-0000-0000-000000000001',
+			expect.objectContaining({
+				kind: 'schema_validation_error',
+				toolName: 'list_objects',
+				requestedShape: { limit: 'string' },
+			}),
+		)
+	})
+
 	it('parses SSE-framed response bodies (data: lines)', async () => {
 		mockHandleRequest.mockImplementation(async (_req, res) => {
 			const payload = JSON.stringify({

@@ -31,7 +31,13 @@ interface JsonRpcMessage {
 		name?: string
 		arguments?: unknown
 	}
-	result?: unknown
+	// The MCP SDK surfaces `tools/call` failures as `result.isError: true`
+	// with the human-readable error text in `content[0].text` — not as a
+	// top-level JSON-RPC `error` field. `extractError` normalizes both.
+	result?: {
+		isError?: boolean
+		content?: Array<{ type?: string; text?: string }>
+	}
 	error?: JsonRpcErrorLike
 }
 
@@ -157,20 +163,20 @@ interface EmitMcpMisfiresArgs {
 async function emitMcpMisfires(args: EmitMcpMisfiresArgs): Promise<void> {
 	try {
 		const responses = parseJsonRpcResponses(args.responseBytes)
-		const errored = responses.filter((r): r is JsonRpcMessage & { error: JsonRpcErrorLike } =>
-			Boolean(r.error),
-		)
+		const errored = responses
+			.map((r) => ({ message: r, error: extractError(r) }))
+			.filter((r): r is { message: JsonRpcMessage; error: JsonRpcErrorLike } => Boolean(r.error))
 		if (errored.length === 0) return
 
 		const requestsById = indexRequestsById(args.requestBody)
 		const agentActorId =
 			args.apiKey && args.db ? await resolveAgentActorId(args.db, args.apiKey) : null
 
-		for (const response of errored) {
-			const kind = classifyMcpError(response.error)
+		for (const { message, error } of errored) {
+			const kind = classifyMcpError(error)
 			if (!kind) continue
-			const request = response.id != null ? requestsById.get(String(response.id)) : undefined
-			const toolName = extractToolName(request, response.error?.message)
+			const request = message.id != null ? requestsById.get(String(message.id)) : undefined
+			const toolName = extractToolName(request, error.message)
 			if (!toolName) continue
 			const shape = requestedShape(request?.params?.arguments)
 			const misfire: McpMisfire = {
@@ -185,6 +191,23 @@ async function emitMcpMisfires(args: EmitMcpMisfiresArgs): Promise<void> {
 	} catch (err) {
 		logger.warn('mcp misfire emission failed', { error: String(err) })
 	}
+}
+
+// Normalize both shapes the MCP SDK uses for error responses into a
+// `{code, message}` object the classifier understands:
+//   - Top-level JSON-RPC `error` (e.g. transport-level failures).
+//   - `result.isError: true` with `content[0].text = "MCP error -32602: ..."`,
+//     which is how `tools/call` returns bad-input / tool-not-found errors
+//     on `@modelcontextprotocol/sdk` >= 1.29.
+function extractError(message: JsonRpcMessage): JsonRpcErrorLike | undefined {
+	if (message.error) return message.error
+	const result = message.result
+	if (!result || result.isError !== true) return undefined
+	const text = result.content?.[0]?.text
+	if (typeof text !== 'string' || text.length === 0) return undefined
+	const codeMatch = text.match(/-3\d{4}\b/)
+	const code = codeMatch ? Number(codeMatch[0]) : undefined
+	return { code, message: text }
 }
 
 // The MCP SDK writes JSON responses either as a plain JSON body (with
