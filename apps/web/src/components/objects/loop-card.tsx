@@ -1,7 +1,9 @@
 import { ObjectReference } from '@/components/shared/object-reference'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
+import { trackLoopViewed } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
+import { useEffect } from 'react'
 
 interface LoopCardProps {
 	object: ObjectResponse
@@ -19,6 +21,14 @@ export function LoopCard({ object, workspaceId }: LoopCardProps) {
 	const cadence = readString(object.metadata, 'cadence')
 	const sourceBetId = readString(object.metadata, 'source_bet_id')
 	const lastBreachAt = readString(object.metadata, 'last_breach_at')
+
+	useEffect(() => {
+		trackLoopViewed({
+			entity_id: object.id,
+			entity_type: 'loop',
+			source_bet_id: sourceBetId,
+		})
+	}, [object.id, sourceBetId])
 
 	return (
 		<section

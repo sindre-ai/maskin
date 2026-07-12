@@ -20,6 +20,16 @@ vi.mock('@/hooks/use-objects', () => ({
 	}),
 }))
 
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return {
+		...actual,
+		trackLoopViewed: vi.fn(),
+	}
+})
+
+import { trackLoopViewed } from '@/lib/analytics'
+
 function renderLoopCard(object = buildObjectResponse({ type: 'loop' })) {
 	return render(
 		<TestWrapper>
@@ -29,6 +39,10 @@ function renderLoopCard(object = buildObjectResponse({ type: 'loop' })) {
 }
 
 describe('LoopCard', () => {
+	beforeEach(() => {
+		vi.mocked(trackLoopViewed).mockClear()
+	})
+
 	it('renders the loop title', () => {
 		const object = buildObjectResponse({
 			type: 'loop',
@@ -134,5 +148,36 @@ describe('LoopCard', () => {
 		})
 		renderLoopCard(object)
 		expect(screen.queryByText('Last breach')).not.toBeInTheDocument()
+	})
+
+	it('fires loop_viewed once on mount, carrying the source_bet_id join key', () => {
+		const object = buildObjectResponse({
+			id: 'loop-77',
+			type: 'loop',
+			status: 'holding',
+			metadata: { source_bet_id: 'bet-77' },
+		})
+		renderLoopCard(object)
+		expect(trackLoopViewed).toHaveBeenCalledTimes(1)
+		expect(trackLoopViewed).toHaveBeenCalledWith({
+			entity_id: 'loop-77',
+			entity_type: 'loop',
+			source_bet_id: 'bet-77',
+		})
+	})
+
+	it('fires loop_viewed with a null source_bet_id when metadata is absent', () => {
+		const object = buildObjectResponse({
+			id: 'loop-88',
+			type: 'loop',
+			status: 'holding',
+			metadata: null,
+		})
+		renderLoopCard(object)
+		expect(trackLoopViewed).toHaveBeenCalledWith({
+			entity_id: 'loop-88',
+			entity_type: 'loop',
+			source_bet_id: null,
+		})
 	})
 })

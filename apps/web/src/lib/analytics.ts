@@ -42,6 +42,7 @@ type TaxonomyEntityType =
 	| 'trigger'
 	| 'relationship'
 	| 'file'
+	| 'loop'
 
 type EventSource = 'web' | 'mcp' | 'trigger'
 
@@ -195,4 +196,21 @@ export function trackBulkEditCommit(p: {
 		platform_device: p.platform_device,
 		source: 'web',
 	})
+}
+
+// Ship-metric events for the Loops primitive bet. `loop_viewed` fires once per
+// Loop detail page mount; `loop_graduated` fires once per Loop created from the
+// web (paired with `bet_created` — same call site pattern in `useCreateObject`).
+// `source_bet_id` mirrors the Loop's `metadata.source_bet_id` so PostHog can
+// join Loop reads back to the bet that produced them.
+export function trackLoopViewed(
+	p: BaseProps & { entity_type: 'loop'; source_bet_id: string | null },
+): void {
+	trackEvent('loop_viewed', { ...fillBase(p), source_bet_id: p.source_bet_id })
+}
+
+export function trackLoopGraduated(
+	p: BaseProps & { entity_type: 'loop'; source_bet_id: string | null },
+): void {
+	trackEvent('loop_graduated', { ...fillBase(p), source_bet_id: p.source_bet_id })
 }
