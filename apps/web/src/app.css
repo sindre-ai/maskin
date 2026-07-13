@@ -99,6 +99,8 @@
 	--color-status-scored-text: var(--st-scored-text);
 	--color-status-parked-bg: var(--st-parked-bg);
 	--color-status-parked-text: var(--st-parked-text);
+	--color-status-archived-bg: var(--st-archived-bg);
+	--color-status-archived-text: var(--st-archived-text);
 
 	/* Type badge colors */
 	--color-type-insight-bg: var(--tp-insight-bg);
@@ -200,6 +202,8 @@
 	--st-scored-text: #86198f;
 	--st-parked-bg: #f5f5f4;
 	--st-parked-text: #57534e;
+	--st-archived-bg: #e7e5e4;
+	--st-archived-text: #57534e;
 
 	/* Type badges */
 	--tp-insight-bg: #fef3c7;
@@ -289,6 +293,8 @@
 	--st-scored-text: #e879f9;
 	--st-parked-bg: #292524;
 	--st-parked-text: #a8a29e;
+	--st-archived-bg: #292524;
+	--st-archived-text: #a8a29e;
 
 	/* Type badges */
 	--tp-insight-bg: #422006;

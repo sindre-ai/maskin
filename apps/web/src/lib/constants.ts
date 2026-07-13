@@ -20,6 +20,7 @@ export const statusColors: Record<string, { bg: string; text: string }> = {
 	live: { bg: 'bg-status-live-bg', text: 'text-status-live-text' },
 	scored: { bg: 'bg-status-scored-bg', text: 'text-status-scored-text' },
 	parked: { bg: 'bg-status-parked-bg', text: 'text-status-parked-text' },
+	archived: { bg: 'bg-status-archived-bg', text: 'text-status-archived-text' },
 	in_review: { bg: 'bg-status-in_review-bg', text: 'text-status-in_review-text' },
 	validated: { bg: 'bg-status-validated-bg', text: 'text-status-validated-text' },
 	pending: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
