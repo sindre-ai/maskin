@@ -1008,7 +1008,8 @@ describe('Integrations Routes', () => {
 					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
 				})
 				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
-				mockResults.select = [integration]
+				// Route lookup + guarded re-read inside the recovery transaction.
+				mockResults.selectQueue = [[integration], [integration]]
 
 				const fetchSpy = vi
 					.spyOn(globalThis, 'fetch')
@@ -1136,7 +1137,10 @@ describe('Integrations Routes', () => {
 				fetchSpy.mockRestore()
 			})
 
-			it('returns 400 when the recovery mint fails after discovery', async () => {
+			it('returns 401 AUTH_REVOKED when discovery 404s (App uninstalled entirely)', async () => {
+				// Discovery 404 means GitHub has no installation for this repo — the
+				// App is gone from the org. Surfacing that as a generic 400 would
+				// hide the reconnect prompt from the caller.
 				const { encrypt } = await import('../../lib/crypto')
 				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = 'true'
 
@@ -1160,7 +1164,90 @@ describe('Integrations Routes', () => {
 					}),
 				)
 
-				expect(res.status).toBe(400)
+				expect(res.status).toBe(401)
+				const body = (await res.json()) as { error: { code: string } }
+				expect(body.error.code).toBe('AUTH_REVOKED')
+				fetchSpy.mockRestore()
+			})
+
+			it('short-circuits the write when a concurrent recovery already rotated the installation id', async () => {
+				// Two parallel callers can both hit this route on the same
+				// cached id. The second one's guarded re-read must observe the
+				// already-rotated credentials row and skip both the UPDATE and
+				// the audit event insert.
+				const { encrypt } = await import('../../lib/crypto')
+				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = 'true'
+
+				const staleIntegration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+				})
+				const alreadyRotatedIntegration = {
+					...staleIntegration,
+					credentials: encrypt(JSON.stringify({ installation_id: '9999' })),
+				}
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				// Route sees the stale row; the guarded re-read inside the txn sees
+				// the row a concurrent caller has already rotated.
+				mockResults.selectQueue = [[staleIntegration], [alreadyRotatedIntegration]]
+
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+					.mockResolvedValueOnce(new Response(JSON.stringify({ id: 9999 }), { status: 200 }))
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ token: 'ghs_recovered' }), { status: 200 }),
+					)
+
+				const res = await app.request(
+					jsonGet(`/api/integrations/${staleIntegration.id}/github-token?repo=sindre-ai%2Fmaskin`, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				expect(await res.json()).toEqual({ token: 'ghs_recovered' })
+				expect(calls.updates).toHaveLength(0)
+				expect(calls.inserts).toHaveLength(0)
+				fetchSpy.mockRestore()
+			})
+
+			it('still returns the fresh token when the audit event insert fails', async () => {
+				// Credentials update commits first; a downstream audit failure
+				// must not suppress the token response the caller is waiting on.
+				const { encrypt } = await import('../../lib/crypto')
+				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = 'true'
+
+				const integration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+				})
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.selectQueue = [[integration], [integration]]
+				mockResults.insertError = new Error('boom — events insert failed')
+
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+					.mockResolvedValueOnce(new Response(JSON.stringify({ id: 9999 }), { status: 200 }))
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ token: 'ghs_recovered' }), { status: 200 }),
+					)
+
+				const res = await app.request(
+					jsonGet(`/api/integrations/${integration.id}/github-token?repo=sindre-ai%2Fmaskin`, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				expect(await res.json()).toEqual({ token: 'ghs_recovered' })
+				// Credentials rewrite still fired.
+				expect(calls.updates).toHaveLength(1)
 				fetchSpy.mockRestore()
 			})
 		})

@@ -814,37 +814,53 @@ app.openapi(githubTokenRoute, (async (c) => {
 			const result = await mintInstallationTokenWithRecovery(credentials, { repo: recoveryRepo })
 			if (result.recovered) {
 				const oldInstallationId = credentials.installation_id as string | undefined
-				const updated: StoredCredentials = {
-					...credentials,
-					installation_id: result.installationId,
-				}
-				await db
-					.update(integrations)
-					.set({ credentials: encrypt(JSON.stringify(updated)), updatedAt: new Date() })
-					.where(eq(integrations.id, integration.id))
+				// Guard against concurrent-recovery duplicate audit rows: two parallel
+				// callers can both 404 on the same cached id and both discover the
+				// same new id. Re-read inside a transaction and only write when the
+				// stored installation_id still matches what we minted against — the
+				// second caller sees the already-rotated row and short-circuits.
+				await db.transaction(async (tx) => {
+					const [current] = await tx
+						.select({ credentials: integrations.credentials })
+						.from(integrations)
+						.where(eq(integrations.id, integration.id))
+						.limit(1)
+					if (!current) return
+					const currentCreds: StoredCredentials = JSON.parse(decrypt(current.credentials))
+					if (currentCreds.installation_id !== oldInstallationId) return
 
-				try {
-					await db.insert(events).values({
-						workspaceId,
-						actorId,
-						action: 'updated',
-						entityType: 'integration',
-						entityId: integration.id,
-						data: {
-							reason: 'installation_id_recovered',
-							old_installation_id: oldInstallationId,
-							new_installation_id: result.installationId,
-							repo: recoveryRepo,
-						},
-					})
-				} catch (auditErr) {
-					// Credentials update already committed — audit failure must not
-					// suppress the token response the caller is waiting on.
-					logger.warn('Failed to insert installation_id_recovered audit event', {
-						integrationId: integration.id,
-						error: String(auditErr),
-					})
-				}
+					const updated: StoredCredentials = {
+						...currentCreds,
+						installation_id: result.installationId,
+					}
+					await tx
+						.update(integrations)
+						.set({ credentials: encrypt(JSON.stringify(updated)), updatedAt: new Date() })
+						.where(eq(integrations.id, integration.id))
+
+					try {
+						await tx.insert(events).values({
+							workspaceId,
+							actorId,
+							action: 'updated',
+							entityType: 'integration',
+							entityId: integration.id,
+							data: {
+								reason: 'installation_id_recovered',
+								old_installation_id: oldInstallationId,
+								new_installation_id: result.installationId,
+								repo: recoveryRepo,
+							},
+						})
+					} catch (auditErr) {
+						// Credentials update already committed — audit failure must not
+						// suppress the token response the caller is waiting on.
+						logger.warn('Failed to insert installation_id_recovered audit event', {
+							integrationId: integration.id,
+							error: String(auditErr),
+						})
+					}
+				})
 				logger.info('Recovered GitHub App installation id mid-session', {
 					integrationId: integration.id,
 					oldInstallationId,
@@ -854,10 +870,30 @@ app.openapi(githubTokenRoute, (async (c) => {
 			}
 			return c.json({ token: result.token })
 		} catch (err) {
+			// Discovery returning 404 means the App is no longer installed for
+			// this repo at all — treat it the same as a revoked grant so the
+			// caller sees the reconnect prompt, not a generic 400. The rest of
+			// the error surface (mint 401, 5xx, malformed credentials) stays
+			// on the 400 path so T5's tagger can classify them.
+			const msg = err instanceof Error ? err.message : String(err)
+			if (msg.startsWith('Failed to discover GitHub App installation')) {
+				logger.warn('GitHub App installation no longer resolvable — treating as revoked', {
+					integrationId: integration.id,
+					repo: recoveryRepo,
+					error: msg,
+				})
+				return c.json(
+					createApiError(
+						'AUTH_REVOKED',
+						'GitHub App installation is no longer resolvable — please reconnect',
+					),
+					401,
+				)
+			}
 			logger.warn('GitHub token mint failed (recovery path)', {
 				integrationId: integration.id,
 				repo: recoveryRepo,
-				error: err instanceof Error ? err.message : String(err),
+				error: msg,
 			})
 			return c.json(createApiError('BAD_REQUEST', 'Failed to mint GitHub access token'), 400)
 		}

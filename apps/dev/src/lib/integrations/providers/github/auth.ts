@@ -154,6 +154,8 @@ export async function mintInstallationTokenWithRecovery(
 	const cachedId = credentials.installation_id as string | undefined
 	if (!cachedId) throw new Error('Missing installation_id on stored credentials')
 
+	// JWT is valid for 10 minutes (see createJwt above), so the same token
+	// safely covers the discovery call and the retry mint in the recovery branch.
 	const jwt = mintAppJwt()
 	const first = await postInstallationAccessToken(cachedId, jwt)
 	if (first.ok && first.token) {
