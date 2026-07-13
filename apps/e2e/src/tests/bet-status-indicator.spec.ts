@@ -19,7 +19,9 @@ test.describe('Bet status indicator', () => {
 		// Scoped to main — the sidebar workspace switcher can render a label
 		// that collides with the bet title (E2E workspace names are derived
 		// from the test title, which often contains the bet title as a substring).
-		await expect(page.locator('main').getByText('Bet with no children')).toBeVisible({ timeout: 10000 })
+		await expect(page.locator('main').getByText('Bet with no children')).toBeVisible({
+			timeout: 10000,
+		})
 
 		const chip = page.getByRole('button', { name: 'Status: idle' })
 		await expect(chip).toBeVisible()
@@ -91,7 +93,9 @@ test.describe('Bet status indicator', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		await expect(page.locator('main').getByText('Bet blocked on decision')).toBeVisible({ timeout: 10000 })
+		await expect(page.locator('main').getByText('Bet blocked on decision')).toBeVisible({
+			timeout: 10000,
+		})
 
 		const chip = page.getByRole('button', { name: 'Status: waiting on human' })
 		await expect(chip).toBeVisible()
@@ -126,7 +130,9 @@ test.describe('Bet status indicator', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects`)
-			await expect(page.locator('main').getByText(`Overview bet ${vp.width}`)).toBeVisible({ timeout: 10000 })
+			await expect(page.locator('main').getByText(`Overview bet ${vp.width}`)).toBeVisible({
+				timeout: 10000,
+			})
 
 			// Same lowercase "waiting" word is rendered on the row indicator (no
 			// "on human" suffix — that's the chip variant only).

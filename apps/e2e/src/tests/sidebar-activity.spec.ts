@@ -169,7 +169,9 @@ test.describe('Sidebar Activity group', () => {
 		// sidebar container — the breadcrumb also renders a "For You" link for
 		// the current page, which would otherwise collide in strict mode.
 		await expect(
-			page.locator('[data-slot="sidebar"], [data-sidebar="sidebar"]').getByRole('link', { name: 'For You' }),
+			page
+				.locator('[data-slot="sidebar"], [data-sidebar="sidebar"]')
+				.getByRole('link', { name: 'For You' }),
 		).toBeVisible()
 		// The Activity group disappears entirely — no error state, no shift.
 		await expect(page.getByTestId('sidebar-activity')).toHaveCount(0)
