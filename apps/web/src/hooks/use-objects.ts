@@ -64,9 +64,21 @@ export function useUpdateObject(workspaceId: string) {
 	return useMutation({
 		mutationFn: ({ id, data }: { id: string; data: UpdateObjectInput }) =>
 			api.objects.update(id, data),
-		onMutate: ({ id }) => {
+		onMutate: ({ id, data }) => {
 			const cached = queryClient.getQueryData<ObjectResponse>(queryKeys.objects.detail(id))
-			return { prevStatus: cached?.status ?? null, type: cached?.type ?? null }
+			// Archiving is the one status transition where the row must disappear
+			// from default reads (T3's `include_archived=false` gate) instead of
+			// just changing colour. Optimistically drop it from the list caches so
+			// the row is gone before the server response settles; onSettled's
+			// invalidation will re-hydrate either way.
+			const listSnapshots =
+				data.status === 'archived'
+					? optimisticallyHideArchivedRow(queryClient, workspaceId, id)
+					: null
+			return { prevStatus: cached?.status ?? null, type: cached?.type ?? null, listSnapshots }
+		},
+		onError: (_err, _vars, ctx) => {
+			if (ctx?.listSnapshots) restoreListSnapshots(queryClient, ctx.listSnapshots)
 		},
 		onSuccess: (data, variables, ctx) => {
 			const nextStatus = variables.data.status
@@ -90,6 +102,47 @@ export function useUpdateObject(workspaceId: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
 		},
 	})
+}
+
+interface ListSnapshots {
+	flat: Array<[readonly unknown[], ObjectResponse[] | undefined]>
+	infinite: Array<[readonly unknown[], InfiniteData<ObjectResponse[]> | undefined]>
+}
+
+function optimisticallyHideArchivedRow(
+	queryClient: ReturnType<typeof useQueryClient>,
+	workspaceId: string,
+	id: string,
+): ListSnapshots {
+	const flat = queryClient.getQueriesData<ObjectResponse[]>({
+		queryKey: queryKeys.objects.listPrefix(workspaceId),
+	})
+	for (const [key, cache] of flat) {
+		if (!cache) continue
+		queryClient.setQueryData<ObjectResponse[]>(
+			key,
+			cache.filter((obj) => obj.id !== id),
+		)
+	}
+	const infinite = queryClient.getQueriesData<InfiniteData<ObjectResponse[]>>({
+		queryKey: queryKeys.objects.listInfinitePrefix(workspaceId),
+	})
+	for (const [key, cache] of infinite) {
+		if (!cache) continue
+		queryClient.setQueryData<InfiniteData<ObjectResponse[]>>(key, {
+			...cache,
+			pages: cache.pages.map((page) => page.filter((obj) => obj.id !== id)),
+		})
+	}
+	return { flat, infinite }
+}
+
+function restoreListSnapshots(
+	queryClient: ReturnType<typeof useQueryClient>,
+	snapshots: ListSnapshots,
+) {
+	for (const [key, cache] of snapshots.flat) queryClient.setQueryData(key, cache)
+	for (const [key, cache] of snapshots.infinite) queryClient.setQueryData(key, cache)
 }
 
 type ObjectListCache = ObjectResponse[]
