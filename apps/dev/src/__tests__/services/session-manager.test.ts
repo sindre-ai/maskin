@@ -1170,10 +1170,12 @@ describe('SessionManager', () => {
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			// 1st select: the fallback lookup after CAS retries are exhausted,
-			// finds the session still 'running'. 2nd select: hasOtherActiveSessions'
-			// check — a non-empty result skips the actors-table update branch.
-			mockResults.selectQueue = [[session], [{ id: 'other-session' }]]
+			// 1st select: markRemoteSessionComplete's own usage extraction (reads
+			// session_logs) — empty means "no usage found", a no-op. 2nd select:
+			// the fallback lookup after CAS retries are exhausted, finds the
+			// session still 'running'. 3rd select: hasOtherActiveSessions' check —
+			// a non-empty result skips the actors-table update branch.
+			mockResults.selectQueue = [[], [session], [{ id: 'other-session' }]]
 
 			await manager.markRemoteSessionComplete(session.id, 137)
 
@@ -1190,7 +1192,9 @@ describe('SessionManager', () => {
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			mockResults.selectQueue = [[session]]
+			// 1st select: the usage-extraction select (empty = no-op). 2nd select:
+			// the fallback lookup, which finds the session already resolved.
+			mockResults.selectQueue = [[], [session]]
 			const initialInsertCount = calls.inserts.length
 
 			await manager.markRemoteSessionComplete(session.id, 137)
