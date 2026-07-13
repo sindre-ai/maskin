@@ -8,6 +8,8 @@ import {
 	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
+	trackLoopGraduated,
+	trackLoopViewed,
 	trackNorthStarPromptImpression,
 	trackNorthStarPromptResponse,
 	trackObjectAttachedFile,
@@ -324,6 +326,57 @@ describe('v1 taxonomy helpers', () => {
 
 		expect(capture).toHaveBeenCalledWith('north_star_prompt_response', {
 			workspace_id: 'ws-42',
+		})
+	})
+
+	it('loop_viewed carries entity_type=loop and the source_bet_id join key', () => {
+		const capture = captureSpy()
+
+		trackLoopViewed({
+			entity_id: 'loop-1',
+			entity_type: 'loop',
+			source_bet_id: 'bet-99',
+		})
+
+		expect(capture).toHaveBeenCalledWith('loop_viewed', {
+			entity_id: 'loop-1',
+			entity_type: 'loop',
+			source: 'web',
+			flow_id: null,
+			source_bet_id: 'bet-99',
+		})
+	})
+
+	it('loop_viewed serialises a missing source_bet_id as null so the join key is always present', () => {
+		const capture = captureSpy()
+
+		trackLoopViewed({
+			entity_id: 'loop-2',
+			entity_type: 'loop',
+			source_bet_id: null,
+		})
+
+		expect(capture).toHaveBeenCalledWith(
+			'loop_viewed',
+			expect.objectContaining({ entity_id: 'loop-2', source_bet_id: null }),
+		)
+	})
+
+	it('loop_graduated carries entity_type=loop and the source_bet_id join key', () => {
+		const capture = captureSpy()
+
+		trackLoopGraduated({
+			entity_id: 'loop-3',
+			entity_type: 'loop',
+			source_bet_id: 'bet-77',
+		})
+
+		expect(capture).toHaveBeenCalledWith('loop_graduated', {
+			entity_id: 'loop-3',
+			entity_type: 'loop',
+			source: 'web',
+			flow_id: null,
+			source_bet_id: 'bet-77',
 		})
 	})
 })
