@@ -58,6 +58,10 @@ import {
 import { isAuthRevokedError } from '../lib/integrations/errors'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
+import {
+	type TokenMetadata,
+	stampTokenMetadata,
+} from '../lib/integrations/providers/github/token-metadata'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
@@ -1221,6 +1225,8 @@ export class SessionManager extends EventEmitter {
 			ownerLogin: string
 			token: string
 			integrationId: string
+			installationId: string
+			tokenMetadata: TokenMetadata
 		}> = []
 		for (const integration of activeIntegrations) {
 			try {
@@ -1231,11 +1237,25 @@ export class SessionManager extends EventEmitter {
 					const ownerLogin = await this.resolveGithubOwnerLogin(integration)
 					if (!ownerLogin) continue
 
+					const installationId = integration.externalId
+					if (!installationId) {
+						logger.warn(
+							'GitHub integration has no externalId; cannot stamp token metadata for tool-call tagging',
+							{
+								integrationId: integration.id,
+								sessionId: session.id,
+							},
+						)
+						continue
+					}
+
 					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
 					resolvedGithubInstalls.push({
 						ownerLogin,
 						token: accessToken,
 						integrationId: integration.id,
+						installationId,
+						tokenMetadata: stampTokenMetadata(accessToken, installationId),
 					})
 				} else {
 					// Slack: only inject the bot token. A user token (xoxp-) here means
