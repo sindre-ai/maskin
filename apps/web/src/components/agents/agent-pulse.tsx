@@ -16,7 +16,7 @@ export function AgentPulse({ workspaceId }: { workspaceId: string }) {
 
 	return (
 		<span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-			<span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+			<span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
 			{activeCount} agent{activeCount !== 1 ? 's' : ''} working
 		</span>
 	)

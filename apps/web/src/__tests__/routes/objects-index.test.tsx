@@ -74,6 +74,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 
 vi.mock('@/hooks/use-objects', () => ({
 	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
+	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
 }))
 
 vi.mock('@/hooks/use-user-display-settings', () => ({
@@ -117,6 +118,11 @@ vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
 }))
 
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: () => null,
+	isCreateShortcut: () => false,
+}))
+
 vi.mock('@/lib/api', () => ({
 	api: { objects: { list: vi.fn(), search: vi.fn() } },
 }))
@@ -124,8 +130,12 @@ vi.mock('@/lib/api', () => ({
 vi.mock('@/lib/query-keys', () => ({
 	queryKeys: {
 		objects: {
+			list: (workspaceId: string, filters?: unknown) => ['objects', workspaceId, 'list', filters],
 			listInfinite: () => ['objects'],
 			board: () => ['objects', 'board'],
+		},
+		relationships: {
+			all: (workspaceId: string) => ['relationships', workspaceId],
 		},
 		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		userDisplaySettings: {
@@ -192,6 +202,20 @@ describe('validateSearch', () => {
 		expect(result.type).toBeUndefined()
 		expect(result.status).toBeUndefined()
 		expect(result.q).toBeUndefined()
+	})
+
+	it('coerces number/boolean metadata.<field> values to strings instead of dropping them', () => {
+		// The router's default search parser JSON-parses query values, so a
+		// bare `metadata.priority=5` or `metadata.active=true` (e.g. from a
+		// hand-typed or externally-built URL) arrives here as a number/boolean.
+		const result = RouteOptions.validateSearch({
+			'metadata.priority': 5,
+			'metadata.active': true,
+			'metadata.region': 'emea',
+		})
+		expect(result['metadata.priority']).toBe('5')
+		expect(result['metadata.active']).toBe('true')
+		expect(result['metadata.region']).toBe('emea')
 	})
 })
 

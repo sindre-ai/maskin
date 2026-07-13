@@ -104,6 +104,7 @@ function createMockStorageProvider() {
 		put: vi.fn().mockResolvedValue(undefined),
 		get: vi.fn().mockResolvedValue(Buffer.from('snapshot data')),
 		list: vi.fn().mockResolvedValue([]),
+		listWithMetadata: vi.fn().mockResolvedValue([]),
 		delete: vi.fn().mockResolvedValue(undefined),
 		exists: vi.fn().mockResolvedValue(false),
 		ensureBucket: vi.fn().mockResolvedValue(undefined),
@@ -669,7 +670,7 @@ describe('SessionManager', () => {
 			}
 		}
 
-		it('produces per-owner env vars for two GitHub installations (agents opt into MCP servers via tools config)', async () => {
+		it('produces per-owner env vars and auto-injects MCP server entries for two GitHub installations', async () => {
 			const wsId = randomUUID()
 			const integrationA = buildIntegration({
 				workspaceId: wsId,
@@ -701,8 +702,12 @@ describe('SessionManager', () => {
 
 			expect(createArgs.env.GITHUB_TOKEN_SINDRE_AI).toBe('ghs_token_sindre_ai')
 			expect(createArgs.env.GITHUB_TOKEN_VAERKSTED_AI).toBe('ghs_token_vaerksted_ai')
-			expect(createArgs.env.GITHUB_TOKEN).toBeUndefined()
-			// GitHub MCP server entries are not auto-injected — agents opt in per-agent
+			// bare GITHUB_TOKEN is aliased from the first installation
+			expect(createArgs.env.GITHUB_TOKEN).toBe('ghs_token_sindre_ai')
+			// GITHUB_INTEGRATION_ID lets the container's credential helper mint fresh
+			// tokens mid-session; it's also aliased from the first installation
+			expect(createArgs.env.GITHUB_INTEGRATION_ID).toBe(integrationA.id)
+			// each installation gets its own auto-injected MCP server entry
 			const mcpKeys = createArgs.env.MCP_SERVERS_JSON
 				? Object.keys(
 						(
@@ -712,7 +717,9 @@ describe('SessionManager', () => {
 						).mcpServers,
 					)
 				: []
-			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(0)
+			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(2)
+			expect(mcpKeys).toContain('github-sindre-ai')
+			expect(mcpKeys).toContain('github-vaerksted-ai')
 		})
 
 		it('lazily backfills owner_login and persists it when the row is missing it', async () => {
@@ -742,6 +749,7 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.GITHUB_TOKEN_ACME_ORG).toBe('ghs_token_acme')
+			expect(createArgs.env.GITHUB_TOKEN).toBe('ghs_token_acme')
 			const mcpKeys = createArgs.env.MCP_SERVERS_JSON
 				? Object.keys(
 						(
@@ -751,7 +759,8 @@ describe('SessionManager', () => {
 						).mcpServers,
 					)
 				: []
-			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(0)
+			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(1)
+			expect(mcpKeys).toContain('github-acme-org')
 		})
 
 		it('skips the integration when owner_login backfill fails (does not kill the session)', async () => {
@@ -775,6 +784,7 @@ describe('SessionManager', () => {
 			const githubKeys = Object.keys(createArgs.env).filter((k) => k.startsWith('GITHUB_TOKEN_'))
 			expect(githubKeys).toEqual([])
 			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
+			expect(createArgs.env.GITHUB_INTEGRATION_ID).toBeUndefined()
 		})
 
 		describe('Slack auto-inject + xoxb- guard', () => {

@@ -272,6 +272,82 @@ describe('Sessions Integration', () => {
 			const list = await res.json()
 			expect(list).toHaveLength(2)
 		})
+
+		describe('updated_before / updated_after filters (AC-T3)', () => {
+			const T = new Date('2026-06-20T12:00:00.000Z')
+			const before = new Date(T.getTime() - 60_000)
+			const after = new Date(T.getTime() + 60_000)
+
+			async function seedThree() {
+				const old = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					updatedAt: before,
+				})
+				const mid = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					updatedAt: T,
+				})
+				const fresh = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					updatedAt: after,
+				})
+				return { old, mid, fresh }
+			}
+
+			it('one-second boundary on either side behaves identically to objects', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				const { mid } = await seedThree()
+
+				const justAfter = new Date(T.getTime() + 1_000).toISOString()
+				const includeRes = await app.request(
+					jsonGet(`/api/sessions?updated_before=${encodeURIComponent(justAfter)}`, headers),
+				)
+				expect(includeRes.status).toBe(200)
+				const includeBody = (await includeRes.json()) as Array<{ id: string }>
+				expect(includeBody.map((r) => r.id)).toContain(mid.id)
+
+				const justBefore = new Date(T.getTime() - 1_000).toISOString()
+				const excludeRes = await app.request(
+					jsonGet(`/api/sessions?updated_before=${encodeURIComponent(justBefore)}`, headers),
+				)
+				const excludeBody = (await excludeRes.json()) as Array<{ id: string }>
+				expect(excludeBody.map((r) => r.id)).not.toContain(mid.id)
+			})
+
+			it('half-open bound excludes rows at the exact instant on both sides', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				const { mid } = await seedThree()
+
+				const cutoff = T.toISOString()
+				const beforeRes = await app.request(
+					jsonGet(`/api/sessions?updated_before=${encodeURIComponent(cutoff)}`, headers),
+				)
+				const beforeBody = (await beforeRes.json()) as Array<{ id: string }>
+				expect(beforeBody.map((r) => r.id)).not.toContain(mid.id)
+
+				const afterRes = await app.request(
+					jsonGet(`/api/sessions?updated_after=${encodeURIComponent(cutoff)}`, headers),
+				)
+				const afterBody = (await afterRes.json()) as Array<{ id: string }>
+				expect(afterBody.map((r) => r.id)).not.toContain(mid.id)
+			})
+
+			it('response is unchanged when neither param is set (AC-T7 parity on sessions)', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				await seedThree()
+
+				const baseline = await app.request(jsonGet('/api/sessions', headers))
+				const withDefaults = await app.request(jsonGet('/api/sessions', headers))
+				expect(await baseline.text()).toBe(await withDefaults.text())
+			})
+
+			it('rejects malformed updated_before with 400 (AC-T6 on sessions)', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				const res = await app.request(jsonGet('/api/sessions?updated_before=not-a-date', headers))
+				expect(res.status).toBe(400)
+			})
+		})
 	})
 
 	describe('Get 404', () => {

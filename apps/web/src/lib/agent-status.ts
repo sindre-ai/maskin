@@ -1,4 +1,4 @@
-import type { AgentStatus } from '@/components/agents/agent-card'
+export type AgentStatus = 'working' | 'idle' | 'failed'
 
 interface SessionLike {
 	actorId: string

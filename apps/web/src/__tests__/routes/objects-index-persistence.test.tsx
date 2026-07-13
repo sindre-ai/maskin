@@ -40,7 +40,10 @@ vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: [] }) }))
 vi.mock('@/hooks/use-enabled-modules', () => ({ useEnabledModules: () => [] }))
 vi.mock('@/hooks/use-custom-extensions', () => ({ useCustomExtensions: () => [] }))
 vi.mock('@maskin/module-sdk', () => ({ getEnabledObjectTypeTabs: () => [] }))
-vi.mock('@/hooks/use-objects', () => ({ useBulkUpdateObjects: () => ({ mutate: vi.fn() }) }))
+vi.mock('@/hooks/use-objects', () => ({
+	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
+	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
+}))
 
 // Track upsert calls via globalThis to dodge vi.mock hoist.
 ;(globalThis as unknown as { __dsUpsertCalls?: number }).__dsUpsertCalls = 0
@@ -101,6 +104,10 @@ vi.mock('@/components/objects/data-table/dynamic-columns', () => ({ getDynamicCo
 vi.mock('@/components/imports/import-dialog', () => ({ ImportDialog: () => null }))
 vi.mock('@/hooks/use-imports', () => ({ useImportToast: () => ({ startTracking: vi.fn() }) }))
 vi.mock('@/components/shared/route-error', () => ({ RouteError: () => <div>Error</div> }))
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: () => null,
+	isCreateShortcut: () => false,
+}))
 
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 

@@ -1,7 +1,18 @@
+import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
 import { Textarea } from '@/components/ui/textarea'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+	Children,
+	type ReactElement,
+	type ReactNode,
+	isValidElement,
+	useCallback,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
@@ -29,6 +40,28 @@ function wrapWithMentions(
 	return children
 }
 
+/**
+ * Extracts the language hint (e.g. "chart") from the `language-X` className
+ * react-markdown puts on the inner `<code>` of a fenced block.
+ */
+function readCodeLanguage(child: ReactNode): string | undefined {
+	if (!isValidElement(child)) return undefined
+	const childEl = child as ReactElement<{ className?: string }>
+	const className = childEl.props?.className
+	if (typeof className !== 'string') return undefined
+	const match = className.match(/language-([\w-]+)/)
+	return match?.[1]
+}
+
+function readCodeSource(child: ReactNode): string {
+	if (!isValidElement(child)) return ''
+	const childEl = child as ReactElement<{ children?: ReactNode }>
+	const inner = childEl.props?.children
+	if (typeof inner === 'string') return inner
+	if (Array.isArray(inner)) return inner.filter((c): c is string => typeof c === 'string').join('')
+	return ''
+}
+
 export function MarkdownContent({
 	content,
 	onChange,
@@ -38,6 +71,7 @@ export function MarkdownContent({
 	disallowedElements,
 	mentionActors,
 	onMentionClick,
+	renderVisuals = false,
 }: {
 	content: string
 	onChange?: (value: string) => void
@@ -47,6 +81,12 @@ export function MarkdownContent({
 	disallowedElements?: string[]
 	mentionActors?: ActorListItem[]
 	onMentionClick?: (actor: ActorListItem) => void
+	/**
+	 * Opt-in: when true, fenced blocks tagged ```chart render as inline visuals
+	 * (e.g. recharts). Defaults to false so object-document body markdown is
+	 * unaffected — only ActivityComment opts in.
+	 */
+	renderVisuals?: boolean
 }) {
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState(content)
@@ -102,10 +142,28 @@ export function MarkdownContent({
 			return <code className={className}>{children}</code>
 		}
 
-		if (!mentionActors) return { code }
+		// When renderVisuals is on, override <pre> (not just <code>) so the
+		// dispatched visual replaces the whole block — react-markdown wraps fenced
+		// blocks as <pre><code class="language-X">…</code></pre> and a <div>
+		// child inside <pre> is invalid HTML.
+		const pre: Components['pre'] = ({ children, ...rest }) => {
+			if (renderVisuals) {
+				const first = Children.toArray(children).find((c) => isValidElement(c)) as
+					| ReactElement
+					| undefined
+				const lang = readCodeLanguage(first)
+				if (lang && isVisualLanguage(lang)) {
+					return <CommentVisual language={lang} source={readCodeSource(first)} />
+				}
+			}
+			return <pre {...rest}>{children}</pre>
+		}
+
+		if (!mentionActors) return { code, pre }
 		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors, onMentionClick)
 		return {
 			code,
+			pre,
 			p: ({ children }) => <p>{wrap(children)}</p>,
 			li: ({ children }) => <li>{wrap(children)}</li>,
 			em: ({ children }) => <em>{wrap(children)}</em>,
@@ -116,7 +174,7 @@ export function MarkdownContent({
 			td: ({ children, ...rest }) => <td {...rest}>{wrap(children)}</td>,
 			th: ({ children, ...rest }) => <th {...rest}>{wrap(children)}</th>,
 		}
-	}, [mentionActors, onMentionClick])
+	}, [mentionActors, onMentionClick, renderVisuals])
 
 	if (editable && editing) {
 		return (

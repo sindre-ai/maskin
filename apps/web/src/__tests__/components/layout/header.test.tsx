@@ -31,6 +31,13 @@ vi.mock('@/components/ui/sidebar', () => ({
 	),
 }))
 
+// Stub the picker so header tests don't need QueryClient/workspace-context setup —
+// header responsibility is opening it, not the create flow itself (covered elsewhere).
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: ({ open }: { open: boolean }) =>
+		open ? <div data-testid="create-picker" /> : null,
+}))
+
 import { usePageHeader } from '@/lib/page-header-context'
 import { useMatches } from '@tanstack/react-router'
 

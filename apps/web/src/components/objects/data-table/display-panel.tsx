@@ -1,3 +1,4 @@
+import { type FieldDefinition, FieldValueInput } from '@/components/objects/field-value-input'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -16,6 +17,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
 import type { VisibilityState } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, Check, ChevronDown, SlidersHorizontal } from 'lucide-react'
 
@@ -44,6 +46,11 @@ export interface DisplayPanelProps {
 	driverFilter?: string
 	onDriverFilterChange?: (value: string | undefined) => void
 	actors?: ActorListItem[]
+	// Metadata filters — one row per custom field definition of the active type.
+	// The parent passes these only when exactly one object type is selected.
+	fieldDefinitions?: FieldDefinition[]
+	metadataFilters?: Record<string, string>
+	onMetadataFilterChange?: (field: string, value: string | undefined) => void
 	onResetFilters?: () => void
 	// Ordering
 	sort?: string
@@ -67,6 +74,11 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 	)
 }
 
+// Bordered picker toggle used inside this popover (View, Properties). The
+// `border-accent bg-accent text-accent-foreground` active state is reserved for
+// picker toggles inside popovers. Filter state that lives in the page toolbar
+// (FilterTabs active, FilterChip) uses the plain `bg-muted text-foreground
+// font-medium` style instead.
 function PillButton({
 	active,
 	disabled,
@@ -140,6 +152,9 @@ export function DisplayPanel({
 	driverFilter,
 	onDriverFilterChange,
 	actors,
+	fieldDefinitions,
+	metadataFilters,
+	onMetadataFilterChange,
 	onResetFilters,
 	sort,
 	onSortChange,
@@ -152,12 +167,39 @@ export function DisplayPanel({
 }: DisplayPanelProps) {
 	const activeStatuses = statusFilter ? statusFilter.split(',').filter(Boolean) : []
 	const activeDrivers = driverFilter ? driverFilter.split(',').filter(Boolean) : []
-	const activeFilterCount = (activeStatuses.length > 0 ? 1 : 0) + (activeDrivers.length > 0 ? 1 : 0)
+	const metadataFields = fieldDefinitions ?? []
+	// Fields whose name can't be inlined into a `metadata.<field>` filter (must
+	// start with a letter, letters/numbers/underscores only — same rule the
+	// backend enforces in extractMetadataFilters). Rendering a filter row for
+	// one of these would look like it works, then have the typed value vanish
+	// from the URL with no explanation the moment it's applied — excluded here
+	// instead, with a visible note, so the limitation is never silent.
+	const filterableMetadataFields = metadataFields.filter((field) =>
+		SAFE_METADATA_FIELD_NAME_RE.test(field.name),
+	)
+	const unfilterableFieldCount = metadataFields.length - filterableMetadataFields.length
+	// Counted from `metadataFilters` directly, not from `metadataFields` — the
+	// active type's field rows (e.g. on the "All" tab, where `fieldDefinitions`
+	// is undefined) can be empty while a metadata filter from another tab is
+	// still applied. Gating the count on the rendered rows made that filter
+	// invisible (no badge, no Reset) even though it kept narrowing results.
+	const activeMetadataFilterCount = Object.values(metadataFilters ?? {}).filter(
+		(value) => value !== '',
+	).length
+	const activeFilterCount =
+		(activeStatuses.length > 0 ? 1 : 0) +
+		(activeDrivers.length > 0 ? 1 : 0) +
+		activeMetadataFilterCount
 	const hasActiveFilters = activeFilterCount > 0
 
+	const showMetadataFilters = !!onMetadataFilterChange && metadataFields.length > 0
 	const showOrdering = !!sort && !!order && !!onSortChange && !!onOrderChange && columns.length > 0
 	const showGrouping = !!onGroupByChange && columns.length > 0
-	const showFilters = !!onStatusFilterChange || !!onDriverFilterChange
+	const showFilters =
+		!!onStatusFilterChange ||
+		!!onDriverFilterChange ||
+		showMetadataFilters ||
+		activeMetadataFilterCount > 0
 	const hideableColumns = columns.filter((col) => col.canHide)
 	const showProperties = !!onColumnVisibilityChange && hideableColumns.length > 0
 	const orderingColumns =
@@ -202,7 +244,19 @@ export function DisplayPanel({
 				? (driverOptions.find((a) => a.id === activeDrivers[0])?.name ?? '1 driver')
 				: `${activeDrivers.length} drivers`
 
-	return (
+	// Inline sort/group reading rendered as a sibling next to the Display
+	// trigger — Linear's Display-options pattern. Filter chips communicate
+	// hidden rows; sort/group are self-evident from the rendered list, so
+	// they surface as a subtle text reading rather than another chip. Renders
+	// only when non-default; collapses <640px so the toolbar stays clean on
+	// mobile (the iconOnly variant already carries the filter count pill).
+	const isNonDefaultSort = !!sort && (sort !== 'createdAt' || order !== 'desc')
+	const hasGrouping = !!groupBy
+	const showInlineReading = !iconOnly && (isNonDefaultSort || hasGrouping)
+	const inlineSortLabel = sortLabel ?? sort
+	const inlineGroupLabel = groupLabel ?? groupBy
+
+	const trigger = (
 		<ResponsivePopover>
 			<ResponsivePopoverTrigger asChild>
 				{iconOnly ? (
@@ -364,6 +418,9 @@ export function DisplayPanel({
 												} else {
 													onStatusFilterChange?.(undefined)
 													onDriverFilterChange?.(undefined)
+													for (const f of metadataFields) {
+														onMetadataFilterChange?.(f.name, undefined)
+													}
 												}
 											}}
 										>
@@ -470,6 +527,50 @@ export function DisplayPanel({
 										)}
 									</div>
 								)}
+
+								{/* Metadata filters — one row per custom field of the active type */}
+								{showMetadataFilters &&
+									filterableMetadataFields.map((field) => {
+										const current = metadataFilters?.[field.name] ?? ''
+										return (
+											<div key={field.name} className="flex items-center gap-2">
+												<span
+													className="w-16 shrink-0 truncate text-xs capitalize text-text-secondary"
+													title={field.name}
+												>
+													{field.name.replace(/_/g, ' ')}
+												</span>
+												<FieldValueInput
+													type={field.type}
+													fieldDef={field}
+													value={current}
+													onChange={(value) =>
+														onMetadataFilterChange?.(field.name, value || undefined)
+													}
+													placeholder="Any"
+													className="flex-1"
+												/>
+												{current !== '' && (
+													<button
+														type="button"
+														aria-label={`Clear ${field.name} filter`}
+														title={`Clear ${field.name} filter`}
+														onClick={() => onMetadataFilterChange?.(field.name, undefined)}
+														className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
+													>
+														Clear
+													</button>
+												)}
+											</div>
+										)
+									})}
+								{unfilterableFieldCount > 0 && (
+									<p className="text-[11px] text-text-secondary">
+										{unfilterableFieldCount} field{unfilterableFieldCount === 1 ? '' : 's'} can't be
+										filtered — field names must start with a letter and contain only letters,
+										numbers, and underscores.
+									</p>
+								)}
 							</div>
 							<Separator />
 						</>
@@ -498,5 +599,35 @@ export function DisplayPanel({
 				</div>
 			</ResponsivePopoverContent>
 		</ResponsivePopover>
+	)
+
+	if (!showInlineReading) return trigger
+
+	return (
+		<div className="inline-flex items-center gap-2">
+			{trigger}
+			<span
+				className="hidden sm:inline-flex items-center gap-1 text-xs"
+				aria-label="Active display settings"
+			>
+				{isNonDefaultSort && (
+					<>
+						<span className="capitalize text-foreground">{inlineSortLabel}</span>
+						{order === 'asc' ? (
+							<ArrowUp size={12} className="text-foreground" />
+						) : (
+							<ArrowDown size={12} className="text-foreground" />
+						)}
+					</>
+				)}
+				{isNonDefaultSort && hasGrouping && <span className="text-muted-foreground">·</span>}
+				{hasGrouping && (
+					<>
+						<span className="text-muted-foreground">grouped by</span>
+						<span className="capitalize text-foreground">{inlineGroupLabel}</span>
+					</>
+				)}
+			</span>
+		</div>
 	)
 }
