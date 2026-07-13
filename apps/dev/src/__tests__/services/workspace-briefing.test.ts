@@ -339,14 +339,103 @@ describe('renderWorkspaceBriefing', () => {
 		const ws = buildWorkspace({
 			name: 'Custom',
 			settings: {
-				display_names: { insight: 'Signal', bet: 'Initiative', task: 'Action' },
+				display_names: { insight: 'Signal', bet: 'Initiative', task: 'Action', loop: 'Cycle' },
 			},
 		})
-		mockResults.selectQueue = [[ws], [], [], [], [], []]
+		const loop = buildObject({
+			workspaceId: ws.id,
+			type: 'loop',
+			status: 'holding',
+			title: 'Bugs fixed under 1 day',
+		})
+		mockResults.selectQueue = [[ws], [], [], [], [], [loop]]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
 		expect(result).toContain('## Active initiatives')
 		expect(result).toContain('## Open signals')
+		expect(result).toContain('## Cycles')
+	})
+
+	it('omits the Loops section entirely when the workspace has no loops', async () => {
+		// Empty-state contract: a workspace with zero Loops should render
+		// exactly as it did pre-Loops — no shouty placeholder line. Matches the
+		// paused-bets pattern so day-1 briefings stay quiet.
+		const { db, mockResults } = createTestContext()
+		const storage = createMockStorage()
+		const ws = buildWorkspace()
+		mockResults.selectQueue = [[ws], [], [], [], [], []]
+
+		const result = await renderWorkspaceBriefing(db, storage, ws.id)
+		expect(result).not.toContain('## Loops')
+	})
+
+	it('renders Loops in a single section with breached before at-risk before holding', async () => {
+		// The bet's ranking DoD: at-risk and breached surface ahead of holding
+		// using the composer's existing per-type grouping. Verify the ordering
+		// on a mixed set — health priority beats recency across tiers, recency
+		// still tiebreaks within a tier.
+		const { db, mockResults } = createTestContext()
+		const storage = createMockStorage()
+		const ws = buildWorkspace()
+		const now = Date.now()
+		const holdingOld = buildObject({
+			workspaceId: ws.id,
+			type: 'loop',
+			status: 'holding',
+			title: 'Bugs fixed under 1 day',
+			metadata: { floor: 'p50 < 24h', cadence: 'weekly' },
+			updatedAt: new Date(now - 1_000_000),
+		})
+		const atRisk = buildObject({
+			workspaceId: ws.id,
+			type: 'loop',
+			status: 'at-risk',
+			title: 'Onboarding TTFV',
+			metadata: { floor: 'p50 < 10m' },
+			updatedAt: new Date(now - 2_000_000),
+		})
+		const breached = buildObject({
+			workspaceId: ws.id,
+			type: 'loop',
+			status: 'breached',
+			title: 'Weekly release cadence',
+			metadata: { cadence: 'weekly' },
+			updatedAt: new Date(now - 3_000_000),
+		})
+		// Order in the mock is the SQL-order (updatedAt desc); the composer
+		// re-sorts by status priority in-memory.
+		mockResults.selectQueue = [[ws], [], [], [], [], [holdingOld, atRisk, breached]]
+
+		const result = await renderWorkspaceBriefing(db, storage, ws.id)
+		expect(result).toContain('## Loops')
+		const loopSection = result.slice(result.indexOf('## Loops'))
+		const breachedIdx = loopSection.indexOf('Weekly release cadence')
+		const atRiskIdx = loopSection.indexOf('Onboarding TTFV')
+		const holdingIdx = loopSection.indexOf('Bugs fixed under 1 day')
+		expect(breachedIdx).toBeGreaterThan(-1)
+		expect(atRiskIdx).toBeGreaterThan(breachedIdx)
+		expect(holdingIdx).toBeGreaterThan(atRiskIdx)
+	})
+
+	it('surfaces a seeded at-risk Loop with health state, floor, and cadence visible', async () => {
+		// Smoke case from the T2 DoD: seed one at-risk Loop and verify the
+		// briefing includes it with its health state visible.
+		const { db, mockResults } = createTestContext()
+		const storage = createMockStorage()
+		const ws = buildWorkspace()
+		const loop = buildObject({
+			workspaceId: ws.id,
+			type: 'loop',
+			status: 'at-risk',
+			title: 'Customer bugs fixed <1 day',
+			metadata: { floor: 'p50 < 24h', cadence: 'weekly' },
+		})
+		mockResults.selectQueue = [[ws], [], [], [], [], [loop]]
+
+		const result = await renderWorkspaceBriefing(db, storage, ws.id)
+		expect(result).toContain('**Customer bugs fixed <1 day** [at-risk]')
+		expect(result).toContain('floor: p50 < 24h')
+		expect(result).toContain('cadence: weekly')
 	})
 
 	it('omits the Loops section entirely when no loops exist', async () => {

@@ -710,6 +710,146 @@ describe('Subscriptions Integration', () => {
 		expect(itemA.mentioning_unread_count).toBe(0)
 	})
 
+	it('a loop watcher receives the at-risk transition signal in unread', async () => {
+		// T2 on bet/loops-primitive: when a Loop flips to a signalling status
+		// (at-risk or breached), subscribers must see it in For You just like
+		// bet terminal transitions — SIGNALLING_LOOP_STATUSES is the shared
+		// source of truth. Without this, watchers can't tell a Loop from a
+		// noisy 'updated' event and the parent bet's ship metric (every Loop
+		// viewed weekly) can't rely on the feed.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const loopRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({
+					type: 'loop',
+					title: 'Customer bugs fixed <1 day',
+					status: 'holding',
+				}),
+				headersA,
+			),
+		)
+		expect(loopRes.status).toBe(201)
+		const loop = await loopRes.json()
+
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: loop.id },
+				headersB,
+			),
+		)
+
+		const patchRes = await appA.request(
+			jsonRequest('PATCH', `/api/objects/${loop.id}`, { status: 'at-risk' }, headersA),
+		)
+		expect(patchRes.status).toBe(200)
+
+		const unreadB = await appB
+			.request(jsonGet('/api/subscriptions/unread', headersB))
+			.then((r) => r.json())
+		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === loop.id)
+		expect(itemB).toBeDefined()
+		expect(itemB.unread_count).toBe(1)
+		expect(itemB.mentioning_unread_count).toBe(0)
+	})
+
+	it('a loop watcher receives the breached signal even with no other activity', async () => {
+		// Silent-Loop failure mode: a Loop that flips straight from holding to
+		// breached with no comments must still land in the watcher's feed.
+		// Mirrors the "silent bet" case for TERMINAL_BET_STATUSES.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const loopRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({
+					type: 'loop',
+					title: 'Weekly release cadence',
+					status: 'holding',
+				}),
+				headersA,
+			),
+		)
+		const loop = await loopRes.json()
+
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: loop.id },
+				headersB,
+			),
+		)
+
+		const patchRes = await appA.request(
+			jsonRequest('PATCH', `/api/objects/${loop.id}`, { status: 'breached' }, headersA),
+		)
+		expect(patchRes.status).toBe(200)
+
+		const unreadB = await appB
+			.request(jsonGet('/api/subscriptions/unread', headersB))
+			.then((r) => r.json())
+		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === loop.id)
+		expect(itemB).toBeDefined()
+		expect(itemB.unread_count).toBe(1)
+	})
+
+	it('a loop transition back to holding does NOT surface in the watcher feed', async () => {
+		// Ranking guarantee for the feed: only at-risk / breached transitions
+		// count as signalling. A recovery to holding is routine lifecycle noise
+		// and must not page a watcher — this is what keeps at-risk/breached
+		// ranked above holding without a Loop-only ranker.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const loopRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/objects',
+				buildCreateObjectBody({
+					type: 'loop',
+					title: 'Onboarding TTFV',
+					status: 'at-risk',
+				}),
+				headersA,
+			),
+		)
+		const loop = await loopRes.json()
+
+		await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: loop.id },
+				headersB,
+			),
+		)
+
+		const patchRes = await appA.request(
+			jsonRequest('PATCH', `/api/objects/${loop.id}`, { status: 'holding' }, headersA),
+		)
+		expect(patchRes.status).toBe(200)
+
+		const unreadB = await appB
+			.request(jsonGet('/api/subscriptions/unread', headersB))
+			.then((r) => r.json())
+		const itemB = unreadB.items.find((i: { entity_id: string }) => i.entity_id === loop.id)
+		expect(itemB).toBeUndefined()
+	})
+
 	it('auto-subscribes the creator to every node created via POST /api/graph', async () => {
 		const appA = appAs(aId)
 		const headersA = { 'x-workspace-id': workspaceId }
