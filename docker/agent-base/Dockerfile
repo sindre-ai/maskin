@@ -31,6 +31,16 @@ WORKDIR /agent/workspace
 COPY entrypoint.sh /entrypoint.sh
 COPY agent-run.sh /agent-run.sh
 COPY github-credential-helper.sh /agent-github-credential-helper.sh
-RUN chmod +x /entrypoint.sh /agent-run.sh /agent-github-credential-helper.sh
+# GitHub MCP proxy that mints a fresh narrowed installation token per
+# `tools/call` (parent bet AC #3 for the API-side surface). Kept alongside
+# the credential helper — same "hit the mint route from the container"
+# pattern, different transport. session-manager spawns it via `node`.
+COPY github-mcp-proxy.mjs /agent-github-mcp-proxy.mjs
+# The lib is COPY'd unprefixed because the proxy's ES module import is
+# `./github-mcp-proxy-lib.mjs` — Node resolves that relative to the proxy's
+# directory (`/`), so the file must land at `/github-mcp-proxy-lib.mjs`.
+# Renaming it to `/agent-github-mcp-proxy-lib.mjs` here breaks the import.
+COPY github-mcp-proxy-lib.mjs /github-mcp-proxy-lib.mjs
+RUN chmod +x /entrypoint.sh /agent-run.sh /agent-github-credential-helper.sh /agent-github-mcp-proxy.mjs
 
 ENTRYPOINT ["/entrypoint.sh"]
