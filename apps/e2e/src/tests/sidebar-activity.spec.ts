@@ -171,7 +171,10 @@ test.describe('Sidebar Activity group', () => {
 		await expect(page.getByTestId('sidebar-activity')).toHaveCount(0)
 	})
 
-	test('reflects an agent start via SSE without a page refresh (AC-U7)', async ({ page, account }) => {
+	test('reflects an agent start via SSE without a page refresh (AC-U7)', async ({
+		page,
+		account,
+	}) => {
 		const startedSession = buildSession({
 			id: 's-sse-1',
 			actorId: 'a-sse-1',
@@ -230,7 +233,10 @@ test.describe('Sidebar Activity group', () => {
 		expect(sessionCalls).toBeGreaterThanOrEqual(2)
 	})
 
-	test('reflects an agent stop via SSE without a page refresh (AC-U7)', async ({ page, account }) => {
+	test('reflects an agent stop via SSE without a page refresh (AC-U7)', async ({
+		page,
+		account,
+	}) => {
 		const runningSession = buildSession({
 			id: 's-sse-2',
 			actorId: 'a-sse-2',
