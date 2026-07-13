@@ -5,10 +5,11 @@ import { createTestApp } from '../setup'
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
-// Ordered actor names for the five default agents. Seed inserts run in this order:
+// Ordered actor names for the six default agents. Seed inserts run in this order:
 // workspaces → owner member → for each agent [actor insert, member insert].
 const DEFAULT_AGENT_NAMES = [
 	'Workspace Coach',
+	'Chief of Staff',
 	'Workspace Driver',
 	'Strategist',
 	'Insights Triage Agent',
@@ -29,7 +30,7 @@ function buildDefaultAgentSeedQueue(ws: ReturnType<typeof buildWorkspace>) {
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		it('creates a workspace and seeds all 5 default agents, returning 201', async () => {
+		it('creates a workspace and seeds all 6 default agents, returning 201', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insertQueue = buildDefaultAgentSeedQueue(ws)
@@ -55,8 +56,8 @@ describe('Workspaces Routes', () => {
 
 			expect(res.status).toBe(201)
 			// inserts: [workspace, owner-member, agent1-actor, agent1-member, agent2-actor, ...]
-			// The 5 actor inserts are at indices 2, 4, 6, 8, 10.
-			const actorInserts = [2, 4, 6, 8, 10].map(
+			// The 6 actor inserts are at indices 2, 4, 6, 8, 10, 12.
+			const actorInserts = [2, 4, 6, 8, 10, 12].map(
 				(i) => calls.inserts[i] as { apiKey?: string; type?: string; name?: string },
 			)
 			expect(actorInserts.map((a) => a.name)).toEqual([...DEFAULT_AGENT_NAMES])
@@ -64,8 +65,10 @@ describe('Workspaces Routes', () => {
 				expect(insert.type).toBe('agent')
 				expect(insert.apiKey).toMatch(/^ank_/)
 			}
-			// Member roles for the 5 default agents (at 3, 5, 7, 9, 11).
-			const memberInserts = [3, 5, 7, 9, 11].map((i) => calls.inserts[i] as { role?: string })
+			// Member roles for the 6 default agents (at 3, 5, 7, 9, 11, 13).
+			const memberInserts = [3, 5, 7, 9, 11, 13].map(
+				(i) => calls.inserts[i] as { role?: string },
+			)
 			for (const insert of memberInserts) {
 				expect(insert.role).toBe('member')
 			}

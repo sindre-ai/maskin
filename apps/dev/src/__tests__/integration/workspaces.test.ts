@@ -42,6 +42,7 @@ const { SeedAgentError } = await import('../../services/workspace-bootstrap')
 
 const DEFAULT_AGENT_NAMES = [
 	'Workspace Coach',
+	'Chief of Staff',
 	'Workspace Driver',
 	'Strategist',
 	'Insights Triage Agent',
@@ -205,11 +206,20 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 5 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 7.
-			expect(members).toHaveLength(7)
+			// Creator (owner) + all 6 default agents (seeded atomically inside the
+			// create transaction) + the newly-added member = 8.
+			expect(members).toHaveLength(8)
 			const roles = members.map((m: { role: string }) => m.role).sort()
-			expect(roles).toEqual(['member', 'member', 'member', 'member', 'member', 'member', 'owner'])
+			expect(roles).toEqual([
+				'member',
+				'member',
+				'member',
+				'member',
+				'member',
+				'member',
+				'member',
+				'owner',
+			])
 		})
 	})
 

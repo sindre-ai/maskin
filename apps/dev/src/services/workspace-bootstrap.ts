@@ -3,6 +3,7 @@ import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, agentSkills, triggers, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import {
+	CHIEF_OF_STAFF_DEFAULT,
 	DEVELOPMENT_AGENTS,
 	DEVELOPMENT_TRIGGERS,
 	WORKSPACE_COACH_DEFAULT,
@@ -15,6 +16,7 @@ import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 
 export const DEFAULT_AGENT_IDS = [
 	'workspace_coach',
+	'chief_of_staff',
 	'workspace_driver',
 	'strategist',
 	'insights_triage',
@@ -74,6 +76,17 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 			llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
 			llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig as Record<string, unknown>,
 			tools: WORKSPACE_COACH_DEFAULT.tools as Record<string, unknown>,
+		}
+	}
+	if (agentId === 'chief_of_staff') {
+		return {
+			type: CHIEF_OF_STAFF_DEFAULT.type,
+			name: CHIEF_OF_STAFF_DEFAULT.name,
+			isSystem: CHIEF_OF_STAFF_DEFAULT.isSystem,
+			systemPrompt: CHIEF_OF_STAFF_DEFAULT.systemPrompt,
+			llmProvider: CHIEF_OF_STAFF_DEFAULT.llmProvider,
+			llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig as Record<string, unknown>,
+			tools: CHIEF_OF_STAFF_DEFAULT.tools as Record<string, unknown>,
 		}
 	}
 	const agent = DEVELOPMENT_AGENTS.find((a) => a.$id === agentId)
@@ -161,6 +174,48 @@ export async function bootstrapDefaultAgents(
 ): Promise<void> {
 	// Map from $id → created actor UUID — used to wire triggers after all agents are seeded.
 	const actorIdMap: Record<string, string> = {}
+
+	// Seed system agents that live outside DEVELOPMENT_AGENTS (Chief of Staff).
+	// Workspace Coach is seeded synchronously by the workspace-create paths, so
+	// its name-check would only ever hit "existing" here — Chief of Staff is the
+	// one that actually needs post-commit seeding via this function. Idempotent
+	// per workspace via the actors.name check.
+	const chiefSpec = resolveActorSpec('chief_of_staff')
+	const [existingChief] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+		.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, chiefSpec.name)))
+		.limit(1)
+
+	if (!existingChief) {
+		const [createdChief] = await db
+			.insert(actors)
+			.values({
+				type: chiefSpec.type,
+				name: chiefSpec.name,
+				isSystem: chiefSpec.isSystem,
+				systemPrompt: chiefSpec.systemPrompt.replaceAll('{{self_id}}', ''),
+				llmProvider: chiefSpec.llmProvider,
+				llmConfig: chiefSpec.llmConfig,
+				tools: chiefSpec.tools,
+				apiKey: generateApiKey().key,
+				createdBy,
+			})
+			.returning()
+
+		if (createdChief) {
+			await db.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: createdChief.id,
+				role: 'member',
+			})
+		} else {
+			logger.error('Failed to create Chief of Staff during workspace bootstrap', {
+				workspaceId,
+			})
+		}
+	}
 
 	for (const agent of defaultAgents) {
 		// Idempotent: check if an actor with this name already exists in the workspace.
