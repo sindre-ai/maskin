@@ -382,6 +382,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 						q: prev.q,
 						groupBy: prev.groupBy,
 						ids: prev.ids,
+						includeArchived: prev.includeArchived,
 					}),
 				})
 			},

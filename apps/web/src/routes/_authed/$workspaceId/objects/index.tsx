@@ -65,6 +65,16 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 				metadataFilters[key] = String(value)
 			}
 		}
+		// Include-archived is URL-only per T5. Present as `1` when on; omitted
+		// otherwise so the default excludes archived rows via T3's API gate.
+		// Deep-links, back/forward, and hard-refresh preserve the choice —
+		// per-view persistence intentionally does not touch localStorage.
+		const rawIncludeArchived = search.includeArchived
+		const includeArchived =
+			rawIncludeArchived === '1' ||
+			rawIncludeArchived === 1 ||
+			rawIncludeArchived === true ||
+			rawIncludeArchived === 'true'
 		return {
 			type: typeof search.type === 'string' ? search.type : undefined,
 			status: typeof search.status === 'string' ? search.status : undefined,
@@ -77,6 +87,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 			q: typeof search.q === 'string' ? search.q : undefined,
 			groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
 			ids: typeof search.ids === 'string' ? search.ids : undefined,
+			includeArchived: includeArchived ? ('1' as const) : undefined,
 			...metadataFilters,
 		}
 	},
@@ -99,7 +110,13 @@ function ObjectsPage() {
 		q,
 		groupBy,
 		ids: idsFilter,
+		includeArchived: includeArchivedParam,
 	} = searchParams
+	const includeArchived = includeArchivedParam === '1'
+	// Per the task scope, the "Show" section (with the Include archived toggle)
+	// is bet-only for now — surfaced when the bet tab is active. Non-bet tabs
+	// keep the existing panel shape until archive lands for their type.
+	const supportsIncludeArchived = typeFilter === 'bet'
 
 	const [importOpen, setImportOpen] = useState(false)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
@@ -207,8 +224,21 @@ function ObjectsPage() {
 		}
 		f.sort = sort
 		f.order = order
+		// Opt-in only: pass through when the "Include archived" toggle is on.
+		// Omitting the flag lets T3's route default (hide archived) apply.
+		if (supportsIncludeArchived && includeArchived) f.include_archived = 'true'
 		return f
-	}, [typeFilter, statusFilter, driverFilter, idsFilter, sort, order, metadataFilters])
+	}, [
+		typeFilter,
+		statusFilter,
+		driverFilter,
+		idsFilter,
+		sort,
+		order,
+		metadataFilters,
+		supportsIncludeArchived,
+		includeArchived,
+	])
 
 	// Infinite query — use search endpoint when q is present
 	const infiniteQuery = useInfiniteQuery({
@@ -811,6 +841,7 @@ function ObjectsPage() {
 							q: undefined,
 							groupBy: undefined,
 							ids: undefined,
+							includeArchived: undefined,
 						},
 						replace: true,
 					})
@@ -847,6 +878,12 @@ function ObjectsPage() {
 				onOrderChange={(value) => updateSearch({ order: value })}
 				groupBy={groupBy}
 				onGroupByChange={(value) => updateSearch({ groupBy: value })}
+				includeArchived={supportsIncludeArchived ? includeArchived : undefined}
+				onIncludeArchivedChange={
+					supportsIncludeArchived
+						? (next) => updateSearch({ includeArchived: next ? '1' : undefined })
+						: undefined
+				}
 				view={effectiveView}
 				onViewChange={(next) => {
 					setView(next)
