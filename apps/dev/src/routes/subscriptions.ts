@@ -335,6 +335,10 @@ app.openapi(listUnreadRoute, (async (c) => {
 		})
 		.from(subscriptions)
 		.leftJoin(
+			objects,
+			and(eq(subscriptions.entityType, 'object'), eq(objects.id, subscriptions.entityId)),
+		)
+		.leftJoin(
 			events,
 			and(
 				eq(events.workspaceId, subscriptions.workspaceId),
@@ -366,6 +370,12 @@ app.openapi(listUnreadRoute, (async (c) => {
 				//     initial-status payload, not a transition. Mirrors (3) via
 				//     the `data->>'status'` fallback in `statusExpr` above; a
 				//     Loop born at `holding` stays quiet.
+				// Unlike TERMINAL_BET_STATUSES, a loop's status is never permanent —
+				// it can flip back to `holding` after arm (3) or (4) already matched an
+				// older unread event. Both loop arms additionally require the object's
+				// CURRENT status (via the `objects` join above) to still be
+				// attention-worthy, so a recovered loop stops surfacing once it's read
+				// back to `holding` even if the triggering event is still unread.
 				or(
 					and(eq(events.entityType, subscriptions.entityType), eq(events.action, 'commented')),
 					and(
@@ -379,12 +389,14 @@ app.openapi(listUnreadRoute, (async (c) => {
 						eq(events.entityType, 'loop'),
 						eq(events.action, 'status_changed'),
 						inArray(statusExpr, [...LOOP_ATTENTION_STATUSES]),
+						inArray(objects.status, [...LOOP_ATTENTION_STATUSES]),
 					),
 					and(
 						eq(subscriptions.entityType, 'object'),
 						eq(events.entityType, 'loop'),
 						eq(events.action, 'created'),
 						inArray(statusExpr, [...LOOP_ATTENTION_STATUSES]),
+						inArray(objects.status, [...LOOP_ATTENTION_STATUSES]),
 					),
 				),
 			),
