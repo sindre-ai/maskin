@@ -22,9 +22,11 @@ import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import {
+	DiscoveryError,
 	fetchInstallationOwnerLogin,
 	mintInstallationTokenWithRecovery,
 } from '../lib/integrations/providers/github/auth'
+import { persistRecoveredInstallationId } from '../lib/integrations/providers/github/installation-recovery'
 import {
 	dispatchAccountLinkAction,
 	dispatchMaskinWorkspaceCommand,
@@ -814,53 +816,21 @@ app.openapi(githubTokenRoute, (async (c) => {
 			const result = await mintInstallationTokenWithRecovery(credentials, { repo: recoveryRepo })
 			if (result.recovered) {
 				const oldInstallationId = credentials.installation_id as string | undefined
-				// Guard against concurrent-recovery duplicate audit rows: two parallel
-				// callers can both 404 on the same cached id and both discover the
-				// same new id. Re-read inside a transaction and only write when the
-				// stored installation_id still matches what we minted against — the
-				// second caller sees the already-rotated row and short-circuits.
-				await db.transaction(async (tx) => {
-					const [current] = await tx
-						.select({ credentials: integrations.credentials })
-						.from(integrations)
-						.where(eq(integrations.id, integration.id))
-						.limit(1)
-					if (!current) return
-					const currentCreds: StoredCredentials = JSON.parse(decrypt(current.credentials))
-					if (currentCreds.installation_id !== oldInstallationId) return
-
-					const updated: StoredCredentials = {
-						...currentCreds,
-						installation_id: result.installationId,
-					}
-					await tx
-						.update(integrations)
-						.set({ credentials: encrypt(JSON.stringify(updated)), updatedAt: new Date() })
-						.where(eq(integrations.id, integration.id))
-
-					try {
-						await tx.insert(events).values({
-							workspaceId,
-							actorId,
-							action: 'updated',
-							entityType: 'integration',
-							entityId: integration.id,
-							data: {
-								reason: 'installation_id_recovered',
-								old_installation_id: oldInstallationId,
-								new_installation_id: result.installationId,
-								repo: recoveryRepo,
-							},
-						})
-					} catch (auditErr) {
-						// Credentials update already committed — audit failure must not
-						// suppress the token response the caller is waiting on.
-						logger.warn('Failed to insert installation_id_recovered audit event', {
-							integrationId: integration.id,
-							error: String(auditErr),
-						})
-					}
-				})
+				if (oldInstallationId) {
+					// Guard against concurrent-recovery duplicate audit rows: two parallel
+					// callers can both 404 on the same cached id and both discover the
+					// same new id. The helper takes a `SELECT … FOR UPDATE` on the row
+					// so the second caller blocks on the first's lock, re-reads the
+					// already-rotated value, and short-circuits without writing again.
+					await persistRecoveredInstallationId(db, {
+						integrationId: integration.id,
+						workspaceId,
+						actorId,
+						expectedOldInstallationId: oldInstallationId,
+						newInstallationId: result.installationId,
+						repo: recoveryRepo,
+					})
+				}
 				logger.info('Recovered GitHub App installation id mid-session', {
 					integrationId: integration.id,
 					oldInstallationId,
@@ -870,17 +840,17 @@ app.openapi(githubTokenRoute, (async (c) => {
 			}
 			return c.json({ token: result.token })
 		} catch (err) {
-			// Discovery returning 404 means the App is no longer installed for
-			// this repo at all — treat it the same as a revoked grant so the
-			// caller sees the reconnect prompt, not a generic 400. The rest of
-			// the error surface (mint 401, 5xx, malformed credentials) stays
-			// on the 400 path so T5's tagger can classify them.
-			const msg = err instanceof Error ? err.message : String(err)
-			if (msg.startsWith('Failed to discover GitHub App installation')) {
+			// Only a discovery 404 means "App is no longer installed for this
+			// repo" — that's the case where the caller genuinely needs the
+			// reconnect prompt. Every other discovery status (5xx, 429, network)
+			// is a transient GitHub failure and must NOT tell the caller their
+			// grant is revoked; it drops into the BAD_REQUEST branch so T5's
+			// tagger classifies it as a transient failure instead.
+			if (err instanceof DiscoveryError && err.status === 404) {
 				logger.warn('GitHub App installation no longer resolvable — treating as revoked', {
 					integrationId: integration.id,
 					repo: recoveryRepo,
-					error: msg,
+					error: err.message,
 				})
 				return c.json(
 					createApiError(
@@ -893,7 +863,8 @@ app.openapi(githubTokenRoute, (async (c) => {
 			logger.warn('GitHub token mint failed (recovery path)', {
 				integrationId: integration.id,
 				repo: recoveryRepo,
-				error: msg,
+				error: err instanceof Error ? err.message : String(err),
+				...(err instanceof DiscoveryError ? { discovery_status: err.status } : {}),
 			})
 			return c.json(createApiError('BAD_REQUEST', 'Failed to mint GitHub access token'), 400)
 		}
