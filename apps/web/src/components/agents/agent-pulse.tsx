@@ -1,5 +1,5 @@
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
-import { ACTIVE_STATUSES } from '@/lib/agent-status'
+import { getActiveAgentSessions } from '@/lib/agent-status'
 import { useMemo } from 'react'
 
 export function AgentPulse({ workspaceId }: { workspaceId: string }) {
@@ -7,10 +7,7 @@ export function AgentPulse({ workspaceId }: { workspaceId: string }) {
 
 	const activeCount = useMemo(() => {
 		if (!sessions) return 0
-		const activeActors = new Set(
-			sessions.filter((s) => ACTIVE_STATUSES.has(s.status)).map((s) => s.actorId),
-		)
-		return activeActors.size
+		return getActiveAgentSessions(sessions).length
 	}, [sessions])
 
 	if (activeCount === 0) {

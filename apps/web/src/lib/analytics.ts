@@ -164,6 +164,19 @@ export function trackForyouSparseComposerSubmit(p: { items_count: number }): voi
 	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
 }
 
+// Sidebar legibility bet — click-through proxy for the qualitative ship metric.
+// `workspace_id` already rides via the PostHog super-property registered on
+// workspace mount; the explicit `workspaceId` here is a duplicate the Analyst
+// asked for so the events can be sliced without joining super-properties.
+
+export function trackSidebarWorkspaceSwitcherOpened(p: { workspaceId: string }): void {
+	trackEvent('sidebar.workspace_switcher.opened', { workspaceId: p.workspaceId })
+}
+
+export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): void {
+	trackEvent('sidebar.agent_activity.expanded', { workspaceId: p.workspaceId })
+}
+
 // Ship-metric events for the For You onboarding prompt bet — response rate =
 // count(north_star_prompt_response) / count(north_star_prompt_impression),
 // filtered to workspaces with no prior bets. `workspace_id` is passed on the
