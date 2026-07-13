@@ -41,6 +41,11 @@ import {
 	utcDayString,
 } from '../lib/analytics/catalog-events'
 import {
+	detectChiefOfStaffDomainOutput,
+	loadCoSSessionContext,
+	trackChiefOfStaffDomainOutputDetected,
+} from '../lib/analytics/thinness-events'
+import {
 	isClaudeFailoverEnabled,
 	recordRuntimeClaudeOAuthBackupExhausted,
 	recordRuntimeClaudeOAuthFailover,
@@ -246,6 +251,16 @@ export class SessionManager extends EventEmitter {
 	 * even though both arrive at `watchContainerExit` as a non-zero exit code.
 	 */
 	private stopRequested: Set<string> = new Set()
+	/**
+	 * Per-session cache for the Chief of Staff prototype bet's thinness guardrail
+	 * (T4). Populated on the first stdout chunk we ingest for a given session:
+	 * a `null` entry means "not Chief of Staff, don't check again"; a populated
+	 * entry carries the workspace/actor ids the thinness event needs so we don't
+	 * re-hit `sessions ⋈ actors` on every chunk. Both local Docker and remote
+	 * agent-server flows share the map.
+	 */
+	private cosThinnessContext: Map<string, { workspaceId: string; actorId: string } | null> =
+		new Map()
 
 	constructor(
 		private db: Database,
@@ -1500,6 +1515,43 @@ export class SessionManager extends EventEmitter {
 		return new Date(Date.now() + timeoutSeconds * 1000)
 	}
 
+	/**
+	 * Chief of Staff thinness guardrail (T4). Fires
+	 * `chief_of_staff_domain_output_detected` once per hit — the parent bet's
+	 * rolling kill clause treats even one as a stop signal, so the heuristic is
+	 * conservative (precision > recall) and the emit is best-effort — an error
+	 * here must never take down the log ingest path.
+	 */
+	private async maybeEmitCoSDomainOutput(
+		sessionId: string,
+		stream: 'stdout' | 'stderr' | 'system',
+		content: string,
+	): Promise<void> {
+		if (stream !== 'stdout') return
+		try {
+			let ctx = this.cosThinnessContext.get(sessionId)
+			if (ctx === undefined) {
+				const loaded = await loadCoSSessionContext(this.db, sessionId)
+				ctx = loaded?.isChiefOfStaff
+					? { workspaceId: loaded.workspaceId, actorId: loaded.actorId }
+					: null
+				this.cosThinnessContext.set(sessionId, ctx)
+			}
+			if (!ctx) return
+			const hit = detectChiefOfStaffDomainOutput(content)
+			if (!hit) return
+			await trackChiefOfStaffDomainOutputDetected({
+				workspaceId: ctx.workspaceId,
+				sessionId,
+				actorId: ctx.actorId,
+				chars: hit.chars,
+				messageId: hit.messageId,
+			})
+		} catch (err) {
+			logger.warn('CoS thinness check failed', { sessionId, error: String(err) })
+		}
+	}
+
 	private streamContainerLogs(sessionId: string, containerId: string) {
 		const drained = (async () => {
 			// First connect replays history (`tail: 'all'`); reconnects after a
@@ -1543,6 +1595,8 @@ export class SessionManager extends EventEmitter {
 										: next
 							}
 						}
+
+						void this.maybeEmitCoSDomainOutput(sessionId, chunk.stream, chunk.data)
 					}
 					// Stream ended naturally — container exited and Docker closed the
 					// connection. `watchContainerExit` will handle terminal cleanup.
@@ -2649,6 +2703,7 @@ export class SessionManager extends EventEmitter {
 	}
 
 	private async cleanupSession(sessionId: string): Promise<void> {
+		this.cosThinnessContext.delete(sessionId)
 		const sessionData = this.activeSessions.get(sessionId)
 		if (sessionData) {
 			await rm(sessionData.tempDir, { recursive: true, force: true }).catch((err) =>
@@ -2683,6 +2738,7 @@ export class SessionManager extends EventEmitter {
 					data: line.content,
 				} satisfies SessionLogEvent)
 			}
+			void this.maybeEmitCoSDomainOutput(sessionId, line.stream, line.content)
 		}
 	}
 
@@ -2865,6 +2921,7 @@ export class SessionManager extends EventEmitter {
 		await this.drainQueue(updated.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
 		)
+		this.cosThinnessContext.delete(sessionId)
 
 		logger.info(`Remote session ${status}: ${sessionId}`, { exitCode })
 	}

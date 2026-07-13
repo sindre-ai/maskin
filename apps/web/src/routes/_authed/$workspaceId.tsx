@@ -8,6 +8,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
+import { deriveEntryAgentRole } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { ChatProvider, useChat } from '@/lib/chat-context'
@@ -64,9 +65,17 @@ function WorkspaceLayout() {
 	// Resolve the per-workspace Workspace Coach agent by name (matches WORKSPACE_COACH_DEFAULT
 	// in packages/shared/src/templates/workspace-coach-agent.ts). Null until actors load
 	// or when the workspace is missing Workspace Coach (e.g. pre-backfill).
-	const agentActorId = useMemo(
-		() => actors?.find((a) => a.type === 'agent' && a.name === 'Workspace Coach')?.id ?? null,
+	const defaultAgent = useMemo(
+		() => actors?.find((a) => a.type === 'agent' && a.name === 'Workspace Coach') ?? null,
 		[actors],
+	)
+	const agentActorId = defaultAgent?.id ?? null
+	// Chief of Staff prototype bet's `chat_session_started.entry_agent_role`:
+	// derived from the routing agent's display name so the property flips to
+	// `'chief-of-staff'` automatically once T3 makes CoS the default here.
+	const entryAgentRole = useMemo(
+		() => deriveEntryAgentRole(defaultAgent?.name ?? null),
+		[defaultAgent],
 	)
 
 	const [open, setOpenState] = useState(getInitialOpen)
@@ -131,7 +140,11 @@ function WorkspaceLayout() {
 							</ChatPinShell>
 						</PageHeaderProvider>
 						<CommandPalette />
-						<ChatPanel workspaceId={workspaceId} agentActorId={agentActorId} />
+						<ChatPanel
+							workspaceId={workspaceId}
+							agentActorId={agentActorId}
+							entryAgentRole={entryAgentRole}
+						/>
 					</PendingCommentsProvider>
 				</NewConversationProvider>
 			</ChatProvider>

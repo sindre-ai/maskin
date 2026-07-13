@@ -144,6 +144,7 @@ describe('useChatSession — bootstrap', () => {
 			entity_id: 'sess-new',
 			entity_type: 'session',
 			entry_point: 'sindre_session',
+			entry_agent_role: null,
 		})
 	})
 
@@ -172,11 +173,39 @@ describe('useChatSession — bootstrap', () => {
 			entity_id: 'sess-1',
 			entity_type: 'session',
 			entry_point: 'sindre_session',
+			entry_agent_role: null,
 		})
 		expect(trackChatSessionStarted).toHaveBeenNthCalledWith(2, {
 			entity_id: 'sess-2',
 			entity_type: 'session',
 			entry_point: 'sindre_session',
+			entry_agent_role: null,
+		})
+	})
+
+	it('forwards entryAgentRole onto chat_session_started for the CoS bet', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-cos'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(
+			() =>
+				useChatSession({
+					workspaceId,
+					agentActorId,
+					entryAgentRole: 'chief-of-staff',
+				}),
+			{ wrapper: TestWrapper },
+		)
+
+		await act(async () => {
+			await result.current.send('hi')
+		})
+
+		expect(trackChatSessionStarted).toHaveBeenCalledWith({
+			entity_id: 'sess-cos',
+			entity_type: 'session',
+			entry_point: 'sindre_session',
+			entry_agent_role: 'chief-of-staff',
 		})
 	})
 
