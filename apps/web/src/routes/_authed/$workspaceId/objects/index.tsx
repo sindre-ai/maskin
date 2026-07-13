@@ -597,7 +597,12 @@ function ObjectsPage() {
 		activeDrivers.length === 1
 			? (actors?.find((a) => a.id === activeDrivers[0])?.name ?? '1 driver')
 			: `${activeDrivers.length} drivers`
-	const hasChipFilters = activeStatuses.length > 0 || activeDrivers.length > 0
+	// Include-archived is the third chip source. Bet-only per T5 — non-bet tabs
+	// never see the toggle or the chip. `supportsIncludeArchived` already gates
+	// the toggle in DisplayPanel; mirroring it here keeps the chip in lockstep
+	// so a leftover URL param on a non-bet tab doesn't render an orphan chip.
+	const archivedChipActive = supportsIncludeArchived && includeArchived
+	const hasChipFilters = activeStatuses.length > 0 || activeDrivers.length > 0 || archivedChipActive
 
 	const bulkOwnerOptions = useMemo(
 		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),
@@ -921,11 +926,24 @@ function ObjectsPage() {
 							onRemove={() => updateSearch({ driver: undefined })}
 						/>
 					)}
+					{archivedChipActive && (
+						<FilterChip
+							label="Include"
+							value="archived"
+							onRemove={() => updateSearch({ includeArchived: undefined })}
+						/>
+					)}
 					<Button
 						variant="ghost"
 						size="sm"
 						className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-						onClick={() => updateSearch({ status: undefined, driver: undefined })}
+						onClick={() =>
+							updateSearch({
+								status: undefined,
+								driver: undefined,
+								includeArchived: undefined,
+							})
+						}
 					>
 						Clear all
 					</Button>
