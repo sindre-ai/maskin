@@ -4,8 +4,9 @@
  * Workspace Coach.
  *
  * This is the single source of truth for the Chief of Staff's factory defaults.
- * It is used at workspace bootstrap and by `POST /api/actors/:id/reset` to
- * restore an edited Chief of Staff back to its original configuration.
+ * Used at workspace bootstrap. `POST /api/actors/:id/reset` currently only
+ * knows about the Workspace Coach — extending it to restore the Chief of Staff
+ * from these defaults is a follow-up.
  */
 
 import { PLATFORM_MCP_PRESET } from './workspace-coach-agent'

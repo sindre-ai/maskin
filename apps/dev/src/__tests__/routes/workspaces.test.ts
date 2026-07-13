@@ -66,9 +66,7 @@ describe('Workspaces Routes', () => {
 				expect(insert.apiKey).toMatch(/^ank_/)
 			}
 			// Member roles for the 6 default agents (at 3, 5, 7, 9, 11, 13).
-			const memberInserts = [3, 5, 7, 9, 11, 13].map(
-				(i) => calls.inserts[i] as { role?: string },
-			)
+			const memberInserts = [3, 5, 7, 9, 11, 13].map((i) => calls.inserts[i] as { role?: string })
 			for (const insert of memberInserts) {
 				expect(insert.role).toBe('member')
 			}
