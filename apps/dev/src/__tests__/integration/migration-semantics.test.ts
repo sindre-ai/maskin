@@ -263,7 +263,7 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 			INSERT INTO workspaces (name, settings, created_by)
 			VALUES (
 				'archived-status-legacy',
-				${JSON.stringify({
+				${{
 					statuses: {
 						bet: [
 							'signal',
@@ -276,7 +276,7 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 							'paused',
 						],
 					},
-				})}::jsonb,
+				}},
 				${actorId}
 			)
 			RETURNING id
@@ -329,7 +329,7 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 			INSERT INTO workspaces (name, settings, created_by)
 			VALUES (
 				'archived-status-idempotent',
-				${JSON.stringify({
+				${{
 					statuses: {
 						bet: [
 							'signal',
@@ -346,7 +346,7 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 					field_definitions: {
 						bet: [{ name: 'archive_reason', type: 'text', required: false }],
 					},
-				})}::jsonb,
+				}},
 				${actorId}
 			)
 			RETURNING id, settings
@@ -421,10 +421,10 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 				'bet',
 				'Council-parked bet swept last week',
 				'paused',
-				${JSON.stringify({
+				${{
 					hygiene_swept_at: '2026-07-06T00:00:00Z',
 					council_route: 'park',
-				})}::jsonb,
+				}},
 				${actorId}
 			)
 			RETURNING id
@@ -453,10 +453,10 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 				'bet',
 				'SOC 2 Type II compliance — paused awaiting external audit',
 				'paused',
-				${JSON.stringify({
+				${{
 					hygiene_swept_at: '2026-07-06T00:00:00Z',
 					parked_reason: 'awaiting_external_audit',
-				})}::jsonb,
+				}},
 				${actorId}
 			)
 			RETURNING id
@@ -500,10 +500,10 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 				'bet',
 				'Swept bet — rerun target',
 				'paused',
-				${JSON.stringify({
+				${{
 					hygiene_swept_at: '2026-07-06T00:00:00Z',
 					council_route: 'park',
-				})}::jsonb,
+				}},
 				${actorId}
 			)
 			RETURNING id
