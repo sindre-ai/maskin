@@ -115,9 +115,10 @@ app.openapi(createWorkspaceRoute, async (c) => {
 				role: 'owner',
 			})
 
-			// Seed all five default agents (Coach, Driver, Strategist, Insights Triage,
-			// Research Agent) inside the same transaction. If any one fails the tx
-			// rolls back — no half-seeded workspace lingers behind a partial success.
+			// Seed all default agents (Coach, Chief of Staff, Driver, Strategist,
+			// Insights Triage, Research Agent) inside the same transaction. If any
+			// one fails the tx rolls back — no half-seeded workspace lingers behind
+			// a partial success.
 			// Skills, workspace_skill files, and triggers are seeded post-commit
 			// because they hit S3 and can't be rolled back inside a DB transaction.
 			await seedDefaultAgentActors(tx, ws.id, actorId)
@@ -158,7 +159,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 		created_by: actorId,
 	})
 
-	// Post-commit: seed the five agents' skills + triggers. The actor + member
+	// Post-commit: seed the default agents' skills + triggers. The actor + member
 	// rows are already committed by seedDefaultAgentActors, so this call is a
 	// no-op for actors (name check hits every one) and only writes
 	// workspace_skills + agent_skills + triggers.

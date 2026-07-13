@@ -103,7 +103,7 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 }
 
 /**
- * Seed the five default agent actor rows + workspace_members inside the
+ * Seed the default agent actor rows + workspace_members inside the
  * caller's transaction. Skills, workspace_skill files, and triggers are NOT
  * seeded here — those hit S3 and must live post-commit (see
  * bootstrapDefaultAgents).

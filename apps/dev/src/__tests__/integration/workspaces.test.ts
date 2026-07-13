@@ -224,7 +224,7 @@ describe('Workspaces Integration', () => {
 	})
 
 	describe('default agent seeding', () => {
-		it('seeds all 5 default agents atomically inside the create transaction', async () => {
+		it('seeds all default agents atomically inside the create transaction', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -236,7 +236,7 @@ describe('Workspaces Integration', () => {
 			expect(await agentNamesFor(ws.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
 		})
 
-		it('creates two workspaces for the same creator with 5 agents each and no cross-contamination', async () => {
+		it('creates two workspaces for the same creator with default agents each and no cross-contamination', async () => {
 			const app = createApp()
 
 			const first = await (
@@ -250,7 +250,7 @@ describe('Workspaces Integration', () => {
 			expect(await agentNamesFor(first.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
 			expect(await agentNamesFor(second.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
 
-			// Agent actor rows are distinct between workspaces — a workspace's five
+			// Agent actor rows are distinct between workspaces — a workspace's
 			// members must not overlap another workspace's, otherwise
 			// permissions/skills would leak across tenants.
 			const firstAgentIds = new Set(
