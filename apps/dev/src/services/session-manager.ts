@@ -49,6 +49,10 @@ import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { isAuthRevokedError } from '../lib/integrations/errors'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import {
+	mintAgentAppInstallationToken,
+	readAgentAppInstallationId,
+} from '../lib/integrations/providers/github/agent-app'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
@@ -1303,6 +1307,49 @@ export class SessionManager extends EventEmitter {
 			envVars.GITHUB_INTEGRATION_ID = primaryGithubIntegrationId
 		}
 
+		// Mint fresh ~1h installation tokens from the sindre-ai-agents App for the
+		// three unattended-agent identities `github`, `github-sindre-ai`, and
+		// `github-vaerksted-ai`. Consumed by each identity's MCP `github` tools
+		// config once the runtime actor-config flip is done (a separate
+		// `update_actor` call, mirroring T2's github_approver deferral). See parent
+		// bet [GitHub App per role for unattended agents]
+		// (https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/9e819672-7bcf-4212-b1b2-a88d83a960b5).
+		// Guarded: no App creds → skip cleanly (session-start keeps working before
+		// Magnus completes the org walkthrough); per-identity mint failure logs
+		// and skips only that identity.
+		//
+		// Per-invocation minting (the DoD's ideal) is owned by sibling task
+		// [Wire the GitHub MCP transport to mint a fresh installation token per
+		// tool call](https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/2e4b353b-0670-46ef-9d39-dd33dd2e8ac6),
+		// which will replace the session-start cache to close the ~1h TTL gap
+		// flagged in the parent bet's knowledge.
+		const agentAppInstallationId = readAgentAppInstallationId()
+		const agentIdentities: Array<{ envKey: string; identity: string }> = [
+			{ envKey: 'AGENT_GITHUB_TOKEN', identity: 'github' },
+			{ envKey: 'AGENT_GITHUB_SINDRE_AI_TOKEN', identity: 'github-sindre-ai' },
+			{ envKey: 'AGENT_GITHUB_VAERKSTED_AI_TOKEN', identity: 'github-vaerksted-ai' },
+		]
+		const mintedAgentTokenEnvKeys: string[] = []
+		if (agentAppInstallationId) {
+			await Promise.all(
+				agentIdentities.map(async ({ envKey, identity }) => {
+					try {
+						const { token } = await mintAgentAppInstallationToken({
+							installationId: agentAppInstallationId,
+						})
+						envVars[envKey] = token
+						mintedAgentTokenEnvKeys.push(envKey)
+					} catch (err) {
+						logger.warn(`Failed to mint sindre-ai-agents installation token for ${identity}`, {
+							sessionId: session.id,
+							workspaceId: session.workspaceId,
+							error: String(err),
+						})
+					}
+				}),
+			)
+		}
+
 		// Merge user-provided env vars, filtering out reserved keys
 		const RESERVED_ENV_KEYS = new Set([
 			'SESSION_ID',
@@ -1338,6 +1385,9 @@ export class SessionManager extends EventEmitter {
 		}
 		if (primaryGithubIntegrationId) {
 			RESERVED_ENV_KEYS.add('GITHUB_INTEGRATION_ID')
+		}
+		for (const key of mintedAgentTokenEnvKeys) {
+			RESERVED_ENV_KEYS.add(key)
 		}
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {

@@ -12,6 +12,21 @@ import { mintAppJwtFromEnv } from './app-jwt'
  */
 const AGENT_APP_ID_ENV = 'GITHUB_APP_ID_SINDRE_AI'
 const AGENT_APP_PRIVATE_KEY_ENV = 'GITHUB_APP_PRIVATE_KEY_SINDRE_AI'
+const AGENT_APP_INSTALLATION_ID_ENV = 'GITHUB_APP_INSTALLATION_ID_SINDRE_AI'
+
+/**
+ * Return the sindre-ai-agents installation id from env, or null when any of the
+ * three App env vars (id / private key / installation id) is missing. Callers
+ * skip minting instead of throwing when this returns null — that's what keeps
+ * session-manager working on environments where the App hasn't been installed
+ * yet (before Magnus completes the org walkthrough).
+ */
+export function readAgentAppInstallationId(env: NodeJS.ProcessEnv = process.env): string | null {
+	const installationId = env[AGENT_APP_INSTALLATION_ID_ENV]
+	if (!installationId) return null
+	if (!env[AGENT_APP_ID_ENV] || !env[AGENT_APP_PRIVATE_KEY_ENV]) return null
+	return installationId
+}
 
 /**
  * Ask GitHub to issue a fresh installation access token for the sindre-ai-agents

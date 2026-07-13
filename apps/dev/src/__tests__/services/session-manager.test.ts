@@ -59,9 +59,16 @@ vi.mock('../../lib/integrations/registry', () => ({
 	getProvider: vi.fn().mockReturnValue(null),
 }))
 
-const { mockGetValidToken, mockFetchInstallationOwnerLogin } = vi.hoisted(() => ({
+const {
+	mockGetValidToken,
+	mockFetchInstallationOwnerLogin,
+	mockMintAgentAppInstallationToken,
+	mockReadAgentAppInstallationId,
+} = vi.hoisted(() => ({
 	mockGetValidToken: vi.fn(),
 	mockFetchInstallationOwnerLogin: vi.fn(),
+	mockMintAgentAppInstallationToken: vi.fn(),
+	mockReadAgentAppInstallationId: vi.fn().mockReturnValue(null),
 }))
 
 vi.mock('../../lib/integrations/oauth/token-manager', () => ({
@@ -72,6 +79,11 @@ vi.mock('../../lib/integrations/oauth/token-manager', () => ({
 
 vi.mock('../../lib/integrations/providers/github/auth', () => ({
 	fetchInstallationOwnerLogin: mockFetchInstallationOwnerLogin,
+}))
+
+vi.mock('../../lib/integrations/providers/github/agent-app', () => ({
+	mintAgentAppInstallationToken: mockMintAgentAppInstallationToken,
+	readAgentAppInstallationId: mockReadAgentAppInstallationId,
 }))
 
 vi.mock('../../services/workspace-briefing', () => ({
@@ -906,6 +918,147 @@ describe('SessionManager', () => {
 			expect(agentMcp.mcpServers['github-sindre-ai'].env.GITHUB_TOKEN).toBe(
 				'${GITHUB_TOKEN_SINDRE_AI}',
 			)
+		})
+	})
+
+	describe('startSession() — sindre-ai-agents App identity tokens', () => {
+		function setupLaunchMocks(opts: {
+			session: ReturnType<typeof buildSession>
+			workspace: { id: string; settings: Record<string, unknown> }
+			agent: Record<string, unknown>
+		}) {
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+			mockResults.selectQueue = [
+				[opts.session],
+				[opts.workspace],
+				[{ count: 0 }],
+				[opts.agent],
+				[opts.workspace],
+				[opts.workspace],
+				[], // no integrations
+			]
+		}
+
+		function buildFixtures() {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			return {
+				session,
+				workspace: { id: session.workspaceId, settings: {} },
+				agent: {
+					id: session.actorId,
+					type: 'agent',
+					systemPrompt: 'You are a helpful AI agent.',
+					llmProvider: null,
+					llmConfig: null,
+					apiKey: 'ank_test_agent_key',
+					tools: null,
+				},
+			}
+		}
+
+		it('injects AGENT_<IDENTITY>_TOKEN env vars for the three unattended-agent identities when App creds are present', async () => {
+			mockReadAgentAppInstallationId.mockReturnValueOnce('inst-777')
+			mockMintAgentAppInstallationToken
+				.mockResolvedValueOnce({ token: 'ghs_github', expiresAt: '2026-07-13T08:00:00Z' })
+				.mockResolvedValueOnce({
+					token: 'ghs_github_sindre_ai',
+					expiresAt: '2026-07-13T08:00:00Z',
+				})
+				.mockResolvedValueOnce({
+					token: 'ghs_github_vaerksted_ai',
+					expiresAt: '2026-07-13T08:00:00Z',
+				})
+
+			const fixtures = buildFixtures()
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+
+			expect(createArgs.env.AGENT_GITHUB_TOKEN).toBe('ghs_github')
+			expect(createArgs.env.AGENT_GITHUB_SINDRE_AI_TOKEN).toBe('ghs_github_sindre_ai')
+			expect(createArgs.env.AGENT_GITHUB_VAERKSTED_AI_TOKEN).toBe('ghs_github_vaerksted_ai')
+			expect(mockMintAgentAppInstallationToken).toHaveBeenCalledTimes(3)
+			expect(mockMintAgentAppInstallationToken).toHaveBeenCalledWith({ installationId: 'inst-777' })
+		})
+
+		it('skips minting cleanly when the sindre-ai-agents App env vars are absent', async () => {
+			mockReadAgentAppInstallationId.mockReturnValueOnce(null)
+
+			const fixtures = buildFixtures()
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+
+			expect(createArgs.env.AGENT_GITHUB_TOKEN).toBeUndefined()
+			expect(createArgs.env.AGENT_GITHUB_SINDRE_AI_TOKEN).toBeUndefined()
+			expect(createArgs.env.AGENT_GITHUB_VAERKSTED_AI_TOKEN).toBeUndefined()
+			expect(mockMintAgentAppInstallationToken).not.toHaveBeenCalled()
+		})
+
+		it('injects the other two identities and continues the session when one mint call fails', async () => {
+			mockReadAgentAppInstallationId.mockReturnValueOnce('inst-777')
+			mockMintAgentAppInstallationToken
+				.mockResolvedValueOnce({ token: 'ghs_github', expiresAt: '2026-07-13T08:00:00Z' })
+				.mockRejectedValueOnce(new Error('GitHub 403 Resource not accessible by integration'))
+				.mockResolvedValueOnce({
+					token: 'ghs_github_vaerksted_ai',
+					expiresAt: '2026-07-13T08:00:00Z',
+				})
+
+			const fixtures = buildFixtures()
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+
+			expect(createArgs.env.AGENT_GITHUB_TOKEN).toBe('ghs_github')
+			expect(createArgs.env.AGENT_GITHUB_SINDRE_AI_TOKEN).toBeUndefined()
+			expect(createArgs.env.AGENT_GITHUB_VAERKSTED_AI_TOKEN).toBe('ghs_github_vaerksted_ai')
+		})
+
+		it('reserves the minted env var names so user config cannot shadow them', async () => {
+			mockReadAgentAppInstallationId.mockReturnValueOnce('inst-777')
+			mockMintAgentAppInstallationToken.mockResolvedValue({
+				token: 'ghs_real',
+				expiresAt: '2026-07-13T08:00:00Z',
+			})
+
+			const fixtures = buildFixtures()
+			fixtures.session.config = {
+				...(fixtures.session.config as Record<string, unknown>),
+				env_vars: {
+					AGENT_GITHUB_TOKEN: 'user-pat',
+					AGENT_GITHUB_SINDRE_AI_TOKEN: 'user-pat',
+					AGENT_GITHUB_VAERKSTED_AI_TOKEN: 'user-pat',
+				},
+			}
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+
+			expect(createArgs.env.AGENT_GITHUB_TOKEN).toBe('ghs_real')
+			expect(createArgs.env.AGENT_GITHUB_SINDRE_AI_TOKEN).toBe('ghs_real')
+			expect(createArgs.env.AGENT_GITHUB_VAERKSTED_AI_TOKEN).toBe('ghs_real')
 		})
 	})
 

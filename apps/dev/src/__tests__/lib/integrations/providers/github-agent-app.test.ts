@@ -1,6 +1,9 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { mintAgentAppInstallationToken } from '../../../../lib/integrations/providers/github/agent-app'
+import {
+	mintAgentAppInstallationToken,
+	readAgentAppInstallationId,
+} from '../../../../lib/integrations/providers/github/agent-app'
 
 const { privateKey: testPrivateKeyPem } = generateKeyPairSync('rsa', {
 	modulusLength: 2048,
@@ -124,5 +127,41 @@ describe('mintAgentAppInstallationToken', () => {
 		await expect(mintAgentAppInstallationToken({ installationId: 'inst-1' })).rejects.toThrow(
 			'GITHUB_APP_ID_SINDRE_AI environment variable is required',
 		)
+	})
+})
+
+describe('readAgentAppInstallationId', () => {
+	it('returns the installation id when all three App env vars are present', () => {
+		expect(
+			readAgentAppInstallationId({
+				GITHUB_APP_ID_SINDRE_AI: '42',
+				GITHUB_APP_PRIVATE_KEY_SINDRE_AI: 'pem-body',
+				GITHUB_APP_INSTALLATION_ID_SINDRE_AI: 'inst-99',
+			}),
+		).toBe('inst-99')
+	})
+
+	it('returns null when the installation id is missing', () => {
+		expect(
+			readAgentAppInstallationId({
+				GITHUB_APP_ID_SINDRE_AI: '42',
+				GITHUB_APP_PRIVATE_KEY_SINDRE_AI: 'pem-body',
+			}),
+		).toBeNull()
+	})
+
+	it('returns null when the App id or private key is missing (would fail mint)', () => {
+		expect(
+			readAgentAppInstallationId({
+				GITHUB_APP_INSTALLATION_ID_SINDRE_AI: 'inst-99',
+				GITHUB_APP_PRIVATE_KEY_SINDRE_AI: 'pem-body',
+			}),
+		).toBeNull()
+		expect(
+			readAgentAppInstallationId({
+				GITHUB_APP_INSTALLATION_ID_SINDRE_AI: 'inst-99',
+				GITHUB_APP_ID_SINDRE_AI: '42',
+			}),
+		).toBeNull()
 	})
 })
