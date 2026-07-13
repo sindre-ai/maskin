@@ -165,8 +165,12 @@ test.describe('Sidebar Activity group', () => {
 			})
 		})
 		await page.goto(`/${account.workspaceId}`)
-		// The sidebar shell (nav + For You link) still renders.
-		await expect(page.getByRole('link', { name: 'For You' })).toBeVisible()
+		// The sidebar shell (nav + For You link) still renders. Scoped to the
+		// sidebar container — the breadcrumb also renders a "For You" link for
+		// the current page, which would otherwise collide in strict mode.
+		await expect(
+			page.locator('[data-slot="sidebar"], [data-sidebar="sidebar"]').getByRole('link', { name: 'For You' }),
+		).toBeVisible()
 		// The Activity group disappears entirely — no error state, no shift.
 		await expect(page.getByTestId('sidebar-activity')).toHaveCount(0)
 	})
@@ -307,10 +311,12 @@ test.describe('Sidebar Activity group', () => {
 		const group = page.getByTestId('sidebar-activity')
 		await expect(group.getByText('Planner')).toBeVisible()
 
-		// Toggle sidebar to icon-collapsed mode via the rail.
+		// Toggle sidebar to icon-collapsed mode via the rail. Icon-collapse hides
+		// the group via `group-data-[collapsible=icon]:hidden` (CSS display:none),
+		// it doesn't unmount it — so assert on visibility, not DOM presence.
 		const rail = page.getByRole('button', { name: 'Toggle Sidebar' })
 		await rail.click()
-		await expect(group.getByText('Planner')).toHaveCount(0)
+		await expect(group.getByText('Planner')).not.toBeVisible()
 
 		// Toggle back to expanded — the Activity group re-appears.
 		await rail.click()
