@@ -47,6 +47,14 @@ import {
 } from '../lib/claude-failover'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
+import {
+	GITHUB_PREFLIGHT_SLACK_CHANNEL,
+	type PreflightVerdict,
+	collectGitHubMcpIdentities,
+	postGitHubPreflightSlackAlert,
+	runGitHubPreflight,
+	stripFailedIdentities,
+} from '../lib/github/preflight'
 import { isAuthRevokedError } from '../lib/integrations/errors'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
@@ -1170,11 +1178,16 @@ export class SessionManager extends EventEmitter {
 		}
 		envVars.MASKIN_API_KEY = agent.apiKey
 
-		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } })
+		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } }).
+		// The AGENT_MCP_JSON env var is written further down, after the GitHub
+		// preflight has had a chance to strip failed identities from
+		// `agentTools.mcpServers` — otherwise a broken identity would be re-attached
+		// via the agent config even after we drop it from MCP_SERVERS_JSON.
 		const agentTools = agent.tools as Record<string, unknown> | null
-		if (agentTools && Object.keys(agentTools).length > 0) {
-			envVars.AGENT_MCP_JSON = JSON.stringify(agentTools)
-		}
+		const agentToolsMcpServers =
+			agentTools && typeof agentTools.mcpServers === 'object' && agentTools.mcpServers !== null
+				? (agentTools.mcpServers as Record<string, unknown>)
+				: null
 
 		// Inject runtime-specific config
 		if (sessionConfig.runtime_config) {
@@ -1354,14 +1367,68 @@ export class SessionManager extends EventEmitter {
 		// with auto-injected workspace MCPs and per-org GitHub MCPs. Keys are namespaced so
 		// the sources can't collide (github-<owner>, integration-<provider>, session-mcp-N).
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
-		const mcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
+		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
 			for (const [i, mcp] of mcps.entries()) {
-				mcpServers[`session-mcp-${i}`] = mcp
+				sessionMcpServers[`session-mcp-${i}`] = mcp
 			}
 		}
-		if (Object.keys(mcpServers).length > 0) {
-			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers })
+
+		// Startup preflight: live-validate every attached GitHub identity BEFORE the
+		// container launches. Each identity gets one authenticated read + one
+		// write-scope probe; a missing token short-circuits without touching the
+		// network (that's how 2026-07-11 dropped calls into the anonymous 60/hr
+		// bucket). Failed identities are gated by dropping their MCP entries from
+		// both the agent config and the session config, so subsequent tool calls
+		// under that namespace cannot fire. One consolidated Slack alert per session
+		// lands on C075JBZ65RT so a task never has to rediscover the outage.
+		const preflightIdentities = collectGitHubMcpIdentities(
+			[agentToolsMcpServers, sessionMcpServers],
+			envVars,
+		)
+		let preflightVerdicts: PreflightVerdict[] = []
+		if (preflightIdentities.length > 0) {
+			preflightVerdicts = await runGitHubPreflight(preflightIdentities)
+			const failed = preflightVerdicts.filter((v) => !v.healthy)
+			if (failed.length > 0) {
+				logger.warn('GitHub preflight failed for one or more identities', {
+					sessionId: session.id,
+					workspaceId: session.workspaceId,
+					failed: failed.map((v) => ({
+						name: v.name,
+						failureClass: v.failureClass,
+					})),
+				})
+				const slackBotToken = envVars.SLACK_BOT_TOKEN
+				if (slackBotToken) {
+					await postGitHubPreflightSlackAlert({
+						botToken: slackBotToken,
+						channelId: GITHUB_PREFLIGHT_SLACK_CHANNEL,
+						verdicts: preflightVerdicts,
+						context: {
+							sessionId: session.id,
+							workspaceId: session.workspaceId,
+						},
+					})
+				} else {
+					logger.warn('GitHub preflight failed but no SLACK_BOT_TOKEN available — alert not sent', {
+						sessionId: session.id,
+						workspaceId: session.workspaceId,
+					})
+				}
+			}
+		}
+		const gatedAgentToolsMcpServers = stripFailedIdentities(agentToolsMcpServers, preflightVerdicts)
+		const gatedSessionMcpServers = stripFailedIdentities(sessionMcpServers, preflightVerdicts)
+
+		if (agentTools && Object.keys(agentTools).length > 0) {
+			const gatedAgentTools = gatedAgentToolsMcpServers
+				? { ...agentTools, mcpServers: gatedAgentToolsMcpServers }
+				: agentTools
+			envVars.AGENT_MCP_JSON = JSON.stringify(gatedAgentTools)
+		}
+		if (Object.keys(gatedSessionMcpServers).length > 0) {
+			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers: gatedSessionMcpServers })
 		}
 
 		const browserRequired =

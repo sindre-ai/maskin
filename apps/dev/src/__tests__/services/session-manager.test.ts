@@ -124,6 +124,31 @@ describe('SessionManager', () => {
 		mockResults = ctx.mockResults
 		calls = ctx.calls
 		manager = new SessionManager(ctx.db, storageProvider as StorageProvider)
+		// Default: pretend GitHub is healthy so preflight in buildLaunchSpec does
+		// not touch the real network. Individual tests override this for the
+		// broken-identity path.
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string | URL) => {
+				const u = url.toString()
+				if (u.startsWith('https://api.github.com/user'))
+					return new Response(JSON.stringify({ login: 'octocat' }), {
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					})
+				if (u.startsWith('https://api.github.com/repos/'))
+					return new Response(JSON.stringify({ permissions: { push: true } }), {
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					})
+				if (u.startsWith('https://slack.com/api/chat.postMessage'))
+					return new Response(JSON.stringify({ ok: true }), {
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					})
+				throw new Error(`unexpected fetch in SessionManager test: ${u}`)
+			}),
+		)
 	})
 
 	afterEach(async () => {
@@ -906,6 +931,226 @@ describe('SessionManager', () => {
 			expect(agentMcp.mcpServers['github-sindre-ai'].env.GITHUB_TOKEN).toBe(
 				'${GITHUB_TOKEN_SINDRE_AI}',
 			)
+		})
+	})
+
+	describe('startSession() — GitHub preflight', () => {
+		const githubProviderConfig = {
+			config: {
+				name: 'github',
+				mcp: {
+					command: 'npx',
+					args: ['-y', '@modelcontextprotocol/server-github'],
+					envKey: 'GITHUB_TOKEN',
+				},
+			},
+		}
+		const slackProviderConfig = {
+			config: {
+				name: 'slack',
+				mcp: {
+					envKey: 'SLACK_BOT_TOKEN',
+				},
+			},
+		}
+
+		function launchFixtures(opts: {
+			integrationRows: ReturnType<typeof buildIntegration>[]
+			agentTools?: Record<string, unknown> | null
+		}) {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const workspace = { id: session.workspaceId, settings: {} }
+			const agent = {
+				id: session.actorId,
+				type: 'agent' as const,
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: opts.agentTools ?? null,
+			}
+			return { session, workspace, agent, integrationRows: opts.integrationRows }
+		}
+
+		function loadLaunchMocks(fixtures: ReturnType<typeof launchFixtures>) {
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+			mockResults.selectQueue = [
+				[fixtures.session],
+				[fixtures.workspace],
+				[{ count: 0 }],
+				[fixtures.agent],
+				[fixtures.workspace],
+				[fixtures.workspace],
+				fixtures.integrationRows,
+			]
+		}
+
+		function jsonRes(body: unknown, status = 200): Response {
+			return new Response(JSON.stringify(body), {
+				status,
+				headers: { 'content-type': 'application/json' },
+			})
+		}
+
+		it('drops a broken github identity from AGENT_MCP_JSON and posts one Slack alert to C075JBZ65RT', async () => {
+			const slackIntegration = buildIntegration({ provider: 'slack', externalId: 'T-preflight' })
+			const fixtures = launchFixtures({
+				integrationRows: [slackIntegration],
+				agentTools: {
+					mcpServers: {
+						github: {
+							type: 'stdio',
+							command: 'npx',
+							args: ['-y', '@modelcontextprotocol/server-github'],
+							env: { GITHUB_TOKEN: 'ghp_ok' },
+						},
+						github_approver: {
+							type: 'stdio',
+							command: 'npx',
+							args: ['-y', '@modelcontextprotocol/server-github'],
+							env: { GITHUB_TOKEN: 'ghp_broken' },
+						},
+					},
+				},
+			})
+
+			vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('xoxb-preflight-bot-token')
+
+			const fetchCalls: Array<{ url: string; body?: unknown }> = []
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async (url: string | URL, init?: RequestInit) => {
+					const u = url.toString()
+					fetchCalls.push({
+						url: u,
+						body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+					})
+					if (u === 'https://api.github.com/user') {
+						// Route the /user probe by Authorization header — the approver
+						// token gets a 401, the primary succeeds.
+						const auth = (init?.headers as Record<string, string> | undefined)?.Authorization
+						if (auth === 'Bearer ghp_broken')
+							return new Response('bad creds ghp_broken', { status: 401 })
+						return jsonRes({ login: 'octocat' })
+					}
+					if (u.startsWith('https://api.github.com/repos/'))
+						return jsonRes({ permissions: { push: true } })
+					if (u === 'https://slack.com/api/chat.postMessage') return jsonRes({ ok: true })
+					throw new Error(`unexpected fetch: ${u}`)
+				}),
+			)
+
+			loadLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const agentMcp = JSON.parse(createArgs.env.AGENT_MCP_JSON) as {
+				mcpServers: Record<string, unknown>
+			}
+			// Broken identity gated: agent literally cannot call mcp__github_approver__*
+			expect(Object.keys(agentMcp.mcpServers)).toContain('github')
+			expect(Object.keys(agentMcp.mcpServers)).not.toContain('github_approver')
+
+			const slackPosts = fetchCalls.filter(
+				(c) => c.url === 'https://slack.com/api/chat.postMessage',
+			)
+			expect(slackPosts).toHaveLength(1)
+			const slackBody = slackPosts[0]?.body as { channel: string; text: string }
+			expect(slackBody.channel).toBe('C075JBZ65RT')
+			expect(slackBody.text).toContain('github_approver')
+			expect(slackBody.text).toContain('401-unauth')
+			expect(slackBody.text).not.toContain('ghp_broken')
+		})
+
+		it('missing token short-circuits to missing-token and never hits the anonymous rate-limit bucket', async () => {
+			const slackIntegration = buildIntegration({ provider: 'slack', externalId: 'T-missing' })
+			const fixtures = launchFixtures({
+				integrationRows: [slackIntegration],
+				agentTools: {
+					mcpServers: {
+						github_approver: {
+							type: 'stdio',
+							command: 'npx',
+							args: ['-y', '@modelcontextprotocol/server-github'],
+							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_APPROVER}' },
+						},
+					},
+				},
+			})
+
+			vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('xoxb-bot-token')
+
+			const fetchCalls: string[] = []
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async (url: string | URL, init?: RequestInit) => {
+					const u = url.toString()
+					fetchCalls.push(u)
+					if (u === 'https://slack.com/api/chat.postMessage')
+						return jsonRes({ ok: true, body: init?.body })
+					throw new Error(`missing-token path must not hit ${u}`)
+				}),
+			)
+
+			loadLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			expect(fetchCalls).not.toContain('https://api.github.com/user')
+			expect(fetchCalls).toContain('https://slack.com/api/chat.postMessage')
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const agentMcp = JSON.parse(createArgs.env.AGENT_MCP_JSON) as {
+				mcpServers: Record<string, unknown>
+			}
+			expect(agentMcp.mcpServers).toEqual({})
+		})
+
+		it('leaves the MCP config untouched and posts no Slack alert when every identity is healthy', async () => {
+			const wsId = randomUUID()
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-healthy',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const fixtures = launchFixtures({ integrationRows: [integration] })
+			fixtures.session.workspaceId = wsId
+			fixtures.workspace.id = wsId
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_healthy_token')
+
+			// Rely on the outer describe's default fetch stub (healthy + no Slack call
+			// expected because nothing failed).
+			loadLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const fetchMock = vi.mocked(fetch)
+			const calledUrls = fetchMock.mock.calls.map((args) => args[0]?.toString() ?? '')
+			expect(calledUrls).not.toContain('https://slack.com/api/chat.postMessage')
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const mcp = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+				mcpServers: Record<string, unknown>
+			}
+			expect(mcp.mcpServers['github-sindre-ai']).toBeDefined()
 		})
 	})
 
