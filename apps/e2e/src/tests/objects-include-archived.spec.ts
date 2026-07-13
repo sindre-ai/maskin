@@ -1,5 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
-import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
+import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 // T5: the DisplayPanel gains a "Show" section with an "Include archived" toggle
 // on the bets tab. Default state hides archived; flipping the toggle reveals
@@ -63,4 +63,51 @@ test.describe('Objects — Include archived toggle', () => {
 			await expect(page).toHaveURL(/includeArchived=1/)
 		})
 	}
+
+	// Follow-up to T5: on desktop the chip strip surfaces `Include: archived ✕`
+	// so users can dismiss the flag without opening the DisplayPanel. Exercised
+	// at 1024 (iPad landscape — the smallest ship-gate viewport that still
+	// renders the desktop chip row) so a regression at this breakpoint fails
+	// loudly. Higher breakpoints share the same render path.
+	test(`removes the includeArchived flag when the chip's ✕ is clicked @ ${VIEWPORTS.tabletLandscape.label}`, async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({
+			width: VIEWPORTS.tabletLandscape.width,
+			height: VIEWPORTS.tabletLandscape.height,
+		})
+
+		const activeTitle = `Chip strip active ${Date.now()}`
+		const archivedTitle = `Chip strip archived ${Date.now()}`
+		await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: activeTitle,
+			status: 'active',
+		})
+		await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: archivedTitle,
+			status: 'archived',
+		})
+
+		// Deep-link straight into the toggle-on state so we're testing the chip,
+		// not the toggle plumbing (which the loop above already covers).
+		await page.goto(`/${account.workspaceId}/objects?type=bet&includeArchived=1`)
+		await expect(page.getByText(archivedTitle)).toBeVisible({ timeout: 10_000 })
+
+		// The chip is rendered inline in the toolbar chip strip. Match on the
+		// label + value pair; the remove button carries the shared "Remove
+		// Include filter" aria-label from FilterChip.
+		const chip = page.getByText('Include:').locator('..')
+		await expect(chip).toBeVisible()
+		await expect(chip).toContainText('archived')
+
+		await page.getByRole('button', { name: /Remove Include filter/i }).click()
+
+		// URL loses the flag, archived row disappears, active row stays.
+		await expect(page).not.toHaveURL(/includeArchived=1/)
+		await expect(page.getByText(archivedTitle)).toHaveCount(0)
+		await expect(page.getByText(activeTitle)).toBeVisible()
+	})
 })
