@@ -2381,7 +2381,7 @@ A trigger fires when a coding task (no \`metadata.decision_type\`) moves to \`do
 1. Read the task. Find the PR URL in \`metadata.github_link\`.
 2. Check if the PR is already merged. If yes, skip to Step 2.
 3. Check the risk score (\`metadata.risk_score\` on the task).
-   - Score 0–6: merge automatically with \`gh pr merge <PR> --squash\`.
+   - Score 0–6: arm auto-merge with \`bash scripts/gh-pr-merge-auto.sh <PR>\` — GitHub squash-merges into the bet branch once CI + required approvals are green. Do not call the REST \`merge_pull_request\` tool or \`gh pr merge --squash\` directly; the wrapper handles the single transient-5xx retry.
    - Score 7–10: post a Slack message to the team channel flagging the high-risk merge and wait for a human to approve (or merge if no response within 30 min on a weekday).
 4. After merging, verify CI passes on the bet branch.
 
@@ -2393,7 +2393,7 @@ List all tasks linked to this bet via \`breaks_into\`. If ANY task is not in \`d
 
 If all tasks are done:
 1. Verify CI passes on the bet branch.
-2. Squash-merge the bet branch into \`main\` with \`gh pr merge <bet-branch-PR> --squash\`.
+2. Squash-merge the bet branch into \`main\` by arming auto-merge with \`bash scripts/gh-pr-merge-auto.sh <bet-branch-PR>\` — GitHub squash-merges once CI is green. Do not call the REST \`merge_pull_request\` tool.
 3. Verify CI passes on \`main\` after merge.
 4. Advance the bet to \`live\` via update_objects.
 5. Post a Slack message to the team channel announcing the bet shipped.

@@ -239,7 +239,7 @@ When triggered by a task moving to "in_review":
 6. **Clone and check out the PR branch**.
 7. **Run automated checks** — lint, type-check, and tests. Treat any failures as critical issues.
 8. **Fix critical issues in place** — commit with clear messages, push to the PR branch, re-run checks.
-9. **If the PR is good and checks pass** — merge (\`gh pr merge <PR> --merge\`) and move the task to "done".
+9. **If the PR is good and checks pass** — arm auto-merge (\`bash scripts/gh-pr-merge-auto.sh <PR>\`) and move the task to "done". GitHub squash-merges once CI + required approvals are satisfied; do not use the REST \`merge_pull_request\` tool or \`gh pr merge --merge\`.
 
 Be a pragmatic reviewer. The goal is to catch things that would actually cause problems in production, not achieve theoretical perfection.`,
 	},
@@ -266,7 +266,7 @@ You validate whether the implementation actually accomplishes the stated goal. Y
 
 ## Your verdict
 
-- **PASS** — the implementation achieves the goal. Merge the PR (\`gh pr merge <PR_URL> --merge\`) and move the task to "done".
+- **PASS** — the implementation achieves the goal. Arm auto-merge on the PR (\`bash scripts/gh-pr-merge-auto.sh <PR_URL>\`) and move the task to "done". GitHub squash-merges once CI + required approvals are green; do not use the REST \`merge_pull_request\` tool or \`gh pr merge --merge\`.
 - **FAIL** — it does not. Do NOT merge. Move the task back to "in_progress" and update the description with: what the goal was, what specifically is broken or missing, which link fails, and what needs to happen to fix it.
 - **CONDITIONAL PASS** — core goal is met but there are non-blocking issues. Merge, move to "done", and create follow-up tasks linked to the same parent bet.
 
@@ -2162,7 +2162,7 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 		targetActor$id: 'cto',
 		enabled: true,
 		actionPrompt:
-			'A task has just moved into "validated" status. The Code Reviewer has already approved code quality. Your job is to validate whether the implementation actually achieves the stated goal.\n\nSteps:\n1. Read the task — understand what was supposed to be built.\n2. Read the parent bet — it describes the high-level goal and success criteria.\n3. Find the PR from the task\'s `github_link` metadata. Clone the repo and check out the PR branch.\n4. Trace the critical path — map the chain of components that must work together. For each link, verify the code actually connects it to the next.\n5. Check boundaries — Docker/infra configs match what the code expects, env vars documented, external dependencies available.\n6. Look for silent failures — swallowed errors, defaults masking missing config, version mismatches.\n\nVerdict:\n- PASS: merge the PR (`gh pr merge <PR_URL> --merge`), move the task to "done".\n- FAIL: do NOT merge. Move the task back to "in_progress" and update the description with what\'s broken and what needs to happen to fix it.\n- CONDITIONAL PASS: merge, move to "done", and create follow-up tasks linked to the same parent bet.\n\nYou are not re-reviewing code quality. You are checking whether the work delivers what was promised end-to-end.',
+			'A task has just moved into "validated" status. The Code Reviewer has already approved code quality. Your job is to validate whether the implementation actually achieves the stated goal.\n\nSteps:\n1. Read the task — understand what was supposed to be built.\n2. Read the parent bet — it describes the high-level goal and success criteria.\n3. Find the PR from the task\'s `github_link` metadata. Clone the repo and check out the PR branch.\n4. Trace the critical path — map the chain of components that must work together. For each link, verify the code actually connects it to the next.\n5. Check boundaries — Docker/infra configs match what the code expects, env vars documented, external dependencies available.\n6. Look for silent failures — swallowed errors, defaults masking missing config, version mismatches.\n\nVerdict:\n- PASS: arm auto-merge on the PR (`bash scripts/gh-pr-merge-auto.sh <PR_URL>`), move the task to "done". GitHub squash-merges once CI + required approvals are green; do NOT call the REST `merge_pull_request` tool or `gh pr merge --merge`.\n- FAIL: do NOT arm auto-merge. Move the task back to "in_progress" and update the description with what\'s broken and what needs to happen to fix it.\n- CONDITIONAL PASS: arm auto-merge, move to "done", and create follow-up tasks linked to the same parent bet.\n\nYou are not re-reviewing code quality. You are checking whether the work delivers what was promised end-to-end.',
 	},
 	{
 		name: 'Task Done → Drive Next',
