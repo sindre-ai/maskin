@@ -391,5 +391,22 @@ describe('DisplayPanel', () => {
 			// users can see the flag is on without opening the panel.
 			expect(screen.getByText('1')).toBeInTheDocument()
 		})
+
+		it('renders section headers in the order View → Show → Ordering → Grouping → Filters', async () => {
+			// The approved UX direction pins Show between View and Ordering.
+			// Guard the DOM order so a future refactor can't silently slide
+			// Show back past Grouping.
+			const user = userEvent.setup()
+			renderPanel({
+				includeArchived: false,
+				onIncludeArchivedChange: vi.fn(),
+				actors: [{ id: 'a1', name: 'Alice', type: 'human', createdAt: '', updatedAt: '' } as never],
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			const headers = screen
+				.getAllByText(/^(View|Show|Ordering|Grouping|Filters|Properties)$/)
+				.map((el) => el.textContent)
+			expect(headers).toEqual(['View', 'Show', 'Ordering', 'Grouping', 'Filters', 'Properties'])
+		})
 	})
 })

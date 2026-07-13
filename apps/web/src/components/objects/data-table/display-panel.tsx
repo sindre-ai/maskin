@@ -325,6 +325,36 @@ export function DisplayPanel({
 						</>
 					)}
 
+					{/* Show — per-view visibility flags (Include archived, ...). Only
+					 * renders when the caller wires `onIncludeArchivedChange`, so
+					 * non-bet surfaces keep their existing panel shape. */}
+					{showShow && (
+						<>
+							<div className="p-3 space-y-2">
+								<SectionHeader>Show</SectionHeader>
+								<label
+									htmlFor="display-include-archived"
+									className={cn(
+										// `relative` anchors the invisible `::before` hit surface
+										// so the visible row stays compact while the tap target
+										// meets 44 px — iOS/mobile canon.
+										'relative flex items-center justify-between gap-2 text-xs cursor-pointer',
+										"before:absolute before:-inset-3 before:h-11 before:w-full before:content-[''] before:pointer-events-none",
+									)}
+								>
+									<span className="text-foreground">Include archived</span>
+									<Switch
+										id="display-include-archived"
+										checked={includeArchived}
+										onCheckedChange={(next) => onIncludeArchivedChange?.(next)}
+										aria-label="Include archived"
+									/>
+								</label>
+							</div>
+							<Separator />
+						</>
+					)}
+
 					{/* Ordering */}
 					{showOrdering && (
 						<>
@@ -407,36 +437,6 @@ export function DisplayPanel({
 										</DropdownMenuContent>
 									</DropdownMenu>
 								</PickerRow>
-							</div>
-							<Separator />
-						</>
-					)}
-
-					{/* Show — per-view visibility flags (Include archived, ...). Only
-					 * renders when the caller wires `onIncludeArchivedChange`, so
-					 * non-bet surfaces keep their existing panel shape. */}
-					{showShow && (
-						<>
-							<div className="p-3 space-y-2">
-								<SectionHeader>Show</SectionHeader>
-								<label
-									htmlFor="display-include-archived"
-									className={cn(
-										// `relative` anchors the invisible `::before` hit surface
-										// so the visible row stays compact while the tap target
-										// meets 44 px — iOS/mobile canon.
-										'relative flex items-center justify-between gap-2 text-xs cursor-pointer',
-										"before:absolute before:-inset-3 before:h-11 before:w-full before:content-[''] before:pointer-events-none",
-									)}
-								>
-									<span className="text-foreground">Include archived</span>
-									<Switch
-										id="display-include-archived"
-										checked={includeArchived}
-										onCheckedChange={(next) => onIncludeArchivedChange?.(next)}
-										aria-label="Include archived"
-									/>
-								</label>
 							</div>
 							<Separator />
 						</>
