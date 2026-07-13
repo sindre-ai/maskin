@@ -955,6 +955,215 @@ describe('Integrations Routes', () => {
 			expect(res.status).toBe(400)
 			fetchSpy.mockRestore()
 		})
+
+		describe('installation-id recovery (?repo= + GITHUB_APP_INSTALLATION_RECOVERY_ENABLED)', () => {
+			const originalFlag = process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED
+
+			afterEach(() => {
+				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = originalFlag
+			})
+
+			it('ignores ?repo= when the recovery flag is off (legacy path)', async () => {
+				const { encrypt } = await import('../../lib/crypto')
+				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = 'false'
+
+				const integration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+				})
+				const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.select = [integration]
+
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValue(new Response(JSON.stringify({ token: 'ghs_legacy' }), { status: 200 }))
+
+				const res = await app.request(
+					jsonGet(`/api/integrations/${integration.id}/github-token?repo=sindre-ai%2Fmaskin`, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				expect(await res.json()).toEqual({ token: 'ghs_legacy' })
+				// Legacy TokenManager path — no discovery call, no credentials rewrite.
+				expect(fetchSpy).toHaveBeenCalledTimes(1)
+				expect(fetchSpy).toHaveBeenCalledWith(
+					'https://api.github.com/app/installations/42/access_tokens',
+					expect.objectContaining({ method: 'POST' }),
+				)
+				fetchSpy.mockRestore()
+			})
+
+			it('recovers installation id on stale-cache 404 and persists it with an audit event', async () => {
+				const { encrypt, decrypt } = await import('../../lib/crypto')
+				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = 'true'
+
+				const integration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+				})
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.select = [integration]
+
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+					.mockResolvedValueOnce(new Response(JSON.stringify({ id: 9999 }), { status: 200 }))
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ token: 'ghs_recovered' }), { status: 200 }),
+					)
+
+				const res = await app.request(
+					jsonGet(`/api/integrations/${integration.id}/github-token?repo=sindre-ai%2Fmaskin`, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				expect(await res.json()).toEqual({ token: 'ghs_recovered' })
+
+				// Cached-id mint, discovery, and re-mint against the recovered id.
+				expect(fetchSpy).toHaveBeenCalledTimes(3)
+				expect(fetchSpy).toHaveBeenNthCalledWith(
+					2,
+					'https://api.github.com/repos/sindre-ai/maskin/installation',
+					expect.any(Object),
+				)
+				expect(fetchSpy).toHaveBeenNthCalledWith(
+					3,
+					'https://api.github.com/app/installations/9999/access_tokens',
+					expect.objectContaining({ method: 'POST' }),
+				)
+
+				// Credentials are rewritten with the recovered install id — the
+				// next write from this session skips the recovery round-trip.
+				const setCall = calls.updates[0] as { credentials: string } | undefined
+				expect(setCall).toBeDefined()
+				const rewritten = JSON.parse(decrypt(setCall?.credentials as string))
+				expect(rewritten.installation_id).toBe('9999')
+
+				// Audit event names the recovery so ops can grep for it later.
+				const insertValues = calls.inserts[0] as
+					| {
+							action: string
+							entityType: string
+							data: Record<string, unknown>
+					  }
+					| undefined
+				expect(insertValues).toBeDefined()
+				expect(insertValues?.action).toBe('updated')
+				expect(insertValues?.entityType).toBe('integration')
+				expect(insertValues?.data).toMatchObject({
+					reason: 'installation_id_recovered',
+					old_installation_id: '42',
+					new_installation_id: '9999',
+					repo: 'sindre-ai/maskin',
+				})
+
+				fetchSpy.mockRestore()
+			})
+
+			it('does not rewrite credentials when the cached install id worked on the first try', async () => {
+				const { encrypt } = await import('../../lib/crypto')
+				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = 'true'
+
+				const integration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+				})
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.select = [integration]
+
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValue(new Response(JSON.stringify({ token: 'ghs_first' }), { status: 200 }))
+
+				const res = await app.request(
+					jsonGet(`/api/integrations/${integration.id}/github-token?repo=sindre-ai%2Fmaskin`, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				expect(await res.json()).toEqual({ token: 'ghs_first' })
+				expect(fetchSpy).toHaveBeenCalledTimes(1)
+				expect(calls.updates).toHaveLength(0)
+				expect(calls.inserts).toHaveLength(0)
+				fetchSpy.mockRestore()
+			})
+
+			it('rejects a malformed ?repo= slug by falling back to the legacy path', async () => {
+				const { encrypt } = await import('../../lib/crypto')
+				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = 'true'
+
+				const integration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+				})
+				const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.select = [integration]
+
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValue(new Response(JSON.stringify({ token: 'ghs_legacy' }), { status: 200 }))
+
+				const res = await app.request(
+					jsonGet(
+						`/api/integrations/${integration.id}/github-token?repo=${encodeURIComponent(
+							'../etc/passwd',
+						)}`,
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				// Bad slug is ignored, not surfaced as an error — the route
+				// still answers with a legacy-path token.
+				expect(res.status).toBe(200)
+				expect(fetchSpy).toHaveBeenCalledTimes(1)
+				expect(fetchSpy).toHaveBeenCalledWith(
+					'https://api.github.com/app/installations/42/access_tokens',
+					expect.objectContaining({ method: 'POST' }),
+				)
+				fetchSpy.mockRestore()
+			})
+
+			it('returns 400 when the recovery mint fails after discovery', async () => {
+				const { encrypt } = await import('../../lib/crypto')
+				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = 'true'
+
+				const integration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+				})
+				const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.select = [integration]
+
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+
+				const res = await app.request(
+					jsonGet(`/api/integrations/${integration.id}/github-token?repo=sindre-ai%2Fmaskin`, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(400)
+				fetchSpy.mockRestore()
+			})
+		})
 	})
 
 	describe('GET /api/integrations/:id/slack/conversations', () => {
