@@ -152,10 +152,26 @@ export interface StoredCredentials {
 	[key: string]: unknown
 }
 
+/**
+ * Per-request installation-token scope, forwarded to `POST /app/installations/:id/access_tokens`.
+ * See `providers/github/scope.ts` for the derivation from the invoking MCP tool call.
+ */
+export interface InstallationScope {
+	repositories?: string[]
+	permissions?: Record<string, 'read' | 'write'>
+}
+
 export interface CustomAuthHandler {
 	getInstallUrl(state: string): string
 	handleCallback(params: Record<string, string>): Promise<StoredCredentials>
-	getAccessToken(credentials: StoredCredentials): Promise<string>
+	/**
+	 * Mint an access token from stored credentials.
+	 *
+	 * `scope` narrows the token per request (currently: GitHub App installation
+	 * tokens accept a `repositories` + `permissions` body). Providers that don't
+	 * support per-request narrowing should ignore the arg.
+	 */
+	getAccessToken(credentials: StoredCredentials, scope?: InstallationScope): Promise<string>
 }
 
 export type CustomEventNormalizer = (

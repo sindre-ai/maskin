@@ -163,6 +163,47 @@ describe('githubAuth', () => {
 			const token = await githubAuth.getAccessToken({ installation_id: '77' })
 			expect(token).toBe('ghs_base64')
 		})
+
+		it('forwards per-request scope as a JSON body so GitHub narrows the minted token', async () => {
+			globalThis.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ token: 'ghs_scoped' }),
+			})
+
+			const token = await githubAuth.getAccessToken(
+				{ installation_id: '42' },
+				{ repositories: ['maskin'], permissions: { pull_requests: 'write', metadata: 'read' } },
+			)
+
+			expect(token).toBe('ghs_scoped')
+			const call = vi.mocked(globalThis.fetch).mock.calls[0]
+			const init = call?.[1] as RequestInit
+			expect(init.body).toBe(
+				JSON.stringify({
+					repositories: ['maskin'],
+					permissions: { pull_requests: 'write', metadata: 'read' },
+				}),
+			)
+			const headers = init.headers as Record<string, string>
+			expect(headers['Content-Type']).toBe('application/json')
+		})
+
+		it('sends no body when scope is omitted so credential-helper legacy calls still work', async () => {
+			globalThis.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ token: 'ghs_wide' }),
+			})
+
+			await githubAuth.getAccessToken({ installation_id: '42' })
+
+			const call = vi.mocked(globalThis.fetch).mock.calls[0]
+			const init = call?.[1] as RequestInit
+			expect(init.body).toBeUndefined()
+			// No Content-Type header — GitHub treats missing body + no CT as the
+			// pre-narrowing shape (installation-wide scope).
+			const headers = init.headers as Record<string, string>
+			expect(headers['Content-Type']).toBeUndefined()
+		})
 	})
 
 	describe('fetchInstallationOwnerLogin', () => {

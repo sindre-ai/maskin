@@ -1,4 +1,4 @@
-import type { CustomAuthHandler, StoredCredentials } from '../../types'
+import type { CustomAuthHandler, InstallationScope, StoredCredentials } from '../../types'
 import { mintAppJwtFromEnv } from './app-jwt'
 
 function mintAppJwt(): string {
@@ -18,8 +18,15 @@ export const githubAuth: CustomAuthHandler = {
 		return { installation_id: installationId }
 	},
 
-	async getAccessToken(credentials: StoredCredentials): Promise<string> {
+	async getAccessToken(credentials: StoredCredentials, scope?: InstallationScope): Promise<string> {
 		const jwt = mintAppJwt()
+
+		// GitHub narrows the minted token to `repositories` + `permissions` when
+		// present on the body. Omitting a field falls back to the installation's
+		// full scope for that dimension — so we always send both when a scope is
+		// supplied, and always send neither when it isn't (backwards compat with
+		// the pre-narrowing caller path).
+		const body = scope ? JSON.stringify(scope) : undefined
 
 		const response = await fetch(
 			`https://api.github.com/app/installations/${credentials.installation_id}/access_tokens`,
@@ -29,7 +36,9 @@ export const githubAuth: CustomAuthHandler = {
 					Authorization: `Bearer ${jwt}`,
 					Accept: 'application/vnd.github+json',
 					'X-GitHub-Api-Version': '2022-11-28',
+					...(body ? { 'Content-Type': 'application/json' } : {}),
 				},
+				body,
 			},
 		)
 

@@ -22,6 +22,7 @@ import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
+import { UnmappedToolError, deriveScope } from '../lib/integrations/providers/github/scope'
 import {
 	dispatchAccountLinkAction,
 	dispatchMaskinWorkspaceCommand,
@@ -731,6 +732,23 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 
 // ── GET /api/integrations/:id/github-token ─────────────────────────────────
 
+const githubTokenQuerySchema = z.object({
+	tool: z.string().min(1).optional().openapi({
+		description:
+			'MCP tool name (without provider prefix, e.g. `create_pull_request`, or `git` for credential-helper invocations). Drives per-request permission narrowing. Omit to fall back to the installation-wide permission set.',
+		example: 'create_pull_request',
+	}),
+	repo: z
+		.string()
+		.regex(/^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)?$/)
+		.optional()
+		.openapi({
+			description:
+				"Repository the caller is about to touch, as `owner/repo` or `repo`. Narrows the minted token to a single repo so a leak can't reach unrelated repos in the same installation. Omit for cross-repo calls (e.g. `search_repositories`).",
+			example: 'sindre-ai/maskin',
+		}),
+})
+
 const githubTokenRoute = createRoute({
 	method: 'get',
 	path: '/{id}/github-token',
@@ -738,6 +756,7 @@ const githubTokenRoute = createRoute({
 	summary: 'Mint a fresh GitHub App installation access token',
 	request: {
 		params: idParamSchema,
+		query: githubTokenQuerySchema,
 		headers: workspaceIdHeader,
 	},
 	responses: {
@@ -746,7 +765,7 @@ const githubTokenRoute = createRoute({
 			content: { 'application/json': { schema: z.object({ token: z.string() }) } },
 		},
 		400: {
-			description: 'Failed to mint token',
+			description: 'Failed to mint token — unmapped tool name or upstream GitHub error',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		401: {
@@ -763,6 +782,7 @@ const githubTokenRoute = createRoute({
 app.openapi(githubTokenRoute, (async (c) => {
 	const db = c.get('db')
 	const { id } = c.req.valid('param')
+	const { tool, repo } = c.req.valid('query')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const [integration] = await db
@@ -779,6 +799,42 @@ app.openapi(githubTokenRoute, (async (c) => {
 		.limit(1)
 	if (!integration) return c.json(createApiError('NOT_FOUND', 'GitHub integration not found'), 404)
 
+	// Derive per-request scope before we mint. An unmapped `tool` fails the
+	// call — silently minting a full-install-scope token would defeat the whole
+	// point of this endpoint.
+	//
+	// `repo` without `tool` is also rejected: `repo` alone can't produce a
+	// narrowed token (permissions would still be install-wide), and honouring
+	// only half the caller's intent risks making a caller believe they narrowed
+	// when they didn't. Callers who want the install-wide token must send neither.
+	let scope: ReturnType<typeof deriveScope> | undefined
+	if (repo && !tool) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'`repo` supplied without `tool` — either send both to narrow, or send neither to fall back to the installation-wide token. Silently honouring only the repo would mint a token still holding install-wide permissions.',
+			),
+			400,
+		)
+	}
+	if (tool) {
+		try {
+			scope = deriveScope({ toolName: tool, repo })
+		} catch (err) {
+			if (err instanceof UnmappedToolError) {
+				logger.warn('GitHub token mint rejected — tool not in scope mapping', {
+					integrationId: integration.id,
+					toolName: err.toolName,
+				})
+				return c.json(createApiError('BAD_REQUEST', err.message), 400)
+			}
+			return c.json(
+				createApiError('BAD_REQUEST', err instanceof Error ? err.message : String(err)),
+				400,
+			)
+		}
+	}
+
 	try {
 		const provider = getProvider('github')
 		const tokenManager = new TokenManager()
@@ -787,7 +843,12 @@ app.openapi(githubTokenRoute, (async (c) => {
 		// call (no caching), so a caller hitting this route just-in-time always gets
 		// a live token — unlike the value baked into a session's env vars once at
 		// container launch, which goes stale for any session running past ~1 hour.
-		const token = await tokenManager.getValidToken(db, integration.id, provider)
+		//
+		// When `scope` is set the token is also narrowed to the specific repo +
+		// minimum permissions the current tool call needs (T4 — per-request
+		// narrowing). Absent `scope`, the token stays at the installation's full
+		// scope — backwards compat for the credential-helper's pre-T4 calls.
+		const token = await tokenManager.getValidToken(db, integration.id, provider, scope)
 		return c.json({ token })
 	} catch (err) {
 		if (isAuthRevokedError(err)) {

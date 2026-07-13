@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { decrypt, encrypt } from '../../crypto'
 import { logger } from '../../logger'
 import { IntegrationAuthRevokedError } from '../errors'
-import type { ResolvedProvider, StoredCredentials } from '../types'
+import type { InstallationScope, ResolvedProvider, StoredCredentials } from '../types'
 import { OAuth2Handler, TokenRequestError } from './handler'
 
 /** Buffer time before expiry to trigger a refresh (5 minutes) */
@@ -40,6 +40,7 @@ export class TokenManager {
 		db: Database,
 		integrationId: string,
 		provider: ResolvedProvider,
+		scope?: InstallationScope,
 	): Promise<string> {
 		// Read integration row
 		const [integration] = await db
@@ -60,9 +61,11 @@ export class TokenManager {
 
 		const credentials: StoredCredentials = JSON.parse(decrypt(integration.credentials))
 
-		// Custom auth providers handle their own token generation
+		// Custom auth providers handle their own token generation. Forward the
+		// per-request scope so GitHub App installation tokens can be narrowed to
+		// the target repo + minimum permissions per call.
 		if (provider.customAuth) {
-			return provider.customAuth.getAccessToken(credentials)
+			return provider.customAuth.getAccessToken(credentials, scope)
 		}
 
 		// API key providers return the stored key directly
