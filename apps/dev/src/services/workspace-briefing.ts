@@ -185,7 +185,18 @@ export async function renderWorkspaceBriefing(
 	// you" at the top of the section. Uses `inArray` so `LOOP_ATTENTION_STATUSES`
 	// stays the single source of truth shared with the unread-feed join in
 	// routes/subscriptions.ts — no drift between the two surfaces.
+	//
+	// This coarse tier alone is not enough: `.limit(MAX_LOOPS)` is applied
+	// against this ORDER BY at the DB level, so it must fully match
+	// LOOP_STATUS_PRIORITY (breached > at-risk > holding), not just
+	// "attention-worthy vs not". A 2-tier ORDER BY would let a fresher
+	// `at-risk` loop win one of the MAX_LOOPS slots over an older `breached`
+	// one, because the in-memory 3-tier sort below only re-sorts whatever
+	// already survived the LIMIT. `loopBreachedPriority` breaks the tie within
+	// the attention-worthy tier so breached rows are never truncated in favor
+	// of at-risk ones.
 	const loopHealthPriority = sql<number>`case when ${inArray(objects.status, [...LOOP_ATTENTION_STATUSES])} then 1 else 0 end`
+	const loopBreachedPriority = sql<number>`case when ${eq(objects.status, 'breached')} then 1 else 0 end`
 
 	// Independent queries run in parallel — they don't depend on each other.
 	const [activeBets, pausedBets, closedBets, openInsights, loops] = await Promise.all([
@@ -245,7 +256,7 @@ export async function renderWorkspaceBriefing(
 			.select()
 			.from(objects)
 			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')))
-			.orderBy(desc(loopHealthPriority), desc(objects.updatedAt))
+			.orderBy(desc(loopHealthPriority), desc(loopBreachedPriority), desc(objects.updatedAt))
 			.limit(MAX_LOOPS),
 	])
 
