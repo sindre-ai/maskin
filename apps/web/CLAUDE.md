@@ -152,7 +152,7 @@ Do not introduce custom breakpoints. The `useIsMobile()` hook in `src/hooks/use-
 
 **Headers, breadcrumbs, dense rows.** Breadcrumbs and other long-text rows are hidden below `md:` (see `header.tsx`); replace with a single-level page label if mobile needs context. Action button clusters in the header use the same `h-7 w-7` ghost-icon sizing — touch targets land at 28px which is borderline; pair them with `aria-label` and don't shrink further.
 
-**Tables.** Tables live inside `overflow-auto` wrappers (see `data-table.tsx`, `related-objects-table.tsx`). Column widths use truncate + `max-w-[150px] sm:max-w-[300px]` so cells get more space on larger screens. Don't add `table-fixed` without explicit need.
+**Tables.** Tables live inside `overflow-auto` wrappers (see `data-table.tsx`, `related-objects-table.tsx`). The Title column carries `w-full` on its `TableHead` and `max-w-0` on its `TableCell` (both keyed off `column.id === 'title'`), and the cell wraps the link in `flex min-w-0` + `min-w-0 flex-1 truncate` — so the auto-layout table hands the leftover width to the title and long titles truncate instead of pushing badges out. Other truncated cells use `max-w-[150px] sm:max-w-[300px]`. Don't add `table-fixed` without explicit need.
 
 **Viewport meta** is set in `apps/web/index.html` (`width=device-width, initial-scale=1.0`). Do not change it without a product reason.
 
@@ -187,7 +187,7 @@ Do not introduce custom breakpoints. The `useIsMobile()` hook in `src/hooks/use-
 
 **Headers, breadcrumbs, dense rows.** Breadcrumbs and other long-text rows are hidden below `md:` (see `header.tsx`); replace with a single-level page label if mobile needs context. Action button clusters in the header use the same `h-7 w-7` ghost-icon sizing — touch targets land at 28px which is borderline; pair them with `aria-label` and don't shrink further.
 
-**Tables.** Tables live inside `overflow-auto` wrappers (see `data-table.tsx`, `related-objects-table.tsx`). Column widths use truncate + `max-w-[150px] sm:max-w-[300px]` so cells get more space on larger screens. Don't add `table-fixed` without explicit need.
+**Tables.** Tables live inside `overflow-auto` wrappers (see `data-table.tsx`, `related-objects-table.tsx`). The Title column carries `w-full` on its `TableHead` and `max-w-0` on its `TableCell` (both keyed off `column.id === 'title'`), and the cell wraps the link in `flex min-w-0` + `min-w-0 flex-1 truncate` — so the auto-layout table hands the leftover width to the title and long titles truncate instead of pushing badges out. Other truncated cells use `max-w-[150px] sm:max-w-[300px]`. Don't add `table-fixed` without explicit need.
 
 **Viewport meta** is set in `apps/web/index.html` (`width=device-width, initial-scale=1.0`). Do not change it without a product reason.
 
