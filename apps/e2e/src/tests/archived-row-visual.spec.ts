@@ -28,9 +28,9 @@ test.describe('Archived row visual language', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects?type=bet`)
-			await expect(
-				page.getByText('Archived bet with prior succeeded state'),
-			).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('Archived bet with prior succeeded state')).toBeVisible({
+				timeout: 10000,
+			})
 			await expect(page.getByText('Paused bet still revivable')).toBeVisible()
 
 			// Prior-status meta renders as "was <prior>" on the archived row.
@@ -63,9 +63,9 @@ test.describe('Archived row visual language', () => {
 		for (const colorScheme of ['light', 'dark'] as const) {
 			await page.emulateMedia({ colorScheme })
 			await page.goto(`/${account.workspaceId}/objects?type=bet`)
-			await expect(
-				page.getByText('Archived bet — badge distinction'),
-			).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('Archived bet — badge distinction')).toBeVisible({
+				timeout: 10000,
+			})
 
 			const archivedBg = await page.evaluate(() =>
 				getComputedStyle(document.documentElement).getPropertyValue('--st-archived-bg').trim(),
