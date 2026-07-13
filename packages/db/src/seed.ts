@@ -928,7 +928,7 @@ After planning, post a comment on the bet (do NOT @mention anyone) summarising: 
 				tools: {
 					mcpServers: {
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1095,7 +1095,7 @@ Move the task to \`in_review\`. The Code Reviewer trigger fires automatically.
 				tools: {
 					mcpServers: {
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1252,7 +1252,7 @@ Do NOT move the task to any other status. The human approves by replying. The Wo
 				tools: {
 					mcpServers: {
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1379,7 +1379,7 @@ Do NOT move the task to any other status.
 							headers: { 'x-api-key': '${EXA_API_KEY}' },
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1507,7 +1507,7 @@ Do NOT move the task to any other status.
 							headers: { 'x-api-key': '${EXA_API_KEY}' },
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1657,7 +1657,7 @@ If checks cannot be fixed (e.g. requires domain knowledge you don't have): post 
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1836,7 +1836,7 @@ If an architecture was approved: does the implementation follow the chosen ADR?
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1993,7 +1993,7 @@ Move the task to \`in_review\`. The Code Reviewer trigger fires automatically.
 				tools: {
 					mcpServers: {
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2101,7 +2101,7 @@ If checks cannot be fixed (e.g. requires domain knowledge you don't have): post 
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2182,7 +2182,7 @@ If an architecture was approved: does the implementation follow the chosen ADR?
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2415,7 +2415,7 @@ If all tasks are done:
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2429,7 +2429,7 @@ If all tasks are done:
 							},
 						},
 						github_approver: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_APPROVER}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_APPROVER}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2566,7 +2566,7 @@ When a \`decision_type: ux\` or \`decision_type: architecture\` task moves to \`
 							headers: { 'x-api-key': '${EXA_API_KEY}' },
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -3136,7 +3136,7 @@ Check all @mention comments in the last 24h. Flag any where an agent @mentioned 
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',

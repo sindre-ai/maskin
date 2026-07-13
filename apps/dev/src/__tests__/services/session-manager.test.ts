@@ -878,7 +878,7 @@ describe('SessionManager', () => {
 						type: 'stdio',
 						command: 'npx',
 						args: ['-y', '@modelcontextprotocol/server-github'],
-						env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
+						env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
 					},
 				},
 			}
@@ -903,7 +903,7 @@ describe('SessionManager', () => {
 				mcpServers: Record<string, { env: Record<string, string> }>
 			}
 			expect(agentMcp.mcpServers['github-sindre-ai']).toBeDefined()
-			expect(agentMcp.mcpServers['github-sindre-ai'].env.GITHUB_TOKEN).toBe(
+			expect(agentMcp.mcpServers['github-sindre-ai'].env.GITHUB_PERSONAL_ACCESS_TOKEN).toBe(
 				'${GITHUB_TOKEN_SINDRE_AI}',
 			)
 		})
