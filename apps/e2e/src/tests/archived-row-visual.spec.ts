@@ -27,7 +27,7 @@ test.describe('Archived row visual language', () => {
 				status: 'paused',
 			})
 
-			await page.goto(`/${account.workspaceId}/objects?type=bet&include_archived=true`)
+			await page.goto(`/${account.workspaceId}/objects?type=bet&includeArchived=1`)
 			await expect(page.getByText('Archived bet with prior succeeded state')).toBeVisible({
 				timeout: 10000,
 			})
@@ -62,7 +62,7 @@ test.describe('Archived row visual language', () => {
 
 		for (const colorScheme of ['light', 'dark'] as const) {
 			await page.emulateMedia({ colorScheme })
-			await page.goto(`/${account.workspaceId}/objects?type=bet&include_archived=true`)
+			await page.goto(`/${account.workspaceId}/objects?type=bet&includeArchived=1`)
 			await expect(page.getByText('Archived bet — badge distinction')).toBeVisible({
 				timeout: 10000,
 			})
