@@ -1185,6 +1185,56 @@ describe('SessionManager', () => {
 			expect(eventInsert).toBeDefined()
 		})
 
+		it('persists non-null usage fields via the fallback direct update when CAS retries are exhausted', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			const resultLogRow = {
+				content: JSON.stringify({
+					type: 'result',
+					total_cost_usd: 0.1234,
+					duration_ms: 5000,
+					usage: {
+						input_tokens: 100,
+						output_tokens: 200,
+						cache_creation_input_tokens: 10,
+						cache_read_input_tokens: 20,
+					},
+				}),
+			}
+			// 1st select: markRemoteSessionComplete's own usage extraction (reads
+			// session_logs) — finds the result event this time, unlike the sibling
+			// "still runs terminal side effects" test above. 2nd select: the
+			// fallback lookup after CAS retries are exhausted, finds the session
+			// still 'running'. 3rd select: hasOtherActiveSessions' check — a
+			// non-empty result skips the actors-table update branch.
+			mockResults.selectQueue = [[resultLogRow], [session], [{ id: 'other-session' }]]
+
+			await manager.markRemoteSessionComplete(session.id, 0)
+
+			// calls.updates captures every .update().set() in call order, across
+			// every table touched (sessions, then later actors/objects) — not just
+			// the sessions-table update we care about. clearActiveSession() runs
+			// after the fallback and would land last if we just took .at(-1), so
+			// filter for the sessions-shaped payload (identified by totalCostUsd)
+			// and take its last occurrence — the fallback direct update (~2830),
+			// distinct from the 3 preceding (and failing) primary CAS attempts.
+			const sessionUpdates = calls.updates.filter(
+				(v): v is Record<string, unknown> =>
+					typeof v === 'object' && v !== null && 'totalCostUsd' in v,
+			)
+			const fallbackUpdate = sessionUpdates.at(-1) as Record<string, unknown>
+			expect(fallbackUpdate.totalCostUsd).toBe('0.1234')
+			expect(fallbackUpdate.inputTokens).toBe(100)
+			expect(fallbackUpdate.outputTokens).toBe(200)
+			expect(fallbackUpdate.cacheCreationInputTokens).toBe(10)
+			expect(fallbackUpdate.cacheReadInputTokens).toBe(20)
+			expect(fallbackUpdate.durationMs).toBe(5000)
+		})
+
 		it('no-ops via the fallback lookup when a concurrent call already resolved the session', async () => {
 			const session = buildSession({ status: 'failed' })
 			mockResults.updateErrorQueue = [
