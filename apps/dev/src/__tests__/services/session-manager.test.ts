@@ -722,6 +722,43 @@ describe('SessionManager', () => {
 			expect(mcpKeys).toContain('github-vaerksted-ai')
 		})
 
+		it('wires each github-<owner> MCP entry to the per-call minting proxy with its integration id', async () => {
+			// The parent bet's AC #3 requires API-side MCP tools mint a fresh
+			// narrowed token per invocation. The proxy sitting at
+			// `/agent-github-mcp-proxy.mjs` does that mint on every `tools/call`
+			// using the integration id passed alongside the fallback token. If
+			// this test regresses, we're back to a static install-wide token
+			// being used for every write from every unattended-agent identity.
+			const integration = buildIntegration({
+				provider: 'github',
+				externalId: 'install-scope',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const fixtures = buildLaunchFixtures([integration])
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_fallback_token')
+
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON ?? '{}') as {
+				mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>
+			}
+			const entry = parsed.mcpServers['github-sindre-ai']
+			expect(entry).toBeDefined()
+			expect(entry.command).toBe('node')
+			expect(entry.args).toEqual(['/agent-github-mcp-proxy.mjs'])
+			// GITHUB_TOKEN stays on the entry as the container-launch fallback
+			// (used by the proxy if the mint route is unreachable mid-session),
+			// and GITHUB_INTEGRATION_ID tells the proxy which integration to
+			// mint against per call.
+			expect(entry.env.GITHUB_TOKEN).toBe('ghs_fallback_token')
+			expect(entry.env.GITHUB_INTEGRATION_ID).toBe(integration.id)
+		})
+
 		it('lazily backfills owner_login and persists it when the row is missing it', async () => {
 			const integration = buildIntegration({
 				provider: 'github',

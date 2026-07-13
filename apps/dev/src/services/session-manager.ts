@@ -1276,17 +1276,35 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Inject per-org GitHub MCP server entries with literal tokens (no envsubst placeholder).
-		// Each installation gets its own named entry (e.g. github-sindre-ai) so agents in
-		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
-		// We also set bare GITHUB_TOKEN so existing agent configs using ${GITHUB_TOKEN}
+		// Inject per-org GitHub MCP server entries. Each installation gets its own
+		// named entry (e.g. github-sindre-ai) so agents in multi-org workspaces
+		// can target specific orgs via mcp__github-<owner>__* tools. We also set
+		// bare GITHUB_TOKEN so existing agent configs using ${GITHUB_TOKEN}
 		// continue to work after envsubst expansion.
-		for (const { ownerLogin, token } of resolvedGithubInstalls) {
+		//
+		// Each entry points at `/agent-github-mcp-proxy.mjs` (installed by
+		// docker/agent-base/Dockerfile) instead of `@modelcontextprotocol/server-github`
+		// directly. The proxy mints a fresh installation token narrowed by
+		// `?tool=<name>&repo=<owner/repo>` on every `tools/call`, so a leaked
+		// token can't reach any other repo in the installation or act with
+		// broader permissions than the invoked tool needs. This closes the
+		// parent bet's AC #3 for the API-side surface — matching what the git
+		// credential helper already does for git operations.
+		//
+		// GITHUB_TOKEN is still injected as a per-entry env var: the proxy
+		// treats it as the fallback that flows through when the mint route is
+		// unreachable (e.g. mint route down but session is mid-flight). Once
+		// T5 revokes the PATs, this stays as the fresh install-token from
+		// session start — no more static PATs in the container.
+		for (const { ownerLogin, token, integrationId } of resolvedGithubInstalls) {
 			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = {
 				type: 'stdio',
-				command: 'npx',
-				args: ['-y', '@modelcontextprotocol/server-github'],
-				env: { GITHUB_TOKEN: token },
+				command: 'node',
+				args: ['/agent-github-mcp-proxy.mjs'],
+				env: {
+					GITHUB_TOKEN: token,
+					GITHUB_INTEGRATION_ID: integrationId,
+				},
 			}
 		}
 		const primaryGithubToken = resolvedGithubInstalls[0]?.token
