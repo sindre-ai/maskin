@@ -60,7 +60,7 @@ const maskinOnlyTools = {
 const githubPlusMaskinTools = {
 	mcpServers: {
 		github: {
-			env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+			env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 			args: ['-y', '@modelcontextprotocol/server-github'],
 			type: 'stdio',
 			command: 'npx',
@@ -84,7 +84,7 @@ const slackTool = {
 }
 
 const githubTool = {
-	env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+	env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 	args: ['-y', '@modelcontextprotocol/server-github'],
 	type: 'stdio',
 	command: 'npx',

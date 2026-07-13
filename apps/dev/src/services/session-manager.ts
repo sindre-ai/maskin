@@ -1286,7 +1286,7 @@ export class SessionManager extends EventEmitter {
 				type: 'stdio',
 				command: 'npx',
 				args: ['-y', '@modelcontextprotocol/server-github'],
-				env: { GITHUB_TOKEN: token },
+				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
 			}
 		}
 		const primaryGithubToken = resolvedGithubInstalls[0]?.token
