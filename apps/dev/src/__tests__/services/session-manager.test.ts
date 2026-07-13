@@ -107,7 +107,11 @@ import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
 import { getProvider } from '../../lib/integrations/registry'
 import { AgentStorageManager } from '../../services/agent-storage'
-import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
+import {
+	SessionManager,
+	mergeLaunchRouteConfig,
+	normalizeBetRepoToOwnerRepo,
+} from '../../services/session-manager'
 import { buildIntegration, buildSession } from '../factories'
 import { createTestContext } from '../setup'
 
@@ -910,6 +914,171 @@ describe('SessionManager', () => {
 						)
 					: []
 				expect(mcpKeys).not.toContain('integration-slack')
+			})
+		})
+
+		describe('GITHUB_REPO from active-bet metadata', () => {
+			it('sets GITHUB_REPO to owner/repo when every active bet with a repo agrees', async () => {
+				const integration = buildIntegration({
+					provider: 'github',
+					externalId: 'install-aaa',
+					config: { owner_login: 'sindre-ai' },
+				})
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('ghs_token_a')
+
+				setupLaunchMocks(fixtures)
+				// Two active bets with the same repo (one full URL, one already normalized)
+				// exercise both the URL-parse branch and the bare-form branch.
+				;(mockResults.selectQueue as unknown[][]).push([
+					{ repo: 'https://github.com/sindre-ai/maskin' },
+					{ repo: 'sindre-ai/maskin' },
+				])
+
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.GITHUB_REPO).toBe('sindre-ai/maskin')
+			})
+
+			it('normalizes a trailing .git and slash off the repo URL', async () => {
+				const integration = buildIntegration({
+					provider: 'github',
+					externalId: 'install-bbb',
+					config: { owner_login: 'sindre-ai' },
+				})
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('ghs_token_b')
+
+				setupLaunchMocks(fixtures)
+				;(mockResults.selectQueue as unknown[][]).push([
+					{ repo: 'https://github.com/sindre-ai/maskin.git/' },
+				])
+
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.GITHUB_REPO).toBe('sindre-ai/maskin')
+			})
+
+			it('leaves GITHUB_REPO unset when no active bet carries a repo — helper degrades to permissions-only narrowing', async () => {
+				const integration = buildIntegration({
+					provider: 'github',
+					externalId: 'install-ccc',
+					config: { owner_login: 'sindre-ai' },
+				})
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('ghs_token_c')
+
+				setupLaunchMocks(fixtures)
+				// Query returns no rows (metadata->>'repo' IS NOT NULL filter matched nothing).
+				;(mockResults.selectQueue as unknown[][]).push([])
+
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.GITHUB_REPO).toBeUndefined()
+			})
+
+			it('leaves GITHUB_REPO unset when active bets disagree on repo — no single canonical target', async () => {
+				const integration = buildIntegration({
+					provider: 'github',
+					externalId: 'install-ddd',
+					config: { owner_login: 'sindre-ai' },
+				})
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('ghs_token_d')
+
+				setupLaunchMocks(fixtures)
+				;(mockResults.selectQueue as unknown[][]).push([
+					{ repo: 'https://github.com/sindre-ai/maskin' },
+					{ repo: 'https://github.com/sindre-ai/other-repo' },
+				])
+
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.GITHUB_REPO).toBeUndefined()
+			})
+
+			it('skips the active-bet query entirely when no GitHub integration is configured', async () => {
+				const fixtures = buildLaunchFixtures([])
+
+				setupLaunchMocks(fixtures)
+				// If the gate leaked, the next SELECT would consume a stray row.
+				// Prove the query was skipped by asserting no GITHUB_REPO and no
+				// GITHUB_INTEGRATION_ID were set.
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.GITHUB_REPO).toBeUndefined()
+				expect(createArgs.env.GITHUB_INTEGRATION_ID).toBeUndefined()
+			})
+
+			it('reserves GITHUB_REPO when we set our own so a user-supplied override is ignored', async () => {
+				const integration = buildIntegration({
+					provider: 'github',
+					externalId: 'install-eee',
+					config: { owner_login: 'sindre-ai' },
+				})
+				const fixtures = buildLaunchFixtures([integration])
+				fixtures.session.config = { env_vars: { GITHUB_REPO: 'attacker/other-repo' } }
+
+				vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('ghs_token_e')
+
+				setupLaunchMocks(fixtures)
+				;(mockResults.selectQueue as unknown[][]).push([
+					{ repo: 'https://github.com/sindre-ai/maskin' },
+				])
+
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.GITHUB_REPO).toBe('sindre-ai/maskin')
+			})
+
+			it('lets a user-supplied GITHUB_REPO through when we did not derive one from active bets', async () => {
+				const integration = buildIntegration({
+					provider: 'github',
+					externalId: 'install-fff',
+					config: { owner_login: 'sindre-ai' },
+				})
+				const fixtures = buildLaunchFixtures([integration])
+				fixtures.session.config = { env_vars: { GITHUB_REPO: 'sindre-ai/pinned-repo' } }
+
+				vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('ghs_token_f')
+
+				setupLaunchMocks(fixtures)
+				;(mockResults.selectQueue as unknown[][]).push([])
+
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.GITHUB_REPO).toBe('sindre-ai/pinned-repo')
 			})
 		})
 
@@ -2638,5 +2807,69 @@ describe('mergeLaunchRouteConfig()', () => {
 		expect(
 			mergeLaunchRouteConfig({ llm_route: 'workspace_api_key' }, 'workspace_api_key', undefined),
 		).toBeNull()
+	})
+})
+
+describe('normalizeBetRepoToOwnerRepo()', () => {
+	it('parses an https GitHub URL into owner/repo', () => {
+		expect(normalizeBetRepoToOwnerRepo('https://github.com/sindre-ai/maskin')).toBe(
+			'sindre-ai/maskin',
+		)
+	})
+
+	it('strips a trailing .git suffix', () => {
+		expect(normalizeBetRepoToOwnerRepo('https://github.com/sindre-ai/maskin.git')).toBe(
+			'sindre-ai/maskin',
+		)
+	})
+
+	it('strips a trailing slash and .git suffix together', () => {
+		expect(normalizeBetRepoToOwnerRepo('https://github.com/sindre-ai/maskin.git/')).toBe(
+			'sindre-ai/maskin',
+		)
+	})
+
+	it('accepts a bare owner/repo string', () => {
+		expect(normalizeBetRepoToOwnerRepo('sindre-ai/maskin')).toBe('sindre-ai/maskin')
+	})
+
+	it('accepts an ssh git@github.com:owner/repo URL', () => {
+		expect(normalizeBetRepoToOwnerRepo('git@github.com:sindre-ai/maskin.git')).toBe(
+			'sindre-ai/maskin',
+		)
+	})
+
+	it('preserves dots, dashes, and underscores in owner/repo names', () => {
+		expect(normalizeBetRepoToOwnerRepo('some-org_v2/my.repo-v3_final')).toBe(
+			'some-org_v2/my.repo-v3_final',
+		)
+	})
+
+	it('returns null for a non-string value', () => {
+		expect(normalizeBetRepoToOwnerRepo(null)).toBeNull()
+		expect(normalizeBetRepoToOwnerRepo(undefined)).toBeNull()
+		expect(normalizeBetRepoToOwnerRepo(42)).toBeNull()
+		expect(normalizeBetRepoToOwnerRepo({ repo: 'x/y' })).toBeNull()
+	})
+
+	it('returns null for an empty or whitespace-only string', () => {
+		expect(normalizeBetRepoToOwnerRepo('')).toBeNull()
+		expect(normalizeBetRepoToOwnerRepo('   ')).toBeNull()
+	})
+
+	it('returns null for a non-GitHub URL', () => {
+		expect(normalizeBetRepoToOwnerRepo('https://gitlab.com/sindre-ai/maskin')).toBeNull()
+	})
+
+	it('returns null for a repo path with more than two segments — avoids injecting a nested path', () => {
+		expect(normalizeBetRepoToOwnerRepo('sindre-ai/maskin/subdir')).toBeNull()
+		expect(normalizeBetRepoToOwnerRepo('https://github.com/sindre-ai/maskin/tree/main')).toBeNull()
+	})
+
+	it('returns null for a bare repo name without an owner', () => {
+		// The credential helper URL-encodes owner/repo; a lone repo would degrade to
+		// a token still holding install-wide repositories scope, which defeats the
+		// whole point. Reject rather than mint a half-narrowed token.
+		expect(normalizeBetRepoToOwnerRepo('maskin')).toBeNull()
 	})
 })

@@ -95,6 +95,37 @@ function elapsedMs(startedAt: Date | null, createdAt: Date | null): number {
 	return anchor ? Date.now() - anchor.getTime() : 0
 }
 
+/**
+ * Normalize a `bet.metadata.repo` value to a bare `owner/repo` string, the
+ * shape the container's git credential helper URL-encodes and forwards to the
+ * mint route as `?repo=owner/repo`. Accepts the three shapes agents actually
+ * store today:
+ *   - `https://github.com/owner/repo` (with or without trailing `.git`, `/`)
+ *   - `git@github.com:owner/repo`
+ *   - `owner/repo`
+ *
+ * Returns `null` for anything that isn't a recognizable GitHub repo pointer,
+ * so the caller can degrade gracefully (env var stays unset, credential helper
+ * falls back to permissions-only narrowing).
+ */
+export function normalizeBetRepoToOwnerRepo(raw: unknown): string | null {
+	if (typeof raw !== 'string') return null
+	const trimmed = raw
+		.trim()
+		.replace(/\/+$/, '')
+		.replace(/\.git$/, '')
+	if (!trimmed) return null
+	const httpsMatch = trimmed.match(
+		/^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/,
+	)
+	if (httpsMatch) return `${httpsMatch[1]}/${httpsMatch[2]}`
+	const sshMatch = trimmed.match(/^git@github\.com:([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/)
+	if (sshMatch) return `${sshMatch[1]}/${sshMatch[2]}`
+	const bareMatch = trimmed.match(/^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/)
+	if (bareMatch) return `${bareMatch[1]}/${bareMatch[2]}`
+	return null
+}
+
 export interface CreateSessionParams {
 	actorId: string
 	actionPrompt: string
@@ -1368,6 +1399,38 @@ export class SessionManager extends EventEmitter {
 			)
 		}
 
+		// GITHUB_REPO narrows the credential helper's mint call to a single repo
+		// (`?tool=git&repo=owner/repo`), so a leaked installation token can't
+		// `git push` to any other repo in the same installation. Sourced from
+		// `bet.metadata.repo` across the workspace's active bets: if they all agree
+		// on the same repo (after normalizing `https://github.com/owner/repo` etc.
+		// to `owner/repo`), that's the workspace's canonical code target. If they
+		// disagree — or none carry a repo — leave the env var unset so the helper
+		// degrades to permissions-only narrowing (T4's graceful fallback). Only
+		// meaningful alongside GITHUB_INTEGRATION_ID; skipped otherwise.
+		if (primaryGithubIntegrationId) {
+			const activeBetRepoRows = await this.db
+				.select({ repo: sql<string | null>`${objects.metadata}->>'repo'` })
+				.from(objects)
+				.where(
+					and(
+						eq(objects.workspaceId, session.workspaceId),
+						eq(objects.type, 'bet'),
+						eq(objects.status, 'active'),
+						sql`${objects.metadata}->>'repo' IS NOT NULL`,
+					),
+				)
+			const normalizedRepos = new Set<string>()
+			for (const { repo } of activeBetRepoRows) {
+				const normalized = normalizeBetRepoToOwnerRepo(repo)
+				if (normalized) normalizedRepos.add(normalized)
+			}
+			if (normalizedRepos.size === 1) {
+				const [canonical] = normalizedRepos
+				if (canonical) envVars.GITHUB_REPO = canonical
+			}
+		}
+
 		// Merge user-provided env vars, filtering out reserved keys
 		const RESERVED_ENV_KEYS = new Set([
 			'SESSION_ID',
@@ -1406,6 +1469,12 @@ export class SessionManager extends EventEmitter {
 		}
 		for (const key of mintedAgentTokenEnvKeys) {
 			RESERVED_ENV_KEYS.add(key)
+		}
+		// Only reserve GITHUB_REPO when we actually derived one from an active bet;
+		// otherwise a user-supplied override (e.g. a session pinned to a specific
+		// repo) must pass through.
+		if (envVars.GITHUB_REPO) {
+			RESERVED_ENV_KEYS.add('GITHUB_REPO')
 		}
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {
