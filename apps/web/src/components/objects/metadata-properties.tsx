@@ -1,27 +1,14 @@
+import { type FieldDefinition, FieldValueInput } from '@/components/objects/field-value-input'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { useUpdateObject } from '@/hooks/use-objects'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import type { ObjectResponse, WorkspaceWithRole } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { SafeJsonValue, SafeMetadata } from '@maskin/shared'
-import { X } from 'lucide-react'
+import { Calendar, CheckSquare, Hash, List, Type, X } from 'lucide-react'
 import { useState } from 'react'
-
-interface FieldDefinition {
-	name: string
-	type: 'text' | 'number' | 'date' | 'enum' | 'boolean'
-	required?: boolean
-	values?: string[]
-}
 
 export function MetadataPropertiesView({
 	object,
@@ -109,12 +96,14 @@ export function MetadataPropertiesView({
 		<div className="space-y-1 w-full">
 			{metaEntries.map(([key, value]) => {
 				const fieldDef = fieldDefs.find((f) => f.name === key)
+				const href = buildValueHref(key, value, metadata)
 				return (
 					<PropertyRow
 						key={key}
 						name={key}
 						value={value}
 						fieldDef={fieldDef}
+						href={href}
 						onUpdate={(v) => handleUpdate(key, v)}
 						onRemove={() => handleRemove(key)}
 					/>
@@ -185,17 +174,21 @@ function PropertyRow({
 	name,
 	value,
 	fieldDef,
+	href,
 	onUpdate,
 	onRemove,
 }: {
 	name: string
 	value: SafeJsonValue
 	fieldDef?: FieldDefinition
+	href?: string
 	onUpdate: (value: SafeJsonValue) => void
 	onRemove: () => void
 }) {
 	const [editing, setEditing] = useState(false)
 	const type = fieldDef?.type ?? inferType(value)
+	const displayClass =
+		'block w-full text-xs text-muted-foreground hover:text-foreground text-left whitespace-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
 
 	return (
 		<div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-accent/50 hover:text-accent-foreground group">
@@ -214,12 +207,17 @@ function PropertyRow({
 						}}
 						onCancel={() => setEditing(false)}
 					/>
-				) : (
-					<button
-						type="button"
-						className="block w-full text-xs text-muted-foreground hover:text-foreground text-left whitespace-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-						onClick={() => setEditing(true)}
+				) : href ? (
+					<a
+						href={href}
+						target="_blank"
+						rel="noopener noreferrer"
+						className={`${displayClass} underline decoration-dotted underline-offset-2`}
 					>
+						{formatDisplay(value, type)}
+					</a>
+				) : (
+					<button type="button" className={displayClass} onClick={() => setEditing(true)}>
 						{formatDisplay(value, type)}
 					</button>
 				)}
@@ -254,119 +252,63 @@ function PropertyEditor({
 }) {
 	const [draft, setDraft] = useState(String(value ?? ''))
 
-	const inputClass = 'h-6 text-xs px-2 py-0.5'
-
-	const handleKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Enter') handleSave()
-		if (e.key === 'Escape') onCancel()
-	}
-
-	const handleSave = () => {
+	const commit = (raw: string) => {
 		switch (type) {
 			case 'number': {
-				const num = Number(draft)
+				const num = Number(raw)
 				if (!Number.isNaN(num)) onSave(num)
 				else onCancel()
 				break
 			}
 			case 'boolean':
-				onSave(draft === 'true')
+				onSave(raw === 'true')
 				break
 			case 'date':
-				onSave(draft || null)
+				onSave(raw || null)
 				break
 			default:
-				onSave(draft)
+				onSave(raw)
 		}
 	}
 
-	switch (type) {
-		case 'boolean':
-			return (
-				<Select
-					defaultOpen
-					value={draft}
-					onValueChange={(v) => {
-						setDraft(v)
-						onSave(v === 'true')
-					}}
-					onOpenChange={(open) => {
-						if (!open) onCancel()
-					}}
-				>
-					<SelectTrigger>
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="true">Yes</SelectItem>
-						<SelectItem value="false">No</SelectItem>
-					</SelectContent>
-				</Select>
-			)
-		case 'date':
-			return (
-				<Input
-					type="date"
-					value={draft ? draft.slice(0, 10) : ''}
-					onChange={(e) => {
-						setDraft(e.target.value)
-						onSave(e.target.value)
-					}}
-					className={`${inputClass} w-full sm:w-32`}
-					autoFocus
-					onBlur={onCancel}
-				/>
-			)
-		case 'enum':
-			return (
-				<Select
-					defaultOpen
-					value={draft}
-					onValueChange={(v) => {
-						setDraft(v)
-						onSave(v)
-					}}
-					onOpenChange={(open) => {
-						if (!open) onCancel()
-					}}
-				>
-					<SelectTrigger>
-						<SelectValue placeholder="Select..." />
-					</SelectTrigger>
-					<SelectContent>
-						{(fieldDef?.values ?? []).map((v) => (
-							<SelectItem key={v} value={v}>
-								{v}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
-			)
-		case 'number':
-			return (
-				<Input
-					type="number"
-					value={draft}
-					onChange={(e) => setDraft(e.target.value)}
-					onBlur={handleSave}
-					onKeyDown={handleKeyDown}
-					className={`${inputClass} w-full sm:w-24`}
-					autoFocus
-				/>
-			)
-		default:
-			return (
-				<Input
-					type="text"
-					value={draft}
-					onChange={(e) => setDraft(e.target.value)}
-					onBlur={handleSave}
-					onKeyDown={handleKeyDown}
-					className={`${inputClass} w-full`}
-					autoFocus
-				/>
-			)
-	}
+	const isSelect = type === 'boolean' || type === 'enum'
+	// Selects and the date picker commit as soon as a value is chosen; free-text
+	// inputs commit on blur / Enter so the user can finish typing first.
+	const commitsOnChange = isSelect || type === 'date'
+	const inputWidth =
+		type === 'date' ? 'w-full sm:w-32' : type === 'number' ? 'w-full sm:w-24' : 'w-full'
+
+	return (
+		<FieldValueInput
+			type={type as FieldDefinition['type']}
+			value={draft}
+			fieldDef={fieldDef}
+			placeholder="Select..."
+			onChange={(v) => {
+				setDraft(v)
+				if (commitsOnChange) commit(v)
+			}}
+			autoFocus={!isSelect}
+			selectDefaultOpen={isSelect}
+			onSelectOpenChange={
+				isSelect
+					? (open) => {
+							if (!open) onCancel()
+						}
+					: undefined
+			}
+			onBlur={commitsOnChange ? onCancel : () => commit(draft)}
+			onKeyDown={
+				commitsOnChange
+					? undefined
+					: (e) => {
+							if (e.key === 'Enter') commit(draft)
+							if (e.key === 'Escape') onCancel()
+						}
+			}
+			className={isSelect ? undefined : `h-6 text-xs px-2 py-0.5 ${inputWidth}`}
+		/>
+	)
 }
 
 function AddPropertyMenu({
@@ -530,16 +472,34 @@ function CreateFieldForm({
 }
 
 function FieldTypeIcon({ type }: { type: string }) {
-	const icons: Record<string, string> = {
-		text: 'T',
-		number: '#',
-		date: '📅',
-		boolean: '☑',
-		enum: '▤',
+	const icons: Record<string, typeof Type> = {
+		text: Type,
+		number: Hash,
+		date: Calendar,
+		boolean: CheckSquare,
+		enum: List,
 	}
-	return (
-		<span className="w-4 text-center text-muted-foreground text-[10px]">{icons[type] ?? '·'}</span>
-	)
+	const Icon = icons[type] ?? Type
+	return <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+}
+
+export function buildValueHref(
+	key: string,
+	value: SafeJsonValue,
+	metadata: SafeMetadata,
+): string | undefined {
+	if (key !== 'branch' || typeof value !== 'string' || !value) return undefined
+	const repo = metadata.repo
+	if (typeof repo !== 'string' || !repo) return undefined
+	let repoUrl: URL
+	try {
+		repoUrl = new URL(repo)
+	} catch {
+		return undefined
+	}
+	if (repoUrl.protocol !== 'https:' || repoUrl.hostname !== 'github.com') return undefined
+	const base = repo.replace(/\/+$/, '')
+	return `${base}/tree/${encodeURIComponent(value)}`
 }
 
 function inferType(value: unknown): string {

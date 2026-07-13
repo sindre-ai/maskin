@@ -1,14 +1,17 @@
 import { PageHeader } from '@/components/layout/page-header'
+import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useTriggers } from '@/hooks/use-triggers'
 import type { TriggerResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { Bell, Clock, Zap } from 'lucide-react'
+import { Bell, Clock, Plus, Zap } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/triggers/')({
 	component: TriggersPage,
@@ -50,10 +53,28 @@ function TriggersPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: triggers, isLoading } = useTriggers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
+	const [createPickerOpen, setCreatePickerOpen] = useState(false)
+
+	useEffect(() => {
+		function onKeydown(event: KeyboardEvent) {
+			if (!isCreateShortcut(event)) return
+			event.preventDefault()
+			setCreatePickerOpen(true)
+		}
+		window.addEventListener('keydown', onKeydown)
+		return () => window.removeEventListener('keydown', onKeydown)
+	}, [])
+
+	const newButton = (
+		<Button size="sm" className="gap-1.5" onClick={() => setCreatePickerOpen(true)}>
+			<Plus size={14} />
+			New
+		</Button>
+	)
 
 	return (
 		<div>
-			<PageHeader title="Triggers" />
+			<PageHeader title="Triggers" actions={newButton} />
 
 			{isLoading ? (
 				<ListSkeleton />
@@ -83,6 +104,11 @@ function TriggersPage() {
 					</div>
 				</div>
 			)}
+			<CreatePicker
+				open={createPickerOpen}
+				onOpenChange={setCreatePickerOpen}
+				defaultType="trigger"
+			/>
 		</div>
 	)
 }

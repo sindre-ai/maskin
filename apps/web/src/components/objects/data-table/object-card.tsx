@@ -1,10 +1,12 @@
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
+import { IndicatorBadgeRow } from '@/components/shared/indicator-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { SourceBadge } from '@/components/shared/source-badge'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { ActorListItem, ObjectResponse } from '@/lib/api'
+import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 
@@ -15,6 +17,7 @@ interface ObjectCardProps {
 	isSelected: boolean
 	onSelect: (selected: boolean) => void
 	onClick: () => void
+	betStatus?: BetStatusResult
 }
 
 export function ObjectCard({
@@ -24,6 +27,7 @@ export function ObjectCard({
 	isSelected,
 	onSelect,
 	onClick,
+	betStatus,
 }: ObjectCardProps) {
 	const owner = object.driver ? actors?.find((a) => a.id === object.driver) : null
 
@@ -39,11 +43,13 @@ export function ObjectCard({
 			)}
 		>
 			<Checkbox
+				size="touch"
+				data-drag-checkbox=""
 				checked={isSelected}
 				onCheckedChange={(value) => onSelect(!!value)}
 				onClick={(e) => e.stopPropagation()}
 				aria-label="Select row"
-				className="mt-0.5 shrink-0"
+				className="shrink-0 touch-none select-none"
 			/>
 			<div className="flex min-w-0 flex-1 flex-col gap-1.5">
 				<div className="flex min-w-0 items-start justify-between gap-2">
@@ -56,6 +62,7 @@ export function ObjectCard({
 						>
 							{object.title || 'Untitled'}
 						</Link>
+						{betStatus && <IndicatorBadgeRow result={betStatus} />}
 						{object.activeSessionId && (
 							<AgentWorkingBadge sessionId={object.activeSessionId} workspaceId={workspaceId} />
 						)}

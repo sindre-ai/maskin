@@ -53,6 +53,8 @@ export const queryKeys = {
 	workspaceSkills: {
 		all: (workspaceId: string) => ['workspace-skills', workspaceId] as const,
 		detail: (workspaceId: string, name: string) => ['workspace-skills', workspaceId, name] as const,
+		files: (workspaceId: string, skillId: string) =>
+			['workspace-skills', workspaceId, 'files', skillId] as const,
 	},
 	agentSkillAttachments: {
 		all: (actorId: string) => ['agent-skill-attachments', actorId] as const,
@@ -63,8 +65,6 @@ export const queryKeys = {
 		logs: (sessionId: string) => ['sessions', sessionId, 'logs'] as const,
 		byActor: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'running'] as const,
-		byActorAll: (workspaceId: string, actorId: string) =>
-			['sessions', workspaceId, 'actor', actorId] as const,
 		byActorAllInfinite: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'all', 'infinite'] as const,
 		byMentionObject: (workspaceId: string, objectId: string) =>

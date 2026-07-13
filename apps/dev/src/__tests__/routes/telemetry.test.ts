@@ -212,6 +212,57 @@ describe('Telemetry Routes', () => {
 			expect(res.status).toBe(400)
 		})
 
+		it('records a tool_call_response_size event with all six properties (PostHog fan-out, no DB row)', async () => {
+			// AC-T1: the bet's First test accepts the event at the route boundary.
+			// Per the bet's posthog_query, the rows land in PostHog rather than the
+			// mcpTelemetry table — the route hands off to capturePosthogEvent and
+			// returns 202 without an insert.
+			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+			mockResults.select = [memberRow]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/telemetry/mcp',
+					{
+						event_type: 'tool_call_response_size',
+						tool_name: 'list_objects',
+						session_id: 'mcp-size-1',
+						content_bytes: 2048,
+						content_tokens: 512,
+						structured_content_bytes: 8192,
+						structured_content_tokens: 2048,
+						truncated: false,
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(202)
+			expect(await res.json()).toEqual({ recorded: true })
+		})
+
+		it('returns 400 when tool_call_response_size omits a required size field', async () => {
+			const { app } = createTestApp(telemetryRoutes, '/api/telemetry')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/telemetry/mcp',
+					{
+						event_type: 'tool_call_response_size',
+						tool_name: 'list_objects',
+						content_bytes: 100,
+						content_tokens: 25,
+						// structured_content_bytes / structured_content_tokens / truncated missing
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
 		it('returns 403 when widget_event sender is not a workspace member', async () => {
 			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
 			mockResults.select = []

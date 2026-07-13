@@ -1,5 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { CreateWorkspaceSkillInput, UpdateWorkspaceSkillInput } from '../lib/api'
+import type {
+	CreateWorkspaceSkillInput,
+	UpdateWorkspaceSkillInput,
+	WorkspaceSkillUploadResult,
+} from '../lib/api'
 import { api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
@@ -59,5 +63,32 @@ export function useDeleteWorkspaceSkill(workspaceId: string) {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.workspaceSkills.all(workspaceId) })
 		},
+	})
+}
+
+export function useUploadWorkspaceSkill(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation<WorkspaceSkillUploadResult, Error, { file: File; skillId?: string }>({
+		mutationFn: ({ file, skillId }) =>
+			api.workspaceSkills.upload(workspaceId, file, skillId ? { skillId } : undefined),
+		onSuccess: (data) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.workspaceSkills.all(workspaceId) })
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.workspaceSkills.files(workspaceId, data.id),
+			})
+		},
+	})
+}
+
+export function useWorkspaceSkillFiles(
+	workspaceId: string,
+	skillId: string | null,
+	enabled: boolean,
+) {
+	return useQuery({
+		queryKey: queryKeys.workspaceSkills.files(workspaceId, skillId ?? ''),
+		// biome-ignore lint/style/noNonNullAssertion: guarded by enabled
+		queryFn: () => api.workspaceSkills.listFiles(workspaceId, skillId!),
+		enabled: !!workspaceId && !!skillId && enabled,
 	})
 }

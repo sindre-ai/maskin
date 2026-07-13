@@ -352,6 +352,24 @@ export function buildAgentSkill(overrides?: Record<string, unknown>) {
 	}
 }
 
+export function buildAgentFile(overrides?: Record<string, unknown>) {
+	const n = next()
+	const actorId = randomUUID()
+	const workspaceId = randomUUID()
+	return {
+		actorId,
+		workspaceId,
+		fileType: 'memory',
+		path: `memory/note-${n}.md`,
+		storageKey: `agents/${actorId}/memory/note-${n}.md`,
+		sizeBytes: 64,
+		sessionId: null,
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		...overrides,
+	}
+}
+
 export function buildWorkspaceSkill(overrides?: Record<string, unknown>) {
 	const n = next()
 	const name = `ws-skill-${n}`
@@ -366,6 +384,8 @@ export function buildWorkspaceSkill(overrides?: Record<string, unknown>) {
 		storageKey: `workspaces/${workspaceId}/skills/${id}/SKILL.md`,
 		sizeBytes: 128,
 		isValid: true,
+		isFolder: false,
+		fileCount: null,
 		createdBy: randomUUID(),
 		createdAt: new Date(),
 		updatedAt: new Date(),

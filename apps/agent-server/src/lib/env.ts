@@ -18,6 +18,13 @@ const envSchema = z.object({
 			16,
 			'AGENT_SERVER_SECRET must be at least 16 chars (generate with `openssl rand -hex 32`)',
 		),
+	// UUID of this box's row in apps/dev's `agent_servers` table. Set once per
+	// host (looked up manually — there's no self-registration flow). Enables
+	// the boot-time reconcile pass (see reconcileOnBoot in index.ts), which
+	// tells apps/dev which sandboxes survived a restart and cleans up any that
+	// didn't. Left unset, that pass just skips with a warning log — existing
+	// deployments without it still boot fine.
+	AGENT_SERVER_ID: z.string().uuid().optional(),
 	MSB_BIN: z.string().optional().default('/root/.microsandbox/bin/msb'),
 	MASKIN_AGENT_SERVER_PUBLIC_HOST: z.string().optional(),
 	// Hostname the microVM uses to reach this agent-server over the host loopback.

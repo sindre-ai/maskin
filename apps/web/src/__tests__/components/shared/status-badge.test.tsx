@@ -57,4 +57,32 @@ describe('StatusBadge', () => {
 		render(<StatusBadge status="in_review" />)
 		expect(screen.getByText('in review')).toBeInTheDocument()
 	})
+
+	describe('variant="dot-word"', () => {
+		it('renders a leading dot and the status word', () => {
+			render(<StatusBadge status="active" variant="dot-word" />)
+			expect(screen.getByText('active')).toBeInTheDocument()
+			const dot = screen.getByTestId('status-dot')
+			expect(dot).toBeInTheDocument()
+			expect(dot).toHaveAttribute('aria-hidden', 'true')
+		})
+
+		it('carries the status text color class so the dot picks up bg-current', () => {
+			const { container } = render(<StatusBadge status="in_progress" variant="dot-word" />)
+			const pill = container.querySelector('[aria-label="Status in progress"]')
+			expect(pill).not.toBeNull()
+			expect(pill?.className).toContain('text-status-in_progress-text')
+		})
+
+		it('replaces underscores with spaces in dot-word label', () => {
+			render(<StatusBadge status="in_review" variant="dot-word" />)
+			expect(screen.getByText('in review')).toBeInTheDocument()
+		})
+
+		it('is not a Badge/outline pill — no bg-status-*-bg class', () => {
+			const { container } = render(<StatusBadge status="active" variant="dot-word" />)
+			const pill = container.querySelector('[aria-label="Status active"]')
+			expect(pill?.className).not.toMatch(/bg-status-.*-bg/)
+		})
+	})
 })
