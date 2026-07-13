@@ -23,7 +23,7 @@ import { Check, ChevronsUpDown } from 'lucide-react'
 
 export function WorkspaceSwitcher() {
 	const { workspace, workspaceId } = useWorkspace()
-	const { data: workspaces, isLoading, isError } = useWorkspaces()
+	const { data: workspaces, isLoading, isError, refetch } = useWorkspaces()
 	const { isMobile, setOpenMobile } = useSidebar()
 	const navigate = useNavigate()
 	const queryClient = useQueryClient()
@@ -49,6 +49,7 @@ export function WorkspaceSwitcher() {
 		queryClient.removeQueries({ queryKey: queryKeys.installedPackages.all(id) })
 		queryClient.removeQueries({ queryKey: queryKeys.catalogItems.installed(id) })
 		queryClient.removeQueries({ queryKey: queryKeys.claudeOauth.status(id) })
+		queryClient.removeQueries({ queryKey: queryKeys.events.history(id) })
 	}
 
 	function handleSelect(target: WorkspaceWithRole) {
@@ -103,7 +104,11 @@ export function WorkspaceSwitcher() {
 							<DropdownMenuItem disabled>
 								<Skeleton className="h-4 w-32" />
 							</DropdownMenuItem>
-						) : isError || !workspaces || workspaces.length === 0 ? (
+						) : isError ? (
+							<DropdownMenuItem onSelect={() => refetch()} className="gap-2 text-muted-foreground">
+								<span className="truncate">Couldn't load workspaces — retry</span>
+							</DropdownMenuItem>
+						) : !workspaces || workspaces.length === 0 ? (
 							<DropdownMenuItem disabled>
 								<Check className="mr-2 size-4" />
 								<span className="truncate">{displayName}</span>

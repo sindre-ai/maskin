@@ -104,6 +104,7 @@ describe('WorkspaceSwitcher', () => {
 			items: [{ entity_id: 'a' }],
 		})
 		client.setQueryData(queryKeys.installedPackages.all('ws-a'), [{ id: 'pkg-1' }])
+		client.setQueryData(queryKeys.events.history('ws-a'), [{ id: 'event-1' }])
 
 		const user = userEvent.setup()
 		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
@@ -119,6 +120,7 @@ describe('WorkspaceSwitcher', () => {
 		expect(client.getQueryData(queryKeys.sessions.all('ws-a'))).toBeUndefined()
 		expect(client.getQueryData(queryKeys.subscriptions.unread('ws-a'))).toBeUndefined()
 		expect(client.getQueryData(queryKeys.installedPackages.all('ws-a'))).toBeUndefined()
+		expect(client.getQueryData(queryKeys.events.history('ws-a'))).toBeUndefined()
 	})
 
 	it('does not navigate when the current workspace is reselected', async () => {
@@ -153,6 +155,28 @@ describe('WorkspaceSwitcher', () => {
 		// renders something legible without collapsing or shifting the shell.
 		expect(screen.getByText('ws-a')).toBeInTheDocument()
 		expect(screen.queryByTestId('workspace-pill-skeleton')).not.toBeInTheDocument()
+	})
+
+	it('shows a retry option in the dropdown when workspaces fail to load (AC-T2)', async () => {
+		const refetch = vi.fn()
+		mockHook({
+			data: undefined,
+			isLoading: false,
+			isError: true,
+			error: new Error('fetch failed'),
+			refetch,
+		})
+		const { Wrapper } = makeWrapper()
+		const user = userEvent.setup()
+		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
+
+		const retryItem = await screen.findByText(/Couldn't load workspaces/)
+		expect(retryItem).toBeInTheDocument()
+
+		await user.click(retryItem)
+		expect(refetch).toHaveBeenCalledTimes(1)
 	})
 
 	it('sets aria-label and tooltip to the current workspace name (AC-T3)', () => {

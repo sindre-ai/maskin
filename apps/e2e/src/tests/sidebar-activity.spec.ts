@@ -171,6 +171,123 @@ test.describe('Sidebar Activity group', () => {
 		await expect(page.getByTestId('sidebar-activity')).toHaveCount(0)
 	})
 
+	test('reflects an agent start via SSE without a page refresh (AC-U7)', async ({ page, account }) => {
+		const startedSession = buildSession({
+			id: 's-sse-1',
+			actorId: 'a-sse-1',
+			currentActivity: 'Starting up',
+		})
+		let sessionCalls = 0
+		await page.route('**/api/sessions*', async (route) => {
+			if (route.request().method() !== 'GET') return route.continue()
+			sessionCalls += 1
+			const sessions = sessionCalls === 1 ? [] : [startedSession]
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify(sessions),
+			})
+		})
+		await page.route('**/api/actors*', async (route) => {
+			if (route.request().method() !== 'GET') return route.continue()
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([buildActor({ id: 'a-sse-1', name: 'Planner' })]),
+			})
+		})
+
+		const sseEvent = {
+			id: 'evt-sse-1',
+			action: 'session_started',
+			workspace_id: account.workspaceId,
+			actor_id: 'a-sse-1',
+			entity_type: 'session',
+			entity_id: 's-sse-1',
+			event_id: 'evt-sse-1',
+		}
+		await page.route('**/api/events', async (route) => {
+			if (route.request().method() !== 'GET') return route.continue()
+			await route.fulfill({
+				status: 200,
+				headers: {
+					'Content-Type': 'text/event-stream',
+					'Cache-Control': 'no-cache',
+					Connection: 'keep-alive',
+				},
+				body: `retry: 600000\n\nevent: session_started\ndata: ${JSON.stringify(sseEvent)}\n\n`,
+			})
+		})
+
+		await page.goto(`/${account.workspaceId}`)
+		const group = page.getByTestId('sidebar-activity')
+		await expect(group.getByText('No agents running')).toBeVisible()
+
+		// The `session` entity SSE event broad-invalidates the sessions query;
+		// the running agent appears without a page.reload().
+		await expect(group.getByText('Planner')).toBeVisible()
+		await expect(group.getByText('Starting up')).toBeVisible()
+		expect(sessionCalls).toBeGreaterThanOrEqual(2)
+	})
+
+	test('reflects an agent stop via SSE without a page refresh (AC-U7)', async ({ page, account }) => {
+		const runningSession = buildSession({
+			id: 's-sse-2',
+			actorId: 'a-sse-2',
+			currentActivity: 'Wrapping up',
+		})
+		let sessionCalls = 0
+		await page.route('**/api/sessions*', async (route) => {
+			if (route.request().method() !== 'GET') return route.continue()
+			sessionCalls += 1
+			const sessions = sessionCalls === 1 ? [runningSession] : []
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify(sessions),
+			})
+		})
+		await page.route('**/api/actors*', async (route) => {
+			if (route.request().method() !== 'GET') return route.continue()
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([buildActor({ id: 'a-sse-2', name: 'Reviewer' })]),
+			})
+		})
+
+		const sseEvent = {
+			id: 'evt-sse-2',
+			action: 'session_completed',
+			workspace_id: account.workspaceId,
+			actor_id: 'a-sse-2',
+			entity_type: 'session',
+			entity_id: 's-sse-2',
+			event_id: 'evt-sse-2',
+		}
+		await page.route('**/api/events', async (route) => {
+			if (route.request().method() !== 'GET') return route.continue()
+			await route.fulfill({
+				status: 200,
+				headers: {
+					'Content-Type': 'text/event-stream',
+					'Cache-Control': 'no-cache',
+					Connection: 'keep-alive',
+				},
+				body: `retry: 600000\n\nevent: session_completed\ndata: ${JSON.stringify(sseEvent)}\n\n`,
+			})
+		})
+
+		await page.goto(`/${account.workspaceId}`)
+		const group = page.getByTestId('sidebar-activity')
+		await expect(group.getByText('Reviewer')).toBeVisible()
+
+		// The `session` entity SSE event broad-invalidates the sessions query;
+		// the completed agent drops out without a page.reload().
+		await expect(group.getByText('No agents running')).toBeVisible()
+		expect(sessionCalls).toBeGreaterThanOrEqual(2)
+	})
+
 	test('hides the Activity group in icon-collapsed mode and shows it when expanded (AC-T3)', async ({
 		page,
 		account,
