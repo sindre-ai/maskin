@@ -1,8 +1,21 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { splitStatements } from '@maskin/db/migrate-utils'
 import { describe, expect, it } from 'vitest'
 import { getTestActorId, sql } from './global-setup'
 
 // These tests assert DB-level semantics that the application relies on but that
 // mocked unit tests cannot verify. Each maps directly to a known-pitfall entry.
+
+async function replayMigration(filename: string): Promise<void> {
+	const here = dirname(fileURLToPath(import.meta.url))
+	const migrationsDir = join(here, '..', '..', '..', '..', '..', 'packages', 'db', 'drizzle')
+	const content = readFileSync(join(migrationsDir, filename), 'utf-8')
+	for (const statement of splitStatements(content)) {
+		await sql.unsafe(statement)
+	}
+}
 
 async function getIndexColumns(relname: string): Promise<string[]> {
 	const rows = await sql<{ column: string; ord: number }[]>`
@@ -233,6 +246,120 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 		expect(byColumn.actor_id, 'actor_id FK must be ON DELETE CASCADE').toBe('c')
 		expect(byColumn.default_workspace_id, 'default_workspace_id FK must be ON DELETE CASCADE').toBe(
 			'c',
+		)
+	})
+
+	// ── bet archived status + archive_reason (migration 0047) ────────────────
+	// T2 of `bet/archived-status`: the migration must add `archived` to every
+	// workspace's settings.statuses.bet and register the archive_reason field on
+	// bet — including on rows whose settings blob is missing intermediate keys —
+	// and it must be idempotent when re-run against an already-patched row.
+
+	it('0047 patches statuses.bet + field_definitions.bet on a pre-existing workspace', async () => {
+		const actorId = getTestActorId()
+		// Simulate a row that predates the migration: statuses.bet has the old
+		// eight-status list; field_definitions.bet is absent.
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, settings, created_by)
+			VALUES (
+				'archived-status-legacy',
+				${JSON.stringify({
+					statuses: {
+						bet: [
+							'signal',
+							'qualified',
+							'define',
+							'active',
+							'live',
+							'succeeded',
+							'failed',
+							'paused',
+						],
+					},
+				})}::jsonb,
+				${actorId}
+			)
+			RETURNING id
+		`
+		// Re-run the 0047 migration statements against the seeded legacy row.
+		await replayMigration('0047_bet_archived_status_and_archive_reason.sql')
+
+		const [after] = await sql<{ settings: Record<string, unknown> }[]>`
+			SELECT settings FROM workspaces WHERE id = ${ws.id}
+		`
+		const settings = after.settings as {
+			statuses: { bet: string[] }
+			field_definitions: { bet: Array<{ name: string; type: string; required: boolean }> }
+		}
+		expect(settings.statuses.bet, 'archived must be appended to statuses.bet').toContain('archived')
+		expect(
+			settings.statuses.bet.filter((s) => s === 'archived').length,
+			'archived must appear exactly once',
+		).toBe(1)
+		expect(settings.field_definitions.bet, 'archive_reason must be registered on bet').toEqual([
+			{ name: 'archive_reason', type: 'text', required: false },
+		])
+	})
+
+	it('0047 handles a workspace whose settings has no statuses or field_definitions keys', async () => {
+		const actorId = getTestActorId()
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, settings, created_by)
+			VALUES ('archived-status-bare', '{}'::jsonb, ${actorId})
+			RETURNING id
+		`
+		await replayMigration('0047_bet_archived_status_and_archive_reason.sql')
+
+		const [after] = await sql<{ settings: Record<string, unknown> }[]>`
+			SELECT settings FROM workspaces WHERE id = ${ws.id}
+		`
+		const settings = after.settings as {
+			statuses: { bet: string[] }
+			field_definitions: { bet: Array<{ name: string }> }
+		}
+		expect(settings.statuses.bet).toEqual(['archived'])
+		expect(settings.field_definitions.bet).toEqual([
+			{ name: 'archive_reason', type: 'text', required: false },
+		])
+	})
+
+	it('0047 is idempotent: a second run adds no duplicate entries', async () => {
+		const actorId = getTestActorId()
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, settings, created_by)
+			VALUES (
+				'archived-status-idempotent',
+				${JSON.stringify({
+					statuses: {
+						bet: [
+							'signal',
+							'qualified',
+							'define',
+							'active',
+							'live',
+							'succeeded',
+							'failed',
+							'paused',
+							'archived',
+						],
+					},
+					field_definitions: {
+						bet: [{ name: 'archive_reason', type: 'text', required: false }],
+					},
+				})}::jsonb,
+				${actorId}
+			)
+			RETURNING id, settings
+		`
+		const before = ws.settings
+		await replayMigration('0047_bet_archived_status_and_archive_reason.sql')
+		await replayMigration('0047_bet_archived_status_and_archive_reason.sql')
+
+		const [after] = await sql<{ settings: Record<string, unknown> }[]>`
+			SELECT settings FROM workspaces WHERE id = ${ws.id}
+		`
+		expect(after.settings, 'settings must be unchanged when both patches already applied').toEqual(
+			before,
 		)
 	})
 

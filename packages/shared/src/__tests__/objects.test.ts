@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	SAFE_METADATA_FIELD_NAME_RE,
+	TERMINAL_BET_STATUSES,
 	createObjectSchema,
 	objectParamsSchema,
 	objectQuerySchema,
@@ -191,6 +192,18 @@ describe('objectParamsSchema', () => {
 
 	it('rejects missing id', () => {
 		expect(() => objectParamsSchema.parse({})).toThrow()
+	})
+})
+
+describe('TERMINAL_BET_STATUSES', () => {
+	it('is exactly succeeded/failed/paused — archived is silent, must stay excluded', () => {
+		// Locks the invariant that drives the retro fan-out gate
+		// (apps/dev/src/routes/objects.ts) and the unread-feed join
+		// (apps/dev/src/routes/subscriptions.ts). If `archived` slips in here,
+		// archiving a bet fires a retro and posts an unread — which is the
+		// exact behaviour the archived-status bet exists to prevent.
+		expect([...TERMINAL_BET_STATUSES]).toEqual(['succeeded', 'failed', 'paused'])
+		expect((TERMINAL_BET_STATUSES as readonly string[]).includes('archived')).toBe(false)
 	})
 })
 

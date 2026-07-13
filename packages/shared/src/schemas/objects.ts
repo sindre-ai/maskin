@@ -17,6 +17,11 @@ export type ObjectType = z.infer<typeof objectTypeSchema>
  * Single source of truth for both apps/dev/src/routes/objects.ts (fan-out
  * gate) and apps/dev/src/routes/subscriptions.ts (unread-feed join) so the
  * two can't independently drift out of sync.
+ *
+ * `archived` is deliberately NOT in this list — archiving a bet is a silent
+ * move that must not surface as an unread-feed row or fan out a retro. If
+ * you add a new terminal status, add it here; do NOT add `archived` on the
+ * assumption that "terminal" and "in the bet enum" are synonymous.
  */
 export const TERMINAL_BET_STATUSES = ['succeeded', 'failed', 'paused'] as const
 export type TerminalBetStatus = (typeof TERMINAL_BET_STATUSES)[number]
