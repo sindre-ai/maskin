@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { openSidebarOnMobile } from '../helpers/sidebar.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // SidebarFooter Activity group (T2 of bet `sidebar-legibility`).
@@ -187,6 +188,10 @@ test.describe('Sidebar Activity group', () => {
 			currentActivity: 'Starting up',
 		})
 		let sessionCalls = 0
+		let releaseSseEvent!: () => void
+		const sseEventGate = new Promise<void>((resolve) => {
+			releaseSseEvent = resolve
+		})
 		await page.route('**/api/sessions*', async (route) => {
 			if (route.request().method() !== 'GET') return route.continue()
 			sessionCalls += 1
@@ -217,6 +222,12 @@ test.describe('Sidebar Activity group', () => {
 		}
 		await page.route('**/api/events', async (route) => {
 			if (route.request().method() !== 'GET') return route.continue()
+			// Wait for the test to confirm the initial render before delivering the SSE
+			// message — otherwise the mocked event (fulfilled instantly on connect) can
+			// race ahead of the sessions query's own in-flight initial fetch. Invalidating
+			// a query mid-fetch just dedupes onto the in-flight (stale) request instead of
+			// starting a fresh one, so the UI would never pick up the SSE-driven change.
+			await sseEventGate
 			await route.fulfill({
 				status: 200,
 				headers: {
@@ -231,6 +242,7 @@ test.describe('Sidebar Activity group', () => {
 		await page.goto(`/${account.workspaceId}`)
 		const group = page.getByTestId('sidebar-activity')
 		await expect(group.getByText('No agents running')).toBeVisible()
+		releaseSseEvent()
 
 		// The `session` entity SSE event broad-invalidates the sessions query;
 		// the running agent appears without a page.reload().
@@ -249,6 +261,10 @@ test.describe('Sidebar Activity group', () => {
 			currentActivity: 'Wrapping up',
 		})
 		let sessionCalls = 0
+		let releaseSseEvent!: () => void
+		const sseEventGate = new Promise<void>((resolve) => {
+			releaseSseEvent = resolve
+		})
 		await page.route('**/api/sessions*', async (route) => {
 			if (route.request().method() !== 'GET') return route.continue()
 			sessionCalls += 1
@@ -279,6 +295,12 @@ test.describe('Sidebar Activity group', () => {
 		}
 		await page.route('**/api/events', async (route) => {
 			if (route.request().method() !== 'GET') return route.continue()
+			// Wait for the test to confirm the initial render before delivering the SSE
+			// message — otherwise the mocked event (fulfilled instantly on connect) can
+			// race ahead of the sessions query's own in-flight initial fetch. Invalidating
+			// a query mid-fetch just dedupes onto the in-flight (stale) request instead of
+			// starting a fresh one, so the UI would never pick up the SSE-driven change.
+			await sseEventGate
 			await route.fulfill({
 				status: 200,
 				headers: {
@@ -293,6 +315,7 @@ test.describe('Sidebar Activity group', () => {
 		await page.goto(`/${account.workspaceId}`)
 		const group = page.getByTestId('sidebar-activity')
 		await expect(group.getByText('Reviewer')).toBeVisible()
+		releaseSseEvent()
 
 		// The `session` entity SSE event broad-invalidates the sessions query;
 		// the completed agent drops out without a page.reload().
@@ -336,8 +359,7 @@ test.describe('Sidebar Activity group', () => {
 			await page.goto(`/${account.workspaceId}`)
 			// On mobile the sidebar is a drawer — open it via the mobile trigger in the header.
 			if (viewport.width < 768) {
-				const trigger = page.getByRole('button', { name: /toggle sidebar/i })
-				if (await trigger.count()) await trigger.first().click()
+				await openSidebarOnMobile(page)
 			}
 			await expect(page.getByTestId('sidebar-activity').getByText('Planner')).toBeVisible()
 		})

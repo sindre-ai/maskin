@@ -1,13 +1,6 @@
-import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { openSidebarOnMobile } from '../helpers/sidebar.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
-
-async function openSidebarOnMobile(page: Page) {
-	const trigger = page.getByRole('button', { name: /toggle sidebar/i }).first()
-	if (await trigger.isVisible().catch(() => false)) {
-		await trigger.click()
-	}
-}
 
 test.describe('Workspace switcher (SidebarHeader pill)', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
@@ -23,7 +16,7 @@ test.describe('Workspace switcher (SidebarHeader pill)', () => {
 
 			const pill = page.getByRole('button', { name: /switch workspace/i })
 			await expect(pill).toBeVisible()
-			await expect(pill).toContainText('My Workspace')
+			await expect(pill).toContainText(account.workspaceName)
 		})
 	}
 
@@ -36,7 +29,7 @@ test.describe('Workspace switcher (SidebarHeader pill)', () => {
 
 		const menu = page.getByRole('menu')
 		await expect(menu).toBeVisible()
-		const currentRow = menu.getByRole('menuitem', { name: 'My Workspace' })
+		const currentRow = menu.getByRole('menuitem', { name: account.workspaceName })
 		await expect(currentRow).toBeVisible()
 		await expect(currentRow.locator('svg')).toBeVisible()
 	})
@@ -58,12 +51,13 @@ test.describe('Workspace switcher (SidebarHeader pill)', () => {
 		const pill = page.getByRole('button', { name: /switch workspace/i })
 		await expect(pill).toContainText(second.name)
 		// No stale leak: the previous workspace name is gone from the pill.
-		await expect(pill).not.toContainText('My Workspace')
+		await expect(pill).not.toContainText(account.workspaceName)
 	})
 
 	test('sidebar shell does not shift while workspaces load (AC-T2)', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		// Slow the workspaces list so the loading branch is visible.
+		const workspacesLoaded = page.waitForResponse('**/api/workspaces')
 		await page.route('**/api/workspaces', async (route) => {
 			await new Promise((r) => setTimeout(r, 400))
 			return route.continue()
@@ -74,7 +68,10 @@ test.describe('Workspace switcher (SidebarHeader pill)', () => {
 
 		const sidebar = page.locator('[data-slot="sidebar"], [data-sidebar="sidebar"]').first()
 		const firstWidth = await sidebar.evaluate((el) => el.getBoundingClientRect().width)
-		await page.waitForLoadState('networkidle')
+		// `networkidle` never fires — the app holds an SSE connection to /api/events —
+		// so wait for the slowed workspaces response itself, then let React settle.
+		await workspacesLoaded
+		await page.waitForTimeout(100)
 		const finalWidth = await sidebar.evaluate((el) => el.getBoundingClientRect().width)
 		expect(Math.abs(finalWidth - firstWidth)).toBeLessThanOrEqual(1)
 	})
