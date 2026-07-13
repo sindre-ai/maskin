@@ -401,4 +401,128 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 		const [restored] = await sql`SELECT to_regclass('public.slack_user_links') AS r`
 		expect(restored.r, 'tx abort must restore the schema for later tests').not.toBeNull()
 	})
+
+	// ── hygiene-swept paused → archived (migration 0048) ─────────────────────
+	// T7 of `bet/archived-status`: rows the workspace-hygiene sweep already
+	// parked into `paused` (as an interim shelf) must migrate to `archived`.
+	// Rows carrying `metadata.parked_reason` are intentional human holds and
+	// must stay `paused` — the sweep never touched them.
+
+	it('0048 moves paused bets stamped with hygiene_swept_at to archived', async () => {
+		const actorId = getTestActorId()
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, created_by) VALUES ('hygiene-swept-happy', ${actorId})
+			RETURNING id
+		`
+		const [bet] = await sql`
+			INSERT INTO objects (workspace_id, type, title, status, metadata, created_by)
+			VALUES (
+				${ws.id},
+				'bet',
+				'Council-parked bet swept last week',
+				'paused',
+				${JSON.stringify({
+					hygiene_swept_at: '2026-07-06T00:00:00Z',
+					council_route: 'park',
+				})}::jsonb,
+				${actorId}
+			)
+			RETURNING id
+		`
+
+		await replayMigration('0048_hygiene_swept_paused_to_archived.sql')
+
+		const [after] = await sql<{ status: string }[]>`
+			SELECT status FROM objects WHERE id = ${bet.id}
+		`
+		expect(after.status).toBe('archived')
+	})
+
+	it('0048 leaves paused bets with parked_reason alone', async () => {
+		const actorId = getTestActorId()
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, created_by) VALUES ('hygiene-swept-parked', ${actorId})
+			RETURNING id
+		`
+		// Row was swept, but a human later added a parked_reason — flipping it back
+		// into an intentional hold. The migration must leave it in paused.
+		const [heldBet] = await sql`
+			INSERT INTO objects (workspace_id, type, title, status, metadata, created_by)
+			VALUES (
+				${ws.id},
+				'bet',
+				'SOC 2 Type II compliance — paused awaiting external audit',
+				'paused',
+				${JSON.stringify({
+					hygiene_swept_at: '2026-07-06T00:00:00Z',
+					parked_reason: 'awaiting_external_audit',
+				})}::jsonb,
+				${actorId}
+			)
+			RETURNING id
+		`
+		// A vanilla paused bet with no hygiene stamp — also must stay put.
+		const [freshPaused] = await sql`
+			INSERT INTO objects (workspace_id, type, title, status, metadata, created_by)
+			VALUES (
+				${ws.id},
+				'bet',
+				'Recently paused, never swept',
+				'paused',
+				'{}'::jsonb,
+				${actorId}
+			)
+			RETURNING id
+		`
+
+		await replayMigration('0048_hygiene_swept_paused_to_archived.sql')
+
+		const rows = await sql<{ id: string; status: string }[]>`
+			SELECT id, status FROM objects
+			WHERE id IN (${heldBet.id}, ${freshPaused.id})
+			ORDER BY id
+		`
+		const byId = Object.fromEntries(rows.map((r) => [r.id, r.status]))
+		expect(byId[heldBet.id], 'parked_reason row must stay paused').toBe('paused')
+		expect(byId[freshPaused.id], 'un-swept paused row must stay paused').toBe('paused')
+	})
+
+	it('0048 is idempotent: a second run flips nothing', async () => {
+		const actorId = getTestActorId()
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, created_by) VALUES ('hygiene-swept-idempotent', ${actorId})
+			RETURNING id
+		`
+		const [bet] = await sql`
+			INSERT INTO objects (workspace_id, type, title, status, metadata, created_by)
+			VALUES (
+				${ws.id},
+				'bet',
+				'Swept bet — rerun target',
+				'paused',
+				${JSON.stringify({
+					hygiene_swept_at: '2026-07-06T00:00:00Z',
+					council_route: 'park',
+				})}::jsonb,
+				${actorId}
+			)
+			RETURNING id
+		`
+
+		await replayMigration('0048_hygiene_swept_paused_to_archived.sql')
+		const [afterFirst] = await sql<{ status: string; updated_at: Date }[]>`
+			SELECT status, updated_at FROM objects WHERE id = ${bet.id}
+		`
+		expect(afterFirst.status).toBe('archived')
+
+		await replayMigration('0048_hygiene_swept_paused_to_archived.sql')
+		const [afterSecond] = await sql<{ status: string; updated_at: Date }[]>`
+			SELECT status, updated_at FROM objects WHERE id = ${bet.id}
+		`
+		expect(afterSecond.status, 'rerun keeps the row at archived').toBe('archived')
+		expect(
+			afterSecond.updated_at.getTime(),
+			'rerun must not touch updated_at — the WHERE clause excludes archived rows',
+		).toBe(afterFirst.updated_at.getTime())
+	})
 })
