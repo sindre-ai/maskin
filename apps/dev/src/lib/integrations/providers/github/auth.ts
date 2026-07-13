@@ -100,6 +100,26 @@ export const githubAuth: CustomAuthHandler = {
  *  discovery request below. */
 const REPO_SLUG_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
 
+/**
+ * Thrown when `GET /repos/:repo/installation` returns a non-2xx. Carries the
+ * HTTP status so callers can distinguish "App is not installed on this repo"
+ * (404 → the caller genuinely needs to reconnect) from transient GitHub
+ * failures (5xx / 429 → tell the caller to retry, don't nag them to reconnect).
+ * Consumers should key on `err.status`, not on the message text.
+ */
+export class DiscoveryError extends Error {
+	readonly status: number
+	readonly repo: string
+	readonly body: string
+	constructor(repo: string, status: number, body: string) {
+		super(`Failed to discover GitHub App installation for ${repo}: ${status} ${body}`)
+		this.name = 'DiscoveryError'
+		this.status = status
+		this.repo = repo
+		this.body = body
+	}
+}
+
 async function discoverInstallationForRepo(repo: string, jwt: string): Promise<string> {
 	if (!REPO_SLUG_RE.test(repo)) {
 		throw new Error(`Invalid repo slug for installation recovery: ${repo}`)
@@ -113,9 +133,7 @@ async function discoverInstallationForRepo(repo: string, jwt: string): Promise<s
 	})
 	if (!response.ok) {
 		const text = await response.text()
-		throw new Error(
-			`Failed to discover GitHub App installation for ${repo}: ${response.status} ${text}`,
-		)
+		throw new DiscoveryError(repo, response.status, text)
 	}
 	const data = (await response.json()) as { id?: number }
 	if (typeof data.id !== 'number') {

@@ -1137,6 +1137,42 @@ describe('Integrations Routes', () => {
 				fetchSpy.mockRestore()
 			})
 
+			it('returns 400 BAD_REQUEST (NOT AUTH_REVOKED) when discovery 5xxs — transient GitHub outage', async () => {
+				// A 5xx from `/repos/:repo/installation` is a GitHub outage / rate
+				// limit, not a revoked grant. The route must NOT map it to 401 —
+				// telling a caller "please reconnect" when the App is fine is a
+				// misclassification the tagger has to work around. The gate keys
+				// on DiscoveryError.status === 404, so 500/503/429/etc. drop to
+				// the transient BAD_REQUEST branch.
+				const { encrypt } = await import('../../lib/crypto')
+				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = 'true'
+
+				const integration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+				})
+				const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.select = [integration]
+
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+					.mockResolvedValueOnce(new Response('Service Unavailable', { status: 503 }))
+
+				const res = await app.request(
+					jsonGet(`/api/integrations/${integration.id}/github-token?repo=sindre-ai%2Fmaskin`, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(400)
+				const body = (await res.json()) as { error: { code: string } }
+				expect(body.error.code).toBe('BAD_REQUEST')
+				fetchSpy.mockRestore()
+			})
+
 			it('returns 401 AUTH_REVOKED when discovery 404s (App uninstalled entirely)', async () => {
 				// Discovery 404 means GitHub has no installation for this repo — the
 				// App is gone from the org. Surfacing that as a generic 400 would

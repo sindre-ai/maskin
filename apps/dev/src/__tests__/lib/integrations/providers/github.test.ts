@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
+	DiscoveryError,
 	fetchInstallationOwnerLogin,
 	githubAuth,
 	mintInstallationTokenWithRecovery,
@@ -326,7 +327,7 @@ describe('githubAuth', () => {
 			expect(globalThis.fetch).toHaveBeenCalledTimes(2)
 		})
 
-		it('throws when discovery itself fails', async () => {
+		it('throws a typed DiscoveryError carrying { status } when discovery 404s', async () => {
 			globalThis.fetch = vi
 				.fn()
 				.mockResolvedValueOnce(makeResponse(404, 'Not Found'))
@@ -334,7 +335,32 @@ describe('githubAuth', () => {
 
 			await expect(
 				mintInstallationTokenWithRecovery({ installation_id: '42' }, { repo: 'sindre-ai/maskin' }),
-			).rejects.toThrow('Failed to discover GitHub App installation for sindre-ai/maskin: 404')
+			).rejects.toMatchObject({
+				name: 'DiscoveryError',
+				status: 404,
+				repo: 'sindre-ai/maskin',
+			})
+		})
+
+		it('throws a typed DiscoveryError with the real status when discovery 5xxs', async () => {
+			// GitHub outages / rate-limits must not masquerade as a 404. The tag
+			// the route later branches on is `err.status`, not the message text.
+			globalThis.fetch = vi
+				.fn()
+				.mockResolvedValueOnce(makeResponse(404, 'Not Found'))
+				.mockResolvedValueOnce(makeResponse(503, 'Service Unavailable'))
+
+			let caught: unknown
+			try {
+				await mintInstallationTokenWithRecovery(
+					{ installation_id: '42' },
+					{ repo: 'sindre-ai/maskin' },
+				)
+			} catch (err) {
+				caught = err
+			}
+			expect(caught).toBeInstanceOf(DiscoveryError)
+			expect(caught).toMatchObject({ status: 503, repo: 'sindre-ai/maskin' })
 		})
 
 		it('propagates non-404 errors unchanged (no recovery)', async () => {

@@ -2,6 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, objects, subscriptions } from '@maskin/db/schema'
 import {
+	LOOP_ATTENTION_STATUSES,
 	TERMINAL_BET_STATUSES,
 	markReadBodySchema,
 	subscribeBodySchema,
@@ -311,10 +312,16 @@ app.openapi(listUnreadRoute, (async (c) => {
 	// (see bet/mcp-response-shape) going forward, but historical rows before
 	// that migration still carry the legacy `{previous, updated}` snapshot —
 	// read whichever is present so old terminal transitions don't drop out of
-	// the unread feed.
-	const terminalStatusExpr = sql<string>`coalesce(
+	// the unread feed. The third fallback (`data->>'status'`) reads the
+	// initial status on a `created` event, whose `data` payload is the full
+	// object row — used by the Loop `created` arm below so a Loop born at
+	// `at-risk`/`breached` surfaces without waiting for a subsequent
+	// transition. `commented` and `status_changed` payloads never carry a
+	// top-level `status` field, so this fallback is safe for them.
+	const statusExpr = sql<string>`coalesce(
 		${events.data}->'updated'->>'status',
-		jsonb_path_query_first(${events.data}, '$.changes[*] ? (@.field == "status")')->>'new'
+		jsonb_path_query_first(${events.data}, '$.changes[*] ? (@.field == "status")')->>'new',
+		${events.data}->>'status'
 	)`
 
 	const rows = await db
@@ -328,13 +335,17 @@ app.openapi(listUnreadRoute, (async (c) => {
 		})
 		.from(subscriptions)
 		.leftJoin(
+			objects,
+			and(eq(subscriptions.entityType, 'object'), eq(objects.id, subscriptions.entityId)),
+		)
+		.leftJoin(
 			events,
 			and(
 				eq(events.workspaceId, subscriptions.workspaceId),
 				eq(events.entityId, subscriptions.entityId),
 				ne(events.actorId, actorId),
 				gt(events.id, lastReadExpr),
-				// Two surfaces land in the unread feed:
+				// Three surfaces land in the unread feed:
 				// (1) comments on the subscribed entity (events.entity_type matches the
 				//     subscription's polymorphic type, e.g. 'object'), and
 				// (2) the bet's own terminal-status transition (events.entity_type is
@@ -346,13 +357,46 @@ app.openapi(listUnreadRoute, (async (c) => {
 				// source of truth shared with the notification fan-out gate in
 				// objects.ts — without (2) a watcher misses the terminal signal, see
 				// T2 on bet/notif-cascade-fix.
+				// (3) a Loop transitioning into an attention-worthy status
+				//     (at-risk / breached) — mirrors (2) for the Loop primitive.
+				//     Uses `type='loop'` in the polymorphic filter path per T2 on
+				//     bet/loops-primitive; a transition back to `holding` is
+				//     quiet news and does not land in the feed.
+				//     LOOP_ATTENTION_STATUSES is the single source of truth shared
+				//     with the briefing composer's health-priority sort.
+				// (4) a Loop born already at an attention-worthy status — QA on
+				//     bet/loops-primitive found seeded `at-risk`/`breached` Loops
+				//     silent in the feed because their `created` event emits an
+				//     initial-status payload, not a transition. Mirrors (3) via
+				//     the `data->>'status'` fallback in `statusExpr` above; a
+				//     Loop born at `holding` stays quiet.
+				// Unlike TERMINAL_BET_STATUSES, a loop's status is never permanent —
+				// it can flip back to `holding` after arm (3) or (4) already matched an
+				// older unread event. Both loop arms additionally require the object's
+				// CURRENT status (via the `objects` join above) to still be
+				// attention-worthy, so a recovered loop stops surfacing once it's read
+				// back to `holding` even if the triggering event is still unread.
 				or(
 					and(eq(events.entityType, subscriptions.entityType), eq(events.action, 'commented')),
 					and(
 						eq(subscriptions.entityType, 'object'),
 						eq(events.entityType, 'bet'),
 						eq(events.action, 'status_changed'),
-						inArray(terminalStatusExpr, [...TERMINAL_BET_STATUSES]),
+						inArray(statusExpr, [...TERMINAL_BET_STATUSES]),
+					),
+					and(
+						eq(subscriptions.entityType, 'object'),
+						eq(events.entityType, 'loop'),
+						eq(events.action, 'status_changed'),
+						inArray(statusExpr, [...LOOP_ATTENTION_STATUSES]),
+						inArray(objects.status, [...LOOP_ATTENTION_STATUSES]),
+					),
+					and(
+						eq(subscriptions.entityType, 'object'),
+						eq(events.entityType, 'loop'),
+						eq(events.action, 'created'),
+						inArray(statusExpr, [...LOOP_ATTENTION_STATUSES]),
+						inArray(objects.status, [...LOOP_ATTENTION_STATUSES]),
 					),
 				),
 			),
