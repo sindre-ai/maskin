@@ -124,11 +124,11 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 				const isBet = row.original.type === 'bet'
 				const betStatus = isBet ? meta?.betStatuses?.get(row.original.id) : undefined
 				return (
-					<div className="flex items-center gap-2">
+					<div className="flex items-center gap-2 min-w-0">
 						<Link
 							to="/$workspaceId/objects/$objectId"
 							params={{ workspaceId, objectId: row.original.id }}
-							className="font-medium truncate max-w-[150px] sm:max-w-[300px] text-foreground hover:underline"
+							className="font-medium truncate min-w-0 flex-1 text-foreground hover:underline"
 							onClick={(e) => e.stopPropagation()}
 						>
 							{row.getValue('title') || 'Untitled'}

@@ -2,7 +2,7 @@ import { events, agentServers, sessions } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { SessionManager } from '../../services/session-manager'
-import { insertSession, insertWorkspace } from '../factories'
+import { insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
 
 function stubStorage(): StorageProvider {
@@ -176,5 +176,47 @@ describe('SessionManager.stopSession — remote agent-server routing (Integratio
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
 		expect(row?.status).toBe('failed')
 		expect(row?.result).toMatchObject({ exit_code: 137 })
+	})
+
+	// Regression coverage: remote (agent-server) sessions never populated token/cost
+	// usage on completion, unlike the local Docker path — the completion handshake
+	// only ever carried an exit code. markRemoteSessionComplete now reads the
+	// session's stdout tail from session_logs (populated by the agent-server's log
+	// ingest endpoint) and extracts usage the same way the local path does.
+	it('populates token/cost usage from session_logs on remote completion', async () => {
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+		})
+
+		await insertSessionLog(db, session.id, {
+			stream: 'stdout',
+			content: `${JSON.stringify({ type: 'system', subtype: 'init' })}\n${JSON.stringify({
+				type: 'result',
+				total_cost_usd: 0.1234,
+				duration_ms: 5000,
+				usage: {
+					input_tokens: 100,
+					output_tokens: 200,
+					cache_creation_input_tokens: 10,
+					cache_read_input_tokens: 20,
+				},
+			})}\n`,
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		try {
+			await manager.markRemoteSessionComplete(session.id, 0)
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('completed')
+		expect(row?.totalCostUsd).toBe('0.123400')
+		expect(row?.inputTokens).toBe(100)
+		expect(row?.outputTokens).toBe(200)
+		expect(row?.cacheCreationInputTokens).toBe(10)
+		expect(row?.cacheReadInputTokens).toBe(20)
+		expect(row?.durationMs).toBe(5000)
 	})
 })

@@ -136,6 +136,20 @@ describe('DataTable', () => {
 		expect(spinners.length).toBeGreaterThanOrEqual(1)
 	})
 
+	it('lets the Title column expand to fill remaining width', () => {
+		const data = [buildObjectResponse({ title: 'Wide Object' })]
+		renderDataTable({ data })
+
+		const titleHeader = screen.getByRole('columnheader', { name: /title/i })
+		expect(titleHeader.className).toMatch(/\bw-full\b/)
+
+		const titleCell = screen.getByText('Wide Object').closest('td')
+		expect(titleCell?.className).toMatch(/\bmax-w-0\b/)
+
+		const otherHeader = screen.getByRole('columnheader', { name: /^status$/i })
+		expect(otherHeader.className).not.toMatch(/\bw-full\b/)
+	})
+
 	describe('grouped rows — chevron scoping and header select-all', () => {
 		it('selects every leaf row in the group when the header checkbox is checked (desktop)', async () => {
 			const user = userEvent.setup()
