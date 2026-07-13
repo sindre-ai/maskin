@@ -130,6 +130,13 @@ export const workspaceSettingsSchema = z.object({
 	// North Star onboarding prompt answer — stored when a user submits the
 	// "What's your product's North Star metric?" card on the For You page.
 	north_star_metric: z.string().optional(),
+	// Actor id that new chats should open with when the caller doesn't pass an
+	// explicit agent (slash-picker overrides still win). `null` — the default
+	// on existing workspace rows — keeps the pre-existing per-caller
+	// resolution path (Workspace Coach by name) unchanged. Set by the Chief of
+	// Staff prototype bet so owner chats route through CoS instead of Workspace
+	// Coach when this is populated.
+	default_agent_id: z.string().uuid().nullable().optional(),
 })
 
 export const createWorkspaceSchema = z.object({

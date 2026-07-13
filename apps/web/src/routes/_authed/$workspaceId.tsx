@@ -62,13 +62,20 @@ function WorkspaceLayout() {
 		[workspaces, workspaceId],
 	)
 
-	// Resolve the per-workspace Workspace Coach agent by name (matches WORKSPACE_COACH_DEFAULT
-	// in packages/shared/src/templates/workspace-coach-agent.ts). Null until actors load
-	// or when the workspace is missing Workspace Coach (e.g. pre-backfill).
-	const defaultAgent = useMemo(
-		() => actors?.find((a) => a.type === 'agent' && a.name === 'Workspace Coach') ?? null,
-		[actors],
-	)
+	// Prefer the workspace-level default_agent_id when set (Chief of Staff
+	// prototype bet); fall back to the Workspace Coach lookup by name. The
+	// fallback keeps every pre-CoS workspace unchanged — settings without a
+	// `default_agent_id` behave exactly as they did before this task.
+	const defaultAgent = useMemo(() => {
+		if (!actors) return null
+		const settings = workspace?.settings as { default_agent_id?: string | null } | undefined
+		const defaultId = settings?.default_agent_id
+		if (typeof defaultId === 'string' && defaultId.length > 0) {
+			const pinned = actors.find((a) => a.id === defaultId)
+			if (pinned) return pinned
+		}
+		return actors.find((a) => a.type === 'agent' && a.name === 'Workspace Coach') ?? null
+	}, [actors, workspace])
 	const agentActorId = defaultAgent?.id ?? null
 	// Chief of Staff prototype bet's `chat_session_started.entry_agent_role`:
 	// derived from the routing agent's display name so the property flips to

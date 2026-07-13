@@ -228,6 +228,7 @@ export function useChatSession({
 						action_prompt: BOOTSTRAP_ACTION_PROMPT,
 						config: { interactive: true },
 						auto_start: true,
+						...(entryAgentRole ? { entry_agent_role: entryAgentRole } : {}),
 					})
 					// If reset() fired between create() resolving and now, the
 					// user discarded this session — don't mount an SSE stream
