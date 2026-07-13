@@ -1286,7 +1286,7 @@ export class SessionManager extends EventEmitter {
 				type: 'stdio',
 				command: 'npx',
 				args: ['-y', '@modelcontextprotocol/server-github'],
-				env: { GITHUB_TOKEN: token },
+				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
 			}
 		}
 		const primaryGithubToken = resolvedGithubInstalls[0]?.token
@@ -2705,6 +2705,24 @@ export class SessionManager extends EventEmitter {
 	async markRemoteSessionComplete(sessionId: string, exitCode: number | null): Promise<void> {
 		const status = exitCode === 0 ? 'completed' : 'failed'
 
+		// Extract token / cost usage from the remote session's stdout tail.
+		// Unlike the local Docker path, there is no in-memory tail buffer for a
+		// microsandbox session — its stdout is streamed into `session_logs` via
+		// the agent-server's HTTP log-ingest endpoint, flushed before this
+		// /complete signal is reported, so the DB-backed extractor is the only
+		// source available here. Parser/DB failures must never block the status
+		// update, so this is wrapped in its own try/catch — same pattern as the
+		// local completion path in handleCompletion().
+		let usage: SessionUsage | null = null
+		try {
+			usage = await extractSessionUsage(this.db, sessionId)
+		} catch (err) {
+			logger.warn('Failed to parse usage from remote session logs', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
 		// A thrown DB error here (distinct from a clean 0-row CAS miss) must not
 		// permanently strand the session: giving up immediately would skip the
 		// audit event, the terminal system log (which SSE /logs/stream clients
@@ -2725,6 +2743,16 @@ export class SessionManager extends EventEmitter {
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,
+						...(usage
+							? {
+									totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+									inputTokens: usage.inputTokens,
+									outputTokens: usage.outputTokens,
+									cacheCreationInputTokens: usage.cacheCreationInputTokens,
+									cacheReadInputTokens: usage.cacheReadInputTokens,
+									durationMs: usage.durationMs,
+								}
+							: {}),
 					})
 					.where(
 						and(
@@ -2799,6 +2827,16 @@ export class SessionManager extends EventEmitter {
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,
+						...(usage
+							? {
+									totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+									inputTokens: usage.inputTokens,
+									outputTokens: usage.outputTokens,
+									cacheCreationInputTokens: usage.cacheCreationInputTokens,
+									cacheReadInputTokens: usage.cacheReadInputTokens,
+									durationMs: usage.durationMs,
+								}
+							: {}),
 					})
 					.where(eq(sessions.id, sessionId))
 			} catch (err) {

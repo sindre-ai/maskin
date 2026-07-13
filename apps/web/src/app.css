@@ -101,6 +101,12 @@
 	--color-status-parked-text: var(--st-parked-text);
 	--color-status-archived-bg: var(--st-archived-bg);
 	--color-status-archived-text: var(--st-archived-text);
+	--color-status-holding-bg: var(--st-holding-bg);
+	--color-status-holding-text: var(--st-holding-text);
+	--color-status-at_risk-bg: var(--st-at_risk-bg);
+	--color-status-at_risk-text: var(--st-at_risk-text);
+	--color-status-breached-bg: var(--st-breached-bg);
+	--color-status-breached-text: var(--st-breached-text);
 
 	/* Type badge colors */
 	--color-type-insight-bg: var(--tp-insight-bg);
@@ -204,6 +210,12 @@
 	--st-parked-text: #57534e;
 	--st-archived-bg: #e7e5e4;
 	--st-archived-text: #57534e;
+	--st-holding-bg: #f4f4f5;
+	--st-holding-text: #52525b;
+	--st-at_risk-bg: #fef3c7;
+	--st-at_risk-text: #92400e;
+	--st-breached-bg: #fee2e2;
+	--st-breached-text: #991b1b;
 
 	/* Type badges */
 	--tp-insight-bg: #fef3c7;
@@ -295,6 +307,12 @@
 	--st-parked-text: #a8a29e;
 	--st-archived-bg: #292524;
 	--st-archived-text: #a8a29e;
+	--st-holding-bg: #27272a;
+	--st-holding-text: #a1a1aa;
+	--st-at_risk-bg: #422006;
+	--st-at_risk-text: #fbbf24;
+	--st-breached-bg: #450a0a;
+	--st-breached-text: #fca5a5;
 
 	/* Type badges */
 	--tp-insight-bg: #422006;

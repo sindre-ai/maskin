@@ -8,6 +8,24 @@ interface SessionLike {
 
 export const ACTIVE_STATUSES = new Set(['running', 'starting', 'pending'])
 
+export function getActiveAgentSessions<T extends SessionLike>(sessions: T[]): T[] {
+	const active = sessions.filter((s) => ACTIVE_STATUSES.has(s.status))
+	const byActor = new Map<string, T>()
+	for (const session of active) {
+		const existing = byActor.get(session.actorId)
+		if (!existing) {
+			byActor.set(session.actorId, session)
+			continue
+		}
+		const existingTime = new Date(existing.createdAt ?? 0).getTime()
+		const nextTime = new Date(session.createdAt ?? 0).getTime()
+		if (nextTime > existingTime) {
+			byActor.set(session.actorId, session)
+		}
+	}
+	return Array.from(byActor.values())
+}
+
 export function groupSessionsByAgent<T extends SessionLike>(sessions: T[]): Map<string, T[]> {
 	const map = new Map<string, T[]>()
 	for (const session of sessions) {

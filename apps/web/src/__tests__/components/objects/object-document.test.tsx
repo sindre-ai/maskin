@@ -24,6 +24,10 @@ vi.mock('@/components/shared/subscribe-toggle', () => ({
 	SubscribeToggle: () => <div data-testid="subscribe-toggle" />,
 }))
 
+vi.mock('@/components/objects/loop-card', () => ({
+	LoopCard: () => <div data-testid="loop-card" />,
+}))
+
 const baseProps = {
 	workspaceId: 'ws-1',
 	statuses: ['proposed', 'active', 'done'],
@@ -138,6 +142,20 @@ describe('ObjectDocumentView', () => {
 		expect(screen.queryByTestId('metadata-properties')).not.toBeInTheDocument()
 		expect(screen.queryByTestId('object-files')).not.toBeInTheDocument()
 		expect(screen.queryByTestId('linked-objects')).not.toBeInTheDocument()
+	})
+
+	describe('LoopCard wiring', () => {
+		it('renders LoopCard when type is loop', () => {
+			const object = buildObjectResponse({ type: 'loop', status: 'holding' })
+			render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(screen.getByTestId('loop-card')).toBeInTheDocument()
+		})
+
+		it('does not render LoopCard for other types', () => {
+			const object = buildObjectResponse({ type: 'bet' })
+			render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(screen.queryByTestId('loop-card')).not.toBeInTheDocument()
+		})
 	})
 
 	it('shows AgentWorkingBadge when activeSessionId present', () => {

@@ -45,6 +45,7 @@ import { StatusBadge } from '../shared/status-badge'
 import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
+import { LoopCard } from './loop-card'
 import { PropertiesDrawer } from './properties-drawer'
 
 interface ObjectDocumentViewProps {
@@ -184,6 +185,8 @@ export function ObjectDocumentView({
 					variant="banner"
 				/>
 			)}
+
+			{object.type === 'loop' && <LoopCard object={object} workspaceId={workspaceId} />}
 
 			{/* Metadata badges row — editable cluster stays inline; provenance
 			 * (creator + createdAt) drops to its own row below sm so 375px never
