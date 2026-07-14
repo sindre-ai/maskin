@@ -94,6 +94,40 @@ describe('runGitHubPreflight', () => {
 		expect(verdict.statusSnippet).toContain('permissions.push')
 	})
 
+	it('skips the /user probe for GitHub App installation tokens (ghs_ prefix) and is healthy on write-scope alone', async () => {
+		const calledUrls: string[] = []
+		const fetchImpl = vi.fn(async (url: string) => {
+			calledUrls.push(url)
+			if (url === 'https://api.github.com/user') {
+				// A real installation token 403s here — assert the probe is never
+				// even called rather than relying on this branch.
+				return textResponse('Resource not accessible by integration', { status: 403 })
+			}
+			return jsonResponse({ permissions: { push: true } })
+		})
+		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict).toEqual({ name: 'github-sindre-ai', healthy: true })
+		expect(calledUrls).not.toContain('https://api.github.com/user')
+	})
+
+	it('classifies a 403 on the write-scope probe for an installation token without touching /user', async () => {
+		const calledUrls: string[] = []
+		const fetchImpl = vi.fn(async (url: string) => {
+			calledUrls.push(url)
+			return textResponse('Resource not accessible by integration', { status: 403 })
+		})
+		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict.healthy).toBe(false)
+		expect(verdict.failureClass).toBe('403-permission')
+		expect(calledUrls).toEqual([
+			`https://api.github.com/repos/${GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO}`,
+		])
+	})
+
 	it('returns network-error when fetch throws', async () => {
 		const fetchImpl = vi.fn(async () => {
 			throw new Error('ECONNRESET')
@@ -207,13 +241,13 @@ describe('resolveMcpGitHubToken', () => {
 })
 
 describe('collectGitHubMcpIdentities', () => {
-	it('extracts an identity from every entry whose env.GITHUB_TOKEN is set, across every source', () => {
+	it('extracts an identity from every entry whose env.GITHUB_PERSONAL_ACCESS_TOKEN is set, across every source', () => {
 		const agentTools = {
 			github: {
-				env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+				env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 			},
 			github_approver: {
-				env: { GITHUB_TOKEN: '${GITHUB_TOKEN_APPROVER}' },
+				env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_APPROVER}' },
 			},
 			slack: {
 				env: { SLACK_BOT_TOKEN: '${SLACK_TOKEN}' },
@@ -221,7 +255,7 @@ describe('collectGitHubMcpIdentities', () => {
 		}
 		const autoInjected = {
 			'github-sindre-ai': {
-				env: { GITHUB_TOKEN: 'ghs_literal_sindre' },
+				env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_literal_sindre' },
 			},
 			'integration-posthog': {
 				env: { POSTHOG_TOKEN: 'phx_x' },
@@ -242,7 +276,7 @@ describe('collectGitHubMcpIdentities', () => {
 
 	it('reports unresolved placeholders as null (→ missing-token downstream)', () => {
 		const identities = collectGitHubMcpIdentities(
-			[{ github_approver: { env: { GITHUB_TOKEN: '${GITHUB_TOKEN_APPROVER}' } } }],
+			[{ github_approver: { env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_APPROVER}' } } }],
 			{},
 		)
 		expect(identities).toEqual([{ name: 'github_approver', token: null }])
