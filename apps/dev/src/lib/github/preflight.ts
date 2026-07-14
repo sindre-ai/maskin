@@ -1,17 +1,26 @@
 /**
  * Startup preflight for the GitHub identities attached to a session's MCP
- * launch spec. Each identity gets one non-mutating write-scope probe
- * (`GET /repos/<probe>` — checks `permissions.push`); identities backed by a
- * user-context token (PAT/OAuth, not a GitHub App installation token) also get
- * an authenticated read (`GET /user`) first. A missing token short-circuits to
- * `missing-token` without hitting the network, so a session that lost its
- * token can't drop calls into GitHub's 60/hr anonymous bucket.
+ * launch spec. A missing token short-circuits to `missing-token` without
+ * hitting the network, so a session that lost its token can't drop calls
+ * into GitHub's 60/hr anonymous bucket.
  *
- * GitHub App installation tokens (prefix `ghs_`) can never pass `GET /user` —
- * that endpoint requires a user-context token, and an installation token gets
- * a 403 "Resource not accessible by integration" there regardless of validity
- * or scope. The write-scope probe is what actually matters for this bet's
- * write path, so installation-token identities skip the /user probe entirely.
+ * This app is multi-tenant — any number of workspaces can each connect their
+ * own GitHub App installation, in their own org, with their own repos. The
+ * write-scope probe therefore can NOT test against one hardcoded repo: an
+ * installation living in org A can never show `permissions.push` on a repo
+ * owned by org B, no matter how well permissioned it is. So for GitHub App
+ * installation tokens (prefix `ghs_`), write scope is checked against
+ * `GET /installation/repositories` — the repos *that specific token* can
+ * reach — instead of any fixed path. This scopes correctly to every tenant's
+ * own org automatically, with no per-identity or per-org configuration.
+ *
+ * Installation tokens also can never pass `GET /user` — that endpoint
+ * requires a user-context token, and an installation token gets a 403
+ * "Resource not accessible by integration" there regardless of validity or
+ * scope — so installation-token identities skip the /user probe entirely.
+ * Non-installation tokens (a user-supplied PAT/OAuth token, not routed
+ * through the integrations table) have no "installation" to scope to, so
+ * they fall back to the fixed default probe repo.
  *
  * Verdicts are per-session, not global — the caller runs preflight once per
  * launch and uses the result to gate the failing identity's MCP tools for
@@ -31,9 +40,8 @@ function isGitHubAppInstallationToken(token: string): boolean {
 /** Default Slack channel for preflight alerts — see the parent bet. */
 export const GITHUB_PREFLIGHT_SLACK_CHANNEL = 'C075JBZ65RT'
 
-/** Default write-scope probe repo — chosen because the bet's target write
- *  path is exactly this repo; any identity that can't read this repo can't
- *  push to it either. */
+/** Fallback write-scope probe repo, used only for non-installation (PAT/OAuth)
+ *  tokens that have no installation to scope `/installation/repositories` to. */
 export const GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO = 'sindre-ai/maskin'
 
 /** Names of the four MCP identities this bet is provisioning. Preflight
@@ -60,6 +68,11 @@ export interface PreflightIdentity {
 	name: string
 	/** Resolved bearer token, or null/empty for the missing-token short-circuit. */
 	token: string | null | undefined
+	/** GitHub App installation ID the token was minted from, when known. Carried
+	 *  through to the verdict purely for diagnostics — lets a Slack alert or log
+	 *  line show exactly which installation produced an unexpected result, without
+	 *  needing to correlate back to the integrations table by hand. */
+	installationId?: string
 }
 
 export interface PreflightVerdict {
@@ -69,6 +82,8 @@ export interface PreflightVerdict {
 	/** Upstream status + short body snippet, token-scrubbed. Never contains the
 	 *  raw token. */
 	statusSnippet?: string
+	/** See {@link PreflightIdentity.installationId}. */
+	installationId?: string
 }
 
 export interface PreflightOptions {
@@ -99,6 +114,7 @@ async function probeOne(
 			healthy: false,
 			failureClass: 'missing-token',
 			statusSnippet: 'no token attached at launch',
+			installationId: id.installationId,
 		}
 	}
 
@@ -109,7 +125,9 @@ async function probeOne(
 		'X-GitHub-Api-Version': '2022-11-28',
 	}
 
-	if (!isGitHubAppInstallationToken(token)) {
+	const isInstallationToken = isGitHubAppInstallationToken(token)
+
+	if (!isInstallationToken) {
 		let userRes: Response
 		try {
 			userRes = await fetchImpl('https://api.github.com/user', { headers })
@@ -119,51 +137,137 @@ async function probeOne(
 				healthy: false,
 				failureClass: 'network-error',
 				statusSnippet: scrubToken(String(err), token),
+				installationId: id.installationId,
 			}
 		}
 		if (!userRes.ok) {
-			return classifyHttpFailure(id.name, userRes, token, '/user')
+			return classifyHttpFailure(id.name, userRes, token, '/user', id.installationId)
 		}
 	}
 
-	let repoRes: Response
+	// Installation tokens are scoped to a single tenant's own org — probing a
+	// fixed repo path would only ever be correct for one hardcoded org, which
+	// breaks for every other tenant. `/installation/repositories` is scoped by
+	// the token itself, so it always reflects the calling installation's own
+	// org regardless of which tenant it belongs to.
+	if (isInstallationToken) {
+		return probeInstallationWriteScope(id.name, fetchImpl, headers, token, id.installationId)
+	}
+	return probeRepoWriteScope(id.name, fetchImpl, headers, token, probeRepo, id.installationId)
+}
+
+async function probeInstallationWriteScope(
+	name: string,
+	fetchImpl: typeof fetch,
+	headers: Record<string, string>,
+	token: string,
+	installationId: string | undefined,
+): Promise<PreflightVerdict> {
+	const path = '/installation/repositories'
+	let res: Response
 	try {
-		repoRes = await fetchImpl(`https://api.github.com/repos/${probeRepo}`, { headers })
+		res = await fetchImpl(`https://api.github.com${path}?per_page=1`, { headers })
 	} catch (err) {
 		return {
-			name: id.name,
+			name,
 			healthy: false,
 			failureClass: 'network-error',
 			statusSnippet: scrubToken(String(err), token),
+			installationId,
 		}
 	}
-	if (!repoRes.ok) {
-		return classifyHttpFailure(id.name, repoRes, token, `/repos/${probeRepo}`)
+	if (!res.ok) {
+		return classifyHttpFailure(name, res, token, path, installationId)
 	}
 
-	let repoBody: unknown
+	let body: unknown
 	try {
-		repoBody = await repoRes.json()
+		body = await res.json()
 	} catch {
 		return {
-			name: id.name,
+			name,
 			healthy: false,
 			failureClass: 'user-lookup-failed',
-			statusSnippet: `/repos/${probeRepo}: unparseable JSON`,
+			statusSnippet: `${path}: unparseable JSON`,
+			installationId,
 		}
 	}
 
-	const push = extractPushPermission(repoBody)
-	if (push !== true) {
+	const repos = (body as { repositories?: unknown[] }).repositories
+	if (!Array.isArray(repos) || repos.length === 0) {
 		return {
-			name: id.name,
+			name,
 			healthy: false,
 			failureClass: 'write-scope-denied',
-			statusSnippet: `/repos/${probeRepo}: permissions.push is ${JSON.stringify(push)}`,
+			statusSnippet: `${path}: installation has no accessible repositories`,
+			installationId,
 		}
 	}
 
-	return { name: id.name, healthy: true }
+	const push = extractPushPermission(repos[0])
+	if (push !== true) {
+		return {
+			name,
+			healthy: false,
+			failureClass: 'write-scope-denied',
+			statusSnippet: `${path}: permissions.push is ${JSON.stringify(push)}`,
+			installationId,
+		}
+	}
+
+	return { name, healthy: true, installationId }
+}
+
+async function probeRepoWriteScope(
+	name: string,
+	fetchImpl: typeof fetch,
+	headers: Record<string, string>,
+	token: string,
+	probeRepo: string,
+	installationId: string | undefined,
+): Promise<PreflightVerdict> {
+	const path = `/repos/${probeRepo}`
+	let res: Response
+	try {
+		res = await fetchImpl(`https://api.github.com${path}`, { headers })
+	} catch (err) {
+		return {
+			name,
+			healthy: false,
+			failureClass: 'network-error',
+			statusSnippet: scrubToken(String(err), token),
+			installationId,
+		}
+	}
+	if (!res.ok) {
+		return classifyHttpFailure(name, res, token, path, installationId)
+	}
+
+	let body: unknown
+	try {
+		body = await res.json()
+	} catch {
+		return {
+			name,
+			healthy: false,
+			failureClass: 'user-lookup-failed',
+			statusSnippet: `${path}: unparseable JSON`,
+			installationId,
+		}
+	}
+
+	const push = extractPushPermission(body)
+	if (push !== true) {
+		return {
+			name,
+			healthy: false,
+			failureClass: 'write-scope-denied',
+			statusSnippet: `${path}: permissions.push is ${JSON.stringify(push)}`,
+			installationId,
+		}
+	}
+
+	return { name, healthy: true, installationId }
 }
 
 function extractPushPermission(body: unknown): unknown {
@@ -178,6 +282,7 @@ async function classifyHttpFailure(
 	res: Response,
 	token: string,
 	path: string,
+	installationId?: string,
 ): Promise<PreflightVerdict> {
 	const status = res.status
 	let bodyText = ''
@@ -195,6 +300,7 @@ async function classifyHttpFailure(
 			healthy: false,
 			failureClass: '401-unauth',
 			statusSnippet: `HTTP 401 ${path}: ${scrubbed}`,
+			installationId,
 		}
 	}
 	if (status === 403) {
@@ -203,6 +309,7 @@ async function classifyHttpFailure(
 			healthy: false,
 			failureClass: '403-permission',
 			statusSnippet: `HTTP 403 ${path}: ${scrubbed}`,
+			installationId,
 		}
 	}
 	return {
@@ -210,6 +317,7 @@ async function classifyHttpFailure(
 		healthy: false,
 		failureClass: 'user-lookup-failed',
 		statusSnippet: `HTTP ${status} ${path}: ${scrubbed}`,
+		installationId,
 	}
 }
 
@@ -248,9 +356,10 @@ export async function postGitHubPreflightSlackAlert(params: {
 	if (unhealthy.length === 0) return
 	if (!botToken) return
 	const fetchImpl = options?.fetchImpl ?? fetch
-	const lines = unhealthy.map(
-		(v) => `• *${v.name}* — ${v.failureClass ?? 'unknown'} — ${v.statusSnippet ?? ''}`,
-	)
+	const lines = unhealthy.map((v) => {
+		const installSuffix = v.installationId ? ` (installation ${v.installationId})` : ''
+		return `• *${v.name}*${installSuffix} — ${v.failureClass ?? 'unknown'} — ${v.statusSnippet ?? ''}`
+	})
 	const text = [
 		`GitHub preflight failed for ${unhealthy.length} identit${unhealthy.length === 1 ? 'y' : 'ies'} at session launch.`,
 		`Session: \`${context.sessionId}\` · Workspace: \`${context.workspaceId}\``,

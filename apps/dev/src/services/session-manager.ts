@@ -1460,10 +1460,20 @@ export class SessionManager extends EventEmitter {
 		// both the agent config and the session config, so subsequent tool calls
 		// under that namespace cannot fire. One consolidated Slack alert per session
 		// lands on C075JBZ65RT so a task never has to rediscover the outage.
+		// Each `github-<owner>` MCP entry's token was minted from a specific
+		// installation (see resolvedGithubInstalls above) — carry that id through
+		// to the verdict so a Slack alert or log line names the exact installation
+		// behind an unexpected failure, instead of just the MCP server name.
+		const installationIdByMcpName = new Map(
+			resolvedGithubInstalls.map((install) => [
+				`github-${install.ownerLogin.toLowerCase()}`,
+				install.installationId,
+			]),
+		)
 		const preflightIdentities = collectGitHubMcpIdentities(
 			[agentToolsMcpServers, sessionMcpServers],
 			envVars,
-		)
+		).map((id) => ({ ...id, installationId: installationIdByMcpName.get(id.name) }))
 		let preflightVerdicts: PreflightVerdict[] = []
 		if (preflightIdentities.length > 0) {
 			preflightVerdicts = await runGitHubPreflight(preflightIdentities)
@@ -1475,6 +1485,7 @@ export class SessionManager extends EventEmitter {
 					failed: failed.map((v) => ({
 						name: v.name,
 						failureClass: v.failureClass,
+						installationId: v.installationId,
 					})),
 				})
 				const slackBotToken = envVars.SLACK_BOT_TOKEN

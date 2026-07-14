@@ -86,15 +86,14 @@ describe('runGitHubPreflight', () => {
 			if (url === 'https://api.github.com/user') return jsonResponse({ login: 'octocat' })
 			return jsonResponse({ permissions: { push: false } })
 		})
-		const [verdict] = await runGitHubPreflight(
-			[{ name: 'github-sindre-ai', token: 'ghs_readonly' }],
-			{ fetchImpl: fetchImpl as unknown as typeof fetch },
-		)
+		const [verdict] = await runGitHubPreflight([{ name: 'github', token: 'ghp_readonly' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
 		expect(verdict.failureClass).toBe('write-scope-denied')
 		expect(verdict.statusSnippet).toContain('permissions.push')
 	})
 
-	it('skips the /user probe for GitHub App installation tokens (ghs_ prefix) and is healthy on write-scope alone', async () => {
+	it('skips the /user probe for GitHub App installation tokens (ghs_ prefix) and checks the installation’s own accessible repos', async () => {
 		const calledUrls: string[] = []
 		const fetchImpl = vi.fn(async (url: string) => {
 			calledUrls.push(url)
@@ -103,16 +102,67 @@ describe('runGitHubPreflight', () => {
 				// even called rather than relying on this branch.
 				return textResponse('Resource not accessible by integration', { status: 403 })
 			}
-			return jsonResponse({ permissions: { push: true } })
+			return jsonResponse({
+				repositories: [{ full_name: 'vaerksted-ai/some-repo', permissions: { push: true } }],
+			})
 		})
+		const [verdict] = await runGitHubPreflight(
+			[{ name: 'github-vaerksted-ai', token: 'ghs_real' }],
+			{
+				fetchImpl: fetchImpl as unknown as typeof fetch,
+			},
+		)
+		expect(verdict).toEqual({ name: 'github-vaerksted-ai', healthy: true })
+		expect(calledUrls).not.toContain('https://api.github.com/user')
+		expect(calledUrls).toEqual(['https://api.github.com/installation/repositories?per_page=1'])
+	})
+
+	it('never probes the hardcoded default repo for an installation token, no matter which org it belongs to', async () => {
+		// This is the multi-tenant regression case: an installation living in an
+		// org other than GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO's owner must still
+		// pass, because write-scope is checked against the installation's own
+		// repos, never against the fixed default.
+		const fetchImpl = vi.fn(async (url: string) => {
+			if (url === `https://api.github.com/repos/${GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO}`) {
+				throw new Error(
+					`must not probe the hardcoded default repo for an installation token: ${url}`,
+				)
+			}
+			return jsonResponse({
+				repositories: [{ full_name: 'some-other-org/repo', permissions: { push: true } }],
+			})
+		})
+		const [verdict] = await runGitHubPreflight(
+			[{ name: 'github-vaerksted-ai', token: 'ghs_real' }],
+			{
+				fetchImpl: fetchImpl as unknown as typeof fetch,
+			},
+		)
+		expect(verdict.healthy).toBe(true)
+	})
+
+	it('flags write-scope-denied when the installation has no accessible repositories', async () => {
+		const fetchImpl = vi.fn(async () => jsonResponse({ repositories: [] }))
 		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
 			fetchImpl: fetchImpl as unknown as typeof fetch,
 		})
-		expect(verdict).toEqual({ name: 'github-sindre-ai', healthy: true })
-		expect(calledUrls).not.toContain('https://api.github.com/user')
+		expect(verdict.failureClass).toBe('write-scope-denied')
+		expect(verdict.statusSnippet).toContain('no accessible repositories')
 	})
 
-	it('classifies a 403 on the write-scope probe for an installation token without touching /user', async () => {
+	it('flags write-scope-denied when the installation’s own repo shows permissions.push=false', async () => {
+		const fetchImpl = vi.fn(async () =>
+			jsonResponse({
+				repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: false } }],
+			}),
+		)
+		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict.failureClass).toBe('write-scope-denied')
+	})
+
+	it('classifies a 403 on the installation write-scope probe without touching /user', async () => {
 		const calledUrls: string[] = []
 		const fetchImpl = vi.fn(async (url: string) => {
 			calledUrls.push(url)
@@ -123,9 +173,7 @@ describe('runGitHubPreflight', () => {
 		})
 		expect(verdict.healthy).toBe(false)
 		expect(verdict.failureClass).toBe('403-permission')
-		expect(calledUrls).toEqual([
-			`https://api.github.com/repos/${GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO}`,
-		])
+		expect(calledUrls).toEqual(['https://api.github.com/installation/repositories?per_page=1'])
 	})
 
 	it('returns network-error when fetch throws', async () => {
@@ -138,7 +186,19 @@ describe('runGitHubPreflight', () => {
 		expect(verdict.failureClass).toBe('network-error')
 	})
 
-	it('probes the write repo passed via options', async () => {
+	it('carries installationId from the identity through to the verdict, healthy or not', async () => {
+		const fetchImpl = vi.fn(async () =>
+			jsonResponse({ repositories: [{ permissions: { push: false } }] }),
+		)
+		const [verdict] = await runGitHubPreflight(
+			[{ name: 'github-sindre-ai', token: 'ghs_x', installationId: '141870781' }],
+			{ fetchImpl: fetchImpl as unknown as typeof fetch },
+		)
+		expect(verdict.failureClass).toBe('write-scope-denied')
+		expect(verdict.installationId).toBe('141870781')
+	})
+
+	it('probes the write repo passed via options for non-installation (PAT/OAuth) tokens', async () => {
 		const seen: string[] = []
 		const fetchImpl = vi.fn(async (url: string) => {
 			seen.push(url)
@@ -187,6 +247,30 @@ describe('postGitHubPreflightSlackAlert', () => {
 		expect(body.text).toContain('github-vaerksted-ai')
 		expect(body.text).not.toContain('github_approver')
 		expect(body.text).not.toContain('xoxb-1')
+	})
+
+	it('includes the installation ID in the alert text when the verdict carries one', async () => {
+		const fetchImpl = vi.fn(async () => jsonResponse({ ok: true }))
+		await postGitHubPreflightSlackAlert({
+			botToken: 'xoxb-1',
+			channelId: GITHUB_PREFLIGHT_SLACK_CHANNEL,
+			verdicts: [
+				{
+					name: 'github-sindre-ai',
+					healthy: false,
+					failureClass: 'write-scope-denied',
+					statusSnippet: 'permissions.push is false',
+					installationId: '141870781',
+				},
+			],
+			context: { sessionId: 'sess-1', workspaceId: 'ws-1' },
+			options: { fetchImpl: fetchImpl as unknown as typeof fetch },
+		})
+		const call = fetchImpl.mock.calls[0] as unknown as [string, RequestInit] | undefined
+		if (!call) throw new Error('expected one Slack call')
+		const [, init] = call
+		const body = JSON.parse(init.body as string) as { text: string }
+		expect(body.text).toContain('installation 141870781')
 	})
 
 	it('skips posting when every identity is healthy', async () => {

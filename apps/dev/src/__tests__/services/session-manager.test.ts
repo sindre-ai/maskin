@@ -153,6 +153,16 @@ describe('SessionManager', () => {
 						status: 200,
 						headers: { 'content-type': 'application/json' },
 					})
+				if (u.startsWith('https://api.github.com/installation/repositories'))
+					return new Response(
+						JSON.stringify({
+							repositories: [{ full_name: 'octocat/hello', permissions: { push: true } }],
+						}),
+						{
+							status: 200,
+							headers: { 'content-type': 'application/json' },
+						},
+					)
 				if (u.startsWith('https://slack.com/api/chat.postMessage'))
 					return new Response(JSON.stringify({ ok: true }), {
 						status: 200,
