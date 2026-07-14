@@ -68,9 +68,9 @@ describe('SessionManager.resolveGithubRepoSlug — sourcing chain against real P
 			metadata: null,
 		})
 		await db.insert(relationshipsTable).values({
-			sourceType: 'task',
+			sourceType: 'object',
 			sourceId: task.id,
-			targetType: 'bet',
+			targetType: 'object',
 			targetId: bet.id,
 			type: 'breaks_into',
 			createdBy: actorId,
@@ -94,9 +94,9 @@ describe('SessionManager.resolveGithubRepoSlug — sourcing chain against real P
 			metadata: null,
 		})
 		await db.insert(relationshipsTable).values({
-			sourceType: 'bet',
+			sourceType: 'object',
 			sourceId: bet.id,
-			targetType: 'task',
+			targetType: 'object',
 			targetId: task.id,
 			type: 'breaks_into',
 			createdBy: actorId,
@@ -120,9 +120,9 @@ describe('SessionManager.resolveGithubRepoSlug — sourcing chain against real P
 			metadata: { repo: 'sindre-ai/other-repo' },
 		})
 		await db.insert(relationshipsTable).values({
-			sourceType: 'task',
+			sourceType: 'object',
 			sourceId: task.id,
-			targetType: 'bet',
+			targetType: 'object',
 			targetId: bet.id,
 			type: 'breaks_into',
 			createdBy: actorId,

@@ -3023,7 +3023,8 @@ describe('SessionManager', () => {
 			const bet = { id: randomUUID(), metadata: { repo: 'sindre-ai/maskin' } }
 			mockResults.selectQueue = [
 				[task],
-				[{ sourceId: task.id, targetId: bet.id, sourceType: 'task', targetType: 'bet' }],
+				[{ sourceId: task.id, targetId: bet.id }],
+				[{ id: bet.id }],
 				[bet],
 			]
 

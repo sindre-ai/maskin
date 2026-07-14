@@ -1566,27 +1566,37 @@ export class SessionManager extends EventEmitter {
 		if (scoped?.type === 'bet') {
 			betId = scoped.id
 		} else if (scoped?.type === 'task') {
+			// `relationships.sourceType`/`targetType` are storage-layer labels
+			// constrained to 'object' | 'file' (see 0046_relationship_type_check.sql)
+			// — they never carry the specialized object type. Resolve the other
+			// endpoint by id and check its actual type via `objects.type`, same
+			// pattern as the object graph endpoint in routes/objects.ts.
 			const edgeRows = await this.db
 				.select({
 					sourceId: relationships.sourceId,
 					targetId: relationships.targetId,
-					sourceType: relationships.sourceType,
-					targetType: relationships.targetType,
 				})
 				.from(relationships)
 				.where(
 					and(
 						eq(relationships.type, 'breaks_into'),
-						or(
-							and(eq(relationships.sourceId, scoped.id), eq(relationships.targetType, 'bet')),
-							and(eq(relationships.targetId, scoped.id), eq(relationships.sourceType, 'bet')),
-						),
+						or(eq(relationships.sourceId, scoped.id), eq(relationships.targetId, scoped.id)),
 					),
 				)
-				.limit(1)
-			const edge = edgeRows[0]
-			if (edge) {
-				betId = edge.sourceType === 'bet' ? edge.sourceId : edge.targetId
+			const otherIds = [
+				...new Set(
+					edgeRows
+						.map((edge) => (edge.sourceId === scoped.id ? edge.targetId : edge.sourceId))
+						.filter((otherId) => otherId !== scoped.id),
+				),
+			]
+			if (otherIds.length > 0) {
+				const betRows = await this.db
+					.select({ id: objects.id })
+					.from(objects)
+					.where(and(inArray(objects.id, otherIds), eq(objects.type, 'bet')))
+					.limit(1)
+				betId = betRows[0]?.id ?? null
 			}
 		}
 		if (betId) {
