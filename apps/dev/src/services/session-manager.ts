@@ -58,10 +58,7 @@ import {
 } from '../lib/github/preflight'
 import { isAuthRevokedError } from '../lib/integrations/errors'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
-import {
-	fetchInstallationOwnerLogin,
-	fetchInstallationPermissions,
-} from '../lib/integrations/providers/github/auth'
+import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import {
 	type SessionGithubInstall,
 	sessionGithubLogClassifier,
@@ -1500,9 +1497,7 @@ export class SessionManager extends EventEmitter {
 		}))
 		let preflightVerdicts: PreflightVerdict[] = []
 		if (preflightIdentities.length > 0) {
-			preflightVerdicts = await runGitHubPreflight(preflightIdentities, {
-				fetchInstallationPermissions,
-			})
+			preflightVerdicts = await runGitHubPreflight(preflightIdentities)
 			const failed = preflightVerdicts.filter((v) => !v.healthy)
 			if (failed.length > 0) {
 				logger.warn('GitHub preflight failed for one or more identities', {

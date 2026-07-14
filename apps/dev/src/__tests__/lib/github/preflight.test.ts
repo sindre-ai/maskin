@@ -45,11 +45,11 @@ describe('runGitHubPreflight', () => {
 		expect(fetchImpl).not.toHaveBeenCalled()
 	})
 
-	it('returns healthy when /user and the write-scope probe both succeed with permissions.push=true', async () => {
+	it('returns healthy when /user succeeds and the write-scope probe creates a blob (HTTP 201)', async () => {
 		const fetchImpl = vi.fn(async (url: string) => {
 			if (url === 'https://api.github.com/user') return jsonResponse({ login: 'octocat' })
-			if (url === `https://api.github.com/repos/${GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO}`)
-				return jsonResponse({ permissions: { push: true } })
+			if (url === `https://api.github.com/repos/${GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO}/git/blobs`)
+				return jsonResponse({ sha: 'abc123' }, { status: 201 })
 			throw new Error(`unexpected url: ${url}`)
 		})
 		const [verdict] = await runGitHubPreflight([{ name: 'github', token: 'ghp_ok' }], {
@@ -81,19 +81,39 @@ describe('runGitHubPreflight', () => {
 		expect(verdict.failureClass).toBe('403-permission')
 	})
 
-	it('flags write-scope-denied when the write probe returns permissions.push=false', async () => {
+	it('flags write-scope-denied when the blob-create write attempt itself is rejected with 403', async () => {
 		const fetchImpl = vi.fn(async (url: string) => {
 			if (url === 'https://api.github.com/user') return jsonResponse({ login: 'octocat' })
-			return jsonResponse({ permissions: { push: false } })
+			return textResponse('Resource not accessible by integration', { status: 403 })
 		})
 		const [verdict] = await runGitHubPreflight([{ name: 'github', token: 'ghp_readonly' }], {
 			fetchImpl: fetchImpl as unknown as typeof fetch,
 		})
 		expect(verdict.failureClass).toBe('write-scope-denied')
-		expect(verdict.statusSnippet).toContain('permissions.push')
+		expect(verdict.statusSnippet).toContain('git/blobs')
+		expect(verdict.statusSnippet).toContain('HTTP 403')
 	})
 
-	it('skips the /user probe for GitHub App installation tokens (ghs_ prefix) and checks the installation’s own accessible repos', async () => {
+	it('never reads permissions.push/pull — a repo reporting push:false is still healthy if the write itself succeeds', async () => {
+		// This is the confirmed production root cause: permissions.push/pull on
+		// GET /repos and GET /installation/repositories do not reliably reflect
+		// what a GitHub App installation token can actually do (see file header).
+		// The probe must judge health solely by whether the write succeeds, never
+		// by reading a permissions field — so even a response that (if it were
+		// read) would say push:false must not affect the verdict.
+		const fetchImpl = vi.fn(async (url: string) => {
+			if (url === 'https://api.github.com/user') return jsonResponse({ login: 'octocat' })
+			if (url === `https://api.github.com/repos/${GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO}/git/blobs`)
+				return jsonResponse({ sha: 'abc123', permissions: { push: false } }, { status: 201 })
+			throw new Error(`unexpected url: ${url}`)
+		})
+		const [verdict] = await runGitHubPreflight([{ name: 'github', token: 'ghp_ok' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict.healthy).toBe(true)
+	})
+
+	it('skips the /user probe for GitHub App installation tokens (ghs_ prefix) and resolves a repo via the installation’s own accessible repos', async () => {
 		const calledUrls: string[] = []
 		const fetchImpl = vi.fn(async (url: string) => {
 			calledUrls.push(url)
@@ -102,9 +122,13 @@ describe('runGitHubPreflight', () => {
 				// even called rather than relying on this branch.
 				return textResponse('Resource not accessible by integration', { status: 403 })
 			}
-			return jsonResponse({
-				repositories: [{ full_name: 'vaerksted-ai/some-repo', permissions: { push: true } }],
-			})
+			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
+				return jsonResponse({ repositories: [{ full_name: 'vaerksted-ai/some-repo' }] })
+			}
+			if (url === 'https://api.github.com/repos/vaerksted-ai/some-repo/git/blobs') {
+				return jsonResponse({ sha: 'abc123' }, { status: 201 })
+			}
+			throw new Error(`unexpected url: ${url}`)
 		})
 		const [verdict] = await runGitHubPreflight(
 			[{ name: 'github-vaerksted-ai', token: 'ghs_real' }],
@@ -114,7 +138,10 @@ describe('runGitHubPreflight', () => {
 		)
 		expect(verdict).toEqual({ name: 'github-vaerksted-ai', healthy: true })
 		expect(calledUrls).not.toContain('https://api.github.com/user')
-		expect(calledUrls).toEqual(['https://api.github.com/installation/repositories?per_page=1'])
+		expect(calledUrls).toEqual([
+			'https://api.github.com/installation/repositories?per_page=1',
+			'https://api.github.com/repos/vaerksted-ai/some-repo/git/blobs',
+		])
 	})
 
 	it('never probes the hardcoded default repo for an installation token, no matter which org it belongs to', async () => {
@@ -123,14 +150,15 @@ describe('runGitHubPreflight', () => {
 		// pass, because write-scope is checked against the installation's own
 		// repos, never against the fixed default.
 		const fetchImpl = vi.fn(async (url: string) => {
-			if (url === `https://api.github.com/repos/${GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO}`) {
+			if (url.startsWith(`https://api.github.com/repos/${GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO}`)) {
 				throw new Error(
 					`must not probe the hardcoded default repo for an installation token: ${url}`,
 				)
 			}
-			return jsonResponse({
-				repositories: [{ full_name: 'some-other-org/repo', permissions: { push: true } }],
-			})
+			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
+				return jsonResponse({ repositories: [{ full_name: 'some-other-org/repo' }] })
+			}
+			return jsonResponse({ sha: 'abc123' }, { status: 201 })
 		})
 		const [verdict] = await runGitHubPreflight(
 			[{ name: 'github-vaerksted-ai', token: 'ghs_real' }],
@@ -150,12 +178,13 @@ describe('runGitHubPreflight', () => {
 		expect(verdict.statusSnippet).toContain('no accessible repositories')
 	})
 
-	it('flags write-scope-denied when the installation’s own repo shows permissions.push=false', async () => {
-		const fetchImpl = vi.fn(async () =>
-			jsonResponse({
-				repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: false } }],
-			}),
-		)
+	it('flags write-scope-denied when the blob-create attempt against the installation’s own resolved repo is rejected', async () => {
+		const fetchImpl = vi.fn(async (url: string) => {
+			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
+				return jsonResponse({ repositories: [{ full_name: 'sindre-ai/maskin' }] })
+			}
+			return textResponse('Resource not accessible by integration', { status: 403 })
+		})
 		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
 			fetchImpl: fetchImpl as unknown as typeof fetch,
 		})
@@ -166,136 +195,6 @@ describe('runGitHubPreflight', () => {
 		expect(verdict.statusSnippet).toContain('sindre-ai/maskin')
 	})
 
-	it('recovers from a false push signal on /installation/repositories by cross-checking the single-repo endpoint', async () => {
-		// Observed in production: /installation/repositories reported permissions.push:false
-		// for an installation whose org config, App manifest, and even a freshly re-created
-		// installation all agreed on Contents: Read & write. The bulk listing's own
-		// permissions field isn't trustworthy on its own — cross-check against
-		// GET /repos/{full_name} before declaring the identity unhealthy.
-		const calledUrls: string[] = []
-		const fetchImpl = vi.fn(async (url: string) => {
-			calledUrls.push(url)
-			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
-				return jsonResponse({
-					repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: false } }],
-				})
-			}
-			if (url === 'https://api.github.com/repos/sindre-ai/maskin') {
-				return jsonResponse({ permissions: { push: true } })
-			}
-			throw new Error(`unexpected fetch: ${url}`)
-		})
-		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
-			fetchImpl: fetchImpl as unknown as typeof fetch,
-		})
-		expect(verdict.healthy).toBe(true)
-		expect(calledUrls).toEqual([
-			'https://api.github.com/installation/repositories?per_page=1',
-			'https://api.github.com/repos/sindre-ai/maskin',
-		])
-	})
-
-	it('stays write-scope-denied and names the cross-check result when the single-repo endpoint also reports push=false', async () => {
-		const calledUrls: string[] = []
-		const fetchImpl = vi.fn(async (url: string) => {
-			calledUrls.push(url)
-			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
-				return jsonResponse({
-					repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: false } }],
-				})
-			}
-			return jsonResponse({ permissions: { push: false } })
-		})
-		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
-			fetchImpl: fetchImpl as unknown as typeof fetch,
-		})
-		expect(verdict.failureClass).toBe('write-scope-denied')
-		// This is the decisive signal distinguishing "the precise endpoint also denies
-		// push" (a real permission problem) from a broken cross-check request — the
-		// statusSnippet must say so explicitly, not just repeat the bulk-listing verdict.
-		expect(verdict.statusSnippet).toContain(
-			'GET /repos/sindre-ai/maskin also reports permissions.push=false',
-		)
-		expect(calledUrls).toEqual([
-			'https://api.github.com/installation/repositories?per_page=1',
-			'https://api.github.com/repos/sindre-ai/maskin',
-		])
-	})
-
-	it('stays write-scope-denied and names the failure reason when the single-repo cross-check request itself fails', async () => {
-		const calledUrls: string[] = []
-		const fetchImpl = vi.fn(async (url: string) => {
-			calledUrls.push(url)
-			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
-				return jsonResponse({
-					repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: false } }],
-				})
-			}
-			return { ok: false, status: 404, text: async () => 'Not Found' } as Response
-		})
-		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
-			fetchImpl: fetchImpl as unknown as typeof fetch,
-		})
-		expect(verdict.failureClass).toBe('write-scope-denied')
-		expect(verdict.statusSnippet).toContain(
-			'GET /repos/sindre-ai/maskin cross-check failed: HTTP 404',
-		)
-		expect(calledUrls).toEqual([
-			'https://api.github.com/installation/repositories?per_page=1',
-			'https://api.github.com/repos/sindre-ai/maskin',
-		])
-	})
-
-	it('names the installation’s own permission grant when both write-scope probes agree it denies push', async () => {
-		// Observed in production: /installation/repositories and GET /repos/{full_name}
-		// both agreed permissions.push=false even after the org config, App manifest,
-		// and a full reinstall all showed Contents: Read & write. Bumping the App's
-		// manifest does not retroactively upgrade an installation that already exists —
-		// the org must explicitly accept the new permission set. Cross-checking the
-		// installation's own grant (independent of any token or repo) is the one signal
-		// that tells us whether GitHub actually applied the change to this installation.
-		const fetchImpl = vi.fn(async (url: string) => {
-			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
-				return jsonResponse({
-					repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: false } }],
-				})
-			}
-			return jsonResponse({ permissions: { push: false } })
-		})
-		const fetchInstallationPermissions = vi.fn(async () => ({ contents: 'read' }))
-		const [verdict] = await runGitHubPreflight(
-			[{ name: 'github-sindre-ai', token: 'ghs_real', installationId: '146523409' }],
-			{ fetchImpl: fetchImpl as unknown as typeof fetch, fetchInstallationPermissions },
-		)
-		expect(verdict.failureClass).toBe('write-scope-denied')
-		expect(verdict.statusSnippet).toContain(
-			'installation 146523409\'s own contents permission is "read"',
-		)
-		expect(fetchInstallationPermissions).toHaveBeenCalledWith('146523409')
-	})
-
-	it('names the failure reason when the installation-permission check itself fails', async () => {
-		const fetchImpl = vi.fn(async (url: string) => {
-			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
-				return jsonResponse({
-					repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: false } }],
-				})
-			}
-			return jsonResponse({ permissions: { push: false } })
-		})
-		const fetchInstallationPermissions = vi.fn(async () => {
-			throw new Error('Failed to fetch installation permissions: 404 Not Found')
-		})
-		const [verdict] = await runGitHubPreflight(
-			[{ name: 'github-sindre-ai', token: 'ghs_real', installationId: '146523409' }],
-			{ fetchImpl: fetchImpl as unknown as typeof fetch, fetchInstallationPermissions },
-		)
-		expect(verdict.failureClass).toBe('write-scope-denied')
-		expect(verdict.statusSnippet).toContain(
-			'installation 146523409 permission check failed: Failed to fetch installation permissions: 404 Not Found',
-		)
-	})
-
 	it('checks the session’s resolved target repo directly when writeProbeRepo is set, instead of /installation/repositories', async () => {
 		const calledUrls: string[] = []
 		const fetchImpl = vi.fn(async (url: string) => {
@@ -303,29 +202,26 @@ describe('runGitHubPreflight', () => {
 			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
 				throw new Error(`must not fall back to /installation/repositories: ${url}`)
 			}
-			return jsonResponse({ permissions: { push: true } })
+			return jsonResponse({ sha: 'abc123' }, { status: 201 })
 		})
 		const [verdict] = await runGitHubPreflight(
 			[{ name: 'github-sindre-ai', token: 'ghs_real', writeProbeRepo: 'sindre-ai/maskin' }],
 			{ fetchImpl: fetchImpl as unknown as typeof fetch },
 		)
 		expect(verdict).toEqual({ name: 'github-sindre-ai', healthy: true })
-		expect(calledUrls).toEqual(['https://api.github.com/repos/sindre-ai/maskin'])
+		expect(calledUrls).toEqual(['https://api.github.com/repos/sindre-ai/maskin/git/blobs'])
 	})
 
 	it('flags write-scope-denied against the resolved target repo even when the installation has other writable repos', async () => {
 		// The precision this buys: an installation can see many repos it can push
 		// to while the one specific repo the session will actually push to is
-		// unwritable (e.g. archived, which GitHub always reports push:false for
-		// regardless of the app's configured grant). Only checking the specific
-		// target repo catches this; /installation/repositories would pass.
+		// unwritable (e.g. archived). Only checking the specific target repo
+		// catches this; /installation/repositories would never even be consulted.
 		const fetchImpl = vi.fn(async (url: string) => {
-			if (url === 'https://api.github.com/repos/sindre-ai/archived-repo') {
-				return jsonResponse({ permissions: { push: false } })
+			if (url === 'https://api.github.com/repos/sindre-ai/archived-repo/git/blobs') {
+				return textResponse('Resource not accessible by integration', { status: 403 })
 			}
-			return jsonResponse({
-				repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: true } }],
-			})
+			return jsonResponse({ repositories: [{ full_name: 'sindre-ai/maskin' }] })
 		})
 		const [verdict] = await runGitHubPreflight(
 			[
@@ -345,18 +241,22 @@ describe('runGitHubPreflight', () => {
 		const calledUrls: string[] = []
 		const fetchImpl = vi.fn(async (url: string) => {
 			calledUrls.push(url)
-			return jsonResponse({
-				repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: true } }],
-			})
+			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
+				return jsonResponse({ repositories: [{ full_name: 'sindre-ai/maskin' }] })
+			}
+			return jsonResponse({ sha: 'abc123' }, { status: 201 })
 		})
 		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
 			fetchImpl: fetchImpl as unknown as typeof fetch,
 		})
 		expect(verdict.healthy).toBe(true)
-		expect(calledUrls).toEqual(['https://api.github.com/installation/repositories?per_page=1'])
+		expect(calledUrls).toEqual([
+			'https://api.github.com/installation/repositories?per_page=1',
+			'https://api.github.com/repos/sindre-ai/maskin/git/blobs',
+		])
 	})
 
-	it('classifies a 403 on the installation write-scope probe without touching /user', async () => {
+	it('classifies a 403 on the installation repo-resolution probe without touching /user', async () => {
 		const calledUrls: string[] = []
 		const fetchImpl = vi.fn(async (url: string) => {
 			calledUrls.push(url)
@@ -381,9 +281,12 @@ describe('runGitHubPreflight', () => {
 	})
 
 	it('carries installationId from the identity through to the verdict, healthy or not', async () => {
-		const fetchImpl = vi.fn(async () =>
-			jsonResponse({ repositories: [{ permissions: { push: false } }] }),
-		)
+		const fetchImpl = vi.fn(async (url: string) => {
+			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
+				return jsonResponse({ repositories: [{ full_name: 'sindre-ai/maskin' }] })
+			}
+			return textResponse('Resource not accessible by integration', { status: 403 })
+		})
 		const [verdict] = await runGitHubPreflight(
 			[{ name: 'github-sindre-ai', token: 'ghs_x', installationId: '141870781' }],
 			{ fetchImpl: fetchImpl as unknown as typeof fetch },
@@ -397,13 +300,13 @@ describe('runGitHubPreflight', () => {
 		const fetchImpl = vi.fn(async (url: string) => {
 			seen.push(url)
 			if (url === 'https://api.github.com/user') return jsonResponse({ login: 'octocat' })
-			return jsonResponse({ permissions: { push: true } })
+			return jsonResponse({ sha: 'abc123' }, { status: 201 })
 		})
 		await runGitHubPreflight([{ name: 'github', token: 'ghp_x' }], {
 			fetchImpl: fetchImpl as unknown as typeof fetch,
 			writeProbeRepo: 'foo/bar',
 		})
-		expect(seen).toContain('https://api.github.com/repos/foo/bar')
+		expect(seen).toContain('https://api.github.com/repos/foo/bar/git/blobs')
 	})
 })
 
