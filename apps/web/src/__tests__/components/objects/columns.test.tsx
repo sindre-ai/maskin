@@ -100,6 +100,37 @@ describe('getStaticColumns', () => {
 		expect(screen.getByText('active')).toBeInTheDocument()
 	})
 
+	it('renders "was <prior>" meta on the archived row when metadata.previous_status is set', () => {
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const data = [
+			buildObjectResponse({
+				status: 'archived',
+				metadata: { previous_status: 'succeeded' },
+			}),
+		]
+		render(<TestTable data={data} columns={columns} />)
+		expect(screen.getByText('was succeeded')).toBeInTheDocument()
+	})
+
+	it('omits the "was <prior>" meta when previous_status is missing', () => {
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const data = [buildObjectResponse({ status: 'archived', metadata: {} })]
+		render(<TestTable data={data} columns={columns} />)
+		expect(screen.queryByText(/^was /)).toBeNull()
+	})
+
+	it('does not render the "was <prior>" meta on non-archived rows', () => {
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const data = [
+			buildObjectResponse({
+				status: 'active',
+				metadata: { previous_status: 'succeeded' },
+			}),
+		]
+		render(<TestTable data={data} columns={columns} />)
+		expect(screen.queryByText('was succeeded')).toBeNull()
+	})
+
 	it('renders TypeBadge for type column', () => {
 		const columns = getStaticColumns({ workspaceId: 'ws-1' })
 		const data = [buildObjectResponse({ type: 'bet' })]

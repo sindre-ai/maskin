@@ -408,5 +408,44 @@ describe('DisplayPanel', () => {
 				.map((el) => el.textContent)
 			expect(headers).toEqual(['View', 'Show', 'Ordering', 'Grouping', 'Filters', 'Properties'])
 		})
+
+		it('keeps the popover open when includeArchived toggles false→true (e.g. via URL commit)', async () => {
+			// Regression guard: the panel used to switch its returned root
+			// between the bare trigger and a wrapping div depending on whether
+			// any inline reading was visible. Flipping the Include-archived
+			// toggle changes that boolean, which tore down and remounted the
+			// ResponsivePopover subtree and closed the panel mid-interaction.
+			const user = userEvent.setup()
+			const props = {
+				columns: defaultColumns,
+				columnVisibility: {},
+				onColumnVisibilityChange: vi.fn(),
+				statusFilter: undefined,
+				onStatusFilterChange: vi.fn(),
+				statusesByType: {},
+				driverFilter: undefined,
+				onDriverFilterChange: vi.fn(),
+				actors: [],
+				sort: 'createdAt',
+				onSortChange: vi.fn(),
+				order: 'desc' as const,
+				onOrderChange: vi.fn(),
+				groupBy: undefined,
+				onGroupByChange: vi.fn(),
+				includeArchived: false,
+				onIncludeArchivedChange: vi.fn(),
+			}
+			const { rerender } = render(<DisplayPanel {...props} />)
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByText('Show')).toBeInTheDocument()
+			// Simulate the URL commit round-trip: parent re-renders with the
+			// new includeArchived value while the popover is open.
+			rerender(<DisplayPanel {...props} includeArchived={true} />)
+			expect(screen.getByText('Show')).toBeInTheDocument()
+			expect(screen.getByRole('switch', { name: /include archived/i })).toHaveAttribute(
+				'data-state',
+				'checked',
+			)
+		})
 	})
 })

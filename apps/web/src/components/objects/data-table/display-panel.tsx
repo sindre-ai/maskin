@@ -641,37 +641,43 @@ export function DisplayPanel({
 		</ResponsivePopover>
 	)
 
-	if (!showInlineReading) return trigger
-
+	// Keep a stable wrapper regardless of `showInlineReading`. Switching the
+	// returned root between `trigger` and `<div>{trigger}…</div>` would tear
+	// down and remount the ResponsivePopover subtree — a toggle inside the
+	// panel (e.g. Include archived) that flips `showInlineReading` would
+	// close the panel mid-interaction because the internal open state lives
+	// in the primitive that just got unmounted.
 	return (
 		<div className="inline-flex items-center gap-2">
 			{trigger}
-			<span
-				className="hidden sm:inline-flex items-center gap-1 text-xs"
-				aria-label="Active display settings"
-			>
-				{isNonDefaultSort && (
-					<>
-						<span className="capitalize text-foreground">{inlineSortLabel}</span>
-						{order === 'asc' ? (
-							<ArrowUp size={12} className="text-foreground" />
-						) : (
-							<ArrowDown size={12} className="text-foreground" />
-						)}
-					</>
-				)}
-				{isNonDefaultSort && hasGrouping && <span className="text-muted-foreground">·</span>}
-				{hasGrouping && (
-					<>
-						<span className="text-muted-foreground">grouped by</span>
-						<span className="capitalize text-foreground">{inlineGroupLabel}</span>
-					</>
-				)}
-				{(isNonDefaultSort || hasGrouping) && includeArchived && (
-					<span className="text-muted-foreground">·</span>
-				)}
-				{includeArchived && <span className="text-foreground">+ archived</span>}
-			</span>
+			{showInlineReading && (
+				<span
+					className="hidden sm:inline-flex items-center gap-1 text-xs"
+					aria-label="Active display settings"
+				>
+					{isNonDefaultSort && (
+						<>
+							<span className="capitalize text-foreground">{inlineSortLabel}</span>
+							{order === 'asc' ? (
+								<ArrowUp size={12} className="text-foreground" />
+							) : (
+								<ArrowDown size={12} className="text-foreground" />
+							)}
+						</>
+					)}
+					{isNonDefaultSort && hasGrouping && <span className="text-muted-foreground">·</span>}
+					{hasGrouping && (
+						<>
+							<span className="text-muted-foreground">grouped by</span>
+							<span className="capitalize text-foreground">{inlineGroupLabel}</span>
+						</>
+					)}
+					{(isNonDefaultSort || hasGrouping) && includeArchived && (
+						<span className="text-muted-foreground">·</span>
+					)}
+					{includeArchived && <span className="text-foreground">+ archived</span>}
+				</span>
+			)}
 		</div>
 	)
 }
