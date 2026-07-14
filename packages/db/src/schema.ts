@@ -734,7 +734,7 @@ export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$in
 
 // ── Catalog Packages ──────────────────────────────────────────────────────────
 //
-// Vetted, installable loops (formerly "bundles") of actors, triggers, skills,
+// Vetted, installable bundles of actors, triggers, skills,
 // and integrations. Any workspace can install a package and Maskin pushes
 // version updates to locked installs via the cron in T5. A package is a single
 // row here; the elements it ships with live in `catalog_package_items` as
@@ -746,7 +746,7 @@ export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$in
 // `catalog_package_items.source_item_id` it was provisioned from). The
 // version-push cron uses both keys to find what to update and to resolve
 // intra-package wiring (e.g. a trigger whose `target_actor_id` points at an
-// agent in the same loop) against the snapshot graph instead of the live
+// agent in the same package) against the snapshot graph instead of the live
 // publisher workspace. Carried as a nullable `metadata jsonb` column on each
 // of the four element tables (added by 0035_install_metadata.sql) so non-
 // install rows pay nothing and install rows are findable by a partial
