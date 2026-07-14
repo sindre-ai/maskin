@@ -63,7 +63,27 @@ export interface ToolCallResponseSizeEvent {
 	truncated: boolean
 }
 
-export type TelemetryEvent = ToolCallEvent | MutationEvent | WidgetEvent | ToolCallResponseSizeEvent
+// MCP misfire event for the agent-reach-signal bet. The server-side
+// classifier in apps/dev/src/routes/mcp.ts owns the primary emission path;
+// this type is here so clients that surface handler-thrown misfires (or
+// downstream tests) speak the same shape as the server ingest.
+export type McpMisfireKind = 'tool_not_found' | 'unknown_param' | 'schema_validation_error'
+
+export interface ErrorEvent {
+	event_type: 'error'
+	kind: McpMisfireKind
+	tool_name: string
+	session_id: string
+	agent_actor_id?: string
+	requested_shape: Record<string, string>
+}
+
+export type TelemetryEvent =
+	| ToolCallEvent
+	| MutationEvent
+	| WidgetEvent
+	| ToolCallResponseSizeEvent
+	| ErrorEvent
 
 /** A telemetry sink ingests events. Production default POSTs to the API; tests
  *  inject capturing sinks; deployments without telemetry endpoints can pass a
