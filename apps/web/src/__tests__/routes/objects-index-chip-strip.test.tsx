@@ -18,7 +18,7 @@ const searchState = vi.hoisted(() => ({
 		order: 'desc' as 'asc' | 'desc',
 		q: undefined as string | undefined,
 		groupBy: undefined as string | undefined,
-		includeArchived: undefined as '1' | undefined,
+		includeArchived: undefined as 1 | undefined,
 	},
 }))
 const navigateMock = vi.hoisted(() => vi.fn())
@@ -154,7 +154,7 @@ beforeEach(() => {
 
 describe('ObjectsPage chip strip — Include: archived', () => {
 	it('renders the chip when the archived toggle is on and the bet tab is active', () => {
-		searchState.current.includeArchived = '1'
+		searchState.current.includeArchived = 1
 		render(<ObjectsPage />)
 		// FilterChip renders `<span>{label:}<span/><span>{value}</span><button/></span>`;
 		// walk up from the label to the outer wrapper before asserting on value.
@@ -172,14 +172,14 @@ describe('ObjectsPage chip strip — Include: archived', () => {
 
 	it('hides the chip on non-bet tabs even if the URL carries the flag', () => {
 		searchState.current.type = 'task'
-		searchState.current.includeArchived = '1'
+		searchState.current.includeArchived = 1
 		render(<ObjectsPage />)
 		expect(screen.queryByText('Include:')).toBeNull()
 	})
 
 	it("clears only the archived flag when the chip's remove button is clicked", async () => {
 		const user = userEvent.setup()
-		searchState.current.includeArchived = '1'
+		searchState.current.includeArchived = 1
 		searchState.current.status = 'active'
 		render(<ObjectsPage />)
 
@@ -193,7 +193,7 @@ describe('ObjectsPage chip strip — Include: archived', () => {
 
 	it('clears the archived flag alongside status/driver when "Clear all" is clicked', async () => {
 		const user = userEvent.setup()
-		searchState.current.includeArchived = '1'
+		searchState.current.includeArchived = 1
 		searchState.current.status = 'active'
 		searchState.current.driver = 'actor-1'
 		render(<ObjectsPage />)
@@ -208,7 +208,7 @@ describe('ObjectsPage chip strip — Include: archived', () => {
 	})
 
 	it('renders the chip strip when only the archived flag is on (no status/driver)', () => {
-		searchState.current.includeArchived = '1'
+		searchState.current.includeArchived = 1
 		render(<ObjectsPage />)
 		expect(screen.getByRole('button', { name: 'Clear all' })).toBeInTheDocument()
 	})

@@ -87,7 +87,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 			q: typeof search.q === 'string' ? search.q : undefined,
 			groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
 			ids: typeof search.ids === 'string' ? search.ids : undefined,
-			includeArchived: includeArchived ? ('1' as const) : undefined,
+			includeArchived: includeArchived ? (1 as const) : undefined,
 			...metadataFilters,
 		}
 	},
@@ -112,7 +112,7 @@ function ObjectsPage() {
 		ids: idsFilter,
 		includeArchived: includeArchivedParam,
 	} = searchParams
-	const includeArchived = includeArchivedParam === '1'
+	const includeArchived = includeArchivedParam === 1
 	// Per the task scope, the "Show" section (with the Include archived toggle)
 	// is bet-only for now — surfaced when the bet tab is active. Non-bet tabs
 	// keep the existing panel shape until archive lands for their type.
@@ -323,7 +323,7 @@ function ObjectsPage() {
 
 	// Update search params helper — uses ref to stay stable across param changes
 	const updateSearch = useCallback(
-		(updates: Record<string, string | undefined>) => {
+		(updates: Record<string, string | number | undefined>) => {
 			const next: Record<string, unknown> = { ...searchParamsRef.current, ...updates }
 			for (const key of Object.keys(next)) {
 				if (next[key] === undefined || next[key] === '') delete next[key]
@@ -886,7 +886,11 @@ function ObjectsPage() {
 				includeArchived={supportsIncludeArchived ? includeArchived : undefined}
 				onIncludeArchivedChange={
 					supportsIncludeArchived
-						? (next) => updateSearch({ includeArchived: next ? '1' : undefined })
+						? // Must be the number 1, not the string '1' — the router's default
+							// search stringifier round-trips through JSON.parse/stringify, so a
+							// string that looks like valid JSON gets re-quoted (`includeArchived=%221%22`)
+							// while a number serializes as the bare digit.
+							(next) => updateSearch({ includeArchived: next ? 1 : undefined })
 						: undefined
 				}
 				view={effectiveView}
