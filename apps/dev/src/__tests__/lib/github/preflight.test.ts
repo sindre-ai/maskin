@@ -1,0 +1,329 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+	GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO,
+	GITHUB_PREFLIGHT_KNOWN_IDENTITIES,
+	GITHUB_PREFLIGHT_SLACK_CHANNEL,
+	collectGitHubMcpIdentities,
+	postGitHubPreflightSlackAlert,
+	resolveMcpGitHubToken,
+	runGitHubPreflight,
+	stripFailedIdentities,
+} from '../../../lib/github/preflight'
+
+function jsonResponse(body: unknown, init: ResponseInit = { status: 200 }): Response {
+	return new Response(JSON.stringify(body), {
+		...init,
+		headers: { 'content-type': 'application/json' },
+	})
+}
+
+function textResponse(text: string, init: ResponseInit): Response {
+	return new Response(text, {
+		...init,
+		headers: { 'content-type': 'text/plain' },
+	})
+}
+
+describe('runGitHubPreflight', () => {
+	it('short-circuits missing tokens without touching the network (protects the 60/hr anonymous bucket)', async () => {
+		const fetchImpl = vi.fn()
+		const verdicts = await runGitHubPreflight(
+			[
+				{ name: 'github', token: null },
+				{ name: 'github_approver', token: '' },
+			],
+			{ fetchImpl: fetchImpl as unknown as typeof fetch },
+		)
+		expect(verdicts).toEqual([
+			expect.objectContaining({ name: 'github', healthy: false, failureClass: 'missing-token' }),
+			expect.objectContaining({
+				name: 'github_approver',
+				healthy: false,
+				failureClass: 'missing-token',
+			}),
+		])
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
+	it('returns healthy when /user and the write-scope probe both succeed with permissions.push=true', async () => {
+		const fetchImpl = vi.fn(async (url: string) => {
+			if (url === 'https://api.github.com/user') return jsonResponse({ login: 'octocat' })
+			if (url === `https://api.github.com/repos/${GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO}`)
+				return jsonResponse({ permissions: { push: true } })
+			throw new Error(`unexpected url: ${url}`)
+		})
+		const [verdict] = await runGitHubPreflight([{ name: 'github', token: 'ghp_ok' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict).toEqual({ name: 'github', healthy: true })
+	})
+
+	it('classifies a 401 as 401-unauth and scrubs the token from any echoed body', async () => {
+		const token = 'ghp_secretsauce_1234'
+		const fetchImpl = vi.fn(async () =>
+			textResponse(`bad creds ${token}`, { status: 401, statusText: 'Unauthorized' }),
+		)
+		const [verdict] = await runGitHubPreflight([{ name: 'github', token }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict.healthy).toBe(false)
+		expect(verdict.failureClass).toBe('401-unauth')
+		expect(verdict.statusSnippet).toContain('HTTP 401')
+		expect(verdict.statusSnippet).not.toContain(token)
+		expect(verdict.statusSnippet).toContain('<redacted>')
+	})
+
+	it('classifies a 403 on the auth read as 403-permission', async () => {
+		const fetchImpl = vi.fn(async () => textResponse('forbidden', { status: 403 }))
+		const [verdict] = await runGitHubPreflight([{ name: 'github_approver', token: 'ghp_x' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict.failureClass).toBe('403-permission')
+	})
+
+	it('flags write-scope-denied when the write probe returns permissions.push=false', async () => {
+		const fetchImpl = vi.fn(async (url: string) => {
+			if (url === 'https://api.github.com/user') return jsonResponse({ login: 'octocat' })
+			return jsonResponse({ permissions: { push: false } })
+		})
+		const [verdict] = await runGitHubPreflight(
+			[{ name: 'github-sindre-ai', token: 'ghs_readonly' }],
+			{ fetchImpl: fetchImpl as unknown as typeof fetch },
+		)
+		expect(verdict.failureClass).toBe('write-scope-denied')
+		expect(verdict.statusSnippet).toContain('permissions.push')
+	})
+
+	it('skips the /user probe for GitHub App installation tokens (ghs_ prefix) and is healthy on write-scope alone', async () => {
+		const calledUrls: string[] = []
+		const fetchImpl = vi.fn(async (url: string) => {
+			calledUrls.push(url)
+			if (url === 'https://api.github.com/user') {
+				// A real installation token 403s here — assert the probe is never
+				// even called rather than relying on this branch.
+				return textResponse('Resource not accessible by integration', { status: 403 })
+			}
+			return jsonResponse({ permissions: { push: true } })
+		})
+		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict).toEqual({ name: 'github-sindre-ai', healthy: true })
+		expect(calledUrls).not.toContain('https://api.github.com/user')
+	})
+
+	it('classifies a 403 on the write-scope probe for an installation token without touching /user', async () => {
+		const calledUrls: string[] = []
+		const fetchImpl = vi.fn(async (url: string) => {
+			calledUrls.push(url)
+			return textResponse('Resource not accessible by integration', { status: 403 })
+		})
+		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict.healthy).toBe(false)
+		expect(verdict.failureClass).toBe('403-permission')
+		expect(calledUrls).toEqual([
+			`https://api.github.com/repos/${GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO}`,
+		])
+	})
+
+	it('returns network-error when fetch throws', async () => {
+		const fetchImpl = vi.fn(async () => {
+			throw new Error('ECONNRESET')
+		})
+		const [verdict] = await runGitHubPreflight([{ name: 'github', token: 'ghp_x' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict.failureClass).toBe('network-error')
+	})
+
+	it('probes the write repo passed via options', async () => {
+		const seen: string[] = []
+		const fetchImpl = vi.fn(async (url: string) => {
+			seen.push(url)
+			if (url === 'https://api.github.com/user') return jsonResponse({ login: 'octocat' })
+			return jsonResponse({ permissions: { push: true } })
+		})
+		await runGitHubPreflight([{ name: 'github', token: 'ghp_x' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+			writeProbeRepo: 'foo/bar',
+		})
+		expect(seen).toContain('https://api.github.com/repos/foo/bar')
+	})
+})
+
+describe('postGitHubPreflightSlackAlert', () => {
+	beforeEach(() => vi.restoreAllMocks())
+
+	it('posts one consolidated message with every failing identity and never the raw token', async () => {
+		const fetchImpl = vi.fn(async () => jsonResponse({ ok: true }))
+		await postGitHubPreflightSlackAlert({
+			botToken: 'xoxb-1',
+			channelId: GITHUB_PREFLIGHT_SLACK_CHANNEL,
+			verdicts: [
+				{ name: 'github', healthy: false, failureClass: '401-unauth', statusSnippet: 'HTTP 401' },
+				{ name: 'github_approver', healthy: true },
+				{
+					name: 'github-vaerksted-ai',
+					healthy: false,
+					failureClass: 'missing-token',
+					statusSnippet: 'no token attached at launch',
+				},
+			],
+			context: { sessionId: 'sess-1', workspaceId: 'ws-1' },
+			options: { fetchImpl: fetchImpl as unknown as typeof fetch },
+		})
+		expect(fetchImpl).toHaveBeenCalledTimes(1)
+		const call = fetchImpl.mock.calls[0]
+		if (!call) throw new Error('expected one Slack call')
+		const [url, init] = call as [string, RequestInit]
+		expect(url).toBe('https://slack.com/api/chat.postMessage')
+		expect((init.headers as Record<string, string>).Authorization).toBe('Bearer xoxb-1')
+		const body = JSON.parse(init.body as string) as { channel: string; text: string }
+		expect(body.channel).toBe(GITHUB_PREFLIGHT_SLACK_CHANNEL)
+		expect(body.text).toContain('2 identities')
+		expect(body.text).toContain('github')
+		expect(body.text).toContain('github-vaerksted-ai')
+		expect(body.text).not.toContain('github_approver')
+		expect(body.text).not.toContain('xoxb-1')
+	})
+
+	it('skips posting when every identity is healthy', async () => {
+		const fetchImpl = vi.fn()
+		await postGitHubPreflightSlackAlert({
+			botToken: 'xoxb-1',
+			channelId: 'C1',
+			verdicts: [{ name: 'github', healthy: true }],
+			context: { sessionId: 'sess-1', workspaceId: 'ws-1' },
+			options: { fetchImpl: fetchImpl as unknown as typeof fetch },
+		})
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
+	it('does not throw when Slack itself fails', async () => {
+		const fetchImpl = vi.fn(async () => {
+			throw new Error('slack down')
+		})
+		await expect(
+			postGitHubPreflightSlackAlert({
+				botToken: 'xoxb-1',
+				channelId: 'C1',
+				verdicts: [
+					{ name: 'github', healthy: false, failureClass: '401-unauth', statusSnippet: 'x' },
+				],
+				context: { sessionId: 'sess-1', workspaceId: 'ws-1' },
+				options: { fetchImpl: fetchImpl as unknown as typeof fetch },
+			}),
+		).resolves.toBeUndefined()
+	})
+})
+
+describe('resolveMcpGitHubToken', () => {
+	it('returns literal tokens unchanged', () => {
+		expect(resolveMcpGitHubToken('ghp_literal', {})).toBe('ghp_literal')
+	})
+
+	it('resolves `${VAR}` placeholders against envVars', () => {
+		expect(
+			resolveMcpGitHubToken('${GITHUB_TOKEN_APPROVER}', { GITHUB_TOKEN_APPROVER: 'ghp_a' }),
+		).toBe('ghp_a')
+	})
+
+	it('returns null when the placeholder is unset — so callers report missing-token', () => {
+		expect(resolveMcpGitHubToken('${GITHUB_TOKEN_APPROVER}', {})).toBeNull()
+	})
+
+	it('returns null for non-string values', () => {
+		expect(resolveMcpGitHubToken(undefined, {})).toBeNull()
+		expect(resolveMcpGitHubToken(42, {})).toBeNull()
+	})
+})
+
+describe('collectGitHubMcpIdentities', () => {
+	it('extracts an identity from every entry whose env.GITHUB_PERSONAL_ACCESS_TOKEN is set, across every source', () => {
+		const agentTools = {
+			github: {
+				env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
+			},
+			github_approver: {
+				env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_APPROVER}' },
+			},
+			slack: {
+				env: { SLACK_BOT_TOKEN: '${SLACK_TOKEN}' },
+			},
+		}
+		const autoInjected = {
+			'github-sindre-ai': {
+				env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_literal_sindre' },
+			},
+			'integration-posthog': {
+				env: { POSTHOG_TOKEN: 'phx_x' },
+			},
+		}
+		const identities = collectGitHubMcpIdentities([agentTools, autoInjected], {
+			GITHUB_TOKEN: 'ghp_bare',
+			GITHUB_TOKEN_APPROVER: 'ghp_approver',
+		})
+		expect(new Map(identities.map((id) => [id.name, id.token]))).toEqual(
+			new Map([
+				['github', 'ghp_bare'],
+				['github_approver', 'ghp_approver'],
+				['github-sindre-ai', 'ghs_literal_sindre'],
+			]),
+		)
+	})
+
+	it('reports unresolved placeholders as null (→ missing-token downstream)', () => {
+		const identities = collectGitHubMcpIdentities(
+			[{ github_approver: { env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_APPROVER}' } } }],
+			{},
+		)
+		expect(identities).toEqual([{ name: 'github_approver', token: null }])
+	})
+
+	it('gracefully ignores null / undefined sources and non-mcp entries', () => {
+		expect(
+			collectGitHubMcpIdentities([null, undefined, { plain: 'not-an-object' as unknown }], {}),
+		).toEqual([])
+	})
+})
+
+describe('stripFailedIdentities', () => {
+	it('removes only the entries the preflight marked unhealthy', () => {
+		const mcp = {
+			github: { env: { GITHUB_TOKEN: 'x' } },
+			github_approver: { env: { GITHUB_TOKEN: 'y' } },
+			slack: {},
+		}
+		const gated = stripFailedIdentities(mcp, [
+			{ name: 'github', healthy: false, failureClass: '401-unauth' },
+			{ name: 'github_approver', healthy: true },
+		])
+		expect(gated).toEqual({
+			github_approver: { env: { GITHUB_TOKEN: 'y' } },
+			slack: {},
+		})
+	})
+
+	it('returns the map unchanged when nothing failed', () => {
+		const mcp = { github: {} }
+		expect(stripFailedIdentities(mcp, [{ name: 'github', healthy: true }])).toBe(mcp)
+	})
+
+	it('passes through null / undefined', () => {
+		expect(stripFailedIdentities(null, [])).toBeNull()
+		expect(stripFailedIdentities(undefined, [])).toBeUndefined()
+	})
+})
+
+describe('GITHUB_PREFLIGHT_KNOWN_IDENTITIES', () => {
+	it('names the four MCP identities the parent bet is provisioning', () => {
+		expect([...GITHUB_PREFLIGHT_KNOWN_IDENTITIES]).toEqual([
+			'github',
+			'github_approver',
+			'github-sindre-ai',
+			'github-vaerksted-ai',
+		])
+	})
+})

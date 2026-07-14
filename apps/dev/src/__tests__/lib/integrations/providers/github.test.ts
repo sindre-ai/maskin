@@ -1,8 +1,10 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
+	DiscoveryError,
 	fetchInstallationOwnerLogin,
 	githubAuth,
+	mintInstallationTokenWithRecovery,
 } from '../../../../lib/integrations/providers/github/auth'
 import { config } from '../../../../lib/integrations/providers/github/config'
 import { githubEventNormalizer } from '../../../../lib/integrations/providers/github/webhooks'
@@ -228,6 +230,164 @@ describe('githubAuth', () => {
 
 			await expect(fetchInstallationOwnerLogin('42')).rejects.toThrow(
 				'GitHub installation response missing account.login',
+			)
+		})
+	})
+
+	describe('mintInstallationTokenWithRecovery', () => {
+		const originalFetch = globalThis.fetch
+		const originalAppId = process.env.GITHUB_APP_ID
+		const originalKey = process.env.GITHUB_APP_PRIVATE_KEY
+
+		beforeAll(() => {
+			process.env.GITHUB_APP_ID = '12345'
+			process.env.GITHUB_APP_PRIVATE_KEY = testPrivateKeyPem
+		})
+
+		afterEach(() => {
+			globalThis.fetch = originalFetch
+		})
+
+		afterAll(() => {
+			process.env.GITHUB_APP_ID = originalAppId
+			process.env.GITHUB_APP_PRIVATE_KEY = originalKey
+		})
+
+		function makeResponse(status: number, body: unknown): Response {
+			return {
+				ok: status >= 200 && status < 300,
+				status,
+				text: () => Promise.resolve(typeof body === 'string' ? body : JSON.stringify(body)),
+				json: () => Promise.resolve(body),
+			} as unknown as Response
+		}
+
+		it('mints against the cached installation id when the first call succeeds', async () => {
+			globalThis.fetch = vi.fn().mockResolvedValueOnce(makeResponse(200, { token: 'ghs_first' }))
+
+			const result = await mintInstallationTokenWithRecovery({ installation_id: '42' })
+
+			expect(result).toEqual({ token: 'ghs_first', installationId: '42', recovered: false })
+			expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+			expect(globalThis.fetch).toHaveBeenCalledWith(
+				'https://api.github.com/app/installations/42/access_tokens',
+				expect.objectContaining({ method: 'POST' }),
+			)
+		})
+
+		it('throws on 404 when no repo hint is provided', async () => {
+			globalThis.fetch = vi.fn().mockResolvedValueOnce(makeResponse(404, 'Not Found'))
+
+			await expect(mintInstallationTokenWithRecovery({ installation_id: '42' })).rejects.toThrow(
+				'Failed to get installation access token: 404',
+			)
+			expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+		})
+
+		it('recovers on 404 by discovering the current install and minting against it', async () => {
+			globalThis.fetch = vi
+				.fn()
+				.mockResolvedValueOnce(makeResponse(404, 'Not Found'))
+				.mockResolvedValueOnce(makeResponse(200, { id: 8888 }))
+				.mockResolvedValueOnce(makeResponse(200, { token: 'ghs_recovered' }))
+
+			const result = await mintInstallationTokenWithRecovery(
+				{ installation_id: '42' },
+				{ repo: 'sindre-ai/maskin' },
+			)
+
+			expect(result).toEqual({
+				token: 'ghs_recovered',
+				installationId: '8888',
+				recovered: true,
+			})
+			expect(globalThis.fetch).toHaveBeenNthCalledWith(
+				2,
+				'https://api.github.com/repos/sindre-ai/maskin/installation',
+				expect.any(Object),
+			)
+			expect(globalThis.fetch).toHaveBeenNthCalledWith(
+				3,
+				'https://api.github.com/app/installations/8888/access_tokens',
+				expect.objectContaining({ method: 'POST' }),
+			)
+		})
+
+		it('throws when discovery returns the same installation id as the cached one', async () => {
+			// Discovery returning the same id means the 404 is not from install
+			// churn — re-mint would just loop. Fail loudly instead.
+			globalThis.fetch = vi
+				.fn()
+				.mockResolvedValueOnce(makeResponse(404, 'Not Found'))
+				.mockResolvedValueOnce(makeResponse(200, { id: 42 }))
+
+			await expect(
+				mintInstallationTokenWithRecovery({ installation_id: '42' }, { repo: 'sindre-ai/maskin' }),
+			).rejects.toThrow('Failed to get installation access token: 404')
+			expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+		})
+
+		it('throws a typed DiscoveryError carrying { status } when discovery 404s', async () => {
+			globalThis.fetch = vi
+				.fn()
+				.mockResolvedValueOnce(makeResponse(404, 'Not Found'))
+				.mockResolvedValueOnce(makeResponse(404, 'Not Found'))
+
+			await expect(
+				mintInstallationTokenWithRecovery({ installation_id: '42' }, { repo: 'sindre-ai/maskin' }),
+			).rejects.toMatchObject({
+				name: 'DiscoveryError',
+				status: 404,
+				repo: 'sindre-ai/maskin',
+			})
+		})
+
+		it('throws a typed DiscoveryError with the real status when discovery 5xxs', async () => {
+			// GitHub outages / rate-limits must not masquerade as a 404. The tag
+			// the route later branches on is `err.status`, not the message text.
+			globalThis.fetch = vi
+				.fn()
+				.mockResolvedValueOnce(makeResponse(404, 'Not Found'))
+				.mockResolvedValueOnce(makeResponse(503, 'Service Unavailable'))
+
+			let caught: unknown
+			try {
+				await mintInstallationTokenWithRecovery(
+					{ installation_id: '42' },
+					{ repo: 'sindre-ai/maskin' },
+				)
+			} catch (err) {
+				caught = err
+			}
+			expect(caught).toBeInstanceOf(DiscoveryError)
+			expect(caught).toMatchObject({ status: 503, repo: 'sindre-ai/maskin' })
+		})
+
+		it('propagates non-404 errors unchanged (no recovery)', async () => {
+			// Only 404 signals stale install id. A 401 is a real auth problem
+			// and must not swallow recovery cost — hand it to the tagger as-is.
+			globalThis.fetch = vi.fn().mockResolvedValueOnce(makeResponse(401, 'Bad credentials'))
+
+			await expect(
+				mintInstallationTokenWithRecovery({ installation_id: '42' }, { repo: 'sindre-ai/maskin' }),
+			).rejects.toThrow('Failed to get installation access token: 401 Bad credentials')
+			expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+		})
+
+		it('rejects an invalid repo slug before hitting GitHub', async () => {
+			// Guards against URL-path injection on `?repo=` — the API layer
+			// enforces the same allowlist, but the helper is the last line of
+			// defence if a caller bypasses the route.
+			globalThis.fetch = vi.fn().mockResolvedValueOnce(makeResponse(404, 'Not Found'))
+
+			await expect(
+				mintInstallationTokenWithRecovery({ installation_id: '42' }, { repo: '../../etc/passwd' }),
+			).rejects.toThrow('Invalid repo slug for installation recovery: ../../etc/passwd')
+		})
+
+		it('throws when credentials have no installation_id', async () => {
+			await expect(mintInstallationTokenWithRecovery({})).rejects.toThrow(
+				'Missing installation_id on stored credentials',
 			)
 		})
 	})

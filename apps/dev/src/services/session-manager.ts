@@ -14,6 +14,7 @@ import {
 	agentServers,
 	integrations,
 	objects,
+	relationships,
 	sessionLogs,
 	sessions,
 	workspaces,
@@ -47,9 +48,25 @@ import {
 } from '../lib/claude-failover'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
+import {
+	GITHUB_PREFLIGHT_SLACK_CHANNEL,
+	type PreflightVerdict,
+	collectGitHubMcpIdentities,
+	postGitHubPreflightSlackAlert,
+	runGitHubPreflight,
+	stripFailedIdentities,
+} from '../lib/github/preflight'
 import { isAuthRevokedError } from '../lib/integrations/errors'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
+import {
+	type SessionGithubInstall,
+	sessionGithubLogClassifier,
+} from '../lib/integrations/providers/github/log-classifier'
+import {
+	type TokenMetadata,
+	stampTokenMetadata,
+} from '../lib/integrations/providers/github/token-metadata'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
@@ -79,6 +96,29 @@ import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace
  * stable group-by key from day one.
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
+
+/**
+ * Mirrors the allowlist regex enforced on the API side by
+ * `apps/dev/src/routes/integrations.ts` and
+ * `apps/dev/src/lib/integrations/providers/github/auth.ts` (T4). Kept in sync so
+ * a slug rejected at mint time is also rejected at source, before it ever
+ * reaches the credential helper.
+ */
+const REPO_SLUG_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+
+/**
+ * Strip the common URL forms (`https://github.com/…`, `git@github.com:…`), a
+ * trailing `.git`, and a trailing slash, then re-check against `REPO_SLUG_RE`.
+ * Returns null when the input can't be reduced to `owner/name`.
+ */
+function normalizeRepoSlug(raw: string): string | null {
+	let s = raw.trim()
+	s = s.replace(/^https?:\/\/github\.com\//i, '')
+	s = s.replace(/^git@github\.com:/i, '')
+	s = s.replace(/\.git$/i, '')
+	s = s.replace(/\/$/, '')
+	return REPO_SLUG_RE.test(s) ? s : null
+}
 
 /**
  * `sessions.startedAt`/`createdAt` are typed `Date | null` by Drizzle but
@@ -1170,11 +1210,16 @@ export class SessionManager extends EventEmitter {
 		}
 		envVars.MASKIN_API_KEY = agent.apiKey
 
-		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } })
+		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } }).
+		// The AGENT_MCP_JSON env var is written further down, after the GitHub
+		// preflight has had a chance to strip failed identities from
+		// `agentTools.mcpServers` — otherwise a broken identity would be re-attached
+		// via the agent config even after we drop it from MCP_SERVERS_JSON.
 		const agentTools = agent.tools as Record<string, unknown> | null
-		if (agentTools && Object.keys(agentTools).length > 0) {
-			envVars.AGENT_MCP_JSON = JSON.stringify(agentTools)
-		}
+		const agentToolsMcpServers =
+			agentTools && typeof agentTools.mcpServers === 'object' && agentTools.mcpServers !== null
+				? (agentTools.mcpServers as Record<string, unknown>)
+				: null
 
 		// Inject runtime-specific config
 		if (sessionConfig.runtime_config) {
@@ -1208,6 +1253,8 @@ export class SessionManager extends EventEmitter {
 			ownerLogin: string
 			token: string
 			integrationId: string
+			installationId: string
+			tokenMetadata: TokenMetadata
 		}> = []
 		for (const integration of activeIntegrations) {
 			try {
@@ -1218,11 +1265,25 @@ export class SessionManager extends EventEmitter {
 					const ownerLogin = await this.resolveGithubOwnerLogin(integration)
 					if (!ownerLogin) continue
 
+					const installationId = integration.externalId
+					if (!installationId) {
+						logger.warn(
+							'GitHub integration has no externalId; cannot stamp token metadata for tool-call tagging',
+							{
+								integrationId: integration.id,
+								sessionId: session.id,
+							},
+						)
+						continue
+					}
+
 					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
 					resolvedGithubInstalls.push({
 						ownerLogin,
 						token: accessToken,
 						integrationId: integration.id,
+						installationId,
+						tokenMetadata: stampTokenMetadata(accessToken, installationId),
 					})
 				} else {
 					// Slack: only inject the bot token. A user token (xoxp-) here means
@@ -1289,6 +1350,16 @@ export class SessionManager extends EventEmitter {
 				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
 			}
 		}
+		// Register the session's github installs with the log classifier so
+		// tool_result envelopes coming back from the container carry a cause_tag
+		// alongside the failure — the parent bet's AC-6 grep-verifier reads
+		// session_logs, not this process's memory.
+		const classifierInstalls: SessionGithubInstall[] = resolvedGithubInstalls.map((r) => ({
+			ownerLoginLower: r.ownerLogin.toLowerCase(),
+			installationId: r.installationId,
+			tokenMetadata: r.tokenMetadata,
+		}))
+		sessionGithubLogClassifier.registerSession(session.id, classifierInstalls)
 		const primaryGithubToken = resolvedGithubInstalls[0]?.token
 		if (primaryGithubToken) {
 			envVars.GITHUB_TOKEN = primaryGithubToken
@@ -1301,6 +1372,25 @@ export class SessionManager extends EventEmitter {
 		const primaryGithubIntegrationId = resolvedGithubInstalls[0]?.integrationId
 		if (primaryGithubIntegrationId) {
 			envVars.GITHUB_INTEGRATION_ID = primaryGithubIntegrationId
+			// GITHUB_REPO lets the credential helper append ?repo=owner/name to the
+			// token-mint request; the API side (integrations.ts githubTokenRoute)
+			// uses it to re-discover the current installation id when the App is
+			// reinstalled mid-session (T4's mint-on-write recovery). Left unset when
+			// no defensible source resolves — a wrong slug 404s the discovery hop
+			// and mis-maps to AUTH_REVOKED per T4's error mapping.
+			const resolved = await this.resolveGithubRepoSlug(session)
+			if (resolved.slug) {
+				envVars.GITHUB_REPO = resolved.slug
+				logger.info('Resolved GITHUB_REPO for GitHub App recovery hint', {
+					sessionId: session.id,
+					source: resolved.source,
+				})
+			} else {
+				logger.warn('No GITHUB_REPO source resolved — recovery hint will be omitted', {
+					sessionId: session.id,
+					rejected: resolved.rejected,
+				})
+			}
 		}
 
 		// Merge user-provided env vars, filtering out reserved keys
@@ -1338,6 +1428,7 @@ export class SessionManager extends EventEmitter {
 		}
 		if (primaryGithubIntegrationId) {
 			RESERVED_ENV_KEYS.add('GITHUB_INTEGRATION_ID')
+			RESERVED_ENV_KEYS.add('GITHUB_REPO')
 		}
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {
@@ -1354,14 +1445,68 @@ export class SessionManager extends EventEmitter {
 		// with auto-injected workspace MCPs and per-org GitHub MCPs. Keys are namespaced so
 		// the sources can't collide (github-<owner>, integration-<provider>, session-mcp-N).
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
-		const mcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
+		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
 			for (const [i, mcp] of mcps.entries()) {
-				mcpServers[`session-mcp-${i}`] = mcp
+				sessionMcpServers[`session-mcp-${i}`] = mcp
 			}
 		}
-		if (Object.keys(mcpServers).length > 0) {
-			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers })
+
+		// Startup preflight: live-validate every attached GitHub identity BEFORE the
+		// container launches. Each identity gets one authenticated read + one
+		// write-scope probe; a missing token short-circuits without touching the
+		// network (that's how 2026-07-11 dropped calls into the anonymous 60/hr
+		// bucket). Failed identities are gated by dropping their MCP entries from
+		// both the agent config and the session config, so subsequent tool calls
+		// under that namespace cannot fire. One consolidated Slack alert per session
+		// lands on C075JBZ65RT so a task never has to rediscover the outage.
+		const preflightIdentities = collectGitHubMcpIdentities(
+			[agentToolsMcpServers, sessionMcpServers],
+			envVars,
+		)
+		let preflightVerdicts: PreflightVerdict[] = []
+		if (preflightIdentities.length > 0) {
+			preflightVerdicts = await runGitHubPreflight(preflightIdentities)
+			const failed = preflightVerdicts.filter((v) => !v.healthy)
+			if (failed.length > 0) {
+				logger.warn('GitHub preflight failed for one or more identities', {
+					sessionId: session.id,
+					workspaceId: session.workspaceId,
+					failed: failed.map((v) => ({
+						name: v.name,
+						failureClass: v.failureClass,
+					})),
+				})
+				const slackBotToken = envVars.SLACK_BOT_TOKEN
+				if (slackBotToken) {
+					await postGitHubPreflightSlackAlert({
+						botToken: slackBotToken,
+						channelId: GITHUB_PREFLIGHT_SLACK_CHANNEL,
+						verdicts: preflightVerdicts,
+						context: {
+							sessionId: session.id,
+							workspaceId: session.workspaceId,
+						},
+					})
+				} else {
+					logger.warn('GitHub preflight failed but no SLACK_BOT_TOKEN available — alert not sent', {
+						sessionId: session.id,
+						workspaceId: session.workspaceId,
+					})
+				}
+			}
+		}
+		const gatedAgentToolsMcpServers = stripFailedIdentities(agentToolsMcpServers, preflightVerdicts)
+		const gatedSessionMcpServers = stripFailedIdentities(sessionMcpServers, preflightVerdicts)
+
+		if (agentTools && Object.keys(agentTools).length > 0) {
+			const gatedAgentTools = gatedAgentToolsMcpServers
+				? { ...agentTools, mcpServers: gatedAgentToolsMcpServers }
+				: agentTools
+			envVars.AGENT_MCP_JSON = JSON.stringify(gatedAgentTools)
+		}
+		if (Object.keys(gatedSessionMcpServers).length > 0) {
+			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers: gatedSessionMcpServers })
 		}
 
 		const browserRequired =
@@ -1377,6 +1522,106 @@ export class SessionManager extends EventEmitter {
 		const cpus = Math.max(1, Math.round(cpuShares / 1024))
 
 		return { image, env: envVars, memoryMib, cpus, cpuShares, browserRequired }
+	}
+
+	/**
+	 * Resolve the `owner/name` slug for the container's `GITHUB_REPO` env var,
+	 * consumed by the git credential helper as a `?repo=` hint on token-mint
+	 * requests. Sourcing order, per T8:
+	 *   1. task-level override — the scoped task's own `metadata.repo`
+	 *   2. bet — either the scoped bet's `metadata.repo`, or the parent bet
+	 *      reached via a `breaks_into` edge on the scoped task
+	 *   3. sandbox default — `process.env.GITHUB_REPO`
+	 * Every candidate is normalized (strip https/ssh URL forms and .git suffix)
+	 * and re-checked against T4's `REPO_SLUG_RE`. A malformed candidate is
+	 * skipped with a `rejected:<label>` marker so we never forward a wrong slug
+	 * to the token route (which would 404 the discovery hop and mis-map to
+	 * AUTH_REVOKED per T4's error mapping).
+	 */
+	async resolveGithubRepoSlug(session: typeof sessions.$inferSelect): Promise<{
+		slug: string | null
+		source: 'task' | 'bet' | 'env' | 'none'
+		rejected?: string
+	}> {
+		const scopedRows = await this.db
+			.select({ id: objects.id, type: objects.type, metadata: objects.metadata })
+			.from(objects)
+			.where(eq(objects.activeSessionId, session.id))
+			.limit(1)
+		const scoped = scopedRows[0]
+
+		// 1. task-level override
+		if (scoped?.type === 'task') {
+			const raw = (scoped.metadata as Record<string, unknown> | null)?.repo
+			if (typeof raw === 'string' && raw.trim() !== '') {
+				const slug = normalizeRepoSlug(raw)
+				if (slug) return { slug, source: 'task' }
+				return { slug: null, source: 'none', rejected: `task:${scoped.id}` }
+			}
+		}
+
+		// 2. bet.metadata.repo — the scoped bet itself, or the parent bet via
+		//    a `breaks_into` edge on the scoped task (either direction).
+		let betId: string | null = null
+		if (scoped?.type === 'bet') {
+			betId = scoped.id
+		} else if (scoped?.type === 'task') {
+			// `relationships.sourceType`/`targetType` are storage-layer labels
+			// constrained to 'object' | 'file' (see 0046_relationship_type_check.sql)
+			// — they never carry the specialized object type. Resolve the other
+			// endpoint by id and check its actual type via `objects.type`, same
+			// pattern as the object graph endpoint in routes/objects.ts.
+			const edgeRows = await this.db
+				.select({
+					sourceId: relationships.sourceId,
+					targetId: relationships.targetId,
+				})
+				.from(relationships)
+				.where(
+					and(
+						eq(relationships.type, 'breaks_into'),
+						or(eq(relationships.sourceId, scoped.id), eq(relationships.targetId, scoped.id)),
+					),
+				)
+			const otherIds = [
+				...new Set(
+					edgeRows
+						.map((edge) => (edge.sourceId === scoped.id ? edge.targetId : edge.sourceId))
+						.filter((otherId) => otherId !== scoped.id),
+				),
+			]
+			if (otherIds.length > 0) {
+				const betRows = await this.db
+					.select({ id: objects.id })
+					.from(objects)
+					.where(and(inArray(objects.id, otherIds), eq(objects.type, 'bet')))
+					.limit(1)
+				betId = betRows[0]?.id ?? null
+			}
+		}
+		if (betId) {
+			const betRows = await this.db
+				.select({ metadata: objects.metadata })
+				.from(objects)
+				.where(eq(objects.id, betId))
+				.limit(1)
+			const raw = (betRows[0]?.metadata as Record<string, unknown> | null)?.repo
+			if (typeof raw === 'string' && raw.trim() !== '') {
+				const slug = normalizeRepoSlug(raw)
+				if (slug) return { slug, source: 'bet' }
+				return { slug: null, source: 'none', rejected: `bet:${betId}` }
+			}
+		}
+
+		// 3. sandbox default
+		const envRaw = process.env.GITHUB_REPO
+		if (typeof envRaw === 'string' && envRaw.trim() !== '') {
+			const slug = normalizeRepoSlug(envRaw)
+			if (slug) return { slug, source: 'env' }
+			return { slug: null, source: 'none', rejected: 'env:GITHUB_REPO' }
+		}
+
+		return { slug: null, source: 'none' }
 	}
 
 	/**
@@ -1515,6 +1760,9 @@ export class SessionManager extends EventEmitter {
 					firstConnect = false
 					for await (const chunk of this.containers.logs(containerId, true, logOpts)) {
 						attempt = 0
+						if (chunk.stream === 'stdout') {
+							await this.emitGithubCauseTagIfAny(sessionId, chunk.data)
+						}
 						const [log] = await this.db
 							.insert(sessionLogs)
 							.values({
@@ -2660,17 +2908,29 @@ export class SessionManager extends EventEmitter {
 			)
 			this.activeSessions.delete(sessionId)
 		}
+		// Always drop classifier state — safe if never registered, and covers
+		// paths (queue-drain rejection, remote sessions) that have no
+		// activeSessions entry to key off.
+		sessionGithubLogClassifier.unregisterSession(sessionId)
 	}
 
 	/**
 	 * Append log lines received from a remote agent-server and emit them on the
 	 * in-process bus so SSE /logs/stream clients see them in real time.
+	 *
+	 * `stdout` lines are also passed through the github tool-call classifier —
+	 * a failed `tool_result` for a `mcp__github-*` tool triggers an extra
+	 * `system`-stream log line carrying `cause_tag=<tag>` so a grep of
+	 * `session_logs` for the last 100 failures finds every tagged failure.
 	 */
 	async appendRemoteSessionLogs(
 		sessionId: string,
 		lines: Array<{ stream: 'stdout' | 'stderr' | 'system'; content: string }>,
 	): Promise<void> {
 		for (const line of lines) {
+			if (line.stream === 'stdout') {
+				await this.emitGithubCauseTagIfAny(sessionId, line.content)
+			}
 			const [log] = await this.db
 				.insert(sessionLogs)
 				.values({ sessionId, stream: line.stream, content: line.content })
@@ -2682,6 +2942,34 @@ export class SessionManager extends EventEmitter {
 					stream: line.stream,
 					data: line.content,
 				} satisfies SessionLogEvent)
+			}
+		}
+	}
+
+	/**
+	 * Run one chunk of stdout through the github tool-call log classifier.
+	 * Chunks may contain multiple newline-delimited stream-json envelopes; each
+	 * one is classified independently. Emits at most one `system`-stream log
+	 * line per failed github tool_result, carrying the parent bet AC-6
+	 * cause_tag and (when present) the installation_id + mint_age_seconds.
+	 * Errors are swallowed — a classifier hiccup must not drop the original
+	 * log write.
+	 */
+	private async emitGithubCauseTagIfAny(sessionId: string, chunk: string): Promise<void> {
+		if (chunk.length === 0) return
+		const lines = chunk.split('\n')
+		for (const line of lines) {
+			if (line.length === 0) continue
+			try {
+				const result = await sessionGithubLogClassifier.classifyLine(sessionId, line)
+				if (result) {
+					await this.insertSystemLog(sessionId, result.taggedLine)
+				}
+			} catch (err) {
+				logger.warn('github log classifier failed for a line', {
+					sessionId,
+					error: err instanceof Error ? err.message : String(err),
+				})
 			}
 		}
 	}
@@ -2900,6 +3188,7 @@ export class SessionManager extends EventEmitter {
 		)
 
 		await this.clearActiveSession(sessionId)
+		sessionGithubLogClassifier.unregisterSession(sessionId)
 		await this.drainQueue(updated.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
 		)

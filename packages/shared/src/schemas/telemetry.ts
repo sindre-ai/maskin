@@ -93,11 +93,36 @@ export const recordMcpToolCallResponseSizeSchema = z.object({
 	truncated: z.boolean(),
 })
 
+// MCP misfire events for the agent-reach-signal bet: one row per real MCP
+// runtime error we can bucket into a demand signal. Persisted in
+// `mcp_telemetry.data` (jsonb, no schema migration) and fanned out to PostHog
+// as `mcp_misfire_tool_not_found` / `mcp_misfire_unknown_param` /
+// `mcp_misfire_schema_validation_error`. `requested_shape` is a
+// `{fieldName: type}` map — values are stripped so no user-visible PII lands
+// in analytics. `agent_actor_id` is the API key's actor id, resolved by the
+// producer (server-side classifier or client sink).
+export const mcpMisfireKindSchema = z.enum([
+	'tool_not_found',
+	'unknown_param',
+	'schema_validation_error',
+])
+export type McpMisfireKind = z.infer<typeof mcpMisfireKindSchema>
+
+export const recordMcpErrorSchema = z.object({
+	event_type: z.literal('error'),
+	kind: mcpMisfireKindSchema,
+	tool_name: toolNameSchema,
+	session_id: sessionIdSchema,
+	agent_actor_id: z.string().min(1).max(128).optional(),
+	requested_shape: z.record(z.string(), z.string()).default({}),
+})
+
 export const recordMcpTelemetrySchema = z.discriminatedUnion('event_type', [
 	recordMcpToolCallSchema,
 	recordMcpMutationSchema,
 	recordMcpWidgetEventSchema,
 	recordMcpToolCallResponseSizeSchema,
+	recordMcpErrorSchema,
 ])
 
 export type RecordMcpTelemetryBody = z.infer<typeof recordMcpTelemetrySchema>
