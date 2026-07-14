@@ -127,15 +127,27 @@ describe('SessionManager', () => {
 		// Default: pretend GitHub is healthy so preflight in buildLaunchSpec does
 		// not touch the real network. Individual tests override this for the
 		// broken-identity path.
+		//
+		// GitHub App installation tokens (ghs_ prefix) 403 on /user for real —
+		// that endpoint requires a user-context token. Mirror that here instead
+		// of unconditionally allowing /user, so this default can't mask a
+		// preflight regression that (re-)requires /user for installation tokens.
 		vi.stubGlobal(
 			'fetch',
-			vi.fn(async (url: string | URL) => {
+			vi.fn(async (url: string | URL, init?: RequestInit) => {
 				const u = url.toString()
-				if (u.startsWith('https://api.github.com/user'))
+				if (u.startsWith('https://api.github.com/user')) {
+					const auth = (init?.headers as Record<string, string> | undefined)?.Authorization
+					if (auth?.startsWith('Bearer ghs_'))
+						return new Response('{"message":"Resource not accessible by integration"}', {
+							status: 403,
+							headers: { 'content-type': 'application/json' },
+						})
 					return new Response(JSON.stringify({ login: 'octocat' }), {
 						status: 200,
 						headers: { 'content-type': 'application/json' },
 					})
+				}
 				if (u.startsWith('https://api.github.com/repos/'))
 					return new Response(JSON.stringify({ permissions: { push: true } }), {
 						status: 200,
@@ -1100,13 +1112,13 @@ describe('SessionManager', () => {
 							type: 'stdio',
 							command: 'npx',
 							args: ['-y', '@modelcontextprotocol/server-github'],
-							env: { GITHUB_TOKEN: 'ghp_ok' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_ok' },
 						},
 						github_approver: {
 							type: 'stdio',
 							command: 'npx',
 							args: ['-y', '@modelcontextprotocol/server-github'],
-							env: { GITHUB_TOKEN: 'ghp_broken' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_broken' },
 						},
 					},
 				},
@@ -1173,7 +1185,7 @@ describe('SessionManager', () => {
 							type: 'stdio',
 							command: 'npx',
 							args: ['-y', '@modelcontextprotocol/server-github'],
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_APPROVER}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_APPROVER}' },
 						},
 					},
 				},

@@ -1,16 +1,32 @@
 /**
  * Startup preflight for the GitHub identities attached to a session's MCP
- * launch spec. Each identity gets one authenticated read (`GET /user`) and one
- * non-mutating write-scope probe (`GET /repos/<probe>` — checks
- * `permissions.push`). A missing token short-circuits to `missing-token`
- * without hitting the network, so a session that lost its token can't drop
- * calls into GitHub's 60/hr anonymous bucket.
+ * launch spec. Each identity gets one non-mutating write-scope probe
+ * (`GET /repos/<probe>` — checks `permissions.push`); identities backed by a
+ * user-context token (PAT/OAuth, not a GitHub App installation token) also get
+ * an authenticated read (`GET /user`) first. A missing token short-circuits to
+ * `missing-token` without hitting the network, so a session that lost its
+ * token can't drop calls into GitHub's 60/hr anonymous bucket.
+ *
+ * GitHub App installation tokens (prefix `ghs_`) can never pass `GET /user` —
+ * that endpoint requires a user-context token, and an installation token gets
+ * a 403 "Resource not accessible by integration" there regardless of validity
+ * or scope. The write-scope probe is what actually matters for this bet's
+ * write path, so installation-token identities skip the /user probe entirely.
  *
  * Verdicts are per-session, not global — the caller runs preflight once per
  * launch and uses the result to gate the failing identity's MCP tools for
  * the rest of the session.
  */
 import { logger } from '../logger'
+
+/** GitHub App installation access tokens carry this prefix. They authenticate
+ *  as the app/installation, not as a user, so `GET /user` always 403s for
+ *  them — skip that probe rather than treat it as a real health signal. */
+const GITHUB_APP_INSTALLATION_TOKEN_PREFIX = 'ghs_'
+
+function isGitHubAppInstallationToken(token: string): boolean {
+	return token.startsWith(GITHUB_APP_INSTALLATION_TOKEN_PREFIX)
+}
 
 /** Default Slack channel for preflight alerts — see the parent bet. */
 export const GITHUB_PREFLIGHT_SLACK_CHANNEL = 'C075JBZ65RT'
@@ -93,19 +109,21 @@ async function probeOne(
 		'X-GitHub-Api-Version': '2022-11-28',
 	}
 
-	let userRes: Response
-	try {
-		userRes = await fetchImpl('https://api.github.com/user', { headers })
-	} catch (err) {
-		return {
-			name: id.name,
-			healthy: false,
-			failureClass: 'network-error',
-			statusSnippet: scrubToken(String(err), token),
+	if (!isGitHubAppInstallationToken(token)) {
+		let userRes: Response
+		try {
+			userRes = await fetchImpl('https://api.github.com/user', { headers })
+		} catch (err) {
+			return {
+				name: id.name,
+				healthy: false,
+				failureClass: 'network-error',
+				statusSnippet: scrubToken(String(err), token),
+			}
 		}
-	}
-	if (!userRes.ok) {
-		return classifyHttpFailure(id.name, userRes, token, '/user')
+		if (!userRes.ok) {
+			return classifyHttpFailure(id.name, userRes, token, '/user')
+		}
 	}
 
 	let repoRes: Response
@@ -286,9 +304,12 @@ export function resolveMcpGitHubToken(
 
 /**
  * Walk one or more MCP server maps and return the github-like identities we
- * should preflight — every entry whose `env.GITHUB_TOKEN` is set. Later
- * maps override earlier maps on name collision (matches Object.assign merge
- * semantics used at the launch-spec level).
+ * should preflight — every entry whose `env.GITHUB_PERSONAL_ACCESS_TOKEN` is
+ * set (the env key `@modelcontextprotocol/server-github` actually reads —
+ * see the known-pitfalls entry on `GITHUB_TOKEN` vs
+ * `GITHUB_PERSONAL_ACCESS_TOKEN`). Later maps override earlier maps on name
+ * collision (matches Object.assign merge semantics used at the launch-spec
+ * level).
  */
 export function collectGitHubMcpIdentities(
 	mcpSources: Array<Record<string, unknown> | undefined | null>,
@@ -313,7 +334,7 @@ function extractGithubTokenFromEntry(
 	if (!entry || typeof entry !== 'object') return undefined
 	const env = (entry as { env?: unknown }).env
 	if (!env || typeof env !== 'object') return undefined
-	const raw = (env as { GITHUB_TOKEN?: unknown }).GITHUB_TOKEN
+	const raw = (env as { GITHUB_PERSONAL_ACCESS_TOKEN?: unknown }).GITHUB_PERSONAL_ACCESS_TOKEN
 	if (raw === undefined) return undefined
 	return resolveMcpGitHubToken(raw, envVars)
 }
