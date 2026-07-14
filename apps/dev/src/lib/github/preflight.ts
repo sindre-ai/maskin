@@ -242,18 +242,29 @@ async function probeInstallationWriteScope(
 		// against `GET /repos/{full_name}`, the endpoint the precise probe path
 		// (probeRepoWriteScope, below) already treats as authoritative, before
 		// declaring the identity unhealthy.
+		const repoLabel = repoName ? ` on ${repoName}` : ''
+		let crossCheckNote = ''
 		if (repoName) {
-			const recheck = await fetchRepoPushPermission(fetchImpl, headers, repoName)
+			const recheck = await fetchRepoPushPermission(fetchImpl, headers, token, repoName)
 			if (recheck.ok && recheck.push === true) {
 				return { name, healthy: true, installationId }
 			}
+			// The cross-check itself didn't clear the identity — record WHY, so the
+			// alert distinguishes "the precise endpoint also denies push" (a real
+			// permission problem, escalate to GitHub support) from "the cross-check
+			// request itself failed" (a bug in the probe, not a permission problem).
+			// Without this, both cases produce the identical statusSnippet as before
+			// this cross-check existed, making the fix impossible to evaluate from
+			// the alert alone.
+			crossCheckNote = recheck.ok
+				? `; GET /repos/${repoName} also reports permissions.push=${JSON.stringify(recheck.push)}`
+				: `; GET /repos/${repoName} cross-check failed: ${recheck.reason}`
 		}
-		const repoLabel = repoName ? ` on ${repoName}` : ''
 		return {
 			name,
 			healthy: false,
 			failureClass: 'write-scope-denied',
-			statusSnippet: `${path}: permissions.push is ${JSON.stringify(push)}${repoLabel}`,
+			statusSnippet: `${path}: permissions.push is ${JSON.stringify(push)}${repoLabel}${crossCheckNote}`,
 			installationId,
 		}
 	}
@@ -264,16 +275,29 @@ async function probeInstallationWriteScope(
 async function fetchRepoPushPermission(
 	fetchImpl: typeof fetch,
 	headers: Record<string, string>,
+	token: string,
 	repoFullName: string,
-): Promise<{ ok: true; push: unknown } | { ok: false }> {
+): Promise<{ ok: true; push: unknown } | { ok: false; reason: string }> {
+	let res: Response
 	try {
-		const res = await fetchImpl(`https://api.github.com/repos/${repoFullName}`, { headers })
-		if (!res.ok) return { ok: false }
-		const body = await res.json()
-		return { ok: true, push: extractPushPermission(body) }
-	} catch {
-		return { ok: false }
+		res = await fetchImpl(`https://api.github.com/repos/${repoFullName}`, { headers })
+	} catch (err) {
+		return { ok: false, reason: scrubToken(String(err), token) }
 	}
+	if (!res.ok) {
+		let bodyText = ''
+		try {
+			bodyText = (await res.text()).slice(0, BODY_SNIPPET_MAX)
+		} catch {}
+		return { ok: false, reason: `HTTP ${res.status}: ${scrubToken(bodyText, token)}` }
+	}
+	let body: unknown
+	try {
+		body = await res.json()
+	} catch {
+		return { ok: false, reason: 'unparseable JSON' }
+	}
+	return { ok: true, push: extractPushPermission(body) }
 }
 
 async function probeRepoWriteScope(

@@ -1507,6 +1507,7 @@ export class SessionManager extends EventEmitter {
 						name: v.name,
 						failureClass: v.failureClass,
 						installationId: v.installationId,
+						statusSnippet: v.statusSnippet,
 					})),
 				})
 				const slackBotToken = envVars.SLACK_BOT_TOKEN
