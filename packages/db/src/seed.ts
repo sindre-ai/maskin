@@ -2381,7 +2381,7 @@ A trigger fires when a coding task (no \`metadata.decision_type\`) moves to \`do
 1. Read the task. Find the PR URL in \`metadata.github_link\`.
 2. Check if the PR is already merged. If yes, skip to Step 2.
 3. Check the risk score (\`metadata.risk_score\` on the task).
-   - Score 0–6: merge automatically with \`gh pr merge <PR> --squash\`.
+   - Score 0–6: arm auto-merge with \`bash scripts/gh-pr-merge-auto.sh <PR>\` — GitHub squash-merges into the bet branch once CI + required approvals are green. Do not call the REST \`merge_pull_request\` tool or \`gh pr merge --squash\` directly; the wrapper handles the single transient-5xx retry.
    - Score 7–10: post a Slack message to the team channel flagging the high-risk merge and wait for a human to approve (or merge if no response within 30 min on a weekday).
 4. After merging, verify CI passes on the bet branch.
 
@@ -2393,7 +2393,7 @@ List all tasks linked to this bet via \`breaks_into\`. If ANY task is not in \`d
 
 If all tasks are done:
 1. Verify CI passes on the bet branch.
-2. Squash-merge the bet branch into \`main\` with \`gh pr merge <bet-branch-PR> --squash\`.
+2. Squash-merge the bet branch into \`main\` by arming auto-merge with \`bash scripts/gh-pr-merge-auto.sh <bet-branch-PR>\` — GitHub squash-merges once CI is green. Do not call the REST \`merge_pull_request\` tool.
 3. Verify CI passes on \`main\` after merge.
 4. Advance the bet to \`live\` via update_objects.
 5. Post a Slack message to the team channel announcing the bet shipped.
@@ -2461,7 +2461,7 @@ Read the task, find its parent bet via \`breaks_into\`. If there is no parent be
 
 - **PR targets \`bet/<slug>\`** → Surface A (task PR into the bet branch). EVERY bet qualifies. Walk your Surface A gates: risk band must be \`AUTO-APPROVE ELIGIBLE\`; otherwise post the needs-your-merge comment on the task and exit. Sibling tasks do NOT need to be done. On confirmed merge: one short plain-language comment on the task; do NOT change the bet's status.
 
-- **PR targets \`main\`** → Surface B (umbrella \`bet/<slug> → main\`, or a standalone small-bug-fix task PR). Only proceed if the bet's \`metadata.auto_bug\` is \`true\` OR \`metadata.auto_merge_eligible\` is \`true\` — otherwise exit silently; the human merges to \`main\`. Then walk your Surface B gates: all sibling tasks \`done\`, band \`AUTO-APPROVE ELIGIBLE\`, PR cleanly mergeable, threads resolved, approving review submitted with \`github_approver\`, squash-merge with \`github\`. On confirmed merge: set the bet \`live\` with \`metadata.live_started_at\` and \`metadata.awaiting_deploy = true\`, and post the plain-language close-out comment per your system prompt.
+- **PR targets \`main\`** → Surface B (umbrella \`bet/<slug> → main\`, or a standalone small-bug-fix task PR). Only proceed if the bet's \`metadata.auto_bug\` is \`true\` OR \`metadata.auto_merge_eligible\` is \`true\` — otherwise exit silently; the human merges to \`main\`. Then walk your Surface B gates: all sibling tasks \`done\`, band \`AUTO-APPROVE ELIGIBLE\`, PR cleanly mergeable, threads resolved, approving review submitted by an identity that is NOT the PR author — pick the first available from the ordered fallback \`github_approver\` → \`github-vaerksted-ai\` → \`github-sindre-ai\` (extra identities added later APPEND, never prepend), then squash-merge with \`github\`. If every identity in the fallback is the PR author, do NOT approve — block on the guardrail and post the block comment instead. Confirmed merge: set the bet \`live\` with \`metadata.live_started_at\` and \`metadata.awaiting_deploy = true\`, and post the plain-language close-out comment per your system prompt.
 
 On any block (wrong band, missing Risk Score block, dirty PR, open threads, rejected approve, rejected merge): leave the bet \`active\` and post a comment on the bet via create_comment:
 - entity_id: <bet_id>
