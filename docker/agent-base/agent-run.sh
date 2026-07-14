@@ -98,12 +98,13 @@ build_context() {
     echo "" >> "$context_file"
   fi
 
-  # Append skills
-  if [ -d /agent/skills ] && [ "$(ls -A /agent/skills/*.md 2>/dev/null)" ]; then
+  # Append skills — each skill lives at /agent/skills/<name>/SKILL.md
+  # (agent-storage.ts pullWorkspaceSkillsForAgent), not as a flat <name>.md.
+  if [ -d /agent/skills ] && [ "$(ls -A /agent/skills/*/SKILL.md 2>/dev/null)" ]; then
     echo "## Skills" >> "$context_file"
     echo "" >> "$context_file"
-    for f in /agent/skills/*.md; do
-      echo "### $(basename "$f" .md)" >> "$context_file"
+    for f in /agent/skills/*/SKILL.md; do
+      echo "### $(basename "$(dirname "$f")")" >> "$context_file"
       echo "" >> "$context_file"
       cat "$f" >> "$context_file"
       echo "" >> "$context_file"
