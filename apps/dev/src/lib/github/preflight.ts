@@ -235,6 +235,19 @@ async function probeInstallationWriteScope(
 		// turns the next occurrence into a one-glance diagnosis instead of a
 		// guessing game requiring a live token to reproduce.
 		const repoName = extractRepoFullName(repos[0])
+		// The bulk listing's own `permissions` field has been observed to report
+		// `push: false` for an installation whose org config, App manifest, and a
+		// freshly re-created installation all agree grant Contents: Read & write —
+		// i.e. this field is not a reliable write-scope signal on its own. Cross-check
+		// against `GET /repos/{full_name}`, the endpoint the precise probe path
+		// (probeRepoWriteScope, below) already treats as authoritative, before
+		// declaring the identity unhealthy.
+		if (repoName) {
+			const recheck = await fetchRepoPushPermission(fetchImpl, headers, repoName)
+			if (recheck.ok && recheck.push === true) {
+				return { name, healthy: true, installationId }
+			}
+		}
 		const repoLabel = repoName ? ` on ${repoName}` : ''
 		return {
 			name,
@@ -246,6 +259,21 @@ async function probeInstallationWriteScope(
 	}
 
 	return { name, healthy: true, installationId }
+}
+
+async function fetchRepoPushPermission(
+	fetchImpl: typeof fetch,
+	headers: Record<string, string>,
+	repoFullName: string,
+): Promise<{ ok: true; push: unknown } | { ok: false }> {
+	try {
+		const res = await fetchImpl(`https://api.github.com/repos/${repoFullName}`, { headers })
+		if (!res.ok) return { ok: false }
+		const body = await res.json()
+		return { ok: true, push: extractPushPermission(body) }
+	} catch {
+		return { ok: false }
+	}
 }
 
 async function probeRepoWriteScope(
