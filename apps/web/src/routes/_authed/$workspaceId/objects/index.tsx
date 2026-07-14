@@ -358,9 +358,13 @@ function ObjectsPage() {
 	// misclassify any bet whose child tasks fell into the second page as
 	// `idle`) and are gated on whether any bets are actually visible so tabs
 	// like `insight` never pay for tasks + rels they don't render.
+	// The indicator is also a hideable display property (`betStatus` in
+	// `columnVisibility`, default visible) — when hidden we skip the queries
+	// so an unwanted indicator isn't paying for fetches either.
+	const betStatusVisible = columnVisibility.betStatus !== false
 	const hasVisibleBets = useMemo(
-		() => visibleObjects.some((o) => o.type === 'bet'),
-		[visibleObjects],
+		() => betStatusVisible && visibleObjects.some((o) => o.type === 'bet'),
+		[betStatusVisible, visibleObjects],
 	)
 	const { data: workspaceTasks } = useQuery({
 		queryKey: queryKeys.objects.list(workspaceId, { type: 'task' }),
@@ -410,7 +414,12 @@ function ObjectsPage() {
 		[workspaceId, actors, fieldDefinitions, typeFilter],
 	)
 
-	// Column info for the controls popover
+	// Column info for the controls popover. `betStatus` is a pseudo-column
+	// (there's no react-table column for it — the indicator renders inline
+	// in the Title cell and the mobile object card), but it's exposed here
+	// with `canHide: true` so it shows up in the Display panel's Properties
+	// section alongside real column toggles. Its visibility is read off the
+	// same `columnVisibility` state below.
 	const columnInfo: ColumnInfo[] = useMemo(() => {
 		const staticNames: Record<string, string> = {
 			status: 'Status',
@@ -420,7 +429,7 @@ function ObjectsPage() {
 			createdAt: 'Created',
 			updatedAt: 'Updated',
 		}
-		return columns
+		const columnEntries = columns
 			.filter((col) => {
 				const id = 'accessorKey' in col ? String(col.accessorKey) : col.id
 				return id !== 'select'
@@ -433,6 +442,7 @@ function ObjectsPage() {
 					: (staticNames[id] ?? id)
 				return { id, label, canHide }
 			})
+		return [...columnEntries, { id: 'betStatus', label: 'Bet status', canHide: true }]
 	}, [columns])
 
 	// Grouping state
