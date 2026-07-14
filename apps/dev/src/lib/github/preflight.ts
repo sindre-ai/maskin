@@ -99,6 +99,18 @@ export interface PreflightVerdict {
 export interface PreflightOptions {
 	fetchImpl?: typeof fetch
 	writeProbeRepo?: string
+	/** Fetches the installation's own granted permissions via
+	 *  `GET /app/installations/{id}` using the App JWT — independent of any
+	 *  specific token or repo. This is the ground truth for whether GitHub
+	 *  actually applied a permission change to THIS installation: bumping the
+	 *  App's manifest does not retroactively upgrade installations that
+	 *  already exist — the org must explicitly accept the new permission set,
+	 *  a step that's easy to miss even after reinstalling the app. When
+	 *  provided, a write-scope-denied verdict's statusSnippet names this
+	 *  installation-level grant, distinguishing "GitHub itself still has this
+	 *  installation pinned to the old, lower permission" (fix: re-accept
+	 *  permissions on GitHub) from any other explanation. */
+	fetchInstallationPermissions?: (installationId: string) => Promise<Record<string, string>>
 }
 
 const BODY_SNIPPET_MAX = 200
@@ -109,13 +121,16 @@ export async function runGitHubPreflight(
 ): Promise<PreflightVerdict[]> {
 	const fetchImpl = opts.fetchImpl ?? fetch
 	const probeRepo = opts.writeProbeRepo ?? GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO
-	return Promise.all(identities.map((id) => probeOne(id, fetchImpl, probeRepo)))
+	return Promise.all(
+		identities.map((id) => probeOne(id, fetchImpl, probeRepo, opts.fetchInstallationPermissions)),
+	)
 }
 
 async function probeOne(
 	id: PreflightIdentity,
 	fetchImpl: typeof fetch,
 	probeRepo: string,
+	fetchInstallationPermissions?: (installationId: string) => Promise<Record<string, string>>,
 ): Promise<PreflightVerdict> {
 	const token = id.token
 	if (!token || token.length === 0) {
@@ -171,11 +186,47 @@ async function probeOne(
 				token,
 				id.writeProbeRepo,
 				id.installationId,
+				fetchInstallationPermissions,
 			)
 		}
-		return probeInstallationWriteScope(id.name, fetchImpl, headers, token, id.installationId)
+		return probeInstallationWriteScope(
+			id.name,
+			fetchImpl,
+			headers,
+			token,
+			id.installationId,
+			fetchInstallationPermissions,
+		)
 	}
-	return probeRepoWriteScope(id.name, fetchImpl, headers, token, probeRepo, id.installationId)
+	return probeRepoWriteScope(
+		id.name,
+		fetchImpl,
+		headers,
+		token,
+		probeRepo,
+		id.installationId,
+		fetchInstallationPermissions,
+	)
+}
+
+/** `GET /app/installations/{id}` (App JWT) is the ground truth for what
+ *  GitHub actually granted this installation — independent of any token or
+ *  repo. Bumping the App's manifest does not retroactively upgrade an
+ *  existing installation; the org must explicitly accept the new permission
+ *  set. Naming this value in the alert turns "the fix didn't work" into "the
+ *  installation itself is still pinned to the old grant — go re-accept
+ *  permissions on GitHub" instead of another round of guessing. */
+async function describeInstallationPermissionCheck(
+	installationId: string | undefined,
+	fetchInstallationPermissions?: (installationId: string) => Promise<Record<string, string>>,
+): Promise<string> {
+	if (!installationId || !fetchInstallationPermissions) return ''
+	try {
+		const permissions = await fetchInstallationPermissions(installationId)
+		return `; installation ${installationId}'s own contents permission is ${JSON.stringify(permissions.contents ?? 'unset')}`
+	} catch (err) {
+		return `; installation ${installationId} permission check failed: ${err instanceof Error ? err.message : String(err)}`
+	}
 }
 
 async function probeInstallationWriteScope(
@@ -184,6 +235,7 @@ async function probeInstallationWriteScope(
 	headers: Record<string, string>,
 	token: string,
 	installationId: string | undefined,
+	fetchInstallationPermissions?: (installationId: string) => Promise<Record<string, string>>,
 ): Promise<PreflightVerdict> {
 	const path = '/installation/repositories'
 	let res: Response
@@ -260,11 +312,15 @@ async function probeInstallationWriteScope(
 				? `; GET /repos/${repoName} also reports permissions.push=${JSON.stringify(recheck.push)}`
 				: `; GET /repos/${repoName} cross-check failed: ${recheck.reason}`
 		}
+		const installationNote = await describeInstallationPermissionCheck(
+			installationId,
+			fetchInstallationPermissions,
+		)
 		return {
 			name,
 			healthy: false,
 			failureClass: 'write-scope-denied',
-			statusSnippet: `${path}: permissions.push is ${JSON.stringify(push)}${repoLabel}${crossCheckNote}`,
+			statusSnippet: `${path}: permissions.push is ${JSON.stringify(push)}${repoLabel}${crossCheckNote}${installationNote}`,
 			installationId,
 		}
 	}
@@ -307,6 +363,7 @@ async function probeRepoWriteScope(
 	token: string,
 	probeRepo: string,
 	installationId: string | undefined,
+	fetchInstallationPermissions?: (installationId: string) => Promise<Record<string, string>>,
 ): Promise<PreflightVerdict> {
 	const path = `/repos/${probeRepo}`
 	let res: Response
@@ -340,11 +397,15 @@ async function probeRepoWriteScope(
 
 	const push = extractPushPermission(body)
 	if (push !== true) {
+		const installationNote = await describeInstallationPermissionCheck(
+			installationId,
+			fetchInstallationPermissions,
+		)
 		return {
 			name,
 			healthy: false,
 			failureClass: 'write-scope-denied',
-			statusSnippet: `${path}: permissions.push is ${JSON.stringify(push)}`,
+			statusSnippet: `${path}: permissions.push is ${JSON.stringify(push)}${installationNote}`,
 			installationId,
 		}
 	}

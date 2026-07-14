@@ -246,6 +246,56 @@ describe('runGitHubPreflight', () => {
 		])
 	})
 
+	it('names the installation’s own permission grant when both write-scope probes agree it denies push', async () => {
+		// Observed in production: /installation/repositories and GET /repos/{full_name}
+		// both agreed permissions.push=false even after the org config, App manifest,
+		// and a full reinstall all showed Contents: Read & write. Bumping the App's
+		// manifest does not retroactively upgrade an installation that already exists —
+		// the org must explicitly accept the new permission set. Cross-checking the
+		// installation's own grant (independent of any token or repo) is the one signal
+		// that tells us whether GitHub actually applied the change to this installation.
+		const fetchImpl = vi.fn(async (url: string) => {
+			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
+				return jsonResponse({
+					repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: false } }],
+				})
+			}
+			return jsonResponse({ permissions: { push: false } })
+		})
+		const fetchInstallationPermissions = vi.fn(async () => ({ contents: 'read' }))
+		const [verdict] = await runGitHubPreflight(
+			[{ name: 'github-sindre-ai', token: 'ghs_real', installationId: '146523409' }],
+			{ fetchImpl: fetchImpl as unknown as typeof fetch, fetchInstallationPermissions },
+		)
+		expect(verdict.failureClass).toBe('write-scope-denied')
+		expect(verdict.statusSnippet).toContain(
+			'installation 146523409\'s own contents permission is "read"',
+		)
+		expect(fetchInstallationPermissions).toHaveBeenCalledWith('146523409')
+	})
+
+	it('names the failure reason when the installation-permission check itself fails', async () => {
+		const fetchImpl = vi.fn(async (url: string) => {
+			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
+				return jsonResponse({
+					repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: false } }],
+				})
+			}
+			return jsonResponse({ permissions: { push: false } })
+		})
+		const fetchInstallationPermissions = vi.fn(async () => {
+			throw new Error('Failed to fetch installation permissions: 404 Not Found')
+		})
+		const [verdict] = await runGitHubPreflight(
+			[{ name: 'github-sindre-ai', token: 'ghs_real', installationId: '146523409' }],
+			{ fetchImpl: fetchImpl as unknown as typeof fetch, fetchInstallationPermissions },
+		)
+		expect(verdict.failureClass).toBe('write-scope-denied')
+		expect(verdict.statusSnippet).toContain(
+			'installation 146523409 permission check failed: Failed to fetch installation permissions: 404 Not Found',
+		)
+	})
+
 	it('checks the session’s resolved target repo directly when writeProbeRepo is set, instead of /installation/repositories', async () => {
 		const calledUrls: string[] = []
 		const fetchImpl = vi.fn(async (url: string) => {

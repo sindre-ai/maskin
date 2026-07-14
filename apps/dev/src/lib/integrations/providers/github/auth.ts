@@ -227,3 +227,35 @@ export async function fetchInstallationOwnerLogin(installationId: string): Promi
 	}
 	return login
 }
+
+/**
+ * Fetch the installation's own granted permissions via `GET
+ * /app/installations/{id}` using the App JWT — independent of any specific
+ * token or repo. This is the ground truth for whether GitHub actually
+ * applied a permission change: bumping the App's manifest does not
+ * retroactively upgrade an installation that already exists, the org must
+ * explicitly accept the new permission set. Used by the preflight health
+ * check to distinguish "the installation itself is still pinned to the old,
+ * lower grant" from other causes of a write-scope-denied verdict.
+ */
+export async function fetchInstallationPermissions(
+	installationId: string,
+): Promise<Record<string, string>> {
+	const jwt = mintAppJwt()
+
+	const response = await fetch(`https://api.github.com/app/installations/${installationId}`, {
+		headers: {
+			Authorization: `Bearer ${jwt}`,
+			Accept: 'application/vnd.github+json',
+			'X-GitHub-Api-Version': '2022-11-28',
+		},
+	})
+
+	if (!response.ok) {
+		const text = await response.text()
+		throw new Error(`Failed to fetch installation permissions: ${response.status} ${text}`)
+	}
+
+	const data = (await response.json()) as { permissions?: Record<string, string> }
+	return data.permissions ?? {}
+}
