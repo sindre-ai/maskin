@@ -4,20 +4,36 @@
  * hitting the network, so a session that lost its token can't drop calls
  * into GitHub's 60/hr anonymous bucket.
  *
+ * Write scope is verified with a REAL write: `POST /repos/{owner}/{repo}/git/blobs`,
+ * which creates an unreferenced blob object. This has no visible side effect —
+ * no branch, file, commit, or PR is created, and GitHub garbage-collects the
+ * object over time — but it is the only reliable way to confirm push-level
+ * access for a GitHub App installation token. The `permissions.push`/`pull`
+ * fields on `GET /repos/{owner}/{repo}` and `GET /installation/repositories`
+ * model classic collaborator affiliation and do NOT reliably reflect what an
+ * App installation token can actually do: confirmed directly against
+ * production, an installation with a correct `contents: write` grant (verified
+ * via `GET /app/installations/{id}`: not suspended, `repository_selection:
+ * all`, target repo present in `/installation/repositories`) still reported
+ * `permissions.push: false` on both endpoints, while a real blob-create
+ * against that same repo with that same token succeeded outright (HTTP 201).
+ * Every prior version of this probe trusted that field — first directly, then
+ * cross-checked against a second endpoint, then against the installation's
+ * own declared grant — and every version kept agreeing on the same wrong
+ * answer, because all three signals share the same flaw. Testing the actual
+ * operation sidesteps it entirely.
+ *
  * This app is multi-tenant — any number of workspaces can each connect their
  * own GitHub App installation, in their own org, with their own repos. The
  * write-scope probe therefore can NOT test against one hardcoded repo: an
- * installation living in org A can never show `permissions.push` on a repo
- * owned by org B, no matter how well permissioned it is. So for GitHub App
- * installation tokens (prefix `ghs_`), write scope is checked one of two ways:
- * when the caller knows the session's actual resolved target repo (threaded
- * in as `PreflightIdentity.writeProbeRepo`), we check `GET /repos/{owner}/{repo}`
- * against that exact repo — the most precise signal, since it's the repo the
- * session will actually push to. Otherwise we fall back to
- * `GET /installation/repositories` — the repos *that specific token* can
- * reach — which still scopes correctly to the tenant's own org automatically,
- * with no per-identity or per-org configuration, but can pass even if the
- * specific target repo turns out to be unwritable (e.g. archived).
+ * installation living in org A has no repo in common with org B. When the
+ * caller knows the session's actual resolved target repo (threaded in as
+ * `PreflightIdentity.writeProbeRepo`), we probe that exact repo — the most
+ * precise signal, since it's the repo the session will actually push to.
+ * Otherwise we resolve any one repo the token can see via
+ * `GET /installation/repositories` and probe that instead — scoped
+ * automatically to the tenant's own org with no per-identity or per-org
+ * configuration required.
  *
  * Installation tokens also can never pass `GET /user` — that endpoint
  * requires a user-context token, and an installation token gets a 403
@@ -158,48 +174,58 @@ async function probeOne(
 	// Installation tokens are scoped to a single tenant's own org — probing a
 	// fixed repo path would only ever be correct for one hardcoded org, which
 	// breaks for every other tenant. When the session's actual target repo is
-	// known, check write scope against that exact repo — it's the most precise
-	// signal available. Otherwise fall back to `/installation/repositories`,
-	// which is scoped by the token itself so it still reflects the calling
-	// installation's own org regardless of which tenant it belongs to.
+	// known, probe write scope against that exact repo — it's the most precise
+	// signal available. Otherwise resolve any repo the token can see via
+	// `/installation/repositories`, which is scoped by the token itself so it
+	// still reflects the calling installation's own org regardless of which
+	// tenant it belongs to.
 	if (isInstallationToken) {
-		if (id.writeProbeRepo) {
-			return probeRepoWriteScope(
+		let repo = id.writeProbeRepo
+		if (!repo) {
+			const resolved = await resolveAnyAccessibleRepo(
 				id.name,
 				fetchImpl,
 				headers,
 				token,
-				id.writeProbeRepo,
 				id.installationId,
 			)
+			if ('verdict' in resolved) return resolved.verdict
+			repo = resolved.repo
 		}
-		return probeInstallationWriteScope(id.name, fetchImpl, headers, token, id.installationId)
+		return probeWriteScope(id.name, fetchImpl, headers, token, repo, id.installationId)
 	}
-	return probeRepoWriteScope(id.name, fetchImpl, headers, token, probeRepo, id.installationId)
+	return probeWriteScope(id.name, fetchImpl, headers, token, probeRepo, id.installationId)
 }
 
-async function probeInstallationWriteScope(
+/** Resolves any one repo an installation token can see, for use when the
+ *  caller doesn't know the session's specific target repo. Reuses
+ *  `/installation/repositories` purely to name a candidate — the actual
+ *  write-scope verdict comes from a real write attempt against it in
+ *  {@link probeWriteScope}, not from this endpoint's `permissions` field. */
+async function resolveAnyAccessibleRepo(
 	name: string,
 	fetchImpl: typeof fetch,
 	headers: Record<string, string>,
 	token: string,
 	installationId: string | undefined,
-): Promise<PreflightVerdict> {
+): Promise<{ repo: string } | { verdict: PreflightVerdict }> {
 	const path = '/installation/repositories'
 	let res: Response
 	try {
 		res = await fetchImpl(`https://api.github.com${path}?per_page=1`, { headers })
 	} catch (err) {
 		return {
-			name,
-			healthy: false,
-			failureClass: 'network-error',
-			statusSnippet: scrubToken(String(err), token),
-			installationId,
+			verdict: {
+				name,
+				healthy: false,
+				failureClass: 'network-error',
+				statusSnippet: scrubToken(String(err), token),
+				installationId,
+			},
 		}
 	}
 	if (!res.ok) {
-		return classifyHttpFailure(name, res, token, path, installationId)
+		return { verdict: await classifyHttpFailure(name, res, token, path, installationId) }
 	}
 
 	let body: unknown
@@ -207,111 +233,58 @@ async function probeInstallationWriteScope(
 		body = await res.json()
 	} catch {
 		return {
-			name,
-			healthy: false,
-			failureClass: 'user-lookup-failed',
-			statusSnippet: `${path}: unparseable JSON`,
-			installationId,
+			verdict: {
+				name,
+				healthy: false,
+				failureClass: 'user-lookup-failed',
+				statusSnippet: `${path}: unparseable JSON`,
+				installationId,
+			},
 		}
 	}
 
 	const repos = (body as { repositories?: unknown[] }).repositories
-	if (!Array.isArray(repos) || repos.length === 0) {
+	const repoName =
+		Array.isArray(repos) && repos.length > 0 ? extractRepoFullName(repos[0]) : undefined
+	if (!repoName) {
 		return {
-			name,
-			healthy: false,
-			failureClass: 'write-scope-denied',
-			statusSnippet: `${path}: installation has no accessible repositories`,
-			installationId,
+			verdict: {
+				name,
+				healthy: false,
+				failureClass: 'write-scope-denied',
+				statusSnippet: `${path}: installation has no accessible repositories`,
+				installationId,
+			},
 		}
 	}
-
-	const push = extractPushPermission(repos[0])
-	if (push !== true) {
-		// Name the repo that failed the probe — without this, a Slack alert only
-		// says "permissions.push is false" with no way to tell whether repos[0]
-		// was actually the tenant's own repo or something unexpected (e.g. GitHub
-		// ordering surfaced a repo outside the installation's normal set). This
-		// turns the next occurrence into a one-glance diagnosis instead of a
-		// guessing game requiring a live token to reproduce.
-		const repoName = extractRepoFullName(repos[0])
-		// The bulk listing's own `permissions` field has been observed to report
-		// `push: false` for an installation whose org config, App manifest, and a
-		// freshly re-created installation all agree grant Contents: Read & write —
-		// i.e. this field is not a reliable write-scope signal on its own. Cross-check
-		// against `GET /repos/{full_name}`, the endpoint the precise probe path
-		// (probeRepoWriteScope, below) already treats as authoritative, before
-		// declaring the identity unhealthy.
-		const repoLabel = repoName ? ` on ${repoName}` : ''
-		let crossCheckNote = ''
-		if (repoName) {
-			const recheck = await fetchRepoPushPermission(fetchImpl, headers, token, repoName)
-			if (recheck.ok && recheck.push === true) {
-				return { name, healthy: true, installationId }
-			}
-			// The cross-check itself didn't clear the identity — record WHY, so the
-			// alert distinguishes "the precise endpoint also denies push" (a real
-			// permission problem, escalate to GitHub support) from "the cross-check
-			// request itself failed" (a bug in the probe, not a permission problem).
-			// Without this, both cases produce the identical statusSnippet as before
-			// this cross-check existed, making the fix impossible to evaluate from
-			// the alert alone.
-			crossCheckNote = recheck.ok
-				? `; GET /repos/${repoName} also reports permissions.push=${JSON.stringify(recheck.push)}`
-				: `; GET /repos/${repoName} cross-check failed: ${recheck.reason}`
-		}
-		return {
-			name,
-			healthy: false,
-			failureClass: 'write-scope-denied',
-			statusSnippet: `${path}: permissions.push is ${JSON.stringify(push)}${repoLabel}${crossCheckNote}`,
-			installationId,
-		}
-	}
-
-	return { name, healthy: true, installationId }
+	return { repo: repoName }
 }
 
-async function fetchRepoPushPermission(
-	fetchImpl: typeof fetch,
-	headers: Record<string, string>,
-	token: string,
-	repoFullName: string,
-): Promise<{ ok: true; push: unknown } | { ok: false; reason: string }> {
-	let res: Response
-	try {
-		res = await fetchImpl(`https://api.github.com/repos/${repoFullName}`, { headers })
-	} catch (err) {
-		return { ok: false, reason: scrubToken(String(err), token) }
-	}
-	if (!res.ok) {
-		let bodyText = ''
-		try {
-			bodyText = (await res.text()).slice(0, BODY_SNIPPET_MAX)
-		} catch {}
-		return { ok: false, reason: `HTTP ${res.status}: ${scrubToken(bodyText, token)}` }
-	}
-	let body: unknown
-	try {
-		body = await res.json()
-	} catch {
-		return { ok: false, reason: 'unparseable JSON' }
-	}
-	return { ok: true, push: extractPushPermission(body) }
-}
-
-async function probeRepoWriteScope(
+/** Authoritative write-scope check: attempts a real write —
+ *  `POST /repos/{repo}/git/blobs`, creating an unreferenced content object —
+ *  instead of reading the `permissions.push`/`pull` fields on `GET /repos` or
+ *  `GET /installation/repositories`. Those fields model classic collaborator
+ *  affiliation and have been confirmed, against production, to report
+ *  `push: false` for an installation token that can genuinely push (see file
+ *  header). A blob create has no visible side effect — no branch, file,
+ *  commit, or PR — and GitHub garbage-collects the object over time, so it's
+ *  safe to run on every session launch. */
+async function probeWriteScope(
 	name: string,
 	fetchImpl: typeof fetch,
 	headers: Record<string, string>,
 	token: string,
-	probeRepo: string,
+	repoFullName: string,
 	installationId: string | undefined,
 ): Promise<PreflightVerdict> {
-	const path = `/repos/${probeRepo}`
+	const path = `/repos/${repoFullName}/git/blobs`
 	let res: Response
 	try {
-		res = await fetchImpl(`https://api.github.com${path}`, { headers })
+		res = await fetchImpl(`https://api.github.com${path}`, {
+			method: 'POST',
+			headers: { ...headers, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: 'maskin-github-preflight-write-probe', encoding: 'utf-8' }),
+		})
 	} catch (err) {
 		return {
 			name,
@@ -321,42 +294,31 @@ async function probeRepoWriteScope(
 			installationId,
 		}
 	}
-	if (!res.ok) {
-		return classifyHttpFailure(name, res, token, path, installationId)
+
+	if (res.ok) {
+		return { name, healthy: true, installationId }
 	}
 
-	let body: unknown
-	try {
-		body = await res.json()
-	} catch {
-		return {
-			name,
-			healthy: false,
-			failureClass: 'user-lookup-failed',
-			statusSnippet: `${path}: unparseable JSON`,
-			installationId,
-		}
-	}
-
-	const push = extractPushPermission(body)
-	if (push !== true) {
+	// 403/404 on an actual write attempt is the real write-scope-denied signal
+	// — unlike the `permissions` field, GitHub only rejects this call when the
+	// token truly cannot write to the repo. Anything else (401, 5xx, other
+	// unexpected codes) goes through the generic classifier instead of being
+	// misreported as a permission issue.
+	if (res.status === 403 || res.status === 404) {
+		let bodyText = ''
+		try {
+			bodyText = (await res.text()).slice(0, BODY_SNIPPET_MAX)
+		} catch {}
 		return {
 			name,
 			healthy: false,
 			failureClass: 'write-scope-denied',
-			statusSnippet: `${path}: permissions.push is ${JSON.stringify(push)}`,
+			statusSnippet: `${path}: HTTP ${res.status} ${scrubToken(bodyText, token)}`,
 			installationId,
 		}
 	}
 
-	return { name, healthy: true, installationId }
-}
-
-function extractPushPermission(body: unknown): unknown {
-	if (body === null || typeof body !== 'object') return undefined
-	const perms = (body as { permissions?: unknown }).permissions
-	if (perms === null || typeof perms !== 'object') return undefined
-	return (perms as { push?: unknown }).push
+	return classifyHttpFailure(name, res, token, path, installationId)
 }
 
 function extractRepoFullName(repo: unknown): string | undefined {

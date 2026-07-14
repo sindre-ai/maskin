@@ -1287,7 +1287,7 @@ describe('SessionManager', () => {
 
 				const fetchMock = vi.mocked(fetch)
 				const calledUrls = fetchMock.mock.calls.map((args) => args[0]?.toString() ?? '')
-				expect(calledUrls).toContain('https://api.github.com/repos/sindre-ai/maskin')
+				expect(calledUrls).toContain('https://api.github.com/repos/sindre-ai/maskin/git/blobs')
 				expect(calledUrls).not.toContain(
 					'https://api.github.com/installation/repositories?per_page=1',
 				)
@@ -1350,11 +1350,13 @@ describe('SessionManager', () => {
 					const auth = (init?.headers as Record<string, string> | undefined)?.Authorization
 					if (u === 'https://api.github.com/installation/repositories?per_page=1') {
 						if (auth === 'Bearer ghs_token_vaerksted_ai')
-							return jsonRes({ repositories: [{ full_name: 'vaerksted-ai/x', permissions: {} }] })
-						return jsonRes({
-							repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: true } }],
-						})
+							return jsonRes({ repositories: [{ full_name: 'vaerksted-ai/x' }] })
+						return jsonRes({ repositories: [{ full_name: 'sindre-ai/maskin' }] })
 					}
+					if (u === 'https://api.github.com/repos/sindre-ai/maskin/git/blobs')
+						return jsonRes({ sha: 'abc123' }, 201)
+					if (u === 'https://api.github.com/repos/vaerksted-ai/x/git/blobs')
+						return new Response('Resource not accessible by integration', { status: 403 })
 					if (u === 'https://slack.com/api/chat.postMessage') return jsonRes({ ok: true })
 					throw new Error(`unexpected fetch: ${u}`)
 				}),
