@@ -1,3 +1,5 @@
+import { objects } from '@maskin/db/schema'
+import { and, eq } from 'drizzle-orm'
 import { buildCreateObjectBody, insertObject, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
@@ -11,7 +13,13 @@ const { default: graphRoutes } = await import('../../routes/graph')
 // registering the @maskin/ext-knowledge module in this process.
 const KNOWLEDGE_WORKSPACE_SETTINGS = {
 	enabled_modules: ['work', 'knowledge'],
-	display_names: { insight: 'Insight', bet: 'Bet', task: 'Task', loop: 'Loop', knowledge: 'Article' },
+	display_names: {
+		insight: 'Insight',
+		bet: 'Bet',
+		task: 'Task',
+		loop: 'Loop',
+		knowledge: 'Article',
+	},
 	statuses: {
 		insight: ['new', 'processing', 'clustered', 'discarded'],
 		bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
@@ -253,6 +261,96 @@ describe('Knowledge duplicate detection', () => {
 			expect(body.error.code).toBe('CONFLICT')
 			expect(body.error.message).toContain('k1')
 			expect(body.error.message).toContain('k2')
+		})
+	})
+
+	// The route-level preflight in findKnowledgeDuplicate() runs before the
+	// INSERT — so two concurrent POSTs with the same title can both pass the
+	// preflight and race into the insert. The partial unique index shipped in
+	// migration 0047 is the DB-side backstop; without it, both writes would
+	// succeed and the "hard guardrail" claim would break. The two tests below
+	// verify the invariant (only one live row survives) and the 409 shape the
+	// concurrent-write branch returns.
+	describe('concurrent writes (TOCTOU backstop)', () => {
+		it('lets only one of many concurrent POST /api/objects with the same title win', async () => {
+			const app = createApp()
+			const title = 'Concurrent racing runbook'
+			const attempts = 8
+
+			const results = await Promise.all(
+				Array.from({ length: attempts }, () =>
+					app.request(
+						jsonRequest(
+							'POST',
+							'/api/objects',
+							buildCreateObjectBody({ type: 'knowledge', title, status: 'draft' }),
+							{ 'x-workspace-id': workspaceId },
+						),
+					),
+				),
+			)
+
+			const statuses = results.map((r) => r.status).sort()
+			const winners = statuses.filter((s) => s === 201)
+			const losers = statuses.filter((s) => s === 409)
+
+			expect(winners.length).toBe(1)
+			expect(winners.length + losers.length).toBe(attempts)
+
+			// Every loser must be a CONFLICT (not a 500 from an unhandled
+			// unique-violation).
+			for (const res of results) {
+				if (res.status === 201) continue
+				expect(res.status).toBe(409)
+				const body = await res.json()
+				expect(body.error.code).toBe('CONFLICT')
+			}
+
+			// And the DB must hold exactly one live knowledge row with that title —
+			// the partial unique index does what the preflight alone couldn't.
+			const surviving = await db
+				.select({ id: objects.id })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'knowledge')))
+			expect(surviving.length).toBe(1)
+		})
+
+		it('rejects a concurrent POST /api/graph batch when the DB constraint fires', async () => {
+			const app = createApp()
+			const title = 'Racing graph batch runbook'
+			const attempts = 4
+
+			const results = await Promise.all(
+				Array.from({ length: attempts }, (_, i) =>
+					app.request(
+						jsonRequest(
+							'POST',
+							'/api/graph',
+							{
+								nodes: [{ $id: `k${i}`, type: 'knowledge', title, status: 'draft' }],
+								edges: [],
+							},
+							{ 'x-workspace-id': workspaceId },
+						),
+					),
+				),
+			)
+
+			const winners = results.filter((r) => r.status === 201)
+			const losers = results.filter((r) => r.status === 409)
+			expect(winners.length).toBe(1)
+			expect(winners.length + losers.length).toBe(attempts)
+
+			for (const res of losers) {
+				const body = await res.json()
+				expect(body.error.code).toBe('CONFLICT')
+			}
+
+			const surviving = await db
+				.select({ id: objects.id })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'knowledge')))
+			expect(surviving.length).toBe(1)
 		})
 	})
 })

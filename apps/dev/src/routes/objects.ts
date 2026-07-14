@@ -54,7 +54,7 @@ import {
 } from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
-import { findKnowledgeDuplicate } from '../lib/knowledge-dedup'
+import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
 import {
@@ -401,21 +401,54 @@ app.openapi(createObjectRoute, async (c) => {
 		}
 	}
 
-	const [created] = await db
-		.insert(objects)
-		.values({
-			...(body.id && { id: body.id }),
-			workspaceId,
-			type: body.type,
-			title: body.title,
-			content: body.content,
-			status: body.status,
-			metadata: body.metadata,
-			driver: body.driver,
-			createdBy: actorId,
-		})
-		.onConflictDoNothing({ target: objects.id })
-		.returning()
+	let created: typeof objects.$inferSelect | undefined
+	try {
+		const rows = await db
+			.insert(objects)
+			.values({
+				...(body.id && { id: body.id }),
+				workspaceId,
+				type: body.type,
+				title: body.title,
+				content: body.content,
+				status: body.status,
+				metadata: body.metadata,
+				driver: body.driver,
+				createdBy: actorId,
+			})
+			.onConflictDoNothing({ target: objects.id })
+			.returning()
+		created = rows[0]
+	} catch (err) {
+		// TOCTOU backstop: two concurrent POSTs for the same knowledge title can
+		// both pass the preflight in findKnowledgeDuplicate(); the partial unique
+		// index in migration 0047 rejects the loser at insert time. Look up the
+		// winning row so the 409 body still points at a concrete existing object.
+		if (isKnowledgeTitleUniqueViolation(err)) {
+			const existing = await findKnowledgeDuplicate(db, workspaceId, body.title)
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					existing
+						? `A similar knowledge object already exists: '${existing.title}' (${existing.id})`
+						: 'A concurrent write produced a duplicate knowledge title',
+					[
+						{
+							field: 'title',
+							message:
+								'Title matches an existing, non-archived knowledge object (concurrent-write backstop)',
+							received: `'${body.title}'`,
+						},
+					],
+					existing
+						? `Update the existing object (PATCH /api/objects/${existing.id}) or link them with a 'duplicates' relationship instead of creating a new one.`
+						: 'Retry the request; a concurrent write claimed this title.',
+				),
+				409,
+			)
+		}
+		throw err
+	}
 
 	if (!created) {
 		if (body.id) {

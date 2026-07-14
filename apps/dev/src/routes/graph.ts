@@ -6,7 +6,12 @@ import { createGraphSchema } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
 import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
-import { findKnowledgeDuplicate, isDuplicateTitle, normalizeTitle } from '../lib/knowledge-dedup'
+import {
+	findKnowledgeDuplicate,
+	isDuplicateTitle,
+	isKnowledgeTitleUniqueViolation,
+	normalizeTitle,
+} from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -148,7 +153,9 @@ app.openapi(createGraphRoute, async (c) => {
 		const normalized = normalizeTitle(node.title ?? '')
 		if (!normalized) continue
 
-		const sibling = seenKnowledgeTitles.find((seen) => isDuplicateTitle(seen.normalized, normalized))
+		const sibling = seenKnowledgeTitles.find((seen) =>
+			isDuplicateTitle(seen.normalized, normalized),
+		)
 		if (sibling) {
 			return c.json(
 				createApiError(
@@ -359,6 +366,36 @@ app.openapi(createGraphRoute, async (c) => {
 			return { nodes: createdNodes, edges: createdEdges }
 		})
 	} catch (err) {
+		// TOCTOU backstop: concurrent graph batches whose knowledge nodes share a
+		// title can both pass findKnowledgeDuplicate(); the partial unique index
+		// in migration 0047 rejects the loser inside the tx. Look up the winning
+		// row so the 409 body still points at a concrete existing object.
+		if (isKnowledgeTitleUniqueViolation(err)) {
+			const conflicting = body.nodes.find((n) => n.type === 'knowledge' && n.title)
+			const existing = conflicting
+				? await findKnowledgeDuplicate(db, workspaceId, conflicting.title)
+				: null
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					existing
+						? `A knowledge node in this batch duplicates an existing knowledge object: '${existing.title}' (${existing.id})`
+						: 'A concurrent write produced a duplicate knowledge title',
+					[
+						{
+							field: conflicting ? `nodes[${conflicting.$id}].title` : 'nodes',
+							message:
+								'Title matches an existing, non-archived knowledge object (concurrent-write backstop)',
+							received: conflicting ? `'${conflicting.title}'` : undefined,
+						},
+					],
+					existing
+						? `Update the existing object (PATCH /api/objects/${existing.id}) or link them with a 'duplicates' relationship instead of creating a new one.`
+						: 'Retry the request; a concurrent write claimed this title.',
+				),
+				409,
+			)
+		}
 		logger.error('Graph transaction failed', { error: String(err) })
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create graph'), 500)
 	}
