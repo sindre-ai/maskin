@@ -747,6 +747,95 @@ describe('SessionManager', () => {
 			expect(mcpKeys).toContain('github-vaerksted-ai')
 		})
 
+		it('sets GITHUB_REPO alongside GITHUB_INTEGRATION_ID when a scoped bet carries metadata.repo', async () => {
+			// End-to-end wiring for T8: the credential helper forwards `?repo=` only
+			// when GITHUB_REPO is populated, so buildLaunchSpec must resolve and set
+			// it in the same block that sets GITHUB_INTEGRATION_ID.
+			const wsId = randomUUID()
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-aaa',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const fixtures = buildLaunchFixtures([integration])
+			fixtures.session.workspaceId = wsId
+			fixtures.workspace.id = wsId
+
+			const scopedBet = {
+				id: randomUUID(),
+				type: 'bet',
+				metadata: { repo: 'sindre-ai/maskin' },
+			}
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_token_sindre_ai')
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+			mockResults.selectQueue = [
+				[fixtures.session],
+				[fixtures.workspace],
+				[{ count: 0 }],
+				[fixtures.agent],
+				[fixtures.workspace],
+				[fixtures.workspace],
+				fixtures.integrationRows,
+				// resolveGithubRepoSlug: activeSessionId lookup returns the bet directly
+				[scopedBet],
+				// resolveGithubRepoSlug: bet.metadata lookup by id
+				[scopedBet],
+			]
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.GITHUB_INTEGRATION_ID).toBe(integration.id)
+			expect(createArgs.env.GITHUB_REPO).toBe('sindre-ai/maskin')
+		})
+
+		it('leaves GITHUB_REPO unset when no scoped object or sandbox default resolves', async () => {
+			const wsId = randomUUID()
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-aaa',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const fixtures = buildLaunchFixtures([integration])
+			fixtures.session.workspaceId = wsId
+			fixtures.workspace.id = wsId
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_token_sindre_ai')
+
+			// Ensure no accidental sandbox default from the host environment leaks in.
+			const originalEnv = process.env.GITHUB_REPO
+			// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+			delete process.env.GITHUB_REPO
+			try {
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.GITHUB_INTEGRATION_ID).toBe(integration.id)
+				expect(createArgs.env.GITHUB_REPO).toBeUndefined()
+			} finally {
+				if (originalEnv === undefined) {
+					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+					delete process.env.GITHUB_REPO
+				} else {
+					process.env.GITHUB_REPO = originalEnv
+				}
+			}
+		})
+
 		it('lazily backfills owner_login and persists it when the row is missing it', async () => {
 			const integration = buildIntegration({
 				provider: 'github',
@@ -2687,6 +2776,163 @@ describe('SessionManager', () => {
 			).handleCompletion(session.id, 'container-abc', null)
 
 			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('resolveGithubRepoSlug()', () => {
+		// T8 — sourcing chain for the container's GITHUB_REPO env var, consumed by
+		// the git credential helper as a `?repo=` hint on token-mint requests
+		// (T4's mint-on-write installation-ID recovery path). The DoD requires
+		// each source to work in isolation, "no source" to leave the env unset,
+		// and malformed sources to be rejected rather than passed downstream.
+		const originalEnvRepo = process.env.GITHUB_REPO
+
+		beforeEach(() => {
+			// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+			delete process.env.GITHUB_REPO
+		})
+
+		afterEach(() => {
+			if (originalEnvRepo === undefined) {
+				// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+				delete process.env.GITHUB_REPO
+			} else {
+				process.env.GITHUB_REPO = originalEnvRepo
+			}
+		})
+
+		it("uses the scoped task's own metadata.repo when set (task-level override)", async () => {
+			const session = buildSession({ status: 'running' })
+			const task = { id: randomUUID(), type: 'task', metadata: { repo: 'sindre-ai/maskin' } }
+			mockResults.selectQueue = [[task]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: 'sindre-ai/maskin', source: 'task' })
+		})
+
+		it("walks breaks_into from a task to its parent bet's metadata.repo when the task has no override", async () => {
+			const session = buildSession({ status: 'running' })
+			const task = { id: randomUUID(), type: 'task', metadata: null }
+			const bet = { id: randomUUID(), metadata: { repo: 'sindre-ai/maskin' } }
+			mockResults.selectQueue = [
+				[task],
+				[{ sourceId: task.id, targetId: bet.id, sourceType: 'task', targetType: 'bet' }],
+				[bet],
+			]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: 'sindre-ai/maskin', source: 'bet' })
+		})
+
+		it("uses the scoped bet's own metadata.repo when the session is bet-scoped", async () => {
+			const session = buildSession({ status: 'running' })
+			const bet = { id: randomUUID(), type: 'bet', metadata: { repo: 'sindre-ai/maskin' } }
+			mockResults.selectQueue = [[bet], [bet]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: 'sindre-ai/maskin', source: 'bet' })
+		})
+
+		it('falls back to process.env.GITHUB_REPO when no scoped object exists (sandbox default)', async () => {
+			const session = buildSession({ status: 'running' })
+			process.env.GITHUB_REPO = 'sindre-ai/maskin'
+			mockResults.selectQueue = [[]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: 'sindre-ai/maskin', source: 'env' })
+		})
+
+		it('returns { slug: null, source: none } when no source is available', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.selectQueue = [[]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: null, source: 'none' })
+		})
+
+		it('rejects a malformed bet.metadata.repo with a rejected marker instead of forwarding it', async () => {
+			const session = buildSession({ status: 'running' })
+			const bet = { id: randomUUID(), type: 'bet', metadata: { repo: 'not-a-slug' } }
+			mockResults.selectQueue = [[bet], [bet]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved.slug).toBeNull()
+			expect(resolved.source).toBe('none')
+			expect(resolved.rejected).toBe(`bet:${bet.id}`)
+		})
+
+		it('rejects a malformed task.metadata.repo (missing "/") without walking to the bet', async () => {
+			const session = buildSession({ status: 'running' })
+			const task = { id: randomUUID(), type: 'task', metadata: { repo: 'missing-slash' } }
+			mockResults.selectQueue = [[task]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved.slug).toBeNull()
+			expect(resolved.source).toBe('none')
+			expect(resolved.rejected).toBe(`task:${task.id}`)
+		})
+
+		it('normalizes a full https:// GitHub URL down to owner/name', async () => {
+			const session = buildSession({ status: 'running' })
+			const bet = {
+				id: randomUUID(),
+				type: 'bet',
+				metadata: { repo: 'https://github.com/sindre-ai/maskin.git' },
+			}
+			mockResults.selectQueue = [[bet], [bet]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: 'sindre-ai/maskin', source: 'bet' })
+		})
+
+		it('normalizes a git@github.com SSH form and strips the .git suffix', async () => {
+			const session = buildSession({ status: 'running' })
+			process.env.GITHUB_REPO = 'git@github.com:sindre-ai/maskin.git'
+			mockResults.selectQueue = [[]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: 'sindre-ai/maskin', source: 'env' })
+		})
+
+		it('rejects a malformed sandbox default env value without setting the slug', async () => {
+			const session = buildSession({ status: 'running' })
+			process.env.GITHUB_REPO = '///not-valid///'
+			mockResults.selectQueue = [[]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved.slug).toBeNull()
+			expect(resolved.source).toBe('none')
+			expect(resolved.rejected).toBe('env:GITHUB_REPO')
 		})
 	})
 })

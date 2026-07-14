@@ -14,6 +14,7 @@ import {
 	agentServers,
 	integrations,
 	objects,
+	relationships,
 	sessionLogs,
 	sessions,
 	workspaces,
@@ -87,6 +88,29 @@ import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace
  * stable group-by key from day one.
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
+
+/**
+ * Mirrors the allowlist regex enforced on the API side by
+ * `apps/dev/src/routes/integrations.ts` and
+ * `apps/dev/src/lib/integrations/providers/github/auth.ts` (T4). Kept in sync so
+ * a slug rejected at mint time is also rejected at source, before it ever
+ * reaches the credential helper.
+ */
+const REPO_SLUG_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+
+/**
+ * Strip the common URL forms (`https://github.com/…`, `git@github.com:…`), a
+ * trailing `.git`, and a trailing slash, then re-check against `REPO_SLUG_RE`.
+ * Returns null when the input can't be reduced to `owner/name`.
+ */
+function normalizeRepoSlug(raw: string): string | null {
+	let s = raw.trim()
+	s = s.replace(/^https?:\/\/github\.com\//i, '')
+	s = s.replace(/^git@github\.com:/i, '')
+	s = s.replace(/\.git$/i, '')
+	s = s.replace(/\/$/, '')
+	return REPO_SLUG_RE.test(s) ? s : null
+}
 
 /**
  * `sessions.startedAt`/`createdAt` are typed `Date | null` by Drizzle but
@@ -1314,6 +1338,25 @@ export class SessionManager extends EventEmitter {
 		const primaryGithubIntegrationId = resolvedGithubInstalls[0]?.integrationId
 		if (primaryGithubIntegrationId) {
 			envVars.GITHUB_INTEGRATION_ID = primaryGithubIntegrationId
+			// GITHUB_REPO lets the credential helper append ?repo=owner/name to the
+			// token-mint request; the API side (integrations.ts githubTokenRoute)
+			// uses it to re-discover the current installation id when the App is
+			// reinstalled mid-session (T4's mint-on-write recovery). Left unset when
+			// no defensible source resolves — a wrong slug 404s the discovery hop
+			// and mis-maps to AUTH_REVOKED per T4's error mapping.
+			const resolved = await this.resolveGithubRepoSlug(session)
+			if (resolved.slug) {
+				envVars.GITHUB_REPO = resolved.slug
+				logger.info('Resolved GITHUB_REPO for GitHub App recovery hint', {
+					sessionId: session.id,
+					source: resolved.source,
+				})
+			} else {
+				logger.warn('No GITHUB_REPO source resolved — recovery hint will be omitted', {
+					sessionId: session.id,
+					rejected: resolved.rejected,
+				})
+			}
 		}
 
 		// Merge user-provided env vars, filtering out reserved keys
@@ -1351,6 +1394,7 @@ export class SessionManager extends EventEmitter {
 		}
 		if (primaryGithubIntegrationId) {
 			RESERVED_ENV_KEYS.add('GITHUB_INTEGRATION_ID')
+			RESERVED_ENV_KEYS.add('GITHUB_REPO')
 		}
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {
@@ -1444,6 +1488,96 @@ export class SessionManager extends EventEmitter {
 		const cpus = Math.max(1, Math.round(cpuShares / 1024))
 
 		return { image, env: envVars, memoryMib, cpus, cpuShares, browserRequired }
+	}
+
+	/**
+	 * Resolve the `owner/name` slug for the container's `GITHUB_REPO` env var,
+	 * consumed by the git credential helper as a `?repo=` hint on token-mint
+	 * requests. Sourcing order, per T8:
+	 *   1. task-level override — the scoped task's own `metadata.repo`
+	 *   2. bet — either the scoped bet's `metadata.repo`, or the parent bet
+	 *      reached via a `breaks_into` edge on the scoped task
+	 *   3. sandbox default — `process.env.GITHUB_REPO`
+	 * Every candidate is normalized (strip https/ssh URL forms and .git suffix)
+	 * and re-checked against T4's `REPO_SLUG_RE`. A malformed candidate is
+	 * skipped with a `rejected:<label>` marker so we never forward a wrong slug
+	 * to the token route (which would 404 the discovery hop and mis-map to
+	 * AUTH_REVOKED per T4's error mapping).
+	 */
+	async resolveGithubRepoSlug(session: typeof sessions.$inferSelect): Promise<{
+		slug: string | null
+		source: 'task' | 'bet' | 'env' | 'none'
+		rejected?: string
+	}> {
+		const scopedRows = await this.db
+			.select({ id: objects.id, type: objects.type, metadata: objects.metadata })
+			.from(objects)
+			.where(eq(objects.activeSessionId, session.id))
+			.limit(1)
+		const scoped = scopedRows[0]
+
+		// 1. task-level override
+		if (scoped?.type === 'task') {
+			const raw = (scoped.metadata as Record<string, unknown> | null)?.repo
+			if (typeof raw === 'string' && raw.trim() !== '') {
+				const slug = normalizeRepoSlug(raw)
+				if (slug) return { slug, source: 'task' }
+				return { slug: null, source: 'none', rejected: `task:${scoped.id}` }
+			}
+		}
+
+		// 2. bet.metadata.repo — the scoped bet itself, or the parent bet via
+		//    a `breaks_into` edge on the scoped task (either direction).
+		let betId: string | null = null
+		if (scoped?.type === 'bet') {
+			betId = scoped.id
+		} else if (scoped?.type === 'task') {
+			const edgeRows = await this.db
+				.select({
+					sourceId: relationships.sourceId,
+					targetId: relationships.targetId,
+					sourceType: relationships.sourceType,
+					targetType: relationships.targetType,
+				})
+				.from(relationships)
+				.where(
+					and(
+						eq(relationships.type, 'breaks_into'),
+						or(
+							and(eq(relationships.sourceId, scoped.id), eq(relationships.targetType, 'bet')),
+							and(eq(relationships.targetId, scoped.id), eq(relationships.sourceType, 'bet')),
+						),
+					),
+				)
+				.limit(1)
+			const edge = edgeRows[0]
+			if (edge) {
+				betId = edge.sourceType === 'bet' ? edge.sourceId : edge.targetId
+			}
+		}
+		if (betId) {
+			const betRows = await this.db
+				.select({ metadata: objects.metadata })
+				.from(objects)
+				.where(eq(objects.id, betId))
+				.limit(1)
+			const raw = (betRows[0]?.metadata as Record<string, unknown> | null)?.repo
+			if (typeof raw === 'string' && raw.trim() !== '') {
+				const slug = normalizeRepoSlug(raw)
+				if (slug) return { slug, source: 'bet' }
+				return { slug: null, source: 'none', rejected: `bet:${betId}` }
+			}
+		}
+
+		// 3. sandbox default
+		const envRaw = process.env.GITHUB_REPO
+		if (typeof envRaw === 'string' && envRaw.trim() !== '') {
+			const slug = normalizeRepoSlug(envRaw)
+			if (slug) return { slug, source: 'env' }
+			return { slug: null, source: 'none', rejected: 'env:GITHUB_REPO' }
+		}
+
+		return { slug: null, source: 'none' }
 	}
 
 	/**
