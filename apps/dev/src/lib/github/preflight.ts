@@ -182,7 +182,13 @@ async function probeOne(
 	if (isInstallationToken) {
 		let repo = id.writeProbeRepo
 		if (!repo) {
-			const resolved = await resolveAnyAccessibleRepo(id.name, fetchImpl, headers, token, id.installationId)
+			const resolved = await resolveAnyAccessibleRepo(
+				id.name,
+				fetchImpl,
+				headers,
+				token,
+				id.installationId,
+			)
 			if ('verdict' in resolved) return resolved.verdict
 			repo = resolved.repo
 		}
@@ -238,7 +244,8 @@ async function resolveAnyAccessibleRepo(
 	}
 
 	const repos = (body as { repositories?: unknown[] }).repositories
-	const repoName = Array.isArray(repos) && repos.length > 0 ? extractRepoFullName(repos[0]) : undefined
+	const repoName =
+		Array.isArray(repos) && repos.length > 0 ? extractRepoFullName(repos[0]) : undefined
 	if (!repoName) {
 		return {
 			verdict: {
