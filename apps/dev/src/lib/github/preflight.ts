@@ -9,10 +9,15 @@
  * write-scope probe therefore can NOT test against one hardcoded repo: an
  * installation living in org A can never show `permissions.push` on a repo
  * owned by org B, no matter how well permissioned it is. So for GitHub App
- * installation tokens (prefix `ghs_`), write scope is checked against
+ * installation tokens (prefix `ghs_`), write scope is checked one of two ways:
+ * when the caller knows the session's actual resolved target repo (threaded
+ * in as `PreflightIdentity.writeProbeRepo`), we check `GET /repos/{owner}/{repo}`
+ * against that exact repo — the most precise signal, since it's the repo the
+ * session will actually push to. Otherwise we fall back to
  * `GET /installation/repositories` — the repos *that specific token* can
- * reach — instead of any fixed path. This scopes correctly to every tenant's
- * own org automatically, with no per-identity or per-org configuration.
+ * reach — which still scopes correctly to the tenant's own org automatically,
+ * with no per-identity or per-org configuration, but can pass even if the
+ * specific target repo turns out to be unwritable (e.g. archived).
  *
  * Installation tokens also can never pass `GET /user` — that endpoint
  * requires a user-context token, and an installation token gets a 403
@@ -73,6 +78,11 @@ export interface PreflightIdentity {
 	 *  line show exactly which installation produced an unexpected result, without
 	 *  needing to correlate back to the integrations table by hand. */
 	installationId?: string
+	/** The session's actual resolved target repo (`owner/repo`), when known. For
+	 *  installation tokens, this takes priority over `/installation/repositories`
+	 *  — checking the exact repo the session will push to is a strictly more
+	 *  precise signal than "can this token see any writable repo in its org". */
+	writeProbeRepo?: string
 }
 
 export interface PreflightVerdict {
@@ -147,10 +157,22 @@ async function probeOne(
 
 	// Installation tokens are scoped to a single tenant's own org — probing a
 	// fixed repo path would only ever be correct for one hardcoded org, which
-	// breaks for every other tenant. `/installation/repositories` is scoped by
-	// the token itself, so it always reflects the calling installation's own
-	// org regardless of which tenant it belongs to.
+	// breaks for every other tenant. When the session's actual target repo is
+	// known, check write scope against that exact repo — it's the most precise
+	// signal available. Otherwise fall back to `/installation/repositories`,
+	// which is scoped by the token itself so it still reflects the calling
+	// installation's own org regardless of which tenant it belongs to.
 	if (isInstallationToken) {
+		if (id.writeProbeRepo) {
+			return probeRepoWriteScope(
+				id.name,
+				fetchImpl,
+				headers,
+				token,
+				id.writeProbeRepo,
+				id.installationId,
+			)
+		}
 		return probeInstallationWriteScope(id.name, fetchImpl, headers, token, id.installationId)
 	}
 	return probeRepoWriteScope(id.name, fetchImpl, headers, token, probeRepo, id.installationId)

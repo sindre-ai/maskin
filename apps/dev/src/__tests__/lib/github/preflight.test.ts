@@ -162,6 +162,66 @@ describe('runGitHubPreflight', () => {
 		expect(verdict.failureClass).toBe('write-scope-denied')
 	})
 
+	it('checks the session’s resolved target repo directly when writeProbeRepo is set, instead of /installation/repositories', async () => {
+		const calledUrls: string[] = []
+		const fetchImpl = vi.fn(async (url: string) => {
+			calledUrls.push(url)
+			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
+				throw new Error(`must not fall back to /installation/repositories: ${url}`)
+			}
+			return jsonResponse({ permissions: { push: true } })
+		})
+		const [verdict] = await runGitHubPreflight(
+			[{ name: 'github-sindre-ai', token: 'ghs_real', writeProbeRepo: 'sindre-ai/maskin' }],
+			{ fetchImpl: fetchImpl as unknown as typeof fetch },
+		)
+		expect(verdict).toEqual({ name: 'github-sindre-ai', healthy: true })
+		expect(calledUrls).toEqual(['https://api.github.com/repos/sindre-ai/maskin'])
+	})
+
+	it('flags write-scope-denied against the resolved target repo even when the installation has other writable repos', async () => {
+		// The precision this buys: an installation can see many repos it can push
+		// to while the one specific repo the session will actually push to is
+		// unwritable (e.g. archived, which GitHub always reports push:false for
+		// regardless of the app's configured grant). Only checking the specific
+		// target repo catches this; /installation/repositories would pass.
+		const fetchImpl = vi.fn(async (url: string) => {
+			if (url === 'https://api.github.com/repos/sindre-ai/archived-repo') {
+				return jsonResponse({ permissions: { push: false } })
+			}
+			return jsonResponse({
+				repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: true } }],
+			})
+		})
+		const [verdict] = await runGitHubPreflight(
+			[
+				{
+					name: 'github-sindre-ai',
+					token: 'ghs_real',
+					writeProbeRepo: 'sindre-ai/archived-repo',
+				},
+			],
+			{ fetchImpl: fetchImpl as unknown as typeof fetch },
+		)
+		expect(verdict.healthy).toBe(false)
+		expect(verdict.failureClass).toBe('write-scope-denied')
+	})
+
+	it('falls back to /installation/repositories when writeProbeRepo is not set', async () => {
+		const calledUrls: string[] = []
+		const fetchImpl = vi.fn(async (url: string) => {
+			calledUrls.push(url)
+			return jsonResponse({
+				repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: true } }],
+			})
+		})
+		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict.healthy).toBe(true)
+		expect(calledUrls).toEqual(['https://api.github.com/installation/repositories?per_page=1'])
+	})
+
 	it('classifies a 403 on the installation write-scope probe without touching /user', async () => {
 		const calledUrls: string[] = []
 		const fetchImpl = vi.fn(async (url: string) => {

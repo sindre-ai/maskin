@@ -1470,10 +1470,26 @@ export class SessionManager extends EventEmitter {
 				install.installationId,
 			]),
 		)
+		// When the session already resolved an actual target repo (envVars.GITHUB_REPO,
+		// set above from resolveGithubRepoSlug), probe that exact repo's write scope for
+		// the matching org's installation instead of the broader `/installation/repositories`
+		// check — it's the repo the session will actually push to, so it's the most precise
+		// signal available. Only wire it to the installation whose org owns that repo; a
+		// different org's installation has no relationship to it and keeps the fallback probe.
+		const targetRepoOwner = envVars.GITHUB_REPO?.split('/')[0]?.toLowerCase()
+		const writeProbeRepoByMcpName = new Map(
+			resolvedGithubInstalls
+				.filter((install) => targetRepoOwner && install.ownerLogin.toLowerCase() === targetRepoOwner)
+				.map((install) => [`github-${install.ownerLogin.toLowerCase()}`, envVars.GITHUB_REPO as string]),
+		)
 		const preflightIdentities = collectGitHubMcpIdentities(
 			[agentToolsMcpServers, sessionMcpServers],
 			envVars,
-		).map((id) => ({ ...id, installationId: installationIdByMcpName.get(id.name) }))
+		).map((id) => ({
+			...id,
+			installationId: installationIdByMcpName.get(id.name),
+			writeProbeRepo: writeProbeRepoByMcpName.get(id.name),
+		}))
 		let preflightVerdicts: PreflightVerdict[] = []
 		if (preflightIdentities.length > 0) {
 			preflightVerdicts = await runGitHubPreflight(preflightIdentities)
