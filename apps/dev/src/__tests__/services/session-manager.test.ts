@@ -153,6 +153,16 @@ describe('SessionManager', () => {
 						status: 200,
 						headers: { 'content-type': 'application/json' },
 					})
+				if (u.startsWith('https://api.github.com/installation/repositories'))
+					return new Response(
+						JSON.stringify({
+							repositories: [{ full_name: 'octocat/hello', permissions: { push: true } }],
+						}),
+						{
+							status: 200,
+							headers: { 'content-type': 'application/json' },
+						},
+					)
 				if (u.startsWith('https://slack.com/api/chat.postMessage'))
 					return new Response(JSON.stringify({ ok: true }), {
 						status: 200,
@@ -1252,6 +1262,123 @@ describe('SessionManager', () => {
 				mcpServers: Record<string, unknown>
 			}
 			expect(mcp.mcpServers['github-sindre-ai']).toBeDefined()
+		})
+
+		it('probes the session’s resolved target repo directly instead of /installation/repositories once GITHUB_REPO is known', async () => {
+			const wsId = randomUUID()
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-healthy',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const fixtures = launchFixtures({ integrationRows: [integration] })
+			fixtures.session.workspaceId = wsId
+			fixtures.workspace.id = wsId
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_healthy_token')
+
+			const originalEnv = process.env.GITHUB_REPO
+			process.env.GITHUB_REPO = 'sindre-ai/maskin'
+			try {
+				loadLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const fetchMock = vi.mocked(fetch)
+				const calledUrls = fetchMock.mock.calls.map((args) => args[0]?.toString() ?? '')
+				expect(calledUrls).toContain('https://api.github.com/repos/sindre-ai/maskin')
+				expect(calledUrls).not.toContain('https://api.github.com/installation/repositories?per_page=1')
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				const mcp = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, unknown>
+				}
+				expect(mcp.mcpServers['github-sindre-ai']).toBeDefined()
+			} finally {
+				if (originalEnv === undefined) {
+					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+					delete process.env.GITHUB_REPO
+				} else {
+					process.env.GITHUB_REPO = originalEnv
+				}
+			}
+		})
+
+		it('attributes a write-scope failure to the correct installation when two orgs are connected', async () => {
+			const wsId = randomUUID()
+			const healthyIntegration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-healthy-org',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const brokenIntegration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-broken-org',
+				config: { owner_login: 'vaerksted-ai' },
+			})
+			const slackIntegration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'slack',
+				externalId: 'T-multi-install',
+			})
+			const fixtures = launchFixtures({
+				integrationRows: [healthyIntegration, brokenIntegration, slackIntegration],
+			})
+			fixtures.session.workspaceId = wsId
+			fixtures.workspace.id = wsId
+
+			vi.mocked(getProvider).mockImplementation(
+				(provider: string) => (provider === 'slack' ? slackProviderConfig : githubProviderConfig) as never,
+			)
+			mockGetValidToken
+				.mockResolvedValueOnce('ghs_token_sindre_ai')
+				.mockResolvedValueOnce('ghs_token_vaerksted_ai')
+				.mockResolvedValueOnce('xoxb-multi-install-bot')
+
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async (url: string | URL, init?: RequestInit) => {
+					const u = url.toString()
+					const auth = (init?.headers as Record<string, string> | undefined)?.Authorization
+					if (u === 'https://api.github.com/installation/repositories?per_page=1') {
+						if (auth === 'Bearer ghs_token_vaerksted_ai')
+							return jsonRes({ repositories: [{ full_name: 'vaerksted-ai/x', permissions: {} }] })
+						return jsonRes({
+							repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: true } }],
+						})
+					}
+					if (u === 'https://slack.com/api/chat.postMessage') return jsonRes({ ok: true })
+					throw new Error(`unexpected fetch: ${u}`)
+				}),
+			)
+
+			loadLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const mcp = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+				mcpServers: Record<string, unknown>
+			}
+			// The failing org's identity is gated; the healthy org's identity is untouched.
+			expect(mcp.mcpServers['github-sindre-ai']).toBeDefined()
+			expect(mcp.mcpServers['github-vaerksted-ai']).toBeUndefined()
+
+			const fetchMock = vi.mocked(fetch)
+			const slackPost = fetchMock.mock.calls.find(
+				(args) => args[0]?.toString() === 'https://slack.com/api/chat.postMessage',
+			)
+			const slackBody = JSON.parse((slackPost?.[1]?.body as string) ?? '{}') as { text: string }
+			// Names the broken org's installation, not the healthy org's.
+			expect(slackBody.text).toContain(brokenIntegration.externalId)
+			expect(slackBody.text).not.toContain(healthyIntegration.externalId)
+			expect(slackBody.text).toContain('github-vaerksted-ai')
 		})
 	})
 

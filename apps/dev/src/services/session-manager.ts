@@ -1460,10 +1460,36 @@ export class SessionManager extends EventEmitter {
 		// both the agent config and the session config, so subsequent tool calls
 		// under that namespace cannot fire. One consolidated Slack alert per session
 		// lands on C075JBZ65RT so a task never has to rediscover the outage.
+		// Each `github-<owner>` MCP entry's token was minted from a specific
+		// installation (see resolvedGithubInstalls above) — carry that id through
+		// to the verdict so a Slack alert or log line names the exact installation
+		// behind an unexpected failure, instead of just the MCP server name.
+		const installationIdByMcpName = new Map(
+			resolvedGithubInstalls.map((install) => [
+				`github-${install.ownerLogin.toLowerCase()}`,
+				install.installationId,
+			]),
+		)
+		// When the session already resolved an actual target repo (envVars.GITHUB_REPO,
+		// set above from resolveGithubRepoSlug), probe that exact repo's write scope for
+		// the matching org's installation instead of the broader `/installation/repositories`
+		// check — it's the repo the session will actually push to, so it's the most precise
+		// signal available. Only wire it to the installation whose org owns that repo; a
+		// different org's installation has no relationship to it and keeps the fallback probe.
+		const targetRepoOwner = envVars.GITHUB_REPO?.split('/')[0]?.toLowerCase()
+		const writeProbeRepoByMcpName = new Map(
+			resolvedGithubInstalls
+				.filter((install) => targetRepoOwner && install.ownerLogin.toLowerCase() === targetRepoOwner)
+				.map((install) => [`github-${install.ownerLogin.toLowerCase()}`, envVars.GITHUB_REPO as string]),
+		)
 		const preflightIdentities = collectGitHubMcpIdentities(
 			[agentToolsMcpServers, sessionMcpServers],
 			envVars,
-		)
+		).map((id) => ({
+			...id,
+			installationId: installationIdByMcpName.get(id.name),
+			writeProbeRepo: writeProbeRepoByMcpName.get(id.name),
+		}))
 		let preflightVerdicts: PreflightVerdict[] = []
 		if (preflightIdentities.length > 0) {
 			preflightVerdicts = await runGitHubPreflight(preflightIdentities)
@@ -1475,6 +1501,7 @@ export class SessionManager extends EventEmitter {
 					failed: failed.map((v) => ({
 						name: v.name,
 						failureClass: v.failureClass,
+						installationId: v.installationId,
 					})),
 				})
 				const slackBotToken = envVars.SLACK_BOT_TOKEN
