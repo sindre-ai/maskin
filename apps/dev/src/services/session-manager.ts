@@ -1479,8 +1479,13 @@ export class SessionManager extends EventEmitter {
 		const targetRepoOwner = envVars.GITHUB_REPO?.split('/')[0]?.toLowerCase()
 		const writeProbeRepoByMcpName = new Map(
 			resolvedGithubInstalls
-				.filter((install) => targetRepoOwner && install.ownerLogin.toLowerCase() === targetRepoOwner)
-				.map((install) => [`github-${install.ownerLogin.toLowerCase()}`, envVars.GITHUB_REPO as string]),
+				.filter(
+					(install) => targetRepoOwner && install.ownerLogin.toLowerCase() === targetRepoOwner,
+				)
+				.map((install) => [
+					`github-${install.ownerLogin.toLowerCase()}`,
+					envVars.GITHUB_REPO as string,
+				]),
 		)
 		const preflightIdentities = collectGitHubMcpIdentities(
 			[agentToolsMcpServers, sessionMcpServers],

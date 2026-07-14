@@ -1288,7 +1288,9 @@ describe('SessionManager', () => {
 				const fetchMock = vi.mocked(fetch)
 				const calledUrls = fetchMock.mock.calls.map((args) => args[0]?.toString() ?? '')
 				expect(calledUrls).toContain('https://api.github.com/repos/sindre-ai/maskin')
-				expect(calledUrls).not.toContain('https://api.github.com/installation/repositories?per_page=1')
+				expect(calledUrls).not.toContain(
+					'https://api.github.com/installation/repositories?per_page=1',
+				)
 
 				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
 					env: Record<string, string>
@@ -1333,7 +1335,8 @@ describe('SessionManager', () => {
 			fixtures.workspace.id = wsId
 
 			vi.mocked(getProvider).mockImplementation(
-				(provider: string) => (provider === 'slack' ? slackProviderConfig : githubProviderConfig) as never,
+				(provider: string) =>
+					(provider === 'slack' ? slackProviderConfig : githubProviderConfig) as never,
 			)
 			mockGetValidToken
 				.mockResolvedValueOnce('ghs_token_sindre_ai')
