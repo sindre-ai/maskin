@@ -1,344 +1,302 @@
-// Shared eval fixture — 20 knowledge Q&A pairs plus a small v1 knowledge corpus.
-//
-// Task ownership: T5 authored this fixture module because T4's baseline run needs
-// the same 20 pairs and the same corpus that T5's router runs against; keeping the
-// data in one place is what makes the ≥30% comparison honest. T4's harness at
-// `knowledge-eval.test.ts` (dump-into-context regime + baseline recording) and T5's
-// harness at `knowledge-eval-router.test.ts` (router regime) both import from here.
-//
-// Freeze contract: once T4 records the baseline against this fixture, the 20 pairs
-// and the corpus are frozen for Stage 1. Do not add, remove, or reword pairs — a
-// changed fixture invalidates the baseline and T5's ≥30% claim. If Stage 2 needs a
-// larger eval, spin a versioned successor (`knowledge-eval-fixture-v2.ts`).
-//
-// Provenance: at time of authoring, T2's real workspace backfill and T4's live
-// `bet_meta` fixture had not landed. This fixture is prototype-scale content
-// authored in-repo, structured to match the T1 v1 spec exactly so the router
-// mechanism can be exercised end-to-end. Once T2's v1 corpus is queryable, T4 may
-// swap the `CORPUS` constant for a real-corpus loader — the shape stays the same.
+/**
+ * Frozen 20-pair knowledge eval fixture — Stage 1 baseline.
+ *
+ * The 20 pairs below are the first 20 entries of the 30 content-lookup pairs
+ * from `bet_meta`'s content-heavy set at commit `da52f31`
+ * (`bet/knowledge-metadata-first-class`, file
+ * `apps/dev/src/__tests__/integration/knowledge-eval-fixture.ts`, 2026-07-03).
+ * Selection: fixture-position index 0..19. The seed is the position of the
+ * rows in the source file — deterministic and pinned in code, no runtime
+ * shuffle.
+ *
+ * DO NOT rotate, extend, or reorder these 20. T5's ≥30% comparison rides on
+ * the exact same 20 running through the same harness. Extending the eval is
+ * an out-of-scope Stage-2 change.
+ *
+ * Every `EvalPair.expectedFixtureId` resolves to exactly one `CorpusEntry`
+ * in `KNOWLEDGE_CORPUS`; the module-level self-check enforces this.
+ */
 
-import type { KnowledgeArticle } from '../../lib/knowledge/router'
-
-export interface EvalPair {
-	id: string
-	question: string
-	goldArticleId: string
-	answerFragment: string
+export type CorpusEntry = {
+	fixtureId: string
+	title: string
+	content: string
 }
 
-// The v1 corpus the router routes across. Each article carries the full v1
-// frontmatter set per docs/reference/knowledge-format.md.
-export const CORPUS: KnowledgeArticle[] = [
+export type EvalPair = {
+	question: string
+	expectedFixtureId: string
+	expectedExcerpt: string
+}
+
+export const FIXTURE_SOURCE_COMMIT = 'da52f3153e0c7a2c3c1b21aa8709bd0d18b568c8'
+export const FIXTURE_SEED = 'da52f31:first-20'
+
+export const KNOWLEDGE_CORPUS: readonly CorpusEntry[] = [
 	{
-		id: 'a1000001-0000-0000-0000-000000000001',
-		title: 'GitHub App installation tokens have ~1h TTL',
-		body: 'GitHub App installation tokens expire after roughly one hour. Sessions that mint an installation token at session start and then attempt a git-write more than 50 minutes later will see a 401 on push, merge-via-API, and PR-review-approve. The correct first-move on a late-run 401 is to check the delta between token-mint time and the write attempt, and to confirm the installation ID has not rotated on the target repo. Refresh the token — do not treat this as a credentials problem.',
-		metadata: {
-			format_version: 'v1',
-			doc_type: 'operational',
-			summary:
-				'GitHub App installation tokens have a ~1h TTL. Late-run 401s on git-writes should be first diagnosed as token-mint delta or installation-ID churn, not credential rot.',
-			tags: ['topic:integrations', 'topic:agent-architecture', 'provenance:writer'],
-			confidence: 'high',
-			scope: 'product-area',
-			last_validated_at: '2026-07-13',
-		},
+		fixtureId: 'status-indicator-dot-word-popover',
+		title: 'Per-object status indicator: dot + word + popover (fold block name into popover title)',
+		content:
+			'## Pattern\n\nSurface the four AI-work states — progressing · waiting on human · stalled · idle — as a colored dot + one-word lowercase label on the objects overview row, and as a chip in the detail-page provenance row that opens a popover on hover/tap. Read-only, deep-link only.\n\n## When to reach for it\nAny object surface where a human needs to answer "does this need me?" in ≤5 seconds, without scrolling into child tasks or comments. Applies to bets today; extendable to any work object with child-task WIP + human_decision gates.',
 	},
 	{
-		id: 'a1000002-0000-0000-0000-000000000002',
-		title: 'PG NOTIFY payloads must stay under 8KB or the trigger rolls back',
-		body: 'Postgres NOTIFY has an 8KB payload cap. When a trigger passes a large field (a full content column, a stringified diff, an unbounded description) into pg_notify, the entire triggering INSERT silently rolls back with no error surfaced to the caller. The pattern is to strip or truncate free-text columns in the trigger body before assembling the notify payload — see migration 0006_notify_drop_data.sql for the canonical shape. Any new trigger that touches pg_notify should be reviewed for payload size against realistic data, not just seed fixtures.',
-		metadata: {
-			format_version: 'v1',
-			doc_type: 'operational',
-			summary:
-				'PG NOTIFY payloads over 8KB cause silent rollback of the triggering INSERT. Truncate large fields in the trigger body; use 0006_notify_drop_data.sql as the reference pattern.',
-			tags: ['topic:data-model', 'topic:architecture'],
-			confidence: 'high',
-			scope: 'workspace',
-			last_validated_at: '2026-07-10',
-		},
+		fixtureId: 'first-test-gate-invalidated-by-scope2',
+		title:
+			'A build-sequencing first-test gate is invalidated if scope-2 tasks land verdicts before scope-1 outcomes are observable',
+		content:
+			'## Rule\nWhen a bet\'s first test is a build-order halt — "ship scope-1, observe outcome X within window Y, only then unlock scope-2 build" — the gate depends on scope-2 tasks NOT landing before scope-1 has emitted observable outcomes. If a scope-2 task\'s verdict lands before the scope-1 outcome window opens, the gate is retroactively invalidated. You cannot pass a gate whose observation window closed on empty data.\n\n## Why\nThe whole point of a staged first test is to kill scope-2 build effort early if scope-1 engagement is missing.',
 	},
 	{
-		id: 'a1000003-0000-0000-0000-000000000003',
-		title: 'Idempotency-Key is required on every write endpoint',
-		body: 'Every write endpoint on the Maskin API accepts an Idempotency-Key header and treats a repeat request with the same key as a no-op returning the original response. Clients (including agents) should generate a stable key per intent and re-use it on retry; without a key the server proceeds without deduplication and duplicate side effects are possible on network retry.',
-		metadata: {
-			format_version: 'v1',
-			doc_type: 'reference',
-			summary:
-				'All Maskin write endpoints accept Idempotency-Key. Callers generate one key per intent and re-use on retry; no key means no dedup and duplicate side effects on retry.',
-			tags: ['topic:architecture', 'topic:integrations'],
-			confidence: 'high',
-			scope: 'workspace',
-			last_validated_at: '2026-07-01',
-		},
+		fixtureId: 'task-dedup-at-creation-api',
+		title:
+			'Task dedup belongs at the creation API — per-agent guards leak once a new origin appears',
+		content:
+			'## Conclusion\nEnforce duplicate-task prevention at the task-creation API, not inside individual agents. Six duplicate-task incidents in ~2 weeks — five from the untracked-PR watchdog, one from a normal design-scoping breakdown — show that any single-origin fix leaks the moment a new caller does the same thing. The task-creation API is the only choke point every origin crosses; a single pre-persist check there covers watchdogs, scoping agents, humans in a hurry, and anything future.\n\n## Why the platform layer, not the agent\n- Per-agent guards ship one at a time.',
 	},
 	{
-		id: 'a1000004-0000-0000-0000-000000000004',
-		title: 'Anthropic just-in-time retrieval outperforms system-prompt stuffing',
-		body: `The Anthropic engineering position is that agents should retrieve knowledge just-in-time at the tool surface, not by pre-loading everything into the system prompt. Preloading burns tokens on facts the agent may never need; on-demand retrieval targets exactly the article the current step calls for. This applies to Maskin's knowledge corpus: the index/router should be the default context source, and dump-into-context is a fallback only when routing fails.`,
-		metadata: {
-			format_version: 'v1',
-			doc_type: 'topic_page',
-			summary:
-				'Anthropic argues just-in-time retrieval at the tool surface beats system-prompt stuffing. Maskin applies this by routing over the knowledge index rather than dumping the corpus.',
-			tags: ['topic:agent-architecture', 'topic:knowledge-system'],
-			confidence: 'high',
-			scope: 'universal',
-			last_validated_at: '2026-07-14',
-		},
+		fixtureId: 'separate-driver-from-status',
+		title:
+			'Overloading a status field as both work-state and wake-up signal breaks both jobs — separate driver from status',
+		content:
+			"## Claim\nWhen a workspace's status field is the only channel that fires triggers, agents will use status flips to wake each other up — not to describe the work. That collapses two independent concerns (who is driving, what stage the work is in) onto one field and breaks both jobs at once. Handoffs must mutate driver and @mention; status may mutate only on genuine transitions (research done, decision made, PR opened).\n\n## Mechanism\nThe status field carries two loads: it is a description of the work and it is a side channel for waking up agents.",
 	},
 	{
-		id: 'a1000005-0000-0000-0000-000000000005',
-		title: 'Drizzle column objects render unqualified inside correlated sql subqueries',
-		body: 'A correlated subquery written inside a Drizzle sql template that interpolates column objects like sessions.agentServerId will render the column without a table qualifier. Postgres then binds the bare column name to the inner table, and the correlation is never true — the aggregate quietly returns zero. Fix by writing table-qualified literal SQL inside the template, or by using LEFT JOIN LATERAL with explicit aliases. Real-Postgres integration tests catch this; mocked unit tests do not.',
-		metadata: {
-			format_version: 'v1',
-			doc_type: 'operational',
-			summary:
-				'Interpolating Drizzle column objects into a correlated sql subquery renders them unqualified — Postgres binds to the inner table and the aggregate returns zero. Use qualified literal SQL or LATERAL joins.',
-			tags: ['topic:data-model', 'topic:code-review'],
-			confidence: 'high',
-			scope: 'product-area',
-			last_validated_at: '2026-07-08',
-		},
+		fixtureId: 'merge-queue-synthetic-main-scope',
+		title:
+			'Merge-queue synthetic-with-main covers only the merge-boundary CI check — pick the pattern per PR-check surface, not per repo',
+		content:
+			'## Conclusion\nWhen a CI check needs to read files that live only on `main` (adapters, `.maskin/*.yml`-style configs, generated manifests), the choice of mechanism must match the check surface, not the repo. Two mechanisms cover disjoint surfaces:\n- Merge-queue / batched-main (Buildkite, Solana Garden pattern) runs the final pre-merge check against a synthetic merge commit that combines the PR branch with current `main`. Any file present on `main` is visible to that check at no cost. But this only fires inside the merge queue; ordinary PR checks still see only the branch.',
 	},
 	{
-		id: 'a1000006-0000-0000-0000-000000000006',
-		title: 'Container sessions store agent files in S3-compatible storage',
-		body: 'Maskin runs agents inside Docker containers spun up by session-manager. Persistent per-agent files (skills, learnings, memory) live in S3-compatible object storage — SeaweedFS in dev, real S3 in production. The apps/dev/src/services/agent-storage.ts module handles pull-on-start and push-on-pause; container filesystems are otherwise ephemeral. Any long-lived artifact an agent produces must be routed through agent-storage or it will be lost on container teardown.',
-		metadata: {
-			format_version: 'v1',
-			doc_type: 'reference',
-			summary:
-				'Agent files persist in S3-compatible storage (SeaweedFS in dev). Container filesystems are ephemeral; use apps/dev/src/services/agent-storage.ts to persist across sessions.',
-			tags: ['topic:agent-architecture', 'topic:architecture'],
-			confidence: 'high',
-			scope: 'product-area',
-			last_validated_at: '2026-07-05',
-		},
+		fixtureId: 'ci-assert-loudly-never-silent-fallback',
+		title:
+			'CI checks whose safety depends on a resolvable resource should assert loudly, never silently fall back',
+		content:
+			"**Principle.** When a CI job's safety depends on a config, adapter, or shared binary that might not resolve on the branch under test, the job must assert the resource is present and hard-fail if not — never silently substitute a default. Silent-fallback is the worst failure mode: it masks the packaging gap, ships permissive defaults into `main`, and turns a safety floor into a suggestion.\n\n**Why it matters.** A floor that only binds when it loads is not a floor. If the risk-classifier adapter can't find `.maskin/protected-paths.yml`, its floors don't bind on that build.",
 	},
 	{
-		id: 'a1000007-0000-0000-0000-000000000007',
-		title: 'GitHub MCP server env key must be GITHUB_PERSONAL_ACCESS_TOKEN',
-		body: 'The @modelcontextprotocol/server-github MCP subprocess reads its token exclusively from the GITHUB_PERSONAL_ACCESS_TOKEN environment variable. Passing the token under the key GITHUB_TOKEN inside the MCP env block is silently ignored; the subprocess makes unauthenticated requests that surface later as 403/rate-limit errors. This is distinct from the container-level GITHUB_TOKEN env var used by envsubst and the gh CLI — that one stays as is. Only the object key inside the MCP env block must be GITHUB_PERSONAL_ACCESS_TOKEN.',
-		metadata: {
-			format_version: 'v1',
-			doc_type: 'operational',
-			summary:
-				'The github MCP server reads from GITHUB_PERSONAL_ACCESS_TOKEN, not GITHUB_TOKEN. Wrong key silently produces unauthenticated calls that fail later as 403.',
-			tags: ['topic:integrations', 'topic:agent-architecture'],
-			confidence: 'high',
-			scope: 'product-area',
-			last_validated_at: '2026-07-12',
-		},
+		fixtureId: 'workspace-deps-for-branch-agnostic-ci',
+		title: 'Ship shared CI binaries as pnpm `workspace:*` deps to make them branch-agnostic',
+		content:
+			"## Conclusion\nWhen a shared internal binary or adapter must run on every branch's CI (not just `main`), land it under `packages/` and depend on it via `workspace:*`. `pnpm install` on any branch resolves to that branch's in-tree copy — no need to check out `main`, no silent fallback when a branch doesn't yet contain the file.\n\n## The gap this closes\nA tool that lives only on `main` is invisible to feature-branch CI. Concrete case in maskin: the risk-classifier adapter can't resolve `.maskin/*.yml` from a `fix/*` branch.",
 	},
 	{
-		id: 'a1000008-0000-0000-0000-000000000008',
-		title: 'Bi-temporal validity: new facts invalidate old, never overwrite',
-		body: 'The industry pattern for staleness in knowledge stores is bi-temporal: an old fact is closed off with an end-date rather than deleted, and the new fact is inserted with its own valid-from date. Readers pick the fact whose validity window contains the current time. Graphiti popularized this pattern for agent memory; Maskin adopts it so historical claims stay auditable and contradictions become explicit rather than lost.',
-		metadata: {
-			format_version: 'v1',
-			doc_type: 'topic_page',
-			summary:
-				'Bi-temporal validity closes old facts with an end-date and adds new facts with their own valid-from; nothing is overwritten. Contradictions become explicit and history is auditable.',
-			tags: ['topic:knowledge-system', 'topic:data-model'],
-			confidence: 'medium',
-			scope: 'universal',
-			last_validated_at: '2026-07-14',
-		},
+		fixtureId: 'trim-mcp-tool-responses-default',
+		title:
+			'Trim MCP tool responses by default — the ecosystem has converged on field projection, pagination metadata, and resource-link fallback',
+		content:
+			'## Conclusion\nTrimming MCP tool responses — small default field sets, opt-in expansion, mandatory pagination metadata, and resource-link fallback for heavy graphs — is where the whole MCP ecosystem is heading, not a Maskin-local stylistic call. Four independent sources (Anthropic engineering, Google MCP Toolbox, the MCP spec community, and Microsoft/third-party writeups) converged on the same design in the last two months. External measurements put field waste in structured tool output at 85–95%.',
 	},
 	{
-		id: 'a1000009-0000-0000-0000-000000000009',
-		title: 'Turbo globalPassThroughEnv is the only way env vars reach child tasks',
-		body: `Turborepo filters environment variables by default: any env var not listed in turbo.json's globalPassThroughEnv is silently unavailable to dev, build, and test tasks even when it is set in .env. This is the recurring source of "the integration works locally but not through turbo" bugs — new integration credentials, new API keys, and new feature flags must be added to globalPassThroughEnv or they will not reach the code that reads them.`,
-		metadata: {
-			format_version: 'v1',
-			doc_type: 'operational',
-			summary:
-				'Turbo silently filters env vars not listed in turbo.json globalPassThroughEnv. New env vars must be added there or child tasks cannot read them.',
-			tags: ['topic:architecture', 'topic:integrations'],
-			confidence: 'high',
-			scope: 'workspace',
-			last_validated_at: '2026-07-06',
-		},
+		fixtureId: 'default-view-via-named-view-sentinel',
+		title:
+			"Route the default/all view through named-view persistence via a sentinel slot — don't build parallel persistence",
+		content:
+			'## Conclusion\nWhen the observable failure of a per-user UI persistence bug is the default or all tab of a view, route that tab through the existing named-view persistence mechanism via a sentinel key (e.g. `__all__`) rather than introducing a parallel persistence system. This keeps the diff narrow, reuses a mechanism the team already trusts, and prevents the default view from drifting out of sync with named views as the persistence contract evolves.',
 	},
 	{
-		id: 'a1000010-0000-0000-0000-000000000010',
-		title: 'Context engineering explains ~80% of agent performance variance',
-		body: 'External research through 2026 converges on the finding that agent output quality is dominated by what tokens are in the context window, not by model size or agent-count topology. Roughly 80% of measured performance variance across recent agent systems traces back to context construction — retrieval, ordering, compression, and pruning. This is the load-bearing argument for treating context engineering as a first-class, systematic discipline rather than a per-agent tuning exercise.',
-		metadata: {
-			format_version: 'v1',
-			doc_type: 'topic_page',
-			summary:
-				'Roughly 80% of agent performance variance traces to context construction, not model or topology. Context engineering is the leverage point.',
-			tags: ['topic:knowledge-system', 'topic:agent-architecture', 'topic:measurement-analytics'],
-			confidence: 'medium',
-			scope: 'universal',
-			last_validated_at: '2026-07-14',
-		},
+		fixtureId: 'sort-group-in-display-panel',
+		title: 'Sort/Group state — surface via DisplayPanel inline reading, not chip strip',
+		content:
+			"## Pattern\nSort and Group state live in the toolbar's existing DisplayPanel trigger — never as chips in the filter chip strip. When either differs from defaults, the DisplayPanel trigger button grows an inline secondary reading:\n\n```\n[Display · Priority ↓ · grouped by Status]  ← non-default sort or group\n[Display]                                     ← defaults (renders nothing extra)\n```\n\n**Trigger rule (verbatim):** render the inline reading when sort !== 'createdAt' || order !== 'desc' || groupBy != null.",
 	},
 	{
-		id: 'a1000011-0000-0000-0000-000000000011',
-		title: 'Number() returns NaN on non-numeric strings and propagates silently to SQL',
-		body: `Number('abc') evaluates to NaN, and NaN passes through arithmetic without raising. When a route handler does Number(req.query.limit) and the caller sends 'abc', the resulting NaN reaches the query layer where it produces unexpected results or Postgres errors depending on the driver. The fix is Number.isFinite(raw) && raw > 0 ? raw : DEFAULT — always validate at the boundary before use.`,
-		metadata: {
-			format_version: 'v1',
-			doc_type: 'operational',
-			summary:
-				'Number() returns NaN on non-numeric input and propagates silently to SQL. Always guard with Number.isFinite() and fall back to a default.',
-			tags: ['topic:code-review', 'topic:architecture'],
-			confidence: 'high',
-			scope: 'workspace',
-			last_validated_at: '2026-07-11',
-		},
+		fixtureId: 'provenance-chips-created-updated',
+		title: 'Object detail provenance — surface both createdAt and updatedAt as inline chips',
+		content:
+			'## Pattern\nOn any object-detail header, provenance is expressed as a row of chips using `<RelativeTime>` — no labelled row, no separator characters, no tooltip-only surfaces. The row lives in the existing flex flex-wrap items-center gap-2 container in apps/web/src/components/objects/object-document.tsx. When both timestamps exist, both render inline:\n\n```\n[Type] [Status] [Driver] [Subscribe] [👤 Created by] [<createdAt RelativeTime>] [updated <updatedAt RelativeTime>]\n```',
 	},
 	{
-		id: 'a1000012-0000-0000-0000-000000000012',
-		title: 'Bets are shaped, time-boxed outcomes with a define → active → verdict lifecycle',
-		body: 'Every substantive workspace decision is framed as a bet. A bet moves through define (shaping), active (in flight), and a terminal verdict (succeeded, failed, qualified, paused). Tasks are children of bets and inherit their outcome. A bet in define has a driver, an anchor, and pending acceptance criteria; a bet in active has AC gates that must land; a terminal bet must produce a verdict statement and a learning that flows into knowledge.',
-		metadata: {
-			format_version: 'v1',
-			doc_type: 'topic_page',
-			summary:
-				'Bets are shaped, time-boxed outcomes with a define → active → verdict lifecycle. Tasks are children; verdicts feed the knowledge loop.',
-			tags: ['topic:bet-lifecycle', 'topic:pipeline-orchestration'],
-			confidence: 'high',
-			scope: 'workspace',
-			last_validated_at: '2026-07-14',
-		},
+		fixtureId: 'shipfeed-inside-product-surface',
+		title:
+			"Agent-run public content sites are inside maskin's product surface — Shipfeed as the reference shape",
+		content:
+			'## Conclusion\nTreat agent-run public content sites as inside maskin\'s product surface, not adjacent to it. When a use case has the shape of an autonomous editor team curating a structured stream with scheduled rollups and a public output surface, size it as a maskin product, not a benchmark for one.\n\n## Why\nOn 2026-06-30, Sebastian shared Shipfeed (shipfeed.fyi) in #inspiration-resources with the framing "This should be a product running on maskin." That is a founder positioning signal — a direct statement that this shape of agentic product sits inside maskin\'s surface area.',
+	},
+	{
+		fixtureId: 'multi-source-convergence-signal',
+		title: 'Multi-source convergence as a ranking signal for agent-run content triage',
+		content:
+			'## Conclusion\nWhen an agent is triaging an incoming content stream, treat the number of independent sources reporting the same story within a time window as a first-class ranking signal. N independent sources within window T means signal; a single source means noise until corroborated. Use this primitive for ranking, dedup, and clustering — not just one of those, all three at once.\n\n## Reasoning\nEditorial newsrooms have used source convergence as a credibility filter for decades.',
+	},
+	{
+		fixtureId: 'new-user-personalisation-window',
+		title: 'New-user AI personalisation has one window — the first 5–15 minutes of session 1',
+		content:
+			"## Conclusion\nAny new-user AI personalisation must fire synchronously on signup, not via batch or scheduled processing. The user's prior on whether the product \"knows them\" calcifies inside 5–15 minutes of first session; once it's set, you've lost up to 75% of week-1 retention. A daily/scheduled council architecture is structurally wrong for this surface — by the time it runs, the prior is fixed.\n\n## Reasoning\ntianpan.co (2026-04-18) argues new users decide whether AI knows them within 5–15 minutes.",
+	},
+	{
+		fixtureId: 'bets-kill-criteria-inside-telemetry',
+		title: 'Bets whose kill criteria depend on telemetry shipped inside the bet cannot fire',
+		content:
+			"## What was tried\nA 4-week bet (Cut Developer agent token waste, 2026-06-15 → 2026-06-30) targeting a ~50% cut in Developer-agent cost via four structural levers — MCP tool-registry dedup, skill lazy-load, baked pnpm in agent-base, ENOSPC trap + host-side LRU. AC-U6 (the gate criterion) was a 30-day PostHog query against runtime_session_ended filtered to agent_name='Developer' AND exit_code=0. Because the emitter shipped inside the same bet, kill criteria could not fire until the emitter itself had accumulated 30 days of data — which never happened inside the bet window.",
+	},
+	{
+		fixtureId: 'coarse-exit-signals-cascade',
+		title: 'Coarse exit signals cascade until every consumer is migrated off the literal',
+		content:
+			'Generic exit codes (notably `exit 1`) hide distinct failure modes and propagate confusion to every consumer downstream — customers, operators, and even agents — until the signal is disambiguated AND every consumer is moved onto the new structured code. Introducing the enum is the easy half; walking the consumers is the half that gets skipped.\n\n## Why it cascades\nA single coarse code forces every consumer to guess what it means. The customer sees "session failed" and can\'t tell if their credits ran out or the system broke.',
+	},
+	{
+		fixtureId: 'bet-timeline-hygiene-description-vs-comments',
+		title: 'Bet timeline hygiene: description stays stable, comments carry signal only',
+		content:
+			"## Conclusion\nOn a bet's detail page, the description is a stable artifact and comments are the running dialogue. Agents must not duplicate facts between the two surfaces, must not litter the thread with convention debates, and must shape decision-pending comments so they stand out from routine status. When the timeline feels noisy, fix it with prose discipline (formatting, default-collapsed phases, OP-routed reply notifications, agent system-prompt guidance) before reaching for structured UI affordances like chips, session blocks, or sticky banners.",
+	},
+	{
+		fixtureId: 'coolify-passthrough-validation',
+		title:
+			'Per-agent env-var credentials need the Coolify passthrough validated before any actor-config work',
+		content:
+			'## Conclusion\nWhen introducing a new per-agent credential to the Maskin agent runtime (e.g. POSTHOG_API_KEY_DEVELOPER, POSTHOG_API_KEY_VALIDATOR), the riskiest assumption is not whether the upstream MCP/API accepts the key. It is whether the Coolify deploy env forwards the var into the spawned agent container shell. "Key set in Coolify" is not the same as "key reaches the container." Validate the passthrough with `env | grep <PREFIX>` from inside a fresh agent session as the first step. Adding the var to an actor\'s MCP config before that check is rework-by-design.',
+	},
+	{
+		fixtureId: 'bet-failures-expired-close-artifacts',
+		title: 'Bet failures today are mostly deadline-expiry artifacts, not evidence-backed verdicts',
+		content:
+			"## Conclusion\nThe bet measurement pipeline does not fire at a bet's review_date. Verdicts are produced when the Product Analyst runs a periodic backlog sweep, by which point most overdue bets get auto-failed with expired_close: true and evidence_quality: null instead of an evidence-backed call. Treat any live → failed transition with expired_close: true as a process artifact, not a real verdict.\n\n## Why this matters\nIf you read the bet portfolio at face value, you will overstate the fail rate.",
+	},
+	{
+		fixtureId: 'cursor-mcp-profile-ceiling',
+		title: 'Cursor Integration — MCP tool ceiling, webhook contract, and .cursor/rules provenance',
+		content:
+			"Maskin's integration with Cursor follows three architecture decisions agreed during Stage 1 of the bet.\n\n**Tool ceiling.** MASKIN_MCP_PROFILE=cursor env var gates a curated ~18-tool allowlist (list_objects, get_objects, search_objects, update_objects, create_objects, create_comment, get_comments, list_actors, get_actor, list_workspaces, get_workspace_schema, list_workspace_skills, get_workspace_skill, create_file, get_file, list_files, mark_read, list_unread). Excludes admin/sessions/triggers/extensions. Tools outside the profile return method-not-found.",
 	},
 ]
 
-// 20 frozen eval pairs. Each pair names the article whose content answers it
-// (goldArticleId) and a short answerFragment the model's output should include.
-// The router regime is scored on whether goldArticleId is present in its top-K;
-// the dump regime is scored on the same fragment against the model's output.
-export const EVAL_PAIRS: EvalPair[] = [
+export const EVAL_PAIRS: readonly EvalPair[] = [
 	{
-		id: 'p01',
-		question: 'Why does a session get a 401 on git push about an hour after start?',
-		goldArticleId: 'a1000001-0000-0000-0000-000000000001',
-		answerFragment: 'installation token',
-	},
-	{
-		id: 'p02',
-		question: 'What is the first diagnostic step for a late-run GitHub write 401?',
-		goldArticleId: 'a1000001-0000-0000-0000-000000000001',
-		answerFragment: 'token-mint delta',
-	},
-	{
-		id: 'p03',
-		question: 'A trigger with pg_notify silently rolls back the insert. What is going on?',
-		goldArticleId: 'a1000002-0000-0000-0000-000000000002',
-		answerFragment: '8KB',
-	},
-	{
-		id: 'p04',
-		question: 'How should new pg_notify triggers handle large content fields?',
-		goldArticleId: 'a1000002-0000-0000-0000-000000000002',
-		answerFragment: 'truncate',
-	},
-	{
-		id: 'p05',
-		question: 'How do write endpoints deduplicate retried requests?',
-		goldArticleId: 'a1000003-0000-0000-0000-000000000003',
-		answerFragment: 'Idempotency-Key',
-	},
-	{
-		id: 'p06',
-		question: 'What is Anthropic\u2019s position on where retrieval should happen for agents?',
-		goldArticleId: 'a1000004-0000-0000-0000-000000000004',
-		answerFragment: 'just-in-time',
-	},
-	{
-		id: 'p07',
-		question: 'Why prefer routing over dumping the whole knowledge corpus?',
-		goldArticleId: 'a1000004-0000-0000-0000-000000000004',
-		answerFragment: 'system prompt',
-	},
-	{
-		id: 'p08',
-		question: 'A COUNT(*) subquery in Drizzle keeps returning zero. Where is the bug likely?',
-		goldArticleId: 'a1000005-0000-0000-0000-000000000005',
-		answerFragment: 'unqualified',
-	},
-	{
-		id: 'p09',
-		question: 'Where do persistent agent files live between container sessions?',
-		goldArticleId: 'a1000006-0000-0000-0000-000000000006',
-		answerFragment: 'S3',
-	},
-	{
-		id: 'p10',
-		question: 'A container-run agent lost the skill file it wrote. Why?',
-		goldArticleId: 'a1000006-0000-0000-0000-000000000006',
-		answerFragment: 'ephemeral',
-	},
-	{
-		id: 'p11',
 		question:
-			'The github MCP subprocess returns 403 on every call. What is the likely env misconfig?',
-		goldArticleId: 'a1000007-0000-0000-0000-000000000007',
-		answerFragment: 'GITHUB_PERSONAL_ACCESS_TOKEN',
+			'I want users to know at a glance whether a bet needs their input — how do we show it?',
+		expectedFixtureId: 'status-indicator-dot-word-popover',
+		expectedExcerpt: 'colored dot + one-word lowercase label',
 	},
 	{
-		id: 'p12',
-		question: 'Why should we not overwrite superseded facts in the knowledge store?',
-		goldArticleId: 'a1000008-0000-0000-0000-000000000008',
-		answerFragment: 'bi-temporal',
+		question:
+			'Can phase-two work close before phase-one has produced observable data, without breaking the gating logic?',
+		expectedFixtureId: 'first-test-gate-invalidated-by-scope2',
+		expectedExcerpt: 'gate is retroactively invalidated',
 	},
 	{
-		id: 'p13',
-		question: 'How do bi-temporal knowledge readers pick the current fact?',
-		goldArticleId: 'a1000008-0000-0000-0000-000000000008',
-		answerFragment: 'validity window',
+		question:
+			'A watchdog keeps creating duplicate tasks — where should we fix this once so future callers can not repeat it?',
+		expectedFixtureId: 'task-dedup-at-creation-api',
+		expectedExcerpt: 'task-creation API is the only choke point',
 	},
 	{
-		id: 'p14',
-		question: 'A new env var is set in .env but not visible to dev. What did we miss?',
-		goldArticleId: 'a1000009-0000-0000-0000-000000000009',
-		answerFragment: 'globalPassThroughEnv',
+		question: 'Why is it a mistake to have agents flip status just to wake each other up?',
+		expectedFixtureId: 'separate-driver-from-status',
+		expectedExcerpt: 'Handoffs must mutate driver and @mention',
 	},
 	{
-		id: 'p15',
-		question: 'What share of agent performance variance is attributed to context construction?',
-		goldArticleId: 'a1000010-0000-0000-0000-000000000010',
-		answerFragment: '80%',
+		question:
+			"Our floor config only lives on the trunk — how do we still validate PR builds against it, and what's the limitation?",
+		expectedFixtureId: 'merge-queue-synthetic-main-scope',
+		expectedExcerpt: 'only fires inside the merge queue',
 	},
 	{
-		id: 'p16',
-		question: 'Why treat context engineering as its own discipline instead of per-agent tuning?',
-		goldArticleId: 'a1000010-0000-0000-0000-000000000010',
-		answerFragment: 'variance',
+		question:
+			'If a build can not resolve a required policy file, is it OK to fall back to a default so the pipeline keeps moving?',
+		expectedFixtureId: 'ci-assert-loudly-never-silent-fallback',
+		expectedExcerpt: 'assert the resource is present and hard-fail',
 	},
 	{
-		id: 'p17',
-		question: 'Number(req.query.limit) came back as NaN and hit the DB. What is the safe pattern?',
-		goldArticleId: 'a1000011-0000-0000-0000-000000000011',
-		answerFragment: 'Number.isFinite',
+		question:
+			"How do we ship a shared internal tool so every feature branch's pipeline can run it without pulling the trunk?",
+		expectedFixtureId: 'workspace-deps-for-branch-agnostic-ci',
+		expectedExcerpt: 'workspace:*',
 	},
 	{
-		id: 'p18',
-		question: 'What phases does a bet move through?',
-		goldArticleId: 'a1000012-0000-0000-0000-000000000012',
-		answerFragment: 'define',
+		question:
+			"Our tool responses are exhausting the model's context — what's the industry-wide default shape we should adopt?",
+		expectedFixtureId: 'trim-mcp-tool-responses-default',
+		expectedExcerpt: 'small default field sets, opt-in expansion',
 	},
 	{
-		id: 'p19',
-		question: 'What is the relationship between a bet and its tasks?',
-		goldArticleId: 'a1000012-0000-0000-0000-000000000012',
-		answerFragment: 'children',
+		question:
+			'Our unnamed default view lost its per-user filters — should we build a separate persistence path just for it?',
+		expectedFixtureId: 'default-view-via-named-view-sentinel',
+		expectedExcerpt: '__all__',
 	},
 	{
-		id: 'p20',
-		question: 'What must a terminal bet produce that feeds the knowledge loop?',
-		goldArticleId: 'a1000012-0000-0000-0000-000000000012',
-		answerFragment: 'verdict',
+		question: 'Where do sort and grouping controls belong when they differ from defaults?',
+		expectedFixtureId: 'sort-group-in-display-panel',
+		expectedExcerpt: 'DisplayPanel',
+	},
+	{
+		question:
+			'How do we surface both when a record was made and when it was last edited on its detail page?',
+		expectedFixtureId: 'provenance-chips-created-updated',
+		expectedExcerpt: 'RelativeTime',
+	},
+	{
+		question:
+			'Sebastian shared a live newsletter site run by agents — should we treat that as a competitor benchmark or as inside our own scope?',
+		expectedFixtureId: 'shipfeed-inside-product-surface',
+		expectedExcerpt: "inside maskin's product surface, not adjacent to it",
+	},
+	{
+		question:
+			'A newsroom agent is ranking incoming stories. What signal from traditional editorial practice should it lean on?',
+		expectedFixtureId: 'multi-source-convergence-signal',
+		expectedExcerpt: 'source convergence',
+	},
+	{
+		question:
+			'How long do we have before a new user decides whether our AI actually understands them?',
+		expectedFixtureId: 'new-user-personalisation-window',
+		expectedExcerpt: 'first 5–15 minutes',
+	},
+	{
+		question:
+			"We planned to measure the success of a project using a metric emitted by that same project's shipped code. What goes wrong?",
+		expectedFixtureId: 'bets-kill-criteria-inside-telemetry',
+		expectedExcerpt: 'kill criteria could not fire',
+	},
+	{
+		question:
+			'We introduced a richer set of session outcome codes. Why has the customer confusion not gone away?',
+		expectedFixtureId: 'coarse-exit-signals-cascade',
+		expectedExcerpt: 'walking the consumers is the half that gets skipped',
+	},
+	{
+		question:
+			"On a project's page, should a decision-pending update go into the description or into the running thread?",
+		expectedFixtureId: 'bet-timeline-hygiene-description-vs-comments',
+		expectedExcerpt: 'description is a stable artifact',
+	},
+	{
+		question:
+			'Our deploy platform stores a secret for the agent runtime, but the agent can not read it. What should we check first?',
+		expectedFixtureId: 'coolify-passthrough-validation',
+		expectedExcerpt: 'env | grep <PREFIX>',
+	},
+	{
+		question:
+			'The portfolio shows a lot of failed projects. Why should we not treat those as real evidence-based losses?',
+		expectedFixtureId: 'bet-failures-expired-close-artifacts',
+		expectedExcerpt: 'expired_close: true',
+	},
+	{
+		question: 'How do we cap which internal tools the IDE-embedded agent is allowed to call?',
+		expectedFixtureId: 'cursor-mcp-profile-ceiling',
+		expectedExcerpt: 'MASKIN_MCP_PROFILE=cursor',
 	},
 ]
 
-// Deterministic seed. Pinned so any regime running the fixture (dump-into-context in
-// T4's harness, router in T5's) produces identical token counts across runs.
-export const FIXTURE_SEED = 't5-router-20260714-1'
+if (KNOWLEDGE_CORPUS.length !== 20) {
+	throw new Error(`KNOWLEDGE_CORPUS must have 20 entries (has ${KNOWLEDGE_CORPUS.length}).`)
+}
+
+if (EVAL_PAIRS.length !== 20) {
+	throw new Error(`EVAL_PAIRS must have 20 entries (has ${EVAL_PAIRS.length}).`)
+}
+
+const CORPUS_IDS = new Set(KNOWLEDGE_CORPUS.map((row) => row.fixtureId))
+for (const pair of EVAL_PAIRS) {
+	if (!CORPUS_IDS.has(pair.expectedFixtureId)) {
+		throw new Error(
+			`EVAL_PAIRS references fixtureId ${pair.expectedFixtureId} which is not in KNOWLEDGE_CORPUS.`,
+		)
+	}
+}
