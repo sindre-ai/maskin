@@ -59,6 +59,10 @@ import { isAuthRevokedError } from '../lib/integrations/errors'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import {
+	type SessionGithubInstall,
+	sessionGithubLogClassifier,
+} from '../lib/integrations/providers/github/log-classifier'
+import {
 	type TokenMetadata,
 	stampTokenMetadata,
 } from '../lib/integrations/providers/github/token-metadata'
@@ -1322,6 +1326,16 @@ export class SessionManager extends EventEmitter {
 				env: { GITHUB_TOKEN: token },
 			}
 		}
+		// Register the session's github installs with the log classifier so
+		// tool_result envelopes coming back from the container carry a cause_tag
+		// alongside the failure — the parent bet's AC-6 grep-verifier reads
+		// session_logs, not this process's memory.
+		const classifierInstalls: SessionGithubInstall[] = resolvedGithubInstalls.map((r) => ({
+			ownerLoginLower: r.ownerLogin.toLowerCase(),
+			installationId: r.installationId,
+			tokenMetadata: r.tokenMetadata,
+		}))
+		sessionGithubLogClassifier.registerSession(session.id, classifierInstalls)
 		const primaryGithubToken = resolvedGithubInstalls[0]?.token
 		if (primaryGithubToken) {
 			envVars.GITHUB_TOKEN = primaryGithubToken
@@ -1602,6 +1616,9 @@ export class SessionManager extends EventEmitter {
 					firstConnect = false
 					for await (const chunk of this.containers.logs(containerId, true, logOpts)) {
 						attempt = 0
+						if (chunk.stream === 'stdout') {
+							await this.emitGithubCauseTagIfAny(sessionId, chunk.data)
+						}
 						const [log] = await this.db
 							.insert(sessionLogs)
 							.values({
@@ -2747,17 +2764,29 @@ export class SessionManager extends EventEmitter {
 			)
 			this.activeSessions.delete(sessionId)
 		}
+		// Always drop classifier state — safe if never registered, and covers
+		// paths (queue-drain rejection, remote sessions) that have no
+		// activeSessions entry to key off.
+		sessionGithubLogClassifier.unregisterSession(sessionId)
 	}
 
 	/**
 	 * Append log lines received from a remote agent-server and emit them on the
 	 * in-process bus so SSE /logs/stream clients see them in real time.
+	 *
+	 * `stdout` lines are also passed through the github tool-call classifier —
+	 * a failed `tool_result` for a `mcp__github-*` tool triggers an extra
+	 * `system`-stream log line carrying `cause_tag=<tag>` so a grep of
+	 * `session_logs` for the last 100 failures finds every tagged failure.
 	 */
 	async appendRemoteSessionLogs(
 		sessionId: string,
 		lines: Array<{ stream: 'stdout' | 'stderr' | 'system'; content: string }>,
 	): Promise<void> {
 		for (const line of lines) {
+			if (line.stream === 'stdout') {
+				await this.emitGithubCauseTagIfAny(sessionId, line.content)
+			}
 			const [log] = await this.db
 				.insert(sessionLogs)
 				.values({ sessionId, stream: line.stream, content: line.content })
@@ -2769,6 +2798,34 @@ export class SessionManager extends EventEmitter {
 					stream: line.stream,
 					data: line.content,
 				} satisfies SessionLogEvent)
+			}
+		}
+	}
+
+	/**
+	 * Run one chunk of stdout through the github tool-call log classifier.
+	 * Chunks may contain multiple newline-delimited stream-json envelopes; each
+	 * one is classified independently. Emits at most one `system`-stream log
+	 * line per failed github tool_result, carrying the parent bet AC-6
+	 * cause_tag and (when present) the installation_id + mint_age_seconds.
+	 * Errors are swallowed — a classifier hiccup must not drop the original
+	 * log write.
+	 */
+	private async emitGithubCauseTagIfAny(sessionId: string, chunk: string): Promise<void> {
+		if (chunk.length === 0) return
+		const lines = chunk.split('\n')
+		for (const line of lines) {
+			if (line.length === 0) continue
+			try {
+				const result = await sessionGithubLogClassifier.classifyLine(sessionId, line)
+				if (result) {
+					await this.insertSystemLog(sessionId, result.taggedLine)
+				}
+			} catch (err) {
+				logger.warn('github log classifier failed for a line', {
+					sessionId,
+					error: err instanceof Error ? err.message : String(err),
+				})
 			}
 		}
 	}
@@ -2949,6 +3006,7 @@ export class SessionManager extends EventEmitter {
 		)
 
 		await this.clearActiveSession(sessionId)
+		sessionGithubLogClassifier.unregisterSession(sessionId)
 		await this.drainQueue(updated.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
 		)

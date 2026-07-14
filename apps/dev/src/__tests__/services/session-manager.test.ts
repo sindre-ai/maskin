@@ -1985,6 +1985,198 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('appendRemoteSessionLogs() — github tool-call cause_tag tagging', () => {
+		// The classifier singleton is process-wide; import lazily so the mock
+		// setup at the top of the file has taken effect first.
+		type ClassifierModule = typeof import('../../lib/integrations/providers/github/log-classifier')
+		let sessionGithubLogClassifier: ClassifierModule['sessionGithubLogClassifier']
+
+		beforeAll(async () => {
+			const mod = await import('../../lib/integrations/providers/github/log-classifier')
+			sessionGithubLogClassifier = mod.sessionGithubLogClassifier
+		})
+
+		function registerFakeInstall(sessionId: string, ownerLower: string, installationId: string) {
+			sessionGithubLogClassifier.registerSession(sessionId, [
+				{
+					ownerLoginLower: ownerLower,
+					installationId,
+					tokenMetadata: {
+						token: 'ghs_test',
+						installationId,
+						mintedAt: new Date(Date.now() - 60_000),
+					},
+				},
+			])
+		}
+
+		function findInserts(pred: (row: { stream?: string; content?: string }) => boolean) {
+			return calls.inserts.filter(
+				(row): row is { stream: string; content: string } =>
+					typeof row === 'object' &&
+					row !== null &&
+					pred(row as { stream?: string; content?: string }),
+			)
+		}
+
+		it('emits a system-stream cause_tag line for a failing github tool_result and passes non-github stdout through unchanged', async () => {
+			const sessionId = randomUUID()
+			registerFakeInstall(sessionId, 'sindre-ai', '4711')
+			try {
+				const toolUse = JSON.stringify({
+					type: 'assistant',
+					message: {
+						content: [
+							{
+								type: 'tool_use',
+								id: 'toolu_401',
+								name: 'mcp__github-sindre-ai__get_issue',
+								input: {},
+							},
+						],
+					},
+				})
+				const toolResult = JSON.stringify({
+					type: 'user',
+					message: {
+						content: [
+							{
+								type: 'tool_result',
+								tool_use_id: 'toolu_401',
+								content: 'GitHub API 401: Bad credentials',
+								is_error: true,
+							},
+						],
+					},
+				})
+				const nonGithub =
+					'plain container stdout with no JSON envelope — must be persisted untouched'
+
+				await manager.appendRemoteSessionLogs(sessionId, [
+					{ stream: 'stdout', content: `${toolUse}\n` },
+					{ stream: 'stdout', content: `${toolResult}\n` },
+					{ stream: 'stdout', content: `${nonGithub}\n` },
+				])
+
+				const tagged = findInserts(
+					(r) => r.stream === 'system' && (r.content ?? '').includes('cause_tag=401-unauth'),
+				)
+				expect(tagged).toHaveLength(1)
+				expect(tagged[0].content).toContain('tool=mcp__github-sindre-ai__get_issue')
+				expect(tagged[0].content).toContain('installation_id=4711')
+
+				const stdoutPassthrough = findInserts(
+					(r) => r.stream === 'stdout' && (r.content ?? '').includes(nonGithub),
+				)
+				expect(stdoutPassthrough).toHaveLength(1)
+			} finally {
+				sessionGithubLogClassifier.unregisterSession(sessionId)
+			}
+		})
+
+		it('lands ≥4 distinct cause_tags across a seeded fault-injection sequence', async () => {
+			const sessionId = randomUUID()
+			registerFakeInstall(sessionId, 'sindre-ai', '4711')
+			try {
+				const faults: Array<[string, string, string]> = [
+					['toolu_401', 'mcp__github-sindre-ai__get_issue', 'GitHub API 401: Bad credentials'],
+					[
+						'toolu_403',
+						'mcp__github-sindre-ai__merge_pull_request',
+						'GitHub API 403: Resource not accessible by integration',
+					],
+					[
+						'toolu_422',
+						'mcp__github-sindre-ai__create_pull_request_review',
+						'GitHub API 422: Validation Failed — expected number for pull_number',
+					],
+					// Owner the session doesn't know about → hadToken:false → missing-token.
+					[
+						'toolu_missing',
+						'mcp__github-unknown-org__list_issues',
+						'GitHub API 401: Bad credentials',
+					],
+				]
+
+				const lines: Array<{ stream: 'stdout'; content: string }> = []
+				for (const [id, name, body] of faults) {
+					lines.push({
+						stream: 'stdout',
+						content: `${JSON.stringify({
+							type: 'assistant',
+							message: {
+								content: [{ type: 'tool_use', id, name, input: {} }],
+							},
+						})}\n`,
+					})
+					lines.push({
+						stream: 'stdout',
+						content: `${JSON.stringify({
+							type: 'user',
+							message: {
+								content: [{ type: 'tool_result', tool_use_id: id, content: body, is_error: true }],
+							},
+						})}\n`,
+					})
+				}
+
+				await manager.appendRemoteSessionLogs(sessionId, lines)
+
+				const tags = findInserts(
+					(r) => r.stream === 'system' && (r.content ?? '').includes('[github-cause-tag]'),
+				)
+					.map((r) => r.content.match(/cause_tag=([\w-]+)/)?.[1])
+					.filter((t): t is string => Boolean(t))
+
+				const distinct = new Set(tags)
+				expect(distinct.size).toBeGreaterThanOrEqual(4)
+				expect(distinct).toContain('401-unauth')
+				expect(distinct).toContain('403-permission')
+				expect(distinct).toContain('schema-validation')
+				expect(distinct).toContain('missing-token')
+			} finally {
+				sessionGithubLogClassifier.unregisterSession(sessionId)
+			}
+		})
+
+		it('does not emit a cause_tag for an unregistered session', async () => {
+			const sessionId = randomUUID()
+			const toolUse = JSON.stringify({
+				type: 'assistant',
+				message: {
+					content: [
+						{
+							type: 'tool_use',
+							id: 'toolu_x',
+							name: 'mcp__github-sindre-ai__get_issue',
+							input: {},
+						},
+					],
+				},
+			})
+			const toolResult = JSON.stringify({
+				type: 'user',
+				message: {
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: 'toolu_x',
+							content: 'GitHub API 500: server error',
+							is_error: true,
+						},
+					],
+				},
+			})
+			await manager.appendRemoteSessionLogs(sessionId, [
+				{ stream: 'stdout', content: `${toolUse}\n${toolResult}\n` },
+			])
+			const tagged = findInserts(
+				(r) => r.stream === 'system' && (r.content ?? '').includes('[github-cause-tag]'),
+			)
+			expect(tagged).toHaveLength(0)
+		})
+	})
+
 	describe('streamContainerLogs() — reconnect on transient stream drop', () => {
 		it('reattaches with tail:0 after a dropped log stream and does not surface the "interrupted" sentinel', async () => {
 			// Regression guard for the false-positive auto-pause bug: when
