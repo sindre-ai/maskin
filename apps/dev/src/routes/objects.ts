@@ -51,6 +51,7 @@ import {
 } from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import { findKnowledgeDuplicate } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
 import {
@@ -382,6 +383,27 @@ app.openapi(createObjectRoute, async (c) => {
 			),
 			400,
 		)
+	}
+
+	if (body.type === 'knowledge') {
+		const duplicate = await findKnowledgeDuplicate(db, workspaceId, body.title)
+		if (duplicate) {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					`A similar knowledge object already exists: '${duplicate.title}' (${duplicate.id})`,
+					[
+						{
+							field: 'title',
+							message: 'Title matches or overlaps an existing, non-archived knowledge object',
+							received: `'${body.title}'`,
+						},
+					],
+					`Update the existing object (PATCH /api/objects/${duplicate.id}) or link them with a 'duplicates' relationship instead of creating a new one.`,
+				),
+				409,
+			)
+		}
 	}
 
 	const [created] = await db

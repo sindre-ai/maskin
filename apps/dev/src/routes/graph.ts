@@ -5,6 +5,7 @@ import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { createGraphSchema } from '@maskin/shared'
 import { eq, inArray } from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
+import { findKnowledgeDuplicate, isDuplicateTitle, normalizeTitle } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -60,6 +61,10 @@ const createGraphRoute = createRoute({
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Workspace not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'A knowledge node duplicates an existing or sibling knowledge object',
 		},
 		500: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -131,6 +136,54 @@ app.openapi(createGraphRoute, async (c) => {
 					400,
 				)
 			}
+		}
+	}
+
+	// Reject knowledge nodes that duplicate an existing (non-archived) knowledge
+	// object, or a sibling knowledge node earlier in this same batch.
+	const seenKnowledgeTitles: { $id: string; normalized: string }[] = []
+	for (const node of body.nodes) {
+		if (node.type !== 'knowledge') continue
+		const normalized = normalizeTitle(node.title ?? '')
+		if (!normalized) continue
+
+		const sibling = seenKnowledgeTitles.find((seen) => isDuplicateTitle(seen.normalized, normalized))
+		if (sibling) {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					`Node '${node.$id}' duplicates node '${sibling.$id}' in the same request`,
+					[
+						{
+							field: `nodes[${node.$id}].title`,
+							message: 'Title matches or overlaps another knowledge node in this batch',
+							received: `'${node.title}'`,
+						},
+					],
+					'Merge the two knowledge nodes into one, or give them distinct titles.',
+				),
+				409,
+			)
+		}
+		seenKnowledgeTitles.push({ $id: node.$id, normalized })
+
+		const duplicate = await findKnowledgeDuplicate(db, workspaceId, node.title)
+		if (duplicate) {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					`Node '${node.$id}' duplicates an existing knowledge object: '${duplicate.title}' (${duplicate.id})`,
+					[
+						{
+							field: `nodes[${node.$id}].title`,
+							message: 'Title matches or overlaps an existing, non-archived knowledge object',
+							received: `'${node.title}'`,
+						},
+					],
+					`Update the existing object (PATCH /api/objects/${duplicate.id}) or link them with a 'duplicates' relationship instead of creating a new one.`,
+				),
+				409,
+			)
 		}
 	}
 
