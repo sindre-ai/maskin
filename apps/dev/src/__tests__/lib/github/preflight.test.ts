@@ -160,6 +160,10 @@ describe('runGitHubPreflight', () => {
 			fetchImpl: fetchImpl as unknown as typeof fetch,
 		})
 		expect(verdict.failureClass).toBe('write-scope-denied')
+		// Names the repo it actually checked — without this, a Slack alert can't
+		// distinguish "the tenant's own repo lost write access" from "GitHub
+		// surfaced an unexpected repo at index 0" without a live reproduction.
+		expect(verdict.statusSnippet).toContain('sindre-ai/maskin')
 	})
 
 	it('checks the session’s resolved target repo directly when writeProbeRepo is set, instead of /installation/repositories', async () => {

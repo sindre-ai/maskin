@@ -228,11 +228,19 @@ async function probeInstallationWriteScope(
 
 	const push = extractPushPermission(repos[0])
 	if (push !== true) {
+		// Name the repo that failed the probe — without this, a Slack alert only
+		// says "permissions.push is false" with no way to tell whether repos[0]
+		// was actually the tenant's own repo or something unexpected (e.g. GitHub
+		// ordering surfaced a repo outside the installation's normal set). This
+		// turns the next occurrence into a one-glance diagnosis instead of a
+		// guessing game requiring a live token to reproduce.
+		const repoName = extractRepoFullName(repos[0])
+		const repoLabel = repoName ? ` on ${repoName}` : ''
 		return {
 			name,
 			healthy: false,
 			failureClass: 'write-scope-denied',
-			statusSnippet: `${path}: permissions.push is ${JSON.stringify(push)}`,
+			statusSnippet: `${path}: permissions.push is ${JSON.stringify(push)}${repoLabel}`,
 			installationId,
 		}
 	}
@@ -297,6 +305,12 @@ function extractPushPermission(body: unknown): unknown {
 	const perms = (body as { permissions?: unknown }).permissions
 	if (perms === null || typeof perms !== 'object') return undefined
 	return (perms as { push?: unknown }).push
+}
+
+function extractRepoFullName(repo: unknown): string | undefined {
+	if (repo === null || typeof repo !== 'object') return undefined
+	const fullName = (repo as { full_name?: unknown }).full_name
+	return typeof fullName === 'string' ? fullName : undefined
 }
 
 async function classifyHttpFailure(
