@@ -166,6 +166,56 @@ describe('runGitHubPreflight', () => {
 		expect(verdict.statusSnippet).toContain('sindre-ai/maskin')
 	})
 
+	it('recovers from a false push signal on /installation/repositories by cross-checking the single-repo endpoint', async () => {
+		// Observed in production: /installation/repositories reported permissions.push:false
+		// for an installation whose org config, App manifest, and even a freshly re-created
+		// installation all agreed on Contents: Read & write. The bulk listing's own
+		// permissions field isn't trustworthy on its own — cross-check against
+		// GET /repos/{full_name} before declaring the identity unhealthy.
+		const calledUrls: string[] = []
+		const fetchImpl = vi.fn(async (url: string) => {
+			calledUrls.push(url)
+			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
+				return jsonResponse({
+					repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: false } }],
+				})
+			}
+			if (url === 'https://api.github.com/repos/sindre-ai/maskin') {
+				return jsonResponse({ permissions: { push: true } })
+			}
+			throw new Error(`unexpected fetch: ${url}`)
+		})
+		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict.healthy).toBe(true)
+		expect(calledUrls).toEqual([
+			'https://api.github.com/installation/repositories?per_page=1',
+			'https://api.github.com/repos/sindre-ai/maskin',
+		])
+	})
+
+	it('stays write-scope-denied when the single-repo cross-check also reports push=false', async () => {
+		const calledUrls: string[] = []
+		const fetchImpl = vi.fn(async (url: string) => {
+			calledUrls.push(url)
+			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
+				return jsonResponse({
+					repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: false } }],
+				})
+			}
+			return jsonResponse({ permissions: { push: false } })
+		})
+		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict.failureClass).toBe('write-scope-denied')
+		expect(calledUrls).toEqual([
+			'https://api.github.com/installation/repositories?per_page=1',
+			'https://api.github.com/repos/sindre-ai/maskin',
+		])
+	})
+
 	it('checks the session’s resolved target repo directly when writeProbeRepo is set, instead of /installation/repositories', async () => {
 		const calledUrls: string[] = []
 		const fetchImpl = vi.fn(async (url: string) => {
