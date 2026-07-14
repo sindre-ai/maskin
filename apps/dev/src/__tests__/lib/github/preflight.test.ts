@@ -195,7 +195,7 @@ describe('runGitHubPreflight', () => {
 		])
 	})
 
-	it('stays write-scope-denied when the single-repo cross-check also reports push=false', async () => {
+	it('stays write-scope-denied and names the cross-check result when the single-repo endpoint also reports push=false', async () => {
 		const calledUrls: string[] = []
 		const fetchImpl = vi.fn(async (url: string) => {
 			calledUrls.push(url)
@@ -210,6 +210,36 @@ describe('runGitHubPreflight', () => {
 			fetchImpl: fetchImpl as unknown as typeof fetch,
 		})
 		expect(verdict.failureClass).toBe('write-scope-denied')
+		// This is the decisive signal distinguishing "the precise endpoint also denies
+		// push" (a real permission problem) from a broken cross-check request — the
+		// statusSnippet must say so explicitly, not just repeat the bulk-listing verdict.
+		expect(verdict.statusSnippet).toContain(
+			'GET /repos/sindre-ai/maskin also reports permissions.push=false',
+		)
+		expect(calledUrls).toEqual([
+			'https://api.github.com/installation/repositories?per_page=1',
+			'https://api.github.com/repos/sindre-ai/maskin',
+		])
+	})
+
+	it('stays write-scope-denied and names the failure reason when the single-repo cross-check request itself fails', async () => {
+		const calledUrls: string[] = []
+		const fetchImpl = vi.fn(async (url: string) => {
+			calledUrls.push(url)
+			if (url === 'https://api.github.com/installation/repositories?per_page=1') {
+				return jsonResponse({
+					repositories: [{ full_name: 'sindre-ai/maskin', permissions: { push: false } }],
+				})
+			}
+			return { ok: false, status: 404, text: async () => 'Not Found' } as Response
+		})
+		const [verdict] = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		expect(verdict.failureClass).toBe('write-scope-denied')
+		expect(verdict.statusSnippet).toContain(
+			'GET /repos/sindre-ai/maskin cross-check failed: HTTP 404',
+		)
 		expect(calledUrls).toEqual([
 			'https://api.github.com/installation/repositories?per_page=1',
 			'https://api.github.com/repos/sindre-ai/maskin',
