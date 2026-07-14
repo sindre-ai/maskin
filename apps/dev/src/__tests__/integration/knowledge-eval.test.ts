@@ -5,8 +5,9 @@
  *   1. Fixture shape (20 corpus rows, 20 pairs, every pair points at a row).
  *   2. Grader semantics on a hand-rolled sample.
  *   3. Dump-into-context path against a real model, guarded by
- *      `RUN_KNOWLEDGE_EVAL_BASELINE=1` + `OPENAI_API_KEY`. Skipped in CI by
- *      default; run manually to record the number.
+ *      `RUN_KNOWLEDGE_EVAL_BASELINE=1` + one of `ANTHROPIC_API_KEY` /
+ *      `CLAUDE_OAUTH_ACCESS_TOKEN`. Skipped in CI by default; run manually
+ *      to record the number.
  *
  * T5's router test file imports the fixture module directly. This file owns
  * the harness only (single-writer-per-file per the branching skill).
