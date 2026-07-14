@@ -1,9 +1,8 @@
 // Prototype-scale knowledge router. Filters v1 knowledge articles by frontmatter
 // (metadata.format_version = "v1"), scores each against a query using tag / doc_type /
 // summary / title overlap, and returns a small top-K set so the caller can compose
-// context from just those articles instead of dumping the whole corpus. Deterministic
-// scoring so the eval harness in `__tests__/integration/knowledge-eval-router.test.ts`
-// can compare reproducibly against T4's dump-into-context baseline.
+// context from just those articles instead of dumping the whole corpus. Scoring is
+// deterministic (id-ascending tiebreak) so downstream evals can compare reproducibly.
 //
 // v1 frontmatter fields consumed here mirror `docs/reference/knowledge-format.md`.
 
