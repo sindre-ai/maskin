@@ -1,0 +1,274 @@
+{
+	"model": "claude-haiku-4-5-20251001",
+	"temperature": 0,
+	"seed": "da52f31:first-20",
+	"fixtureSourceCommit": "da52f3153e0c7a2c3c1b21aa8709bd0d18b568c8",
+	"topK": 3,
+	"numPairs": 20,
+	"numCorrect": 16,
+	"totalPromptTokens": 11873,
+	"avgPromptTokensPerPair": 593.65,
+	"tokensPerCorrectAnswer": 742.0625,
+	"perPair": [
+		{
+			"question": "I want users to know at a glance whether a bet needs their input — how do we show it?",
+			"expectedFixtureId": "status-indicator-dot-word-popover",
+			"routedFixtureIds": [
+				"new-user-personalisation-window",
+				"bet-failures-expired-close-artifacts",
+				"bet-timeline-hygiene-description-vs-comments"
+			],
+			"promptTokens": 550,
+			"completionTokens": 89,
+			"response": "According to the corpus, you should \"shape decision-pending comments so they stand out from routine status\" and use \"prose discipline (formatting, default-collapsed phases, OP-routed reply notifications, agent system-prompt guidance)\" to make the timeline clearer. The guidance emphasizes fixing noise through better formatting and notification routing rather than adding new structured UI elements like \"chips, session blocks, or sticky banners.\"",
+			"correct": false
+		},
+		{
+			"question": "Can phase-two work close before phase-one has produced observable data, without breaking the gating logic?",
+			"expectedFixtureId": "first-test-gate-invalidated-by-scope2",
+			"routedFixtureIds": [
+				"first-test-gate-invalidated-by-scope2",
+				"separate-driver-from-status",
+				"workspace-deps-for-branch-agnostic-ci"
+			],
+			"promptTokens": 616,
+			"completionTokens": 95,
+			"response": "No. According to the knowledge corpus, \"the gate depends on scope-2 tasks NOT landing before scope-1 has emitted observable outcomes. If a scope-2 task's verdict lands before the scope-1 outcome window opens, the gate is retroactively invalidated.\" The rule exists because \"the whole point of a staged first test is to kill scope-2 build effort early if scope-1 engagement is missing.\"",
+			"correct": true
+		},
+		{
+			"question": "A watchdog keeps creating duplicate tasks — where should we fix this once so future callers can not repeat it?",
+			"expectedFixtureId": "task-dedup-at-creation-api",
+			"routedFixtureIds": [
+				"task-dedup-at-creation-api",
+				"first-test-gate-invalidated-by-scope2",
+				"bets-kill-criteria-inside-telemetry"
+			],
+			"promptTokens": 647,
+			"completionTokens": 115,
+			"response": "According to the knowledge corpus, duplicate-task prevention should be enforced **at the task-creation API**, not inside individual agents or watchdogs. The document states: \"Enforce duplicate-task prevention at the task-creation API, not inside individual agents\" because \"the task-creation API is the only choke point every origin crosses; a single pre-persist check there covers watchdogs, scoping agents, humans in a hurry, and anything future.\" Per-agent fixes leak the moment a new caller does the same thing.",
+			"correct": true
+		},
+		{
+			"question": "Why is it a mistake to have agents flip status just to wake each other up?",
+			"expectedFixtureId": "separate-driver-from-status",
+			"routedFixtureIds": [
+				"separate-driver-from-status",
+				"bet-timeline-hygiene-description-vs-comments",
+				"status-indicator-dot-word-popover"
+			],
+			"promptTokens": 567,
+			"completionTokens": 107,
+			"response": "According to the corpus, having agents flip status just to wake each other up is a mistake because it \"collapses two independent concerns (who is driving, what stage the work is in) onto one field and breaks both jobs at once.\" When the status field serves as both a work-state description and a wake-up signal, agents will use status flips for signaling rather than accurately describing the work, which undermines both the status field's ability to communicate actual progress and the handoff mechanism itself.",
+			"correct": false
+		},
+		{
+			"question": "Our floor config only lives on the trunk — how do we still validate PR builds against it, and what's the limitation?",
+			"expectedFixtureId": "merge-queue-synthetic-main-scope",
+			"routedFixtureIds": [
+				"merge-queue-synthetic-main-scope",
+				"coolify-passthrough-validation",
+				"first-test-gate-invalidated-by-scope2"
+			],
+			"promptTokens": 645,
+			"completionTokens": 130,
+			"response": "According to the knowledge corpus, you should use the **merge-queue / batched-main mechanism** (like Buildkite or Solana Garden pattern), which \"runs the final pre-merge check against a synthetic merge commit that combines the PR branch with current `main`. Any file present on `main` is visible to that check at no cost.\"\n\nHowever, the key limitation is that **this only fires inside the merge queue; ordinary PR checks still see only the branch.** So trunk-only config files are available for validation, but only at the merge-queue stage, not during regular PR checks.",
+			"correct": true
+		},
+		{
+			"question": "If a build can not resolve a required policy file, is it OK to fall back to a default so the pipeline keeps moving?",
+			"expectedFixtureId": "ci-assert-loudly-never-silent-fallback",
+			"routedFixtureIds": [
+				"trim-mcp-tool-responses-default",
+				"ci-assert-loudly-never-silent-fallback",
+				"bet-failures-expired-close-artifacts"
+			],
+			"promptTokens": 578,
+			"completionTokens": 113,
+			"response": "No, according to the knowledge corpus. The document \"CI checks whose safety depends on a resolvable resource should assert loudly, never silently fall back\" states that \"When a CI job's safety depends on a config, adapter, or shared binary that might not resolve on the branch under test, the job must assert the resource is present and hard-fail if not — never silently substitute a default.\" It explains that silent fallback is \"the worst failure mode\" because it masks packaging gaps and turns safety floors into mere suggestions.",
+			"correct": true
+		},
+		{
+			"question": "How do we ship a shared internal tool so every feature branch's pipeline can run it without pulling the trunk?",
+			"expectedFixtureId": "workspace-deps-for-branch-agnostic-ci",
+			"routedFixtureIds": [
+				"workspace-deps-for-branch-agnostic-ci",
+				"bets-kill-criteria-inside-telemetry",
+				"shipfeed-inside-product-surface"
+			],
+			"promptTokens": 648,
+			"completionTokens": 76,
+			"response": "According to the knowledge corpus, you should \"land it under `packages/` and depend on it via `workspace:*`.\" This way, \"`pnpm install` on any branch resolves to that branch's in-tree copy — no need to check out `main`, no silent fallback when a branch doesn't yet contain the file.\"",
+			"correct": true
+		},
+		{
+			"question": "Our tool responses are exhausting the model's context — what's the industry-wide default shape we should adopt?",
+			"expectedFixtureId": "trim-mcp-tool-responses-default",
+			"routedFixtureIds": [
+				"trim-mcp-tool-responses-default",
+				"shipfeed-inside-product-surface",
+				"ci-assert-loudly-never-silent-fallback"
+			],
+			"promptTokens": 603,
+			"completionTokens": 113,
+			"response": "According to the knowledge corpus, the industry-wide default shape for tool responses is to use \"small default field sets, opt-in expansion, mandatory pagination metadata, and resource-link fallback for heavy graphs.\" The corpus notes that \"four independent sources (Anthropic engineering, Google MCP Toolbox, the MCP spec community, and Microsoft/third-party writeups) converged on the same design in the last two months,\" with external measurements showing that \"field waste in structured tool output at 85–95%.\"",
+			"correct": true
+		},
+		{
+			"question": "Our unnamed default view lost its per-user filters — should we build a separate persistence path just for it?",
+			"expectedFixtureId": "default-view-via-named-view-sentinel",
+			"routedFixtureIds": [
+				"default-view-via-named-view-sentinel",
+				"new-user-personalisation-window",
+				"ci-assert-loudly-never-silent-fallback"
+			],
+			"promptTokens": 569,
+			"completionTokens": 87,
+			"response": "No. According to the knowledge corpus, you should \"route that tab through the existing named-view persistence mechanism via a sentinel key (e.g. `__all__`) rather than introducing a parallel persistence system.\" This approach \"keeps the diff narrow, reuses a mechanism the team already trusts, and prevents the default view from drifting out of sync with named views as the persistence contract evolves.\"",
+			"correct": true
+		},
+		{
+			"question": "Where do sort and grouping controls belong when they differ from defaults?",
+			"expectedFixtureId": "sort-group-in-display-panel",
+			"routedFixtureIds": [
+				"sort-group-in-display-panel",
+				"task-dedup-at-creation-api",
+				"bet-timeline-hygiene-description-vs-comments"
+			],
+			"promptTokens": 551,
+			"completionTokens": 74,
+			"response": "According to the knowledge corpus, sort and grouping controls belong in the toolbar's existing DisplayPanel trigger, not as chips in the filter chip strip. When sort or grouping differs from defaults, \"the DisplayPanel trigger button grows an inline secondary reading\" (for example: `[Display · Priority ↓ · grouped by Status]`).",
+			"correct": true
+		},
+		{
+			"question": "How do we surface both when a record was made and when it was last edited on its detail page?",
+			"expectedFixtureId": "provenance-chips-created-updated",
+			"routedFixtureIds": [
+				"provenance-chips-created-updated",
+				"separate-driver-from-status",
+				"bet-timeline-hygiene-description-vs-comments"
+			],
+			"promptTokens": 561,
+			"completionTokens": 88,
+			"response": "According to the knowledge corpus, on an object-detail header, both creation and update timestamps are surfaced as inline chips using `<RelativeTime>` in a flex container with no labels or separators. When both timestamps exist, they render together in this format: `[👤 Created by] [<createdAt RelativeTime>] [updated <updatedAt RelativeTime>]`.",
+			"correct": true
+		},
+		{
+			"question": "Sebastian shared a live newsletter site run by agents — should we treat that as a competitor benchmark or as inside our own scope?",
+			"expectedFixtureId": "shipfeed-inside-product-surface",
+			"routedFixtureIds": [
+				"shipfeed-inside-product-surface",
+				"workspace-deps-for-branch-agnostic-ci",
+				"task-dedup-at-creation-api"
+			],
+			"promptTokens": 621,
+			"completionTokens": 132,
+			"response": "According to the knowledge corpus, Sebastian's positioning of Shipfeed (shipfeed.fyi) as \"a product running on maskin\" indicates that agent-run public content sites should be treated as **inside maskin's product surface, not as a competitor benchmark**. The corpus states: \"Treat agent-run public content sites as inside maskin's product surface, not adjacent to it,\" and notes that when a use case involves \"an autonomous editor team curating a structured stream with scheduled rollups and a public output surface,\" it should be \"sized as a maskin product, not a benchmark for one.\"",
+			"correct": true
+		},
+		{
+			"question": "A newsroom agent is ranking incoming stories. What signal from traditional editorial practice should it lean on?",
+			"expectedFixtureId": "multi-source-convergence-signal",
+			"routedFixtureIds": [
+				"multi-source-convergence-signal",
+				"shipfeed-inside-product-surface",
+				"coarse-exit-signals-cascade"
+			],
+			"promptTokens": 537,
+			"completionTokens": 101,
+			"response": "According to the knowledge corpus, a newsroom agent should lean on **multi-source convergence** as a ranking signal. As stated in the conclusion: \"When an agent is triaging an incoming content stream, treat the number of independent sources reporting the same story within a time window as a first-class ranking signal.\" The reasoning notes that \"Editorial newsrooms have used source convergence as a credibility filter for decades,\" making this a proven traditional editorial practice that agents should adopt.",
+			"correct": true
+		},
+		{
+			"question": "How long do we have before a new user decides whether our AI actually understands them?",
+			"expectedFixtureId": "new-user-personalisation-window",
+			"routedFixtureIds": [
+				"new-user-personalisation-window",
+				"task-dedup-at-creation-api",
+				"coolify-passthrough-validation"
+			],
+			"promptTokens": 610,
+			"completionTokens": 71,
+			"response": "According to the knowledge corpus, a new user decides whether the AI \"knows them\" within **5–15 minutes of their first session**. The corpus emphasizes that \"once it's set, you've lost up to 75% of week-1 retention,\" making this window critical for new-user AI personalization.",
+			"correct": false
+		},
+		{
+			"question": "We planned to measure the success of a project using a metric emitted by that same project's shipped code. What goes wrong?",
+			"expectedFixtureId": "bets-kill-criteria-inside-telemetry",
+			"routedFixtureIds": [
+				"trim-mcp-tool-responses-default",
+				"bets-kill-criteria-inside-telemetry",
+				"coarse-exit-signals-cascade"
+			],
+			"promptTokens": 595,
+			"completionTokens": 88,
+			"response": "According to the knowledge corpus, when kill criteria depend on telemetry shipped inside the same project, \"kill criteria could not fire until the emitter itself had accumulated 30 days of data — which never happened inside the bet window.\" In other words, you cannot measure success using metrics from code that hasn't yet shipped or accumulated sufficient data, creating a circular dependency that prevents evaluation during the project's actual timeframe.",
+			"correct": true
+		},
+		{
+			"question": "We introduced a richer set of session outcome codes. Why has the customer confusion not gone away?",
+			"expectedFixtureId": "coarse-exit-signals-cascade",
+			"routedFixtureIds": [
+				"new-user-personalisation-window",
+				"coarse-exit-signals-cascade",
+				"bets-kill-criteria-inside-telemetry"
+			],
+			"promptTokens": 597,
+			"completionTokens": 108,
+			"response": "According to the knowledge corpus, customer confusion persists because \"introducing the enum is the easy half; walking the consumers is the half that gets skipped.\" The corpus explains that a single coarse exit code forces every consumer to guess what it means, and this confusion only propagates until \"every consumer is moved onto the new structured code.\" Simply creating richer codes is insufficient—all downstream consumers (customers, operators, and agents) must be actively migrated to use the new structured codes for the confusion to actually resolve.",
+			"correct": true
+		},
+		{
+			"question": "On a project's page, should a decision-pending update go into the description or into the running thread?",
+			"expectedFixtureId": "bet-timeline-hygiene-description-vs-comments",
+			"routedFixtureIds": [
+				"bet-timeline-hygiene-description-vs-comments",
+				"status-indicator-dot-word-popover",
+				"ci-assert-loudly-never-silent-fallback"
+			],
+			"promptTokens": 585,
+			"completionTokens": 87,
+			"response": "According to the knowledge corpus provided, a decision-pending update should go into the running thread (comments), not the description. The corpus states that \"on a bet's detail page, the description is a stable artifact and comments are the running dialogue,\" and agents should \"shape decision-pending comments so they stand out from routine status.\" The description should remain stable, while comments carry the signal of ongoing decisions and dialogue.",
+			"correct": true
+		},
+		{
+			"question": "Our deploy platform stores a secret for the agent runtime, but the agent can not read it. What should we check first?",
+			"expectedFixtureId": "coolify-passthrough-validation",
+			"routedFixtureIds": [
+				"coolify-passthrough-validation",
+				"bets-kill-criteria-inside-telemetry",
+				"merge-queue-synthetic-main-scope"
+			],
+			"promptTokens": 664,
+			"completionTokens": 110,
+			"response": "According to the knowledge corpus, you should first validate the Coolify passthrough by running `env | grep <PREFIX>` from inside a fresh agent session. As the document states: \"Key set in Coolify\" is not the same as \"key reaches the container.\" This passthrough validation should be done before any actor-config work, since the riskiest assumption is not whether the upstream API accepts the key, but whether the Coolify deploy environment actually forwards the variable into the spawned agent container shell.",
+			"correct": true
+		},
+		{
+			"question": "The portfolio shows a lot of failed projects. Why should we not treat those as real evidence-based losses?",
+			"expectedFixtureId": "bet-failures-expired-close-artifacts",
+			"routedFixtureIds": [
+				"bet-failures-expired-close-artifacts",
+				"multi-source-convergence-signal",
+				"shipfeed-inside-product-surface"
+			],
+			"promptTokens": 547,
+			"completionTokens": 140,
+			"response": "According to the knowledge corpus, most failed bets in the portfolio are \"deadline-expiry artifacts, not evidence-backed verdicts.\" The bet measurement pipeline doesn't fire at a bet's review date; instead, verdicts are produced during periodic backlog sweeps, by which point overdue bets get auto-failed with `expired_close: true` and `evidence_quality: null` rather than receiving an actual evidence-based evaluation. Therefore, you should treat any transition to failed status with `expired_close: true` as a process artifact, not a real verdict, which means the portfolio's fail rate is overstated if read at face value.",
+			"correct": true
+		},
+		{
+			"question": "How do we cap which internal tools the IDE-embedded agent is allowed to call?",
+			"expectedFixtureId": "cursor-mcp-profile-ceiling",
+			"routedFixtureIds": [
+				"shipfeed-inside-product-surface",
+				"bet-failures-expired-close-artifacts",
+				"task-dedup-at-creation-api"
+			],
+			"promptTokens": 582,
+			"completionTokens": 59,
+			"response": "The knowledge corpus provided does not contain information about capping which internal tools an IDE-embedded agent is allowed to call. The corpus discusses task deduplication, bet measurement processes, and product surface definitions, but does not address agent tool access controls or IDE-embedded agent permissions.",
+			"correct": false
+		}
+	]
+}

@@ -3,7 +3,7 @@ import {
 	type KnowledgeArticle,
 	approxTokens,
 	assembleContext,
-	assembleFullContext,
+	assembleV1DumpContext,
 	route,
 	tokenizeQuery,
 } from '../../../lib/knowledge/router'
@@ -132,7 +132,7 @@ describe('route', () => {
 	})
 })
 
-describe('assembleContext / assembleFullContext', () => {
+describe('assembleContext / assembleV1DumpContext', () => {
 	it('renders v1 header + body per article', () => {
 		const a = v1Article({
 			title: 'Doc',
@@ -152,7 +152,7 @@ describe('assembleContext / assembleFullContext', () => {
 		expect(out).toContain('Hello.')
 	})
 
-	it('assembleFullContext skips non-v1 rows', () => {
+	it('assembleV1DumpContext skips non-v1 rows', () => {
 		const corpus: KnowledgeArticle[] = [
 			v1Article({ id: 'x1', title: 'v1' }),
 			v1Article({
@@ -161,9 +161,20 @@ describe('assembleContext / assembleFullContext', () => {
 				metadata: { format_version: undefined, tags: ['topic:x'] },
 			}),
 		]
-		const out = assembleFullContext(corpus)
+		const out = assembleV1DumpContext(corpus)
 		expect(out).toContain('# v1')
 		expect(out).not.toContain('# v0')
+	})
+
+	it('assembleV1DumpContext returns empty string when no v1 rows exist', () => {
+		const corpus: KnowledgeArticle[] = [
+			v1Article({
+				id: 'y1',
+				title: 'legacy',
+				metadata: { format_version: undefined },
+			}),
+		]
+		expect(assembleV1DumpContext(corpus)).toBe('')
 	})
 })
 
