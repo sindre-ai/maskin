@@ -38,6 +38,8 @@ const baseProps = {
 	onDelete: vi.fn(),
 }
 
+const betStatuses = ['proposed', 'active', 'paused', 'succeeded', 'failed', 'archived']
+
 describe('ObjectDocumentView', () => {
 	it('renders title in textarea', () => {
 		const object = buildObjectResponse({ title: 'My Bet' })
@@ -281,6 +283,88 @@ describe('ObjectDocumentView', () => {
 			await user.click(screen.getByRole('option', { name: /Unassigned/ }))
 
 			expect(onUpdateDriver).toHaveBeenCalledWith(null)
+		})
+	})
+
+	// One handler, two entry points: picking `archived` in the status picker
+	// dispatches through `onArchive` — the same handler the row `⋯` menu's
+	// Archive item calls. Prevents the picker path from silently duplicating
+	// or bypassing archive logic.
+	describe('status picker → archive routing', () => {
+		it('routes archived picks through onArchive for bets when handler is provided', async () => {
+			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+			const onArchive = vi.fn()
+			const onUpdateStatus = vi.fn()
+			const object = buildObjectResponse({ type: 'bet', status: 'active' })
+
+			render(
+				<ObjectDocumentView
+					{...baseProps}
+					object={object}
+					statuses={betStatuses}
+					onArchive={onArchive}
+					onUpdateStatus={onUpdateStatus}
+				/>,
+			)
+
+			const triggers = screen.getAllByRole('combobox')
+			// StatusSelect is the first combobox (mounted before OwnerSelect).
+			await user.click(triggers[0])
+			await user.click(screen.getByRole('option', { name: /archived/i }))
+
+			expect(onArchive).toHaveBeenCalledTimes(1)
+			expect(onUpdateStatus).not.toHaveBeenCalled()
+		})
+
+		it('routes non-archived picks through onUpdateStatus even when onArchive is provided', async () => {
+			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+			const onArchive = vi.fn()
+			const onUpdateStatus = vi.fn()
+			const object = buildObjectResponse({ type: 'bet', status: 'active' })
+
+			render(
+				<ObjectDocumentView
+					{...baseProps}
+					object={object}
+					statuses={betStatuses}
+					onArchive={onArchive}
+					onUpdateStatus={onUpdateStatus}
+				/>,
+			)
+
+			const triggers = screen.getAllByRole('combobox')
+			await user.click(triggers[0])
+			await user.click(screen.getByRole('option', { name: /paused/i }))
+
+			expect(onUpdateStatus).toHaveBeenCalledWith('paused')
+			expect(onArchive).not.toHaveBeenCalled()
+		})
+
+		it('leaves non-bet types on the generic onUpdateStatus path', async () => {
+			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+			const onArchive = vi.fn()
+			const onUpdateStatus = vi.fn()
+			// A task in a workspace whose enum still happens to include
+			// `archived` should fall through to the generic status route — archive
+			// isn't a supported action on non-bet types in this ship.
+			const object = buildObjectResponse({ type: 'task', status: 'todo' })
+
+			render(
+				<ObjectDocumentView
+					{...baseProps}
+					object={object}
+					statuses={['todo', 'archived']}
+					onArchive={onArchive}
+					onUpdateStatus={onUpdateStatus}
+				/>,
+			)
+
+			const triggers = screen.getAllByRole('combobox')
+			await user.click(triggers[0])
+			await user.click(screen.getByRole('option', { name: /archived/i }))
+
+			expect(onUpdateStatus).toHaveBeenCalledWith('archived')
+			expect(onArchive).not.toHaveBeenCalled()
 		})
 	})
 })

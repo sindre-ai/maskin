@@ -99,6 +99,8 @@
 	--color-status-scored-text: var(--st-scored-text);
 	--color-status-parked-bg: var(--st-parked-bg);
 	--color-status-parked-text: var(--st-parked-text);
+	--color-status-archived-bg: var(--st-archived-bg);
+	--color-status-archived-text: var(--st-archived-text);
 	--color-status-holding-bg: var(--st-holding-bg);
 	--color-status-holding-text: var(--st-holding-text);
 	--color-status-at_risk-bg: var(--st-at_risk-bg);
@@ -206,6 +208,8 @@
 	--st-scored-text: #86198f;
 	--st-parked-bg: #f5f5f4;
 	--st-parked-text: #57534e;
+	--st-archived-bg: #e7e5e4;
+	--st-archived-text: #57534e;
 	--st-holding-bg: #f4f4f5;
 	--st-holding-text: #52525b;
 	--st-at_risk-bg: #fef3c7;
@@ -301,6 +305,8 @@
 	--st-scored-text: #e879f9;
 	--st-parked-bg: #292524;
 	--st-parked-text: #a8a29e;
+	--st-archived-bg: #292524;
+	--st-archived-text: #a8a29e;
 	--st-holding-bg: #27272a;
 	--st-holding-text: #a1a1aa;
 	--st-at_risk-bg: #422006;

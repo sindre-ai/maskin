@@ -148,7 +148,21 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 		{
 			accessorKey: 'status',
 			header: sortableHeader('Status', 'status'),
-			cell: ({ row }) => <StatusBadge status={row.getValue('status')} />,
+			cell: ({ row }) => {
+				const status = row.getValue('status') as string
+				const priorRaw = row.original.metadata?.previous_status
+				const priorStatus = typeof priorRaw === 'string' ? priorRaw : null
+				return (
+					<div className="flex items-center gap-1.5 min-w-0">
+						<StatusBadge status={status} />
+						{status === 'archived' && priorStatus && (
+							<span className="truncate text-xs text-muted-foreground">
+								was {priorStatus.replace(/_/g, ' ')}
+							</span>
+						)}
+					</div>
+				)
+			},
 		},
 		{
 			accessorKey: 'type',

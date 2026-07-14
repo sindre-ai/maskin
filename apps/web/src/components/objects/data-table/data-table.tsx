@@ -443,11 +443,13 @@ export function DataTable({
 									)
 								}
 
+								const isArchivedRow = row.original.status === 'archived'
 								return (
 									<TableRow
 										key={row.id}
 										data-index={virtualItem.index}
 										data-drag-row={row.id}
+										data-archived={isArchivedRow ? '' : undefined}
 										ref={virtualizer.measureElement}
 										data-state={row.getIsSelected() && 'selected'}
 										className={cn(
@@ -458,6 +460,7 @@ export function DataTable({
 											'data-[drag-active-end=true]:before:left-0',
 											'data-[drag-active-end=true]:before:w-[3px]',
 											'data-[drag-active-end=true]:before:bg-primary',
+											isArchivedRow && 'is-archived opacity-[0.62] hover:opacity-90',
 										)}
 										onClick={() => handleRowClick(row.original.id)}
 									>

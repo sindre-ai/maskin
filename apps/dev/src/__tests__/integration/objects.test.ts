@@ -490,6 +490,124 @@ describe('Objects Integration', () => {
 		})
 	})
 
+	// Type-agnostic archive visibility. Default reads exclude `status = 'archived'`
+	// rows so archived work stays hidden until a caller opts in. Tests exercise
+	// both the list and search endpoints and cover both types that have the
+	// status (bet today) and types that don't (task, insight) — a hidden 'archived'
+	// task never should have existed, but if it did, the filter still hides it.
+	describe('include_archived filter', () => {
+		it('hides archived rows on list by default and reveals them when include_archived=true', async () => {
+			const app = createApp()
+			const live = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'active',
+			})
+			const archived = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'archived',
+			})
+
+			const defaultRes = await app.request(
+				jsonGet('/api/objects?type=bet', { 'x-workspace-id': workspaceId }),
+			)
+			expect(defaultRes.status).toBe(200)
+			const defaultBody = (await defaultRes.json()) as Array<{ id: string; status: string }>
+			expect(defaultBody.map((r) => r.id)).toEqual([live.id])
+
+			const optInRes = await app.request(
+				jsonGet('/api/objects?type=bet&include_archived=true', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(optInRes.status).toBe(200)
+			const optInBody = (await optInRes.json()) as Array<{ id: string; status: string }>
+			expect(optInBody.map((r) => r.id).sort()).toEqual([live.id, archived.id].sort())
+		})
+
+		it('hides archived rows on search by default and reveals them when include_archived=true', async () => {
+			const app = createApp()
+			const live = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'checkout latency bet',
+				status: 'active',
+			})
+			const archived = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'checkout latency bet',
+				status: 'archived',
+			})
+
+			const defaultRes = await app.request(
+				jsonGet('/api/objects/search?q=checkout', { 'x-workspace-id': workspaceId }),
+			)
+			expect(defaultRes.status).toBe(200)
+			const defaultBody = (await defaultRes.json()) as Array<{ id: string }>
+			expect(defaultBody.map((r) => r.id)).toEqual([live.id])
+
+			const optInRes = await app.request(
+				jsonGet('/api/objects/search?q=checkout&include_archived=true', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(optInRes.status).toBe(200)
+			const optInBody = (await optInRes.json()) as Array<{ id: string }>
+			expect(optInBody.map((r) => r.id).sort()).toEqual([live.id, archived.id].sort())
+		})
+
+		it('applies the archive gate to any type — hidden archived tasks stay hidden without opt-in', async () => {
+			const app = createApp()
+			const liveTask = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'archived',
+			})
+
+			const res = await app.request(
+				jsonGet('/api/objects?type=task', { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string; status: string }>
+			expect(body.map((r) => r.id)).toEqual([liveTask.id])
+		})
+
+		it('hides archived rows on the board endpoint by default and reveals them on opt-in', async () => {
+			const app = createApp()
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'active',
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'archived',
+			})
+
+			const defaultRes = await app.request(
+				jsonGet('/api/objects/board?type=bet', { 'x-workspace-id': workspaceId }),
+			)
+			expect(defaultRes.status).toBe(200)
+			const defaultBody = (await defaultRes.json()) as {
+				columns: Array<{ value: string; total: number }>
+			}
+			const defaultArchived = defaultBody.columns.find((col) => col.value === 'archived')
+			expect(defaultArchived?.total ?? 0).toBe(0)
+
+			const optInRes = await app.request(
+				jsonGet('/api/objects/board?type=bet&include_archived=true', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(optInRes.status).toBe(200)
+			const optInBody = (await optInRes.json()) as {
+				columns: Array<{ value: string; total: number }>
+			}
+			const optInArchived = optInBody.columns.find((col) => col.value === 'archived')
+			expect(optInArchived?.total).toBe(1)
+		})
+	})
+
 	describe('GET /api/objects/board', () => {
 		it('returns full column totals with paged objects per column', async () => {
 			const app = createApp()
