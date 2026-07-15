@@ -42,7 +42,7 @@ Layer-3 index nodes carry a superset of the article-layer fields, with two diffe
 | `type` | `metadata.doc_type` | literal `"index"` | required | Marks a Layer-3 index. T5's router reads this: rows with `doc_type == "index"` are routing targets (read first); rows with any other `doc_type` value are content targets (read on demand). New enum value in v1. |
 | `summary` | `metadata.summary` | string, ≤500 chars | required | One paragraph naming the domain the index covers, at the resolution the router uses to decide whether to enter this index. Same self-contained rule as the article layer. |
 | `tags` | `metadata.tags` | string[] | required | Retrieval tokens. At minimum one `topic:*` that matches (or spans) the domain named in `covers`. Conventional to also carry `index:<kind>` (e.g. `index:operational`) for humans skim-reading. |
-| `covers` | `metadata.covers` | object | required | The selection rule that defines membership. Two supported forms: `{tag: "topic:xxx", doc_type: [...]}` (filter — all v1 articles matching the tag and optional doc_type list) or `{ids: [uuid, ...]}` (explicit — a fixed list of articles). New in v1. |
+| `covers` | `metadata.covers` | object | required | The tag filter that defines membership. Shape: `{tag: "topic:xxx", doc_type: [...]}` — all v1 articles whose `tags` include the given `topic:*` (and, if `doc_type` is present, whose `metadata.doc_type` is in the list) are members. Router materialises the catalog by joining this filter against `derived_from` edges from the index; lint fails when the two diverge. Only the tag-filter shape is in v1 — an explicit-ids form (`{ids: [...]}`) was considered and dropped; see design decisions. New in v1. |
 | `source_edges` | `relationships` | edge[] | required, non-empty | One `derived_from` edge from the index to each catalogued article. The edges are the source of truth for membership; `covers` is the human-readable rule the lint reconciles against. |
 | `confidence` | `metadata.confidence` | enum | required | Same enum as the article layer. Usually `high` for a curated index. |
 | `updated` | `metadata.last_validated_at` | date (ISO 8601) | required | The date the index was last reconciled with its catalogued articles. |
@@ -86,6 +86,12 @@ The format layer stays on the metadata surface: no new `object.type` values, no 
 
 - *Considered:* inline `entries: [{id, summary, tags}]` array in the index's frontmatter. **Rejected:** violates the "every reference is edged" compression rule; the entries drift from the source articles' `summary` field on every article edit.
 - *Chosen:* index has `covers` (the membership rule, human-readable and machine-executable) plus a `derived_from` edge to each catalogued article. The router materialises the catalog at read time by joining edges → target articles' `summary`. Lint verifies edges match `covers`.
+
+**`covers` shape — tag filter only for v1 — decided by Magnus 2026-07-15.**
+
+- *Considered:* also allowing an explicit `{ids: [uuid, ...]}` form for hand-curated indexes.
+- *Rejected for v1:* the filter form is closer to how T5's router already thinks (tag + `doc_type` match), cheaper for lint (verify tag/`doc_type` inclusion vs. reconcile an ID list against the edge set), and lets an index auto-grow with new tagged articles without a manual edit. No hand-curated use case is on the pilot slice.
+- *Chosen:* the single supported shape is `{tag: "topic:xxx", doc_type: [...]}`. The explicit-ids form is out of v1 and will only be added if a genuinely curated-index use case appears later.
 
 ## The compression test
 
@@ -195,6 +201,8 @@ updated: 2026-07-15
 scope: workspace
 format_version: "v1"
 ```
+
+The index's `covers` is the tag-filter shape: any v1 article carrying `topic:agent-pipeline` in its `tags` and having `doc_type` in {`operational`, `playbook`} is a member. Lint fails if the edge set and the filter diverge (an article matches `covers` but has no `derived_from` edge from the index, or an edge points to a target that doesn't match `covers`).
 
 ### The graph, and how the router reads it
 
