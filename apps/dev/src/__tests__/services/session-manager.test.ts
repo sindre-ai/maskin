@@ -2465,7 +2465,7 @@ describe('SessionManager', () => {
 	})
 
 	describe('streamContainerLogs() — reconnect on transient stream drop', () => {
-		it('reattaches with tail:0 after a dropped log stream and does not surface the "interrupted" sentinel', async () => {
+		it('falls back to tail:0 when no chunk was ever ingested, writes a drop marker, and does not surface the "interrupted" sentinel', async () => {
 			// Regression guard for the false-positive auto-pause bug: when
 			// dockerode's logs(follow:true) connection drops mid-session,
 			// `session_logs` stops growing and the 10-min idle watchdog
@@ -2484,8 +2484,8 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(sessionId, { tempDir: '/tmp/test' })
 
-			// First connect throws (simulating a socket drop), second connect
-			// yields one chunk and ends naturally.
+			// First connect throws before any chunk arrives (simulating a socket
+			// drop), second connect yields one chunk and ends naturally.
 			mockContainerManager.logs.mockImplementationOnce(() => ({
 				[Symbol.asyncIterator]() {
 					return { next: () => Promise.reject(new Error('socket closed mid-stream')) }
@@ -2521,8 +2521,9 @@ describe('SessionManager', () => {
 				vi.useRealTimers()
 			}
 
-			// Two calls: first replays history (`{}`), second reattaches from
-			// "now" (`tail: 0`) to avoid duplicating already-persisted rows.
+			// Two calls: first replays history (`{}`); second reattaches — since no
+			// chunk was ever ingested there's no timestamp to backfill from, so it
+			// falls back to `tail: 0` rather than duplicating everything.
 			expect(mockContainerManager.logs).toHaveBeenCalledTimes(2)
 			expect(mockContainerManager.logs).toHaveBeenNthCalledWith(1, 'container-reconnect', true, {})
 			expect(mockContainerManager.logs).toHaveBeenNthCalledWith(2, 'container-reconnect', true, {
@@ -2540,6 +2541,16 @@ describe('SessionManager', () => {
 			)
 			expect(interrupted).toBeUndefined()
 
+			// A drop is now visible even when the reconnect itself succeeds.
+			const dropped = calls.inserts.find(
+				(i): i is { stream: string; content: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { stream?: string }).stream === 'system' &&
+					String((i as { content?: string }).content ?? '').includes('Log stream dropped'),
+			)
+			expect(dropped).toBeDefined()
+
 			// The recovered chunk from the second attempt is persisted, which
 			// is what keeps the idle watchdog's `lastLog` heuristic honest.
 			const recovered = calls.inserts.find(
@@ -2550,6 +2561,71 @@ describe('SessionManager', () => {
 					(i as { content?: string }).content === 'recovered-chunk',
 			)
 			expect(recovered).toBeDefined()
+		})
+
+		it('backfills via sinceUnixSec from the last ingested chunk when a drop happens mid-stream', async () => {
+			const sessionId = 'sess-reconnect-backfill'
+			const FIXED_TIME_MS = 1_700_000_000_000
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; logsDrained?: Promise<void> }>
+				}
+			).activeSessions.set(sessionId, { tempDir: '/tmp/test' })
+
+			// First connect delivers a chunk, then the connection drops. Second
+			// connect recovers.
+			mockContainerManager.logs.mockImplementationOnce(() => ({
+				async *[Symbol.asyncIterator]() {
+					yield { stream: 'stdout' as const, data: 'first-chunk' }
+					throw new Error('socket closed mid-stream')
+				},
+			}))
+			mockContainerManager.logs.mockImplementationOnce(() => ({
+				async *[Symbol.asyncIterator]() {
+					yield { stream: 'stdout' as const, data: 'recovered-chunk' }
+				},
+			}))
+			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
+
+			vi.useFakeTimers()
+			vi.setSystemTime(FIXED_TIME_MS)
+			try {
+				;(
+					manager as unknown as {
+						streamContainerLogs(sessionId: string, containerId: string): void
+					}
+				).streamContainerLogs(sessionId, 'container-backfill')
+
+				const drained = (
+					manager as unknown as {
+						activeSessions: Map<string, { logsDrained?: Promise<void> }>
+					}
+				).activeSessions.get(sessionId)?.logsDrained
+				expect(drained).toBeDefined()
+
+				await vi.runAllTimersAsync()
+				await drained
+			} finally {
+				vi.useRealTimers()
+			}
+
+			// Second call backfills from the last successfully-ingested chunk's
+			// timestamp instead of jumping to "now".
+			expect(mockContainerManager.logs).toHaveBeenCalledTimes(2)
+			expect(mockContainerManager.logs).toHaveBeenNthCalledWith(1, 'container-backfill', true, {})
+			expect(mockContainerManager.logs).toHaveBeenNthCalledWith(2, 'container-backfill', true, {
+				sinceUnixSec: Math.floor(FIXED_TIME_MS / 1000),
+			})
+
+			const dropped = calls.inserts.find(
+				(i): i is { stream: string; content: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { stream?: string }).stream === 'system' &&
+					String((i as { content?: string }).content ?? '').includes('Log stream dropped'),
+			)
+			expect(dropped).toBeDefined()
+			expect(dropped?.content).toContain(new Date(FIXED_TIME_MS).toISOString())
 		})
 	})
 
