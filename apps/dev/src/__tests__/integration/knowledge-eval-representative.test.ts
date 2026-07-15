@@ -176,7 +176,7 @@ describe('knowledge-eval-representative recorded baseline', () => {
 
 			const artifactPath = join(__dirname, 'knowledge-eval-representative-baseline.json')
 			mkdirSync(dirname(artifactPath), { recursive: true })
-			writeFileSync(artifactPath, `${JSON.stringify(result, null, 2)}\n`, 'utf-8')
+			writeFileSync(artifactPath, `${JSON.stringify(result, null, '\t')}\n`, 'utf-8')
 		},
 		600_000,
 	)
