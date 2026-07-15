@@ -1,6 +1,6 @@
 /**
  * Router regime against the frozen 20-pair knowledge eval — the ship-metric
- * measurement for AC #4.
+ * measurement for AC #4 of the parent bet.
  *
  * Imports T4's shared fixture and harness (single-writer rule: T4 owns
  * `knowledge-eval-fixture.ts`, `knowledge-eval-harness.ts`, and
@@ -8,18 +8,21 @@
  *
  * T4's fixture predates the v1 spec — its rows only carry `fixtureId`, `title`,
  * `content`. The router filters on `metadata.format_version = "v1"`, so we
- * synthesise a v1-shaped metadata block at import time (`format_version: 'v1'`,
- * a summary derived from the content head, doc_type/tags left unset until T2's
- * backfill lands). The adapter is scoped to this test — nothing writes back to
- * T4's fixture.
+ * synthesise a v1-shaped metadata block at import time (`format_version: 'v1'`
+ * plus a summary derived from the content head). The adapter is scoped to
+ * this test — nothing writes back to T4's fixture.
  *
  * The synthesis carries the router past the v1 filter and gives title/summary
  * signal, but it cannot fabricate `tags` — the highest-weight router signal
  * (weight 3, vs title 1.5 / summary 1). On T4's tagless fixture the router
- * therefore floors at 18/20 top-K recall on natural-language questions like
- * "how do we cap which internal tools the IDE-embedded agent is allowed to
- * call?" — no query token surfaces in the article title. Once T2's v1
- * backfill adds real tags to the corpus, that gap closes.
+ * therefore floors at 18/20 top-K recall on natural-language questions where
+ * no query token surfaces in the article title. Backfilling real tags across
+ * the 20 corpus rows was T2's job; T2 was discarded during the bet re-plan on
+ * 2026-07-14 (the re-plan replaced the horizontal Stage-1 spine with the
+ * vertical T7–T10 slice), so that 1-pair gap now stands as an accepted
+ * limitation of this 20-pair fixture. The full parity check moves to T10,
+ * which runs the router against T9's pilot corpus in T8's harness with real
+ * frontmatter authored on the v1 spec.
  *
  * Two DB-independent checks run without a network call:
  *   1. Mechanism: v1 filter applies, top-K contains the gold article on ≥18/20
@@ -33,10 +36,12 @@
  * baseline uses. When it runs it calls the real model on all 20 pairs, sums
  * the real `input_tokens` (via T4's `callAnthropicWithUsage`), writes a JSON
  * artifact, and strict-asserts `tokensPerCorrectAnswer ≤ 0.7 * metric_baseline`.
- * The strict correctness parity assertion (≥ baseline 17/20) is gated behind
- * `KNOWLEDGE_ROUTER_STRICT_CORRECTNESS=1` — off by default until T2 lands,
- * per the reshipped scope decision on this task. Recorded correctness is
- * always written to the artifact regardless.
+ * A separate strict correctness parity assertion (≥ baseline 17/20) is gated
+ * behind `KNOWLEDGE_ROUTER_STRICT_CORRECTNESS=1` — off by default. That gate
+ * exists for whoever later re-runs the harness on a fixture with real tags
+ * (either a hand-tagged fork or T10 against T8's fixture); on the current
+ * tagless T4 fixture it cannot pass and enabling it would false-fail the
+ * ship-metric run.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'

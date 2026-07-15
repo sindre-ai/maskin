@@ -19,8 +19,8 @@
 				"bet-timeline-hygiene-description-vs-comments"
 			],
 			"promptTokens": 550,
-			"completionTokens": 89,
-			"response": "According to the corpus, you should \"shape decision-pending comments so they stand out from routine status\" and use \"prose discipline (formatting, default-collapsed phases, OP-routed reply notifications, agent system-prompt guidance)\" to make the timeline clearer. The guidance emphasizes fixing noise through better formatting and notification routing rather than adding new structured UI elements like \"chips, session blocks, or sticky banners.\"",
+			"completionTokens": 83,
+			"response": "According to the corpus, you should \"shape decision-pending comments so they stand out from routine status\" and use \"prose discipline (formatting, default-collapsed phases, OP-routed reply notifications, agent system-prompt guidance)\" to make the timeline clearer. The guidance emphasizes fixing noise through better formatting and notification routing rather than adding new structured UI elements like chips or banners.",
 			"correct": false
 		},
 		{
@@ -175,8 +175,8 @@
 				"coarse-exit-signals-cascade"
 			],
 			"promptTokens": 537,
-			"completionTokens": 101,
-			"response": "According to the knowledge corpus, a newsroom agent should lean on **multi-source convergence** as a ranking signal. As stated in the conclusion: \"When an agent is triaging an incoming content stream, treat the number of independent sources reporting the same story within a time window as a first-class ranking signal.\" The reasoning notes that \"Editorial newsrooms have used source convergence as a credibility filter for decades,\" making this a proven traditional editorial practice that agents should adopt.",
+			"completionTokens": 114,
+			"response": "According to the knowledge corpus, a newsroom agent should lean on **multi-source convergence** as a ranking signal. The corpus states: \"When an agent is triaging an incoming content stream, treat the number of independent sources reporting the same story within a time window as a first-class ranking signal. N independent sources within window T means signal; a single source means noise until corroborated.\" This approach is grounded in traditional editorial practice, as \"Editorial newsrooms have used source convergence as a credibility filter for decades.\"",
 			"correct": true
 		},
 		{
