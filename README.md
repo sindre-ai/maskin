@@ -363,6 +363,10 @@ pnpm db:migrate
 pnpm db:seed
 ```
 
+### Running checks locally
+
+Run the surface-probe CI gate for a bet: `MASKIN_API_KEY=… MASKIN_WORKSPACE_ID=… pnpm bet-surface-probe-check --bet <bet-id>`
+
 ### Environment Variables
 
 | Variable | Required | Default | Description |
