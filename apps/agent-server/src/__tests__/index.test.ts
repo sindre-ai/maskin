@@ -1192,3 +1192,146 @@ describe('reconcileOnBoot', () => {
 		expect(calls.find((c) => c.args[0] === 'remove')).toBeUndefined()
 	})
 })
+
+describe('monitorSession — flushLogs retry and drop marker', () => {
+	// monitorSession isn't exported directly; reattach one via reconcileOnBoot
+	// (same pattern as the 'reattaches a monitor for a claimed sandbox' test
+	// above) to get a live sessionLogRouters push function, then drive its
+	// internal flushLogs through fake timers and a stubbed global fetch.
+	function makeAlwaysRunningRunner(sessionName: string) {
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			if (args[0] === 'list') {
+				return { stdout: JSON.stringify([{ name: sessionName, status: 'Running' }]), stderr: '' }
+			}
+			return { stdout: '', stderr: '' }
+		}
+		return run
+	}
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	it('retries a failed log flush and succeeds on a later attempt', async () => {
+		const sessionId = 'sess-flush-retry'
+		const run = makeAlwaysRunningRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		const logsFetch = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('network blip'))
+			.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+		vi.stubGlobal('fetch', logsFetch)
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters,
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			const push = sessionLogRouters.get(sessionId)
+			expect(push).toBeDefined()
+			push?.('hello world')
+
+			// First flush fires after LOG_FLUSH_INTERVAL_MS (2s) and fails; the
+			// retry fires after LOG_FLUSH_RETRY_DELAY_MS (2s) and succeeds.
+			await vi.advanceTimersByTimeAsync(2_000)
+			await vi.advanceTimersByTimeAsync(2_000)
+		} finally {
+			vi.useRealTimers()
+		}
+
+		expect(logsFetch).toHaveBeenCalledTimes(2)
+		const secondCall = logsFetch.mock.calls[1]
+		if (!secondCall) throw new Error('logsFetch was not called a second time')
+		const body = JSON.parse(secondCall[1].body as string) as {
+			logs: Array<{ stream: string; content: string }>
+		}
+		expect(body.logs).toEqual([{ stream: 'stdout', content: 'hello world' }])
+	})
+
+	it('drops a batch after exhausting retries and queues a marker for the next flush', async () => {
+		const sessionId = 'sess-flush-drop'
+		const run = makeAlwaysRunningRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		const logsFetch = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('network blip 1'))
+			.mockRejectedValueOnce(new Error('network blip 2'))
+			.mockRejectedValueOnce(new Error('network blip 3'))
+			.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+		vi.stubGlobal('fetch', logsFetch)
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters,
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			const push = sessionLogRouters.get(sessionId)
+			expect(push).toBeDefined()
+			push?.('first batch, will be dropped')
+
+			// LOG_FLUSH_RETRIES = 3: initial attempt + 2 retries, 2s apart, plus
+			// the initial 2s flush-interval wait before the first attempt.
+			await vi.advanceTimersByTimeAsync(2_000) // scheduled flush fires, attempt 1 fails
+			await vi.advanceTimersByTimeAsync(2_000) // attempt 2 fails
+			await vi.advanceTimersByTimeAsync(2_000) // attempt 3 fails, retries exhausted
+
+			expect(logsFetch).toHaveBeenCalledTimes(3)
+
+			// A later line arriving after the drop schedules the next flush, which
+			// should carry both the marker and the new line.
+			push?.('second batch, should succeed')
+			await vi.advanceTimersByTimeAsync(2_000)
+		} finally {
+			vi.useRealTimers()
+		}
+
+		expect(logsFetch).toHaveBeenCalledTimes(4)
+		const fourthCall = logsFetch.mock.calls[3]
+		if (!fourthCall) throw new Error('logsFetch was not called a fourth time')
+		const body = JSON.parse(fourthCall[1].body as string) as {
+			logs: Array<{ stream: string; content: string }>
+		}
+		expect(body.logs).toEqual([
+			{
+				stream: 'stdout',
+				content: '[system] 1 log lines failed to reach Maskin after 3 attempts and were dropped\n',
+			},
+			{ stream: 'stdout', content: 'second batch, should succeed' },
+		])
+	})
+})
