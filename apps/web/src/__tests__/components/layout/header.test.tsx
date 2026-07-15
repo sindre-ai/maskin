@@ -89,4 +89,12 @@ describe('Header', () => {
 		const trigger = screen.getByRole('button', { name: /toggle sidebar/i })
 		expect(trigger.className).toMatch(/\bmd:hidden\b/)
 	})
+
+	it('scales the header fade-out gradient with content padding (16px mobile, 32px md+)', () => {
+		const { container } = render(<Header />)
+		const header = container.querySelector('header')
+		expect(header).not.toBeNull()
+		expect(header?.className).toMatch(/\bafter:h-4\b/)
+		expect(header?.className).toMatch(/\bmd:after:h-8\b/)
+	})
 })
