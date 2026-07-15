@@ -183,12 +183,17 @@ function scoreArticle(article: KnowledgeArticle, terms: string[]): RouteHit {
 
 // Assembles a compact context string from the hits. Callers pass this to the model
 // in the router regime. Dump-into-context callers pass every article through the
-// same shape (via `assembleFullContext`) so the token comparison is apples-to-apples.
+// same shape (via `assembleV1DumpContext`) so the token comparison is apples-to-apples.
 export function assembleContext(articles: KnowledgeArticle[]): string {
 	return articles.map(renderArticle).join('\n\n---\n\n')
 }
 
-export function assembleFullContext(corpus: KnowledgeArticle[]): string {
+// Named `assembleV1DumpContext` — not `assembleFullContext` — so the caller sees
+// the v1 filter in the name. A non-v1 corpus (e.g. T4's fixture before T2's
+// backfill lands) returns an empty string, not the "full" corpus. Callers that
+// need to see everything regardless of frontmatter should use `assembleContext`
+// on the raw corpus.
+export function assembleV1DumpContext(corpus: KnowledgeArticle[]): string {
 	const v1 = corpus.filter((a) => a.metadata.format_version === 'v1')
 	return assembleContext(v1)
 }
