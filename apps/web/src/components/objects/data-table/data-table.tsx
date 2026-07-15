@@ -330,7 +330,7 @@ export function DataTable({
 										onSelect={(selected) => row.toggleSelected(selected)}
 										onClick={() => handleRowClick(row.original.id)}
 										betStatus={
-											row.original.type === 'bet'
+											row.original.type === 'bet' && meta?.showBetStatusIndicator !== false
 												? meta?.betStatuses?.get(row.original.id)
 												: undefined
 										}

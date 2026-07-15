@@ -414,5 +414,26 @@ describe('DataTable', () => {
 			})
 			expect(screen.getByLabelText('Status: waiting')).toBeInTheDocument()
 		})
+
+		it('hides the bet status indicator on a bet card when showBetStatusIndicator is false', () => {
+			const bet = buildObjectResponse({ id: 'bet-mobile', title: 'Bet Mobile', type: 'bet' })
+			const betStatuses = new Map([
+				[
+					'bet-mobile',
+					{ state: 'waiting_on_human' as const, pendingAction: null, decisionsSoFar: [] },
+				],
+			])
+			renderDataTable({
+				data: [bet],
+				meta: {
+					onSort: vi.fn(),
+					currentSort: 'createdAt',
+					currentOrder: 'desc',
+					betStatuses,
+					showBetStatusIndicator: false,
+				},
+			})
+			expect(screen.queryByLabelText('Status: waiting')).not.toBeInTheDocument()
+		})
 	})
 })
