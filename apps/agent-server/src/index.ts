@@ -182,24 +182,54 @@ async function monitorSession(
 	let logBuffer: Array<{ stream: 'stdout' | 'stderr'; content: string }> = []
 	let flushTimer: NodeJS.Timeout | null = null
 
+	const LOG_FLUSH_RETRIES = 3
+	const LOG_FLUSH_RETRY_DELAY_MS = 2_000
+
 	const flushLogs = async (): Promise<void> => {
 		if (!maskinBaseUrl || logBuffer.length === 0) {
 			logBuffer = []
 			return
 		}
 		const batch = logBuffer.splice(0)
-		try {
-			await fetch(`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/logs`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${agentServerSecret}`,
-				},
-				body: JSON.stringify({ logs: batch }),
-			})
-		} catch (err) {
-			logger.warn('failed to POST logs to Maskin', { sessionId, error: String(err) })
+		for (let attempt = 1; attempt <= LOG_FLUSH_RETRIES; attempt++) {
+			try {
+				const res = await fetch(
+					`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/logs`,
+					{
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+							Authorization: `Bearer ${agentServerSecret}`,
+						},
+						body: JSON.stringify({ logs: batch }),
+					},
+				)
+				if (!res.ok) {
+					throw new Error(`Maskin log ingest responded with ${res.status}`)
+				}
+				return
+			} catch (err) {
+				logger.warn('failed to POST logs to Maskin, will retry', {
+					sessionId,
+					attempt,
+					maxAttempts: LOG_FLUSH_RETRIES,
+					error: String(err),
+				})
+				if (attempt < LOG_FLUSH_RETRIES) {
+					await sleep(LOG_FLUSH_RETRY_DELAY_MS)
+				}
+			}
 		}
+		// All retries exhausted — this batch is genuinely gone. Leave a visible
+		// marker for the next successful flush so the gap isn't silent.
+		logger.error('failed to POST logs to Maskin after all retries, batch dropped', {
+			sessionId,
+			droppedLines: batch.length,
+		})
+		logBuffer.push({
+			stream: 'stdout',
+			content: `[system] ${batch.length} log lines failed to reach Maskin after ${LOG_FLUSH_RETRIES} attempts and were dropped\n`,
+		})
 	}
 
 	const scheduleFlush = (): void => {

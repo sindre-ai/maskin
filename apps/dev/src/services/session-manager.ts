@@ -1781,18 +1781,26 @@ export class SessionManager extends EventEmitter {
 	private streamContainerLogs(sessionId: string, containerId: string) {
 		const drained = (async () => {
 			// First connect replays history (`tail: 'all'`); reconnects after a
-			// transient drop pick up from "now" (`tail: 0`) so we don't duplicate
-			// every prior log row. A few seconds of missed output is acceptable —
-			// the goal is just to keep the stream alive so the idle watchdog
-			// doesn't mistake stream silence for agent inactivity.
+			// transient drop backfill from the timestamp of the last chunk we
+			// actually ingested (`since`) instead of jumping to "now", so a
+			// dropped connection doesn't silently lose whatever was emitted
+			// during the gap. `since` has 1-second resolution, so a reconnect
+			// can re-deliver up to ~1s of already-persisted content — accepted
+			// as a minor duplicate over losing the gap outright.
 			let attempt = 0
 			let firstConnect = true
+			let lastChunkAt: number | undefined
 			while (true) {
 				try {
-					const logOpts = firstConnect ? {} : { tail: 0 as const }
+					const logOpts = firstConnect
+						? {}
+						: lastChunkAt
+							? { sinceUnixSec: Math.floor(lastChunkAt / 1000) }
+							: { tail: 0 as const }
 					firstConnect = false
 					for await (const chunk of this.containers.logs(containerId, true, logOpts)) {
 						attempt = 0
+						lastChunkAt = Date.now()
 						if (chunk.stream === 'stdout') {
 							await this.emitGithubCauseTagIfAny(sessionId, chunk.data)
 						}
@@ -1841,6 +1849,22 @@ export class SessionManager extends EventEmitter {
 					if (!(await this.isContainerAlive(containerId))) {
 						logger.info('Log stream ended; container no longer running', { sessionId })
 						return
+					}
+
+					if (attempt === 1) {
+						// Mark the start of a drop incident (once, not on every retry
+						// within it) so a gap is visible even if the reconnect below
+						// succeeds and the exhaustion marker never fires.
+						const resumePoint = lastChunkAt ? new Date(lastChunkAt).toISOString() : 'stream start'
+						await this.insertSystemLog(
+							sessionId,
+							`Log stream dropped — reconnecting (resuming from ${resumePoint})`,
+						).catch((logErr) =>
+							logger.error('Failed to write log-stream-dropped system log', {
+								sessionId,
+								error: String(logErr),
+							}),
+						)
 					}
 
 					if (attempt >= SessionManager.LOG_STREAM_MAX_RECONNECTS) {
