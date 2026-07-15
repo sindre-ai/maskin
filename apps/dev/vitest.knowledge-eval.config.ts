@@ -7,7 +7,10 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
 	test: {
 		globals: true,
-		include: ['src/__tests__/integration/knowledge-eval.test.ts'],
-		testTimeout: 120_000,
+		include: [
+			'src/__tests__/integration/knowledge-eval.test.ts',
+			'src/__tests__/integration/knowledge-eval-representative.test.ts',
+		],
+		testTimeout: 600_000,
 	},
 })
