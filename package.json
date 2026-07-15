@@ -16,7 +16,8 @@
 		"db:generate": "turbo db:generate",
 		"db:migrate": "turbo db:migrate",
 		"db:seed": "turbo db:seed",
-		"posthog:bulk-edit-commit-ios": "dotenv -e .env -- tsx scripts/posthog/bulk-edit-commit-ios.ts"
+		"posthog:bulk-edit-commit-ios": "dotenv -e .env -- tsx scripts/posthog/bulk-edit-commit-ios.ts",
+		"bet-surface-probe-check": "tsx scripts/bet-surface-probe-check.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.0",
