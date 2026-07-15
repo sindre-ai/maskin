@@ -326,6 +326,46 @@ describe('POST /sessions validation', () => {
 		})
 		expect(res.status).toBe(400)
 	})
+
+	it('rejects an out-of-range previewGuestPorts entry with 400', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-1',
+				image: 'alpine:3.20',
+				env: {},
+				previewGuestPorts: [70000],
+			}),
+		})
+		expect(res.status).toBe(400)
+	})
+
+	it('rejects a non-integer previewGuestPorts entry with 400', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-1',
+				image: 'alpine:3.20',
+				env: {},
+				previewGuestPorts: [5173.5],
+			}),
+		})
+		expect(res.status).toBe(400)
+	})
 })
 
 describe('POST /sessions browserRequired wiring', () => {
@@ -399,6 +439,93 @@ describe('POST /sessions browserRequired wiring', () => {
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
 		expect(envFlags).toContain('BROWSER_CDP_URL=http://10.0.1.1:39222')
+	})
+
+	it('publishes previewGuestPorts on the session VM, grants the sidecar allow@private, and returns preview_url', async () => {
+		const { run, cdpPollReady, calls } = makeSidecarAwareRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: async () => 39222,
+				cdpPollReady,
+			},
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-preview',
+				image: 'maskin/agent-base:latest',
+				env: {},
+				browserRequired: true,
+				previewGuestPorts: [5173],
+			}),
+		})
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { preview_url?: string }
+		expect(body.preview_url).toBe('http://10.0.1.1:39222')
+
+		const creates = calls.filter((c) => c.args[0] === 'create')
+		const sidecarCreate = creates.find((c) => c.args.includes('anko-browser-sess-preview'))
+		const sessionCreate = creates.find((c) => c.args.includes('sess-preview'))
+		expect(sidecarCreate).toBeDefined()
+		expect(sessionCreate).toBeDefined()
+
+		// Sidecar needs a route back into the bridge to reach the session's published port.
+		expect(sidecarCreate?.args).toContain('allow@private')
+
+		// Session VM publishes its preview port on the bridge gateway.
+		const pFlags = sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-p') ?? []
+		expect(pFlags).toContain('10.0.1.1:39222:5173')
+	})
+
+	it('does not grant the sidecar allow@private or return preview_url when no previewGuestPorts are given', async () => {
+		const { run, cdpPollReady, calls } = makeSidecarAwareRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: async () => 39222,
+				cdpPollReady,
+			},
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-noprev',
+				image: 'maskin/agent-base:latest',
+				env: {},
+				browserRequired: true,
+			}),
+		})
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { preview_url?: string }
+		expect(body.preview_url).toBeUndefined()
+
+		const creates = calls.filter((c) => c.args[0] === 'create')
+		const sidecarCreate = creates.find((c) => c.args.includes('anko-browser-sess-noprev'))
+		expect(sidecarCreate).toBeDefined()
+		expect(sidecarCreate?.args).not.toContain('allow@private')
 	})
 
 	it('provisions no sidecar, injects no BROWSER_CDP_URL, and omits allow@private when browserRequired is absent', async () => {

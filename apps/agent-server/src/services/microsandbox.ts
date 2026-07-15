@@ -98,6 +98,15 @@ const CREATE_TIMEOUT_MS = 60_000
 // libkrun-equivalent of an air-gap for tests.
 export type PullPolicy = 'always' | 'if-missing' | 'never'
 
+// A single `-p <bridgeGateway>:<hostPort>:<guestPort>` forward, publishing one
+// of the session's own app ports on the bridge-only gateway so a sibling VM
+// (the browser sidecar) can reach it — the same mechanism the sidecar already
+// uses to publish its own CDP port outward.
+export type PreviewPortMapping = {
+	guestPort: number
+	hostPort: number
+}
+
 export type SpawnSessionInput = {
 	sessionId: string
 	image: string
@@ -113,6 +122,15 @@ export type SpawnSessionInput = {
 	// a sibling sidecar VM (the browser sidecar) over the msb bridge. Off by
 	// default — only sessions that need browser access pay for it.
 	allowPrivateNet?: boolean
+	// App port(s) inside this session to publish on the msb bridge gateway, so
+	// the browser sidecar can reach a dev server running inside the session
+	// (e.g. `pnpm run dev`). Resolve via resolvePreviewPortMappings() before
+	// calling spawnSession so the host ports are known ahead of provisioning
+	// the sidecar's own allow@private grant.
+	previewPorts?: readonly PreviewPortMapping[]
+	// Bridge gateway address used for previewPorts forwarding. Defaults to the
+	// same DEFAULT_BRIDGE_GATEWAY the browser sidecar uses.
+	bridgeGateway?: string
 }
 
 export type SpawnSessionResult = {
@@ -199,6 +217,8 @@ export function buildMsbCreateArgs(input: {
 	pullPolicy?: PullPolicy
 	maxDuration?: string
 	allowPrivateNet?: boolean
+	previewPorts?: readonly PreviewPortMapping[]
+	bridgeGateway?: string
 }): string[] {
 	const args: string[] = [
 		'create',
@@ -225,6 +245,15 @@ export function buildMsbCreateArgs(input: {
 	]
 	if (input.allowPrivateNet) {
 		args.push('--net-rule', PRIVATE_NET_RULE)
+	}
+	// Publish the session's own app port(s) on the bridge-only gateway, mirroring
+	// provisionBrowserSidecar's CDP forwarding — lets the browser sidecar (which
+	// gets allow@private of its own) reach a dev server running inside this VM.
+	if (input.previewPorts && input.previewPorts.length > 0) {
+		const bridgeGateway = input.bridgeGateway ?? DEFAULT_BRIDGE_GATEWAY
+		for (const mapping of input.previewPorts) {
+			args.push('-p', `${bridgeGateway}:${mapping.hostPort}:${mapping.guestPort}`)
+		}
 	}
 	// Backstop only: a `create`d microVM is persistent and won't power off when its
 	// entrypoint exits, so without a cap a wedged/crashed session sits "running"
@@ -303,6 +332,8 @@ export async function spawnSession(
 		...(input.pullPolicy !== undefined && { pullPolicy: input.pullPolicy }),
 		...(input.maxDuration !== undefined && { maxDuration: input.maxDuration }),
 		...(input.allowPrivateNet !== undefined && { allowPrivateNet: input.allowPrivateNet }),
+		...(input.previewPorts !== undefined && { previewPorts: input.previewPorts }),
+		...(input.bridgeGateway !== undefined && { bridgeGateway: input.bridgeGateway }),
 	})
 
 	logger.info('msb create starting', { sessionId: input.sessionId, image: input.image })
@@ -504,6 +535,27 @@ function findFreeHostPort(host: string): Promise<number> {
 }
 
 /**
+ * Resolve one free bridge-only host port per requested guest port, for
+ * publishing a session's own app port(s) the same way the browser sidecar's
+ * CDP port is published (`-p <bridgeGateway>:<hostPort>:<guestPort>`). Call
+ * this before provisionBrowserSidecar/spawnSession so the sidecar's
+ * allow@private grant and the session's -p mappings are set up together.
+ */
+export async function resolvePreviewPortMappings(
+	guestPorts: readonly number[],
+	deps: MicrosandboxDeps,
+	bridgeGateway: string = DEFAULT_BRIDGE_GATEWAY,
+): Promise<PreviewPortMapping[]> {
+	const findPort = deps.findPort ?? findFreeHostPort
+	const mappings: PreviewPortMapping[] = []
+	for (const guestPort of guestPorts) {
+		const hostPort = await findPort(bridgeGateway)
+		mappings.push({ guestPort, hostPort })
+	}
+	return mappings
+}
+
+/**
  * Fire-and-forget `msb exec <name>` to start the browser sidecar entrypoint
  * (Xvfb + Chromium + socat). `msb create` boots the VM but does NOT execute
  * CMD/ENTRYPOINT — `msb exec` is required. Mirrors `launchSessionExec`.
@@ -581,7 +633,7 @@ export type BrowserSidecar = {
 export async function provisionBrowserSidecar(
 	prefix: string,
 	deps: MicrosandboxDeps,
-	options: { image?: string; bridgeGateway?: string } = {},
+	options: { image?: string; bridgeGateway?: string; allowPrivateNet?: boolean } = {},
 ): Promise<BrowserSidecar | null> {
 	const name = `anko-browser-${prefix}`
 	assertValidSessionId(name)
@@ -624,8 +676,15 @@ export async function provisionBrowserSidecar(
 		DNS_UDP_RULE,
 		'--net-rule',
 		DNS_TCP_RULE,
-		image,
 	]
+
+	// Lets the sidecar route back into the private bridge to reach a session's
+	// own published preview port(s) — the other half of the -p forward on the
+	// session's own msb create call (see buildMsbCreateArgs' previewPorts).
+	if (options.allowPrivateNet) {
+		createArgs.push('--net-rule', PRIVATE_NET_RULE)
+	}
+	createArgs.push(image)
 
 	try {
 		await run(deps.msbBin, createArgs, { timeoutMs: BROWSER_SIDECAR_CREATE_TIMEOUT_MS })

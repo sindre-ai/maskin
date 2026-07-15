@@ -11,6 +11,7 @@ import {
 	listSandboxNames,
 	provisionBrowserSidecar,
 	removeSandbox,
+	resolvePreviewPortMappings,
 	sanitizeEnvForMicroVM,
 	spawnSession,
 	stopSandbox,
@@ -260,6 +261,79 @@ describe('buildMsbCreateArgs', () => {
 		}
 		expect(netRules).toContain('allow@private')
 	})
+
+	it('omits -p preview forwarding when no previewPorts are given', () => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+		})
+		expect(args).not.toContain('-p')
+	})
+
+	it('publishes each previewPorts mapping as -p <bridgeGateway>:<hostPort>:<guestPort>', () => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+			previewPorts: [
+				{ guestPort: 5173, hostPort: 39500 },
+				{ guestPort: 3000, hostPort: 39501 },
+			],
+		})
+		const pFlags = args.filter((_a, i) => args[i - 1] === '-p')
+		expect(pFlags).toContain('10.0.1.1:39500:5173')
+		expect(pFlags).toContain('10.0.1.1:39501:3000')
+	})
+
+	it('uses a configured bridgeGateway for previewPorts forwarding', () => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+			previewPorts: [{ guestPort: 5173, hostPort: 39500 }],
+			bridgeGateway: '192.168.100.1',
+		})
+		const pFlags = args.filter((_a, i) => args[i - 1] === '-p')
+		expect(pFlags).toContain('192.168.100.1:39500:5173')
+	})
+})
+
+describe('resolvePreviewPortMappings', () => {
+	it('resolves one free host port per guest port, defaulting to the bridge gateway', async () => {
+		let next = 39500
+		const findPort = async () => next++
+		const mappings = await resolvePreviewPortMappings([5173, 3000], {
+			msbBin: '/usr/local/bin/msb',
+			run: async () => ({ stdout: '', stderr: '' }),
+			findPort,
+		})
+		expect(mappings).toEqual([
+			{ guestPort: 5173, hostPort: 39500 },
+			{ guestPort: 3000, hostPort: 39501 },
+		])
+	})
+
+	it('returns an empty array for an empty guestPorts list', async () => {
+		const mappings = await resolvePreviewPortMappings([], {
+			msbBin: '/usr/local/bin/msb',
+			run: async () => ({ stdout: '', stderr: '' }),
+			findPort: async () => 39500,
+		})
+		expect(mappings).toEqual([])
+	})
 })
 
 describe('removeSandbox', () => {
@@ -355,6 +429,30 @@ describe('spawnSession (orchestration)', () => {
 			expect(result.connection).toEqual({ host: 'agent.example.com', port: 3001 })
 			expect(calls[0]?.args[0]).toBe('create')
 			expect(calls.at(-1)?.args[0]).toBe('list')
+		} finally {
+			await rm(dir, { recursive: true, force: true })
+		}
+	})
+
+	it('threads previewPorts and bridgeGateway into the create call', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-preview-'))
+		try {
+			const { run, calls } = makeRunner({
+				create: { stdout: '' },
+				list: { stdout: JSON.stringify([{ name: 'orch-preview', status: 'Running' }]) },
+			})
+			await spawnSession(
+				{
+					...baseInput,
+					sessionId: 'orch-preview',
+					sessionDir: dir,
+					previewPorts: [{ guestPort: 5173, hostPort: 39500 }],
+					bridgeGateway: '192.168.100.1',
+				},
+				{ msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+			)
+			const createCall = calls.find((c) => c.args[0] === 'create')
+			expect(createCall?.args).toContain('192.168.100.1:39500:5173')
 		} finally {
 			await rm(dir, { recursive: true, force: true })
 		}
@@ -765,6 +863,64 @@ describe('provisionBrowserSidecar', () => {
 		})
 		expect(sidecar).toBeNull()
 		expect(calls.map((c) => c[0])).toContain('remove')
+	})
+
+	it('omits allow@private by default (no route back into the session unless requested)', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-noprv0001', status: 'Running' }]),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+		await provisionBrowserSidecar('noprv0001', {
+			msbBin,
+			run,
+			sleep: async () => {},
+			now: () => 0,
+			findPort: async () => 39222,
+			cdpPollReady: async () => {},
+		})
+		const createCall = calls.find((c) => c[0] === 'create')
+		expect(createCall).not.toContain('allow@private')
+	})
+
+	it('adds --net-rule allow@private when allowPrivateNet is requested (reach the session preview port)', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-prv00001', status: 'Running' }]),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+		await provisionBrowserSidecar(
+			'prv00001',
+			{
+				msbBin,
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: async () => 39222,
+				cdpPollReady: async () => {},
+			},
+			{ allowPrivateNet: true },
+		)
+		const createCall = calls.find((c) => c[0] === 'create')
+		expect(createCall).toContain('allow@private')
 	})
 })
 

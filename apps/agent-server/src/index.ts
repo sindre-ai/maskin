@@ -13,6 +13,7 @@ import { InputQueue } from './services/input-queue'
 import {
 	type BrowserSidecar,
 	type MicrosandboxDeps,
+	type PreviewPortMapping,
 	type PullPolicy,
 	cleanupBrowserSidecar,
 	defaultRunner,
@@ -21,6 +22,7 @@ import {
 	provisionBrowserSidecar,
 	readMsbVersion,
 	removeSandbox,
+	resolvePreviewPortMappings,
 	spawnSession,
 	stopSandbox,
 	waitForCompletion,
@@ -53,6 +55,11 @@ const SESSION_REQUEST_SCHEMA = z.object({
 	// and inject `BROWSER_CDP_URL` so `@playwright/mcp` can attach. Absent or
 	// false → no sidecar, no env var, no MCP entry.
 	browserRequired: z.boolean().optional(),
+	// Guest port(s) inside the session to publish on the msb bridge gateway
+	// (e.g. a Vite dev server on 5173), so the browser sidecar's Playwright can
+	// reach them. Only takes effect when browserRequired is also true — the
+	// forwarding exists to let the sidecar view the session's own dev server.
+	previewGuestPorts: z.array(z.number().int().positive().max(65535)).optional(),
 	sourceSessionId: z.string().regex(SESSION_ID_RE).optional(),
 })
 
@@ -553,17 +560,40 @@ export function buildApp(deps: AppDeps): Hono {
 		// A failed sidecar must not take down the session — the agent falls back
 		// to an instrumentation-gap comment instead of fabricating a browser pass.
 		let browserSidecar: BrowserSidecar | null = null
+		let previewPortMappings: PreviewPortMapping[] = []
 		if (body.browserRequired === true) {
+			// Resolve preview port forwards before provisioning the sidecar so we
+			// know whether the sidecar needs an allow@private route back in.
+			if (body.previewGuestPorts && body.previewGuestPorts.length > 0) {
+				try {
+					previewPortMappings = await resolvePreviewPortMappings(
+						body.previewGuestPorts,
+						deps.msb,
+						deps.env.MSB_BRIDGE_GATEWAY,
+					)
+				} catch (err) {
+					logger.warn('preview port resolution failed — continuing without preview forwarding', {
+						sessionId: body.sessionId,
+						error: String(err),
+					})
+				}
+			}
 			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 16), deps.msb, {
 				image: deps.env.BROWSER_SIDECAR_IMAGE,
 				bridgeGateway: deps.env.MSB_BRIDGE_GATEWAY,
+				...(previewPortMappings.length > 0 && { allowPrivateNet: true }),
 			})
 			if (browserSidecar) {
 				sessionEnv.BROWSER_CDP_URL = browserSidecar.cdpUrl
+				const primaryPreviewMapping = previewPortMappings[0]
+				if (primaryPreviewMapping) {
+					sessionEnv.PREVIEW_URL = `http://${deps.env.MSB_BRIDGE_GATEWAY}:${primaryPreviewMapping.hostPort}`
+				}
 				logger.info('browser sidecar attached to session', {
 					sessionId: body.sessionId,
 					sidecarName: browserSidecar.name,
 					cdpUrl: browserSidecar.cdpUrl,
+					previewUrl: sessionEnv.PREVIEW_URL,
 				})
 			} else {
 				logger.warn('browser sidecar unavailable — session continues without browser', {
@@ -593,6 +623,10 @@ export function buildApp(deps: AppDeps): Hono {
 					// Only opened when a sidecar was provisioned — keeps the default
 					// session firewall posture tight for the common path.
 					...(browserSidecar !== null && { allowPrivateNet: true }),
+					...(previewPortMappings.length > 0 && {
+						previewPorts: previewPortMappings,
+						bridgeGateway: deps.env.MSB_BRIDGE_GATEWAY,
+					}),
 				},
 				deps.msb,
 			)
@@ -658,6 +692,7 @@ export function buildApp(deps: AppDeps): Hono {
 					warm_hit: warmHit,
 					env_overflow_spilled: result.envOverflowSpilled,
 					env_sanitized: result.envSanitized,
+					...(sessionEnv.PREVIEW_URL !== undefined && { preview_url: sessionEnv.PREVIEW_URL }),
 				},
 				201,
 			)
