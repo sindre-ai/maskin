@@ -1334,4 +1334,52 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 			{ stream: 'stdout', content: 'second batch, should succeed' },
 		])
 	})
+
+	it('retries and drops a batch when Maskin resolves with a non-ok status (no network error)', async () => {
+		const sessionId = 'sess-flush-http-error'
+		const run = makeAlwaysRunningRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		// A resolved 401 never rejects fetch() — it must still be treated as a
+		// failure (retried, then dropped with a marker), not silently accepted.
+		const logsFetch = vi.fn(async () => ({
+			ok: false,
+			status: 401,
+			json: async () => ({}),
+		}))
+		vi.stubGlobal('fetch', logsFetch)
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters,
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			const push = sessionLogRouters.get(sessionId)
+			expect(push).toBeDefined()
+			push?.('will be dropped after 401s')
+
+			await vi.advanceTimersByTimeAsync(2_000) // scheduled flush fires, attempt 1: 401
+			await vi.advanceTimersByTimeAsync(2_000) // attempt 2: 401
+			await vi.advanceTimersByTimeAsync(2_000) // attempt 3: 401, retries exhausted
+		} finally {
+			vi.useRealTimers()
+		}
+
+		expect(logsFetch).toHaveBeenCalledTimes(3)
+	})
 })
