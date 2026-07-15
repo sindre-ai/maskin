@@ -2566,7 +2566,6 @@ describe('SessionManager', () => {
 		it('backfills via sinceUnixSec from the last ingested chunk when a drop happens mid-stream', async () => {
 			const sessionId = 'sess-reconnect-backfill'
 			const FIXED_TIME_MS = 1_700_000_000_000
-
 			;(
 				manager as unknown as {
 					activeSessions: Map<string, { tempDir: string; logsDrained?: Promise<void> }>

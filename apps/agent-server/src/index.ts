@@ -186,14 +186,17 @@ async function monitorSession(
 		const batch = logBuffer.splice(0)
 		for (let attempt = 1; attempt <= LOG_FLUSH_RETRIES; attempt++) {
 			try {
-				const res = await fetch(`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/logs`, {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						Authorization: `Bearer ${agentServerSecret}`,
+				const res = await fetch(
+					`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/logs`,
+					{
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+							Authorization: `Bearer ${agentServerSecret}`,
+						},
+						body: JSON.stringify({ logs: batch }),
 					},
-					body: JSON.stringify({ logs: batch }),
-				})
+				)
 				if (!res.ok) {
 					throw new Error(`Maskin log ingest responded with ${res.status}`)
 				}

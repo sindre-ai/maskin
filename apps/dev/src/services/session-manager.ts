@@ -1855,9 +1855,7 @@ export class SessionManager extends EventEmitter {
 						// Mark the start of a drop incident (once, not on every retry
 						// within it) so a gap is visible even if the reconnect below
 						// succeeds and the exhaustion marker never fires.
-						const resumePoint = lastChunkAt
-							? new Date(lastChunkAt).toISOString()
-							: 'stream start'
+						const resumePoint = lastChunkAt ? new Date(lastChunkAt).toISOString() : 'stream start'
 						await this.insertSystemLog(
 							sessionId,
 							`Log stream dropped — reconnecting (resuming from ${resumePoint})`,
