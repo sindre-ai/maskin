@@ -6,12 +6,17 @@
  * Usage:
  *   ANTHROPIC_API_KEY=... tsx apps/dev/scripts/run-knowledge-eval-pilot.ts
  *
- * Emits two artifacts next to the fixture (T11 spec):
+ * Emits three artifacts next to the fixture. `knowledge-eval-pilot.json`
+ * is the semantic-primary reference that `bet.metadata.metric_current`
+ * reads. `-baseline.json` and `-router.json` are the exact-grader audit
+ * trail alongside it (same shape, both graders).
+ *   - `knowledge-eval-pilot.json` — dump + router paired, both graders.
  *   - `knowledge-eval-pilot-baseline.json` — dump-only regime
  *     (`retriever: null`), both graders. The baseline the router leg
  *     is scored against.
  *   - `knowledge-eval-pilot-router.json` — dump + router paired, both
- *     graders. The ship-metric verdict input.
+ *     graders. Same shape as the primary; produced from a separate
+ *     paired call so the audit trail is its own evidence.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -75,15 +80,21 @@ async function main() {
 	const baselinePath = join(artifactDir, 'knowledge-eval-pilot-baseline.json')
 	writeFileSync(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`, 'utf-8')
 
-	// Dump + router paired — the verdict artefact.
+	// Dump + router paired — the verdict artefact. Written to both
+	// `knowledge-eval-pilot.json` (semantic-primary reference for bet
+	// `metric_current`) and `knowledge-eval-pilot-router.json` (exact-
+	// grader audit trail alongside the baseline).
 	const paired = await runPairedEval(PILOT_PAIRS, PILOT_CORPUS, chat, {
 		seed: PILOT_SEED,
 		fixtureSourceCommit: PILOT_SNAPSHOT_AT,
 		retriever: createRouterRetriever(),
 		judge,
 	})
+	const primaryPath = join(artifactDir, 'knowledge-eval-pilot.json')
 	const pairedPath = join(artifactDir, 'knowledge-eval-pilot-router.json')
-	writeFileSync(pairedPath, `${JSON.stringify(paired, null, 2)}\n`, 'utf-8')
+	const pairedJson = `${JSON.stringify(paired, null, 2)}\n`
+	writeFileSync(primaryPath, pairedJson, 'utf-8')
+	writeFileSync(pairedPath, pairedJson, 'utf-8')
 
 	console.log('\n=== pilot dump-only baseline ===')
 	console.log(`model: ${baseline.model} · seed: ${baseline.seed}`)
@@ -96,7 +107,8 @@ async function main() {
 	console.log(`pairs: ${paired.numPairs}\n`)
 	logRegime('dump', paired.dump)
 	if (paired.router) logRegime('router', paired.router)
-	console.log(`artifact: ${pairedPath}`)
+	console.log(`artifacts: ${primaryPath}`)
+	console.log(`           ${pairedPath}`)
 }
 
 main().catch((err) => {
