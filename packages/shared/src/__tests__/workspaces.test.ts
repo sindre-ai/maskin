@@ -29,6 +29,7 @@ describe('workspaceSettingsSchema', () => {
 			'succeeded',
 			'failed',
 			'paused',
+			'archived',
 		])
 		expect(result.statuses.task).toEqual([
 			'todo',
@@ -38,7 +39,9 @@ describe('workspaceSettingsSchema', () => {
 			'done',
 			'discarded',
 		])
-		expect(result.field_definitions).toEqual({})
+		expect(result.field_definitions).toEqual({
+			bet: [{ name: 'archive_reason', type: 'text', required: false }],
+		})
 		expect(result.relationship_types).toEqual([
 			'informs',
 			'breaks_into',

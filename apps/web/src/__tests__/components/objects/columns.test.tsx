@@ -100,6 +100,37 @@ describe('getStaticColumns', () => {
 		expect(screen.getByText('active')).toBeInTheDocument()
 	})
 
+	it('renders "was <prior>" meta on the archived row when metadata.previous_status is set', () => {
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const data = [
+			buildObjectResponse({
+				status: 'archived',
+				metadata: { previous_status: 'succeeded' },
+			}),
+		]
+		render(<TestTable data={data} columns={columns} />)
+		expect(screen.getByText('was succeeded')).toBeInTheDocument()
+	})
+
+	it('omits the "was <prior>" meta when previous_status is missing', () => {
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const data = [buildObjectResponse({ status: 'archived', metadata: {} })]
+		render(<TestTable data={data} columns={columns} />)
+		expect(screen.queryByText(/^was /)).toBeNull()
+	})
+
+	it('does not render the "was <prior>" meta on non-archived rows', () => {
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const data = [
+			buildObjectResponse({
+				status: 'active',
+				metadata: { previous_status: 'succeeded' },
+			}),
+		]
+		render(<TestTable data={data} columns={columns} />)
+		expect(screen.queryByText('was succeeded')).toBeNull()
+	})
+
 	it('renders TypeBadge for type column', () => {
 		const columns = getStaticColumns({ workspaceId: 'ws-1' })
 		const data = [buildObjectResponse({ type: 'bet' })]
@@ -195,5 +226,36 @@ describe('getStaticColumns', () => {
 		expect(link.className).not.toMatch(/max-w-\[/)
 		expect(link.className).toMatch(/\btruncate\b/)
 		expect(link.className).toMatch(/\bmin-w-0\b/)
+	})
+
+	it('renders the bet status indicator in the Title cell when a bet has a status', () => {
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const data = [buildObjectResponse({ id: 'bet-1', type: 'bet', title: 'A bet' })]
+		const meta = {
+			onSort: vi.fn(),
+			currentSort: 'createdAt',
+			currentOrder: 'desc' as const,
+			betStatuses: new Map([
+				['bet-1', { state: 'stalled' as const, pendingAction: null, decisionsSoFar: [] }],
+			]),
+		}
+		render(<TestTable data={data} columns={columns} meta={meta} />)
+		expect(screen.getByLabelText('Status: stalled')).toBeInTheDocument()
+	})
+
+	it('hides the bet status indicator when meta.showBetStatusIndicator is false', () => {
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const data = [buildObjectResponse({ id: 'bet-1', type: 'bet', title: 'A bet' })]
+		const meta = {
+			onSort: vi.fn(),
+			currentSort: 'createdAt',
+			currentOrder: 'desc' as const,
+			betStatuses: new Map([
+				['bet-1', { state: 'stalled' as const, pendingAction: null, decisionsSoFar: [] }],
+			]),
+			showBetStatusIndicator: false,
+		}
+		render(<TestTable data={data} columns={columns} meta={meta} />)
+		expect(screen.queryByLabelText('Status: stalled')).not.toBeInTheDocument()
 	})
 })

@@ -17,9 +17,28 @@ export type ObjectType = z.infer<typeof objectTypeSchema>
  * Single source of truth for both apps/dev/src/routes/objects.ts (fan-out
  * gate) and apps/dev/src/routes/subscriptions.ts (unread-feed join) so the
  * two can't independently drift out of sync.
+ *
+ * `archived` is deliberately NOT in this list — archiving a bet is a silent
+ * move that must not surface as an unread-feed row or fan out a retro. If
+ * you add a new terminal status, add it here; do NOT add `archived` on the
+ * assumption that "terminal" and "in the bet enum" are synonymous.
  */
 export const TERMINAL_BET_STATUSES = ['succeeded', 'failed', 'paused'] as const
 export type TerminalBetStatus = (typeof TERMINAL_BET_STATUSES)[number]
+
+/**
+ * Loop statuses that warrant an unread-feed entry when transitioned into —
+ * the "your standing commitment needs attention" signal that mirrors the
+ * bet's terminal-status signal. `holding` is deliberately omitted: a Loop
+ * settling back into holding is quiet news, not a For You surface. Shared
+ * between the briefing composer (`apps/dev/src/services/workspace-briefing.ts`,
+ * where these Loops sort ahead of holding) and the unread-feed join
+ * (`apps/dev/src/routes/subscriptions.ts`, where a `status_changed` into
+ * these values enters the feed). Single source of truth so the two surfaces
+ * can't drift.
+ */
+export const LOOP_ATTENTION_STATUSES = ['at-risk', 'breached'] as const
+export type LoopAttentionStatus = (typeof LOOP_ATTENTION_STATUSES)[number]
 
 export const createObjectSchema = z.object({
 	id: z.string().uuid().optional(),
@@ -140,6 +159,24 @@ const cursorCreatedAtSchema = z
 		'Keyset seek: the `created_at` of the last row returned. The server pages strictly past `(cursor_created_at, cursor_id)` in `createdAt` order. Requires `cursor_id`.',
 	)
 
+/** Type-agnostic archive visibility flag. Default `false` — reads exclude rows
+ *  with `status = 'archived'` regardless of type so archived work stays hidden
+ *  from list/search/board unless a caller explicitly opts in. Applies to any
+ *  type whose enum carries `archived` (bet today; insight/task later).
+ *  Accepts native booleans (MCP JSON body) and query-string tokens `"true"` /
+ *  `"1"` (HTTP querystring). Anything else — including `"false"` and `"0"` —
+ *  resolves to `false` so archived rows stay hidden by default. */
+const includeArchivedSchema = z
+	.preprocess((v) => {
+		if (typeof v === 'boolean') return v
+		if (typeof v === 'string') return v === 'true' || v === '1'
+		return false
+	}, z.boolean())
+	.default(false)
+	.describe(
+		'When false (the default), rows with `status = "archived"` are excluded regardless of type. Set to `true` to include archived rows — used by surfaces that let a viewer opt in (e.g. the "Include archived" DisplayPanel toggle).',
+	)
+
 export const objectQuerySchema = z.object({
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
@@ -156,6 +193,7 @@ export const objectQuerySchema = z.object({
 	snapshot_at: snapshotAtSchema,
 	cursor_created_at: cursorCreatedAtSchema,
 	cursor_id: cursorIdSchema,
+	include_archived: includeArchivedSchema,
 })
 
 export const boardObjectQuerySchema = objectQuerySchema.extend({
@@ -192,6 +230,7 @@ export const searchObjectsSchema = z.object({
 	snapshot_at: snapshotAtSchema,
 	cursor_created_at: cursorCreatedAtSchema,
 	cursor_id: cursorIdSchema,
+	include_archived: includeArchivedSchema,
 })
 
 export const objectParamsSchema = z.object({

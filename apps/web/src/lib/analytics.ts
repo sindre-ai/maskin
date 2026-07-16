@@ -42,6 +42,7 @@ type TaxonomyEntityType =
 	| 'trigger'
 	| 'relationship'
 	| 'file'
+	| 'loop'
 
 type EventSource = 'web' | 'mcp' | 'trigger'
 
@@ -205,6 +206,19 @@ export function trackForyouSparseComposerSubmit(p: { items_count: number }): voi
 	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
 }
 
+// Sidebar legibility bet — click-through proxy for the qualitative ship metric.
+// `workspace_id` already rides via the PostHog super-property registered on
+// workspace mount; the explicit `workspaceId` here is a duplicate the Analyst
+// asked for so the events can be sliced without joining super-properties.
+
+export function trackSidebarWorkspaceSwitcherOpened(p: { workspaceId: string }): void {
+	trackEvent('sidebar.workspace_switcher.opened', { workspaceId: p.workspaceId })
+}
+
+export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): void {
+	trackEvent('sidebar.agent_activity.expanded', { workspaceId: p.workspaceId })
+}
+
 // Ship-metric events for the For You onboarding prompt bet — response rate =
 // count(north_star_prompt_response) / count(north_star_prompt_impression),
 // filtered to workspaces with no prior bets. `workspace_id` is passed on the
@@ -237,4 +251,21 @@ export function trackBulkEditCommit(p: {
 		platform_device: p.platform_device,
 		source: 'web',
 	})
+}
+
+// Ship-metric events for the Loops primitive bet. `loop_viewed` fires once per
+// Loop detail page mount; `loop_graduated` fires once per Loop created from the
+// web (paired with `bet_created` — same call site pattern in `useCreateObject`).
+// `source_bet_id` mirrors the Loop's `metadata.source_bet_id` so PostHog can
+// join Loop reads back to the bet that produced them.
+export function trackLoopViewed(
+	p: BaseProps & { entity_type: 'loop'; source_bet_id: string | null },
+): void {
+	trackEvent('loop_viewed', { ...fillBase(p), source_bet_id: p.source_bet_id })
+}
+
+export function trackLoopGraduated(
+	p: BaseProps & { entity_type: 'loop'; source_bet_id: string | null },
+): void {
+	trackEvent('loop_graduated', { ...fillBase(p), source_bet_id: p.source_bet_id })
 }

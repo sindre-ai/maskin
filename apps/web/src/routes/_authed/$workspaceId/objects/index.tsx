@@ -65,6 +65,16 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 				metadataFilters[key] = String(value)
 			}
 		}
+		// Include-archived is URL-only per T5. Present as `1` when on; omitted
+		// otherwise so the default excludes archived rows via T3's API gate.
+		// Deep-links, back/forward, and hard-refresh preserve the choice —
+		// per-view persistence intentionally does not touch localStorage.
+		const rawIncludeArchived = search.includeArchived
+		const includeArchived =
+			rawIncludeArchived === '1' ||
+			rawIncludeArchived === 1 ||
+			rawIncludeArchived === true ||
+			rawIncludeArchived === 'true'
 		return {
 			type: typeof search.type === 'string' ? search.type : undefined,
 			status: typeof search.status === 'string' ? search.status : undefined,
@@ -77,6 +87,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 			q: typeof search.q === 'string' ? search.q : undefined,
 			groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
 			ids: typeof search.ids === 'string' ? search.ids : undefined,
+			includeArchived: includeArchived ? (1 as const) : undefined,
 			...metadataFilters,
 		}
 	},
@@ -99,7 +110,13 @@ function ObjectsPage() {
 		q,
 		groupBy,
 		ids: idsFilter,
+		includeArchived: includeArchivedParam,
 	} = searchParams
+	const includeArchived = includeArchivedParam === 1
+	// Per the task scope, the "Show" section (with the Include archived toggle)
+	// is bet-only for now — surfaced when the bet tab is active. Non-bet tabs
+	// keep the existing panel shape until archive lands for their type.
+	const supportsIncludeArchived = typeFilter === 'bet'
 
 	const [importOpen, setImportOpen] = useState(false)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
@@ -207,8 +224,21 @@ function ObjectsPage() {
 		}
 		f.sort = sort
 		f.order = order
+		// Opt-in only: pass through when the "Include archived" toggle is on.
+		// Omitting the flag lets T3's route default (hide archived) apply.
+		if (supportsIncludeArchived && includeArchived) f.include_archived = 'true'
 		return f
-	}, [typeFilter, statusFilter, driverFilter, idsFilter, sort, order, metadataFilters])
+	}, [
+		typeFilter,
+		statusFilter,
+		driverFilter,
+		idsFilter,
+		sort,
+		order,
+		metadataFilters,
+		supportsIncludeArchived,
+		includeArchived,
+	])
 
 	// Infinite query — use search endpoint when q is present
 	const infiniteQuery = useInfiniteQuery({
@@ -293,7 +323,7 @@ function ObjectsPage() {
 
 	// Update search params helper — uses ref to stay stable across param changes
 	const updateSearch = useCallback(
-		(updates: Record<string, string | undefined>) => {
+		(updates: Record<string, string | number | undefined>) => {
 			const next: Record<string, unknown> = { ...searchParamsRef.current, ...updates }
 			for (const key of Object.keys(next)) {
 				if (next[key] === undefined || next[key] === '') delete next[key]
@@ -362,10 +392,21 @@ function ObjectsPage() {
 		return buildBetStatuses(bets, workspaceTasks, breaksIntoRels, new Date())
 	}, [hasVisibleBets, workspaceTasks, breaksIntoRels, visibleObjects])
 
+	// Bet status is rendered inside the Title cell (not as its own column), so
+	// its show/hide toggle lives in the same `columnVisibility` map as the real
+	// columns and is threaded into the cell via `showBetStatusIndicator`.
+	const showBetStatusIndicator = columnVisibility.betStatusIndicator !== false
+
 	// Table meta — sort state passed via meta to avoid re-creating columns on every sort change
 	const tableMeta: ObjectsTableMeta = useMemo(
-		() => ({ onSort: handleSort, currentSort: sort, currentOrder: order, betStatuses }),
-		[handleSort, sort, order, betStatuses],
+		() => ({
+			onSort: handleSort,
+			currentSort: sort,
+			currentOrder: order,
+			betStatuses,
+			showBetStatusIndicator,
+		}),
+		[handleSort, sort, order, betStatuses, showBetStatusIndicator],
 	)
 
 	// Columns — stable across sort changes since sort state is in meta
@@ -390,7 +431,7 @@ function ObjectsPage() {
 			createdAt: 'Created',
 			updatedAt: 'Updated',
 		}
-		return columns
+		const base = columns
 			.filter((col) => {
 				const id = 'accessorKey' in col ? String(col.accessorKey) : col.id
 				return id !== 'select'
@@ -403,7 +444,14 @@ function ObjectsPage() {
 					: (staticNames[id] ?? id)
 				return { id, label, canHide }
 			})
-	}, [columns])
+		// Synthetic entry: bet status lives inside the Title cell, so it has no
+		// column of its own. Only surface the toggle on tabs where bets can appear
+		// — hiding it on `insight` / `task` tabs where it would do nothing.
+		if (!typeFilter || typeFilter === 'bet') {
+			base.push({ id: 'betStatusIndicator', label: 'Bet status', canHide: true })
+		}
+		return base
+	}, [columns, typeFilter])
 
 	// Grouping state
 	const groupingState: GroupingState = groupBy ? [groupBy] : []
@@ -567,7 +615,12 @@ function ObjectsPage() {
 		activeDrivers.length === 1
 			? (actors?.find((a) => a.id === activeDrivers[0])?.name ?? '1 driver')
 			: `${activeDrivers.length} drivers`
-	const hasChipFilters = activeStatuses.length > 0 || activeDrivers.length > 0
+	// Include-archived is the third chip source. Bet-only per T5 — non-bet tabs
+	// never see the toggle or the chip. `supportsIncludeArchived` already gates
+	// the toggle in DisplayPanel; mirroring it here keeps the chip in lockstep
+	// so a leftover URL param on a non-bet tab doesn't render an orphan chip.
+	const archivedChipActive = supportsIncludeArchived && includeArchived
+	const hasChipFilters = activeStatuses.length > 0 || activeDrivers.length > 0 || archivedChipActive
 
 	const bulkOwnerOptions = useMemo(
 		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),
@@ -811,6 +864,7 @@ function ObjectsPage() {
 							q: undefined,
 							groupBy: undefined,
 							ids: undefined,
+							includeArchived: undefined,
 						},
 						replace: true,
 					})
@@ -847,6 +901,16 @@ function ObjectsPage() {
 				onOrderChange={(value) => updateSearch({ order: value })}
 				groupBy={groupBy}
 				onGroupByChange={(value) => updateSearch({ groupBy: value })}
+				includeArchived={supportsIncludeArchived ? includeArchived : undefined}
+				onIncludeArchivedChange={
+					supportsIncludeArchived
+						? // Must be the number 1, not the string '1' — the router's default
+							// search stringifier round-trips through JSON.parse/stringify, so a
+							// string that looks like valid JSON gets re-quoted (`includeArchived=%221%22`)
+							// while a number serializes as the bare digit.
+							(next) => updateSearch({ includeArchived: next ? 1 : undefined })
+						: undefined
+				}
 				view={effectiveView}
 				onViewChange={(next) => {
 					setView(next)
@@ -884,11 +948,24 @@ function ObjectsPage() {
 							onRemove={() => updateSearch({ driver: undefined })}
 						/>
 					)}
+					{archivedChipActive && (
+						<FilterChip
+							label="Include"
+							value="archived"
+							onRemove={() => updateSearch({ includeArchived: undefined })}
+						/>
+					)}
 					<Button
 						variant="ghost"
 						size="sm"
 						className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-						onClick={() => updateSearch({ status: undefined, driver: undefined })}
+						onClick={() =>
+							updateSearch({
+								status: undefined,
+								driver: undefined,
+								includeArchived: undefined,
+							})
+						}
 					>
 						Clear all
 					</Button>
