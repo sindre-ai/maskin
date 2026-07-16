@@ -55,6 +55,68 @@ export function gradeAnswer(response: string | null, expectedExcerpt: string): b
 	return normalise(response).includes(normalise(expectedExcerpt))
 }
 
+// Judge prompt: yes/no verdict on whether `response` contains the information
+// in `expectedExcerpt`. Answers with a paraphrase — the case that trips the
+// exact-substring grader — should score `yes`; answers that hit a different
+// topic, hedge without stating the information, or refuse should score `no`.
+// Temperature 0 keeps repeat calls stable.
+export const SEMANTIC_JUDGE_MODEL = 'claude-haiku-4-5-20251001'
+export const SEMANTIC_JUDGE_SYSTEM_PROMPT =
+	'You are grading whether a candidate answer contains the information in a gold excerpt from a knowledge article. Say "yes" if the answer states the same fact or rule as the gold excerpt — verbatim quoting, paraphrase, and equivalent restatement all count. Say "no" if the answer omits, contradicts, or hedges the information, or answers a different question. Reply with exactly two lines: line 1 is "yes" or "no" (lowercase, nothing else); line 2 is a one-sentence reason.'
+
+export function buildSemanticJudgeMessages(
+	response: string,
+	expectedExcerpt: string,
+): Array<{ role: 'system' | 'user'; content: string }> {
+	return [
+		{ role: 'system', content: SEMANTIC_JUDGE_SYSTEM_PROMPT },
+		{
+			role: 'user',
+			content: `Gold excerpt:\n${expectedExcerpt}\n\nCandidate answer:\n${response}`,
+		},
+	]
+}
+
+export type SemanticGrade = { correct: boolean; reason: string; verdict: string }
+
+// A judge takes the candidate answer + gold excerpt and returns yes/no +
+// reason. Callers pass an `AnthropicJudge` for the real-model path, or a
+// stub for tests. When the response is null (model refused / errored) we
+// short-circuit to `correct: false` without calling the judge — same
+// contract as `gradeAnswer`.
+export type SemanticJudge = (response: string, expectedExcerpt: string) => Promise<SemanticGrade>
+
+export async function gradeAnswerSemantic(
+	response: string | null,
+	expectedExcerpt: string,
+	judge: SemanticJudge,
+): Promise<SemanticGrade> {
+	if (!response) return { correct: false, reason: 'no response', verdict: 'no' }
+	return judge(response, expectedExcerpt)
+}
+
+// Wire the semantic judge to the same Anthropic path the reader uses so
+// the paired run reports both graders on a single invocation. Reads the
+// verdict off line 1; anything not starting with `yes` (after trim,
+// lowercased) is scored as `no`.
+export function createAnthropicJudge(
+	apiKey: string,
+	model: string = SEMANTIC_JUDGE_MODEL,
+): SemanticJudge {
+	return async (response, expectedExcerpt) => {
+		const messages = buildSemanticJudgeMessages(response, expectedExcerpt)
+		const { content } = await callAnthropicWithUsage(messages, model, apiKey)
+		const text = (content ?? '').trim()
+		const [firstLine = '', ...rest] = text.split('\n')
+		const verdict = firstLine.trim().toLowerCase()
+		return {
+			correct: verdict.startsWith('yes'),
+			reason: rest.join(' ').trim() || firstLine.trim(),
+			verdict,
+		}
+	}
+}
+
 export type PairResult = {
 	question: string
 	expectedFixtureId: string

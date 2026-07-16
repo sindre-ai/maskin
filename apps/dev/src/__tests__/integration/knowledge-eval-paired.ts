@@ -14,8 +14,11 @@
  *     recorded as `null`).
  *
  * Both regimes score:
- *   - `tokensPerCorrectAnswer` — total prompt input tokens divided by the
- *     number of pairs the grader marked correct. Same definition as T4.
+ *   - `tokensPerCorrectAnswerExact` / `tokensPerCorrectAnswerSemantic` —
+ *     total prompt input tokens divided by the number of pairs the
+ *     respective grader marked correct. Exact-substring is the T4 audit
+ *     trail; semantic-match is the primary (paraphrase-tolerant) metric.
+ *     Semantic values are `null` when the caller doesn't pass a judge.
  *   - `retrievalAccuracy` — fraction of pairs where the article set
  *     handed to the model contains the gold source. For the dump regime
  *     this is always 1.0 (the whole corpus is dumped, gold is always
@@ -32,7 +35,9 @@ import {
 	BASELINE_SYSTEM_PROMPT,
 	BASELINE_TEMPERATURE,
 	type ChatFn,
+	type SemanticJudge,
 	gradeAnswer,
+	gradeAnswerSemantic,
 } from './knowledge-eval-harness'
 import type { RepresentativeArticle, RepresentativePair } from './knowledge-eval-representative'
 
@@ -47,6 +52,11 @@ export type Retriever = (
 
 export type RegimeName = 'dump' | 'router'
 
+// Per-pair grading emits both graders side-by-side. `correctExact` keeps
+// the T4/T8 contract (exact substring, case/whitespace insensitive) as
+// the audit trail; `correctSemantic` is the primary metric — null when
+// no judge was supplied so callers can distinguish "not scored" from
+// "scored wrong".
 export type PairedPairResult = {
 	regime: RegimeName
 	question: string
@@ -55,17 +65,21 @@ export type PairedPairResult = {
 	promptTokens: number
 	completionTokens: number
 	response: string | null
-	correct: boolean
+	correctExact: boolean
+	correctSemantic: boolean | null
+	semanticReason: string | null
 	retrievedContainsGold: boolean
 }
 
 export type RegimeSummary = {
 	regime: RegimeName
 	numPairs: number
-	numCorrect: number
+	numCorrectExact: number
+	numCorrectSemantic: number | null
 	totalPromptTokens: number
 	avgPromptTokensPerPair: number
-	tokensPerCorrectAnswer: number
+	tokensPerCorrectAnswerExact: number
+	tokensPerCorrectAnswerSemantic: number | null
 	retrievalAccuracy: number
 	perPair: PairedPairResult[]
 }
@@ -105,16 +119,26 @@ function buildMessages(
 function summarise(regime: RegimeName, perPair: PairedPairResult[]): RegimeSummary {
 	const numPairs = perPair.length
 	const totalPromptTokens = perPair.reduce((s, p) => s + p.promptTokens, 0)
-	const numCorrect = perPair.filter((p) => p.correct).length
+	const numCorrectExact = perPair.filter((p) => p.correctExact).length
+	const semanticScored = perPair.filter((p) => p.correctSemantic !== null)
+	const numCorrectSemantic =
+		semanticScored.length === 0 ? null : semanticScored.filter((p) => p.correctSemantic).length
 	const retrievalHits = perPair.filter((p) => p.retrievedContainsGold).length
 	return {
 		regime,
 		numPairs,
-		numCorrect,
+		numCorrectExact,
+		numCorrectSemantic,
 		totalPromptTokens,
 		avgPromptTokensPerPair: numPairs === 0 ? 0 : totalPromptTokens / numPairs,
-		tokensPerCorrectAnswer:
-			numCorrect === 0 ? Number.POSITIVE_INFINITY : totalPromptTokens / numCorrect,
+		tokensPerCorrectAnswerExact:
+			numCorrectExact === 0 ? Number.POSITIVE_INFINITY : totalPromptTokens / numCorrectExact,
+		tokensPerCorrectAnswerSemantic:
+			numCorrectSemantic === null
+				? null
+				: numCorrectSemantic === 0
+					? Number.POSITIVE_INFINITY
+					: totalPromptTokens / numCorrectSemantic,
 		retrievalAccuracy: numPairs === 0 ? 0 : retrievalHits / numPairs,
 		perPair,
 	}
@@ -127,10 +151,33 @@ function indexPairs(pairs: readonly RepresentativePair[]): Map<string, Represent
 	return new Map(pairs.map((p) => [p.question, p]))
 }
 
+// Score one candidate answer under both graders. When `judge` is `null`,
+// the semantic side records `null` — audit-trail-only mode preserves the
+// pre-semantic contract for callers that haven't wired a judge yet.
+async function scorePair(
+	response: string | null,
+	expectedExcerpt: string,
+	judge: SemanticJudge | null,
+): Promise<{
+	correctExact: boolean
+	correctSemantic: boolean | null
+	semanticReason: string | null
+}> {
+	const correctExact = gradeAnswer(response, expectedExcerpt)
+	if (judge === null) return { correctExact, correctSemantic: null, semanticReason: null }
+	const semantic = await gradeAnswerSemantic(response, expectedExcerpt, judge)
+	return {
+		correctExact,
+		correctSemantic: semantic.correct,
+		semanticReason: semantic.reason,
+	}
+}
+
 export async function runDumpRegime(
 	pairs: readonly RepresentativePair[],
 	corpus: readonly RepresentativeArticle[],
 	chat: ChatFn,
+	judge: SemanticJudge | null = null,
 ): Promise<RegimeSummary> {
 	const perPair: PairedPairResult[] = []
 	const goldByQuestion = indexPairs(pairs)
@@ -144,6 +191,7 @@ export async function runDumpRegime(
 		const { content, promptTokens, completionTokens } = await chat(messages)
 		const goldPair = goldByQuestion.get(pair.question)
 		const expectedExcerpt = goldPair?.expectedExcerpt ?? ''
+		const grades = await scorePair(content, expectedExcerpt, judge)
 		perPair.push({
 			regime: 'dump',
 			question: pair.question,
@@ -152,7 +200,7 @@ export async function runDumpRegime(
 			promptTokens,
 			completionTokens,
 			response: content,
-			correct: gradeAnswer(content, expectedExcerpt),
+			...grades,
 			retrievedContainsGold: true,
 		})
 	}
@@ -164,6 +212,7 @@ export async function runRouterRegime(
 	corpus: readonly RepresentativeArticle[],
 	chat: ChatFn,
 	retriever: Retriever,
+	judge: SemanticJudge | null = null,
 ): Promise<RegimeSummary> {
 	const perPair: PairedPairResult[] = []
 	const goldByQuestion = indexPairs(pairs)
@@ -173,6 +222,7 @@ export async function runRouterRegime(
 		const { content, promptTokens, completionTokens } = await chat(messages)
 		const goldPair = goldByQuestion.get(pair.question)
 		const expectedExcerpt = goldPair?.expectedExcerpt ?? ''
+		const grades = await scorePair(content, expectedExcerpt, judge)
 		perPair.push({
 			regime: 'router',
 			question: pair.question,
@@ -181,7 +231,7 @@ export async function runRouterRegime(
 			promptTokens,
 			completionTokens,
 			response: content,
-			correct: gradeAnswer(content, expectedExcerpt),
+			...grades,
 			retrievedContainsGold: retrievedIds.includes(pair.expectedFixtureId),
 		})
 	}
@@ -196,6 +246,11 @@ export type PairedRunOptions = {
 	// baseline is recorded. T8 records this shape; T10 flips it on with
 	// a real Retriever.
 	retriever?: Retriever | null
+	// When set, each pair is scored with both the exact-substring grader
+	// (audit trail) and the semantic judge (primary metric). When absent
+	// or `null`, semantic scores render as `null` in the summary — same
+	// pre-semantic contract T8/T10 recorded.
+	judge?: SemanticJudge | null
 }
 
 export async function runPairedEval(
@@ -204,9 +259,12 @@ export async function runPairedEval(
 	chat: ChatFn,
 	opts: PairedRunOptions,
 ): Promise<PairedResult> {
-	const dump = await runDumpRegime(pairs, corpus, chat)
+	const judge = opts.judge ?? null
+	const dump = await runDumpRegime(pairs, corpus, chat, judge)
 	const router =
-		opts.retriever == null ? null : await runRouterRegime(pairs, corpus, chat, opts.retriever)
+		opts.retriever == null
+			? null
+			: await runRouterRegime(pairs, corpus, chat, opts.retriever, judge)
 	return {
 		model: opts.model ?? BASELINE_MODEL,
 		temperature: BASELINE_TEMPERATURE,
