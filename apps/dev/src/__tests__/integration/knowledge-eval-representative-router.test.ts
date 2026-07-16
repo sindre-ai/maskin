@@ -131,20 +131,28 @@ describe('paired-runner with the router retriever (stubbed chat)', () => {
 describe('router paired-run recorded artifact', () => {
 	const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.CLAUDE_OAUTH_ACCESS_TOKEN ?? undefined
 	const shouldRun = process.env.RUN_KNOWLEDGE_EVAL_ROUTER === '1' && Boolean(apiKey)
+	// Opt-in: `KNOWLEDGE_EVAL_SEMANTIC_JUDGE=1` runs the semantic-match judge
+	// alongside the exact-substring grader — the mode the bet's 2026-08-25
+	// verdict uses. Off by default; flip on for the re-grade.
+	const useSemanticJudge = process.env.KNOWLEDGE_EVAL_SEMANTIC_JUDGE === '1'
 
 	it.runIf(shouldRun)(
 		'records dump + router numbers side-by-side against a real model',
 		async () => {
 			const chat: ChatFn = (messages) =>
 				callAnthropicWithUsage(messages, BASELINE_MODEL, apiKey as string)
+			const judge: ChatFn | null = useSemanticJudge
+				? (messages) => callAnthropicWithUsage(messages, BASELINE_MODEL, apiKey as string)
+				: null
 			const result = await runPairedEval(REPRESENTATIVE_PAIRS, REPRESENTATIVE_CORPUS, chat, {
 				seed: REPRESENTATIVE_SEED,
 				fixtureSourceCommit: REPRESENTATIVE_SOURCE_COMMIT,
 				retriever: createRouterRetriever(),
+				judge,
 			})
 			expect(result.dump.numPairs).toBe(REPRESENTATIVE_PAIRS.length)
 			expect(result.router?.numPairs).toBe(REPRESENTATIVE_PAIRS.length)
-			expect(Number.isFinite(result.dump.tokensPerCorrectAnswer)).toBe(true)
+			expect(Number.isFinite(result.dump.tokensPerCorrectAnswerExact)).toBe(true)
 			// Router regime should never send more prompt tokens than the dump
 			// regime — top-K subset vs. the whole corpus.
 			expect(result.router?.totalPromptTokens ?? 0).toBeLessThanOrEqual(

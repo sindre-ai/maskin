@@ -18,12 +18,15 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
 	BASELINE_MODEL,
+	type ChatFn,
 	EVAL_PAIRS,
 	FIXTURE_SEED,
 	FIXTURE_SOURCE_COMMIT,
 	KNOWLEDGE_CORPUS,
 	callAnthropicWithUsage,
 	gradeAnswer,
+	gradeAnswerSemantic,
+	parseSemanticJudgeOutput,
 	runDumpBaseline,
 	serialiseCorpus,
 } from './knowledge-eval-harness'
@@ -81,6 +84,74 @@ describe('knowledge-eval grader', () => {
 		expect(gradeAnswer('some unrelated response', 'colored dot + one-word lowercase label')).toBe(
 			false,
 		)
+	})
+})
+
+describe('knowledge-eval semantic-match grader', () => {
+	it('parses YES / NO from the judge output regardless of trailing punctuation or case', () => {
+		expect(parseSemanticJudgeOutput('YES\ncaptures the meaning')).toEqual({
+			correct: true,
+			reason: 'captures the meaning',
+		})
+		expect(parseSemanticJudgeOutput('no.\ndifferent detail')).toEqual({
+			correct: false,
+			reason: 'different detail',
+		})
+		expect(parseSemanticJudgeOutput('Yes — same substance')).toEqual({
+			correct: true,
+			reason: 'Yes — same substance',
+		})
+	})
+
+	it('treats a judge that emits neither YES nor NO as a rejection', () => {
+		expect(parseSemanticJudgeOutput('maybe?')).toEqual({
+			correct: false,
+			reason: 'maybe?',
+		})
+		expect(parseSemanticJudgeOutput(null)).toEqual({
+			correct: false,
+			reason: 'judge returned no content',
+		})
+	})
+
+	it('short-circuits a null response without calling the judge', async () => {
+		let judgeCalls = 0
+		const judge: ChatFn = async () => {
+			judgeCalls += 1
+			return { content: 'YES\nunreachable', promptTokens: 10, completionTokens: 3 }
+		}
+		const result = await gradeAnswerSemantic(null, 'anything', judge)
+		expect(result.correct).toBe(false)
+		expect(result.promptTokens).toBe(0)
+		expect(result.completionTokens).toBe(0)
+		expect(judgeCalls).toBe(0)
+	})
+
+	it('rescues a paraphrased answer that the exact-substring grader misses', async () => {
+		const gold = 'colored dot + one-word lowercase label'
+		const paraphrase = 'A small tinted dot next to a single lowercase word.'
+		expect(gradeAnswer(paraphrase, gold)).toBe(false)
+		const judge: ChatFn = async () => ({
+			content: 'YES\nsame convention, different wording',
+			promptTokens: 22,
+			completionTokens: 6,
+		})
+		const semantic = await gradeAnswerSemantic(paraphrase, gold, judge)
+		expect(semantic.correct).toBe(true)
+		expect(semantic.reason).toBe('same convention, different wording')
+		expect(semantic.promptTokens).toBe(22)
+		expect(semantic.completionTokens).toBe(6)
+	})
+
+	it('marks a candidate that misses the gold as wrong even when the judge is verbose', async () => {
+		const judge: ChatFn = async () => ({
+			content: 'NO\ncandidate discusses a different topic entirely',
+			promptTokens: 25,
+			completionTokens: 8,
+		})
+		const semantic = await gradeAnswerSemantic('unrelated text', 'the specific rule', judge)
+		expect(semantic.correct).toBe(false)
+		expect(semantic.reason).toBe('candidate discusses a different topic entirely')
 	})
 })
 

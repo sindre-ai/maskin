@@ -55,6 +55,86 @@ export function gradeAnswer(response: string | null, expectedExcerpt: string): b
 	return normalise(response).includes(normalise(expectedExcerpt))
 }
 
+export type ChatFn = (
+	messages: Array<{ role: 'system' | 'user'; content: string }>,
+) => Promise<{ content: string | null; promptTokens: number; completionTokens: number }>
+
+// --- semantic-match grader ------------------------------------------------
+// The exact-substring `gradeAnswer` above false-fails answers that carry the
+// right information in different words. On the T9 pilot corpus that dropped
+// correctness to 4/7 on both dump and router regimes — a grader artifact,
+// not a router or corpus signal. `gradeAnswerSemantic` asks a second model
+// call (a "judge") whether the candidate captures the same information as
+// the gold excerpt. Same model + temperature as the reader by default; the
+// judge is passed in as a `ChatFn` so a stub can drive the paired runner
+// without touching the network in unit tests.
+
+export const SEMANTIC_JUDGE_SYSTEM_PROMPT =
+	'You are grading whether a candidate answer captures the correct information from a gold excerpt drawn from a knowledge article. Paraphrase is fine — grade for meaning, not wording. Reply on line 1 with exactly one word: YES if the candidate contains the same key information as the gold excerpt, or NO otherwise. On line 2, add one short sentence explaining the call. Do not output anything else.'
+
+export function buildSemanticJudgeMessages(
+	response: string,
+	expectedExcerpt: string,
+): Array<{ role: 'system' | 'user'; content: string }> {
+	return [
+		{ role: 'system', content: SEMANTIC_JUDGE_SYSTEM_PROMPT },
+		{
+			role: 'user',
+			content: `Gold excerpt:\n${expectedExcerpt}\n\nCandidate answer:\n${response}`,
+		},
+	]
+}
+
+export type SemanticJudgeResult = {
+	correct: boolean
+	reason: string
+	promptTokens: number
+	completionTokens: number
+}
+
+/**
+ * Parse the judge's raw output into `{correct, reason}`. The prompt asks for
+ * `YES`/`NO` on line 1 and a one-line reason on line 2 — but models drift, so
+ * we scan the first non-empty line for a leading `YES`/`NO` token and treat
+ * anything else as `NO` (safer default: if the judge is confused, don't
+ * award the pair). The remainder is captured verbatim as the reason.
+ */
+export function parseSemanticJudgeOutput(content: string | null): {
+	correct: boolean
+	reason: string
+} {
+	if (!content) return { correct: false, reason: 'judge returned no content' }
+	const lines = content
+		.split('\n')
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0)
+	const firstToken = (lines[0] ?? '').match(/^[A-Za-z]+/)?.[0]?.toUpperCase() ?? ''
+	const correct = firstToken === 'YES'
+	const reason = lines.slice(1).join(' ').trim() || lines[0] || ''
+	return { correct, reason }
+}
+
+export async function gradeAnswerSemantic(
+	response: string | null,
+	expectedExcerpt: string,
+	judge: ChatFn,
+): Promise<SemanticJudgeResult> {
+	if (!response) {
+		// Skip the judge call — a missing response is unambiguously wrong and
+		// spending judge tokens on it just inflates the audit trail.
+		return {
+			correct: false,
+			reason: 'no response from reader',
+			promptTokens: 0,
+			completionTokens: 0,
+		}
+	}
+	const messages = buildSemanticJudgeMessages(response, expectedExcerpt)
+	const { content, promptTokens, completionTokens } = await judge(messages)
+	const parsed = parseSemanticJudgeOutput(content)
+	return { ...parsed, promptTokens, completionTokens }
+}
+
 export type PairResult = {
 	question: string
 	expectedFixtureId: string
@@ -76,10 +156,6 @@ export type BaselineResult = {
 	tokensPerCorrectAnswer: number
 	perPair: PairResult[]
 }
-
-export type ChatFn = (
-	messages: Array<{ role: 'system' | 'user'; content: string }>,
-) => Promise<{ content: string | null; promptTokens: number; completionTokens: number }>
 
 export async function runDumpBaseline(
 	pairs: readonly EvalPair[],

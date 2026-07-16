@@ -113,7 +113,10 @@ describe('paired-eval runner semantics', () => {
 			fixtureSourceCommit: REPRESENTATIVE_SOURCE_COMMIT,
 			retriever: null,
 		})
-		expect(result.dump.numCorrect).toBe(REPRESENTATIVE_PAIRS.length)
+		expect(result.dump.numCorrectExact).toBe(REPRESENTATIVE_PAIRS.length)
+		expect(result.dump.numCorrectSemantic).toBeNull()
+		expect(result.dump.tokensPerCorrectAnswerSemantic).toBeNull()
+		expect(result.dump.totalJudgePromptTokens).toBe(0)
 		expect(result.dump.retrievalAccuracy).toBe(1)
 		expect(result.router).toBeNull()
 	})
@@ -127,7 +130,7 @@ describe('paired-eval runner semantics', () => {
 		})
 		expect(result.router).not.toBeNull()
 		expect(result.router?.retrievalAccuracy).toBe(1)
-		expect(result.router?.numCorrect).toBe(REPRESENTATIVE_PAIRS.length)
+		expect(result.router?.numCorrectExact).toBe(REPRESENTATIVE_PAIRS.length)
 		// Router regime should use fewer tokens than dump — top-1 vs. full corpus.
 		expect(result.router?.totalPromptTokens).toBeLessThan(result.dump.totalPromptTokens)
 	})
@@ -141,7 +144,76 @@ describe('paired-eval runner semantics', () => {
 			retriever: emptyRetriever,
 		})
 		expect(result.router?.retrievalAccuracy).toBe(0)
-		expect(result.router?.numCorrect).toBe(0)
+		expect(result.router?.numCorrectExact).toBe(0)
+	})
+
+	it('semantic-match judge fills the primary correctness metric alongside the exact-substring audit', async () => {
+		const chat = stubChatFor(excerptByQuestion)
+		// Stub judge — approves every candidate the reader gave a non-null
+		// response for. Exercises both graders side-by-side without touching
+		// the network.
+		const stubJudge: ChatFn = async (messages) => {
+			const gold = messages
+				.find((m) => m.role === 'user')
+				?.content.match(/Gold excerpt:\n([\s\S]*?)\n\nCandidate answer:\n([\s\S]*)$/)
+			const candidate = gold?.[2] ?? ''
+			const correct = candidate.trim().length > 0 ? 'YES' : 'NO'
+			const reason = correct === 'YES' ? 'candidate covers the gold information' : 'no response'
+			return {
+				content: `${correct}\n${reason}`,
+				promptTokens: 12,
+				completionTokens: 8,
+			}
+		}
+		const result = await runPairedEval(REPRESENTATIVE_PAIRS, REPRESENTATIVE_CORPUS, chat, {
+			seed: REPRESENTATIVE_SEED,
+			fixtureSourceCommit: REPRESENTATIVE_SOURCE_COMMIT,
+			retriever: null,
+			judge: stubJudge,
+		})
+		expect(result.dump.numCorrectSemantic).toBe(REPRESENTATIVE_PAIRS.length)
+		expect(result.dump.numCorrectExact).toBe(REPRESENTATIVE_PAIRS.length)
+		expect(result.dump.tokensPerCorrectAnswerSemantic).toBeGreaterThan(0)
+		expect(result.dump.tokensPerCorrectAnswerSemantic).toBe(result.dump.tokensPerCorrectAnswerExact)
+		// Judge-side counters populated but excluded from reader token budget.
+		expect(result.dump.totalJudgePromptTokens).toBe(12 * REPRESENTATIVE_PAIRS.length)
+		expect(result.dump.perPair.every((p) => p.correctSemantic === true)).toBe(true)
+		expect(result.dump.perPair.every((p) => p.semanticJudgeReason !== null)).toBe(true)
+	})
+
+	it('semantic-match judge can rescue paraphrased answers that the exact grader marks wrong', async () => {
+		// Reader always paraphrases — never quotes verbatim — so exact grader
+		// always fails. Judge always says YES. Semantic recovers all pairs,
+		// exact-substring records the miss. Demonstrates the grader
+		// artifact / real signal split the semantic mode was added for.
+		const paraphrasingChat: ChatFn = async (messages) => {
+			const userContent = messages.find((m) => m.role === 'user')?.content ?? ''
+			return {
+				content: `Paraphrased answer for: ${userContent.slice(-40)}`,
+				promptTokens: 100,
+				completionTokens: 20,
+			}
+		}
+		const yesJudge: ChatFn = async () => ({
+			content: 'YES\nsame meaning as gold',
+			promptTokens: 15,
+			completionTokens: 5,
+		})
+		const result = await runPairedEval(
+			REPRESENTATIVE_PAIRS,
+			REPRESENTATIVE_CORPUS,
+			paraphrasingChat,
+			{
+				seed: REPRESENTATIVE_SEED,
+				fixtureSourceCommit: REPRESENTATIVE_SOURCE_COMMIT,
+				retriever: null,
+				judge: yesJudge,
+			},
+		)
+		expect(result.dump.numCorrectExact).toBe(0)
+		expect(result.dump.tokensPerCorrectAnswerExact).toBe(Number.POSITIVE_INFINITY)
+		expect(result.dump.numCorrectSemantic).toBe(REPRESENTATIVE_PAIRS.length)
+		expect(result.dump.tokensPerCorrectAnswerSemantic).toBeLessThan(Number.POSITIVE_INFINITY)
 	})
 
 	it('computeRetrievalAccuracy handles missing entries as zero-hit', () => {
@@ -157,20 +229,29 @@ describe('paired-eval runner semantics', () => {
 describe('knowledge-eval-representative recorded baseline', () => {
 	const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.CLAUDE_OAUTH_ACCESS_TOKEN ?? undefined
 	const shouldRun = process.env.RUN_KNOWLEDGE_EVAL_REPRESENTATIVE === '1' && Boolean(apiKey)
+	// Opt-in: `KNOWLEDGE_EVAL_SEMANTIC_JUDGE=1` wires the semantic-match judge
+	// (same model as the reader) alongside the exact-substring grader. Off by
+	// default so re-running the baseline stays cheap; flip on for the bet
+	// verdict re-grade.
+	const useSemanticJudge = process.env.KNOWLEDGE_EVAL_SEMANTIC_JUDGE === '1'
 
 	it.runIf(shouldRun)(
 		'records the dump-regime baseline against a real model',
 		async () => {
 			const chat: ChatFn = (messages) =>
 				callAnthropicWithUsage(messages, BASELINE_MODEL, apiKey as string)
+			const judge: ChatFn | null = useSemanticJudge
+				? (messages) => callAnthropicWithUsage(messages, BASELINE_MODEL, apiKey as string)
+				: null
 			const result = await runPairedEval(REPRESENTATIVE_PAIRS, REPRESENTATIVE_CORPUS, chat, {
 				seed: REPRESENTATIVE_SEED,
 				fixtureSourceCommit: REPRESENTATIVE_SOURCE_COMMIT,
 				retriever: null,
+				judge,
 			})
 			expect(result.dump.numPairs).toBe(REPRESENTATIVE_PAIRS.length)
-			expect(result.dump.numCorrect).toBeGreaterThan(0)
-			expect(Number.isFinite(result.dump.tokensPerCorrectAnswer)).toBe(true)
+			expect(result.dump.numCorrectExact).toBeGreaterThan(0)
+			expect(Number.isFinite(result.dump.tokensPerCorrectAnswerExact)).toBe(true)
 			expect(result.dump.retrievalAccuracy).toBe(1)
 			expect(result.router).toBeNull()
 
