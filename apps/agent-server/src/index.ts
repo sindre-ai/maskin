@@ -646,6 +646,9 @@ export function buildApp(deps: AppDeps): Hono {
 					previewUrl: sessionEnv.PREVIEW_URL,
 				})
 			} else {
+				if (previewPortMappings.length > 0) {
+					previewForwardingFailed = true
+				}
 				logger.warn('browser sidecar unavailable — session continues without browser', {
 					sessionId: body.sessionId,
 				})

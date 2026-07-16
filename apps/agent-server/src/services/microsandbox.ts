@@ -348,12 +348,15 @@ export async function spawnSession(
 			message: e.message ?? 'unknown',
 		})
 		// Best-effort cleanup so a half-booted sandbox doesn't sit around with
-		// the same name on retry. Failures here are swallowed deliberately —
-		// the original create error is the real signal.
+		// the same name on retry. Non-fatal — the original create error is the
+		// real signal — but a failed cleanup is still logged, not swallowed.
 		try {
 			await run(deps.msbBin, ['remove', '-f', '--quiet', input.sessionId], { timeoutMs: 15_000 })
-		} catch {
-			/* ignored */
+		} catch (cleanupErr) {
+			logger.warn('session cleanup after create failure did not confirm removal', {
+				sessionId: input.sessionId,
+				error: String(cleanupErr),
+			})
 		}
 		throw new Error(`msb create failed for ${input.sessionId}: ${stderr || e.message || 'unknown'}`)
 	}
@@ -367,8 +370,11 @@ export async function spawnSession(
 		})
 		try {
 			await run(deps.msbBin, ['remove', '-f', '--quiet', input.sessionId], { timeoutMs: 15_000 })
-		} catch {
-			/* ignored */
+		} catch (cleanupErr) {
+			logger.warn('session cleanup after waitForRunning failure did not confirm removal', {
+				sessionId: input.sessionId,
+				error: String(cleanupErr),
+			})
 		}
 		throw err
 	}
