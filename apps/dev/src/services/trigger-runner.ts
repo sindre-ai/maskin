@@ -1,11 +1,14 @@
 import type { Database } from '@maskin/db'
 import { events, objects, sessions, triggers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { readChanges, reversePatch } from '@maskin/shared'
+import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
-import { and, eq } from 'drizzle-orm'
+import { type SQL, and, eq, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { SessionManager } from './session-manager'
+
+/** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
+const SCOPE_MATCH_LIMIT = 100
 
 const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
 
@@ -398,37 +401,7 @@ export class TriggerRunner {
 
 		try {
 			const job = new Cron(expression, { timezone: 'UTC' }, async () => {
-				const cronBackoff = this.triggerFailures.get(trigger.id)
-				if (cronBackoff && cronBackoff.backoffUntil > new Date()) {
-					logger.info(
-						`Cron trigger '${trigger.name}' in backoff until ${cronBackoff.backoffUntil.toISOString()}, skipping`,
-					)
-					return
-				}
-
-				logger.info(`Cron trigger '${trigger.name}' firing`)
-
-				await this.db.insert(events).values({
-					workspaceId: trigger.workspaceId,
-					actorId: trigger.targetActorId,
-					action: 'trigger_fired',
-					entityType: 'trigger',
-					entityId: trigger.id,
-					data: {
-						trigger_name: trigger.name,
-						prompt: trigger.actionPrompt,
-						target_actor_id: trigger.targetActorId,
-					},
-				})
-
-				this.sessionManager
-					.createSession(trigger.workspaceId, {
-						actorId: trigger.targetActorId,
-						actionPrompt: trigger.actionPrompt,
-						triggerId: trigger.id,
-						createdBy: trigger.createdBy,
-					})
-					.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+				await this.fireCronTrigger(trigger)
 			})
 
 			this.cronJobs.set(trigger.id, job)
@@ -438,6 +411,72 @@ export class TriggerRunner {
 				error: String(err),
 			})
 		}
+	}
+
+	private async fireCronTrigger(trigger: typeof triggers.$inferSelect): Promise<void> {
+		const cronBackoff = this.triggerFailures.get(trigger.id)
+		if (cronBackoff && cronBackoff.backoffUntil > new Date()) {
+			logger.info(
+				`Cron trigger '${trigger.name}' in backoff until ${cronBackoff.backoffUntil.toISOString()}, skipping`,
+			)
+			return
+		}
+
+		const config = (trigger.config as Record<string, unknown>) ?? {}
+		const scope = parseCronScope(config.scope)
+
+		// When a scope filter is present, the trigger only fires if the query
+		// matches at least one row. Zero rows → no session, no `trigger_fired`
+		// event. This satisfies the "does not spawn an empty session" contract
+		// at the runner level, not via a silent agent exit.
+		let scopeMatches: { id: string; title: string | null }[] | null = null
+		if (scope) {
+			scopeMatches = await this.queryScopeMatches(trigger.workspaceId, scope)
+			if (scopeMatches.length === 0) {
+				logger.info(
+					`Cron trigger '${trigger.name}' skipped — scope matched 0 rows in workspace ${trigger.workspaceId}`,
+				)
+				return
+			}
+		}
+
+		logger.info(`Cron trigger '${trigger.name}' firing`)
+
+		const eventData: Record<string, unknown> = {
+			trigger_name: trigger.name,
+			prompt: trigger.actionPrompt,
+			target_actor_id: trigger.targetActorId,
+		}
+		if (scopeMatches) eventData.scope_matches = scopeMatches
+
+		await this.db.insert(events).values({
+			workspaceId: trigger.workspaceId,
+			actorId: trigger.targetActorId,
+			action: 'trigger_fired',
+			entityType: 'trigger',
+			entityId: trigger.id,
+			data: eventData,
+		})
+
+		const actionPrompt = scopeMatches
+			? `${trigger.actionPrompt}\n\nScope matches: ${JSON.stringify(scopeMatches)}`
+			: trigger.actionPrompt
+
+		this.sessionManager
+			.createSession(trigger.workspaceId, {
+				actorId: trigger.targetActorId,
+				actionPrompt,
+				triggerId: trigger.id,
+				createdBy: trigger.createdBy,
+			})
+			.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+	}
+
+	private async queryScopeMatches(
+		workspaceId: string,
+		scope: CronScope,
+	): Promise<{ id: string; title: string | null }[]> {
+		return await queryCronScopeMatches(this.db, workspaceId, scope, SCOPE_MATCH_LIMIT)
 	}
 
 	private async loadReminders() {
@@ -493,6 +532,77 @@ export class TriggerRunner {
 
 		this.reminderTimeouts.set(trigger.id, timeout)
 	}
+}
+
+export interface CronScope {
+	entity_type: string
+	metadata_eq?: Record<string, string>
+	metadata_before_now?: string
+}
+
+/**
+ * Query `objects` for the rows matching a cron trigger scope filter, scoped
+ * to the trigger's workspace. Exported so integration tests can exercise the
+ * JSONB metadata predicates and `timestamptz` cast against real Postgres —
+ * mocked-DB unit tests can't catch a mis-cast or a JSONB coercion pitfall.
+ */
+export async function queryCronScopeMatches(
+	db: Database,
+	workspaceId: string,
+	scope: CronScope,
+	limit: number,
+): Promise<{ id: string; title: string | null }[]> {
+	const conditions: SQL[] = [
+		eq(objects.workspaceId, workspaceId),
+		eq(objects.type, scope.entity_type),
+	]
+	if (scope.metadata_eq) {
+		for (const [key, value] of Object.entries(scope.metadata_eq)) {
+			// Field name pre-validated by schema; guard against a hand-crafted
+			// DB row that bypassed validation before inlining via sql.raw.
+			if (!SAFE_METADATA_FIELD_NAME_RE.test(key)) continue
+			conditions.push(sql`${objects.metadata}->>${sql.raw(`'${key}'`)} = ${value}`)
+		}
+	}
+	if (scope.metadata_before_now) {
+		const field = scope.metadata_before_now
+		if (SAFE_METADATA_FIELD_NAME_RE.test(field)) {
+			conditions.push(sql`(${objects.metadata}->>${sql.raw(`'${field}'`)})::timestamptz < now()`)
+		}
+	}
+	return await db
+		.select({ id: objects.id, title: objects.title })
+		.from(objects)
+		.where(and(...conditions))
+		.limit(limit)
+}
+
+/**
+ * Parse the `scope` block off a cron trigger config. Rejects anything that
+ * isn't a plain object with an `entity_type` string plus optional
+ * `metadata_eq` / `metadata_before_now`. Field names are pinned to
+ * `SAFE_METADATA_FIELD_NAME_RE` so a hand-crafted DB row that skipped Zod
+ * validation can never leak into the `sql.raw` path.
+ */
+export function parseCronScope(raw: unknown): CronScope | null {
+	if (!raw || typeof raw !== 'object') return null
+	const s = raw as Record<string, unknown>
+	if (typeof s.entity_type !== 'string' || s.entity_type.length === 0) return null
+	const scope: CronScope = { entity_type: s.entity_type }
+	if (s.metadata_eq && typeof s.metadata_eq === 'object') {
+		const eq: Record<string, string> = {}
+		for (const [k, v] of Object.entries(s.metadata_eq as Record<string, unknown>)) {
+			if (SAFE_METADATA_FIELD_NAME_RE.test(k) && typeof v === 'string') eq[k] = v
+		}
+		if (Object.keys(eq).length > 0) scope.metadata_eq = eq
+	}
+	if (
+		typeof s.metadata_before_now === 'string' &&
+		SAFE_METADATA_FIELD_NAME_RE.test(s.metadata_before_now)
+	) {
+		scope.metadata_before_now = s.metadata_before_now
+	}
+	return scope
 }
 
 export interface ObjectData {

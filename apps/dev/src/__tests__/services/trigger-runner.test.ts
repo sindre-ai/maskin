@@ -496,6 +496,70 @@ describe('TriggerRunner', () => {
 			await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
+
+		it('skips session creation on a zero-row scope pass', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = buildTrigger({
+				type: 'cron',
+				workspaceId: 'ws-1',
+				config: {
+					expression: '*/5 * * * *',
+					scope: {
+						entity_type: 'knowledge',
+						metadata_eq: { doc_type: 'profile' },
+						metadata_before_now: 'review_by',
+					},
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger], // cron triggers on load
+				[], // reminder triggers on load
+				[], // scope query — 0 matches
+			]
+			const insertSpy = vi.fn().mockReturnValue({
+				values: vi.fn().mockResolvedValue(undefined),
+			})
+			mockResults.insert = insertSpy as unknown as unknown[]
+			await runner.start()
+
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('fires and appends scope matches to the action prompt when the scope is non-empty', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = buildTrigger({
+				type: 'cron',
+				workspaceId: 'ws-1',
+				actionPrompt: 'Sweep stale profiles',
+				config: {
+					expression: '*/5 * * * *',
+					scope: {
+						entity_type: 'knowledge',
+						metadata_eq: { doc_type: 'profile' },
+						metadata_before_now: 'review_by',
+					},
+				},
+			})
+			const match = { id: 'kn-1', title: 'About this company' }
+			mockResults.selectQueue = [
+				[trigger], // cron triggers on load
+				[], // reminder triggers on load
+				[match], // scope query — 1 match
+			]
+			mockResults.insert = []
+			await runner.start()
+
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+			expect(sessionManager.createSession).toHaveBeenCalledOnce()
+			const [, opts] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
+			expect(opts.actionPrompt).toContain('Sweep stale profiles')
+			expect(opts.actionPrompt).toContain('kn-1')
+			expect(opts.actionPrompt).toContain('About this company')
+			expect(opts.actionPrompt).toContain('Scope matches:')
+		})
 	})
 
 	describe('reminder scheduling', () => {
