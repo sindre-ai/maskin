@@ -14,7 +14,16 @@ import { useSubscribe, useUnsubscribe } from '@/hooks/use-subscriptions'
 import { trackEvent } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { Bell, BellOff, Copy, ExternalLink, FileText, MoreHorizontal, Trash2 } from 'lucide-react'
+import {
+	Archive,
+	Bell,
+	BellOff,
+	Copy,
+	ExternalLink,
+	FileText,
+	MoreHorizontal,
+	Trash2,
+} from 'lucide-react'
 import { Fragment, useCallback, useEffect, useMemo } from 'react'
 import { toast } from 'sonner'
 
@@ -35,6 +44,7 @@ interface MenuItemDef {
 export interface AuxiliaryActionMenuProps {
 	object: ObjectResponse
 	onDeleteRequest: () => void
+	onArchiveRequest?: () => void
 	workspaceId: string
 	open?: boolean
 	onOpenChange?: (open: boolean) => void
@@ -43,6 +53,7 @@ export interface AuxiliaryActionMenuProps {
 export function AuxiliaryActionMenu({
 	object,
 	onDeleteRequest,
+	onArchiveRequest,
 	workspaceId,
 	open,
 	onOpenChange,
@@ -66,8 +77,10 @@ export function AuxiliaryActionMenu({
 		}
 	}, [object.is_subscribed, object.id, subscribe, unsubscribe])
 
-	const items = useMemo<MenuItemDef[]>(
-		() => [
+	const canArchive = object.type === 'bet' && !!onArchiveRequest && object.status !== 'archived'
+
+	const items = useMemo<MenuItemDef[]>(() => {
+		const base: MenuItemDef[] = [
 			{
 				id: 'copy-link',
 				label: 'Copy link',
@@ -96,18 +109,37 @@ export function AuxiliaryActionMenu({
 				shortcut: 'S',
 				onSelect: handleSubscribeToggle,
 			},
-			{
-				id: 'delete',
-				label: 'Delete',
-				icon: Trash2,
-				shortcut: '⌘⌫',
+		]
+		if (canArchive && onArchiveRequest) {
+			base.push({
+				id: 'archive',
+				label: 'Archive',
+				icon: Archive,
+				shortcut: 'A',
 				separatorBefore: true,
-				variant: 'destructive',
-				onSelect: onDeleteRequest,
-			},
-		],
-		[object, handleClipboard, handleSubscribeToggle, onDeleteRequest],
-	)
+				onSelect: onArchiveRequest,
+			})
+		}
+		base.push({
+			id: 'delete',
+			label: 'Delete',
+			icon: Trash2,
+			shortcut: '⌘⌫',
+			// Only draw a separator before Delete when Archive isn't sitting right
+			// above it — otherwise the destructive-actions group gets a double rule.
+			separatorBefore: !canArchive,
+			variant: 'destructive',
+			onSelect: onDeleteRequest,
+		})
+		return base
+	}, [
+		object,
+		handleClipboard,
+		handleSubscribeToggle,
+		onDeleteRequest,
+		onArchiveRequest,
+		canArchive,
+	])
 
 	const visibleItems = items.filter((item) => item.visibility !== 'hide')
 
@@ -122,6 +154,7 @@ export function AuxiliaryActionMenu({
 			else if (e.key === 'T' && e.shiftKey && !isMeta) itemId = 'copy-title'
 			else if (e.key === 'C' && e.shiftKey && !isMeta) itemId = 'copy-content'
 			else if (e.key === 's' && !e.shiftKey && !isMeta) itemId = 'subscribe'
+			else if (e.key === 'a' && !e.shiftKey && !isMeta) itemId = 'archive'
 			else if (e.key === 'Backspace' && isMeta) itemId = 'delete'
 
 			if (!itemId) return

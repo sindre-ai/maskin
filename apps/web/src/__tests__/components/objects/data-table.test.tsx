@@ -136,6 +136,41 @@ describe('DataTable', () => {
 		expect(spinners.length).toBeGreaterThanOrEqual(1)
 	})
 
+	it('marks archived rows with data-archived and the dimmed opacity class (desktop)', () => {
+		const data = [
+			buildObjectResponse({
+				id: 'archived-1',
+				title: 'Old bet',
+				status: 'archived',
+				metadata: { previous_status: 'succeeded' },
+			}),
+			buildObjectResponse({ id: 'active-1', title: 'Live bet', status: 'active' }),
+		]
+		const { container } = renderDataTable({ data })
+		const archivedRow = container.querySelector('tr[data-archived]') as HTMLElement | null
+		expect(archivedRow).not.toBeNull()
+		expect(archivedRow?.className).toMatch(/opacity-\[0.62\]/)
+		// Active row must not carry the archived attribute or the dim class.
+		const rows = container.querySelectorAll('tbody tr')
+		const activeRow = Array.from(rows).find((r) => r.textContent?.includes('Live bet'))
+		expect(activeRow?.hasAttribute('data-archived')).toBe(false)
+		expect(activeRow?.className ?? '').not.toMatch(/opacity-\[0.62\]/)
+	})
+
+	it('lets the Title column expand to fill remaining width', () => {
+		const data = [buildObjectResponse({ title: 'Wide Object' })]
+		renderDataTable({ data })
+
+		const titleHeader = screen.getByRole('columnheader', { name: /title/i })
+		expect(titleHeader.className).toMatch(/\bw-full\b/)
+
+		const titleCell = screen.getByText('Wide Object').closest('td')
+		expect(titleCell?.className).toMatch(/\bmax-w-0\b/)
+
+		const otherHeader = screen.getByRole('columnheader', { name: /^status$/i })
+		expect(otherHeader.className).not.toMatch(/\bw-full\b/)
+	})
+
 	describe('grouped rows — chevron scoping and header select-all', () => {
 		it('selects every leaf row in the group when the header checkbox is checked (desktop)', async () => {
 			const user = userEvent.setup()
@@ -378,6 +413,27 @@ describe('DataTable', () => {
 				meta: { onSort: vi.fn(), currentSort: 'createdAt', currentOrder: 'desc', betStatuses },
 			})
 			expect(screen.getByLabelText('Status: waiting')).toBeInTheDocument()
+		})
+
+		it('hides the bet status indicator on a bet card when showBetStatusIndicator is false', () => {
+			const bet = buildObjectResponse({ id: 'bet-mobile', title: 'Bet Mobile', type: 'bet' })
+			const betStatuses = new Map([
+				[
+					'bet-mobile',
+					{ state: 'waiting_on_human' as const, pendingAction: null, decisionsSoFar: [] },
+				],
+			])
+			renderDataTable({
+				data: [bet],
+				meta: {
+					onSort: vi.fn(),
+					currentSort: 'createdAt',
+					currentOrder: 'desc',
+					betStatuses,
+					showBetStatusIndicator: false,
+				},
+			})
+			expect(screen.queryByLabelText('Status: waiting')).not.toBeInTheDocument()
 		})
 	})
 })

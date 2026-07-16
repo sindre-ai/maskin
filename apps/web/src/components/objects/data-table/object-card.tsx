@@ -30,16 +30,24 @@ export function ObjectCard({
 	betStatus,
 }: ObjectCardProps) {
 	const owner = object.driver ? actors?.find((a) => a.id === object.driver) : null
+	const isArchived = object.status === 'archived'
+	// Prior status is populated by the archive handler (T6) into metadata.previous_status.
+	// We only render "was <status>" when it's set; falling back to `object.status` would
+	// print "was archived", which is useless.
+	const priorStatusRaw = object.metadata?.previous_status
+	const priorStatus = typeof priorStatusRaw === 'string' ? priorStatusRaw : null
 
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: card click supplements the inner Link, which keyboard users tab to and activate with Enter
 		<div
 			data-state={isSelected ? 'selected' : undefined}
+			data-archived={isArchived ? '' : undefined}
 			onClick={onClick}
 			className={cn(
 				'flex w-full items-start gap-3 border-b border-border bg-card px-4 py-3',
-				'cursor-pointer transition-colors hover:bg-accent/30',
+				'cursor-pointer transition-[background-color,opacity] hover:bg-accent/30',
 				'data-[state=selected]:bg-accent/50',
+				isArchived && 'is-archived opacity-[0.62] hover:opacity-90',
 			)}
 		>
 			<Checkbox
@@ -72,6 +80,9 @@ export function ObjectCard({
 				<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
 					<TypeBadge type={object.type} />
 					{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
+					{isArchived && priorStatus && (
+						<span className="truncate">was {priorStatus.replace(/_/g, ' ')}</span>
+					)}
 					{owner && <span className="truncate">{owner.name}</span>}
 					{object.updatedAt && (
 						<RelativeTime date={object.updatedAt} className="ml-auto shrink-0" />

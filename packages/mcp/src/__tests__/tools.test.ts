@@ -238,6 +238,16 @@ describe('list_objects schema', () => {
 		const result = schema.parse({})
 		expect(result.metadata_eq).toBeUndefined()
 	})
+
+	it('defaults include_archived to false so archived rows stay hidden unless the caller opts in', () => {
+		const result = schema.parse({})
+		expect(result.include_archived).toBe(false)
+	})
+
+	it('accepts include_archived = true when the caller wants archived rows', () => {
+		const result = schema.parse({ include_archived: true })
+		expect(result.include_archived).toBe(true)
+	})
 })
 
 describe('search_objects schema', () => {
@@ -311,6 +321,16 @@ describe('search_objects schema', () => {
 	it('omits metadata_eq when not supplied', () => {
 		const result = schema.parse({ q: 'bet' })
 		expect(result.metadata_eq).toBeUndefined()
+	})
+
+	it('defaults include_archived to false so archived rows stay hidden unless the caller opts in', () => {
+		const result = schema.parse({ q: 'bet' })
+		expect(result.include_archived).toBe(false)
+	})
+
+	it('accepts include_archived = true when the caller wants archived rows', () => {
+		const result = schema.parse({ q: 'bet', include_archived: true })
+		expect(result.include_archived).toBe(true)
 	})
 })
 
