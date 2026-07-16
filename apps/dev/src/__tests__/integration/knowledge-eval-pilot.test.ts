@@ -19,9 +19,15 @@
  *   2. Stubbed paired-runner — perfect-answer stub with a stub judge;
  *      asserts both grader columns render on a single run without the
  *      network.
- *   3. Real-model gated run — dump + router, both graders, guarded by
- *      `RUN_KNOWLEDGE_EVAL_PILOT=1` + an Anthropic token. Emits
- *      `knowledge-eval-pilot.json` — the verdict artifact.
+ *   3. Real-model gated runs — both guarded by `RUN_KNOWLEDGE_EVAL_PILOT=1`
+ *      + an Anthropic token. Two artifacts land next to the fixture so
+ *      the ship-metric baseline lives on disk instead of a bet comment
+ *      (T11):
+ *        - `knowledge-eval-pilot-baseline.json` — dump-only regime
+ *          (`retriever: null`), both graders. The dump baseline the
+ *          router leg is scored against.
+ *        - `knowledge-eval-pilot-router.json` — dump + router paired,
+ *          both graders. The verdict artifact.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -132,10 +138,40 @@ describe('paired-runner over the pilot with stubbed chat + stub judge', () => {
 	})
 })
 
-describe('pilot paired-run recorded artifact', () => {
+describe('pilot paired-run recorded artifacts', () => {
 	const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.CLAUDE_OAUTH_ACCESS_TOKEN ?? undefined
 	const shouldRun = process.env.RUN_KNOWLEDGE_EVAL_PILOT === '1' && Boolean(apiKey)
 
+	// Dump-only baseline artifact — separate from the paired run so the
+	// baseline the router leg is compared against exists on disk on its
+	// own, not just as one leg of the paired file. Both graders populate.
+	it.runIf(shouldRun)(
+		'records the dump-only baseline against the real model',
+		async () => {
+			const chat: ChatFn = (messages) =>
+				callAnthropicWithUsage(messages, BASELINE_MODEL, apiKey as string)
+			const judge = createAnthropicJudge(apiKey as string)
+			const result = await runPairedEval(PILOT_PAIRS, PILOT_CORPUS, chat, {
+				seed: PILOT_SEED,
+				fixtureSourceCommit: PILOT_SNAPSHOT_AT,
+				retriever: null,
+				judge,
+			})
+
+			expect(result.dump.numPairs).toBe(PILOT_PAIRS.length)
+			expect(result.router).toBeNull()
+			expect(Number.isFinite(result.dump.tokensPerCorrectAnswerExact)).toBe(true)
+			expect(result.dump.numCorrectSemantic).not.toBeNull()
+			expect(result.dump.retrievalAccuracy).toBe(1)
+
+			const artifactPath = join(__dirname, 'knowledge-eval-pilot-baseline.json')
+			mkdirSync(dirname(artifactPath), { recursive: true })
+			writeFileSync(artifactPath, `${JSON.stringify(result, null, 2)}\n`, 'utf-8')
+		},
+		900_000,
+	)
+
+	// Dump + router paired artifact — the ship-metric verdict input.
 	it.runIf(shouldRun)(
 		'records dump + router numbers under both graders against the real model',
 		async () => {
@@ -162,7 +198,7 @@ describe('pilot paired-run recorded artifact', () => {
 				result.dump.totalPromptTokens,
 			)
 
-			const artifactPath = join(__dirname, 'knowledge-eval-pilot.json')
+			const artifactPath = join(__dirname, 'knowledge-eval-pilot-router.json')
 			mkdirSync(dirname(artifactPath), { recursive: true })
 			writeFileSync(artifactPath, `${JSON.stringify(result, null, 2)}\n`, 'utf-8')
 		},

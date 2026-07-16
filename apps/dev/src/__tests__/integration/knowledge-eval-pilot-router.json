@@ -30,10 +30,10 @@
         ],
         "promptTokens": 2590,
         "completionTokens": 81,
-        "response": "The knowledge corpus does not contain information about how the agent-pipeline knowledge index decides what an agent should read next. The only relevant passage states that \"Router reads the summary and the summaries of the six catalogued articles first, then pulls only the article bodies it decides it needs,\" but it does not explain the decision-making logic the router uses to determine which article bodies to retrieve.",
+        "response": "The knowledge corpus does not contain information about how the agent-pipeline knowledge index decides what an agent should read next. The only relevant passage states that \"Router reads the summary and the summaries of the six catalogued articles first, then pulls only the article bodies it decides it needs,\" but it does not explain the decision-making logic the Router uses to determine which article bodies to retrieve.",
         "correctExact": false,
         "correctSemantic": false,
-        "semanticReason": "The candidate answer quotes the gold excerpt verbatim but then claims the knowledge corpus doesn't explain the decision-making logic, which contradicts the fact that the gold excerpt itself provides the information about what the Router does (reads summaries first, then pulls needed article bodies).",
+        "semanticReason": "The candidate answer quotes the gold excerpt verbatim but then claims the gold excerpt doesn't explain the decision-making logic, which is a different question than whether the answer contains the information in the gold excerpt itself.",
         "retrievedContainsGold": true
       },
       {
@@ -50,8 +50,8 @@
           "d3816268-5137-4969-af88-d8679d7313f6"
         ],
         "promptTokens": 2591,
-        "completionTokens": 131,
-        "response": "According to the knowledge corpus, you should trim the payload to \"the minimal field that supports the metric.\" Specifically, for every new log line or analytics event, answer two questions: **(1) What question is this signal answering?** and **(2) What is the minimal value that answers it?** (such as a boolean, enum, count, or id — not the raw input). If the field being shipped is wider than necessary (e.g., a full URL where a platform enum suffices, or a comment body where a `has_newline` boolean suffices), you should trim it.",
+        "completionTokens": 130,
+        "response": "According to the knowledge corpus, you should trim the payload to \"the minimal field that supports the metric.\" Specifically, for every new log line or analytics event, answer two questions: **(1) What question is this signal answering?** and **(2) What is the minimal value that answers it?** (such as a boolean, enum, count, or id — not the raw input). If the field being shipped is wider than necessary (e.g., a URL where a platform enum suffices, or a comment body where a `has_newline` boolean suffices), you should trim it.",
         "correctExact": false,
         "correctSemantic": true,
         "semanticReason": "The candidate answer directly quotes and accurately paraphrases the gold excerpt's core principle of trimming the payload to the minimal field that supports the metric, providing concrete examples of how to apply this principle.",
@@ -92,11 +92,11 @@
           "d3816268-5137-4969-af88-d8679d7313f6"
         ],
         "promptTokens": 2594,
-        "completionTokens": 117,
-        "response": "According to the knowledge corpus, the Code Reviewer will BLOCK a PR on bet-level grounds if: **(1) the originating insight for the bet was previously discarded by Insight Triage and the discard was never reconciled, or (2) the PR reverses a previously-ratified workspace policy without a corresponding human-authored signal that the policy has changed.** As illustrated in PR #442, the block occurs \"on the *premise of the work*, not the work itself\" — despite the diff being mechanically clean.",
+        "completionTokens": 145,
+        "response": "According to the knowledge corpus, the Code Reviewer will BLOCK a PR on bet-level grounds if: **(1) the originating insight for the bet was previously discarded by Insight Triage and the discard was never reconciled, or (2) the PR reverses a previously-ratified workspace policy without a corresponding human-authored signal that the policy has changed.** As stated in the document, \"The verdict on PR #442 was BLOCK despite the diff being mechanically clean (0 MUST / 0 SHOULD / 0 NIT on code quality). The block was on the *premise of the work*, not the work itself.\"",
         "correctExact": true,
         "correctSemantic": true,
-        "semanticReason": "The candidate answer explicitly states that a Code Reviewer will BLOCK a PR if \"the PR reverses a previously-ratified workspace policy,\" which matches the gold excerpt's fact.",
+        "semanticReason": "The candidate answer explicitly states that a Code Reviewer will BLOCK a PR if \"the PR reverses a previously-ratified workspace policy,\" which directly matches the gold excerpt's phrase \"reverses a previously-ratified workspace policy.\"",
         "retrievedContainsGold": true
       },
       {
@@ -155,11 +155,11 @@
           "d3816268-5137-4969-af88-d8679d7313f6"
         ],
         "promptTokens": 2594,
-        "completionTokens": 129,
-        "response": "According to the knowledge corpus, a parent prevents a child's `useMemo` cache from rebuilding on every parent render by **stabilising references before they cross the prop boundary**. Specifically, the fixes are: (1) hoist inline arrays/objects to module scope as constants (e.g., `const EMPTY: T[] = []`), (2) wrap handlers in `useCallback` with appropriate dependencies, or (3) lift per-row work up the tree and pass the derived result down rather than passing inline literals as props that the child uses as `useMemo` dependencies.",
+        "completionTokens": 125,
+        "response": "According to the knowledge corpus, a parent prevents a child's `useMemo` cache from rebuilding on every parent render by **stabilising references before they cross the prop boundary**. Specifically, the fixes are: (1) hoist inline arrays/objects to module scope as constants (e.g., `const EMPTY: T[] = []`), (2) wrap handlers in `useCallback` with appropriate dependencies, or (3) lift per-row work up the tree by building derived values once in the parent and passing the result down rather than passing inline literals as props.",
         "correctExact": false,
         "correctSemantic": true,
-        "semanticReason": "The candidate answer directly states and explains the core principle from the gold excerpt: \"stabilising references before they cross the prop boundary,\" and provides concrete examples of how to implement this stabilization.",
+        "semanticReason": "The candidate answer directly states \"stabilising references before they cross the prop boundary\" as the core principle, which matches the gold excerpt verbatim, and provides concrete examples of how to implement this stabilization.",
         "retrievedContainsGold": true
       }
     ]
@@ -168,11 +168,11 @@
     "regime": "router",
     "numPairs": 7,
     "numCorrectExact": 3,
-    "numCorrectSemantic": 6,
+    "numCorrectSemantic": 7,
     "totalPromptTokens": 7432,
     "avgPromptTokensPerPair": 1061.7142857142858,
     "tokensPerCorrectAnswerExact": 2477.3333333333335,
-    "tokensPerCorrectAnswerSemantic": 1238.6666666666667,
+    "tokensPerCorrectAnswerSemantic": 1061.7142857142858,
     "retrievalAccuracy": 1,
     "perPair": [
       {
@@ -270,11 +270,11 @@
           "3062b2c9-e157-42ee-a250-3ecbfca01867"
         ],
         "promptTokens": 1245,
-        "completionTokens": 109,
-        "response": "According to the corpus, accessibility findings appear in Code Reviewer sweeps only when the PR queue shifts toward UI-heavy diffs. The rule states: \"When the queue shifts toward UI-heavy diffs, accessibility findings (aria-live chattiness, screen-reader labeling semantics, touch-input reachability) surface as a new category — even though they were absent when backend-heavy diffs dominated. The category emergence is *caused by* the queue composition, not by a change in reviewer behavior.\"",
+        "completionTokens": 114,
+        "response": "According to the corpus, accessibility (a11y) findings appear in Code Reviewer sweeps only when the PR queue shifts toward UI-heavy diffs. The rule states: \"When the queue shifts toward UI-heavy diffs, accessibility findings (aria-live chattiness, screen-reader labeling semantics, touch-input reachability) surface as a new category — even though they were absent when backend-heavy diffs dominated. The category emergence is *caused by* the queue composition, not by a change in reviewer behavior.\"",
         "correctExact": false,
-        "correctSemantic": false,
-        "semanticReason": "The candidate answer provides a specific example about accessibility findings and UI-heavy diffs, but the gold excerpt states a more general principle that a Code Reviewer's mix of fix categories is a function of the PR queue's domain mix—the candidate answer illustrates one instance of this principle rather than stating the general rule itself.",
+        "correctSemantic": true,
+        "semanticReason": "The candidate answer correctly states that a Code Reviewer's mix of fix categories is determined by the PR queue's domain mix, using accessibility findings as a concrete example to illustrate how queue composition (UI-heavy vs. backend-heavy) directly causes which categories of issues emerge.",
         "retrievedContainsGold": true
       },
       {

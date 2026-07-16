@@ -1,15 +1,17 @@
 /**
  * Standalone runner for the pilot paired eval — bypasses the vitest
  * integration harness (which requires Postgres) so we can produce the
- * verdict artifact from any node environment with an Anthropic token.
+ * verdict artifacts from any node environment with an Anthropic token.
  *
  * Usage:
- *   RUN_KNOWLEDGE_EVAL_PILOT=1 \
- *     ANTHROPIC_API_KEY=... \
- *     tsx apps/dev/scripts/run-knowledge-eval-pilot.ts
+ *   ANTHROPIC_API_KEY=... tsx apps/dev/scripts/run-knowledge-eval-pilot.ts
  *
- * Emits `knowledge-eval-pilot.json` next to the fixture file. Both
- * grader modes populate.
+ * Emits two artifacts next to the fixture (T11 spec):
+ *   - `knowledge-eval-pilot-baseline.json` — dump-only regime
+ *     (`retriever: null`), both graders. The baseline the router leg
+ *     is scored against.
+ *   - `knowledge-eval-pilot-router.json` — dump + router paired, both
+ *     graders. The ship-metric verdict input.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -30,6 +32,25 @@ import {
 } from '../src/__tests__/integration/knowledge-eval-pilot'
 import { createRouterRetriever } from '../src/__tests__/integration/knowledge-eval-router-wiring'
 
+function logRegime(
+	label: string,
+	r: NonNullable<Awaited<ReturnType<typeof runPairedEval>>['router']>,
+) {
+	console.log(`${label}:`)
+	console.log(`  totalPromptTokens:       ${r.totalPromptTokens}`)
+	console.log(`  numCorrectExact:         ${r.numCorrectExact} / ${r.numPairs}`)
+	console.log(`  numCorrectSemantic:      ${r.numCorrectSemantic} / ${r.numPairs}`)
+	console.log(`  tokens/correct exact:    ${r.tokensPerCorrectAnswerExact.toFixed(2)}`)
+	console.log(
+		`  tokens/correct semantic: ${
+			r.tokensPerCorrectAnswerSemantic === null
+				? 'null'
+				: r.tokensPerCorrectAnswerSemantic.toFixed(2)
+		}`,
+	)
+	console.log(`  retrievalAccuracy:       ${r.retrievalAccuracy}\n`)
+}
+
 async function main() {
 	const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.CLAUDE_OAUTH_ACCESS_TOKEN
 	if (!apiKey) {
@@ -38,59 +59,44 @@ async function main() {
 	const chat: ChatFn = (messages) => callAnthropicWithUsage(messages, BASELINE_MODEL, apiKey)
 	const judge = createAnthropicJudge(apiKey)
 
-	const result = await runPairedEval(PILOT_PAIRS, PILOT_CORPUS, chat, {
+	const __dirname = dirname(fileURLToPath(import.meta.url))
+	const artifactDir = join(__dirname, '..', 'src', '__tests__', 'integration')
+	mkdirSync(artifactDir, { recursive: true })
+
+	// Dump-only baseline first — separate real-model call, so the baseline
+	// artifact is a standalone artefact (not just one leg of the paired
+	// file). Both graders populate. Same fixture, same model.
+	const baseline = await runPairedEval(PILOT_PAIRS, PILOT_CORPUS, chat, {
+		seed: PILOT_SEED,
+		fixtureSourceCommit: PILOT_SNAPSHOT_AT,
+		retriever: null,
+		judge,
+	})
+	const baselinePath = join(artifactDir, 'knowledge-eval-pilot-baseline.json')
+	writeFileSync(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`, 'utf-8')
+
+	// Dump + router paired — the verdict artefact.
+	const paired = await runPairedEval(PILOT_PAIRS, PILOT_CORPUS, chat, {
 		seed: PILOT_SEED,
 		fixtureSourceCommit: PILOT_SNAPSHOT_AT,
 		retriever: createRouterRetriever(),
 		judge,
 	})
+	const pairedPath = join(artifactDir, 'knowledge-eval-pilot-router.json')
+	writeFileSync(pairedPath, `${JSON.stringify(paired, null, 2)}\n`, 'utf-8')
 
-	const __dirname = dirname(fileURLToPath(import.meta.url))
-	const artifactPath = join(
-		__dirname,
-		'..',
-		'src',
-		'__tests__',
-		'integration',
-		'knowledge-eval-pilot.json',
-	)
-	mkdirSync(dirname(artifactPath), { recursive: true })
-	writeFileSync(artifactPath, `${JSON.stringify(result, null, 2)}\n`, 'utf-8')
+	console.log('\n=== pilot dump-only baseline ===')
+	console.log(`model: ${baseline.model} · seed: ${baseline.seed}`)
+	console.log(`pairs: ${baseline.numPairs}\n`)
+	logRegime('dump', baseline.dump)
+	console.log(`artifact: ${baselinePath}\n`)
 
-	const dump = result.dump
-	const router = result.router
-	console.log('\n=== pilot paired-run ===')
-	console.log(`model: ${result.model} · seed: ${result.seed}`)
-	console.log(`pairs: ${result.numPairs}\n`)
-	console.log('dump:')
-	console.log(`  totalPromptTokens: ${dump.totalPromptTokens}`)
-	console.log(`  numCorrectExact:    ${dump.numCorrectExact} / ${dump.numPairs}`)
-	console.log(`  numCorrectSemantic: ${dump.numCorrectSemantic} / ${dump.numPairs}`)
-	console.log(`  tokens/correct exact:    ${dump.tokensPerCorrectAnswerExact.toFixed(2)}`)
-	console.log(
-		`  tokens/correct semantic: ${
-			dump.tokensPerCorrectAnswerSemantic === null
-				? 'null'
-				: dump.tokensPerCorrectAnswerSemantic.toFixed(2)
-		}`,
-	)
-	console.log(`  retrievalAccuracy:  ${dump.retrievalAccuracy}\n`)
-	if (router) {
-		console.log('router:')
-		console.log(`  totalPromptTokens: ${router.totalPromptTokens}`)
-		console.log(`  numCorrectExact:    ${router.numCorrectExact} / ${router.numPairs}`)
-		console.log(`  numCorrectSemantic: ${router.numCorrectSemantic} / ${router.numPairs}`)
-		console.log(`  tokens/correct exact:    ${router.tokensPerCorrectAnswerExact.toFixed(2)}`)
-		console.log(
-			`  tokens/correct semantic: ${
-				router.tokensPerCorrectAnswerSemantic === null
-					? 'null'
-					: router.tokensPerCorrectAnswerSemantic.toFixed(2)
-			}`,
-		)
-		console.log(`  retrievalAccuracy:  ${router.retrievalAccuracy}\n`)
-	}
-	console.log(`artifact: ${artifactPath}`)
+	console.log('=== pilot dump + router paired ===')
+	console.log(`model: ${paired.model} · seed: ${paired.seed}`)
+	console.log(`pairs: ${paired.numPairs}\n`)
+	logRegime('dump', paired.dump)
+	if (paired.router) logRegime('router', paired.router)
+	console.log(`artifact: ${pairedPath}`)
 }
 
 main().catch((err) => {
