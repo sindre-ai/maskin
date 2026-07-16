@@ -1,0 +1,114 @@
+name: DeepSec
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened, ready_for_review]
+    # Backend / API / MCP source scope only. Frontend-only diffs (apps/web/**)
+    # and migration-only diffs (packages/db/drizzle/**) do not match any
+    # positive pattern below, so the workflow is skipped for those PRs. A PR
+    # that touches both a migration AND backend source still triggers via the
+    # backend match, which is the intended behaviour.
+    paths:
+      - 'apps/dev/**'
+      - 'packages/db/**'
+      - '!packages/db/drizzle/**'
+      - 'packages/mcp/**'
+
+concurrency:
+  group: deepsec-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  deepsec:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history so `pull_request.base.sha` is reachable for the diff.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Run DeepSec against PR diff
+        id: scan
+        env:
+          # AI_GATEWAY_API_KEY is preferred (routes via Vercel AI Gateway with
+          # per-project spend visibility). ANTHROPIC_AUTH_TOKEN is the fallback
+          # path. Either being present is enough — DeepSec picks the first one
+          # it finds. Both are wired here so whichever repo secret is
+          # configured (see T2) reaches the CLI without a further workflow
+          # edit.
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+        run: |
+          # `--agent claude` and `--model claude-haiku-4-5` are pinned
+          # literally. Auto-detection can pick a stale/exhausted subscription
+          # and report a false `0 findings, $0 cost` pass — the exact footgun
+          # the parent bet body calls out. Pinning haiku keeps per-PR spend
+          # aligned with the ≤$50/mo bet guardrail and matches the model the
+          # T1 backtest establishes TP/FP rates against.
+          set +e
+          pnpm deepsec process \
+            --diff "${{ github.event.pull_request.base.sha }}" \
+            --agent claude \
+            --model claude-haiku-4-5 \
+            2>&1 | tee deepsec-report.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: Post DeepSec comment on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            const report = fs.existsSync('deepsec-report.txt')
+              ? fs.readFileSync('deepsec-report.txt', 'utf8')
+              : '(no report produced — DeepSec step did not write output)'
+            const trimmed = report.length > 60000
+              ? report.slice(0, 60000) + '\n… (truncated, see job logs for full output)'
+              : report
+            const body = [
+              '### DeepSec scan',
+              '',
+              'Invocation: `pnpm deepsec process --diff <base> --agent claude --model claude-haiku-4-5`',
+              '',
+              '```',
+              trimmed,
+              '```',
+            ].join('\n')
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body,
+            })
+
+      - name: Gate on HIGH-severity findings
+        if: always()
+        run: |
+          if [ ! -f deepsec-report.txt ]; then
+            echo "::error::DeepSec produced no report — failing so a silent no-op cannot pass the check."
+            exit 1
+          fi
+          if grep -Eq '(^|[^A-Za-z])HIGH([^A-Za-z]|$)' deepsec-report.txt; then
+            echo "::error::DeepSec reported HIGH-severity finding(s). See the PR comment for details."
+            exit 1
+          fi
+          echo "No HIGH-severity findings; SHOULD/LOW notes do not block merge."
