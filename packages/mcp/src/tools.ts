@@ -340,6 +340,60 @@ export const tools = {
 			id: z.string().uuid(),
 		}),
 	},
+	traverse_graph: {
+		description:
+			"Bounded multi-hop breadth-first traversal from a single object across the workspace `relationships` table. Returns a flat `{ nodes: [{id, type, title}], edges: [{source, target, type}] }` subgraph plus a `truncated` flag. Use this to resolve supersedes/contradicts chains, walk breaks_into hierarchies, or gather an object's multi-hop context in a single call — instead of chaining `get_objects` + `list_relationships` yourself. Bounded by `max_depth` (default 3), `max_nodes` (default 200), and their product (server ceiling: 5000). Cycles terminate via a visited set keyed on object id. Only object endpoints inside the caller's workspace are followed; file endpoints and cross-workspace ids are skipped. Prefer `get_objects` when you already know the ids you need — this tool is for discovering the surrounding graph.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z
+				.string()
+				.uuid()
+				.describe("Object id to start the traversal from. Must exist in the caller's workspace."),
+			max_depth: z
+				.number()
+				.int()
+				.min(1)
+				.max(10)
+				.default(3)
+				.describe(
+					'Maximum BFS depth. 1 = direct neighbours only, 3 = neighbours of neighbours of neighbours. Server ceiling: max_depth * max_nodes ≤ 5000.',
+				),
+			max_nodes: z
+				.number()
+				.int()
+				.min(1)
+				.max(1000)
+				.default(200)
+				.describe(
+					'Maximum number of objects in the response, including the start node. When the cap trips, `truncated` is `true` and `truncated_reason` is `"max_nodes"`.',
+				),
+			edge_type_allow_list: z
+				.array(
+					z.enum([
+						'informs',
+						'breaks_into',
+						'blocks',
+						'relates_to',
+						'duplicates',
+						'supersedes',
+						'contradicts',
+						'about',
+						'competes_with',
+						'derived_from',
+					]),
+				)
+				.optional()
+				.describe(
+					'Only follow relationships whose `type` is in this list. Omit to follow every workspace edge type.',
+				),
+			direction: z
+				.enum(['outbound', 'inbound', 'both'])
+				.default('both')
+				.describe(
+					'`outbound` follows edges out of the current frontier (source → target). `inbound` follows edges into it (target → source). `both` is the default and matches how agents usually reason about contradiction/supersession chains.',
+				),
+		}),
+	},
 	create_actor: {
 		description:
 			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role. If auto_create_workspace is true (default for humans), a new workspace is created instead.',

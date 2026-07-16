@@ -39,7 +39,10 @@ vi.mock('@/lib/workspace-context', () => ({
 vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: [] }) }))
 vi.mock('@/hooks/use-enabled-modules', () => ({ useEnabledModules: () => [] }))
 vi.mock('@/hooks/use-custom-extensions', () => ({ useCustomExtensions: () => [] }))
-vi.mock('@maskin/module-sdk', () => ({ getEnabledObjectTypeTabs: () => [] }))
+vi.mock('@maskin/module-sdk', () => ({
+	getEnabledObjectTypeTabs: () => [],
+	getAllWebModules: () => [],
+}))
 vi.mock('@/hooks/use-objects', () => ({
 	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
 	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),

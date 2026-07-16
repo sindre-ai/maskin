@@ -3,8 +3,15 @@ import type { Database } from '@maskin/db'
 import { events, files, objects, relationships, workspaces } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { createGraphSchema } from '@maskin/shared'
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
+import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
+import {
+	findKnowledgeDuplicate,
+	isDuplicateTitle,
+	isKnowledgeTitleUniqueViolation,
+	normalizeTitle,
+} from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -60,6 +67,10 @@ const createGraphRoute = createRoute({
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Workspace not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'A knowledge node duplicates an existing or sibling knowledge object',
 		},
 		500: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -131,6 +142,56 @@ app.openapi(createGraphRoute, async (c) => {
 					400,
 				)
 			}
+		}
+	}
+
+	// Reject knowledge nodes that duplicate an existing (non-archived) knowledge
+	// object, or a sibling knowledge node earlier in this same batch.
+	const seenKnowledgeTitles: { $id: string; normalized: string }[] = []
+	for (const node of body.nodes) {
+		if (node.type !== 'knowledge') continue
+		const normalized = normalizeTitle(node.title ?? '')
+		if (!normalized) continue
+
+		const sibling = seenKnowledgeTitles.find((seen) =>
+			isDuplicateTitle(seen.normalized, normalized),
+		)
+		if (sibling) {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					`Node '${node.$id}' duplicates node '${sibling.$id}' in the same request`,
+					[
+						{
+							field: `nodes[${node.$id}].title`,
+							message: 'Title matches or overlaps another knowledge node in this batch',
+							received: `'${node.title}'`,
+						},
+					],
+					'Merge the two knowledge nodes into one, or give them distinct titles.',
+				),
+				409,
+			)
+		}
+		seenKnowledgeTitles.push({ $id: node.$id, normalized })
+
+		const duplicate = await findKnowledgeDuplicate(db, workspaceId, node.title)
+		if (duplicate) {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					`Node '${node.$id}' duplicates an existing knowledge object: '${duplicate.title}' (${duplicate.id})`,
+					[
+						{
+							field: `nodes[${node.$id}].title`,
+							message: 'Title matches or overlaps an existing, non-archived knowledge object',
+							received: `'${node.title}'`,
+						},
+					],
+					`Update the existing object (PATCH /api/objects/${duplicate.id}) or link them with a 'duplicates' relationship instead of creating a new one.`,
+				),
+				409,
+			)
 		}
 	}
 
@@ -240,7 +301,11 @@ app.openapi(createGraphRoute, async (c) => {
 				const sourceType = isSourceNew ? 'object' : fileIds.has(sourceId) ? 'file' : 'object'
 				const targetType = isTargetNew ? 'object' : fileIds.has(targetId) ? 'file' : 'object'
 
-				const [created] = await tx
+				// Idempotent on (source_id, target_id, type). A duplicate edge in the
+				// same graph payload — or one already present in the DB — resolves to
+				// the existing row without re-firing the audit event or T2's
+				// `workspace_knowledge_referenced` ship-metric emit.
+				const insertedEdges = await tx
 					.insert(relationships)
 					.values({
 						sourceType,
@@ -250,26 +315,87 @@ app.openapi(createGraphRoute, async (c) => {
 						type: edge.type,
 						createdBy: actorId,
 					})
+					.onConflictDoNothing({
+						target: [relationships.sourceId, relationships.targetId, relationships.type],
+					})
 					.returning()
 
+				let created = insertedEdges[0]
+				const isNewInsert = Boolean(created)
 				if (!created) {
-					throw new Error(`Failed to create edge from '${edge.source}' to '${edge.target}'`)
+					const [existing] = await tx
+						.select()
+						.from(relationships)
+						.where(
+							and(
+								eq(relationships.sourceId, sourceId),
+								eq(relationships.targetId, targetId),
+								eq(relationships.type, edge.type),
+							),
+						)
+						.limit(1)
+					if (!existing) {
+						throw new Error(`Failed to create edge from '${edge.source}' to '${edge.target}'`)
+					}
+					created = existing
 				}
 				createdEdges.push(created)
 
-				await tx.insert(events).values({
-					workspaceId,
-					actorId,
-					action: 'created',
-					entityType: 'relationship',
-					entityId: created.id,
-					data: created,
-				})
+				if (isNewInsert) {
+					await tx.insert(events).values({
+						workspaceId,
+						actorId,
+						action: 'created',
+						entityType: 'relationship',
+						entityId: created.id,
+						data: created,
+					})
+
+					// Ship-metric auto-emit when a fresh `derived_from` edge points at
+					// a `knowledge` object.
+					await maybeEmitKnowledgeReferenceFromEdge(tx, {
+						workspaceId,
+						actorId,
+						edgeType: created.type,
+						sourceId: created.sourceId,
+						targetId: created.targetId,
+					})
+				}
 			}
 
 			return { nodes: createdNodes, edges: createdEdges }
 		})
 	} catch (err) {
+		// TOCTOU backstop: concurrent graph batches whose knowledge nodes share a
+		// title can both pass findKnowledgeDuplicate(); the partial unique index
+		// in migration 0047 rejects the loser inside the tx. Look up the winning
+		// row so the 409 body still points at a concrete existing object.
+		if (isKnowledgeTitleUniqueViolation(err)) {
+			const conflicting = body.nodes.find((n) => n.type === 'knowledge' && n.title)
+			const existing = conflicting
+				? await findKnowledgeDuplicate(db, workspaceId, conflicting.title)
+				: null
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					existing
+						? `A knowledge node in this batch duplicates an existing knowledge object: '${existing.title}' (${existing.id})`
+						: 'A concurrent write produced a duplicate knowledge title',
+					[
+						{
+							field: conflicting ? `nodes[${conflicting.$id}].title` : 'nodes',
+							message:
+								'Title matches an existing, non-archived knowledge object (concurrent-write backstop)',
+							received: conflicting ? `'${conflicting.title}'` : undefined,
+						},
+					],
+					existing
+						? `Update the existing object (PATCH /api/objects/${existing.id}) or link them with a 'duplicates' relationship instead of creating a new one.`
+						: 'Retry the request; a concurrent write claimed this title.',
+				),
+				409,
+			)
+		}
 		logger.error('Graph transaction failed', { error: String(err) })
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create graph'), 500)
 	}

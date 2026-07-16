@@ -12,6 +12,7 @@ import { Link } from '@tanstack/react-router'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
 import { Badge } from '../ui/badge'
+import { UndoWriteChip } from './undo-write-chip'
 
 const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
 const SESSION_ACTIONS = new Set([
@@ -56,6 +57,8 @@ interface ActivityItemViewProps {
 	actorsById?: Map<string, ActorListItem>
 	/** Replaces the default formatted description (used by the timeline to render compact "set the status to X" rows under phase dividers). */
 	descriptionOverride?: string
+	/** When true, render an Undo chip on Knowledge Author writes within the 7-day window. Set by the object-detail timeline for knowledge objects. */
+	allowUndoWriteChip?: boolean
 }
 
 export function ActivityItemView({
@@ -66,6 +69,7 @@ export function ActivityItemView({
 	contextEntityId,
 	actorsById,
 	descriptionOverride,
+	allowUndoWriteChip = false,
 }: ActivityItemViewProps) {
 	const isAgent = actor?.type === 'agent'
 	const title = getEntityTitle(event)
@@ -125,6 +129,14 @@ export function ActivityItemView({
 							error
 						</Badge>
 					)}
+					{allowUndoWriteChip && workspaceId && (
+						<UndoWriteChip
+							event={event}
+							objectId={event.entityId}
+							workspaceId={workspaceId}
+							actor={actor}
+						/>
+					)}
 				</div>
 				<RelativeTime
 					date={event.createdAt}
@@ -155,12 +167,14 @@ export function ActivityItem({
 	contextEntityId,
 	actorsById,
 	descriptionOverride,
+	allowUndoWriteChip = false,
 }: {
 	event: EventResponse
 	compact?: boolean
 	contextEntityId?: string
 	actorsById?: Map<string, ActorListItem>
 	descriptionOverride?: string
+	allowUndoWriteChip?: boolean
 }) {
 	const { data: actor } = useActor(event.actorId)
 
@@ -173,6 +187,7 @@ export function ActivityItem({
 			contextEntityId={contextEntityId}
 			actorsById={actorsById}
 			descriptionOverride={descriptionOverride}
+			allowUndoWriteChip={allowUndoWriteChip}
 		/>
 	)
 }

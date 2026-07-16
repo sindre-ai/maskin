@@ -1,10 +1,29 @@
 import { z } from 'zod'
+import { SAFE_METADATA_FIELD_NAME_RE } from './objects'
 import { safeJsonValue } from './primitives'
 
 export const triggerTypeSchema = z.enum(['cron', 'event', 'reminder'])
 
+// A cron `scope` filter narrows the pass to the objects the target agent should
+// act on. When set, the trigger runner pre-queries `objects` and skips session
+// creation entirely on a zero-row pass — no session, no `trigger_fired` event.
+// Matched rows are appended to the action prompt so the agent gets the batch
+// without a round-trip through get_objects.
+//
+// `metadata_eq` keys and `metadata_before_now` are inlined into `sql.raw`, so
+// they're pinned to `SAFE_METADATA_FIELD_NAME_RE` (same contract the
+// `metadata.<field>` filter on `/api/objects` enforces). Values in
+// `metadata_eq` are always parameter-bound.
+const safeFieldName = z.string().regex(SAFE_METADATA_FIELD_NAME_RE)
+export const cronScopeSchema = z.object({
+	entity_type: z.string().min(1),
+	metadata_eq: z.record(safeFieldName, z.string()).optional(),
+	metadata_before_now: safeFieldName.optional(),
+})
+
 export const cronConfigSchema = z.object({
 	expression: z.string(),
+	scope: cronScopeSchema.optional(),
 })
 
 export const conditionOperatorSchema = z.enum([
