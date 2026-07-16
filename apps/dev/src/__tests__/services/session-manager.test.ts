@@ -124,6 +124,53 @@ describe('SessionManager', () => {
 		mockResults = ctx.mockResults
 		calls = ctx.calls
 		manager = new SessionManager(ctx.db, storageProvider as StorageProvider)
+		// Default: pretend GitHub is healthy so preflight in buildLaunchSpec does
+		// not touch the real network. Individual tests override this for the
+		// broken-identity path.
+		//
+		// GitHub App installation tokens (ghs_ prefix) 403 on /user for real —
+		// that endpoint requires a user-context token. Mirror that here instead
+		// of unconditionally allowing /user, so this default can't mask a
+		// preflight regression that (re-)requires /user for installation tokens.
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string | URL, init?: RequestInit) => {
+				const u = url.toString()
+				if (u.startsWith('https://api.github.com/user')) {
+					const auth = (init?.headers as Record<string, string> | undefined)?.Authorization
+					if (auth?.startsWith('Bearer ghs_'))
+						return new Response('{"message":"Resource not accessible by integration"}', {
+							status: 403,
+							headers: { 'content-type': 'application/json' },
+						})
+					return new Response(JSON.stringify({ login: 'octocat' }), {
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					})
+				}
+				if (u.startsWith('https://api.github.com/repos/'))
+					return new Response(JSON.stringify({ permissions: { push: true } }), {
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					})
+				if (u.startsWith('https://api.github.com/installation/repositories'))
+					return new Response(
+						JSON.stringify({
+							repositories: [{ full_name: 'octocat/hello', permissions: { push: true } }],
+						}),
+						{
+							status: 200,
+							headers: { 'content-type': 'application/json' },
+						},
+					)
+				if (u.startsWith('https://slack.com/api/chat.postMessage'))
+					return new Response(JSON.stringify({ ok: true }), {
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					})
+				throw new Error(`unexpected fetch in SessionManager test: ${u}`)
+			}),
+		)
 	})
 
 	afterEach(async () => {
@@ -722,6 +769,95 @@ describe('SessionManager', () => {
 			expect(mcpKeys).toContain('github-vaerksted-ai')
 		})
 
+		it('sets GITHUB_REPO alongside GITHUB_INTEGRATION_ID when a scoped bet carries metadata.repo', async () => {
+			// End-to-end wiring for T8: the credential helper forwards `?repo=` only
+			// when GITHUB_REPO is populated, so buildLaunchSpec must resolve and set
+			// it in the same block that sets GITHUB_INTEGRATION_ID.
+			const wsId = randomUUID()
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-aaa',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const fixtures = buildLaunchFixtures([integration])
+			fixtures.session.workspaceId = wsId
+			fixtures.workspace.id = wsId
+
+			const scopedBet = {
+				id: randomUUID(),
+				type: 'bet',
+				metadata: { repo: 'sindre-ai/maskin' },
+			}
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_token_sindre_ai')
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+			mockResults.selectQueue = [
+				[fixtures.session],
+				[fixtures.workspace],
+				[{ count: 0 }],
+				[fixtures.agent],
+				[fixtures.workspace],
+				[fixtures.workspace],
+				fixtures.integrationRows,
+				// resolveGithubRepoSlug: activeSessionId lookup returns the bet directly
+				[scopedBet],
+				// resolveGithubRepoSlug: bet.metadata lookup by id
+				[scopedBet],
+			]
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.GITHUB_INTEGRATION_ID).toBe(integration.id)
+			expect(createArgs.env.GITHUB_REPO).toBe('sindre-ai/maskin')
+		})
+
+		it('leaves GITHUB_REPO unset when no scoped object or sandbox default resolves', async () => {
+			const wsId = randomUUID()
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-aaa',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const fixtures = buildLaunchFixtures([integration])
+			fixtures.session.workspaceId = wsId
+			fixtures.workspace.id = wsId
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_token_sindre_ai')
+
+			// Ensure no accidental sandbox default from the host environment leaks in.
+			const originalEnv = process.env.GITHUB_REPO
+			// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+			delete process.env.GITHUB_REPO
+			try {
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.GITHUB_INTEGRATION_ID).toBe(integration.id)
+				expect(createArgs.env.GITHUB_REPO).toBeUndefined()
+			} finally {
+				if (originalEnv === undefined) {
+					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+					delete process.env.GITHUB_REPO
+				} else {
+					process.env.GITHUB_REPO = originalEnv
+				}
+			}
+		})
+
 		it('lazily backfills owner_login and persists it when the row is missing it', async () => {
 			const integration = buildIntegration({
 				provider: 'github',
@@ -878,7 +1014,7 @@ describe('SessionManager', () => {
 						type: 'stdio',
 						command: 'npx',
 						args: ['-y', '@modelcontextprotocol/server-github'],
-						env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
+						env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
 					},
 				},
 			}
@@ -903,9 +1039,351 @@ describe('SessionManager', () => {
 				mcpServers: Record<string, { env: Record<string, string> }>
 			}
 			expect(agentMcp.mcpServers['github-sindre-ai']).toBeDefined()
-			expect(agentMcp.mcpServers['github-sindre-ai'].env.GITHUB_TOKEN).toBe(
+			expect(agentMcp.mcpServers['github-sindre-ai'].env.GITHUB_PERSONAL_ACCESS_TOKEN).toBe(
 				'${GITHUB_TOKEN_SINDRE_AI}',
 			)
+		})
+	})
+
+	describe('startSession() — GitHub preflight', () => {
+		const githubProviderConfig = {
+			config: {
+				name: 'github',
+				mcp: {
+					command: 'npx',
+					args: ['-y', '@modelcontextprotocol/server-github'],
+					envKey: 'GITHUB_TOKEN',
+				},
+			},
+		}
+		const slackProviderConfig = {
+			config: {
+				name: 'slack',
+				mcp: {
+					envKey: 'SLACK_BOT_TOKEN',
+				},
+			},
+		}
+
+		function launchFixtures(opts: {
+			integrationRows: ReturnType<typeof buildIntegration>[]
+			agentTools?: Record<string, unknown> | null
+		}) {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const workspace = { id: session.workspaceId, settings: {} }
+			const agent = {
+				id: session.actorId,
+				type: 'agent' as const,
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: opts.agentTools ?? null,
+			}
+			return { session, workspace, agent, integrationRows: opts.integrationRows }
+		}
+
+		function loadLaunchMocks(fixtures: ReturnType<typeof launchFixtures>) {
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+			mockResults.selectQueue = [
+				[fixtures.session],
+				[fixtures.workspace],
+				[{ count: 0 }],
+				[fixtures.agent],
+				[fixtures.workspace],
+				[fixtures.workspace],
+				fixtures.integrationRows,
+			]
+		}
+
+		function jsonRes(body: unknown, status = 200): Response {
+			return new Response(JSON.stringify(body), {
+				status,
+				headers: { 'content-type': 'application/json' },
+			})
+		}
+
+		it('drops a broken github identity from AGENT_MCP_JSON and posts one Slack alert to C075JBZ65RT', async () => {
+			const slackIntegration = buildIntegration({ provider: 'slack', externalId: 'T-preflight' })
+			const fixtures = launchFixtures({
+				integrationRows: [slackIntegration],
+				agentTools: {
+					mcpServers: {
+						github: {
+							type: 'stdio',
+							command: 'npx',
+							args: ['-y', '@modelcontextprotocol/server-github'],
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_ok' },
+						},
+						github_approver: {
+							type: 'stdio',
+							command: 'npx',
+							args: ['-y', '@modelcontextprotocol/server-github'],
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_broken' },
+						},
+					},
+				},
+			})
+
+			vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('xoxb-preflight-bot-token')
+
+			const fetchCalls: Array<{ url: string; body?: unknown }> = []
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async (url: string | URL, init?: RequestInit) => {
+					const u = url.toString()
+					fetchCalls.push({
+						url: u,
+						body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+					})
+					if (u === 'https://api.github.com/user') {
+						// Route the /user probe by Authorization header — the approver
+						// token gets a 401, the primary succeeds.
+						const auth = (init?.headers as Record<string, string> | undefined)?.Authorization
+						if (auth === 'Bearer ghp_broken')
+							return new Response('bad creds ghp_broken', { status: 401 })
+						return jsonRes({ login: 'octocat' })
+					}
+					if (u.startsWith('https://api.github.com/repos/'))
+						return jsonRes({ permissions: { push: true } })
+					if (u === 'https://slack.com/api/chat.postMessage') return jsonRes({ ok: true })
+					throw new Error(`unexpected fetch: ${u}`)
+				}),
+			)
+
+			loadLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const agentMcp = JSON.parse(createArgs.env.AGENT_MCP_JSON) as {
+				mcpServers: Record<string, unknown>
+			}
+			// Broken identity gated: agent literally cannot call mcp__github_approver__*
+			expect(Object.keys(agentMcp.mcpServers)).toContain('github')
+			expect(Object.keys(agentMcp.mcpServers)).not.toContain('github_approver')
+
+			const slackPosts = fetchCalls.filter(
+				(c) => c.url === 'https://slack.com/api/chat.postMessage',
+			)
+			expect(slackPosts).toHaveLength(1)
+			const slackBody = slackPosts[0]?.body as { channel: string; text: string }
+			expect(slackBody.channel).toBe('C075JBZ65RT')
+			expect(slackBody.text).toContain('github_approver')
+			expect(slackBody.text).toContain('401-unauth')
+			expect(slackBody.text).not.toContain('ghp_broken')
+		})
+
+		it('missing token short-circuits to missing-token and never hits the anonymous rate-limit bucket', async () => {
+			const slackIntegration = buildIntegration({ provider: 'slack', externalId: 'T-missing' })
+			const fixtures = launchFixtures({
+				integrationRows: [slackIntegration],
+				agentTools: {
+					mcpServers: {
+						github_approver: {
+							type: 'stdio',
+							command: 'npx',
+							args: ['-y', '@modelcontextprotocol/server-github'],
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_APPROVER}' },
+						},
+					},
+				},
+			})
+
+			vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('xoxb-bot-token')
+
+			const fetchCalls: string[] = []
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async (url: string | URL, init?: RequestInit) => {
+					const u = url.toString()
+					fetchCalls.push(u)
+					if (u === 'https://slack.com/api/chat.postMessage')
+						return jsonRes({ ok: true, body: init?.body })
+					throw new Error(`missing-token path must not hit ${u}`)
+				}),
+			)
+
+			loadLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			expect(fetchCalls).not.toContain('https://api.github.com/user')
+			expect(fetchCalls).toContain('https://slack.com/api/chat.postMessage')
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const agentMcp = JSON.parse(createArgs.env.AGENT_MCP_JSON) as {
+				mcpServers: Record<string, unknown>
+			}
+			expect(agentMcp.mcpServers).toEqual({})
+		})
+
+		it('leaves the MCP config untouched and posts no Slack alert when every identity is healthy', async () => {
+			const wsId = randomUUID()
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-healthy',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const fixtures = launchFixtures({ integrationRows: [integration] })
+			fixtures.session.workspaceId = wsId
+			fixtures.workspace.id = wsId
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_healthy_token')
+
+			// Rely on the outer describe's default fetch stub (healthy + no Slack call
+			// expected because nothing failed).
+			loadLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const fetchMock = vi.mocked(fetch)
+			const calledUrls = fetchMock.mock.calls.map((args) => args[0]?.toString() ?? '')
+			expect(calledUrls).not.toContain('https://slack.com/api/chat.postMessage')
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const mcp = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+				mcpServers: Record<string, unknown>
+			}
+			expect(mcp.mcpServers['github-sindre-ai']).toBeDefined()
+		})
+
+		it('probes the session’s resolved target repo directly instead of /installation/repositories once GITHUB_REPO is known', async () => {
+			const wsId = randomUUID()
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-healthy',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const fixtures = launchFixtures({ integrationRows: [integration] })
+			fixtures.session.workspaceId = wsId
+			fixtures.workspace.id = wsId
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_healthy_token')
+
+			const originalEnv = process.env.GITHUB_REPO
+			process.env.GITHUB_REPO = 'sindre-ai/maskin'
+			try {
+				loadLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const fetchMock = vi.mocked(fetch)
+				const calledUrls = fetchMock.mock.calls.map((args) => args[0]?.toString() ?? '')
+				expect(calledUrls).toContain('https://api.github.com/repos/sindre-ai/maskin/git/blobs')
+				expect(calledUrls).not.toContain(
+					'https://api.github.com/installation/repositories?per_page=1',
+				)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				const mcp = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, unknown>
+				}
+				expect(mcp.mcpServers['github-sindre-ai']).toBeDefined()
+			} finally {
+				if (originalEnv === undefined) {
+					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+					delete process.env.GITHUB_REPO
+				} else {
+					process.env.GITHUB_REPO = originalEnv
+				}
+			}
+		})
+
+		it('attributes a write-scope failure to the correct installation when two orgs are connected', async () => {
+			const wsId = randomUUID()
+			const healthyIntegration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-healthy-org',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const brokenIntegration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-broken-org',
+				config: { owner_login: 'vaerksted-ai' },
+			})
+			const slackIntegration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'slack',
+				externalId: 'T-multi-install',
+			})
+			const fixtures = launchFixtures({
+				integrationRows: [healthyIntegration, brokenIntegration, slackIntegration],
+			})
+			fixtures.session.workspaceId = wsId
+			fixtures.workspace.id = wsId
+
+			vi.mocked(getProvider).mockImplementation(
+				(provider: string) =>
+					(provider === 'slack' ? slackProviderConfig : githubProviderConfig) as never,
+			)
+			mockGetValidToken
+				.mockResolvedValueOnce('ghs_token_sindre_ai')
+				.mockResolvedValueOnce('ghs_token_vaerksted_ai')
+				.mockResolvedValueOnce('xoxb-multi-install-bot')
+
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async (url: string | URL, init?: RequestInit) => {
+					const u = url.toString()
+					const auth = (init?.headers as Record<string, string> | undefined)?.Authorization
+					if (u === 'https://api.github.com/installation/repositories?per_page=1') {
+						if (auth === 'Bearer ghs_token_vaerksted_ai')
+							return jsonRes({ repositories: [{ full_name: 'vaerksted-ai/x' }] })
+						return jsonRes({ repositories: [{ full_name: 'sindre-ai/maskin' }] })
+					}
+					if (u === 'https://api.github.com/repos/sindre-ai/maskin/git/blobs')
+						return jsonRes({ sha: 'abc123' }, 201)
+					if (u === 'https://api.github.com/repos/vaerksted-ai/x/git/blobs')
+						return new Response('Resource not accessible by integration', { status: 403 })
+					if (u === 'https://slack.com/api/chat.postMessage') return jsonRes({ ok: true })
+					throw new Error(`unexpected fetch: ${u}`)
+				}),
+			)
+
+			loadLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const mcp = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+				mcpServers: Record<string, unknown>
+			}
+			// The failing org's identity is gated; the healthy org's identity is untouched.
+			expect(mcp.mcpServers['github-sindre-ai']).toBeDefined()
+			expect(mcp.mcpServers['github-vaerksted-ai']).toBeUndefined()
+
+			const fetchMock = vi.mocked(fetch)
+			const slackPost = fetchMock.mock.calls.find(
+				(args) => args[0]?.toString() === 'https://slack.com/api/chat.postMessage',
+			)
+			const slackBody = JSON.parse((slackPost?.[1]?.body as string) ?? '{}') as { text: string }
+			// Names the broken org's installation, not the healthy org's.
+			expect(slackBody.text).toContain(brokenIntegration.externalId)
+			expect(slackBody.text).not.toContain(healthyIntegration.externalId)
+			expect(slackBody.text).toContain('github-vaerksted-ai')
 		})
 	})
 
@@ -1170,10 +1648,12 @@ describe('SessionManager', () => {
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			// 1st select: the fallback lookup after CAS retries are exhausted,
-			// finds the session still 'running'. 2nd select: hasOtherActiveSessions'
-			// check — a non-empty result skips the actors-table update branch.
-			mockResults.selectQueue = [[session], [{ id: 'other-session' }]]
+			// 1st select: markRemoteSessionComplete's own usage extraction (reads
+			// session_logs) — empty means "no usage found", a no-op. 2nd select:
+			// the fallback lookup after CAS retries are exhausted, finds the
+			// session still 'running'. 3rd select: hasOtherActiveSessions' check —
+			// a non-empty result skips the actors-table update branch.
+			mockResults.selectQueue = [[], [session], [{ id: 'other-session' }]]
 
 			await manager.markRemoteSessionComplete(session.id, 137)
 
@@ -1183,6 +1663,56 @@ describe('SessionManager', () => {
 			expect(eventInsert).toBeDefined()
 		})
 
+		it('persists non-null usage fields via the fallback direct update when CAS retries are exhausted', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			const resultLogRow = {
+				content: JSON.stringify({
+					type: 'result',
+					total_cost_usd: 0.1234,
+					duration_ms: 5000,
+					usage: {
+						input_tokens: 100,
+						output_tokens: 200,
+						cache_creation_input_tokens: 10,
+						cache_read_input_tokens: 20,
+					},
+				}),
+			}
+			// 1st select: markRemoteSessionComplete's own usage extraction (reads
+			// session_logs) — finds the result event this time, unlike the sibling
+			// "still runs terminal side effects" test above. 2nd select: the
+			// fallback lookup after CAS retries are exhausted, finds the session
+			// still 'running'. 3rd select: hasOtherActiveSessions' check — a
+			// non-empty result skips the actors-table update branch.
+			mockResults.selectQueue = [[resultLogRow], [session], [{ id: 'other-session' }]]
+
+			await manager.markRemoteSessionComplete(session.id, 0)
+
+			// calls.updates captures every .update().set() in call order, across
+			// every table touched (sessions, then later actors/objects) — not just
+			// the sessions-table update we care about. clearActiveSession() runs
+			// after the fallback and would land last if we just took .at(-1), so
+			// filter for the sessions-shaped payload (identified by totalCostUsd)
+			// and take its last occurrence — the fallback direct update (~2830),
+			// distinct from the 3 preceding (and failing) primary CAS attempts.
+			const sessionUpdates = calls.updates.filter(
+				(v): v is Record<string, unknown> =>
+					typeof v === 'object' && v !== null && 'totalCostUsd' in v,
+			)
+			const fallbackUpdate = sessionUpdates.at(-1) as Record<string, unknown>
+			expect(fallbackUpdate.totalCostUsd).toBe('0.1234')
+			expect(fallbackUpdate.inputTokens).toBe(100)
+			expect(fallbackUpdate.outputTokens).toBe(200)
+			expect(fallbackUpdate.cacheCreationInputTokens).toBe(10)
+			expect(fallbackUpdate.cacheReadInputTokens).toBe(20)
+			expect(fallbackUpdate.durationMs).toBe(5000)
+		})
+
 		it('no-ops via the fallback lookup when a concurrent call already resolved the session', async () => {
 			const session = buildSession({ status: 'failed' })
 			mockResults.updateErrorQueue = [
@@ -1190,7 +1720,9 @@ describe('SessionManager', () => {
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			mockResults.selectQueue = [[session]]
+			// 1st select: the usage-extraction select (empty = no-op). 2nd select:
+			// the fallback lookup, which finds the session already resolved.
+			mockResults.selectQueue = [[], [session]]
 			const initialInsertCount = calls.inserts.length
 
 			await manager.markRemoteSessionComplete(session.id, 137)
@@ -1740,8 +2272,200 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('appendRemoteSessionLogs() — github tool-call cause_tag tagging', () => {
+		// The classifier singleton is process-wide; import lazily so the mock
+		// setup at the top of the file has taken effect first.
+		type ClassifierModule = typeof import('../../lib/integrations/providers/github/log-classifier')
+		let sessionGithubLogClassifier: ClassifierModule['sessionGithubLogClassifier']
+
+		beforeAll(async () => {
+			const mod = await import('../../lib/integrations/providers/github/log-classifier')
+			sessionGithubLogClassifier = mod.sessionGithubLogClassifier
+		})
+
+		function registerFakeInstall(sessionId: string, ownerLower: string, installationId: string) {
+			sessionGithubLogClassifier.registerSession(sessionId, [
+				{
+					ownerLoginLower: ownerLower,
+					installationId,
+					tokenMetadata: {
+						token: 'ghs_test',
+						installationId,
+						mintedAt: new Date(Date.now() - 60_000),
+					},
+				},
+			])
+		}
+
+		function findInserts(pred: (row: { stream?: string; content?: string }) => boolean) {
+			return calls.inserts.filter(
+				(row): row is { stream: string; content: string } =>
+					typeof row === 'object' &&
+					row !== null &&
+					pred(row as { stream?: string; content?: string }),
+			)
+		}
+
+		it('emits a system-stream cause_tag line for a failing github tool_result and passes non-github stdout through unchanged', async () => {
+			const sessionId = randomUUID()
+			registerFakeInstall(sessionId, 'sindre-ai', '4711')
+			try {
+				const toolUse = JSON.stringify({
+					type: 'assistant',
+					message: {
+						content: [
+							{
+								type: 'tool_use',
+								id: 'toolu_401',
+								name: 'mcp__github-sindre-ai__get_issue',
+								input: {},
+							},
+						],
+					},
+				})
+				const toolResult = JSON.stringify({
+					type: 'user',
+					message: {
+						content: [
+							{
+								type: 'tool_result',
+								tool_use_id: 'toolu_401',
+								content: 'GitHub API 401: Bad credentials',
+								is_error: true,
+							},
+						],
+					},
+				})
+				const nonGithub =
+					'plain container stdout with no JSON envelope — must be persisted untouched'
+
+				await manager.appendRemoteSessionLogs(sessionId, [
+					{ stream: 'stdout', content: `${toolUse}\n` },
+					{ stream: 'stdout', content: `${toolResult}\n` },
+					{ stream: 'stdout', content: `${nonGithub}\n` },
+				])
+
+				const tagged = findInserts(
+					(r) => r.stream === 'system' && (r.content ?? '').includes('cause_tag=401-unauth'),
+				)
+				expect(tagged).toHaveLength(1)
+				expect(tagged[0].content).toContain('tool=mcp__github-sindre-ai__get_issue')
+				expect(tagged[0].content).toContain('installation_id=4711')
+
+				const stdoutPassthrough = findInserts(
+					(r) => r.stream === 'stdout' && (r.content ?? '').includes(nonGithub),
+				)
+				expect(stdoutPassthrough).toHaveLength(1)
+			} finally {
+				sessionGithubLogClassifier.unregisterSession(sessionId)
+			}
+		})
+
+		it('lands ≥4 distinct cause_tags across a seeded fault-injection sequence', async () => {
+			const sessionId = randomUUID()
+			registerFakeInstall(sessionId, 'sindre-ai', '4711')
+			try {
+				const faults: Array<[string, string, string]> = [
+					['toolu_401', 'mcp__github-sindre-ai__get_issue', 'GitHub API 401: Bad credentials'],
+					[
+						'toolu_403',
+						'mcp__github-sindre-ai__merge_pull_request',
+						'GitHub API 403: Resource not accessible by integration',
+					],
+					[
+						'toolu_422',
+						'mcp__github-sindre-ai__create_pull_request_review',
+						'GitHub API 422: Validation Failed — expected number for pull_number',
+					],
+					// Owner the session doesn't know about → hadToken:false → missing-token.
+					[
+						'toolu_missing',
+						'mcp__github-unknown-org__list_issues',
+						'GitHub API 401: Bad credentials',
+					],
+				]
+
+				const lines: Array<{ stream: 'stdout'; content: string }> = []
+				for (const [id, name, body] of faults) {
+					lines.push({
+						stream: 'stdout',
+						content: `${JSON.stringify({
+							type: 'assistant',
+							message: {
+								content: [{ type: 'tool_use', id, name, input: {} }],
+							},
+						})}\n`,
+					})
+					lines.push({
+						stream: 'stdout',
+						content: `${JSON.stringify({
+							type: 'user',
+							message: {
+								content: [{ type: 'tool_result', tool_use_id: id, content: body, is_error: true }],
+							},
+						})}\n`,
+					})
+				}
+
+				await manager.appendRemoteSessionLogs(sessionId, lines)
+
+				const tags = findInserts(
+					(r) => r.stream === 'system' && (r.content ?? '').includes('[github-cause-tag]'),
+				)
+					.map((r) => r.content.match(/cause_tag=([\w-]+)/)?.[1])
+					.filter((t): t is string => Boolean(t))
+
+				const distinct = new Set(tags)
+				expect(distinct.size).toBeGreaterThanOrEqual(4)
+				expect(distinct).toContain('401-unauth')
+				expect(distinct).toContain('403-permission')
+				expect(distinct).toContain('schema-validation')
+				expect(distinct).toContain('missing-token')
+			} finally {
+				sessionGithubLogClassifier.unregisterSession(sessionId)
+			}
+		})
+
+		it('does not emit a cause_tag for an unregistered session', async () => {
+			const sessionId = randomUUID()
+			const toolUse = JSON.stringify({
+				type: 'assistant',
+				message: {
+					content: [
+						{
+							type: 'tool_use',
+							id: 'toolu_x',
+							name: 'mcp__github-sindre-ai__get_issue',
+							input: {},
+						},
+					],
+				},
+			})
+			const toolResult = JSON.stringify({
+				type: 'user',
+				message: {
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: 'toolu_x',
+							content: 'GitHub API 500: server error',
+							is_error: true,
+						},
+					],
+				},
+			})
+			await manager.appendRemoteSessionLogs(sessionId, [
+				{ stream: 'stdout', content: `${toolUse}\n${toolResult}\n` },
+			])
+			const tagged = findInserts(
+				(r) => r.stream === 'system' && (r.content ?? '').includes('[github-cause-tag]'),
+			)
+			expect(tagged).toHaveLength(0)
+		})
+	})
+
 	describe('streamContainerLogs() — reconnect on transient stream drop', () => {
-		it('reattaches with tail:0 after a dropped log stream and does not surface the "interrupted" sentinel', async () => {
+		it('falls back to tail:0 when no chunk was ever ingested, writes a drop marker, and does not surface the "interrupted" sentinel', async () => {
 			// Regression guard for the false-positive auto-pause bug: when
 			// dockerode's logs(follow:true) connection drops mid-session,
 			// `session_logs` stops growing and the 10-min idle watchdog
@@ -1760,8 +2484,8 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(sessionId, { tempDir: '/tmp/test' })
 
-			// First connect throws (simulating a socket drop), second connect
-			// yields one chunk and ends naturally.
+			// First connect throws before any chunk arrives (simulating a socket
+			// drop), second connect yields one chunk and ends naturally.
 			mockContainerManager.logs.mockImplementationOnce(() => ({
 				[Symbol.asyncIterator]() {
 					return { next: () => Promise.reject(new Error('socket closed mid-stream')) }
@@ -1797,8 +2521,9 @@ describe('SessionManager', () => {
 				vi.useRealTimers()
 			}
 
-			// Two calls: first replays history (`{}`), second reattaches from
-			// "now" (`tail: 0`) to avoid duplicating already-persisted rows.
+			// Two calls: first replays history (`{}`); second reattaches — since no
+			// chunk was ever ingested there's no timestamp to backfill from, so it
+			// falls back to `tail: 0` rather than duplicating everything.
 			expect(mockContainerManager.logs).toHaveBeenCalledTimes(2)
 			expect(mockContainerManager.logs).toHaveBeenNthCalledWith(1, 'container-reconnect', true, {})
 			expect(mockContainerManager.logs).toHaveBeenNthCalledWith(2, 'container-reconnect', true, {
@@ -1816,6 +2541,16 @@ describe('SessionManager', () => {
 			)
 			expect(interrupted).toBeUndefined()
 
+			// A drop is now visible even when the reconnect itself succeeds.
+			const dropped = calls.inserts.find(
+				(i): i is { stream: string; content: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { stream?: string }).stream === 'system' &&
+					String((i as { content?: string }).content ?? '').includes('Log stream dropped'),
+			)
+			expect(dropped).toBeDefined()
+
 			// The recovered chunk from the second attempt is persisted, which
 			// is what keeps the idle watchdog's `lastLog` heuristic honest.
 			const recovered = calls.inserts.find(
@@ -1826,6 +2561,71 @@ describe('SessionManager', () => {
 					(i as { content?: string }).content === 'recovered-chunk',
 			)
 			expect(recovered).toBeDefined()
+		})
+
+		it('backfills via sinceUnixSec from the last ingested chunk when a drop happens mid-stream', async () => {
+			const sessionId = 'sess-reconnect-backfill'
+			const FIXED_TIME_MS = 1_700_000_000_000
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; logsDrained?: Promise<void> }>
+				}
+			).activeSessions.set(sessionId, { tempDir: '/tmp/test' })
+
+			// First connect delivers a chunk, then the connection drops. Second
+			// connect recovers.
+			mockContainerManager.logs.mockImplementationOnce(() => ({
+				async *[Symbol.asyncIterator]() {
+					yield { stream: 'stdout' as const, data: 'first-chunk' }
+					throw new Error('socket closed mid-stream')
+				},
+			}))
+			mockContainerManager.logs.mockImplementationOnce(() => ({
+				async *[Symbol.asyncIterator]() {
+					yield { stream: 'stdout' as const, data: 'recovered-chunk' }
+				},
+			}))
+			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
+
+			vi.useFakeTimers()
+			vi.setSystemTime(FIXED_TIME_MS)
+			try {
+				;(
+					manager as unknown as {
+						streamContainerLogs(sessionId: string, containerId: string): void
+					}
+				).streamContainerLogs(sessionId, 'container-backfill')
+
+				const drained = (
+					manager as unknown as {
+						activeSessions: Map<string, { logsDrained?: Promise<void> }>
+					}
+				).activeSessions.get(sessionId)?.logsDrained
+				expect(drained).toBeDefined()
+
+				await vi.runAllTimersAsync()
+				await drained
+			} finally {
+				vi.useRealTimers()
+			}
+
+			// Second call backfills from the last successfully-ingested chunk's
+			// timestamp instead of jumping to "now".
+			expect(mockContainerManager.logs).toHaveBeenCalledTimes(2)
+			expect(mockContainerManager.logs).toHaveBeenNthCalledWith(1, 'container-backfill', true, {})
+			expect(mockContainerManager.logs).toHaveBeenNthCalledWith(2, 'container-backfill', true, {
+				sinceUnixSec: Math.floor(FIXED_TIME_MS / 1000),
+			})
+
+			const dropped = calls.inserts.find(
+				(i): i is { stream: string; content: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { stream?: string }).stream === 'system' &&
+					String((i as { content?: string }).content ?? '').includes('Log stream dropped'),
+			)
+			expect(dropped).toBeDefined()
+			expect(dropped?.content).toContain(new Date(FIXED_TIME_MS).toISOString())
 		})
 	})
 
@@ -2388,6 +3188,164 @@ describe('SessionManager', () => {
 			).handleCompletion(session.id, 'container-abc', null)
 
 			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('resolveGithubRepoSlug()', () => {
+		// T8 — sourcing chain for the container's GITHUB_REPO env var, consumed by
+		// the git credential helper as a `?repo=` hint on token-mint requests
+		// (T4's mint-on-write installation-ID recovery path). The DoD requires
+		// each source to work in isolation, "no source" to leave the env unset,
+		// and malformed sources to be rejected rather than passed downstream.
+		const originalEnvRepo = process.env.GITHUB_REPO
+
+		beforeEach(() => {
+			// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+			delete process.env.GITHUB_REPO
+		})
+
+		afterEach(() => {
+			if (originalEnvRepo === undefined) {
+				// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+				delete process.env.GITHUB_REPO
+			} else {
+				process.env.GITHUB_REPO = originalEnvRepo
+			}
+		})
+
+		it("uses the scoped task's own metadata.repo when set (task-level override)", async () => {
+			const session = buildSession({ status: 'running' })
+			const task = { id: randomUUID(), type: 'task', metadata: { repo: 'sindre-ai/maskin' } }
+			mockResults.selectQueue = [[task]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: 'sindre-ai/maskin', source: 'task' })
+		})
+
+		it("walks breaks_into from a task to its parent bet's metadata.repo when the task has no override", async () => {
+			const session = buildSession({ status: 'running' })
+			const task = { id: randomUUID(), type: 'task', metadata: null }
+			const bet = { id: randomUUID(), metadata: { repo: 'sindre-ai/maskin' } }
+			mockResults.selectQueue = [
+				[task],
+				[{ sourceId: task.id, targetId: bet.id }],
+				[{ id: bet.id }],
+				[bet],
+			]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: 'sindre-ai/maskin', source: 'bet' })
+		})
+
+		it("uses the scoped bet's own metadata.repo when the session is bet-scoped", async () => {
+			const session = buildSession({ status: 'running' })
+			const bet = { id: randomUUID(), type: 'bet', metadata: { repo: 'sindre-ai/maskin' } }
+			mockResults.selectQueue = [[bet], [bet]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: 'sindre-ai/maskin', source: 'bet' })
+		})
+
+		it('falls back to process.env.GITHUB_REPO when no scoped object exists (sandbox default)', async () => {
+			const session = buildSession({ status: 'running' })
+			process.env.GITHUB_REPO = 'sindre-ai/maskin'
+			mockResults.selectQueue = [[]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: 'sindre-ai/maskin', source: 'env' })
+		})
+
+		it('returns { slug: null, source: none } when no source is available', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.selectQueue = [[]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: null, source: 'none' })
+		})
+
+		it('rejects a malformed bet.metadata.repo with a rejected marker instead of forwarding it', async () => {
+			const session = buildSession({ status: 'running' })
+			const bet = { id: randomUUID(), type: 'bet', metadata: { repo: 'not-a-slug' } }
+			mockResults.selectQueue = [[bet], [bet]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved.slug).toBeNull()
+			expect(resolved.source).toBe('none')
+			expect(resolved.rejected).toBe(`bet:${bet.id}`)
+		})
+
+		it('rejects a malformed task.metadata.repo (missing "/") without walking to the bet', async () => {
+			const session = buildSession({ status: 'running' })
+			const task = { id: randomUUID(), type: 'task', metadata: { repo: 'missing-slash' } }
+			mockResults.selectQueue = [[task]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved.slug).toBeNull()
+			expect(resolved.source).toBe('none')
+			expect(resolved.rejected).toBe(`task:${task.id}`)
+		})
+
+		it('normalizes a full https:// GitHub URL down to owner/name', async () => {
+			const session = buildSession({ status: 'running' })
+			const bet = {
+				id: randomUUID(),
+				type: 'bet',
+				metadata: { repo: 'https://github.com/sindre-ai/maskin.git' },
+			}
+			mockResults.selectQueue = [[bet], [bet]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: 'sindre-ai/maskin', source: 'bet' })
+		})
+
+		it('normalizes a git@github.com SSH form and strips the .git suffix', async () => {
+			const session = buildSession({ status: 'running' })
+			process.env.GITHUB_REPO = 'git@github.com:sindre-ai/maskin.git'
+			mockResults.selectQueue = [[]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved).toEqual({ slug: 'sindre-ai/maskin', source: 'env' })
+		})
+
+		it('rejects a malformed sandbox default env value without setting the slug', async () => {
+			const session = buildSession({ status: 'running' })
+			process.env.GITHUB_REPO = '///not-valid///'
+			mockResults.selectQueue = [[]]
+
+			const resolved = await manager.resolveGithubRepoSlug(
+				session as unknown as Parameters<typeof manager.resolveGithubRepoSlug>[0],
+			)
+
+			expect(resolved.slug).toBeNull()
+			expect(resolved.source).toBe('none')
+			expect(resolved.rejected).toBe('env:GITHUB_REPO')
 		})
 	})
 })

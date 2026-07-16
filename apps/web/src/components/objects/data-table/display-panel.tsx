@@ -15,6 +15,7 @@ import {
 	ResponsivePopoverTrigger,
 } from '@/components/ui/responsive-popover'
 import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
@@ -60,6 +61,11 @@ export interface DisplayPanelProps {
 	// Grouping
 	groupBy?: string
 	onGroupByChange?: (value: string | undefined) => void
+	// Show — per-view visibility flags. Callers opt in by wiring
+	// `onIncludeArchivedChange`; when unset the whole section is hidden so
+	// non-bet surfaces keep their existing panel.
+	includeArchived?: boolean
+	onIncludeArchivedChange?: (value: boolean) => void
 	// Trigger appearance
 	iconOnly?: boolean
 	// Sections — surfaces that don't have a board view can opt out of the View pills.
@@ -162,6 +168,8 @@ export function DisplayPanel({
 	onOrderChange,
 	groupBy,
 	onGroupByChange,
+	includeArchived = false,
+	onIncludeArchivedChange,
 	iconOnly = false,
 	showView = true,
 }: DisplayPanelProps) {
@@ -189,8 +197,10 @@ export function DisplayPanel({
 	const activeFilterCount =
 		(activeStatuses.length > 0 ? 1 : 0) +
 		(activeDrivers.length > 0 ? 1 : 0) +
-		activeMetadataFilterCount
+		activeMetadataFilterCount +
+		(includeArchived ? 1 : 0)
 	const hasActiveFilters = activeFilterCount > 0
+	const showShow = !!onIncludeArchivedChange
 
 	const showMetadataFilters = !!onMetadataFilterChange && metadataFields.length > 0
 	const showOrdering = !!sort && !!order && !!onSortChange && !!onOrderChange && columns.length > 0
@@ -252,7 +262,7 @@ export function DisplayPanel({
 	// mobile (the iconOnly variant already carries the filter count pill).
 	const isNonDefaultSort = !!sort && (sort !== 'createdAt' || order !== 'desc')
 	const hasGrouping = !!groupBy
-	const showInlineReading = !iconOnly && (isNonDefaultSort || hasGrouping)
+	const showInlineReading = !iconOnly && (isNonDefaultSort || hasGrouping || includeArchived)
 	const inlineSortLabel = sortLabel ?? sort
 	const inlineGroupLabel = groupLabel ?? groupBy
 
@@ -310,6 +320,36 @@ export function DisplayPanel({
 										Board
 									</PillButton>
 								</div>
+							</div>
+							<Separator />
+						</>
+					)}
+
+					{/* Show — per-view visibility flags (Include archived, ...). Only
+					 * renders when the caller wires `onIncludeArchivedChange`, so
+					 * non-bet surfaces keep their existing panel shape. */}
+					{showShow && (
+						<>
+							<div className="p-3 space-y-2">
+								<SectionHeader>Show</SectionHeader>
+								<label
+									htmlFor="display-include-archived"
+									className={cn(
+										// `relative` anchors the invisible `::before` hit surface
+										// so the visible row stays compact while the tap target
+										// meets 44 px — iOS/mobile canon.
+										'relative flex items-center justify-between gap-2 text-xs cursor-pointer',
+										"before:absolute before:-inset-3 before:h-11 before:w-full before:content-[''] before:pointer-events-none",
+									)}
+								>
+									<span className="text-foreground">Include archived</span>
+									<Switch
+										id="display-include-archived"
+										checked={includeArchived}
+										onCheckedChange={(next) => onIncludeArchivedChange?.(next)}
+										aria-label="Include archived"
+									/>
+								</label>
 							</div>
 							<Separator />
 						</>
@@ -601,33 +641,43 @@ export function DisplayPanel({
 		</ResponsivePopover>
 	)
 
-	if (!showInlineReading) return trigger
-
+	// Keep a stable wrapper regardless of `showInlineReading`. Switching the
+	// returned root between `trigger` and `<div>{trigger}…</div>` would tear
+	// down and remount the ResponsivePopover subtree — a toggle inside the
+	// panel (e.g. Include archived) that flips `showInlineReading` would
+	// close the panel mid-interaction because the internal open state lives
+	// in the primitive that just got unmounted.
 	return (
 		<div className="inline-flex items-center gap-2">
 			{trigger}
-			<span
-				className="hidden sm:inline-flex items-center gap-1 text-xs"
-				aria-label="Active display settings"
-			>
-				{isNonDefaultSort && (
-					<>
-						<span className="capitalize text-foreground">{inlineSortLabel}</span>
-						{order === 'asc' ? (
-							<ArrowUp size={12} className="text-foreground" />
-						) : (
-							<ArrowDown size={12} className="text-foreground" />
-						)}
-					</>
-				)}
-				{isNonDefaultSort && hasGrouping && <span className="text-muted-foreground">·</span>}
-				{hasGrouping && (
-					<>
-						<span className="text-muted-foreground">grouped by</span>
-						<span className="capitalize text-foreground">{inlineGroupLabel}</span>
-					</>
-				)}
-			</span>
+			{showInlineReading && (
+				<span
+					className="hidden sm:inline-flex items-center gap-1 text-xs"
+					aria-label="Active display settings"
+				>
+					{isNonDefaultSort && (
+						<>
+							<span className="capitalize text-foreground">{inlineSortLabel}</span>
+							{order === 'asc' ? (
+								<ArrowUp size={12} className="text-foreground" />
+							) : (
+								<ArrowDown size={12} className="text-foreground" />
+							)}
+						</>
+					)}
+					{isNonDefaultSort && hasGrouping && <span className="text-muted-foreground">·</span>}
+					{hasGrouping && (
+						<>
+							<span className="text-muted-foreground">grouped by</span>
+							<span className="capitalize text-foreground">{inlineGroupLabel}</span>
+						</>
+					)}
+					{(isNonDefaultSort || hasGrouping) && includeArchived && (
+						<span className="text-muted-foreground">·</span>
+					)}
+					{includeArchived && <span className="text-foreground">+ archived</span>}
+				</span>
+			)}
 		</div>
 	)
 }

@@ -578,6 +578,26 @@ describe('tool handlers', () => {
 			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
 			expect(calledUrl).not.toContain('metadata.')
 		})
+
+		it('forwards include_archived=true to the route when opted in', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({ include_archived: true })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('include_archived=true')
+		})
+
+		it('omits include_archived from the URL when the flag defaults to false', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_objects')
+			await handler({})
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).not.toContain('include_archived=')
+		})
 	})
 
 	describe('search_objects handler', () => {
@@ -650,6 +670,26 @@ describe('tool handlers', () => {
 
 			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
 			expect(calledUrl).not.toContain('metadata.')
+		})
+
+		it('forwards include_archived=true to the route when opted in', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('search_objects')
+			await handler({ q: 'bet', include_archived: true })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain('include_archived=true')
+		})
+
+		it('omits include_archived from the URL when the flag defaults to false', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('search_objects')
+			await handler({ q: 'bet' })
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).not.toContain('include_archived=')
 		})
 	})
 

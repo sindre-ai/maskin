@@ -291,6 +291,7 @@ function ForYouDashboard() {
 											q: undefined,
 											groupBy: undefined,
 											ids: undefined,
+											includeArchived: undefined,
 										},
 									})
 								}

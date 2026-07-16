@@ -51,6 +51,7 @@ import { StatusBadge } from '../shared/status-badge'
 import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
+import { LoopCard } from './loop-card'
 import { PropertiesDrawer } from './properties-drawer'
 import { VerifiedChip, isKnowledgeAuthorWrite } from './verified-chip'
 
@@ -66,6 +67,10 @@ interface ObjectDocumentViewProps {
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
 	onUpdateStatus: (status: string) => void
+	// Optional archive route — when provided, picking `archived` in the status
+	// picker is dispatched here instead of `onUpdateStatus`, keeping the
+	// single-handler contract with the row's Archive menu action.
+	onArchive?: () => void
 	onUpdateDriver: (driver: string | null) => void
 	onDeleteRelationship?: (relationshipId: string) => void
 	onDelete: () => void
@@ -128,6 +133,7 @@ export function ObjectDocumentView({
 	onUpdateTitle,
 	onUpdateContent,
 	onUpdateStatus,
+	onArchive,
 	onUpdateDriver,
 	onDeleteRelationship,
 	onDelete,
@@ -161,11 +167,21 @@ export function ObjectDocumentView({
 		[onUpdateContent],
 	)
 
+	// One handler, two entry points: the status picker's `archived` option
+	// dispatches to the same archive route as the row Archive menu. Falls back
+	// to the generic status update if no archive handler was supplied — the
+	// dropdown item is still there because the workspace's bet status enum
+	// includes `archived`, but without a bet-typed object it just moves the
+	// status like any other value.
 	const handleStatusChange = useCallback(
 		(status: string) => {
+			if (status === 'archived' && onArchive && object.type === 'bet') {
+				onArchive()
+				return
+			}
 			onUpdateStatus(status)
 		},
-		[onUpdateStatus],
+		[onUpdateStatus, onArchive, object.type],
 	)
 
 	return (
@@ -206,6 +222,8 @@ export function ObjectDocumentView({
 					variant="banner"
 				/>
 			)}
+
+			{object.type === 'loop' && <LoopCard object={object} workspaceId={workspaceId} />}
 
 			{/* Metadata badges row — editable cluster stays inline; provenance
 			 * (creator + createdAt) drops to its own row below sm so 375px never
@@ -369,6 +387,24 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[object.id, updateObject],
 	)
 
+	// Archive route shared by the row `⋯` menu and the status picker. Sets
+	// `status = archived` and stamps the current status onto
+	// `metadata.previous_status` so the archived-row treatment (T4) can render
+	// "was <prior status>". Server-side metadata is shallow-merged, so
+	// `archive_reason` and any other existing keys survive. A hygiene sweep
+	// can populate `archive_reason` later; the reason prompt UI is deferred.
+	const handleArchive = useCallback(() => {
+		if (object.type !== 'bet') return
+		if (object.status === 'archived') return
+		updateObject.mutate({
+			id: object.id,
+			data: {
+				status: 'archived',
+				metadata: { previous_status: object.status },
+			},
+		})
+	}, [object.id, object.status, object.type, updateObject])
+
 	const handleUpdateDriver = useCallback(
 		(driver: string | null) => {
 			updateObject.mutate({ id: object.id, data: { driver } })
@@ -405,6 +441,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 						q: prev.q,
 						groupBy: prev.groupBy,
 						ids: prev.ids,
+						includeArchived: prev.includeArchived,
 					}),
 				})
 			},
@@ -474,6 +511,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 			<AuxiliaryActionMenu
 				object={object}
 				onDeleteRequest={openDeleteConfirm}
+				onArchiveRequest={handleArchive}
 				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}
@@ -505,6 +543,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onUpdateTitle={handleUpdateTitle}
 				onUpdateContent={handleUpdateContent}
 				onUpdateStatus={handleUpdateStatus}
+				onArchive={handleArchive}
 				onUpdateDriver={handleUpdateDriver}
 				onDeleteRelationship={handleDeleteRelationship}
 				onDelete={handleDelete}

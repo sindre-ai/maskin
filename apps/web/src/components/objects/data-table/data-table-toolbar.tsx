@@ -40,6 +40,9 @@ interface DataTableToolbarProps {
 	onOrderChange: (value: 'asc' | 'desc') => void
 	groupBy?: string
 	onGroupByChange: (value: string | undefined) => void
+	// Show — per-view visibility flags. Only surfaced when the caller opts in.
+	includeArchived?: boolean
+	onIncludeArchivedChange?: (value: boolean) => void
 	// View switcher
 	view?: DisplayPanelView
 	onViewChange?: (view: DisplayPanelView) => void
@@ -75,6 +78,8 @@ export function DataTableToolbar({
 	onOrderChange,
 	groupBy,
 	onGroupByChange,
+	includeArchived,
+	onIncludeArchivedChange,
 	view,
 	onViewChange,
 	boardSupported,
@@ -148,6 +153,8 @@ export function DataTableToolbar({
 				onOrderChange={onOrderChange}
 				groupBy={groupBy}
 				onGroupByChange={onGroupByChange}
+				includeArchived={includeArchived}
+				onIncludeArchivedChange={onIncludeArchivedChange}
 			/>
 
 			{/* Actions — Import is occasional, New is primary. Ordered per the

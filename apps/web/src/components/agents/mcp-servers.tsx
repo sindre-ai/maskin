@@ -176,7 +176,9 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 				type: 'stdio',
 				command: 'npx',
 				args: ['-y', '@modelcontextprotocol/server-github'],
-				env: { GITHUB_TOKEN: `\${GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}}` },
+				env: {
+					GITHUB_PERSONAL_ACCESS_TOKEN: `\${GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}}`,
+				},
 			}
 		}
 		onUpdate({ mcpServers: updated })

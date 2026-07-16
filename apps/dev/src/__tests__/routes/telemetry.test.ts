@@ -112,6 +112,50 @@ describe('Telemetry Routes', () => {
 			expect(res.status).toBe(400)
 		})
 
+		it('accepts an error event variant and returns 202', async () => {
+			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+			mockResults.select = [memberRow]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/telemetry/mcp',
+					{
+						event_type: 'error',
+						kind: 'tool_not_found',
+						tool_name: 'imaginary_tool',
+						session_id: 'mcp-err-1',
+						agent_actor_id: 'actor-1',
+						requested_shape: { workspace_id: 'string' },
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(202)
+			expect(await res.json()).toEqual({ recorded: true })
+		})
+
+		it('returns 400 when error variant has an unknown kind', async () => {
+			const { app } = createTestApp(telemetryRoutes, '/api/telemetry')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/telemetry/mcp',
+					{
+						event_type: 'error',
+						kind: 'bogus_kind',
+						tool_name: 'imaginary_tool',
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
 		it('records a widget_event render_success for a workspace member', async () => {
 			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
 			mockResults.select = [memberRow]
