@@ -937,13 +937,19 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		if (!attachedFileIds.has(endpointId)) connectedIds.add(endpointId)
 	}
 
-	// Batch-fetch connected objects
+	// Batch-fetch connected objects. Scope by caller workspace: a relationship
+	// edge can point at an object in another tenant (writers do not enforce that
+	// both endpoints share a workspace), so a raw `WHERE id IN (...)` here would
+	// hydrate cross-tenant rows into the response. Filtering by `workspace_id`
+	// matches the sibling `files` batch fetch on line 931 and the primary object
+	// lookup — endpoints outside the caller's workspace fall out silently and
+	// their titles resolve to `null` in the relationship rows below.
 	let connectedObjects: (typeof objects.$inferSelect)[] = []
 	if (connectedIds.size > 0) {
 		connectedObjects = await db
 			.select()
 			.from(objects)
-			.where(inArray(objects.id, [...connectedIds]))
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, [...connectedIds])))
 	}
 
 	// Fetch recent activity + comments for this object. Events use the object's
@@ -1003,6 +1009,20 @@ app.openapi(getObjectGraphRoute, async (c) => {
 	const titleById = new Map<string, string | null>()
 	titleById.set(object.id, object.title ?? null)
 	for (const co of connectedObjects) titleById.set(co.id, co.title ?? null)
+
+	// Set of endpoint ids we've confirmed live in the caller's workspace: the
+	// primary object, files fetched under `workspace_id = ?`, and connected
+	// objects fetched under the same predicate. Any edge with an endpoint
+	// outside this set touches another tenant — either because the current
+	// object is the target of a foreign source, or a writer created an edge
+	// pointing at a foreign target. Drop those edges so the response never
+	// carries proof-of-existence for out-of-workspace ids.
+	const inWorkspaceIds = new Set<string>([object.id])
+	for (const fileId of attachedFileIds) inWorkspaceIds.add(fileId)
+	for (const co of connectedObjects) inWorkspaceIds.add(co.id)
+	const scopedRels = rels.filter(
+		(r) => inWorkspaceIds.has(r.sourceId) && inWorkspaceIds.has(r.targetId),
+	)
 
 	// Collect every file id this object touches: (1) files attached via
 	// relationships whose endpoint resolves to a row in `files` (already
@@ -1065,7 +1085,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 				unread_count: unreadCount,
 				subscriber_count: subscriberCount,
 			},
-			relationships: rels.map((r) => ({
+			relationships: scopedRels.map((r) => ({
 				...serialize(r),
 				sourceTitle: titleById.get(r.sourceId) ?? null,
 				targetTitle: titleById.get(r.targetId) ?? null,
