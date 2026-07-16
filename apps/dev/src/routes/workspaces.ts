@@ -121,7 +121,15 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			// a partial success.
 			// Skills, workspace_skill files, and triggers are seeded post-commit
 			// because they hit S3 and can't be rolled back inside a DB transaction.
-			await seedDefaultAgentActors(tx, ws.id, actorId)
+			const agentIds = await seedDefaultAgentActors(tx, ws.id, actorId)
+
+			// Pin Chief of Staff as the default chat agent unless the caller
+			// explicitly requested a different (or no) default in the create body.
+			if (settings.default_agent_id === undefined && agentIds.chief_of_staff) {
+				const nextSettings = { ...settings, default_agent_id: agentIds.chief_of_staff }
+				await tx.update(workspaces).set({ settings: nextSettings }).where(eq(workspaces.id, ws.id))
+				ws.settings = nextSettings
+			}
 
 			return ws
 		})

@@ -72,6 +72,48 @@ describe('Workspaces Routes', () => {
 			}
 		})
 
+		it('sets default_agent_id to Chief of Staff when the caller does not specify one', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			const agentRows = DEFAULT_AGENT_NAMES.map((name) => buildActor({ type: 'agent', name }))
+			const queue: unknown[][] = [[ws], [{}]]
+			for (const row of agentRows) {
+				queue.push([row])
+				queue.push([{}])
+			}
+			mockResults.insertQueue = queue
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			const chief = agentRows.find((a) => a.name === 'Chief of Staff')
+			expect(body.settings.default_agent_id).toBe(chief?.id)
+		})
+
+		it('respects an explicit default_agent_id and does not overwrite it', async () => {
+			const explicitAgentId = randomUUID()
+			// The mock insert returns this row verbatim (unlike real Postgres, it
+			// doesn't reflect what was actually passed to .values()), so build it
+			// with the settings the route would have written for this request.
+			const ws = buildWorkspace({ settings: { default_agent_id: explicitAgentId } })
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.insertQueue = buildDefaultAgentSeedQueue(ws)
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', {
+					...buildCreateWorkspaceBody(),
+					settings: { default_agent_id: explicitAgentId },
+				}),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.settings.default_agent_id).toBe(explicitAgentId)
+		})
+
 		it('returns 500 when workspace insert returns empty', async () => {
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insert = [] // empty — insert failed

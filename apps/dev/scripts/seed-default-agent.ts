@@ -7,31 +7,42 @@
 // ("Chief of Staff stub — do owner chats route through it without domain
 // output?") scopes the prototype to that workspace only. Override with
 // `--workspace-id=<uuid>` or `WORKSPACE_ID=<uuid>` if needed for e.g. staging.
+// Or pass `--all` to backfill every workspace in the database at once (used
+// for the retroactive rollout to existing workspaces, including ones already
+// running with no explicit default — i.e. falling back to Workspace Coach).
 //
 // Run:
 //   DATABASE_URL=... pnpm --filter @maskin/dev exec tsx scripts/seed-default-agent.ts
 //   DATABASE_URL=... pnpm --filter @maskin/dev exec tsx scripts/seed-default-agent.ts --unset
 //   DATABASE_URL=... pnpm --filter @maskin/dev exec tsx scripts/seed-default-agent.ts --workspace-id=<uuid>
+//   DATABASE_URL=... pnpm --filter @maskin/dev exec tsx scripts/seed-default-agent.ts --all
 //
 // Idempotency: re-running with no flag is a no-op if the field is already set
 // to the same actor id. Re-running `--unset` on an already-null field is also
-// a no-op. Each mutation emits a `workspace.updated` audit event.
+// a no-op. `--all` never overwrites a workspace's explicit default_agent_id —
+// it only fills in workspaces where the field is unset. Each mutation emits a
+// `workspace.updated` audit event.
 
 import { pathToFileURL } from 'node:url'
-import { createDb } from '@maskin/db'
+import { type Database, createDb } from '@maskin/db'
 import { events, actors, workspaceMembers, workspaces } from '@maskin/db/schema'
 import { CHIEF_OF_STAFF_DEFAULT } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
+import {
+	ensureChiefOfStaffActor,
+	pinDefaultAgentIfUnset,
+} from '../src/services/workspace-bootstrap'
 
 export const MASKIN_SELF_WORKSPACE_ID = 'fe944fe6-7b45-478c-afc7-b889cea63c08'
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-export type ParsedArgs = { workspaceId: string; unset: boolean }
+export type ParsedArgs = { workspaceId: string; unset: boolean; all: boolean }
 
 /**
  * Argv/env parser split out for unit tests. Precedence: `--workspace-id=<uuid>`
  * flag → `WORKSPACE_ID` env var → Maskin's own workspace id. Throws on invalid
- * UUID so the caller can decide between exit(1) and rethrow.
+ * UUID, or on `--all` combined with `--unset`/`--workspace-id`, so the caller
+ * can decide between exit(1) and rethrow.
  */
 export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv): ParsedArgs {
 	const flag = argv.find((a) => a.startsWith('--workspace-id='))
@@ -39,7 +50,71 @@ export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv): Pars
 	if (!UUID_RE.test(raw)) {
 		throw new Error(`Invalid workspace id: ${raw}`)
 	}
-	return { workspaceId: raw, unset: argv.includes('--unset') }
+	const all = argv.includes('--all')
+	const unset = argv.includes('--unset')
+	if (all && unset) {
+		throw new Error('--all cannot be combined with --unset')
+	}
+	if (all && flag) {
+		throw new Error('--all cannot be combined with --workspace-id')
+	}
+	return { workspaceId: raw, unset, all }
+}
+
+/**
+ * Backfills every workspace's default_agent_id to its own Chief of Staff
+ * actor, creating that actor first if it doesn't exist yet. Skips (and
+ * counts) workspaces with no `created_by` actor, since there's no one to
+ * attribute the audit event to. Never overwrites an already-set
+ * default_agent_id — see `pinDefaultAgentIfUnset`.
+ */
+export async function backfillAll(db: Database): Promise<{
+	pinned: number
+	alreadySet: number
+	skippedNoOwner: number
+}> {
+	const rows = await db
+		.select({ id: workspaces.id, createdBy: workspaces.createdBy })
+		.from(workspaces)
+
+	let pinned = 0
+	let alreadySet = 0
+	let skippedNoOwner = 0
+
+	for (const ws of rows) {
+		if (!ws.createdBy) {
+			console.warn(
+				`Workspace ${ws.id} has no created_by actor — cannot attribute the audit event. Skipping.`,
+			)
+			skippedNoOwner++
+			continue
+		}
+		const createdBy = ws.createdBy
+
+		const didPin = await db.transaction(async (tx) => {
+			const chiefId = await ensureChiefOfStaffActor(tx, ws.id, createdBy)
+			const pinned = await pinDefaultAgentIfUnset(tx, ws.id, chiefId)
+			if (pinned) {
+				await tx.insert(events).values({
+					workspaceId: ws.id,
+					actorId: createdBy,
+					action: 'updated',
+					entityType: 'workspace',
+					entityId: ws.id,
+					data: { field: 'default_agent_id', previous: null, next: chiefId },
+				})
+			}
+			return pinned
+		})
+
+		if (didPin) pinned++
+		else alreadySet++
+	}
+
+	console.log(
+		`Backfill complete: ${pinned} workspace(s) pinned to Chief of Staff, ${alreadySet} already had a default_agent_id, ${skippedNoOwner} skipped (no created_by).`,
+	)
+	return { pinned, alreadySet, skippedNoOwner }
 }
 
 async function main(): Promise<void> {
@@ -51,14 +126,20 @@ async function main(): Promise<void> {
 
 	let workspaceId: string
 	let unset: boolean
+	let all: boolean
 	try {
-		;({ workspaceId, unset } = parseArgs(process.argv, process.env))
+		;({ workspaceId, unset, all } = parseArgs(process.argv, process.env))
 	} catch (err) {
 		console.error(err instanceof Error ? err.message : String(err))
 		process.exit(1)
 	}
 
 	const db = createDb(url)
+
+	if (all) {
+		await backfillAll(db)
+		process.exit(0)
+	}
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	if (!ws) {

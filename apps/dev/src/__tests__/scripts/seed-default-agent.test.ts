@@ -6,6 +6,7 @@ describe('seed-default-agent parseArgs', () => {
 		expect(parseArgs(['node', 'script.ts'], {})).toEqual({
 			workspaceId: MASKIN_SELF_WORKSPACE_ID,
 			unset: false,
+			all: false,
 		})
 	})
 
@@ -31,6 +32,23 @@ describe('seed-default-agent parseArgs', () => {
 	it('throws on a non-UUID workspace id', () => {
 		expect(() => parseArgs(['node', 'script.ts', '--workspace-id=not-a-uuid'], {})).toThrow(
 			/Invalid workspace id/,
+		)
+	})
+
+	it('flips all on when --all is passed', () => {
+		expect(parseArgs(['node', 'script.ts', '--all'], {}).all).toBe(true)
+	})
+
+	it('throws when --all is combined with --unset', () => {
+		expect(() => parseArgs(['node', 'script.ts', '--all', '--unset'], {})).toThrow(
+			/--all cannot be combined with --unset/,
+		)
+	})
+
+	it('throws when --all is combined with --workspace-id', () => {
+		const id = 'aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa'
+		expect(() => parseArgs(['node', 'script.ts', '--all', `--workspace-id=${id}`], {})).toThrow(
+			/--all cannot be combined with --workspace-id/,
 		)
 	})
 })

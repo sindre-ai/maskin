@@ -1,7 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { actors, agentSkills, triggers, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
+import {
+	actors,
+	agentSkills,
+	triggers,
+	workspaceMembers,
+	workspaceSkills,
+	workspaces,
+} from '@maskin/db/schema'
 import {
 	CHIEF_OF_STAFF_DEFAULT,
 	DEVELOPMENT_AGENTS,
@@ -111,12 +118,18 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
  * Idempotent per workspace: an agent whose `name` already has a
  * workspace_members row is skipped. On any per-agent failure throws
  * SeedAgentError so the caller's tx rolls back cleanly.
+ *
+ * Returns a map of agent id → actor id (whether newly created or
+ * pre-existing) so callers can pin one of them as the workspace's default
+ * chat agent without an extra lookup query.
  */
 export async function seedDefaultAgentActors(
 	tx: Tx,
 	workspaceId: string,
 	createdBy: string,
-): Promise<void> {
+): Promise<Record<DefaultAgentId, string>> {
+	const actorIds = {} as Record<DefaultAgentId, string>
+
 	for (const agentId of DEFAULT_AGENT_IDS) {
 		try {
 			const spec = resolveActorSpec(agentId)
@@ -128,7 +141,10 @@ export async function seedDefaultAgentActors(
 				.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, spec.name)))
 				.limit(1)
 
-			if (existing) continue
+			if (existing) {
+				actorIds[agentId] = existing.actorId
+				continue
+			}
 
 			const [created] = await tx
 				.insert(actors)
@@ -159,11 +175,88 @@ export async function seedDefaultAgentActors(
 				actorId: created.id,
 				role: 'member',
 			})
+
+			actorIds[agentId] = created.id
 		} catch (err) {
 			if (err instanceof SeedAgentError) throw err
 			throw new SeedAgentError(agentId, err)
 		}
 	}
+
+	return actorIds
+}
+
+/**
+ * Idempotently ensures a Chief of Staff actor exists in the workspace,
+ * creating it if missing. Returns its actor id either way.
+ */
+export async function ensureChiefOfStaffActor(
+	db: Tx,
+	workspaceId: string,
+	createdBy: string,
+): Promise<string> {
+	const chiefSpec = resolveActorSpec('chief_of_staff')
+	const [existing] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+		.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, chiefSpec.name)))
+		.limit(1)
+
+	if (existing) return existing.actorId
+
+	const [created] = await db
+		.insert(actors)
+		.values({
+			type: chiefSpec.type,
+			name: chiefSpec.name,
+			isSystem: chiefSpec.isSystem,
+			systemPrompt: chiefSpec.systemPrompt.replaceAll('{{self_id}}', ''),
+			llmProvider: chiefSpec.llmProvider,
+			llmConfig: chiefSpec.llmConfig,
+			tools: chiefSpec.tools,
+			apiKey: generateApiKey().key,
+			createdBy,
+		})
+		.returning()
+
+	if (!created) throw new Error('Failed to create Chief of Staff actor')
+
+	await db.insert(workspaceMembers).values({
+		workspaceId,
+		actorId: created.id,
+		role: 'member',
+	})
+
+	return created.id
+}
+
+/**
+ * Pins `agentActorId` as the workspace's default chat agent, but only if
+ * `settings.default_agent_id` isn't already set — never clobbers an
+ * explicit choice (owner pick, or a prior run of this same function).
+ * Returns whether it made a change.
+ */
+export async function pinDefaultAgentIfUnset(
+	db: Tx,
+	workspaceId: string,
+	agentActorId: string,
+): Promise<boolean> {
+	const [ws] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	const currentSettings = (ws?.settings ?? {}) as Record<string, unknown>
+	if (currentSettings.default_agent_id != null) return false
+
+	await db
+		.update(workspaces)
+		.set({ settings: { ...currentSettings, default_agent_id: agentActorId } })
+		.where(eq(workspaces.id, workspaceId))
+
+	return true
 }
 
 export async function bootstrapDefaultAgents(
@@ -180,41 +273,22 @@ export async function bootstrapDefaultAgents(
 	// its name-check would only ever hit "existing" here — Chief of Staff is the
 	// one that actually needs post-commit seeding via this function. Idempotent
 	// per workspace via the actors.name check.
-	const chiefSpec = resolveActorSpec('chief_of_staff')
-	const [existingChief] = await db
-		.select({ actorId: workspaceMembers.actorId })
-		.from(workspaceMembers)
-		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-		.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, chiefSpec.name)))
-		.limit(1)
+	let chiefId: string | null = null
+	try {
+		chiefId = await ensureChiefOfStaffActor(db, workspaceId, createdBy)
+	} catch (err) {
+		logger.error('Failed to create Chief of Staff during workspace bootstrap', {
+			workspaceId,
+			err,
+		})
+	}
 
-	if (!existingChief) {
-		const [createdChief] = await db
-			.insert(actors)
-			.values({
-				type: chiefSpec.type,
-				name: chiefSpec.name,
-				isSystem: chiefSpec.isSystem,
-				systemPrompt: chiefSpec.systemPrompt.replaceAll('{{self_id}}', ''),
-				llmProvider: chiefSpec.llmProvider,
-				llmConfig: chiefSpec.llmConfig,
-				tools: chiefSpec.tools,
-				apiKey: generateApiKey().key,
-				createdBy,
-			})
-			.returning()
-
-		if (createdChief) {
-			await db.insert(workspaceMembers).values({
-				workspaceId,
-				actorId: createdChief.id,
-				role: 'member',
-			})
-		} else {
-			logger.error('Failed to create Chief of Staff during workspace bootstrap', {
-				workspaceId,
-			})
-		}
+	// Pin Chief of Staff as the workspace's default chat agent if nothing has
+	// claimed that slot yet. No-op for workspaces that already have a
+	// default_agent_id (e.g. dev-bootstrap already set it synchronously, or an
+	// owner picked a different default).
+	if (chiefId) {
+		await pinDefaultAgentIfUnset(db, workspaceId, chiefId)
 	}
 
 	for (const agent of defaultAgents) {

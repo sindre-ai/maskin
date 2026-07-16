@@ -436,4 +436,51 @@ describe('Workspaces Integration', () => {
 			expect(properties.workspace_id).toBe(ws.id)
 		})
 	})
+
+	describe('default chat agent', () => {
+		async function chiefOfStaffIdFor(workspaceId: string): Promise<string | undefined> {
+			const rows = await db
+				.select({ actorId: actors.id, name: actors.name })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(eq(workspaceMembers.workspaceId, workspaceId))
+			return rows.find((r) => r.name === 'Chief of Staff')?.actorId
+		}
+
+		it('defaults a newly created workspace to its own Chief of Staff actor', async () => {
+			const app = createApp()
+
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Default CoS' }))
+			expect(res.status).toBe(201)
+			const ws = await res.json()
+
+			const chiefId = await chiefOfStaffIdFor(ws.id)
+			expect(chiefId).toBeDefined()
+			expect(ws.settings.default_agent_id).toBe(chiefId)
+		})
+
+		it('does not overwrite an explicit default_agent_id supplied at creation', async () => {
+			const app = createApp()
+			const explicitAgentId = randomUUID()
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', {
+					name: 'Explicit Default',
+					settings: { default_agent_id: explicitAgentId },
+				}),
+			)
+			expect(res.status).toBe(201)
+			const ws = await res.json()
+
+			expect(ws.settings.default_agent_id).toBe(explicitAgentId)
+
+			const [row] = await db
+				.select({ settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, ws.id))
+			expect((row?.settings as { default_agent_id?: string })?.default_agent_id).toBe(
+				explicitAgentId,
+			)
+		})
+	})
 })
