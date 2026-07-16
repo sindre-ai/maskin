@@ -781,6 +781,9 @@ export async function startSshRelay(
 	serveProc.on('error', (err) => {
 		logger.error('msb ssh serve spawn error', { targetName, error: String(err) })
 	})
+	serveProc.on('close', (code, sig) => {
+		logger.info('msb ssh serve process exited', { targetName, code, signal: sig })
+	})
 	serveProc.unref()
 	// The probe socket has served its purpose once `msb ssh serve` has
 	// actually bound (or failed to bind) the port — release right after
@@ -822,11 +825,17 @@ export async function startSshRelay(
 	tunnelProc.on('error', (err) => {
 		logger.error('ssh tunnel spawn error', { targetName, error: String(err) })
 	})
+	tunnelProc.on('close', (code, sig) => {
+		logger.info('ssh tunnel process exited', { targetName, code, signal: sig })
+	})
 	tunnelProc.unref()
-	// Same release-after-spawn convention as sshPort above — relayPort is only
-	// released here when this call self-allocated it; a caller-supplied
-	// relayPort is the caller's reservation to release.
-	if (selfAllocatedRelay) releaseHostPort(relayPort)
+	// Always release here, even for a caller-supplied relayPort: if we left the
+	// reservation socket open, it would still accept connections on relayPort and
+	// fool the tcpPollReady check below into reporting success even when the real
+	// bind above failed (EADDRINUSE against our own reservation, exiting ssh
+	// immediately under ExitOnForwardFailure). releaseHostPort is a no-op if
+	// already released, so the caller's own cleanup stays safe to call afterward.
+	releaseHostPort(relayPort)
 
 	try {
 		await tcpPollReady(SSH_RELAY_BIND_HOST, relayPort, SSH_TUNNEL_READY_TIMEOUT_MS)
