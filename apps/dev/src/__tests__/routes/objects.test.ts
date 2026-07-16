@@ -724,6 +724,45 @@ describe('Objects Routes', () => {
 			expect(body.connected_objects[0].id).toBe(insight.id)
 		})
 
+		it('omits an edge whose endpoint is in another workspace (no hydration, no title, no edge)', async () => {
+			// Regression for the cross-workspace disclosure DeepSec caught: the
+			// connected-objects batch fetch used to be `WHERE id IN (...)` with no
+			// `workspace_id` predicate, so a WS-A → WS-B edge would hydrate the
+			// WS-B target row. The fix scopes both the batch fetch and the final
+			// relationships list by the caller's workspace. Here the mock DB
+			// returns the edge but returns `[]` for connected objects (simulating
+			// the real predicate filtering out the WS-B row), so the response
+			// must contain neither the foreign row nor the edge that pointed to
+			// it.
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const foreignWs = '00000000-0000-0000-0000-000000000099'
+			const foreignId = '00000000-0000-0000-0000-0000000000ff'
+			const crossEdge = buildRelationship({
+				sourceType: 'object',
+				sourceId: obj.id,
+				targetType: 'object',
+				targetId: foreignId,
+				type: 'informs',
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1) object (WS-A row), 2) relationships (cross-edge is returned raw),
+			// 3) files-membership lookup ([]), 4) connected objects — returns []
+			// because the workspace_id predicate filters the foreign row out,
+			// 5) events.
+			mockResults.selectQueue = [[obj], [crossEdge], [], [], []]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.connected_objects).toEqual([])
+			expect(body.relationships).toEqual([])
+			expect(JSON.stringify(body)).not.toContain(foreignId)
+			expect(JSON.stringify(body)).not.toContain(foreignWs)
+		})
+
 		it('resolves a file endpoint even when the edge label is a legacy object type', async () => {
 			// The mirror case: an `attached` edge whose file endpoint is stamped
 			// with a legacy label (e.g. `'bet'`) rather than the canonical

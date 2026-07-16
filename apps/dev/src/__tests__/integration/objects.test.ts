@@ -5,6 +5,7 @@ import {
 	buildFile,
 	insertActor,
 	insertObject,
+	insertRelationship,
 	insertWorkspace,
 } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
@@ -1438,6 +1439,65 @@ describe('Objects Integration', () => {
 			expect(body.connected_objects).toHaveLength(1)
 			expect(body.connected_objects[0].id).toBe(insight.id)
 			expect(body.files).toEqual([])
+		})
+
+		it('does not hydrate or reference cross-workspace endpoints (WS-A caller cannot see WS-B rows)', async () => {
+			// Regression for the HIGH-severity cross-workspace disclosure DeepSec
+			// caught on 2026-07-16. Two real workspaces, a relationship whose
+			// endpoints straddle the boundary, a WS-A caller — the response must
+			// carry no evidence of the WS-B row (no connected_object entry, no
+			// edge). Real Postgres is the only harness that can prove the
+			// `workspace_id` predicate on the batch fetch works; the mock
+			// harness only proves the branch is taken.
+			const otherActor = await insertActor(db)
+			const otherWs = await insertWorkspace(db, otherActor.id)
+
+			const app = createApp()
+			const wsABet = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet' })
+			const wsBInsight = await insertObject(db, otherWs.id, otherActor.id, {
+				type: 'insight',
+				title: 'CROSS_WORKSPACE_SECRET_TITLE',
+			})
+			// A WS-A → WS-B edge. Writers accept edges pointing at any
+			// object id, so this is a realistic threat model — nothing at write
+			// time enforces both endpoints share a workspace.
+			await insertRelationship(db, getTestActorId(), {
+				sourceType: 'object',
+				sourceId: wsABet.id,
+				targetType: 'object',
+				targetId: wsBInsight.id,
+				type: 'informs',
+			})
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${wsABet.id}/graph`, { 'x-workspace-id': workspaceId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			// The WS-B row is neither hydrated as a connected object nor
+			// echoed back in the relationships list.
+			expect(body.connected_objects).toEqual([])
+			expect(body.relationships).toEqual([])
+			const payload = JSON.stringify(body)
+			expect(payload).not.toContain(wsBInsight.id)
+			expect(payload).not.toContain('CROSS_WORKSPACE_SECRET_TITLE')
+			expect(payload).not.toContain(otherWs.id)
+		})
+
+		it('returns 404 when a WS-A caller requests a WS-B object id', async () => {
+			// The primary object lookup is scoped by workspace_id, so probing a
+			// foreign id must return 404 — not the row.
+			const otherActor = await insertActor(db)
+			const otherWs = await insertWorkspace(db, otherActor.id)
+			const wsBObject = await insertObject(db, otherWs.id, otherActor.id, { type: 'bet' })
+
+			const app = createApp()
+			const res = await app.request(
+				jsonGet(`/api/objects/${wsBObject.id}/graph`, { 'x-workspace-id': workspaceId }),
+			)
+
+			expect(res.status).toBe(404)
 		})
 
 		it('buckets a file endpoint correctly with canonical target_type', async () => {
