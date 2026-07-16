@@ -30,6 +30,7 @@ const ALL_TOOL_NAMES = [
 	'list_objects',
 	'search_objects',
 	'list_relationships',
+	'traverse_graph',
 	'delete_relationship',
 	'create_actor',
 	'update_actor',
@@ -330,6 +331,46 @@ describe('search_objects schema', () => {
 	it('accepts include_archived = true when the caller wants archived rows', () => {
 		const result = schema.parse({ q: 'bet', include_archived: true })
 		expect(result.include_archived).toBe(true)
+	})
+})
+
+describe('traverse_graph schema', () => {
+	const schema = tools.traverse_graph.inputSchema
+
+	it('accepts minimal input and applies bound defaults', () => {
+		const result = schema.parse({ object_id: uuid })
+		expect(result.object_id).toBe(uuid)
+		expect(result.max_depth).toBe(3)
+		expect(result.max_nodes).toBe(200)
+		expect(result.direction).toBe('both')
+	})
+
+	it('requires object_id as uuid', () => {
+		expect(() => schema.parse({ object_id: 'not-uuid' })).toThrow()
+	})
+
+	it('accepts an edge_type_allow_list enum array', () => {
+		const result = schema.parse({
+			object_id: uuid,
+			edge_type_allow_list: ['supersedes', 'contradicts'],
+		})
+		expect(result.edge_type_allow_list).toEqual(['supersedes', 'contradicts'])
+	})
+
+	it('rejects an unknown edge type', () => {
+		expect(() => schema.parse({ object_id: uuid, edge_type_allow_list: ['not_a_type'] })).toThrow()
+	})
+
+	it('rejects direction outside the allow-list', () => {
+		expect(() => schema.parse({ object_id: uuid, direction: 'sideways' })).toThrow()
+	})
+
+	it('rejects max_depth above the tool-side ceiling', () => {
+		expect(() => schema.parse({ object_id: uuid, max_depth: 11 })).toThrow()
+	})
+
+	it('rejects max_nodes above the tool-side ceiling', () => {
+		expect(() => schema.parse({ object_id: uuid, max_nodes: 1001 })).toThrow()
 	})
 })
 

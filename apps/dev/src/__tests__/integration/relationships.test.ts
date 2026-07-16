@@ -97,7 +97,7 @@ describe('Relationships Integration', () => {
 		expect(list).toHaveLength(2)
 	})
 
-	it('enforces unique constraint on (source, target, type)', async () => {
+	it('returns the existing row idempotently on a duplicate (source, target, type) insert', async () => {
 		const app = createApp()
 		const body = buildCreateRelationshipBody({
 			source_id: obj1Id,
@@ -111,15 +111,21 @@ describe('Relationships Integration', () => {
 			}),
 		)
 		expect(first.status).toBe(201)
+		const firstBody = await first.json()
 
-		// Second with same (source, target, type) should fail
+		// Second with same (source, target, type) is a no-op under the
+		// `relationships_src_tgt_type_uniq` constraint — the route uses
+		// ON CONFLICT DO NOTHING so it returns 201 with the pre-existing row
+		// instead of surfacing the DB error as 500. Downstream: the audit
+		// event and any ship-metric emit only fire on the fresh insert.
 		const second = await app.request(
 			jsonRequest('POST', '/api/relationships', body, {
 				'x-workspace-id': workspaceId,
 			}),
 		)
-		// Unique constraint violation — route doesn't handle duplicates, so DB error surfaces as 500
-		expect(second.status).toBe(500)
+		expect(second.status).toBe(201)
+		const secondBody = await second.json()
+		expect(secondBody.id).toBe(firstBody.id)
 	})
 
 	it('write-side normalizes divergent source_type/target_type to canonical values', async () => {

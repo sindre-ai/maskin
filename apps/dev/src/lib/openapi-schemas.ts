@@ -138,6 +138,28 @@ export const objectGraphResponseSchema = z.object({
 	files: z.array(fileSummarySchema),
 })
 
+export const traverseGraphNodeSchema = z.object({
+	id: z.string().uuid(),
+	type: z.string(),
+	title: z.string().nullable(),
+})
+
+export const traverseGraphEdgeSchema = z.object({
+	source: z.string().uuid(),
+	target: z.string().uuid(),
+	type: z.string(),
+})
+
+export const traverseGraphResponseSchema = z.object({
+	nodes: z.array(traverseGraphNodeSchema),
+	edges: z.array(traverseGraphEdgeSchema),
+	// Traversal stopped early because a bound was hit. Callers can widen
+	// `max_depth`/`max_nodes` and re-run, or accept the partial subgraph.
+	truncated: z.boolean(),
+	// Which bound tripped truncation. `null` when `truncated` is `false`.
+	truncated_reason: z.enum(['max_nodes', 'max_depth']).nullable(),
+})
+
 export const integrationResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),

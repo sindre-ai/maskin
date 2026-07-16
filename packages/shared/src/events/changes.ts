@@ -14,6 +14,11 @@ export interface FieldChange {
 	new: unknown
 }
 
+// How long the Undo chip on a Knowledge Author write stays valid. Server and
+// client both derive expiry from the original event's createdAt against this
+// same constant so the two agree without a cron cleanup job.
+export const KNOWLEDGE_WRITE_UNDO_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+
 /**
  * Whitelist of first-class object columns that carry user-authored diffs.
  * `id`, `type`, `workspaceId`, `createdAt`, `updatedAt`, `createdBy` are skipped

@@ -35,6 +35,7 @@ vi.mock('@/hooks/use-workspaces', () => ({
 vi.mock('@/hooks/use-objects', () => ({
 	useObjectGraph: () => ({ data: undefined }),
 	useUpdateObject: () => ({ mutate: vi.fn() }),
+	useVerifyObject: () => ({ mutate: vi.fn() }),
 	useDeleteObject: () => ({ mutate: mutateMock, isPending: false }),
 }))
 

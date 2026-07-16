@@ -175,10 +175,22 @@ export const api = {
 		get: (id: string) => request<ObjectResponse>(`/objects/${id}`),
 		graph: (id: string, workspaceId: string) =>
 			request<ObjectGraphResponse>(`/objects/${id}/graph`, { workspaceId }),
+		references: (id: string, workspaceId: string) =>
+			request<KnowledgeReferencesResponse>(`/objects/${id}/references`, { workspaceId }),
 		create: (workspaceId: string, data: CreateObjectInput) =>
 			request<ObjectResponse>('/objects', { method: 'POST', body: data, workspaceId }),
 		update: (id: string, data: UpdateObjectInput) =>
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
+		verify: (id: string, verified: boolean) =>
+			request<ObjectResponse>(`/objects/${id}/verification`, {
+				method: 'POST',
+				body: { verified },
+			}),
+		undoWrite: (id: string, eventId: number) =>
+			request<ObjectResponse>(`/objects/${id}/undo-write`, {
+				method: 'POST',
+				body: { eventId },
+			}),
 		delete: (id: string) => request<{ deleted: boolean }>(`/objects/${id}`, { method: 'DELETE' }),
 		search: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
@@ -926,6 +938,11 @@ export interface ObjectGraphResponse {
 	relationships: RelationshipResponse[]
 	connected_objects: ObjectResponse[]
 	events: EventResponse[]
+}
+
+export interface KnowledgeReferencesResponse {
+	window_days: number
+	unique_contexts: number
 }
 
 export interface CreateRelationshipInput {

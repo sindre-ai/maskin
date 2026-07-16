@@ -177,4 +177,28 @@ describe('getDynamicColumns', () => {
 		render(<TestTable data={data} columns={columns} />)
 		expect(screen.getByRole('button', { name: /due date/i })).toBeInTheDocument()
 	})
+
+	it('renders provenance as a compact chip list, one chip per tag', () => {
+		const fields = {
+			knowledge: [{ name: 'provenance', type: 'text' as const }],
+		}
+		const columns = getDynamicColumns(fields, 'knowledge')
+		const data = [
+			buildObjectResponse({ metadata: { provenance: 'writer, claude-sonnet, human-review' } }),
+		]
+		render(<TestTable data={data} columns={columns} />)
+		expect(screen.getByText('writer')).toBeInTheDocument()
+		expect(screen.getByText('claude-sonnet')).toBeInTheDocument()
+		expect(screen.getByText('human-review')).toBeInTheDocument()
+	})
+
+	it('renders dash for provenance when value is empty after splitting', () => {
+		const fields = {
+			knowledge: [{ name: 'provenance', type: 'text' as const }],
+		}
+		const columns = getDynamicColumns(fields, 'knowledge')
+		const data = [buildObjectResponse({ metadata: { provenance: ' , ,' } })]
+		render(<TestTable data={data} columns={columns} />)
+		expect(screen.getByText('—')).toBeInTheDocument()
+	})
 })
