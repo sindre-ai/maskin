@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -6,6 +6,7 @@ import {
 	assertValidSessionId,
 	buildMsbCreateArgs,
 	cleanupBrowserSidecar,
+	ensureAgentServerSshKey,
 	ensureSessionSkeleton,
 	formatOverflowEnvFile,
 	listSandboxNames,
@@ -14,9 +15,16 @@ import {
 	resolvePreviewPortMappings,
 	sanitizeEnvForMicroVM,
 	spawnSession,
+	startSshRelay,
 	stopSandbox,
 	waitForCompletion,
 } from '../services/microsandbox'
+import type { SshRelay } from '../services/microsandbox'
+
+function makePortAllocator(start: number): () => Promise<number> {
+	let next = start
+	return async () => next++
+}
 
 describe('assertValidSessionId', () => {
 	it.each(['sess-123', 'a', 'Z9_-aB', 'a'.repeat(128)])('accepts %s', (id) => {
@@ -227,7 +235,7 @@ describe('buildMsbCreateArgs', () => {
 		expect(args).not.toContain('--max-duration')
 	})
 
-	it('omits allow@private by default (default firewall posture stays tight)', () => {
+	it('adds no extra allow@host:tcp:<port> rules when extraAllowedHostPorts is omitted', () => {
 		const args = buildMsbCreateArgs({
 			sessionId: 's',
 			image: 'i',
@@ -241,10 +249,15 @@ describe('buildMsbCreateArgs', () => {
 		for (let i = 0; i < args.length - 1; i++) {
 			if (args[i] === '--net-rule') netRules.push(args[i + 1] as string)
 		}
-		expect(netRules).not.toContain('allow@private')
+		expect(netRules).toEqual([
+			'allow@host:tcp:3001',
+			'allow@public',
+			'allow@any:udp:53',
+			'allow@any:tcp:53',
+		])
 	})
 
-	it('adds allow@private only when allowPrivateNet is true (sidecar reachability)', () => {
+	it('adds one allow@host:tcp:<port> net-rule per extraAllowedHostPorts entry (narrow SSH-relay grant)', () => {
 		const args = buildMsbCreateArgs({
 			sessionId: 's',
 			image: 'i',
@@ -253,66 +266,19 @@ describe('buildMsbCreateArgs', () => {
 			hostPort: 3001,
 			env: {},
 			sessionDir: '/d',
-			allowPrivateNet: true,
+			extraAllowedHostPorts: [39500, 39501],
 		})
 		const netRules: string[] = []
 		for (let i = 0; i < args.length - 1; i++) {
 			if (args[i] === '--net-rule') netRules.push(args[i + 1] as string)
 		}
-		expect(netRules).toContain('allow@private')
-	})
-
-	it('omits -p preview forwarding when no previewPorts are given', () => {
-		const args = buildMsbCreateArgs({
-			sessionId: 's',
-			image: 'i',
-			memoryMib: 512,
-			cpus: 1,
-			hostPort: 3001,
-			env: {},
-			sessionDir: '/d',
-		})
-		expect(args).not.toContain('-p')
-	})
-
-	it('publishes each previewPorts mapping as -p <bridgeGateway>:<hostPort>:<guestPort>', () => {
-		const args = buildMsbCreateArgs({
-			sessionId: 's',
-			image: 'i',
-			memoryMib: 512,
-			cpus: 1,
-			hostPort: 3001,
-			env: {},
-			sessionDir: '/d',
-			previewPorts: [
-				{ guestPort: 5173, hostPort: 39500 },
-				{ guestPort: 3000, hostPort: 39501 },
-			],
-		})
-		const pFlags = args.filter((_a, i) => args[i - 1] === '-p')
-		expect(pFlags).toContain('10.0.1.1:39500:5173')
-		expect(pFlags).toContain('10.0.1.1:39501:3000')
-	})
-
-	it('uses a configured bridgeGateway for previewPorts forwarding', () => {
-		const args = buildMsbCreateArgs({
-			sessionId: 's',
-			image: 'i',
-			memoryMib: 512,
-			cpus: 1,
-			hostPort: 3001,
-			env: {},
-			sessionDir: '/d',
-			previewPorts: [{ guestPort: 5173, hostPort: 39500 }],
-			bridgeGateway: '192.168.100.1',
-		})
-		const pFlags = args.filter((_a, i) => args[i - 1] === '-p')
-		expect(pFlags).toContain('192.168.100.1:39500:5173')
+		expect(netRules).toContain('allow@host:tcp:39500')
+		expect(netRules).toContain('allow@host:tcp:39501')
 	})
 })
 
 describe('resolvePreviewPortMappings', () => {
-	it('resolves one free host port per guest port, defaulting to the bridge gateway', async () => {
+	it('resolves one free host-loopback relay port per guest port', async () => {
 		let next = 39500
 		const findPort = async () => next++
 		const result = await resolvePreviewPortMappings([5173, 3000], {
@@ -321,8 +287,8 @@ describe('resolvePreviewPortMappings', () => {
 			findPort,
 		})
 		expect(result.mappings).toEqual([
-			{ guestPort: 5173, hostPort: 39500 },
-			{ guestPort: 3000, hostPort: 39501 },
+			{ guestPort: 5173, relayPort: 39500 },
+			{ guestPort: 3000, relayPort: 39501 },
 		])
 		expect(() => result.release()).not.toThrow()
 	})
@@ -452,7 +418,7 @@ describe('spawnSession (orchestration)', () => {
 		}
 	})
 
-	it('threads previewPorts and bridgeGateway into the create call', async () => {
+	it('threads extraAllowedHostPorts into the create call as extra allow@host:tcp net-rules', async () => {
 		const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-preview-'))
 		try {
 			const { run, calls } = makeRunner({
@@ -464,13 +430,13 @@ describe('spawnSession (orchestration)', () => {
 					...baseInput,
 					sessionId: 'orch-preview',
 					sessionDir: dir,
-					previewPorts: [{ guestPort: 5173, hostPort: 39500 }],
-					bridgeGateway: '192.168.100.1',
+					extraAllowedHostPorts: [39500, 39501],
 				},
 				{ msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
 			)
 			const createCall = calls.find((c) => c.args[0] === 'create')
-			expect(createCall?.args).toContain('192.168.100.1:39500:5173')
+			expect(createCall?.args).toContain('allow@host:tcp:39500')
+			expect(createCall?.args).toContain('allow@host:tcp:39501')
 		} finally {
 			await rm(dir, { recursive: true, force: true })
 		}
@@ -722,10 +688,168 @@ describe('listSandboxNames', () => {
 	})
 })
 
+describe('ensureAgentServerSshKey', () => {
+	it('generates a keypair via ssh-keygen when absent, then authorizes it with msb', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-sshkey-'))
+		try {
+			const keyPath = join(dir, 'nested', 'relay_key')
+			const calls: Array<{ bin: string; args: readonly string[] }> = []
+			const run = async (
+				bin: string,
+				args: readonly string[],
+			): Promise<{ stdout: string; stderr: string }> => {
+				calls.push({ bin, args })
+				return { stdout: '', stderr: '' }
+			}
+			const info = await ensureAgentServerSshKey(keyPath, {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sshKeygenBin: '/usr/bin/ssh-keygen',
+			})
+			expect(info).toEqual({ privateKeyPath: keyPath, publicKeyPath: `${keyPath}.pub` })
+			expect(calls[0]).toEqual({
+				bin: '/usr/bin/ssh-keygen',
+				args: ['-t', 'ed25519', '-N', '', '-f', keyPath],
+			})
+			expect(calls[1]).toEqual({
+				bin: '/usr/local/bin/msb',
+				args: ['ssh', 'authorize', '--file', `${keyPath}.pub`],
+			})
+		} finally {
+			await rm(dir, { recursive: true, force: true })
+		}
+	})
+
+	it('skips ssh-keygen but still re-authorizes when the key already exists', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-sshkey-'))
+		try {
+			const keyPath = join(dir, 'relay_key')
+			await writeFile(keyPath, 'existing-key-material', { mode: 0o600 })
+			const calls: Array<{ bin: string; args: readonly string[] }> = []
+			const run = async (
+				bin: string,
+				args: readonly string[],
+			): Promise<{ stdout: string; stderr: string }> => {
+				calls.push({ bin, args })
+				return { stdout: '', stderr: '' }
+			}
+			await ensureAgentServerSshKey(keyPath, {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sshKeygenBin: '/usr/bin/ssh-keygen',
+			})
+			expect(calls.map((c) => c.bin)).toEqual(['/usr/local/bin/msb'])
+			expect(calls[0]).toEqual({
+				bin: '/usr/local/bin/msb',
+				args: ['ssh', 'authorize', '--file', `${keyPath}.pub`],
+			})
+		} finally {
+			await rm(dir, { recursive: true, force: true })
+		}
+	})
+})
+
+describe('startSshRelay', () => {
+	const sshKeyPath = '/root/.agent-server/ssh/relay_key'
+
+	it('opens a relay using a self-allocated port and returns relay info', async () => {
+		const readyCalls: Array<{ host: string; port: number }> = []
+		const relay = await startSshRelay('sess-relay1', 5173, sshKeyPath, {
+			msbBin: '/usr/local/bin/msb',
+			findPort: makePortAllocator(40000),
+			tcpPollReady: async (host: string, port: number) => {
+				readyCalls.push({ host, port })
+			},
+			sshBin: '/usr/bin/ssh',
+		})
+		expect(relay).not.toBeNull()
+		expect(relay?.relayPort).toBe(40000)
+		expect(relay?.targetName).toBe('sess-relay1')
+		expect(relay?.targetGuestPort).toBe(5173)
+		// sshPort (allocated second) is polled first (msb ssh serve), then relayPort
+		// (allocated first) is polled once the ssh -L tunnel is up.
+		expect(readyCalls.map((c) => c.port)).toEqual([40001, 40000])
+		relay?.stop()
+	})
+
+	it('uses a caller-supplied relayPort without allocating a second one for it', async () => {
+		const findPortCalls: string[] = []
+		const findPort = async (host: string): Promise<number> => {
+			findPortCalls.push(host)
+			return 41000
+		}
+		const relay = await startSshRelay(
+			'sess-relay2',
+			3000,
+			sshKeyPath,
+			{
+				msbBin: '/usr/local/bin/msb',
+				findPort,
+				tcpPollReady: async () => {},
+				sshBin: '/usr/bin/ssh',
+			},
+			{ relayPort: 39999 },
+		)
+		expect(relay?.relayPort).toBe(39999)
+		// Only the ssh-serve port is self-allocated when relayPort is supplied.
+		expect(findPortCalls.length).toBe(1)
+		relay?.stop()
+	})
+
+	it('returns null when relay port allocation fails', async () => {
+		const relay = await startSshRelay('sess-relay3', 3000, sshKeyPath, {
+			msbBin: '/usr/local/bin/msb',
+			findPort: async () => {
+				throw new Error('no free ports')
+			},
+			tcpPollReady: async () => {},
+		})
+		expect(relay).toBeNull()
+	})
+
+	it('returns null when the msb ssh serve listener never becomes ready', async () => {
+		const relay = await startSshRelay('sess-relay4', 3000, sshKeyPath, {
+			msbBin: '/usr/local/bin/msb',
+			findPort: makePortAllocator(42000),
+			tcpPollReady: async () => {
+				throw new Error('not ready')
+			},
+			sshBin: '/usr/bin/ssh',
+		})
+		expect(relay).toBeNull()
+	})
+
+	it('returns null when the ssh tunnel never becomes ready (serve was ready)', async () => {
+		let call = 0
+		const relay = await startSshRelay('sess-relay5', 3000, sshKeyPath, {
+			msbBin: '/usr/local/bin/msb',
+			findPort: makePortAllocator(43000),
+			tcpPollReady: async () => {
+				call++
+				if (call === 1) return // msb ssh serve readiness
+				throw new Error('tunnel not ready')
+			},
+			sshBin: '/usr/bin/ssh',
+		})
+		expect(relay).toBeNull()
+	})
+
+	it('rejects an invalid target name before spawning anything', async () => {
+		await expect(
+			startSshRelay('../etc/passwd', 3000, sshKeyPath, {
+				msbBin: '/usr/local/bin/msb',
+				findPort: makePortAllocator(44000),
+				tcpPollReady: async () => {},
+			}),
+		).rejects.toThrow(/Invalid session id/)
+	})
+})
+
 describe('provisionBrowserSidecar', () => {
 	const msbBin = '/usr/local/bin/msb'
+	const sshKeyPath = '/root/.agent-server/ssh/relay_key'
 
-	it('creates the sidecar VM, waits for Running, launches exec, polls CDP, returns the URL', async () => {
+	it('creates the sidecar VM, waits for Running, launches exec, opens an SSH relay, polls CDP, returns the URL', async () => {
 		const calls: Array<readonly string[]> = []
 		const run = async (
 			_bin: string,
@@ -740,26 +864,28 @@ describe('provisionBrowserSidecar', () => {
 			}
 			return { stdout: '', stderr: '' }
 		}
-		const sidecar = await provisionBrowserSidecar('deadbeef', {
-			msbBin,
-			run,
-			sleep: async () => {},
-			now: () => 0,
-			findPort: async () => 39222,
-			cdpPollReady: async () => {},
-		})
-		expect(sidecar).toEqual({
-			name: 'anko-browser-deadbeef',
-			cdpUrl: 'http://10.0.1.1:39222',
-		})
+		const sidecar = await provisionBrowserSidecar(
+			'deadbeef',
+			{
+				msbBin,
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: makePortAllocator(39222),
+				tcpPollReady: async () => {},
+				cdpPollReady: async () => {},
+			},
+			{ sshKeyPath },
+		)
+		expect(sidecar?.name).toBe('anko-browser-deadbeef')
+		expect(sidecar?.cdpUrl).toBe('http://host.microsandbox.internal:39222')
+		expect(sidecar?.cdpRelay?.relayPort).toBe(39222)
 		const verbs = calls.map((c) => c[0])
 		expect(verbs).toContain('create')
 		expect(verbs).toContain('list')
 		expect(verbs).not.toContain('inspect')
-		// create args must include port forwarding and the default image.
 		const createCall = calls.find((c) => c[0] === 'create')
-		expect(createCall).toContain('-p')
-		expect(createCall).toContain('10.0.1.1:39222:9222')
+		expect(createCall).not.toContain('-p')
 		expect(createCall?.at(-1)).toBe('browser-sidecar:latest')
 	})
 
@@ -786,29 +912,31 @@ describe('provisionBrowserSidecar', () => {
 				run,
 				sleep: async () => {},
 				now: () => 0,
-				findPort: async () => 39222,
+				findPort: makePortAllocator(39222),
+				tcpPollReady: async () => {},
 				cdpPollReady: async () => {},
 			},
-			{ image: 'maskin/browser-sidecar:latest' },
+			{ image: 'maskin/browser-sidecar:latest', sshKeyPath },
 		)
 
-		expect(sidecar?.cdpUrl).toBe('http://10.0.1.1:39222')
+		expect(sidecar?.cdpUrl).toBe('http://host.microsandbox.internal:39222')
 		const createCall = calls.find((c) => c[0] === 'create')
 		expect(createCall?.at(-1)).toBe('maskin/browser-sidecar:latest')
 	})
 
-	it('uses a configured bridge gateway when provided', async () => {
+	it('uses a configured agentServerInternalHost when provided', async () => {
 		const calls: Array<readonly string[]> = []
 		const run = async (
 			_bin: string,
 			args: readonly string[],
 		): Promise<{ stdout: string; stderr: string }> => {
 			calls.push(args)
-			if (args[0] === 'list')
+			if (args[0] === 'list') {
 				return {
 					stdout: JSON.stringify([{ name: 'anko-browser-gw00001', status: 'Running' }]),
 					stderr: '',
 				}
+			}
 			return { stdout: '', stderr: '' }
 		}
 
@@ -819,15 +947,14 @@ describe('provisionBrowserSidecar', () => {
 				run,
 				sleep: async () => {},
 				now: () => 0,
-				findPort: async () => 40000,
+				findPort: makePortAllocator(40000),
+				tcpPollReady: async () => {},
 				cdpPollReady: async () => {},
 			},
-			{ bridgeGateway: '192.168.100.1' },
+			{ sshKeyPath, agentServerInternalHost: 'custom.internal' },
 		)
 
-		expect(sidecar?.cdpUrl).toBe('http://192.168.100.1:40000')
-		const createCall = calls.find((c) => c[0] === 'create')
-		expect(createCall).toContain('192.168.100.1:40000:9222')
+		expect(sidecar?.cdpUrl).toBe('http://custom.internal:40000')
 	})
 
 	it('returns null and removes the half-built VM when msb create fails', async () => {
@@ -842,14 +969,7 @@ describe('provisionBrowserSidecar', () => {
 			}
 			return { stdout: '', stderr: '' }
 		}
-		const sidecar = await provisionBrowserSidecar('failcre8', {
-			msbBin,
-			run,
-			sleep: async () => {},
-			now: () => 0,
-			findPort: async () => 39222,
-			cdpPollReady: async () => {},
-		})
+		const sidecar = await provisionBrowserSidecar('failcre8', { msbBin, run }, { sshKeyPath })
 		expect(sidecar).toBeNull()
 		expect(calls.map((c) => c[0])).toEqual(['create', 'remove'])
 	})
@@ -869,21 +989,60 @@ describe('provisionBrowserSidecar', () => {
 			}
 			return { stdout: '', stderr: '' }
 		}
-		const sidecar = await provisionBrowserSidecar('nocdp000', {
-			msbBin,
-			run,
-			sleep: async () => {},
-			now: () => 0,
-			findPort: async () => 39222,
-			cdpPollReady: async () => {
-				throw new Error('CDP not ready within timeout')
+		const sidecar = await provisionBrowserSidecar(
+			'nocdp000',
+			{
+				msbBin,
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: makePortAllocator(39222),
+				tcpPollReady: async () => {},
+				cdpPollReady: async () => {
+					throw new Error('CDP not ready within timeout')
+				},
 			},
-		})
+			{ sshKeyPath },
+		)
 		expect(sidecar).toBeNull()
 		expect(calls.map((c) => c[0])).toContain('remove')
 	})
 
-	it('omits allow@private by default (no route back into the session unless requested)', async () => {
+	it('returns null and removes the VM when the SSH relay fails to establish', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-norelay', status: 'Running' }]),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+		const sidecar = await provisionBrowserSidecar(
+			'norelay',
+			{
+				msbBin,
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: makePortAllocator(39222),
+				tcpPollReady: async () => {
+					throw new Error('relay never came up')
+				},
+				cdpPollReady: async () => {},
+			},
+			{ sshKeyPath },
+		)
+		expect(sidecar).toBeNull()
+		expect(calls.map((c) => c[0])).toContain('remove')
+	})
+
+	it('adds no extra allow@host:tcp:<port> rules when extraAllowedHostPorts is omitted', async () => {
 		const calls: Array<readonly string[]> = []
 		const run = async (
 			_bin: string,
@@ -898,19 +1057,24 @@ describe('provisionBrowserSidecar', () => {
 			}
 			return { stdout: '', stderr: '' }
 		}
-		await provisionBrowserSidecar('noprv0001', {
-			msbBin,
-			run,
-			sleep: async () => {},
-			now: () => 0,
-			findPort: async () => 39222,
-			cdpPollReady: async () => {},
-		})
+		await provisionBrowserSidecar(
+			'noprv0001',
+			{
+				msbBin,
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: makePortAllocator(39222),
+				tcpPollReady: async () => {},
+				cdpPollReady: async () => {},
+			},
+			{ sshKeyPath },
+		)
 		const createCall = calls.find((c) => c[0] === 'create')
-		expect(createCall).not.toContain('allow@private')
+		expect(createCall?.some((a) => a.startsWith('allow@host:tcp:'))).toBe(false)
 	})
 
-	it('adds --net-rule allow@private when allowPrivateNet is requested (reach the session preview port)', async () => {
+	it('adds one allow@host:tcp:<port> net-rule per extraAllowedHostPorts entry (reach a session preview relay)', async () => {
 		const calls: Array<readonly string[]> = []
 		const run = async (
 			_bin: string,
@@ -932,13 +1096,15 @@ describe('provisionBrowserSidecar', () => {
 				run,
 				sleep: async () => {},
 				now: () => 0,
-				findPort: async () => 39222,
+				findPort: makePortAllocator(39222),
+				tcpPollReady: async () => {},
 				cdpPollReady: async () => {},
 			},
-			{ allowPrivateNet: true },
+			{ sshKeyPath, extraAllowedHostPorts: [39500, 39501] },
 		)
 		const createCall = calls.find((c) => c[0] === 'create')
-		expect(createCall).toContain('allow@private')
+		expect(createCall).toContain('allow@host:tcp:39500')
+		expect(createCall).toContain('allow@host:tcp:39501')
 	})
 })
 
@@ -984,6 +1150,37 @@ describe('cleanupBrowserSidecar', () => {
 		)
 		expect(calls[0]).toEqual(['remove', '-f', '--quiet', 'anko-browser-feed'])
 		expect(calls[1]?.[0]).toBe('list')
+	})
+
+	it('stops the CDP SSH relay before removing the sidecar VM', async () => {
+		const calls: Array<readonly string[]> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push(args)
+			if (args[0] === 'list') return { stdout: '[]', stderr: '' }
+			return { stdout: '', stderr: '' }
+		}
+		const clock = fakeClock()
+		let stopped = false
+		const cdpRelay: SshRelay = {
+			relayPort: 39222,
+			targetName: 'anko-browser-relaytest',
+			targetGuestPort: 9222,
+			stop: () => {
+				stopped = true
+			},
+		}
+		await cleanupBrowserSidecar(
+			{
+				name: 'anko-browser-relaytest',
+				cdpUrl: 'http://host.microsandbox.internal:39222',
+				cdpRelay,
+			},
+			{ msbBin, run, sleep: clock.sleep, now: clock.now },
+		)
+		expect(stopped).toBe(true)
 	})
 
 	it('no-ops when no sidecar was provisioned (the common path)', async () => {

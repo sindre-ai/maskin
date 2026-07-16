@@ -15,8 +15,10 @@ import {
 	type MicrosandboxDeps,
 	type PreviewPortMapping,
 	type PullPolicy,
+	type SshRelay,
 	cleanupBrowserSidecar,
 	defaultRunner,
+	ensureAgentServerSshKey,
 	launchSessionExec,
 	listSandboxNames,
 	provisionBrowserSidecar,
@@ -24,6 +26,7 @@ import {
 	removeSandbox,
 	resolvePreviewPortMappings,
 	spawnSession,
+	startSshRelay,
 	stopSandbox,
 	waitForCompletion,
 } from './services/microsandbox'
@@ -185,6 +188,7 @@ async function monitorSession(
 	sessionLogRouters?: Map<string, (line: string) => void>,
 	sessionExitCodes?: Map<string, number>,
 	browserSidecar?: BrowserSidecar | null,
+	previewRelays?: SshRelay[],
 ): Promise<void> {
 	const run = msb.run ?? defaultRunner()
 	const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -367,6 +371,7 @@ async function monitorSession(
 	// Chromium VMs linger. `cleanupBrowserSidecar` is a no-op when no sidecar
 	// was provisioned (the common path).
 	if (browserSidecar) {
+		for (const relay of previewRelays ?? []) relay.stop()
 		await cleanupBrowserSidecar(browserSidecar, msb)
 	}
 }
@@ -604,20 +609,19 @@ export function buildApp(deps: AppDeps): Hono {
 		let browserSidecar: BrowserSidecar | null = null
 		let previewPortMappings: PreviewPortMapping[] = []
 		let previewForwardingFailed = false
-		// Released once spawnSession's own `msb create -p` has consumed (or failed
-		// to consume) these reservations — see the finally block around spawnSession
-		// below. Keeps the held probe sockets from leaking on every code path.
+		// Released once the SSH relay(s) into these ports have actually been
+		// started (success or failure) further down — see the preview-relay
+		// block after spawnSession. Keeps the held probe sockets from leaking
+		// on every code path.
 		let releasePreviewPorts: () => void = () => {}
 		if (body.browserRequired === true) {
-			// Resolve preview port forwards before provisioning the sidecar so we
-			// know whether the sidecar needs an allow@private route back in.
+			// Resolve preview port relay ports before provisioning the sidecar so
+			// we know which allow@host:tcp:<port> rules the sidecar needs baked in
+			// at create time — the relay itself can only start once the session VM
+			// is Running, further down.
 			if (body.previewGuestPorts && body.previewGuestPorts.length > 0) {
 				try {
-					const resolved = await resolvePreviewPortMappings(
-						body.previewGuestPorts,
-						deps.msb,
-						deps.env.MSB_BRIDGE_GATEWAY,
-					)
+					const resolved = await resolvePreviewPortMappings(body.previewGuestPorts, deps.msb)
 					previewPortMappings = resolved.mappings
 					releasePreviewPorts = resolved.release
 				} catch (err) {
@@ -630,14 +634,17 @@ export function buildApp(deps: AppDeps): Hono {
 			}
 			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 16), deps.msb, {
 				image: deps.env.BROWSER_SIDECAR_IMAGE,
-				bridgeGateway: deps.env.MSB_BRIDGE_GATEWAY,
-				...(previewPortMappings.length > 0 && { allowPrivateNet: true }),
+				sshKeyPath: deps.env.AGENT_SERVER_SSH_KEY_PATH,
+				agentServerInternalHost,
+				...(previewPortMappings.length > 0 && {
+					extraAllowedHostPorts: previewPortMappings.map((m) => m.relayPort),
+				}),
 			})
 			if (browserSidecar) {
 				sessionEnv.BROWSER_CDP_URL = browserSidecar.cdpUrl
 				const primaryPreviewMapping = previewPortMappings[0]
 				if (primaryPreviewMapping) {
-					sessionEnv.PREVIEW_URL = `http://${deps.env.MSB_BRIDGE_GATEWAY}:${primaryPreviewMapping.hostPort}`
+					sessionEnv.PREVIEW_URL = `http://${agentServerInternalHost}:${primaryPreviewMapping.relayPort}`
 				}
 				logger.info('browser sidecar attached to session', {
 					sessionId: body.sessionId,
@@ -655,6 +662,7 @@ export function buildApp(deps: AppDeps): Hono {
 			}
 		}
 
+		const previewRelays: SshRelay[] = []
 		try {
 			let result: Awaited<ReturnType<typeof spawnSession>>
 			try {
@@ -676,26 +684,20 @@ export function buildApp(deps: AppDeps): Hono {
 								maxDuration: deps.env.SESSION_MAX_DURATION,
 							}),
 						// Only opened when a sidecar was provisioned — keeps the default
-						// session firewall posture tight for the common path.
-						...(browserSidecar !== null && { allowPrivateNet: true }),
-						// Only forward the session's preview port onto the shared bridge
-						// when a sidecar actually exists to consume it — otherwise the
-						// port sits exposed on the bridge gateway with nothing there to
-						// reach it.
-						...(browserSidecar !== null &&
-							previewPortMappings.length > 0 && {
-								previewPorts: previewPortMappings,
-								bridgeGateway: deps.env.MSB_BRIDGE_GATEWAY,
-							}),
+						// session firewall posture tight for the common path. Grants
+						// reachability into exactly the sidecar's CDP SSH-relay port,
+						// not the old allow@private blanket RFC1918 range.
+						...(browserSidecar?.cdpRelay !== undefined && {
+							extraAllowedHostPorts: [browserSidecar.cdpRelay.relayPort],
+						}),
 					},
 					deps.msb,
 				)
-			} finally {
-				// spawnSession's own `msb create -p` has now consumed (or failed to
-				// consume) the reserved host ports — release the held probe sockets
-				// regardless of outcome so they don't leak for the rest of this
-				// request's (potentially long) background work.
+			} catch (err) {
+				// spawnSession failed — no live VM to relay into, release the
+				// preview-port reservations now.
 				releasePreviewPorts()
+				throw err
 			}
 			logger.info('session spawned', {
 				sessionId: body.sessionId,
@@ -705,6 +707,40 @@ export function buildApp(deps: AppDeps): Hono {
 				envOverflowSpilled: result.envOverflowSpilled,
 				envSanitized: result.envSanitized,
 			})
+
+			// Session VM is now Running — actually open the SSH-relay tunnel(s) into
+			// its preview port(s), targeting the same relayPort numbers already
+			// baked into the sidecar's allow@host:tcp:<port> net-rules above. Must
+			// happen after spawnSession (the relay target must be a live VM); the
+			// pre-reserved port numbers are only released once this has run,
+			// whatever the outcome — see resolvePreviewPortMappings.
+			if (browserSidecar && previewPortMappings.length > 0) {
+				try {
+					for (const mapping of previewPortMappings) {
+						const relay = await startSshRelay(
+							body.sessionId,
+							mapping.guestPort,
+							deps.env.AGENT_SERVER_SSH_KEY_PATH,
+							deps.msb,
+							{ relayPort: mapping.relayPort },
+						)
+						if (relay) {
+							previewRelays.push(relay)
+						} else {
+							previewForwardingFailed = true
+							logger.warn('preview port ssh relay failed to establish', {
+								sessionId: body.sessionId,
+								guestPort: mapping.guestPort,
+								relayPort: mapping.relayPort,
+							})
+						}
+					}
+				} finally {
+					releasePreviewPorts()
+				}
+			} else {
+				releasePreviewPorts()
+			}
 
 			// Write exec trigger to the bind-mounted session dir. entrypoint.sh sleeps
 			// during create-time (no trigger); finding this file tells it to run the
@@ -725,14 +761,16 @@ export function buildApp(deps: AppDeps): Hono {
 				sessionLogRouters,
 				sessionExitCodes,
 				browserSidecar,
+				previewRelays,
 			)
 				.catch((err) => {
 					logger.error('monitorSession crashed unexpectedly', {
 						sessionId: body.sessionId,
 						error: String(err),
 					})
-					// monitorSession crashed before reaching its own cleanupBrowserSidecar
-					// block — clean up here so the sidecar VM isn't left orphaned.
+					// monitorSession crashed before reaching its own cleanup tail — clean
+					// up here so the sidecar VM and preview relays aren't left orphaned.
+					for (const relay of previewRelays) relay.stop()
 					if (browserSidecar) {
 						void cleanupBrowserSidecar(browserSidecar, deps.msb).catch((cleanupErr) => {
 							logger.warn('browser sidecar cleanup after monitorSession crash failed', {
@@ -766,8 +804,9 @@ export function buildApp(deps: AppDeps): Hono {
 			)
 		} catch (err) {
 			logger.error('session spawn failed', { sessionId: body.sessionId, error: String(err) })
-			// Don't orphan the sidecar — spawnSession failed before monitorSession
-			// would have torn it down. Best-effort, idempotent.
+			// Don't orphan the sidecar or any preview relays — spawnSession failed
+			// before monitorSession would have torn them down. Best-effort, idempotent.
+			for (const relay of previewRelays) relay.stop()
 			if (browserSidecar) {
 				await cleanupBrowserSidecar(browserSidecar, deps.msb).catch(() => {})
 			}
@@ -1058,6 +1097,17 @@ async function main(): Promise<void> {
 	const env = parseEnv()
 	const storage = await buildStorage(env)
 	const msb: MicrosandboxDeps = { msbBin: env.MSB_BIN }
+
+	// Best-effort: a box that can't mint/authorize its relay keypair here still
+	// boots — browser-required sessions will simply fail sidecar/preview relay
+	// setup individually later (provisionBrowserSidecar / startSshRelay never
+	// throw past the session boundary), consistent with this file's philosophy
+	// of not crashing the whole box over an optional-capability failure.
+	try {
+		await ensureAgentServerSshKey(env.AGENT_SERVER_SSH_KEY_PATH, msb)
+	} catch (err) {
+		logger.error('failed to ensure agent-server ssh relay keypair', { error: String(err) })
+	}
 
 	let warmer: ImageWarmer | null = null
 	if (env.WARM_POOL_IMAGE) {

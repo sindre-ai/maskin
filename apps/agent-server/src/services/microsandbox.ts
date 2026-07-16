@@ -1,8 +1,8 @@
-import { execFile as execFileCb, spawn } from 'node:child_process'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { type ChildProcess, execFile as execFileCb, spawn } from 'node:child_process'
+import { access, mkdir, writeFile } from 'node:fs/promises'
 import { get as httpGet } from 'node:http'
-import { createServer } from 'node:net'
-import { join } from 'node:path'
+import { connect, createServer } from 'node:net'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { logger } from '../lib/logger'
 
@@ -46,11 +46,22 @@ const PUBLIC_EGRESS_RULE = 'allow@public'
 const DNS_UDP_RULE = 'allow@any:udp:53'
 const DNS_TCP_RULE = 'allow@any:tcp:53'
 
-// When a session needs to talk to a sibling msb microVM (the browser sidecar),
-// the target IP is on the msb bridge — a private RFC1918 range.
-// `allow@private` opens that path without giving the session blanket access to
-// the host network. Only added when explicitly requested.
-const PRIVATE_NET_RULE = 'allow@private'
+// SSH-relay networking: when a session or the browser sidecar needs to reach
+// a sibling microVM's port (CDP, a dev-server preview port), agent-server
+// opens `msb ssh serve <target> --host 127.0.0.1 --port <sshPort>` plus a
+// real `ssh -L` tunnel from a host-loopback port into the target's own
+// guest-local port — see startSshRelay() below. Verified against production
+// msb 0.5.7 to reach a --no-net guest's own 127.0.0.1 with zero other network
+// exposure. This replaces the old `allow@private` blanket RFC1918 grant: the
+// only net-rule either VM needs now is a single `allow@host:tcp:<relayPort>`
+// scoped to the one relay port it's meant to reach.
+const SSH_RELAY_BIND_HOST = '127.0.0.1'
+const SSH_RELAY_POLL_INTERVAL_MS = 250
+const SSH_RELAY_CONNECT_TIMEOUT_MS = 1_000
+const SSH_SERVE_READY_TIMEOUT_MS = 15_000
+const SSH_TUNNEL_READY_TIMEOUT_MS = 15_000
+const DEFAULT_SSH_BIN = 'ssh'
+const DEFAULT_SSH_KEYGEN_BIN = 'ssh-keygen'
 
 // Default Chromium CDP sidecar image. Production can override this with the
 // registry tag published by the browser-sidecar Docker workflow.
@@ -59,10 +70,12 @@ const DEFAULT_BROWSER_SIDECAR_IMAGE = 'browser-sidecar:latest'
 // CDP listener inside the browser-sidecar container (socat bridge target).
 const BROWSER_CDP_GUEST_PORT = 9222
 
-// Host-side bridge gateway that session VMs reach via allow@private.
-// msb assigns the bridge host 10.0.1.1 by default; override via env when
-// running a custom msb network config.
-const DEFAULT_BRIDGE_GATEWAY = '10.0.1.1'
+// DNS name a session VM (and the browser sidecar) use to reach the physical
+// host over their own allow@host:tcp:<port> net-rule — matches how
+// AGENT_SERVER_URL is constructed in index.ts. Overridden via
+// provisionBrowserSidecar's agentServerInternalHost option when
+// AGENT_SERVER_INTERNAL_HOST is set.
+const DEFAULT_AGENT_SERVER_INTERNAL_HOST = 'host.microsandbox.internal'
 
 // Bigger memory budget than a session VM: Xvfb + headed Chromium is heavier
 // than the agent-base image and Chromium tabs eat into the budget fast.
@@ -98,13 +111,13 @@ const CREATE_TIMEOUT_MS = 60_000
 // libkrun-equivalent of an air-gap for tests.
 export type PullPolicy = 'always' | 'if-missing' | 'never'
 
-// A single `-p <bridgeGateway>:<hostPort>:<guestPort>` forward, publishing one
-// of the session's own app ports on the bridge-only gateway so a sibling VM
-// (the browser sidecar) can reach it — the same mechanism the sidecar already
-// uses to publish its own CDP port outward.
+// A single SSH-relay forward: a host-loopback port that tunnels into one of
+// the session's own guest-local app ports, so the browser sidecar (given a
+// narrow allow@host:tcp:<relayPort> grant) can reach a dev server running
+// inside the session (e.g. `pnpm run dev`). See startSshRelay().
 export type PreviewPortMapping = {
 	guestPort: number
-	hostPort: number
+	relayPort: number
 }
 
 export type SpawnSessionInput = {
@@ -118,19 +131,11 @@ export type SpawnSessionInput = {
 	sessionDir: string
 	pullPolicy?: PullPolicy
 	maxDuration?: string
-	// When true, the session VM gets `--net-rule allow@private` so it can reach
-	// a sibling sidecar VM (the browser sidecar) over the msb bridge. Off by
-	// default — only sessions that need browser access pay for it.
-	allowPrivateNet?: boolean
-	// App port(s) inside this session to publish on the msb bridge gateway, so
-	// the browser sidecar can reach a dev server running inside the session
-	// (e.g. `pnpm run dev`). Resolve via resolvePreviewPortMappings() before
-	// calling spawnSession so the host ports are known ahead of provisioning
-	// the sidecar's own allow@private grant.
-	previewPorts?: readonly PreviewPortMapping[]
-	// Bridge gateway address used for previewPorts forwarding. Defaults to the
-	// same DEFAULT_BRIDGE_GATEWAY the browser sidecar uses.
-	bridgeGateway?: string
+	// Extra host-loopback ports (beyond `hostPort`) this session VM may reach
+	// via `--net-rule allow@host:tcp:<port>`. Used to grant access to the
+	// browser sidecar's CDP SSH-relay port when the session needs browser
+	// capability — the narrow replacement for the old allow@private grant.
+	extraAllowedHostPorts?: readonly number[]
 }
 
 export type SpawnSessionResult = {
@@ -158,6 +163,14 @@ export type MicrosandboxDeps = {
 	findPort?: (host: string) => Promise<number>
 	// Overrideable in tests: wait for the CDP endpoint to accept connections.
 	cdpPollReady?: (port: number) => Promise<void>
+	// Overrideable in tests: path to the `ssh` binary used for relay tunnels.
+	sshBin?: string
+	// Overrideable in tests: path to the `ssh-keygen` binary used for relay
+	// key generation.
+	sshKeygenBin?: string
+	// Overrideable in tests: wait for a bare TCP listener to accept
+	// connections.
+	tcpPollReady?: (host: string, port: number, timeoutMs: number) => Promise<void>
 }
 
 export function assertValidSessionId(sessionId: string): void {
@@ -216,9 +229,7 @@ export function buildMsbCreateArgs(input: {
 	sessionDir: string
 	pullPolicy?: PullPolicy
 	maxDuration?: string
-	allowPrivateNet?: boolean
-	previewPorts?: readonly PreviewPortMapping[]
-	bridgeGateway?: string
+	extraAllowedHostPorts?: readonly number[]
 }): string[] {
 	const args: string[] = [
 		'create',
@@ -243,16 +254,12 @@ export function buildMsbCreateArgs(input: {
 		'-v',
 		`${input.sessionDir}:${SESSION_GUEST_PATH}`,
 	]
-	if (input.allowPrivateNet) {
-		args.push('--net-rule', PRIVATE_NET_RULE)
-	}
-	// Publish the session's own app port(s) on the bridge-only gateway, mirroring
-	// provisionBrowserSidecar's CDP forwarding — lets the browser sidecar (which
-	// gets allow@private of its own) reach a dev server running inside this VM.
-	if (input.previewPorts && input.previewPorts.length > 0) {
-		const bridgeGateway = input.bridgeGateway ?? DEFAULT_BRIDGE_GATEWAY
-		for (const mapping of input.previewPorts) {
-			args.push('-p', `${bridgeGateway}:${mapping.hostPort}:${mapping.guestPort}`)
+	// Extra host-loopback ports this session needs beyond its own hostPort —
+	// e.g. the browser sidecar's CDP SSH-relay port — granted narrowly per
+	// port rather than the old allow@private blanket RFC1918 grant.
+	if (input.extraAllowedHostPorts) {
+		for (const port of input.extraAllowedHostPorts) {
+			args.push('--net-rule', `allow@${HOST_RULE_HOST}:tcp:${port}`)
 		}
 	}
 	// Backstop only: a `create`d microVM is persistent and won't power off when its
@@ -331,9 +338,9 @@ export async function spawnSession(
 		sessionDir: input.sessionDir,
 		...(input.pullPolicy !== undefined && { pullPolicy: input.pullPolicy }),
 		...(input.maxDuration !== undefined && { maxDuration: input.maxDuration }),
-		...(input.allowPrivateNet !== undefined && { allowPrivateNet: input.allowPrivateNet }),
-		...(input.previewPorts !== undefined && { previewPorts: input.previewPorts }),
-		...(input.bridgeGateway !== undefined && { bridgeGateway: input.bridgeGateway }),
+		...(input.extraAllowedHostPorts !== undefined && {
+			extraAllowedHostPorts: input.extraAllowedHostPorts,
+		}),
 	})
 
 	logger.info('msb create starting', { sessionId: input.sessionId, image: input.image })
@@ -524,20 +531,20 @@ export async function readMsbVersion(deps: { msbBin: string; run?: CommandRunner
 // Sockets opened by the default findFreeHostPort() below, keyed by the port
 // they're bound to. Held open (not closed immediately after the bind probe)
 // until releaseHostPort() is called, so the OS can't hand the same "free"
-// port to a second concurrent probe before the first caller's `msb create -p`
-// has actually claimed it. Ports resolved via an injected deps.findPort
-// (tests) never populate this map, so releaseHostPort() is a safe no-op there.
+// port to a second concurrent probe before the first caller's consumer (an
+// SSH relay tunnel, `msb ssh serve`, ...) has actually claimed it. Ports
+// resolved via an injected deps.findPort (tests) never populate this map, so
+// releaseHostPort() is a safe no-op there.
 const heldHostPorts = new Map<number, ReturnType<typeof createServer>>()
 
 /**
  * Allocate a free TCP port on a host bind address and hold it open (see
- * heldHostPorts above). Used to pick the host-side port for
- * `msb create -p <bridgeGateway>:<port>:<guestPort>` — both the browser
- * sidecar's own CDP port and, via resolvePreviewPortMappings, a session's
- * preview port forwards. Callers must call releaseHostPort(port) once the
- * `msb create` invocation that consumes the port has run (success or
- * failure) — releasing earlier re-opens the TOCTOU window this exists to
- * close.
+ * heldHostPorts above). Used to pick host-loopback ports for SSH-relay
+ * tunnels — the browser sidecar's CDP relay, a session's preview-port relays
+ * (via resolvePreviewPortMappings), and the intermediate `msb ssh serve`
+ * listener port (via startSshRelay). Callers must call releaseHostPort(port)
+ * once the invocation that consumes the port has run (success or failure) —
+ * releasing earlier re-opens the TOCTOU window this exists to close.
  */
 function findFreeHostPort(host: string): Promise<number> {
 	return new Promise((resolve, reject) => {
@@ -572,44 +579,273 @@ export type PreviewPortResolution = {
 	mappings: PreviewPortMapping[]
 	/**
 	 * Releases the host-port reservations backing these mappings. Call only
-	 * after the `msb create -p` command that publishes them has actually run
+	 * after the SSH relay(s) that consume them have actually been started
 	 * (success or failure) — see findFreeHostPort's TOCTOU note above.
 	 */
 	release: () => void
 }
 
 /**
- * Resolve one free bridge-only host port per requested guest port, for
- * publishing a session's own app port(s) the same way the browser sidecar's
- * CDP port is published (`-p <bridgeGateway>:<hostPort>:<guestPort>`). Call
- * this before provisionBrowserSidecar/spawnSession so the sidecar's
- * allow@private grant and the session's -p mappings are set up together.
+ * Resolve one free host-loopback port per requested guest port, reserved for
+ * an eventual SSH-relay tunnel into that session port (see startSshRelay()
+ * below). Call this before provisioning the browser sidecar so the reserved
+ * port numbers are known ahead of baking them into the sidecar's own
+ * `allow@host:tcp:<port>` net-rules — the sidecar's create-time rules must be
+ * set before the session VM exists, even though the relay itself can only be
+ * started once the session is Running.
  *
  * The returned reservations stay open (not just "looked free a moment ago")
  * until the caller invokes release() — hold it through provisionBrowserSidecar
- * and the eventual spawnSession call, then release once spawnSession's own
- * `msb create -p` has run. See findFreeHostPort for why.
+ * and the eventual spawnSession + startSshRelay calls, then release once the
+ * relay(s) have actually been started against these port numbers (success or
+ * failure). See findFreeHostPort for why.
  */
 export async function resolvePreviewPortMappings(
 	guestPorts: readonly number[],
 	deps: MicrosandboxDeps,
-	bridgeGateway: string = DEFAULT_BRIDGE_GATEWAY,
 ): Promise<PreviewPortResolution> {
 	const findPort = deps.findPort ?? findFreeHostPort
 	const mappings: PreviewPortMapping[] = []
 	try {
 		for (const guestPort of guestPorts) {
-			const hostPort = await findPort(bridgeGateway)
-			mappings.push({ guestPort, hostPort })
+			const relayPort = await findPort(SSH_RELAY_BIND_HOST)
+			mappings.push({ guestPort, relayPort })
 		}
 	} catch (err) {
-		for (const m of mappings) releaseHostPort(m.hostPort)
+		for (const m of mappings) releaseHostPort(m.relayPort)
 		throw err
 	}
 	return {
 		mappings,
 		release: () => {
-			for (const m of mappings) releaseHostPort(m.hostPort)
+			for (const m of mappings) releaseHostPort(m.relayPort)
+		},
+	}
+}
+
+export type SshKeyInfo = {
+	privateKeyPath: string
+	publicKeyPath: string
+}
+
+export type SshRelay = {
+	relayPort: number
+	targetName: string
+	targetGuestPort: number
+	stop: () => void
+}
+
+/**
+ * Poll a bare TCP listener at host:port until it accepts a connection, or the
+ * timeout elapses. Used to confirm both `msb ssh serve`'s listener and the
+ * `ssh -L` tunnel's local bind have actually come up before handing the port
+ * to a caller.
+ */
+async function defaultTcpPollReady(
+	host: string,
+	port: number,
+	timeoutMs: number,
+	deps: { sleep: (ms: number) => Promise<void>; now: () => number },
+): Promise<void> {
+	const deadline = deps.now() + timeoutMs
+	while (deps.now() < deadline) {
+		const ready = await new Promise<boolean>((resolve) => {
+			const socket = connect({ host, port })
+			const finish = (ok: boolean): void => {
+				socket.removeAllListeners()
+				socket.destroy()
+				resolve(ok)
+			}
+			socket.setTimeout(SSH_RELAY_CONNECT_TIMEOUT_MS)
+			socket.once('connect', () => finish(true))
+			socket.once('error', () => finish(false))
+			socket.once('timeout', () => finish(false))
+		})
+		if (ready) return
+		await deps.sleep(SSH_RELAY_POLL_INTERVAL_MS)
+	}
+	throw new Error(`TCP listener on ${host}:${port} did not become ready within ${timeoutMs}ms`)
+}
+
+/**
+ * Idempotently ensure agent-server has a persistent SSH keypair at `keyPath`,
+ * generating one with `ssh-keygen` only on first boot, and (re-)authorizing
+ * its public half with `msb ssh authorize` on every call — cheap and safe to
+ * repeat since duplicate `authorized_keys` lines are harmless, and it re-heals
+ * the grant if that file was wiped externally between restarts.
+ */
+export async function ensureAgentServerSshKey(
+	keyPath: string,
+	deps: MicrosandboxDeps,
+): Promise<SshKeyInfo> {
+	const run = deps.run ?? defaultRunner()
+	const sshKeygenBin = deps.sshKeygenBin ?? DEFAULT_SSH_KEYGEN_BIN
+	const publicKeyPath = `${keyPath}.pub`
+
+	const exists = await access(keyPath)
+		.then(() => true)
+		.catch(() => false)
+	if (!exists) {
+		await mkdir(dirname(keyPath), { recursive: true, mode: 0o700 })
+		await run(sshKeygenBin, ['-t', 'ed25519', '-N', '', '-f', keyPath], { timeoutMs: 15_000 })
+		logger.info('generated agent-server ssh relay keypair', { keyPath })
+	}
+
+	await run(deps.msbBin, ['ssh', 'authorize', '--file', publicKeyPath], { timeoutMs: 15_000 })
+
+	return { privateKeyPath: keyPath, publicKeyPath }
+}
+
+// ChildProcess.kill() throws (EINVAL on Windows, and platform-dependent
+// elsewhere) when the process never actually spawned — e.g. spawn() failed
+// synchronously with ENOENT for a bad/missing binary path. That's a real
+// failure mode for msb/ssh, not just a test artifact, so every kill() on a
+// relay's serve/tunnel process must tolerate it rather than let it crash the
+// caller (startSshRelay's own failure paths, and cleanupBrowserSidecar via
+// the returned stop()).
+function safeKill(proc: ChildProcess): void {
+	try {
+		proc.kill()
+	} catch (err) {
+		logger.warn('failed to kill relay child process (already exited or never spawned)', {
+			error: String(err),
+		})
+	}
+}
+
+/**
+ * Open a narrow SSH-relay tunnel from a host-loopback port into a single TCP
+ * port inside a running msb sandbox — the replacement for the old
+ * allow@private / bridge `-p` publish mechanism. Two chained child processes:
+ *
+ *   1. `msb ssh serve <targetName> --host 127.0.0.1 --port <sshPort>` — an
+ *      sshd-like listener microsandbox exposes for a running sandbox,
+ *      proxying SSH sessions into the guest.
+ *   2. `ssh -N -L 127.0.0.1:<relayPort>:127.0.0.1:<targetGuestPort> ...` — a
+ *      real SSH client using the persistent agent-server keypair, forwarding
+ *      the host-loopback relayPort into the guest's OWN loopback at
+ *      targetGuestPort. Verified against production msb 0.5.7 to work even
+ *      for a --no-net guest with zero other network exposure.
+ *
+ * `opts.relayPort`, when provided, must already be a live TOCTOU-safe
+ * reservation (see findFreeHostPort / resolvePreviewPortMappings) that the
+ * caller pre-baked into a sibling VM's --net-rule before this sandbox
+ * existed — startSshRelay does NOT release it; the caller owns that
+ * reservation's lifecycle. When omitted, startSshRelay self-allocates and
+ * self-releases its own relayPort (the CDP-relay case, which has no such
+ * ordering constraint).
+ *
+ * Returns null (and tears down whatever was started) on any failure — never
+ * throws past this boundary, matching provisionBrowserSidecar's convention.
+ */
+export async function startSshRelay(
+	targetName: string,
+	targetGuestPort: number,
+	sshKeyPath: string,
+	deps: MicrosandboxDeps,
+	opts: { relayPort?: number } = {},
+): Promise<SshRelay | null> {
+	assertValidSessionId(targetName)
+	const sleep = deps.sleep ?? defaultSleep
+	const now = deps.now ?? Date.now
+	const findPort = deps.findPort ?? findFreeHostPort
+	const sshBin = deps.sshBin ?? DEFAULT_SSH_BIN
+	const tcpPollReady =
+		deps.tcpPollReady ??
+		((host: string, port: number, timeoutMs: number) =>
+			defaultTcpPollReady(host, port, timeoutMs, { sleep, now }))
+
+	const selfAllocatedRelay = opts.relayPort === undefined
+	let relayPort: number
+	try {
+		relayPort = opts.relayPort ?? (await findPort(SSH_RELAY_BIND_HOST))
+	} catch (err) {
+		logger.error('ssh relay: failed to allocate relay port', { targetName, error: String(err) })
+		return null
+	}
+
+	let sshPort: number
+	try {
+		sshPort = await findPort(SSH_RELAY_BIND_HOST)
+	} catch (err) {
+		logger.error('ssh relay: failed to allocate ssh serve port', { targetName, error: String(err) })
+		if (selfAllocatedRelay) releaseHostPort(relayPort)
+		return null
+	}
+
+	const serveProc = spawn(
+		deps.msbBin,
+		['ssh', 'serve', targetName, '--host', SSH_RELAY_BIND_HOST, '--port', String(sshPort)],
+		{ stdio: 'ignore' },
+	)
+	serveProc.on('error', (err) => {
+		logger.error('msb ssh serve spawn error', { targetName, error: String(err) })
+	})
+	serveProc.unref()
+	// The probe socket has served its purpose once `msb ssh serve` has
+	// actually bound (or failed to bind) the port — release right after
+	// spawn, mirroring the create-arg release convention used elsewhere in
+	// this file (e.g. provisionBrowserSidecar's old hostPort release).
+	releaseHostPort(sshPort)
+
+	try {
+		await tcpPollReady(SSH_RELAY_BIND_HOST, sshPort, SSH_SERVE_READY_TIMEOUT_MS)
+	} catch (err) {
+		logger.error('msb ssh serve did not become ready', { targetName, sshPort, error: String(err) })
+		safeKill(serveProc)
+		if (selfAllocatedRelay) releaseHostPort(relayPort)
+		return null
+	}
+
+	const tunnelProc = spawn(
+		sshBin,
+		[
+			'-N',
+			'-L',
+			`${SSH_RELAY_BIND_HOST}:${relayPort}:${SSH_RELAY_BIND_HOST}:${targetGuestPort}`,
+			'-p',
+			String(sshPort),
+			'-i',
+			sshKeyPath,
+			'-o',
+			'StrictHostKeyChecking=no',
+			'-o',
+			'UserKnownHostsFile=/dev/null',
+			'-o',
+			'ExitOnForwardFailure=yes',
+			'-o',
+			'BatchMode=yes',
+			`root@${SSH_RELAY_BIND_HOST}`,
+		],
+		{ stdio: 'ignore' },
+	)
+	tunnelProc.on('error', (err) => {
+		logger.error('ssh tunnel spawn error', { targetName, error: String(err) })
+	})
+	tunnelProc.unref()
+	// Same release-after-spawn convention as sshPort above — relayPort is only
+	// released here when this call self-allocated it; a caller-supplied
+	// relayPort is the caller's reservation to release.
+	if (selfAllocatedRelay) releaseHostPort(relayPort)
+
+	try {
+		await tcpPollReady(SSH_RELAY_BIND_HOST, relayPort, SSH_TUNNEL_READY_TIMEOUT_MS)
+	} catch (err) {
+		logger.error('ssh tunnel did not become ready', { targetName, relayPort, error: String(err) })
+		safeKill(tunnelProc)
+		safeKill(serveProc)
+		return null
+	}
+
+	logger.info('ssh relay established', { targetName, targetGuestPort, relayPort, sshPort })
+
+	return {
+		relayPort,
+		targetName,
+		targetGuestPort,
+		stop: () => {
+			safeKill(tunnelProc)
+			safeKill(serveProc)
 		},
 	}
 }
@@ -669,6 +905,11 @@ async function defaultPollCdpReady(
 export type BrowserSidecar = {
 	name: string
 	cdpUrl: string
+	// Present only for sidecars provisioned by this process; absent when
+	// reattached via reconcileOnBoot (see index.ts) — SSH relay child
+	// processes are owned by this process (not the msb daemon), so they don't
+	// survive an agent-server restart and cannot be recovered.
+	cdpRelay?: SshRelay
 }
 
 /**
@@ -676,11 +917,18 @@ export type BrowserSidecar = {
  * browser-enabled sessions. Returns the sidecar name and a CDP URL the session
  * VM can hand to `@playwright/mcp`.
  *
- * Strategy: forward a bridge-only host TCP port to guest port 9222
- * (`-p <bridgeGateway>:<port>:9222`), then fire `msb exec` to start the entrypoint.
- * `msb create` boots the VM but does NOT run CMD/ENTRYPOINT — `msb exec` is
- * required. The session VM reaches the CDP endpoint at `http://<bridgeGateway>:<port>`
- * via `allow@private`, since the bridge gateway is a private RFC1918 address.
+ * Strategy: `msb create` boots the sidecar with no CDP port published at all —
+ * `msb exec` starts Xvfb + Chromium + socat, then startSshRelay() opens an
+ * SSH-relay tunnel (`msb ssh serve` + `ssh -L`) from a host-loopback port into
+ * the sidecar's own guest-local CDP port. This replaces the old
+ * `-p <bridgeGateway>:<port>:9222` bridge publish + allow@private grant —
+ * verified against production msb 0.5.7 to reach a guest's own 127.0.0.1 even
+ * with zero other network exposure (no bridge, no --net-rule beyond DNS/public
+ * egress). The session VM reaches the relay port via the same
+ * `allow@host:tcp:<port>` / `host.microsandbox.internal` mechanism used for
+ * AGENT_SERVER_URL, narrowly scoped to exactly that one port (see
+ * extraAllowedHostPorts on spawnSession).
+ *
  * The URL must be http:// (not ws://) — `@playwright/mcp --cdp-endpoint` performs
  * CDP discovery via `GET {url}/json/version` to find the browser's real
  * `webSocketDebuggerUrl` before opening a WebSocket, the same discovery this
@@ -692,26 +940,21 @@ export type BrowserSidecar = {
 export async function provisionBrowserSidecar(
 	prefix: string,
 	deps: MicrosandboxDeps,
-	options: { image?: string; bridgeGateway?: string; allowPrivateNet?: boolean } = {},
+	options: {
+		image?: string
+		sshKeyPath: string
+		agentServerInternalHost?: string
+		extraAllowedHostPorts?: readonly number[]
+	},
 ): Promise<BrowserSidecar | null> {
 	const name = `anko-browser-${prefix}`
 	assertValidSessionId(name)
 	const run = deps.run ?? defaultRunner()
 	const sleep = deps.sleep ?? defaultSleep
 	const now = deps.now ?? Date.now
-	const findPort = deps.findPort ?? findFreeHostPort
 	const image = options.image ?? DEFAULT_BROWSER_SIDECAR_IMAGE
-	const bridgeGateway = options.bridgeGateway ?? DEFAULT_BRIDGE_GATEWAY
-	const pollReady =
-		deps.cdpPollReady ?? ((port) => defaultPollCdpReady(bridgeGateway, port, { sleep, now }))
-
-	let hostPort: number
-	try {
-		hostPort = await findPort(bridgeGateway)
-	} catch (err) {
-		logger.error('browser sidecar: failed to allocate host port', { name, error: String(err) })
-		return null
-	}
+	const agentServerInternalHost =
+		options.agentServerInternalHost ?? DEFAULT_AGENT_SERVER_INTERNAL_HOST
 
 	const createArgs: string[] = [
 		'create',
@@ -724,10 +967,6 @@ export async function provisionBrowserSidecar(
 		'--pull',
 		'always',
 		'--quiet',
-		// Forward a bridge-only host port to guest CDP port so the session VM can
-		// reach Chrome without exposing unauthenticated CDP on public interfaces.
-		'-p',
-		`${bridgeGateway}:${hostPort}:${BROWSER_CDP_GUEST_PORT}`,
 		// Sidecar needs public egress (Chromium asset fetches) and DNS.
 		'--net-rule',
 		PUBLIC_EGRESS_RULE,
@@ -737,55 +976,35 @@ export async function provisionBrowserSidecar(
 		DNS_TCP_RULE,
 	]
 
-	// Lets the sidecar route back into the private bridge to reach a session's
-	// own published preview port(s) — the other half of the -p forward on the
-	// session's own msb create call (see buildMsbCreateArgs' previewPorts).
-	//
-	// Accepted risk: msb's --net-rule grammar only exposes symbolic groups
-	// (host/private/public/any), optionally narrowed to a protocol+port on
-	// that group (e.g. `allow@host:tcp:<port>`) — there is no IP- or
-	// CIDR-scoped rule, so this cannot be tightened to "only the bridge
-	// gateway's forwarded port." `allow@private` therefore grants the sidecar
-	// reachability to the entire RFC1918 range, not just the one session port
-	// it's meant to view. Blast radius is narrowed the only ways available:
-	// this rule is only added when a preview port was actually requested and
-	// resolved (never unconditionally — see caller), and the session side only
-	// forwards its port onto the bridge when this same sidecar was
-	// successfully provisioned (see the `browserSidecar !== null` gate around
-	// `previewPorts` in index.ts), so the window where anything is reachable
-	// on the bridge is exactly the lifetime of a session that both requested
-	// and received a browser sidecar.
-	if (options.allowPrivateNet) {
-		createArgs.push('--net-rule', PRIVATE_NET_RULE)
+	// Lets the sidecar reach a session's own preview-relay port(s) on the host
+	// loopback — the SSH-relay replacement for the old allow@private blanket
+	// RFC1918 grant. Each entry is scoped to exactly one port.
+	if (options.extraAllowedHostPorts) {
+		for (const port of options.extraAllowedHostPorts) {
+			createArgs.push('--net-rule', `allow@${HOST_RULE_HOST}:tcp:${port}`)
+		}
 	}
 	createArgs.push(image)
 
-	// Once `msb create` has settled (claimed the -p mapping or failed to), the
-	// local probe socket has served its purpose — release it either way so it
-	// doesn't sit open for the rest of this function's (possibly long) polling.
 	try {
-		try {
-			await run(deps.msbBin, createArgs, { timeoutMs: BROWSER_SIDECAR_CREATE_TIMEOUT_MS })
-		} catch (err) {
-			const e = err as { stderr?: unknown; message?: string }
-			const stderr = e.stderr ? String(e.stderr) : ''
-			logger.error('browser sidecar create failed', {
+		await run(deps.msbBin, createArgs, { timeoutMs: BROWSER_SIDECAR_CREATE_TIMEOUT_MS })
+	} catch (err) {
+		const e = err as { stderr?: unknown; message?: string }
+		const stderr = e.stderr ? String(e.stderr) : ''
+		logger.error('browser sidecar create failed', {
+			name,
+			stderr,
+			message: e.message ?? 'unknown',
+		})
+		await run(deps.msbBin, ['remove', '-f', '--quiet', name], {
+			timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS,
+		}).catch((cleanupErr) => {
+			logger.warn('browser sidecar cleanup after create failure did not confirm removal', {
 				name,
-				stderr,
-				message: e.message ?? 'unknown',
+				error: String(cleanupErr),
 			})
-			await run(deps.msbBin, ['remove', '-f', '--quiet', name], {
-				timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS,
-			}).catch((cleanupErr) => {
-				logger.warn('browser sidecar cleanup after create failure did not confirm removal', {
-					name,
-					error: String(cleanupErr),
-				})
-			})
-			return null
-		}
-	} finally {
-		releaseHostPort(hostPort)
+		})
+		return null
 	}
 
 	try {
@@ -807,14 +1026,32 @@ export async function provisionBrowserSidecar(
 	// VM kernel but does NOT execute ENTRYPOINT/CMD — `msb exec` is required.
 	launchSidecarExec(name, deps)
 
+	const cdpRelay = await startSshRelay(name, BROWSER_CDP_GUEST_PORT, options.sshKeyPath, deps)
+	if (!cdpRelay) {
+		logger.error('browser sidecar CDP relay failed to establish', { name })
+		await run(deps.msbBin, ['remove', '-f', '--quiet', name], {
+			timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS,
+		}).catch((cleanupErr) => {
+			logger.warn('browser sidecar cleanup after CDP relay failure did not confirm removal', {
+				name,
+				error: String(cleanupErr),
+			})
+		})
+		return null
+	}
+
+	const pollReady =
+		deps.cdpPollReady ??
+		((port: number) => defaultPollCdpReady(SSH_RELAY_BIND_HOST, port, { sleep, now }))
 	try {
-		await pollReady(hostPort)
+		await pollReady(cdpRelay.relayPort)
 	} catch (err) {
 		logger.error('browser sidecar CDP did not become ready', {
 			name,
-			port: hostPort,
+			port: cdpRelay.relayPort,
 			error: String(err),
 		})
+		cdpRelay.stop()
 		await run(deps.msbBin, ['remove', '-f', '--quiet', name], {
 			timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS,
 		}).catch((cleanupErr) => {
@@ -826,16 +1063,16 @@ export async function provisionBrowserSidecar(
 		return null
 	}
 
-	const cdpUrl = `http://${bridgeGateway}:${hostPort}`
+	const cdpUrl = `http://${agentServerInternalHost}:${cdpRelay.relayPort}`
 	logger.info('browser sidecar started', { name, cdpUrl })
-	return { name, cdpUrl }
+	return { name, cdpUrl, cdpRelay }
 }
 
 /**
  * Tear down a sidecar provisioned by `provisionBrowserSidecar`. Idempotent —
  * a missing or already-removed sandbox returns cleanly. Called from
  * `monitorSession` after the session VM exits so we don't leave Chromium VMs
- * orphaned on the host.
+ * (or their SSH relay child processes) orphaned on the host.
  *
  * After firing `msb remove -f` this polls `msb list` until the sidecar row is
  * gone or the AC-T5 SLA elapses. A `remove -f` that returns OK while the row
@@ -848,6 +1085,7 @@ export async function cleanupBrowserSidecar(
 	deps: MicrosandboxDeps,
 ): Promise<void> {
 	if (!sidecar) return
+	sidecar.cdpRelay?.stop()
 	const run = deps.run ?? defaultRunner()
 	const sleep = deps.sleep ?? defaultSleep
 	const now = deps.now ?? Date.now

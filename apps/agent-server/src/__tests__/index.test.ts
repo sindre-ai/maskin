@@ -20,7 +20,7 @@ function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 		S3_REGION: 'us-east-1',
 		WARM_POOL_REFRESH_MINUTES: 0,
 		BROWSER_SIDECAR_IMAGE: 'browser-sidecar:latest',
-		MSB_BRIDGE_GATEWAY: '10.0.1.1',
+		AGENT_SERVER_SSH_KEY_PATH: '/tmp/agent-server-test/ssh/relay_key',
 		SESSION_MAX_DURATION: '8h',
 		...overrides,
 	}
@@ -410,6 +410,11 @@ describe('POST /sessions validation', () => {
 })
 
 describe('POST /sessions browserRequired wiring', () => {
+	function makePortAllocator(start: number): () => Promise<number> {
+		let next = start
+		return async () => next++
+	}
+
 	function makeSidecarAwareRunner(opts: { cdpFail?: boolean } = {}) {
 		const calls: Array<{ args: readonly string[] }> = []
 		const run = async (
@@ -435,11 +440,24 @@ describe('POST /sessions browserRequired wiring', () => {
 					throw new Error('CDP not ready')
 				}
 			: async () => {}
-		return { run, calls, cdpPollReady }
+		// SSH-relay readiness (both `msb ssh serve` and the `ssh -L` tunnel) —
+		// stubbed to resolve immediately so relay setup never depends on real
+		// spawn/ssh binaries being present in the test environment.
+		const tcpPollReady = async () => {}
+		return { run, calls, cdpPollReady, tcpPollReady }
 	}
 
-	it('provisions a sidecar, injects BROWSER_CDP_URL, and adds allow@private when browserRequired=true', async () => {
-		const { run, cdpPollReady, calls } = makeSidecarAwareRunner()
+	function netRuleValues(args: readonly string[] | undefined): string[] {
+		const values: string[] = []
+		if (!args) return values
+		for (let i = 0; i < args.length - 1; i++) {
+			if (args[i] === '--net-rule') values.push(args[i + 1] as string)
+		}
+		return values
+	}
+
+	it('provisions a sidecar, injects BROWSER_CDP_URL, and grants the session a narrow allow@host:tcp:<relayPort> rule when browserRequired=true', async () => {
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
 			env,
@@ -449,8 +467,9 @@ describe('POST /sessions browserRequired wiring', () => {
 				run,
 				sleep: async () => {},
 				now: () => 0,
-				findPort: async () => 39222,
+				findPort: makePortAllocator(39222),
 				cdpPollReady,
+				tcpPollReady,
 			},
 		})
 
@@ -474,16 +493,21 @@ describe('POST /sessions browserRequired wiring', () => {
 		const sessionCreate = creates.find((c) => c.args.includes('sess-betqa1'))
 		expect(sidecarCreate).toBeDefined()
 		expect(sessionCreate).toBeDefined()
-		// Session VM must carry --net-rule allow@private so it can reach the sidecar.
-		expect(sessionCreate?.args).toContain('allow@private')
-		// Session VM env must include BROWSER_CDP_URL using the bridge gateway + forwarded port.
+		// findPort call order: sidecar's self-allocated CDP relay reserves
+		// relayPort (39222) before sshPort (39223) — see startSshRelay.
+		const cdpRelayPort = 39222
+		// Session VM must carry a narrow --net-rule reaching only the CDP relay
+		// port on host loopback — never a blanket allow@private RFC1918 grant.
+		expect(netRuleValues(sessionCreate?.args)).toContain(`allow@host:tcp:${cdpRelayPort}`)
+		expect(sessionCreate?.args).not.toContain('allow@private')
+		// Session VM env must include BROWSER_CDP_URL pointing at the SSH-relay port.
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
-		expect(envFlags).toContain('BROWSER_CDP_URL=http://10.0.1.1:39222')
+		expect(envFlags).toContain(`BROWSER_CDP_URL=http://host.microsandbox.internal:${cdpRelayPort}`)
 	})
 
-	it('publishes previewGuestPorts on the session VM, grants the sidecar allow@private, and returns preview_url', async () => {
-		const { run, cdpPollReady, calls } = makeSidecarAwareRunner()
+	it('opens a preview SSH relay, grants the sidecar allow@host:tcp:<relayPort>, and returns preview_url', async () => {
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
 			env,
@@ -493,8 +517,9 @@ describe('POST /sessions browserRequired wiring', () => {
 				run,
 				sleep: async () => {},
 				now: () => 0,
-				findPort: async () => 39222,
+				findPort: makePortAllocator(39500),
 				cdpPollReady,
+				tcpPollReady,
 			},
 		})
 
@@ -514,7 +539,10 @@ describe('POST /sessions browserRequired wiring', () => {
 		})
 		expect(res.status).toBe(201)
 		const body = (await res.json()) as { preview_url?: string }
-		expect(body.preview_url).toBe('http://10.0.1.1:39222')
+		// findPort call order: (1) resolvePreviewPortMappings reserves the
+		// preview relayPort before the sidecar is created at all.
+		const previewRelayPort = 39500
+		expect(body.preview_url).toBe(`http://host.microsandbox.internal:${previewRelayPort}`)
 
 		const creates = calls.filter((c) => c.args[0] === 'create')
 		const sidecarCreate = creates.find((c) => c.args.includes('anko-browser-sess-preview'))
@@ -522,16 +550,18 @@ describe('POST /sessions browserRequired wiring', () => {
 		expect(sidecarCreate).toBeDefined()
 		expect(sessionCreate).toBeDefined()
 
-		// Sidecar needs a route back into the bridge to reach the session's published port.
-		expect(sidecarCreate?.args).toContain('allow@private')
+		// Sidecar needs a route to reach the preview relay's host-loopback port
+		// (Playwright inside the sidecar talks to PREVIEW_URL).
+		expect(netRuleValues(sidecarCreate?.args)).toContain(`allow@host:tcp:${previewRelayPort}`)
+		expect(sidecarCreate?.args).not.toContain('allow@private')
 
-		// Session VM publishes its preview port on the bridge gateway.
-		const pFlags = sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-p') ?? []
-		expect(pFlags).toContain('10.0.1.1:39222:5173')
+		// No bridge-publish flags exist in the SSH-relay model.
+		expect(sessionCreate?.args).not.toContain('-p')
+		expect(sidecarCreate?.args).not.toContain('-p')
 	})
 
-	it('does not grant the sidecar allow@private or return preview_url when no previewGuestPorts are given', async () => {
-		const { run, cdpPollReady, calls } = makeSidecarAwareRunner()
+	it('adds no extra allow@host:tcp:<port> rule to the sidecar when no previewGuestPorts are given', async () => {
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
 			env,
@@ -541,8 +571,9 @@ describe('POST /sessions browserRequired wiring', () => {
 				run,
 				sleep: async () => {},
 				now: () => 0,
-				findPort: async () => 39222,
+				findPort: makePortAllocator(39222),
 				cdpPollReady,
+				tcpPollReady,
 			},
 		})
 
@@ -566,11 +597,17 @@ describe('POST /sessions browserRequired wiring', () => {
 		const creates = calls.filter((c) => c.args[0] === 'create')
 		const sidecarCreate = creates.find((c) => c.args.includes('anko-browser-sess-noprev'))
 		expect(sidecarCreate).toBeDefined()
-		expect(sidecarCreate?.args).not.toContain('allow@private')
+		// Base sidecar create args carry exactly the 3 default net-rules
+		// (allow@public, allow@any:udp:53, allow@any:tcp:53) — no preview grant.
+		expect(netRuleValues(sidecarCreate?.args)).toEqual([
+			'allow@public',
+			'allow@any:udp:53',
+			'allow@any:tcp:53',
+		])
 	})
 
-	it('provisions no sidecar, injects no BROWSER_CDP_URL, and omits allow@private when browserRequired is absent', async () => {
-		const { run, cdpPollReady, calls } = makeSidecarAwareRunner()
+	it('provisions no sidecar, injects no BROWSER_CDP_URL, and adds no extra allow@host:tcp:<port> rule when browserRequired is absent', async () => {
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
 			env,
@@ -580,8 +617,9 @@ describe('POST /sessions browserRequired wiring', () => {
 				run,
 				sleep: async () => {},
 				now: () => 0,
-				findPort: async () => 39222,
+				findPort: makePortAllocator(39222),
 				cdpPollReady,
+				tcpPollReady,
 			},
 		})
 
@@ -602,7 +640,14 @@ describe('POST /sessions browserRequired wiring', () => {
 		const creates = calls.filter((c) => c.args[0] === 'create')
 		expect(creates.some((c) => c.args.some((a) => a.startsWith('anko-browser-')))).toBe(false)
 		const sessionCreate = creates.find((c) => c.args.includes('sess-plain'))
-		expect(sessionCreate?.args).not.toContain('allow@private')
+		// Base session create args carry exactly the 4 default net-rules
+		// (allow@host:tcp:<hostPort>, allow@public, allow@any:udp:53, allow@any:tcp:53).
+		expect(netRuleValues(sessionCreate?.args)).toEqual([
+			`allow@host:tcp:${env.PORT}`,
+			'allow@public',
+			'allow@any:udp:53',
+			'allow@any:tcp:53',
+		])
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
 		expect(envFlags.some((e) => e.startsWith('BROWSER_CDP_URL='))).toBe(false)
@@ -610,7 +655,7 @@ describe('POST /sessions browserRequired wiring', () => {
 
 	it('still spawns the session (without BROWSER_CDP_URL) when sidecar provisioning fails', async () => {
 		// CDP poll times out → provisionBrowserSidecar returns null.
-		const { run, cdpPollReady, calls } = makeSidecarAwareRunner({ cdpFail: true })
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner({ cdpFail: true })
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
 			env,
@@ -620,8 +665,9 @@ describe('POST /sessions browserRequired wiring', () => {
 				run,
 				sleep: async () => {},
 				now: () => 0,
-				findPort: async () => 39222,
+				findPort: makePortAllocator(39222),
 				cdpPollReady,
+				tcpPollReady,
 			},
 		})
 
@@ -644,17 +690,22 @@ describe('POST /sessions browserRequired wiring', () => {
 			.filter((c) => c.args[0] === 'create')
 			.find((c) => c.args.includes('sess-betqa2'))
 		expect(sessionCreate).toBeDefined()
-		// Sidecar failed → no allow@private rule, no BROWSER_CDP_URL injected.
-		expect(sessionCreate?.args).not.toContain('allow@private')
+		// Sidecar failed → no extra allow@host:tcp rule, no BROWSER_CDP_URL injected.
+		expect(netRuleValues(sessionCreate?.args)).toEqual([
+			`allow@host:tcp:${env.PORT}`,
+			'allow@public',
+			'allow@any:udp:53',
+			'allow@any:tcp:53',
+		])
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
 		expect(envFlags.some((e) => e.startsWith('BROWSER_CDP_URL='))).toBe(false)
 	})
 
-	it('does not publish previewGuestPorts on the bridge when sidecar provisioning fails', async () => {
+	it('does not open a preview ssh relay when sidecar provisioning fails', async () => {
 		// CDP poll times out → provisionBrowserSidecar returns null, so nothing
-		// exists to consume the forwarded port — it must not be published.
-		const { run, cdpPollReady, calls } = makeSidecarAwareRunner({ cdpFail: true })
+		// exists to consume the preview relay — it must not be opened.
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner({ cdpFail: true })
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
 			env,
@@ -664,8 +715,9 @@ describe('POST /sessions browserRequired wiring', () => {
 				run,
 				sleep: async () => {},
 				now: () => 0,
-				findPort: async () => 39222,
+				findPort: makePortAllocator(39500),
 				cdpPollReady,
+				tcpPollReady,
 			},
 		})
 
@@ -684,19 +736,26 @@ describe('POST /sessions browserRequired wiring', () => {
 			}),
 		})
 		expect(res.status).toBe(201)
-		const body = (await res.json()) as { preview_url?: string }
+		const body = (await res.json()) as { preview_url?: string; preview_forwarding_failed?: boolean }
 		expect(body.preview_url).toBeUndefined()
+		expect(body.preview_forwarding_failed).toBe(true)
 
 		const sessionCreate = calls
 			.filter((c) => c.args[0] === 'create')
 			.find((c) => c.args.includes('sess-sidecarfail-preview'))
 		expect(sessionCreate).toBeDefined()
-		const pFlags = sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-p') ?? []
-		expect(pFlags.some((p) => p.endsWith(':5173'))).toBe(false)
+		// No sidecar means no consumer for the preview relay — the session gets
+		// no extra allow@host:tcp rule beyond its default 4.
+		expect(netRuleValues(sessionCreate?.args)).toEqual([
+			`allow@host:tcp:${env.PORT}`,
+			'allow@public',
+			'allow@any:udp:53',
+			'allow@any:tcp:53',
+		])
 	})
 
 	it('returns preview_forwarding_failed and still spawns the session when preview port resolution fails', async () => {
-		const { run, cdpPollReady, calls } = makeSidecarAwareRunner()
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		let findPortCalls = 0
 		const app = buildApp({
@@ -708,13 +767,14 @@ describe('POST /sessions browserRequired wiring', () => {
 				sleep: async () => {},
 				now: () => 0,
 				// First call is the preview-port resolution — fail it. The sidecar's
-				// own CDP port allocation (later call) still succeeds.
+				// own CDP relay port allocation (later calls) still succeeds.
 				findPort: async () => {
 					findPortCalls++
 					if (findPortCalls === 1) throw new Error('no free ports')
 					return 39222
 				},
 				cdpPollReady,
+				tcpPollReady,
 			},
 		})
 
@@ -744,8 +804,10 @@ describe('POST /sessions browserRequired wiring', () => {
 			.filter((c) => c.args[0] === 'create')
 			.find((c) => c.args.includes('sess-previewfail'))
 		expect(sessionCreate).toBeDefined()
-		const pFlags = sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-p') ?? []
-		expect(pFlags.some((p) => p.endsWith(':5173'))).toBe(false)
+		// Sidecar still provisions successfully (CDP relay unaffected by the
+		// preview-port failure) — session gets exactly the CDP relay's grant.
+		const cdpRelayPort = 39222
+		expect(netRuleValues(sessionCreate?.args)).toContain(`allow@host:tcp:${cdpRelayPort}`)
 	})
 })
 
