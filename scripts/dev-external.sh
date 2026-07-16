@@ -23,4 +23,5 @@ echo "Running database migrations..."
 pnpm db:migrate
 
 echo "Starting dev servers..."
+export MASKIN_DEV_EXTERNAL=1
 exec dotenv -- turbo dev --log-prefix=none

@@ -681,6 +681,21 @@ export async function provisionBrowserSidecar(
 	// Lets the sidecar route back into the private bridge to reach a session's
 	// own published preview port(s) — the other half of the -p forward on the
 	// session's own msb create call (see buildMsbCreateArgs' previewPorts).
+	//
+	// Accepted risk: msb's --net-rule grammar only exposes symbolic groups
+	// (host/private/public/any), optionally narrowed to a protocol+port on
+	// that group (e.g. `allow@host:tcp:<port>`) — there is no IP- or
+	// CIDR-scoped rule, so this cannot be tightened to "only the bridge
+	// gateway's forwarded port." `allow@private` therefore grants the sidecar
+	// reachability to the entire RFC1918 range, not just the one session port
+	// it's meant to view. Blast radius is narrowed the only ways available:
+	// this rule is only added when a preview port was actually requested and
+	// resolved (never unconditionally — see caller), and the session side only
+	// forwards its port onto the bridge when this same sidecar was
+	// successfully provisioned (see the `browserSidecar !== null` gate around
+	// `previewPorts` in index.ts), so the window where anything is reachable
+	// on the bridge is exactly the lifetime of a session that both requested
+	// and received a browser sidecar.
 	if (options.allowPrivateNet) {
 		createArgs.push('--net-rule', PRIVATE_NET_RULE)
 	}

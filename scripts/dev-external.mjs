@@ -37,6 +37,7 @@ run('pnpm db:migrate')
 
 // Start dev servers
 console.log('Starting dev servers...')
+process.env.MASKIN_DEV_EXTERNAL = '1'
 const child = spawn('pnpm', ['turbo', 'dev', '--log-prefix=none'], {
 	stdio: 'inherit',
 	shell: true,

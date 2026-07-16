@@ -366,6 +366,47 @@ describe('POST /sessions validation', () => {
 		})
 		expect(res.status).toBe(400)
 	})
+
+	it('rejects previewGuestPorts with 400 when browserRequired is not true', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-1',
+				image: 'alpine:3.20',
+				env: {},
+				previewGuestPorts: [5173],
+			}),
+		})
+		expect(res.status).toBe(400)
+	})
+
+	it('rejects more than MAX_PREVIEW_GUEST_PORTS entries with 400', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-1',
+				image: 'alpine:3.20',
+				env: {},
+				browserRequired: true,
+				previewGuestPorts: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+			}),
+		})
+		expect(res.status).toBe(400)
+	})
 })
 
 describe('POST /sessions browserRequired wiring', () => {
@@ -608,6 +649,103 @@ describe('POST /sessions browserRequired wiring', () => {
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
 		expect(envFlags.some((e) => e.startsWith('BROWSER_CDP_URL='))).toBe(false)
+	})
+
+	it('does not publish previewGuestPorts on the bridge when sidecar provisioning fails', async () => {
+		// CDP poll times out → provisionBrowserSidecar returns null, so nothing
+		// exists to consume the forwarded port — it must not be published.
+		const { run, cdpPollReady, calls } = makeSidecarAwareRunner({ cdpFail: true })
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: async () => 39222,
+				cdpPollReady,
+			},
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-sidecarfail-preview',
+				image: 'maskin/agent-base:latest',
+				env: {},
+				browserRequired: true,
+				previewGuestPorts: [5173],
+			}),
+		})
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { preview_url?: string }
+		expect(body.preview_url).toBeUndefined()
+
+		const sessionCreate = calls
+			.filter((c) => c.args[0] === 'create')
+			.find((c) => c.args.includes('sess-sidecarfail-preview'))
+		expect(sessionCreate).toBeDefined()
+		const pFlags = sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-p') ?? []
+		expect(pFlags.some((p) => p.endsWith(':5173'))).toBe(false)
+	})
+
+	it('returns preview_forwarding_failed and still spawns the session when preview port resolution fails', async () => {
+		const { run, cdpPollReady, calls } = makeSidecarAwareRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		let findPortCalls = 0
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				// First call is the preview-port resolution — fail it. The sidecar's
+				// own CDP port allocation (later call) still succeeds.
+				findPort: async () => {
+					findPortCalls++
+					if (findPortCalls === 1) throw new Error('no free ports')
+					return 39222
+				},
+				cdpPollReady,
+			},
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-previewfail',
+				image: 'maskin/agent-base:latest',
+				env: {},
+				browserRequired: true,
+				previewGuestPorts: [5173],
+			}),
+		})
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as {
+			preview_url?: string
+			preview_forwarding_failed?: boolean
+		}
+		expect(body.preview_forwarding_failed).toBe(true)
+		expect(body.preview_url).toBeUndefined()
+
+		const sessionCreate = calls
+			.filter((c) => c.args[0] === 'create')
+			.find((c) => c.args.includes('sess-previewfail'))
+		expect(sessionCreate).toBeDefined()
+		const pFlags = sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-p') ?? []
+		expect(pFlags.some((p) => p.endsWith(':5173'))).toBe(false)
 	})
 })
 

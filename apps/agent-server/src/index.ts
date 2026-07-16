@@ -35,33 +35,45 @@ import {
 
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 
-const SESSION_REQUEST_SCHEMA = z.object({
-	sessionId: z
-		.string()
-		.regex(
-			/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/,
-			'sessionId must match ^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$',
-		),
-	image: z.string().min(1),
-	env: z
-		.record(
-			z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'env key must be a valid shell identifier'),
-			z.string(),
-		)
-		.default({}),
-	memoryMib: z.number().int().positive().optional(),
-	cpus: z.number().int().positive().optional(),
-	// When true, provision a Chromium CDP sidecar microVM alongside the session
-	// and inject `BROWSER_CDP_URL` so `@playwright/mcp` can attach. Absent or
-	// false → no sidecar, no env var, no MCP entry.
-	browserRequired: z.boolean().optional(),
-	// Guest port(s) inside the session to publish on the msb bridge gateway
-	// (e.g. a Vite dev server on 5173), so the browser sidecar's Playwright can
-	// reach them. Only takes effect when browserRequired is also true — the
-	// forwarding exists to let the sidecar view the session's own dev server.
-	previewGuestPorts: z.array(z.number().int().positive().max(65535)).optional(),
-	sourceSessionId: z.string().regex(SESSION_ID_RE).optional(),
-})
+const MAX_PREVIEW_GUEST_PORTS = 8
+
+const SESSION_REQUEST_SCHEMA = z
+	.object({
+		sessionId: z
+			.string()
+			.regex(
+				/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/,
+				'sessionId must match ^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$',
+			),
+		image: z.string().min(1),
+		env: z
+			.record(
+				z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'env key must be a valid shell identifier'),
+				z.string(),
+			)
+			.default({}),
+		memoryMib: z.number().int().positive().optional(),
+		cpus: z.number().int().positive().optional(),
+		// When true, provision a Chromium CDP sidecar microVM alongside the session
+		// and inject `BROWSER_CDP_URL` so `@playwright/mcp` can attach. Absent or
+		// false → no sidecar, no env var, no MCP entry.
+		browserRequired: z.boolean().optional(),
+		// Guest port(s) inside the session to publish on the msb bridge gateway
+		// (e.g. a Vite dev server on 5173), so the browser sidecar's Playwright can
+		// reach them. Only takes effect when browserRequired is also true — the
+		// forwarding exists to let the sidecar view the session's own dev server.
+		// Capped well below ephemeral port exhaustion range; a session only ever
+		// needs to forward a handful of local dev servers.
+		previewGuestPorts: z
+			.array(z.number().int().positive().max(65535))
+			.max(MAX_PREVIEW_GUEST_PORTS)
+			.optional(),
+		sourceSessionId: z.string().regex(SESSION_ID_RE).optional(),
+	})
+	.refine((data) => !data.previewGuestPorts || data.browserRequired === true, {
+		message: 'previewGuestPorts requires browserRequired to be true',
+		path: ['previewGuestPorts'],
+	})
 
 export type AppDeps = {
 	env: AgentServerEnv
@@ -591,6 +603,7 @@ export function buildApp(deps: AppDeps): Hono {
 		// to an instrumentation-gap comment instead of fabricating a browser pass.
 		let browserSidecar: BrowserSidecar | null = null
 		let previewPortMappings: PreviewPortMapping[] = []
+		let previewForwardingFailed = false
 		if (body.browserRequired === true) {
 			// Resolve preview port forwards before provisioning the sidecar so we
 			// know whether the sidecar needs an allow@private route back in.
@@ -602,6 +615,7 @@ export function buildApp(deps: AppDeps): Hono {
 						deps.env.MSB_BRIDGE_GATEWAY,
 					)
 				} catch (err) {
+					previewForwardingFailed = true
 					logger.warn('preview port resolution failed — continuing without preview forwarding', {
 						sessionId: body.sessionId,
 						error: String(err),
@@ -653,10 +667,15 @@ export function buildApp(deps: AppDeps): Hono {
 					// Only opened when a sidecar was provisioned — keeps the default
 					// session firewall posture tight for the common path.
 					...(browserSidecar !== null && { allowPrivateNet: true }),
-					...(previewPortMappings.length > 0 && {
-						previewPorts: previewPortMappings,
-						bridgeGateway: deps.env.MSB_BRIDGE_GATEWAY,
-					}),
+					// Only forward the session's preview port onto the shared bridge
+					// when a sidecar actually exists to consume it — otherwise the
+					// port sits exposed on the bridge gateway with nothing there to
+					// reach it.
+					...(browserSidecar !== null &&
+						previewPortMappings.length > 0 && {
+							previewPorts: previewPortMappings,
+							bridgeGateway: deps.env.MSB_BRIDGE_GATEWAY,
+						}),
 				},
 				deps.msb,
 			)
@@ -723,6 +742,7 @@ export function buildApp(deps: AppDeps): Hono {
 					env_overflow_spilled: result.envOverflowSpilled,
 					env_sanitized: result.envSanitized,
 					...(sessionEnv.PREVIEW_URL !== undefined && { preview_url: sessionEnv.PREVIEW_URL }),
+					...(previewForwardingFailed && { preview_forwarding_failed: true }),
 				},
 				201,
 			)
