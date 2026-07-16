@@ -20,14 +20,18 @@
  *      asserts both grader columns render on a single run without the
  *      network.
  *   3. Real-model gated runs — both guarded by `RUN_KNOWLEDGE_EVAL_PILOT=1`
- *      + an Anthropic token. Two artifacts land next to the fixture so
+ *      + an Anthropic token. Three artifacts land next to the fixture so
  *      the ship-metric baseline lives on disk instead of a bet comment
  *      (T11):
+ *        - `knowledge-eval-pilot.json` — dump + router paired, both
+ *          graders. The semantic-primary reference read by
+ *          `bet.metadata.metric_current`.
  *        - `knowledge-eval-pilot-baseline.json` — dump-only regime
  *          (`retriever: null`), both graders. The dump baseline the
  *          router leg is scored against.
  *        - `knowledge-eval-pilot-router.json` — dump + router paired,
- *          both graders. The verdict artifact.
+ *          both graders. The exact-grader audit-trail sibling of
+ *          `knowledge-eval-pilot.json` (same shape, separate run).
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -198,9 +202,12 @@ describe('pilot paired-run recorded artifacts', () => {
 				result.dump.totalPromptTokens,
 			)
 
-			const artifactPath = join(__dirname, 'knowledge-eval-pilot-router.json')
-			mkdirSync(dirname(artifactPath), { recursive: true })
-			writeFileSync(artifactPath, `${JSON.stringify(result, null, 2)}\n`, 'utf-8')
+			const payload = `${JSON.stringify(result, null, 2)}\n`
+			const primaryPath = join(__dirname, 'knowledge-eval-pilot.json')
+			const auditPath = join(__dirname, 'knowledge-eval-pilot-router.json')
+			mkdirSync(dirname(primaryPath), { recursive: true })
+			writeFileSync(primaryPath, payload, 'utf-8')
+			writeFileSync(auditPath, payload, 'utf-8')
 		},
 		900_000,
 	)

@@ -1,0 +1,297 @@
+{
+  "model": "claude-haiku-4-5-20251001",
+  "temperature": 0,
+  "seed": "maskin://fe944fe6-7b45-478c-afc7-b889cea63c08/pilot:t9-v1",
+  "fixtureSourceCommit": "2026-07-16",
+  "numPairs": 7,
+  "dump": {
+    "regime": "dump",
+    "numPairs": 7,
+    "numCorrectExact": 2,
+    "numCorrectSemantic": 6,
+    "totalPromptTokens": 18144,
+    "avgPromptTokensPerPair": 2592,
+    "tokensPerCorrectAnswerExact": 9072,
+    "tokensPerCorrectAnswerSemantic": 3024,
+    "retrievalAccuracy": 1,
+    "perPair": [
+      {
+        "regime": "dump",
+        "question": "How does the agent-pipeline knowledge index decide what an agent should read next?",
+        "expectedFixtureId": "544a5c4e-cf18-46a6-8aac-5837da1bc761",
+        "retrievedIds": [
+          "544a5c4e-cf18-46a6-8aac-5837da1bc761",
+          "81948ac6-3db4-42a0-bc04-901a70eec23b",
+          "09dc15a8-b8c6-4c68-8bb7-c619864e9647",
+          "7c23eaf4-7d48-47c9-aa34-1acc5653d7d6",
+          "3062b2c9-e157-42ee-a250-3ecbfca01867",
+          "9a02894c-3934-49e3-9ee4-1a2edcf29b09",
+          "d3816268-5137-4969-af88-d8679d7313f6"
+        ],
+        "promptTokens": 2590,
+        "completionTokens": 81,
+        "response": "The knowledge corpus does not contain information about how the agent-pipeline knowledge index decides what an agent should read next. The only relevant passage states that \"Router reads the summary and the summaries of the six catalogued articles first, then pulls only the article bodies it decides it needs,\" but it does not explain the decision-making logic the router uses to determine which article bodies to retrieve.",
+        "correctExact": false,
+        "correctSemantic": false,
+        "semanticReason": "The candidate answer quotes the gold excerpt verbatim but then claims the knowledge corpus doesn't explain the decision-making logic, which contradicts the fact that the gold excerpt itself provides the information about what the Router does (reads summaries first, then pulls needed article bodies).",
+        "retrievedContainsGold": true
+      },
+      {
+        "regime": "dump",
+        "question": "How should I size the payload of a new log line or PostHog event?",
+        "expectedFixtureId": "81948ac6-3db4-42a0-bc04-901a70eec23b",
+        "retrievedIds": [
+          "544a5c4e-cf18-46a6-8aac-5837da1bc761",
+          "81948ac6-3db4-42a0-bc04-901a70eec23b",
+          "09dc15a8-b8c6-4c68-8bb7-c619864e9647",
+          "7c23eaf4-7d48-47c9-aa34-1acc5653d7d6",
+          "3062b2c9-e157-42ee-a250-3ecbfca01867",
+          "9a02894c-3934-49e3-9ee4-1a2edcf29b09",
+          "d3816268-5137-4969-af88-d8679d7313f6"
+        ],
+        "promptTokens": 2591,
+        "completionTokens": 131,
+        "response": "According to the knowledge corpus, you should trim the payload to \"the minimal field that supports the metric.\" Specifically, for every new log line or analytics event, answer two questions: **(1) What question is this signal answering?** and **(2) What is the minimal value that answers it?** (such as a boolean, enum, count, or id — not the raw input). If the field being shipped is wider than necessary (e.g., a full URL where a platform enum suffices, or a comment body where a `has_newline` boolean suffices), you should trim it.",
+        "correctExact": false,
+        "correctSemantic": true,
+        "semanticReason": "The candidate answer directly quotes and accurately paraphrases the gold excerpt's core principle of trimming the payload to the minimal field that supports the metric, providing concrete examples of how to apply this principle.",
+        "retrievedContainsGold": true
+      },
+      {
+        "regime": "dump",
+        "question": "What must the Developer agent reason about before adding an await inside a webhook handler?",
+        "expectedFixtureId": "09dc15a8-b8c6-4c68-8bb7-c619864e9647",
+        "retrievedIds": [
+          "544a5c4e-cf18-46a6-8aac-5837da1bc761",
+          "81948ac6-3db4-42a0-bc04-901a70eec23b",
+          "09dc15a8-b8c6-4c68-8bb7-c619864e9647",
+          "7c23eaf4-7d48-47c9-aa34-1acc5653d7d6",
+          "3062b2c9-e157-42ee-a250-3ecbfca01867",
+          "9a02894c-3934-49e3-9ee4-1a2edcf29b09",
+          "d3816268-5137-4969-af88-d8679d7313f6"
+        ],
+        "promptTokens": 2590,
+        "completionTokens": 105,
+        "response": "According to the knowledge corpus, before adding an `await` inside a webhook handler, the Developer agent must answer three questions:\n\n1. What is the caller's timeout / ack deadline?\n2. What does the caller do on timeout — retry, fail, or both?\n3. If retried, is this operation idempotent?\n\nIf any answer is unknown or unfavorable, the work should be moved off the hot path or fired-and-forgotten with error capture.",
+        "correctExact": false,
+        "correctSemantic": true,
+        "semanticReason": "The candidate answer explicitly addresses the caller's timeout budget and retry semantics through questions 1 and 2, which directly correspond to the gold excerpt's requirement to \"explicitly reason about the caller's timeout budget and worst-case retry semantics.\"",
+        "retrievedContainsGold": true
+      },
+      {
+        "regime": "dump",
+        "question": "On what bet-level ground will the Code Reviewer BLOCK a PR whose diff is clean?",
+        "expectedFixtureId": "7c23eaf4-7d48-47c9-aa34-1acc5653d7d6",
+        "retrievedIds": [
+          "544a5c4e-cf18-46a6-8aac-5837da1bc761",
+          "81948ac6-3db4-42a0-bc04-901a70eec23b",
+          "09dc15a8-b8c6-4c68-8bb7-c619864e9647",
+          "7c23eaf4-7d48-47c9-aa34-1acc5653d7d6",
+          "3062b2c9-e157-42ee-a250-3ecbfca01867",
+          "9a02894c-3934-49e3-9ee4-1a2edcf29b09",
+          "d3816268-5137-4969-af88-d8679d7313f6"
+        ],
+        "promptTokens": 2594,
+        "completionTokens": 117,
+        "response": "According to the knowledge corpus, the Code Reviewer will BLOCK a PR on bet-level grounds if: **(1) the originating insight for the bet was previously discarded by Insight Triage and the discard was never reconciled, or (2) the PR reverses a previously-ratified workspace policy without a corresponding human-authored signal that the policy has changed.** As illustrated in PR #442, the block occurs \"on the *premise of the work*, not the work itself\" — despite the diff being mechanically clean.",
+        "correctExact": true,
+        "correctSemantic": true,
+        "semanticReason": "The candidate answer explicitly states that a Code Reviewer will BLOCK a PR if \"the PR reverses a previously-ratified workspace policy,\" which matches the gold excerpt's fact.",
+        "retrievedContainsGold": true
+      },
+      {
+        "regime": "dump",
+        "question": "What's the author-side pre-flight question when a PR adds a new query shape?",
+        "expectedFixtureId": "3062b2c9-e157-42ee-a250-3ecbfca01867",
+        "retrievedIds": [
+          "544a5c4e-cf18-46a6-8aac-5837da1bc761",
+          "81948ac6-3db4-42a0-bc04-901a70eec23b",
+          "09dc15a8-b8c6-4c68-8bb7-c619864e9647",
+          "7c23eaf4-7d48-47c9-aa34-1acc5653d7d6",
+          "3062b2c9-e157-42ee-a250-3ecbfca01867",
+          "9a02894c-3934-49e3-9ee4-1a2edcf29b09",
+          "d3816268-5137-4969-af88-d8679d7313f6"
+        ],
+        "promptTokens": 2593,
+        "completionTokens": 83,
+        "response": "According to the knowledge corpus, the author-side pre-flight question when a PR introduces a new query shape is: **\"what does this query plan look like at 50k rows?\"** This question is meant to prompt consideration of database performance before the code review stage, particularly for new filter column combinations, JSONB path filters, or join/subquery patterns not previously exercised.",
+        "correctExact": true,
+        "correctSemantic": true,
+        "semanticReason": "The candidate answer directly quotes the gold excerpt's question verbatim and provides accurate context about its purpose.",
+        "retrievedContainsGold": true
+      },
+      {
+        "regime": "dump",
+        "question": "Why do a11y findings appear in some Code Reviewer sweeps and not others?",
+        "expectedFixtureId": "9a02894c-3934-49e3-9ee4-1a2edcf29b09",
+        "retrievedIds": [
+          "544a5c4e-cf18-46a6-8aac-5837da1bc761",
+          "81948ac6-3db4-42a0-bc04-901a70eec23b",
+          "09dc15a8-b8c6-4c68-8bb7-c619864e9647",
+          "7c23eaf4-7d48-47c9-aa34-1acc5653d7d6",
+          "3062b2c9-e157-42ee-a250-3ecbfca01867",
+          "9a02894c-3934-49e3-9ee4-1a2edcf29b09",
+          "d3816268-5137-4969-af88-d8679d7313f6"
+        ],
+        "promptTokens": 2592,
+        "completionTokens": 116,
+        "response": "According to the knowledge corpus, accessibility findings emerge in Code Reviewer sweeps when \"the queue shifts toward UI-heavy diffs,\" not due to a fixed reviewer taxonomy. As stated: \"When the queue shifts toward UI-heavy diffs, accessibility findings (aria-live chattiness, screen-reader labeling semantics, touch-input reachability) surface as a new category — even though they were absent when backend-heavy diffs dominated. The category emergence is *caused by* the queue composition, not by a change in reviewer behavior.\"",
+        "correctExact": false,
+        "correctSemantic": true,
+        "semanticReason": "The candidate answer correctly states that a Code Reviewer's mix of fix categories is determined by the PR queue's domain mix, using the specific example of accessibility findings emerging when the queue shifts toward UI-heavy diffs, which directly supports the gold excerpt's claim.",
+        "retrievedContainsGold": true
+      },
+      {
+        "regime": "dump",
+        "question": "How does a parent prevent a child's useMemo cache from rebuilding on every parent render?",
+        "expectedFixtureId": "d3816268-5137-4969-af88-d8679d7313f6",
+        "retrievedIds": [
+          "544a5c4e-cf18-46a6-8aac-5837da1bc761",
+          "81948ac6-3db4-42a0-bc04-901a70eec23b",
+          "09dc15a8-b8c6-4c68-8bb7-c619864e9647",
+          "7c23eaf4-7d48-47c9-aa34-1acc5653d7d6",
+          "3062b2c9-e157-42ee-a250-3ecbfca01867",
+          "9a02894c-3934-49e3-9ee4-1a2edcf29b09",
+          "d3816268-5137-4969-af88-d8679d7313f6"
+        ],
+        "promptTokens": 2594,
+        "completionTokens": 129,
+        "response": "According to the knowledge corpus, a parent prevents a child's `useMemo` cache from rebuilding on every parent render by **stabilising references before they cross the prop boundary**. Specifically, the fixes are: (1) hoist inline arrays/objects to module scope as constants (e.g., `const EMPTY: T[] = []`), (2) wrap handlers in `useCallback` with appropriate dependencies, or (3) lift per-row work up the tree and pass the derived result down rather than passing inline literals as props that the child uses as `useMemo` dependencies.",
+        "correctExact": false,
+        "correctSemantic": true,
+        "semanticReason": "The candidate answer directly states and explains the core principle from the gold excerpt: \"stabilising references before they cross the prop boundary,\" and provides concrete examples of how to implement this stabilization.",
+        "retrievedContainsGold": true
+      }
+    ]
+  },
+  "router": {
+    "regime": "router",
+    "numPairs": 7,
+    "numCorrectExact": 3,
+    "numCorrectSemantic": 6,
+    "totalPromptTokens": 7432,
+    "avgPromptTokensPerPair": 1061.7142857142858,
+    "tokensPerCorrectAnswerExact": 2477.3333333333335,
+    "tokensPerCorrectAnswerSemantic": 1238.6666666666667,
+    "retrievalAccuracy": 1,
+    "perPair": [
+      {
+        "regime": "router",
+        "question": "How does the agent-pipeline knowledge index decide what an agent should read next?",
+        "expectedFixtureId": "544a5c4e-cf18-46a6-8aac-5837da1bc761",
+        "retrievedIds": [
+          "544a5c4e-cf18-46a6-8aac-5837da1bc761",
+          "3062b2c9-e157-42ee-a250-3ecbfca01867",
+          "09dc15a8-b8c6-4c68-8bb7-c619864e9647"
+        ],
+        "promptTokens": 1094,
+        "completionTokens": 69,
+        "response": "According to the knowledge corpus, the agent-pipeline index uses a two-stage reading strategy: \"Router reads the summary and the summaries of the six catalogued articles first, then pulls only the article bodies it decides it needs.\" This means the router prioritizes summaries to make routing decisions before fetching full article bodies.",
+        "correctExact": true,
+        "correctSemantic": true,
+        "semanticReason": "The candidate answer directly quotes the gold excerpt verbatim and accurately represents the fact that the router reads summaries first before pulling article bodies.",
+        "retrievedContainsGold": true
+      },
+      {
+        "regime": "router",
+        "question": "How should I size the payload of a new log line or PostHog event?",
+        "expectedFixtureId": "81948ac6-3db4-42a0-bc04-901a70eec23b",
+        "retrievedIds": [
+          "81948ac6-3db4-42a0-bc04-901a70eec23b",
+          "544a5c4e-cf18-46a6-8aac-5837da1bc761",
+          "3062b2c9-e157-42ee-a250-3ecbfca01867"
+        ],
+        "promptTokens": 1130,
+        "completionTokens": 116,
+        "response": "According to the knowledge corpus, you should size the payload by asking: **\"What is the minimal value that answers it?\"** \n\nThe guidance is to trim each field to the minimal data type that supports the metric—such as a boolean, enum, count, or ID—rather than shipping raw input. For example, use a `has_newline` boolean instead of the full comment body, or a platform enum instead of a raw URL. As stated in the corpus: \"If the field being shipped is wider than the answer, trim it.\"",
+        "correctExact": false,
+        "correctSemantic": true,
+        "semanticReason": "The candidate answer accurately paraphrases and expands on the gold excerpt's core principle of trimming the payload to the minimal field that supports the metric, providing concrete examples and equivalent restatement of the same guidance.",
+        "retrievedContainsGold": true
+      },
+      {
+        "regime": "router",
+        "question": "What must the Developer agent reason about before adding an await inside a webhook handler?",
+        "expectedFixtureId": "09dc15a8-b8c6-4c68-8bb7-c619864e9647",
+        "retrievedIds": [
+          "09dc15a8-b8c6-4c68-8bb7-c619864e9647",
+          "544a5c4e-cf18-46a6-8aac-5837da1bc761",
+          "7c23eaf4-7d48-47c9-aa34-1acc5653d7d6"
+        ],
+        "promptTokens": 1109,
+        "completionTokens": 114,
+        "response": "According to the knowledge corpus, before adding `await` inside a webhook handler, the Developer agent must explicitly reason about three things:\n\n1. **What is the caller's timeout / ack deadline?**\n2. **What does the caller do on timeout — retry, fail, or both?**\n3. **If retried, is this operation idempotent?**\n\nIf any answer is unknown or unfavorable, the work should be moved off the hot path or executed as fire-and-forget with error capture.",
+        "correctExact": false,
+        "correctSemantic": true,
+        "semanticReason": "The candidate answer explicitly addresses the caller's timeout budget and worst-case retry semantics as core considerations, which directly aligns with the gold excerpt's requirement to \"explicitly reason about the caller's timeout budget and worst-case retry semantics.\"",
+        "retrievedContainsGold": true
+      },
+      {
+        "regime": "router",
+        "question": "On what bet-level ground will the Code Reviewer BLOCK a PR whose diff is clean?",
+        "expectedFixtureId": "7c23eaf4-7d48-47c9-aa34-1acc5653d7d6",
+        "retrievedIds": [
+          "7c23eaf4-7d48-47c9-aa34-1acc5653d7d6",
+          "9a02894c-3934-49e3-9ee4-1a2edcf29b09",
+          "3062b2c9-e157-42ee-a250-3ecbfca01867"
+        ],
+        "promptTokens": 1247,
+        "completionTokens": 156,
+        "response": "According to the knowledge corpus, the Code Reviewer will BLOCK a PR on bet-level grounds if: (1) \"the originating insight for the bet was previously discarded by Insight Triage (e.g. flagged as a suspected prompt-injection signal) and the discard was never reconciled,\" or (2) \"the PR reverses a previously-ratified workspace policy without a corresponding human-authored signal that the policy has changed.\" The corpus illustrates this with PR #442, which received a BLOCK verdict despite having \"0 MUST / 0 SHOULD / 0 NIT on code quality\" because the block was \"on the *premise of the work*, not the work itself.\"",
+        "correctExact": true,
+        "correctSemantic": true,
+        "semanticReason": "The candidate answer explicitly states that a Code Reviewer will BLOCK a PR if \"the PR reverses a previously-ratified workspace policy,\" which directly matches the gold excerpt's phrase \"reverses a previously-ratified workspace policy.\"",
+        "retrievedContainsGold": true
+      },
+      {
+        "regime": "router",
+        "question": "What's the author-side pre-flight question when a PR adds a new query shape?",
+        "expectedFixtureId": "3062b2c9-e157-42ee-a250-3ecbfca01867",
+        "retrievedIds": [
+          "3062b2c9-e157-42ee-a250-3ecbfca01867",
+          "09dc15a8-b8c6-4c68-8bb7-c619864e9647",
+          "9a02894c-3934-49e3-9ee4-1a2edcf29b09"
+        ],
+        "promptTokens": 1176,
+        "completionTokens": 87,
+        "response": "According to the corpus, the author-side pre-flight question when a PR adds a new query shape is: **\"what does this query plan look like at 50k rows?\"** This question is posed before the code reviewer even examines the PR, as part of the author's own vetting process when introducing a new filter column combination, JSONB path filter, or join/subquery pattern.",
+        "correctExact": true,
+        "correctSemantic": true,
+        "semanticReason": "The candidate answer directly quotes the exact phrase from the gold excerpt and accurately identifies it as a pre-flight question asked when a PR adds a new query shape.",
+        "retrievedContainsGold": true
+      },
+      {
+        "regime": "router",
+        "question": "Why do a11y findings appear in some Code Reviewer sweeps and not others?",
+        "expectedFixtureId": "9a02894c-3934-49e3-9ee4-1a2edcf29b09",
+        "retrievedIds": [
+          "9a02894c-3934-49e3-9ee4-1a2edcf29b09",
+          "7c23eaf4-7d48-47c9-aa34-1acc5653d7d6",
+          "3062b2c9-e157-42ee-a250-3ecbfca01867"
+        ],
+        "promptTokens": 1245,
+        "completionTokens": 109,
+        "response": "According to the corpus, accessibility findings appear in Code Reviewer sweeps only when the PR queue shifts toward UI-heavy diffs. The rule states: \"When the queue shifts toward UI-heavy diffs, accessibility findings (aria-live chattiness, screen-reader labeling semantics, touch-input reachability) surface as a new category — even though they were absent when backend-heavy diffs dominated. The category emergence is *caused by* the queue composition, not by a change in reviewer behavior.\"",
+        "correctExact": false,
+        "correctSemantic": false,
+        "semanticReason": "The candidate answer provides a specific example about accessibility findings and UI-heavy diffs, but the gold excerpt states a more general principle that a Code Reviewer's mix of fix categories is a function of the PR queue's domain mix—the candidate answer illustrates one instance of this principle rather than stating the general rule itself.",
+        "retrievedContainsGold": true
+      },
+      {
+        "regime": "router",
+        "question": "How does a parent prevent a child's useMemo cache from rebuilding on every parent render?",
+        "expectedFixtureId": "d3816268-5137-4969-af88-d8679d7313f6",
+        "retrievedIds": [
+          "d3816268-5137-4969-af88-d8679d7313f6"
+        ],
+        "promptTokens": 431,
+        "completionTokens": 178,
+        "response": "According to the corpus, a parent can prevent a child's `useMemo` cache from rebuilding on every parent render by **stabilizing references before they cross the prop boundary**. Specifically, the fix recipes include:\n\n1. **Stabilize fallback values** by hoisting constants like `const EMPTY: T[] = []` to module scope (preferred for zero hook cost), or wrapping them in `useMemo(() => prop ?? [], [prop])` in the parent.\n\n2. **Wrap callback handlers in `useCallback`** with relevant dependencies in the dep list.\n\n3. **Lift per-row work up the tree** by building derived values once in the parent (or via a context provider) and passing the result down, rather than letting the child recalculate it on every render.",
+        "correctExact": false,
+        "correctSemantic": true,
+        "semanticReason": "The candidate answer directly states and elaborates on the core principle from the gold excerpt: \"stabilizing references before they cross the prop boundary,\" providing specific implementation strategies that align with this guidance.",
+        "retrievedContainsGold": true
+      }
+    ]
+  }
+}
