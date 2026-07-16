@@ -63,6 +63,7 @@ describe('buildObjectListConditions — tokenized ILIKE for q', () => {
 	it('adds a per-token ILIKE OR match for a multi-token q', () => {
 		const { conditions, searchRankExpr } = buildObjectListConditions({
 			q: 'database migration',
+			include_archived: true,
 		})
 		expect(searchRankExpr).not.toBeNull()
 		expect(conditions).toHaveLength(1)
@@ -72,7 +73,10 @@ describe('buildObjectListConditions — tokenized ILIKE for q', () => {
 	})
 
 	it('adds a single ILIKE OR match for a single-token q', () => {
-		const { conditions, searchRankExpr } = buildObjectListConditions({ q: 'database' })
+		const { conditions, searchRankExpr } = buildObjectListConditions({
+			q: 'database',
+			include_archived: true,
+		})
 		expect(searchRankExpr).not.toBeNull()
 		expect(conditions).toHaveLength(1)
 		const rendered = dialect.sqlToQuery(conditions[0] as never)
@@ -81,19 +85,27 @@ describe('buildObjectListConditions — tokenized ILIKE for q', () => {
 	})
 
 	it('does not add a text condition when q is punctuation-only', () => {
-		const { conditions, searchRankExpr } = buildObjectListConditions({ q: '!!! ??? ...' })
+		const { conditions, searchRankExpr } = buildObjectListConditions({
+			q: '!!! ??? ...',
+			include_archived: true,
+		})
 		expect(searchRankExpr).toBeNull()
 		expect(conditions).toEqual([])
 	})
 
 	it('does not add a text condition when q is all stopwords', () => {
-		const { conditions, searchRankExpr } = buildObjectListConditions({ q: 'the and of' })
+		const { conditions, searchRankExpr } = buildObjectListConditions({
+			q: 'the and of',
+			include_archived: true,
+		})
 		expect(searchRankExpr).toBeNull()
 		expect(conditions).toEqual([])
 	})
 
 	it('does not add a text condition when q is absent (empty-q fall-through)', () => {
-		const { conditions, searchRankExpr } = buildObjectListConditions({})
+		const { conditions, searchRankExpr } = buildObjectListConditions({
+			include_archived: true,
+		})
 		expect(searchRankExpr).toBeNull()
 		expect(conditions).toEqual([])
 	})
