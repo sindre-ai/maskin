@@ -515,23 +515,61 @@ export async function readMsbVersion(deps: { msbBin: string; run?: CommandRunner
 	}
 }
 
+// Sockets opened by the default findFreeHostPort() below, keyed by the port
+// they're bound to. Held open (not closed immediately after the bind probe)
+// until releaseHostPort() is called, so the OS can't hand the same "free"
+// port to a second concurrent probe before the first caller's `msb create -p`
+// has actually claimed it. Ports resolved via an injected deps.findPort
+// (tests) never populate this map, so releaseHostPort() is a safe no-op there.
+const heldHostPorts = new Map<number, ReturnType<typeof createServer>>()
+
 /**
- * Allocate a free TCP port on a host bind address. Used to pick the host-side
- * port for `msb create -p <bridgeGateway>:<port>:9222` so CDP is reachable
- * from the agent session VM without publishing it on every host interface.
+ * Allocate a free TCP port on a host bind address and hold it open (see
+ * heldHostPorts above). Used to pick the host-side port for
+ * `msb create -p <bridgeGateway>:<port>:<guestPort>` — both the browser
+ * sidecar's own CDP port and, via resolvePreviewPortMappings, a session's
+ * preview port forwards. Callers must call releaseHostPort(port) once the
+ * `msb create` invocation that consumes the port has run (success or
+ * failure) — releasing earlier re-opens the TOCTOU window this exists to
+ * close.
  */
 function findFreeHostPort(host: string): Promise<number> {
 	return new Promise((resolve, reject) => {
 		const srv = createServer()
+		srv.on('error', reject)
 		srv.listen(0, host, () => {
 			const addr = srv.address()
-			srv.close(() => {
-				if (addr && typeof addr === 'object') resolve(addr.port)
-				else reject(new Error('could not determine free host port'))
-			})
+			if (addr && typeof addr === 'object') {
+				heldHostPorts.set(addr.port, srv)
+				resolve(addr.port)
+			} else {
+				srv.close(() => reject(new Error('could not determine free host port')))
+			}
 		})
-		srv.on('error', reject)
 	})
+}
+
+/**
+ * Release a port reserved by the default findFreeHostPort(), closing the
+ * socket holding it open. No-op for ports not tracked here — e.g. a
+ * test-injected deps.findPort value, or a port already released — so it's
+ * safe to call unconditionally from a finally block.
+ */
+function releaseHostPort(port: number): void {
+	const srv = heldHostPorts.get(port)
+	if (!srv) return
+	heldHostPorts.delete(port)
+	srv.close()
+}
+
+export type PreviewPortResolution = {
+	mappings: PreviewPortMapping[]
+	/**
+	 * Releases the host-port reservations backing these mappings. Call only
+	 * after the `msb create -p` command that publishes them has actually run
+	 * (success or failure) — see findFreeHostPort's TOCTOU note above.
+	 */
+	release: () => void
 }
 
 /**
@@ -540,19 +578,34 @@ function findFreeHostPort(host: string): Promise<number> {
  * CDP port is published (`-p <bridgeGateway>:<hostPort>:<guestPort>`). Call
  * this before provisionBrowserSidecar/spawnSession so the sidecar's
  * allow@private grant and the session's -p mappings are set up together.
+ *
+ * The returned reservations stay open (not just "looked free a moment ago")
+ * until the caller invokes release() — hold it through provisionBrowserSidecar
+ * and the eventual spawnSession call, then release once spawnSession's own
+ * `msb create -p` has run. See findFreeHostPort for why.
  */
 export async function resolvePreviewPortMappings(
 	guestPorts: readonly number[],
 	deps: MicrosandboxDeps,
 	bridgeGateway: string = DEFAULT_BRIDGE_GATEWAY,
-): Promise<PreviewPortMapping[]> {
+): Promise<PreviewPortResolution> {
 	const findPort = deps.findPort ?? findFreeHostPort
 	const mappings: PreviewPortMapping[] = []
-	for (const guestPort of guestPorts) {
-		const hostPort = await findPort(bridgeGateway)
-		mappings.push({ guestPort, hostPort })
+	try {
+		for (const guestPort of guestPorts) {
+			const hostPort = await findPort(bridgeGateway)
+			mappings.push({ guestPort, hostPort })
+		}
+	} catch (err) {
+		for (const m of mappings) releaseHostPort(m.hostPort)
+		throw err
 	}
-	return mappings
+	return {
+		mappings,
+		release: () => {
+			for (const m of mappings) releaseHostPort(m.hostPort)
+		},
+	}
 }
 
 /**
@@ -701,20 +754,32 @@ export async function provisionBrowserSidecar(
 	}
 	createArgs.push(image)
 
+	// Once `msb create` has settled (claimed the -p mapping or failed to), the
+	// local probe socket has served its purpose — release it either way so it
+	// doesn't sit open for the rest of this function's (possibly long) polling.
 	try {
-		await run(deps.msbBin, createArgs, { timeoutMs: BROWSER_SIDECAR_CREATE_TIMEOUT_MS })
-	} catch (err) {
-		const e = err as { stderr?: unknown; message?: string }
-		const stderr = e.stderr ? String(e.stderr) : ''
-		logger.error('browser sidecar create failed', {
-			name,
-			stderr,
-			message: e.message ?? 'unknown',
-		})
-		await run(deps.msbBin, ['remove', '-f', '--quiet', name], {
-			timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS,
-		}).catch(() => {})
-		return null
+		try {
+			await run(deps.msbBin, createArgs, { timeoutMs: BROWSER_SIDECAR_CREATE_TIMEOUT_MS })
+		} catch (err) {
+			const e = err as { stderr?: unknown; message?: string }
+			const stderr = e.stderr ? String(e.stderr) : ''
+			logger.error('browser sidecar create failed', {
+				name,
+				stderr,
+				message: e.message ?? 'unknown',
+			})
+			await run(deps.msbBin, ['remove', '-f', '--quiet', name], {
+				timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS,
+			}).catch((cleanupErr) => {
+				logger.warn('browser sidecar cleanup after create failure did not confirm removal', {
+					name,
+					error: String(cleanupErr),
+				})
+			})
+			return null
+		}
+	} finally {
+		releaseHostPort(hostPort)
 	}
 
 	try {
@@ -723,7 +788,12 @@ export async function provisionBrowserSidecar(
 		logger.error('browser sidecar did not reach Running', { name, error: String(err) })
 		await run(deps.msbBin, ['remove', '-f', '--quiet', name], {
 			timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS,
-		}).catch(() => {})
+		}).catch((cleanupErr) => {
+			logger.warn('browser sidecar cleanup after waitForRunning failure did not confirm removal', {
+				name,
+				error: String(cleanupErr),
+			})
+		})
 		return null
 	}
 
@@ -741,7 +811,12 @@ export async function provisionBrowserSidecar(
 		})
 		await run(deps.msbBin, ['remove', '-f', '--quiet', name], {
 			timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS,
-		}).catch(() => {})
+		}).catch((cleanupErr) => {
+			logger.warn('browser sidecar cleanup after CDP-not-ready failure did not confirm removal', {
+				name,
+				error: String(cleanupErr),
+			})
+		})
 		return null
 	}
 

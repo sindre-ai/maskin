@@ -315,24 +315,42 @@ describe('resolvePreviewPortMappings', () => {
 	it('resolves one free host port per guest port, defaulting to the bridge gateway', async () => {
 		let next = 39500
 		const findPort = async () => next++
-		const mappings = await resolvePreviewPortMappings([5173, 3000], {
+		const result = await resolvePreviewPortMappings([5173, 3000], {
 			msbBin: '/usr/local/bin/msb',
 			run: async () => ({ stdout: '', stderr: '' }),
 			findPort,
 		})
-		expect(mappings).toEqual([
+		expect(result.mappings).toEqual([
 			{ guestPort: 5173, hostPort: 39500 },
 			{ guestPort: 3000, hostPort: 39501 },
 		])
+		expect(() => result.release()).not.toThrow()
 	})
 
 	it('returns an empty array for an empty guestPorts list', async () => {
-		const mappings = await resolvePreviewPortMappings([], {
+		const result = await resolvePreviewPortMappings([], {
 			msbBin: '/usr/local/bin/msb',
 			run: async () => ({ stdout: '', stderr: '' }),
 			findPort: async () => 39500,
 		})
-		expect(mappings).toEqual([])
+		expect(result.mappings).toEqual([])
+		expect(() => result.release()).not.toThrow()
+	})
+
+	it('releases already-resolved reservations when a later guest port fails to resolve', async () => {
+		let calls = 0
+		const findPort = async () => {
+			calls++
+			if (calls === 2) throw new Error('no free ports')
+			return 39500 + calls
+		}
+		await expect(
+			resolvePreviewPortMappings([5173, 3000], {
+				msbBin: '/usr/local/bin/msb',
+				run: async () => ({ stdout: '', stderr: '' }),
+				findPort,
+			}),
+		).rejects.toThrow('no free ports')
 	})
 })
 

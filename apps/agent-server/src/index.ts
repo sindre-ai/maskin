@@ -604,16 +604,22 @@ export function buildApp(deps: AppDeps): Hono {
 		let browserSidecar: BrowserSidecar | null = null
 		let previewPortMappings: PreviewPortMapping[] = []
 		let previewForwardingFailed = false
+		// Released once spawnSession's own `msb create -p` has consumed (or failed
+		// to consume) these reservations — see the finally block around spawnSession
+		// below. Keeps the held probe sockets from leaking on every code path.
+		let releasePreviewPorts: () => void = () => {}
 		if (body.browserRequired === true) {
 			// Resolve preview port forwards before provisioning the sidecar so we
 			// know whether the sidecar needs an allow@private route back in.
 			if (body.previewGuestPorts && body.previewGuestPorts.length > 0) {
 				try {
-					previewPortMappings = await resolvePreviewPortMappings(
+					const resolved = await resolvePreviewPortMappings(
 						body.previewGuestPorts,
 						deps.msb,
 						deps.env.MSB_BRIDGE_GATEWAY,
 					)
+					previewPortMappings = resolved.mappings
+					releasePreviewPorts = resolved.release
 				} catch (err) {
 					previewForwardingFailed = true
 					logger.warn('preview port resolution failed — continuing without preview forwarding', {
@@ -647,38 +653,47 @@ export function buildApp(deps: AppDeps): Hono {
 		}
 
 		try {
-			const result = await spawnSession(
-				{
-					sessionId: body.sessionId,
-					image: body.image,
-					env: sessionEnv,
-					...(body.memoryMib !== undefined && { memoryMib: body.memoryMib }),
-					...(body.cpus !== undefined && { cpus: body.cpus }),
-					hostPort: deps.env.PORT,
-					...(deps.env.MASKIN_AGENT_SERVER_PUBLIC_HOST !== undefined && {
-						publicHost: deps.env.MASKIN_AGENT_SERVER_PUBLIC_HOST,
-					}),
-					sessionDir,
-					pullPolicy,
-					...(deps.env.SESSION_MAX_DURATION !== '' &&
-						deps.env.SESSION_MAX_DURATION !== '0' && {
-							maxDuration: deps.env.SESSION_MAX_DURATION,
+			let result: Awaited<ReturnType<typeof spawnSession>>
+			try {
+				result = await spawnSession(
+					{
+						sessionId: body.sessionId,
+						image: body.image,
+						env: sessionEnv,
+						...(body.memoryMib !== undefined && { memoryMib: body.memoryMib }),
+						...(body.cpus !== undefined && { cpus: body.cpus }),
+						hostPort: deps.env.PORT,
+						...(deps.env.MASKIN_AGENT_SERVER_PUBLIC_HOST !== undefined && {
+							publicHost: deps.env.MASKIN_AGENT_SERVER_PUBLIC_HOST,
 						}),
-					// Only opened when a sidecar was provisioned — keeps the default
-					// session firewall posture tight for the common path.
-					...(browserSidecar !== null && { allowPrivateNet: true }),
-					// Only forward the session's preview port onto the shared bridge
-					// when a sidecar actually exists to consume it — otherwise the
-					// port sits exposed on the bridge gateway with nothing there to
-					// reach it.
-					...(browserSidecar !== null &&
-						previewPortMappings.length > 0 && {
-							previewPorts: previewPortMappings,
-							bridgeGateway: deps.env.MSB_BRIDGE_GATEWAY,
-						}),
-				},
-				deps.msb,
-			)
+						sessionDir,
+						pullPolicy,
+						...(deps.env.SESSION_MAX_DURATION !== '' &&
+							deps.env.SESSION_MAX_DURATION !== '0' && {
+								maxDuration: deps.env.SESSION_MAX_DURATION,
+							}),
+						// Only opened when a sidecar was provisioned — keeps the default
+						// session firewall posture tight for the common path.
+						...(browserSidecar !== null && { allowPrivateNet: true }),
+						// Only forward the session's preview port onto the shared bridge
+						// when a sidecar actually exists to consume it — otherwise the
+						// port sits exposed on the bridge gateway with nothing there to
+						// reach it.
+						...(browserSidecar !== null &&
+							previewPortMappings.length > 0 && {
+								previewPorts: previewPortMappings,
+								bridgeGateway: deps.env.MSB_BRIDGE_GATEWAY,
+							}),
+					},
+					deps.msb,
+				)
+			} finally {
+				// spawnSession's own `msb create -p` has now consumed (or failed to
+				// consume) the reserved host ports — release the held probe sockets
+				// regardless of outcome so they don't leak for the rest of this
+				// request's (potentially long) background work.
+				releasePreviewPorts()
+			}
 			logger.info('session spawned', {
 				sessionId: body.sessionId,
 				image: body.image,
