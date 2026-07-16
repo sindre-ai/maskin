@@ -2116,15 +2116,24 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor }, 20)
+			// The `/api/objects/search` route ranks matches by token-hit count
+			// whenever `q` tokenizes to a non-empty set (T2). Under that
+			// ORDER BY, the API's `(createdAt, id)` keyset seek no longer
+			// matches the walk order — the server drops it and falls back to
+			// offset pagination on the same snapshot. Since `q` is required
+			// here, the seek is effectively always inert on this route, so
+			// don't send a cursor and don't hand back `next_cursor` either.
+			// Callers walk multi-page results via `offset` — same shape this
+			// tool had before scoped cursors existed. Mirrors the
+			// `sort=updatedAt` cursor guard in `list_objects`.
+			const pagination = resolveListPagination({ limit: args.limit, cursor: undefined }, 20)
 			const params = new URLSearchParams()
 			params.set('q', args.q)
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
 			if (args.driver_id) params.set('driver', args.driver_id)
 			if (args.updated_after) params.set('updated_after', args.updated_after)
-			const fetchCap = isResponseScopingEnabled() ? pagination.limit + 1 : pagination.limit
-			params.set('limit', String(fetchCap))
+			params.set('limit', String(pagination.limit))
 			if (args.offset) params.set('offset', String(args.offset))
 			for (const [field, value] of Object.entries(args.metadata_eq ?? {})) {
 				if (typeof value === 'string' && value.length > 0) params.set(`metadata.${field}`, value)
@@ -2132,18 +2141,13 @@ export function createMcpServer(config: McpConfig) {
 			if (args.include_archived) params.set('include_archived', 'true')
 			if (isResponseScopingEnabled()) {
 				params.set('snapshot_at', pagination.snapshotAt)
-				params.set('order', pagination.order)
-				params.set('sort', 'createdAt')
-				if (pagination.cursor) {
-					params.set('cursor_created_at', pagination.cursor.k.sortValue)
-					params.set('cursor_id', pagination.cursor.k.id)
-				}
 			}
 			const raw = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as RawObject[]
-			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
-			const result = trimmed as RawObject[]
+			// Client-side cap — the API already respects `limit`, but keeps the
+			// output bounded even if a caller (or a test stub) hands back more.
+			const result = raw.slice(0, pagination.limit)
 			const offset = typeof args.offset === 'number' ? args.offset : 0
 			const heroCard = await buildCollectionHeroCard(
 				config,
@@ -2187,9 +2191,7 @@ export function createMcpServer(config: McpConfig) {
 						limit: result.length,
 						offset,
 						returned: result.length,
-						...(nextCursor ? { next_cursor: nextCursor } : {}),
 					},
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
 			}
 		},
