@@ -1403,4 +1403,152 @@ describe('Objects Integration', () => {
 			expect(body.files[0].id).toBe(fileRow.id)
 		})
 	})
+
+	describe('GET /api/objects/:id/references — 7-day rolling reference count', () => {
+		// Load-bearing integration test for T6: the DoD contract that emitting
+		// N reference events across M unique sessions returns M. The unit test
+		// pins the response shape against the mock aggregate; this test pins
+		// the actual DISTINCT semantics against real Postgres — mocked DB
+		// tests can't catch `data->>'consumer_context_id'` DISTINCT
+		// misbehaviour (or a filter that quietly full-scans).
+		it('counts DISTINCT consumer_context_id values (7-day window) for the specified action', async () => {
+			const knowledge = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'knowledge',
+			})
+			const consumerA = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet' })
+			const consumerB = await insertObject(db, workspaceId, getTestActorId(), { type: 'task' })
+			const consumerC = await insertObject(db, workspaceId, getTestActorId(), { type: 'insight' })
+
+			// 4 reference events across 3 unique consumer contexts — expect N=3.
+			// consumerA gets two rows to prove the DISTINCT collapse.
+			const rows = [
+				{ consumer_context_id: consumerA.id },
+				{ consumer_context_id: consumerA.id },
+				{ consumer_context_id: consumerB.id },
+				{ consumer_context_id: consumerC.id },
+			]
+			for (const r of rows) {
+				await db.insert(events).values({
+					workspaceId,
+					actorId: getTestActorId(),
+					action: 'workspace_knowledge_referenced',
+					entityType: 'object',
+					entityId: knowledge.id,
+					data: { consumer_context_id: r.consumer_context_id, source_topics: [] },
+				})
+			}
+
+			// Guard: an unrelated action on the same entity must not inflate the
+			// count — the WHERE clause pins the action.
+			await db.insert(events).values({
+				workspaceId,
+				actorId: getTestActorId(),
+				action: 'commented',
+				entityType: 'object',
+				entityId: knowledge.id,
+				data: { consumer_context_id: consumerA.id },
+			})
+
+			const app = createApp()
+			const res = await app.request(
+				jsonGet(`/api/objects/${knowledge.id}/references`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.window_days).toBe(7)
+			expect(body.unique_contexts).toBe(3)
+		})
+
+		it('excludes rows outside the 7-day window', async () => {
+			const knowledge = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'knowledge',
+			})
+			const consumerA = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet' })
+			const consumerB = await insertObject(db, workspaceId, getTestActorId(), { type: 'task' })
+
+			// One row inside the window (default `createdAt` = now via the
+			// column default), one row backdated 30 days out. Only the in-window
+			// row must be counted.
+			await db.insert(events).values({
+				workspaceId,
+				actorId: getTestActorId(),
+				action: 'workspace_knowledge_referenced',
+				entityType: 'object',
+				entityId: knowledge.id,
+				data: { consumer_context_id: consumerA.id, source_topics: [] },
+			})
+			const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+			await db.insert(events).values({
+				workspaceId,
+				actorId: getTestActorId(),
+				action: 'workspace_knowledge_referenced',
+				entityType: 'object',
+				entityId: knowledge.id,
+				data: { consumer_context_id: consumerB.id, source_topics: [] },
+				createdAt: thirtyDaysAgo,
+			})
+
+			const app = createApp()
+			const res = await app.request(
+				jsonGet(`/api/objects/${knowledge.id}/references`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.unique_contexts).toBe(1)
+		})
+
+		it('returns 0 when no reference events exist for the object', async () => {
+			const knowledge = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'knowledge',
+			})
+
+			const app = createApp()
+			const res = await app.request(
+				jsonGet(`/api/objects/${knowledge.id}/references`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.unique_contexts).toBe(0)
+			expect(body.window_days).toBe(7)
+		})
+
+		it('scopes the count to the current workspace', async () => {
+			const knowledge = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'knowledge',
+			})
+			const consumer = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet' })
+			// A second workspace holds an event with the SAME entity_id — the
+			// endpoint filters by workspace_id so this must not leak into the
+			// count.
+			const otherWs = await insertWorkspace(db, getTestActorId())
+			await db.insert(events).values({
+				workspaceId: otherWs.id,
+				actorId: getTestActorId(),
+				action: 'workspace_knowledge_referenced',
+				entityType: 'object',
+				entityId: knowledge.id,
+				data: { consumer_context_id: consumer.id, source_topics: [] },
+			})
+
+			const app = createApp()
+			const res = await app.request(
+				jsonGet(`/api/objects/${knowledge.id}/references`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.unique_contexts).toBe(0)
+		})
+	})
 })

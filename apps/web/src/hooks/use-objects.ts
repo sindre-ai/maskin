@@ -45,6 +45,24 @@ export function useObjectGraph(workspaceId: string, id: string) {
 	})
 }
 
+// Powers the "Referenced by N contexts/week" chip on the knowledge doc
+// header. DoD is happy with async freshness up to 5 minutes — a longer stale
+// window plus the SSE-driven cache invalidation that fires on any new
+// `workspace_knowledge_referenced` event keeps this cheap without stalling
+// the chip after a real cite.
+export function useKnowledgeReferences(
+	workspaceId: string,
+	id: string,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
+	return useQuery({
+		queryKey: queryKeys.objects.references(id),
+		queryFn: () => api.objects.references(id, workspaceId),
+		enabled: enabled && !!id && !!workspaceId,
+		staleTime: 5 * 60 * 1000,
+	})
+}
+
 export function useCreateObject(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
@@ -314,6 +332,48 @@ export function useBulkResultHandlers(
 	)
 
 	return { reportBulkResult, retainOnlyFailed }
+}
+
+// Stamp / unstamp the "Verified" chip on a Knowledge Author write. Server-side
+// this is a scoped write on `metadata.verified_by` + `metadata.verified_at`
+// wrapped with a dedicated `verified` / `unverified` timeline event; server
+// enforces the "human admin/owner only" rule so the mutation is safe to
+// surface behind a client-side visibility guard.
+export function useVerifyObject(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, verified }: { id: string; verified: boolean }) =>
+			api.objects.verify(id, verified),
+		onSuccess: (data) => {
+			queryClient.setQueryData(queryKeys.objects.detail(data.id), data)
+		},
+		onSettled: (_data, _err, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+		},
+	})
+}
+
+// Roll back a single Knowledge Author write on a knowledge object. Server
+// re-verifies the KA identity, the 7-day window, and the caller's role, so
+// the mutation is safe to expose behind the client-side visibility guard.
+// Invalidates detail + graph + list on settle so the SSE-refreshed timeline
+// picks up the reversal + reversal event row without a manual refresh.
+export function useUndoKnowledgeWrite(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, eventId }: { id: string; eventId: number }) =>
+			api.objects.undoWrite(id, eventId),
+		onSuccess: (data) => {
+			queryClient.setQueryData(queryKeys.objects.detail(data.id), data)
+		},
+		onSettled: (_data, _err, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+		},
+	})
 }
 
 export function useMigrateObjectType(workspaceId: string) {

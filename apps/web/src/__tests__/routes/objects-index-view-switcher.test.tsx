@@ -57,6 +57,7 @@ vi.mock('@/hooks/use-enabled-modules', () => ({ useEnabledModules: () => [] }))
 vi.mock('@/hooks/use-custom-extensions', () => ({ useCustomExtensions: () => [] }))
 vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: () => [{ label: 'Tasks', value: 'task' }],
+	getAllWebModules: () => [],
 }))
 vi.mock('@/hooks/use-objects', () => ({
 	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),

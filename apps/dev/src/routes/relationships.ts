@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { events, files, objects, relationships } from '@maskin/db/schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, inArray, or } from 'drizzle-orm'
+import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError } from '../lib/errors'
 import {
@@ -75,7 +76,12 @@ app.openapi(createRelationshipRoute, async (c) => {
 	const sourceType = fileIds.has(body.source_id) ? 'file' : 'object'
 	const targetType = fileIds.has(body.target_id) ? 'file' : 'object'
 
-	const [created] = await db
+	// Idempotent on (source_id, target_id, type) — matches
+	// `relationships_src_tgt_type_uniq`. A duplicate call returns 201 with the
+	// existing row and does NOT re-fire the audit event or the
+	// `workspace_knowledge_referenced` ship-metric emit (per T2 idempotency
+	// clause — one edge, one emit).
+	const insertedRows = await db
 		.insert(relationships)
 		.values({
 			sourceType,
@@ -85,20 +91,51 @@ app.openapi(createRelationshipRoute, async (c) => {
 			type: body.type,
 			createdBy: actorId,
 		})
+		.onConflictDoNothing({
+			target: [relationships.sourceId, relationships.targetId, relationships.type],
+		})
 		.returning()
 
+	let created = insertedRows[0]
+	const isNewInsert = Boolean(created)
 	if (!created) {
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create relationship'), 500)
+		const [existing] = await db
+			.select()
+			.from(relationships)
+			.where(
+				and(
+					eq(relationships.sourceId, body.source_id),
+					eq(relationships.targetId, body.target_id),
+					eq(relationships.type, body.type),
+				),
+			)
+			.limit(1)
+		if (!existing) {
+			return c.json(createApiError('INTERNAL_ERROR', 'Failed to create relationship'), 500)
+		}
+		created = existing
 	}
 
-	await db.insert(events).values({
-		workspaceId,
-		actorId,
-		action: 'created',
-		entityType: 'relationship',
-		entityId: created.id,
-		data: created,
-	})
+	if (isNewInsert) {
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'created',
+			entityType: 'relationship',
+			entityId: created.id,
+			data: created,
+		})
+
+		// Auto-emit ship-metric when the new edge is a `derived_from` pointing at
+		// a `knowledge` object. Best-effort — never blocks the response.
+		await maybeEmitKnowledgeReferenceFromEdge(db, {
+			workspaceId,
+			actorId,
+			edgeType: created.type,
+			sourceId: created.sourceId,
+			targetId: created.targetId,
+		})
+	}
 
 	const endpointRows = await db
 		.select({ id: objects.id, title: objects.title })
