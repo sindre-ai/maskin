@@ -1,0 +1,147 @@
+{
+	"model": "claude-haiku-4-5-20251001",
+	"temperature": 0,
+	"seed": "bet/context-engineering-format:pilot-t9-v1",
+	"fixtureSourceCommit": "16379036a86d1cca82ea15a9fce7d1478a05d0b6",
+	"numPairs": 7,
+	"numCorrect": 6,
+	"totalPromptTokens": 33541,
+	"avgPromptTokensPerPair": 4791.571428571428,
+	"tokensPerCorrectAnswer": 5590.166666666667,
+	"retrievalAccuracy": 1,
+	"perPair": [
+		{
+			"regime": "dump",
+			"question": "What defines membership for the agent-pipeline knowledge index — how does the router know which articles belong under this catalog?",
+			"expectedFixtureId": "p01-index-agent-pipeline",
+			"retrievedIds": [
+				"p01-index-agent-pipeline",
+				"p02-telemetry-payload-trim",
+				"p03-hot-path-async-safety",
+				"p04-cr-bet-level-scope-expansion",
+				"p05-ship-db-index-with-query",
+				"p06-fix-category-mix-queue",
+				"p07-react-identity-stability"
+			],
+			"promptTokens": 4777,
+			"completionTokens": 110,
+			"response": "According to the corpus, the agent-pipeline index uses a **membership rule in v1 tag-filter shape**: any `type=knowledge` row with `metadata.format_version=v1`, `metadata.tags` including `topic:agent-pipeline`, and `metadata.doc_type` in {`operational`, `playbook`}. The router reads the index summary and the summaries of the catalogued articles first, then pulls only the article bodies it decides it needs based on this membership rule.",
+			"correct": true,
+			"retrievedContainsGold": true
+		},
+		{
+			"regime": "dump",
+			"question": "A telemetry surface (stdout log line or PostHog event) is about to ship a raw meeting URL alongside the payload — what is the observability guidance on shaping that payload?",
+			"expectedFixtureId": "p02-telemetry-payload-trim",
+			"retrievedIds": [
+				"p01-index-agent-pipeline",
+				"p02-telemetry-payload-trim",
+				"p03-hot-path-async-safety",
+				"p04-cr-bet-level-scope-expansion",
+				"p05-ship-db-index-with-query",
+				"p06-fix-category-mix-queue",
+				"p07-react-identity-stability"
+			],
+			"promptTokens": 4793,
+			"completionTokens": 138,
+			"response": "According to the knowledge corpus, you should **trim the payload to the minimal field that supports the metric**. Specifically, meeting URLs function as bearer tokens (anyone with the URL can join), so they should never go into logs or analytics. Instead, derive a categorical value or identifier that answers the underlying question — for example, ship `platform` (enum) rather than the raw URL, or emit only the `id` and `workspaceId` if those are diagnostically sufficient. The guidance is: \"Bearer-style identifiers — meeting URLs, signed S3 URLs, share links, magic-link tokens — never go into logs or analytics.\"",
+			"correct": true,
+			"retrievedContainsGold": true
+		},
+		{
+			"regime": "dump",
+			"question": "Inside a webhook handler that must ack within a few seconds, is it safe to serially await a long fan-out of file downloads before responding — and if not, what is the fix pattern?",
+			"expectedFixtureId": "p03-hot-path-async-safety",
+			"retrievedIds": [
+				"p01-index-agent-pipeline",
+				"p02-telemetry-payload-trim",
+				"p03-hot-path-async-safety",
+				"p04-cr-bet-level-scope-expansion",
+				"p05-ship-db-index-with-query",
+				"p06-fix-category-mix-queue",
+				"p07-react-identity-stability"
+			],
+			"promptTokens": 4795,
+			"completionTokens": 239,
+			"response": "Based on the knowledge corpus, **no, it is not safe to serially await a long fan-out of file downloads before responding** in a webhook handler with a tight ack deadline.\n\nAccording to p03-hot-path-async-safety, the pattern to avoid is: \"A handler awaits work that can exceed the upstream's ack window\" — the example given is `MAX_FILES_PER_EVENT (20) × DOWNLOAD_TIMEOUT_MS (30s)` = ~10 minutes before Slack ack, but Slack retries after 3 seconds, producing duplicate rows on retry.\n\nThe fix pattern is: **\"ack first, then do work — or `Promise.allSettled` if the budget allows. Never serial `await` in a loop.\"** The underlying principle is to answer three questions before adding `await` in a request handler: (1) What is the caller's timeout/ack deadline? (2) What does the caller do on timeout — retry, fail, both? (3) If retried, is this operation idempotent?",
+			"correct": true,
+			"retrievedContainsGold": true
+		},
+		{
+			"regime": "dump",
+			"question": "The diff on this PR is mechanically clean but it reverses a workspace policy the team previously ratified. What is the Code Reviewer expected to do?",
+			"expectedFixtureId": "p04-cr-bet-level-scope-expansion",
+			"retrievedIds": [
+				"p01-index-agent-pipeline",
+				"p02-telemetry-payload-trim",
+				"p03-hot-path-async-safety",
+				"p04-cr-bet-level-scope-expansion",
+				"p05-ship-db-index-with-query",
+				"p06-fix-category-mix-queue",
+				"p07-react-identity-stability"
+			],
+			"promptTokens": 4786,
+			"completionTokens": 136,
+			"response": "According to the knowledge corpus, the Code Reviewer is expected to **issue a BLOCK verdict** on bet-level / governance grounds, even if the diff is mechanically clean. As stated in p04: \"CR will refuse approval if: (2) The PR **reverses a previously-ratified workspace policy** without a corresponding human-authored signal that the policy has changed.\"\n\nThe corpus notes this is novel because it gates on the *premise of the work* rather than code defects. To resolve the block, the PR would need \"a corresponding policy-change signal in the bet or in CLAUDE.md before CR considers approval.\"",
+			"correct": true,
+			"retrievedContainsGold": true
+		},
+		{
+			"regime": "dump",
+			"question": "A route adds a new WHERE clause on `(workspace_id, entity_id)` but the only existing composite is `(workspace_id, created_at)` — does that existing index cover the new query, and why or why not?",
+			"expectedFixtureId": "p05-ship-db-index-with-query",
+			"retrievedIds": [
+				"p01-index-agent-pipeline",
+				"p02-telemetry-payload-trim",
+				"p03-hot-path-async-safety",
+				"p04-cr-bet-level-scope-expansion",
+				"p05-ship-db-index-with-query",
+				"p06-fix-category-mix-queue",
+				"p07-react-identity-stability"
+			],
+			"promptTokens": 4806,
+			"completionTokens": 184,
+			"response": "No, the existing index does not cover the new query. According to the knowledge corpus (p05-ship-db-index-with-query):\n\n\"The trap: an existing `(workspace_id, X)` index does **not** cover a new `(workspace_id, Y)` filter — the leading column matches but selectivity collapses to whatever workspace_id alone gives you.\"\n\nIn this case, `(workspace_id, created_at)` has `workspace_id` as the leading column, but the new query filters on `(workspace_id, entity_id)`. While both indexes share the `workspace_id` prefix, the second column differs (`created_at` vs. `entity_id`), so the existing index cannot efficiently support the new filter combination and will scan a wide slice on busy workspaces.",
+			"correct": false,
+			"retrievedContainsGold": true
+		},
+		{
+			"regime": "dump",
+			"question": "One 48-hour window produced 1 SHOULD and 2 NITs on accessibility findings. Should we add a11y as a standalone item to the review checklist based on this sample?",
+			"expectedFixtureId": "p06-fix-category-mix-queue",
+			"retrievedIds": [
+				"p01-index-agent-pipeline",
+				"p02-telemetry-payload-trim",
+				"p03-hot-path-async-safety",
+				"p04-cr-bet-level-scope-expansion",
+				"p05-ship-db-index-with-query",
+				"p06-fix-category-mix-queue",
+				"p07-react-identity-stability"
+			],
+			"promptTokens": 4796,
+			"completionTokens": 173,
+			"response": "According to the knowledge corpus, **no**. The document p06-fix-category-mix-queue explicitly addresses this scenario:\n\n\"Adding 'check a11y' to the `review-checklist` skill before the queue actually produces a11y diffs creates noise. Adding it after the category surfaces — and after findings escalate beyond NIT/SHOULD-debate level — keeps the checklist useful.\"\n\nThe guidance is clear: \"One 48h window with 1 SHOULD + 2 NITs is below the bar\" for adding a11y to the checklist. The right action is to \"log and watch\" rather than add it immediately, and wait until findings \"cross the SHOULD threshold sustainably\" over multiple sweeps before formalizing it as a checklist item.",
+			"correct": true,
+			"retrievedContainsGold": true
+		},
+		{
+			"regime": "dump",
+			"question": "A parent React component passes `actors ?? []` and inline arrow handlers into a child that memoises its columns on those props. What is the underlying failure mode?",
+			"expectedFixtureId": "p07-react-identity-stability",
+			"retrievedIds": [
+				"p01-index-agent-pipeline",
+				"p02-telemetry-payload-trim",
+				"p03-hot-path-async-safety",
+				"p04-cr-bet-level-scope-expansion",
+				"p05-ship-db-index-with-query",
+				"p06-fix-category-mix-queue",
+				"p07-react-identity-stability"
+			],
+			"promptTokens": 4788,
+			"completionTokens": 184,
+			"response": "According to the knowledge corpus, the underlying failure mode is that **the child's memoised value rebuilds on every parent render — not on actual data change**. \n\nAs explained in p07: \"When a parent component passes **inline literal arrays, inline arrow functions, or inline object literals** as props into a child that uses those props as `useMemo` / `useCallback` / `useReactTable` dependencies, the child's memoised value rebuilds on **every parent render** — not on actual data change. The cache is structurally defeated.\" The `actors ?? []` fallback allocates a new array identity every render while `actors` is undefined, and the inline arrow handler creates a new function identity each render, causing the child's memo cache key to change and the expensive structure (like a columns array) to rebuild unnecessarily.",
+			"correct": true,
+			"retrievedContainsGold": true
+		}
+	]
+}

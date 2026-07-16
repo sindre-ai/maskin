@@ -15,6 +15,7 @@ export default defineConfig({
 			'src/__tests__/integration/knowledge-eval-router.test.ts',
 			'src/__tests__/integration/knowledge-eval-representative.test.ts',
 			'src/__tests__/integration/knowledge-eval-representative-router.test.ts',
+			'src/__tests__/integration/knowledge-eval-pilot.test.ts',
 		],
 		testTimeout: 600_000,
 	},
