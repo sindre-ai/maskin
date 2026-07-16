@@ -2273,6 +2273,52 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'traverse_graph',
+		{
+			description: tools.traverse_graph.description,
+			inputSchema: tools.traverse_graph.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.relationships, csp: CSP } },
+		},
+		async (args) => {
+			const params = new URLSearchParams()
+			if (typeof args.max_depth === 'number') params.set('max_depth', String(args.max_depth))
+			if (typeof args.max_nodes === 'number') params.set('max_nodes', String(args.max_nodes))
+			if (args.direction) params.set('direction', args.direction)
+			if (args.edge_type_allow_list && args.edge_type_allow_list.length > 0) {
+				params.set('edge_types', args.edge_type_allow_list.join(','))
+			}
+			const query = params.toString()
+			const result = (await apiCall(
+				config,
+				'GET',
+				`/api/objects/${args.object_id}/graph/traverse${query ? `?${query}` : ''}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)) as {
+				nodes: Array<{ id: string; type: string; title: string | null }>
+				edges: Array<{ source: string; target: string; type: string }>
+				truncated: boolean
+				truncated_reason: 'max_nodes' | 'max_depth' | null
+			}
+			const summaryLines = [
+				`nodes: ${result.nodes.length}${result.truncated ? ` (truncated: ${result.truncated_reason})` : ''}`,
+				`edges: ${result.edges.length}`,
+			]
+			return {
+				_meta: meta('traverse_graph', config, (args as { workspace_id?: string }).workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: `${summaryLines.join('\n')}\n\n${JSON.stringify(result, null, 2)}`,
+					},
+				],
+				structuredContent: result,
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'delete_relationship',
 		{
 			description: tools.delete_relationship.description,
