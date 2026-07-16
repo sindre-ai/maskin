@@ -215,6 +215,121 @@ describe('useUpdateObject', () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.objects.update).toHaveBeenCalledWith('obj-1', { title: 'Updated' })
 	})
+
+	// Archive is the one status transition that must vanish from default
+	// reads. Optimistically removing the row from list + infinite caches keeps
+	// the UI in step with T3's server-side `include_archived=false` gate,
+	// instead of leaving the row visible until the refetch settles.
+	it('optimistically removes archived row from list and infinite caches', async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: 1000 * 60 },
+				mutations: { retry: false },
+			},
+		})
+		const Wrapper = ({ children }: { children: ReactNode }) =>
+			React.createElement(QueryClientProvider, { client: queryClient }, children)
+
+		const flatKey = queryKeys.objects.list(workspaceId, { type: 'bet' })
+		queryClient.setQueryData(flatKey, [
+			buildObject({ id: 'bet-1', status: 'active', type: 'bet' }),
+			buildObject({ id: 'bet-2', status: 'active', type: 'bet' }),
+		])
+		const infiniteKey = queryKeys.objects.listInfinite(workspaceId, {})
+		queryClient.setQueryData(infiniteKey, {
+			pages: [
+				[
+					buildObject({ id: 'bet-1', status: 'active', type: 'bet' }),
+					buildObject({ id: 'bet-2', status: 'active', type: 'bet' }),
+				],
+			],
+			pageParams: [0],
+		})
+
+		let resolve!: (value: ObjectResponse) => void
+		vi.mocked(api.objects.update).mockReturnValue(
+			new Promise<ObjectResponse>((res) => {
+				resolve = res
+			}),
+		)
+
+		const { result } = renderHook(() => useUpdateObject(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ id: 'bet-1', data: { status: 'archived' } })
+
+		await waitFor(() => {
+			const flat = queryClient.getQueryData<ObjectResponse[]>(flatKey) ?? []
+			expect(flat.map((o) => o.id)).toEqual(['bet-2'])
+			const infinite = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(infiniteKey)
+			expect(infinite?.pages[0].map((o) => o.id)).toEqual(['bet-2'])
+		})
+
+		resolve(buildObject({ id: 'bet-1', status: 'archived', type: 'bet' }))
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+	})
+
+	// Non-archive updates leave the list caches untouched — status changes
+	// like `active → paused` should stay in the row and let the visual
+	// treatment carry the change, not disappear.
+	it('does not remove row when status is not archived', async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: 1000 * 60 },
+				mutations: { retry: false },
+			},
+		})
+		const Wrapper = ({ children }: { children: ReactNode }) =>
+			React.createElement(QueryClientProvider, { client: queryClient }, children)
+
+		const flatKey = queryKeys.objects.list(workspaceId, { type: 'bet' })
+		queryClient.setQueryData(flatKey, [buildObject({ id: 'bet-1', status: 'active', type: 'bet' })])
+
+		let resolve!: (value: ObjectResponse) => void
+		vi.mocked(api.objects.update).mockReturnValue(
+			new Promise<ObjectResponse>((res) => {
+				resolve = res
+			}),
+		)
+
+		const { result } = renderHook(() => useUpdateObject(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ id: 'bet-1', data: { status: 'paused' } })
+
+		// The row must still be present — only the archived path removes it.
+		const flat = queryClient.getQueryData<ObjectResponse[]>(flatKey) ?? []
+		expect(flat.map((o) => o.id)).toEqual(['bet-1'])
+
+		resolve(buildObject({ id: 'bet-1', status: 'paused', type: 'bet' }))
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+	})
+
+	// Rollback restores the archived row if the request rejects, so a
+	// backend/network failure doesn't leave the user staring at a row that
+	// silently vanished when the archive never actually happened.
+	it('restores archived row when the update rejects', async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: 1000 * 60 },
+				mutations: { retry: false },
+			},
+		})
+		const Wrapper = ({ children }: { children: ReactNode }) =>
+			React.createElement(QueryClientProvider, { client: queryClient }, children)
+
+		const flatKey = queryKeys.objects.list(workspaceId, { type: 'bet' })
+		const seed = [
+			buildObject({ id: 'bet-1', status: 'active', type: 'bet' }),
+			buildObject({ id: 'bet-2', status: 'active', type: 'bet' }),
+		]
+		queryClient.setQueryData(flatKey, seed)
+
+		vi.mocked(api.objects.update).mockRejectedValue(new Error('Network'))
+
+		const { result } = renderHook(() => useUpdateObject(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ id: 'bet-1', data: { status: 'archived' } })
+
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		const flat = queryClient.getQueryData<ObjectResponse[]>(flatKey) ?? []
+		expect(flat.map((o) => o.id)).toEqual(['bet-1', 'bet-2'])
+	})
 })
 
 describe('useBulkUpdateObjects', () => {

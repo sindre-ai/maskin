@@ -2039,6 +2039,7 @@ export function createMcpServer(config: McpConfig) {
 			for (const [field, value] of Object.entries(args.metadata_eq ?? {})) {
 				if (typeof value === 'string' && value.length > 0) params.set(`metadata.${field}`, value)
 			}
+			if (args.include_archived) params.set('include_archived', 'true')
 			if (sortedByCreatedAt && isResponseScopingEnabled()) {
 				params.set('snapshot_at', pagination.snapshotAt)
 				params.set('order', pagination.order)
@@ -2137,6 +2138,7 @@ export function createMcpServer(config: McpConfig) {
 			for (const [field, value] of Object.entries(args.metadata_eq ?? {})) {
 				if (typeof value === 'string' && value.length > 0) params.set(`metadata.${field}`, value)
 			}
+			if (args.include_archived) params.set('include_archived', 'true')
 			if (isResponseScopingEnabled()) {
 				params.set('snapshot_at', pagination.snapshotAt)
 			}

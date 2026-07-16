@@ -21,7 +21,12 @@ import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
-import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
+import {
+	DiscoveryError,
+	fetchInstallationOwnerLogin,
+	mintInstallationTokenWithRecovery,
+} from '../lib/integrations/providers/github/auth'
+import { persistRecoveredInstallationId } from '../lib/integrations/providers/github/installation-recovery'
 import {
 	dispatchAccountLinkAction,
 	dispatchMaskinWorkspaceCommand,
@@ -731,6 +736,8 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 
 // ── GET /api/integrations/:id/github-token ─────────────────────────────────
 
+const REPO_SLUG_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+
 const githubTokenRoute = createRoute({
 	method: 'get',
 	path: '/{id}/github-token',
@@ -738,6 +745,19 @@ const githubTokenRoute = createRoute({
 	summary: 'Mint a fresh GitHub App installation access token',
 	request: {
 		params: idParamSchema,
+		query: z.object({
+			repo: z
+				.string()
+				.optional()
+				.openapi({
+					description:
+						'owner/name hint. When set AND GITHUB_APP_INSTALLATION_RECOVERY_ENABLED=true, ' +
+						'a 404 on the cached installation id triggers re-discovery for this repo ' +
+						'and mints against the fresh install (mid-session App-reinstall recovery). ' +
+						'Ignored when the flag is off — behavior is identical to the legacy path.',
+					example: 'sindre-ai/maskin',
+				}),
+		}),
 		headers: workspaceIdHeader,
 	},
 	responses: {
@@ -762,7 +782,9 @@ const githubTokenRoute = createRoute({
 
 app.openapi(githubTokenRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+	const { repo } = c.req.valid('query')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const [integration] = await db
@@ -778,6 +800,75 @@ app.openapi(githubTokenRoute, (async (c) => {
 		)
 		.limit(1)
 	if (!integration) return c.json(createApiError('NOT_FOUND', 'GitHub integration not found'), 404)
+
+	// Recovery path: on stale-cache 404 we re-discover the current install for
+	// the target repo and mint against it, so an App reinstalled mid-session
+	// doesn't surface raw 401 as a task failure. Gated by env flag (default off)
+	// and requires a well-formed `?repo=owner/name` hint. The legacy path stays
+	// unchanged when either is missing, so PAT-mode identities are unaffected
+	// (they never reach this route in the first place — this is App-mode only).
+	const recoveryEnabled = process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED === 'true'
+	const recoveryRepo = recoveryEnabled && repo && REPO_SLUG_RE.test(repo) ? repo : undefined
+
+	if (recoveryRepo) {
+		try {
+			const credentials: StoredCredentials = JSON.parse(decrypt(integration.credentials))
+			const result = await mintInstallationTokenWithRecovery(credentials, { repo: recoveryRepo })
+			if (result.recovered) {
+				const oldInstallationId = credentials.installation_id as string | undefined
+				if (oldInstallationId) {
+					// Guard against concurrent-recovery duplicate audit rows: two parallel
+					// callers can both 404 on the same cached id and both discover the
+					// same new id. The helper takes a `SELECT … FOR UPDATE` on the row
+					// so the second caller blocks on the first's lock, re-reads the
+					// already-rotated value, and short-circuits without writing again.
+					await persistRecoveredInstallationId(db, {
+						integrationId: integration.id,
+						workspaceId,
+						actorId,
+						expectedOldInstallationId: oldInstallationId,
+						newInstallationId: result.installationId,
+						repo: recoveryRepo,
+					})
+				}
+				logger.info('Recovered GitHub App installation id mid-session', {
+					integrationId: integration.id,
+					oldInstallationId,
+					newInstallationId: result.installationId,
+					repo: recoveryRepo,
+				})
+			}
+			return c.json({ token: result.token })
+		} catch (err) {
+			// Only a discovery 404 means "App is no longer installed for this
+			// repo" — that's the case where the caller genuinely needs the
+			// reconnect prompt. Every other discovery status (5xx, 429, network)
+			// is a transient GitHub failure and must NOT tell the caller their
+			// grant is revoked; it drops into the BAD_REQUEST branch so T5's
+			// tagger classifies it as a transient failure instead.
+			if (err instanceof DiscoveryError && err.status === 404) {
+				logger.warn('GitHub App installation no longer resolvable — treating as revoked', {
+					integrationId: integration.id,
+					repo: recoveryRepo,
+					error: err.message,
+				})
+				return c.json(
+					createApiError(
+						'AUTH_REVOKED',
+						'GitHub App installation is no longer resolvable — please reconnect',
+					),
+					401,
+				)
+			}
+			logger.warn('GitHub token mint failed (recovery path)', {
+				integrationId: integration.id,
+				repo: recoveryRepo,
+				error: err instanceof Error ? err.message : String(err),
+				...(err instanceof DiscoveryError ? { discovery_status: err.status } : {}),
+			})
+			return c.json(createApiError('BAD_REQUEST', 'Failed to mint GitHub access token'), 400)
+		}
+	}
 
 	try {
 		const provider = getProvider('github')

@@ -331,6 +331,7 @@ export function buildObjectListConditions(
 		q?: string
 		updated_before?: string
 		updated_after?: string
+		include_archived?: boolean
 	},
 	metadataFilters: { field: string; value: string }[] = [],
 ): { conditions: SQL[]; searchRankExpr: SQL | null } {
@@ -372,6 +373,13 @@ export function buildObjectListConditions(
 	// Half-open contract — Zod has already validated these as ISO-8601 strings.
 	if (query.updated_before) conditions.push(lt(objects.updatedAt, new Date(query.updated_before)))
 	if (query.updated_after) conditions.push(gt(objects.updatedAt, new Date(query.updated_after)))
+	// Type-agnostic archive hide: unless the caller explicitly opts in with
+	// `include_archived=true`, exclude any row whose status is 'archived'.
+	// The gate is type-agnostic and applies uniformly to list, board, and
+	// search reads — archived work stays hidden by default.
+	if (!query.include_archived) {
+		conditions.push(ne(objects.status, 'archived'))
+	}
 	// Field name pre-validated by extractMetadataFilters; value is parameter-bound.
 	for (const { field, value } of metadataFilters) {
 		conditions.push(sql`${objects.metadata}->>'${sql.raw(field)}' = ${value}`)
@@ -678,6 +686,7 @@ app.openapi(boardObjectsRoute, async (c) => {
 			q: query.q,
 			updated_before: query.updated_before,
 			updated_after: query.updated_after,
+			include_archived: query.include_archived,
 		},
 		parsedMetadataFilters.filters,
 	)
