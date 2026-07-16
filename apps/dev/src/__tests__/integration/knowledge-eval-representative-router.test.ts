@@ -144,7 +144,7 @@ describe('router paired-run recorded artifact', () => {
 			})
 			expect(result.dump.numPairs).toBe(REPRESENTATIVE_PAIRS.length)
 			expect(result.router?.numPairs).toBe(REPRESENTATIVE_PAIRS.length)
-			expect(Number.isFinite(result.dump.tokensPerCorrectAnswer)).toBe(true)
+			expect(Number.isFinite(result.dump.tokensPerCorrectAnswerExact)).toBe(true)
 			// Router regime should never send more prompt tokens than the dump
 			// regime — top-K subset vs. the whole corpus.
 			expect(result.router?.totalPromptTokens ?? 0).toBeLessThanOrEqual(

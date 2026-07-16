@@ -113,7 +113,8 @@ describe('paired-eval runner semantics', () => {
 			fixtureSourceCommit: REPRESENTATIVE_SOURCE_COMMIT,
 			retriever: null,
 		})
-		expect(result.dump.numCorrect).toBe(REPRESENTATIVE_PAIRS.length)
+		expect(result.dump.numCorrectExact).toBe(REPRESENTATIVE_PAIRS.length)
+		expect(result.dump.numCorrectSemantic).toBeNull()
 		expect(result.dump.retrievalAccuracy).toBe(1)
 		expect(result.router).toBeNull()
 	})
@@ -127,7 +128,7 @@ describe('paired-eval runner semantics', () => {
 		})
 		expect(result.router).not.toBeNull()
 		expect(result.router?.retrievalAccuracy).toBe(1)
-		expect(result.router?.numCorrect).toBe(REPRESENTATIVE_PAIRS.length)
+		expect(result.router?.numCorrectExact).toBe(REPRESENTATIVE_PAIRS.length)
 		// Router regime should use fewer tokens than dump — top-1 vs. full corpus.
 		expect(result.router?.totalPromptTokens).toBeLessThan(result.dump.totalPromptTokens)
 	})
@@ -141,7 +142,7 @@ describe('paired-eval runner semantics', () => {
 			retriever: emptyRetriever,
 		})
 		expect(result.router?.retrievalAccuracy).toBe(0)
-		expect(result.router?.numCorrect).toBe(0)
+		expect(result.router?.numCorrectExact).toBe(0)
 	})
 
 	it('computeRetrievalAccuracy handles missing entries as zero-hit', () => {
@@ -169,8 +170,8 @@ describe('knowledge-eval-representative recorded baseline', () => {
 				retriever: null,
 			})
 			expect(result.dump.numPairs).toBe(REPRESENTATIVE_PAIRS.length)
-			expect(result.dump.numCorrect).toBeGreaterThan(0)
-			expect(Number.isFinite(result.dump.tokensPerCorrectAnswer)).toBe(true)
+			expect(result.dump.numCorrectExact).toBeGreaterThan(0)
+			expect(Number.isFinite(result.dump.tokensPerCorrectAnswerExact)).toBe(true)
 			expect(result.dump.retrievalAccuracy).toBe(1)
 			expect(result.router).toBeNull()
 
