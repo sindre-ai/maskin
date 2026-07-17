@@ -166,7 +166,15 @@ vi.mock('@/components/shared/create-picker', () => ({
 vi.mock('@/lib/api', () => ({
 	api: { objects: { list: vi.fn(), search: vi.fn() } },
 }))
-vi.mock('@/lib/analytics', () => ({ trackEvent: vi.fn() }))
+vi.mock('@/lib/analytics', () => ({
+	trackEvent: vi.fn(),
+	trackObjectsListArrived: vi.fn(),
+	trackObjectsListGroupToggled: vi.fn(),
+}))
+vi.mock('@/lib/back-nav-tracker', () => ({
+	consumeArrivalNavType: vi.fn().mockReturnValue('direct'),
+	initBackNavTracker: vi.fn(),
+}))
 vi.mock('@/lib/query-keys', () => ({
 	queryKeys: {
 		objects: {

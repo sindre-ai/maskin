@@ -26,7 +26,7 @@ import {
 import { trackEvent, trackObjectsListArrived, trackObjectsListGroupToggled } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
-import { wasRecentBackNav } from '@/lib/back-nav-tracker'
+import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
 import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
@@ -154,17 +154,20 @@ function ObjectsPage() {
 		setRowSelection({})
 	}, [workspaceId])
 
-	// popstate fires immediately before React runs mount effects, so a
-	// sub-100ms delta is a reliable "this mount was triggered by browser
-	// back/forward" signal. PUSH/REPLACE landings (Link click, URL bar entry,
-	// hard refresh) do not fire popstate, so this stays silent for them —
-	// matching the bet's `nav_type='back'` denominator. The tracker is
-	// initialised at app boot (see main.tsx) so deep-link starts followed by a
-	// browser-back to the list are captured too.
+	// Fires on every mount, with the nav_type resolved from popstate + the
+	// initial PerformanceNavigationTiming entry. The ship-metric denominator
+	// filters to `nav_type='back'` in PostHog; the `direct` / `link` variants
+	// ride along so the arrival stream can be sliced by nav type later. The
+	// tracker is initialised at app boot (see main.tsx) so deep-link starts
+	// followed by a browser-back to the list are captured too. typeFilter is
+	// intentionally excluded from deps — a tab switch changes it under a
+	// stable mount and must not re-emit the arrival event.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: mount-once event
 	useEffect(() => {
-		if (wasRecentBackNav()) {
-			trackObjectsListArrived({ nav_type: 'back' })
-		}
+		trackObjectsListArrived({
+			nav_type: consumeArrivalNavType(),
+			objectType: typeFilter ?? null,
+		})
 	}, [])
 
 	// User-initiated group toggle is the bet's numerator. Fires unconditionally
@@ -172,9 +175,16 @@ function ObjectsPage() {
 	// enforced by the PostHog query, not the client. The `source: 'system'`
 	// variant is reserved for the eventual T2 restore path so wire-verification
 	// can tell a user rebuild apart from the silent restore.
-	const handleGroupToggle = useCallback(() => {
-		trackObjectsListGroupToggled({ source: 'user' })
-	}, [])
+	const handleGroupToggle = useCallback(
+		(expanded: boolean) => {
+			trackObjectsListGroupToggled({
+				source: 'user',
+				expanded,
+				objectType: typeFilter ?? null,
+			})
+		},
+		[typeFilter],
+	)
 
 	// Linear-style `C` shortcut opens the create picker with the active type
 	// tab pre-selected. Guarded so typing into filters/search never triggers it.

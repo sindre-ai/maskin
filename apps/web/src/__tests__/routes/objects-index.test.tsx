@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildWorkspaceWithRole } from '../factories'
 
 vi.mock('@/lib/back-nav-tracker', () => ({
-	wasRecentBackNav: vi.fn(),
+	consumeArrivalNavType: vi.fn(),
 	initBackNavTracker: vi.fn(),
 }))
 
@@ -244,30 +244,44 @@ describe('ObjectsPage', () => {
 	})
 })
 
-describe('ObjectsPage mount-effect back-nav detection', () => {
+describe('ObjectsPage mount-effect arrival event', () => {
 	beforeEach(async () => {
 		const { trackObjectsListArrived } = await import('@/lib/analytics')
+		const { consumeArrivalNavType } = await import('@/lib/back-nav-tracker')
 		vi.mocked(trackObjectsListArrived).mockClear()
+		vi.mocked(consumeArrivalNavType).mockReset()
 	})
 
-	it('fires objects_list_arrived({ nav_type: "back" }) when a browser back-nav triggered the mount', async () => {
-		const { wasRecentBackNav } = await import('@/lib/back-nav-tracker')
+	it('fires objects_list_arrived with nav_type=back and objectType=null when the mount was a browser back-nav on the All tab', async () => {
+		const { consumeArrivalNavType } = await import('@/lib/back-nav-tracker')
 		const { trackObjectsListArrived } = await import('@/lib/analytics')
-		vi.mocked(wasRecentBackNav).mockReturnValue(true)
+		vi.mocked(consumeArrivalNavType).mockReturnValue('back')
 
 		render(<ObjectsPage />)
 
 		expect(trackObjectsListArrived).toHaveBeenCalledTimes(1)
-		expect(trackObjectsListArrived).toHaveBeenCalledWith({ nav_type: 'back' })
+		expect(trackObjectsListArrived).toHaveBeenCalledWith({ nav_type: 'back', objectType: null })
 	})
 
-	it('stays silent on a PUSH/REPLACE landing where no popstate preceded the mount', async () => {
-		const { wasRecentBackNav } = await import('@/lib/back-nav-tracker')
+	it('fires objects_list_arrived on every mount, including direct (URL-bar) and link (SPA nav) landings', async () => {
+		const { consumeArrivalNavType } = await import('@/lib/back-nav-tracker')
 		const { trackObjectsListArrived } = await import('@/lib/analytics')
-		vi.mocked(wasRecentBackNav).mockReturnValue(false)
 
+		vi.mocked(consumeArrivalNavType).mockReturnValue('direct')
+		const { unmount } = render(<ObjectsPage />)
+		expect(trackObjectsListArrived).toHaveBeenCalledTimes(1)
+		expect(trackObjectsListArrived).toHaveBeenLastCalledWith({
+			nav_type: 'direct',
+			objectType: null,
+		})
+		unmount()
+
+		vi.mocked(consumeArrivalNavType).mockReturnValue('link')
 		render(<ObjectsPage />)
-
-		expect(trackObjectsListArrived).not.toHaveBeenCalled()
+		expect(trackObjectsListArrived).toHaveBeenCalledTimes(2)
+		expect(trackObjectsListArrived).toHaveBeenLastCalledWith({
+			nav_type: 'link',
+			objectType: null,
+		})
 	})
 })

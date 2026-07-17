@@ -435,38 +435,55 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
-	it('objects_list_arrived carries nav_type for the bet denominator', () => {
+	it('objects_list_arrived carries nav_type and objectType for the bet denominator', () => {
 		const capture = captureSpy()
 
-		trackObjectsListArrived({ nav_type: 'back' })
+		trackObjectsListArrived({ nav_type: 'back', objectType: 'bet' })
 
-		expect(capture).toHaveBeenCalledWith('objects_list_arrived', { nav_type: 'back' })
+		expect(capture).toHaveBeenCalledWith('objects_list_arrived', {
+			nav_type: 'back',
+			objectType: 'bet',
+		})
 	})
 
-	it('objects_list_arrived accepts push and replace for future re-use', () => {
+	it('objects_list_arrived accepts direct and link for the always-emit path', () => {
 		const capture = captureSpy()
 
-		trackObjectsListArrived({ nav_type: 'push' })
-		trackObjectsListArrived({ nav_type: 'replace' })
+		trackObjectsListArrived({ nav_type: 'direct', objectType: null })
+		trackObjectsListArrived({ nav_type: 'link', objectType: 'task' })
 
-		expect(capture).toHaveBeenNthCalledWith(1, 'objects_list_arrived', { nav_type: 'push' })
-		expect(capture).toHaveBeenNthCalledWith(2, 'objects_list_arrived', { nav_type: 'replace' })
+		expect(capture).toHaveBeenNthCalledWith(1, 'objects_list_arrived', {
+			nav_type: 'direct',
+			objectType: null,
+		})
+		expect(capture).toHaveBeenNthCalledWith(2, 'objects_list_arrived', {
+			nav_type: 'link',
+			objectType: 'task',
+		})
 	})
 
-	it('objects_list_group_toggled carries source for the bet numerator', () => {
+	it('objects_list_group_toggled carries source, expanded, and objectType for the bet numerator', () => {
 		const capture = captureSpy()
 
-		trackObjectsListGroupToggled({ source: 'user' })
+		trackObjectsListGroupToggled({ source: 'user', expanded: true, objectType: 'bet' })
 
-		expect(capture).toHaveBeenCalledWith('objects_list_group_toggled', { source: 'user' })
+		expect(capture).toHaveBeenCalledWith('objects_list_group_toggled', {
+			source: 'user',
+			expanded: true,
+			objectType: 'bet',
+		})
 	})
 
 	it('objects_list_group_toggled accepts the system source for restore wire-verification', () => {
 		const capture = captureSpy()
 
-		trackObjectsListGroupToggled({ source: 'system' })
+		trackObjectsListGroupToggled({ source: 'system', expanded: false, objectType: null })
 
-		expect(capture).toHaveBeenCalledWith('objects_list_group_toggled', { source: 'system' })
+		expect(capture).toHaveBeenCalledWith('objects_list_group_toggled', {
+			source: 'system',
+			expanded: false,
+			objectType: null,
+		})
 	})
 
 	it('loop_graduated carries entity_type=loop and the source_bet_id join key', () => {

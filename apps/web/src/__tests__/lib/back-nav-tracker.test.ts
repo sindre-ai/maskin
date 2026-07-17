@@ -1,5 +1,6 @@
 import {
 	__resetBackNavTrackerForTesting,
+	consumeArrivalNavType,
 	initBackNavTracker,
 	wasRecentBackNav,
 } from '@/lib/back-nav-tracker'
@@ -58,5 +59,64 @@ describe('back-nav-tracker', () => {
 
 		const popstateCalls = addSpy.mock.calls.filter(([type]) => type === 'popstate')
 		expect(popstateCalls).toHaveLength(1)
+	})
+})
+
+describe('consumeArrivalNavType', () => {
+	function mockNavigationEntry(type: NavigationTimingType | undefined): void {
+		const entries = type ? [{ type } as PerformanceNavigationTiming] : []
+		vi.spyOn(performance, 'getEntriesByType').mockReturnValue(entries)
+	}
+
+	it('returns "back" when a popstate fired within the window', () => {
+		initBackNavTracker()
+		const spy = vi.spyOn(performance, 'now').mockReturnValue(1000)
+		window.dispatchEvent(new PopStateEvent('popstate'))
+		spy.mockReturnValue(1050)
+
+		expect(consumeArrivalNavType()).toBe('back')
+	})
+
+	it('returns "direct" on the first arrival when the initial navigation was a URL-bar entry', () => {
+		mockNavigationEntry('navigate')
+		initBackNavTracker()
+
+		expect(consumeArrivalNavType()).toBe('direct')
+	})
+
+	it('returns "direct" on the first arrival when the initial navigation was a hard refresh', () => {
+		mockNavigationEntry('reload')
+		initBackNavTracker()
+
+		expect(consumeArrivalNavType()).toBe('direct')
+	})
+
+	it('returns "back" on the first arrival when the initial navigation was browser back/forward at page load', () => {
+		mockNavigationEntry('back_forward')
+		initBackNavTracker()
+
+		expect(consumeArrivalNavType()).toBe('back')
+	})
+
+	it('returns "link" on subsequent arrivals with no popstate (SPA Link nav)', () => {
+		mockNavigationEntry('navigate')
+		initBackNavTracker()
+
+		expect(consumeArrivalNavType()).toBe('direct')
+		expect(consumeArrivalNavType()).toBe('link')
+		expect(consumeArrivalNavType()).toBe('link')
+	})
+
+	it('prefers "back" over "link" when a popstate fires between arrivals', () => {
+		mockNavigationEntry('navigate')
+		initBackNavTracker()
+		const spy = vi.spyOn(performance, 'now').mockReturnValue(1000)
+
+		expect(consumeArrivalNavType()).toBe('direct')
+
+		window.dispatchEvent(new PopStateEvent('popstate'))
+		spy.mockReturnValue(1050)
+
+		expect(consumeArrivalNavType()).toBe('back')
 	})
 })
