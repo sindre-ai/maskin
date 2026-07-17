@@ -244,11 +244,21 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 		ref,
 		() => ({
 			getFirstVisibleRowId: () => {
-				const first = virtualizerRef.current.getVirtualItems()[0]
-				if (!first) return null
-				const row = rowsRef.current[first.index]
-				if (!row || row.getIsGrouped()) return null
-				return row.original?.id ?? null
+				// The virtualizer keeps overscan rows in the item list on
+				// either side of the viewport (mobile: 10, desktop: 20). Return
+				// the topmost item whose bottom is inside the viewport, not
+				// the topmost item in the overscan window — otherwise capture
+				// and restore misalign by a full overscan window.
+				const scroller = parentRef.current
+				if (!scroller) return null
+				const scrollTop = scroller.scrollTop
+				for (const item of virtualizerRef.current.getVirtualItems()) {
+					if (item.end <= scrollTop) continue
+					const row = rowsRef.current[item.index]
+					if (!row || row.getIsGrouped()) continue
+					return row.original?.id ?? null
+				}
+				return null
 			},
 			scrollToRowId: (rowId: string) => {
 				const idx = rowsRef.current.findIndex((r) => !r.getIsGrouped() && r.original?.id === rowId)
