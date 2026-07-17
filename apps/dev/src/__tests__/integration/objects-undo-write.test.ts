@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { events, actors, objects, workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME } from '@maskin/shared'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { insertActor, insertObject, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
@@ -278,8 +278,23 @@ describe('Objects undo-write integration', () => {
 	})
 
 	// KA actor rows are seeded per-test; this cleanup keeps the shared test-actor
-	// row unaffected while ensuring the agents we insert don't accumulate.
+	// row unaffected while ensuring the agents we insert don't accumulate. The
+	// events rows seeded via seedKAWrite() reference these actors via a
+	// no-cascade FK, so they must be deleted first or the actor delete violates
+	// events_actor_id_actors_id_fk.
 	afterEach(async () => {
-		await db.delete(actors).where(eq(actors.name, DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME))
+		const kaAgents = await db
+			.select({ id: actors.id })
+			.from(actors)
+			.where(eq(actors.name, DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME))
+		if (kaAgents.length > 0) {
+			await db.delete(events).where(
+				inArray(
+					events.actorId,
+					kaAgents.map((a) => a.id),
+				),
+			)
+			await db.delete(actors).where(eq(actors.name, DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME))
+		}
 	})
 })
