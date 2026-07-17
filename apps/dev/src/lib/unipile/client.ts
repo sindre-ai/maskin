@@ -1,13 +1,19 @@
-// Minimal Unipile HTTP client — only the two endpoints the self-serve
-// LinkedIn connect flow needs: create a hosted-auth link and read the account
-// back on callback. If more of Unipile's API becomes needed (send message,
-// list conversations), extend this file rather than adding a second client.
+// Minimal Unipile HTTP client — the endpoints the self-serve LinkedIn flow
+// needs: create a hosted-auth link, read the account back on callback, and
+// send a message via a connected account. Extend this file rather than
+// adding a second client.
 //
 // Unipile's hosted-auth model: POST /api/v1/hosted/accounts/link returns a
 // one-time URL the user is sent to. When they finish, Unipile redirects them
 // to the `success_redirect_url` we provided and echoes back the `name` we
 // supplied — the same nonce we validate in the callback. The created account
 // is discoverable via GET /api/v1/accounts?name=<our-name>.
+//
+// Send model: LinkedIn messages go through two Unipile endpoints depending on
+// whether the conversation exists — POST /api/v1/chats starts a new one with
+// a first message, POST /api/v1/chats/{chat_id}/messages appends to it.
+// `sendChatMessage` picks the right endpoint based on whether `chatId` was
+// supplied and returns a normalised { chatId, messageId } for the caller.
 
 import { logger } from '../logger'
 
@@ -171,4 +177,73 @@ export function extractSendingAs(account: UnipileAccount): {
 		name: im?.username ?? null,
 		providerId: im?.provider_id ?? null,
 	}
+}
+
+export interface SendChatMessageInput {
+	/** The Unipile-managed account id — from the connected `linkedin_accounts` row. */
+	accountId: string
+	/** Existing Unipile chat id to append to. If omitted, `attendeesProviderIds` must be set. */
+	chatId?: string
+	/** LinkedIn provider ids of the recipient(s). Used only when starting a new chat. */
+	attendeesProviderIds?: string[]
+	/** Message body. */
+	text: string
+}
+
+export interface SendChatMessageResult {
+	chatId: string
+	messageId: string
+}
+
+/**
+ * Send a LinkedIn message via a customer-connected Unipile account. Picks the
+ * right Unipile endpoint based on whether `chatId` is supplied — appending to
+ * an existing conversation vs. starting a new one with a first message. Both
+ * shapes normalise to `{ chatId, messageId }` so the caller doesn't need to
+ * branch on the response envelope.
+ */
+export async function sendChatMessage(
+	config: UnipileClientConfig,
+	input: SendChatMessageInput,
+): Promise<SendChatMessageResult> {
+	if (input.chatId) {
+		const res = await unipileFetch(
+			config,
+			`/api/v1/chats/${encodeURIComponent(input.chatId)}/messages`,
+			{
+				method: 'POST',
+				body: JSON.stringify({ account_id: input.accountId, text: input.text }),
+			},
+		)
+		const json = (await res.json()) as { message_id?: string; id?: string }
+		const messageId = json.message_id ?? json.id
+		if (!messageId) {
+			throw new UnipileApiError(200, `/api/v1/chats/${input.chatId}/messages`, JSON.stringify(json))
+		}
+		return { chatId: input.chatId, messageId }
+	}
+
+	if (!input.attendeesProviderIds || input.attendeesProviderIds.length === 0) {
+		throw new Error('sendChatMessage requires chatId or attendeesProviderIds')
+	}
+
+	const res = await unipileFetch(config, '/api/v1/chats', {
+		method: 'POST',
+		body: JSON.stringify({
+			account_id: input.accountId,
+			attendees_ids: input.attendeesProviderIds,
+			text: input.text,
+		}),
+	})
+	const json = (await res.json()) as {
+		chat_id?: string
+		id?: string
+		message_id?: string
+	}
+	const chatId = json.chat_id ?? json.id
+	const messageId = json.message_id
+	if (!chatId || !messageId) {
+		throw new UnipileApiError(200, '/api/v1/chats', JSON.stringify(json))
+	}
+	return { chatId, messageId }
 }

@@ -4,7 +4,10 @@ import type { Database } from '@maskin/db'
 import { events, linkedinAccounts, workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
-import { trackLinkedinAccountConnected } from '../lib/analytics/linkedin-events'
+import {
+	trackLinkedinAccountConnected,
+	trackLinkedinMessageSent,
+} from '../lib/analytics/linkedin-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
 import { derivePacing } from '../lib/linkedin/pacing'
@@ -17,7 +20,10 @@ import {
 	findAccountByName,
 	getAccountById,
 	readUnipileConfig,
+	sendChatMessage,
 } from '../lib/unipile/client'
+
+const SENDABLE_ACCOUNT_STATES = new Set(['syncing', 'warm_up', 'healthy'])
 
 type Env = {
 	Variables: {
@@ -377,6 +383,142 @@ app.openapi(callbackRoute, (async (c) => {
 
 	return c.redirect(`${frontendUrl}${agentPath}?linkedin=connected`)
 }) as RouteHandler<typeof callbackRoute, Env>)
+
+// ── POST /api/linkedin/messages ────────────────────────────────────────────
+//
+// Send-half of the bet's compound ship metric. Sends a LinkedIn message via
+// the workspace's customer-connected Unipile account and emits the
+// `linkedin_message_sent` PostHog event on success.
+//
+// Guardrails:
+//   - The route reads the workspace's `linkedin_accounts` row. If none exists,
+//     404 — the workspace hasn't connected a LinkedIn account and no send is
+//     possible.
+//   - The account state must be `syncing`, `warm_up`, or `healthy`. Any other
+//     state (`handoff`, `restricted`, `reconnect`) blocks the send with 409
+//     per the bet AC ("Restricted state stops all agent sending", "Reconnect
+//     state pauses the agent").
+//   - The Idempotency-Key middleware in front of `/api/*` prevents client
+//     retries with the same key from re-hitting Unipile (and re-emitting).
+//   - The PostHog emit is inside the success branch after Unipile returns
+//     2xx — a failed send never emits.
+
+const sendMessageBodySchema = z
+	.object({
+		text: z.string().min(1).max(8000),
+		chat_id: z.string().min(1).optional(),
+		attendees_provider_ids: z.array(z.string().min(1)).min(1).optional(),
+	})
+	.refine((v) => v.chat_id || (v.attendees_provider_ids && v.attendees_provider_ids.length > 0), {
+		message: 'Either chat_id or attendees_provider_ids must be provided',
+	})
+
+const sendMessageResponseSchema = z.object({
+	chat_id: z.string(),
+	message_id: z.string(),
+})
+
+const sendMessageRoute = createRoute({
+	method: 'post',
+	path: '/messages',
+	tags: ['linkedin'],
+	summary: "Send a LinkedIn message via the workspace's connected account",
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: sendMessageBodySchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Message sent',
+			content: { 'application/json': { schema: sendMessageResponseSchema } },
+		},
+		404: {
+			description: 'No LinkedIn account connected for this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Account is not in a sendable state',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		501: {
+			description: 'Unipile is not configured on this deployment',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		502: {
+			description: 'Unipile rejected the send',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(sendMessageRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const body = c.req.valid('json')
+
+	const unipile = readUnipileConfig()
+	if (!unipile) {
+		return c.json(
+			createApiError(
+				'INTERNAL_ERROR',
+				'Unipile is not configured. Set UNIPILE_API_KEY and UNIPILE_DSN.',
+			),
+			501,
+		)
+	}
+
+	const [account] = await db
+		.select({
+			id: linkedinAccounts.id,
+			state: linkedinAccounts.state,
+			unipileAccountId: linkedinAccounts.unipileAccountId,
+		})
+		.from(linkedinAccounts)
+		.where(eq(linkedinAccounts.workspaceId, workspaceId))
+		.limit(1)
+
+	if (!account || !account.unipileAccountId) {
+		return c.json(
+			createApiError('NOT_FOUND', 'No LinkedIn account connected for this workspace'),
+			404,
+		)
+	}
+
+	if (!SENDABLE_ACCOUNT_STATES.has(account.state)) {
+		return c.json(
+			createApiError('CONFLICT', `LinkedIn account is in state '${account.state}' and cannot send`),
+			409,
+		)
+	}
+
+	let result: Awaited<ReturnType<typeof sendChatMessage>>
+	try {
+		result = await sendChatMessage(unipile, {
+			accountId: account.unipileAccountId,
+			chatId: body.chat_id,
+			attendeesProviderIds: body.attendees_provider_ids,
+			text: body.text,
+		})
+	} catch (err) {
+		logger.error('Unipile send failed', {
+			workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+			...(err instanceof UnipileApiError ? { status: err.status, path: err.path } : {}),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to send LinkedIn message'), 502)
+	}
+
+	await trackLinkedinMessageSent({
+		workspaceId,
+		actorId,
+		unipileAccountId: account.unipileAccountId,
+		chatId: result.chatId,
+		messageId: result.messageId,
+	})
+
+	return c.json({ chat_id: result.chatId, message_id: result.messageId })
+}) as RouteHandler<typeof sendMessageRoute, Env>)
 
 export default app
 
