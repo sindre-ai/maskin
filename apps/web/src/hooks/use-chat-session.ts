@@ -47,6 +47,15 @@ export type ChatSessionStatus = 'idle' | 'starting' | 'connecting' | 'ready' | '
 export interface UseChatSessionOptions {
 	workspaceId: string
 	agentActorId: string | null
+	/**
+	 * Kebab-cased role of the agent that opened the chat. Rides on
+	 * `chat_session_started` as `entry_agent_role` — set to `'chief-of-staff'`
+	 * when the workspace default routed the chat, otherwise the picked actor's
+	 * role. Callers derive it from the actor's display name via
+	 * `deriveEntryAgentRole()` in `@/lib/analytics`. Optional so pre-CoS
+	 * callers keep compiling; passing `null` leaves the property unset.
+	 */
+	entryAgentRole?: string | null
 	enabled?: boolean
 }
 
@@ -75,6 +84,7 @@ export interface UseChatSessionResult {
 export function useChatSession({
 	workspaceId,
 	agentActorId,
+	entryAgentRole = null,
 	enabled = true,
 }: UseChatSessionOptions): UseChatSessionResult {
 	const [sessionId, setSessionId] = useState<string | null>(null)
@@ -218,6 +228,7 @@ export function useChatSession({
 						action_prompt: BOOTSTRAP_ACTION_PROMPT,
 						config: { interactive: true },
 						auto_start: true,
+						...(entryAgentRole ? { entry_agent_role: entryAgentRole } : {}),
 					})
 					// If reset() fired between create() resolving and now, the
 					// user discarded this session — don't mount an SSE stream
@@ -241,6 +252,7 @@ export function useChatSession({
 						entity_id: session.id,
 						entity_type: 'session',
 						entry_point: 'sindre_session',
+						entry_agent_role: entryAgentRole,
 					})
 					// Wait for the container to actually be running before we
 					// POST the user's turn — otherwise the input endpoint
@@ -280,7 +292,7 @@ export function useChatSession({
 			const body = attachments && attachments.length > 0 ? { content, attachments } : { content }
 			await api.sessions.input(currentSessionId, body, workspaceId)
 		},
-		[sessionId, workspaceId, agentActorId],
+		[sessionId, workspaceId, agentActorId, entryAgentRole],
 	)
 
 	const reset = useCallback(() => {

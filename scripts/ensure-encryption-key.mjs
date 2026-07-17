@@ -34,6 +34,7 @@ function isValidHexKey(value) {
 
 const DATABASE_URL_NAME = 'DATABASE_URL'
 const DATABASE_URL_DEFAULT = 'postgresql://postgres:postgres@localhost:5432/maskin'
+const SKIP_DB_DEFAULT = process.argv.includes('--skip-db-default')
 
 let content = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, 'utf-8') : ''
 let changed = false
@@ -50,6 +51,13 @@ if (!isValidHexKey(keyFromEnv) && !isValidHexKey(keyFromFile)) {
 const dbUrlFromEnv = (process.env[DATABASE_URL_NAME] ?? '').trim()
 const dbUrlFromFile = readEnvValue(content, DATABASE_URL_NAME)
 if (!dbUrlFromEnv && !dbUrlFromFile) {
+	if (SKIP_DB_DEFAULT) {
+		if (changed) writeFileSync(ENV_PATH, content)
+		console.error(
+			`${DATABASE_URL_NAME} is not set and --skip-db-default was passed, so no local default will be written. Set ${DATABASE_URL_NAME} in .env or the environment (e.g. a Supabase connection string) before running this stack.`,
+		)
+		process.exit(1)
+	}
 	content = upsertEnvLine(content, DATABASE_URL_NAME, DATABASE_URL_DEFAULT)
 	changed = true
 	console.log(`Set default ${DATABASE_URL_NAME} (written to ${ENV_PATH})`)
