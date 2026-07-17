@@ -166,6 +166,7 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
           ARGOS_TOKEN: ${{ secrets.ARGOS_TOKEN }}
+          DEBUG: pw:webserver
 
       - name: Upload Playwright report
         if: always()
