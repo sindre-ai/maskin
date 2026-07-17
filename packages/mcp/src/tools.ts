@@ -875,6 +875,19 @@ export const tools = {
 					memory_mb: z.number().int().min(256).max(8192).optional(),
 					cpu_shares: z.number().int().min(256).max(4096).optional(),
 					env_vars: z.record(z.string()).optional(),
+					browserRequired: z
+						.boolean()
+						.optional()
+						.describe(
+							'Provision a Chromium CDP browser sidecar and inject BROWSER_CDP_URL so a playwright MCP server can attach. Auto-enabled when the actor already has an MCP server referencing ${BROWSER_CDP_URL} — set explicitly only when you also need previewGuestPorts.',
+						),
+					previewGuestPorts: z
+						.array(z.number().int().positive().max(65535))
+						.max(8)
+						.optional()
+						.describe(
+							'Guest port(s) inside the session to publish on the browser sidecar bridge (e.g. 5173 for a Vite dev server), so the sidecar\'s Playwright can reach a dev server the agent boots locally inside its own session — no external deploy needed. Implies browserRequired.',
+						),
 				})
 				.optional()
 				.describe('Container configuration overrides'),

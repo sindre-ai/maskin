@@ -165,6 +165,29 @@ describe('sessionConfigSchema', () => {
 		})
 		expect(result.mcps).toHaveLength(1)
 	})
+
+	it('accepts previewGuestPorts alongside browserRequired', () => {
+		const result = sessionConfigSchema.parse({
+			browserRequired: true,
+			previewGuestPorts: [5173, 3000],
+		})
+		expect(result.previewGuestPorts).toEqual([5173, 3000])
+	})
+
+	it('leaves previewGuestPorts undefined by default', () => {
+		const result = sessionConfigSchema.parse({})
+		expect(result.previewGuestPorts).toBeUndefined()
+	})
+
+	it('rejects previewGuestPorts entries above 65535', () => {
+		expect(() => sessionConfigSchema.parse({ previewGuestPorts: [70000] })).toThrow()
+	})
+
+	it('rejects more than 8 previewGuestPorts entries', () => {
+		expect(() =>
+			sessionConfigSchema.parse({ previewGuestPorts: [1, 2, 3, 4, 5, 6, 7, 8, 9] }),
+		).toThrow()
+	})
 })
 
 describe('createSessionSchema', () => {
