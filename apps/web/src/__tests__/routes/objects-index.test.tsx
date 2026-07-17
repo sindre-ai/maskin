@@ -1,7 +1,22 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { buildWorkspaceWithRole } from '../factories'
+
+vi.mock('@/lib/back-nav-tracker', () => ({
+	wasRecentBackNav: vi.fn(),
+	initBackNavTracker: vi.fn(),
+}))
+
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return {
+		...actual,
+		trackObjectsListArrived: vi.fn(),
+		trackObjectsListGroupToggled: vi.fn(),
+		trackEvent: vi.fn(),
+	}
+})
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -226,5 +241,33 @@ describe('ObjectsPage', () => {
 		expect(screen.getByText('Objects')).toBeInTheDocument()
 		expect(screen.getByTestId('data-table')).toBeInTheDocument()
 		expect(screen.getByTestId('data-table-toolbar')).toBeInTheDocument()
+	})
+})
+
+describe('ObjectsPage mount-effect back-nav detection', () => {
+	beforeEach(async () => {
+		const { trackObjectsListArrived } = await import('@/lib/analytics')
+		vi.mocked(trackObjectsListArrived).mockClear()
+	})
+
+	it('fires objects_list_arrived({ nav_type: "back" }) when a browser back-nav triggered the mount', async () => {
+		const { wasRecentBackNav } = await import('@/lib/back-nav-tracker')
+		const { trackObjectsListArrived } = await import('@/lib/analytics')
+		vi.mocked(wasRecentBackNav).mockReturnValue(true)
+
+		render(<ObjectsPage />)
+
+		expect(trackObjectsListArrived).toHaveBeenCalledTimes(1)
+		expect(trackObjectsListArrived).toHaveBeenCalledWith({ nav_type: 'back' })
+	})
+
+	it('stays silent on a PUSH/REPLACE landing where no popstate preceded the mount', async () => {
+		const { wasRecentBackNav } = await import('@/lib/back-nav-tracker')
+		const { trackObjectsListArrived } = await import('@/lib/analytics')
+		vi.mocked(wasRecentBackNav).mockReturnValue(false)
+
+		render(<ObjectsPage />)
+
+		expect(trackObjectsListArrived).not.toHaveBeenCalled()
 	})
 })

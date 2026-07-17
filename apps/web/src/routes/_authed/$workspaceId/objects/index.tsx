@@ -26,6 +26,7 @@ import {
 import { trackEvent, trackObjectsListArrived, trackObjectsListGroupToggled } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
+import { wasRecentBackNav } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
 import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
@@ -44,21 +45,6 @@ import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstac
 import { Filter, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-
-// Browser back/forward is the only signal for the bet's denominator
-// (`objects_list_arrived(nav_type='back')`). `popstate` fires exactly for those
-// two nav types and never for `Link`-driven pushState — so recording its
-// timestamp at module load lets the Objects route's mount effect distinguish a
-// back-nav landing from a PUSH/REPLACE landing without hooking into the router
-// internals (TanStack Router 1.168 doesn't surface the last history action).
-// Module scope on purpose: the Objects route unmounts on nav to a detail page
-// and re-mounts on browser-back, so this signal has to live outside the tree.
-let lastPopstateAt = 0
-if (typeof window !== 'undefined') {
-	window.addEventListener('popstate', () => {
-		lastPopstateAt = performance.now()
-	})
-}
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	component: ObjectsPage,
@@ -172,9 +158,11 @@ function ObjectsPage() {
 	// sub-100ms delta is a reliable "this mount was triggered by browser
 	// back/forward" signal. PUSH/REPLACE landings (Link click, URL bar entry,
 	// hard refresh) do not fire popstate, so this stays silent for them —
-	// matching the bet's `nav_type='back'` denominator.
+	// matching the bet's `nav_type='back'` denominator. The tracker is
+	// initialised at app boot (see main.tsx) so deep-link starts followed by a
+	// browser-back to the list are captured too.
 	useEffect(() => {
-		if (performance.now() - lastPopstateAt < 100) {
+		if (wasRecentBackNav()) {
 			trackObjectsListArrived({ nav_type: 'back' })
 		}
 	}, [])
