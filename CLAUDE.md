@@ -33,6 +33,9 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 ## Reference
 - `docs/reference/README.md` — Canonical documentation for Maskin's primitives — read the matching page before trusting model memory.
 
+## Runbooks
+- `docs/runbooks/github-agent-merge-reliability.md` — diagnostic + recovery guide for GitHub write-path failures (approve, merge, push, PR open) in autonomous agent sessions; includes the first-move pattern for late-run 401s (token-mint delta, installation-ID churn) and the failure-tag glossary set by the tool-call layer
+
 ## Architecture
 - Modular monorepo managed by Turborepo + pnpm workspaces: `apps/` (deployable services) + `packages/` (shared libs)
 - Backend (`apps/dev`): Hono.js + OpenAPIHono + Drizzle ORM + PostgreSQL, runs on port 3000
