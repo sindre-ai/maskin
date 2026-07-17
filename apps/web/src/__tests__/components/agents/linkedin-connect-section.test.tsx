@@ -1,9 +1,11 @@
 import {
 	LinkedinChannelsSection,
 	LinkedinHeroPill,
+	hasLinkedinCapability,
+	useLinkedinSendingBlock,
 } from '@/components/agents/linkedin-connect-section'
 import type { LinkedinAccountResponse, LinkedinAccountState } from '@/lib/api'
-import { render, screen } from '@testing-library/react'
+import { render, renderHook, screen, waitFor } from '@testing-library/react'
 import { TestWrapper } from '../../setup'
 
 vi.mock('@/lib/api', () => ({
@@ -56,7 +58,11 @@ describe('LinkedinChannelsSection — state coverage', () => {
 		vi.mocked(api.linkedin.account).mockResolvedValueOnce(null)
 		render(
 			<TestWrapper>
-				<LinkedinChannelsSection agentId={agentId} workspaceId={workspaceId} />
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
 			</TestWrapper>,
 		)
 		expect(await screen.findByRole('button', { name: /connect linkedin/i })).toBeInTheDocument()
@@ -68,7 +74,11 @@ describe('LinkedinChannelsSection — state coverage', () => {
 		vi.mocked(api.linkedin.account).mockResolvedValueOnce(buildAccount({ state: 'handoff' }))
 		render(
 			<TestWrapper>
-				<LinkedinChannelsSection agentId={agentId} workspaceId={workspaceId} />
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
 			</TestWrapper>,
 		)
 		expect(await screen.findByRole('button', { name: /reopen unipile/i })).toBeInTheDocument()
@@ -83,7 +93,11 @@ describe('LinkedinChannelsSection — state coverage', () => {
 		)
 		render(
 			<TestWrapper>
-				<LinkedinChannelsSection agentId={agentId} workspaceId={workspaceId} />
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
 			</TestWrapper>,
 		)
 		const syncButton = await screen.findByRole('button', { name: /syncing/i })
@@ -107,7 +121,11 @@ describe('LinkedinChannelsSection — state coverage', () => {
 		)
 		render(
 			<TestWrapper>
-				<LinkedinChannelsSection agentId={agentId} workspaceId={workspaceId} />
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
 			</TestWrapper>,
 		)
 		expect(await screen.findByText(/warm-up · day 3 of 14/i)).toBeInTheDocument()
@@ -119,7 +137,11 @@ describe('LinkedinChannelsSection — state coverage', () => {
 		vi.mocked(api.linkedin.account).mockResolvedValueOnce(buildAccount({ state: 'healthy' }))
 		render(
 			<TestWrapper>
-				<LinkedinChannelsSection agentId={agentId} workspaceId={workspaceId} />
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
 			</TestWrapper>,
 		)
 		expect(await screen.findByText('Sebastian Bakke')).toBeInTheDocument()
@@ -132,7 +154,11 @@ describe('LinkedinChannelsSection — state coverage', () => {
 		vi.mocked(api.linkedin.account).mockResolvedValueOnce(buildAccount({ state: 'reconnect' }))
 		render(
 			<TestWrapper>
-				<LinkedinChannelsSection agentId={agentId} workspaceId={workspaceId} />
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
 			</TestWrapper>,
 		)
 		expect(await screen.findByRole('button', { name: /reconnect/i })).toBeInTheDocument()
@@ -143,7 +169,11 @@ describe('LinkedinChannelsSection — state coverage', () => {
 		vi.mocked(api.linkedin.account).mockResolvedValueOnce(buildAccount({ state: 'restricted' }))
 		render(
 			<TestWrapper>
-				<LinkedinChannelsSection agentId={agentId} workspaceId={workspaceId} />
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
 			</TestWrapper>,
 		)
 		await screen.findByText(/restricted by linkedin/i)
@@ -157,7 +187,7 @@ describe('LinkedinHeroPill', () => {
 		vi.mocked(api.linkedin.account).mockResolvedValueOnce(null)
 		render(
 			<TestWrapper>
-				<LinkedinHeroPill workspaceId={workspaceId} />
+				<LinkedinHeroPill workspaceId={workspaceId} tools={{ capabilities: ['linkedin'] }} />
 			</TestWrapper>,
 		)
 		expect(await screen.findByText(/needs linkedin/i)).toBeInTheDocument()
@@ -178,7 +208,7 @@ describe('LinkedinHeroPill', () => {
 		)
 		render(
 			<TestWrapper>
-				<LinkedinHeroPill workspaceId={workspaceId} />
+				<LinkedinHeroPill workspaceId={workspaceId} tools={{ capabilities: ['linkedin'] }} />
 			</TestWrapper>,
 		)
 		expect(await screen.findByText(/warming up · day 5 of 14/i)).toBeInTheDocument()
@@ -188,9 +218,76 @@ describe('LinkedinHeroPill', () => {
 		vi.mocked(api.linkedin.account).mockResolvedValueOnce(buildAccount({ state: 'restricted' }))
 		render(
 			<TestWrapper>
-				<LinkedinHeroPill workspaceId={workspaceId} />
+				<LinkedinHeroPill workspaceId={workspaceId} tools={{ capabilities: ['linkedin'] }} />
 			</TestWrapper>,
 		)
 		expect(await screen.findByText(/restricted · stopped/i)).toBeInTheDocument()
+	})
+})
+
+describe('hasLinkedinCapability', () => {
+	it('returns true when tools.capabilities contains "linkedin"', () => {
+		expect(hasLinkedinCapability({ capabilities: ['linkedin'] })).toBe(true)
+		expect(hasLinkedinCapability({ capabilities: ['linkedin', 'other'] })).toBe(true)
+	})
+
+	it('returns false for null, undefined, or missing capabilities', () => {
+		expect(hasLinkedinCapability(null)).toBe(false)
+		expect(hasLinkedinCapability(undefined)).toBe(false)
+		expect(hasLinkedinCapability({})).toBe(false)
+		expect(hasLinkedinCapability({ mcpServers: {} })).toBe(false)
+	})
+
+	it('returns false when capabilities is not an array or lacks "linkedin"', () => {
+		expect(hasLinkedinCapability({ capabilities: [] })).toBe(false)
+		expect(hasLinkedinCapability({ capabilities: ['github'] })).toBe(false)
+		expect(hasLinkedinCapability({ capabilities: 'linkedin' })).toBe(false)
+	})
+})
+
+describe('LinkedIn UI gating on non-SDR agents', () => {
+	it('LinkedinChannelsSection renders nothing when the agent lacks the capability', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(buildAccount({ state: 'restricted' }))
+		const { container } = render(
+			<TestWrapper>
+				<LinkedinChannelsSection agentId={agentId} workspaceId={workspaceId} tools={null} />
+			</TestWrapper>,
+		)
+		expect(container).toBeEmptyDOMElement()
+		expect(api.linkedin.account).not.toHaveBeenCalled()
+	})
+
+	it('LinkedinHeroPill renders nothing when the agent lacks the capability', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(null)
+		const { container } = render(
+			<TestWrapper>
+				<LinkedinHeroPill workspaceId={workspaceId} tools={{ mcpServers: {} }} />
+			</TestWrapper>,
+		)
+		expect(container).toBeEmptyDOMElement()
+		expect(api.linkedin.account).not.toHaveBeenCalled()
+	})
+
+	it('useLinkedinSendingBlock returns unblocked for agents without the capability, even if the account is restricted', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValue(buildAccount({ state: 'restricted' }))
+		const { result } = renderHook(() => useLinkedinSendingBlock({ workspaceId, tools: null }), {
+			wrapper: TestWrapper,
+		})
+		expect(result.current).toEqual({ blocked: false, reason: null })
+		expect(api.linkedin.account).not.toHaveBeenCalled()
+	})
+
+	it('useLinkedinSendingBlock blocks the SDR agent when the account is restricted', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValue(buildAccount({ state: 'restricted' }))
+		const { result } = renderHook(
+			() =>
+				useLinkedinSendingBlock({
+					workspaceId,
+					tools: { capabilities: ['linkedin'] },
+				}),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.blocked).toBe(true))
+		expect(result.current.reason).toMatch(/restricted/i)
 	})
 })

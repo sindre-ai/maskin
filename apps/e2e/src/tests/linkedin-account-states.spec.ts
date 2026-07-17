@@ -101,7 +101,13 @@ test.describe('LinkedIn account state UI on agent detail', () => {
 					'content-type': 'application/json',
 					Authorization: `Bearer ${account.apiKey}`,
 				},
-				data: { type: 'agent', name: `LinkedIn State Agent ${Date.now()}` },
+				// tools.capabilities: ['linkedin'] is what mounts the LinkedIn UI on the
+				// agent detail page — non-SDR agents omit it and see no LinkedIn UI.
+				data: {
+					type: 'agent',
+					name: `LinkedIn State Agent ${Date.now()}`,
+					tools: { mcpServers: {}, capabilities: ['linkedin'] },
+				},
 			})
 			expect(agentRes.ok()).toBeTruthy()
 			const agent = (await agentRes.json()) as { id: string }

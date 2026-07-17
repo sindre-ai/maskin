@@ -5,9 +5,27 @@ import type { LinkedinAccountResponse, LinkedinAccountState } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { AlertTriangle, Info, Link2, RefreshCw, ShieldAlert } from 'lucide-react'
 
+// Capability flag on `actor.tools.capabilities` that opts an agent into the
+// LinkedIn account UI on its detail page. Structural signal so we don't
+// hard-code an actor name — matches the bet AC ("agents that declare a
+// linkedin capability").
+const LINKEDIN_CAPABILITY = 'linkedin'
+
+/**
+ * True when the agent's `tools.capabilities` array contains 'linkedin'.
+ * Accepts the raw JSONB shape (`Record<string, unknown> | null`) so callers
+ * pass `agent.tools` through without narrowing at the call site.
+ */
+export function hasLinkedinCapability(tools: Record<string, unknown> | null | undefined): boolean {
+	if (!tools) return false
+	const caps = tools.capabilities
+	return Array.isArray(caps) && caps.includes(LINKEDIN_CAPABILITY)
+}
+
 interface LinkedinChannelsSectionProps {
 	agentId: string
 	workspaceId: string
+	tools: Record<string, unknown> | null | undefined
 }
 
 /**
@@ -15,12 +33,22 @@ interface LinkedinChannelsSectionProps {
  * page. Renders the seven lifecycle states from the parent bet: not-connected,
  * handoff, syncing, warm-up, healthy, reconnect, restricted.
  *
+ * Only mounts for agents that declare the 'linkedin' capability — non-SDR
+ * agents render nothing so a workspace without LinkedIn set up doesn't see
+ * connect prompts on every agent.
+ *
  * Restricted intentionally does not surface a reconnect CTA — reconnecting is
  * the wrong recovery for that state (see the bet guardrail). Reconnect state
  * gets a warn CTA; restricted only points at a recovery guide.
  */
-export function LinkedinChannelsSection({ agentId, workspaceId }: LinkedinChannelsSectionProps) {
-	const { data: account, isLoading } = useLinkedinAccount(workspaceId)
+export function LinkedinChannelsSection({
+	agentId,
+	workspaceId,
+	tools,
+}: LinkedinChannelsSectionProps) {
+	const enabled = hasLinkedinCapability(tools)
+	const { data: account, isLoading } = useLinkedinAccount(workspaceId, { enabled })
+	if (!enabled) return null
 
 	if (isLoading) {
 		return (
@@ -60,10 +88,19 @@ export const LinkedinConnectSection = LinkedinChannelsSection
 /**
  * Renders the "Needs LinkedIn" / state pill for the agent hero metadata row.
  * Placed inline with the type badge + active/idle indicator so it participates
- * in the same wrap and touch-target sizing.
+ * in the same wrap and touch-target sizing. Renders nothing unless the agent
+ * declares the 'linkedin' capability.
  */
-export function LinkedinHeroPill({ workspaceId }: { workspaceId: string }) {
-	const { data: account, isLoading } = useLinkedinAccount(workspaceId)
+export function LinkedinHeroPill({
+	workspaceId,
+	tools,
+}: {
+	workspaceId: string
+	tools: Record<string, unknown> | null | undefined
+}) {
+	const enabled = hasLinkedinCapability(tools)
+	const { data: account, isLoading } = useLinkedinAccount(workspaceId, { enabled })
+	if (!enabled) return null
 	if (isLoading) return null
 	const state = deriveDisplayState(account)
 	const { text, tone } = HERO_PILL[state](account)
@@ -101,9 +138,21 @@ export interface LinkedinSendingBlock {
  * (the agent hero Run button) use this to disable the send-triggering
  * controls. `blocked: true` covers Restricted (LinkedIn stopped the account)
  * and Reconnect (session expired, no auth to send with).
+ *
+ * Agents without the 'linkedin' capability never send via LinkedIn, so a
+ * LinkedIn Restricted / Reconnect state must not block their Run button —
+ * this hook short-circuits to unblocked in that case.
  */
-export function useLinkedinSendingBlock(workspaceId: string): LinkedinSendingBlock {
-	const { data: account } = useLinkedinAccount(workspaceId)
+export function useLinkedinSendingBlock({
+	workspaceId,
+	tools,
+}: {
+	workspaceId: string
+	tools: Record<string, unknown> | null | undefined
+}): LinkedinSendingBlock {
+	const enabled = hasLinkedinCapability(tools)
+	const { data: account } = useLinkedinAccount(workspaceId, { enabled })
+	if (!enabled) return { blocked: false, reason: null }
 	if (!account) return { blocked: false, reason: null }
 	if (account.state === 'restricted') {
 		return { blocked: true, reason: 'LinkedIn restricted this account. Sending is stopped.' }

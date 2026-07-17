@@ -3,10 +3,11 @@ import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
-export function useLinkedinAccount(workspaceId: string) {
+export function useLinkedinAccount(workspaceId: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.linkedin.account(workspaceId),
 		queryFn: () => api.linkedin.account(workspaceId),
+		enabled: options?.enabled ?? true,
 	})
 }
 

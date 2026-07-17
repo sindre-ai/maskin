@@ -3,8 +3,14 @@ import { mcpServerSchema } from './sessions'
 
 export const actorTypeSchema = z.enum(['human', 'agent'])
 
+// `capabilities` is a set of opt-in flags that surface per-agent UI on the
+// agent detail page. Today the only value that gates anything is 'linkedin',
+// which mounts the LinkedIn hero pill, Channels row, and sending block on the
+// SDR agent detail without hard-coding the actor name. Kept as a free-form
+// string array so future capabilities can land without a schema migration.
 export const actorToolsSchema = z.object({
 	mcpServers: z.record(z.string(), mcpServerSchema).default({}),
+	capabilities: z.array(z.string()).optional(),
 })
 
 export const llmConfigSchema = z.object({
