@@ -41,6 +41,18 @@ describe('objects-view-state', () => {
 		})
 	})
 
+	it('patchViewState updates expandedGroupIds without clobbering firstVisibleRowId', () => {
+		setViewState('ws-1', 'bet', {
+			expandedGroupIds: { 'status:active': true },
+			firstVisibleRowId: 'obj-7',
+		})
+		patchViewState('ws-1', 'bet', { expandedGroupIds: { 'status:done': true } })
+		expect(getViewState('ws-1', 'bet')).toEqual({
+			expandedGroupIds: { 'status:done': true },
+			firstVisibleRowId: 'obj-7',
+		})
+	})
+
 	it('keys per (workspaceId, displaySettingsKey) — the All tab and a type tab do not leak', () => {
 		patchViewState('ws-1', '__all__', { firstVisibleRowId: 'all-row' })
 		patchViewState('ws-1', 'bet', { firstVisibleRowId: 'bet-row' })

@@ -129,18 +129,21 @@ interface DataTableProps {
 	columnVisibility: VisibilityState
 	onColumnVisibilityChange: OnChangeFn<VisibilityState>
 	grouping?: GroupingState
-	// Controlled group-expansion state persisted via useUserDisplaySettings —
-	// when both are provided the DataTable becomes the writer of the persisted
-	// `groupExpanded` map on the shared DisplaySettingsBody.
-	expanded?: ExpandedState
-	onExpandedChange?: OnChangeFn<ExpandedState>
 	meta?: ObjectsTableMeta
 	hasNextPage?: boolean
 	isFetchingNextPage?: boolean
 	isError?: boolean
 	fetchNextPage?: () => void
 	isLoading?: boolean
-	onGroupToggle?: () => void
+	// Controlled group-expansion state. Lifted so the Objects route can
+	// snapshot it into the session view-state store on every change and
+	// hydrate it on a POP landing. Keyed by react-table's stable row id
+	// (object id), so a refetch/filter/sort that reshapes the visible rows
+	// keeps overrides bound to the right group. Also the boundary at which
+	// the route fires the group-toggle analytics — this replaces the earlier
+	// `onGroupToggle` side-channel.
+	expanded: ExpandedState
+	onExpandedChange: OnChangeFn<ExpandedState>
 	// Fires synchronously right before a row-click navigate. The route reads
 	// the current first-visible row id via `ref.current.getFirstVisibleRowId()`
 	// and writes it into the session view-state store, so a back-nav landing
@@ -160,15 +163,14 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 		columnVisibility,
 		onColumnVisibilityChange,
 		grouping,
-		expanded,
-		onExpandedChange,
 		meta,
 		hasNextPage,
 		isFetchingNextPage,
 		isError,
 		fetchNextPage,
 		isLoading,
-		onGroupToggle,
+		expanded,
+		onExpandedChange,
 		onCaptureViewState,
 	},
 	ref,
@@ -182,11 +184,6 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 	const parentRef = useRef<HTMLDivElement>(null)
 	const sentinelRef = useRef<HTMLDivElement>(null)
 
-	// Only wire the controlled `expanded` state through when the parent actually
-	// provides it — otherwise leave TanStack to manage the field internally so
-	// existing callers (tests, non-Objects-list surfaces) keep their prior
-	// uncontrolled behavior.
-	const controlledExpanded = expanded !== undefined && onExpandedChange !== undefined
 	const table = useReactTable({
 		data,
 		columns,
@@ -194,12 +191,12 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 			rowSelection,
 			columnVisibility,
 			grouping: grouping ?? [],
-			...(controlledExpanded ? { expanded } : {}),
+			expanded,
 		},
 		meta: meta as Record<string, unknown>,
 		onRowSelectionChange,
 		onColumnVisibilityChange,
-		...(controlledExpanded ? { onExpandedChange } : {}),
+		onExpandedChange,
 		getCoreRowModel: getCoreRowModel(),
 		getGroupedRowModel: grouping?.length ? getGroupedRowModel() : undefined,
 		getExpandedRowModel: grouping?.length ? getExpandedRowModel() : undefined,
@@ -354,10 +351,7 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 											/>
 											<button
 												type="button"
-												onClick={() => {
-													row.toggleExpanded()
-													onGroupToggle?.()
-												}}
+												onClick={() => row.toggleExpanded()}
 												aria-expanded={row.getIsExpanded()}
 												className="flex flex-1 items-center gap-2 text-left"
 											>
@@ -491,10 +485,7 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 													/>
 													<button
 														type="button"
-														onClick={() => {
-															row.toggleExpanded()
-															onGroupToggle?.()
-														}}
+														onClick={() => row.toggleExpanded()}
 														aria-expanded={row.getIsExpanded()}
 														className="flex flex-1 items-center gap-2 text-left"
 													>

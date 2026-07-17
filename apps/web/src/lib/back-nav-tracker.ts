@@ -15,6 +15,7 @@
 
 let lastPopstateAt = Number.NEGATIVE_INFINITY
 let initialised = false
+let firstArrivalConsumed = false
 
 const WINDOW_MS = 100
 
@@ -31,7 +32,32 @@ export function wasRecentBackNav(): boolean {
 	return performance.now() - lastPopstateAt < WINDOW_MS
 }
 
+// Returns the nav_type for the current mount and marks the first-arrival slot
+// consumed so subsequent SPA navigations don't look like `direct`.
+//
+// - `back` — a popstate fired within the last 100 ms (browser back/forward, or
+//   a back-forward navigation that landed at the initial page load).
+// - `direct` — this is the first arrival in the SPA session AND the initial
+//   `PerformanceNavigationTiming.type` was `navigate` or `reload` (URL-bar
+//   entry or hard refresh).
+// - `link` — anything else, i.e. an in-app SPA navigation via `<Link>` /
+//   `router.navigate` that doesn't fire popstate.
+export function consumeArrivalNavType(): 'back' | 'direct' | 'link' {
+	if (wasRecentBackNav()) return 'back'
+	if (!firstArrivalConsumed) {
+		firstArrivalConsumed = true
+		const entry =
+			typeof performance !== 'undefined' && typeof performance.getEntriesByType === 'function'
+				? (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)
+				: undefined
+		if (entry?.type === 'back_forward') return 'back'
+		return 'direct'
+	}
+	return 'link'
+}
+
 export function __resetBackNavTrackerForTesting(): void {
 	lastPopstateAt = Number.NEGATIVE_INFINITY
 	initialised = false
+	firstArrivalConsumed = false
 }

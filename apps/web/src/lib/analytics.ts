@@ -257,19 +257,33 @@ export function trackBulkEditCommit(p: {
 // The PostHog query pairs `objects_list_arrived(nav_type='back')` (denominator
 // — a back-nav landing on the list) with `objects_list_group_toggled(source=
 // 'user')` (numerator — a user-initiated group toggle) within a 30s window,
-// enforced on the query side. `nav_type` is the enum for the arrived event so
-// push/replace variants can slot in later; `source` distinguishes user toggles
+// enforced on the query side. `nav_type` fires on every mount so the arrival
+// stream can be sliced later; `direct` is a URL-bar or hard-refresh landing,
+// `link` is an in-app SPA navigation. `source` distinguishes user toggles
 // from the eventual system-driven restore (used to wire-verify the restore).
-export type ObjectsListNavType = 'back' | 'push' | 'replace'
+// `objectType` is the current tab (`bet`, `insight`, …) or `null` on the All
+// tab so the metric can be sliced per type without joining super properties.
+export type ObjectsListNavType = 'back' | 'direct' | 'link'
 
-export function trackObjectsListArrived(p: { nav_type: ObjectsListNavType }): void {
-	trackEvent('objects_list_arrived', { nav_type: p.nav_type })
+export function trackObjectsListArrived(p: {
+	nav_type: ObjectsListNavType
+	objectType: string | null
+}): void {
+	trackEvent('objects_list_arrived', { nav_type: p.nav_type, objectType: p.objectType })
 }
 
 export type ObjectsListGroupToggleSource = 'user' | 'system'
 
-export function trackObjectsListGroupToggled(p: { source: ObjectsListGroupToggleSource }): void {
-	trackEvent('objects_list_group_toggled', { source: p.source })
+export function trackObjectsListGroupToggled(p: {
+	source: ObjectsListGroupToggleSource
+	expanded: boolean
+	objectType: string | null
+}): void {
+	trackEvent('objects_list_group_toggled', {
+		source: p.source,
+		expanded: p.expanded,
+		objectType: p.objectType,
+	})
 }
 
 // Ship-metric events for the Loops primitive bet. `loop_viewed` fires once per

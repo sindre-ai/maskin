@@ -14,6 +14,7 @@ const scrollToRowIdMock = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/back-nav-tracker', () => ({
 	wasRecentBackNav: vi.fn(),
 	initBackNavTracker: vi.fn(),
+	consumeArrivalNavType: vi.fn(),
 }))
 
 vi.mock('@/lib/analytics', async () => {
@@ -201,8 +202,9 @@ const RouteOptions = Route as unknown as { component: React.FC }
 const ObjectsPage = RouteOptions.component
 
 async function setBackNav(isBack: boolean) {
-	const { wasRecentBackNav } = await import('@/lib/back-nav-tracker')
+	const { wasRecentBackNav, consumeArrivalNavType } = await import('@/lib/back-nav-tracker')
 	vi.mocked(wasRecentBackNav).mockReturnValue(isBack)
+	vi.mocked(consumeArrivalNavType).mockReturnValue(isBack ? 'back' : 'link')
 }
 
 beforeEach(() => {
