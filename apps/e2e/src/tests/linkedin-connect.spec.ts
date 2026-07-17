@@ -17,12 +17,18 @@ test.describe('LinkedIn connect entry point on agent detail', () => {
 
 			// Seed an agent actor and make it a workspace member. Route helpers only
 			// expose createObject; agents are actors, so hit the API directly.
+			// tools.capabilities: ['linkedin'] is what mounts the LinkedIn UI on the
+			// agent detail page — a bare agent gets no LinkedIn UI at all.
 			const agentRes = await page.request.post('http://localhost:5173/api/actors', {
 				headers: {
 					'content-type': 'application/json',
 					Authorization: `Bearer ${account.apiKey}`,
 				},
-				data: { type: 'agent', name: `LinkedIn Test Agent ${Date.now()}` },
+				data: {
+					type: 'agent',
+					name: `LinkedIn Test Agent ${Date.now()}`,
+					tools: { mcpServers: {}, capabilities: ['linkedin'] },
+				},
 			})
 			expect(agentRes.ok()).toBeTruthy()
 			const agent = (await agentRes.json()) as { id: string }

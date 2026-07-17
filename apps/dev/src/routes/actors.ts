@@ -148,9 +148,13 @@ app.openapi(createActorRoute, async (c) => {
 	const passwordHash = body.password ? await hashPassword(body.password) : undefined
 
 	// Agents get the Maskin MCP by default — caller-provided servers win on conflict.
+	// Preserve any other caller-provided tools fields (e.g. `capabilities`), otherwise
+	// an agent created with `capabilities: ['linkedin']` would silently drop it and
+	// the per-agent capability gates on the frontend would never open.
 	const tools =
 		body.type === 'agent'
 			? {
+					...(body.tools ?? {}),
 					mcpServers: {
 						maskin: PLATFORM_MCP_PRESET,
 						...(body.tools?.mcpServers ?? {}),

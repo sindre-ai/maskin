@@ -83,6 +83,30 @@ describe('Actors Routes', () => {
 			expect(inserted.tools?.mcpServers.maskin.url).toBe('https://custom/mcp')
 		})
 
+		it('preserves caller-provided tools.capabilities alongside the default Maskin MCP', async () => {
+			const actor = buildActor({ type: 'agent' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/actors',
+					buildCreateActorBody({
+						type: 'agent',
+						tools: { mcpServers: {}, capabilities: ['linkedin'] },
+					}),
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as {
+				tools?: { mcpServers: Record<string, unknown>; capabilities?: string[] }
+			}
+			expect(inserted.tools?.capabilities).toEqual(['linkedin'])
+			expect(inserted.tools?.mcpServers.maskin).toEqual(PLATFORM_MCP_PRESET)
+		})
+
 		it('seeds Workspace Coach with a generated apiKey when auto-creating a workspace', async () => {
 			const actor = buildActor({ type: 'human' })
 			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
