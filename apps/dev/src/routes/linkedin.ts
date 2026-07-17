@@ -283,6 +283,17 @@ app.openapi(callbackRoute, (async (c) => {
 	// call between the events insert and the redirect — the block is intentionally
 	// contiguous so it takes a single-line append with no surrounding edits.
 
+	// Peek at the current row so we can pick the right event action after the
+	// upsert. Only a first-time connect (no row, or the pre-callback `handoff`
+	// placeholder) should log `created`; a `restricted`/`reconnect` recovery
+	// logs `reconnected`; a redirect-replay against an already-syncing row logs
+	// `updated`.
+	const [priorRow] = await db
+		.select({ state: linkedinAccounts.state })
+		.from(linkedinAccounts)
+		.where(eq(linkedinAccounts.workspaceId, stateData.workspaceId))
+		.limit(1)
+
 	const now = new Date()
 	const upserted = await db
 		.insert(linkedinAccounts)
@@ -310,10 +321,17 @@ app.openapi(callbackRoute, (async (c) => {
 
 	const accountRowId = upserted[0]?.id
 	if (accountRowId) {
+		const priorState = priorRow?.state
+		const action: 'created' | 'reconnected' | 'updated' =
+			!priorState || priorState === 'handoff'
+				? 'created'
+				: priorState === 'restricted' || priorState === 'reconnect'
+					? 'reconnected'
+					: 'updated'
 		await db.insert(events).values({
 			workspaceId: stateData.workspaceId,
 			actorId: stateData.actorId,
-			action: 'created',
+			action,
 			entityType: 'linkedin_account',
 			entityId: accountRowId,
 			data: {
@@ -321,6 +339,7 @@ app.openapi(callbackRoute, (async (c) => {
 				sending_as_name: sendingAs.name,
 				sending_as_provider_id: sendingAs.providerId,
 				state: 'syncing',
+				...(priorState ? { prior_state: priorState } : {}),
 			},
 		})
 	}

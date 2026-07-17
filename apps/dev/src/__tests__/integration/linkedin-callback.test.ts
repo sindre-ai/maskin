@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { events, linkedinAccounts } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { insertActor, insertWorkspace } from '../factories'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
@@ -128,6 +128,108 @@ describe('GET /api/linkedin/callback', () => {
 		expect(rows).toHaveLength(1)
 		expect(rows[0].unipileAccountId).toBe('unipile-acc-second')
 		expect(rows[0].state).toBe('syncing')
+
+		// The second callback is a state replay against an already-syncing row;
+		// it must NOT re-emit `created` — only the first callback does.
+		const audit = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityType, 'linkedin_account'), eq(events.entityId, rows[0].id)))
+			.orderBy(asc(events.id))
+		expect(audit.map((e) => e.action)).toEqual(['created', 'updated'])
+	})
+
+	it('logs `reconnected` when a restricted account transitions back to syncing', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		const agent = await insertActor(db, { type: 'agent', name: 'SDR-reconnect' })
+
+		// Pre-seed a row in `restricted` — the shape T5's reconnect flow lands the
+		// user in before they walk back through Unipile hosted-auth.
+		await db.insert(linkedinAccounts).values({
+			workspaceId: ws.id,
+			state: 'restricted',
+			unipileAccountId: 'unipile-acc-old',
+			sendingAsName: 'old',
+			sendingAsProviderId: 'urn:old',
+			createdBy: actorId,
+		})
+
+		vi.mocked(unipile.findAccountByName).mockResolvedValueOnce({
+			object: 'Account',
+			id: 'unipile-acc-new',
+			connection_params: { im: { username: 'new', provider_id: 'urn:new' } },
+		})
+
+		const state = buildState({ workspaceId: ws.id, actorId, agentId: agent.id })
+		const app = buildApp()
+		const res = await app.request(`/api/linkedin/callback?state=${encodeURIComponent(state)}`)
+		expect(res.status).toBe(302)
+
+		const [row] = await db
+			.select()
+			.from(linkedinAccounts)
+			.where(eq(linkedinAccounts.workspaceId, ws.id))
+		expect(row.state).toBe('syncing')
+
+		const audit = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityType, 'linkedin_account'), eq(events.entityId, row.id)))
+		expect(audit).toHaveLength(1)
+		expect(audit[0].action).toBe('reconnected')
+		expect((audit[0].data as Record<string, unknown>).prior_state).toBe('restricted')
+	})
+
+	it('rejects the callback when the actor is no longer a workspace member', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		const otherActor = await insertActor(db, { type: 'human', name: 'kicked-out' })
+
+		// otherActor is NOT a member of ws — the callback should reject before
+		// touching Unipile or the linkedin_accounts row.
+		const state = buildState({ workspaceId: ws.id, actorId: otherActor.id, agentId: actorId })
+		const app = buildApp()
+		const res = await app.request(`/api/linkedin/callback?state=${encodeURIComponent(state)}`)
+
+		expect(res.status).toBe(400)
+		const body = (await res.json()) as { message?: string; error?: string }
+		expect(JSON.stringify(body).toLowerCase()).toContain('member')
+
+		// No row, no audit event.
+		const rows = await db
+			.select()
+			.from(linkedinAccounts)
+			.where(eq(linkedinAccounts.workspaceId, ws.id))
+		expect(rows).toHaveLength(0)
+	})
+
+	it('redirects with linkedin=failed when Unipile bounces back with ?error=failed', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		const agent = await insertActor(db, { type: 'agent', name: 'SDR-failed' })
+
+		const state = buildState({ workspaceId: ws.id, actorId, agentId: agent.id })
+		const app = buildApp()
+		const res = await app.request(
+			`/api/linkedin/callback?state=${encodeURIComponent(state)}&error=failed`,
+		)
+
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location')).toContain(`/${ws.id}/agents/${agent.id}`)
+		expect(res.headers.get('location')).toContain('linkedin=failed')
+
+		// Failure branch must not touch the account row or log a Unipile-account
+		// event; the `handoff` placeholder (if any) is preserved for the retry.
+		const rows = await db
+			.select()
+			.from(linkedinAccounts)
+			.where(eq(linkedinAccounts.workspaceId, ws.id))
+		expect(rows).toHaveLength(0)
+		const audit = await db.select().from(events).where(eq(events.entityType, 'linkedin_account'))
+		expect(audit).toHaveLength(0)
+		expect(unipile.findAccountByName).not.toHaveBeenCalled()
+		expect(unipile.getAccountById).not.toHaveBeenCalled()
 	})
 
 	it('rejects an expired state param', async () => {
