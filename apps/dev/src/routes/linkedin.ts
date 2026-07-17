@@ -4,6 +4,7 @@ import type { Database } from '@maskin/db'
 import { events, linkedinAccounts, workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
+import { trackLinkedinAccountConnected } from '../lib/analytics/linkedin-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -278,10 +279,8 @@ app.openapi(callbackRoute, (async (c) => {
 	const sendingAs = extractSendingAs(account)
 
 	// ── Success branch ─────────────────────────────────────────────────────
-	// Persist the row in `syncing`, write the audit event, then redirect. T2
-	// extends this branch by adding a `posthog.capture('linkedin_account_connected')`
-	// call between the events insert and the redirect — the block is intentionally
-	// contiguous so it takes a single-line append with no surrounding edits.
+	// Persist the row in `syncing`, write the audit event, emit the ship-metric
+	// PostHog event, then redirect.
 
 	// Peek at the current row so we can pick the right event action after the
 	// upsert. Only a first-time connect (no row, or the pre-callback `handoff`
@@ -319,15 +318,16 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 		.returning({ id: linkedinAccounts.id })
 
+	const priorState = priorRow?.state
+	const isFirstSuccessfulConnect = !priorState || priorState === 'handoff'
+
 	const accountRowId = upserted[0]?.id
 	if (accountRowId) {
-		const priorState = priorRow?.state
-		const action: 'created' | 'reconnected' | 'updated' =
-			!priorState || priorState === 'handoff'
-				? 'created'
-				: priorState === 'restricted' || priorState === 'reconnect'
-					? 'reconnected'
-					: 'updated'
+		const action: 'created' | 'reconnected' | 'updated' = isFirstSuccessfulConnect
+			? 'created'
+			: priorState === 'restricted' || priorState === 'reconnect'
+				? 'reconnected'
+				: 'updated'
 		await db.insert(events).values({
 			workspaceId: stateData.workspaceId,
 			actorId: stateData.actorId,
@@ -341,6 +341,19 @@ app.openapi(callbackRoute, (async (c) => {
 				state: 'syncing',
 				...(priorState ? { prior_state: priorState } : {}),
 			},
+		})
+	}
+
+	// Ship-metric emit. Gate on first-time connect (row absent or `handoff`
+	// placeholder) so a redirect-replay within the state TTL and a
+	// `reconnected` recovery both stay silent — the bet's compound query
+	// counts distinct workspaces via distinct_id already, but the DoD says
+	// "fires exactly once on successful hosted-auth handoff".
+	if (isFirstSuccessfulConnect) {
+		await trackLinkedinAccountConnected({
+			workspaceId: stateData.workspaceId,
+			actorId: stateData.actorId,
+			unipileAccountId: account.id,
 		})
 	}
 

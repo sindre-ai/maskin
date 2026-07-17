@@ -16,6 +16,13 @@ vi.mock('../../lib/unipile/client', async () => {
 	}
 })
 
+const { trackLinkedinAccountConnectedMock } = vi.hoisted(() => ({
+	trackLinkedinAccountConnectedMock: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../lib/analytics/linkedin-events', () => ({
+	trackLinkedinAccountConnected: trackLinkedinAccountConnectedMock,
+}))
+
 const unipile = await import('../../lib/unipile/client')
 const { default: linkedinRoutes } = await import('../../routes/linkedin')
 const { encrypt } = await import('../../lib/crypto')
@@ -40,6 +47,7 @@ beforeEach(() => {
 	vi.mocked(unipile.createHostedAuthLink).mockReset()
 	vi.mocked(unipile.findAccountByName).mockReset()
 	vi.mocked(unipile.getAccountById).mockReset()
+	trackLinkedinAccountConnectedMock.mockClear()
 })
 
 describe('POST /api/linkedin/connect', () => {
@@ -158,5 +166,96 @@ describe('GET /api/linkedin/callback', () => {
 		mockResults.select = [{ workspaceId: wsId, actorId }]
 		const res = await app.request(`/api/linkedin/callback?state=${encodeURIComponent(state)}`)
 		expect(res.status).toBe(400)
+		expect(trackLinkedinAccountConnectedMock).not.toHaveBeenCalled()
+	})
+
+	it('emits `linkedin_account_connected` exactly once on the first successful callback', async () => {
+		vi.mocked(unipile.readUnipileConfig).mockReturnValue({
+			apiKey: 'k',
+			dsn: 'https://unipile.test',
+		})
+		vi.mocked(unipile.findAccountByName).mockResolvedValueOnce({
+			object: 'Account',
+			id: 'unipile-acc-1',
+			connection_params: { im: { username: 'sindre', provider_id: 'urn:li:1' } },
+		})
+		const state = encrypt(
+			JSON.stringify({ workspaceId: wsId, actorId, agentId, nonce: 'n', ts: Date.now() }),
+		)
+		const { app, mockResults } = createTestApp(linkedinRoutes, '/api/linkedin', actorId)
+		// Queued selects: (1) workspace membership check, (2) prior row lookup — none exists yet.
+		mockResults.selectQueue = [[{ workspaceId: wsId, actorId }], []]
+		mockResults.insert = [{ id: 'row-1' }]
+
+		const res = await app.request(`/api/linkedin/callback?state=${encodeURIComponent(state)}`)
+
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location')).toContain('linkedin=connected')
+		expect(trackLinkedinAccountConnectedMock).toHaveBeenCalledOnce()
+		expect(trackLinkedinAccountConnectedMock).toHaveBeenCalledWith({
+			workspaceId: wsId,
+			actorId,
+			unipileAccountId: 'unipile-acc-1',
+		})
+	})
+
+	it('does not emit `linkedin_account_connected` on a state-replay when the row is already syncing', async () => {
+		vi.mocked(unipile.readUnipileConfig).mockReturnValue({
+			apiKey: 'k',
+			dsn: 'https://unipile.test',
+		})
+		vi.mocked(unipile.findAccountByName).mockResolvedValueOnce({
+			object: 'Account',
+			id: 'unipile-acc-1',
+			connection_params: { im: { username: 'sindre', provider_id: 'urn:li:1' } },
+		})
+		const state = encrypt(
+			JSON.stringify({ workspaceId: wsId, actorId, agentId, nonce: 'n', ts: Date.now() }),
+		)
+		const { app, mockResults } = createTestApp(linkedinRoutes, '/api/linkedin', actorId)
+		// Prior row lookup returns an already-syncing account — replay of the same URL.
+		mockResults.selectQueue = [[{ workspaceId: wsId, actorId }], [{ state: 'syncing' }]]
+		mockResults.insert = [{ id: 'row-1' }]
+
+		const res = await app.request(`/api/linkedin/callback?state=${encodeURIComponent(state)}`)
+
+		expect(res.status).toBe(302)
+		expect(trackLinkedinAccountConnectedMock).not.toHaveBeenCalled()
+	})
+
+	it('does not emit `linkedin_account_connected` when Unipile bounces back with an error param', async () => {
+		const state = encrypt(
+			JSON.stringify({ workspaceId: wsId, actorId, agentId, nonce: 'n', ts: Date.now() }),
+		)
+		const { app, mockResults } = createTestApp(linkedinRoutes, '/api/linkedin', actorId)
+		mockResults.select = [{ workspaceId: wsId, actorId }]
+
+		const res = await app.request(
+			`/api/linkedin/callback?error=failed&state=${encodeURIComponent(state)}`,
+		)
+
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location')).toContain('linkedin=failed')
+		expect(trackLinkedinAccountConnectedMock).not.toHaveBeenCalled()
+	})
+
+	it('does not emit `linkedin_account_connected` when Unipile has no record of the account', async () => {
+		vi.mocked(unipile.readUnipileConfig).mockReturnValue({
+			apiKey: 'k',
+			dsn: 'https://unipile.test',
+		})
+		vi.mocked(unipile.findAccountByName).mockResolvedValueOnce(null)
+		vi.mocked(unipile.getAccountById).mockResolvedValueOnce(null)
+		const state = encrypt(
+			JSON.stringify({ workspaceId: wsId, actorId, agentId, nonce: 'n', ts: Date.now() }),
+		)
+		const { app, mockResults } = createTestApp(linkedinRoutes, '/api/linkedin', actorId)
+		mockResults.select = [{ workspaceId: wsId, actorId }]
+
+		const res = await app.request(`/api/linkedin/callback?state=${encodeURIComponent(state)}`)
+
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location')).toContain('linkedin=not_found')
+		expect(trackLinkedinAccountConnectedMock).not.toHaveBeenCalled()
 	})
 })

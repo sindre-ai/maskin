@@ -23,6 +23,13 @@ vi.mock('../../lib/unipile/client', async () => {
 	}
 })
 
+const { trackLinkedinAccountConnectedMock } = vi.hoisted(() => ({
+	trackLinkedinAccountConnectedMock: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../lib/analytics/linkedin-events', () => ({
+	trackLinkedinAccountConnected: trackLinkedinAccountConnectedMock,
+}))
+
 const unipile = await import('../../lib/unipile/client')
 const { default: linkedinRoutes } = await import('../../routes/linkedin')
 const { encrypt } = await import('../../lib/crypto')
@@ -54,6 +61,7 @@ describe('GET /api/linkedin/callback', () => {
 	beforeEach(() => {
 		vi.mocked(unipile.findAccountByName).mockReset()
 		vi.mocked(unipile.getAccountById).mockReset()
+		trackLinkedinAccountConnectedMock.mockClear()
 	})
 
 	it('lands the account in syncing state and writes an audit event', async () => {
@@ -94,6 +102,14 @@ describe('GET /api/linkedin/callback', () => {
 		expect(event).toBeDefined()
 		expect(event.action).toBe('created')
 		expect(event.workspaceId).toBe(ws.id)
+
+		// PostHog ship-metric emit fires once with workspaceId as distinct id.
+		expect(trackLinkedinAccountConnectedMock).toHaveBeenCalledOnce()
+		expect(trackLinkedinAccountConnectedMock).toHaveBeenCalledWith({
+			workspaceId: ws.id,
+			actorId,
+			unipileAccountId: 'unipile-acc-1',
+		})
 	})
 
 	it('upserts a second successful connect on the same workspace instead of duplicating', async () => {
@@ -137,6 +153,15 @@ describe('GET /api/linkedin/callback', () => {
 			.where(and(eq(events.entityType, 'linkedin_account'), eq(events.entityId, rows[0].id)))
 			.orderBy(asc(events.id))
 		expect(audit.map((e) => e.action)).toEqual(['created', 'updated'])
+
+		// PostHog ship-metric emit gated on first-successful-connect — one on
+		// the first landing, zero on the replay, keyed on workspaceId.
+		expect(trackLinkedinAccountConnectedMock).toHaveBeenCalledOnce()
+		expect(trackLinkedinAccountConnectedMock).toHaveBeenCalledWith({
+			workspaceId: ws.id,
+			actorId,
+			unipileAccountId: 'unipile-acc-first',
+		})
 	})
 
 	it('logs `reconnected` when a restricted account transitions back to syncing', async () => {
@@ -179,6 +204,10 @@ describe('GET /api/linkedin/callback', () => {
 		expect(audit).toHaveLength(1)
 		expect(audit[0].action).toBe('reconnected')
 		expect((audit[0].data as Record<string, unknown>).prior_state).toBe('restricted')
+
+		// A `reconnected` recovery isn't the "first successful hosted-auth handoff"
+		// the DoD targets — the ship-metric emit stays silent for reconnects.
+		expect(trackLinkedinAccountConnectedMock).not.toHaveBeenCalled()
 	})
 
 	it('rejects the callback when the actor is no longer a workspace member', async () => {
@@ -196,12 +225,13 @@ describe('GET /api/linkedin/callback', () => {
 		const body = (await res.json()) as { message?: string; error?: string }
 		expect(JSON.stringify(body).toLowerCase()).toContain('member')
 
-		// No row, no audit event.
+		// No row, no audit event, no PostHog emit.
 		const rows = await db
 			.select()
 			.from(linkedinAccounts)
 			.where(eq(linkedinAccounts.workspaceId, ws.id))
 		expect(rows).toHaveLength(0)
+		expect(trackLinkedinAccountConnectedMock).not.toHaveBeenCalled()
 	})
 
 	it('redirects with linkedin=failed when Unipile bounces back with ?error=failed', async () => {
@@ -230,6 +260,7 @@ describe('GET /api/linkedin/callback', () => {
 		expect(audit).toHaveLength(0)
 		expect(unipile.findAccountByName).not.toHaveBeenCalled()
 		expect(unipile.getAccountById).not.toHaveBeenCalled()
+		expect(trackLinkedinAccountConnectedMock).not.toHaveBeenCalled()
 	})
 
 	it('rejects an expired state param', async () => {
@@ -269,5 +300,6 @@ describe('GET /api/linkedin/callback', () => {
 			.from(linkedinAccounts)
 			.where(eq(linkedinAccounts.workspaceId, ws.id))
 		expect(rows).toHaveLength(0)
+		expect(trackLinkedinAccountConnectedMock).not.toHaveBeenCalled()
 	})
 })
