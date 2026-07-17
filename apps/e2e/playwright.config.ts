@@ -22,12 +22,16 @@ export default defineConfig({
 			port: 3000,
 			reuseExistingServer: !process.env.CI,
 			cwd: '../../',
+			stdout: 'pipe',
+			stderr: 'pipe',
 		},
 		{
 			command: 'pnpm --filter @maskin/web dev',
 			port: 5173,
 			reuseExistingServer: !process.env.CI,
 			cwd: '../../',
+			stdout: 'pipe',
+			stderr: 'pipe',
 		},
 	],
 })
