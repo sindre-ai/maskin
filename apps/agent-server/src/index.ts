@@ -13,15 +13,20 @@ import { InputQueue } from './services/input-queue'
 import {
 	type BrowserSidecar,
 	type MicrosandboxDeps,
+	type PreviewPortMapping,
 	type PullPolicy,
+	type SshRelay,
 	cleanupBrowserSidecar,
 	defaultRunner,
+	ensureAgentServerSshKey,
 	launchSessionExec,
 	listSandboxNames,
 	provisionBrowserSidecar,
 	readMsbVersion,
 	removeSandbox,
+	resolvePreviewPortMappings,
 	spawnSession,
+	startSshRelay,
 	stopSandbox,
 	waitForCompletion,
 } from './services/microsandbox'
@@ -33,28 +38,45 @@ import {
 
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 
-const SESSION_REQUEST_SCHEMA = z.object({
-	sessionId: z
-		.string()
-		.regex(
-			/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/,
-			'sessionId must match ^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$',
-		),
-	image: z.string().min(1),
-	env: z
-		.record(
-			z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'env key must be a valid shell identifier'),
-			z.string(),
-		)
-		.default({}),
-	memoryMib: z.number().int().positive().optional(),
-	cpus: z.number().int().positive().optional(),
-	// When true, provision a Chromium CDP sidecar microVM alongside the session
-	// and inject `BROWSER_CDP_URL` so `@playwright/mcp` can attach. Absent or
-	// false → no sidecar, no env var, no MCP entry.
-	browserRequired: z.boolean().optional(),
-	sourceSessionId: z.string().regex(SESSION_ID_RE).optional(),
-})
+const MAX_PREVIEW_GUEST_PORTS = 8
+
+const SESSION_REQUEST_SCHEMA = z
+	.object({
+		sessionId: z
+			.string()
+			.regex(
+				/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/,
+				'sessionId must match ^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$',
+			),
+		image: z.string().min(1),
+		env: z
+			.record(
+				z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'env key must be a valid shell identifier'),
+				z.string(),
+			)
+			.default({}),
+		memoryMib: z.number().int().positive().optional(),
+		cpus: z.number().int().positive().optional(),
+		// When true, provision a Chromium CDP sidecar microVM alongside the session
+		// and inject `BROWSER_CDP_URL` so `@playwright/mcp` can attach. Absent or
+		// false → no sidecar, no env var, no MCP entry.
+		browserRequired: z.boolean().optional(),
+		// Guest port(s) inside the session to publish on the msb bridge gateway
+		// (e.g. a Vite dev server on 5173), so the browser sidecar's Playwright can
+		// reach them. Only takes effect when browserRequired is also true — the
+		// forwarding exists to let the sidecar view the session's own dev server.
+		// Capped well below ephemeral port exhaustion range; a session only ever
+		// needs to forward a handful of local dev servers.
+		previewGuestPorts: z
+			.array(z.number().int().positive().max(65535))
+			.max(MAX_PREVIEW_GUEST_PORTS)
+			.optional(),
+		sourceSessionId: z.string().regex(SESSION_ID_RE).optional(),
+	})
+	.refine((data) => !data.previewGuestPorts || data.browserRequired === true, {
+		message: 'previewGuestPorts requires browserRequired to be true',
+		path: ['previewGuestPorts'],
+	})
 
 export type AppDeps = {
 	env: AgentServerEnv
@@ -166,6 +188,7 @@ async function monitorSession(
 	sessionLogRouters?: Map<string, (line: string) => void>,
 	sessionExitCodes?: Map<string, number>,
 	browserSidecar?: BrowserSidecar | null,
+	previewRelays?: SshRelay[],
 ): Promise<void> {
 	const run = msb.run ?? defaultRunner()
 	const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -348,6 +371,7 @@ async function monitorSession(
 	// Chromium VMs linger. `cleanupBrowserSidecar` is a no-op when no sidecar
 	// was provisioned (the common path).
 	if (browserSidecar) {
+		for (const relay of previewRelays ?? []) relay.stop()
 		await cleanupBrowserSidecar(browserSidecar, msb)
 	}
 }
@@ -583,49 +607,98 @@ export function buildApp(deps: AppDeps): Hono {
 		// A failed sidecar must not take down the session — the agent falls back
 		// to an instrumentation-gap comment instead of fabricating a browser pass.
 		let browserSidecar: BrowserSidecar | null = null
+		let previewPortMappings: PreviewPortMapping[] = []
+		let previewForwardingFailed = false
+		// Released once the SSH relay(s) into these ports have actually been
+		// started (success or failure) further down — see the preview-relay
+		// block after spawnSession. Keeps the held probe sockets from leaking
+		// on every code path.
+		let releasePreviewPorts: () => void = () => {}
 		if (body.browserRequired === true) {
+			// Resolve preview port relay ports before provisioning the sidecar so
+			// we know which allow@host:tcp:<port> rules the sidecar needs baked in
+			// at create time — the relay itself can only start once the session VM
+			// is Running, further down.
+			if (body.previewGuestPorts && body.previewGuestPorts.length > 0) {
+				try {
+					const resolved = await resolvePreviewPortMappings(body.previewGuestPorts, deps.msb)
+					previewPortMappings = resolved.mappings
+					releasePreviewPorts = resolved.release
+				} catch (err) {
+					previewForwardingFailed = true
+					logger.warn('preview port resolution failed — continuing without preview forwarding', {
+						sessionId: body.sessionId,
+						error: String(err),
+					})
+				}
+			}
 			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 16), deps.msb, {
 				image: deps.env.BROWSER_SIDECAR_IMAGE,
-				bridgeGateway: deps.env.MSB_BRIDGE_GATEWAY,
+				sshKeyPath: deps.env.AGENT_SERVER_SSH_KEY_PATH,
+				agentServerInternalHost,
+				...(previewPortMappings.length > 0 && {
+					extraAllowedHostPorts: previewPortMappings.map((m) => m.relayPort),
+				}),
 			})
 			if (browserSidecar) {
 				sessionEnv.BROWSER_CDP_URL = browserSidecar.cdpUrl
+				const primaryPreviewMapping = previewPortMappings[0]
+				if (primaryPreviewMapping) {
+					sessionEnv.PREVIEW_URL = `http://${agentServerInternalHost}:${primaryPreviewMapping.relayPort}`
+				}
 				logger.info('browser sidecar attached to session', {
 					sessionId: body.sessionId,
 					sidecarName: browserSidecar.name,
 					cdpUrl: browserSidecar.cdpUrl,
+					previewUrl: sessionEnv.PREVIEW_URL,
 				})
 			} else {
+				if (previewPortMappings.length > 0) {
+					previewForwardingFailed = true
+				}
 				logger.warn('browser sidecar unavailable — session continues without browser', {
 					sessionId: body.sessionId,
 				})
 			}
 		}
 
+		const previewRelays: SshRelay[] = []
 		try {
-			const result = await spawnSession(
-				{
-					sessionId: body.sessionId,
-					image: body.image,
-					env: sessionEnv,
-					...(body.memoryMib !== undefined && { memoryMib: body.memoryMib }),
-					...(body.cpus !== undefined && { cpus: body.cpus }),
-					hostPort: deps.env.PORT,
-					...(deps.env.MASKIN_AGENT_SERVER_PUBLIC_HOST !== undefined && {
-						publicHost: deps.env.MASKIN_AGENT_SERVER_PUBLIC_HOST,
-					}),
-					sessionDir,
-					pullPolicy,
-					...(deps.env.SESSION_MAX_DURATION !== '' &&
-						deps.env.SESSION_MAX_DURATION !== '0' && {
-							maxDuration: deps.env.SESSION_MAX_DURATION,
+			let result: Awaited<ReturnType<typeof spawnSession>>
+			try {
+				result = await spawnSession(
+					{
+						sessionId: body.sessionId,
+						image: body.image,
+						env: sessionEnv,
+						...(body.memoryMib !== undefined && { memoryMib: body.memoryMib }),
+						...(body.cpus !== undefined && { cpus: body.cpus }),
+						hostPort: deps.env.PORT,
+						...(deps.env.MASKIN_AGENT_SERVER_PUBLIC_HOST !== undefined && {
+							publicHost: deps.env.MASKIN_AGENT_SERVER_PUBLIC_HOST,
 						}),
-					// Only opened when a sidecar was provisioned — keeps the default
-					// session firewall posture tight for the common path.
-					...(browserSidecar !== null && { allowPrivateNet: true }),
-				},
-				deps.msb,
-			)
+						sessionDir,
+						pullPolicy,
+						...(deps.env.SESSION_MAX_DURATION !== '' &&
+							deps.env.SESSION_MAX_DURATION !== '0' && {
+								maxDuration: deps.env.SESSION_MAX_DURATION,
+							}),
+						// Only opened when a sidecar was provisioned — keeps the default
+						// session firewall posture tight for the common path. Grants
+						// reachability into exactly the sidecar's CDP SSH-relay port,
+						// not the old allow@private blanket RFC1918 range.
+						...(browserSidecar?.cdpRelay !== undefined && {
+							extraAllowedHostPorts: [browserSidecar.cdpRelay.relayPort],
+						}),
+					},
+					deps.msb,
+				)
+			} catch (err) {
+				// spawnSession failed — no live VM to relay into, release the
+				// preview-port reservations now.
+				releasePreviewPorts()
+				throw err
+			}
 			logger.info('session spawned', {
 				sessionId: body.sessionId,
 				image: body.image,
@@ -634,6 +707,40 @@ export function buildApp(deps: AppDeps): Hono {
 				envOverflowSpilled: result.envOverflowSpilled,
 				envSanitized: result.envSanitized,
 			})
+
+			// Session VM is now Running — actually open the SSH-relay tunnel(s) into
+			// its preview port(s), targeting the same relayPort numbers already
+			// baked into the sidecar's allow@host:tcp:<port> net-rules above. Must
+			// happen after spawnSession (the relay target must be a live VM); the
+			// pre-reserved port numbers are only released once this has run,
+			// whatever the outcome — see resolvePreviewPortMappings.
+			if (browserSidecar && previewPortMappings.length > 0) {
+				try {
+					for (const mapping of previewPortMappings) {
+						const relay = await startSshRelay(
+							body.sessionId,
+							mapping.guestPort,
+							deps.env.AGENT_SERVER_SSH_KEY_PATH,
+							deps.msb,
+							{ relayPort: mapping.relayPort },
+						)
+						if (relay) {
+							previewRelays.push(relay)
+						} else {
+							previewForwardingFailed = true
+							logger.warn('preview port ssh relay failed to establish', {
+								sessionId: body.sessionId,
+								guestPort: mapping.guestPort,
+								relayPort: mapping.relayPort,
+							})
+						}
+					}
+				} finally {
+					releasePreviewPorts()
+				}
+			} else {
+				releasePreviewPorts()
+			}
 
 			// Write exec trigger to the bind-mounted session dir. entrypoint.sh sleeps
 			// during create-time (no trigger); finding this file tells it to run the
@@ -654,14 +761,16 @@ export function buildApp(deps: AppDeps): Hono {
 				sessionLogRouters,
 				sessionExitCodes,
 				browserSidecar,
+				previewRelays,
 			)
 				.catch((err) => {
 					logger.error('monitorSession crashed unexpectedly', {
 						sessionId: body.sessionId,
 						error: String(err),
 					})
-					// monitorSession crashed before reaching its own cleanupBrowserSidecar
-					// block — clean up here so the sidecar VM isn't left orphaned.
+					// monitorSession crashed before reaching its own cleanup tail — clean
+					// up here so the sidecar VM and preview relays aren't left orphaned.
+					for (const relay of previewRelays) relay.stop()
 					if (browserSidecar) {
 						void cleanupBrowserSidecar(browserSidecar, deps.msb).catch((cleanupErr) => {
 							logger.warn('browser sidecar cleanup after monitorSession crash failed', {
@@ -688,13 +797,16 @@ export function buildApp(deps: AppDeps): Hono {
 					warm_hit: warmHit,
 					env_overflow_spilled: result.envOverflowSpilled,
 					env_sanitized: result.envSanitized,
+					...(sessionEnv.PREVIEW_URL !== undefined && { preview_url: sessionEnv.PREVIEW_URL }),
+					...(previewForwardingFailed && { preview_forwarding_failed: true }),
 				},
 				201,
 			)
 		} catch (err) {
 			logger.error('session spawn failed', { sessionId: body.sessionId, error: String(err) })
-			// Don't orphan the sidecar — spawnSession failed before monitorSession
-			// would have torn it down. Best-effort, idempotent.
+			// Don't orphan the sidecar or any preview relays — spawnSession failed
+			// before monitorSession would have torn them down. Best-effort, idempotent.
+			for (const relay of previewRelays) relay.stop()
 			if (browserSidecar) {
 				await cleanupBrowserSidecar(browserSidecar, deps.msb).catch(() => {})
 			}
@@ -985,6 +1097,17 @@ async function main(): Promise<void> {
 	const env = parseEnv()
 	const storage = await buildStorage(env)
 	const msb: MicrosandboxDeps = { msbBin: env.MSB_BIN }
+
+	// Best-effort: a box that can't mint/authorize its relay keypair here still
+	// boots — browser-required sessions will simply fail sidecar/preview relay
+	// setup individually later (provisionBrowserSidecar / startSshRelay never
+	// throw past the session boundary), consistent with this file's philosophy
+	// of not crashing the whole box over an optional-capability failure.
+	try {
+		await ensureAgentServerSshKey(env.AGENT_SERVER_SSH_KEY_PATH, msb)
+	} catch (err) {
+		logger.error('failed to ensure agent-server ssh relay keypair', { error: String(err) })
+	}
 
 	let warmer: ImageWarmer | null = null
 	if (env.WARM_POOL_IMAGE) {

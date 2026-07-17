@@ -1,4 +1,5 @@
 import {
+	deriveEntryAgentRole,
 	trackAgentCreated,
 	trackAgentSessionCompleted,
 	trackAgentSessionStarted,
@@ -19,6 +20,7 @@ import {
 	trackRelationshipCreated,
 	trackSidebarAgentActivityExpanded,
 	trackSidebarWorkspaceSwitcherOpened,
+	trackSpecialistSummonedManually,
 	trackTriggerCreated,
 	trackTriggerFired,
 } from '@/lib/analytics'
@@ -174,18 +176,26 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
-	it('chat_session_started carries the entry point alongside the property contract', () => {
+	it('chat_session_started carries the entry point + entry_agent_role for the CoS bet', () => {
 		const capture = captureSpy()
 
 		trackChatSessionStarted({
 			entity_id: 'sess-7',
 			entity_type: 'session',
 			entry_point: 'sindre_session',
+			entry_agent_role: 'chief-of-staff',
 		})
 		trackChatSessionStarted({
 			entity_id: 'sess-8',
 			entity_type: 'session',
 			entry_point: 'agent_one_shot',
+			entry_agent_role: 'workspace-coach',
+		})
+		trackChatSessionStarted({
+			entity_id: 'sess-9',
+			entity_type: 'session',
+			entry_point: 'sindre_session',
+			entry_agent_role: null,
 		})
 
 		expect(capture).toHaveBeenNthCalledWith(1, 'chat_session_started', {
@@ -194,6 +204,7 @@ describe('v1 taxonomy helpers', () => {
 			source: 'web',
 			flow_id: null,
 			entry_point: 'sindre_session',
+			entry_agent_role: 'chief-of-staff',
 		})
 		expect(capture).toHaveBeenNthCalledWith(2, 'chat_session_started', {
 			entity_id: 'sess-8',
@@ -201,7 +212,45 @@ describe('v1 taxonomy helpers', () => {
 			source: 'web',
 			flow_id: null,
 			entry_point: 'agent_one_shot',
+			entry_agent_role: 'workspace-coach',
 		})
+		expect(capture).toHaveBeenNthCalledWith(3, 'chat_session_started', {
+			entity_id: 'sess-9',
+			entity_type: 'session',
+			source: 'web',
+			flow_id: null,
+			entry_point: 'sindre_session',
+			entry_agent_role: null,
+		})
+	})
+
+	it('specialist_summoned_manually names the picked agent and its kebab role', () => {
+		const capture = captureSpy()
+
+		trackSpecialistSummonedManually({
+			entity_id: 'agent-42',
+			entity_type: 'agent',
+			agent_role: 'growth-strategist',
+		})
+
+		expect(capture).toHaveBeenCalledWith('specialist_summoned_manually', {
+			entity_id: 'agent-42',
+			entity_type: 'agent',
+			source: 'web',
+			flow_id: null,
+			agent_role: 'growth-strategist',
+		})
+	})
+
+	it('deriveEntryAgentRole kebab-cases actor names and squashes edge cases', () => {
+		expect(deriveEntryAgentRole('Chief of Staff')).toBe('chief-of-staff')
+		expect(deriveEntryAgentRole('Workspace Coach')).toBe('workspace-coach')
+		expect(deriveEntryAgentRole('  Growth-Strategist  ')).toBe('growth-strategist')
+		expect(deriveEntryAgentRole('Ops&Ledger')).toBe('ops-ledger')
+		expect(deriveEntryAgentRole('')).toBeNull()
+		expect(deriveEntryAgentRole('   ')).toBeNull()
+		expect(deriveEntryAgentRole(null)).toBeNull()
+		expect(deriveEntryAgentRole(undefined)).toBeNull()
 	})
 
 	it('comment_posted captures is_reply, attachment_count, and content', () => {
