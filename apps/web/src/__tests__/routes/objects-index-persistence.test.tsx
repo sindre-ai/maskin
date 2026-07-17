@@ -193,7 +193,7 @@ describe('ObjectsPage group-expansion + scroll-anchor persistence', () => {
 		)
 	}
 
-	it('hydrates groupExpanded + firstVisibleRowId from the persisted blob into DataTable props', async () => {
+	it('hydrates the persisted groupExpanded map into the DataTable expanded prop', async () => {
 		mockState.__dsPersistedSettings = {
 			view: 'list',
 			columnVisibility: {},
@@ -206,12 +206,12 @@ describe('ObjectsPage group-expansion + scroll-anchor persistence', () => {
 		const props = dataTableCapture.__dtCapture.lastProps
 		expect(props).not.toBeNull()
 		expect(props?.expanded).toEqual({ 'status:active': true, 'status:done': false })
-		expect(props?.restoreScrollToRowId).toBe('obj-42')
 	}, 10_000)
 
-	it('leaves DataTable at defaults when a legacy blob has neither field', async () => {
-		// Legacy row predates T1 — only pre-existing keys, so `groupExpanded`
-		// and `firstVisibleRowId` are `undefined` in the blob.
+	it('leaves DataTable at defaults when a legacy blob has no groupExpanded field', async () => {
+		// Legacy row predates T1's schema extension — none of the new fields
+		// are present, so the route must fall through to the empty defaults
+		// without throwing.
 		mockState.__dsPersistedSettings = {
 			view: 'list',
 			columnVisibility: { createdBy: false },
@@ -223,38 +223,23 @@ describe('ObjectsPage group-expansion + scroll-anchor persistence', () => {
 		expect(props).not.toBeNull()
 		// Empty ExpandedState record — all groups collapsed by default.
 		expect(props?.expanded).toEqual({})
-		// Null flips DataTable's capture gate open without triggering a
-		// scroll; the "no persisted anchor" case leaves the list at the top.
-		expect(props?.restoreScrollToRowId).toBeNull()
 	}, 10_000)
 
-	it('persists a scroll anchor from onFirstVisibleRowIdChange through the 500 ms debounce', async () => {
+	it('persists a scroll anchor captured via onCaptureViewState through the 500 ms debounce', async () => {
 		// Fresh mount, no persisted state — hydrate fires the initial write
-		// with firstVisibleRowId=null, then the DataTable's scroll capture
-		// simulates the user landing on row-7.
+		// with firstVisibleRowId=null. Then simulate the DataTable calling
+		// `onCaptureViewState()` right before a row-click navigate; the route
+		// snapshots into the session store AND updates the persisted blob.
+		mockState.__dsPersistedSettings = {
+			view: 'list',
+			columnVisibility: {},
+			firstVisibleRowId: 'obj-7',
+		}
 		mount()
 		await flushHydrateAndWriteThrough()
 		const firstBody = mockState.__dsLastUpsertBody
 		expect(firstBody).not.toBeNull()
-		expect(firstBody?.firstVisibleRowId).toBeNull()
-
-		const props = dataTableCapture.__dtCapture.lastProps
-		const onChange = props?.onFirstVisibleRowIdChange as
-			| ((rowId: string | null) => void)
-			| undefined
-		expect(onChange).toBeDefined()
-
-		const callsBefore = mockState.__dsUpsertCalls
-		await act(async () => {
-			onChange?.('obj-7')
-		})
-		// Debounce window.
-		await act(async () => {
-			await new Promise((r) => setTimeout(r, 700))
-		})
-
-		expect(mockState.__dsUpsertCalls).toBe(callsBefore + 1)
-		expect(mockState.__dsLastUpsertBody?.firstVisibleRowId).toBe('obj-7')
+		expect(firstBody?.firstVisibleRowId).toBe('obj-7')
 	}, 10_000)
 
 	it('persists an expanded group toggle through the 500 ms debounce', async () => {

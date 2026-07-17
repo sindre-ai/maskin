@@ -37,8 +37,7 @@ test.describe('Objects list retains view state across back-nav', () => {
 			// Wait for the write-through debounce to persist through the shared
 			// display-settings PUT rail.
 			await page.waitForResponse(
-				(r) =>
-					r.url().includes('/user-display-settings/bet') && r.request().method() === 'PUT',
+				(r) => r.url().includes('/user-display-settings/bet') && r.request().method() === 'PUT',
 				{ timeout: 5_000 },
 			)
 
@@ -52,9 +51,9 @@ test.describe('Objects list retains view state across back-nav', () => {
 			await expect(page.locator('[role="status"]')).toHaveCount(0)
 
 			// The active group is expanded again after back-nav.
-			await expect(
-				page.getByRole('button', { name: /active/i, expanded: true }),
-			).toBeVisible({ timeout: 5_000 })
+			await expect(page.getByRole('button', { name: /active/i, expanded: true })).toBeVisible({
+				timeout: 5_000,
+			})
 		})
 
 		test(`scroll anchor is restored to the previously-first-visible row after back-nav @ ${vp.label}`, async ({
@@ -88,8 +87,7 @@ test.describe('Objects list retains view state across back-nav', () => {
 
 			// Wait for the write-through debounce to fire.
 			await page.waitForResponse(
-				(r) =>
-					r.url().includes('/user-display-settings/bet') && r.request().method() === 'PUT',
+				(r) => r.url().includes('/user-display-settings/bet') && r.request().method() === 'PUT',
 				{ timeout: 5_000 },
 			)
 

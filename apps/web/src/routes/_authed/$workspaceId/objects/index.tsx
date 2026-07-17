@@ -3,7 +3,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { BoardView } from '@/components/objects/board/board-view'
 import { BulkActionBar } from '@/components/objects/bulk-action-bar'
 import { type ObjectsTableMeta, getStaticColumns } from '@/components/objects/data-table/columns'
-import { DataTable } from '@/components/objects/data-table/data-table'
+import { DataTable, type DataTableHandle } from '@/components/objects/data-table/data-table'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
 import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
 import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
@@ -28,6 +28,7 @@ import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { wasRecentBackNav } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
+import { getViewState, patchViewState } from '@/lib/objects-view-state'
 import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -135,14 +136,18 @@ function ObjectsPage() {
 	// Group-expansion state — the persisted `groupExpanded` field from the
 	// display-settings blob rides here. TanStack's ExpandedState allows either
 	// a boolean (all/none) or a Record<string, boolean>; we always store the
-	// record shape since a boolean can't be persisted per-row.
+	// record shape since a boolean can't be persisted per-row. Scroll anchor
+	// restore is owned by the session-scoped view-state store below (T3's
+	// domain); this task only extends the persistent DisplaySettings rail with
+	// the cross-tab-durable `groupExpanded` map + writes `firstVisibleRowId`
+	// alongside it so both fields on the shared schema stay in lockstep.
 	const [expanded, setExpanded] = useState<ExpandedState>({})
-	// Anchor for silent scroll restore. `undefined` before display-settings
-	// hydrate — DataTable holds its scroll-capture callback until the parent
-	// hands it a defined value (see restoreScrollToRowId in data-table.tsx).
-	// `null` = hydrated, no persisted anchor. `string` = try to restore that
-	// row id to the top.
-	const [firstVisibleRowId, setFirstVisibleRowId] = useState<string | null | undefined>(undefined)
+	// Latest first-visible row id captured at navigate-away time (via
+	// handleCaptureViewState). Fed into the write-through so the persisted
+	// blob's `firstVisibleRowId` matches what the session store already has.
+	const [persistedFirstVisibleRowId, setPersistedFirstVisibleRowId] = useState<
+		string | null | undefined
+	>(undefined)
 	// View switcher (List | Board). Route-local — persists per object type
 	// through the same Display settings row, never via the URL.
 	const [view, setView] = useState<DisplayPanelView>('list')
@@ -178,8 +183,14 @@ function ObjectsPage() {
 	// matching the bet's `nav_type='back'` denominator. The tracker is
 	// initialised at app boot (see main.tsx) so deep-link starts followed by a
 	// browser-back to the list are captured too.
+	//
+	// The same mount also arms the scroll-restore effect below. Data isn't
+	// necessarily loaded yet at mount time, so the restore itself has to
+	// wait for `!isLoading && rows.length > 0`.
+	const shouldRestoreScrollRef = useRef(false)
 	useEffect(() => {
 		if (wasRecentBackNav()) {
+			shouldRestoreScrollRef.current = true
 			trackObjectsListArrived({ nav_type: 'back' })
 		}
 	}, [])
@@ -192,6 +203,12 @@ function ObjectsPage() {
 	const handleGroupToggle = useCallback(() => {
 		trackObjectsListGroupToggled({ source: 'user' })
 	}, [])
+
+	// Imperative handle for the DataTable. Lets this route read the first-
+	// visible row id at navigate-away and drive `virtualizer.scrollToIndex`
+	// on a POP landing, without lifting the virtualizer or row model out of
+	// DataTable.
+	const dataTableRef = useRef<DataTableHandle>(null)
 
 	// Linear-style `C` shortcut opens the create picker with the active type
 	// tab pre-selected. Guarded so typing into filters/search never triggers it.
@@ -542,6 +559,39 @@ function ObjectsPage() {
 	// the same way per-type tabs do — without that, the user's choices in
 	// the display menu reset to defaults on every navigation away and back.
 	const displaySettingsKey = typeFilter ?? ALL_TYPES_KEY
+
+	// Fired synchronously by DataTable right before the row-click navigate.
+	// Snapshots the first-visible row id into the session view-state store so
+	// a back-nav landing (below) can restore the anchor. Keyed by workspace +
+	// tab so an anchor from one tab never rehydrates onto another. Also feeds
+	// the persisted DisplaySettings write-through so the schema's
+	// `firstVisibleRowId` field on the shared blob stays in lockstep with the
+	// session store — the T2 brief calls for both fields to ride the same
+	// 500 ms debounced rail as `columnVisibility`.
+	const handleCaptureViewState = useCallback(() => {
+		const firstVisibleRowId = dataTableRef.current?.getFirstVisibleRowId() ?? null
+		patchViewState(workspaceId, displaySettingsKey, { firstVisibleRowId })
+		setPersistedFirstVisibleRowId(firstVisibleRowId)
+	}, [workspaceId, displaySettingsKey])
+
+	// Silent scroll restore on POP landings. Waits for the first page of data
+	// so `scrollToIndex` has real rows to resolve against — scrolling an empty
+	// list would produce jitter and then re-fire on the next render. Fires
+	// exactly once per POP: the ref is cleared after the first attempt (which
+	// itself may no-op silently if the persisted row id is no longer in the
+	// current row set — deleted row, or the URL filter shifted).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: fires once when the load-gate flips; ref reads current key
+	useEffect(() => {
+		if (!shouldRestoreScrollRef.current) return
+		if (infiniteQuery.isLoading) return
+		if (allObjects.length === 0) return
+		const { firstVisibleRowId } = getViewState(workspaceId, displaySettingsKey)
+		if (firstVisibleRowId) {
+			dataTableRef.current?.scrollToRowId(firstVisibleRowId)
+		}
+		shouldRestoreScrollRef.current = false
+	}, [infiniteQuery.isLoading, allObjects.length])
+
 	const displaySettingsQuery = useUserDisplaySettings(workspaceId, displaySettingsKey)
 	const updateDisplaySettings = useUpdateUserDisplaySettings(workspaceId)
 	// `useMutation` returns a new object reference on every render, but the
@@ -581,12 +631,10 @@ function ObjectsPage() {
 		hydratedTypesRef.current.add(displaySettingsKey)
 		const persisted = displaySettingsQuery.data
 		if (!persisted) {
-			// No saved view for this key — fall back to the route default. Flip
-			// firstVisibleRowId from `undefined` to `null` so DataTable knows
-			// the settings are hydrated and starts capturing scroll.
+			// No saved view for this key — fall back to the route default.
 			setView('list')
 			setExpanded({})
-			setFirstVisibleRowId(null)
+			setPersistedFirstVisibleRowId(null)
 			return
 		}
 		const s = persisted.settings
@@ -611,19 +659,30 @@ function ObjectsPage() {
 		// This applies on the All tab too — `__all__` is its own row, so
 		// switching between All and a type tab restores each side's own state.
 		if (s.columnVisibility) setColumnVisibility(s.columnVisibility)
-		// Group expansion + first-visible-row anchor. Missing on a legacy blob
-		// = default (all groups collapsed, no anchor) — must not throw. A
-		// persisted `firstVisibleRowId` for a row that no longer exists in the
-		// current data set is handled downstream in DataTable, which silently
-		// falls back to the top per the AC.
+		// Group expansion is the T2 persistence surface — apply as-is. A
+		// missing map (legacy blob) collapses to the default of every group
+		// collapsed; a persisted map with row ids from a stale groupBy is
+		// harmless because TanStack Table simply ignores ids that aren't in
+		// the current row model.
 		setExpanded(s.groupExpanded ?? {})
-		setFirstVisibleRowId(s.firstVisibleRowId ?? null)
+		// Seed the session store from the persisted anchor so a hard-refresh
+		// followed by an immediate back-nav sees the last-known row rather
+		// than a top-of-list flash. Later navigate-away captures overwrite
+		// this via handleCaptureViewState. The scroll RESTORE itself remains
+		// session-scoped (see the shouldRestoreScrollRef effect above).
+		if (s.firstVisibleRowId) {
+			patchViewState(workspaceId, displaySettingsKey, {
+				firstVisibleRowId: s.firstVisibleRowId,
+			})
+		}
+		setPersistedFirstVisibleRowId(s.firstVisibleRowId ?? null)
 	}, [
 		displaySettingsKey,
 		displaySettingsQuery.isSuccess,
 		displaySettingsQuery.data,
 		urlIsInDefaultShape,
 		updateSearch,
+		workspaceId,
 	])
 
 	// Write-through. Only fires after this key has been hydrated so the
@@ -659,8 +718,8 @@ function ObjectsPage() {
 		// the write-through effect is already gated on hydration, but keep
 		// the guard so a stray render can't clobber a persisted anchor with a
 		// half-initialised state.
-		if (firstVisibleRowId !== undefined) {
-			settings.firstVisibleRowId = firstVisibleRowId
+		if (persistedFirstVisibleRowId !== undefined) {
+			settings.firstVisibleRowId = persistedFirstVisibleRowId
 		}
 
 		const handle = setTimeout(() => {
@@ -678,7 +737,7 @@ function ObjectsPage() {
 		metadataFilters,
 		columnVisibility,
 		expanded,
-		firstVisibleRowId,
+		persistedFirstVisibleRowId,
 	])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
@@ -951,12 +1010,12 @@ function ObjectsPage() {
 					// touched something.
 					const incomingKey = value || ALL_TYPES_KEY
 					hydratedTypesRef.current.delete(incomingKey)
-					// Reset the two lifted-into-parent view-state slices so the
-					// remounted DataTable (keyed on displaySettingsKey) reads
-					// `undefined` at mount and waits for hydrate rather than
-					// scrolling to the previous tab's anchor row.
+					// Reset the lifted-into-parent view-state slices so the new
+					// tab's hydrate block always sees a clean starting state and
+					// doesn't briefly show the outgoing tab's expanded groups or
+					// anchor.
 					setExpanded({})
-					setFirstVisibleRowId(undefined)
+					setPersistedFirstVisibleRowId(undefined)
 					navigate({
 						to: '/$workspaceId/objects',
 						params: { workspaceId },
@@ -1109,10 +1168,7 @@ function ObjectsPage() {
 				</div>
 			) : (
 				<DataTable
-					// Remount on tab switch so the one-shot scroll restore runs
-					// against the new tab's persisted anchor. Same key drives
-					// the hydration reset above via hydratedTypesRef.
-					key={displaySettingsKey}
+					ref={dataTableRef}
 					data={allObjects}
 					columns={columns}
 					workspaceId={workspaceId}
@@ -1131,8 +1187,7 @@ function ObjectsPage() {
 					fetchNextPage={infiniteQuery.fetchNextPage}
 					isLoading={infiniteQuery.isLoading}
 					onGroupToggle={handleGroupToggle}
-					restoreScrollToRowId={firstVisibleRowId}
-					onFirstVisibleRowIdChange={setFirstVisibleRowId}
+					onCaptureViewState={handleCaptureViewState}
 				/>
 			)}
 			<BulkActionBar
