@@ -108,10 +108,52 @@ export function trackAgentSessionStarted(p: BaseProps & { entity_type: 'session'
 // sessions table. `workspace_id` + `actor_id` ride as super-properties.
 export type ChatSessionEntryPoint = 'sindre_session' | 'agent_one_shot'
 
+// Kebab-cased role for the actor that opened the session. Fixed by the
+// Chief of Staff prototype bet's `posthog_query`: `chief-of-staff` when the
+// workspace's default agent routed the chat, otherwise the picked agent's
+// role. Callers derive it via `deriveEntryAgentRole()` below.
 export function trackChatSessionStarted(
-	p: BaseProps & { entity_type: 'session'; entry_point: ChatSessionEntryPoint },
+	p: BaseProps & {
+		entity_type: 'session'
+		entry_point: ChatSessionEntryPoint
+		entry_agent_role: string | null
+	},
 ): void {
-	trackEvent('chat_session_started', { ...fillBase(p), entry_point: p.entry_point })
+	trackEvent('chat_session_started', {
+		...fillBase(p),
+		entry_point: p.entry_point,
+		entry_agent_role: p.entry_agent_role,
+	})
+}
+
+// Fires when the owner picks a non-default agent from the slash-picker instead
+// of letting the default (Chief of Staff, once T3 wires it) route the chat.
+// One of the three thinness events for the Chief of Staff stub bet — a hit
+// means the boundary agent was bypassed. `entity_id` is the picked agent's
+// actor id so the query can group by which specialist was pulled in.
+export function trackSpecialistSummonedManually(
+	p: BaseProps & { entity_type: 'agent'; agent_role: string | null },
+): void {
+	trackEvent('specialist_summoned_manually', {
+		...fillBase(p),
+		agent_role: p.agent_role,
+	})
+}
+
+// Kebab-cases an agent's display name into the role slug the PostHog query
+// keys off. Returns `null` for a nameless or whitespace-only input so the
+// property is explicitly missing rather than an empty string — the query
+// `properties.entry_agent_role = 'chief-of-staff'` reads a null as "not the
+// default", which is the correct semantic when the actor's identity is
+// undetermined.
+export function deriveEntryAgentRole(name: string | null | undefined): string | null {
+	if (!name) return null
+	const trimmed = name.trim()
+	if (trimmed.length === 0) return null
+	return trimmed
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '')
 }
 
 export function trackAgentSessionCompleted(

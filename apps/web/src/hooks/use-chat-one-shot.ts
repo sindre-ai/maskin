@@ -1,4 +1,4 @@
-import { trackChatSessionStarted } from '@/lib/analytics'
+import { deriveEntryAgentRole, trackChatSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
 import {
@@ -106,6 +106,7 @@ export function useChatOneShot(): UseChatOneShotResult {
 			entity_id: session.id,
 			entity_type: 'session',
 			entry_point: 'agent_one_shot',
+			entry_agent_role: deriveEntryAgentRole(agent.name),
 		})
 
 		const apiKey = getApiKey()
