@@ -1,14 +1,24 @@
 import {
+	trackAgentCreated,
 	trackAgentSessionCompleted,
 	trackAgentSessionStarted,
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
 	trackChatImageUpload,
+	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
+	trackLoopGraduated,
+	trackLoopViewed,
+	trackNorthStarPromptImpression,
+	trackNorthStarPromptResponse,
 	trackObjectAttachedFile,
+	trackObjectCreated,
 	trackRelationshipCreated,
+	trackSidebarAgentActivityExpanded,
+	trackSidebarWorkspaceSwitcherOpened,
+	trackTriggerCreated,
 	trackTriggerFired,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
@@ -27,7 +37,24 @@ afterEach(() => {
 })
 
 describe('trackEvent', () => {
-	it('emits a console.info line tagged [analytics] with name and props', () => {
+	it('always forwards to posthog.capture — even before posthog is initialised', () => {
+		// Regression guard: prior versions silently dropped events when the
+		// module-local `initialized` flag was false, which is exactly how the
+		// north_star_prompt_impression / _response events were being lost in prod
+		// (see task Instrument north_star_prompt_* on the For You onboarding
+		// prompt bet). posthog-js is safe to call before init; do it anyway.
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackEvent('objects_control_changed', { source: 'objects-page', control: 'status_filter' })
+
+		expect(capture).toHaveBeenCalledTimes(1)
+		expect(capture).toHaveBeenCalledWith('objects_control_changed', {
+			source: 'objects-page',
+			control: 'status_filter',
+		})
+	})
+
+	it('also emits a console.info line tagged [analytics] when posthog is not initialised, for local dev diagnostics', () => {
 		trackEvent('objects_control_changed', { source: 'objects-page', control: 'status_filter' })
 
 		expect(console.info).toHaveBeenCalledTimes(1)
@@ -63,7 +90,7 @@ describe('trackEvent', () => {
 		Storage.prototype.getItem = original
 	})
 
-	it('routes through posthog.capture once posthog is initialised', () => {
+	it('routes through posthog.capture and skips the console fallback once posthog is initialised', () => {
 		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
 		__setInitializedForTesting(true)
 
@@ -146,6 +173,36 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
+	it('chat_session_started carries the entry point alongside the property contract', () => {
+		const capture = captureSpy()
+
+		trackChatSessionStarted({
+			entity_id: 'sess-7',
+			entity_type: 'session',
+			entry_point: 'sindre_session',
+		})
+		trackChatSessionStarted({
+			entity_id: 'sess-8',
+			entity_type: 'session',
+			entry_point: 'agent_one_shot',
+		})
+
+		expect(capture).toHaveBeenNthCalledWith(1, 'chat_session_started', {
+			entity_id: 'sess-7',
+			entity_type: 'session',
+			source: 'web',
+			flow_id: null,
+			entry_point: 'sindre_session',
+		})
+		expect(capture).toHaveBeenNthCalledWith(2, 'chat_session_started', {
+			entity_id: 'sess-8',
+			entity_type: 'session',
+			source: 'web',
+			flow_id: null,
+			entry_point: 'agent_one_shot',
+		})
+	})
+
 	it('comment_posted captures is_reply, attachment_count, and content', () => {
 		const capture = captureSpy()
 
@@ -197,6 +254,44 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
+	it('object_created carries object_subtype and the shared base contract', () => {
+		const capture = captureSpy()
+
+		trackObjectCreated({
+			entity_id: 'obj-42',
+			entity_type: 'object',
+			object_subtype: 'bet',
+		})
+
+		expect(capture).toHaveBeenCalledWith(
+			'object_created',
+			expect.objectContaining({
+				entity_id: 'obj-42',
+				entity_type: 'object',
+				object_subtype: 'bet',
+				source: 'web',
+			}),
+		)
+	})
+
+	it('agent_created and trigger_created fire under their fixed entity types', () => {
+		const capture = captureSpy()
+
+		trackAgentCreated({ entity_id: 'agent-5', entity_type: 'agent' })
+		trackTriggerCreated({ entity_id: 'trg-2', entity_type: 'trigger' })
+
+		expect(capture).toHaveBeenNthCalledWith(
+			1,
+			'agent_created',
+			expect.objectContaining({ entity_id: 'agent-5', entity_type: 'agent' }),
+		)
+		expect(capture).toHaveBeenNthCalledWith(
+			2,
+			'trigger_created',
+			expect.objectContaining({ entity_id: 'trg-2', entity_type: 'trigger', source: 'web' }),
+		)
+	})
+
 	it('object_attached_file carries file_id and parent entity type', () => {
 		const capture = captureSpy()
 
@@ -215,6 +310,97 @@ describe('v1 taxonomy helpers', () => {
 				parent_entity_type: 'bet',
 			}),
 		)
+	})
+
+	it('sidebar.workspace_switcher.opened carries the workspaceId', () => {
+		const capture = captureSpy()
+
+		trackSidebarWorkspaceSwitcherOpened({ workspaceId: 'ws-42' })
+
+		expect(capture).toHaveBeenCalledWith('sidebar.workspace_switcher.opened', {
+			workspaceId: 'ws-42',
+		})
+	})
+
+	it('sidebar.agent_activity.expanded carries the workspaceId', () => {
+		const capture = captureSpy()
+
+		trackSidebarAgentActivityExpanded({ workspaceId: 'ws-42' })
+
+		expect(capture).toHaveBeenCalledWith('sidebar.agent_activity.expanded', {
+			workspaceId: 'ws-42',
+		})
+	})
+
+	it('north_star_prompt_impression fires with workspace_id via posthog.capture', () => {
+		const capture = captureSpy()
+
+		trackNorthStarPromptImpression({ workspace_id: 'ws-42' })
+
+		expect(capture).toHaveBeenCalledWith('north_star_prompt_impression', {
+			workspace_id: 'ws-42',
+		})
+	})
+
+	it('north_star_prompt_response fires with workspace_id via posthog.capture', () => {
+		const capture = captureSpy()
+
+		trackNorthStarPromptResponse({ workspace_id: 'ws-42' })
+
+		expect(capture).toHaveBeenCalledWith('north_star_prompt_response', {
+			workspace_id: 'ws-42',
+		})
+	})
+
+	it('loop_viewed carries entity_type=loop and the source_bet_id join key', () => {
+		const capture = captureSpy()
+
+		trackLoopViewed({
+			entity_id: 'loop-1',
+			entity_type: 'loop',
+			source_bet_id: 'bet-99',
+		})
+
+		expect(capture).toHaveBeenCalledWith('loop_viewed', {
+			entity_id: 'loop-1',
+			entity_type: 'loop',
+			source: 'web',
+			flow_id: null,
+			source_bet_id: 'bet-99',
+		})
+	})
+
+	it('loop_viewed serialises a missing source_bet_id as null so the join key is always present', () => {
+		const capture = captureSpy()
+
+		trackLoopViewed({
+			entity_id: 'loop-2',
+			entity_type: 'loop',
+			source_bet_id: null,
+		})
+
+		expect(capture).toHaveBeenCalledWith(
+			'loop_viewed',
+			expect.objectContaining({ entity_id: 'loop-2', source_bet_id: null }),
+		)
+	})
+
+	it('loop_graduated carries entity_type=loop and the source_bet_id join key', () => {
+		const capture = captureSpy()
+
+		trackLoopGraduated({
+			entity_id: 'loop-3',
+			entity_type: 'loop',
+			source_bet_id: 'bet-77',
+		})
+
+		expect(capture).toHaveBeenCalledWith('loop_graduated', {
+			entity_id: 'loop-3',
+			entity_type: 'loop',
+			source: 'web',
+			flow_id: null,
+			source_bet_id: 'bet-77',
+		})
 	})
 })
 

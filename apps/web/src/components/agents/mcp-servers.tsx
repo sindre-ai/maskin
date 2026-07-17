@@ -61,6 +61,11 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		url: 'https://gmailmcp.googleapis.com/mcp/v1',
 		headers: { Authorization: 'Bearer ${GMAIL_TOKEN}' },
 	},
+	'google-calendar': {
+		type: 'http',
+		url: 'https://calendarmcp.googleapis.com/mcp/v1',
+		headers: { Authorization: 'Bearer ${GOOGLE_CALENDAR_TOKEN}' },
+	},
 	posthog: {
 		type: 'http',
 		url: 'https://mcp.posthog.com/mcp',
@@ -171,7 +176,9 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 				type: 'stdio',
 				command: 'npx',
 				args: ['-y', '@modelcontextprotocol/server-github'],
-				env: { GITHUB_TOKEN: `\${GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}}` },
+				env: {
+					GITHUB_PERSONAL_ACCESS_TOKEN: `\${GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}}`,
+				},
 			}
 		}
 		onUpdate({ mcpServers: updated })

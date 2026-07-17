@@ -1,5 +1,13 @@
-import type { ModuleDefinition } from '@maskin/module-sdk'
+import type { FieldDefinition, ModuleDefinition } from '@maskin/module-sdk'
 import { MODULE_ID, MODULE_NAME } from '../shared.js'
+
+const LOOP_STATUSES = ['holding', 'at-risk', 'breached']
+const LOOP_FIELDS: FieldDefinition[] = [
+	{ name: 'floor', type: 'text' },
+	{ name: 'cadence', type: 'text' },
+	{ name: 'source_bet_id', type: 'text' },
+	{ name: 'last_breach_at', type: 'date' },
+]
 
 const workExtension: ModuleDefinition = {
 	id: MODULE_ID,
@@ -10,7 +18,7 @@ const workExtension: ModuleDefinition = {
 			type: 'insight',
 			label: 'Insight',
 			icon: 'lightbulb',
-			defaultStatuses: ['new', 'processing', 'clustered', 'discarded'],
+			defaultStatuses: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
 		},
 		{
 			type: 'bet',
@@ -18,9 +26,10 @@ const workExtension: ModuleDefinition = {
 			icon: 'target',
 			defaultStatuses: [
 				'signal',
-				'proposed',
+				'qualified',
+				'define',
 				'active',
-				'completed',
+				'live',
 				'succeeded',
 				'failed',
 				'paused',
@@ -30,7 +39,14 @@ const workExtension: ModuleDefinition = {
 			type: 'task',
 			label: 'Task',
 			icon: 'check-square',
-			defaultStatuses: ['todo', 'in_progress', 'done', 'blocked'],
+			defaultStatuses: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
+		},
+		{
+			type: 'loop',
+			label: 'Loop',
+			icon: 'repeat',
+			defaultStatuses: LOOP_STATUSES,
+			defaultFields: LOOP_FIELDS,
 		},
 	],
 	defaultSettings: {
@@ -38,11 +54,16 @@ const workExtension: ModuleDefinition = {
 			insight: 'Insight',
 			bet: 'Bet',
 			task: 'Task',
+			loop: 'Loop',
 		},
 		statuses: {
-			insight: ['new', 'processing', 'clustered', 'discarded'],
-			bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
-			task: ['todo', 'in_progress', 'done', 'blocked'],
+			insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
+			bet: ['signal', 'qualified', 'define', 'active', 'live', 'succeeded', 'failed', 'paused'],
+			task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
+			loop: LOOP_STATUSES,
+		},
+		field_definitions: {
+			loop: LOOP_FIELDS,
 		},
 	},
 }

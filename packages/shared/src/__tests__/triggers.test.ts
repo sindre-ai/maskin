@@ -3,6 +3,7 @@ import {
 	conditionOperatorSchema,
 	createTriggerSchema,
 	cronConfigSchema,
+	cronScopeSchema,
 	eventConfigSchema,
 	reminderConfigSchema,
 	triggerConditionSchema,
@@ -33,6 +34,49 @@ describe('cronConfigSchema', () => {
 
 	it('rejects missing expression', () => {
 		expect(() => cronConfigSchema.parse({})).toThrow()
+	})
+
+	it('accepts an optional scope filter', () => {
+		const result = cronConfigSchema.parse({
+			expression: '0 3 * * 1',
+			scope: {
+				entity_type: 'knowledge',
+				metadata_eq: { doc_type: 'profile' },
+				metadata_before_now: 'review_by',
+			},
+		})
+		expect(result.scope?.entity_type).toBe('knowledge')
+		expect(result.scope?.metadata_eq?.doc_type).toBe('profile')
+		expect(result.scope?.metadata_before_now).toBe('review_by')
+	})
+})
+
+describe('cronScopeSchema', () => {
+	it('accepts entity_type alone', () => {
+		const result = cronScopeSchema.parse({ entity_type: 'knowledge' })
+		expect(result.entity_type).toBe('knowledge')
+	})
+
+	it('rejects empty entity_type', () => {
+		expect(() => cronScopeSchema.parse({ entity_type: '' })).toThrow()
+	})
+
+	it('rejects an unsafe metadata_eq key', () => {
+		expect(() =>
+			cronScopeSchema.parse({
+				entity_type: 'knowledge',
+				metadata_eq: { "doc'type": 'profile' },
+			}),
+		).toThrow()
+	})
+
+	it('rejects an unsafe metadata_before_now field name', () => {
+		expect(() =>
+			cronScopeSchema.parse({
+				entity_type: 'knowledge',
+				metadata_before_now: '2024_target',
+			}),
+		).toThrow()
 	})
 })
 

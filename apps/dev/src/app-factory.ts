@@ -18,6 +18,7 @@ import agentServerReconcileRoutes from './routes/agent-server-reconcile'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
+import briefingRoutes from './routes/briefing'
 import catalogPackagesRoutes from './routes/catalog-packages'
 import claudeOauthRoutes from './routes/claude-oauth'
 import eventsRoutes from './routes/events'
@@ -203,6 +204,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/api/*', createIdempotencyMiddleware(db))
 
 	app.route('/api/objects', objectsRoutes)
+	app.route('/api/briefing', briefingRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
 	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
 	app.route('/api/admin/landing-funnel', adminLandingFunnelRoutes)

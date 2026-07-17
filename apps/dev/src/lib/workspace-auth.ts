@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { workspaceMembers } from '@maskin/db/schema'
+import { actors, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 
 /**
@@ -43,4 +43,26 @@ export async function isWorkspaceOwner(
 		)
 		.limit(1)
 	return !!member
+}
+
+// Human admin/owner check for surfaces where only workspace humans can act
+// (e.g. the T5 "Verified by <human>" stamp on Knowledge Author writes).
+// Agents must not pass — even if they somehow held an admin/owner membership,
+// stamping is an object-level human verification, not an autonomous action.
+export async function isWorkspaceHumanAdminOrOwner(
+	db: Database,
+	actorId: string,
+	workspaceId: string,
+): Promise<boolean> {
+	const [row] = await db
+		.select({ role: workspaceMembers.role, type: actors.type })
+		.from(workspaceMembers)
+		.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
+		.where(
+			and(eq(workspaceMembers.actorId, actorId), eq(workspaceMembers.workspaceId, workspaceId)),
+		)
+		.limit(1)
+	if (!row) return false
+	if (row.type === 'agent') return false
+	return row.role === 'owner' || row.role === 'admin'
 }

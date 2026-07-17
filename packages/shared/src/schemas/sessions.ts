@@ -80,6 +80,7 @@ export const sessionConfigSchema = z.object({
 	interactive: z.boolean().default(false),
 	mention: sessionMentionContextSchema.optional(),
 	thread_reply: sessionThreadReplyContextSchema.optional(),
+	browserRequired: z.boolean().default(false),
 })
 
 export const createSessionSchema = z.object({
@@ -95,6 +96,10 @@ export const sessionQuerySchema = z.object({
 	status: sessionStatusSchema.optional(),
 	actor_id: z.string().uuid().optional(),
 	mention_object_id: z.string().uuid().optional(),
+	/** Half-open: rows satisfy `updated_at < updated_before`. Bound excluded. */
+	updated_before: z.string().datetime({ offset: true }).optional(),
+	/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */
+	updated_after: z.string().datetime({ offset: true }).optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(20),
 	offset: z.coerce.number().int().min(0).default(0),
 })

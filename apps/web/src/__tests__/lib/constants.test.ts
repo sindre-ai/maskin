@@ -39,6 +39,21 @@ describe('getStatusColor', () => {
 	it('returns defaultStatusColor for unknown status', () => {
 		expect(getStatusColor('nonexistent')).toEqual(defaultStatusColor)
 	})
+
+	it('maps loop statuses to their color-coded chips', () => {
+		expect(getStatusColor('holding')).toEqual({
+			bg: 'bg-status-holding-bg',
+			text: 'text-status-holding-text',
+		})
+		expect(getStatusColor('at-risk')).toEqual({
+			bg: 'bg-status-at_risk-bg',
+			text: 'text-status-at_risk-text',
+		})
+		expect(getStatusColor('breached')).toEqual({
+			bg: 'bg-status-breached-bg',
+			text: 'text-status-breached-text',
+		})
+	})
 })
 
 describe('API_BASE', () => {

@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/table'
 import { useIsMobile } from '@/hooks/use-mobile'
 import type { ObjectResponse, RelationshipResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { Link, useNavigate } from '@tanstack/react-router'
 import {
 	type Column,
@@ -77,11 +78,11 @@ export function RelatedObjectsTable({
 				cell: ({ row }) => {
 					const obj = row.original.object
 					return (
-						<div className="flex items-center gap-2">
+						<div className="flex items-center gap-2 min-w-0">
 							<Link
 								to="/$workspaceId/objects/$objectId"
 								params={{ workspaceId, objectId: obj.id }}
-								className="font-medium truncate max-w-[150px] sm:max-w-[300px] text-foreground hover:underline"
+								className="font-medium truncate min-w-0 flex-1 text-foreground hover:underline"
 								onClick={(e) => e.stopPropagation()}
 							>
 								{obj.title || 'Untitled'}
@@ -185,7 +186,13 @@ export function RelatedObjectsTable({
 					{table.getHeaderGroups().map((headerGroup) => (
 						<TableRow key={headerGroup.id} className="hover:bg-transparent">
 							{headerGroup.headers.map((header) => (
-								<TableHead key={header.id} className="h-8 px-2 sticky top-0 bg-background z-10">
+								<TableHead
+									key={header.id}
+									className={cn(
+										'h-8 px-2 sticky top-0 bg-background z-10',
+										header.column.id === 'title' && 'w-full',
+									)}
+								>
 									{header.isPlaceholder
 										? null
 										: flexRender(header.column.columnDef.header, header.getContext())}
@@ -202,7 +209,10 @@ export function RelatedObjectsTable({
 							onClick={() => handleRowClick(row.original.object.id)}
 						>
 							{row.getVisibleCells().map((cell) => (
-								<TableCell key={cell.id} className="py-1.5 px-2">
+								<TableCell
+									key={cell.id}
+									className={cn('py-1.5 px-2', cell.column.id === 'title' && 'max-w-0')}
+								>
 									{flexRender(cell.column.columnDef.cell, cell.getContext())}
 								</TableCell>
 							))}

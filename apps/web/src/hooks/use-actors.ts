@@ -88,7 +88,9 @@ function invalidateAgentControls(
 	queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 	queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
 	queryClient.invalidateQueries({ queryKey: queryKeys.sessions.byActor(workspaceId, actorId) })
-	queryClient.invalidateQueries({ queryKey: queryKeys.sessions.byActorAll(workspaceId, actorId) })
+	queryClient.invalidateQueries({
+		queryKey: queryKeys.sessions.byActorAllInfinite(workspaceId, actorId),
+	})
 }
 
 export function useAgentPause(workspaceId: string) {
@@ -97,9 +99,6 @@ export function useAgentPause(workspaceId: string) {
 		mutationFn: (id: string) => api.actors.pause(id, workspaceId),
 		onSuccess: (_result, id) => {
 			invalidateAgentControls(queryClient, workspaceId, id)
-		},
-		onError: () => {
-			toast.error('Failed to pause agent')
 		},
 	})
 }
@@ -111,9 +110,6 @@ export function useAgentRun(workspaceId: string) {
 			api.actors.run(id, workspaceId, body),
 		onSuccess: (_result, { id }) => {
 			invalidateAgentControls(queryClient, workspaceId, id)
-		},
-		onError: () => {
-			toast.error('Failed to run agent')
 		},
 	})
 }

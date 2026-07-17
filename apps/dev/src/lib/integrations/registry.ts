@@ -8,12 +8,16 @@ import { config as gmailConfig } from './providers/gmail/config'
 import { resolveExternalId as gmailResolveExternalId } from './providers/gmail/resolve-id'
 import { fanOutGmailHistory, setupGmailWatch, stopGmailWatch } from './providers/gmail/watch'
 import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/webhooks'
+import { config as googleCalendarConfig } from './providers/google-calendar/config'
+import { revokeGoogleCalendarGrant } from './providers/google-calendar/disconnect'
+import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
 } from './providers/linear/config'
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as posthogConfig } from './providers/posthog/config'
+import { reapSlackUserLinks } from './providers/slack/account-link'
 import {
 	config as slackConfig,
 	slackExtractDeliveryId,
@@ -21,7 +25,12 @@ import {
 	resolveExternalId as slackResolveExternalId,
 	slackWebhookPreHandler,
 } from './providers/slack/config'
+import {
+	removeSlackDefaultTriggers,
+	seedSlackDefaultTriggers,
+} from './providers/slack/default-triggers'
 import { slackWebhookFanOut } from './providers/slack/fan-out'
+import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
 
 const providers = new Map<string, ResolvedProvider>()
@@ -48,6 +57,21 @@ providers.set('slack', {
 	webhookPreHandler: slackWebhookPreHandler,
 	extractDeliveryId: slackExtractDeliveryId,
 	webhookFanOut: slackWebhookFanOut,
+	// Seed the tier cache, then the default @mention / DM responder triggers —
+	// without them, mention events sit unconsumed and the bot never answers.
+	// Both are fail-soft internally.
+	postInstall: async (ctx) => {
+		await probeSlackTierOnInstall(ctx)
+		await seedSlackDefaultTriggers(ctx)
+	},
+	// On disconnect, reap slack_user_links rows for this team/workspace pair so
+	// the next mention re-prompts (AC-T5), and remove the seeded default
+	// triggers (kept if another Slack team is still connected). Best-effort —
+	// never blocks the disconnect even if the table read fails.
+	preDisconnect: async (ctx) => {
+		await reapSlackUserLinks(ctx)
+		await removeSlackDefaultTriggers(ctx)
+	},
 	// File downloads can blow past Slack's 3s ack budget; process them off the
 	// hot path. The delivery claim still happens sync so retries are deduped.
 	asyncProcessing: true,
@@ -61,6 +85,12 @@ providers.set('gmail', {
 	postInstall: setupGmailWatch,
 	webhookFanOut: fanOutGmailHistory,
 	preDisconnect: stopGmailWatch,
+})
+
+providers.set('google-calendar', {
+	config: googleCalendarConfig,
+	resolveExternalId: googleCalendarResolveExternalId,
+	preDisconnect: revokeGoogleCalendarGrant,
 })
 
 providers.set('posthog', {

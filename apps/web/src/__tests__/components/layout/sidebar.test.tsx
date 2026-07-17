@@ -60,12 +60,16 @@ vi.mock('@/components/ui/sidebar', () => ({
 	useSidebar: () => ({ setOpenMobile }),
 }))
 
-vi.mock('@/components/agents/agent-pulse', () => ({
-	AgentPulse: () => <div data-testid="agent-pulse">AgentPulse</div>,
+vi.mock('@/components/layout/sidebar-activity', () => ({
+	SidebarActivity: () => <div data-testid="sidebar-activity">SidebarActivity</div>,
 }))
 
 vi.mock('@/components/layout/nav-user', () => ({
 	NavUser: () => <div data-testid="nav-user">NavUser</div>,
+}))
+
+vi.mock('@/components/layout/workspace-switcher', () => ({
+	WorkspaceSwitcher: () => <div data-testid="workspace-switcher">WorkspaceSwitcher</div>,
 }))
 
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
@@ -91,11 +95,16 @@ describe('AppSidebar', () => {
 		expect(screen.queryByText('Objects')).not.toBeInTheDocument()
 	})
 
-	it('renders AgentPulse and NavUser in footer', () => {
+	it('renders SidebarActivity and NavUser in footer', () => {
 		vi.mocked(useEnabledModules).mockReturnValue(['work'])
 		render(<AppSidebar />)
-		expect(screen.getByText('AgentPulse')).toBeInTheDocument()
+		expect(screen.getByText('SidebarActivity')).toBeInTheDocument()
 		expect(screen.getByText('NavUser')).toBeInTheDocument()
+	})
+
+	it('renders WorkspaceSwitcher in the header', () => {
+		render(<AppSidebar />)
+		expect(screen.getByTestId('workspace-switcher')).toBeInTheDocument()
 	})
 
 	it('does not render a chat launcher — lives in the app header now', () => {

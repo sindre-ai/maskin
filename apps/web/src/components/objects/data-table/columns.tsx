@@ -1,9 +1,11 @@
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
+import { IndicatorBadgeRow } from '@/components/shared/indicator-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { ActorListItem, ObjectResponse } from '@/lib/api'
+import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import type { ColumnDef, Table } from '@tanstack/react-table'
@@ -22,6 +24,11 @@ export interface ObjectsTableMeta {
 	onSort: (columnId: string) => void
 	currentSort: string
 	currentOrder: 'asc' | 'desc'
+	betStatuses?: Map<string, BetStatusResult>
+	// Bet status is rendered in the Title cell rather than as its own column, so
+	// the display menu toggles it via this flag instead of column visibility.
+	// Absent/true → visible, matching the default-visible behavior of a real column.
+	showBetStatusIndicator?: boolean
 }
 
 interface ColumnOptions {
@@ -89,6 +96,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			id: 'select',
 			header: ({ table }) => (
 				<Checkbox
+					size="touch"
 					checked={
 						table.getIsAllPageRowsSelected() ||
 						(table.getIsSomePageRowsSelected() && 'indeterminate')
@@ -99,40 +107,68 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			),
 			cell: ({ row }) => (
 				<Checkbox
+					size="touch"
+					data-drag-checkbox=""
 					checked={row.getIsSelected()}
 					onCheckedChange={(value) => row.toggleSelected(!!value)}
 					aria-label="Select row"
 					onClick={(e) => e.stopPropagation()}
+					className="touch-none select-none"
 				/>
 			),
 			enableSorting: false,
 			enableHiding: false,
-			size: 40,
+			size: 60,
 		},
 		{
 			accessorKey: 'title',
 			header: sortableHeader('Title', 'title'),
-			cell: ({ row }) => (
-				<div className="flex items-center gap-2">
-					<Link
-						to="/$workspaceId/objects/$objectId"
-						params={{ workspaceId, objectId: row.original.id }}
-						className="font-medium truncate max-w-[150px] sm:max-w-[300px] text-foreground hover:underline"
-						onClick={(e) => e.stopPropagation()}
-					>
-						{row.getValue('title') || 'Untitled'}
-					</Link>
-					{row.original.activeSessionId && (
-						<AgentWorkingBadge sessionId={row.original.activeSessionId} workspaceId={workspaceId} />
-					)}
-				</div>
-			),
+			cell: ({ row, table }) => {
+				const meta = table.options.meta as ObjectsTableMeta | undefined
+				const isBet = row.original.type === 'bet'
+				const showBetStatus = meta?.showBetStatusIndicator !== false
+				const betStatus =
+					isBet && showBetStatus ? meta?.betStatuses?.get(row.original.id) : undefined
+				return (
+					<div className="flex items-center gap-2 min-w-0">
+						<Link
+							to="/$workspaceId/objects/$objectId"
+							params={{ workspaceId, objectId: row.original.id }}
+							className="font-medium truncate min-w-0 flex-1 text-foreground hover:underline"
+							onClick={(e) => e.stopPropagation()}
+						>
+							{row.getValue('title') || 'Untitled'}
+						</Link>
+						{betStatus && <IndicatorBadgeRow result={betStatus} />}
+						{row.original.activeSessionId && (
+							<AgentWorkingBadge
+								sessionId={row.original.activeSessionId}
+								workspaceId={workspaceId}
+							/>
+						)}
+					</div>
+				)
+			},
 			enableHiding: false,
 		},
 		{
 			accessorKey: 'status',
 			header: sortableHeader('Status', 'status'),
-			cell: ({ row }) => <StatusBadge status={row.getValue('status')} />,
+			cell: ({ row }) => {
+				const status = row.getValue('status') as string
+				const priorRaw = row.original.metadata?.previous_status
+				const priorStatus = typeof priorRaw === 'string' ? priorRaw : null
+				return (
+					<div className="flex items-center gap-1.5 min-w-0">
+						<StatusBadge status={status} />
+						{status === 'archived' && priorStatus && (
+							<span className="truncate text-xs text-muted-foreground">
+								was {priorStatus.replace(/_/g, ' ')}
+							</span>
+						)}
+					</div>
+				)
+			},
 		},
 		{
 			accessorKey: 'type',

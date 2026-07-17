@@ -10,7 +10,7 @@ import {
 	sessionUsageQuerySchema,
 	sessionUsageResponseSchema,
 } from '@maskin/shared'
-import { and, asc, desc, eq, gt, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, formatZodError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -135,6 +135,9 @@ app.openapi(listSessionsRoute, (async (c) => {
 			sql`(${sessions.config}->'mention'->>'object_id' = ${query.mention_object_id} OR ${sessions.config}->'thread_reply'->>'object_id' = ${query.mention_object_id})`,
 		)
 	}
+	// Half-open contract — Zod has already validated these as ISO-8601 strings.
+	if (query.updated_before) conditions.push(lt(sessions.updatedAt, new Date(query.updated_before)))
+	if (query.updated_after) conditions.push(gt(sessions.updatedAt, new Date(query.updated_after)))
 
 	const results = await db
 		.select()

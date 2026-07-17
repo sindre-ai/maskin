@@ -16,7 +16,14 @@ import {
 } from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useDeleteObject, useObjectGraph, useUpdateObject } from '@/hooks/use-objects'
+import {
+	useDeleteObject,
+	useKnowledgeReferences,
+	useObjectGraph,
+	useUpdateObject,
+	useVerifyObject,
+} from '@/hooks/use-objects'
+import { useDeleteRelationship } from '@/hooks/use-relationships'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { trackEvent } from '@/lib/analytics'
 import type {
@@ -26,15 +33,17 @@ import type {
 	ObjectResponse,
 	RelationshipResponse,
 } from '@/lib/api'
+import { classifyBetStatus } from '@/lib/bet-status'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { Check, User } from 'lucide-react'
+import { Check, PanelRight, User } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionBanner } from '../activity/action-banner'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentWorkingBadge } from '../shared/agent-working-badge'
+import { IndicatorBadgeChip } from '../shared/indicator-badge'
 import { MarkdownContent } from '../shared/markdown-content'
 import { RelativeTime } from '../shared/relative-time'
 import { SourceBadge } from '../shared/source-badge'
@@ -42,9 +51,9 @@ import { StatusBadge } from '../shared/status-badge'
 import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
-import { LinkedObjects } from './linked-objects'
-import { MetadataProperties } from './metadata-properties'
-import { ObjectFiles } from './object-files'
+import { LoopCard } from './loop-card'
+import { PropertiesDrawer } from './properties-drawer'
+import { VerifiedChip, isKnowledgeAuthorWrite } from './verified-chip'
 
 interface ObjectDocumentViewProps {
 	object: ObjectResponse
@@ -52,19 +61,64 @@ interface ObjectDocumentViewProps {
 	statuses: string[]
 	creator?: ActorResponse
 	members?: MemberResponse[]
-	relationships?: {
-		asSource: RelationshipResponse[]
-		asTarget: RelationshipResponse[]
-	}
+	allRelationships?: RelationshipResponse[]
 	connectedObjects?: ObjectResponse[]
 	events?: EventResponse[]
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
 	onUpdateStatus: (status: string) => void
+	// Optional archive route — when provided, picking `archived` in the status
+	// picker is dispatched here instead of `onUpdateStatus`, keeping the
+	// single-handler contract with the row's Archive menu action.
+	onArchive?: () => void
 	onUpdateDriver: (driver: string | null) => void
+	onDeleteRelationship?: (relationshipId: string) => void
 	onDelete: () => void
+	onToggleVerified?: (verified: boolean) => void
+	isVerifying?: boolean
 	isDeleting?: boolean
 	showSaved?: boolean
+	betStatus?: ReturnType<typeof classifyBetStatus>
+	// False only when `object.content` genuinely wasn't fetched (e.g. an MCP
+	// `get_objects` response without `include: ['content']`) — as opposed to
+	// the object legitimately having no content. Callers that always fetch the
+	// full object (the webapp page) never need to set this.
+	contentLoaded?: boolean
+}
+
+// Renders "Referenced by N contexts/week" alongside the other prov-row chips
+// on knowledge object headers. Hidden when N is 0 (per DoD — the empty state
+// stays invisible so the row doesn't grow a permanent "Never referenced"
+// footprint). Also hidden while the count is loading or on API failure — the
+// chip is decorative, not load-bearing, so it must never block the header
+// from rendering.
+function KnowledgeReferencesChip({
+	workspaceId,
+	objectId,
+}: {
+	workspaceId: string
+	objectId: string
+}) {
+	const { data } = useKnowledgeReferences(workspaceId, objectId)
+	const count = data?.unique_contexts ?? 0
+	if (count <= 0) return null
+	return (
+		<span
+			className="text-[11px] text-muted-foreground"
+			title="Unique bets/tasks/insights that cited this knowledge object in the last 7 days (rolling window)"
+		>
+			Referenced by {count} {count === 1 ? 'context' : 'contexts'}/week
+		</span>
+	)
+}
+
+function shouldShowUpdatedChip(createdAt: string | null, updatedAt: string | null): boolean {
+	if (!updatedAt) return false
+	if (!createdAt) return true
+	const created = Date.parse(createdAt)
+	const updated = Date.parse(updatedAt)
+	if (!Number.isFinite(created) || !Number.isFinite(updated)) return false
+	return updated - created >= 60_000
 }
 
 export function ObjectDocumentView({
@@ -73,18 +127,32 @@ export function ObjectDocumentView({
 	statuses,
 	creator,
 	members,
-	relationships,
+	allRelationships,
 	connectedObjects,
 	events,
 	onUpdateTitle,
 	onUpdateContent,
 	onUpdateStatus,
+	onArchive,
 	onUpdateDriver,
+	onDeleteRelationship,
 	onDelete,
+	onToggleVerified,
+	isVerifying = false,
 	isDeleting = false,
 	showSaved = false,
+	betStatus,
+	contentLoaded = true,
 }: ObjectDocumentViewProps) {
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
+	// Reset the local title draft when navigating to a different object — this
+	// component instance is reused across route param changes, so the useState
+	// initializer alone would leave the textarea stuck on the previous title.
+	const [trackedObjectId, setTrackedObjectId] = useState(object.id)
+	if (trackedObjectId !== object.id) {
+		setTrackedObjectId(object.id)
+		setTitleDraft(object.title ?? '')
+	}
 
 	const handleTitleBlur = useCallback(() => {
 		if (titleDraft !== object.title) {
@@ -99,11 +167,21 @@ export function ObjectDocumentView({
 		[onUpdateContent],
 	)
 
+	// One handler, two entry points: the status picker's `archived` option
+	// dispatches to the same archive route as the row Archive menu. Falls back
+	// to the generic status update if no archive handler was supplied — the
+	// dropdown item is still there because the workspace's bet status enum
+	// includes `archived`, but without a bet-typed object it just moves the
+	// status like any other value.
 	const handleStatusChange = useCallback(
 		(status: string) => {
+			if (status === 'archived' && onArchive && object.type === 'bet') {
+				onArchive()
+				return
+			}
 			onUpdateStatus(status)
 		},
-		[onUpdateStatus],
+		[onUpdateStatus, onArchive, object.type],
 	)
 
 	return (
@@ -121,7 +199,7 @@ export function ObjectDocumentView({
 					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Untitled"
 					rows={1}
-					className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
+					className="w-full text-2xl font-semibold tracking-[-0.022em] bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
 					ref={(el) => {
 						if (el) {
 							el.style.height = 'auto'
@@ -145,7 +223,11 @@ export function ObjectDocumentView({
 				/>
 			)}
 
-			{/* Metadata badges row */}
+			{object.type === 'loop' && <LoopCard object={object} workspaceId={workspaceId} />}
+
+			{/* Metadata badges row — editable cluster stays inline; provenance
+			 * (creator + createdAt) drops to its own row below sm so 375px never
+			 * spills into a jagged partial wrap. */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
 				<TypeBadge type={object.type} />
 				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
@@ -153,6 +235,17 @@ export function ObjectDocumentView({
 					<StatusSelect current={object.status} options={statuses} onChange={handleStatusChange} />
 				) : (
 					<StatusBadge status={object.status} />
+				)}
+				{object.type === 'bet' && betStatus && (
+					<IndicatorBadgeChip result={betStatus} workspaceId={workspaceId} />
+				)}
+				{isKnowledgeAuthorWrite(object) && onToggleVerified && (
+					<VerifiedChip
+						object={object}
+						members={members}
+						onToggle={onToggleVerified}
+						isPending={isVerifying}
+					/>
 				)}
 				{members && (
 					<OwnerSelect
@@ -167,53 +260,46 @@ export function ObjectDocumentView({
 					entityId={object.id}
 					isSubscribed={object.is_subscribed}
 				/>
-				{creator && (
-					<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-						<ActorAvatar name={creator.name} type={creator.type} size="sm" />
-						{creator.name}
-					</span>
-				)}
-				<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
-			</div>
-
-			{/* Properties */}
-			<div className="mb-6 w-full">
-				<MetadataProperties object={object} />
-			</div>
-
-			{/* Content */}
-			<div className="mb-8">
-				<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
-			</div>
-
-			{/* Linked objects */}
-			{relationships && (
-				<div className="border-t border-border pt-6 mb-8">
-					<LinkedObjects
-						objectId={object.id}
-						objectType={object.type}
-						asSource={relationships.asSource}
-						asTarget={relationships.asTarget}
-						connectedObjects={connectedObjects}
-					/>
+				<div className="flex basis-full items-center gap-2 sm:basis-auto">
+					{creator && (
+						<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+							<ActorAvatar name={creator.name} type={creator.type} size="sm" />
+							{creator.name}
+						</span>
+					)}
+					<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
+					{shouldShowUpdatedChip(object.createdAt, object.updatedAt) && (
+						<span className="text-[11px] text-muted-foreground">
+							updated <RelativeTime date={object.updatedAt} />
+						</span>
+					)}
+					{object.type === 'knowledge' && (
+						<KnowledgeReferencesChip workspaceId={workspaceId} objectId={object.id} />
+					)}
 				</div>
-			)}
-
-			{/* Files */}
-			<div className="border-t border-border pt-6 mb-8">
-				<ObjectFiles
-					workspaceId={workspaceId}
-					objectId={object.id}
-					objectType={object.type}
-					relationships={relationships}
-				/>
 			</div>
 
-			{/* Activity */}
+			{/* Content — long-form prose caps at 75ch on viewports ≥1280px (AC-U1). */}
+			<div className="mb-8 xl:max-w-[75ch]">
+				{contentLoaded ? (
+					<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
+				) : (
+					<p className="text-sm text-muted-foreground italic">
+						Content not included in this response.
+					</p>
+				)}
+			</div>
+
+			{/* Activity — relationships are projected inline (AC-U11) or rendered
+				as a grouped-by-edge-type table (AC-U12) depending on the persisted
+				Timeline ↔ Table choice. */}
 			<ObjectActivity
 				workspaceId={workspaceId}
 				object={object}
 				events={events}
+				relationships={allRelationships}
+				connectedObjects={connectedObjects}
+				onDeleteRelationship={onDeleteRelationship}
 				activeSessionId={object.activeSessionId}
 			/>
 		</div>
@@ -224,7 +310,9 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const updateObject = useUpdateObject(workspaceId)
+	const verifyObject = useVerifyObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
+	const deleteRelationship = useDeleteRelationship(workspaceId, object.id)
 	const { data: creator } = useActor(object.createdBy)
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
@@ -238,10 +326,45 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		}
 		return { asSource, asTarget }
 	}, [graph, object.id])
+	// Flat, deduped list for the activity surface (both projection and table
+	// view consume the same edge set — AC-U12).
+	const allRelationships = useMemo(() => {
+		if (!graph) return undefined
+		const seen = new Set<string>()
+		const list: RelationshipResponse[] = []
+		for (const rel of graph.relationships) {
+			if (seen.has(rel.id)) continue
+			seen.add(rel.id)
+			list.push(rel)
+		}
+		return list
+	}, [graph])
+	const handleDeleteRelationship = useCallback(
+		(relationshipId: string) => {
+			deleteRelationship.mutate(relationshipId)
+		},
+		[deleteRelationship],
+	)
 	const { data: events } = useEntityEvents(workspaceId, object.id)
 
 	const settings = workspace.settings as Record<string, unknown>
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[object.type] ?? []
+
+	// Bets get a `waiting/progressing/stalled/idle` chip in the header. Classify
+	// over child tasks derived from `breaks_into` relationships already loaded
+	// by `useObjectGraph` — no extra API call.
+	const betStatus = useMemo(() => {
+		if (object.type !== 'bet' || !graph) return undefined
+		const childTaskIds = new Set<string>()
+		for (const rel of graph.relationships) {
+			if (rel.type !== 'breaks_into' || rel.sourceId !== object.id) continue
+			childTaskIds.add(rel.targetId)
+		}
+		const childTasks = graph.connected_objects.filter(
+			(o) => o.type === 'task' && childTaskIds.has(o.id),
+		)
+		return classifyBetStatus(object, childTasks)
+	}, [object, graph])
 
 	const handleUpdateTitle = useCallback(
 		(title: string) => {
@@ -264,11 +387,36 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[object.id, updateObject],
 	)
 
+	// Archive route shared by the row `⋯` menu and the status picker. Sets
+	// `status = archived` and stamps the current status onto
+	// `metadata.previous_status` so the archived-row treatment (T4) can render
+	// "was <prior status>". Server-side metadata is shallow-merged, so
+	// `archive_reason` and any other existing keys survive. A hygiene sweep
+	// can populate `archive_reason` later; the reason prompt UI is deferred.
+	const handleArchive = useCallback(() => {
+		if (object.type !== 'bet') return
+		if (object.status === 'archived') return
+		updateObject.mutate({
+			id: object.id,
+			data: {
+				status: 'archived',
+				metadata: { previous_status: object.status },
+			},
+		})
+	}, [object.id, object.status, object.type, updateObject])
+
 	const handleUpdateDriver = useCallback(
 		(driver: string | null) => {
 			updateObject.mutate({ id: object.id, data: { driver } })
 		},
 		[object.id, updateObject],
+	)
+
+	const handleToggleVerified = useCallback(
+		(verified: boolean) => {
+			verifyObject.mutate({ id: object.id, verified })
+		},
+		[object.id, verifyObject],
 	)
 
 	const [confirmDelete, setConfirmDelete] = useState(false)
@@ -293,6 +441,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 						q: prev.q,
 						groupBy: prev.groupBy,
 						ids: prev.ids,
+						includeArchived: prev.includeArchived,
 					}),
 				})
 			},
@@ -330,6 +479,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	}, [handleDelete])
 
 	const [menuOpen, setMenuOpen] = useState(false)
+	const [drawerOpen, setDrawerOpen] = useState(false)
 
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
@@ -346,19 +496,32 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		return () => document.removeEventListener('keydown', handler)
 	}, [])
 
-	const menuActions = (
-		<AuxiliaryActionMenu
-			object={object}
-			onDeleteRequest={openDeleteConfirm}
-			workspaceId={workspaceId}
-			open={menuOpen}
-			onOpenChange={setMenuOpen}
-		/>
+	const headerActions = (
+		<>
+			<Button
+				variant="ghost"
+				size="icon"
+				className="h-7 w-7"
+				onClick={() => setDrawerOpen((v) => !v)}
+				aria-label="Properties"
+				aria-expanded={drawerOpen}
+			>
+				<PanelRight size={15} />
+			</Button>
+			<AuxiliaryActionMenu
+				object={object}
+				onDeleteRequest={openDeleteConfirm}
+				onArchiveRequest={handleArchive}
+				workspaceId={workspaceId}
+				open={menuOpen}
+				onOpenChange={setMenuOpen}
+			/>
+		</>
 	)
 
 	return (
 		<>
-			<PageHeader actions={menuActions} />
+			<PageHeader actions={headerActions} />
 			<DeleteConfirmDialog
 				open={confirmDelete}
 				onOpenChange={handleDeleteOpenChange}
@@ -374,15 +537,27 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				statuses={statuses}
 				creator={creator}
 				members={members}
-				relationships={relationships}
+				allRelationships={allRelationships}
 				connectedObjects={graph?.connected_objects}
 				events={events}
 				onUpdateTitle={handleUpdateTitle}
 				onUpdateContent={handleUpdateContent}
 				onUpdateStatus={handleUpdateStatus}
+				onArchive={handleArchive}
 				onUpdateDriver={handleUpdateDriver}
+				onDeleteRelationship={handleDeleteRelationship}
 				onDelete={handleDelete}
+				onToggleVerified={handleToggleVerified}
+				isVerifying={verifyObject.isPending}
 				isDeleting={deleteObject.isPending}
+				betStatus={betStatus}
+			/>
+			<PropertiesDrawer
+				open={drawerOpen}
+				onOpenChange={setDrawerOpen}
+				object={object}
+				workspaceId={workspaceId}
+				relationships={relationships}
 			/>
 		</>
 	)

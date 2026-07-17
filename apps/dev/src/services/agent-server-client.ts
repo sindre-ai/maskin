@@ -33,6 +33,7 @@ export type StartSessionRequest = {
 	env?: Record<string, string>
 	memoryMib?: number
 	cpus?: number
+	browserRequired?: boolean
 	sourceSessionId?: string
 }
 
@@ -71,6 +72,10 @@ export class AgentServerClient {
 		await this.postJson<{ ok: boolean }>(`/sessions/${sessionId}/input`, {
 			content: payload.message.content,
 		})
+	}
+
+	async stopSession(sessionId: string): Promise<void> {
+		await this.postJson<{ ok: boolean }>(`/sessions/${sessionId}/stop`, {})
 	}
 
 	// Public to let lifecycle-route callers (T3 stop/snapshot/restore) reuse the

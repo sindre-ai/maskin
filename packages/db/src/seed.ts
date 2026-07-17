@@ -74,7 +74,7 @@ import {
 	DEV_PACKAGE_WORKSPACE_DRIVER_DESCRIPTION,
 	DEV_PACKAGE_WORKSPACE_DRIVER_NAME,
 	DEV_PACKAGE_WORKSPACE_DRIVER_SLUG,
-	DEV_TRIGGER_ACCEPTANCE_VALIDATOR_TASK_TESTING,
+	DEV_TRIGGER_ACCEPTANCE_VALIDATOR_TASK_VALIDATED,
 	DEV_TRIGGER_ARCHITECT_TASK_IN_PROGRESS,
 	DEV_TRIGGER_AUTO_MERGE_BOT_TASK_DONE,
 	DEV_TRIGGER_CODE_REVIEWER_PR_SYNCHRONIZE,
@@ -928,7 +928,7 @@ After planning, post a comment on the bet (do NOT @mention anyone) summarising: 
 				tools: {
 					mcpServers: {
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1095,7 +1095,7 @@ Move the task to \`in_review\`. The Code Reviewer trigger fires automatically.
 				tools: {
 					mcpServers: {
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1252,7 +1252,7 @@ Do NOT move the task to any other status. The human approves by replying. The Wo
 				tools: {
 					mcpServers: {
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1379,7 +1379,7 @@ Do NOT move the task to any other status.
 							headers: { 'x-api-key': '${EXA_API_KEY}' },
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1507,7 +1507,7 @@ Do NOT move the task to any other status.
 							headers: { 'x-api-key': '${EXA_API_KEY}' },
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1636,7 +1636,7 @@ For each critical issue: clone, fix, commit with message "fix: [description of i
 
 ## Step 6: Hand off
 
-If checks pass and critical issues are resolved: move the task to \`testing\`. The Acceptance Validator trigger fires automatically.
+If checks pass and critical issues are resolved: move the task to \`validated\`. The Acceptance Validator trigger fires automatically.
 
 If checks cannot be fixed (e.g. requires domain knowledge you don't have): post a comment on the task explaining what's broken, move back to \`in_progress\`.
 
@@ -1657,7 +1657,7 @@ If checks cannot be fixed (e.g. requires domain knowledge you don't have): post 
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1693,7 +1693,7 @@ Read the task via get_objects. If \`metadata.decision_type\` is \`architecture\`
 Read the task's \`metadata.review_round_trips\` (default 0).
 
 **If \`review_round_trips >= 3\`:**
-  - DO NOT review, DO NOT score risk, DO NOT route the task to \`testing\`.
+  - DO NOT review, DO NOT score risk, DO NOT route the task to \`validated\`.
   - Leave the task at \`in_review\`. The CTO will have already escalated to a human via notification (or will on its next fire if it hasn't yet).
   - Exit silently. Do NOT increment any counter — only the CTO increments on FAIL.
 
@@ -1703,9 +1703,9 @@ Read the task's \`metadata.review_round_trips\` (default 0).
 
 A task has just moved into \`in_review\` status. Follow your system prompt — it has the full review flow, the \`risk-classifier\` invocation, and the band classification.
 
-Briefly: read the task and parent bet, find the PR via \`github_link\`, run \`review-topology\` if the diff is multi-file or exceeds 30 LOC, then \`review-specialists\` if gated, review per \`review-checklist\`, fix critical issues if any, run \`risk-classifier\`, write the \`## Risk Score\` block, hand off to the CTO by moving the task to \`testing\`. Lower-numbered sibling tasks and their unmerged PRs are context, never gates — there is no \`blocked\` status and \`blocks\` edges are deprecated.
+Briefly: read the task and parent bet, find the PR via \`github_link\`, run \`review-topology\` if the diff is multi-file or exceeds 30 LOC, then \`review-specialists\` if gated, review per \`review-checklist\`, fix critical issues if any, run \`risk-classifier\`, write the \`## Risk Score\` block, hand off to the CTO by moving the task to \`validated\`. Lower-numbered sibling tasks and their unmerged PRs are context, never gates — there is no \`blocked\` status and \`blocks\` edges are deprecated.
 
-**Merge ownership:** the Auto-Merge Bot merges task PRs into the bet branch when the band is \`AUTO-APPROVE ELIGIBLE\`; flagged PRs go to a human. Merges to \`main\` are human-only except on super-low-risk bets (\`auto_bug\` / \`auto_merge_eligible\`). Your Risk Score gates that pipeline and is bubbled up to the human for flagged PRs so they can prioritize riskier reviews — it does NOT gate the agent flow. Always hand off to the CTO by moving to \`testing\` regardless of band. You never merge anything yourself.
+**Merge ownership:** the Auto-Merge Bot merges task PRs into the bet branch when the band is \`AUTO-APPROVE ELIGIBLE\`; flagged PRs go to a human. Merges to \`main\` are human-only except on super-low-risk bets (\`auto_bug\` / \`auto_merge_eligible\`). Your Risk Score gates that pipeline and is bubbled up to the human for flagged PRs so they can prioritize riskier reviews — it does NOT gate the agent flow. Always hand off to the CTO by moving to \`validated\` regardless of band. You never merge anything yourself.
 
 Triggering event: {triggering_event}`,
 				targetActorId: DEV_ACTOR_CODE_REVIEWER,
@@ -1726,7 +1726,7 @@ Triggering event: {triggering_event}`,
 
 1. **Find the linked task.** Read the PR URL from the event payload. Search tasks with \`metadata.github_link\` matching it. None found → exit silently (untracked PR — human-driven PRs to \`main\` mid-iteration usually land here).
 
-2. **Review window.** If the task's status is NOT \`in_review\` or \`testing\` → exit silently.
+2. **Review window.** If the task's status is NOT \`in_review\` or \`validated\` → exit silently.
 
 3. **Debounce — 30 minutes.** Read the task's \`## Risk Score\` block. If its \`re-scored:\` timestamp (or the original score's timestamp, inferable from the task's recent events) is newer than 30 minutes → exit silently. Rapid push streaks re-score at most once per half hour. The per-SHA contract is still honored because the score consumed at any handoff or merge decision is recomputed from the latest SHA at that point — not because every intermediate push gets its own session.
 
@@ -1743,7 +1743,7 @@ If no exit hit, re-score:
      - entity_id: <task_id>
      - mentions: []
      - content: "⚠️ Risk band increased after push: <old band> → <new band>. Top new risk signals: [list]. PR: [url]. Reply by @mentioning me with: \`approved\` (to continue at new band) · \`block-two-human\` (if a second human reviewer is required)"
-   - If the task was already at \`testing\` and the band moved up: ALSO move the task back to \`in_review\` so the Acceptance Validator doesn't validate against the now-stale prior pass.
+   - If the task was already at \`validated\` and the band moved up: ALSO move the task back to \`in_review\` so the Acceptance Validator doesn't validate against the now-stale prior pass.
 
 7. **Post the \`maskin/risk-score\` GitHub check run** for the new SHA if you have permissions (skip silently if not).
 
@@ -1785,7 +1785,7 @@ if (acceptanceValidatorPkg) {
 
 ## How you get spawned
 
-A trigger fires when a task moves to \`testing\`.
+A trigger fires when a task moves to \`validated\`.
 
 ## Step 1: Understand what "done" means for this task
 
@@ -1836,7 +1836,7 @@ If an architecture was approved: does the implementation follow the chosen ADR?
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1862,20 +1862,20 @@ If an architecture was approved: does the implementation follow the chosen ADR?
 		{
 			packageId: acceptanceValidatorPkg.id,
 			itemType: 'trigger',
-			sourceItemId: DEV_TRIGGER_ACCEPTANCE_VALIDATOR_TASK_TESTING,
+			sourceItemId: DEV_TRIGGER_ACCEPTANCE_VALIDATOR_TASK_VALIDATED,
 			itemSnapshot: {
-				name: 'Task Testing → Acceptance Validation',
+				name: 'Task Validated → Acceptance Validation',
 				description:
-					'Fires when a task moves to testing; spawns the Acceptance Validator to verify the implementation delivers its stated goal.',
+					'Fires when a task moves to validated; spawns the Acceptance Validator to verify the implementation delivers its stated goal.',
 				type: 'event',
-				config: { action: 'status_changed', to_status: 'testing', entity_type: 'task' },
+				config: { action: 'status_changed', to_status: 'validated', entity_type: 'task' },
 				actionPrompt: `## CIRCUIT BREAKER — read this FIRST
 
 Read the task's \`metadata.review_round_trips\` (default 0). This counter increments each time the CTO FAILs validation on the SAME head SHA.
 
 **If \`review_round_trips >= 3\`:**
   - DO NOT validate, DO NOT mark done, DO NOT send the task back to in_progress.
-  - Leave the task at \`testing\`.
+  - Leave the task at \`validated\`.
   - Idempotency: call get_comments on this task. If a comment from you (actor 4c1a09da-dca8-4972-8a6f-68717197ffe3) with "Validation loop hit 3-bounce limit" already exists in the last 48h, exit silently.
   - Otherwise post a comment via create_comment:
     - entity_id: <task_id>
@@ -1891,9 +1891,9 @@ The counter resets to 0 automatically when a new commit is pushed (the PR synchr
 
 ---
 
-A task has just moved into \`testing\` status. Follow your system prompt — it has the goal-validation methodology.
+A task has just moved into \`validated\` status. Follow your system prompt — it has the goal-validation methodology.
 
-Briefly: read the task and parent bet, read the \`## Risk Score\` block from the task content (the Code Reviewer wrote it), run \`spec-conformance\`, trace the critical path, verify each link, drive the surface via \`qa\` (and \`bet-qa\` on the last open task of a user-facing bet), render PASS / CONDITIONAL PASS / FAIL.
+Briefly: read the task and parent bet, read the \`## Risk Score\` block from the task content (the Code Reviewer wrote it), run \`spec-conformance\`, trace the critical path, verify each link, drive the surface via \`qa\` when appropriate, render PASS / CONDITIONAL PASS / FAIL.
 
 **You DO NOT merge code.** You never call \`gh pr merge\` or any merge tool. After you mark a task \`done\`, the Auto-Merge Bot merges its PR into the bet branch when the risk band qualifies; merges to \`main\` are human-only except on super-low-risk bets — per the merge-ownership rule in your system prompt. Your job ends at marking the task \`done\` (PASS / CONDITIONAL PASS) or \`in_progress\` (FAIL).
 
@@ -1993,7 +1993,7 @@ Move the task to \`in_review\`. The Code Reviewer trigger fires automatically.
 				tools: {
 					mcpServers: {
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2080,7 +2080,7 @@ For each critical issue: clone, fix, commit with message "fix: [description of i
 
 ## Step 6: Hand off
 
-If checks pass and critical issues are resolved: move the task to \`testing\`. The Acceptance Validator trigger fires automatically.
+If checks pass and critical issues are resolved: move the task to \`validated\`. The Acceptance Validator trigger fires automatically.
 
 If checks cannot be fixed (e.g. requires domain knowledge you don't have): post a comment on the task explaining what's broken, move back to \`in_progress\`.
 
@@ -2101,7 +2101,7 @@ If checks cannot be fixed (e.g. requires domain knowledge you don't have): post 
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2131,7 +2131,7 @@ If checks cannot be fixed (e.g. requires domain knowledge you don't have): post 
 
 ## How you get spawned
 
-A trigger fires when a task moves to \`testing\`.
+A trigger fires when a task moves to \`validated\`.
 
 ## Step 1: Understand what "done" means for this task
 
@@ -2182,7 +2182,7 @@ If an architecture was approved: does the implementation follow the chosen ADR?
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2274,7 +2274,7 @@ Read the task's \`metadata.review_round_trips\` (default 0).
 
 ---
 
-A task has just moved into \`in_review\` status. Follow your system prompt — read the task and parent bet, find the PR via \`github_link\`, review the diff, fix critical issues if any, compute the risk score, write the \`## Risk Score\` block, and hand off to the CTO by moving the task to \`testing\`. Lower-numbered sibling tasks and their unmerged PRs are context, never gates.
+A task has just moved into \`in_review\` status. Follow your system prompt — read the task and parent bet, find the PR via \`github_link\`, review the diff, fix critical issues if any, compute the risk score, write the \`## Risk Score\` block, and hand off to the CTO by moving the task to \`validated\`. Lower-numbered sibling tasks and their unmerged PRs are context, never gates.
 
 **Merge ownership:** you never merge anything. The Auto-Merge Bot merges task PRs into the bet branch when the band qualifies; merges to \`main\` are human-only except on super-low-risk bets.
 
@@ -2297,7 +2297,7 @@ Triggering event: {triggering_event}`,
 
 1. **Find the linked task.** Read the PR URL from the event payload. Search tasks with \`metadata.github_link\` matching it. None found → exit silently.
 
-2. **Review window.** If the task's status is NOT \`in_review\` or \`testing\` → exit silently.
+2. **Review window.** If the task's status is NOT \`in_review\` or \`validated\` → exit silently.
 
 3. **Debounce — 30 minutes.** If the \`## Risk Score\` block's timestamp is newer than 30 minutes → exit silently.
 
@@ -2307,7 +2307,7 @@ If no exit hit, re-score:
 
 5. **Replace the \`## Risk Score\` block AND reset the bounce counter** on the task content via update_objects. Mark this re-score with a \`re-scored: <ISO timestamp>\` line. In the same update_objects call, set \`metadata.review_round_trips = 0\` — a new commit means a fresh attempt.
 
-6. **Re-evaluate handoff** based on the new band. If the band moved UP, post a comment on the task. If the task was at \`testing\` and the band moved up, move the task back to \`in_review\`.
+6. **Re-evaluate handoff** based on the new band. If the band moved UP, post a comment on the task. If the task was at \`validated\` and the band moved up, move the task back to \`in_review\`.
 
 Triggering event: {triggering_event}`,
 				targetActorId: DEV_ACTOR_CODE_REVIEWER,
@@ -2317,18 +2317,18 @@ Triggering event: {triggering_event}`,
 		{
 			packageId: devPipelinePkg.id,
 			itemType: 'trigger',
-			sourceItemId: DEV_TRIGGER_ACCEPTANCE_VALIDATOR_TASK_TESTING,
+			sourceItemId: DEV_TRIGGER_ACCEPTANCE_VALIDATOR_TASK_VALIDATED,
 			itemSnapshot: {
-				name: 'Task Testing → Acceptance Validation',
+				name: 'Task Validated → Acceptance Validation',
 				description:
-					'Fires when a task moves to testing; spawns the Acceptance Validator to verify the implementation delivers its stated goal.',
+					'Fires when a task moves to validated; spawns the Acceptance Validator to verify the implementation delivers its stated goal.',
 				type: 'event',
-				config: { action: 'status_changed', to_status: 'testing', entity_type: 'task' },
+				config: { action: 'status_changed', to_status: 'validated', entity_type: 'task' },
 				actionPrompt: `## CIRCUIT BREAKER — read this FIRST
 
 Read the task's \`metadata.review_round_trips\` (default 0).
 
-**If \`review_round_trips >= 3\`:** leave the task at \`testing\`, post a human-escalation comment (if not already posted in the last 48h), and exit. Do NOT validate. Do NOT increment the counter.
+**If \`review_round_trips >= 3\`:** leave the task at \`validated\`, post a human-escalation comment (if not already posted in the last 48h), and exit. Do NOT validate. Do NOT increment the counter.
 
 **If \`review_round_trips < 3\`:** proceed with the methodology in your system prompt.
   - On **PASS** or **CONDITIONAL PASS**: move task to \`done\` and set \`metadata.review_round_trips = 0\`. CONDITIONAL PASS additionally requires creating follow-up tasks for the non-blocking issues, linked to the parent bet. **No merge attempt — you never merge.**
@@ -2336,7 +2336,7 @@ Read the task's \`metadata.review_round_trips\` (default 0).
 
 ---
 
-A task has just moved into \`testing\` status. Follow your system prompt — read the task and parent bet, read the \`## Risk Score\` block, trace the critical path, verify each link, and render PASS / CONDITIONAL PASS / FAIL.
+A task has just moved into \`validated\` status. Follow your system prompt — read the task and parent bet, read the \`## Risk Score\` block, trace the critical path, verify each link, and render PASS / CONDITIONAL PASS / FAIL.
 
 **You DO NOT merge code.** After you mark a task \`done\`, the Auto-Merge Bot merges its PR into the bet branch when the risk band qualifies; merges to \`main\` are human-only except on super-low-risk bets.
 
@@ -2381,7 +2381,7 @@ A trigger fires when a coding task (no \`metadata.decision_type\`) moves to \`do
 1. Read the task. Find the PR URL in \`metadata.github_link\`.
 2. Check if the PR is already merged. If yes, skip to Step 2.
 3. Check the risk score (\`metadata.risk_score\` on the task).
-   - Score 0–6: merge automatically with \`gh pr merge <PR> --squash\`.
+   - Score 0–6: arm auto-merge with \`bash scripts/gh-pr-merge-auto.sh <PR>\` — GitHub squash-merges into the bet branch once CI + required approvals are green. Do not call the REST \`merge_pull_request\` tool or \`gh pr merge --squash\` directly; the wrapper handles the single transient-5xx retry.
    - Score 7–10: post a Slack message to the team channel flagging the high-risk merge and wait for a human to approve (or merge if no response within 30 min on a weekday).
 4. After merging, verify CI passes on the bet branch.
 
@@ -2393,7 +2393,7 @@ List all tasks linked to this bet via \`breaks_into\`. If ANY task is not in \`d
 
 If all tasks are done:
 1. Verify CI passes on the bet branch.
-2. Squash-merge the bet branch into \`main\` with \`gh pr merge <bet-branch-PR> --squash\`.
+2. Squash-merge the bet branch into \`main\` by arming auto-merge with \`bash scripts/gh-pr-merge-auto.sh <bet-branch-PR>\` — GitHub squash-merges once CI is green. Do not call the REST \`merge_pull_request\` tool.
 3. Verify CI passes on \`main\` after merge.
 4. Advance the bet to \`live\` via update_objects.
 5. Post a Slack message to the team channel announcing the bet shipped.
@@ -2415,7 +2415,7 @@ If all tasks are done:
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2429,7 +2429,7 @@ If all tasks are done:
 							},
 						},
 						github_approver: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_APPROVER}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_APPROVER}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2461,7 +2461,7 @@ Read the task, find its parent bet via \`breaks_into\`. If there is no parent be
 
 - **PR targets \`bet/<slug>\`** → Surface A (task PR into the bet branch). EVERY bet qualifies. Walk your Surface A gates: risk band must be \`AUTO-APPROVE ELIGIBLE\`; otherwise post the needs-your-merge comment on the task and exit. Sibling tasks do NOT need to be done. On confirmed merge: one short plain-language comment on the task; do NOT change the bet's status.
 
-- **PR targets \`main\`** → Surface B (umbrella \`bet/<slug> → main\`, or a standalone small-bug-fix task PR). Only proceed if the bet's \`metadata.auto_bug\` is \`true\` OR \`metadata.auto_merge_eligible\` is \`true\` — otherwise exit silently; the human merges to \`main\`. Then walk your Surface B gates: all sibling tasks \`done\`, band \`AUTO-APPROVE ELIGIBLE\`, PR cleanly mergeable, threads resolved, approving review submitted with \`github_approver\`, squash-merge with \`github\`. On confirmed merge: set the bet \`live\` with \`metadata.live_started_at\` and \`metadata.awaiting_deploy = true\`, and post the plain-language close-out comment per your system prompt.
+- **PR targets \`main\`** → Surface B (umbrella \`bet/<slug> → main\`, or a standalone small-bug-fix task PR). Only proceed if the bet's \`metadata.auto_bug\` is \`true\` OR \`metadata.auto_merge_eligible\` is \`true\` — otherwise exit silently; the human merges to \`main\`. Then walk your Surface B gates: all sibling tasks \`done\`, band \`AUTO-APPROVE ELIGIBLE\`, PR cleanly mergeable, threads resolved, approving review submitted by an identity that is NOT the PR author — pick the first available from the ordered fallback \`github_approver\` → \`github-vaerksted-ai\` → \`github-sindre-ai\` (extra identities added later APPEND, never prepend), then squash-merge with \`github\`. If every identity in the fallback is the PR author, do NOT approve — block on the guardrail and post the block comment instead. Confirmed merge: set the bet \`live\` with \`metadata.live_started_at\` and \`metadata.awaiting_deploy = true\`, and post the plain-language close-out comment per your system prompt.
 
 On any block (wrong band, missing Risk Score block, dirty PR, open threads, rejected approve, rejected merge): leave the bet \`active\` and post a comment on the bet via create_comment:
 - entity_id: <bet_id>
@@ -2566,7 +2566,7 @@ When a \`decision_type: ux\` or \`decision_type: architecture\` task moves to \`
 							headers: { 'x-api-key': '${EXA_API_KEY}' },
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -3136,7 +3136,7 @@ Check all @mention comments in the last 24h. Flag any where an agent @mentioned 
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -3181,7 +3181,7 @@ Nothing is ever blocked. \`blocks\` edges are deprecated — ignore any that exi
 
 ## STEP 2 — Check bet completion
 
-List all tasks linked to the bet via \`breaks_into\`. Tally by status. If ALL are \`done\` or \`discarded\` (none in \`todo\`, \`in_progress\`, \`in_review\`, \`testing\`):
+List all tasks linked to the bet via \`breaks_into\`. Tally by status. If ALL are \`done\` or \`discarded\` (none in \`todo\`, \`in_progress\`, \`in_review\`, \`validated\`):
 
 → **Bet complete path.** See STEP 5.
 
@@ -3211,7 +3211,7 @@ Do NOT advance the bet status yourself.
 
 ## STEP 6 — Edge case: no todo tasks but bet not complete
 
-Some tasks are in \`in_progress\`, \`in_review\`, or \`testing\` — they're not done yet. Budget is available but there are no \`todo\` tasks to start. Exit silently. Work is in flight.
+Some tasks are in \`in_progress\`, \`in_review\`, or \`validated\` — they're not done yet. Budget is available but there are no \`todo\` tasks to start. Exit silently. Work is in flight.
 
 Triggering event: {triggering_event}`,
 				targetActorId: DEV_ACTOR_WORKSPACE_DRIVER,
@@ -3422,13 +3422,20 @@ Triggering event: {triggering_event}`,
 
 Load \`maskin-voice\` and \`pipeline-liveness-watchdog\` before any action. The skill is the source of truth — run Mode 1 (full sweep) exactly as it specifies. The checks below are a memory aid, not a replacement.
 
+For each of Checks 1–3, query stalled tasks directly with the server-side filter:
+\`list_objects(type='task', status='<status>', updated_before='<now minus N hours, ISO-8601 UTC>', sort='updated_at_asc')\`.
+Compute the cutoff as \`new Date(Date.now() - N * 3600 * 1000).toISOString()\`. Walk the returned rows oldest-first — the server has already filtered to only tasks that haven't been touched inside the window, so you never need to fetch-then-filter in the session. Server-side filter must appear in the tool call log line for each check.
+
 **Check 1 — Tasks stuck in \`in_progress\` > 2h with no running session.**
+Query: \`list_objects(type='task', status='in_progress', updated_before=<now - 2h>, sort='updated_at_asc')\`.
 For each: find the last session, check its status. If \`failed\` or \`timeout\`, restart. If \`completed\` but task not advanced, advance the task manually. If no session at all, create one.
 
 **Check 2 — Tasks stuck in \`in_review\` > 4h with no reviewer session.**
+Query: \`list_objects(type='task', status='in_review', updated_before=<now - 4h>, sort='updated_at_asc')\`.
 For each: spawn a Code Reviewer session. The session trigger will pick it up normally.
 
-**Check 3 — Tasks stuck in \`testing\` > 4h with no CTO session.**
+**Check 3 — Tasks stuck in \`validated\` > 4h with no CTO session.**
+Query: \`list_objects(type='task', status='validated', updated_before=<now - 4h>, sort='updated_at_asc')\`.
 For each: spawn an Acceptance Validator session.
 
 **Check 4 — Bets in \`active\` with all tasks \`done\` but bet not advanced.**
@@ -3460,11 +3467,15 @@ Triggering event: {triggering_event}`,
 				actionPrompt: `Run your Mode 3 daily bet sweep. Three responsibilities:
 
 **STEP 1 — Unstick stalled tasks.**
-For each \`active\` bet:
-- Find tasks in \`in_progress\` > 6h with no active session: restart.
-- Find tasks in \`in_review\` > 12h: re-trigger Code Reviewer.
-- Find tasks in \`testing\` > 12h: re-trigger Acceptance Validator.
-- Find \`todo\` tasks that should have started (concurrency budget available, no blocker): move to \`in_progress\`.
+
+Query stalled tasks directly with the server-side time filter instead of enumerating every active bet. For each cutoff below, compute \`new Date(Date.now() - N * 3600 * 1000).toISOString()\` and call:
+\`list_objects(type='task', status='<status>', updated_before='<cutoff>', sort='updated_at_asc')\`.
+Walk the returned rows oldest-first. The server has already narrowed the set to tasks not touched inside the window — no client-side filter needed, and the session reaches every row in one pass instead of running out of context after a few bets.
+
+- \`in_progress\`, cutoff \`now - 6h\`, no active session → restart.
+- \`in_review\`, cutoff \`now - 12h\` → re-trigger Code Reviewer.
+- \`validated\`, cutoff \`now - 12h\` → re-trigger Acceptance Validator.
+- \`todo\` tasks that should have started (concurrency budget available): move to \`in_progress\`. (No time filter — todos always eligible.)
 
 **STEP 2 — Advance completed bets.**
 Find bets where all tasks are \`done\` or \`discarded\` but bet is still \`active\`. Post a comment @mentioning the Strategist (\`c524aac2-4373-485b-b709-bbb4eb2d021e\`) to run acceptance review.
@@ -3947,7 +3958,7 @@ If there has been zero activity (no events in 24h AND no new objects of any type
 
 Call get_events with a time window of the last 24h. Scan for:
 
-a. **Rework signals** — tasks that moved from \`done\` or \`testing\` back to \`in_progress\` more than once in 24h (bounce pattern).
+a. **Rework signals** — tasks that moved from \`done\` or \`validated\` back to \`in_progress\` more than once in 24h (bounce pattern).
 
 b. **Review bottlenecks** — tasks that entered \`in_review\` and haven't moved in >4h (stuck in review queue).
 
@@ -3994,7 +4005,7 @@ List all sessions from the last 48h where the actor is the Code Reviewer (actor 
 **Step 2 — Categorize findings**
 For each session, classify the issues caught:
 - Type: \`logic-bug\`, \`security\`, \`test-missing\`, \`type-error\`, \`ux-regression\`, \`performance\`, \`style-only\`
-- Severity: \`critical\` (would have shipped broken), \`moderate\` (caught before testing), \`minor\` (style/cleanup)
+- Severity: \`critical\` (would have shipped broken), \`moderate\` (caught before validation), \`minor\` (style/cleanup)
 - Attribution: which agent introduced the issue (Developer, Planner, or external)
 
 **Step 3 — Pattern analysis**
@@ -4015,7 +4026,7 @@ Search for existing insights tagged \`code-review-analysis\` from the last 48h. 
 - Tags: \`pipeline-health\`, \`code-review-analysis\`
 
 **Step 6 — Slack alert (only if critical patterns found)**
-If ≥3 critical issues were missed (reached \`testing\` without being caught by Code Reviewer), OR the same error type appears in 5+ reviews: post to Slack channel C075JBZ65RT with a 2-line summary and the insight link.
+If ≥3 critical issues were missed (reached \`validated\` without being caught by Code Reviewer), OR the same error type appears in 5+ reviews: post to Slack channel C075JBZ65RT with a 2-line summary and the insight link.
 
 **Step 7 — Exit**
 Exit silently if fewer than 3 sessions to analyze (insufficient data for patterns).
@@ -4054,7 +4065,7 @@ For each FAIL verdict:
 - How many round trips did this task take before PASS?
 
 **Step 3 — Bounce rate analysis**
-Compute: what % of tasks required >1 round trip (FAIL → in_progress → in_review → testing → FAIL again)?
+Compute: what % of tasks required >1 round trip (FAIL → in_progress → in_review → validated → FAIL again)?
 Tasks with \`metadata.review_round_trips >= 2\` are the high-friction ones. List them.
 
 **Step 4 — Circuit breaker check**

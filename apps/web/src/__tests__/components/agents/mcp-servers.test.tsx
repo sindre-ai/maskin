@@ -19,7 +19,7 @@ const stdioTools = {
 			type: 'stdio',
 			command: 'npx',
 			args: ['-y', '@modelcontextprotocol/server-github'],
-			env: { GITHUB_TOKEN: 'tok' },
+			env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'tok' },
 		},
 	},
 }
@@ -154,7 +154,7 @@ describe('McpServers', () => {
 					type: 'stdio',
 					command: 'npx',
 					args: ['-y', '@modelcontextprotocol/server-github'],
-					env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
+					env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
 				},
 			},
 		}
@@ -186,10 +186,10 @@ describe('McpServers', () => {
 		expect(onUpdate).toHaveBeenCalledWith({
 			mcpServers: expect.objectContaining({
 				'github-sindre-ai': expect.objectContaining({
-					env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
+					env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
 				}),
 				'github-vaerksted-ai': expect.objectContaining({
-					env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
+					env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
 				}),
 			}),
 		})

@@ -1,3 +1,4 @@
+import { trackChatSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { SessionInputAttachment } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
@@ -323,6 +324,21 @@ export function useChatSession({
 					currentSessionId = session.id
 					setSessionId(session.id)
 					writePersistedSessionId(workspaceId, agentActorId, session.id)
+					// Founder-substitution measurement: fires once per fresh
+					// container. Guarded by entering this bootstrap branch,
+					// which happens both on the first send (`sessionId` is
+					// null) and after the previous container closes
+					// (`currentSessionId` above is forced to null when
+					// `statusRef.current === 'closed'`, even though `sessionId`
+					// still holds the old, closed session's id) — both are
+					// legitimate new chat-session starts. `reset()`
+					// additionally bumps `generationRef` and nulls `sessionId`
+					// directly.
+					trackChatSessionStarted({
+						entity_id: session.id,
+						entity_type: 'session',
+						entry_point: 'sindre_session',
+					})
 					// Wait for the container to actually be running before we
 					// POST the user's turn — otherwise the input endpoint
 					// rejects with 409 "Session is not running".

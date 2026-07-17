@@ -1,12 +1,13 @@
 import type {
 	ActorListItem,
 	ActorResponse,
+	AgentState,
 	DisplaySettingsBody,
 	SafeMetadata,
 	TriggerResponse,
 } from '@maskin/shared'
 
-export type { ActorListItem, ActorResponse, DisplaySettingsBody, TriggerResponse }
+export type { ActorListItem, ActorResponse, AgentState, DisplaySettingsBody, TriggerResponse }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -174,10 +175,22 @@ export const api = {
 		get: (id: string) => request<ObjectResponse>(`/objects/${id}`),
 		graph: (id: string, workspaceId: string) =>
 			request<ObjectGraphResponse>(`/objects/${id}/graph`, { workspaceId }),
+		references: (id: string, workspaceId: string) =>
+			request<KnowledgeReferencesResponse>(`/objects/${id}/references`, { workspaceId }),
 		create: (workspaceId: string, data: CreateObjectInput) =>
 			request<ObjectResponse>('/objects', { method: 'POST', body: data, workspaceId }),
 		update: (id: string, data: UpdateObjectInput) =>
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
+		verify: (id: string, verified: boolean) =>
+			request<ObjectResponse>(`/objects/${id}/verification`, {
+				method: 'POST',
+				body: { verified },
+			}),
+		undoWrite: (id: string, eventId: number) =>
+			request<ObjectResponse>(`/objects/${id}/undo-write`, {
+				method: 'POST',
+				body: { eventId },
+			}),
 		delete: (id: string) => request<{ deleted: boolean }>(`/objects/${id}`, { method: 'DELETE' }),
 		search: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
@@ -446,11 +459,13 @@ export const api = {
 			}),
 		status: (workspaceId: string) =>
 			request<ClaudeOAuthStatusResponse>('/claude-oauth/status', { workspaceId }),
-		disconnect: (workspaceId: string) =>
-			request<{ success: boolean }>('/claude-oauth', {
+		disconnect: (workspaceId: string, slot?: ClaudeOAuthSlot) =>
+			request<{ success: boolean }>(slot ? `/claude-oauth?slot=${slot}` : '/claude-oauth', {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		swap: (workspaceId: string) =>
+			request<{ success: boolean }>('/claude-oauth/swap', { method: 'POST', workspaceId }),
 	},
 
 	catalogPackages: {
@@ -508,6 +523,10 @@ export const api = {
 				body: { keepProvisionedItems },
 				workspaceId,
 			}),
+	},
+
+	briefing: {
+		get: (workspaceId: string) => request<BriefingResponse>('/briefing', { workspaceId }),
 	},
 
 	subscriptions: {
@@ -576,6 +595,60 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		upload: async (
+			workspaceId: string,
+			file: File,
+			opts?: { skillId?: string },
+		): Promise<WorkspaceSkillUploadResult> => {
+			const apiKey = getApiKey()
+			const formData = new FormData()
+			formData.append('file', file)
+			const qs = opts?.skillId ? `?skillId=${encodeURIComponent(opts.skillId)}` : ''
+			const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/skills/upload${qs}`, {
+				method: 'POST',
+				headers: {
+					...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+					'X-Workspace-Id': workspaceId,
+				},
+				body: formData,
+			})
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({ error: res.statusText }))
+				const message =
+					typeof data.error === 'object' ? data.error.message : data.error || res.statusText
+				throw new ApiError(res.status, message)
+			}
+			return res.json()
+		},
+		listFiles: (workspaceId: string, skillId: string) =>
+			request<WorkspaceSkillFileEntry[]>(`/workspaces/${workspaceId}/skills/${skillId}/files`, {
+				workspaceId,
+			}),
+		download: async (
+			workspaceId: string,
+			skillId: string,
+		): Promise<{ blob: Blob; filename: string }> => {
+			const apiKey = getApiKey()
+			const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/skills/${skillId}/download`, {
+				headers: {
+					...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+					'X-Workspace-Id': workspaceId,
+				},
+			})
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({ error: res.statusText }))
+				const message =
+					typeof data.error === 'object' ? data.error.message : data.error || res.statusText
+				throw new ApiError(res.status, message)
+			}
+			const disposition = res.headers.get('content-disposition') ?? ''
+			// Prefer the RFC 5987 filename* parameter (UTF-8) over the ASCII fallback
+			// so non-ASCII skill names round-trip cleanly.
+			const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1]
+			const ascii = /filename="([^"]+)"/.exec(disposition)?.[1]
+			const filename = (utf8 ? decodeURIComponent(utf8) : ascii) ?? `${skillId}.zip`
+			return { blob: await res.blob(), filename }
+		},
 		listForActor: (actorId: string) =>
 			request<AttachedWorkspaceSkill[]>(`/actors/${actorId}/workspace-skills`),
 		attach: (actorId: string, workspaceSkillId: string) =>
@@ -621,8 +694,17 @@ export const api = {
 	},
 }
 
+export type ClaudeOAuthSlot = 'primary' | 'backup'
+
+export interface ClaudeOAuthSlotInfo {
+	subscription_type?: string
+	expires_at: number
+	fingerprint?: string
+}
+
 export interface ClaudeOAuthExchangeResponse {
 	success: boolean
+	slot?: ClaudeOAuthSlot
 	subscription_type?: string
 	expires_at: number
 }
@@ -632,6 +714,15 @@ export interface ClaudeOAuthStatusResponse {
 	subscription_type?: string
 	expires_at?: number
 	valid: boolean
+	slots: {
+		primary?: ClaudeOAuthSlotInfo
+		backup?: ClaudeOAuthSlotInfo
+	}
+	active_slot: ClaudeOAuthSlot
+	last_primary_failure_at?: number
+	last_classified_reason?: string
+	last_backup_failure_at?: number
+	last_backup_classified_reason?: string
 }
 
 export interface ClaudeOAuthImportInput {
@@ -640,6 +731,7 @@ export interface ClaudeOAuthImportInput {
 	expiresAt: number
 	subscriptionType?: string
 	scopes?: string[]
+	slot?: ClaudeOAuthSlot
 }
 
 // Types derived from backend response schemas
@@ -682,7 +774,9 @@ export interface UnreadItem {
 	entity_type: string
 	entity_id: string
 	unread_count: number
-	mentions_you: boolean
+	// Count of unread events on the entity that actually @-mention the viewer.
+	// Drives the "Mentioned" pill on the For You card when > 0.
+	mentioning_unread_count: number
 	latest_event_id: number | null
 	latest_activity_at: string | null
 	object?: ObjectResponse
@@ -690,6 +784,11 @@ export interface UnreadItem {
 
 export interface UnreadResponse {
 	items: UnreadItem[]
+}
+
+export interface BriefingResponse {
+	workspace_id: string
+	markdown: string
 }
 
 export interface UserDisplaySettingsResponse {
@@ -841,6 +940,11 @@ export interface ObjectGraphResponse {
 	events: EventResponse[]
 }
 
+export interface KnowledgeReferencesResponse {
+	window_days: number
+	unique_contexts: number
+}
+
 export interface CreateRelationshipInput {
 	source_type: string
 	source_id: string
@@ -889,6 +993,7 @@ export interface ProviderInfo {
 	displayName: string
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key'
 	events: ProviderEventDefinition[]
+	externalIdDisplay?: 'email' | 'installation'
 }
 
 export interface SlackConversation {
@@ -955,6 +1060,10 @@ export interface WorkspaceSkillListItem {
 	storageKey: string
 	sizeBytes: number
 	isValid: boolean
+	// Optional so a row from a backend that hasn't shipped T2 yet still types — falsy
+	// values fall through to the single-file render path.
+	isFolder?: boolean
+	fileCount?: number | null
 	createdBy: string | null
 	createdAt: string
 	updatedAt: string
@@ -962,6 +1071,15 @@ export interface WorkspaceSkillListItem {
 
 export interface WorkspaceSkillDetail extends WorkspaceSkillListItem {
 	content: string
+}
+
+export interface WorkspaceSkillUploadResult extends WorkspaceSkillDetail {
+	error: { kind: string; message: string } | null
+}
+
+export interface WorkspaceSkillFileEntry {
+	relativePath: string
+	sizeBytes: number
 }
 
 export interface AttachedWorkspaceSkill extends WorkspaceSkillListItem {
