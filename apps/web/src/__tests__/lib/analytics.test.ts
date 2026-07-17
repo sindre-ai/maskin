@@ -14,6 +14,8 @@ import {
 	trackNorthStarPromptResponse,
 	trackObjectAttachedFile,
 	trackObjectCreated,
+	trackObjectsListArrived,
+	trackObjectsListGroupToggled,
 	trackRelationshipCreated,
 	trackSidebarAgentActivityExpanded,
 	trackSidebarWorkspaceSwitcherOpened,
@@ -382,6 +384,40 @@ describe('v1 taxonomy helpers', () => {
 			'loop_viewed',
 			expect.objectContaining({ entity_id: 'loop-2', source_bet_id: null }),
 		)
+	})
+
+	it('objects_list_arrived carries nav_type for the bet denominator', () => {
+		const capture = captureSpy()
+
+		trackObjectsListArrived({ nav_type: 'back' })
+
+		expect(capture).toHaveBeenCalledWith('objects_list_arrived', { nav_type: 'back' })
+	})
+
+	it('objects_list_arrived accepts push and replace for future re-use', () => {
+		const capture = captureSpy()
+
+		trackObjectsListArrived({ nav_type: 'push' })
+		trackObjectsListArrived({ nav_type: 'replace' })
+
+		expect(capture).toHaveBeenNthCalledWith(1, 'objects_list_arrived', { nav_type: 'push' })
+		expect(capture).toHaveBeenNthCalledWith(2, 'objects_list_arrived', { nav_type: 'replace' })
+	})
+
+	it('objects_list_group_toggled carries source for the bet numerator', () => {
+		const capture = captureSpy()
+
+		trackObjectsListGroupToggled({ source: 'user' })
+
+		expect(capture).toHaveBeenCalledWith('objects_list_group_toggled', { source: 'user' })
+	})
+
+	it('objects_list_group_toggled accepts the system source for restore wire-verification', () => {
+		const capture = captureSpy()
+
+		trackObjectsListGroupToggled({ source: 'system' })
+
+		expect(capture).toHaveBeenCalledWith('objects_list_group_toggled', { source: 'system' })
 	})
 
 	it('loop_graduated carries entity_type=loop and the source_bet_id join key', () => {

@@ -125,6 +125,10 @@ interface DataTableProps {
 	isError?: boolean
 	fetchNextPage?: () => void
 	isLoading?: boolean
+	// Fires whenever a user toggles a group header (expand or collapse). Kept as
+	// a small side-channel callback for now; T2 lifts group expansion into
+	// TanStack's `onExpandedChange` so this can fold into the same boundary.
+	onGroupToggle?: () => void
 }
 
 export function DataTable({
@@ -143,6 +147,7 @@ export function DataTable({
 	isError,
 	fetchNextPage,
 	isLoading,
+	onGroupToggle,
 }: DataTableProps) {
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
@@ -287,7 +292,10 @@ export function DataTable({
 											/>
 											<button
 												type="button"
-												onClick={() => row.toggleExpanded()}
+												onClick={() => {
+													row.toggleExpanded()
+													onGroupToggle?.()
+												}}
 												aria-expanded={row.getIsExpanded()}
 												className="flex flex-1 items-center gap-2 text-left"
 											>
@@ -421,7 +429,10 @@ export function DataTable({
 													/>
 													<button
 														type="button"
-														onClick={() => row.toggleExpanded()}
+														onClick={() => {
+															row.toggleExpanded()
+															onGroupToggle?.()
+														}}
 														aria-expanded={row.getIsExpanded()}
 														className="flex flex-1 items-center gap-2 text-left"
 													>

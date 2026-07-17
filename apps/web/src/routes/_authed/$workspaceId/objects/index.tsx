@@ -23,7 +23,7 @@ import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
-import { trackEvent } from '@/lib/analytics'
+import { trackEvent, trackObjectsListArrived, trackObjectsListGroupToggled } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
@@ -44,6 +44,21 @@ import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstac
 import { Filter, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+
+// Browser back/forward is the only signal for the bet's denominator
+// (`objects_list_arrived(nav_type='back')`). `popstate` fires exactly for those
+// two nav types and never for `Link`-driven pushState — so recording its
+// timestamp at module load lets the Objects route's mount effect distinguish a
+// back-nav landing from a PUSH/REPLACE landing without hooking into the router
+// internals (TanStack Router 1.168 doesn't surface the last history action).
+// Module scope on purpose: the Objects route unmounts on nav to a detail page
+// and re-mounts on browser-back, so this signal has to live outside the tree.
+let lastPopstateAt = 0
+if (typeof window !== 'undefined') {
+	window.addEventListener('popstate', () => {
+		lastPopstateAt = performance.now()
+	})
+}
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	component: ObjectsPage,
@@ -152,6 +167,26 @@ function ObjectsPage() {
 	useEffect(() => {
 		setRowSelection({})
 	}, [workspaceId])
+
+	// popstate fires immediately before React runs mount effects, so a
+	// sub-100ms delta is a reliable "this mount was triggered by browser
+	// back/forward" signal. PUSH/REPLACE landings (Link click, URL bar entry,
+	// hard refresh) do not fire popstate, so this stays silent for them —
+	// matching the bet's `nav_type='back'` denominator.
+	useEffect(() => {
+		if (performance.now() - lastPopstateAt < 100) {
+			trackObjectsListArrived({ nav_type: 'back' })
+		}
+	}, [])
+
+	// User-initiated group toggle is the bet's numerator. Fires unconditionally
+	// on every user toggle — the 30s pairing against `objects_list_arrived` is
+	// enforced by the PostHog query, not the client. The `source: 'system'`
+	// variant is reserved for the eventual T2 restore path so wire-verification
+	// can tell a user rebuild apart from the silent restore.
+	const handleGroupToggle = useCallback(() => {
+		trackObjectsListGroupToggled({ source: 'user' })
+	}, [])
 
 	// Linear-style `C` shortcut opens the create picker with the active type
 	// tab pre-selected. Guarded so typing into filters/search never triggers it.
@@ -1038,6 +1073,7 @@ function ObjectsPage() {
 					isError={infiniteQuery.isError}
 					fetchNextPage={infiniteQuery.fetchNextPage}
 					isLoading={infiniteQuery.isLoading}
+					onGroupToggle={handleGroupToggle}
 				/>
 			)}
 			<BulkActionBar
