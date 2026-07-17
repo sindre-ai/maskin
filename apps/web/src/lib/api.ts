@@ -333,6 +333,17 @@ export const api = {
 			request<SlackUser[]>(`/integrations/${id}/slack/users`, { workspaceId }),
 	},
 
+	linkedin: {
+		account: (workspaceId: string) =>
+			request<LinkedinAccountResponse | null>('/linkedin/account', { workspaceId }),
+		connect: (workspaceId: string, agentId: string) =>
+			request<{ url: string }>('/linkedin/connect', {
+				method: 'POST',
+				body: { agent_id: agentId },
+				workspaceId,
+			}),
+	},
+
 	notifications: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
@@ -1010,6 +1021,26 @@ export interface SlackUser {
 	name: string
 	real_name: string
 	is_bot: boolean
+}
+
+export type LinkedinAccountState =
+	| 'handoff'
+	| 'syncing'
+	| 'warm_up'
+	| 'healthy'
+	| 'restricted'
+	| 'reconnect'
+
+export interface LinkedinAccountResponse {
+	id: string
+	workspaceId: string
+	state: LinkedinAccountState
+	unipileAccountId: string | null
+	sendingAsName: string | null
+	sendingAsProviderId: string | null
+	connectedAt: string | null
+	createdAt: string | null
+	updatedAt: string | null
 }
 
 export interface NotificationResponse {

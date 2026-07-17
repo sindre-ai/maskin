@@ -41,6 +41,9 @@ export const queryKeys = {
 		slackUsers: (integrationId: string) =>
 			['integrations', integrationId, 'slack', 'users'] as const,
 	},
+	linkedin: {
+		account: (workspaceId: string) => ['linkedin', workspaceId, 'account'] as const,
+	},
 	notifications: {
 		all: (workspaceId: string) => ['notifications', workspaceId] as const,
 		list: (workspaceId: string, filters?: Record<string, unknown>) =>

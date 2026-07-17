@@ -57,6 +57,7 @@ import { RelativeTime } from '../shared/relative-time'
 import { TypeBadge } from '../shared/type-badge'
 import { AgentRunPauseButton } from './agent-run-pause-button'
 import { AgentUsageChart } from './agent-usage-chart'
+import { LinkedinConnectSection } from './linkedin-connect-section'
 import { McpServers } from './mcp-servers'
 import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-detail-panel'
 import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
@@ -297,6 +298,9 @@ export function AgentDocumentView({
 
 			{/* Usage chart */}
 			<AgentUsageChart agent={agent} workspaceId={workspaceId} />
+
+			{/* LinkedIn connect entry point (minimal — T4 replaces with full state UI) */}
+			<LinkedinConnectSection agentId={agent.id} workspaceId={workspaceId} />
 
 			{/* Currently Working On */}
 			{activeSessions && activeSessions.length > 0 && (

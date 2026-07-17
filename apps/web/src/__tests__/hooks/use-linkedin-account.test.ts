@@ -1,0 +1,81 @@
+import { renderHook, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/lib/api', () => ({
+	api: {
+		linkedin: {
+			account: vi.fn(),
+			connect: vi.fn(),
+		},
+	},
+}))
+
+vi.mock('sonner', () => ({
+	toast: { success: vi.fn(), error: vi.fn() },
+}))
+
+import { useConnectLinkedin, useLinkedinAccount } from '@/hooks/use-linkedin-account'
+import { api } from '@/lib/api'
+import { TestWrapper } from '../setup'
+
+const workspaceId = '00000000-0000-0000-0000-000000000001'
+const agentId = '11111111-1111-1111-1111-111111111111'
+
+beforeEach(() => {
+	vi.clearAllMocks()
+})
+
+describe('useLinkedinAccount', () => {
+	it('returns null when no account is connected', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(null)
+		const { result } = renderHook(() => useLinkedinAccount(workspaceId), { wrapper: TestWrapper })
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toBeNull()
+	})
+
+	it('returns the account when one is connected', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce({
+			id: 'acc-1',
+			workspaceId,
+			state: 'syncing',
+			unipileAccountId: 'unipile-1',
+			sendingAsName: 'sindre',
+			sendingAsProviderId: 'urn:li:1',
+			connectedAt: null,
+			createdAt: null,
+			updatedAt: null,
+		})
+		const { result } = renderHook(() => useLinkedinAccount(workspaceId), { wrapper: TestWrapper })
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data?.state).toBe('syncing')
+		expect(result.current.data?.sendingAsName).toBe('sindre')
+	})
+})
+
+describe('useConnectLinkedin', () => {
+	it('redirects the browser to the returned Unipile URL on success', async () => {
+		vi.mocked(api.linkedin.connect).mockResolvedValueOnce({
+			url: 'https://account.unipile.com/link/abc',
+		})
+		const original = window.location
+		const assignHref = vi.fn()
+		Object.defineProperty(window, 'location', {
+			writable: true,
+			value: {
+				...original,
+				set href(v: string) {
+					assignHref(v)
+				},
+			},
+		})
+
+		const { result } = renderHook(() => useConnectLinkedin(workspaceId), { wrapper: TestWrapper })
+		result.current.mutate(agentId)
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(assignHref).toHaveBeenCalledWith('https://account.unipile.com/link/abc')
+		expect(api.linkedin.connect).toHaveBeenCalledWith(workspaceId, agentId)
+
+		Object.defineProperty(window, 'location', { writable: true, value: original })
+	})
+})

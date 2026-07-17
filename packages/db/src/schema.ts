@@ -924,3 +924,54 @@ export const sessionDispatchAttempts = pgTable(
 
 export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
 export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
+
+// ── LinkedIn Accounts ───────────────────────────────────────────────────────
+//
+// One customer-owned Unipile LinkedIn account per workspace. Populated by the
+// Unipile hosted-auth callback; downstream tasks read this row to render the
+// agent-detail LinkedIn UI and to gate customer-account outreach.
+//
+// The `state` column drives the lifecycle:
+//   handoff    — user has been sent to Unipile hosted-auth, no callback yet
+//   syncing    — Unipile confirmed the connect, initial contact/message sync running
+//   warm_up    — sync done, pacing is deliberately below cap while the account warms
+//   healthy    — pacing at cap, sends flowing
+//   restricted — LinkedIn flagged/restricted the account; sends blocked, no reconnect
+//   reconnect  — session expired; agent paused until customer re-runs hosted-auth
+//
+// UNIQUE on workspace_id: one account per workspace by product decision (bet
+// `## Not doing` — no account-pool management, no multi-account switching).
+
+export const linkedinAccounts = pgTable(
+	'linkedin_accounts',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		state: text('state').notNull(),
+		// Unipile's own account identifier — the join key for every downstream
+		// Unipile API call (fetch profile, list conversations, send message).
+		unipileAccountId: text('unipile_account_id'),
+		// The LinkedIn identity the agent will send as, mirrored from Unipile so
+		// the UI can render it without a round-trip.
+		sendingAsName: text('sending_as_name'),
+		sendingAsProviderId: text('sending_as_provider_id'),
+		connectedAt: timestamp('connected_at', { withTimezone: true }),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('linkedin_accounts_workspace_id_uniq').on(t.workspaceId),
+		check(
+			'linkedin_accounts_state_check',
+			sql`${t.state} IN ('handoff','syncing','warm_up','healthy','restricted','reconnect')`,
+		),
+	],
+)
+
+export type LinkedinAccount = typeof linkedinAccounts.$inferSelect
+export type NewLinkedinAccount = typeof linkedinAccounts.$inferInsert

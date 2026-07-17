@@ -28,6 +28,7 @@ import importsRoutes from './routes/imports'
 import installedPackagesRoutes from './routes/installed-packages'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import linkedinRoutes from './routes/linkedin'
 import mcpRoutes from './routes/mcp'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
@@ -197,6 +198,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/claim' && method === 'POST') return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
+		// Unipile hosted-auth redirects the user to /api/linkedin/callback from a
+		// third-party origin — the browser can't carry our bearer token, so the
+		// encrypted `state` param authenticates the request instead.
+		if (path === '/api/linkedin/callback') return next()
 
 		return auth(c, next)
 	})
@@ -218,6 +223,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
+	app.route('/api/linkedin', linkedinRoutes)
 	app.route('/api/catalog', catalogPackagesRoutes)
 	app.route('/api/webhooks', webhookApp)
 	app.route('/api/internal/agent-servers', agentServerReconcileRoutes)

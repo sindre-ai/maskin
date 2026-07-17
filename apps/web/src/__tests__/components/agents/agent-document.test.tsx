@@ -77,6 +77,10 @@ vi.mock('@/components/agents/agent-usage-chart', () => ({
 	AgentUsageChart: () => null,
 }))
 
+vi.mock('@/components/agents/linkedin-connect-section', () => ({
+	LinkedinConnectSection: () => null,
+}))
+
 vi.mock('@/components/activity/activity-item', () => ({
 	ActivityItem: ({ event }: { event: { action: string } }) => <div>{event.action}</div>,
 }))
