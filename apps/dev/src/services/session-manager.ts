@@ -1105,6 +1105,7 @@ export class SessionManager extends EventEmitter {
 		cpus: number
 		cpuShares: number
 		browserRequired: boolean
+		previewGuestPorts: number[]
 	}> {
 		const [agent] = await this.db
 			.select()
@@ -1557,8 +1558,19 @@ export class SessionManager extends EventEmitter {
 			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers: gatedSessionMcpServers })
 		}
 
+		const previewGuestPorts = Array.isArray(sessionConfig.previewGuestPorts)
+			? sessionConfig.previewGuestPorts.filter(
+					(p): p is number => typeof p === 'number' && Number.isInteger(p) && p > 0 && p <= 65535,
+				)
+			: []
+
+		// previewGuestPorts requires browserRequired on the agent-server's request
+		// schema (the browser sidecar is what the relayed ports actually serve) —
+		// requesting preview ports always implies a browser is required.
 		const browserRequired =
-			sessionConfig.browserRequired === true || this.needsBrowserSidecar(envVars)
+			sessionConfig.browserRequired === true ||
+			this.needsBrowserSidecar(envVars) ||
+			previewGuestPorts.length > 0
 
 		const image =
 			(sessionConfig.base_image as string) ?? process.env.AGENT_BASE_IMAGE ?? 'agent-base:latest'
@@ -1569,7 +1581,7 @@ export class SessionManager extends EventEmitter {
 		const cpuShares = (sessionConfig.cpu_shares as number) ?? 1024
 		const cpus = Math.max(1, Math.round(cpuShares / 1024))
 
-		return { image, env: envVars, memoryMib, cpus, cpuShares, browserRequired }
+		return { image, env: envVars, memoryMib, cpus, cpuShares, browserRequired, previewGuestPorts }
 	}
 
 	/**
