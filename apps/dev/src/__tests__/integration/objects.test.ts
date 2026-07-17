@@ -490,6 +490,124 @@ describe('Objects Integration', () => {
 		})
 	})
 
+	// Type-agnostic archive visibility. Default reads exclude `status = 'archived'`
+	// rows so archived work stays hidden until a caller opts in. Tests exercise
+	// both the list and search endpoints and cover both types that have the
+	// status (bet today) and types that don't (task, insight) — a hidden 'archived'
+	// task never should have existed, but if it did, the filter still hides it.
+	describe('include_archived filter', () => {
+		it('hides archived rows on list by default and reveals them when include_archived=true', async () => {
+			const app = createApp()
+			const live = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'active',
+			})
+			const archived = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'archived',
+			})
+
+			const defaultRes = await app.request(
+				jsonGet('/api/objects?type=bet', { 'x-workspace-id': workspaceId }),
+			)
+			expect(defaultRes.status).toBe(200)
+			const defaultBody = (await defaultRes.json()) as Array<{ id: string; status: string }>
+			expect(defaultBody.map((r) => r.id)).toEqual([live.id])
+
+			const optInRes = await app.request(
+				jsonGet('/api/objects?type=bet&include_archived=true', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(optInRes.status).toBe(200)
+			const optInBody = (await optInRes.json()) as Array<{ id: string; status: string }>
+			expect(optInBody.map((r) => r.id).sort()).toEqual([live.id, archived.id].sort())
+		})
+
+		it('hides archived rows on search by default and reveals them when include_archived=true', async () => {
+			const app = createApp()
+			const live = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'checkout latency bet',
+				status: 'active',
+			})
+			const archived = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				title: 'checkout latency bet',
+				status: 'archived',
+			})
+
+			const defaultRes = await app.request(
+				jsonGet('/api/objects/search?q=checkout', { 'x-workspace-id': workspaceId }),
+			)
+			expect(defaultRes.status).toBe(200)
+			const defaultBody = (await defaultRes.json()) as Array<{ id: string }>
+			expect(defaultBody.map((r) => r.id)).toEqual([live.id])
+
+			const optInRes = await app.request(
+				jsonGet('/api/objects/search?q=checkout&include_archived=true', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(optInRes.status).toBe(200)
+			const optInBody = (await optInRes.json()) as Array<{ id: string }>
+			expect(optInBody.map((r) => r.id).sort()).toEqual([live.id, archived.id].sort())
+		})
+
+		it('applies the archive gate to any type — hidden archived tasks stay hidden without opt-in', async () => {
+			const app = createApp()
+			const liveTask = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'archived',
+			})
+
+			const res = await app.request(
+				jsonGet('/api/objects?type=task', { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string; status: string }>
+			expect(body.map((r) => r.id)).toEqual([liveTask.id])
+		})
+
+		it('hides archived rows on the board endpoint by default and reveals them on opt-in', async () => {
+			const app = createApp()
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'active',
+			})
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'archived',
+			})
+
+			const defaultRes = await app.request(
+				jsonGet('/api/objects/board?type=bet', { 'x-workspace-id': workspaceId }),
+			)
+			expect(defaultRes.status).toBe(200)
+			const defaultBody = (await defaultRes.json()) as {
+				columns: Array<{ value: string; total: number }>
+			}
+			const defaultArchived = defaultBody.columns.find((col) => col.value === 'archived')
+			expect(defaultArchived?.total ?? 0).toBe(0)
+
+			const optInRes = await app.request(
+				jsonGet('/api/objects/board?type=bet&include_archived=true', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(optInRes.status).toBe(200)
+			const optInBody = (await optInRes.json()) as {
+				columns: Array<{ value: string; total: number }>
+			}
+			const optInArchived = optInBody.columns.find((col) => col.value === 'archived')
+			expect(optInArchived?.total).toBe(1)
+		})
+	})
+
 	describe('GET /api/objects/board', () => {
 		it('returns full column totals with paged objects per column', async () => {
 			const app = createApp()
@@ -1214,6 +1332,77 @@ describe('Objects Integration', () => {
 			// entirely, so all three rows are returned, ordered by updatedAt desc.
 			expect(rows.map((r) => r.id)).toEqual([row0.id, row1.id, row2.id])
 		})
+
+		it('skips the keyset seek on /objects/search when `q` switches ORDER BY to rank', async () => {
+			// After T2, `/api/objects/search?q=…` switches its ORDER BY to
+			// rank-by-token-hits whenever `q` tokenizes to a non-empty set.
+			// The `(created_at, id)` keyset seek in `buildCursorConditions` is
+			// expressed in createdAt order and no longer matches the walk order
+			// under rank — the pair silently skips or duplicates rows across
+			// pages. The guard must drop the seek and let callers fall through
+			// to offset pagination on the same snapshot.
+			//
+			// The seed below is engineered so rank order is the *reverse* of
+			// createdAt-desc order: every row ties on token-hit count (both
+			// tokens hit both title and content), so the deterministic
+			// tie-break (`title ASC, id ASC`) orders them 00 → 05, while
+			// createdAt-desc would order them 05 → 00. That mismatch is what
+			// makes the seek predicate corrupt the walk if it stays engaged.
+			const app = createApp()
+			const actorId = getTestActorId()
+			const baseMs = new Date('2026-03-02T00:00:00.000Z').getTime()
+
+			const seeded = []
+			for (let i = 0; i < 6; i++) {
+				const created = await insertObject(db, workspaceId, actorId, {
+					type: 'task',
+					status: 'todo',
+					title: `Gamma delta row ${String(i).padStart(2, '0')}`,
+					content: 'gamma and delta together in the body too',
+					createdAt: new Date(baseMs + i * 60_000),
+					updatedAt: new Date(baseMs + i * 60_000),
+				})
+				seeded.push(created)
+			}
+			const seededIds = new Set(seeded.map((r) => r.id))
+
+			// Page 1 — first 3 rows under rank ordering (rows 00, 01, 02).
+			const q = encodeURIComponent('gamma delta')
+			const page1Res = await app.request(
+				jsonGet(`/api/objects/search?q=${q}&limit=3&offset=0`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(page1Res.status).toBe(200)
+			const page1 = (await page1Res.json()) as Array<{ id: string; createdAt: string }>
+			expect(page1).toHaveLength(3)
+			for (const row of page1) expect(seededIds.has(row.id)).toBe(true)
+
+			// Page 2 — carry the last row's (createdAt, id) as a cursor AND
+			// bump offset=3. Under the guard the seek predicate must be
+			// dropped (else it filters out rows 03–05 since their createdAt is
+			// *greater* than row 02's, and only rows 00–01 survive → dups of
+			// page 1); the offset must still apply so page 2 advances past
+			// page 1 in rank order to return rows 03, 04, 05.
+			const lastOfPage1 = page1[page1.length - 1]
+			const page2Url = `/api/objects/search?q=${q}&limit=3&offset=3&cursor_created_at=${encodeURIComponent(lastOfPage1.createdAt)}&cursor_id=${encodeURIComponent(lastOfPage1.id)}`
+			const page2Res = await app.request(jsonGet(page2Url, { 'x-workspace-id': workspaceId }))
+			expect(page2Res.status).toBe(200)
+			const page2 = (await page2Res.json()) as Array<{ id: string; createdAt: string }>
+
+			// Six seeded rows total; page 1 returned 3, page 2 must return the
+			// remaining 3 with no duplicate and no skip.
+			expect(page2).toHaveLength(3)
+			const page1Ids = new Set(page1.map((row) => row.id))
+			for (const row of page2) {
+				expect(page1Ids.has(row.id)).toBe(false)
+				expect(seededIds.has(row.id)).toBe(true)
+			}
+
+			// Union equals the seeded set exactly — no skip, no leak, no dup.
+			const walked = [...page1.map((r) => r.id), ...page2.map((r) => r.id)]
+			expect([...walked].sort()).toEqual([...seededIds].sort())
+		})
 	})
 
 	describe('GET /api/objects/:id/graph — endpoint resolution by id', () => {
@@ -1283,6 +1472,154 @@ describe('Objects Integration', () => {
 			expect(body.connected_objects).toEqual([])
 			expect(body.files).toHaveLength(1)
 			expect(body.files[0].id).toBe(fileRow.id)
+		})
+	})
+
+	describe('GET /api/objects/:id/references — 7-day rolling reference count', () => {
+		// Load-bearing integration test for T6: the DoD contract that emitting
+		// N reference events across M unique sessions returns M. The unit test
+		// pins the response shape against the mock aggregate; this test pins
+		// the actual DISTINCT semantics against real Postgres — mocked DB
+		// tests can't catch `data->>'consumer_context_id'` DISTINCT
+		// misbehaviour (or a filter that quietly full-scans).
+		it('counts DISTINCT consumer_context_id values (7-day window) for the specified action', async () => {
+			const knowledge = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'knowledge',
+			})
+			const consumerA = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet' })
+			const consumerB = await insertObject(db, workspaceId, getTestActorId(), { type: 'task' })
+			const consumerC = await insertObject(db, workspaceId, getTestActorId(), { type: 'insight' })
+
+			// 4 reference events across 3 unique consumer contexts — expect N=3.
+			// consumerA gets two rows to prove the DISTINCT collapse.
+			const rows = [
+				{ consumer_context_id: consumerA.id },
+				{ consumer_context_id: consumerA.id },
+				{ consumer_context_id: consumerB.id },
+				{ consumer_context_id: consumerC.id },
+			]
+			for (const r of rows) {
+				await db.insert(events).values({
+					workspaceId,
+					actorId: getTestActorId(),
+					action: 'workspace_knowledge_referenced',
+					entityType: 'object',
+					entityId: knowledge.id,
+					data: { consumer_context_id: r.consumer_context_id, source_topics: [] },
+				})
+			}
+
+			// Guard: an unrelated action on the same entity must not inflate the
+			// count — the WHERE clause pins the action.
+			await db.insert(events).values({
+				workspaceId,
+				actorId: getTestActorId(),
+				action: 'commented',
+				entityType: 'object',
+				entityId: knowledge.id,
+				data: { consumer_context_id: consumerA.id },
+			})
+
+			const app = createApp()
+			const res = await app.request(
+				jsonGet(`/api/objects/${knowledge.id}/references`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.window_days).toBe(7)
+			expect(body.unique_contexts).toBe(3)
+		})
+
+		it('excludes rows outside the 7-day window', async () => {
+			const knowledge = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'knowledge',
+			})
+			const consumerA = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet' })
+			const consumerB = await insertObject(db, workspaceId, getTestActorId(), { type: 'task' })
+
+			// One row inside the window (default `createdAt` = now via the
+			// column default), one row backdated 30 days out. Only the in-window
+			// row must be counted.
+			await db.insert(events).values({
+				workspaceId,
+				actorId: getTestActorId(),
+				action: 'workspace_knowledge_referenced',
+				entityType: 'object',
+				entityId: knowledge.id,
+				data: { consumer_context_id: consumerA.id, source_topics: [] },
+			})
+			const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+			await db.insert(events).values({
+				workspaceId,
+				actorId: getTestActorId(),
+				action: 'workspace_knowledge_referenced',
+				entityType: 'object',
+				entityId: knowledge.id,
+				data: { consumer_context_id: consumerB.id, source_topics: [] },
+				createdAt: thirtyDaysAgo,
+			})
+
+			const app = createApp()
+			const res = await app.request(
+				jsonGet(`/api/objects/${knowledge.id}/references`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.unique_contexts).toBe(1)
+		})
+
+		it('returns 0 when no reference events exist for the object', async () => {
+			const knowledge = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'knowledge',
+			})
+
+			const app = createApp()
+			const res = await app.request(
+				jsonGet(`/api/objects/${knowledge.id}/references`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.unique_contexts).toBe(0)
+			expect(body.window_days).toBe(7)
+		})
+
+		it('scopes the count to the current workspace', async () => {
+			const knowledge = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'knowledge',
+			})
+			const consumer = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet' })
+			// A second workspace holds an event with the SAME entity_id — the
+			// endpoint filters by workspace_id so this must not leak into the
+			// count.
+			const otherWs = await insertWorkspace(db, getTestActorId())
+			await db.insert(events).values({
+				workspaceId: otherWs.id,
+				actorId: getTestActorId(),
+				action: 'workspace_knowledge_referenced',
+				entityType: 'object',
+				entityId: knowledge.id,
+				data: { consumer_context_id: consumer.id, source_topics: [] },
+			})
+
+			const app = createApp()
+			const res = await app.request(
+				jsonGet(`/api/objects/${knowledge.id}/references`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.unique_contexts).toBe(0)
 		})
 	})
 })

@@ -29,6 +29,7 @@ describe('workspaceSettingsSchema', () => {
 			'succeeded',
 			'failed',
 			'paused',
+			'archived',
 		])
 		expect(result.statuses.task).toEqual([
 			'todo',
@@ -38,7 +39,9 @@ describe('workspaceSettingsSchema', () => {
 			'done',
 			'discarded',
 		])
-		expect(result.field_definitions).toEqual({})
+		expect(result.field_definitions).toEqual({
+			bet: [{ name: 'archive_reason', type: 'text', required: false }],
+		})
 		expect(result.relationship_types).toEqual([
 			'informs',
 			'breaks_into',
@@ -120,6 +123,25 @@ describe('workspaceSettingsSchema', () => {
 
 	it('rejects an empty claude_oauth object', () => {
 		expect(() => workspaceSettingsSchema.parse({ claude_oauth: {} })).toThrow()
+	})
+
+	it('leaves default_agent_id undefined when not provided', () => {
+		const result = workspaceSettingsSchema.parse({})
+		expect(result.default_agent_id).toBeUndefined()
+	})
+
+	it('accepts default_agent_id set to a uuid', () => {
+		const result = workspaceSettingsSchema.parse({ default_agent_id: uuid })
+		expect(result.default_agent_id).toBe(uuid)
+	})
+
+	it('accepts default_agent_id explicitly cleared to null', () => {
+		const result = workspaceSettingsSchema.parse({ default_agent_id: null })
+		expect(result.default_agent_id).toBeNull()
+	})
+
+	it('rejects default_agent_id that is not a uuid', () => {
+		expect(() => workspaceSettingsSchema.parse({ default_agent_id: 'not-a-uuid' })).toThrow()
 	})
 
 	it('accepts field_definitions', () => {

@@ -331,4 +331,121 @@ describe('DisplayPanel', () => {
 			expect(screen.queryByText(/can't be filtered/i)).toBeNull()
 		})
 	})
+
+	describe('Show — Include archived', () => {
+		it('does not render the Show section when onIncludeArchivedChange is unset', async () => {
+			const user = userEvent.setup()
+			renderPanel()
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.queryByText('Show')).toBeNull()
+			expect(screen.queryByRole('switch', { name: /include archived/i })).toBeNull()
+		})
+
+		it('renders the Show section and reflects the current includeArchived state', async () => {
+			const user = userEvent.setup()
+			renderPanel({ includeArchived: true, onIncludeArchivedChange: vi.fn() })
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByText('Show')).toBeInTheDocument()
+			const toggle = screen.getByRole('switch', { name: /include archived/i })
+			expect(toggle).toBeInTheDocument()
+			expect(toggle).toHaveAttribute('data-state', 'checked')
+		})
+
+		it('calls onIncludeArchivedChange when the switch is toggled', async () => {
+			const user = userEvent.setup()
+			const onIncludeArchivedChange = vi.fn()
+			renderPanel({ includeArchived: false, onIncludeArchivedChange })
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			await user.click(screen.getByRole('switch', { name: /include archived/i }))
+			expect(onIncludeArchivedChange).toHaveBeenCalledWith(true)
+		})
+
+		it('counts the includeArchived flag in the trigger badge', () => {
+			renderPanel({ includeArchived: true, onIncludeArchivedChange: vi.fn() })
+			expect(screen.getByText('1')).toBeInTheDocument()
+		})
+
+		it('adds +1 to the badge on top of an existing status filter', () => {
+			renderPanel({
+				includeArchived: true,
+				onIncludeArchivedChange: vi.fn(),
+				statusFilter: 'active',
+			})
+			expect(screen.getByText('2')).toBeInTheDocument()
+		})
+
+		it('renders "+ archived" inline next to the Display trigger when on', () => {
+			renderPanel({ includeArchived: true, onIncludeArchivedChange: vi.fn() })
+			expect(screen.getByText('+ archived')).toBeInTheDocument()
+		})
+
+		it('does not render the inline "+ archived" reading when the flag is off', () => {
+			renderPanel({ includeArchived: false, onIncludeArchivedChange: vi.fn() })
+			expect(screen.queryByText('+ archived')).toBeNull()
+		})
+
+		it('does not render the inline "+ archived" reading on the iconOnly (mobile) trigger', () => {
+			renderPanel({ includeArchived: true, onIncludeArchivedChange: vi.fn(), iconOnly: true })
+			expect(screen.queryByText('+ archived')).toBeNull()
+			// The icon-only trigger still carries the count pill so mobile
+			// users can see the flag is on without opening the panel.
+			expect(screen.getByText('1')).toBeInTheDocument()
+		})
+
+		it('renders section headers in the order View → Show → Ordering → Grouping → Filters', async () => {
+			// The approved UX direction pins Show between View and Ordering.
+			// Guard the DOM order so a future refactor can't silently slide
+			// Show back past Grouping.
+			const user = userEvent.setup()
+			renderPanel({
+				includeArchived: false,
+				onIncludeArchivedChange: vi.fn(),
+				actors: [{ id: 'a1', name: 'Alice', type: 'human', createdAt: '', updatedAt: '' } as never],
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			const headers = screen
+				.getAllByText(/^(View|Show|Ordering|Grouping|Filters|Properties)$/)
+				.map((el) => el.textContent)
+			expect(headers).toEqual(['View', 'Show', 'Ordering', 'Grouping', 'Filters', 'Properties'])
+		})
+
+		it('keeps the popover open when includeArchived toggles false→true (e.g. via URL commit)', async () => {
+			// Regression guard: the panel used to switch its returned root
+			// between the bare trigger and a wrapping div depending on whether
+			// any inline reading was visible. Flipping the Include-archived
+			// toggle changes that boolean, which tore down and remounted the
+			// ResponsivePopover subtree and closed the panel mid-interaction.
+			const user = userEvent.setup()
+			const props = {
+				columns: defaultColumns,
+				columnVisibility: {},
+				onColumnVisibilityChange: vi.fn(),
+				statusFilter: undefined,
+				onStatusFilterChange: vi.fn(),
+				statusesByType: {},
+				driverFilter: undefined,
+				onDriverFilterChange: vi.fn(),
+				actors: [],
+				sort: 'createdAt',
+				onSortChange: vi.fn(),
+				order: 'desc' as const,
+				onOrderChange: vi.fn(),
+				groupBy: undefined,
+				onGroupByChange: vi.fn(),
+				includeArchived: false,
+				onIncludeArchivedChange: vi.fn(),
+			}
+			const { rerender } = render(<DisplayPanel {...props} />)
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByText('Show')).toBeInTheDocument()
+			// Simulate the URL commit round-trip: parent re-renders with the
+			// new includeArchived value while the popover is open.
+			rerender(<DisplayPanel {...props} includeArchived={true} />)
+			expect(screen.getByText('Show')).toBeInTheDocument()
+			expect(screen.getByRole('switch', { name: /include archived/i })).toHaveAttribute(
+				'data-state',
+				'checked',
+			)
+		})
+	})
 })

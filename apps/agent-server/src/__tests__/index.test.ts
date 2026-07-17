@@ -20,7 +20,7 @@ function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 		S3_REGION: 'us-east-1',
 		WARM_POOL_REFRESH_MINUTES: 0,
 		BROWSER_SIDECAR_IMAGE: 'browser-sidecar:latest',
-		MSB_BRIDGE_GATEWAY: '10.0.1.1',
+		AGENT_SERVER_SSH_KEY_PATH: '/tmp/agent-server-test/ssh/relay_key',
 		SESSION_MAX_DURATION: '8h',
 		...overrides,
 	}
@@ -326,9 +326,95 @@ describe('POST /sessions validation', () => {
 		})
 		expect(res.status).toBe(400)
 	})
+
+	it('rejects an out-of-range previewGuestPorts entry with 400', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-1',
+				image: 'alpine:3.20',
+				env: {},
+				previewGuestPorts: [70000],
+			}),
+		})
+		expect(res.status).toBe(400)
+	})
+
+	it('rejects a non-integer previewGuestPorts entry with 400', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-1',
+				image: 'alpine:3.20',
+				env: {},
+				previewGuestPorts: [5173.5],
+			}),
+		})
+		expect(res.status).toBe(400)
+	})
+
+	it('rejects previewGuestPorts with 400 when browserRequired is not true', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-1',
+				image: 'alpine:3.20',
+				env: {},
+				previewGuestPorts: [5173],
+			}),
+		})
+		expect(res.status).toBe(400)
+	})
+
+	it('rejects more than MAX_PREVIEW_GUEST_PORTS entries with 400', async () => {
+		const { run } = makeRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-1',
+				image: 'alpine:3.20',
+				env: {},
+				browserRequired: true,
+				previewGuestPorts: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+			}),
+		})
+		expect(res.status).toBe(400)
+	})
 })
 
 describe('POST /sessions browserRequired wiring', () => {
+	function makePortAllocator(start: number): () => Promise<number> {
+		let next = start
+		return async () => next++
+	}
+
 	function makeSidecarAwareRunner(opts: { cdpFail?: boolean } = {}) {
 		const calls: Array<{ args: readonly string[] }> = []
 		const run = async (
@@ -354,11 +440,24 @@ describe('POST /sessions browserRequired wiring', () => {
 					throw new Error('CDP not ready')
 				}
 			: async () => {}
-		return { run, calls, cdpPollReady }
+		// SSH-relay readiness (both `msb ssh serve` and the `ssh -L` tunnel) —
+		// stubbed to resolve immediately so relay setup never depends on real
+		// spawn/ssh binaries being present in the test environment.
+		const tcpPollReady = async () => {}
+		return { run, calls, cdpPollReady, tcpPollReady }
 	}
 
-	it('provisions a sidecar, injects BROWSER_CDP_URL, and adds allow@private when browserRequired=true', async () => {
-		const { run, cdpPollReady, calls } = makeSidecarAwareRunner()
+	function netRuleValues(args: readonly string[] | undefined): string[] {
+		const values: string[] = []
+		if (!args) return values
+		for (let i = 0; i < args.length - 1; i++) {
+			if (args[i] === '--net-rule') values.push(args[i + 1] as string)
+		}
+		return values
+	}
+
+	it('provisions a sidecar, injects BROWSER_CDP_URL, and grants the session a narrow allow@host:tcp:<relayPort> rule when browserRequired=true', async () => {
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
 			env,
@@ -368,8 +467,9 @@ describe('POST /sessions browserRequired wiring', () => {
 				run,
 				sleep: async () => {},
 				now: () => 0,
-				findPort: async () => 39222,
+				findPort: makePortAllocator(39222),
 				cdpPollReady,
+				tcpPollReady,
 			},
 		})
 
@@ -393,16 +493,21 @@ describe('POST /sessions browserRequired wiring', () => {
 		const sessionCreate = creates.find((c) => c.args.includes('sess-betqa1'))
 		expect(sidecarCreate).toBeDefined()
 		expect(sessionCreate).toBeDefined()
-		// Session VM must carry --net-rule allow@private so it can reach the sidecar.
-		expect(sessionCreate?.args).toContain('allow@private')
-		// Session VM env must include BROWSER_CDP_URL using the bridge gateway + forwarded port.
+		// findPort call order: sidecar's self-allocated CDP relay reserves
+		// relayPort (39222) before sshPort (39223) — see startSshRelay.
+		const cdpRelayPort = 39222
+		// Session VM must carry a narrow --net-rule reaching only the CDP relay
+		// port on host loopback — never a blanket allow@private RFC1918 grant.
+		expect(netRuleValues(sessionCreate?.args)).toContain(`allow@host:tcp:${cdpRelayPort}`)
+		expect(sessionCreate?.args).not.toContain('allow@private')
+		// Session VM env must include BROWSER_CDP_URL pointing at the SSH-relay port.
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
-		expect(envFlags).toContain('BROWSER_CDP_URL=http://10.0.1.1:39222')
+		expect(envFlags).toContain(`BROWSER_CDP_URL=http://host.microsandbox.internal:${cdpRelayPort}`)
 	})
 
-	it('provisions no sidecar, injects no BROWSER_CDP_URL, and omits allow@private when browserRequired is absent', async () => {
-		const { run, cdpPollReady, calls } = makeSidecarAwareRunner()
+	it('opens a preview SSH relay, grants the sidecar allow@host:tcp:<relayPort>, and returns preview_url', async () => {
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
 			env,
@@ -412,8 +517,109 @@ describe('POST /sessions browserRequired wiring', () => {
 				run,
 				sleep: async () => {},
 				now: () => 0,
-				findPort: async () => 39222,
+				findPort: makePortAllocator(39500),
 				cdpPollReady,
+				tcpPollReady,
+			},
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-preview',
+				image: 'maskin/agent-base:latest',
+				env: {},
+				browserRequired: true,
+				previewGuestPorts: [5173],
+			}),
+		})
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { preview_url?: string }
+		// findPort call order: (1) resolvePreviewPortMappings reserves the
+		// preview relayPort before the sidecar is created at all.
+		const previewRelayPort = 39500
+		expect(body.preview_url).toBe(`http://host.microsandbox.internal:${previewRelayPort}`)
+
+		const creates = calls.filter((c) => c.args[0] === 'create')
+		const sidecarCreate = creates.find((c) => c.args.includes('anko-browser-sess-preview'))
+		const sessionCreate = creates.find((c) => c.args.includes('sess-preview'))
+		expect(sidecarCreate).toBeDefined()
+		expect(sessionCreate).toBeDefined()
+
+		// Sidecar needs a route to reach the preview relay's host-loopback port
+		// (Playwright inside the sidecar talks to PREVIEW_URL).
+		expect(netRuleValues(sidecarCreate?.args)).toContain(`allow@host:tcp:${previewRelayPort}`)
+		expect(sidecarCreate?.args).not.toContain('allow@private')
+
+		// No bridge-publish flags exist in the SSH-relay model.
+		expect(sessionCreate?.args).not.toContain('-p')
+		expect(sidecarCreate?.args).not.toContain('-p')
+	})
+
+	it('adds no extra allow@host:tcp:<port> rule to the sidecar when no previewGuestPorts are given', async () => {
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: makePortAllocator(39222),
+				cdpPollReady,
+				tcpPollReady,
+			},
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-noprev',
+				image: 'maskin/agent-base:latest',
+				env: {},
+				browserRequired: true,
+			}),
+		})
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { preview_url?: string }
+		expect(body.preview_url).toBeUndefined()
+
+		const creates = calls.filter((c) => c.args[0] === 'create')
+		const sidecarCreate = creates.find((c) => c.args.includes('anko-browser-sess-noprev'))
+		expect(sidecarCreate).toBeDefined()
+		// Base sidecar create args carry exactly the 3 default net-rules
+		// (allow@public, allow@any:udp:53, allow@any:tcp:53) — no preview grant.
+		expect(netRuleValues(sidecarCreate?.args)).toEqual([
+			'allow@public',
+			'allow@any:udp:53',
+			'allow@any:tcp:53',
+		])
+	})
+
+	it('provisions no sidecar, injects no BROWSER_CDP_URL, and adds no extra allow@host:tcp:<port> rule when browserRequired is absent', async () => {
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: makePortAllocator(39222),
+				cdpPollReady,
+				tcpPollReady,
 			},
 		})
 
@@ -434,7 +640,14 @@ describe('POST /sessions browserRequired wiring', () => {
 		const creates = calls.filter((c) => c.args[0] === 'create')
 		expect(creates.some((c) => c.args.some((a) => a.startsWith('anko-browser-')))).toBe(false)
 		const sessionCreate = creates.find((c) => c.args.includes('sess-plain'))
-		expect(sessionCreate?.args).not.toContain('allow@private')
+		// Base session create args carry exactly the 4 default net-rules
+		// (allow@host:tcp:<hostPort>, allow@public, allow@any:udp:53, allow@any:tcp:53).
+		expect(netRuleValues(sessionCreate?.args)).toEqual([
+			`allow@host:tcp:${env.PORT}`,
+			'allow@public',
+			'allow@any:udp:53',
+			'allow@any:tcp:53',
+		])
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
 		expect(envFlags.some((e) => e.startsWith('BROWSER_CDP_URL='))).toBe(false)
@@ -442,7 +655,7 @@ describe('POST /sessions browserRequired wiring', () => {
 
 	it('still spawns the session (without BROWSER_CDP_URL) when sidecar provisioning fails', async () => {
 		// CDP poll times out → provisionBrowserSidecar returns null.
-		const { run, cdpPollReady, calls } = makeSidecarAwareRunner({ cdpFail: true })
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner({ cdpFail: true })
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
 			env,
@@ -452,8 +665,9 @@ describe('POST /sessions browserRequired wiring', () => {
 				run,
 				sleep: async () => {},
 				now: () => 0,
-				findPort: async () => 39222,
+				findPort: makePortAllocator(39222),
 				cdpPollReady,
+				tcpPollReady,
 			},
 		})
 
@@ -476,11 +690,124 @@ describe('POST /sessions browserRequired wiring', () => {
 			.filter((c) => c.args[0] === 'create')
 			.find((c) => c.args.includes('sess-betqa2'))
 		expect(sessionCreate).toBeDefined()
-		// Sidecar failed → no allow@private rule, no BROWSER_CDP_URL injected.
-		expect(sessionCreate?.args).not.toContain('allow@private')
+		// Sidecar failed → no extra allow@host:tcp rule, no BROWSER_CDP_URL injected.
+		expect(netRuleValues(sessionCreate?.args)).toEqual([
+			`allow@host:tcp:${env.PORT}`,
+			'allow@public',
+			'allow@any:udp:53',
+			'allow@any:tcp:53',
+		])
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
 		expect(envFlags.some((e) => e.startsWith('BROWSER_CDP_URL='))).toBe(false)
+	})
+
+	it('does not open a preview ssh relay when sidecar provisioning fails', async () => {
+		// CDP poll times out → provisionBrowserSidecar returns null, so nothing
+		// exists to consume the preview relay — it must not be opened.
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner({ cdpFail: true })
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				findPort: makePortAllocator(39500),
+				cdpPollReady,
+				tcpPollReady,
+			},
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-sidecarfail-preview',
+				image: 'maskin/agent-base:latest',
+				env: {},
+				browserRequired: true,
+				previewGuestPorts: [5173],
+			}),
+		})
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { preview_url?: string; preview_forwarding_failed?: boolean }
+		expect(body.preview_url).toBeUndefined()
+		expect(body.preview_forwarding_failed).toBe(true)
+
+		const sessionCreate = calls
+			.filter((c) => c.args[0] === 'create')
+			.find((c) => c.args.includes('sess-sidecarfail-preview'))
+		expect(sessionCreate).toBeDefined()
+		// No sidecar means no consumer for the preview relay — the session gets
+		// no extra allow@host:tcp rule beyond its default 4.
+		expect(netRuleValues(sessionCreate?.args)).toEqual([
+			`allow@host:tcp:${env.PORT}`,
+			'allow@public',
+			'allow@any:udp:53',
+			'allow@any:tcp:53',
+		])
+	})
+
+	it('returns preview_forwarding_failed and still spawns the session when preview port resolution fails', async () => {
+		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		let findPortCalls = 0
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				// First call is the preview-port resolution — fail it. The sidecar's
+				// own CDP relay port allocation (later calls) still succeeds.
+				findPort: async () => {
+					findPortCalls++
+					if (findPortCalls === 1) throw new Error('no free ports')
+					return 39222
+				},
+				cdpPollReady,
+				tcpPollReady,
+			},
+		})
+
+		const res = await app.request('/sessions', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+			},
+			body: JSON.stringify({
+				sessionId: 'sess-previewfail',
+				image: 'maskin/agent-base:latest',
+				env: {},
+				browserRequired: true,
+				previewGuestPorts: [5173],
+			}),
+		})
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as {
+			preview_url?: string
+			preview_forwarding_failed?: boolean
+		}
+		expect(body.preview_forwarding_failed).toBe(true)
+		expect(body.preview_url).toBeUndefined()
+
+		const sessionCreate = calls
+			.filter((c) => c.args[0] === 'create')
+			.find((c) => c.args.includes('sess-previewfail'))
+		expect(sessionCreate).toBeDefined()
+		// Sidecar still provisions successfully (CDP relay unaffected by the
+		// preview-port failure) — session gets exactly the CDP relay's grant.
+		const cdpRelayPort = 39222
+		expect(netRuleValues(sessionCreate?.args)).toContain(`allow@host:tcp:${cdpRelayPort}`)
 	})
 })
 
@@ -1190,5 +1517,196 @@ describe('reconcileOnBoot', () => {
 		})
 
 		expect(calls.find((c) => c.args[0] === 'remove')).toBeUndefined()
+	})
+})
+
+describe('monitorSession — flushLogs retry and drop marker', () => {
+	// monitorSession isn't exported directly; reattach one via reconcileOnBoot
+	// (same pattern as the 'reattaches a monitor for a claimed sandbox' test
+	// above) to get a live sessionLogRouters push function, then drive its
+	// internal flushLogs through fake timers and a stubbed global fetch.
+	function makeAlwaysRunningRunner(sessionName: string) {
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			if (args[0] === 'list') {
+				return { stdout: JSON.stringify([{ name: sessionName, status: 'Running' }]), stderr: '' }
+			}
+			return { stdout: '', stderr: '' }
+		}
+		return run
+	}
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	it('retries a failed log flush and succeeds on a later attempt', async () => {
+		const sessionId = 'sess-flush-retry'
+		const run = makeAlwaysRunningRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		const logsFetch = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('network blip'))
+			.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+		vi.stubGlobal('fetch', logsFetch)
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters,
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			const push = sessionLogRouters.get(sessionId)
+			expect(push).toBeDefined()
+			push?.('hello world')
+
+			// First flush fires after LOG_FLUSH_INTERVAL_MS (2s) and fails; the
+			// retry fires after LOG_FLUSH_RETRY_DELAY_MS (2s) and succeeds.
+			await vi.advanceTimersByTimeAsync(2_000)
+			await vi.advanceTimersByTimeAsync(2_000)
+		} finally {
+			vi.useRealTimers()
+		}
+
+		expect(logsFetch).toHaveBeenCalledTimes(2)
+		const secondCall = logsFetch.mock.calls[1]
+		if (!secondCall) throw new Error('logsFetch was not called a second time')
+		const body = JSON.parse(secondCall[1].body as string) as {
+			logs: Array<{ stream: string; content: string }>
+		}
+		expect(body.logs).toEqual([{ stream: 'stdout', content: 'hello world' }])
+	})
+
+	it('drops a batch after exhausting retries and queues a marker for the next flush', async () => {
+		const sessionId = 'sess-flush-drop'
+		const run = makeAlwaysRunningRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		const logsFetch = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('network blip 1'))
+			.mockRejectedValueOnce(new Error('network blip 2'))
+			.mockRejectedValueOnce(new Error('network blip 3'))
+			.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+		vi.stubGlobal('fetch', logsFetch)
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters,
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			const push = sessionLogRouters.get(sessionId)
+			expect(push).toBeDefined()
+			push?.('first batch, will be dropped')
+
+			// LOG_FLUSH_RETRIES = 3: initial attempt + 2 retries, 2s apart, plus
+			// the initial 2s flush-interval wait before the first attempt.
+			await vi.advanceTimersByTimeAsync(2_000) // scheduled flush fires, attempt 1 fails
+			await vi.advanceTimersByTimeAsync(2_000) // attempt 2 fails
+			await vi.advanceTimersByTimeAsync(2_000) // attempt 3 fails, retries exhausted
+
+			expect(logsFetch).toHaveBeenCalledTimes(3)
+
+			// A later line arriving after the drop schedules the next flush, which
+			// should carry both the marker and the new line.
+			push?.('second batch, should succeed')
+			await vi.advanceTimersByTimeAsync(2_000)
+		} finally {
+			vi.useRealTimers()
+		}
+
+		expect(logsFetch).toHaveBeenCalledTimes(4)
+		const fourthCall = logsFetch.mock.calls[3]
+		if (!fourthCall) throw new Error('logsFetch was not called a fourth time')
+		const body = JSON.parse(fourthCall[1].body as string) as {
+			logs: Array<{ stream: string; content: string }>
+		}
+		expect(body.logs).toEqual([
+			{
+				stream: 'stdout',
+				content: '[system] 1 log lines failed to reach Maskin after 3 attempts and were dropped\n',
+			},
+			{ stream: 'stdout', content: 'second batch, should succeed' },
+		])
+	})
+
+	it('retries and drops a batch when Maskin resolves with a non-ok status (no network error)', async () => {
+		const sessionId = 'sess-flush-http-error'
+		const run = makeAlwaysRunningRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		// A resolved 401 never rejects fetch() — it must still be treated as a
+		// failure (retried, then dropped with a marker), not silently accepted.
+		const logsFetch = vi.fn(async () => ({
+			ok: false,
+			status: 401,
+			json: async () => ({}),
+		}))
+		vi.stubGlobal('fetch', logsFetch)
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters,
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			const push = sessionLogRouters.get(sessionId)
+			expect(push).toBeDefined()
+			push?.('will be dropped after 401s')
+
+			await vi.advanceTimersByTimeAsync(2_000) // scheduled flush fires, attempt 1: 401
+			await vi.advanceTimersByTimeAsync(2_000) // attempt 2: 401
+			await vi.advanceTimersByTimeAsync(2_000) // attempt 3: 401, retries exhausted
+		} finally {
+			vi.useRealTimers()
+		}
+
+		expect(logsFetch).toHaveBeenCalledTimes(3)
 	})
 })

@@ -12,6 +12,7 @@ export const queryKeys = {
 		boardPrefix: (workspaceId: string) => ['objects', workspaceId, 'board'] as const,
 		detail: (id: string) => ['objects', 'detail', id] as const,
 		graph: (id: string) => ['objects', 'graph', id] as const,
+		references: (id: string) => ['objects', 'references', id] as const,
 	},
 	bets: {
 		all: (workspaceId: string) => ['bets', workspaceId] as const,
@@ -90,6 +91,9 @@ export const queryKeys = {
 	},
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,
+	},
+	briefing: {
+		current: (workspaceId: string) => ['briefing', workspaceId] as const,
 	},
 	subscriptions: {
 		subscribers: (entityType: string, entityId: string) =>

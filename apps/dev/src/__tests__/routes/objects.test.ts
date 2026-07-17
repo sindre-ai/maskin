@@ -757,6 +757,40 @@ describe('Objects Routes', () => {
 		})
 	})
 
+	describe('GET /api/objects/:id/references', () => {
+		it('returns the unique-context count with the 7-day window', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'knowledge' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// One SELECT: the COUNT DISTINCT aggregate. The mock DB harness returns
+			// whatever we queue for the aggregate row.
+			mockResults.selectQueue = [[{ unique_contexts: 3 }]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/references`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toEqual({ window_days: 7, unique_contexts: 3 })
+		})
+
+		it('returns 0 when no reference events exist', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'knowledge' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// Empty aggregate row — the coalesce in the handler falls back to 0.
+			mockResults.selectQueue = [[{ unique_contexts: null }]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/references`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.unique_contexts).toBe(0)
+			expect(body.window_days).toBe(7)
+		})
+	})
+
 	describe('DELETE /api/objects/:id', () => {
 		it('returns 200 when deleted', async () => {
 			const existing = buildObject()
@@ -871,6 +905,390 @@ describe('Objects Routes', () => {
 
 			const res = await app.request(jsonDelete(`/api/objects/${existing.id}`))
 			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('POST /api/objects/:id/verification', () => {
+		// A Knowledge Author write — knowledge object with `provenance` containing "writer".
+		function buildKnowledgeWrite(overrides?: Record<string, unknown>) {
+			return buildObject({
+				type: 'knowledge',
+				metadata: { provenance: 'writer, claude-sonnet' },
+				...overrides,
+			})
+		}
+
+		it('stamps verification and emits a verified event on the object timeline', async () => {
+			const existing = buildKnowledgeWrite()
+			const updated = { ...existing }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing], // initial fetch
+				[buildWorkspaceMember()], // isWorkspaceMember
+				[{ role: 'admin', type: 'human' }], // isWorkspaceHumanAdminOrOwner
+				[existing], // in-tx FOR UPDATE re-read
+			]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(200)
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert?.action).toBe('verified')
+			expect((eventInsert?.data as { verified?: boolean }).verified).toBe(true)
+			const patchSet = calls.updates[0] as { metadata: Record<string, unknown> }
+			expect(patchSet.metadata.verified_by).toBeTruthy()
+			expect(typeof patchSet.metadata.verified_at).toBe('string')
+		})
+
+		it('unstamps verification and clears the metadata fields', async () => {
+			const existing = buildKnowledgeWrite({
+				metadata: {
+					provenance: 'writer',
+					verified_by: 'actor-x',
+					verified_at: '2026-06-01T00:00:00.000Z',
+				},
+			})
+			const updated = { ...existing }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember()],
+				[{ role: 'owner', type: 'human' }],
+				[existing],
+			]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: false }),
+			)
+
+			expect(res.status).toBe(200)
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert?.action).toBe('unverified')
+			const patchSet = calls.updates[0] as { metadata: Record<string, unknown> }
+			expect(patchSet.metadata.verified_by).toBeUndefined()
+			expect(patchSet.metadata.verified_at).toBeUndefined()
+			// Provenance and other unrelated metadata are preserved.
+			expect(patchSet.metadata.provenance).toBe('writer')
+		})
+
+		it('returns 409 when the object is not a knowledge type', async () => {
+			const existing = buildObject({ type: 'task' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(409)
+		})
+
+		it('returns 409 when the knowledge object has no writer provenance', async () => {
+			const existing = buildObject({
+				type: 'knowledge',
+				metadata: { provenance: 'human-review' },
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(409)
+		})
+
+		it('returns 403 when caller is a member but not admin/owner', async () => {
+			const existing = buildKnowledgeWrite()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember({ role: 'member' })],
+				[], // isWorkspaceHumanAdminOrOwner: no matching row
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 403 when caller is an agent (even with admin role)', async () => {
+			const existing = buildKnowledgeWrite()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember({ role: 'admin' })],
+				// The join filters agents out server-side; helper returns [] here.
+				[],
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 404 when the object does not exist', async () => {
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[]]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects/00000000-0000-0000-0000-000000000099/verification', {
+					verified: true,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('POST /api/objects/:id/undo-write', () => {
+		const KA_NAME = 'Retro & Knowledge Author'
+
+		function buildKnowledgeObject(overrides?: Record<string, unknown>) {
+			return buildObject({
+				type: 'knowledge',
+				metadata: { summary: 'About the company (post-write)' },
+				...overrides,
+			})
+		}
+
+		function buildKAUpdateEvent(
+			entityId: string,
+			overrides?: Partial<{
+				createdAt: Date
+				action: 'updated' | 'status_changed'
+				changes: Array<{ field: string; old: unknown; new: unknown }>
+			}>,
+		) {
+			return buildEvent({
+				action: overrides?.action ?? 'updated',
+				entityType: 'knowledge',
+				entityId,
+				createdAt: overrides?.createdAt ?? new Date(),
+				data: {
+					changes: overrides?.changes ?? [
+						{ field: 'title', old: 'Company (old)', new: 'Company (new)' },
+					],
+				},
+			})
+		}
+
+		function eventJoinRow(event: ReturnType<typeof buildKAUpdateEvent>) {
+			// The route reads the event via a join with actors — mirror the join
+			// row shape here so mockResults.selectQueue matches the query.
+			return {
+				id: event.id,
+				workspaceId: event.workspaceId,
+				actorId: event.actorId,
+				action: event.action,
+				entityType: event.entityType,
+				entityId: event.entityId,
+				data: event.data,
+				createdAt: event.createdAt,
+				authorType: 'agent',
+				authorName: KA_NAME,
+			}
+		}
+
+		it('reverses a KA update and emits a knowledge_write_undone event', async () => {
+			const existing = buildKnowledgeObject({ title: 'Company (new)' })
+			const event = buildKAUpdateEvent(existing.id)
+			const reverted = { ...existing, title: 'Company (old)' }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing], // initial fetch
+				[buildWorkspaceMember()], // isWorkspaceMember
+				[eventJoinRow(event)], // event + author join
+				[{ role: 'admin', type: 'human' }], // isWorkspaceHumanAdminOrOwner
+				[existing], // FOR UPDATE re-read
+			]
+			mockResults.update = [reverted]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: event.id }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.title).toBe('Company (old)')
+
+			const reversalInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(reversalInsert?.action).toBe('knowledge_write_undone')
+			const data = reversalInsert?.data as { original_event_id: number }
+			expect(data.original_event_id).toBe(event.id)
+
+			const patchSet = calls.updates[0] as { title: string }
+			expect(patchSet.title).toBe('Company (old)')
+		})
+
+		it('returns 404 when the actor is not a member of the object workspace', async () => {
+			const existing = buildKnowledgeObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], []] // member check returns empty
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: 1 }),
+			)
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 409 when the object is not a knowledge type', async () => {
+			const existing = buildObject({ type: 'task' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: 1 }),
+			)
+			expect(res.status).toBe(409)
+		})
+
+		it('returns 404 when the referenced event cannot be found on this object', async () => {
+			const existing = buildKnowledgeObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember()],
+				[], // event join returns nothing
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: 9999 }),
+			)
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 409 when the event was not authored by the Knowledge Author', async () => {
+			const existing = buildKnowledgeObject()
+			const event = buildKAUpdateEvent(existing.id)
+			const row = { ...eventJoinRow(event), authorName: 'Some Other Agent' }
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [row]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: event.id }),
+			)
+			expect(res.status).toBe(409)
+		})
+
+		it('returns 409 when the event action is not updated / status_changed', async () => {
+			const existing = buildKnowledgeObject()
+			const event = buildKAUpdateEvent(existing.id)
+			const row = { ...eventJoinRow(event), action: 'created' }
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [row]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: event.id }),
+			)
+			expect(res.status).toBe(409)
+		})
+
+		it('returns 410 when the event is older than 7 days', async () => {
+			const existing = buildKnowledgeObject()
+			const oldEvent = buildKAUpdateEvent(existing.id, {
+				createdAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000),
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [eventJoinRow(oldEvent)]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: oldEvent.id }),
+			)
+			expect(res.status).toBe(410)
+		})
+
+		it('returns 403 when the caller is a member but not admin/owner', async () => {
+			const existing = buildKnowledgeObject()
+			const event = buildKAUpdateEvent(existing.id)
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember({ role: 'member' })],
+				[eventJoinRow(event)],
+				[], // isWorkspaceHumanAdminOrOwner: no matching row
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: event.id }),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 403 when the caller is an agent (even with admin role)', async () => {
+			const existing = buildKnowledgeObject()
+			const event = buildKAUpdateEvent(existing.id)
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember({ role: 'admin' })],
+				[eventJoinRow(event)],
+				[], // join filters agents
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: event.id }),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('reverses only the fields carried by the event (partial-field undo)', async () => {
+			// Object has a later-written field the KA event never touched — the
+			// undo must leave that field intact rather than clobbering it.
+			const existing = buildKnowledgeObject({
+				title: 'Company (new)',
+				content: 'body written by someone else after the KA edit',
+			})
+			const event = buildKAUpdateEvent(existing.id, {
+				changes: [{ field: 'title', old: 'Company (old)', new: 'Company (new)' }],
+			})
+			const reverted = { ...existing, title: 'Company (old)' }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember()],
+				[eventJoinRow(event)],
+				[{ role: 'owner', type: 'human' }],
+				[existing],
+			]
+			mockResults.update = [reverted]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: event.id }),
+			)
+
+			expect(res.status).toBe(200)
+			// UPDATE only patches the fields the event changed — no 'content' key.
+			const patchSet = calls.updates[0] as Record<string, unknown>
+			expect(patchSet.title).toBe('Company (old)')
+			expect(patchSet.content).toBeUndefined()
 		})
 	})
 

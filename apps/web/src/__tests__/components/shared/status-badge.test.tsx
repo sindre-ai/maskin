@@ -58,6 +58,14 @@ describe('StatusBadge', () => {
 		expect(screen.getByText('in review')).toBeInTheDocument()
 	})
 
+	it('maps the archived status to its own token classes (warm stone, distinct from paused)', () => {
+		const { container } = render(<StatusBadge status="archived" />)
+		const badge = container.firstElementChild as HTMLElement
+		expect(badge.className).toContain('bg-status-archived-bg')
+		expect(badge.className).toContain('text-status-archived-text')
+		expect(badge.className).not.toContain('paused')
+	})
+
 	describe('variant="dot-word"', () => {
 		it('renders a leading dot and the status word', () => {
 			render(<StatusBadge status="active" variant="dot-word" />)

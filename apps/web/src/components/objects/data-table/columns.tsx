@@ -25,6 +25,10 @@ export interface ObjectsTableMeta {
 	currentSort: string
 	currentOrder: 'asc' | 'desc'
 	betStatuses?: Map<string, BetStatusResult>
+	// Bet status is rendered in the Title cell rather than as its own column, so
+	// the display menu toggles it via this flag instead of column visibility.
+	// Absent/true → visible, matching the default-visible behavior of a real column.
+	showBetStatusIndicator?: boolean
 }
 
 interface ColumnOptions {
@@ -122,13 +126,15 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			cell: ({ row, table }) => {
 				const meta = table.options.meta as ObjectsTableMeta | undefined
 				const isBet = row.original.type === 'bet'
-				const betStatus = isBet ? meta?.betStatuses?.get(row.original.id) : undefined
+				const showBetStatus = meta?.showBetStatusIndicator !== false
+				const betStatus =
+					isBet && showBetStatus ? meta?.betStatuses?.get(row.original.id) : undefined
 				return (
-					<div className="flex items-center gap-2">
+					<div className="flex items-center gap-2 min-w-0">
 						<Link
 							to="/$workspaceId/objects/$objectId"
 							params={{ workspaceId, objectId: row.original.id }}
-							className="font-medium truncate max-w-[150px] sm:max-w-[300px] text-foreground hover:underline"
+							className="font-medium truncate min-w-0 flex-1 text-foreground hover:underline"
 							onClick={(e) => e.stopPropagation()}
 						>
 							{row.getValue('title') || 'Untitled'}
@@ -148,7 +154,21 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 		{
 			accessorKey: 'status',
 			header: sortableHeader('Status', 'status'),
-			cell: ({ row }) => <StatusBadge status={row.getValue('status')} />,
+			cell: ({ row }) => {
+				const status = row.getValue('status') as string
+				const priorRaw = row.original.metadata?.previous_status
+				const priorStatus = typeof priorRaw === 'string' ? priorRaw : null
+				return (
+					<div className="flex items-center gap-1.5 min-w-0">
+						<StatusBadge status={status} />
+						{status === 'archived' && priorStatus && (
+							<span className="truncate text-xs text-muted-foreground">
+								was {priorStatus.replace(/_/g, ' ')}
+							</span>
+						)}
+					</div>
+				)
+			},
 		},
 		{
 			accessorKey: 'type',

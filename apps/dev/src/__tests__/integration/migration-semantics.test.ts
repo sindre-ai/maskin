@@ -1,8 +1,21 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { splitStatements } from '@maskin/db/migrate-utils'
 import { describe, expect, it } from 'vitest'
 import { getTestActorId, sql } from './global-setup'
 
 // These tests assert DB-level semantics that the application relies on but that
 // mocked unit tests cannot verify. Each maps directly to a known-pitfall entry.
+
+async function replayMigration(filename: string): Promise<void> {
+	const here = dirname(fileURLToPath(import.meta.url))
+	const migrationsDir = join(here, '..', '..', '..', '..', '..', 'packages', 'db', 'drizzle')
+	const content = readFileSync(join(migrationsDir, filename), 'utf-8')
+	for (const statement of splitStatements(content)) {
+		await sql.unsafe(statement)
+	}
+}
 
 async function getIndexColumns(relname: string): Promise<string[]> {
 	const rows = await sql<{ column: string; ord: number }[]>`
@@ -236,6 +249,120 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 		)
 	})
 
+	// ── bet archived status + archive_reason (migration 0047) ────────────────
+	// T2 of `bet/archived-status`: the migration must add `archived` to every
+	// workspace's settings.statuses.bet and register the archive_reason field on
+	// bet — including on rows whose settings blob is missing intermediate keys —
+	// and it must be idempotent when re-run against an already-patched row.
+
+	it('0047 patches statuses.bet + field_definitions.bet on a pre-existing workspace', async () => {
+		const actorId = getTestActorId()
+		// Simulate a row that predates the migration: statuses.bet has the old
+		// eight-status list; field_definitions.bet is absent.
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, settings, created_by)
+			VALUES (
+				'archived-status-legacy',
+				${sql.json({
+					statuses: {
+						bet: [
+							'signal',
+							'qualified',
+							'define',
+							'active',
+							'live',
+							'succeeded',
+							'failed',
+							'paused',
+						],
+					},
+				})},
+				${actorId}
+			)
+			RETURNING id
+		`
+		// Re-run the 0047 migration statements against the seeded legacy row.
+		await replayMigration('0047_bet_archived_status_and_archive_reason.sql')
+
+		const [after] = await sql<{ settings: Record<string, unknown> }[]>`
+			SELECT settings FROM workspaces WHERE id = ${ws.id}
+		`
+		const settings = after.settings as {
+			statuses: { bet: string[] }
+			field_definitions: { bet: Array<{ name: string; type: string; required: boolean }> }
+		}
+		expect(settings.statuses.bet, 'archived must be appended to statuses.bet').toContain('archived')
+		expect(
+			settings.statuses.bet.filter((s) => s === 'archived').length,
+			'archived must appear exactly once',
+		).toBe(1)
+		expect(settings.field_definitions.bet, 'archive_reason must be registered on bet').toEqual([
+			{ name: 'archive_reason', type: 'text', required: false },
+		])
+	})
+
+	it('0047 handles a workspace whose settings has no statuses or field_definitions keys', async () => {
+		const actorId = getTestActorId()
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, settings, created_by)
+			VALUES ('archived-status-bare', '{}'::jsonb, ${actorId})
+			RETURNING id
+		`
+		await replayMigration('0047_bet_archived_status_and_archive_reason.sql')
+
+		const [after] = await sql<{ settings: Record<string, unknown> }[]>`
+			SELECT settings FROM workspaces WHERE id = ${ws.id}
+		`
+		const settings = after.settings as {
+			statuses: { bet: string[] }
+			field_definitions: { bet: Array<{ name: string }> }
+		}
+		expect(settings.statuses.bet).toEqual(['archived'])
+		expect(settings.field_definitions.bet).toEqual([
+			{ name: 'archive_reason', type: 'text', required: false },
+		])
+	})
+
+	it('0047 is idempotent: a second run adds no duplicate entries', async () => {
+		const actorId = getTestActorId()
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, settings, created_by)
+			VALUES (
+				'archived-status-idempotent',
+				${sql.json({
+					statuses: {
+						bet: [
+							'signal',
+							'qualified',
+							'define',
+							'active',
+							'live',
+							'succeeded',
+							'failed',
+							'paused',
+							'archived',
+						],
+					},
+					field_definitions: {
+						bet: [{ name: 'archive_reason', type: 'text', required: false }],
+					},
+				})},
+				${actorId}
+			)
+			RETURNING id, settings
+		`
+		const before = ws.settings
+		await replayMigration('0047_bet_archived_status_and_archive_reason.sql')
+		await replayMigration('0047_bet_archived_status_and_archive_reason.sql')
+
+		const [after] = await sql<{ settings: Record<string, unknown> }[]>`
+			SELECT settings FROM workspaces WHERE id = ${ws.id}
+		`
+		expect(after.settings, 'settings must be unchanged when both patches already applied').toEqual(
+			before,
+		)
+	})
+
 	it('slack_user_links rollback drops the table and leaves integrations rows untouched', async () => {
 		const actorId = getTestActorId()
 		const [ws] = await sql`
@@ -273,5 +400,129 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 
 		const [restored] = await sql`SELECT to_regclass('public.slack_user_links') AS r`
 		expect(restored.r, 'tx abort must restore the schema for later tests').not.toBeNull()
+	})
+
+	// ── hygiene-swept paused → archived (migration 0048) ─────────────────────
+	// T7 of `bet/archived-status`: rows the workspace-hygiene sweep already
+	// parked into `paused` (as an interim shelf) must migrate to `archived`.
+	// Rows carrying `metadata.parked_reason` are intentional human holds and
+	// must stay `paused` — the sweep never touched them.
+
+	it('0048 moves paused bets stamped with hygiene_swept_at to archived', async () => {
+		const actorId = getTestActorId()
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, created_by) VALUES ('hygiene-swept-happy', ${actorId})
+			RETURNING id
+		`
+		const [bet] = await sql`
+			INSERT INTO objects (workspace_id, type, title, status, metadata, created_by)
+			VALUES (
+				${ws.id},
+				'bet',
+				'Council-parked bet swept last week',
+				'paused',
+				${sql.json({
+					hygiene_swept_at: '2026-07-06T00:00:00Z',
+					council_route: 'park',
+				})},
+				${actorId}
+			)
+			RETURNING id
+		`
+
+		await replayMigration('0048_hygiene_swept_paused_to_archived.sql')
+
+		const [after] = await sql<{ status: string }[]>`
+			SELECT status FROM objects WHERE id = ${bet.id}
+		`
+		expect(after.status).toBe('archived')
+	})
+
+	it('0048 leaves paused bets with parked_reason alone', async () => {
+		const actorId = getTestActorId()
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, created_by) VALUES ('hygiene-swept-parked', ${actorId})
+			RETURNING id
+		`
+		// Row was swept, but a human later added a parked_reason — flipping it back
+		// into an intentional hold. The migration must leave it in paused.
+		const [heldBet] = await sql`
+			INSERT INTO objects (workspace_id, type, title, status, metadata, created_by)
+			VALUES (
+				${ws.id},
+				'bet',
+				'SOC 2 Type II compliance — paused awaiting external audit',
+				'paused',
+				${sql.json({
+					hygiene_swept_at: '2026-07-06T00:00:00Z',
+					parked_reason: 'awaiting_external_audit',
+				})},
+				${actorId}
+			)
+			RETURNING id
+		`
+		// A vanilla paused bet with no hygiene stamp — also must stay put.
+		const [freshPaused] = await sql`
+			INSERT INTO objects (workspace_id, type, title, status, metadata, created_by)
+			VALUES (
+				${ws.id},
+				'bet',
+				'Recently paused, never swept',
+				'paused',
+				'{}'::jsonb,
+				${actorId}
+			)
+			RETURNING id
+		`
+
+		await replayMigration('0048_hygiene_swept_paused_to_archived.sql')
+
+		const rows = await sql<{ id: string; status: string }[]>`
+			SELECT id, status FROM objects
+			WHERE id IN (${heldBet.id}, ${freshPaused.id})
+			ORDER BY id
+		`
+		const byId = Object.fromEntries(rows.map((r) => [r.id, r.status]))
+		expect(byId[heldBet.id], 'parked_reason row must stay paused').toBe('paused')
+		expect(byId[freshPaused.id], 'un-swept paused row must stay paused').toBe('paused')
+	})
+
+	it('0048 is idempotent: a second run flips nothing', async () => {
+		const actorId = getTestActorId()
+		const [ws] = await sql`
+			INSERT INTO workspaces (name, created_by) VALUES ('hygiene-swept-idempotent', ${actorId})
+			RETURNING id
+		`
+		const [bet] = await sql`
+			INSERT INTO objects (workspace_id, type, title, status, metadata, created_by)
+			VALUES (
+				${ws.id},
+				'bet',
+				'Swept bet — rerun target',
+				'paused',
+				${sql.json({
+					hygiene_swept_at: '2026-07-06T00:00:00Z',
+					council_route: 'park',
+				})},
+				${actorId}
+			)
+			RETURNING id
+		`
+
+		await replayMigration('0048_hygiene_swept_paused_to_archived.sql')
+		const [afterFirst] = await sql<{ status: string; updated_at: Date }[]>`
+			SELECT status, updated_at FROM objects WHERE id = ${bet.id}
+		`
+		expect(afterFirst.status).toBe('archived')
+
+		await replayMigration('0048_hygiene_swept_paused_to_archived.sql')
+		const [afterSecond] = await sql<{ status: string; updated_at: Date }[]>`
+			SELECT status, updated_at FROM objects WHERE id = ${bet.id}
+		`
+		expect(afterSecond.status, 'rerun keeps the row at archived').toBe('archived')
+		expect(
+			afterSecond.updated_at.getTime(),
+			'rerun must not touch updated_at — the WHERE clause excludes archived rows',
+		).toBe(afterFirst.updated_at.getTime())
 	})
 })

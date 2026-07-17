@@ -394,6 +394,7 @@ export function ObjectActivity({
 															? formatStatusTransitionShort(event)
 															: undefined
 													}
+													allowUndoWriteChip={object.type === 'knowledge'}
 												/>
 											)
 										})}

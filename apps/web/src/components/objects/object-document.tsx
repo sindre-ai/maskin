@@ -16,7 +16,13 @@ import {
 } from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useDeleteObject, useObjectGraph, useUpdateObject } from '@/hooks/use-objects'
+import {
+	useDeleteObject,
+	useKnowledgeReferences,
+	useObjectGraph,
+	useUpdateObject,
+	useVerifyObject,
+} from '@/hooks/use-objects'
 import { useDeleteRelationship } from '@/hooks/use-relationships'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { trackEvent } from '@/lib/analytics'
@@ -45,7 +51,9 @@ import { StatusBadge } from '../shared/status-badge'
 import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
+import { LoopCard } from './loop-card'
 import { PropertiesDrawer } from './properties-drawer'
+import { VerifiedChip, isKnowledgeAuthorWrite } from './verified-chip'
 
 interface ObjectDocumentViewProps {
 	object: ObjectResponse
@@ -59,9 +67,15 @@ interface ObjectDocumentViewProps {
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
 	onUpdateStatus: (status: string) => void
+	// Optional archive route — when provided, picking `archived` in the status
+	// picker is dispatched here instead of `onUpdateStatus`, keeping the
+	// single-handler contract with the row's Archive menu action.
+	onArchive?: () => void
 	onUpdateDriver: (driver: string | null) => void
 	onDeleteRelationship?: (relationshipId: string) => void
 	onDelete: () => void
+	onToggleVerified?: (verified: boolean) => void
+	isVerifying?: boolean
 	isDeleting?: boolean
 	showSaved?: boolean
 	betStatus?: ReturnType<typeof classifyBetStatus>
@@ -70,6 +84,32 @@ interface ObjectDocumentViewProps {
 	// the object legitimately having no content. Callers that always fetch the
 	// full object (the webapp page) never need to set this.
 	contentLoaded?: boolean
+}
+
+// Renders "Referenced by N contexts/week" alongside the other prov-row chips
+// on knowledge object headers. Hidden when N is 0 (per DoD — the empty state
+// stays invisible so the row doesn't grow a permanent "Never referenced"
+// footprint). Also hidden while the count is loading or on API failure — the
+// chip is decorative, not load-bearing, so it must never block the header
+// from rendering.
+function KnowledgeReferencesChip({
+	workspaceId,
+	objectId,
+}: {
+	workspaceId: string
+	objectId: string
+}) {
+	const { data } = useKnowledgeReferences(workspaceId, objectId)
+	const count = data?.unique_contexts ?? 0
+	if (count <= 0) return null
+	return (
+		<span
+			className="text-[11px] text-muted-foreground"
+			title="Unique bets/tasks/insights that cited this knowledge object in the last 7 days (rolling window)"
+		>
+			Referenced by {count} {count === 1 ? 'context' : 'contexts'}/week
+		</span>
+	)
 }
 
 function shouldShowUpdatedChip(createdAt: string | null, updatedAt: string | null): boolean {
@@ -93,9 +133,12 @@ export function ObjectDocumentView({
 	onUpdateTitle,
 	onUpdateContent,
 	onUpdateStatus,
+	onArchive,
 	onUpdateDriver,
 	onDeleteRelationship,
 	onDelete,
+	onToggleVerified,
+	isVerifying = false,
 	isDeleting = false,
 	showSaved = false,
 	betStatus,
@@ -124,11 +167,21 @@ export function ObjectDocumentView({
 		[onUpdateContent],
 	)
 
+	// One handler, two entry points: the status picker's `archived` option
+	// dispatches to the same archive route as the row Archive menu. Falls back
+	// to the generic status update if no archive handler was supplied — the
+	// dropdown item is still there because the workspace's bet status enum
+	// includes `archived`, but without a bet-typed object it just moves the
+	// status like any other value.
 	const handleStatusChange = useCallback(
 		(status: string) => {
+			if (status === 'archived' && onArchive && object.type === 'bet') {
+				onArchive()
+				return
+			}
 			onUpdateStatus(status)
 		},
-		[onUpdateStatus],
+		[onUpdateStatus, onArchive, object.type],
 	)
 
 	return (
@@ -170,6 +223,8 @@ export function ObjectDocumentView({
 				/>
 			)}
 
+			{object.type === 'loop' && <LoopCard object={object} workspaceId={workspaceId} />}
+
 			{/* Metadata badges row — editable cluster stays inline; provenance
 			 * (creator + createdAt) drops to its own row below sm so 375px never
 			 * spills into a jagged partial wrap. */}
@@ -183,6 +238,14 @@ export function ObjectDocumentView({
 				)}
 				{object.type === 'bet' && betStatus && (
 					<IndicatorBadgeChip result={betStatus} workspaceId={workspaceId} />
+				)}
+				{isKnowledgeAuthorWrite(object) && onToggleVerified && (
+					<VerifiedChip
+						object={object}
+						members={members}
+						onToggle={onToggleVerified}
+						isPending={isVerifying}
+					/>
 				)}
 				{members && (
 					<OwnerSelect
@@ -209,6 +272,9 @@ export function ObjectDocumentView({
 						<span className="text-[11px] text-muted-foreground">
 							updated <RelativeTime date={object.updatedAt} />
 						</span>
+					)}
+					{object.type === 'knowledge' && (
+						<KnowledgeReferencesChip workspaceId={workspaceId} objectId={object.id} />
 					)}
 				</div>
 			</div>
@@ -244,6 +310,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const updateObject = useUpdateObject(workspaceId)
+	const verifyObject = useVerifyObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const deleteRelationship = useDeleteRelationship(workspaceId, object.id)
 	const { data: creator } = useActor(object.createdBy)
@@ -320,11 +387,36 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[object.id, updateObject],
 	)
 
+	// Archive route shared by the row `⋯` menu and the status picker. Sets
+	// `status = archived` and stamps the current status onto
+	// `metadata.previous_status` so the archived-row treatment (T4) can render
+	// "was <prior status>". Server-side metadata is shallow-merged, so
+	// `archive_reason` and any other existing keys survive. A hygiene sweep
+	// can populate `archive_reason` later; the reason prompt UI is deferred.
+	const handleArchive = useCallback(() => {
+		if (object.type !== 'bet') return
+		if (object.status === 'archived') return
+		updateObject.mutate({
+			id: object.id,
+			data: {
+				status: 'archived',
+				metadata: { previous_status: object.status },
+			},
+		})
+	}, [object.id, object.status, object.type, updateObject])
+
 	const handleUpdateDriver = useCallback(
 		(driver: string | null) => {
 			updateObject.mutate({ id: object.id, data: { driver } })
 		},
 		[object.id, updateObject],
+	)
+
+	const handleToggleVerified = useCallback(
+		(verified: boolean) => {
+			verifyObject.mutate({ id: object.id, verified })
+		},
+		[object.id, verifyObject],
 	)
 
 	const [confirmDelete, setConfirmDelete] = useState(false)
@@ -349,6 +441,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 						q: prev.q,
 						groupBy: prev.groupBy,
 						ids: prev.ids,
+						includeArchived: prev.includeArchived,
 					}),
 				})
 			},
@@ -418,6 +511,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 			<AuxiliaryActionMenu
 				object={object}
 				onDeleteRequest={openDeleteConfirm}
+				onArchiveRequest={handleArchive}
 				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}
@@ -449,9 +543,12 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onUpdateTitle={handleUpdateTitle}
 				onUpdateContent={handleUpdateContent}
 				onUpdateStatus={handleUpdateStatus}
+				onArchive={handleArchive}
 				onUpdateDriver={handleUpdateDriver}
 				onDeleteRelationship={handleDeleteRelationship}
 				onDelete={handleDelete}
+				onToggleVerified={handleToggleVerified}
+				isVerifying={verifyObject.isPending}
 				isDeleting={deleteObject.isPending}
 				betStatus={betStatus}
 			/>

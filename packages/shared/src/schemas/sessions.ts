@@ -68,6 +68,10 @@ export const sessionThreadReplyContextSchema = z.object({
 })
 export type SessionThreadReplyContext = z.infer<typeof sessionThreadReplyContextSchema>
 
+// Mirrors MAX_PREVIEW_GUEST_PORTS in apps/agent-server/src/index.ts — a
+// session only ever needs to forward a handful of local dev servers.
+const MAX_PREVIEW_GUEST_PORTS = 8
+
 export const sessionConfigSchema = z.object({
 	base_image: z.string().default('agent-base:latest'),
 	runtime: sessionRuntimeSchema.default('claude-code'),
@@ -80,7 +84,19 @@ export const sessionConfigSchema = z.object({
 	interactive: z.boolean().default(false),
 	mention: sessionMentionContextSchema.optional(),
 	thread_reply: sessionThreadReplyContextSchema.optional(),
+	// When true, provision a browser sidecar and inject BROWSER_CDP_URL so
+	// @playwright/mcp can attach. See needsBrowserSidecar() in session-manager.ts
+	// for the legacy auto-detection path (MCP config referencing ${BROWSER_CDP_URL}).
 	browserRequired: z.boolean().default(false),
+	// Guest port(s) inside the session to publish on the msb bridge gateway
+	// (e.g. a Vite dev server on 5173), so the browser sidecar's Playwright can
+	// reach them. Only takes effect when browserRequired is also true —
+	// session-manager.ts's buildLaunchSpec() forces browserRequired on whenever
+	// this is non-empty, so passing one without the other is still safe.
+	previewGuestPorts: z
+		.array(z.number().int().positive().max(65535))
+		.max(MAX_PREVIEW_GUEST_PORTS)
+		.optional(),
 })
 
 export const createSessionSchema = z.object({
@@ -90,6 +106,11 @@ export const createSessionSchema = z.object({
 	trigger_id: z.string().uuid().optional(),
 	auto_start: z.boolean().default(true),
 	source_session_id: z.string().uuid().optional(),
+	// A short slug identifying the role of the agent this chat entered under
+	// (e.g. "chief-of-staff", "workspace-coach"). Persisted onto
+	// `sessions.config.entry_agent_role` so downstream analytics can attribute
+	// every session to the agent that received the owner's first turn.
+	entry_agent_role: z.string().max(64).optional(),
 })
 
 export const sessionQuerySchema = z.object({

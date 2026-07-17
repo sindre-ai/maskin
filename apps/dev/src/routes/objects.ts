@@ -14,6 +14,8 @@ import {
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
+	DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME,
+	KNOWLEDGE_WRITE_UNDO_WINDOW_MS,
 	OBJECT_DIFF_FIELDS,
 	SAFE_METADATA_FIELD_NAME_RE,
 	TERMINAL_BET_STATUSES,
@@ -29,6 +31,7 @@ import {
 	migrateObjectTypeResponseSchema,
 	migrateObjectTypeSchema,
 	objectQuerySchema,
+	reversePatch,
 	searchObjectsSchema,
 	updateObjectSchema,
 } from '@maskin/shared'
@@ -51,6 +54,7 @@ import {
 } from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
 import {
@@ -58,11 +62,12 @@ import {
 	idParamSchema,
 	objectGraphResponseSchema,
 	objectResponseSchema,
+	traverseGraphResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../lib/workspace-auth'
 import {
 	autoSubscribe,
 	getSubscriberCount,
@@ -187,20 +192,25 @@ function isCursorSeekActive(query: {
  * The keyset predicate matches the sort order the list handlers use
  * (`createdAt` desc/asc, `id` asc tiebreaker — see `resolveOrderBy`), so it
  * only fires when the walk is actually sorted by `createdAt` — see
- * `isCursorSeekActive`.
+ * `isCursorSeekActive`. Callers pass `includeKeyset=false` to force the
+ * predicate off when the ORDER BY is overridden downstream (e.g. by
+ * `searchRankExpr`) so the seek and the walk order can't drift out of sync.
  */
-function buildCursorConditions(query: {
-	sort?: string
-	order?: string
-	snapshot_at?: string
-	cursor_created_at?: string
-	cursor_id?: string
-}): SQL[] {
+function buildCursorConditions(
+	query: {
+		sort?: string
+		order?: string
+		snapshot_at?: string
+		cursor_created_at?: string
+		cursor_id?: string
+	},
+	includeKeyset = true,
+): SQL[] {
 	const conditions: SQL[] = []
 	if (query.snapshot_at) {
 		conditions.push(lte(objects.createdAt, new Date(query.snapshot_at)))
 	}
-	if (isCursorSeekActive(query)) {
+	if (includeKeyset && isCursorSeekActive(query)) {
 		const lastCa = new Date(query.cursor_created_at as string)
 		const lastId = query.cursor_id as string
 		if (query.order === 'asc') {
@@ -220,7 +230,104 @@ function buildCursorConditions(query: {
 	return conditions
 }
 
-function buildObjectListConditions(
+// Shared stopword set for `q` tokenization — kept verbatim in sync with the
+// offline eval harness so a post-merge run against the seeded fixtures returns
+// the same rows in the same order as the pre-merge T1 numbers.
+const SEARCH_STOPWORDS: ReadonlySet<string> = new Set([
+	'a',
+	'an',
+	'and',
+	'are',
+	'as',
+	'at',
+	'be',
+	'been',
+	'but',
+	'by',
+	'can',
+	'could',
+	'did',
+	'do',
+	'does',
+	'for',
+	'from',
+	'has',
+	'have',
+	'how',
+	'i',
+	'if',
+	'in',
+	'into',
+	'is',
+	'it',
+	'its',
+	'just',
+	'not',
+	'of',
+	'on',
+	'or',
+	'over',
+	'past',
+	'per',
+	'should',
+	'so',
+	'than',
+	'that',
+	'the',
+	'their',
+	'them',
+	'then',
+	'there',
+	'they',
+	'this',
+	'to',
+	'up',
+	'was',
+	'we',
+	'were',
+	'what',
+	'when',
+	'where',
+	'which',
+	'while',
+	'who',
+	'why',
+	'will',
+	'with',
+	'you',
+	'your',
+])
+
+/**
+ * Tokenizer for the `q` search parameter. Ports the offline-eval harness rule
+ * verbatim so a post-merge run reproduces T1's numbers against the same seeded
+ * fixtures:
+ *   lowercase → replace `[^a-z0-9\s_-]+` with space → split on whitespace →
+ *   drop tokens shorter than 3 chars or in the shared stopword set → dedupe
+ *   preserving first-seen order.
+ * Empty / whitespace / punctuation-only / all-stopword inputs collapse to `[]`,
+ * which the caller uses to fall through to an unfiltered result set.
+ */
+export function tokenizeSearchQuery(q: string): string[] {
+	if (!q) return []
+	const normalized = q.toLowerCase().replace(/[^a-z0-9\s_-]+/g, ' ')
+	const seen = new Set<string>()
+	const tokens: string[] = []
+	for (const token of normalized.split(/\s+/)) {
+		if (token.length < 3) continue
+		if (SEARCH_STOPWORDS.has(token)) continue
+		if (seen.has(token)) continue
+		seen.add(token)
+		tokens.push(token)
+	}
+	return tokens
+}
+
+function tokenIlikePattern(token: string): string {
+	return `%${token.replace(/[%_\\]/g, '\\$&')}%`
+}
+
+export function buildObjectListConditions(
 	query: {
 		type?: string
 		status?: string
@@ -229,10 +336,12 @@ function buildObjectListConditions(
 		q?: string
 		updated_before?: string
 		updated_after?: string
+		include_archived?: boolean
 	},
 	metadataFilters: { field: string; value: string }[] = [],
-) {
+): { conditions: SQL[]; searchRankExpr: SQL | null } {
 	const conditions: SQL[] = []
+	let searchRankExpr: SQL | null = null
 	if (query.type) conditions.push(eq(objects.type, query.type))
 	if (query.status) {
 		const statuses = query.status.split(',').filter(Boolean)
@@ -249,19 +358,47 @@ function buildObjectListConditions(
 		if (idList.length > 0) conditions.push(inArray(objects.id, idList))
 	}
 	if (query.q) {
-		const escaped = query.q.replace(/[%_\\]/g, '\\$&')
-		const pattern = `%${escaped}%`
-		const textMatch = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
-		if (textMatch) conditions.push(textMatch)
+		const tokens = tokenizeSearchQuery(query.q)
+		if (tokens.length > 0) {
+			const perTokenMatches: SQL[] = []
+			const perTokenHits: SQL[] = []
+			for (const token of tokens) {
+				const pattern = tokenIlikePattern(token)
+				const match = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
+				if (match) perTokenMatches.push(match)
+				perTokenHits.push(
+					sql`(case when ${objects.title} ilike ${pattern} or ${objects.content} ilike ${pattern} then 1 else 0 end)`,
+				)
+			}
+			const combined = or(...perTokenMatches)
+			if (combined) conditions.push(combined)
+			searchRankExpr = sql.join(perTokenHits, sql` + `)
+		}
 	}
 	// Half-open contract — Zod has already validated these as ISO-8601 strings.
 	if (query.updated_before) conditions.push(lt(objects.updatedAt, new Date(query.updated_before)))
 	if (query.updated_after) conditions.push(gt(objects.updatedAt, new Date(query.updated_after)))
+	// Type-agnostic archive hide: unless the caller explicitly opts in with
+	// `include_archived=true`, exclude any row whose status is 'archived'.
+	// The gate is type-agnostic and applies uniformly to list, board, and
+	// search reads — archived work stays hidden by default.
+	if (!query.include_archived) {
+		conditions.push(ne(objects.status, 'archived'))
+	}
 	// Field name pre-validated by extractMetadataFilters; value is parameter-bound.
 	for (const { field, value } of metadataFilters) {
 		conditions.push(sql`${objects.metadata}->>'${sql.raw(field)}' = ${value}`)
 	}
-	return conditions
+	return { conditions, searchRankExpr }
+}
+
+/**
+ * Ordering when a tokenized `q` produced a rank expression: token-hit count
+ * DESC, then title ASC (T1's deterministic tie-break), then id ASC to keep
+ * pagination stable across ties.
+ */
+export function tokenRankOrderBy(rankExpr: SQL): SQL[] {
+	return [desc(rankExpr), asc(objects.title), asc(objects.id)]
 }
 
 function resolveBoardGroupExpression(groupBy?: string): SQL {
@@ -376,21 +513,75 @@ app.openapi(createObjectRoute, async (c) => {
 		)
 	}
 
-	const [created] = await db
-		.insert(objects)
-		.values({
-			...(body.id && { id: body.id }),
-			workspaceId,
-			type: body.type,
-			title: body.title,
-			content: body.content,
-			status: body.status,
-			metadata: body.metadata,
-			driver: body.driver,
-			createdBy: actorId,
-		})
-		.onConflictDoNothing({ target: objects.id })
-		.returning()
+	if (body.type === 'knowledge') {
+		const duplicate = await findKnowledgeDuplicate(db, workspaceId, body.title)
+		if (duplicate) {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					`A similar knowledge object already exists: '${duplicate.title}' (${duplicate.id})`,
+					[
+						{
+							field: 'title',
+							message: 'Title matches or overlaps an existing, non-archived knowledge object',
+							received: `'${body.title}'`,
+						},
+					],
+					`Update the existing object (PATCH /api/objects/${duplicate.id}) or link them with a 'duplicates' relationship instead of creating a new one.`,
+				),
+				409,
+			)
+		}
+	}
+
+	let created: typeof objects.$inferSelect | undefined
+	try {
+		const rows = await db
+			.insert(objects)
+			.values({
+				...(body.id && { id: body.id }),
+				workspaceId,
+				type: body.type,
+				title: body.title,
+				content: body.content,
+				status: body.status,
+				metadata: body.metadata,
+				driver: body.driver,
+				createdBy: actorId,
+			})
+			.onConflictDoNothing({ target: objects.id })
+			.returning()
+		created = rows[0]
+	} catch (err) {
+		// TOCTOU backstop: two concurrent POSTs for the same knowledge title can
+		// both pass the preflight in findKnowledgeDuplicate(); the partial unique
+		// index in migration 0047 rejects the loser at insert time. Look up the
+		// winning row so the 409 body still points at a concrete existing object.
+		if (isKnowledgeTitleUniqueViolation(err)) {
+			const existing = await findKnowledgeDuplicate(db, workspaceId, body.title)
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					existing
+						? `A similar knowledge object already exists: '${existing.title}' (${existing.id})`
+						: 'A concurrent write produced a duplicate knowledge title',
+					[
+						{
+							field: 'title',
+							message:
+								'Title matches an existing, non-archived knowledge object (concurrent-write backstop)',
+							received: `'${body.title}'`,
+						},
+					],
+					existing
+						? `Update the existing object (PATCH /api/objects/${existing.id}) or link them with a 'duplicates' relationship instead of creating a new one.`
+						: 'Retry the request; a concurrent write claimed this title.',
+				),
+				409,
+			)
+		}
+		throw err
+	}
 
 	if (!created) {
 		if (body.id) {
@@ -453,18 +644,31 @@ app.openapi(listObjectsRoute, async (c) => {
 		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
 	}
 
+	const { conditions: filterConditions, searchRankExpr } = buildObjectListConditions(
+		query,
+		parsedMetadataFilters.filters,
+	)
+	// When `q` tokenizes to a non-empty set the ORDER BY switches to
+	// rank-by-token-hits, and the `(createdAt, id)` keyset seek in
+	// `buildCursorConditions` no longer matches the walk order — silently
+	// skipping or duplicating rows across pages. Disable the seek and the
+	// paired `offset` fall-through together so callers that pair `q` with a
+	// cursor drop back to offset pagination on the same snapshot.
+	const useKeyset = isCursorSeekActive(query) && !searchRankExpr
 	const conditions = [
 		eq(objects.workspaceId, workspaceId),
-		...buildObjectListConditions(query, parsedMetadataFilters.filters),
-		...buildCursorConditions(query),
+		...filterConditions,
+		...buildCursorConditions(query, useKeyset),
 	]
 
-	const orderBy = resolveOrderBy(query)
+	// When `q` tokenized to a non-empty set, rank rows by count of token hits
+	// (DESC, title ASC tie-break) and let ranking override caller-supplied
+	// sort — this is how the offline eval harness scores the fixture.
+	const orderBy = searchRankExpr ? tokenRankOrderBy(searchRankExpr) : resolveOrderBy(query)
 
 	// When the keyset seek is engaged, `offset` no longer makes sense — the
 	// predicate itself skips past the last-seen row. Ignoring it also keeps
 	// the walk snapshot-consistent when a caller accidentally forwards both.
-	const useKeyset = isCursorSeekActive(query)
 	const results = await db
 		.select()
 		.from(objects)
@@ -532,21 +736,20 @@ app.openapi(boardObjectsRoute, async (c) => {
 		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
 	}
 
-	const baseConditions = [
-		eq(objects.workspaceId, workspaceId),
-		...buildObjectListConditions(
-			{
-				type: query.type,
-				status: query.status,
-				driver: query.driver,
-				ids: query.ids,
-				q: query.q,
-				updated_before: query.updated_before,
-				updated_after: query.updated_after,
-			},
-			parsedMetadataFilters.filters,
-		),
-	]
+	const { conditions: boardFilterConditions } = buildObjectListConditions(
+		{
+			type: query.type,
+			status: query.status,
+			driver: query.driver,
+			ids: query.ids,
+			q: query.q,
+			updated_before: query.updated_before,
+			updated_after: query.updated_after,
+			include_archived: query.include_archived,
+		},
+		parsedMetadataFilters.filters,
+	)
+	const baseConditions = [eq(objects.workspaceId, workspaceId), ...boardFilterConditions]
 
 	const countRows = await db
 		.select({ value: groupExpr, total: count() })
@@ -636,15 +839,23 @@ app.openapi(searchObjectsRoute, async (c) => {
 		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
 	}
 
+	const { conditions: filterConditions, searchRankExpr } = buildObjectListConditions(
+		query,
+		parsedMetadataFilters.filters,
+	)
+	// See `listObjectsRoute` — when the rank ORDER BY takes over, the
+	// `(createdAt, id)` seek predicate no longer matches the walk order.
+	// Disable seek + offset fall-through together so callers pairing `q`
+	// with a cursor drop to offset pagination on the same snapshot.
+	const useKeyset = isCursorSeekActive(query) && !searchRankExpr
 	const conditions = [
 		eq(objects.workspaceId, workspaceId),
-		...buildObjectListConditions(query, parsedMetadataFilters.filters),
-		...buildCursorConditions(query),
+		...filterConditions,
+		...buildCursorConditions(query, useKeyset),
 	]
 
-	const orderBy = resolveOrderBy(query)
+	const orderBy = searchRankExpr ? tokenRankOrderBy(searchRankExpr) : resolveOrderBy(query)
 
-	const useKeyset = isCursorSeekActive(query)
 	const results = await db
 		.select()
 		.from(objects)
@@ -863,6 +1074,261 @@ app.openapi(getObjectGraphRoute, async (c) => {
 			events: serializedEvents,
 			files: filesSummary,
 		} as z.infer<typeof objectGraphResponseSchema>,
+		200,
+	)
+})
+
+// GET /{id}/graph/traverse - Bounded multi-hop BFS across the relationships
+// table starting at {id}. Returns nodes (objects only) + edges as flat lists.
+// Bounds: depth cap, node cap, and their product ceiling (5000). Cycles are
+// broken by a visited set keyed on object id, so a workspace with a
+// `supersedes`/`contradicts` loop returns a bounded, terminating response.
+const TRAVERSE_MAX_DEPTH = 10
+const TRAVERSE_MAX_NODES = 1000
+const TRAVERSE_WORK_CEILING = 5000
+const traverseGraphQuerySchema = z
+	.object({
+		max_depth: z.coerce.number().int().min(1).max(TRAVERSE_MAX_DEPTH).default(3),
+		max_nodes: z.coerce.number().int().min(1).max(TRAVERSE_MAX_NODES).default(200),
+		direction: z.enum(['outbound', 'inbound', 'both']).default('both'),
+		// Comma-separated allow-list of edge types. Empty/absent means no filter.
+		// String rather than array so it composes with URLSearchParams query encoding.
+		edge_types: z
+			.string()
+			.optional()
+			.transform((v) =>
+				v
+					? v
+							.split(',')
+							.map((s) => s.trim())
+							.filter(Boolean)
+					: [],
+			),
+	})
+	.refine((v) => v.max_depth * v.max_nodes <= TRAVERSE_WORK_CEILING, {
+		message: `max_depth * max_nodes must not exceed ${TRAVERSE_WORK_CEILING}`,
+		path: ['max_nodes'],
+	})
+
+const traverseGraphRoute = createRoute({
+	method: 'get',
+	path: '/{id}/graph/traverse',
+	tags: ['Objects'],
+	summary: 'Bounded multi-hop graph traversal from an object',
+	description:
+		"Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on object id, so cyclic edges (e.g. `supersedes` loops) terminate. Only object endpoints inside the caller's workspace are followed — file endpoints and cross-workspace ids are skipped.",
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+		query: traverseGraphQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: traverseGraphResponseSchema } },
+			description: 'Bounded subgraph reachable from the start object',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object not found in this workspace',
+		},
+	},
+})
+
+// GET /{id}/references - Count of unique consumer contexts that referenced this
+// knowledge object in the last 7 rolling days. Reads T2's per-cite audit rows
+// from the `events` table (action = 'workspace_knowledge_referenced'), joined
+// by `data->>'consumer_context_id'` (the bet/task/insight the caller was
+// reasoning on, per ADR Decision 5). The knowledge doc-header chip renders
+// this as "Referenced by N contexts/week". Uses `events_ws_entity_id_idx
+// (workspace_id, entity_id, id)` — no full scan.
+const getObjectReferencesRoute = createRoute({
+	method: 'get',
+	path: '/{id}/references',
+	tags: ['Objects'],
+	summary: 'Reference-count for the knowledge doc-header chip (7-day rolling)',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						window_days: z.number(),
+						unique_contexts: z.number(),
+					}),
+				},
+			},
+			description: 'Reference counts for the last N rolling days',
+		},
+	},
+})
+
+app.openapi(traverseGraphRoute, async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const query = c.req.valid('query')
+
+	const [start] = await db
+		.select({ id: objects.id, type: objects.type, title: objects.title })
+		.from(objects)
+		.where(and(eq(objects.id, id), eq(objects.workspaceId, workspaceId)))
+		.limit(1)
+
+	if (!start) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	const nodesById = new Map<string, { id: string; type: string; title: string | null }>()
+	nodesById.set(start.id, { id: start.id, type: start.type, title: start.title ?? null })
+
+	const edgesByKey = new Map<string, { source: string; target: string; type: string }>()
+	const edgeKey = (source: string, target: string, type: string) =>
+		`${source}\u0000${target}\u0000${type}`
+
+	let frontier = new Set<string>([start.id])
+	const visited = new Set<string>([start.id])
+	let truncated = false
+	let truncatedReason: 'max_nodes' | 'max_depth' | null = null
+
+	const followOutbound = query.direction === 'outbound' || query.direction === 'both'
+	const followInbound = query.direction === 'inbound' || query.direction === 'both'
+	const edgeTypeFilter = query.edge_types.length > 0 ? new Set(query.edge_types) : null
+
+	for (let depth = 0; depth < query.max_depth; depth++) {
+		if (frontier.size === 0) break
+
+		const frontierIds = [...frontier]
+		const directionClauses: SQL[] = []
+		if (followOutbound) directionClauses.push(inArray(relationships.sourceId, frontierIds))
+		if (followInbound) directionClauses.push(inArray(relationships.targetId, frontierIds))
+		if (directionClauses.length === 0) break
+
+		const whereClauses: SQL[] = [
+			// biome-ignore lint/style/noNonNullAssertion: at least one clause pushed above
+			directionClauses.length === 1 ? directionClauses[0]! : or(...directionClauses)!,
+		]
+		if (edgeTypeFilter) whereClauses.push(inArray(relationships.type, [...edgeTypeFilter]))
+
+		const rels = await db
+			.select({
+				sourceId: relationships.sourceId,
+				targetId: relationships.targetId,
+				type: relationships.type,
+			})
+			.from(relationships)
+			.where(and(...whereClauses))
+
+		if (rels.length === 0) break
+
+		const candidateIds = new Set<string>()
+		for (const r of rels) {
+			if (frontier.has(r.sourceId) && followOutbound) candidateIds.add(r.targetId)
+			if (frontier.has(r.targetId) && followInbound) candidateIds.add(r.sourceId)
+		}
+		for (const seen of visited) candidateIds.delete(seen)
+
+		let discovered: { id: string; type: string; title: string | null }[] = []
+		if (candidateIds.size > 0) {
+			// Workspace scoping + file/object filter in one query: only rows in
+			// `objects` with matching workspaceId come back. File endpoints and
+			// cross-workspace ids drop out here.
+			const rows = await db
+				.select({ id: objects.id, type: objects.type, title: objects.title })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, [...candidateIds])))
+			discovered = rows.map((r) => ({ id: r.id, type: r.type, title: r.title ?? null }))
+		}
+
+		const discoveredIds = new Set(discovered.map((n) => n.id))
+		let hitNodeCap = false
+		for (const n of discovered) {
+			if (nodesById.size >= query.max_nodes) {
+				hitNodeCap = true
+				break
+			}
+			nodesById.set(n.id, n)
+			visited.add(n.id)
+		}
+
+		// Record edges whose *both* endpoints are in the visited set (either
+		// already-known nodes or nodes we just admitted). Edges dangling into
+		// a truncated candidate are dropped so the response is self-consistent.
+		for (const r of rels) {
+			const sourceKept = nodesById.has(r.sourceId)
+			const targetKept = nodesById.has(r.targetId)
+			if (!sourceKept || !targetKept) continue
+			const key = edgeKey(r.sourceId, r.targetId, r.type)
+			if (!edgesByKey.has(key)) {
+				edgesByKey.set(key, { source: r.sourceId, target: r.targetId, type: r.type })
+			}
+		}
+
+		if (hitNodeCap) {
+			truncated = true
+			truncatedReason = 'max_nodes'
+			break
+		}
+
+		// Next frontier is only the newly discovered, kept nodes.
+		const nextFrontier = new Set<string>()
+		for (const idFound of discoveredIds) {
+			if (nodesById.has(idFound)) nextFrontier.add(idFound)
+		}
+		frontier = nextFrontier
+
+		// If depth cap will stop expansion but more edges could exist, flag it.
+		if (depth === query.max_depth - 1 && frontier.size > 0) {
+			truncated = true
+			truncatedReason = 'max_depth'
+		}
+	}
+
+	return c.json(
+		{
+			nodes: [...nodesById.values()],
+			edges: [...edgesByKey.values()],
+			truncated,
+			truncated_reason: truncatedReason,
+		} satisfies z.infer<typeof traverseGraphResponseSchema>,
+		200,
+	)
+})
+
+app.openapi(getObjectReferencesRoute, async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const WINDOW_DAYS = 7
+
+	// Count DISTINCT non-null consumer_context_id across the last-7-day window
+	// for this workspace + object. Cast the JSONB extract to text so DISTINCT
+	// works on the same collation as the index-covered columns; the extract
+	// itself yields `text`, so this is a cheap noop that keeps the plan stable.
+	// The workspace_id + entity_id predicates are index-covered; action + time
+	// filter runs as a heap filter on the (small) per-object result set.
+	const [row] = await db
+		.select({
+			unique_contexts: sql<number>`COUNT(DISTINCT (${events.data}->>'consumer_context_id'))::int`,
+		})
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, workspaceId),
+				eq(events.entityId, id),
+				eq(events.action, 'workspace_knowledge_referenced'),
+				gt(events.createdAt, sql`NOW() - INTERVAL '${sql.raw(String(WINDOW_DAYS))} days'`),
+			),
+		)
+
+	return c.json(
+		{
+			window_days: WINDOW_DAYS,
+			unique_contexts: row?.unique_contexts ?? 0,
+		},
 		200,
 	)
 })
@@ -1104,6 +1570,340 @@ app.openapi(updateObjectRoute, async (c) => {
 
 	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
 })
+
+// POST /{id}/verification — human-only stamp/unstamp on a Knowledge Author write.
+// Object-level (not per-field). Sets `metadata.verified_by` + `metadata.verified_at`
+// on stamp, clears both on unstamp — so the chip state persists across sessions
+// via metadata rather than ephemeral UI. Emits a dedicated `verified` /
+// `unverified` event action so the object timeline reads "verified by <human>"
+// instead of the generic "updated custom field: verified_by".
+const verifyObjectRoute = createRoute({
+	method: 'post',
+	path: '/{id}/verification',
+	tags: ['Objects'],
+	summary: 'Stamp or unstamp verification on a Knowledge Author write',
+	request: {
+		params: idParamSchema,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({ verified: z.boolean() }),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: objectResponseSchema } },
+			description: 'Verification state updated',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller is not a workspace human admin/owner',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object is not a Knowledge Author write',
+		},
+	},
+})
+
+app.openapi(verifyObjectRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { verified } = c.req.valid('json')
+
+	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
+
+	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	if (existing.type !== 'knowledge' || !hasWriterProvenance(existing.metadata)) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Verification is only available on Knowledge Author writes (knowledge objects with provenance:writer).',
+			),
+			409,
+		)
+	}
+
+	if (!(await isWorkspaceHumanAdminOrOwner(db, actorId, existing.workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace human admins or owners can stamp verification.'),
+			403,
+		)
+	}
+
+	let updated: typeof objects.$inferSelect | undefined
+
+	await db.transaction(async (tx) => {
+		const [current] = await tx
+			.select()
+			.from(objects)
+			.where(eq(objects.id, id))
+			.for('update')
+			.limit(1)
+		if (!current) return
+
+		const currentMeta = (current.metadata ?? {}) as Record<string, unknown>
+		let nextMeta: Record<string, unknown>
+
+		if (verified) {
+			nextMeta = {
+				...currentMeta,
+				verified_by: actorId,
+				verified_at: new Date().toISOString(),
+			}
+		} else {
+			// Omit `verified_by` + `verified_at` by rebuilding the object without them
+			// so unstamping leaves no residual keys in the jsonb payload.
+			const { verified_by: _vb, verified_at: _va, ...rest } = currentMeta
+			nextMeta = rest
+		}
+
+		const [row] = await tx
+			.update(objects)
+			.set({ metadata: nextMeta, updatedAt: new Date() })
+			.where(eq(objects.id, id))
+			.returning()
+		if (!row) return
+
+		updated = row
+
+		await tx.insert(events).values({
+			workspaceId: current.workspaceId,
+			actorId,
+			action: verified ? 'verified' : 'unverified',
+			entityType: current.type,
+			entityId: id,
+			data: {
+				verified,
+				verified_by: verified ? actorId : (currentMeta.verified_by ?? null),
+				verified_at: verified ? nextMeta.verified_at : (currentMeta.verified_at ?? null),
+			},
+		})
+	})
+
+	if (!updated) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
+})
+
+// POST /{id}/undo-write — human-only single-write reversal of a Knowledge
+// Author update to a knowledge object. Safety valve for Direction A: writes
+// land as normal activity events with no gating, and this endpoint lets a
+// workspace human admin/owner roll one back within 7 days.
+//
+// Reversal is partial-field: only fields in the original event's `changes`
+// list are restored to their `old` value. Other fields the object has picked
+// up in the meantime (including from concurrent authors) are untouched. This
+// is the "not object delete" guarantee from the DoD — we never destroy the
+// object, we surgically undo one write. A `knowledge_write_undone` event is
+// inserted so the reversal is itself a first-class timeline row.
+const undoWriteRoute = createRoute({
+	method: 'post',
+	path: '/{id}/undo-write',
+	tags: ['Objects'],
+	summary: 'Undo a Knowledge Author write on a knowledge object',
+	request: {
+		params: idParamSchema,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({ eventId: z.number().int().positive() }),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: objectResponseSchema } },
+			description: 'Write reversed',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller is not a workspace human admin/owner',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object or event not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Event is not an undoable Knowledge Author write',
+		},
+		410: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Undo window has expired',
+		},
+	},
+})
+
+app.openapi(undoWriteRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { eventId } = c.req.valid('json')
+
+	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
+
+	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	if (existing.type !== 'knowledge') {
+		return c.json(createApiError('CONFLICT', 'Undo is only available on knowledge objects.'), 409)
+	}
+
+	// Fetch the event + its actor together so we can enforce the Knowledge
+	// Author identity in one round-trip. The join is scoped by workspace so an
+	// event id from a different workspace can't leak.
+	const [eventRow] = await db
+		.select({
+			id: events.id,
+			workspaceId: events.workspaceId,
+			actorId: events.actorId,
+			action: events.action,
+			entityType: events.entityType,
+			entityId: events.entityId,
+			data: events.data,
+			createdAt: events.createdAt,
+			authorType: actors.type,
+			authorName: actors.name,
+		})
+		.from(events)
+		.innerJoin(actors, eq(actors.id, events.actorId))
+		.where(
+			and(
+				eq(events.id, eventId),
+				eq(events.entityId, id),
+				eq(events.workspaceId, existing.workspaceId),
+			),
+		)
+		.limit(1)
+
+	if (!eventRow) {
+		return c.json(createApiError('NOT_FOUND', 'Event not found for this object'), 404)
+	}
+
+	if (eventRow.action !== 'updated' && eventRow.action !== 'status_changed') {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Only field-level Knowledge Author writes (updated / status_changed) can be undone.',
+			),
+			409,
+		)
+	}
+
+	if (
+		eventRow.authorType !== 'agent' ||
+		eventRow.authorName !== DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME
+	) {
+		return c.json(createApiError('CONFLICT', 'Event is not a Knowledge Author write.'), 409)
+	}
+
+	const originalCreatedAt = eventRow.createdAt ?? new Date(0)
+	const ageMs = Date.now() - originalCreatedAt.getTime()
+	if (ageMs > KNOWLEDGE_WRITE_UNDO_WINDOW_MS) {
+		return c.json(
+			createApiError('CONFLICT', 'The 7-day undo window for this write has expired.'),
+			410,
+		)
+	}
+
+	const changes = getChangesFromEventData(eventRow.data, OBJECT_DIFF_FIELDS)
+	if (!changes || changes.length === 0) {
+		return c.json(createApiError('CONFLICT', 'This write has no field diff to reverse.'), 409)
+	}
+
+	if (!(await isWorkspaceHumanAdminOrOwner(db, actorId, existing.workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace human admins or owners can undo a write.'),
+			403,
+		)
+	}
+
+	let reverted: typeof objects.$inferSelect | undefined
+
+	await db.transaction(async (tx) => {
+		const [current] = await tx
+			.select()
+			.from(objects)
+			.where(eq(objects.id, id))
+			.for('update')
+			.limit(1)
+		if (!current) return
+
+		// reversePatch restores only the fields carried by the original event's
+		// changes list — anything else on the object (including writes that
+		// happened after the KA write) survives.
+		const patched = reversePatch(current as unknown as Record<string, unknown>, changes)
+		const updateSet: Partial<typeof objects.$inferInsert> = { updatedAt: new Date() }
+		for (const change of changes) {
+			const field = change.field as keyof typeof objects.$inferInsert
+			// biome-ignore lint/suspicious/noExplicitAny: field is validated against OBJECT_DIFF_FIELDS
+			;(updateSet as any)[field] = patched[change.field]
+		}
+
+		const [row] = await tx.update(objects).set(updateSet).where(eq(objects.id, id)).returning()
+		if (!row) return
+
+		reverted = row
+
+		await tx.insert(events).values({
+			workspaceId: current.workspaceId,
+			actorId,
+			action: 'knowledge_write_undone',
+			entityType: current.type,
+			entityId: id,
+			data: {
+				original_event_id: eventRow.id,
+				original_actor_id: eventRow.actorId,
+				changes,
+			},
+		})
+	})
+
+	if (!reverted) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	return c.json(serialize(reverted) as z.infer<typeof objectResponseSchema>, 200)
+})
+
+// A knowledge object counts as a "Knowledge Author write" — and gets the
+// Verified chip + stamp control — when its `provenance` metadata field
+// contains the "writer" tag. `provenance` is the comma-separated text field
+// T3 added to KNOWLEDGE_FIELDS; the sibling T2 pipeline additionally stamps
+// `provenance:writer` into `metadata.tags`, but the object-detail surface
+// keys off the `provenance` column that's rendered on the Objects page.
+function hasWriterProvenance(metadata: unknown): boolean {
+	if (!metadata || typeof metadata !== 'object') return false
+	const raw = (metadata as Record<string, unknown>).provenance
+	if (typeof raw !== 'string') return false
+	return raw
+		.split(',')
+		.map((tag) => tag.trim().toLowerCase())
+		.includes('writer')
+}
 
 function isTerminalBetStatus(status: string): boolean {
 	return (TERMINAL_BET_STATUSES as readonly string[]).includes(status)

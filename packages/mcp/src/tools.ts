@@ -221,7 +221,7 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date unless `sort` is set. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `offset` still works for backward compatibility.',
+			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date unless `sort` is set. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `offset` still works for backward compatibility.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
@@ -260,11 +260,17 @@ export const tools = {
 					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted after that first call cannot leak into the stream.',
 				),
 			metadata_eq: metadataEqSchema,
+			include_archived: z
+				.boolean()
+				.default(false)
+				.describe(
+					'When false (the default), rows with `status = "archived"` are excluded regardless of type. Set to `true` to include archived rows — used when a caller deliberately wants to see closed-out work.',
+				),
 		}),
 	},
 	search_objects: {
 		description:
-			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z
@@ -294,6 +300,12 @@ export const tools = {
 					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
 				),
 			metadata_eq: metadataEqSchema,
+			include_archived: z
+				.boolean()
+				.default(false)
+				.describe(
+					'When false (the default), rows with `status = "archived"` are excluded regardless of type. Set to `true` to include archived rows — used when a caller deliberately wants to see closed-out work.',
+				),
 		}),
 	},
 	list_relationships: {
@@ -326,6 +338,60 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
+		}),
+	},
+	traverse_graph: {
+		description:
+			"Bounded multi-hop breadth-first traversal from a single object across the workspace `relationships` table. Returns a flat `{ nodes: [{id, type, title}], edges: [{source, target, type}] }` subgraph plus a `truncated` flag. Use this to resolve supersedes/contradicts chains, walk breaks_into hierarchies, or gather an object's multi-hop context in a single call — instead of chaining `get_objects` + `list_relationships` yourself. Bounded by `max_depth` (default 3), `max_nodes` (default 200), and their product (server ceiling: 5000). Cycles terminate via a visited set keyed on object id. Only object endpoints inside the caller's workspace are followed; file endpoints and cross-workspace ids are skipped. Prefer `get_objects` when you already know the ids you need — this tool is for discovering the surrounding graph.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z
+				.string()
+				.uuid()
+				.describe("Object id to start the traversal from. Must exist in the caller's workspace."),
+			max_depth: z
+				.number()
+				.int()
+				.min(1)
+				.max(10)
+				.default(3)
+				.describe(
+					'Maximum BFS depth. 1 = direct neighbours only, 3 = neighbours of neighbours of neighbours. Server ceiling: max_depth * max_nodes ≤ 5000.',
+				),
+			max_nodes: z
+				.number()
+				.int()
+				.min(1)
+				.max(1000)
+				.default(200)
+				.describe(
+					'Maximum number of objects in the response, including the start node. When the cap trips, `truncated` is `true` and `truncated_reason` is `"max_nodes"`.',
+				),
+			edge_type_allow_list: z
+				.array(
+					z.enum([
+						'informs',
+						'breaks_into',
+						'blocks',
+						'relates_to',
+						'duplicates',
+						'supersedes',
+						'contradicts',
+						'about',
+						'competes_with',
+						'derived_from',
+					]),
+				)
+				.optional()
+				.describe(
+					'Only follow relationships whose `type` is in this list. Omit to follow every workspace edge type.',
+				),
+			direction: z
+				.enum(['outbound', 'inbound', 'both'])
+				.default('both')
+				.describe(
+					'`outbound` follows edges out of the current frontier (source → target). `inbound` follows edges into it (target → source). `both` is the default and matches how agents usually reason about contradiction/supersession chains.',
+				),
 		}),
 	},
 	create_actor: {
@@ -809,6 +875,19 @@ export const tools = {
 					memory_mb: z.number().int().min(256).max(8192).optional(),
 					cpu_shares: z.number().int().min(256).max(4096).optional(),
 					env_vars: z.record(z.string()).optional(),
+					browserRequired: z
+						.boolean()
+						.optional()
+						.describe(
+							'Provision a Chromium CDP browser sidecar and inject BROWSER_CDP_URL so a playwright MCP server can attach. Auto-enabled when the actor already has an MCP server referencing ${BROWSER_CDP_URL} — set explicitly only when you also need previewGuestPorts.',
+						),
+					previewGuestPorts: z
+						.array(z.number().int().positive().max(65535))
+						.max(8)
+						.optional()
+						.describe(
+							"Guest port(s) inside the session to publish on the browser sidecar bridge (e.g. 5173 for a Vite dev server), so the sidecar's Playwright can reach a dev server the agent boots locally inside its own session — no external deploy needed. Implies browserRequired.",
+						),
 				})
 				.optional()
 				.describe('Container configuration overrides'),
