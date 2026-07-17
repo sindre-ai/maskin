@@ -79,6 +79,9 @@ vi.mock('@/components/agents/agent-usage-chart', () => ({
 
 vi.mock('@/components/agents/linkedin-connect-section', () => ({
 	LinkedinConnectSection: () => null,
+	LinkedinChannelsSection: () => null,
+	LinkedinHeroPill: () => null,
+	useLinkedinSendingBlock: () => ({ blocked: false, reason: null }),
 }))
 
 vi.mock('@/components/activity/activity-item', () => ({

@@ -10,6 +10,7 @@ import {
 } from '../lib/analytics/linkedin-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
+import { derivePacing } from '../lib/linkedin/pacing'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import {
@@ -37,6 +38,19 @@ const app = new OpenAPIHono<Env>()
 
 const STATE_TTL_MS = 15 * 60 * 1000
 
+const pacingSnapshotSchema = z.object({
+	dailyCap: z.number(),
+	dailySent: z.number(),
+	weeklyCap: z.number(),
+	weeklySent: z.number(),
+	warmup: z
+		.object({
+			day: z.number(),
+			total: z.number(),
+		})
+		.nullable(),
+})
+
 const linkedinAccountSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
@@ -47,6 +61,10 @@ const linkedinAccountSchema = z.object({
 	connectedAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	pacing: pacingSnapshotSchema,
+	// Populated once T3's message-sent events land; null until then so the UI
+	// renders "—" instead of a fabricated number.
+	acceptanceRate: z.number().nullable(),
 })
 
 // ── GET /api/linkedin/account ──────────────────────────────────────────────
@@ -570,6 +588,8 @@ function serializeAccount(row: LinkedinAccountRow) {
 		connectedAt: row.connectedAt ? row.connectedAt.toISOString() : null,
 		createdAt: row.createdAt ? row.createdAt.toISOString() : null,
 		updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
+		pacing: derivePacing(row.state, row.connectedAt),
+		acceptanceRate: null,
 	}
 }
 

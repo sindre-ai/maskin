@@ -183,9 +183,67 @@ describe('GET /api/linkedin/account', () => {
 		]
 		const res = await app.request(jsonGet('/api/linkedin/account', { 'x-workspace-id': wsId }))
 		expect(res.status).toBe(200)
-		const body = (await res.json()) as { state: string; unipileAccountId: string }
+		const body = (await res.json()) as {
+			state: string
+			unipileAccountId: string
+			pacing: { dailyCap: number; weeklyCap: number; warmup: unknown }
+			acceptanceRate: number | null
+		}
 		expect(body.state).toBe('syncing')
 		expect(body.unipileAccountId).toBe('unipile-1')
+		// Syncing accounts do not send, so pacing caps default to zero.
+		expect(body.pacing.dailyCap).toBe(0)
+		expect(body.pacing.weeklyCap).toBe(0)
+		expect(body.acceptanceRate).toBeNull()
+	})
+
+	it('returns healthy pacing caps for a healthy account', async () => {
+		const now = new Date()
+		const { app, mockResults } = createTestApp(linkedinRoutes, '/api/linkedin', actorId)
+		mockResults.select = [
+			{
+				id: 'acc-1',
+				workspaceId: wsId,
+				state: 'healthy',
+				unipileAccountId: 'unipile-1',
+				sendingAsName: 'Sebastian',
+				sendingAsProviderId: 'urn:li:1',
+				connectedAt: now,
+				createdAt: now,
+				updatedAt: now,
+			},
+		]
+		const res = await app.request(jsonGet('/api/linkedin/account', { 'x-workspace-id': wsId }))
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { pacing: { dailyCap: number; weeklyCap: number } }
+		expect(body.pacing.dailyCap).toBe(20)
+		expect(body.pacing.weeklyCap).toBe(80)
+	})
+
+	it('returns warm-up pacing caps + progress for a warming-up account', async () => {
+		const now = new Date()
+		const { app, mockResults } = createTestApp(linkedinRoutes, '/api/linkedin', actorId)
+		mockResults.select = [
+			{
+				id: 'acc-1',
+				workspaceId: wsId,
+				state: 'warm_up',
+				unipileAccountId: 'unipile-1',
+				sendingAsName: 'Sebastian',
+				sendingAsProviderId: 'urn:li:1',
+				connectedAt: now,
+				createdAt: now,
+				updatedAt: now,
+			},
+		]
+		const res = await app.request(jsonGet('/api/linkedin/account', { 'x-workspace-id': wsId }))
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			pacing: { dailyCap: number; weeklyCap: number; warmup: { day: number; total: number } | null }
+		}
+		expect(body.pacing.dailyCap).toBe(5)
+		expect(body.pacing.weeklyCap).toBe(25)
+		expect(body.pacing.warmup?.total).toBe(14)
 	})
 })
 

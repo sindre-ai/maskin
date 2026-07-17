@@ -357,12 +357,13 @@ describe('IntegrationsPage', () => {
 				unipileAccountId: 'unipile-acc-1',
 				// `??` would swallow an explicit `null` here — use `in` so the test can
 				// exercise the null-identity fallback in `describeLinkedinRow`.
-				sendingAsName:
-					'sendingAsName' in overrides ? overrides.sendingAsName : 'sindre.brekke',
+				sendingAsName: 'sendingAsName' in overrides ? overrides.sendingAsName : 'sindre.brekke',
 				sendingAsProviderId: 'urn:li:person:abc',
 				connectedAt: '2026-07-17T00:00:00Z',
 				createdAt: '2026-07-17T00:00:00Z',
 				updatedAt: '2026-07-17T00:00:00Z',
+				pacing: { dailyCap: 0, dailySent: 0, weeklyCap: 0, weeklySent: 0, warmup: null },
+				acceptanceRate: null,
 			}
 		}
 
