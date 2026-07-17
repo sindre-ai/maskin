@@ -48,17 +48,30 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: [] }),
 }))
 
+// Spy shared with the scroll-restore tests below. `scrollToIndex` receives
+// the anchor index + align option; tests assert it was called with the right
+// row index. `firstVisibleIndex` lets a test simulate the user scrolling to
+// a specific row so the capture callback fires — and scrollToIndex itself
+// updates it so the mock behaves the way the real virtualizer does after a
+// restore (the DOM would have scrolled and virtualItems would advance).
+let mockFirstVisibleIndex = 0
+const mockScrollToIndex = vi.fn((idx: number) => {
+	mockFirstVisibleIndex = idx
+})
 vi.mock('@tanstack/react-virtual', () => ({
 	useVirtualizer: ({ count }: { count: number }) => ({
-		getVirtualItems: () =>
-			Array.from({ length: count }, (_, i) => ({
-				index: i,
-				key: i,
-				start: i * 48,
+		getVirtualItems: () => {
+			const start = Math.max(0, Math.min(mockFirstVisibleIndex, count - 1))
+			return Array.from({ length: Math.max(0, count - start) }, (_, i) => ({
+				index: start + i,
+				key: start + i,
+				start: (start + i) * 48,
 				size: 48,
-			})),
+			}))
+		},
 		getTotalSize: () => count * 48,
 		measureElement: vi.fn(),
+		scrollToIndex: mockScrollToIndex,
 	}),
 }))
 
@@ -89,6 +102,8 @@ describe('DataTable', () => {
 	beforeEach(() => {
 		mockNavigate.mockClear()
 		mockIsMobile.mockReturnValue(false)
+		mockScrollToIndex.mockClear()
+		mockFirstVisibleIndex = 0
 	})
 
 	it('shows empty state when data is empty', () => {
@@ -434,6 +449,135 @@ describe('DataTable', () => {
 				},
 			})
 			expect(screen.queryByLabelText('Status: waiting')).not.toBeInTheDocument()
+		})
+	})
+
+	// T2 (retain view state) — silent scroll restore + first-visible capture.
+	// The DataTable is the writer of `firstVisibleRowId` on the shared
+	// DisplaySettingsBody: on mount it scrolls the last-known anchor row to
+	// the top, and as the user scrolls it hands the new anchor back to the
+	// parent (which debounces into `useUpdateUserDisplaySettings`).
+	describe('scroll restore + first-visible-row capture', () => {
+		it('scrolls the anchor row to the top on mount when restoreScrollToRowId matches an existing row', async () => {
+			const data = [
+				buildObjectResponse({ id: 'row-a', title: 'A' }),
+				buildObjectResponse({ id: 'row-b', title: 'B' }),
+				buildObjectResponse({ id: 'row-c', title: 'C' }),
+			]
+			renderDataTable({ data, restoreScrollToRowId: 'row-b' })
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 0))
+			})
+
+			expect(mockScrollToIndex).toHaveBeenCalledWith(1, { align: 'start' })
+		})
+
+		it('falls back to top with no error when the persisted anchor row is not in the data set', async () => {
+			const data = [
+				buildObjectResponse({ id: 'row-a', title: 'A' }),
+				buildObjectResponse({ id: 'row-b', title: 'B' }),
+			]
+			// `row-missing` was persisted but has since been deleted / filtered
+			// out. AC-7: no throw, no scroll, silent top-of-list fallback.
+			renderDataTable({ data, restoreScrollToRowId: 'row-missing' })
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 0))
+			})
+
+			expect(mockScrollToIndex).not.toHaveBeenCalled()
+			expect(screen.getByText('A')).toBeInTheDocument()
+		})
+
+		it('does not scroll or call onFirstVisibleRowIdChange while restoreScrollToRowId is undefined (pre-hydration)', async () => {
+			const onChange = vi.fn()
+			const data = [buildObjectResponse({ id: 'row-a', title: 'A' })]
+			renderDataTable({
+				data,
+				restoreScrollToRowId: undefined,
+				onFirstVisibleRowIdChange: onChange,
+			})
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50))
+			})
+
+			expect(mockScrollToIndex).not.toHaveBeenCalled()
+			expect(onChange).not.toHaveBeenCalled()
+		})
+
+		it('opens the capture gate and reports scroll changes once restoreScrollToRowId is null (fresh mount)', async () => {
+			const onChange = vi.fn()
+			const data = [
+				buildObjectResponse({ id: 'row-a', title: 'A' }),
+				buildObjectResponse({ id: 'row-b', title: 'B' }),
+				buildObjectResponse({ id: 'row-c', title: 'C' }),
+			]
+			const { rerender } = render(
+				<DataTable
+					data={data}
+					columns={defaultColumns}
+					workspaceId="ws-1"
+					rowSelection={{}}
+					onRowSelectionChange={vi.fn()}
+					columnVisibility={{}}
+					onColumnVisibilityChange={vi.fn()}
+					restoreScrollToRowId={null}
+					onFirstVisibleRowIdChange={onChange}
+				/>,
+			)
+
+			// Wait for the double-rAF gate to open.
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 60))
+			})
+
+			// Simulate user scrolling to row-b.
+			mockFirstVisibleIndex = 1
+			rerender(
+				<DataTable
+					data={data}
+					columns={defaultColumns}
+					workspaceId="ws-1"
+					rowSelection={{}}
+					onRowSelectionChange={vi.fn()}
+					columnVisibility={{}}
+					onColumnVisibilityChange={vi.fn()}
+					restoreScrollToRowId={null}
+					onFirstVisibleRowIdChange={onChange}
+				/>,
+			)
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 10))
+			})
+
+			expect(onChange).toHaveBeenCalledWith('row-b')
+		})
+
+		it('does not overwrite the persisted anchor with the top row before the restore completes', async () => {
+			const onChange = vi.fn()
+			const data = [
+				buildObjectResponse({ id: 'row-a', title: 'A' }),
+				buildObjectResponse({ id: 'row-b', title: 'B' }),
+				buildObjectResponse({ id: 'row-c', title: 'C' }),
+			]
+			renderDataTable({
+				data,
+				restoreScrollToRowId: 'row-b',
+				onFirstVisibleRowIdChange: onChange,
+			})
+
+			// The initial render's virtualItems still shows row-a at the top
+			// because the restore effect hasn't run yet. onChange must NOT be
+			// called with 'row-a' — that would clobber the persisted anchor.
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 60))
+			})
+
+			expect(onChange).not.toHaveBeenCalledWith('row-a')
+			expect(mockScrollToIndex).toHaveBeenCalledWith(1, { align: 'start' })
 		})
 	})
 })

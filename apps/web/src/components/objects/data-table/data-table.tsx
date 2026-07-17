@@ -90,6 +90,7 @@ import { cn } from '@/lib/cn'
 import { useNavigate } from '@tanstack/react-router'
 import {
 	type ColumnDef,
+	type ExpandedState,
 	type GroupingState,
 	type OnChangeFn,
 	type Row,
@@ -104,7 +105,7 @@ import {
 } from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronRight } from 'lucide-react'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ObjectsTableMeta } from './columns'
 import { ObjectCard } from './object-card'
 import { useDragSelect } from './use-drag-select'
@@ -119,16 +120,29 @@ interface DataTableProps {
 	columnVisibility: VisibilityState
 	onColumnVisibilityChange: OnChangeFn<VisibilityState>
 	grouping?: GroupingState
+	// Controlled group-expansion state persisted via useUserDisplaySettings —
+	// when both are provided the DataTable becomes the writer of the persisted
+	// `groupExpanded` map on the shared DisplaySettingsBody.
+	expanded?: ExpandedState
+	onExpandedChange?: OnChangeFn<ExpandedState>
 	meta?: ObjectsTableMeta
 	hasNextPage?: boolean
 	isFetchingNextPage?: boolean
 	isError?: boolean
 	fetchNextPage?: () => void
 	isLoading?: boolean
-	// Fires whenever a user toggles a group header (expand or collapse). Kept as
-	// a small side-channel callback for now; T2 lifts group expansion into
-	// TanStack's `onExpandedChange` so this can fold into the same boundary.
 	onGroupToggle?: () => void
+	// Anchor for silent scroll restore. `undefined` = parent hasn't hydrated
+	// display settings yet (don't restore, don't capture); `null` = hydrated,
+	// no persisted anchor (fresh mount at top, start capturing); `string` =
+	// hydrated, try to scroll the row with this id to the top on first paint.
+	// If the row isn't in the currently-loaded pages the list falls back to
+	// the top silently — matches the deleted/filtered-out AC.
+	restoreScrollToRowId?: string | null
+	// Fires when the first-visible row id changes as the user scrolls. Parent
+	// debounces the write into the same 500ms user-display-settings rail that
+	// carries columnVisibility.
+	onFirstVisibleRowIdChange?: (rowId: string | null) => void
 }
 
 export function DataTable({
@@ -141,6 +155,8 @@ export function DataTable({
 	columnVisibility,
 	onColumnVisibilityChange,
 	grouping,
+	expanded,
+	onExpandedChange,
 	meta,
 	hasNextPage,
 	isFetchingNextPage,
@@ -148,6 +164,8 @@ export function DataTable({
 	fetchNextPage,
 	isLoading,
 	onGroupToggle,
+	restoreScrollToRowId,
+	onFirstVisibleRowIdChange,
 }: DataTableProps) {
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
@@ -158,6 +176,11 @@ export function DataTable({
 	const parentRef = useRef<HTMLDivElement>(null)
 	const sentinelRef = useRef<HTMLDivElement>(null)
 
+	// Only wire the controlled `expanded` state through when the parent actually
+	// provides it — otherwise leave TanStack to manage the field internally so
+	// existing callers (tests, non-Objects-list surfaces) keep their prior
+	// uncontrolled behavior.
+	const controlledExpanded = expanded !== undefined && onExpandedChange !== undefined
 	const table = useReactTable({
 		data,
 		columns,
@@ -165,10 +188,12 @@ export function DataTable({
 			rowSelection,
 			columnVisibility,
 			grouping: grouping ?? [],
+			...(controlledExpanded ? { expanded } : {}),
 		},
 		meta: meta as Record<string, unknown>,
 		onRowSelectionChange,
 		onColumnVisibilityChange,
+		...(controlledExpanded ? { onExpandedChange } : {}),
 		getCoreRowModel: getCoreRowModel(),
 		getGroupedRowModel: grouping?.length ? getGroupedRowModel() : undefined,
 		getExpandedRowModel: grouping?.length ? getExpandedRowModel() : undefined,
@@ -202,6 +227,69 @@ export function DataTable({
 		estimateSize: () => (isMobile ? 96 : isTouchViewport ? 60 : 48),
 		overscan: isMobile ? 10 : 20,
 	})
+
+	// Silent scroll restore. `restoreScrollToRowId` is a three-state prop:
+	// `undefined` means the parent hasn't hydrated its persisted display
+	// settings yet — hold both the restore attempt and the scroll-capture
+	// callback so we don't clobber the persisted anchor with the top row
+	// mid-mount. Once it flips to `string` or `null` we perform the one-shot
+	// restore and open the capture gate. String anchors that resolve to a
+	// row.id currently in `rows` scroll silently; anchors that resolve to
+	// nothing (deleted, filtered out, or on an unloaded infinite page) leave
+	// the list at the top per the AC. Restore is one-shot per DataTable
+	// mount — parents that need to re-restore (e.g. on tab switch) drive
+	// that by remounting via a `key` prop, not by mutating this prop.
+	const initialRestoreAnchorRef = useRef<string | null | undefined>(restoreScrollToRowId)
+	if (initialRestoreAnchorRef.current === undefined && restoreScrollToRowId !== undefined) {
+		initialRestoreAnchorRef.current = restoreScrollToRowId
+	}
+	const [captureReady, setCaptureReady] = useState(false)
+	const lastCapturedRef = useRef<string | null | undefined>(undefined)
+	useEffect(() => {
+		if (captureReady) return
+		if (initialRestoreAnchorRef.current === undefined) return
+		if (rows.length === 0) return
+		const anchor = initialRestoreAnchorRef.current
+		if (typeof anchor === 'string') {
+			const idx = rows.findIndex((r) => r.id === anchor)
+			if (idx >= 0) virtualizer.scrollToIndex(idx, { align: 'start' })
+			// Seed lastCaptured with the anchor so the very first capture run
+			// after the scroll settles reads a matching row id and stays
+			// silent. Only a real user scroll off the anchor row produces a
+			// write.
+			lastCapturedRef.current = anchor
+		}
+		// Delay flipping the capture gate through a double rAF so the
+		// imperative scroll above has time to reach the virtualizer's
+		// internal state — otherwise the capture effect below would run with
+		// stale virtualItems (firstVisibleIndex still 0) and overwrite the
+		// anchor with the top row.
+		let raf2 = 0
+		const raf1 = requestAnimationFrame(() => {
+			raf2 = requestAnimationFrame(() => setCaptureReady(true))
+		})
+		return () => {
+			cancelAnimationFrame(raf1)
+			if (raf2) cancelAnimationFrame(raf2)
+		}
+	}, [rows, virtualizer, captureReady])
+
+	// Capture the first-visible row id as the user scrolls and hand it to the
+	// parent, which debounces the write into the existing 500ms rail. Gated
+	// on `captureReady` so the initial mount doesn't overwrite the persisted
+	// anchor with the top row before the restore effect above completes.
+	const virtualItemsForCapture = virtualizer.getVirtualItems()
+	const firstVisibleIndex = virtualItemsForCapture[0]?.index
+	useEffect(() => {
+		if (!onFirstVisibleRowIdChange) return
+		if (!captureReady) return
+		if (rows.length === 0) return
+		const firstRowId =
+			firstVisibleIndex !== undefined ? (rows[firstVisibleIndex]?.id ?? null) : null
+		if (lastCapturedRef.current === firstRowId) return
+		lastCapturedRef.current = firstRowId
+		onFirstVisibleRowIdChange(firstRowId)
+	}, [firstVisibleIndex, rows, captureReady, onFirstVisibleRowIdChange])
 
 	// Infinite scroll sentinel — skip when fetching or errored to avoid retry loops
 	useEffect(() => {
