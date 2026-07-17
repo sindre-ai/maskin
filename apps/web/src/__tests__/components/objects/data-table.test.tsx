@@ -1,9 +1,14 @@
 import { getStaticColumns } from '@/components/objects/data-table/columns'
-import { DataTable } from '@/components/objects/data-table/data-table'
+import { DataTable, type DataTableHandle } from '@/components/objects/data-table/data-table'
 import type { RowSelectionState, VisibilityState } from '@tanstack/react-table'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { ButtonHTMLAttributes, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import {
+	type ButtonHTMLAttributes,
+	type MouseEvent as ReactMouseEvent,
+	type ReactNode,
+	createRef,
+} from 'react'
 import { buildObjectResponse } from '../../factories'
 
 const mockNavigate = vi.fn()
@@ -126,6 +131,53 @@ describe('DataTable', () => {
 			to: '/$workspaceId/objects/$objectId',
 			params: { workspaceId: 'ws-1', objectId: 'obj-42' },
 		})
+	})
+
+	it('calls onCaptureViewState synchronously before navigating on row click', async () => {
+		const user = userEvent.setup()
+		const onCaptureViewState = vi.fn()
+		const obj = buildObjectResponse({
+			id: 'obj-99',
+			title: 'Anchor row',
+			status: 'active',
+		})
+		const { container } = renderDataTable({ data: [obj], onCaptureViewState })
+
+		// Click on the row (not the title Link — that stops propagation to keep
+		// keyboard-select semantics clean). The row-level onClick calls the
+		// route's `handleRowClick`, which is what wires the capture callback.
+		const row = container.querySelector('tr[data-drag-row]') as HTMLElement | null
+		expect(row).not.toBeNull()
+		await user.click(row as HTMLElement)
+
+		// Capture must run before navigate so the store holds the outgoing
+		// scroll anchor by the time the router pushes the detail route.
+		expect(onCaptureViewState).toHaveBeenCalledTimes(1)
+		const captureOrder = onCaptureViewState.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+		const navigateOrder = mockNavigate.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY
+		expect(captureOrder).toBeLessThan(navigateOrder)
+	})
+
+	it('exposes an imperative handle whose getFirstVisibleRowId returns the top virtualized row id', () => {
+		const ref = createRef<DataTableHandle>()
+		const data = [
+			buildObjectResponse({ id: 'row-top', title: 'Top' }),
+			buildObjectResponse({ id: 'row-2', title: 'Second' }),
+		]
+		render(
+			<DataTable
+				ref={ref}
+				data={data}
+				columns={defaultColumns}
+				workspaceId="ws-1"
+				rowSelection={{}}
+				onRowSelectionChange={vi.fn()}
+				columnVisibility={{}}
+				onColumnVisibilityChange={vi.fn()}
+			/>,
+		)
+		expect(ref.current).not.toBeNull()
+		expect(ref.current?.getFirstVisibleRowId()).toBe('row-top')
 	})
 
 	it('shows fetching indicator when isFetchingNextPage is true', () => {

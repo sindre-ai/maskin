@@ -3,7 +3,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { BoardView } from '@/components/objects/board/board-view'
 import { BulkActionBar } from '@/components/objects/bulk-action-bar'
 import { type ObjectsTableMeta, getStaticColumns } from '@/components/objects/data-table/columns'
-import { DataTable } from '@/components/objects/data-table/data-table'
+import { DataTable, type DataTableHandle } from '@/components/objects/data-table/data-table'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
 import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
 import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
@@ -28,6 +28,7 @@ import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
+import { getViewState, patchViewState } from '@/lib/objects-view-state'
 import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -162,10 +163,17 @@ function ObjectsPage() {
 	// followed by a browser-back to the list are captured too. typeFilter is
 	// intentionally excluded from deps — a tab switch changes it under a
 	// stable mount and must not re-emit the arrival event.
+	//
+	// The same mount also arms the scroll-restore effect below. Data isn't
+	// necessarily loaded yet at mount time, so the restore itself has to
+	// wait for `!isLoading && rows.length > 0`.
+	const shouldRestoreScrollRef = useRef(false)
 	// biome-ignore lint/correctness/useExhaustiveDependencies: mount-once event
 	useEffect(() => {
+		const navType = consumeArrivalNavType()
+		if (navType === 'back') shouldRestoreScrollRef.current = true
 		trackObjectsListArrived({
-			nav_type: consumeArrivalNavType(),
+			nav_type: navType,
 			objectType: typeFilter ?? null,
 		})
 	}, [])
@@ -185,6 +193,12 @@ function ObjectsPage() {
 		},
 		[typeFilter],
 	)
+
+	// Imperative handle for the DataTable. Lets this route read the first-
+	// visible row id at navigate-away and drive `virtualizer.scrollToIndex`
+	// on a POP landing, without lifting the virtualizer or row model out of
+	// DataTable.
+	const dataTableRef = useRef<DataTableHandle>(null)
 
 	// Linear-style `C` shortcut opens the create picker with the active type
 	// tab pre-selected. Guarded so typing into filters/search never triggers it.
@@ -535,6 +549,34 @@ function ObjectsPage() {
 	// the same way per-type tabs do — without that, the user's choices in
 	// the display menu reset to defaults on every navigation away and back.
 	const displaySettingsKey = typeFilter ?? ALL_TYPES_KEY
+
+	// Fired synchronously by DataTable right before the row-click navigate.
+	// Snapshots the first-visible row id into the session view-state store so
+	// a back-nav landing (below) can restore the anchor. Keyed by workspace +
+	// tab so an anchor from one tab never rehydrates onto another.
+	const handleCaptureViewState = useCallback(() => {
+		const firstVisibleRowId = dataTableRef.current?.getFirstVisibleRowId() ?? null
+		patchViewState(workspaceId, displaySettingsKey, { firstVisibleRowId })
+	}, [workspaceId, displaySettingsKey])
+
+	// Silent scroll restore on POP landings. Waits for the first page of data
+	// so `scrollToIndex` has real rows to resolve against — scrolling an empty
+	// list would produce jitter and then re-fire on the next render. Fires
+	// exactly once per POP: the ref is cleared after the first attempt (which
+	// itself may no-op silently if the persisted row id is no longer in the
+	// current row set — deleted row, or the URL filter shifted).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: fires once when the load-gate flips; ref reads current key
+	useEffect(() => {
+		if (!shouldRestoreScrollRef.current) return
+		if (infiniteQuery.isLoading) return
+		if (allObjects.length === 0) return
+		const { firstVisibleRowId } = getViewState(workspaceId, displaySettingsKey)
+		if (firstVisibleRowId) {
+			dataTableRef.current?.scrollToRowId(firstVisibleRowId)
+		}
+		shouldRestoreScrollRef.current = false
+	}, [infiniteQuery.isLoading, allObjects.length])
+
 	const displaySettingsQuery = useUserDisplaySettings(workspaceId, displaySettingsKey)
 	const updateDisplaySettings = useUpdateUserDisplaySettings(workspaceId)
 	// `useMutation` returns a new object reference on every render, but the
@@ -1056,6 +1098,7 @@ function ObjectsPage() {
 				</div>
 			) : (
 				<DataTable
+					ref={dataTableRef}
 					data={allObjects}
 					columns={columns}
 					workspaceId={workspaceId}
@@ -1072,6 +1115,7 @@ function ObjectsPage() {
 					fetchNextPage={infiniteQuery.fetchNextPage}
 					isLoading={infiniteQuery.isLoading}
 					onGroupToggle={handleGroupToggle}
+					onCaptureViewState={handleCaptureViewState}
 				/>
 			)}
 			<BulkActionBar
