@@ -52,7 +52,13 @@ test.describe('LinkedIn connect entry point on agent detail', () => {
 			// resolves in CI. The follow-up route stub then returns a tiny 200 page
 			// so the navigation completes cleanly.
 			const stubUrl = 'http://localhost:5173/__linkedin_stub'
+			// Capture the x-workspace-id header the frontend sends so we can assert
+			// on it after the click. Regression guard against the missing-header bug
+			// where the row derived workspaceId from the (null) account instead of
+			// the prop, dropping x-workspace-id and 400ing on the server.
+			let connectHeaders: Record<string, string> = {}
 			await page.route('**/api/linkedin/connect', async (route) => {
+				connectHeaders = route.request().headers()
 				await route.fulfill({
 					status: 200,
 					contentType: 'application/json',
@@ -87,6 +93,7 @@ test.describe('LinkedIn connect entry point on agent detail', () => {
 			await connectButton.click()
 			await nav
 			expect(page.url()).toContain('/__linkedin_stub')
+			expect(connectHeaders['x-workspace-id']).toBe(account.workspaceId)
 		})
 	}
 })

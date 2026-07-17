@@ -70,7 +70,12 @@ export function LinkedinChannelsSection({
 			<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
 				Channels
 			</h3>
-			<LinkedinChannelRow account={account} state={state} agentId={agentId} />
+			<LinkedinChannelRow
+				account={account}
+				state={state}
+				agentId={agentId}
+				workspaceId={workspaceId}
+			/>
 			{state !== 'not-connected' && state !== 'handoff' && account && (
 				<div className="mt-4">
 					<LinkedinAccountPanel account={account} state={state} />
@@ -217,12 +222,13 @@ function LinkedinChannelRow({
 	account,
 	state,
 	agentId,
+	workspaceId,
 }: {
 	account: LinkedinAccountResponse | null | undefined
 	state: DisplayState
 	agentId: string
+	workspaceId: string
 }) {
-	const workspaceId = account?.workspaceId ?? ''
 	const connect = useConnectLinkedin(workspaceId)
 	const sub = ROW_SUBS[state](account)
 	const dotTone = ROW_DOT_TONE[state]

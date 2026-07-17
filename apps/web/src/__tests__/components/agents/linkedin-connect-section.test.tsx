@@ -6,6 +6,7 @@ import {
 } from '@/components/agents/linkedin-connect-section'
 import type { LinkedinAccountResponse, LinkedinAccountState } from '@/lib/api'
 import { render, renderHook, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { TestWrapper } from '../../setup'
 
 vi.mock('@/lib/api', () => ({
@@ -68,6 +69,27 @@ describe('LinkedinChannelsSection — state coverage', () => {
 		expect(await screen.findByRole('button', { name: /connect linkedin/i })).toBeInTheDocument()
 		// No account panel until an account row exists.
 		expect(screen.queryByText(/sending as/i)).not.toBeInTheDocument()
+	})
+
+	it('calls the connect API with the workspaceId prop when no account is connected', async () => {
+		// Regression: previously the row derived workspaceId from `account?.workspaceId ?? ''`,
+		// which was empty in the not-connected state, so the API client dropped the
+		// x-workspace-id header and the server 400'd with a Zod error. The row must use
+		// the workspaceId prop threaded from the parent so the header is always sent.
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(null)
+		vi.mocked(api.linkedin.connect).mockRejectedValueOnce(new Error('handled'))
+		render(
+			<TestWrapper>
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
+			</TestWrapper>,
+		)
+		const button = await screen.findByRole('button', { name: /connect linkedin/i })
+		await userEvent.click(button)
+		await waitFor(() => expect(api.linkedin.connect).toHaveBeenCalledWith(workspaceId, { agentId }))
 	})
 
 	it('renders the handoff state with a Reopen Unipile control', async () => {
