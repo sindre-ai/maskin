@@ -14,11 +14,14 @@ export function useLinkedinAccount(workspaceId: string) {
  * Kicks off the Unipile hosted-auth handoff and redirects the browser to the
  * returned URL. The user completes LinkedIn login on Unipile, then Unipile
  * redirects them to `/api/linkedin/callback` which upserts the account row and
- * bounces them back to the agent detail page with `?linkedin=connected`.
+ * bounces them back to the caller-supplied destination — the agent detail page
+ * when called with `agentId`, or the `returnPath` (e.g. Settings › Integrations)
+ * when called with one.
  */
 export function useConnectLinkedin(workspaceId: string) {
 	return useMutation({
-		mutationFn: (agentId: string) => api.linkedin.connect(workspaceId, agentId),
+		mutationFn: (payload: { agentId?: string; returnPath?: string }) =>
+			api.linkedin.connect(workspaceId, payload),
 		onSuccess: (data) => {
 			window.location.href = data.url
 		},

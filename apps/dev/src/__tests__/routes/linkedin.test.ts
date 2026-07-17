@@ -98,7 +98,7 @@ describe('POST /api/linkedin/connect', () => {
 		expect(unipile.createHostedAuthLink).toHaveBeenCalledOnce()
 	})
 
-	it('rejects a request with no agent_id', async () => {
+	it('rejects a request with neither agent_id nor return_path', async () => {
 		vi.mocked(unipile.readUnipileConfig).mockReturnValue({
 			apiKey: 'k',
 			dsn: 'https://unipile.test',
@@ -106,6 +106,52 @@ describe('POST /api/linkedin/connect', () => {
 		const { app } = createTestApp(linkedinRoutes, '/api/linkedin', actorId)
 		const res = await app.request(
 			jsonRequest('POST', '/api/linkedin/connect', {}, { 'x-workspace-id': wsId }),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	it('accepts a return_path without an agent_id (Settings › Integrations round-trip)', async () => {
+		vi.mocked(unipile.readUnipileConfig).mockReturnValue({
+			apiKey: 'k',
+			dsn: 'https://unipile.test',
+		})
+		vi.mocked(unipile.createHostedAuthLink).mockResolvedValue({
+			url: 'https://account.unipile.com/link/settings',
+		})
+		const { app, mockResults } = createTestApp(linkedinRoutes, '/api/linkedin', actorId)
+		mockResults.insert = [{ id: 'row-id' }]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/linkedin/connect',
+				{ return_path: `/${wsId}/settings/integrations` },
+				{ 'x-workspace-id': wsId },
+			),
+		)
+		expect(res.status).toBe(200)
+		expect(unipile.createHostedAuthLink).toHaveBeenCalledOnce()
+	})
+
+	it.each([
+		['does not start with /', 'settings/integrations'],
+		['is a protocol-relative URL', '//evil.example.com/steal'],
+		['contains a scheme', '/foo?next=https://evil.example.com'],
+		['contains a backslash', '/foo\\bar'],
+		['exceeds the length cap', `/${'a'.repeat(250)}`],
+	])('rejects a return_path that %s', async (_label, badPath) => {
+		vi.mocked(unipile.readUnipileConfig).mockReturnValue({
+			apiKey: 'k',
+			dsn: 'https://unipile.test',
+		})
+		const { app } = createTestApp(linkedinRoutes, '/api/linkedin', actorId)
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/linkedin/connect',
+				{ return_path: badPath },
+				{ 'x-workspace-id': wsId },
+			),
 		)
 		expect(res.status).toBe(400)
 	})

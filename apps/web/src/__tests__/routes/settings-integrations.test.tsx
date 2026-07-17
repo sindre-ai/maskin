@@ -8,6 +8,8 @@ const mockUseIntegrations = vi.fn()
 const mockUseProviders = vi.fn()
 const mockConnect = vi.fn()
 const mockDisconnect = vi.fn()
+const mockUseLinkedinAccount = vi.fn()
+const mockConnectLinkedin = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -26,6 +28,11 @@ vi.mock('@/hooks/use-integrations', () => ({
 	useProviders: () => mockUseProviders(),
 	useConnectIntegration: () => ({ mutate: mockConnect, isPending: false }),
 	useDisconnectIntegration: () => ({ mutate: mockDisconnect, isPending: false }),
+}))
+
+vi.mock('@/hooks/use-linkedin-account', () => ({
+	useLinkedinAccount: (...args: unknown[]) => mockUseLinkedinAccount(...args),
+	useConnectLinkedin: () => ({ mutate: mockConnectLinkedin, isPending: false }),
 }))
 
 vi.mock('@/components/shared/empty-state', () => ({
@@ -47,6 +54,7 @@ const IntegrationsPage = (Route as unknown as { component: React.FC }).component
 describe('IntegrationsPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mockUseLinkedinAccount.mockReturnValue({ data: null, isLoading: false })
 	})
 
 	it('shows loading state', () => {
@@ -92,7 +100,8 @@ describe('IntegrationsPage', () => {
 		})
 		render(<IntegrationsPage />)
 		expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
+		// Two Connect buttons: LinkedIn (always rendered) + GitHub (disconnected).
+		expect(screen.getAllByRole('button', { name: 'Connect' })).toHaveLength(2)
 	})
 
 	it('keeps the api key dialog open until connect succeeds', async () => {
@@ -104,13 +113,18 @@ describe('IntegrationsPage', () => {
 		})
 		render(<IntegrationsPage />)
 
-		await user.click(screen.getByRole('button', { name: 'Connect' }))
+		// The LinkedIn row also renders a Connect button — scope to the PostHog row.
+		const posthogRow = screen.getByText('PostHog').closest('div.flex') as HTMLElement
+		await user.click(within(posthogRow).getByRole('button', { name: 'Connect' }))
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
 
 		await user.type(screen.getByLabelText('API key'), 'phx_test_key')
 		expect(screen.getByDisplayValue('phx_test_key')).toBeInTheDocument()
 
-		const connectButton = screen.getByRole('button', { name: 'Connect' })
+		// The Connect button inside the dialog — scope to the dialog to avoid the
+		// LinkedIn row's Connect button.
+		const dialog = screen.getByRole('dialog')
+		const connectButton = within(dialog).getByRole('button', { name: 'Connect' })
 		await user.click(connectButton)
 
 		expect(mockConnect).toHaveBeenCalledWith(
@@ -234,7 +248,8 @@ describe('IntegrationsPage', () => {
 			render(<IntegrationsPage />)
 
 			expect(screen.queryByText(/GitHub · /)).not.toBeInTheDocument()
-			expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
+			// LinkedIn + GitHub each render a single Connect button.
+			expect(screen.getAllByRole('button', { name: 'Connect' })).toHaveLength(2)
 		})
 
 		it('does not group non-github providers even when multiple integrations exist for them', () => {
@@ -292,7 +307,9 @@ describe('IntegrationsPage', () => {
 
 			render(<IntegrationsPage />)
 
-			expect(screen.getByText('Available to connect')).toBeInTheDocument()
+			// LinkedIn row also renders "Available to connect" — scope to Google Calendar.
+			const gcRow = screen.getByText('Google Calendar').closest('div.flex') as HTMLElement
+			expect(within(gcRow).getByText('Available to connect')).toBeInTheDocument()
 			expect(screen.queryByText(/event types available/)).not.toBeInTheDocument()
 		})
 	})
@@ -320,6 +337,121 @@ describe('IntegrationsPage', () => {
 
 			expect(screen.getByText('Connected as user@gmail.com')).toBeInTheDocument()
 			expect(screen.queryByText(/Installation /)).not.toBeInTheDocument()
+		})
+	})
+
+	describe('linkedin provider row', () => {
+		beforeEach(() => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] }],
+				isLoading: false,
+			})
+		})
+
+		function buildAccount(overrides: Partial<{ state: string; sendingAsName: string | null }>) {
+			return {
+				id: 'li-1',
+				workspaceId: 'ws-1',
+				state: overrides.state ?? 'healthy',
+				unipileAccountId: 'unipile-acc-1',
+				// `??` would swallow an explicit `null` here — use `in` so the test can
+				// exercise the null-identity fallback in `describeLinkedinRow`.
+				sendingAsName:
+					'sendingAsName' in overrides ? overrides.sendingAsName : 'sindre.brekke',
+				sendingAsProviderId: 'urn:li:person:abc',
+				connectedAt: '2026-07-17T00:00:00Z',
+				createdAt: '2026-07-17T00:00:00Z',
+				updatedAt: '2026-07-17T00:00:00Z',
+			}
+		}
+
+		it('renders a Connect button and "Available to connect" when there is no account', () => {
+			mockUseLinkedinAccount.mockReturnValue({ data: null, isLoading: false })
+			render(<IntegrationsPage />)
+
+			const linkedinRow = screen.getByText('LinkedIn').closest('div.flex') as HTMLElement
+			expect(within(linkedinRow).getByText('Available to connect')).toBeInTheDocument()
+			expect(within(linkedinRow).getByRole('button', { name: 'Connect' })).toBeInTheDocument()
+		})
+
+		it('sends the settings return_path when Connect is clicked so the callback lands back here', async () => {
+			const user = userEvent.setup()
+			mockUseLinkedinAccount.mockReturnValue({ data: null, isLoading: false })
+			render(<IntegrationsPage />)
+
+			const linkedinRow = screen.getByText('LinkedIn').closest('div.flex') as HTMLElement
+			await user.click(within(linkedinRow).getByRole('button', { name: 'Connect' }))
+
+			expect(mockConnectLinkedin).toHaveBeenCalledWith({
+				returnPath: '/ws-1/settings/integrations',
+			})
+		})
+
+		it('shows a healthy connected identity with no reconnect action', () => {
+			mockUseLinkedinAccount.mockReturnValue({
+				data: buildAccount({ state: 'healthy' }),
+				isLoading: false,
+			})
+			render(<IntegrationsPage />)
+
+			const linkedinRow = screen.getByText('LinkedIn').closest('div.flex') as HTMLElement
+			expect(within(linkedinRow).getByText(/Connected as sindre\.brekke/)).toBeInTheDocument()
+			expect(within(linkedinRow).getByText(/Healthy/)).toBeInTheDocument()
+			expect(within(linkedinRow).queryByRole('button')).not.toBeInTheDocument()
+		})
+
+		it('shows a syncing indicator with no action button', () => {
+			mockUseLinkedinAccount.mockReturnValue({
+				data: buildAccount({ state: 'syncing' }),
+				isLoading: false,
+			})
+			render(<IntegrationsPage />)
+
+			const linkedinRow = screen.getByText('LinkedIn').closest('div.flex') as HTMLElement
+			expect(within(linkedinRow).getByText(/Syncing/)).toBeInTheDocument()
+			expect(within(linkedinRow).queryByRole('button')).not.toBeInTheDocument()
+		})
+
+		it('shows Restricted with NO reconnect CTA (bet AC: restricted must not surface a reconnect)', () => {
+			mockUseLinkedinAccount.mockReturnValue({
+				data: buildAccount({ state: 'restricted' }),
+				isLoading: false,
+			})
+			render(<IntegrationsPage />)
+
+			const linkedinRow = screen.getByText('LinkedIn').closest('div.flex') as HTMLElement
+			expect(within(linkedinRow).getByText(/Restricted/)).toBeInTheDocument()
+			expect(within(linkedinRow).queryByRole('button')).not.toBeInTheDocument()
+		})
+
+		it('surfaces a Reconnect button when the account is in the reconnect state', async () => {
+			const user = userEvent.setup()
+			mockUseLinkedinAccount.mockReturnValue({
+				data: buildAccount({ state: 'reconnect' }),
+				isLoading: false,
+			})
+			render(<IntegrationsPage />)
+
+			const linkedinRow = screen.getByText('LinkedIn').closest('div.flex') as HTMLElement
+			const reconnect = within(linkedinRow).getByRole('button', { name: 'Reconnect' })
+			expect(reconnect).toBeInTheDocument()
+
+			await user.click(reconnect)
+			expect(mockConnectLinkedin).toHaveBeenCalledWith({
+				returnPath: '/ws-1/settings/integrations',
+			})
+		})
+
+		it('falls back to a generic "Connected" label when sendingAsName is null', () => {
+			mockUseLinkedinAccount.mockReturnValue({
+				data: buildAccount({ state: 'warm_up', sendingAsName: null }),
+				isLoading: false,
+			})
+			render(<IntegrationsPage />)
+
+			const linkedinRow = screen.getByText('LinkedIn').closest('div.flex') as HTMLElement
+			expect(within(linkedinRow).getByText(/^Connected · Warming up$/)).toBeInTheDocument()
 		})
 	})
 })

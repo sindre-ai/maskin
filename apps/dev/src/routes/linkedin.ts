@@ -79,9 +79,37 @@ app.openapi(getAccountRoute, (async (c) => {
 
 // ── POST /api/linkedin/connect ─────────────────────────────────────────────
 
-const connectBodySchema = z.object({
-	agent_id: z.string().uuid(),
-})
+// `return_path` lets a caller (e.g. Settings › Integrations, T5) send the
+// user back to a surface that isn't the agent detail page. Validated to a
+// safe relative path so a malicious body can't turn our callback redirect
+// into an open redirect. When absent, the callback falls back to the T1
+// default of `/{workspaceId}/agents/{agentId}` — so either `agent_id` or
+// `return_path` (or both) must be supplied.
+const RETURN_PATH_MAX_LENGTH = 200
+function isSafeReturnPath(p: string): boolean {
+	if (!p || p.length > RETURN_PATH_MAX_LENGTH) return false
+	if (!p.startsWith('/')) return false
+	if (p.startsWith('//')) return false
+	if (p.includes('://')) return false
+	if (p.includes('\\')) return false
+	return true
+}
+
+const connectBodySchema = z
+	.object({
+		agent_id: z.string().uuid().optional(),
+		return_path: z
+			.string()
+			.max(RETURN_PATH_MAX_LENGTH)
+			.refine(
+				isSafeReturnPath,
+				'return_path must be a safe relative path (starts with /, no scheme)',
+			)
+			.optional(),
+	})
+	.refine((v) => v.agent_id || v.return_path, {
+		message: 'Provide agent_id or return_path',
+	})
 
 const connectRoute = createRoute({
 	method: 'post',
@@ -108,7 +136,7 @@ app.openapi(connectRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { agent_id: agentId } = c.req.valid('json')
+	const { agent_id: agentId, return_path: returnPath } = c.req.valid('json')
 
 	const unipile = readUnipileConfig()
 	if (!unipile) {
@@ -137,7 +165,9 @@ app.openapi(connectRoute, (async (c) => {
 			set: { state: 'handoff', updatedAt: new Date() },
 		})
 
-	const state = encrypt(JSON.stringify({ workspaceId, actorId, agentId, nonce, ts: Date.now() }))
+	const state = encrypt(
+		JSON.stringify({ workspaceId, actorId, agentId, returnPath, nonce, ts: Date.now() }),
+	)
 
 	const origin = resolveOrigin(c.req.url, c.req.header())
 	const successRedirectUrl = `${origin}/api/linkedin/callback?state=${encodeURIComponent(state)}`
@@ -201,7 +231,8 @@ app.openapi(callbackRoute, (async (c) => {
 	let stateData: {
 		workspaceId: string
 		actorId: string
-		agentId: string
+		agentId?: string
+		returnPath?: string
 		nonce: string
 		ts: number
 	}
@@ -236,7 +267,17 @@ app.openapi(callbackRoute, (async (c) => {
 	}
 
 	const frontendUrl = resolveFrontendUrl()
-	const agentPath = `/${stateData.workspaceId}/agents/${stateData.agentId}`
+	// Prefer the caller-supplied returnPath (Settings › Integrations passes
+	// `/{workspaceId}/settings/integrations`); fall back to the T1 default of
+	// the agent detail page when only `agent_id` was supplied. Defensive
+	// re-validation — the state is encrypted with our key, but a bad path
+	// slipping through would turn the callback into an open redirect.
+	const returnPath =
+		stateData.returnPath && isSafeReturnPath(stateData.returnPath)
+			? stateData.returnPath
+			: stateData.agentId
+				? `/${stateData.workspaceId}/agents/${stateData.agentId}`
+				: `/${stateData.workspaceId}`
 
 	// Failure branch — Unipile bounced the user back with an error param.
 	if (query.error) {
@@ -244,7 +285,7 @@ app.openapi(callbackRoute, (async (c) => {
 			workspaceId: stateData.workspaceId,
 			error: query.error,
 		})
-		return c.redirect(`${frontendUrl}${agentPath}?linkedin=failed`)
+		return c.redirect(`${frontendUrl}${returnPath}?linkedin=failed`)
 	}
 
 	const unipile = readUnipileConfig()
@@ -279,7 +320,7 @@ app.openapi(callbackRoute, (async (c) => {
 			nonce: stateData.nonce,
 			accountIdFromQuery: query.account_id,
 		})
-		return c.redirect(`${frontendUrl}${agentPath}?linkedin=not_found`)
+		return c.redirect(`${frontendUrl}${returnPath}?linkedin=not_found`)
 	}
 
 	const sendingAs = extractSendingAs(account)
@@ -363,7 +404,7 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 	}
 
-	return c.redirect(`${frontendUrl}${agentPath}?linkedin=connected`)
+	return c.redirect(`${frontendUrl}${returnPath}?linkedin=connected`)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
 // ── POST /api/linkedin/messages ────────────────────────────────────────────

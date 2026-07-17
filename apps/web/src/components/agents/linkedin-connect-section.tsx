@@ -47,7 +47,7 @@ export function LinkedinConnectSection({ agentId, workspaceId }: LinkedinConnect
 					<Button
 						type="button"
 						size="sm"
-						onClick={() => connect.mutate(agentId)}
+						onClick={() => connect.mutate({ agentId })}
 						disabled={connect.isPending}
 					>
 						{connect.isPending ? 'Opening…' : 'Connect LinkedIn'}

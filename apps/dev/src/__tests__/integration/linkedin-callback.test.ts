@@ -43,6 +43,7 @@ function buildState(
 		workspaceId: string
 		actorId: string
 		agentId: string
+		returnPath: string
 		nonce: string
 		ts: number
 	}>,
@@ -51,6 +52,7 @@ function buildState(
 		workspaceId: overrides?.workspaceId ?? '00000000-0000-0000-0000-000000000000',
 		actorId: overrides?.actorId ?? getTestActorId(),
 		agentId: overrides?.agentId ?? '11111111-1111-1111-1111-111111111111',
+		...(overrides?.returnPath ? { returnPath: overrides.returnPath } : {}),
 		nonce: overrides?.nonce ?? randomBytes(16).toString('hex'),
 		ts: overrides?.ts ?? Date.now(),
 	}
@@ -301,5 +303,57 @@ describe('GET /api/linkedin/callback', () => {
 			.where(eq(linkedinAccounts.workspaceId, ws.id))
 		expect(rows).toHaveLength(0)
 		expect(trackLinkedinAccountConnectedMock).not.toHaveBeenCalled()
+	})
+
+	it('redirects to the Settings › Integrations returnPath when the caller supplied one (T5 round-trip)', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		const nonce = randomBytes(16).toString('hex')
+
+		vi.mocked(unipile.findAccountByName).mockResolvedValueOnce({
+			object: 'Account',
+			id: 'unipile-acc-settings',
+			connection_params: { im: { username: 'sindre.brekke', provider_id: 'urn:li:person:xyz' } },
+		})
+
+		const returnPath = `/${ws.id}/settings/integrations`
+		const state = buildState({ workspaceId: ws.id, actorId, returnPath, nonce })
+		const app = buildApp()
+		const res = await app.request(`/api/linkedin/callback?state=${encodeURIComponent(state)}`)
+
+		expect(res.status).toBe(302)
+		const location = res.headers.get('location')
+		expect(location).toContain(returnPath)
+		expect(location).toContain('linkedin=connected')
+		expect(location).not.toContain('/agents/')
+
+		// The account row is still upserted to `syncing` — the return path only
+		// controls the redirect target, not the persistence.
+		const [row] = await db
+			.select()
+			.from(linkedinAccounts)
+			.where(eq(linkedinAccounts.workspaceId, ws.id))
+		expect(row).toBeDefined()
+		expect(row.state).toBe('syncing')
+		expect(trackLinkedinAccountConnectedMock).toHaveBeenCalledOnce()
+	})
+
+	it('redirects to the returnPath with linkedin=failed on the Unipile error branch (Settings round-trip)', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+
+		const returnPath = `/${ws.id}/settings/integrations`
+		const state = buildState({ workspaceId: ws.id, actorId, returnPath })
+		const app = buildApp()
+		const res = await app.request(
+			`/api/linkedin/callback?state=${encodeURIComponent(state)}&error=failed`,
+		)
+
+		expect(res.status).toBe(302)
+		const location = res.headers.get('location')
+		expect(location).toContain(returnPath)
+		expect(location).toContain('linkedin=failed')
+		expect(location).not.toContain('/agents/')
+		expect(vi.mocked(unipile.findAccountByName)).not.toHaveBeenCalled()
 	})
 })

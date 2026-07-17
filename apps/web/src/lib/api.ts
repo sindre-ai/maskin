@@ -336,10 +336,13 @@ export const api = {
 	linkedin: {
 		account: (workspaceId: string) =>
 			request<LinkedinAccountResponse | null>('/linkedin/account', { workspaceId }),
-		connect: (workspaceId: string, agentId: string) =>
+		connect: (workspaceId: string, payload: { agentId?: string; returnPath?: string }) =>
 			request<{ url: string }>('/linkedin/connect', {
 				method: 'POST',
-				body: { agent_id: agentId },
+				body: {
+					...(payload.agentId ? { agent_id: payload.agentId } : {}),
+					...(payload.returnPath ? { return_path: payload.returnPath } : {}),
+				},
 				workspaceId,
 			}),
 	},

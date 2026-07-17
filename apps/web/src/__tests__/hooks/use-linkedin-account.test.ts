@@ -53,10 +53,7 @@ describe('useLinkedinAccount', () => {
 })
 
 describe('useConnectLinkedin', () => {
-	it('redirects the browser to the returned Unipile URL on success', async () => {
-		vi.mocked(api.linkedin.connect).mockResolvedValueOnce({
-			url: 'https://account.unipile.com/link/abc',
-		})
+	function stubWindowLocation() {
 		const original = window.location
 		const assignHref = vi.fn()
 		Object.defineProperty(window, 'location', {
@@ -68,14 +65,43 @@ describe('useConnectLinkedin', () => {
 				},
 			},
 		})
+		return {
+			assignHref,
+			restore: () => Object.defineProperty(window, 'location', { writable: true, value: original }),
+		}
+	}
+
+	it('redirects to the Unipile URL and forwards agentId on the agent-page connect flow', async () => {
+		vi.mocked(api.linkedin.connect).mockResolvedValueOnce({
+			url: 'https://account.unipile.com/link/abc',
+		})
+		const { assignHref, restore } = stubWindowLocation()
 
 		const { result } = renderHook(() => useConnectLinkedin(workspaceId), { wrapper: TestWrapper })
-		result.current.mutate(agentId)
+		result.current.mutate({ agentId })
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(assignHref).toHaveBeenCalledWith('https://account.unipile.com/link/abc')
-		expect(api.linkedin.connect).toHaveBeenCalledWith(workspaceId, agentId)
+		expect(api.linkedin.connect).toHaveBeenCalledWith(workspaceId, { agentId })
 
-		Object.defineProperty(window, 'location', { writable: true, value: original })
+		restore()
+	})
+
+	it('forwards returnPath when called from Settings › Integrations (T5 round-trip)', async () => {
+		vi.mocked(api.linkedin.connect).mockResolvedValueOnce({
+			url: 'https://account.unipile.com/link/xyz',
+		})
+		const { assignHref, restore } = stubWindowLocation()
+
+		const { result } = renderHook(() => useConnectLinkedin(workspaceId), { wrapper: TestWrapper })
+		result.current.mutate({ returnPath: `/${workspaceId}/settings/integrations` })
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(assignHref).toHaveBeenCalledWith('https://account.unipile.com/link/xyz')
+		expect(api.linkedin.connect).toHaveBeenCalledWith(workspaceId, {
+			returnPath: `/${workspaceId}/settings/integrations`,
+		})
+
+		restore()
 	})
 })
