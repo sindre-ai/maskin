@@ -90,6 +90,7 @@ import { cn } from '@/lib/cn'
 import { useNavigate } from '@tanstack/react-router'
 import {
 	type ColumnDef,
+	type ExpandedState,
 	type GroupingState,
 	type OnChangeFn,
 	type Row,
@@ -134,11 +135,15 @@ interface DataTableProps {
 	isError?: boolean
 	fetchNextPage?: () => void
 	isLoading?: boolean
-	// Fires whenever a user toggles a group header (expand or collapse). The
-	// boolean is the post-toggle state — true for expand, false for collapse.
-	// Kept as a small side-channel callback for now; T2 lifts group expansion
-	// into TanStack's `onExpandedChange` so this can fold into the same boundary.
-	onGroupToggle?: (expanded: boolean) => void
+	// Controlled group-expansion state. Lifted so the Objects route can
+	// snapshot it into the session view-state store on every change and
+	// hydrate it on a POP landing. Keyed by react-table's stable row id
+	// (object id), so a refetch/filter/sort that reshapes the visible rows
+	// keeps overrides bound to the right group. Also the boundary at which
+	// the route fires the group-toggle analytics — this replaces the earlier
+	// `onGroupToggle` side-channel.
+	expanded: ExpandedState
+	onExpandedChange: OnChangeFn<ExpandedState>
 	// Fires synchronously right before a row-click navigate. The route reads
 	// the current first-visible row id via `ref.current.getFirstVisibleRowId()`
 	// and writes it into the session view-state store, so a back-nav landing
@@ -164,7 +169,8 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 		isError,
 		fetchNextPage,
 		isLoading,
-		onGroupToggle,
+		expanded,
+		onExpandedChange,
 		onCaptureViewState,
 	},
 	ref,
@@ -185,10 +191,12 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 			rowSelection,
 			columnVisibility,
 			grouping: grouping ?? [],
+			expanded,
 		},
 		meta: meta as Record<string, unknown>,
 		onRowSelectionChange,
 		onColumnVisibilityChange,
+		onExpandedChange,
 		getCoreRowModel: getCoreRowModel(),
 		getGroupedRowModel: grouping?.length ? getGroupedRowModel() : undefined,
 		getExpandedRowModel: grouping?.length ? getExpandedRowModel() : undefined,
@@ -343,11 +351,7 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 											/>
 											<button
 												type="button"
-												onClick={() => {
-													const nextExpanded = !row.getIsExpanded()
-													row.toggleExpanded()
-													onGroupToggle?.(nextExpanded)
-												}}
+												onClick={() => row.toggleExpanded()}
 												aria-expanded={row.getIsExpanded()}
 												className="flex flex-1 items-center gap-2 text-left"
 											>
@@ -481,11 +485,7 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 													/>
 													<button
 														type="button"
-														onClick={() => {
-															const nextExpanded = !row.getIsExpanded()
-															row.toggleExpanded()
-															onGroupToggle?.(nextExpanded)
-														}}
+														onClick={() => row.toggleExpanded()}
 														aria-expanded={row.getIsExpanded()}
 														className="flex flex-1 items-center gap-2 text-left"
 													>

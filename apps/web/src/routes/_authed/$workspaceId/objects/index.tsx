@@ -28,7 +28,7 @@ import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
-import { getViewState, patchViewState } from '@/lib/objects-view-state'
+import { clearViewState, getViewState, patchViewState } from '@/lib/objects-view-state'
 import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -42,7 +42,13 @@ import {
 	useQueryClient,
 } from '@tanstack/react-query'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
-import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
+import type {
+	ExpandedState,
+	GroupingState,
+	OnChangeFn,
+	RowSelectionState,
+	VisibilityState,
+} from '@tanstack/react-table'
 import { Filter, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -155,6 +161,12 @@ function ObjectsPage() {
 		setRowSelection({})
 	}, [workspaceId])
 
+	// Group-expansion state is lifted from `DataTable` so a POP landing can
+	// silently rehydrate what the user had open before they drilled into a
+	// row. React-table keys the map by row id (object id) — see `getRowId` on
+	// `DataTable`. Route-local: not persisted server-side, dies on tab close.
+	const [expanded, setExpanded] = useState<ExpandedState>({})
+
 	// Fires on every mount, with the nav_type resolved from popstate + the
 	// initial PerformanceNavigationTiming entry. The ship-metric denominator
 	// filters to `nav_type='back'` in PostHog; the `direct` / `link` variants
@@ -164,35 +176,24 @@ function ObjectsPage() {
 	// intentionally excluded from deps — a tab switch changes it under a
 	// stable mount and must not re-emit the arrival event.
 	//
-	// The same mount also arms the scroll-restore effect below. Data isn't
-	// necessarily loaded yet at mount time, so the restore itself has to
-	// wait for `!isLoading && rows.length > 0`.
+	// The same mount arms two restore effects: scroll anchor and group
+	// expansion. Data isn't necessarily loaded yet at mount time, so both
+	// wait for the display-settings hydrate (expansion) or the first row
+	// page (scroll) before actually restoring.
 	const shouldRestoreScrollRef = useRef(false)
+	const shouldRestoreExpandedRef = useRef(false)
 	// biome-ignore lint/correctness/useExhaustiveDependencies: mount-once event
 	useEffect(() => {
 		const navType = consumeArrivalNavType()
-		if (navType === 'back') shouldRestoreScrollRef.current = true
+		if (navType === 'back') {
+			shouldRestoreScrollRef.current = true
+			shouldRestoreExpandedRef.current = true
+		}
 		trackObjectsListArrived({
 			nav_type: navType,
 			objectType: typeFilter ?? null,
 		})
 	}, [])
-
-	// User-initiated group toggle is the bet's numerator. Fires unconditionally
-	// on every user toggle — the 30s pairing against `objects_list_arrived` is
-	// enforced by the PostHog query, not the client. The `source: 'system'`
-	// variant is reserved for the eventual T2 restore path so wire-verification
-	// can tell a user rebuild apart from the silent restore.
-	const handleGroupToggle = useCallback(
-		(expanded: boolean) => {
-			trackObjectsListGroupToggled({
-				source: 'user',
-				expanded,
-				objectType: typeFilter ?? null,
-			})
-		},
-		[typeFilter],
-	)
 
 	// Imperative handle for the DataTable. Lets this route read the first-
 	// visible row id at navigate-away and drive `virtualizer.scrollToIndex`
@@ -650,6 +651,59 @@ function ObjectsPage() {
 		updateSearch,
 	])
 
+	// Silent group-expansion restore on the POP-landing mount. Tied to the
+	// same first-hydrate gate the display-settings block uses so the restore
+	// lands on the same render as the persisted view/columns — no visible
+	// flip. POP-only (arm-once ref); PUSH/REPLACE landings never restore.
+	// Also fires once per POP: the ref is consumed on the first attempt
+	// (even when the persisted map is empty), so later in-page tab switches
+	// inside the same mount never rehydrate.
+	useEffect(() => {
+		if (!shouldRestoreExpandedRef.current) return
+		if (!displaySettingsQuery.isSuccess) return
+		if (!hydratedTypesRef.current.has(displaySettingsKey)) return
+		shouldRestoreExpandedRef.current = false
+		const { expandedGroupIds } = getViewState(workspaceId, displaySettingsKey)
+		if (Object.keys(expandedGroupIds).length === 0) return
+		setExpanded(expandedGroupIds)
+		trackObjectsListGroupToggled({
+			source: 'system',
+			expanded: true,
+			objectType: typeFilter ?? null,
+		})
+	}, [displaySettingsKey, displaySettingsQuery.isSuccess, workspaceId, typeFilter])
+
+	// Group-expansion writes flow through here — the DataTable is fully
+	// controlled. On every user toggle: apply the update, patch the resulting
+	// map into the session store for the current key, and fire the group-
+	// toggle analytics with source: 'user'. The silent restore above bypasses
+	// this handler (it calls `setExpanded` directly), so every fire here is
+	// user-initiated by construction. `expanded` on the analytics payload is
+	// the net direction of the update — true when a row's expansion count
+	// grew (user opened a group), false when it shrank (user closed one).
+	const handleExpandedChange: OnChangeFn<ExpandedState> = useCallback(
+		(updater) => {
+			setExpanded((prev) => {
+				const next = typeof updater === 'function' ? updater(prev) : updater
+				const prevMap = prev === true ? {} : (prev ?? {})
+				const nextMap: Record<string, boolean> = {}
+				if (next !== true && next && typeof next === 'object') {
+					for (const [id, on] of Object.entries(next)) if (on) nextMap[id] = true
+				}
+				const prevOpen = Object.values(prevMap).filter(Boolean).length
+				const nextOpen = Object.values(nextMap).filter(Boolean).length
+				patchViewState(workspaceId, displaySettingsKey, { expandedGroupIds: nextMap })
+				trackObjectsListGroupToggled({
+					source: 'user',
+					expanded: nextOpen > prevOpen,
+					objectType: typeFilter ?? null,
+				})
+				return next
+			})
+		},
+		[workspaceId, displaySettingsKey, typeFilter],
+	)
+
 	// Write-through. Only fires after this key has been hydrated so the
 	// initial apply doesn't immediately re-write the same blob back.
 	useEffect(() => {
@@ -946,6 +1000,13 @@ function ObjectsPage() {
 					// tab re-hydrates from its own persisted row instead of inheriting
 					// the previous tab's settings.
 					hydratedTypesRef.current.delete(displaySettingsKey)
+					// Same story for the session view-state — an expansion or
+					// scroll anchor built on the outgoing tab must not leak
+					// back onto it if the user returns. Drop the store slot
+					// and reset local expanded so the destination tab starts
+					// with all groups closed.
+					clearViewState(workspaceId, displaySettingsKey)
+					setExpanded({})
 					navigate({
 						to: '/$workspaceId/objects',
 						params: { workspaceId },
@@ -1114,7 +1175,8 @@ function ObjectsPage() {
 					isError={infiniteQuery.isError}
 					fetchNextPage={infiniteQuery.fetchNextPage}
 					isLoading={infiniteQuery.isLoading}
-					onGroupToggle={handleGroupToggle}
+					expanded={expanded}
+					onExpandedChange={handleExpandedChange}
 					onCaptureViewState={handleCaptureViewState}
 				/>
 			)}

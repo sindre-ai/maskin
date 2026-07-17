@@ -1,6 +1,11 @@
 import { getStaticColumns } from '@/components/objects/data-table/columns'
 import { DataTable, type DataTableHandle } from '@/components/objects/data-table/data-table'
-import type { RowSelectionState, VisibilityState } from '@tanstack/react-table'
+import type {
+	ExpandedState,
+	OnChangeFn,
+	RowSelectionState,
+	VisibilityState,
+} from '@tanstack/react-table'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
@@ -8,6 +13,7 @@ import {
 	type MouseEvent as ReactMouseEvent,
 	type ReactNode,
 	createRef,
+	useState,
 } from 'react'
 import { buildObjectResponse } from '../../factories'
 
@@ -76,6 +82,18 @@ globalThis.IntersectionObserver = vi.fn().mockImplementation(() => ({
 
 const defaultColumns = getStaticColumns({ workspaceId: 'ws-1' })
 
+// Wraps DataTable so header-chevron clicks in tests visibly toggle expansion
+// via the controlled onExpandedChange boundary. Production wiring lives in
+// the Objects route; this harness just keeps the primitive testable.
+function StatefulExpandedHarness(props: Parameters<typeof DataTable>[0]) {
+	const [expanded, setExpanded] = useState<ExpandedState>(props.expanded)
+	const onExpandedChange: OnChangeFn<ExpandedState> = (updater) => {
+		setExpanded((prev) => (typeof updater === 'function' ? updater(prev) : updater))
+		props.onExpandedChange(updater)
+	}
+	return <DataTable {...props} expanded={expanded} onExpandedChange={onExpandedChange} />
+}
+
 function renderDataTable(overrides: Partial<Parameters<typeof DataTable>[0]> = {}) {
 	const props = {
 		data: [],
@@ -85,9 +103,11 @@ function renderDataTable(overrides: Partial<Parameters<typeof DataTable>[0]> = {
 		onRowSelectionChange: vi.fn(),
 		columnVisibility: {} as VisibilityState,
 		onColumnVisibilityChange: vi.fn(),
+		expanded: {} as ExpandedState,
+		onExpandedChange: vi.fn(),
 		...overrides,
 	}
-	return render(<DataTable {...props} />)
+	return render(<StatefulExpandedHarness {...props} />)
 }
 
 describe('DataTable', () => {
@@ -174,6 +194,8 @@ describe('DataTable', () => {
 				onRowSelectionChange={vi.fn()}
 				columnVisibility={{}}
 				onColumnVisibilityChange={vi.fn()}
+				expanded={{}}
+				onExpandedChange={vi.fn()}
 			/>,
 		)
 		expect(ref.current).not.toBeNull()
@@ -404,8 +426,10 @@ describe('DataTable', () => {
 				columnVisibility: {} as VisibilityState,
 				onColumnVisibilityChange: vi.fn(),
 				grouping: ['createdBy'],
+				expanded: {} as ExpandedState,
+				onExpandedChange: vi.fn(),
 			}
-			const { rerender } = render(<DataTable {...props} />)
+			const { rerender } = render(<StatefulExpandedHarness {...props} />)
 
 			await user.click(screen.getByRole('button', { name: /\(2\)/ }))
 			expect(screen.getByText('Gamma')).toBeInTheDocument()
@@ -414,7 +438,7 @@ describe('DataTable', () => {
 			// through a fresh data reference. Without autoResetExpanded: false,
 			// TanStack Table would collapse the group on this cycle.
 			await act(async () => {
-				rerender(<DataTable {...props} data={[...data]} />)
+				rerender(<StatefulExpandedHarness {...props} data={[...data]} />)
 			})
 
 			expect(screen.getByText('Gamma')).toBeInTheDocument()
