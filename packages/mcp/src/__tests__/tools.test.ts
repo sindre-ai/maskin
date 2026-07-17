@@ -506,6 +506,25 @@ describe('create_session schema', () => {
 			}),
 		).toThrow()
 	})
+
+	it('accepts previewGuestPorts alongside browserRequired', () => {
+		const result = schema.parse({
+			actor_id: uuid,
+			action_prompt: 'Test',
+			config: { browserRequired: true, previewGuestPorts: [5173] },
+		})
+		expect(result.config?.previewGuestPorts).toEqual([5173])
+	})
+
+	it('rejects previewGuestPorts entries above 65535', () => {
+		expect(() =>
+			schema.parse({
+				actor_id: uuid,
+				action_prompt: 'Test',
+				config: { previewGuestPorts: [70000] },
+			}),
+		).toThrow()
+	})
 })
 
 describe('list_sessions schema', () => {
