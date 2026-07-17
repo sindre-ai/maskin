@@ -154,6 +154,16 @@ export type CommandRunner = (
 	options?: { timeoutMs?: number },
 ) => Promise<{ stdout: string; stderr: string }>
 
+// Shape of the two long-running background spawns in startSshRelay (`msb ssh
+// serve` and the real `ssh -L` tunnel client) — unlike the one-shot commands
+// behind CommandRunner, these are fire-and-forget processes we keep a handle
+// to (for safeKill/stop), so they can't go through `run`.
+export type ProcessSpawner = (
+	bin: string,
+	args: readonly string[],
+	options: { stdio: 'ignore' },
+) => ChildProcess
+
 export type MicrosandboxDeps = {
 	msbBin: string
 	run?: CommandRunner
@@ -171,6 +181,16 @@ export type MicrosandboxDeps = {
 	// Overrideable in tests: wait for a bare TCP listener to accept
 	// connections.
 	tcpPollReady?: (host: string, port: number, timeoutMs: number) => Promise<void>
+	// Overrideable in tests: spawn the long-running `msb ssh serve` / `ssh -L`
+	// background processes started by startSshRelay. Defaults to the real
+	// node:child_process spawn. Tests MUST override this — unlike msbBin
+	// (always a fake path in tests), sshBin often resolves to a real,
+	// installed `ssh` binary (explicit '/usr/bin/ssh', or the 'ssh' PATH
+	// default), so without this override a "unit" test launches a real OS
+	// subprocess. That subprocess is harmless in isolation, but with 70+
+	// tests spawning one apiece in rapid succession it can exhaust CI runner
+	// resources — see the CI-only OOM/SIGKILL this override fixes.
+	spawnProcess?: ProcessSpawner
 }
 
 export function assertValidSessionId(sessionId: string): void {
@@ -750,6 +770,7 @@ export async function startSshRelay(
 	const now = deps.now ?? Date.now
 	const findPort = deps.findPort ?? findFreeHostPort
 	const sshBin = deps.sshBin ?? DEFAULT_SSH_BIN
+	const spawnProcess = deps.spawnProcess ?? spawn
 	const tcpPollReady =
 		deps.tcpPollReady ??
 		((host: string, port: number, timeoutMs: number) =>
@@ -773,7 +794,7 @@ export async function startSshRelay(
 		return null
 	}
 
-	const serveProc = spawn(
+	const serveProc = spawnProcess(
 		deps.msbBin,
 		['ssh', 'serve', targetName, '--host', SSH_RELAY_BIND_HOST, '--port', String(sshPort)],
 		{ stdio: 'ignore' },
@@ -800,7 +821,7 @@ export async function startSshRelay(
 		return null
 	}
 
-	const tunnelProc = spawn(
+	const tunnelProc = spawnProcess(
 		sshBin,
 		[
 			'-N',

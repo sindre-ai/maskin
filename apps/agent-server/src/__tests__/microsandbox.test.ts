@@ -1,3 +1,5 @@
+import type { ChildProcess } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,11 +21,25 @@ import {
 	stopSandbox,
 	waitForCompletion,
 } from '../services/microsandbox'
-import type { SshRelay } from '../services/microsandbox'
+import type { ProcessSpawner, SshRelay } from '../services/microsandbox'
 
 function makePortAllocator(start: number): () => Promise<number> {
 	let next = start
 	return async () => next++
+}
+
+// Fake ProcessSpawner for startSshRelay/provisionBrowserSidecar tests — never
+// launches a real OS process. Unlike msbBin (always a fake path in tests),
+// sshBin often resolves to a real, installed `ssh` binary (explicit
+// '/usr/bin/ssh', or the 'ssh' PATH default), so without this override these
+// "unit" tests would spawn real ssh child processes.
+function fakeSpawnProcess(): ProcessSpawner {
+	return () => {
+		const proc = new EventEmitter() as unknown as ChildProcess
+		proc.unref = () => proc
+		proc.kill = () => true
+		return proc
+	}
 }
 
 describe('assertValidSessionId', () => {
@@ -761,6 +777,7 @@ describe('startSshRelay', () => {
 				readyCalls.push({ host, port })
 			},
 			sshBin: '/usr/bin/ssh',
+			spawnProcess: fakeSpawnProcess(),
 		})
 		expect(relay).not.toBeNull()
 		expect(relay?.relayPort).toBe(40000)
@@ -787,6 +804,7 @@ describe('startSshRelay', () => {
 				findPort,
 				tcpPollReady: async () => {},
 				sshBin: '/usr/bin/ssh',
+				spawnProcess: fakeSpawnProcess(),
 			},
 			{ relayPort: 39999 },
 		)
@@ -803,6 +821,7 @@ describe('startSshRelay', () => {
 				throw new Error('no free ports')
 			},
 			tcpPollReady: async () => {},
+			spawnProcess: fakeSpawnProcess(),
 		})
 		expect(relay).toBeNull()
 	})
@@ -815,6 +834,7 @@ describe('startSshRelay', () => {
 				throw new Error('not ready')
 			},
 			sshBin: '/usr/bin/ssh',
+			spawnProcess: fakeSpawnProcess(),
 		})
 		expect(relay).toBeNull()
 	})
@@ -830,6 +850,7 @@ describe('startSshRelay', () => {
 				throw new Error('tunnel not ready')
 			},
 			sshBin: '/usr/bin/ssh',
+			spawnProcess: fakeSpawnProcess(),
 		})
 		expect(relay).toBeNull()
 	})
@@ -840,6 +861,7 @@ describe('startSshRelay', () => {
 				msbBin: '/usr/local/bin/msb',
 				findPort: makePortAllocator(44000),
 				tcpPollReady: async () => {},
+				spawnProcess: fakeSpawnProcess(),
 			}),
 		).rejects.toThrow(/Invalid session id/)
 	})
@@ -874,6 +896,7 @@ describe('provisionBrowserSidecar', () => {
 				findPort: makePortAllocator(39222),
 				tcpPollReady: async () => {},
 				cdpPollReady: async () => {},
+				spawnProcess: fakeSpawnProcess(),
 			},
 			{ sshKeyPath },
 		)
@@ -915,6 +938,7 @@ describe('provisionBrowserSidecar', () => {
 				findPort: makePortAllocator(39222),
 				tcpPollReady: async () => {},
 				cdpPollReady: async () => {},
+				spawnProcess: fakeSpawnProcess(),
 			},
 			{ image: 'maskin/browser-sidecar:latest', sshKeyPath },
 		)
@@ -950,6 +974,7 @@ describe('provisionBrowserSidecar', () => {
 				findPort: makePortAllocator(40000),
 				tcpPollReady: async () => {},
 				cdpPollReady: async () => {},
+				spawnProcess: fakeSpawnProcess(),
 			},
 			{ sshKeyPath, agentServerInternalHost: 'custom.internal' },
 		)
@@ -1001,6 +1026,7 @@ describe('provisionBrowserSidecar', () => {
 				cdpPollReady: async () => {
 					throw new Error('CDP not ready within timeout')
 				},
+				spawnProcess: fakeSpawnProcess(),
 			},
 			{ sshKeyPath },
 		)
@@ -1035,6 +1061,7 @@ describe('provisionBrowserSidecar', () => {
 					throw new Error('relay never came up')
 				},
 				cdpPollReady: async () => {},
+				spawnProcess: fakeSpawnProcess(),
 			},
 			{ sshKeyPath },
 		)
@@ -1067,6 +1094,7 @@ describe('provisionBrowserSidecar', () => {
 				findPort: makePortAllocator(39222),
 				tcpPollReady: async () => {},
 				cdpPollReady: async () => {},
+				spawnProcess: fakeSpawnProcess(),
 			},
 			{ sshKeyPath },
 		)
@@ -1099,6 +1127,7 @@ describe('provisionBrowserSidecar', () => {
 				findPort: makePortAllocator(39222),
 				tcpPollReady: async () => {},
 				cdpPollReady: async () => {},
+				spawnProcess: fakeSpawnProcess(),
 			},
 			{ sshKeyPath, extraAllowedHostPorts: [39500, 39501] },
 		)
