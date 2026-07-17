@@ -27,33 +27,45 @@ test.describe('Objects list retains view state across back-nav', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects?type=bet&groupBy=status`)
-			await expect(page.getByText('Bet Alpha (active)')).toBeVisible({ timeout: 10_000 })
 
-			// Groups render collapsed by default. Expand the "active" group.
-			const activeGroupToggle = page.getByRole('button', { name: /active/i, expanded: false })
-			await activeGroupToggle.click()
+			// Groups render collapsed by default — the group header shows the
+			// status label + count, and sub-rows are hidden until expanded.
+			// Wait for the "active" group toggle as the ready signal.
+			const activeGroupToggle = page.getByRole('button', {
+				name: /active/i,
+				expanded: false,
+			})
+			await expect(activeGroupToggle).toBeVisible({ timeout: 10_000 })
+
+			// Expand the active group. Fire the click and wait for the
+			// debounced PUT concurrently so the response isn't missed if the
+			// toggle-driven write-through fires before we start listening.
+			const [putResponse] = await Promise.all([
+				page.waitForResponse(
+					(r) => r.url().includes('/user-display-settings/bet') && r.request().method() === 'PUT',
+					{ timeout: 10_000 },
+				),
+				activeGroupToggle.click(),
+			])
+			expect(putResponse.ok()).toBe(true)
+
 			await expect(page.getByRole('button', { name: /active/i, expanded: true })).toBeVisible()
+			await expect(page.getByText('Bet Alpha (active)')).toBeVisible()
 
-			// Wait for the write-through debounce to persist through the shared
-			// display-settings PUT rail.
-			await page.waitForResponse(
-				(r) => r.url().includes('/user-display-settings/bet') && r.request().method() === 'PUT',
-				{ timeout: 5_000 },
-			)
-
-			// Click into an object, then browser-back to the list.
+			// Click into the object, then browser-back to the list.
 			await page.getByText('Bet Alpha (active)').click()
 			await expect(page).toHaveURL(/\/objects\//, { timeout: 10_000 })
 			await page.goBack()
-			await expect(page.getByText('Bet Alpha (active)')).toBeVisible({ timeout: 10_000 })
+
+			// After silent restore, the "active" group is expanded again and
+			// the row is visible.
+			await expect(page.getByRole('button', { name: /active/i, expanded: true })).toBeVisible({
+				timeout: 10_000,
+			})
+			await expect(page.getByText('Bet Alpha (active)')).toBeVisible()
 
 			// Restore is silent: no toast, no banner, no "resume" affordance.
 			await expect(page.locator('[role="status"]')).toHaveCount(0)
-
-			// The active group is expanded again after back-nav.
-			await expect(page.getByRole('button', { name: /active/i, expanded: true })).toBeVisible({
-				timeout: 5_000,
-			})
 		})
 
 		test(`scroll anchor is restored to the previously-first-visible row after back-nav @ ${vp.label}`, async ({
@@ -78,18 +90,12 @@ test.describe('Objects list retains view state across back-nav', () => {
 
 			// Scroll into the middle of the list. The exact anchor row is
 			// picked from what's visible after the scroll settles.
-			await page.getByText('Scroll Anchor Row 59').scrollIntoViewIfNeeded()
 			await page.evaluate(() => {
-				// Scroll the nearest overflow container ~50 rows down (~2400px).
 				const scroller = document.querySelector('.overflow-auto') as HTMLElement | null
 				if (scroller) scroller.scrollTop = 2400
 			})
-
-			// Wait for the write-through debounce to fire.
-			await page.waitForResponse(
-				(r) => r.url().includes('/user-display-settings/bet') && r.request().method() === 'PUT',
-				{ timeout: 5_000 },
-			)
+			// Let the virtualiser render the new window.
+			await page.waitForTimeout(300)
 
 			// Capture the row currently at the top of the viewport.
 			const firstVisibleRowText = await page.evaluate(() => {
@@ -105,27 +111,34 @@ test.describe('Objects list retains view state across back-nav', () => {
 			})
 			expect(firstVisibleRowText).toBeTruthy()
 
-			// Click into the first visible row (find one that is clickable) and
-			// then browser-back.
-			await page.evaluate(() => {
+			// Pick a row below the first-visible to click. Clicking fires the
+			// route's captureViewState synchronously, which patches the
+			// session view-state store with the first-visible row id before
+			// the navigate. Restore on back-nav reads from that store.
+			const clickTargetRowId = await page.evaluate(() => {
 				const scroller = document.querySelector('.overflow-auto') as HTMLElement | null
-				if (!scroller) return
+				if (!scroller) return null
 				const scrollerRect = scroller.getBoundingClientRect()
 				const rows = Array.from(scroller.querySelectorAll('[data-drag-row]'))
 				for (const row of rows) {
 					const rect = row.getBoundingClientRect()
 					if (rect.top > scrollerRect.top + 20) {
-						;(row as HTMLElement).click()
-						return
+						return (row as HTMLElement).getAttribute('data-drag-row')
 					}
 				}
+				return null
 			})
+			expect(clickTargetRowId).toBeTruthy()
+			await page.locator(`[data-drag-row="${clickTargetRowId}"]`).click()
 			await expect(page).toHaveURL(/\/objects\//, { timeout: 10_000 })
 			await page.goBack()
 
 			await expect(page.getByText(/Scroll Anchor Row \d+/).first()).toBeVisible({
 				timeout: 10_000,
 			})
+			// Wait for the mount-time restore effect to run scrollToRowId
+			// after the first row page arrives.
+			await page.waitForTimeout(500)
 
 			// The row that was first-visible before back-nav is at the top again.
 			const restoredFirstVisibleRowText = await page.evaluate(() => {
