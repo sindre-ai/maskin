@@ -47,15 +47,6 @@ jobs:
 
       - name: Run DeepSec against PR diff
         id: scan
-        env:
-          # AI_GATEWAY_API_KEY is preferred (routes via Vercel AI Gateway with
-          # per-project spend visibility). ANTHROPIC_AUTH_TOKEN is the fallback
-          # path. Either being present is enough — DeepSec picks the first one
-          # it finds. Both are wired here so whichever repo secret is
-          # configured (see T2) reaches the CLI without a further workflow
-          # edit.
-          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
         run: |
           # `--agent claude` and `--model claude-haiku-4-5` are pinned
           # literally. Auto-detection can pick a stale/exhausted subscription
