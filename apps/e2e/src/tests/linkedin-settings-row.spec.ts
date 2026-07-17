@@ -45,15 +45,14 @@ test.describe('LinkedIn provider row on Settings › Integrations', () => {
 			await page.goto(`/${account.workspaceId}/settings/integrations`)
 			await page.waitForLoadState('load')
 
-			// The LinkedIn row lives inside the main content area — scope out the
-			// workspace-switcher (which carries the account title in its aria-label)
-			// to keep strict-mode happy.
+			// Walk up from the exact LinkedIn heading — `filter({ hasText: /^LinkedIn/ })`
+			// on `div` also matches the outer providers list (its text starts with
+			// "LinkedIn" because the row is first), which pulls in every other
+			// not-connected provider's "Available to connect".
 			const main = page.locator('main')
-			const linkedinRow = main
-				.locator('div')
-				.filter({ hasText: /^LinkedIn/ })
-				.first()
-			await expect(linkedinRow).toBeVisible({ timeout: 10000 })
+			const linkedinHeading = main.getByText('LinkedIn', { exact: true })
+			await expect(linkedinHeading).toBeVisible({ timeout: 10000 })
+			const linkedinRow = linkedinHeading.locator('..').locator('..')
 			await expect(linkedinRow.getByText('Available to connect')).toBeVisible()
 
 			const connectButton = linkedinRow.getByRole('button', { name: 'Connect' })
