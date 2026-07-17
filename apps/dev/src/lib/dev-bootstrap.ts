@@ -17,6 +17,7 @@ import {
 	CCD_PACKAGE_SLUG,
 	CCD_PACKAGE_USE_CASE,
 	CCD_PACKAGE_VERSION,
+	CHIEF_OF_STAFF_DEFAULT,
 	WORKSPACE_COACH_DEFAULT,
 } from '@maskin/shared'
 import { and, count, eq, isNotNull } from 'drizzle-orm'
@@ -353,6 +354,40 @@ export async function maybeBootstrapDev(
 			actorId: coach.id,
 			role: 'member',
 		})
+
+		// Seed Chief of Staff synchronously so we can capture its actor id and
+		// pin it as this workspace's default chat agent in the same tx.
+		// bootstrapDefaultAgents() also has an idempotent CoS name-check so the
+		// post-commit call will simply skip this actor.
+		const [chief] = await tx
+			.insert(actors)
+			.values({
+				type: CHIEF_OF_STAFF_DEFAULT.type,
+				name: CHIEF_OF_STAFF_DEFAULT.name,
+				isSystem: CHIEF_OF_STAFF_DEFAULT.isSystem,
+				systemPrompt: CHIEF_OF_STAFF_DEFAULT.systemPrompt,
+				llmProvider: CHIEF_OF_STAFF_DEFAULT.llmProvider,
+				llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig,
+				tools: CHIEF_OF_STAFF_DEFAULT.tools,
+				apiKey: generateApiKey().key,
+				createdBy: actor.id,
+			})
+			.returning()
+
+		if (!chief) throw new Error('dev bootstrap: failed to seed Chief of Staff actor')
+
+		await tx.insert(workspaceMembers).values({
+			workspaceId: ws.id,
+			actorId: chief.id,
+			role: 'member',
+		})
+
+		// Pin Chief of Staff as the default chat agent for this workspace.
+		// Reversible via `pnpm --filter @maskin/dev exec tsx scripts/seed-default-agent.ts --unset`.
+		await tx
+			.update(workspaces)
+			.set({ settings: { default_agent_id: chief.id } })
+			.where(eq(workspaces.id, ws.id))
 
 		return ws
 	})

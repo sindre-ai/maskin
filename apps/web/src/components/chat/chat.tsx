@@ -10,6 +10,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useChatOneShot } from '@/hooks/use-chat-one-shot'
 import { useChatSession } from '@/hooks/use-chat-session'
+import { deriveEntryAgentRole, trackSpecialistSummonedManually } from '@/lib/analytics'
 import type { SessionInputAttachment } from '@/lib/api'
 import {
 	type ChatSelection,
@@ -50,6 +51,13 @@ export type ChatSurface = 'sheet' | 'pulse-bar'
 export interface ChatProps {
 	workspaceId: string
 	agentActorId: string | null
+	/**
+	 * Kebab-cased role of the default chat agent. Rides on
+	 * `chat_session_started.entry_agent_role` for the persistent session so
+	 * the parent bet's PostHog query can compute the `chief_start_rate` metric.
+	 * One-shot sessions derive the role from the picked agent themselves.
+	 */
+	entryAgentRole?: string | null
 	surface: ChatSurface
 	/**
 	 * Composer-level selection. When `selection.agent` is set, the next send is
@@ -108,6 +116,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	{
 		workspaceId,
 		agentActorId,
+		entryAgentRole = null,
 		surface,
 		selection,
 		onDispatchSelection,
@@ -125,7 +134,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	const selectedNotifications = activeSelection.notifications
 	const selectedFiles = activeSelection.files
 
-	const session = useChatSession({ workspaceId, agentActorId })
+	const session = useChatSession({ workspaceId, agentActorId, entryAgentRole })
 	const oneShot = useChatOneShot()
 
 	// Merge events from both sources while preserving arrival order, so a turn
@@ -597,6 +606,15 @@ export function Composer({
 		(result: SlashPickerResult) => {
 			if (result.kind === 'agent') {
 				onDispatchSelection?.({ type: 'add_agent', agent: result.ref })
+				// Thinness event #2: the owner bypassed the default (Chief of
+				// Staff, once T3 wires it) and pulled a specialist in directly.
+				// The parent bet counts any hit as evidence the boundary agent
+				// isn't holding.
+				trackSpecialistSummonedManually({
+					entity_id: result.ref.id,
+					entity_type: 'agent',
+					agent_role: deriveEntryAgentRole(result.ref.name),
+				})
 			} else if (result.kind === 'object') {
 				onDispatchSelection?.({ type: 'add_object', object: result.ref })
 			} else {
