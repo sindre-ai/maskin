@@ -104,10 +104,19 @@ import {
 } from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronRight } from 'lucide-react'
-import { useCallback, useEffect, useRef } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
 import type { ObjectsTableMeta } from './columns'
 import { ObjectCard } from './object-card'
 import { useDragSelect } from './use-drag-select'
+
+// Imperative handle the Objects route uses to read the first-visible row at
+// navigate-away time and to restore the scroll position on a POP landing.
+// Keeps the virtualizer and row model owned by DataTable — the route never
+// touches TanStack Virtual directly.
+export interface DataTableHandle {
+	getFirstVisibleRowId(): string | null
+	scrollToRowId(rowId: string): void
+}
 
 interface DataTableProps {
 	data: ObjectResponse[]
@@ -129,26 +138,36 @@ interface DataTableProps {
 	// a small side-channel callback for now; T2 lifts group expansion into
 	// TanStack's `onExpandedChange` so this can fold into the same boundary.
 	onGroupToggle?: () => void
+	// Fires synchronously right before a row-click navigate. The route reads
+	// the current first-visible row id via `ref.current.getFirstVisibleRowId()`
+	// and writes it into the session view-state store, so a back-nav landing
+	// can restore the anchor. Single read per click — no scroll listener, so
+	// the list-page TTI guardrail (<10% regression) isn't at risk.
+	onCaptureViewState?: () => void
 }
 
-export function DataTable({
-	data,
-	columns,
-	workspaceId,
-	actors: actorsProp,
-	rowSelection,
-	onRowSelectionChange,
-	columnVisibility,
-	onColumnVisibilityChange,
-	grouping,
-	meta,
-	hasNextPage,
-	isFetchingNextPage,
-	isError,
-	fetchNextPage,
-	isLoading,
-	onGroupToggle,
-}: DataTableProps) {
+export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function DataTable(
+	{
+		data,
+		columns,
+		workspaceId,
+		actors: actorsProp,
+		rowSelection,
+		onRowSelectionChange,
+		columnVisibility,
+		onColumnVisibilityChange,
+		grouping,
+		meta,
+		hasNextPage,
+		isFetchingNextPage,
+		isError,
+		fetchNextPage,
+		isLoading,
+		onGroupToggle,
+		onCaptureViewState,
+	},
+	ref,
+) {
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
 	const isTouchViewport = useIsTouchViewport()
@@ -184,6 +203,13 @@ export function DataTable({
 
 	const { rows } = table.getRowModel()
 
+	// Refs mirror the current render's row model + virtualizer so the imperative
+	// handle stays identity-stable (no dep-array on useImperativeHandle) while
+	// still reading fresh values inside its methods. Avoids re-registering the
+	// handle on every render — the route's ref stays valid across POPs.
+	const rowsRef = useRef(rows)
+	rowsRef.current = rows
+
 	// The scroll container only mounts once loading/empty placeholders give way
 	// to the real list below — gate attachment on that so the hook's listener
 	// effect actually re-runs once the container exists (scrollRef's identity
@@ -202,6 +228,27 @@ export function DataTable({
 		estimateSize: () => (isMobile ? 96 : isTouchViewport ? 60 : 48),
 		overscan: isMobile ? 10 : 20,
 	})
+	const virtualizerRef = useRef(virtualizer)
+	virtualizerRef.current = virtualizer
+
+	useImperativeHandle(
+		ref,
+		() => ({
+			getFirstVisibleRowId: () => {
+				const first = virtualizerRef.current.getVirtualItems()[0]
+				if (!first) return null
+				const row = rowsRef.current[first.index]
+				if (!row || row.getIsGrouped()) return null
+				return row.original?.id ?? null
+			},
+			scrollToRowId: (rowId: string) => {
+				const idx = rowsRef.current.findIndex((r) => !r.getIsGrouped() && r.original?.id === rowId)
+				if (idx < 0) return
+				virtualizerRef.current.scrollToIndex(idx, { align: 'start' })
+			},
+		}),
+		[],
+	)
 
 	// Infinite scroll sentinel — skip when fetching or errored to avoid retry loops
 	useEffect(() => {
@@ -218,12 +265,15 @@ export function DataTable({
 
 	const handleRowClick = useCallback(
 		(objectId: string) => {
+			// Snapshot view state before pushing the detail route — the mount
+			// effect on the eventual POP landing back to this list reads it.
+			onCaptureViewState?.()
 			navigate({
 				to: '/$workspaceId/objects/$objectId',
 				params: { workspaceId, objectId },
 			})
 		},
-		[navigate, workspaceId],
+		[navigate, workspaceId, onCaptureViewState],
 	)
 
 	if (isLoading) {
@@ -509,4 +559,4 @@ export function DataTable({
 			)}
 		</div>
 	)
-}
+})
