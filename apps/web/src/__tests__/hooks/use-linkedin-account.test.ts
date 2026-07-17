@@ -44,11 +44,46 @@ describe('useLinkedinAccount', () => {
 			connectedAt: null,
 			createdAt: null,
 			updatedAt: null,
+			pacing: {
+				dailyCap: 0,
+				dailySent: 0,
+				weeklyCap: 0,
+				weeklySent: 0,
+				warmup: null,
+			},
+			acceptanceRate: null,
 		})
 		const { result } = renderHook(() => useLinkedinAccount(workspaceId), { wrapper: TestWrapper })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data?.state).toBe('syncing')
 		expect(result.current.data?.sendingAsName).toBe('sindre')
+	})
+
+	it('exposes the pacing snapshot for a healthy account', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce({
+			id: 'acc-1',
+			workspaceId,
+			state: 'healthy',
+			unipileAccountId: 'unipile-1',
+			sendingAsName: 'Sebastian Bakke',
+			sendingAsProviderId: 'urn:li:1',
+			connectedAt: '2026-07-10T12:00:00.000Z',
+			createdAt: null,
+			updatedAt: null,
+			pacing: {
+				dailyCap: 20,
+				dailySent: 4,
+				weeklyCap: 80,
+				weeklySent: 18,
+				warmup: null,
+			},
+			acceptanceRate: 0.62,
+		})
+		const { result } = renderHook(() => useLinkedinAccount(workspaceId), { wrapper: TestWrapper })
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data?.pacing.dailyCap).toBe(20)
+		expect(result.current.data?.pacing.weeklyCap).toBe(80)
+		expect(result.current.data?.acceptanceRate).toBe(0.62)
 	})
 })
 

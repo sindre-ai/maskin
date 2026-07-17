@@ -57,7 +57,11 @@ import { RelativeTime } from '../shared/relative-time'
 import { TypeBadge } from '../shared/type-badge'
 import { AgentRunPauseButton } from './agent-run-pause-button'
 import { AgentUsageChart } from './agent-usage-chart'
-import { LinkedinConnectSection } from './linkedin-connect-section'
+import {
+	LinkedinChannelsSection,
+	LinkedinHeroPill,
+	useLinkedinSendingBlock,
+} from './linkedin-connect-section'
 import { McpServers } from './mcp-servers'
 import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-detail-panel'
 import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
@@ -148,6 +152,7 @@ export function AgentDocumentView({
 	const [configExpanded, setConfigExpanded] = useConfigExpanded()
 
 	const isActive = (activeSessions?.length ?? 0) > 0
+	const linkedinBlock = useLinkedinSendingBlock(workspaceId)
 
 	const handleNameBlur = useCallback(() => {
 		if (nameDraft.trim() && nameDraft !== agent.name) {
@@ -280,6 +285,7 @@ export function AgentDocumentView({
 						</button>
 					</span>
 				)}
+				<LinkedinHeroPill workspaceId={workspaceId} />
 			</div>
 
 			{/* Run/Pause + New Conversation */}
@@ -290,6 +296,8 @@ export function AgentDocumentView({
 					onPause={onPause}
 					isRunPending={isRunPending}
 					isPausePending={isPausePending}
+					disabled={linkedinBlock.blocked}
+					disabledReason={linkedinBlock.reason ?? undefined}
 				/>
 				<Button variant="outline" size="sm" className="min-h-[44px]" onClick={onNewConversation}>
 					New Conversation
@@ -299,8 +307,8 @@ export function AgentDocumentView({
 			{/* Usage chart */}
 			<AgentUsageChart agent={agent} workspaceId={workspaceId} />
 
-			{/* LinkedIn connect entry point (minimal — T4 replaces with full state UI) */}
-			<LinkedinConnectSection agentId={agent.id} workspaceId={workspaceId} />
+			{/* LinkedIn channels row + account panel */}
+			<LinkedinChannelsSection agentId={agent.id} workspaceId={workspaceId} />
 
 			{/* Currently Working On */}
 			{activeSessions && activeSessions.length > 0 && (

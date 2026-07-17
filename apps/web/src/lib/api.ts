@@ -1031,6 +1031,14 @@ export type LinkedinAccountState =
 	| 'restricted'
 	| 'reconnect'
 
+export interface LinkedinPacingSnapshot {
+	dailyCap: number
+	dailySent: number
+	weeklyCap: number
+	weeklySent: number
+	warmup: { day: number; total: number } | null
+}
+
 export interface LinkedinAccountResponse {
 	id: string
 	workspaceId: string
@@ -1041,6 +1049,8 @@ export interface LinkedinAccountResponse {
 	connectedAt: string | null
 	createdAt: string | null
 	updatedAt: string | null
+	pacing: LinkedinPacingSnapshot
+	acceptanceRate: number | null
 }
 
 export interface NotificationResponse {
