@@ -223,6 +223,30 @@ describe('createSessionSchema', () => {
 	it('rejects empty action_prompt', () => {
 		expect(() => createSessionSchema.parse({ actor_id: uuid, action_prompt: '' })).toThrow()
 	})
+
+	it('accepts optional entry_agent_role', () => {
+		const result = createSessionSchema.parse({
+			actor_id: uuid,
+			action_prompt: 'Test',
+			entry_agent_role: 'chief-of-staff',
+		})
+		expect(result.entry_agent_role).toBe('chief-of-staff')
+	})
+
+	it('leaves entry_agent_role undefined when omitted', () => {
+		const result = createSessionSchema.parse({ actor_id: uuid, action_prompt: 'Test' })
+		expect(result.entry_agent_role).toBeUndefined()
+	})
+
+	it('rejects entry_agent_role longer than 64 chars', () => {
+		expect(() =>
+			createSessionSchema.parse({
+				actor_id: uuid,
+				action_prompt: 'Test',
+				entry_agent_role: 'x'.repeat(65),
+			}),
+		).toThrow()
+	})
 })
 
 describe('sessionQuerySchema', () => {

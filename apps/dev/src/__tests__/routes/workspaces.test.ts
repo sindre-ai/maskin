@@ -5,10 +5,11 @@ import { createTestApp } from '../setup'
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
-// Ordered actor names for the five default agents. Seed inserts run in this order:
+// Ordered actor names for the six default agents. Seed inserts run in this order:
 // workspaces → owner member → for each agent [actor insert, member insert].
 const DEFAULT_AGENT_NAMES = [
 	'Workspace Coach',
+	'Chief of Staff',
 	'Workspace Driver',
 	'Strategist',
 	'Insights Triage Agent',
@@ -29,7 +30,7 @@ function buildDefaultAgentSeedQueue(ws: ReturnType<typeof buildWorkspace>) {
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		it('creates a workspace and seeds all 5 default agents, returning 201', async () => {
+		it('creates a workspace and seeds all 6 default agents, returning 201', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insertQueue = buildDefaultAgentSeedQueue(ws)
@@ -55,8 +56,8 @@ describe('Workspaces Routes', () => {
 
 			expect(res.status).toBe(201)
 			// inserts: [workspace, owner-member, agent1-actor, agent1-member, agent2-actor, ...]
-			// The 5 actor inserts are at indices 2, 4, 6, 8, 10.
-			const actorInserts = [2, 4, 6, 8, 10].map(
+			// The 6 actor inserts are at indices 2, 4, 6, 8, 10, 12.
+			const actorInserts = [2, 4, 6, 8, 10, 12].map(
 				(i) => calls.inserts[i] as { apiKey?: string; type?: string; name?: string },
 			)
 			expect(actorInserts.map((a) => a.name)).toEqual([...DEFAULT_AGENT_NAMES])
@@ -64,11 +65,53 @@ describe('Workspaces Routes', () => {
 				expect(insert.type).toBe('agent')
 				expect(insert.apiKey).toMatch(/^ank_/)
 			}
-			// Member roles for the 5 default agents (at 3, 5, 7, 9, 11).
-			const memberInserts = [3, 5, 7, 9, 11].map((i) => calls.inserts[i] as { role?: string })
+			// Member roles for the 6 default agents (at 3, 5, 7, 9, 11, 13).
+			const memberInserts = [3, 5, 7, 9, 11, 13].map((i) => calls.inserts[i] as { role?: string })
 			for (const insert of memberInserts) {
 				expect(insert.role).toBe('member')
 			}
+		})
+
+		it('sets default_agent_id to Chief of Staff when the caller does not specify one', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			const agentRows = DEFAULT_AGENT_NAMES.map((name) => buildActor({ type: 'agent', name }))
+			const queue: unknown[][] = [[ws], [{}]]
+			for (const row of agentRows) {
+				queue.push([row])
+				queue.push([{}])
+			}
+			mockResults.insertQueue = queue
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			const chief = agentRows.find((a) => a.name === 'Chief of Staff')
+			expect(body.settings.default_agent_id).toBe(chief?.id)
+		})
+
+		it('respects an explicit default_agent_id and does not overwrite it', async () => {
+			const explicitAgentId = randomUUID()
+			// The mock insert returns this row verbatim (unlike real Postgres, it
+			// doesn't reflect what was actually passed to .values()), so build it
+			// with the settings the route would have written for this request.
+			const ws = buildWorkspace({ settings: { default_agent_id: explicitAgentId } })
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.insertQueue = buildDefaultAgentSeedQueue(ws)
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', {
+					...buildCreateWorkspaceBody(),
+					settings: { default_agent_id: explicitAgentId },
+				}),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.settings.default_agent_id).toBe(explicitAgentId)
 		})
 
 		it('returns 500 when workspace insert returns empty', async () => {

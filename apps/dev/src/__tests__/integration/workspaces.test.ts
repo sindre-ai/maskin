@@ -42,6 +42,7 @@ const { SeedAgentError } = await import('../../services/workspace-bootstrap')
 
 const DEFAULT_AGENT_NAMES = [
 	'Workspace Coach',
+	'Chief of Staff',
 	'Workspace Driver',
 	'Strategist',
 	'Insights Triage Agent',
@@ -205,16 +206,25 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 5 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 7.
-			expect(members).toHaveLength(7)
+			// Creator (owner) + all 6 default agents (seeded atomically inside the
+			// create transaction) + the newly-added member = 8.
+			expect(members).toHaveLength(8)
 			const roles = members.map((m: { role: string }) => m.role).sort()
-			expect(roles).toEqual(['member', 'member', 'member', 'member', 'member', 'member', 'owner'])
+			expect(roles).toEqual([
+				'member',
+				'member',
+				'member',
+				'member',
+				'member',
+				'member',
+				'member',
+				'owner',
+			])
 		})
 	})
 
 	describe('default agent seeding', () => {
-		it('seeds all 5 default agents atomically inside the create transaction', async () => {
+		it('seeds all default agents atomically inside the create transaction', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -226,7 +236,7 @@ describe('Workspaces Integration', () => {
 			expect(await agentNamesFor(ws.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
 		})
 
-		it('creates two workspaces for the same creator with 5 agents each and no cross-contamination', async () => {
+		it('creates two workspaces for the same creator with default agents each and no cross-contamination', async () => {
 			const app = createApp()
 
 			const first = await (
@@ -240,7 +250,7 @@ describe('Workspaces Integration', () => {
 			expect(await agentNamesFor(first.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
 			expect(await agentNamesFor(second.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
 
-			// Agent actor rows are distinct between workspaces — a workspace's five
+			// Agent actor rows are distinct between workspaces — a workspace's
 			// members must not overlap another workspace's, otherwise
 			// permissions/skills would leak across tenants.
 			const firstAgentIds = new Set(
@@ -424,6 +434,53 @@ describe('Workspaces Integration', () => {
 			expect(event).toBe('workspace_created')
 			expect(distinctId).toBe(ws.id)
 			expect(properties.workspace_id).toBe(ws.id)
+		})
+	})
+
+	describe('default chat agent', () => {
+		async function chiefOfStaffIdFor(workspaceId: string): Promise<string | undefined> {
+			const rows = await db
+				.select({ actorId: actors.id, name: actors.name })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(eq(workspaceMembers.workspaceId, workspaceId))
+			return rows.find((r) => r.name === 'Chief of Staff')?.actorId
+		}
+
+		it('defaults a newly created workspace to its own Chief of Staff actor', async () => {
+			const app = createApp()
+
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Default CoS' }))
+			expect(res.status).toBe(201)
+			const ws = await res.json()
+
+			const chiefId = await chiefOfStaffIdFor(ws.id)
+			expect(chiefId).toBeDefined()
+			expect(ws.settings.default_agent_id).toBe(chiefId)
+		})
+
+		it('does not overwrite an explicit default_agent_id supplied at creation', async () => {
+			const app = createApp()
+			const explicitAgentId = randomUUID()
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', {
+					name: 'Explicit Default',
+					settings: { default_agent_id: explicitAgentId },
+				}),
+			)
+			expect(res.status).toBe(201)
+			const ws = await res.json()
+
+			expect(ws.settings.default_agent_id).toBe(explicitAgentId)
+
+			const [row] = await db
+				.select({ settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, ws.id))
+			expect((row?.settings as { default_agent_id?: string })?.default_agent_id).toBe(
+				explicitAgentId,
+			)
 		})
 	})
 })

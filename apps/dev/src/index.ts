@@ -152,6 +152,7 @@ if (process.env.NODE_ENV === 'production') {
 				memoryMib: spec.memoryMib,
 				cpus: spec.cpus,
 				...(spec.browserRequired && { browserRequired: true }),
+				...(spec.previewGuestPorts.length > 0 && { previewGuestPorts: spec.previewGuestPorts }),
 				sourceSessionId: session.sourceSessionId ?? undefined,
 			}
 		},

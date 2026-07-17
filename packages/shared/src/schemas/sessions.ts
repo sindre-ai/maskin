@@ -90,6 +90,11 @@ export const createSessionSchema = z.object({
 	trigger_id: z.string().uuid().optional(),
 	auto_start: z.boolean().default(true),
 	source_session_id: z.string().uuid().optional(),
+	// A short slug identifying the role of the agent this chat entered under
+	// (e.g. "chief-of-staff", "workspace-coach"). Persisted onto
+	// `sessions.config.entry_agent_role` so downstream analytics can attribute
+	// every session to the agent that received the owner's first turn.
+	entry_agent_role: z.string().max(64).optional(),
 })
 
 export const sessionQuerySchema = z.object({
