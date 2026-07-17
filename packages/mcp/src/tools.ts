@@ -886,7 +886,7 @@ export const tools = {
 						.max(8)
 						.optional()
 						.describe(
-							'Guest port(s) inside the session to publish on the browser sidecar bridge (e.g. 5173 for a Vite dev server), so the sidecar\'s Playwright can reach a dev server the agent boots locally inside its own session — no external deploy needed. Implies browserRequired.',
+							"Guest port(s) inside the session to publish on the browser sidecar bridge (e.g. 5173 for a Vite dev server), so the sidecar's Playwright can reach a dev server the agent boots locally inside its own session — no external deploy needed. Implies browserRequired.",
 						),
 				})
 				.optional()
