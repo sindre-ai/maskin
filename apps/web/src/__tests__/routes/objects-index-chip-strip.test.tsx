@@ -47,6 +47,7 @@ vi.mock('@/hooks/use-enabled-modules', () => ({ useEnabledModules: () => [] }))
 vi.mock('@/hooks/use-custom-extensions', () => ({ useCustomExtensions: () => [] }))
 vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: () => [{ label: 'Bets', value: 'bet' }],
+	getAllWebModules: () => [],
 }))
 
 vi.mock('@tanstack/react-query', async (importOriginal) => {
