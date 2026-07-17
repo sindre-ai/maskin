@@ -47,6 +47,42 @@ describe('displaySettingsBodySchema', () => {
 		expect(() => displaySettingsBodySchema.parse({ columnVisibility: vis })).toThrow(/at most 200/)
 	})
 
+	describe('groupExpanded and firstVisibleRowId', () => {
+		it('accepts a groupExpanded map alongside other settings', () => {
+			const parsed = displaySettingsBodySchema.parse({
+				groupBy: 'status',
+				groupExpanded: { 'metadata.status:active': true, 'metadata.status:done': false },
+			})
+			expect(parsed.groupExpanded).toEqual({
+				'metadata.status:active': true,
+				'metadata.status:done': false,
+			})
+		})
+
+		it('accepts firstVisibleRowId as a row id', () => {
+			const parsed = displaySettingsBodySchema.parse({ firstVisibleRowId: 'row_42' })
+			expect(parsed.firstVisibleRowId).toBe('row_42')
+		})
+
+		it('accepts firstVisibleRowId=null to signal cleared state', () => {
+			const parsed = displaySettingsBodySchema.parse({ firstVisibleRowId: null })
+			expect(parsed.firstVisibleRowId).toBeNull()
+		})
+
+		it('rejects a groupExpanded map with more than 200 entries', () => {
+			const groupExpanded: Record<string, boolean> = {}
+			for (let i = 0; i < 201; i++) groupExpanded[`group_${i}`] = true
+			expect(() => displaySettingsBodySchema.parse({ groupExpanded })).toThrow(/at most 200/)
+		})
+
+		it('leaves legacy blobs without the new fields untouched', () => {
+			const legacy = { view: 'list' as const, sort: 'title', order: 'asc' as const }
+			const parsed = displaySettingsBodySchema.parse(legacy)
+			expect(parsed.groupExpanded).toBeUndefined()
+			expect(parsed.firstVisibleRowId).toBeUndefined()
+		})
+	})
+
 	describe('timelineView (AC-T7)', () => {
 		it('accepts timelineView=timeline', () => {
 			expect(displaySettingsBodySchema.parse({ timelineView: 'timeline' }).timelineView).toBe(

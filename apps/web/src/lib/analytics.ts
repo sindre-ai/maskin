@@ -253,6 +253,39 @@ export function trackBulkEditCommit(p: {
 	})
 }
 
+// Ship-metric events for the view-state retention bet on the Objects list.
+// The PostHog query pairs `objects_list_arrived(nav_type='back')` (denominator
+// — a back-nav landing on the list) with `objects_list_group_toggled(source=
+// 'user')` (numerator — a user-initiated group toggle) within a 30s window,
+// enforced on the query side. `nav_type` fires on every mount so the arrival
+// stream can be sliced later; `direct` is a URL-bar or hard-refresh landing,
+// `link` is an in-app SPA navigation. `source` distinguishes user toggles
+// from the eventual system-driven restore (used to wire-verify the restore).
+// `objectType` is the current tab (`bet`, `insight`, …) or `null` on the All
+// tab so the metric can be sliced per type without joining super properties.
+export type ObjectsListNavType = 'back' | 'direct' | 'link'
+
+export function trackObjectsListArrived(p: {
+	nav_type: ObjectsListNavType
+	objectType: string | null
+}): void {
+	trackEvent('objects_list_arrived', { nav_type: p.nav_type, objectType: p.objectType })
+}
+
+export type ObjectsListGroupToggleSource = 'user' | 'system'
+
+export function trackObjectsListGroupToggled(p: {
+	source: ObjectsListGroupToggleSource
+	expanded: boolean
+	objectType: string | null
+}): void {
+	trackEvent('objects_list_group_toggled', {
+		source: p.source,
+		expanded: p.expanded,
+		objectType: p.objectType,
+	})
+}
+
 // Ship-metric events for the Loops primitive bet. `loop_viewed` fires once per
 // Loop detail page mount; `loop_graduated` fires once per Loop created from the
 // web (paired with `bet_created` — same call site pattern in `useCreateObject`).
