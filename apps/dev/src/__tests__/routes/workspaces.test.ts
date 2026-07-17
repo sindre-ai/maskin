@@ -5,11 +5,12 @@ import { createTestApp } from '../setup'
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
-// Ordered actor names for the six default agents. Seed inserts run in this order:
-// workspaces → owner member → for each agent [actor insert, member insert].
+// Ordered actor names for the seven default agents. Seed inserts run in this
+// order: workspaces → owner member → for each agent [actor insert, member insert].
 const DEFAULT_AGENT_NAMES = [
 	'Workspace Coach',
 	'Chief of Staff',
+	'SDR agent',
 	'Workspace Driver',
 	'Strategist',
 	'Insights Triage Agent',
@@ -30,7 +31,7 @@ function buildDefaultAgentSeedQueue(ws: ReturnType<typeof buildWorkspace>) {
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		it('creates a workspace and seeds all 6 default agents, returning 201', async () => {
+		it('creates a workspace and seeds all 7 default agents, returning 201', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insertQueue = buildDefaultAgentSeedQueue(ws)
@@ -56,17 +57,32 @@ describe('Workspaces Routes', () => {
 
 			expect(res.status).toBe(201)
 			// inserts: [workspace, owner-member, agent1-actor, agent1-member, agent2-actor, ...]
-			// The 6 actor inserts are at indices 2, 4, 6, 8, 10, 12.
-			const actorInserts = [2, 4, 6, 8, 10, 12].map(
-				(i) => calls.inserts[i] as { apiKey?: string; type?: string; name?: string },
+			// The 7 actor inserts are at indices 2, 4, 6, 8, 10, 12, 14.
+			const actorInserts = [2, 4, 6, 8, 10, 12, 14].map(
+				(i) =>
+					calls.inserts[i] as {
+						apiKey?: string
+						type?: string
+						name?: string
+						tools?: Record<string, unknown>
+					},
 			)
 			expect(actorInserts.map((a) => a.name)).toEqual([...DEFAULT_AGENT_NAMES])
 			for (const insert of actorInserts) {
 				expect(insert.type).toBe('agent')
 				expect(insert.apiKey).toMatch(/^ank_/)
 			}
-			// Member roles for the 6 default agents (at 3, 5, 7, 9, 11, 13).
-			const memberInserts = [3, 5, 7, 9, 11, 13].map((i) => calls.inserts[i] as { role?: string })
+			// SDR agent (index 2 in DEFAULT_AGENT_NAMES → insert index 6) carries the
+			// linkedin capability opt-in that unlocks the LinkedIn UI on its detail page.
+			const sdrInsert = actorInserts[2]
+			expect(sdrInsert?.name).toBe('SDR agent')
+			expect((sdrInsert?.tools as { capabilities?: string[] } | null)?.capabilities).toContain(
+				'linkedin',
+			)
+			// Member roles for the 7 default agents (at 3, 5, 7, 9, 11, 13, 15).
+			const memberInserts = [3, 5, 7, 9, 11, 13, 15].map(
+				(i) => calls.inserts[i] as { role?: string },
+			)
 			for (const insert of memberInserts) {
 				expect(insert.role).toBe('member')
 			}

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { generateApiKey } from '@maskin/auth'
 import { actors, workspaceMembers, workspaces as workspacesTable } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { insertActor } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
@@ -43,6 +43,7 @@ const { SeedAgentError } = await import('../../services/workspace-bootstrap')
 const DEFAULT_AGENT_NAMES = [
 	'Workspace Coach',
 	'Chief of Staff',
+	'SDR agent',
 	'Workspace Driver',
 	'Strategist',
 	'Insights Triage Agent',
@@ -206,11 +207,12 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 6 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 8.
-			expect(members).toHaveLength(8)
+			// Creator (owner) + all 7 default agents (seeded atomically inside the
+			// create transaction) + the newly-added member = 9.
+			expect(members).toHaveLength(9)
 			const roles = members.map((m: { role: string }) => m.role).sort()
 			expect(roles).toEqual([
+				'member',
 				'member',
 				'member',
 				'member',
@@ -234,6 +236,32 @@ describe('Workspaces Integration', () => {
 			const ws = await createRes.json()
 
 			expect(await agentNamesFor(ws.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
+		})
+
+		it('persists tools.capabilities: [linkedin] on the seeded SDR agent so the frontend gate opens', async () => {
+			// End-to-end guard for this task's DoD — the whole point of the SDR
+			// agent template is that its `tools.capabilities` array survives the
+			// insert path into jsonb and reads back with `'linkedin'` present, so
+			// `hasLinkedinCapability` on the agent-detail frontend returns true
+			// without a manual `PATCH /api/actors` from the console.
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'SDR Capability Persist' }),
+			)
+			expect(createRes.status).toBe(201)
+			const ws = await createRes.json()
+
+			const [sdr] = await db
+				.select({ tools: actors.tools })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(and(eq(workspaceMembers.workspaceId, ws.id), eq(actors.name, 'SDR agent')))
+				.limit(1)
+
+			expect(sdr).toBeDefined()
+			const capabilities = (sdr?.tools as { capabilities?: string[] } | null)?.capabilities
+			expect(capabilities).toContain('linkedin')
 		})
 
 		it('creates two workspaces for the same creator with default agents each and no cross-contamination', async () => {

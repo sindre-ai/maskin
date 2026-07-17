@@ -13,6 +13,7 @@ import {
 	CHIEF_OF_STAFF_DEFAULT,
 	DEVELOPMENT_AGENTS,
 	DEVELOPMENT_TRIGGERS,
+	SDR_AGENT_DEFAULT,
 	WORKSPACE_COACH_DEFAULT,
 	parseSkillMd,
 	skillNameSchema,
@@ -24,6 +25,7 @@ import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 export const DEFAULT_AGENT_IDS = [
 	'workspace_coach',
 	'chief_of_staff',
+	'sdr_agent',
 	'workspace_driver',
 	'strategist',
 	'insights_triage',
@@ -94,6 +96,17 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 			llmProvider: CHIEF_OF_STAFF_DEFAULT.llmProvider,
 			llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig as Record<string, unknown>,
 			tools: CHIEF_OF_STAFF_DEFAULT.tools as Record<string, unknown>,
+		}
+	}
+	if (agentId === 'sdr_agent') {
+		return {
+			type: SDR_AGENT_DEFAULT.type,
+			name: SDR_AGENT_DEFAULT.name,
+			isSystem: SDR_AGENT_DEFAULT.isSystem,
+			systemPrompt: SDR_AGENT_DEFAULT.systemPrompt,
+			llmProvider: SDR_AGENT_DEFAULT.llmProvider,
+			llmConfig: SDR_AGENT_DEFAULT.llmConfig as Record<string, unknown>,
+			tools: SDR_AGENT_DEFAULT.tools as Record<string, unknown>,
 		}
 	}
 	const agent = DEVELOPMENT_AGENTS.find((a) => a.$id === agentId)
@@ -184,6 +197,53 @@ export async function seedDefaultAgentActors(
 	}
 
 	return actorIds
+}
+
+/**
+ * Idempotently ensures the SDR agent actor exists in the workspace,
+ * creating it if missing. Returns its actor id either way. Seeds the
+ * `tools.capabilities: ['linkedin']` opt-in that unlocks the LinkedIn
+ * hero pill and Channels row on the agent detail page.
+ */
+export async function ensureSdrAgentActor(
+	db: Tx,
+	workspaceId: string,
+	createdBy: string,
+): Promise<string> {
+	const spec = resolveActorSpec('sdr_agent')
+	const [existing] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+		.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, spec.name)))
+		.limit(1)
+
+	if (existing) return existing.actorId
+
+	const [created] = await db
+		.insert(actors)
+		.values({
+			type: spec.type,
+			name: spec.name,
+			isSystem: spec.isSystem,
+			systemPrompt: spec.systemPrompt.replaceAll('{{self_id}}', ''),
+			llmProvider: spec.llmProvider,
+			llmConfig: spec.llmConfig,
+			tools: spec.tools,
+			apiKey: generateApiKey().key,
+			createdBy,
+		})
+		.returning()
+
+	if (!created) throw new Error('Failed to create SDR agent actor')
+
+	await db.insert(workspaceMembers).values({
+		workspaceId,
+		actorId: created.id,
+		role: 'member',
+	})
+
+	return created.id
 }
 
 /**
@@ -289,6 +349,20 @@ export async function bootstrapDefaultAgents(
 	// owner picked a different default).
 	if (chiefId) {
 		await pinDefaultAgentIfUnset(db, workspaceId, chiefId)
+	}
+
+	// Seed the SDR agent — the customer-facing LinkedIn outreach specialist.
+	// Idempotent per workspace via the actors.name check. Kept separate from
+	// the DEVELOPMENT_AGENTS loop below because it lives in its own template
+	// file (like Chief of Staff and Workspace Coach), not in the internal
+	// development-agents bundle.
+	try {
+		await ensureSdrAgentActor(db, workspaceId, createdBy)
+	} catch (err) {
+		logger.error('Failed to create SDR agent during workspace bootstrap', {
+			workspaceId,
+			err,
+		})
 	}
 
 	for (const agent of defaultAgents) {
