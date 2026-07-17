@@ -57,7 +57,6 @@ export function AgentRunPauseButton({
 			}}
 			disabled={isRunPending || disabled}
 			title={disabled ? disabledReason : undefined}
-			aria-label={disabled && disabledReason ? disabledReason : undefined}
 		>
 			<Play size={14} aria-hidden="true" />
 			{isRunPending ? 'Starting…' : runLabel}
