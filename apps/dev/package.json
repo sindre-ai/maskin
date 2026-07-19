@@ -20,6 +20,7 @@
 		"@hono/zod-openapi": "^0.18.0",
 		"@maskin/auth": "workspace:*",
 		"@maskin/db": "workspace:*",
+		"@maskin/markdown": "workspace:*",
 		"@maskin/ext-crm": "workspace:*",
 		"@maskin/ext-knowledge": "workspace:*",
 		"@maskin/ext-notetaker": "workspace:*",
