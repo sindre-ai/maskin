@@ -29,6 +29,7 @@ import installedPackagesRoutes from './routes/installed-packages'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import mcpRoutes from './routes/mcp'
+import methodRoutes from './routes/method'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
@@ -251,6 +252,13 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	}
 
 	app.route('/mcp', mcpRoutes)
+
+	// Public Method reader. Mounted before the SPA static/fallback below so
+	// `/method/*` never falls through to `index.html`. Editorial layer is the
+	// scope of T1 on the parent bet; the analytics injection landing here (T2)
+	// is what makes the ship metric emit — preserve that injection when the
+	// editorial layer replaces the route body.
+	app.route('/method', methodRoutes)
 
 	app.doc31('/api/openapi.json', getOpenApiConfig(port))
 
