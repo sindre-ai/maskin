@@ -57,6 +57,18 @@ export function SparseComposer({ itemsCount, onFocusChange }: SparseComposerProp
 					type: obj.type ?? undefined,
 				})
 			}
+			for (const notif of selection.notifications) {
+				attachments.push({ kind: 'notification', id: notif.id, title: notif.title })
+			}
+			for (const file of selection.files) {
+				attachments.push({
+					kind: 'file',
+					fileId: file.fileId,
+					name: file.name,
+					sizeBytes: file.sizeBytes,
+					...(file.mimeType ? { mimeType: file.mimeType } : {}),
+				})
+			}
 			const itemsCountAtSubmit = itemsCount
 			await openWithContext(attachments, content)
 			trackForyouSparseComposerSubmit({ items_count: itemsCountAtSubmit })

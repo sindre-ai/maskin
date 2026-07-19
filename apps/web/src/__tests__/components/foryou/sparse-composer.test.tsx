@@ -22,9 +22,18 @@ vi.mock('@/lib/analytics', () => ({
 	trackForyouSparseComposerSubmit: (p: { items_count: number }) => trackSubmitMock(p),
 }))
 
-// Minimal stub — Composer's own tests cover its internals (Enter, error display, etc.)
+// Minimal stub — Composer's own tests cover its internals (Enter, error display, etc.).
+// Exposes a hidden "Seed file attachment" button so tests can dispatch add_file into
+// SparseComposer's reducer and assert the forwarding path through openWithContext.
 vi.mock('@/components/chat/chat', () => ({
-	Composer: ({ onSend, placeholder, textareaLabel, disabled, externalError }: ComposerProps) => {
+	Composer: ({
+		onSend,
+		onDispatchSelection,
+		placeholder,
+		textareaLabel,
+		disabled,
+		externalError,
+	}: ComposerProps) => {
 		const [value, setValue] = useState('')
 		return (
 			<form
@@ -45,6 +54,21 @@ vi.mock('@/components/chat/chat', () => ({
 					disabled={disabled}
 				/>
 				<button type="submit" aria-label="Send message" disabled={disabled || !value.trim()} />
+				<button
+					type="button"
+					aria-label="Seed file attachment"
+					onClick={() =>
+						onDispatchSelection?.({
+							type: 'add_file',
+							file: {
+								fileId: 'file-seeded',
+								name: 'photo.jpg',
+								sizeBytes: 2048,
+								mimeType: 'image/jpeg',
+							},
+						})
+					}
+				/>
 				{externalError ? <p role="alert">{externalError}</p> : null}
 			</form>
 		)
@@ -159,6 +183,28 @@ describe('SparseComposer', () => {
 		await waitFor(() => expect(openWithContextMock).toHaveBeenCalled())
 		expect(trackSubmitMock).not.toHaveBeenCalled()
 		await waitFor(() => expect(chip).not.toBeDisabled())
+	})
+
+	it('forwards a picked file attachment to the sheet so Chat.handleSend sees it on the auto-send turn', async () => {
+		const user = userEvent.setup()
+		render(<SparseComposer itemsCount={0} />)
+		await user.click(screen.getByRole('button', { name: 'Seed file attachment' }))
+		await user.type(getTextarea(), 'look at this')
+		await user.click(screen.getByRole('button', { name: 'Send message' }))
+		await waitFor(() => {
+			expect(openWithContextMock).toHaveBeenCalledWith(
+				[
+					{
+						kind: 'file',
+						fileId: 'file-seeded',
+						name: 'photo.jpg',
+						sizeBytes: 2048,
+						mimeType: 'image/jpeg',
+					},
+				],
+				'look at this',
+			)
+		})
 	})
 
 	it('clears chipError on successful text-input submit after a prior chip failure', async () => {
