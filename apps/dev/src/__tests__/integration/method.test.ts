@@ -1,4 +1,4 @@
-import { objects, relationships, workspaces } from '@maskin/db/schema'
+import { relationships, workspaces } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import methodRoutes, { slugFor } from '../../routes/method'
