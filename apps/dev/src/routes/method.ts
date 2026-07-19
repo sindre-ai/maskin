@@ -152,17 +152,29 @@ function cacheSet(key: string, value: string): void {
 	}
 }
 
+// The rendered page inlines the pageview `<script>` from
+// `buildMethodSitePageviewScript`, whose output depends on VITE_POSTHOG_KEY and
+// VITE_POSTHOG_HOST. Include a fingerprint of those in the ETag/cache key so a
+// config change (or a test that flips a var) never serves a stale cached page.
+function analyticsFingerprint(): string {
+	const key = process.env.VITE_POSTHOG_KEY ?? ''
+	const host = process.env.VITE_POSTHOG_HOST ?? ''
+	return createHash('sha1').update(`${key}:${host}`).digest('hex').slice(0, 8)
+}
+
 function coverEtag(chapters: PublishableChapter[], publishVersion: number): string {
 	const maxUpdated = chapters.reduce((acc, c) => Math.max(acc, c.updatedAt.getTime()), 0)
 	return `"${createHash('sha1')
-		.update(`cover:${maxUpdated}:${publishVersion}:${chapters.length}`)
+		.update(`cover:${maxUpdated}:${publishVersion}:${chapters.length}:${analyticsFingerprint()}`)
 		.digest('hex')
 		.slice(0, 16)}"`
 }
 
 function chapterEtag(chapter: PublishableChapter, publishVersion: number): string {
 	return `"${createHash('sha1')
-		.update(`chapter:${chapter.id}:${chapter.updatedAt.getTime()}:${publishVersion}`)
+		.update(
+			`chapter:${chapter.id}:${chapter.updatedAt.getTime()}:${publishVersion}:${analyticsFingerprint()}`,
+		)
 		.digest('hex')
 		.slice(0, 16)}"`
 }
