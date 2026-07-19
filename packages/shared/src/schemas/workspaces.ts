@@ -152,6 +152,20 @@ export const workspaceSettingsSchema = z.object({
 	// Staff prototype bet so owner chats route through CoS instead of Workspace
 	// Coach when this is populated.
 	default_agent_id: z.string().uuid().nullable().optional(),
+	// Public "method site" publishing config (ADR #6 on the Publish bet).
+	// `enabled` is the master switch — false by default so a workspace opts in
+	// before any object metadata surfaces at /method/*. `version` bumps on any
+	// publish-visible edit and drives ETag invalidation (ADR-2/ADR-4).
+	publish: z
+		.object({
+			enabled: z.boolean().default(false),
+			slug: z.string().optional(),
+			title: z.string().optional(),
+			description: z.string().optional(),
+			visibility: z.enum(['public', 'unlisted']).default('public'),
+			version: z.number().int().nonnegative().default(0),
+		})
+		.optional(),
 })
 
 export const createWorkspaceSchema = z.object({
