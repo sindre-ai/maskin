@@ -554,6 +554,88 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('buildLaunchSpec() — previewGuestPorts (Critical #1 fix)', () => {
+		function buildTestAgent(actorId: string) {
+			return {
+				id: actorId,
+				type: 'agent' as const,
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+		}
+
+		function buildTestWorkspace(workspaceId: string) {
+			return { id: workspaceId, settings: {} }
+		}
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+		})
+
+		it('passes previewGuestPorts through and forces browserRequired to true', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				config: { previewGuestPorts: [3000, 8080] },
+			})
+			const agent = buildTestAgent(session.actorId)
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			mockResults.selectQueue = [
+				[agent], // buildLaunchSpec: agent lookup
+				[workspace], // buildLaunchSpec: workspace llm keys
+				[], // buildLaunchSpec: integrations
+			]
+
+			const spec = await manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+
+			expect(spec.previewGuestPorts).toEqual([3000, 8080])
+			expect(spec.browserRequired).toBe(true)
+		})
+
+		it('filters out non-integer, non-positive, and out-of-range port values', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				config: { previewGuestPorts: [3000, -1, 70000, 'abc', 1.5, 8080] },
+			})
+			const agent = buildTestAgent(session.actorId)
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			mockResults.selectQueue = [[agent], [workspace], []]
+
+			const spec = await manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+
+			expect(spec.previewGuestPorts).toEqual([3000, 8080])
+		})
+
+		it('leaves browserRequired false and previewGuestPorts empty when the field is absent', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				config: {},
+			})
+			const agent = buildTestAgent(session.actorId)
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			mockResults.selectQueue = [[agent], [workspace], []]
+
+			const spec = await manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+
+			expect(spec.previewGuestPorts).toEqual([])
+			expect(spec.browserRequired).toBe(false)
+		})
+	})
+
 	describe('cleanupBrowserSidecar() — teardown SLA (AC-T5)', () => {
 		// Access the private map + method through a structural cast so the test
 		// can exercise the orchestration without standing up the whole

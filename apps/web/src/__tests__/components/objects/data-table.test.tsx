@@ -1,9 +1,20 @@
 import { getStaticColumns } from '@/components/objects/data-table/columns'
-import { DataTable } from '@/components/objects/data-table/data-table'
-import type { RowSelectionState, VisibilityState } from '@tanstack/react-table'
+import { DataTable, type DataTableHandle } from '@/components/objects/data-table/data-table'
+import type {
+	ExpandedState,
+	OnChangeFn,
+	RowSelectionState,
+	VisibilityState,
+} from '@tanstack/react-table'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { ButtonHTMLAttributes, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import {
+	type ButtonHTMLAttributes,
+	type MouseEvent as ReactMouseEvent,
+	type ReactNode,
+	createRef,
+	useState,
+} from 'react'
 import { buildObjectResponse } from '../../factories'
 
 const mockNavigate = vi.fn()
@@ -48,6 +59,7 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: [] }),
 }))
 
+const mockScrollToIndex = vi.fn()
 vi.mock('@tanstack/react-virtual', () => ({
 	useVirtualizer: ({ count }: { count: number }) => ({
 		getVirtualItems: () =>
@@ -59,6 +71,7 @@ vi.mock('@tanstack/react-virtual', () => ({
 			})),
 		getTotalSize: () => count * 48,
 		measureElement: vi.fn(),
+		scrollToIndex: mockScrollToIndex,
 	}),
 }))
 
@@ -71,6 +84,18 @@ globalThis.IntersectionObserver = vi.fn().mockImplementation(() => ({
 
 const defaultColumns = getStaticColumns({ workspaceId: 'ws-1' })
 
+// Wraps DataTable so header-chevron clicks in tests visibly toggle expansion
+// via the controlled onExpandedChange boundary. Production wiring lives in
+// the Objects route; this harness just keeps the primitive testable.
+function StatefulExpandedHarness(props: Parameters<typeof DataTable>[0]) {
+	const [expanded, setExpanded] = useState<ExpandedState>(props.expanded)
+	const onExpandedChange: OnChangeFn<ExpandedState> = (updater) => {
+		setExpanded((prev) => (typeof updater === 'function' ? updater(prev) : updater))
+		props.onExpandedChange(updater)
+	}
+	return <DataTable {...props} expanded={expanded} onExpandedChange={onExpandedChange} />
+}
+
 function renderDataTable(overrides: Partial<Parameters<typeof DataTable>[0]> = {}) {
 	const props = {
 		data: [],
@@ -80,15 +105,18 @@ function renderDataTable(overrides: Partial<Parameters<typeof DataTable>[0]> = {
 		onRowSelectionChange: vi.fn(),
 		columnVisibility: {} as VisibilityState,
 		onColumnVisibilityChange: vi.fn(),
+		expanded: {} as ExpandedState,
+		onExpandedChange: vi.fn(),
 		...overrides,
 	}
-	return render(<DataTable {...props} />)
+	return render(<StatefulExpandedHarness {...props} />)
 }
 
 describe('DataTable', () => {
 	beforeEach(() => {
 		mockNavigate.mockClear()
 		mockIsMobile.mockReturnValue(false)
+		mockScrollToIndex.mockClear()
 	})
 
 	it('shows empty state when data is empty', () => {
@@ -126,6 +154,55 @@ describe('DataTable', () => {
 			to: '/$workspaceId/objects/$objectId',
 			params: { workspaceId: 'ws-1', objectId: 'obj-42' },
 		})
+	})
+
+	it('calls onCaptureViewState synchronously before navigating on row click', async () => {
+		const user = userEvent.setup()
+		const onCaptureViewState = vi.fn()
+		const obj = buildObjectResponse({
+			id: 'obj-99',
+			title: 'Anchor row',
+			status: 'active',
+		})
+		const { container } = renderDataTable({ data: [obj], onCaptureViewState })
+
+		// Click on the row (not the title Link — that stops propagation to keep
+		// keyboard-select semantics clean). The row-level onClick calls the
+		// route's `handleRowClick`, which is what wires the capture callback.
+		const row = container.querySelector('tr[data-drag-row]') as HTMLElement | null
+		expect(row).not.toBeNull()
+		await user.click(row as HTMLElement)
+
+		// Capture must run before navigate so the store holds the outgoing
+		// scroll anchor by the time the router pushes the detail route.
+		expect(onCaptureViewState).toHaveBeenCalledTimes(1)
+		const captureOrder = onCaptureViewState.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+		const navigateOrder = mockNavigate.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY
+		expect(captureOrder).toBeLessThan(navigateOrder)
+	})
+
+	it('exposes an imperative handle whose getFirstVisibleRowId returns the top virtualized row id', () => {
+		const ref = createRef<DataTableHandle>()
+		const data = [
+			buildObjectResponse({ id: 'row-top', title: 'Top' }),
+			buildObjectResponse({ id: 'row-2', title: 'Second' }),
+		]
+		render(
+			<DataTable
+				ref={ref}
+				data={data}
+				columns={defaultColumns}
+				workspaceId="ws-1"
+				rowSelection={{}}
+				onRowSelectionChange={vi.fn()}
+				columnVisibility={{}}
+				onColumnVisibilityChange={vi.fn()}
+				expanded={{}}
+				onExpandedChange={vi.fn()}
+			/>,
+		)
+		expect(ref.current).not.toBeNull()
+		expect(ref.current?.getFirstVisibleRowId()).toBe('row-top')
 	})
 
 	it('shows fetching indicator when isFetchingNextPage is true', () => {
@@ -352,8 +429,10 @@ describe('DataTable', () => {
 				columnVisibility: {} as VisibilityState,
 				onColumnVisibilityChange: vi.fn(),
 				grouping: ['createdBy'],
+				expanded: {} as ExpandedState,
+				onExpandedChange: vi.fn(),
 			}
-			const { rerender } = render(<DataTable {...props} />)
+			const { rerender } = render(<StatefulExpandedHarness {...props} />)
 
 			await user.click(screen.getByRole('button', { name: /\(2\)/ }))
 			expect(screen.getByText('Gamma')).toBeInTheDocument()
@@ -362,7 +441,7 @@ describe('DataTable', () => {
 			// through a fresh data reference. Without autoResetExpanded: false,
 			// TanStack Table would collapse the group on this cycle.
 			await act(async () => {
-				rerender(<DataTable {...props} data={[...data]} />)
+				rerender(<StatefulExpandedHarness {...props} data={[...data]} />)
 			})
 
 			expect(screen.getByText('Gamma')).toBeInTheDocument()
@@ -434,6 +513,52 @@ describe('DataTable', () => {
 				},
 			})
 			expect(screen.queryByLabelText('Status: waiting')).not.toBeInTheDocument()
+		})
+	})
+
+	// T2 (retain view state) — group expansion controlled state. The Objects
+	// route lifts TanStack's `expanded` map so it can hydrate from and write
+	// through the persisted DisplaySettingsBody's `groupExpanded` field.
+	describe('controlled group-expansion state', () => {
+		it('renders groups expanded when hydrated with a persisted expanded state', () => {
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			// TanStack Table row.id for a grouped header row is
+			// `<column>:<value>` — same shape that lands in the persisted map.
+			renderDataTable({
+				data,
+				grouping: ['status'],
+				expanded: { 'status:active': true },
+				onExpandedChange: vi.fn(),
+			})
+
+			// The expanded group's leaf rows render immediately — no chevron
+			// click needed. That's the visible signal of controlled expansion.
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+			expect(screen.getByText('Beta')).toBeInTheDocument()
+			expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument()
+		})
+
+		it('calls onExpandedChange when the chevron is clicked', async () => {
+			const user = userEvent.setup()
+			const data = [
+				buildObjectResponse({ id: 'a', title: 'Alpha', status: 'active' }),
+				buildObjectResponse({ id: 'b', title: 'Beta', status: 'active' }),
+			]
+			const onExpandedChange = vi.fn()
+			renderDataTable({
+				data,
+				grouping: ['status'],
+				expanded: {},
+				onExpandedChange,
+			})
+
+			const chevron = screen.getByRole('button', { expanded: false })
+			await user.click(chevron)
+
+			expect(onExpandedChange).toHaveBeenCalled()
 		})
 	})
 })

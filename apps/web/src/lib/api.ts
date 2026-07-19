@@ -1159,6 +1159,7 @@ export interface CreateSessionInput {
 	action_prompt: string
 	config?: SessionConfigInput
 	auto_start?: boolean
+	entry_agent_role?: string
 }
 
 export interface SessionResponse {

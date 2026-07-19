@@ -149,11 +149,13 @@ describe('useChatOneShot — send', () => {
 			entity_id: 'sess-a',
 			entity_type: 'session',
 			entry_point: 'agent_one_shot',
+			entry_agent_role: 'code-reviewer',
 		})
 		expect(trackChatSessionStarted).toHaveBeenNthCalledWith(2, {
 			entity_id: 'sess-b',
 			entity_type: 'session',
 			entry_point: 'agent_one_shot',
+			entry_agent_role: 'code-reviewer',
 		})
 	})
 

@@ -88,10 +88,18 @@ app.openapi(createSessionRoute, (async (c) => {
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
+	// Stash entry_agent_role inside the existing config JSON blob so downstream
+	// analytics (parent bet's Chief of Staff thinness query) can attribute
+	// every session to the agent that received the owner's first turn without
+	// requiring an additive column migration.
+	const config = body.entry_agent_role
+		? { ...body.config, entry_agent_role: body.entry_agent_role }
+		: body.config
+
 	const session = await sessionManager.createSession(workspaceId, {
 		actorId: body.actor_id,
 		actionPrompt: body.action_prompt,
-		config: body.config,
+		config,
 		triggerId: body.trigger_id,
 		createdBy: actorId,
 		autoStart: body.auto_start,

@@ -24,6 +24,50 @@ describe('Sessions Routes', () => {
 			expect(body.id).toBe(session.id)
 			expect(body.status).toBe('running')
 		})
+
+		it('persists entry_agent_role onto sessions.config for downstream analytics', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, sessionManager } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue(session)
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions',
+					buildCreateSessionBody({
+						config: { interactive: true },
+						entry_agent_role: 'chief-of-staff',
+					}),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const createArgs = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
+			expect(createArgs?.[0]).toBe(wsId)
+			expect(createArgs?.[1]?.config).toMatchObject({
+				interactive: true,
+				entry_agent_role: 'chief-of-staff',
+			})
+		})
+
+		it('leaves config untouched when entry_agent_role is omitted', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, sessionManager } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue(session)
+
+			await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions',
+					buildCreateSessionBody({ config: { interactive: true } }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			const createArgs = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
+			expect(createArgs?.[1]?.config).not.toHaveProperty('entry_agent_role')
+		})
 	})
 
 	describe('GET /api/sessions', () => {

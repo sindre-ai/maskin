@@ -2,6 +2,7 @@ import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-v
 import { Textarea } from '@/components/ui/textarea'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { remarkPlugins } from '@maskin/markdown/plugins'
 import {
 	Children,
 	type ReactElement,
@@ -14,8 +15,6 @@ import {
 	useState,
 } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
-import remarkBreaks from 'remark-breaks'
-import remarkGfm from 'remark-gfm'
 import { MentionedText } from './mentioned-text'
 
 function wrapWithMentions(
@@ -224,7 +223,7 @@ export function MarkdownContent({
 				)}
 			>
 				<ReactMarkdown
-					remarkPlugins={[remarkGfm, remarkBreaks]}
+					remarkPlugins={remarkPlugins as unknown as never[]}
 					disallowedElements={disallowedElements}
 					unwrapDisallowed={Boolean(disallowedElements && disallowedElements.length > 0)}
 					components={components}

@@ -56,6 +56,12 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return { ...actual, trackSpecialistSummonedManually: vi.fn() }
+})
+
+import { trackSpecialistSummonedManually } from '@/lib/analytics'
 import { api } from '@/lib/api'
 
 // cmdk + Radix Popover rely on these browser APIs when the picker content is
@@ -96,6 +102,7 @@ beforeEach(() => {
 	mockOneShotSend.mockClear()
 	mockOneShotClear.mockClear()
 	mockUploadFile.mockReset()
+	vi.mocked(trackSpecialistSummonedManually).mockClear()
 	vi.mocked(api.actors.list).mockResolvedValue([
 		buildActorListItem({ id: 'actor-a', name: 'Reviewer', type: 'agent', email: null }),
 		buildActorListItem({ id: 'actor-b', name: 'Planner', type: 'agent', email: null }),
@@ -679,8 +686,39 @@ describe('Chat', () => {
 			type: 'add_agent',
 			agent: { id: 'actor-a', name: 'Reviewer' },
 		})
+		// Thinness event: manually summoning a specialist through the picker is
+		// exactly the interaction the parent bet's `specialist_summoned_manually`
+		// counts. Fires the moment the agent is committed, with the picked
+		// actor's kebab-cased role for the query.
+		expect(trackSpecialistSummonedManually).toHaveBeenCalledWith({
+			entity_id: 'actor-a',
+			entity_type: 'agent',
+			agent_role: 'reviewer',
+		})
 		// The `/` that triggered the picker is spliced out; the rest remains.
 		await waitFor(() => expect(textarea.value).toBe('hi '))
+	})
+
+	it('does not fire specialist_summoned_manually when the picker adds an object', async () => {
+		const user = userEvent.setup()
+		vi.mocked(trackSpecialistSummonedManually).mockClear()
+		const dispatch = vi.fn<(action: ChatSelectionAction) => void>()
+
+		render(
+			<Chat
+				workspaceId="ws-1"
+				agentActorId="actor-agent"
+				surface="sheet"
+				selection={{ agent: null, objects: [], notifications: [], files: [] }}
+				onDispatchSelection={dispatch}
+			/>,
+			{ wrapper: WithQueryClient },
+		)
+
+		await user.click(screen.getByRole('button', { name: /attach items/i }))
+		await user.click(await screen.findByRole('option', { name: /Bet Alpha/ }))
+
+		expect(trackSpecialistSummonedManually).not.toHaveBeenCalled()
 	})
 
 	it('dispatches add_object when the Items button path picks an object', async () => {

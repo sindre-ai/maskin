@@ -29,6 +29,14 @@ const COLUMN_VISIBILITY_MAX_ENTRIES = 200
 // Metadata filter keys are workspace-defined field names, same bound as
 // columnIdSchema; realistic field-definition counts per type are a handful.
 const METADATA_FILTERS_MAX_ENTRIES = 50
+// TanStack Table row ids for grouping look like `metadata.<field>:<value>`;
+// the same 256-char bound as columnIdSchema comfortably fits any realistic
+// composite key.
+const rowIdSchema = z.string().min(1).max(256)
+// Group-expansion state can hold one entry per group row rendered on the
+// list; the same bound as columnVisibility keeps payload size finite while
+// far exceeding any realistic group count.
+const GROUP_EXPANDED_MAX_ENTRIES = 200
 
 export const displaySettingsBodySchema = z
 	.object({
@@ -56,6 +64,13 @@ export const displaySettingsBodySchema = z
 			})
 			.optional(),
 		timelineView: z.enum(['timeline', 'table']).optional(),
+		groupExpanded: z
+			.record(rowIdSchema, z.boolean())
+			.refine((v) => Object.keys(v).length <= GROUP_EXPANDED_MAX_ENTRIES, {
+				message: `groupExpanded may have at most ${GROUP_EXPANDED_MAX_ENTRIES} entries`,
+			})
+			.optional(),
+		firstVisibleRowId: rowIdSchema.nullable().optional(),
 	})
 	.strict()
 

@@ -278,22 +278,18 @@ describe('Objects undo-write integration', () => {
 	})
 
 	// KA actor rows are seeded per-test; this cleanup keeps the shared test-actor
-	// row unaffected while ensuring the agents we insert don't accumulate. The
-	// events rows seeded via seedKAWrite() reference these actors via a
-	// no-cascade FK, so they must be deleted first or the actor delete violates
-	// events_actor_id_actors_id_fk.
+	// row unaffected while ensuring the agents we insert don't accumulate.
+	// events.actor_id has an ON DELETE no action FK to actors, so the events
+	// these agents authored must be deleted first or the actor delete violates
+	// the constraint.
 	afterEach(async () => {
 		const kaAgents = await db
 			.select({ id: actors.id })
 			.from(actors)
 			.where(eq(actors.name, DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME))
 		if (kaAgents.length > 0) {
-			await db.delete(events).where(
-				inArray(
-					events.actorId,
-					kaAgents.map((a) => a.id),
-				),
-			)
+			const ids = kaAgents.map((a) => a.id)
+			await db.delete(events).where(inArray(events.actorId, ids))
 			await db.delete(actors).where(eq(actors.name, DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME))
 		}
 	})
