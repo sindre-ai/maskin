@@ -31,17 +31,17 @@
 		"@maskin/shared": "workspace:*",
 		"@maskin/storage": "workspace:*",
 		"@modelcontextprotocol/sdk": "^1.29.0",
-		"adm-zip": "^0.5.17",
+		"adm-zip": "^0.6.0",
 		"bcryptjs": "^3.0.3",
 		"croner": "^10.0.1",
 		"csv-parse": "^6.2.1",
 		"dockerode": "^4.0.0",
 		"drizzle-orm": "^0.45.2",
 		"google-auth-library": "^9.15.0",
-		"hono": "^4.12.14",
+		"hono": "^4.12.31",
 		"posthog-node": "^4.10.2",
 		"postgres": "^3.4.9",
-		"tar-stream": "^3.1.0",
+		"tar-stream": "^3.2.0",
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {
@@ -51,8 +51,8 @@
 		"@types/node": "^25.6.0",
 		"@types/tar-stream": "^3.1.4",
 		"@vitest/coverage-v8": "^3.2.4",
-		"esbuild": "^0.28.0",
-		"tsx": "^4.19.0",
+		"esbuild": "^0.28.1",
+		"tsx": "^4.23.1",
 		"typescript": "^5.7.0",
 		"vitest": "^3.0.0"
 	}
