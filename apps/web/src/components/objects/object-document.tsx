@@ -24,6 +24,7 @@ import {
 	useVerifyObject,
 } from '@/hooks/use-objects'
 import { useDeleteRelationship } from '@/hooks/use-relationships'
+import { useScrollToTopEmitter } from '@/hooks/use-scroll-to-top-emitter'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { trackEvent } from '@/lib/analytics'
 import type {
@@ -310,6 +311,11 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const updateObject = useUpdateObject(workspaceId)
+	useScrollToTopEmitter({
+		enabled: object.type === 'bet',
+		objectType: object.type,
+		objectId: object.id,
+	})
 	const verifyObject = useVerifyObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const deleteRelationship = useDeleteRelationship(workspaceId, object.id)

@@ -18,6 +18,7 @@ import {
 	trackObjectsListArrived,
 	trackObjectsListGroupToggled,
 	trackRelationshipCreated,
+	trackScrollToTop,
 	trackSidebarAgentActivityExpanded,
 	trackSidebarWorkspaceSwitcherOpened,
 	trackSpecialistSummonedManually,
@@ -399,6 +400,24 @@ describe('v1 taxonomy helpers', () => {
 
 		expect(capture).toHaveBeenCalledWith('north_star_prompt_response', {
 			workspace_id: 'ws-42',
+		})
+	})
+
+	it('scroll_to_top carries the object_type + object_id join keys and the depth properties', () => {
+		const capture = captureSpy()
+
+		trackScrollToTop({
+			object_type: 'bet',
+			object_id: 'bet-42',
+			scroll_depth_at_start_px: 1600,
+			viewports_scrolled: 2,
+		})
+
+		expect(capture).toHaveBeenCalledWith('scroll_to_top', {
+			object_type: 'bet',
+			object_id: 'bet-42',
+			scroll_depth_at_start_px: 1600,
+			viewports_scrolled: 2,
 		})
 	})
 
