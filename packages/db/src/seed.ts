@@ -928,7 +928,7 @@ After planning, post a comment on the bet (do NOT @mention anyone) summarising: 
 				tools: {
 					mcpServers: {
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1095,7 +1095,7 @@ Move the task to \`in_review\`. The Code Reviewer trigger fires automatically.
 				tools: {
 					mcpServers: {
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1252,7 +1252,7 @@ Do NOT move the task to any other status. The human approves by replying. The Wo
 				tools: {
 					mcpServers: {
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1379,7 +1379,7 @@ Do NOT move the task to any other status.
 							headers: { 'x-api-key': '${EXA_API_KEY}' },
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1507,7 +1507,7 @@ Do NOT move the task to any other status.
 							headers: { 'x-api-key': '${EXA_API_KEY}' },
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1657,7 +1657,7 @@ If checks cannot be fixed (e.g. requires domain knowledge you don't have): post 
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1836,7 +1836,7 @@ If an architecture was approved: does the implementation follow the chosen ADR?
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -1993,7 +1993,7 @@ Move the task to \`in_review\`. The Code Reviewer trigger fires automatically.
 				tools: {
 					mcpServers: {
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2101,7 +2101,7 @@ If checks cannot be fixed (e.g. requires domain knowledge you don't have): post 
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2182,7 +2182,7 @@ If an architecture was approved: does the implementation follow the chosen ADR?
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2381,7 +2381,7 @@ A trigger fires when a coding task (no \`metadata.decision_type\`) moves to \`do
 1. Read the task. Find the PR URL in \`metadata.github_link\`.
 2. Check if the PR is already merged. If yes, skip to Step 2.
 3. Check the risk score (\`metadata.risk_score\` on the task).
-   - Score 0–6: merge automatically with \`gh pr merge <PR> --squash\`.
+   - Score 0–6: arm auto-merge with \`bash scripts/gh-pr-merge-auto.sh <PR>\` — GitHub squash-merges into the bet branch once CI + required approvals are green. Do not call the REST \`merge_pull_request\` tool or \`gh pr merge --squash\` directly; the wrapper handles the single transient-5xx retry.
    - Score 7–10: post a Slack message to the team channel flagging the high-risk merge and wait for a human to approve (or merge if no response within 30 min on a weekday).
 4. After merging, verify CI passes on the bet branch.
 
@@ -2393,7 +2393,7 @@ List all tasks linked to this bet via \`breaks_into\`. If ANY task is not in \`d
 
 If all tasks are done:
 1. Verify CI passes on the bet branch.
-2. Squash-merge the bet branch into \`main\` with \`gh pr merge <bet-branch-PR> --squash\`.
+2. Squash-merge the bet branch into \`main\` by arming auto-merge with \`bash scripts/gh-pr-merge-auto.sh <bet-branch-PR>\` — GitHub squash-merges once CI is green. Do not call the REST \`merge_pull_request\` tool.
 3. Verify CI passes on \`main\` after merge.
 4. Advance the bet to \`live\` via update_objects.
 5. Post a Slack message to the team channel announcing the bet shipped.
@@ -2415,7 +2415,7 @@ If all tasks are done:
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2429,7 +2429,7 @@ If all tasks are done:
 							},
 						},
 						github_approver: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN_APPROVER}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_APPROVER}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -2461,7 +2461,7 @@ Read the task, find its parent bet via \`breaks_into\`. If there is no parent be
 
 - **PR targets \`bet/<slug>\`** → Surface A (task PR into the bet branch). EVERY bet qualifies. Walk your Surface A gates: risk band must be \`AUTO-APPROVE ELIGIBLE\`; otherwise post the needs-your-merge comment on the task and exit. Sibling tasks do NOT need to be done. On confirmed merge: one short plain-language comment on the task; do NOT change the bet's status.
 
-- **PR targets \`main\`** → Surface B (umbrella \`bet/<slug> → main\`, or a standalone small-bug-fix task PR). Only proceed if the bet's \`metadata.auto_bug\` is \`true\` OR \`metadata.auto_merge_eligible\` is \`true\` — otherwise exit silently; the human merges to \`main\`. Then walk your Surface B gates: all sibling tasks \`done\`, band \`AUTO-APPROVE ELIGIBLE\`, PR cleanly mergeable, threads resolved, approving review submitted with \`github_approver\`, squash-merge with \`github\`. On confirmed merge: set the bet \`live\` with \`metadata.live_started_at\` and \`metadata.awaiting_deploy = true\`, and post the plain-language close-out comment per your system prompt.
+- **PR targets \`main\`** → Surface B (umbrella \`bet/<slug> → main\`, or a standalone small-bug-fix task PR). Only proceed if the bet's \`metadata.auto_bug\` is \`true\` OR \`metadata.auto_merge_eligible\` is \`true\` — otherwise exit silently; the human merges to \`main\`. Then walk your Surface B gates: all sibling tasks \`done\`, band \`AUTO-APPROVE ELIGIBLE\`, PR cleanly mergeable, threads resolved, approving review submitted by an identity that is NOT the PR author — pick the first available from the ordered fallback \`github_approver\` → \`github-vaerksted-ai\` → \`github-sindre-ai\` (extra identities added later APPEND, never prepend), then squash-merge with \`github\`. If every identity in the fallback is the PR author, do NOT approve — block on the guardrail and post the block comment instead. Confirmed merge: set the bet \`live\` with \`metadata.live_started_at\` and \`metadata.awaiting_deploy = true\`, and post the plain-language close-out comment per your system prompt.
 
 On any block (wrong band, missing Risk Score block, dirty PR, open threads, rejected approve, rejected merge): leave the bet \`active\` and post a comment on the bet via create_comment:
 - entity_id: <bet_id>
@@ -2566,7 +2566,7 @@ When a \`decision_type: ux\` or \`decision_type: architecture\` task moves to \`
 							headers: { 'x-api-key': '${EXA_API_KEY}' },
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -3136,7 +3136,7 @@ Check all @mention comments in the last 24h. Flag any where an agent @mentioned 
 							command: 'npx',
 						},
 						github: {
-							env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
 							args: ['-y', '@modelcontextprotocol/server-github'],
 							type: 'stdio' as const,
 							command: 'npx',
@@ -3422,13 +3422,20 @@ Triggering event: {triggering_event}`,
 
 Load \`maskin-voice\` and \`pipeline-liveness-watchdog\` before any action. The skill is the source of truth — run Mode 1 (full sweep) exactly as it specifies. The checks below are a memory aid, not a replacement.
 
+For each of Checks 1–3, query stalled tasks directly with the server-side filter:
+\`list_objects(type='task', status='<status>', updated_before='<now minus N hours, ISO-8601 UTC>', sort='updated_at_asc')\`.
+Compute the cutoff as \`new Date(Date.now() - N * 3600 * 1000).toISOString()\`. Walk the returned rows oldest-first — the server has already filtered to only tasks that haven't been touched inside the window, so you never need to fetch-then-filter in the session. Server-side filter must appear in the tool call log line for each check.
+
 **Check 1 — Tasks stuck in \`in_progress\` > 2h with no running session.**
+Query: \`list_objects(type='task', status='in_progress', updated_before=<now - 2h>, sort='updated_at_asc')\`.
 For each: find the last session, check its status. If \`failed\` or \`timeout\`, restart. If \`completed\` but task not advanced, advance the task manually. If no session at all, create one.
 
 **Check 2 — Tasks stuck in \`in_review\` > 4h with no reviewer session.**
+Query: \`list_objects(type='task', status='in_review', updated_before=<now - 4h>, sort='updated_at_asc')\`.
 For each: spawn a Code Reviewer session. The session trigger will pick it up normally.
 
 **Check 3 — Tasks stuck in \`validated\` > 4h with no CTO session.**
+Query: \`list_objects(type='task', status='validated', updated_before=<now - 4h>, sort='updated_at_asc')\`.
 For each: spawn an Acceptance Validator session.
 
 **Check 4 — Bets in \`active\` with all tasks \`done\` but bet not advanced.**
@@ -3460,11 +3467,15 @@ Triggering event: {triggering_event}`,
 				actionPrompt: `Run your Mode 3 daily bet sweep. Three responsibilities:
 
 **STEP 1 — Unstick stalled tasks.**
-For each \`active\` bet:
-- Find tasks in \`in_progress\` > 6h with no active session: restart.
-- Find tasks in \`in_review\` > 12h: re-trigger Code Reviewer.
-- Find tasks in \`validated\` > 12h: re-trigger Acceptance Validator.
-- Find \`todo\` tasks that should have started (concurrency budget available, no blocker): move to \`in_progress\`.
+
+Query stalled tasks directly with the server-side time filter instead of enumerating every active bet. For each cutoff below, compute \`new Date(Date.now() - N * 3600 * 1000).toISOString()\` and call:
+\`list_objects(type='task', status='<status>', updated_before='<cutoff>', sort='updated_at_asc')\`.
+Walk the returned rows oldest-first. The server has already narrowed the set to tasks not touched inside the window — no client-side filter needed, and the session reaches every row in one pass instead of running out of context after a few bets.
+
+- \`in_progress\`, cutoff \`now - 6h\`, no active session → restart.
+- \`in_review\`, cutoff \`now - 12h\` → re-trigger Code Reviewer.
+- \`validated\`, cutoff \`now - 12h\` → re-trigger Acceptance Validator.
+- \`todo\` tasks that should have started (concurrency budget available): move to \`in_progress\`. (No time filter — todos always eligible.)
 
 **STEP 2 — Advance completed bets.**
 Find bets where all tasks are \`done\` or \`discarded\` but bet is still \`active\`. Post a comment @mentioning the Strategist (\`c524aac2-4373-485b-b709-bbb4eb2d021e\`) to run acceptance review.

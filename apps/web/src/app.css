@@ -4,6 +4,30 @@
 @custom-variant dark (&:is(.dark *));
 @custom-variant can-hover (@media (hover: hover));
 
+/* Metric-tuned fallback fonts.
+   Render box is matched to Schibsted Grotesk / JetBrains Mono before the
+   webfont arrives so the layout doesn't shift on font swap. Values are a
+   conservative first pass — T8 will pin them against measured CLS. */
+@font-face {
+	font-family: "Schibsted Grotesk Fallback";
+	src: local("Arial"), local("Helvetica Neue"), local("Helvetica");
+	font-display: swap;
+	size-adjust: 100%;
+	ascent-override: 96%;
+	descent-override: 22%;
+	line-gap-override: 0%;
+}
+
+@font-face {
+	font-family: "JetBrains Mono Fallback";
+	src: local("Menlo"), local("Consolas"), local("Courier New");
+	font-display: swap;
+	size-adjust: 95%;
+	ascent-override: 100%;
+	descent-override: 24%;
+	line-gap-override: 0%;
+}
+
 @theme inline {
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
@@ -75,6 +99,14 @@
 	--color-status-scored-text: var(--st-scored-text);
 	--color-status-parked-bg: var(--st-parked-bg);
 	--color-status-parked-text: var(--st-parked-text);
+	--color-status-archived-bg: var(--st-archived-bg);
+	--color-status-archived-text: var(--st-archived-text);
+	--color-status-holding-bg: var(--st-holding-bg);
+	--color-status-holding-text: var(--st-holding-text);
+	--color-status-at_risk-bg: var(--st-at_risk-bg);
+	--color-status-at_risk-text: var(--st-at_risk-text);
+	--color-status-breached-bg: var(--st-breached-bg);
+	--color-status-breached-text: var(--st-breached-text);
 
 	/* Type badge colors */
 	--color-type-insight-bg: var(--tp-insight-bg);
@@ -94,8 +126,9 @@
 }
 
 @theme {
-	--font-sans: "Inter", system-ui, sans-serif;
-	--font-mono: "JetBrains Mono", ui-monospace, monospace;
+	--font-sans: "Schibsted Grotesk", "Schibsted Grotesk Fallback", system-ui, -apple-system,
+		"Segoe UI", Roboto, sans-serif;
+	--font-mono: "JetBrains Mono", "JetBrains Mono Fallback", ui-monospace, Menlo, Consolas, monospace;
 
 	--radius-sm: calc(var(--radius) - 4px);
 	--radius-md: calc(var(--radius) - 2px);
@@ -175,6 +208,14 @@
 	--st-scored-text: #86198f;
 	--st-parked-bg: #f5f5f4;
 	--st-parked-text: #57534e;
+	--st-archived-bg: #e7e5e4;
+	--st-archived-text: #57534e;
+	--st-holding-bg: #f4f4f5;
+	--st-holding-text: #52525b;
+	--st-at_risk-bg: #fef3c7;
+	--st-at_risk-text: #92400e;
+	--st-breached-bg: #fee2e2;
+	--st-breached-text: #991b1b;
 
 	/* Type badges */
 	--tp-insight-bg: #fef3c7;
@@ -264,6 +305,14 @@
 	--st-scored-text: #e879f9;
 	--st-parked-bg: #292524;
 	--st-parked-text: #a8a29e;
+	--st-archived-bg: #292524;
+	--st-archived-text: #a8a29e;
+	--st-holding-bg: #27272a;
+	--st-holding-text: #a1a1aa;
+	--st-at_risk-bg: #422006;
+	--st-at_risk-text: #fbbf24;
+	--st-breached-bg: #450a0a;
+	--st-breached-text: #fca5a5;
 
 	/* Type badges */
 	--tp-insight-bg: #422006;
@@ -288,6 +337,16 @@
 	}
 	body {
 		@apply bg-background text-foreground font-sans antialiased;
+	}
+
+	/* Tabular numerals on mono surfaces — keeps numeric columns column-aligned
+	   without each call site having to remember the utility class (AC-U4). */
+	code,
+	kbd,
+	samp,
+	pre,
+	.font-mono {
+		font-variant-numeric: tabular-nums;
 	}
 
 	/* Slim scrollbars — claude.ai-style thin track. Firefox uses the

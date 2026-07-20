@@ -1,12 +1,14 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, files, notifications, objects, subscriptions } from '@maskin/db/schema'
+import { events, actors, files, objects, subscriptions } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
+import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
+import { insertNotificationsWithEvents } from '../lib/notifications'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
 import type { SessionManager } from '../services/session-manager'
@@ -249,41 +251,27 @@ app.openapi(createCommentRoute, (async (c) => {
 			const agentActors = mentionedActors.filter((a) => a.type === 'agent')
 
 			if (agentActors.length > 0) {
-				const createdNotifications = await tx
-					.insert(notifications)
-					.values(
-						agentActors.map((agent) => ({
-							workspaceId,
-							type: 'needs_input' as const,
-							title: '@mentioned by comment',
-							content: body.content,
-							sourceActorId: actorId,
-							targetActorId: agent.id,
-							objectId: body.entity_id,
-							status: 'pending' as const,
-						})),
-					)
-					.returning()
+				const createdNotifications = await insertNotificationsWithEvents(tx, {
+					workspaceId,
+					actorId,
+					rows: agentActors.map((agent) => ({
+						workspaceId,
+						type: 'needs_input' as const,
+						title: '@mentioned by comment',
+						content: body.content,
+						sourceActorId: actorId,
+						targetActorId: agent.id,
+						objectId: body.entity_id,
+						status: 'pending' as const,
+					})),
+				})
 
-				if (createdNotifications.length > 0) {
-					await tx.insert(events).values(
-						createdNotifications.map((notification) => ({
-							workspaceId,
-							actorId,
-							action: 'created',
-							entityType: 'notification',
-							entityId: notification.id,
-							data: notification,
-						})),
-					)
-
-					for (const notification of createdNotifications) {
-						if (notification.targetActorId) {
-							mentions.push({
-								agentId: notification.targetActorId,
-								notificationId: notification.id,
-							})
-						}
+				for (const notification of createdNotifications) {
+					if (notification.targetActorId) {
+						mentions.push({
+							agentId: notification.targetActorId,
+							notificationId: notification.id,
+						})
 					}
 				}
 			}
@@ -425,6 +413,30 @@ app.openapi(createCommentRoute, (async (c) => {
 			logger.error('Failed to spawn thread-reply sessions', {
 				objectId: body.entity_id,
 				threadRootEventId: parentEventId,
+				error: String(err),
+			}),
+		)
+	}
+
+	// Ship-metric for the minimal-redesign bet: emit agent_comment_posted to
+	// PostHog when the commenter is an agent, capturing reply length + whether
+	// the comment used the inline-visual / task-list channels. Fire-and-forget;
+	// the helper itself never throws.
+	const actorType = c.get('actorType')
+	if (actorType === 'agent') {
+		const metadata = (body.metadata ?? {}) as Record<string, unknown>
+		const tasks = Array.isArray(metadata.tasks) ? metadata.tasks : []
+		trackAgentCommentPosted({
+			workspaceId,
+			actorId,
+			entityId: body.entity_id,
+			entityType: 'object',
+			content: body.content,
+			hasTaskList: tasks.length > 0,
+		}).catch((err) =>
+			logger.warn('trackAgentCommentPosted failed', {
+				actorId,
+				entityId: body.entity_id,
 				error: String(err),
 			}),
 		)

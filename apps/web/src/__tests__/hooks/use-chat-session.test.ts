@@ -35,7 +35,13 @@ vi.mock('@/lib/auth', () => ({
 	getApiKey: () => 'test-api-key',
 }))
 
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return { ...actual, trackChatSessionStarted: vi.fn() }
+})
+
 import { useChatSession } from '@/hooks/use-chat-session'
+import { trackChatSessionStarted } from '@/lib/analytics'
 import type { SessionResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { TestWrapper } from '../setup'
@@ -116,6 +122,144 @@ describe('useChatSession — bootstrap', () => {
 		})
 		await expect(result.current.send('hi')).rejects.toThrow(/not available/i)
 		expect(api.sessions.create).not.toHaveBeenCalled()
+	})
+
+	it('forwards entry_agent_role to the backend when the caller provides one', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-cos'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(
+			() => useChatSession({ workspaceId, agentActorId, entryAgentRole: 'chief-of-staff' }),
+			{ wrapper: TestWrapper },
+		)
+
+		await act(async () => {
+			await result.current.send('hi')
+		})
+
+		expect(api.sessions.create).toHaveBeenCalledWith(workspaceId, {
+			actor_id: agentActorId,
+			action_prompt: 'Workspace Coach interactive chat',
+			config: { interactive: true },
+			auto_start: true,
+			entry_agent_role: 'chief-of-staff',
+		})
+	})
+
+	it('omits entry_agent_role from the create body when the caller passes null', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-plain'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(
+			() => useChatSession({ workspaceId, agentActorId, entryAgentRole: null }),
+			{ wrapper: TestWrapper },
+		)
+
+		await act(async () => {
+			await result.current.send('hi')
+		})
+
+		const createArgs = vi.mocked(api.sessions.create).mock.calls[0]
+		expect(createArgs?.[1]).not.toHaveProperty('entry_agent_role')
+	})
+
+	it('emits chat_session_started once on the first fresh send, not on subsequent ones', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-new'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		await act(async () => {
+			await result.current.send('hi')
+		})
+		await act(async () => {
+			await result.current.send('again')
+		})
+
+		expect(trackChatSessionStarted).toHaveBeenCalledTimes(1)
+		expect(trackChatSessionStarted).toHaveBeenCalledWith({
+			entity_id: 'sess-new',
+			entity_type: 'session',
+			entry_point: 'sindre_session',
+			entry_agent_role: null,
+		})
+	})
+
+	it('emits chat_session_started again after reset() — a new container is a new chat', async () => {
+		vi.mocked(api.sessions.create)
+			.mockResolvedValueOnce(buildSession('sess-1'))
+			.mockResolvedValueOnce(buildSession('sess-2'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		await act(async () => {
+			await result.current.send('first')
+		})
+		act(() => {
+			result.current.reset()
+		})
+		await act(async () => {
+			await result.current.send('second')
+		})
+
+		expect(trackChatSessionStarted).toHaveBeenCalledTimes(2)
+		expect(trackChatSessionStarted).toHaveBeenNthCalledWith(1, {
+			entity_id: 'sess-1',
+			entity_type: 'session',
+			entry_point: 'sindre_session',
+			entry_agent_role: null,
+		})
+		expect(trackChatSessionStarted).toHaveBeenNthCalledWith(2, {
+			entity_id: 'sess-2',
+			entity_type: 'session',
+			entry_point: 'sindre_session',
+			entry_agent_role: null,
+		})
+	})
+
+	it('forwards entryAgentRole onto chat_session_started for the CoS bet', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-cos'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(
+			() =>
+				useChatSession({
+					workspaceId,
+					agentActorId,
+					entryAgentRole: 'chief-of-staff',
+				}),
+			{ wrapper: TestWrapper },
+		)
+
+		await act(async () => {
+			await result.current.send('hi')
+		})
+
+		expect(trackChatSessionStarted).toHaveBeenCalledWith({
+			entity_id: 'sess-cos',
+			entity_type: 'session',
+			entry_point: 'sindre_session',
+			entry_agent_role: 'chief-of-staff',
+		})
+	})
+
+	it('does not emit chat_session_started when session creation fails', async () => {
+		vi.mocked(api.sessions.create).mockRejectedValue(new Error('boom'))
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		await act(async () => {
+			await expect(result.current.send('hi')).rejects.toThrow('boom')
+		})
+
+		expect(trackChatSessionStarted).not.toHaveBeenCalled()
 	})
 
 	it('captures errors from session creation as the hook error', async () => {

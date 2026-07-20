@@ -10,7 +10,7 @@ import {
 	sessionUsageQuerySchema,
 	sessionUsageResponseSchema,
 } from '@maskin/shared'
-import { and, asc, desc, eq, gt, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, formatZodError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -88,10 +88,18 @@ app.openapi(createSessionRoute, (async (c) => {
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
+	// Stash entry_agent_role inside the existing config JSON blob so downstream
+	// analytics (parent bet's Chief of Staff thinness query) can attribute
+	// every session to the agent that received the owner's first turn without
+	// requiring an additive column migration.
+	const config = body.entry_agent_role
+		? { ...body.config, entry_agent_role: body.entry_agent_role }
+		: body.config
+
 	const session = await sessionManager.createSession(workspaceId, {
 		actorId: body.actor_id,
 		actionPrompt: body.action_prompt,
-		config: body.config,
+		config,
 		triggerId: body.trigger_id,
 		createdBy: actorId,
 		autoStart: body.auto_start,
@@ -135,6 +143,9 @@ app.openapi(listSessionsRoute, (async (c) => {
 			sql`(${sessions.config}->'mention'->>'object_id' = ${query.mention_object_id} OR ${sessions.config}->'thread_reply'->>'object_id' = ${query.mention_object_id})`,
 		)
 	}
+	// Half-open contract — Zod has already validated these as ISO-8601 strings.
+	if (query.updated_before) conditions.push(lt(sessions.updatedAt, new Date(query.updated_before)))
+	if (query.updated_after) conditions.push(gt(sessions.updatedAt, new Date(query.updated_after)))
 
 	const results = await db
 		.select()

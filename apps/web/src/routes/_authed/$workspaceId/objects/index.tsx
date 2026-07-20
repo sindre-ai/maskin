@@ -3,11 +3,14 @@ import { PageHeader } from '@/components/layout/page-header'
 import { BoardView } from '@/components/objects/board/board-view'
 import { BulkActionBar } from '@/components/objects/bulk-action-bar'
 import { type ObjectsTableMeta, getStaticColumns } from '@/components/objects/data-table/columns'
-import { DataTable } from '@/components/objects/data-table/data-table'
+import { DataTable, type DataTableHandle } from '@/components/objects/data-table/data-table'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
 import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
 import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
+import type { FieldDefinition } from '@/components/objects/field-value-input'
+import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
+import { FilterChip } from '@/components/shared/filter-chip'
 import { RouteError } from '@/components/shared/route-error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -15,18 +18,22 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useImportToast } from '@/hooks/use-imports'
-import { useBulkUpdateObjects } from '@/hooks/use-objects'
+import { useBulkResultHandlers, useBulkUpdateObjects } from '@/hooks/use-objects'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
-import { trackEvent } from '@/lib/analytics'
+import { trackEvent, trackObjectsListArrived, trackObjectsListGroupToggled } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
+import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
+import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
+import { clearViewState, getViewState, patchViewState } from '@/lib/objects-view-state'
+import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
-import { ALL_TYPES_KEY } from '@maskin/shared'
+import { getAllWebModules, getEnabledObjectTypeTabs } from '@maskin/module-sdk'
+import { ALL_TYPES_KEY, SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
 import {
 	type InfiniteData,
 	keepPreviousData,
@@ -35,7 +42,13 @@ import {
 	useQueryClient,
 } from '@tanstack/react-query'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
-import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
+import type {
+	ExpandedState,
+	GroupingState,
+	OnChangeFn,
+	RowSelectionState,
+	VisibilityState,
+} from '@tanstack/react-table'
 import { Filter, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -43,19 +56,49 @@ import { toast } from 'sonner'
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	component: ObjectsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
-	validateSearch: (search: Record<string, unknown>) => ({
-		type: typeof search.type === 'string' ? search.type : undefined,
-		status: typeof search.status === 'string' ? search.status : undefined,
-		driver: typeof search.driver === 'string' ? search.driver : undefined,
-		sort: typeof search.sort === 'string' ? search.sort : 'createdAt',
-		order:
-			typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
-				? (search.order as 'asc' | 'desc')
-				: 'desc',
-		q: typeof search.q === 'string' ? search.q : undefined,
-		groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
-		ids: typeof search.ids === 'string' ? search.ids : undefined,
-	}),
+	validateSearch: (search: Record<string, unknown>) => {
+		// Pass through dynamic `metadata.<field>` filter keys so they persist in
+		// the URL and survive `updateSearch()` merges. Fixed keys are plucked
+		// explicitly below; unlisted keys would otherwise be dropped.
+		// Number/boolean metadata fields (e.g. a bare `metadata.priority=5` or
+		// `metadata.active=true` from a hand-typed or externally-built URL) parse
+		// to a JS number/boolean here — coerce back to string rather than
+		// dropping them, since the filter value is always compared as text.
+		const metadataFilters: Record<string, string> = {}
+		for (const [key, value] of Object.entries(search)) {
+			if (!key.startsWith('metadata.')) continue
+			if (!SAFE_METADATA_FIELD_NAME_RE.test(key.slice('metadata.'.length))) continue
+			if (typeof value === 'string') metadataFilters[key] = value
+			else if (typeof value === 'number' || typeof value === 'boolean') {
+				metadataFilters[key] = String(value)
+			}
+		}
+		// Include-archived is URL-only per T5. Present as `1` when on; omitted
+		// otherwise so the default excludes archived rows via T3's API gate.
+		// Deep-links, back/forward, and hard-refresh preserve the choice —
+		// per-view persistence intentionally does not touch localStorage.
+		const rawIncludeArchived = search.includeArchived
+		const includeArchived =
+			rawIncludeArchived === '1' ||
+			rawIncludeArchived === 1 ||
+			rawIncludeArchived === true ||
+			rawIncludeArchived === 'true'
+		return {
+			type: typeof search.type === 'string' ? search.type : undefined,
+			status: typeof search.status === 'string' ? search.status : undefined,
+			driver: typeof search.driver === 'string' ? search.driver : undefined,
+			sort: typeof search.sort === 'string' ? search.sort : 'createdAt',
+			order:
+				typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
+					? (search.order as 'asc' | 'desc')
+					: 'desc',
+			q: typeof search.q === 'string' ? search.q : undefined,
+			groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
+			ids: typeof search.ids === 'string' ? search.ids : undefined,
+			includeArchived: includeArchived ? (1 as const) : undefined,
+			...metadataFilters,
+		}
+	},
 })
 
 const PAGE_SIZE = 50
@@ -75,9 +118,16 @@ function ObjectsPage() {
 		q,
 		groupBy,
 		ids: idsFilter,
+		includeArchived: includeArchivedParam,
 	} = searchParams
+	const includeArchived = includeArchivedParam === 1
+	// Per the task scope, the "Show" section (with the Include archived toggle)
+	// is bet-only for now — surfaced when the bet tab is active. Non-bet tabs
+	// keep the existing panel shape until archive lands for their type.
+	const supportsIncludeArchived = typeFilter === 'bet'
 
 	const [importOpen, setImportOpen] = useState(false)
+	const [createPickerOpen, setCreatePickerOpen] = useState(false)
 	const { startTracking: trackImport } = useImportToast(workspaceId)
 	const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
@@ -111,6 +161,62 @@ function ObjectsPage() {
 		setRowSelection({})
 	}, [workspaceId])
 
+	// Group-expansion state is lifted from `DataTable` so a POP landing can
+	// silently rehydrate what the user had open before they drilled into a
+	// row. React-table keys the map by row id (object id) — see `getRowId` on
+	// `DataTable`. Route-local: not persisted server-side, dies on tab close.
+	const [expanded, setExpanded] = useState<ExpandedState>({})
+	// Latest first-visible row anchor captured at navigate-away time. Feeds
+	// the debounced DisplaySettings write-through so a hard reload can bootstrap
+	// the session store from the persisted value.
+	const [capturedAnchor, setCapturedAnchor] = useState<string | null | undefined>(undefined)
+
+	// Fires on every mount, with the nav_type resolved from popstate + the
+	// initial PerformanceNavigationTiming entry. The ship-metric denominator
+	// filters to `nav_type='back'` in PostHog; the `direct` / `link` variants
+	// ride along so the arrival stream can be sliced by nav type later. The
+	// tracker is initialised at app boot (see main.tsx) so deep-link starts
+	// followed by a browser-back to the list are captured too. typeFilter is
+	// intentionally excluded from deps — a tab switch changes it under a
+	// stable mount and must not re-emit the arrival event.
+	//
+	// The same mount arms two restore effects: scroll anchor and group
+	// expansion. Data isn't necessarily loaded yet at mount time, so both
+	// wait for the display-settings hydrate (expansion) or the first row
+	// page (scroll) before actually restoring.
+	const shouldRestoreScrollRef = useRef(false)
+	const shouldRestoreExpandedRef = useRef(false)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: mount-once event
+	useEffect(() => {
+		const navType = consumeArrivalNavType()
+		if (navType === 'back') {
+			shouldRestoreScrollRef.current = true
+			shouldRestoreExpandedRef.current = true
+		}
+		trackObjectsListArrived({
+			nav_type: navType,
+			objectType: typeFilter ?? null,
+		})
+	}, [])
+
+	// Imperative handle for the DataTable. Lets this route read the first-
+	// visible row id at navigate-away and drive `virtualizer.scrollToIndex`
+	// on a POP landing, without lifting the virtualizer or row model out of
+	// DataTable.
+	const dataTableRef = useRef<DataTableHandle>(null)
+
+	// Linear-style `C` shortcut opens the create picker with the active type
+	// tab pre-selected. Guarded so typing into filters/search never triggers it.
+	useEffect(() => {
+		function onKeydown(event: KeyboardEvent) {
+			if (!isCreateShortcut(event)) return
+			event.preventDefault()
+			setCreatePickerOpen(true)
+		}
+		window.addEventListener('keydown', onKeydown)
+		return () => window.removeEventListener('keydown', onKeydown)
+	}, [])
+
 	const searchParamsRef = useRef(searchParams)
 	searchParamsRef.current = searchParams
 
@@ -130,6 +236,34 @@ function ObjectsPage() {
 		]
 	}, [enabledModules, customExtensions])
 
+	// `searchParams` is a fresh object every render (TanStack Router doesn't
+	// give it referential stability here — every other filter in this file
+	// destructures a primitive off it for that reason). Serialize the active
+	// `metadata.*` entries into a stable string first, then derive the object
+	// from that string, so `metadataFilters` only gets a new reference when
+	// the actual filter content changes — anything else re-fires effects
+	// (write-through, urlIsInDefaultShape) on every render, looping writes.
+	const metadataFiltersKey = useMemo(() => {
+		return Object.entries(searchParams)
+			.filter(([key, value]) => key.startsWith('metadata.') && typeof value === 'string' && value)
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([key, value]) => `${key}=${encodeURIComponent(value as string)}`)
+			.join('&')
+	}, [searchParams])
+
+	// Active metadata filters, keyed by field name (URL key `metadata.<field>`
+	// with the prefix stripped). Drives the Display-panel rows and the API params.
+	const metadataFilters = useMemo(() => {
+		const m: Record<string, string> = {}
+		if (!metadataFiltersKey) return m
+		for (const pair of metadataFiltersKey.split('&')) {
+			const eqIdx = pair.indexOf('=')
+			const key = pair.slice(0, eqIdx)
+			m[key.slice('metadata.'.length)] = decodeURIComponent(pair.slice(eqIdx + 1))
+		}
+		return m
+	}, [metadataFiltersKey])
+
 	// Build API filters
 	const filters = useMemo(() => {
 		const f: Record<string, string> = {}
@@ -137,10 +271,26 @@ function ObjectsPage() {
 		if (statusFilter) f.status = statusFilter
 		if (driverFilter) f.driver = driverFilter
 		if (idsFilter) f.ids = idsFilter
+		for (const [field, value] of Object.entries(metadataFilters)) {
+			f[`metadata.${field}`] = value
+		}
 		f.sort = sort
 		f.order = order
+		// Opt-in only: pass through when the "Include archived" toggle is on.
+		// Omitting the flag lets T3's route default (hide archived) apply.
+		if (supportsIncludeArchived && includeArchived) f.include_archived = 'true'
 		return f
-	}, [typeFilter, statusFilter, driverFilter, idsFilter, sort, order])
+	}, [
+		typeFilter,
+		statusFilter,
+		driverFilter,
+		idsFilter,
+		sort,
+		order,
+		metadataFilters,
+		supportsIncludeArchived,
+		includeArchived,
+	])
 
 	// Infinite query — use search endpoint when q is present
 	const infiniteQuery = useInfiniteQuery({
@@ -213,14 +363,38 @@ function ObjectsPage() {
 	)
 	const visibleObjects = effectiveView === 'board' ? boardInitialObjects : allObjects
 
-	// Field definitions for dynamic columns
-	const fieldDefinitions = settings?.field_definitions as
-		| Record<string, Array<{ name: string; type: 'text' | 'number' | 'date' | 'enum' | 'boolean' }>>
-		| undefined
+	// Field definitions for dynamic columns. Layer enabled-module defaults under
+	// workspace overrides so extension-provided types (e.g. knowledge) ship with
+	// their column set even when the workspace hasn't customised field_definitions.
+	const fieldDefinitions = useMemo(() => {
+		const workspaceFields = settings?.field_definitions as
+			| Record<string, FieldDefinition[]>
+			| undefined
+		const merged: Record<string, FieldDefinition[]> = {}
+		for (const mod of getAllWebModules()) {
+			if (!enabledModules.includes(mod.id)) continue
+			const modFields = mod.defaultSettings?.field_definitions
+			if (!modFields) continue
+			for (const [type, fields] of Object.entries(modFields)) {
+				merged[type] = fields
+			}
+		}
+		if (workspaceFields) {
+			for (const [type, fields] of Object.entries(workspaceFields)) {
+				merged[type] = fields
+			}
+		}
+		return Object.keys(merged).length > 0 ? merged : undefined
+	}, [settings, enabledModules])
+
+	// Metadata filter rows only apply when a single object type is selected — the
+	// field definitions (and thus the filterable fields) are per-type. On the
+	// "All" tab this is undefined so the Display panel renders no metadata rows.
+	const typeFieldDefinitions = typeFilter ? (fieldDefinitions?.[typeFilter] ?? []) : undefined
 
 	// Update search params helper — uses ref to stay stable across param changes
 	const updateSearch = useCallback(
-		(updates: Record<string, string | undefined>) => {
+		(updates: Record<string, string | number | undefined>) => {
 			const next: Record<string, unknown> = { ...searchParamsRef.current, ...updates }
 			for (const key of Object.keys(next)) {
 				if (next[key] === undefined || next[key] === '') delete next[key]
@@ -247,10 +421,63 @@ function ObjectsPage() {
 		[sort, order, updateSearch],
 	)
 
+	// Bet status indicator wiring — the Title cell renders `IndicatorBadgeRow`
+	// beside each bet's title. It classifies over child tasks; the overview
+	// only loads a flat page of objects, so pull the workspace's full task
+	// list and `breaks_into` relationships once and group them here. Both
+	// queries page through the endpoints (`limit=50` default would silently
+	// misclassify any bet whose child tasks fell into the second page as
+	// `idle`) and are gated on whether any bets are actually visible so tabs
+	// like `insight` never pay for tasks + rels they don't render.
+	const hasVisibleBets = useMemo(
+		() => visibleObjects.some((o) => o.type === 'bet'),
+		[visibleObjects],
+	)
+	const { data: workspaceTasks } = useQuery({
+		queryKey: queryKeys.objects.list(workspaceId, { type: 'task' }),
+		queryFn: () =>
+			fetchAllPages<ObjectResponse>(({ limit, offset }) =>
+				api.objects.list(workspaceId, {
+					type: 'task',
+					limit: String(limit),
+					offset: String(offset),
+				}),
+			),
+		enabled: hasVisibleBets,
+	})
+	const { data: breaksIntoRels } = useQuery({
+		queryKey: [...queryKeys.relationships.all(workspaceId), { type: 'breaks_into' }] as const,
+		queryFn: () =>
+			fetchAllPages(({ limit, offset }) =>
+				api.relationships.list(workspaceId, {
+					type: 'breaks_into',
+					limit: String(limit),
+					offset: String(offset),
+				}),
+			),
+		enabled: hasVisibleBets,
+	})
+	const betStatuses = useMemo<Map<string, BetStatusResult>>(() => {
+		if (!hasVisibleBets || !workspaceTasks || !breaksIntoRels) return new Map()
+		const bets = visibleObjects.filter((o) => o.type === 'bet')
+		return buildBetStatuses(bets, workspaceTasks, breaksIntoRels, new Date())
+	}, [hasVisibleBets, workspaceTasks, breaksIntoRels, visibleObjects])
+
+	// Bet status is rendered inside the Title cell (not as its own column), so
+	// its show/hide toggle lives in the same `columnVisibility` map as the real
+	// columns and is threaded into the cell via `showBetStatusIndicator`.
+	const showBetStatusIndicator = columnVisibility.betStatusIndicator !== false
+
 	// Table meta — sort state passed via meta to avoid re-creating columns on every sort change
 	const tableMeta: ObjectsTableMeta = useMemo(
-		() => ({ onSort: handleSort, currentSort: sort, currentOrder: order }),
-		[handleSort, sort, order],
+		() => ({
+			onSort: handleSort,
+			currentSort: sort,
+			currentOrder: order,
+			betStatuses,
+			showBetStatusIndicator,
+		}),
+		[handleSort, sort, order, betStatuses, showBetStatusIndicator],
 	)
 
 	// Columns — stable across sort changes since sort state is in meta
@@ -275,7 +502,7 @@ function ObjectsPage() {
 			createdAt: 'Created',
 			updatedAt: 'Updated',
 		}
-		return columns
+		const base = columns
 			.filter((col) => {
 				const id = 'accessorKey' in col ? String(col.accessorKey) : col.id
 				return id !== 'select'
@@ -288,7 +515,14 @@ function ObjectsPage() {
 					: (staticNames[id] ?? id)
 				return { id, label, canHide }
 			})
-	}, [columns])
+		// Synthetic entry: bet status lives inside the Title cell, so it has no
+		// column of its own. Only surface the toggle on tabs where bets can appear
+		// — hiding it on `insight` / `task` tabs where it would do nothing.
+		if (!typeFilter || typeFilter === 'bet') {
+			base.push({ id: 'betStatusIndicator', label: 'Bet status', canHide: true })
+		}
+		return base
+	}, [columns, typeFilter])
 
 	// Grouping state
 	const groupingState: GroupingState = groupBy ? [groupBy] : []
@@ -320,6 +554,38 @@ function ObjectsPage() {
 	// the same way per-type tabs do — without that, the user's choices in
 	// the display menu reset to defaults on every navigation away and back.
 	const displaySettingsKey = typeFilter ?? ALL_TYPES_KEY
+
+	// Fired synchronously by DataTable right before the row-click navigate.
+	// Snapshots the first-visible row id into the session view-state store so
+	// a back-nav landing (below) can restore the anchor. Keyed by workspace +
+	// tab so an anchor from one tab never rehydrates onto another. Also feeds
+	// `capturedAnchor` state which rides the debounced DisplaySettings write-
+	// through — T2's DoD asks for scroll-anchor changes to persist through
+	// the same rail as columnVisibility.
+	const handleCaptureViewState = useCallback(() => {
+		const firstVisibleRowId = dataTableRef.current?.getFirstVisibleRowId() ?? null
+		patchViewState(workspaceId, displaySettingsKey, { firstVisibleRowId })
+		setCapturedAnchor(firstVisibleRowId)
+	}, [workspaceId, displaySettingsKey])
+
+	// Silent scroll restore on POP landings. Waits for the first page of data
+	// so `scrollToIndex` has real rows to resolve against — scrolling an empty
+	// list would produce jitter and then re-fire on the next render. Fires
+	// exactly once per POP: the ref is cleared after the first attempt (which
+	// itself may no-op silently if the persisted row id is no longer in the
+	// current row set — deleted row, or the URL filter shifted).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: fires once when the load-gate flips; ref reads current key
+	useEffect(() => {
+		if (!shouldRestoreScrollRef.current) return
+		if (infiniteQuery.isLoading) return
+		if (allObjects.length === 0) return
+		const { firstVisibleRowId } = getViewState(workspaceId, displaySettingsKey)
+		if (firstVisibleRowId) {
+			dataTableRef.current?.scrollToRowId(firstVisibleRowId)
+		}
+		shouldRestoreScrollRef.current = false
+	}, [infiniteQuery.isLoading, allObjects.length])
+
 	const displaySettingsQuery = useUserDisplaySettings(workspaceId, displaySettingsKey)
 	const updateDisplaySettings = useUpdateUserDisplaySettings(workspaceId)
 	// `useMutation` returns a new object reference on every render, but the
@@ -338,13 +604,15 @@ function ObjectsPage() {
 			(!searchParams.order || searchParams.order === 'desc') &&
 			!searchParams.groupBy &&
 			!searchParams.status &&
-			!searchParams.driver,
+			!searchParams.driver &&
+			Object.keys(metadataFilters).length === 0,
 		[
 			searchParams.sort,
 			searchParams.order,
 			searchParams.groupBy,
 			searchParams.status,
 			searchParams.driver,
+			metadataFilters,
 		],
 	)
 
@@ -372,6 +640,9 @@ function ObjectsPage() {
 			if (s.groupBy) updates.groupBy = s.groupBy
 			if (s.filters?.status) updates.status = s.filters.status
 			if (s.filters?.driver) updates.driver = s.filters.driver
+			for (const [field, value] of Object.entries(s.filters?.metadata ?? {})) {
+				updates[`metadata.${field}`] = value
+			}
 			if (Object.keys(updates).length > 0) updateSearch(updates)
 		}
 		// Persisted blob wins: the saved map REPLACES the route's initial
@@ -380,16 +651,96 @@ function ObjectsPage() {
 		// This applies on the All tab too — `__all__` is its own row, so
 		// switching between All and a type tab restores each side's own state.
 		if (s.columnVisibility) setColumnVisibility(s.columnVisibility)
+		// Cross-session bootstrap for the group-expansion + scroll-anchor
+		// state that T1 extended on the shared DisplaySettingsBody. In-session
+		// restore comes from the ephemeral view-state store (session-scoped by
+		// design — see the shouldRestoreScrollRef + shouldRestoreExpandedRef
+		// effects); this seeds that store when a hard reload wipes it but the
+		// persisted row still has values. `groupExpanded` also drives the
+		// initial DataTable state directly so the very first render already
+		// shows the last-known expanded groups instead of a top-of-list flash.
+		if (s.groupExpanded && Object.keys(s.groupExpanded).length > 0) {
+			setExpanded(s.groupExpanded)
+			patchViewState(workspaceId, displaySettingsKey, {
+				expandedGroupIds: s.groupExpanded,
+			})
+		}
+		if (s.firstVisibleRowId) {
+			patchViewState(workspaceId, displaySettingsKey, {
+				firstVisibleRowId: s.firstVisibleRowId,
+			})
+			setCapturedAnchor(s.firstVisibleRowId)
+		} else {
+			setCapturedAnchor(null)
+		}
 	}, [
 		displaySettingsKey,
 		displaySettingsQuery.isSuccess,
 		displaySettingsQuery.data,
 		urlIsInDefaultShape,
 		updateSearch,
+		workspaceId,
 	])
+
+	// Silent group-expansion restore on the POP-landing mount. Tied to the
+	// same first-hydrate gate the display-settings block uses so the restore
+	// lands on the same render as the persisted view/columns — no visible
+	// flip. POP-only (arm-once ref); PUSH/REPLACE landings never restore.
+	// Also fires once per POP: the ref is consumed on the first attempt
+	// (even when the persisted map is empty), so later in-page tab switches
+	// inside the same mount never rehydrate.
+	useEffect(() => {
+		if (!shouldRestoreExpandedRef.current) return
+		if (!displaySettingsQuery.isSuccess) return
+		if (!hydratedTypesRef.current.has(displaySettingsKey)) return
+		shouldRestoreExpandedRef.current = false
+		const { expandedGroupIds } = getViewState(workspaceId, displaySettingsKey)
+		if (Object.keys(expandedGroupIds).length === 0) return
+		setExpanded(expandedGroupIds)
+		trackObjectsListGroupToggled({
+			source: 'system',
+			expanded: true,
+			objectType: typeFilter ?? null,
+		})
+	}, [displaySettingsKey, displaySettingsQuery.isSuccess, workspaceId, typeFilter])
+
+	// Group-expansion writes flow through here — the DataTable is fully
+	// controlled. On every user toggle: apply the update, patch the resulting
+	// map into the session store for the current key, and fire the group-
+	// toggle analytics with source: 'user'. The silent restore above bypasses
+	// this handler (it calls `setExpanded` directly), so every fire here is
+	// user-initiated by construction. `expanded` on the analytics payload is
+	// the net direction of the update — true when a row's expansion count
+	// grew (user opened a group), false when it shrank (user closed one).
+	const handleExpandedChange: OnChangeFn<ExpandedState> = useCallback(
+		(updater) => {
+			setExpanded((prev) => {
+				const next = typeof updater === 'function' ? updater(prev) : updater
+				const prevMap = prev === true ? {} : (prev ?? {})
+				const nextMap: Record<string, boolean> = {}
+				if (next !== true && next && typeof next === 'object') {
+					for (const [id, on] of Object.entries(next)) if (on) nextMap[id] = true
+				}
+				const prevOpen = Object.values(prevMap).filter(Boolean).length
+				const nextOpen = Object.values(nextMap).filter(Boolean).length
+				patchViewState(workspaceId, displaySettingsKey, { expandedGroupIds: nextMap })
+				trackObjectsListGroupToggled({
+					source: 'user',
+					expanded: nextOpen > prevOpen,
+					objectType: typeFilter ?? null,
+				})
+				return next
+			})
+		},
+		[workspaceId, displaySettingsKey, typeFilter],
+	)
 
 	// Write-through. Only fires after this key has been hydrated so the
 	// initial apply doesn't immediately re-write the same blob back.
+	// T2 also folds groupExpanded + firstVisibleRowId into the same debounced
+	// rail so a hard reload can re-seed the session view-state store from the
+	// last-known values. The in-session restore paths still come from the
+	// ephemeral store; this write is a cross-session backstop.
 	useEffect(() => {
 		if (!hydratedTypesRef.current.has(displaySettingsKey)) return
 		const settings: DisplaySettingsBody = {
@@ -399,22 +750,74 @@ function ObjectsPage() {
 			groupBy: groupBy ?? null,
 			columnVisibility,
 		}
-		const filters: { status?: string; driver?: string } = {}
+		const filters: { status?: string; driver?: string; metadata?: Record<string, string> } = {}
 		if (statusFilter) filters.status = statusFilter
 		if (driverFilter) filters.driver = driverFilter
-		if (filters.status || filters.driver) settings.filters = filters
+		if (Object.keys(metadataFilters).length > 0) filters.metadata = metadataFilters
+		if (filters.status || filters.driver || filters.metadata) settings.filters = filters
+		// TanStack's ExpandedState can be `true` (all-expanded); that state is
+		// unreachable through the DataTable UI here but we skip persisting it
+		// since it can't round-trip through the schema's Record<string, boolean>.
+		if (expanded !== true && Object.keys(expanded).length > 0) {
+			settings.groupExpanded = expanded
+		}
+		// Persist both string (anchor) and null (deliberate top). Skip
+		// `undefined` — the pre-hydration sentinel. Once hydrated, the state
+		// flips to at least null, so we always emit the field afterwards.
+		if (capturedAnchor !== undefined) {
+			settings.firstVisibleRowId = capturedAnchor
+		}
 
 		const handle = setTimeout(() => {
 			updateMutateRef.current({ objectType: displaySettingsKey, settings })
 		}, 500)
 		return () => clearTimeout(handle)
-	}, [displaySettingsKey, view, sort, order, groupBy, statusFilter, driverFilter, columnVisibility])
+	}, [
+		displaySettingsKey,
+		view,
+		sort,
+		order,
+		groupBy,
+		statusFilter,
+		driverFilter,
+		metadataFilters,
+		columnVisibility,
+		expanded,
+		capturedAnchor,
+	])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
 
 	const clearIdsFilter = useCallback(() => {
 		updateSearch({ ids: undefined })
 	}, [updateSearch])
+
+	// Human-readable labels for the active status/driver chips. Mirror the
+	// DisplayPanel picker's collapsing rule: single value → the value, >1 →
+	// "{N} statuses/drivers". Keeps the chip strip readable at any selection
+	// size without spilling the toolbar row.
+	const activeStatuses = useMemo(
+		() => (statusFilter ? statusFilter.split(',').filter(Boolean) : []),
+		[statusFilter],
+	)
+	const activeDrivers = useMemo(
+		() => (driverFilter ? driverFilter.split(',').filter(Boolean) : []),
+		[driverFilter],
+	)
+	const statusChipValue =
+		activeStatuses.length === 1
+			? (activeStatuses[0]?.replace(/_/g, ' ') ?? '')
+			: `${activeStatuses.length} statuses`
+	const driverChipValue =
+		activeDrivers.length === 1
+			? (actors?.find((a) => a.id === activeDrivers[0])?.name ?? '1 driver')
+			: `${activeDrivers.length} drivers`
+	// Include-archived is the third chip source. Bet-only per T5 — non-bet tabs
+	// never see the toggle or the chip. `supportsIncludeArchived` already gates
+	// the toggle in DisplayPanel; mirroring it here keeps the chip in lockstep
+	// so a leftover URL param on a non-bet tab doesn't render an orphan chip.
+	const archivedChipActive = supportsIncludeArchived && includeArchived
+	const hasChipFilters = activeStatuses.length > 0 || activeDrivers.length > 0 || archivedChipActive
 
 	const bulkOwnerOptions = useMemo(
 		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),
@@ -424,25 +827,12 @@ function ObjectsPage() {
 	const bulkUpdate = useBulkUpdateObjects(workspaceId)
 	const queryClient = useQueryClient()
 
-	const reportBulkResult = useCallback(
-		(
-			response: { results: Array<{ id: string; ok: boolean; error?: string }> },
-			total: number,
-			verb: 'updated' | 'deleted',
-		) => {
-			const okCount = response.results.filter((r) => r.ok).length
-			const failed = total - okCount
-			if (failed === 0) {
-				toast.success(`${okCount} object${okCount === 1 ? '' : 's'} ${verb}`)
-				clearSelection()
-			} else {
-				const firstError = response.results.find((r) => !r.ok)?.error
-				toast.error(`${okCount} of ${total} ${verb}; ${failed} failed`, {
-					description: firstError,
-				})
-			}
-		},
-		[clearSelection],
+	// Matches the handleBulkDelete pattern: on partial success, prune selection
+	// to the ids that still need attention so the bulk bar stays pinned to the
+	// failed rows and the operator can retry them without re-selecting.
+	const { reportBulkResult, retainOnlyFailed } = useBulkResultHandlers(
+		clearSelection,
+		setRowSelection,
 	)
 
 	const handleBulkStatusChange = useCallback(
@@ -452,12 +842,15 @@ function ObjectsPage() {
 			bulkUpdate.mutate(
 				{ ids, patch: { status } },
 				{
-					onSuccess: (data) => reportBulkResult(data, ids.length, 'updated'),
+					onSuccess: (data) => {
+						retainOnlyFailed(data)
+						reportBulkResult(data, ids.length, 'updated')
+					},
 					onError: () => toast.error('Failed to update objects'),
 				},
 			)
 		},
-		[selectedIds, bulkUpdate, reportBulkResult],
+		[selectedIds, bulkUpdate, reportBulkResult, retainOnlyFailed],
 	)
 
 	const handleBulkOwnerChange = useCallback(
@@ -467,12 +860,15 @@ function ObjectsPage() {
 			bulkUpdate.mutate(
 				{ ids, patch: { driver: ownerId } },
 				{
-					onSuccess: (data) => reportBulkResult(data, ids.length, 'updated'),
+					onSuccess: (data) => {
+						retainOnlyFailed(data)
+						reportBulkResult(data, ids.length, 'updated')
+					},
 					onError: () => toast.error('Failed to update objects'),
 				},
 			)
 		},
-		[selectedIds, bulkUpdate, reportBulkResult],
+		[selectedIds, bulkUpdate, reportBulkResult, retainOnlyFailed],
 	)
 
 	// Build the path the app uses for object detail pages — kept relative so we can
@@ -653,6 +1049,14 @@ function ObjectsPage() {
 					// tab re-hydrates from its own persisted row instead of inheriting
 					// the previous tab's settings.
 					hydratedTypesRef.current.delete(displaySettingsKey)
+					// Same story for the session view-state — an expansion or
+					// scroll anchor built on the outgoing tab must not leak
+					// back onto it if the user returns. Drop the store slot
+					// and reset local expanded so the destination tab starts
+					// with all groups closed.
+					clearViewState(workspaceId, displaySettingsKey)
+					setExpanded({})
+					setCapturedAnchor(undefined)
 					navigate({
 						to: '/$workspaceId/objects',
 						params: { workspaceId },
@@ -665,6 +1069,7 @@ function ObjectsPage() {
 							q: undefined,
 							groupBy: undefined,
 							ids: undefined,
+							includeArchived: undefined,
 						},
 						replace: true,
 					})
@@ -677,7 +1082,19 @@ function ObjectsPage() {
 				driverFilter={driverFilter}
 				onDriverFilterChange={(value) => updateSearch({ driver: value })}
 				actors={actors}
-				onResetFilters={() => updateSearch({ status: undefined, driver: undefined })}
+				fieldDefinitions={typeFieldDefinitions}
+				metadataFilters={metadataFilters}
+				onMetadataFilterChange={(field, value) => updateSearch({ [`metadata.${field}`]: value })}
+				onResetFilters={() => {
+					const cleared: Record<string, string | undefined> = {
+						status: undefined,
+						driver: undefined,
+					}
+					for (const key of Object.keys(searchParams)) {
+						if (key.startsWith('metadata.')) cleared[key] = undefined
+					}
+					updateSearch(cleared)
+				}}
 				sort={sort}
 				onSortChange={(value) =>
 					updateSearch({
@@ -689,6 +1106,16 @@ function ObjectsPage() {
 				onOrderChange={(value) => updateSearch({ order: value })}
 				groupBy={groupBy}
 				onGroupByChange={(value) => updateSearch({ groupBy: value })}
+				includeArchived={supportsIncludeArchived ? includeArchived : undefined}
+				onIncludeArchivedChange={
+					supportsIncludeArchived
+						? // Must be the number 1, not the string '1' — the router's default
+							// search stringifier round-trips through JSON.parse/stringify, so a
+							// string that looks like valid JSON gets re-quoted (`includeArchived=%221%22`)
+							// while a number serializes as the bare digit.
+							(next) => updateSearch({ includeArchived: next ? 1 : undefined })
+						: undefined
+				}
 				view={effectiveView}
 				onViewChange={(next) => {
 					setView(next)
@@ -707,9 +1134,56 @@ function ObjectsPage() {
 				}}
 				boardSupported={boardSupported}
 				onImportClick={() => setImportOpen(true)}
+				onNewClick={() => setCreatePickerOpen(true)}
 			/>
 
+			{hasChipFilters && (
+				<div className="flex items-center gap-2 mx-6 mb-3 flex-wrap">
+					{activeStatuses.length > 0 && (
+						<FilterChip
+							label="Status"
+							value={statusChipValue}
+							onRemove={() => updateSearch({ status: undefined })}
+						/>
+					)}
+					{activeDrivers.length > 0 && (
+						<FilterChip
+							label="Driver"
+							value={driverChipValue}
+							onRemove={() => updateSearch({ driver: undefined })}
+						/>
+					)}
+					{archivedChipActive && (
+						<FilterChip
+							label="Include"
+							value="archived"
+							onRemove={() => updateSearch({ includeArchived: undefined })}
+						/>
+					)}
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+						onClick={() =>
+							updateSearch({
+								status: undefined,
+								driver: undefined,
+								includeArchived: undefined,
+							})
+						}
+					>
+						Clear all
+					</Button>
+				</div>
+			)}
+
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
+			<CreatePicker
+				open={createPickerOpen}
+				onOpenChange={setCreatePickerOpen}
+				defaultType="object"
+				defaultObjectSubtype={typeFilter}
+			/>
 
 			{effectiveView === 'board' && typeFilter ? (
 				<div className="pb-4 flex-1 min-h-0 overflow-x-auto overflow-y-hidden md:px-6">
@@ -735,6 +1209,7 @@ function ObjectsPage() {
 				</div>
 			) : (
 				<DataTable
+					ref={dataTableRef}
 					data={allObjects}
 					columns={columns}
 					workspaceId={workspaceId}
@@ -750,6 +1225,9 @@ function ObjectsPage() {
 					isError={infiniteQuery.isError}
 					fetchNextPage={infiniteQuery.fetchNextPage}
 					isLoading={infiniteQuery.isLoading}
+					expanded={expanded}
+					onExpandedChange={handleExpandedChange}
+					onCaptureViewState={handleCaptureViewState}
 				/>
 			)}
 			<BulkActionBar

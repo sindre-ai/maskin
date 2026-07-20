@@ -1,7 +1,22 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { buildWorkspaceWithRole } from '../factories'
+
+vi.mock('@/lib/back-nav-tracker', () => ({
+	consumeArrivalNavType: vi.fn(),
+	initBackNavTracker: vi.fn(),
+}))
+
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return {
+		...actual,
+		trackObjectsListArrived: vi.fn(),
+		trackObjectsListGroupToggled: vi.fn(),
+		trackEvent: vi.fn(),
+	}
+})
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -42,6 +57,7 @@ vi.mock('@/hooks/use-custom-extensions', () => ({
 
 vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: () => [],
+	getAllWebModules: () => [],
 }))
 
 vi.mock('@tanstack/react-query', async (importOriginal) => {
@@ -74,6 +90,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 
 vi.mock('@/hooks/use-objects', () => ({
 	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
+	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
 }))
 
 vi.mock('@/hooks/use-user-display-settings', () => ({
@@ -117,6 +134,11 @@ vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
 }))
 
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: () => null,
+	isCreateShortcut: () => false,
+}))
+
 vi.mock('@/lib/api', () => ({
 	api: { objects: { list: vi.fn(), search: vi.fn() } },
 }))
@@ -124,8 +146,12 @@ vi.mock('@/lib/api', () => ({
 vi.mock('@/lib/query-keys', () => ({
 	queryKeys: {
 		objects: {
+			list: (workspaceId: string, filters?: unknown) => ['objects', workspaceId, 'list', filters],
 			listInfinite: () => ['objects'],
 			board: () => ['objects', 'board'],
+		},
+		relationships: {
+			all: (workspaceId: string) => ['relationships', workspaceId],
 		},
 		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		userDisplaySettings: {
@@ -193,6 +219,20 @@ describe('validateSearch', () => {
 		expect(result.status).toBeUndefined()
 		expect(result.q).toBeUndefined()
 	})
+
+	it('coerces number/boolean metadata.<field> values to strings instead of dropping them', () => {
+		// The router's default search parser JSON-parses query values, so a
+		// bare `metadata.priority=5` or `metadata.active=true` (e.g. from a
+		// hand-typed or externally-built URL) arrives here as a number/boolean.
+		const result = RouteOptions.validateSearch({
+			'metadata.priority': 5,
+			'metadata.active': true,
+			'metadata.region': 'emea',
+		})
+		expect(result['metadata.priority']).toBe('5')
+		expect(result['metadata.active']).toBe('true')
+		expect(result['metadata.region']).toBe('emea')
+	})
 })
 
 describe('ObjectsPage', () => {
@@ -201,5 +241,47 @@ describe('ObjectsPage', () => {
 		expect(screen.getByText('Objects')).toBeInTheDocument()
 		expect(screen.getByTestId('data-table')).toBeInTheDocument()
 		expect(screen.getByTestId('data-table-toolbar')).toBeInTheDocument()
+	})
+})
+
+describe('ObjectsPage mount-effect arrival event', () => {
+	beforeEach(async () => {
+		const { trackObjectsListArrived } = await import('@/lib/analytics')
+		const { consumeArrivalNavType } = await import('@/lib/back-nav-tracker')
+		vi.mocked(trackObjectsListArrived).mockClear()
+		vi.mocked(consumeArrivalNavType).mockReset()
+	})
+
+	it('fires objects_list_arrived with nav_type=back and objectType=null when the mount was a browser back-nav on the All tab', async () => {
+		const { consumeArrivalNavType } = await import('@/lib/back-nav-tracker')
+		const { trackObjectsListArrived } = await import('@/lib/analytics')
+		vi.mocked(consumeArrivalNavType).mockReturnValue('back')
+
+		render(<ObjectsPage />)
+
+		expect(trackObjectsListArrived).toHaveBeenCalledTimes(1)
+		expect(trackObjectsListArrived).toHaveBeenCalledWith({ nav_type: 'back', objectType: null })
+	})
+
+	it('fires objects_list_arrived on every mount, including direct (URL-bar) and link (SPA nav) landings', async () => {
+		const { consumeArrivalNavType } = await import('@/lib/back-nav-tracker')
+		const { trackObjectsListArrived } = await import('@/lib/analytics')
+
+		vi.mocked(consumeArrivalNavType).mockReturnValue('direct')
+		const { unmount } = render(<ObjectsPage />)
+		expect(trackObjectsListArrived).toHaveBeenCalledTimes(1)
+		expect(trackObjectsListArrived).toHaveBeenLastCalledWith({
+			nav_type: 'direct',
+			objectType: null,
+		})
+		unmount()
+
+		vi.mocked(consumeArrivalNavType).mockReturnValue('link')
+		render(<ObjectsPage />)
+		expect(trackObjectsListArrived).toHaveBeenCalledTimes(2)
+		expect(trackObjectsListArrived).toHaveBeenLastCalledWith({
+			nav_type: 'link',
+			objectType: null,
+		})
 	})
 })

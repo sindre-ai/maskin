@@ -14,6 +14,7 @@ import {
 	agentServers,
 	integrations,
 	objects,
+	relationships,
 	sessionLogs,
 	sessions,
 	workspaces,
@@ -22,6 +23,7 @@ import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import {
 	and,
+	asc,
 	count as countFn,
 	desc,
 	eq,
@@ -30,24 +32,61 @@ import {
 	isNull,
 	lt,
 	ne,
+	notInArray,
 	or,
+	sql,
 } from 'drizzle-orm'
 import {
 	claimLoopActiveDay,
 	trackLoopActiveDay,
 	utcDayString,
 } from '../lib/analytics/catalog-events'
+import {
+	detectChiefOfStaffDomainOutput,
+	loadCoSSessionContext,
+	trackChiefOfStaffDomainOutputDetected,
+} from '../lib/analytics/thinness-events'
+import {
+	isClaudeFailoverEnabled,
+	recordRuntimeClaudeOAuthBackupExhausted,
+	recordRuntimeClaudeOAuthFailover,
+} from '../lib/claude-failover'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
+import {
+	GITHUB_PREFLIGHT_SLACK_CHANNEL,
+	type PreflightVerdict,
+	collectGitHubMcpIdentities,
+	postGitHubPreflightSlackAlert,
+	runGitHubPreflight,
+	stripFailedIdentities,
+} from '../lib/github/preflight'
 import { isAuthRevokedError } from '../lib/integrations/errors'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
+import {
+	type SessionGithubInstall,
+	sessionGithubLogClassifier,
+} from '../lib/integrations/providers/github/log-classifier'
+import {
+	type TokenMetadata,
+	stampTokenMetadata,
+} from '../lib/integrations/providers/github/token-metadata'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
-import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
+import {
+	FallbackQuotaExceededError,
+	LLM_ROUTE_OAUTH,
+	type LlmRoute,
+	resolveLlmRoute,
+} from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
-import { AgentServerClient } from './agent-server-client'
+import {
+	AgentServerAuthError,
+	AgentServerClient,
+	AgentServerHttpError,
+} from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
@@ -62,6 +101,29 @@ import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace
  * stable group-by key from day one.
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
+
+/**
+ * Mirrors the allowlist regex enforced on the API side by
+ * `apps/dev/src/routes/integrations.ts` and
+ * `apps/dev/src/lib/integrations/providers/github/auth.ts` (T4). Kept in sync so
+ * a slug rejected at mint time is also rejected at source, before it ever
+ * reaches the credential helper.
+ */
+const REPO_SLUG_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+
+/**
+ * Strip the common URL forms (`https://github.com/…`, `git@github.com:…`), a
+ * trailing `.git`, and a trailing slash, then re-check against `REPO_SLUG_RE`.
+ * Returns null when the input can't be reduced to `owner/name`.
+ */
+function normalizeRepoSlug(raw: string): string | null {
+	let s = raw.trim()
+	s = s.replace(/^https?:\/\/github\.com\//i, '')
+	s = s.replace(/^git@github\.com:/i, '')
+	s = s.replace(/\.git$/i, '')
+	s = s.replace(/\/$/, '')
+	return REPO_SLUG_RE.test(s) ? s : null
+}
 
 /**
  * `sessions.startedAt`/`createdAt` are typed `Date | null` by Drizzle but
@@ -106,6 +168,67 @@ function isContainerGoneError(err: unknown): boolean {
 	const message = (err as { message?: unknown }).message
 	if (typeof message !== 'string') return false
 	return /HTTP code 404/.test(message) || /is not running/.test(message)
+}
+
+function claudeRuntimeFailoverReason(
+	failureReason: { provider: string; reason_code: string } | null,
+	stdoutTail: string,
+): string | null {
+	if (!failureReason || failureReason.provider !== 'anthropic') return null
+	if (failureReason.reason_code === 'not_logged_in') return 'auth_failed'
+
+	const usageCodes = new Set([
+		'session_limit',
+		'weekly_limit',
+		'opus_limit',
+		'server_rate_limit',
+		'request_rejected_429',
+		'credit_balance_low',
+		'billing_error',
+		'max_plan_rate_limit',
+		'rate_limit_error',
+	])
+	if (!usageCodes.has(failureReason.reason_code)) return null
+
+	if (stdoutTail.includes('"rateLimitType":"weekly"')) return 'quota_exhausted_weekly'
+	if (stdoutTail.includes('"rateLimitType":"five_hour"')) return 'quota_exhausted_5h'
+	if (failureReason.reason_code === 'weekly_limit') return 'quota_exhausted_weekly'
+	return 'quota_exhausted'
+}
+
+/**
+ * Decides whether `buildLaunchSpec`'s resolved LLM route needs persisting on
+ * `sessions.config`, and if so, returns the merged config. Returns `null`
+ * when nothing changed.
+ *
+ * Clears `claude_oauth_runtime_failover_retry_of` whenever the slot resolves
+ * back to `primary`. That marker only means anything while the session is
+ * still actually running on the backup a prior runtime failover put it on —
+ * leaving it stamped after a lazy recovery flips the slot back to primary
+ * would make `maybeRetryClaudeOAuthOnBackup`'s gate (which treats a
+ * `retry_of` string alone as sufficient, regardless of the current
+ * `llm_oauth_slot`) misclassify a later, unrelated primary failure as
+ * "backup already exhausted".
+ */
+export function mergeLaunchRouteConfig(
+	existingConfig: Record<string, unknown>,
+	routeTaken: LlmRoute,
+	nextOauthSlot: string | undefined,
+): Record<string, unknown> | null {
+	const needsUpdate =
+		existingConfig.llm_route !== routeTaken ||
+		(nextOauthSlot && existingConfig.llm_oauth_slot !== nextOauthSlot)
+	if (!needsUpdate) return null
+
+	const updatedConfig: Record<string, unknown> = {
+		...existingConfig,
+		llm_route: routeTaken,
+		...(nextOauthSlot ? { llm_oauth_slot: nextOauthSlot } : {}),
+	}
+	if (nextOauthSlot === 'primary') {
+		updatedConfig.claude_oauth_runtime_failover_retry_of = undefined
+	}
+	return updatedConfig
 }
 
 export interface SessionLogEvent extends LogChunk {
@@ -168,6 +291,16 @@ export class SessionManager extends EventEmitter {
 	 * even though both arrive at `watchContainerExit` as a non-zero exit code.
 	 */
 	private stopRequested: Set<string> = new Set()
+	/**
+	 * Per-session cache for the Chief of Staff prototype bet's thinness guardrail
+	 * (T4). Populated on the first stdout chunk we ingest for a given session:
+	 * a `null` entry means "not Chief of Staff, don't check again"; a populated
+	 * entry carries the workspace/actor ids the thinness event needs so we don't
+	 * re-hit `sessions ⋈ actors` on every chunk. Both local Docker and remote
+	 * agent-server flows share the map.
+	 */
+	private cosThinnessContext: Map<string, { workspaceId: string; actorId: string } | null> =
+		new Map()
 
 	constructor(
 		private db: Database,
@@ -554,7 +687,70 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		if (!session || !session.containerId) {
+		if (!session) {
+			throw new Error(`Session ${sessionId} not found or has no container`)
+		}
+
+		if (session.agentServerId) {
+			const [serverRow] = await this.db
+				.select({ id: agentServers.id, url: agentServers.url, secret: agentServers.secret })
+				.from(agentServers)
+				.where(eq(agentServers.id, session.agentServerId))
+				.limit(1)
+			if (!serverRow) {
+				throw new Error(`Agent server ${session.agentServerId} not found`)
+			}
+			const client = new AgentServerClient({ server: serverRow })
+			try {
+				await client.stopSession(sessionId)
+			} catch (err) {
+				// Sanitize before rethrowing — the route handler surfaces this
+				// message verbatim to the API caller (apps/dev/src/routes/sessions.ts),
+				// and AgentServerHttpError's raw message embeds the agent-server's
+				// internal URL plus up to 200 chars of its HTTP response body, which
+				// must not reach an external client. Full details still go to the log.
+				if (err instanceof AgentServerAuthError) {
+					logger.error(
+						'agent-server rejected bearer token while stopping session — secret rotation race',
+						{ sessionId, agentServerId: serverRow.id, agentServerUrl: serverRow.url },
+					)
+					throw new Error(`Failed to stop session ${sessionId}: agent-server rejected bearer token`)
+				}
+				if (err instanceof AgentServerHttpError) {
+					logger.error('agent-server returned an error while stopping session', {
+						sessionId,
+						agentServerId: serverRow.id,
+						agentServerUrl: serverRow.url,
+						status: err.status,
+						body: err.body,
+					})
+					throw new Error(
+						`Failed to stop session ${sessionId}: agent-server returned HTTP ${err.status}`,
+					)
+				}
+				// Anything else (e.g. a raw network/DNS failure thrown by fetch inside
+				// postJson) isn't a typed AgentServerClient error and carries no
+				// built-in sanitization — its raw message can still embed internal
+				// details. Sanitize it the same way as the two branches above instead
+				// of rethrowing unmodified; full details still go to the log.
+				logger.error('unexpected error while stopping session on agent-server', {
+					sessionId,
+					agentServerId: serverRow.id,
+					agentServerUrl: serverRow.url,
+					error: String(err),
+				})
+				throw new Error(`Failed to stop session ${sessionId}: agent-server request failed`)
+			}
+			// Remote sessions have no local exit watcher — the agent-server's own
+			// completion monitor lives in that process's memory and may already be
+			// gone (e.g. after a redeploy), so it can never call back to report
+			// completion. Treat this explicit, successful stop as authoritative
+			// instead of waiting on a callback that might never arrive.
+			await this.markRemoteSessionComplete(sessionId, null)
+			return
+		}
+
+		if (!session.containerId) {
 			throw new Error(`Session ${sessionId} not found or has no container`)
 		}
 
@@ -909,6 +1105,7 @@ export class SessionManager extends EventEmitter {
 		cpus: number
 		cpuShares: number
 		browserRequired: boolean
+		previewGuestPorts: number[]
 	}> {
 		const [agent] = await this.db
 			.select()
@@ -965,6 +1162,7 @@ export class SessionManager extends EventEmitter {
 		const wsLlmKeys = wsSettings.llm_keys ?? {}
 
 		let routeTaken: LlmRoute | null = null
+		let oauthSlotTaken: string | undefined
 		try {
 			const resolved = await resolveLlmRoute({
 				db: this.db,
@@ -978,6 +1176,7 @@ export class SessionManager extends EventEmitter {
 			})
 			if (resolved) {
 				routeTaken = resolved.route
+				oauthSlotTaken = resolved.oauthSlot
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
@@ -1005,8 +1204,9 @@ export class SessionManager extends EventEmitter {
 		// queries (and later analytics) can find fallback sessions cheaply.
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
-			if (existingConfig.llm_route !== routeTaken) {
-				const updatedConfig = { ...existingConfig, llm_route: routeTaken }
+			const nextOauthSlot = routeTaken === LLM_ROUTE_OAUTH ? oauthSlotTaken : undefined
+			const updatedConfig = mergeLaunchRouteConfig(existingConfig, routeTaken, nextOauthSlot)
+			if (updatedConfig) {
 				await this.db
 					.update(sessions)
 					.set({ config: updatedConfig })
@@ -1026,11 +1226,16 @@ export class SessionManager extends EventEmitter {
 		}
 		envVars.MASKIN_API_KEY = agent.apiKey
 
-		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } })
+		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } }).
+		// The AGENT_MCP_JSON env var is written further down, after the GitHub
+		// preflight has had a chance to strip failed identities from
+		// `agentTools.mcpServers` — otherwise a broken identity would be re-attached
+		// via the agent config even after we drop it from MCP_SERVERS_JSON.
 		const agentTools = agent.tools as Record<string, unknown> | null
-		if (agentTools && Object.keys(agentTools).length > 0) {
-			envVars.AGENT_MCP_JSON = JSON.stringify(agentTools)
-		}
+		const agentToolsMcpServers =
+			agentTools && typeof agentTools.mcpServers === 'object' && agentTools.mcpServers !== null
+				? (agentTools.mcpServers as Record<string, unknown>)
+				: null
 
 		// Inject runtime-specific config
 		if (sessionConfig.runtime_config) {
@@ -1047,6 +1252,7 @@ export class SessionManager extends EventEmitter {
 			.where(
 				and(eq(integrations.workspaceId, session.workspaceId), eq(integrations.status, 'active')),
 			)
+			.orderBy(asc(integrations.createdAt))
 
 		const tokenManager = new TokenManager()
 		// MCP servers injected by virtue of a workspace having an active
@@ -1054,11 +1260,18 @@ export class SessionManager extends EventEmitter {
 		// (e.g. PostHog → Synthesizer) belong here; tools an agent opts into
 		// per-config still go through the agent/session MCP paths.
 		//
-		// GitHub installations only get a per-owner env var here; the MCP server
-		// entry is not auto-injected — agents opt in per their tools.mcpServers
-		// config (github-{owner} key). The env var is available for envsubst
-		// substitution when the container resolves the agent's configured entry.
+		// GitHub installations get both a per-owner env var (GITHUB_TOKEN_<OWNER>)
+		// and an auto-injected MCP server entry (github-<owner>) with the token
+		// baked in. The bare GITHUB_TOKEN is aliased from the first installation
+		// so existing agent configs using ${GITHUB_TOKEN} continue to work.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
+		const resolvedGithubInstalls: Array<{
+			ownerLogin: string
+			token: string
+			integrationId: string
+			installationId: string
+			tokenMetadata: TokenMetadata
+		}> = []
 		for (const integration of activeIntegrations) {
 			try {
 				const resolved = getProvider(integration.provider)
@@ -1068,7 +1281,26 @@ export class SessionManager extends EventEmitter {
 					const ownerLogin = await this.resolveGithubOwnerLogin(integration)
 					if (!ownerLogin) continue
 
+					const installationId = integration.externalId
+					if (!installationId) {
+						logger.warn(
+							'GitHub integration has no externalId; cannot stamp token metadata for tool-call tagging',
+							{
+								integrationId: integration.id,
+								sessionId: session.id,
+							},
+						)
+						continue
+					}
+
 					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
+					resolvedGithubInstalls.push({
+						ownerLogin,
+						token: accessToken,
+						integrationId: integration.id,
+						installationId,
+						tokenMetadata: stampTokenMetadata(accessToken, installationId),
+					})
 				} else {
 					// Slack: only inject the bot token. A user token (xoxp-) here means
 					// the install granted user scopes instead of bot scopes — posting
@@ -1121,6 +1353,62 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
+		// Inject per-org GitHub MCP server entries with literal tokens (no envsubst placeholder).
+		// Each installation gets its own named entry (e.g. github-sindre-ai) so agents in
+		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
+		// We also set bare GITHUB_TOKEN so existing agent configs using ${GITHUB_TOKEN}
+		// continue to work after envsubst expansion.
+		for (const { ownerLogin, token } of resolvedGithubInstalls) {
+			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = {
+				type: 'stdio',
+				command: 'npx',
+				args: ['-y', '@modelcontextprotocol/server-github'],
+				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
+			}
+		}
+		// Register the session's github installs with the log classifier so
+		// tool_result envelopes coming back from the container carry a cause_tag
+		// alongside the failure — the parent bet's AC-6 grep-verifier reads
+		// session_logs, not this process's memory.
+		const classifierInstalls: SessionGithubInstall[] = resolvedGithubInstalls.map((r) => ({
+			ownerLoginLower: r.ownerLogin.toLowerCase(),
+			installationId: r.installationId,
+			tokenMetadata: r.tokenMetadata,
+		}))
+		sessionGithubLogClassifier.registerSession(session.id, classifierInstalls)
+		const primaryGithubToken = resolvedGithubInstalls[0]?.token
+		if (primaryGithubToken) {
+			envVars.GITHUB_TOKEN = primaryGithubToken
+		}
+		// GITHUB_INTEGRATION_ID lets the container's git credential helper
+		// (docker/agent-base/github-credential-helper.sh) mint a fresh installation
+		// token via GET /api/integrations/:id/github-token on every git operation,
+		// instead of relying on the GITHUB_TOKEN value above going stale after
+		// GitHub's 1-hour installation-token TTL for sessions that outlive it.
+		const primaryGithubIntegrationId = resolvedGithubInstalls[0]?.integrationId
+		if (primaryGithubIntegrationId) {
+			envVars.GITHUB_INTEGRATION_ID = primaryGithubIntegrationId
+			// GITHUB_REPO lets the credential helper append ?repo=owner/name to the
+			// token-mint request; the API side (integrations.ts githubTokenRoute)
+			// uses it to re-discover the current installation id when the App is
+			// reinstalled mid-session (T4's mint-on-write recovery). Left unset when
+			// no defensible source resolves — a wrong slug 404s the discovery hop
+			// and mis-maps to AUTH_REVOKED per T4's error mapping.
+			const resolved = await this.resolveGithubRepoSlug(session)
+			if (resolved.slug) {
+				envVars.GITHUB_REPO = resolved.slug
+				logger.info('Resolved GITHUB_REPO for GitHub App recovery hint', {
+					sessionId: session.id,
+					source: resolved.source,
+				})
+			} else {
+				logger.warn('No GITHUB_REPO source resolved — recovery hint will be omitted', {
+					sessionId: session.id,
+					rejected: resolved.rejected,
+				})
+			}
+		}
+
 		// Merge user-provided env vars, filtering out reserved keys
 		const RESERVED_ENV_KEYS = new Set([
 			'SESSION_ID',
@@ -1149,9 +1437,18 @@ export class SessionManager extends EventEmitter {
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
 			'BROWSER_CDP_URL',
 		])
+		// Only reserve GITHUB_TOKEN when we actually injected one; otherwise a
+		// user-supplied PAT (no GitHub integration configured) must pass through.
+		if (primaryGithubToken) {
+			RESERVED_ENV_KEYS.add('GITHUB_TOKEN')
+		}
+		if (primaryGithubIntegrationId) {
+			RESERVED_ENV_KEYS.add('GITHUB_INTEGRATION_ID')
+			RESERVED_ENV_KEYS.add('GITHUB_REPO')
+		}
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {
-			if (!RESERVED_ENV_KEYS.has(key)) {
+			if (!RESERVED_ENV_KEYS.has(key) && !key.startsWith('GITHUB_TOKEN_')) {
 				envVars[key] = value
 			} else {
 				logger.warn(`Ignoring reserved env var from user config: ${key}`, {
@@ -1160,22 +1457,120 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Session-level MCP config (convert array → { mcpServers: { ... } } format),
-		// merged with any auto-injected workspace MCPs and GitHub installation MCPs.
-		// Keys are namespaced so the sources can't collide.
+		// Session-level MCP config (convert array → { mcpServers: { ... } } format), merged
+		// with auto-injected workspace MCPs and per-org GitHub MCPs. Keys are namespaced so
+		// the sources can't collide (github-<owner>, integration-<provider>, session-mcp-N).
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
-		const mcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
+		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
 			for (const [i, mcp] of mcps.entries()) {
-				mcpServers[`session-mcp-${i}`] = mcp
+				sessionMcpServers[`session-mcp-${i}`] = mcp
 			}
 		}
-		if (Object.keys(mcpServers).length > 0) {
-			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers })
+
+		// Startup preflight: live-validate every attached GitHub identity BEFORE the
+		// container launches. Each identity gets one authenticated read + one
+		// write-scope probe; a missing token short-circuits without touching the
+		// network (that's how 2026-07-11 dropped calls into the anonymous 60/hr
+		// bucket). Failed identities are gated by dropping their MCP entries from
+		// both the agent config and the session config, so subsequent tool calls
+		// under that namespace cannot fire. One consolidated Slack alert per session
+		// lands on C075JBZ65RT so a task never has to rediscover the outage.
+		// Each `github-<owner>` MCP entry's token was minted from a specific
+		// installation (see resolvedGithubInstalls above) — carry that id through
+		// to the verdict so a Slack alert or log line names the exact installation
+		// behind an unexpected failure, instead of just the MCP server name.
+		const installationIdByMcpName = new Map(
+			resolvedGithubInstalls.map((install) => [
+				`github-${install.ownerLogin.toLowerCase()}`,
+				install.installationId,
+			]),
+		)
+		// When the session already resolved an actual target repo (envVars.GITHUB_REPO,
+		// set above from resolveGithubRepoSlug), probe that exact repo's write scope for
+		// the matching org's installation instead of the broader `/installation/repositories`
+		// check — it's the repo the session will actually push to, so it's the most precise
+		// signal available. Only wire it to the installation whose org owns that repo; a
+		// different org's installation has no relationship to it and keeps the fallback probe.
+		const targetRepoOwner = envVars.GITHUB_REPO?.split('/')[0]?.toLowerCase()
+		const writeProbeRepoByMcpName = new Map(
+			resolvedGithubInstalls
+				.filter(
+					(install) => targetRepoOwner && install.ownerLogin.toLowerCase() === targetRepoOwner,
+				)
+				.map((install) => [
+					`github-${install.ownerLogin.toLowerCase()}`,
+					envVars.GITHUB_REPO as string,
+				]),
+		)
+		const preflightIdentities = collectGitHubMcpIdentities(
+			[agentToolsMcpServers, sessionMcpServers],
+			envVars,
+		).map((id) => ({
+			...id,
+			installationId: installationIdByMcpName.get(id.name),
+			writeProbeRepo: writeProbeRepoByMcpName.get(id.name),
+		}))
+		let preflightVerdicts: PreflightVerdict[] = []
+		if (preflightIdentities.length > 0) {
+			preflightVerdicts = await runGitHubPreflight(preflightIdentities)
+			const failed = preflightVerdicts.filter((v) => !v.healthy)
+			if (failed.length > 0) {
+				logger.warn('GitHub preflight failed for one or more identities', {
+					sessionId: session.id,
+					workspaceId: session.workspaceId,
+					failed: failed.map((v) => ({
+						name: v.name,
+						failureClass: v.failureClass,
+						installationId: v.installationId,
+						statusSnippet: v.statusSnippet,
+					})),
+				})
+				const slackBotToken = envVars.SLACK_BOT_TOKEN
+				if (slackBotToken) {
+					await postGitHubPreflightSlackAlert({
+						botToken: slackBotToken,
+						channelId: GITHUB_PREFLIGHT_SLACK_CHANNEL,
+						verdicts: preflightVerdicts,
+						context: {
+							sessionId: session.id,
+							workspaceId: session.workspaceId,
+						},
+					})
+				} else {
+					logger.warn('GitHub preflight failed but no SLACK_BOT_TOKEN available — alert not sent', {
+						sessionId: session.id,
+						workspaceId: session.workspaceId,
+					})
+				}
+			}
+		}
+		const gatedAgentToolsMcpServers = stripFailedIdentities(agentToolsMcpServers, preflightVerdicts)
+		const gatedSessionMcpServers = stripFailedIdentities(sessionMcpServers, preflightVerdicts)
+
+		if (agentTools && Object.keys(agentTools).length > 0) {
+			const gatedAgentTools = gatedAgentToolsMcpServers
+				? { ...agentTools, mcpServers: gatedAgentToolsMcpServers }
+				: agentTools
+			envVars.AGENT_MCP_JSON = JSON.stringify(gatedAgentTools)
+		}
+		if (Object.keys(gatedSessionMcpServers).length > 0) {
+			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers: gatedSessionMcpServers })
 		}
 
+		const previewGuestPorts = Array.isArray(sessionConfig.previewGuestPorts)
+			? sessionConfig.previewGuestPorts.filter(
+					(p): p is number => typeof p === 'number' && Number.isInteger(p) && p > 0 && p <= 65535,
+				)
+			: []
+
+		// previewGuestPorts requires browserRequired on the agent-server's request
+		// schema (the browser sidecar is what the relayed ports actually serve) —
+		// requesting preview ports always implies a browser is required.
 		const browserRequired =
-			sessionConfig.browserRequired === true || this.needsBrowserSidecar(envVars)
+			sessionConfig.browserRequired === true ||
+			this.needsBrowserSidecar(envVars) ||
+			previewGuestPorts.length > 0
 
 		const image =
 			(sessionConfig.base_image as string) ?? process.env.AGENT_BASE_IMAGE ?? 'agent-base:latest'
@@ -1186,7 +1581,107 @@ export class SessionManager extends EventEmitter {
 		const cpuShares = (sessionConfig.cpu_shares as number) ?? 1024
 		const cpus = Math.max(1, Math.round(cpuShares / 1024))
 
-		return { image, env: envVars, memoryMib, cpus, cpuShares, browserRequired }
+		return { image, env: envVars, memoryMib, cpus, cpuShares, browserRequired, previewGuestPorts }
+	}
+
+	/**
+	 * Resolve the `owner/name` slug for the container's `GITHUB_REPO` env var,
+	 * consumed by the git credential helper as a `?repo=` hint on token-mint
+	 * requests. Sourcing order, per T8:
+	 *   1. task-level override — the scoped task's own `metadata.repo`
+	 *   2. bet — either the scoped bet's `metadata.repo`, or the parent bet
+	 *      reached via a `breaks_into` edge on the scoped task
+	 *   3. sandbox default — `process.env.GITHUB_REPO`
+	 * Every candidate is normalized (strip https/ssh URL forms and .git suffix)
+	 * and re-checked against T4's `REPO_SLUG_RE`. A malformed candidate is
+	 * skipped with a `rejected:<label>` marker so we never forward a wrong slug
+	 * to the token route (which would 404 the discovery hop and mis-map to
+	 * AUTH_REVOKED per T4's error mapping).
+	 */
+	async resolveGithubRepoSlug(session: typeof sessions.$inferSelect): Promise<{
+		slug: string | null
+		source: 'task' | 'bet' | 'env' | 'none'
+		rejected?: string
+	}> {
+		const scopedRows = await this.db
+			.select({ id: objects.id, type: objects.type, metadata: objects.metadata })
+			.from(objects)
+			.where(eq(objects.activeSessionId, session.id))
+			.limit(1)
+		const scoped = scopedRows[0]
+
+		// 1. task-level override
+		if (scoped?.type === 'task') {
+			const raw = (scoped.metadata as Record<string, unknown> | null)?.repo
+			if (typeof raw === 'string' && raw.trim() !== '') {
+				const slug = normalizeRepoSlug(raw)
+				if (slug) return { slug, source: 'task' }
+				return { slug: null, source: 'none', rejected: `task:${scoped.id}` }
+			}
+		}
+
+		// 2. bet.metadata.repo — the scoped bet itself, or the parent bet via
+		//    a `breaks_into` edge on the scoped task (either direction).
+		let betId: string | null = null
+		if (scoped?.type === 'bet') {
+			betId = scoped.id
+		} else if (scoped?.type === 'task') {
+			// `relationships.sourceType`/`targetType` are storage-layer labels
+			// constrained to 'object' | 'file' (see 0046_relationship_type_check.sql)
+			// — they never carry the specialized object type. Resolve the other
+			// endpoint by id and check its actual type via `objects.type`, same
+			// pattern as the object graph endpoint in routes/objects.ts.
+			const edgeRows = await this.db
+				.select({
+					sourceId: relationships.sourceId,
+					targetId: relationships.targetId,
+				})
+				.from(relationships)
+				.where(
+					and(
+						eq(relationships.type, 'breaks_into'),
+						or(eq(relationships.sourceId, scoped.id), eq(relationships.targetId, scoped.id)),
+					),
+				)
+			const otherIds = [
+				...new Set(
+					edgeRows
+						.map((edge) => (edge.sourceId === scoped.id ? edge.targetId : edge.sourceId))
+						.filter((otherId) => otherId !== scoped.id),
+				),
+			]
+			if (otherIds.length > 0) {
+				const betRows = await this.db
+					.select({ id: objects.id })
+					.from(objects)
+					.where(and(inArray(objects.id, otherIds), eq(objects.type, 'bet')))
+					.limit(1)
+				betId = betRows[0]?.id ?? null
+			}
+		}
+		if (betId) {
+			const betRows = await this.db
+				.select({ metadata: objects.metadata })
+				.from(objects)
+				.where(eq(objects.id, betId))
+				.limit(1)
+			const raw = (betRows[0]?.metadata as Record<string, unknown> | null)?.repo
+			if (typeof raw === 'string' && raw.trim() !== '') {
+				const slug = normalizeRepoSlug(raw)
+				if (slug) return { slug, source: 'bet' }
+				return { slug: null, source: 'none', rejected: `bet:${betId}` }
+			}
+		}
+
+		// 3. sandbox default
+		const envRaw = process.env.GITHUB_REPO
+		if (typeof envRaw === 'string' && envRaw.trim() !== '') {
+			const slug = normalizeRepoSlug(envRaw)
+			if (slug) return { slug, source: 'env' }
+			return { slug: null, source: 'none', rejected: 'env:GITHUB_REPO' }
+		}
+
+		return { slug: null, source: 'none' }
 	}
 
 	/**
@@ -1310,21 +1805,69 @@ export class SessionManager extends EventEmitter {
 		return new Date(Date.now() + timeoutSeconds * 1000)
 	}
 
+	/**
+	 * Chief of Staff thinness guardrail (T4). Fires
+	 * `chief_of_staff_domain_output_detected` once per hit — the parent bet's
+	 * rolling kill clause treats even one as a stop signal, so the heuristic is
+	 * conservative (precision > recall) and the emit is best-effort — an error
+	 * here must never take down the log ingest path.
+	 */
+	private async maybeEmitCoSDomainOutput(
+		sessionId: string,
+		stream: 'stdout' | 'stderr' | 'system',
+		content: string,
+	): Promise<void> {
+		if (stream !== 'stdout') return
+		try {
+			let ctx = this.cosThinnessContext.get(sessionId)
+			if (ctx === undefined) {
+				const loaded = await loadCoSSessionContext(this.db, sessionId)
+				ctx = loaded?.isChiefOfStaff
+					? { workspaceId: loaded.workspaceId, actorId: loaded.actorId }
+					: null
+				this.cosThinnessContext.set(sessionId, ctx)
+			}
+			if (!ctx) return
+			const hit = detectChiefOfStaffDomainOutput(content)
+			if (!hit) return
+			await trackChiefOfStaffDomainOutputDetected({
+				workspaceId: ctx.workspaceId,
+				sessionId,
+				actorId: ctx.actorId,
+				chars: hit.chars,
+				messageId: hit.messageId,
+			})
+		} catch (err) {
+			logger.warn('CoS thinness check failed', { sessionId, error: String(err) })
+		}
+	}
+
 	private streamContainerLogs(sessionId: string, containerId: string) {
 		const drained = (async () => {
 			// First connect replays history (`tail: 'all'`); reconnects after a
-			// transient drop pick up from "now" (`tail: 0`) so we don't duplicate
-			// every prior log row. A few seconds of missed output is acceptable —
-			// the goal is just to keep the stream alive so the idle watchdog
-			// doesn't mistake stream silence for agent inactivity.
+			// transient drop backfill from the timestamp of the last chunk we
+			// actually ingested (`since`) instead of jumping to "now", so a
+			// dropped connection doesn't silently lose whatever was emitted
+			// during the gap. `since` has 1-second resolution, so a reconnect
+			// can re-deliver up to ~1s of already-persisted content — accepted
+			// as a minor duplicate over losing the gap outright.
 			let attempt = 0
 			let firstConnect = true
+			let lastChunkAt: number | undefined
 			while (true) {
 				try {
-					const logOpts = firstConnect ? {} : { tail: 0 as const }
+					const logOpts = firstConnect
+						? {}
+						: lastChunkAt
+							? { sinceUnixSec: Math.floor(lastChunkAt / 1000) }
+							: { tail: 0 as const }
 					firstConnect = false
 					for await (const chunk of this.containers.logs(containerId, true, logOpts)) {
 						attempt = 0
+						lastChunkAt = Date.now()
+						if (chunk.stream === 'stdout') {
+							await this.emitGithubCauseTagIfAny(sessionId, chunk.data)
+						}
 						const [log] = await this.db
 							.insert(sessionLogs)
 							.values({
@@ -1353,6 +1896,8 @@ export class SessionManager extends EventEmitter {
 										: next
 							}
 						}
+
+						void this.maybeEmitCoSDomainOutput(sessionId, chunk.stream, chunk.data)
 					}
 					// Stream ended naturally — container exited and Docker closed the
 					// connection. `watchContainerExit` will handle terminal cleanup.
@@ -1370,6 +1915,22 @@ export class SessionManager extends EventEmitter {
 					if (!(await this.isContainerAlive(containerId))) {
 						logger.info('Log stream ended; container no longer running', { sessionId })
 						return
+					}
+
+					if (attempt === 1) {
+						// Mark the start of a drop incident (once, not on every retry
+						// within it) so a gap is visible even if the reconnect below
+						// succeeds and the exhaustion marker never fires.
+						const resumePoint = lastChunkAt ? new Date(lastChunkAt).toISOString() : 'stream start'
+						await this.insertSystemLog(
+							sessionId,
+							`Log stream dropped — reconnecting (resuming from ${resumePoint})`,
+						).catch((logErr) =>
+							logger.error('Failed to write log-stream-dropped system log', {
+								sessionId,
+								error: String(logErr),
+							}),
+						)
 					}
 
 					if (attempt >= SessionManager.LOG_STREAM_MAX_RECONNECTS) {
@@ -1450,6 +2011,21 @@ export class SessionManager extends EventEmitter {
 	] as const
 
 	/**
+	 * Session statuses that are already resolved (or mid-way through their own
+	 * lifecycle path) — a session in one of these must never be reprocessed as
+	 * newly-completing, whether the completion signal came from the local
+	 * Docker exit watcher (`handleCompletion`) or from a remote agent-server
+	 * (`markRemoteSessionComplete`).
+	 */
+	private static readonly TERMINAL_OR_TRANSITIONAL_STATUSES = [
+		'completed',
+		'failed',
+		'timeout',
+		'paused',
+		'snapshotting',
+	] as const
+
+	/**
 	 * True if the actor has an active session other than `excludeSessionId`.
 	 * Used to avoid clobbering agent-level `agentState` when one of several
 	 * concurrent sessions transitions — the agent should only flip to a
@@ -1473,6 +2049,84 @@ export class SessionManager extends EventEmitter {
 		return Boolean(other)
 	}
 
+	private async maybeRetryClaudeOAuthOnBackup(params: {
+		session: typeof sessions.$inferSelect
+		failureReason: { provider: string; reason_code: string } | null
+		stdoutTail: string
+	}): Promise<void> {
+		const { session, failureReason, stdoutTail } = params
+		// Mirrors the session-start gate in resolveClaudeCredentialsWithFailover —
+		// flipping the flag off must stop failover everywhere, not just at
+		// session start. Without this, an operator using the flag as an
+		// incident kill-switch would still see mid-session runtime failures
+		// flip active_slot to backup and fire the failover event.
+		if (!isClaudeFailoverEnabled()) return
+		const config = ((session.config as Record<string, unknown>) ?? {}) as Record<string, unknown>
+		if (config.llm_route !== LLM_ROUTE_OAUTH) return
+
+		const reason = claudeRuntimeFailoverReason(failureReason, stdoutTail)
+		if (!reason) return
+
+		if (
+			config.llm_oauth_slot === 'backup' ||
+			typeof config.claude_oauth_runtime_failover_retry_of === 'string'
+		) {
+			await recordRuntimeClaudeOAuthBackupExhausted({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				reason,
+				sourceSessionId: session.id,
+			})
+			await this.insertSystemLog(
+				session.id,
+				'Claude backup subscription also hit a usage limit; no further Claude OAuth fallback is available',
+			)
+			return
+		}
+
+		if (config.llm_oauth_slot !== 'primary') return
+
+		const [existingRetry] = await this.db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.workspaceId, session.workspaceId),
+					sql`${sessions.config}->>'claude_oauth_runtime_failover_retry_of' = ${session.id}`,
+				),
+			)
+			.limit(1)
+		if (existingRetry) return
+
+		const didFailover = await recordRuntimeClaudeOAuthFailover({
+			db: this.db,
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			reason,
+			sourceSessionId: session.id,
+		})
+		if (!didFailover) return
+
+		await this.insertSystemLog(
+			session.id,
+			'Claude primary subscription hit a usage limit; retrying this session on the backup subscription',
+		)
+		await this.createSession(session.workspaceId, {
+			actorId: session.actorId,
+			actionPrompt: session.actionPrompt,
+			config: {
+				...config,
+				llm_oauth_slot: 'backup',
+				claude_oauth_runtime_failover_retry_of: session.id,
+			},
+			triggerId: session.triggerId ?? undefined,
+			createdBy: session.createdBy,
+			autoStart: true,
+			sourceSessionId: session.id,
+		})
+	}
+
 	private async handleCompletion(
 		sessionId: string,
 		containerId: string,
@@ -1487,7 +2141,11 @@ export class SessionManager extends EventEmitter {
 		if (!session) return
 
 		// Skip if already in a terminal or transitional state (avoid double-processing)
-		if (['completed', 'failed', 'timeout', 'paused', 'snapshotting'].includes(session.status))
+		if (
+			(SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES as readonly string[]).includes(
+				session.status,
+			)
+		)
 			return
 
 		try {
@@ -1505,8 +2163,6 @@ export class SessionManager extends EventEmitter {
 		} catch (err) {
 			logger.warn('Failed to push session files', { sessionId, error: String(err) })
 		}
-
-		const status = exitCode === 0 ? 'completed' : 'failed'
 
 		// Extract token / cost usage from the tail of stdout. Codex and custom
 		// runtimes don't emit structured usage — extractor returns null and the
@@ -1543,15 +2199,18 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		const stdoutTail = this.activeSessions.get(sessionId)?.stdoutTail ?? ''
 		const failureReason =
-			exitCode !== null && exitCode !== 0
-				? classifyCreditExhaustion(this.activeSessions.get(sessionId)?.stdoutTail ?? '')
+			exitCode !== null
+				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
 				: null
+		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
 		if (failureReason) {
 			logger.info('Session credit-exhaustion classified', {
 				sessionId,
 				reason_code: failureReason.reason_code,
 				provider: failureReason.provider,
+				exitCode,
 			})
 		}
 
@@ -1629,6 +2288,16 @@ export class SessionManager extends EventEmitter {
 				status,
 				error: String(err),
 			})
+		}
+
+		if (status === 'failed') {
+			await this.maybeRetryClaudeOAuthOnBackup({ session, failureReason, stdoutTail }).catch(
+				(err) =>
+					logger.warn('Failed to retry Claude OAuth session on backup', {
+						sessionId,
+						error: String(err),
+					}),
+			)
 		}
 
 		// Ship-metric emit. If this session belongs to a managed-catalog actor
@@ -2351,6 +3020,7 @@ export class SessionManager extends EventEmitter {
 	}
 
 	private async cleanupSession(sessionId: string): Promise<void> {
+		this.cosThinnessContext.delete(sessionId)
 		const sessionData = this.activeSessions.get(sessionId)
 		if (sessionData) {
 			await rm(sessionData.tempDir, { recursive: true, force: true }).catch((err) =>
@@ -2362,17 +3032,29 @@ export class SessionManager extends EventEmitter {
 			)
 			this.activeSessions.delete(sessionId)
 		}
+		// Always drop classifier state — safe if never registered, and covers
+		// paths (queue-drain rejection, remote sessions) that have no
+		// activeSessions entry to key off.
+		sessionGithubLogClassifier.unregisterSession(sessionId)
 	}
 
 	/**
 	 * Append log lines received from a remote agent-server and emit them on the
 	 * in-process bus so SSE /logs/stream clients see them in real time.
+	 *
+	 * `stdout` lines are also passed through the github tool-call classifier —
+	 * a failed `tool_result` for a `mcp__github-*` tool triggers an extra
+	 * `system`-stream log line carrying `cause_tag=<tag>` so a grep of
+	 * `session_logs` for the last 100 failures finds every tagged failure.
 	 */
 	async appendRemoteSessionLogs(
 		sessionId: string,
 		lines: Array<{ stream: 'stdout' | 'stderr' | 'system'; content: string }>,
 	): Promise<void> {
 		for (const line of lines) {
+			if (line.stream === 'stdout') {
+				await this.emitGithubCauseTagIfAny(sessionId, line.content)
+			}
 			const [log] = await this.db
 				.insert(sessionLogs)
 				.values({ sessionId, stream: line.stream, content: line.content })
@@ -2385,6 +3067,35 @@ export class SessionManager extends EventEmitter {
 					data: line.content,
 				} satisfies SessionLogEvent)
 			}
+			void this.maybeEmitCoSDomainOutput(sessionId, line.stream, line.content)
+		}
+	}
+
+	/**
+	 * Run one chunk of stdout through the github tool-call log classifier.
+	 * Chunks may contain multiple newline-delimited stream-json envelopes; each
+	 * one is classified independently. Emits at most one `system`-stream log
+	 * line per failed github tool_result, carrying the parent bet AC-6
+	 * cause_tag and (when present) the installation_id + mint_age_seconds.
+	 * Errors are swallowed — a classifier hiccup must not drop the original
+	 * log write.
+	 */
+	private async emitGithubCauseTagIfAny(sessionId: string, chunk: string): Promise<void> {
+		if (chunk.length === 0) return
+		const lines = chunk.split('\n')
+		for (const line of lines) {
+			if (line.length === 0) continue
+			try {
+				const result = await sessionGithubLogClassifier.classifyLine(sessionId, line)
+				if (result) {
+					await this.insertSystemLog(sessionId, result.taggedLine)
+				}
+			} catch (err) {
+				logger.warn('github log classifier failed for a line', {
+					sessionId,
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
 		}
 	}
 
@@ -2392,40 +3103,170 @@ export class SessionManager extends EventEmitter {
 	 * Mark a remote agent-server session as completed or failed. Mirrors the
 	 * relevant parts of `handleCompletion` but skips local Docker cleanup (the
 	 * agent-server owns the sandbox lifecycle; the workspace is already in S3).
+	 *
+	 * Uses a compare-and-set UPDATE (status NOT IN the terminal/transitional
+	 * set, in the WHERE clause, with `.returning()` in place of a preliminary
+	 * SELECT) so two concurrent calls for the same session — e.g. a stop
+	 * request racing the agent-server's async completion report, or two
+	 * racing stop requests — can never both observe 'running' and both write
+	 * a terminal event. Exactly one call's UPDATE matches the row; the other
+	 * gets zero rows back and no-ops.
 	 */
-	async markRemoteSessionComplete(sessionId: string, exitCode: number | null): Promise<void> {
-		const [session] = await this.db
-			.select()
-			.from(sessions)
-			.where(eq(sessions.id, sessionId))
-			.limit(1)
-		if (!session) return
-		if (['completed', 'failed', 'timeout', 'paused', 'snapshotting'].includes(session.status))
-			return
+	private static readonly CAS_UPDATE_RETRIES = 3
+	private static readonly CAS_UPDATE_RETRY_DELAY_MS = 150
 
+	async markRemoteSessionComplete(sessionId: string, exitCode: number | null): Promise<void> {
 		const status = exitCode === 0 ? 'completed' : 'failed'
 
+		// Extract token / cost usage from the remote session's stdout tail.
+		// Unlike the local Docker path, there is no in-memory tail buffer for a
+		// microsandbox session — its stdout is streamed into `session_logs` via
+		// the agent-server's HTTP log-ingest endpoint, flushed before this
+		// /complete signal is reported, so the DB-backed extractor is the only
+		// source available here. Parser/DB failures must never block the status
+		// update, so this is wrapped in its own try/catch — same pattern as the
+		// local completion path in handleCompletion().
+		let usage: SessionUsage | null = null
 		try {
-			await this.db
-				.update(sessions)
-				.set({
-					status,
-					result: { exit_code: exitCode },
-					completedAt: new Date(),
-					updatedAt: new Date(),
-					currentActivity: null,
-				})
-				.where(eq(sessions.id, sessionId))
+			usage = await extractSessionUsage(this.db, sessionId)
 		} catch (err) {
-			logger.error('Failed to update remote session status', {
+			logger.warn('Failed to parse usage from remote session logs', {
 				sessionId,
-				status,
 				error: String(err),
 			})
 		}
 
+		// A thrown DB error here (distinct from a clean 0-row CAS miss) must not
+		// permanently strand the session: giving up immediately would skip the
+		// audit event, the terminal system log (which SSE /logs/stream clients
+		// need to close), activeSessionId clearing, and the queue drain below —
+		// leaving a connected client hanging until the watchdog reaper eventually
+		// fires. Retry a few times with linear backoff before accepting that, per
+		// the retry pattern already used for transient errors in
+		// pushSessionWorkspace (apps/agent-server/src/services/session-workspace.ts).
+		let updated: typeof sessions.$inferSelect | undefined
+		let updateErr: unknown
+		for (let attempt = 1; attempt <= SessionManager.CAS_UPDATE_RETRIES; attempt++) {
+			try {
+				;[updated] = await this.db
+					.update(sessions)
+					.set({
+						status,
+						result: { exit_code: exitCode },
+						completedAt: new Date(),
+						updatedAt: new Date(),
+						currentActivity: null,
+						...(usage
+							? {
+									totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+									inputTokens: usage.inputTokens,
+									outputTokens: usage.outputTokens,
+									cacheCreationInputTokens: usage.cacheCreationInputTokens,
+									cacheReadInputTokens: usage.cacheReadInputTokens,
+									durationMs: usage.durationMs,
+								}
+							: {}),
+					})
+					.where(
+						and(
+							eq(sessions.id, sessionId),
+							notInArray(sessions.status, [...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES]),
+						),
+					)
+					.returning()
+				updateErr = undefined
+				break
+			} catch (err) {
+				updateErr = err
+				if (attempt < SessionManager.CAS_UPDATE_RETRIES) {
+					await new Promise((resolve) =>
+						setTimeout(resolve, SessionManager.CAS_UPDATE_RETRY_DELAY_MS * attempt),
+					)
+				}
+			}
+		}
+		if (updateErr) {
+			// Best-effort: a DB hiccup here must not surface as a thrown error to
+			// stopSession()'s caller, which would otherwise report a 400 "stop
+			// failed" even though the remote sandbox kill already succeeded.
+			logger.error('Failed to update remote session status after retries', {
+				sessionId,
+				status,
+				error: String(updateErr),
+			})
+			// The CAS UPDATE never persisted after all retries — most likely a
+			// transient DB outage, not a lost race (a lost race returns 0 rows
+			// without throwing, handled by the `!updated` check below). Returning
+			// here unconditionally would skip every side effect below and strand
+			// the session at 'running' with a hung SSE /logs/stream client — the
+			// exact bug class this method exists to fix. Do one read-only lookup
+			// to decide whether those side effects should still run.
+			let fallback: typeof sessions.$inferSelect | undefined
+			try {
+				;[fallback] = await this.db
+					.select()
+					.from(sessions)
+					.where(eq(sessions.id, sessionId))
+					.limit(1)
+			} catch (err) {
+				logger.error('Fallback session lookup after CAS retries also failed — giving up', {
+					sessionId,
+					error: String(err),
+				})
+				return
+			}
+			if (!fallback) return
+			// Another call already resolved this session while our retries were
+			// failing (its own report landed, or a concurrent call won the CAS) —
+			// no-op to avoid a duplicate terminal event.
+			if (
+				(SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES as readonly string[]).includes(
+					fallback.status,
+				)
+			) {
+				return
+			}
+			// Best-effort: try once more to persist the status directly (not
+			// CAS-guarded — the read above just confirmed no other call has
+			// resolved it). If this also fails, still fall through to the side
+			// effects below so the session doesn't hang forever, matching the
+			// pre-CAS code's unconditional fallthrough on an UPDATE error.
+			try {
+				await this.db
+					.update(sessions)
+					.set({
+						status,
+						result: { exit_code: exitCode },
+						completedAt: new Date(),
+						updatedAt: new Date(),
+						currentActivity: null,
+						...(usage
+							? {
+									totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+									inputTokens: usage.inputTokens,
+									outputTokens: usage.outputTokens,
+									cacheCreationInputTokens: usage.cacheCreationInputTokens,
+									cacheReadInputTokens: usage.cacheReadInputTokens,
+									durationMs: usage.durationMs,
+								}
+							: {}),
+					})
+					.where(eq(sessions.id, sessionId))
+			} catch (err) {
+				logger.error(
+					'Fallback direct status update also failed — continuing with best-effort cleanup only',
+					{ sessionId, error: String(err) },
+				)
+			}
+			updated = fallback
+		}
+
+		// No row matched: either the session doesn't exist, or it was already
+		// terminal/transitional (this call lost the race, or is a stale retry).
+		if (!updated) return
+
 		try {
-			if (!(await this.hasOtherActiveSessions(session.actorId, sessionId))) {
+			if (!(await this.hasOtherActiveSessions(updated.actorId, sessionId))) {
 				await this.db
 					.update(actors)
 					.set({
@@ -2433,7 +3274,7 @@ export class SessionManager extends EventEmitter {
 						agentStateUpdatedAt: new Date(),
 						updatedAt: new Date(),
 					})
-					.where(eq(actors.id, session.actorId))
+					.where(eq(actors.id, updated.actorId))
 			}
 		} catch (err) {
 			logger.warn('Failed to sync agentState for remote session', { sessionId, error: String(err) })
@@ -2441,8 +3282,8 @@ export class SessionManager extends EventEmitter {
 
 		try {
 			await this.db.insert(events).values({
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
+				workspaceId: updated.workspaceId,
+				actorId: updated.actorId,
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
@@ -2472,9 +3313,11 @@ export class SessionManager extends EventEmitter {
 		)
 
 		await this.clearActiveSession(sessionId)
-		await this.drainQueue(session.workspaceId).catch((err) =>
+		sessionGithubLogClassifier.unregisterSession(sessionId)
+		await this.drainQueue(updated.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
 		)
+		this.cosThinnessContext.delete(sessionId)
 
 		logger.info(`Remote session ${status}: ${sessionId}`, { exitCode })
 	}

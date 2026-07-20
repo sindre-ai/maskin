@@ -18,6 +18,13 @@ const envSchema = z.object({
 			16,
 			'AGENT_SERVER_SECRET must be at least 16 chars (generate with `openssl rand -hex 32`)',
 		),
+	// UUID of this box's row in apps/dev's `agent_servers` table. Set once per
+	// host (looked up manually — there's no self-registration flow). Enables
+	// the boot-time reconcile pass (see reconcileOnBoot in index.ts), which
+	// tells apps/dev which sandboxes survived a restart and cleans up any that
+	// didn't. Left unset, that pass just skips with a warning log — existing
+	// deployments without it still boot fine.
+	AGENT_SERVER_ID: z.string().uuid().optional(),
 	MSB_BIN: z.string().optional().default('/root/.microsandbox/bin/msb'),
 	MASKIN_AGENT_SERVER_PUBLIC_HOST: z.string().optional(),
 	// Hostname the microVM uses to reach this agent-server over the host loopback.
@@ -54,10 +61,12 @@ const envSchema = z.object({
 	// Chromium sidecar image used for browser-enabled sessions. Set this to the
 	// same repository/tag published by the browser-sidecar Docker workflow.
 	BROWSER_SIDECAR_IMAGE: z.string().optional().default('browser-sidecar:latest'),
-	// Host-side bridge gateway IP that session VMs reach via allow@private to
-	// talk to the browser sidecar over port-forwarding. On the default msb bridge
-	// this is 10.0.1.1. Override only for custom msb network configs.
-	MSB_BRIDGE_GATEWAY: z.string().optional().default('10.0.1.1'),
+	// Path to the persistent SSH keypair agent-server uses to open SSH-relay
+	// tunnels (`msb ssh serve` + `ssh -L`) into session/sidecar microVMs — the
+	// replacement for the old allow@private / bridge-gateway networking. The
+	// private key is generated on first boot if absent; the public half is
+	// (re-)registered with `msb ssh authorize` on every boot.
+	AGENT_SERVER_SSH_KEY_PATH: z.string().optional().default('/root/.agent-server/ssh/relay_key'),
 	// Minutes between cache re-warms. 0 warms once at startup only (zero ongoing
 	// overhead); a positive value lets a moving `:latest` reach sessions without
 	// a restart. Bounded so a typo can't schedule a sub-second pull loop.

@@ -552,6 +552,99 @@ describe('slackWebhookFanOut', () => {
 		expect(result).toEqual([normalized])
 	})
 
+	it('drops slack.app_home_opened events after publishing the view (returns [])', async () => {
+		// Regression guard: app_home_opened is a side-effect event — the route
+		// must not insert an events row per tab open, but it must still claim
+		// the delivery so retries get deduped.
+		const { slackWebhookFanOut } = await import(
+			'../../../../lib/integrations/providers/slack/fan-out'
+		)
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			status: 200,
+			json: () => Promise.resolve({ ok: true }),
+		} as unknown as Response)
+
+		// publishAppHomeView walks slack_user_links → notifications → integrations,
+		// not the files/events/integrations triplet the messaging tests need, so
+		// give it its own fake DB that returns no link (unlinked-state view).
+		const db = {
+			select: () => ({
+				from: () => ({
+					where: () => ({ limit: () => Promise.resolve([]) }),
+					leftJoin: () => ({
+						where: () => ({ orderBy: () => ({ limit: () => Promise.resolve([]) }) }),
+					}),
+				}),
+			}),
+		}
+		const { _resetAppHomeDebounce } = await import(
+			'../../../../lib/integrations/providers/slack/webhooks'
+		)
+		_resetAppHomeDebounce()
+
+		const result = await slackWebhookFanOut({
+			db: db as never,
+			storage: makeFakeStorage(),
+			integrationId: 'int-1',
+			workspaceId: 'ws-1',
+			normalized: {
+				entityType: 'slack.app_home_opened',
+				action: 'opened',
+				installationId: 'T1',
+				data: {
+					type: 'event_callback',
+					team_id: 'T1',
+					event: { type: 'app_home_opened', user: 'U1', tab: 'home' },
+				},
+			},
+		})
+
+		// No events row is inserted for an App Home open.
+		expect(result).toEqual([])
+		// No publish — the unlinked-state path returns early because there's no
+		// active integration row to read a bot token from.
+		expect(fetchSpy).not.toHaveBeenCalled()
+	})
+
+	it('does not publish for app_home_opened tabs other than `home`', async () => {
+		const { slackWebhookFanOut } = await import(
+			'../../../../lib/integrations/providers/slack/fan-out'
+		)
+		const fetchSpy = vi.spyOn(globalThis, 'fetch')
+		const db = {
+			select: () => ({
+				from: () => ({
+					where: () => ({ limit: () => Promise.resolve([]) }),
+				}),
+			}),
+		}
+		const { _resetAppHomeDebounce } = await import(
+			'../../../../lib/integrations/providers/slack/webhooks'
+		)
+		_resetAppHomeDebounce()
+
+		const result = await slackWebhookFanOut({
+			db: db as never,
+			storage: makeFakeStorage(),
+			integrationId: 'int-1',
+			workspaceId: 'ws-1',
+			normalized: {
+				entityType: 'slack.app_home_opened',
+				action: 'opened',
+				installationId: 'T1',
+				data: {
+					type: 'event_callback',
+					team_id: 'T1',
+					event: { type: 'app_home_opened', user: 'U1', tab: 'messages' },
+				},
+			},
+		})
+
+		expect(result).toEqual([])
+		expect(fetchSpy).not.toHaveBeenCalled()
+	})
+
 	it('rejects a file whose streamed body exceeds the cap when Content-Length is missing', async () => {
 		// Belt-and-suspenders guard: untrusted upstreams may omit or lie about
 		// Content-Length. The streaming counter must abort once accumulated

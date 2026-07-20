@@ -5,6 +5,7 @@ interface TestAccount {
 	apiKey: string
 	actorId: string
 	workspaceId: string
+	workspaceName: string
 	api: TestAPI
 }
 
@@ -51,6 +52,7 @@ export const test = base.extend<AuthFixtures>({
 			apiKey: actor.api_key,
 			actorId: actor.id,
 			workspaceId: workspace.id,
+			workspaceName: workspace.name,
 			api,
 		})
 	},

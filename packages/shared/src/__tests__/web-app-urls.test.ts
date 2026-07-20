@@ -124,6 +124,19 @@ describe('buildWebAppPath', () => {
 		).toBe('/ws-123/objects/obj-a')
 	})
 
+	it('builds file detail path from the id', () => {
+		expect(buildWebAppPath(ws, { kind: 'file', id: 'file-1' })).toBe('/ws-123/files/file-1')
+	})
+
+	it('routes skill links to the settings skills list (no per-skill detail route yet)', () => {
+		expect(buildWebAppPath(ws, { kind: 'skill', name: 'my-skill' })).toBe('/ws-123/settings/skills')
+		// `name` is recorded on the target for forward-compat but ignored by the
+		// current URL builder — every skill resolves to the shared settings list.
+		expect(buildWebAppPath(ws, { kind: 'skill', name: 'other-skill' })).toBe(
+			'/ws-123/settings/skills',
+		)
+	})
+
 	it('builds settings index and section paths', () => {
 		expect(buildWebAppPath(ws, { kind: 'settings' })).toBe('/ws-123/settings')
 		const sections = ['integrations', 'keys', 'mcp', 'members', 'skills', 'objects'] as const
@@ -145,6 +158,8 @@ describe('buildWebAppPath', () => {
 			{ kind: 'notification', id: 'x' },
 			{ kind: 'extension', id: 'x' },
 			{ kind: 'relationship', sourceId: 'x' },
+			{ kind: 'file', id: 'x' },
+			{ kind: 'skill', name: 'x' },
 			{ kind: 'settings' },
 		]
 		for (const t of targets) {
