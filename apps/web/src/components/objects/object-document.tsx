@@ -313,7 +313,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const updateObject = useUpdateObject(workspaceId)
 	useScrollToTopEmitter({
 		enabled: object.type === 'bet',
-		objectType: object.type,
+		objectSubtype: object.type,
 		objectId: object.id,
 	})
 	const verifyObject = useVerifyObject(workspaceId)
