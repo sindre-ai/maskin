@@ -95,7 +95,30 @@ export async function probeClaudeSubscription(
 	res.headers.forEach((value, key) => {
 		headerRecord[key] = value
 	})
-	return { kind: 'http', status: res.status, headers: headersFrom(headerRecord) }
+	// A 429 without the `anthropic-ratelimit-unified-status: exhausted` header
+	// can still be a subscription-bucket rejection carrying the signal in the
+	// body (`type: rate_limit_error`, or a `rate_limit_event` with
+	// `overageStatus: rejected` / `rateLimitType: five_hour`). Read the body
+	// so `classifyClaudeFailure` can trip failover on that shape too — every
+	// other status keeps today's behaviour and skips the body drain.
+	const body = res.status === 429 ? await readProbeBody(res) : undefined
+	return { kind: 'http', status: res.status, headers: headersFrom(headerRecord), body }
+}
+
+const PROBE_BODY_MAX_BYTES = 64 * 1024
+
+async function readProbeBody(res: Response): Promise<unknown> {
+	try {
+		const text = await res.text()
+		const capped = text.length > PROBE_BODY_MAX_BYTES ? text.slice(0, PROBE_BODY_MAX_BYTES) : text
+		try {
+			return JSON.parse(capped)
+		} catch {
+			return capped
+		}
+	} catch {
+		return undefined
+	}
 }
 
 export interface FailoverParams {

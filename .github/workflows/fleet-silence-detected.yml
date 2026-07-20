@@ -1,0 +1,28 @@
+name: Fleet silence detected
+
+on:
+  repository_dispatch:
+    types: [fleet.silence_detected]
+
+permissions:
+  contents: read
+
+jobs:
+  log-payload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log full client_payload
+        env:
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+        run: |
+          printf '%s\n' "$PAYLOAD" | jq .
+
+      - name: Echo individual fields
+        env:
+          LATEST_COMPLETED_AT: ${{ github.event.client_payload.latest_completed_at }}
+          MINUTES_SINCE: ${{ github.event.client_payload.minutes_since }}
+          DETECTED_AT: ${{ github.event.client_payload.detected_at }}
+        run: |
+          echo "latest_completed_at=$LATEST_COMPLETED_AT"
+          echo "minutes_since=$MINUTES_SINCE"
+          echo "detected_at=$DETECTED_AT"
