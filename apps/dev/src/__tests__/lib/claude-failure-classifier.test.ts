@@ -8,10 +8,12 @@ import {
 const httpResponse = (
 	status: number,
 	headers: Record<string, string | undefined> = {},
+	body?: unknown,
 ): ClassifierInput => ({
 	kind: 'http',
 	status,
 	headers: headersFrom(headers),
+	body,
 })
 
 describe('classifyClaudeFailure', () => {
@@ -70,6 +72,81 @@ describe('classifyClaudeFailure', () => {
 		it('exhausted header is matched case-insensitively', () => {
 			const decision = classifyClaudeFailure(
 				httpResponse(429, { 'anthropic-ratelimit-unified-status': 'EXHAUSTED' }),
+			)
+			expect(decision).toEqual({ action: 'failover', reason: 'quota_exhausted' })
+		})
+	})
+
+	describe('429 body inspection — Claude subscription bucket exhaustion', () => {
+		it('429 with type:rate_limit_error body → failover with quota_exhausted', () => {
+			const decision = classifyClaudeFailure(
+				httpResponse(
+					429,
+					{},
+					{ type: 'error', error: { type: 'rate_limit_error', message: "You've hit your limit" } },
+				),
+			)
+			expect(decision).toEqual({ action: 'failover', reason: 'quota_exhausted' })
+		})
+
+		it('429 with rate_limit_event { overageStatus: rejected } → failover', () => {
+			const decision = classifyClaudeFailure(
+				httpResponse(
+					429,
+					{},
+					{
+						type: 'rate_limit_event',
+						rate_limit_info: { rateLimitType: 'five_hour', overageStatus: 'rejected' },
+					},
+				),
+			)
+			expect(decision).toEqual({ action: 'failover', reason: 'quota_exhausted' })
+		})
+
+		it('429 with only rateLimitType:five_hour → failover', () => {
+			const decision = classifyClaudeFailure(
+				httpResponse(429, {}, { rate_limit_info: { rateLimitType: 'five_hour' } }),
+			)
+			expect(decision).toEqual({ action: 'failover', reason: 'quota_exhausted' })
+		})
+
+		it('429 with rate-limit body as a raw JSON string → failover', () => {
+			const decision = classifyClaudeFailure(
+				httpResponse(
+					429,
+					{},
+					'{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour","overageStatus":"rejected"}}',
+				),
+			)
+			expect(decision).toEqual({ action: 'failover', reason: 'quota_exhausted' })
+		})
+
+		it('429 with overage_status snake_case variant → failover', () => {
+			const decision = classifyClaudeFailure(
+				httpResponse(429, {}, { rate_limit_info: { overage_status: 'REJECTED' } }),
+			)
+			expect(decision).toEqual({ action: 'failover', reason: 'quota_exhausted' })
+		})
+
+		it('429 with unrelated JSON body still retries the primary', () => {
+			const decision = classifyClaudeFailure(
+				httpResponse(429, {}, { type: 'error', error: { type: 'overloaded_error' } }),
+			)
+			expect(decision).toEqual({ action: 'retry_primary', reason: 'throughput_burst' })
+		})
+
+		it('429 with unparseable body (undefined) still retries the primary', () => {
+			const decision = classifyClaudeFailure(httpResponse(429, {}, undefined))
+			expect(decision).toEqual({ action: 'retry_primary', reason: 'throughput_burst' })
+		})
+
+		it('exhausted header still wins over an unrelated body', () => {
+			const decision = classifyClaudeFailure(
+				httpResponse(
+					429,
+					{ 'anthropic-ratelimit-unified-status': 'exhausted' },
+					{ type: 'error', error: { type: 'overloaded_error' } },
+				),
 			)
 			expect(decision).toEqual({ action: 'failover', reason: 'quota_exhausted' })
 		})

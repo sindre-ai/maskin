@@ -466,6 +466,51 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			})
 		})
 
+		it('classifies a 429 with a rate_limit_event body as quota_exhausted (failover)', async () => {
+			// End-to-end evidence for T6: a 429 that carries no
+			// `anthropic-ratelimit-unified-status: exhausted` header but does
+			// carry the Claude subscription rate-limit body must flip the
+			// active slot to backup, matching the OAuth-death failover path.
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot(),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+			}
+			const { db, eventInserts, getSettings } = createMockDb({
+				settings: { claude_oauth: claudeOAuth },
+			})
+			const probe = vi
+				.fn<() => Promise<ClassifierInput | null>>()
+				.mockResolvedValueOnce({
+					kind: 'http',
+					status: 429,
+					headers: headersFrom({}),
+					body: {
+						type: 'rate_limit_event',
+						rate_limit_info: { rateLimitType: 'five_hour', overageStatus: 'rejected' },
+					},
+				})
+				.mockResolvedValueOnce(null)
+
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				probe,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
+			expect(result?.slot).toBe('backup')
+			expect(eventInserts[0]).toMatchObject({
+				action: FAILOVER_TRIGGERED_ACTION,
+				data: expect.objectContaining({ reason: 'quota_exhausted' }),
+			})
+			const stored = getSettings()?.claude_oauth as OAuthSlotStorage
+			expect(stored.failover).toMatchObject({
+				active_slot: 'backup',
+				last_classified_reason: 'quota_exhausted',
+			})
+		})
+
 		it('does not failover on a transient 429 throughput-burst', async () => {
 			const claudeOAuth: OAuthSlotStorage = {
 				primary: encryptedSlot({ encryptedAccessToken: 'primary-token' }),
