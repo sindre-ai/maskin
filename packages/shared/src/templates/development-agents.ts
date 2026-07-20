@@ -2160,6 +2160,22 @@ Never hardcode another actor's ID in a comment, mention, or handoff. If a mode s
 
 export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 	{
+		// Renders the daily briefing's audio track. Dispatches to an in-process
+		// TTS handler instead of spawning an agent session — see
+		// apps/dev/src/services/briefing-audio-renderer.ts. Rollback: flip
+		// `enabled` to false and briefings keep flowing without audio.
+		name: 'Briefing Created → Render Audio',
+		type: 'event',
+		config: {
+			entity_type: 'briefing',
+			action: 'created',
+			handler: 'render_briefing_audio',
+		},
+		targetActor$id: 'chief_of_staff',
+		enabled: true,
+		actionPrompt: 'Render TTS audio for the briefing and attach the MP3 to the briefing object.',
+	},
+	{
 		name: 'Bet Proposed → Plan Tasks',
 		type: 'event',
 		config: {

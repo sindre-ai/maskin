@@ -289,6 +289,10 @@ export async function bootstrapDefaultAgents(
 	// owner picked a different default).
 	if (chiefId) {
 		await pinDefaultAgentIfUnset(db, workspaceId, chiefId)
+		// Chief of Staff isn't in DEVELOPMENT_AGENTS, but a trigger can still
+		// name it via `targetActor$id: 'chief_of_staff'` (the briefing
+		// audio-render trigger does). Expose the id under the same key.
+		actorIdMap.chief_of_staff = chiefId
 	}
 
 	for (const agent of defaultAgents) {
