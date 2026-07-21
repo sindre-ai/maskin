@@ -316,3 +316,67 @@ export function trackLoopGraduated(
 ): void {
 	trackEvent('loop_graduated', { ...fillBase(p), source_bet_id: p.source_bet_id })
 }
+
+// Ship-metric events for the For You briefing bet. `workspace_session_start`
+// is the denominator for the For-You-first rate; `fyp_opened_first` is its
+// numerator (fires once per session when For You is the first workspace
+// surface). `fyp_session_opened` is the denominator for briefing engagement
+// (fires once per session on any first arrival at For You). Both briefing
+// events dedupe per briefing per session via sessionStorage so a scroll-back
+// or audio replay never double-counts. `workspace_id` rides as an explicit
+// property so the PostHog query can filter without depending on super
+// properties having registered yet.
+function readSessionFlag(key: string): boolean {
+	try {
+		return typeof sessionStorage !== 'undefined' && sessionStorage.getItem(key) === '1'
+	} catch {
+		return false
+	}
+}
+
+function writeSessionFlag(key: string): void {
+	try {
+		sessionStorage?.setItem(key, '1')
+	} catch {
+		// sessionStorage unavailable (SSR, privacy mode) — best-effort only.
+	}
+}
+
+export function trackWorkspaceSessionStart(p: { workspace_id: string }): void {
+	trackEvent('workspace_session_start', { workspace_id: p.workspace_id })
+}
+
+export function trackFypSessionOpened(p: { workspace_id: string }): void {
+	trackEvent('fyp_session_opened', { workspace_id: p.workspace_id })
+}
+
+export function trackFypOpenedFirst(p: { workspace_id: string }): void {
+	trackEvent('fyp_opened_first', { workspace_id: p.workspace_id })
+}
+
+const FYP_BRIEFING_READ_KEY = (briefingId: string) => `maskin_fyp_briefing_read_${briefingId}`
+const FYP_BRIEFING_AUDIO_KEY = (briefingId: string) =>
+	`maskin_fyp_briefing_audio_played_${briefingId}`
+
+export function trackFypBriefingRead(p: { workspace_id: string; briefing_id: string }): void {
+	const key = FYP_BRIEFING_READ_KEY(p.briefing_id)
+	if (readSessionFlag(key)) return
+	writeSessionFlag(key)
+	trackEvent('fyp_briefing_read', {
+		workspace_id: p.workspace_id,
+		briefing_id: p.briefing_id,
+	})
+}
+
+export function trackFypBriefingAudioPlayed(p: {
+	workspace_id: string
+	briefing_id: string
+}): void {
+	const key = FYP_BRIEFING_AUDIO_KEY(p.briefing_id)
+	if (readSessionFlag(key)) return
+	writeSessionFlag(key)
+	trackEvent('fyp_briefing_audio_played', {
+		workspace_id: p.workspace_id,
+		briefing_id: p.briefing_id,
+	})
+}
