@@ -17,10 +17,7 @@ async function setTheme(page: Page, theme: 'light' | 'dark') {
 test.describe('TipTap editor on object detail', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
 		for (const theme of ['light', 'dark'] as const) {
-			test(`mounts, accepts input, autosaves @ ${vp.label} ${theme}`, async ({
-				page,
-				account,
-			}) => {
+			test(`mounts, accepts input, autosaves @ ${vp.label} ${theme}`, async ({ page, account }) => {
 				await page.setViewportSize({ width: vp.width, height: vp.height })
 				await setTheme(page, theme)
 
@@ -86,10 +83,7 @@ test.describe('TipTap editor on object detail', () => {
 		await page.keyboard.press('Enter')
 		await editor.evaluate((el) => {
 			const dt = new DataTransfer()
-			dt.setData(
-				'text/html',
-				'<h2>Pasted heading</h2><ul><li>Pasted item</li></ul>',
-			)
+			dt.setData('text/html', '<h2>Pasted heading</h2><ul><li>Pasted item</li></ul>')
 			el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true }))
 		})
 

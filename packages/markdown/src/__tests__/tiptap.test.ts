@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { editorHtmlToMarkdown, markdownToEditorHtml } from '../tiptap'
 import { serializeMarkdown } from '../serialize'
+import { editorHtmlToMarkdown, markdownToEditorHtml } from '../tiptap'
 
 // The tiptap adapter is the editor's IO layer: markdown → HTML on load,
 // HTML → canonical Markdown on save. Every save must leave through the
@@ -82,10 +82,7 @@ describe('editor round-trip through the owned serializer', () => {
 	const cases: Array<[label: string, source: string]> = [
 		['tight list', '# Tight list\n\n- one\n- two\n- three\n'],
 		['ordered list', '# Ordered\n\n1. one\n2. two\n3. three\n'],
-		[
-			'table',
-			'# Table\n\n| a | b |\n| - | - |\n| 1 | 2 |\n',
-		],
+		['table', '# Table\n\n| a | b |\n| - | - |\n| 1 | 2 |\n'],
 		['bold + link', 'A **strong** and a [link](https://maskin.io).\n'],
 	]
 	for (const [label, source] of cases) {

@@ -139,6 +139,15 @@ export function TipTapEditor({
 	if (value !== prevValue) {
 		setPrevValue(value)
 		if (editor && !editor.isDestroyed && value !== lastEmittedRef.current) {
+			// Cancel any pending autosave — the debounced timer would fire after
+			// setContent with the new value's HTML, misattributing it as the
+			// user's write. Losing A's unflushed keystrokes on an external
+			// nav/SSE overwrite is unavoidable at this layer; T4's reconcile
+			// banner is where the conflict surfaces.
+			if (debounceRef.current) {
+				clearTimeout(debounceRef.current)
+				debounceRef.current = null
+			}
 			lastEmittedRef.current = value
 			editor.commands.setContent(markdownToEditorHtml(value), { emitUpdate: false })
 		}
