@@ -144,6 +144,44 @@ describe('Header', () => {
 		expect(screen.getByRole('button', { name: /create new/i })).toBeInTheDocument()
 	})
 
+	it('keeps the Create button on the agents list surface', () => {
+		vi.mocked(useMatches).mockReturnValue([
+			{
+				routeId: '/_authed/$workspaceId/agents',
+				pathname: '/ws-1/agents',
+				params: { workspaceId: 'ws-1' },
+			},
+		] as ReturnType<typeof useMatches>)
+		vi.mocked(usePageHeader).mockReturnValue({
+			actions: null,
+			stickyIdentity: null,
+			setActions: vi.fn(),
+			setStickyIdentity: vi.fn(),
+		})
+
+		render(<Header />)
+		expect(screen.getByRole('button', { name: /create new/i })).toBeInTheDocument()
+	})
+
+	it('keeps the Create button on the triggers list surface', () => {
+		vi.mocked(useMatches).mockReturnValue([
+			{
+				routeId: '/_authed/$workspaceId/triggers/',
+				pathname: '/ws-1/triggers',
+				params: { workspaceId: 'ws-1' },
+			},
+		] as ReturnType<typeof useMatches>)
+		vi.mocked(usePageHeader).mockReturnValue({
+			actions: null,
+			stickyIdentity: null,
+			setActions: vi.fn(),
+			setStickyIdentity: vi.fn(),
+		})
+
+		render(<Header />)
+		expect(screen.getByRole('button', { name: /create new/i })).toBeInTheDocument()
+	})
+
 	it('renders the sticky identity projection when the hero has scrolled off', () => {
 		vi.mocked(useMatches).mockReturnValue([
 			{

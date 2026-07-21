@@ -135,4 +135,14 @@ test.describe('+ Create button on nav', () => {
 		await page.goto(`/${account.workspaceId}/objects`)
 		await expect(page.locator('header').getByRole('button', { name: /create new/i })).toBeVisible()
 	})
+
+	test('is present on /agents and /triggers list surfaces', async ({ page, account }) => {
+		await page.setViewportSize(WIDE_DESKTOP)
+
+		await page.goto(`/${account.workspaceId}/agents`)
+		await expect(page.locator('header').getByRole('button', { name: /create new/i })).toBeVisible()
+
+		await page.goto(`/${account.workspaceId}/triggers`)
+		await expect(page.locator('header').getByRole('button', { name: /create new/i })).toBeVisible()
+	})
 })
