@@ -1,3 +1,4 @@
+import { BriefingCard } from '@/components/foryou/briefing-card'
 import { NewConversationComposer } from '@/components/foryou/new-conversation-composer'
 import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
@@ -10,6 +11,7 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
+import { useBriefing } from '@/hooks/use-briefing'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import type { UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -60,6 +62,16 @@ function ForYouDashboard() {
 	const navigate = useNavigate()
 	const { data, isLoading } = useUnread(workspaceId)
 	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
+	// Featured briefing — first item of the feed when a CoS briefing exists for
+	// the workspace. Absent (null) when the API returns no briefing.
+	const { data: briefing } = useBriefing(workspaceId)
+	const briefingCard =
+		briefing?.object != null ? (
+			<BriefingCard
+				workspaceId={workspaceId}
+				briefing={briefing as typeof briefing & { object: NonNullable<typeof briefing.object> }}
+			/>
+		) : null
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
 
@@ -260,6 +272,7 @@ function ForYouDashboard() {
 		return (
 			<>
 				<div className="flex flex-col gap-2">
+					{briefingCard}
 					{northStarCard}
 					<div className="flex items-center justify-end">
 						<Button
@@ -312,6 +325,7 @@ function ForYouDashboard() {
 	return (
 		<>
 			<div className={cn('flex flex-col gap-3', activeId && 'pb-28')}>
+				{briefingCard}
 				{northStarCard}
 
 				{/* Page head — h1 + subtitle + filters + Mark-all-read + New (AC-U7).

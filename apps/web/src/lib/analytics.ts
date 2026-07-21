@@ -206,6 +206,20 @@ export function trackForyouSparseComposerSubmit(p: { items_count: number }): voi
 	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
 }
 
+// Ship-metric events for the featured briefing card at the top of For You.
+// `fyp_briefing_read` fires once per card mount past 50% scroll of the card
+// body; `fyp_briefing_audio_played` fires once per mount past 60s of playback.
+// Both carry the briefing knowledge object's id as `entity_id` so PostHog can
+// dedupe per briefing.
+
+export function trackFypBriefingRead(p: { entity_id: string }): void {
+	trackEvent('fyp_briefing_read', { entity_id: p.entity_id, entity_type: 'knowledge' })
+}
+
+export function trackFypBriefingAudioPlayed(p: { entity_id: string }): void {
+	trackEvent('fyp_briefing_audio_played', { entity_id: p.entity_id, entity_type: 'knowledge' })
+}
+
 // Sidebar legibility bet — click-through proxy for the qualitative ship metric.
 // `workspace_id` already rides via the PostHog super-property registered on
 // workspace mount; the explicit `workspaceId` here is a duplicate the Analyst

@@ -49,6 +49,14 @@ vi.mock('@/hooks/use-bets', () => ({
 	useBets: (...args: unknown[]) => mockUseBets(...args),
 }))
 
+vi.mock('@/hooks/use-briefing', () => ({
+	useBriefing: () => ({ data: undefined }),
+}))
+
+vi.mock('@/components/foryou/briefing-card', () => ({
+	BriefingCard: () => <div data-testid="briefing-card" />,
+}))
+
 vi.mock('@/components/foryou/north-star-prompt-card', () => ({
 	NorthStarPromptCard: () => <div data-testid="north-star-prompt-card" />,
 }))
