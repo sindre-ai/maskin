@@ -207,16 +207,25 @@ export function trackForyouSparseComposerSubmit(p: { items_count: number }): voi
 }
 
 // Ship-metric events for the featured briefing card at the top of For You.
-// `fyp_briefing_read` fires once per card mount past 50% scroll of the card
-// body; `fyp_briefing_audio_played` fires once per mount past 60s of playback.
-// Both carry the briefing knowledge object's id as `entity_id` so PostHog can
-// dedupe per briefing.
+// `fyp_briefing_read` fires past 50% scroll of the card body;
+// `fyp_briefing_audio_played` fires past 60s of playback. Both dedupe per
+// briefing per tab session via sessionStorage so scroll-back, audio replay,
+// or a card re-mount within the same session never double-counts.
+
+const FYP_BRIEFING_READ_KEY = (entityId: string) => `maskin_fyp_briefing_read_${entityId}`
+const FYP_BRIEFING_AUDIO_KEY = (entityId: string) => `maskin_fyp_briefing_audio_played_${entityId}`
 
 export function trackFypBriefingRead(p: { entity_id: string }): void {
+	const key = FYP_BRIEFING_READ_KEY(p.entity_id)
+	if (readSessionFlag(key)) return
+	writeSessionFlag(key)
 	trackEvent('fyp_briefing_read', { entity_id: p.entity_id, entity_type: 'knowledge' })
 }
 
 export function trackFypBriefingAudioPlayed(p: { entity_id: string }): void {
+	const key = FYP_BRIEFING_AUDIO_KEY(p.entity_id)
+	if (readSessionFlag(key)) return
+	writeSessionFlag(key)
 	trackEvent('fyp_briefing_audio_played', { entity_id: p.entity_id, entity_type: 'knowledge' })
 }
 
@@ -352,31 +361,4 @@ export function trackFypSessionOpened(p: { workspace_id: string }): void {
 
 export function trackFypOpenedFirst(p: { workspace_id: string }): void {
 	trackEvent('fyp_opened_first', { workspace_id: p.workspace_id })
-}
-
-const FYP_BRIEFING_READ_KEY = (briefingId: string) => `maskin_fyp_briefing_read_${briefingId}`
-const FYP_BRIEFING_AUDIO_KEY = (briefingId: string) =>
-	`maskin_fyp_briefing_audio_played_${briefingId}`
-
-export function trackFypBriefingRead(p: { workspace_id: string; briefing_id: string }): void {
-	const key = FYP_BRIEFING_READ_KEY(p.briefing_id)
-	if (readSessionFlag(key)) return
-	writeSessionFlag(key)
-	trackEvent('fyp_briefing_read', {
-		workspace_id: p.workspace_id,
-		briefing_id: p.briefing_id,
-	})
-}
-
-export function trackFypBriefingAudioPlayed(p: {
-	workspace_id: string
-	briefing_id: string
-}): void {
-	const key = FYP_BRIEFING_AUDIO_KEY(p.briefing_id)
-	if (readSessionFlag(key)) return
-	writeSessionFlag(key)
-	trackEvent('fyp_briefing_audio_played', {
-		workspace_id: p.workspace_id,
-		briefing_id: p.briefing_id,
-	})
 }
