@@ -2,11 +2,12 @@ import { ApiError, type ObjectResponse, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import {
 	type ConflictDetectedPayload,
+	type ConflictResolutionOutcome,
 	type ConflictResolvedPayload,
 	extractTheirsFrom409,
 } from '@/lib/reconcile/types'
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 
 export type ReconcileBannerStatus =
 	| 'idle'
@@ -21,7 +22,7 @@ export interface ReconcileConflict {
 	// The current server state (title omitted; only body markdown is in scope
 	// per the task's Out-of-Scope).
 	theirs: string
-	// Fresh version from the 409 body — echo this back on keep_mine to break
+	// Fresh version from the 409 body — echo this back on keep-mine to break
 	// the deadlock.
 	freshVersion: number | null
 	// Full server object from the 409 body — used to hydrate the query cache on
@@ -60,6 +61,11 @@ export function useContentReconcile({
 	const queryClient = useQueryClient()
 	const [status, setStatus] = useState<ReconcileBannerStatus>('idle')
 	const [conflict, setConflict] = useState<ReconcileConflict | null>(null)
+	// Whether the user opened the diff overlay for the currently-active
+	// conflict. A ref (not state) because it's a resolution-time input to
+	// `keepMine` / `confirmTakeTheirs` — no rerender needed when it flips.
+	// Reset on every new conflict so re-conflicts don't inherit the flag.
+	const hasReviewedRef = useRef(false)
 
 	const runPatch = useCallback(
 		async (content: string, expectedVersion: number | null): Promise<void> => {
@@ -79,6 +85,7 @@ export function useContentReconcile({
 							freshVersion: typeof theirs.version === 'number' ? theirs.version : null,
 							theirsObject: theirs,
 						}
+						hasReviewedRef.current = false
 						setConflict(next)
 						setStatus('conflict')
 						onConflictDetected?.({
@@ -108,6 +115,7 @@ export function useContentReconcile({
 
 	const openReview = useCallback(() => {
 		if (status === 'idle') return
+		hasReviewedRef.current = true
 		setStatus('reviewing')
 	}, [status])
 
@@ -118,20 +126,24 @@ export function useContentReconcile({
 
 	const keepMine = useCallback(async () => {
 		if (!conflict) return
+		const outcome: ConflictResolutionOutcome = hasReviewedRef.current
+			? 'reviewed_then_kept_mine'
+			: 'kept_mine'
 		setStatus('retrying')
 		try {
 			await runPatch(conflict.mine, conflict.freshVersion)
 			// runPatch either succeeded (cache is fresh) or re-conflicted (new
-			// conflict state already set by runPatch's 409 branch). Only clear the
-			// resolved state when we actually succeeded — detected via the fact
-			// that status hasn't been bumped back to 'conflict' by runPatch.
+			// conflict state already set by runPatch's 409 branch, which also reset
+			// hasReviewedRef). Only clear the resolved state when we actually
+			// succeeded — detected via the fact that status hasn't been bumped
+			// back to 'conflict' by runPatch.
 			setStatus((prev) => {
 				if (prev === 'retrying') {
 					onConflictResolved?.({
 						objectId: object.id,
 						objectType: object.type,
 						freshVersion: conflict.freshVersion,
-						resolution: 'keep_mine',
+						resolution: outcome,
 					})
 					setConflict(null)
 					return 'idle'
@@ -156,6 +168,9 @@ export function useContentReconcile({
 
 	const confirmTakeTheirs = useCallback(() => {
 		if (!conflict) return
+		const outcome: ConflictResolutionOutcome = hasReviewedRef.current
+			? 'reviewed_then_took_theirs'
+			: 'took_theirs'
 		// Server already has this state — no PATCH needed. Push it into the
 		// detail cache so the editor re-renders with theirs and the version
 		// echoes on the next write.
@@ -165,7 +180,7 @@ export function useContentReconcile({
 			objectId: object.id,
 			objectType: object.type,
 			freshVersion: conflict.freshVersion,
-			resolution: 'take_theirs',
+			resolution: outcome,
 		})
 		setConflict(null)
 		setStatus('idle')

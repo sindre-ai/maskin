@@ -35,6 +35,17 @@ function buildTheirs(overrides: Partial<ObjectResponse> = {}): ObjectResponse {
 	})
 }
 
+// The real 409 wire shape from `staleVersionErrorSchema`:
+// `{ error: { code, message }, current: ObjectResponse }`. Every rejection
+// mock in this suite goes through here so the extractor bug can't reach unit-
+// green again.
+function stale409(current: ObjectResponse): ApiError {
+	return new ApiError(409, 'stale', undefined, {
+		error: { code: 'CONFLICT', message: 'stale version' },
+		current,
+	})
+}
+
 describe('useContentReconcile', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
@@ -67,9 +78,7 @@ describe('useContentReconcile', () => {
 	it('surfaces the banner and fires onConflictDetected on 409', async () => {
 		const object = buildObjectResponse({ id: 'obj-1', content: 'mine', version: 3 })
 		const theirs = buildTheirs({ content: 'theirs', version: 5 })
-		vi.mocked(api.objects.update).mockRejectedValue(
-			new ApiError(409, 'stale', undefined, { object: theirs }),
-		)
+		vi.mocked(api.objects.update).mockRejectedValue(stale409(theirs))
 		const onConflictDetected = vi.fn()
 
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -90,12 +99,12 @@ describe('useContentReconcile', () => {
 		)
 	})
 
-	it('keep-mine re-PATCHes with the fresh version and resolves', async () => {
+	it('keep-mine re-PATCHes with the fresh version and emits kept_mine', async () => {
 		const object = buildObjectResponse({ id: 'obj-1', content: 'mine', version: 3 })
 		const theirs = buildTheirs({ content: 'theirs', version: 5 })
 		const resolved = buildObjectResponse({ id: 'obj-1', content: 'new draft', version: 6 })
 		vi.mocked(api.objects.update)
-			.mockRejectedValueOnce(new ApiError(409, 'stale', undefined, { object: theirs }))
+			.mockRejectedValueOnce(stale409(theirs))
 			.mockResolvedValueOnce(resolved)
 		const onConflictResolved = vi.fn()
 
@@ -120,7 +129,37 @@ describe('useContentReconcile', () => {
 		expect(result.current.status).toBe('idle')
 		expect(result.current.conflict).toBeNull()
 		expect(onConflictResolved).toHaveBeenCalledWith(
-			expect.objectContaining({ resolution: 'keep_mine', freshVersion: 5 }),
+			expect.objectContaining({ resolution: 'kept_mine', freshVersion: 5 }),
+		)
+	})
+
+	it('keep-mine after opening review emits reviewed_then_kept_mine', async () => {
+		const object = buildObjectResponse({ id: 'obj-1', content: 'mine', version: 3 })
+		const theirs = buildTheirs({ content: 'theirs', version: 5 })
+		const resolved = buildObjectResponse({ id: 'obj-1', content: 'new draft', version: 6 })
+		vi.mocked(api.objects.update)
+			.mockRejectedValueOnce(stale409(theirs))
+			.mockResolvedValueOnce(resolved)
+		const onConflictResolved = vi.fn()
+
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+		const { result } = renderHook(() => useContentReconcile({ object, onConflictResolved }), {
+			wrapper: wrapperWith(queryClient),
+		})
+
+		act(() => result.current.saveContent('new draft'))
+		await waitFor(() => expect(result.current.status).toBe('conflict'))
+
+		act(() => result.current.openReview())
+		act(() => result.current.closeReview())
+
+		await act(async () => {
+			await result.current.keepMine()
+		})
+
+		expect(result.current.status).toBe('idle')
+		expect(onConflictResolved).toHaveBeenCalledWith(
+			expect.objectContaining({ resolution: 'reviewed_then_kept_mine' }),
 		)
 	})
 
@@ -129,8 +168,8 @@ describe('useContentReconcile', () => {
 		const theirsA = buildTheirs({ content: 'theirs v5', version: 5 })
 		const theirsB = buildTheirs({ content: 'theirs v6', version: 6 })
 		vi.mocked(api.objects.update)
-			.mockRejectedValueOnce(new ApiError(409, 'stale', undefined, { object: theirsA }))
-			.mockRejectedValueOnce(new ApiError(409, 'stale', undefined, { object: theirsB }))
+			.mockRejectedValueOnce(stale409(theirsA))
+			.mockRejectedValueOnce(stale409(theirsB))
 
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 		const { result } = renderHook(() => useContentReconcile({ object }), {
@@ -149,12 +188,10 @@ describe('useContentReconcile', () => {
 		expect(result.current.conflict?.theirs).toBe('theirs v6')
 	})
 
-	it('take-theirs writes theirs to the cache after confirm and emits resolved', async () => {
+	it('take-theirs writes theirs to the cache after confirm and emits took_theirs', async () => {
 		const object = buildObjectResponse({ id: 'obj-1', content: 'mine', version: 3 })
 		const theirs = buildTheirs({ content: 'theirs', version: 5 })
-		vi.mocked(api.objects.update).mockRejectedValue(
-			new ApiError(409, 'stale', undefined, { object: theirs }),
-		)
+		vi.mocked(api.objects.update).mockRejectedValue(stale409(theirs))
 		const onConflictResolved = vi.fn()
 
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -174,16 +211,81 @@ describe('useContentReconcile', () => {
 		expect(result.current.conflict).toBeNull()
 		expect(queryClient.getQueryData(['objects', 'detail', 'obj-1'])).toEqual(theirs)
 		expect(onConflictResolved).toHaveBeenCalledWith(
-			expect.objectContaining({ resolution: 'take_theirs' }),
+			expect.objectContaining({ resolution: 'took_theirs' }),
+		)
+	})
+
+	it('take-theirs after opening review emits reviewed_then_took_theirs', async () => {
+		const object = buildObjectResponse({ id: 'obj-1', content: 'mine', version: 3 })
+		const theirs = buildTheirs({ content: 'theirs', version: 5 })
+		vi.mocked(api.objects.update).mockRejectedValue(stale409(theirs))
+		const onConflictResolved = vi.fn()
+
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+		const { result } = renderHook(() => useContentReconcile({ object, onConflictResolved }), {
+			wrapper: wrapperWith(queryClient),
+		})
+
+		act(() => result.current.saveContent('new draft'))
+		await waitFor(() => expect(result.current.status).toBe('conflict'))
+
+		act(() => result.current.openReview())
+		act(() => result.current.closeReview())
+
+		act(() => result.current.requestTakeTheirs())
+		act(() => result.current.confirmTakeTheirs())
+
+		expect(result.current.status).toBe('idle')
+		expect(onConflictResolved).toHaveBeenCalledWith(
+			expect.objectContaining({ resolution: 'reviewed_then_took_theirs' }),
+		)
+	})
+
+	it('resets the review flag on a re-conflict so kept_mine follows a fresh unreviewed click', async () => {
+		const object = buildObjectResponse({ id: 'obj-1', content: 'mine', version: 3 })
+		const theirsA = buildTheirs({ content: 'theirs v5', version: 5 })
+		const theirsB = buildTheirs({ content: 'theirs v6', version: 6 })
+		const resolved = buildObjectResponse({ id: 'obj-1', content: 'new draft', version: 7 })
+		vi.mocked(api.objects.update)
+			.mockRejectedValueOnce(stale409(theirsA))
+			.mockRejectedValueOnce(stale409(theirsB))
+			.mockResolvedValueOnce(resolved)
+		const onConflictResolved = vi.fn()
+
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+		const { result } = renderHook(() => useContentReconcile({ object, onConflictResolved }), {
+			wrapper: wrapperWith(queryClient),
+		})
+
+		act(() => result.current.saveContent('new draft'))
+		await waitFor(() => expect(result.current.status).toBe('conflict'))
+
+		// User opens review on the first conflict, then clicks keep-mine, which
+		// re-conflicts on version 6 without touching the diff overlay again.
+		act(() => result.current.openReview())
+		act(() => result.current.closeReview())
+
+		await act(async () => {
+			await result.current.keepMine()
+		})
+		expect(result.current.status).toBe('conflict')
+		expect(result.current.conflict?.freshVersion).toBe(6)
+
+		// A second keep-mine — this time unreviewed on the new conflict —
+		// resolves cleanly and emits `kept_mine`, not `reviewed_then_kept_mine`.
+		onConflictResolved.mockClear()
+		await act(async () => {
+			await result.current.keepMine()
+		})
+		expect(onConflictResolved).toHaveBeenCalledWith(
+			expect.objectContaining({ resolution: 'kept_mine' }),
 		)
 	})
 
 	it('review opens and closes without dismissing the banner', async () => {
 		const object = buildObjectResponse({ id: 'obj-1', content: 'mine', version: 3 })
 		const theirs = buildTheirs()
-		vi.mocked(api.objects.update).mockRejectedValue(
-			new ApiError(409, 'stale', undefined, { object: theirs }),
-		)
+		vi.mocked(api.objects.update).mockRejectedValue(stale409(theirs))
 
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 		const { result } = renderHook(() => useContentReconcile({ object }), {
@@ -203,9 +305,7 @@ describe('useContentReconcile', () => {
 	it('drops writes while a conflict is active (no silent clobber)', async () => {
 		const object = buildObjectResponse({ id: 'obj-1', content: 'mine', version: 3 })
 		const theirs = buildTheirs()
-		vi.mocked(api.objects.update).mockRejectedValue(
-			new ApiError(409, 'stale', undefined, { object: theirs }),
-		)
+		vi.mocked(api.objects.update).mockRejectedValue(stale409(theirs))
 
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 		const { result } = renderHook(() => useContentReconcile({ object }), {
