@@ -917,6 +917,105 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('update_objects handler — version guard', () => {
+		it('passes expected_version through as an If-Match header on PATCH', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ id: 'obj-1', type: 'bet', version: 6 }),
+			} as Response)
+
+			const handler = getHandler('update_objects')
+			await handler({
+				updates: [
+					{
+						id: '11111111-1111-1111-1111-111111111111',
+						title: 'Guarded',
+						expected_version: 5,
+					},
+				],
+			})
+
+			const patchCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => ((c[1] as RequestInit).method ?? 'GET') === 'PATCH')
+			expect(patchCall).toBeDefined()
+			const headers = (patchCall?.[1] as RequestInit).headers as Record<string, string>
+			expect(headers['If-Match']).toBe('5')
+			// The body must not leak the internal-only fields through to the server.
+			const body = JSON.parse((patchCall?.[1] as RequestInit).body as string)
+			expect(body.expected_version).toBeUndefined()
+			expect(body.title).toBe('Guarded')
+		})
+
+		it('surfaces a stale-version conflict with the current server state', async () => {
+			const current = {
+				id: '11111111-1111-1111-1111-111111111111',
+				type: 'bet',
+				version: 7,
+				title: 'Winner wrote this',
+			}
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: false,
+				status: 409,
+				text: () =>
+					Promise.resolve(
+						JSON.stringify({
+							error: {
+								code: 'CONFLICT',
+								message: 'Object version 5 is stale — current version is 7',
+							},
+							current,
+						}),
+					),
+			} as Response)
+
+			const handler = getHandler('update_objects')
+			const result = (await handler({
+				updates: [
+					{
+						id: '11111111-1111-1111-1111-111111111111',
+						title: 'Loser',
+						expected_version: 5,
+					},
+				],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toHaveLength(1)
+			expect(parsed[0].success).toBe(false)
+			expect(parsed[0].error).toBe('stale_version')
+			expect(parsed[0].conflict.expectedVersion).toBe(5)
+			expect(parsed[0].conflict.currentVersion).toBe(7)
+			expect(parsed[0].conflict.currentState).toEqual(current)
+		})
+
+		it('omits the If-Match header when the caller opts out of the guard', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ id: 'obj-1', type: 'bet', version: 2 }),
+			} as Response)
+
+			const handler = getHandler('update_objects')
+			await handler({
+				updates: [
+					{
+						id: '11111111-1111-1111-1111-111111111111',
+						title: 'No guard',
+					},
+				],
+			})
+
+			const patchCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => ((c[1] as RequestInit).method ?? 'GET') === 'PATCH')
+			const headers = (patchCall?.[1] as RequestInit).headers as Record<string, string>
+			expect(headers['If-Match']).toBeUndefined()
+			// The MCP tag still ships so the server can label a 409 as source='mcp'
+			// even when this call itself uses the deprecated last-write-wins path.
+			expect(headers['X-Maskin-Client']).toBe('mcp')
+		})
+	})
+
 	describe('delete_object handler', () => {
 		it('DELETEs /api/objects/:id', async () => {
 			mockFetchSuccess({})

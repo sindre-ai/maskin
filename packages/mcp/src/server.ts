@@ -262,6 +262,32 @@ type ApiCallOptions = {
 	skipWorkspace?: boolean
 	workspaceId?: string
 	idempotencyKey?: string
+	/**
+	 * Extra request headers to send alongside the standard auth/workspace/idempotency
+	 * headers. Used by tools that plumb through per-call metadata like `If-Match`
+	 * for optimistic-concurrency guards on the objects PATCH.
+	 */
+	headers?: Record<string, string>
+}
+
+/**
+ * Thrown by `apiFetch` on any non-2xx response so callers can distinguish
+ * between transport errors and structured API failures. Carries the parsed
+ * JSON body (when the response was JSON) so callers can react to specific
+ * failure shapes — the `update_objects` tool inspects `.status === 409` and
+ * `.body.current` to surface a stale-version error to the agent without a
+ * second round trip.
+ */
+export class ApiHttpError extends Error {
+	readonly status: number
+	readonly body: unknown
+
+	constructor(status: number, body: unknown, message: string) {
+		super(message)
+		this.name = 'ApiHttpError'
+		this.status = status
+		this.body = body
+	}
 }
 
 const MUTATING_METHODS = new Set(['POST', 'PATCH', 'DELETE', 'PUT'])
@@ -323,6 +349,9 @@ async function apiFetch(
 	if (idempotencyKey) {
 		headers['Idempotency-Key'] = idempotencyKey
 	}
+	if (options?.headers) {
+		for (const [k, v] of Object.entries(options.headers)) headers[k] = v
+	}
 
 	const response = await fetch(url, {
 		method,
@@ -332,9 +361,17 @@ async function apiFetch(
 
 	if (!response.ok) {
 		const errorText = await response.text()
+		let parsedBody: unknown
 		let message: string
 		try {
-			const errorData = JSON.parse(errorText)
+			parsedBody = JSON.parse(errorText)
+			const errorData = parsedBody as {
+				error?: {
+					message?: string
+					details?: Array<{ field: string; message: string; expected?: string }>
+					suggestion?: string
+				}
+			}
 			if (errorData.error?.message) {
 				const parts = [errorData.error.message]
 				if (errorData.error.details?.length) {
@@ -354,9 +391,10 @@ async function apiFetch(
 				message = errorText
 			}
 		} catch {
+			parsedBody = undefined
 			message = errorText
 		}
-		throw new Error(`API error ${response.status}: ${message}`)
+		throw new ApiHttpError(response.status, parsedBody, `API error ${response.status}: ${message}`)
 	}
 
 	return response
@@ -1750,188 +1788,236 @@ export function createMcpServer(config: McpConfig) {
 			// Update objects in parallel
 			if (args.updates?.length) {
 				const objectResults = await Promise.all(
-					args.updates.map(async ({ id, attach_file_ids, detach_file_ids, ...body }) => {
-						const out: Array<{
-							type: string
-							id: string
-							success: boolean
-							skipped?: boolean
-							result?: unknown
-							error?: string
-						}> = []
+					args.updates.map(
+						async ({ id, attach_file_ids, detach_file_ids, expected_version, ...body }) => {
+							const out: Array<{
+								type: string
+								id: string
+								success: boolean
+								skipped?: boolean
+								result?: unknown
+								error?: string
+								conflict?: {
+									expectedVersion: number
+									currentVersion: number
+									currentState: unknown
+								}
+							}> = []
 
-						// Captured from the PATCH response (when present) so attach_file_ids
-						// can use the object's real type ('bet' | 'task' | 'insight') as
-						// source_type — matching what create_objects and the web UI write.
-						let objectType: string | undefined
+							// Captured from the PATCH response (when present) so attach_file_ids
+							// can use the object's real type ('bet' | 'task' | 'insight') as
+							// source_type — matching what create_objects and the web UI write.
+							let objectType: string | undefined
 
-						const hasFieldUpdate = Object.values(body).some((v) => v !== undefined)
-						if (hasFieldUpdate) {
-							try {
-								const result = await apiCall(config, 'PATCH', `/api/objects/${id}`, body, wsOpts)
-								objectType = (result as { type?: unknown })?.type as string | undefined
-								const urlWsId = wsOpts.workspaceId ?? config.defaultWorkspaceId
-								out.push({
-									type: 'object',
-									id,
-									success: true,
-									result: urlWsId
-										? addUrl(result as Record<string, unknown>, config, urlWsId, {
-												kind: 'object',
-												id,
-											})
-										: result,
-								})
-							} catch (error) {
-								out.push({ type: 'object', id, success: false, error: String(error) })
-							}
-						}
-
-						// Attach files in parallel — each becomes an `attached` relationship
-						// whose source_type is the object's real type ('bet' | 'task' |
-						// 'insight'), matching create_objects and the web UI. Retrieval
-						// goes by direction + targetType, but staying consistent keeps any
-						// future source_type queries clean.
-						//
-						// We GET the existing rel first so a repeat attach is an
-						// idempotent no-op (success + skipped) instead of failing the
-						// (source_id, target_id, type) unique constraint.
-						if (attach_file_ids?.length) {
-							// One extra GET only when no PATCH ran — otherwise the type
-							// already came back on the PATCH response.
-							let sourceType = objectType
-							if (sourceType === undefined) {
+							const hasFieldUpdate = Object.values(body).some((v) => v !== undefined)
+							if (hasFieldUpdate) {
+								// Send the client's expected version via `If-Match` — same guard
+								// the HTTP PATCH exposes. The API also accepts `expected_version`
+								// in the body, but the header wins in the handler; keeping both
+								// consistent here avoids a caller ever ending up in
+								// last-write-wins because we double-set one and dropped the other.
+								// `X-Maskin-Client: mcp` tags the request so the 409 branch on the
+								// server can label the editor_write_conflict_detected analytics
+								// event as source='mcp' (vs 'patch' for HTTP callers).
+								const patchHeaders: Record<string, string> = { 'X-Maskin-Client': 'mcp' }
+								if (expected_version !== undefined) {
+									patchHeaders['If-Match'] = String(expected_version)
+								}
+								const patchOpts = { ...wsOpts, headers: patchHeaders }
 								try {
-									const fetched = (await apiCall(
+									const result = await apiCall(
 										config,
-										'GET',
+										'PATCH',
 										`/api/objects/${id}`,
-										undefined,
-										wsOpts,
-									)) as { type?: unknown }
-									sourceType = typeof fetched?.type === 'string' ? fetched.type : undefined
-								} catch {
-									// Handled per-file below.
+										body,
+										patchOpts,
+									)
+									objectType = (result as { type?: unknown })?.type as string | undefined
+									const urlWsId = wsOpts.workspaceId ?? config.defaultWorkspaceId
+									out.push({
+										type: 'object',
+										id,
+										success: true,
+										result: urlWsId
+											? addUrl(result as Record<string, unknown>, config, urlWsId, {
+													kind: 'object',
+													id,
+												})
+											: result,
+									})
+								} catch (error) {
+									if (error instanceof ApiHttpError && error.status === 409) {
+										const conflictBody = error.body as
+											| { current?: { version?: number } & Record<string, unknown> }
+											| undefined
+										const currentState = conflictBody?.current
+										out.push({
+											type: 'object',
+											id,
+											success: false,
+											error: 'stale_version',
+											...(currentState
+												? {
+														conflict: {
+															expectedVersion: expected_version ?? -1,
+															currentVersion: currentState.version ?? -1,
+															currentState,
+														},
+													}
+												: {}),
+										})
+									} else {
+										out.push({ type: 'object', id, success: false, error: String(error) })
+									}
 								}
 							}
 
-							const attachResults = await Promise.all(
-								attach_file_ids.map(async (fileId) => {
-									if (!sourceType) {
-										return {
-											type: 'file_attachment',
-											id: `${id}->${fileId}`,
-											success: false,
-											error: 'Could not resolve object type for attachment',
-										}
-									}
+							// Attach files in parallel — each becomes an `attached` relationship
+							// whose source_type is the object's real type ('bet' | 'task' |
+							// 'insight'), matching create_objects and the web UI. Retrieval
+							// goes by direction + targetType, but staying consistent keeps any
+							// future source_type queries clean.
+							//
+							// We GET the existing rel first so a repeat attach is an
+							// idempotent no-op (success + skipped) instead of failing the
+							// (source_id, target_id, type) unique constraint.
+							if (attach_file_ids?.length) {
+								// One extra GET only when no PATCH ran — otherwise the type
+								// already came back on the PATCH response.
+								let sourceType = objectType
+								if (sourceType === undefined) {
 									try {
-										const params = new URLSearchParams()
-										params.set('source_id', id)
-										params.set('target_id', fileId)
-										params.set('type', 'attached')
-										const existing = (await apiCall(
+										const fetched = (await apiCall(
 											config,
 											'GET',
-											`/api/relationships?${params}`,
+											`/api/objects/${id}`,
 											undefined,
 											wsOpts,
-										)) as Array<{ id: string; targetType: string }>
-										if (existing.some((r) => r.targetType === 'file')) {
+										)) as { type?: unknown }
+										sourceType = typeof fetched?.type === 'string' ? fetched.type : undefined
+									} catch {
+										// Handled per-file below.
+									}
+								}
+
+								const attachResults = await Promise.all(
+									attach_file_ids.map(async (fileId) => {
+										if (!sourceType) {
+											return {
+												type: 'file_attachment',
+												id: `${id}->${fileId}`,
+												success: false,
+												error: 'Could not resolve object type for attachment',
+											}
+										}
+										try {
+											const params = new URLSearchParams()
+											params.set('source_id', id)
+											params.set('target_id', fileId)
+											params.set('type', 'attached')
+											const existing = (await apiCall(
+												config,
+												'GET',
+												`/api/relationships?${params}`,
+												undefined,
+												wsOpts,
+											)) as Array<{ id: string; targetType: string }>
+											if (existing.some((r) => r.targetType === 'file')) {
+												return {
+													type: 'file_attachment',
+													id: `${id}->${fileId}`,
+													success: true,
+													skipped: true,
+												}
+											}
+											const result = await apiCall(
+												config,
+												'POST',
+												'/api/relationships',
+												{
+													source_type: sourceType,
+													source_id: id,
+													target_type: 'file',
+													target_id: fileId,
+													type: 'attached',
+												},
+												wsOpts,
+											)
 											return {
 												type: 'file_attachment',
 												id: `${id}->${fileId}`,
 												success: true,
-												skipped: true,
+												result,
+											}
+										} catch (error) {
+											return {
+												type: 'file_attachment',
+												id: `${id}->${fileId}`,
+												success: false,
+												error: String(error),
 											}
 										}
-										const result = await apiCall(
-											config,
-											'POST',
-											'/api/relationships',
-											{
-												source_type: sourceType,
-												source_id: id,
-												target_type: 'file',
-												target_id: fileId,
-												type: 'attached',
-											},
-											wsOpts,
-										)
-										return {
-											type: 'file_attachment',
-											id: `${id}->${fileId}`,
-											success: true,
-											result,
-										}
-									} catch (error) {
-										return {
-											type: 'file_attachment',
-											id: `${id}->${fileId}`,
-											success: false,
-											error: String(error),
-										}
-									}
-								}),
-							)
-							out.push(...attachResults)
-						}
+									}),
+								)
+								out.push(...attachResults)
+							}
 
-						// Detach files: list relationships rooted at this object with
-						// type='attached', match by target_id, then delete each.
-						// Cheaper than asking the user to track relationship UUIDs.
-						if (detach_file_ids?.length) {
-							const detachResults = await Promise.all(
-								detach_file_ids.map(async (fileId) => {
-									try {
-										const params = new URLSearchParams()
-										params.set('source_id', id)
-										params.set('target_id', fileId)
-										params.set('type', 'attached')
-										const rels = (await apiCall(
-											config,
-											'GET',
-											`/api/relationships?${params}`,
-											undefined,
-											wsOpts,
-										)) as Array<{ id: string; targetType: string }>
-										const match = rels.find((r) => r.targetType === 'file')
-										if (!match) {
+							// Detach files: list relationships rooted at this object with
+							// type='attached', match by target_id, then delete each.
+							// Cheaper than asking the user to track relationship UUIDs.
+							if (detach_file_ids?.length) {
+								const detachResults = await Promise.all(
+									detach_file_ids.map(async (fileId) => {
+										try {
+											const params = new URLSearchParams()
+											params.set('source_id', id)
+											params.set('target_id', fileId)
+											params.set('type', 'attached')
+											const rels = (await apiCall(
+												config,
+												'GET',
+												`/api/relationships?${params}`,
+												undefined,
+												wsOpts,
+											)) as Array<{ id: string; targetType: string }>
+											const match = rels.find((r) => r.targetType === 'file')
+											if (!match) {
+												return {
+													type: 'file_detachment',
+													id: `${id}->${fileId}`,
+													success: false,
+													error: 'No attached relationship found between this object and file',
+												}
+											}
+											const result = await apiCall(
+												config,
+												'DELETE',
+												`/api/relationships/${match.id}`,
+												undefined,
+												wsOpts,
+											)
+											return {
+												type: 'file_detachment',
+												id: `${id}->${fileId}`,
+												success: true,
+												result,
+											}
+										} catch (error) {
 											return {
 												type: 'file_detachment',
 												id: `${id}->${fileId}`,
 												success: false,
-												error: 'No attached relationship found between this object and file',
+												error: String(error),
 											}
 										}
-										const result = await apiCall(
-											config,
-											'DELETE',
-											`/api/relationships/${match.id}`,
-											undefined,
-											wsOpts,
-										)
-										return {
-											type: 'file_detachment',
-											id: `${id}->${fileId}`,
-											success: true,
-											result,
-										}
-									} catch (error) {
-										return {
-											type: 'file_detachment',
-											id: `${id}->${fileId}`,
-											success: false,
-											error: String(error),
-										}
-									}
-								}),
-							)
-							out.push(...detachResults)
-						}
+									}),
+								)
+								out.push(...detachResults)
+							}
 
-						return out
-					}),
+							return out
+						},
+					),
 				)
 				for (const entry of objectResults) results.push(...entry)
 			}
