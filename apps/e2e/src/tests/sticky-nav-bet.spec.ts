@@ -46,9 +46,13 @@ test.describe('Sticky nav — bet identity', () => {
 
 			await scrollHeroOff(page)
 
-			// After scroll: the sticky projection appears in the header. Rendered
-			// twice (desktop + mobile slot) via responsive CSS.
-			await expect(header.getByText(STICKY_TITLE_MARKER).first()).toBeVisible()
+			// After scroll: the sticky projection appears in the header. The
+			// desktop and mobile slots each get their own DOM node, so filter to
+			// the one that's actually visible at the current viewport before
+			// asserting.
+			await expect(
+				header.getByText(STICKY_TITLE_MARKER).filter({ visible: true }).first(),
+			).toBeVisible()
 			await expect(header.getByRole('button', { name: /status active/i }).first()).toBeVisible()
 		})
 	}
