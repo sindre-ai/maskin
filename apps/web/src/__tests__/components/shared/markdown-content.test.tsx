@@ -1,5 +1,5 @@
 import { MarkdownContent } from '@/components/shared/markdown-content'
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -13,6 +13,30 @@ vi.mock('recharts', async () => {
 	}
 })
 
+// Stub the TipTap editor mount — this suite covers the MarkdownContent
+// shell (view/edit toggle, mention chips, chart visuals, placeholder). The
+// editor itself is exercised in tiptap-editor.test.tsx where mounting the
+// real ProseMirror view is worth the cost.
+vi.mock('@/components/editor/tiptap-editor', () => ({
+	TipTapEditor: ({
+		value,
+		onBlur,
+	}: {
+		value: string
+		onChange: (v: string) => void
+		onBlur?: () => void
+	}) => (
+		<div
+			data-testid="tiptap-editor-stub"
+			contentEditable
+			suppressContentEditableWarning
+			onBlur={() => onBlur?.()}
+		>
+			{value}
+		</div>
+	),
+}))
+
 describe('MarkdownContent', () => {
 	it('renders markdown content', () => {
 		render(<MarkdownContent content="**bold text**" />)
@@ -24,37 +48,27 @@ describe('MarkdownContent', () => {
 		expect(screen.getByPlaceholderText('Click to add content...')).toBeInTheDocument()
 	})
 
-	it('enters edit mode on click when editable', async () => {
+	it('mounts the TipTap editor on click when editable', async () => {
 		const user = userEvent.setup()
 		render(<MarkdownContent content="some text" editable onChange={vi.fn()} />)
 
 		await user.click(screen.getByText('some text'))
-		expect(screen.getByRole('textbox')).toBeInTheDocument()
+		expect(screen.getByTestId('tiptap-editor-mount')).toBeInTheDocument()
+		expect(screen.getByTestId('tiptap-editor-stub')).toBeInTheDocument()
 	})
 
-	it('calls onChange on blur with modified content', async () => {
+	it('exits edit mode on blur', async () => {
 		const user = userEvent.setup()
-		const onChange = vi.fn()
-		render(<MarkdownContent content="original" editable onChange={onChange} />)
+		render(<MarkdownContent content="original" editable onChange={vi.fn()} />)
 
 		await user.click(screen.getByText('original'))
-		const textarea = screen.getByRole('textbox')
-		await user.clear(textarea)
-		await user.type(textarea, 'updated')
-		await user.tab()
+		expect(screen.getByTestId('tiptap-editor-mount')).toBeInTheDocument()
 
-		expect(onChange).toHaveBeenCalledWith('updated')
-	})
-
-	it('does not call onChange when content unchanged', async () => {
-		const user = userEvent.setup()
-		const onChange = vi.fn()
-		render(<MarkdownContent content="original" editable onChange={onChange} />)
-
-		await user.click(screen.getByText('original'))
-		await user.tab()
-
-		expect(onChange).not.toHaveBeenCalled()
+		act(() => {
+			fireEvent.blur(screen.getByTestId('tiptap-editor-stub'))
+		})
+		expect(screen.queryByTestId('tiptap-editor-mount')).not.toBeInTheDocument()
+		expect(screen.getByText('original')).toBeInTheDocument()
 	})
 
 	it('does not enter edit mode when not editable', async () => {
@@ -62,7 +76,7 @@ describe('MarkdownContent', () => {
 		render(<MarkdownContent content="read only" />)
 
 		await user.click(screen.getByText('read only'))
-		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('tiptap-editor-mount')).not.toBeInTheDocument()
 	})
 
 	it('suppresses disallowed elements but keeps their text', () => {

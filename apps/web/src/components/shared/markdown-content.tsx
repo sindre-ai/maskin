@@ -1,4 +1,5 @@
 import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
+import { TipTapEditor } from '@/components/editor/tiptap-editor'
 import { Textarea } from '@/components/ui/textarea'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -9,7 +10,6 @@ import {
 	type ReactNode,
 	isValidElement,
 	useCallback,
-	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -88,40 +88,30 @@ export function MarkdownContent({
 	renderVisuals?: boolean
 }) {
 	const [editing, setEditing] = useState(false)
-	const [draft, setDraft] = useState(content)
 	const containerRef = useRef<HTMLDivElement>(null)
-	const textareaRef = useRef<HTMLTextAreaElement>(null)
 	// Height of the rendered prose view at the moment edit mode is entered.
 	// Used as a floor so the box doesn't shrink when headings/lists collapse to plain text.
 	const [lockedHeight, setLockedHeight] = useState<number | undefined>(undefined)
 
-	const handleBlur = useCallback(() => {
-		setEditing(false)
-		if (draft !== content) {
-			onChange?.(draft)
-		}
-	}, [draft, content, onChange])
+	const handleEditorChange = useCallback(
+		(next: string) => {
+			if (next !== content) {
+				onChange?.(next)
+			}
+		},
+		[content, onChange],
+	)
 
-	const startEditing = (initialDraft: string) => {
+	const handleEditorBlur = useCallback(() => {
+		setEditing(false)
+	}, [])
+
+	const startEditing = () => {
 		if (containerRef.current) {
 			setLockedHeight(containerRef.current.offsetHeight)
 		}
-		setDraft(initialDraft)
 		setEditing(true)
 	}
-
-	const adjustHeight = useCallback(() => {
-		const ta = textareaRef.current
-		if (!ta) return
-		ta.style.height = 'auto'
-		const scrollHeight = ta.scrollHeight
-		const min = lockedHeight ?? 0
-		ta.style.height = `${Math.max(scrollHeight, min)}px`
-	}, [lockedHeight])
-
-	useLayoutEffect(() => {
-		if (editing) adjustHeight()
-	}, [editing, adjustHeight])
 
 	const components = useMemo<Components>(() => {
 		// Inline code spans that contain a bare URL render as a clickable link instead
@@ -177,18 +167,15 @@ export function MarkdownContent({
 
 	if (editable && editing) {
 		return (
-			<Textarea
-				ref={textareaRef}
-				className="w-full bg-transparent text-sm text-muted-foreground font-sans resize-none outline-none border-none p-0 focus:outline-none overflow-hidden"
-				style={{ minHeight: lockedHeight, lineHeight: '1.7142857' }}
-				value={draft}
-				onChange={(e) => {
-					setDraft(e.target.value)
-					adjustHeight()
-				}}
-				onBlur={handleBlur}
-				autoFocus
-			/>
+			<div style={{ minHeight: lockedHeight }} data-testid="tiptap-editor-mount">
+				<TipTapEditor
+					value={content}
+					onChange={handleEditorChange}
+					onBlur={handleEditorBlur}
+					autoFocus
+					className="text-sm"
+				/>
+			</div>
 		)
 	}
 
@@ -197,7 +184,7 @@ export function MarkdownContent({
 			<Textarea
 				className={`${className ?? ''} w-full min-h-[60px] text-sm text-muted-foreground`}
 				placeholder="Click to add content..."
-				onFocus={() => startEditing('')}
+				onFocus={() => startEditing()}
 				readOnly
 			/>
 		)
@@ -208,10 +195,10 @@ export function MarkdownContent({
 			ref={containerRef}
 			className={className}
 			onClick={() => {
-				if (editable) startEditing(content)
+				if (editable) startEditing()
 			}}
 			onKeyDown={(e) => {
-				if (editable && (e.key === 'Enter' || e.key === ' ')) startEditing(content)
+				if (editable && (e.key === 'Enter' || e.key === ' ')) startEditing()
 			}}
 			tabIndex={editable ? 0 : undefined}
 		>
