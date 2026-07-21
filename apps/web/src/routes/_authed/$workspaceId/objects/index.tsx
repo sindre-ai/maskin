@@ -27,7 +27,13 @@ import { trackEvent, trackObjectsListArrived, trackObjectsListGroupToggled } fro
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
-import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
+import {
+	type BetStatusResult,
+	type BetStatusState,
+	WORK_STATE_WEIGHT,
+	buildBetStatuses,
+	classifyObjectWorkState,
+} from '@/lib/bet-status'
 import { clearViewState, getViewState, patchViewState } from '@/lib/objects-view-state'
 import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
@@ -83,19 +89,26 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 			rawIncludeArchived === 1 ||
 			rawIncludeArchived === true ||
 			rawIncludeArchived === 'true'
+		// Fleet-status defaults (T5, D1): a fresh landing renders three primitive
+		// sections with urgency-sorted rows. Explicit sort/groupBy URL params
+		// still win, so existing deep-links stay stable.
+		const rawShowIdle = search.showIdle
+		const showIdle =
+			rawShowIdle === '1' || rawShowIdle === 1 || rawShowIdle === true || rawShowIdle === 'true'
 		return {
 			type: typeof search.type === 'string' ? search.type : undefined,
 			status: typeof search.status === 'string' ? search.status : undefined,
 			driver: typeof search.driver === 'string' ? search.driver : undefined,
-			sort: typeof search.sort === 'string' ? search.sort : 'createdAt',
+			sort: typeof search.sort === 'string' ? search.sort : 'aiWorkState',
 			order:
 				typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
 					? (search.order as 'asc' | 'desc')
 					: 'desc',
 			q: typeof search.q === 'string' ? search.q : undefined,
-			groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
+			groupBy: typeof search.groupBy === 'string' ? search.groupBy : 'type',
 			ids: typeof search.ids === 'string' ? search.ids : undefined,
 			includeArchived: includeArchived ? (1 as const) : undefined,
+			showIdle: showIdle ? (1 as const) : undefined,
 			...metadataFilters,
 		}
 	},
@@ -119,8 +132,11 @@ function ObjectsPage() {
 		groupBy,
 		ids: idsFilter,
 		includeArchived: includeArchivedParam,
+		showIdle: showIdleParam,
 	} = searchParams
 	const includeArchived = includeArchivedParam === 1
+	const showIdle = showIdleParam === 1
+	const isFleetStatusSort = sort === 'aiWorkState'
 	// Per the task scope, the "Show" section (with the Include archived toggle)
 	// is bet-only for now — surfaced when the bet tab is active. Non-bet tabs
 	// keep the existing panel shape until archive lands for their type.
@@ -274,7 +290,10 @@ function ObjectsPage() {
 		for (const [field, value] of Object.entries(metadataFilters)) {
 			f[`metadata.${field}`] = value
 		}
-		f.sort = sort
+		// Fleet-status sort is client-side (no backend column), so fall back to
+		// the backend's own default when it's active. Order is preserved so a
+		// user pick still round-trips through the API for other sorts.
+		if (!isFleetStatusSort) f.sort = sort
 		f.order = order
 		// Opt-in only: pass through when the "Include archived" toggle is on.
 		// Omitting the flag lets T3's route default (hide archived) apply.
@@ -290,6 +309,7 @@ function ObjectsPage() {
 		metadataFilters,
 		supportsIncludeArchived,
 		includeArchived,
+		isFleetStatusSort,
 	])
 
 	// Infinite query — use search endpoint when q is present
@@ -463,6 +483,57 @@ function ObjectsPage() {
 		return buildBetStatuses(bets, workspaceTasks, breaksIntoRels, new Date())
 	}, [hasVisibleBets, workspaceTasks, breaksIntoRels, visibleObjects])
 
+	// Fleet-status: shared work-state map for every visible row. Bets read from
+	// `betStatuses` (child-task classification); non-bet rows are classified
+	// against their own status/session/updatedAt via `classifyObjectWorkState`.
+	// Only populated in fleet-status mode so classic sorts keep the bet-only
+	// indicator behavior.
+	const workStateByObjectId = useMemo<Map<string, BetStatusState>>(() => {
+		if (!isFleetStatusSort) return new Map()
+		const now = new Date()
+		const map = new Map<string, BetStatusState>()
+		for (const obj of visibleObjects) {
+			if (obj.type === 'bet') {
+				const s = betStatuses.get(obj.id)
+				map.set(obj.id, s?.state ?? 'idle')
+			} else {
+				map.set(obj.id, classifyObjectWorkState(obj, now))
+			}
+		}
+		return map
+	}, [isFleetStatusSort, visibleObjects, betStatuses])
+
+	// Section-header pill counts. Waiting is what the AC calls out explicitly;
+	// idle count backs the "N idle hidden" note when the fold is on.
+	const { waitingCountByGroup, idleCountByGroup } = useMemo(() => {
+		const waiting: Record<string, number> = {}
+		const idle: Record<string, number> = {}
+		if (!isFleetStatusSort) return { waitingCountByGroup: waiting, idleCountByGroup: idle }
+		for (const obj of visibleObjects) {
+			const state = workStateByObjectId.get(obj.id)
+			if (state === 'waiting_on_human') waiting[obj.type] = (waiting[obj.type] ?? 0) + 1
+			else if (state === 'idle') idle[obj.type] = (idle[obj.type] ?? 0) + 1
+		}
+		return { waitingCountByGroup: waiting, idleCountByGroup: idle }
+	}, [isFleetStatusSort, visibleObjects, workStateByObjectId])
+
+	// Sort visibleObjects by AI-work-state within each type group when fleet-status
+	// mode is on. When idle-fold is on (default), the idle rows are filtered out
+	// entirely — the section header's "N idle hidden" note keeps them discoverable.
+	const displayObjects = useMemo(() => {
+		if (!isFleetStatusSort) return visibleObjects
+		const filtered = showIdle
+			? visibleObjects
+			: visibleObjects.filter((o) => workStateByObjectId.get(o.id) !== 'idle')
+		// Stable sort — the visibleObjects order (createdAt desc from the API)
+		// becomes the tiebreaker within a state bucket, so no jitter on refetch.
+		return [...filtered].sort((a, b) => {
+			const wa = WORK_STATE_WEIGHT[workStateByObjectId.get(a.id) ?? 'idle']
+			const wb = WORK_STATE_WEIGHT[workStateByObjectId.get(b.id) ?? 'idle']
+			return wa - wb
+		})
+	}, [isFleetStatusSort, showIdle, visibleObjects, workStateByObjectId])
+
 	// Bet status is rendered inside the Title cell (not as its own column), so
 	// its show/hide toggle lives in the same `columnVisibility` map as the real
 	// columns and is threaded into the cell via `showBetStatusIndicator`.
@@ -476,8 +547,17 @@ function ObjectsPage() {
 			currentOrder: order,
 			betStatuses,
 			showBetStatusIndicator,
+			workStateByObjectId: isFleetStatusSort ? workStateByObjectId : undefined,
 		}),
-		[handleSort, sort, order, betStatuses, showBetStatusIndicator],
+		[
+			handleSort,
+			sort,
+			order,
+			betStatuses,
+			showBetStatusIndicator,
+			workStateByObjectId,
+			isFleetStatusSort,
+		],
 	)
 
 	// Columns — stable across sort changes since sort state is in meta
@@ -600,9 +680,12 @@ function ObjectsPage() {
 
 	const urlIsInDefaultShape = useMemo(
 		() =>
-			(!searchParams.sort || searchParams.sort === 'createdAt') &&
+			// validateSearch fills in the fleet-status defaults, so a clean URL is
+			// indistinguishable from `?sort=aiWorkState&groupBy=type`. Treat either
+			// as "default" so persisted user settings still hydrate on top.
+			(!searchParams.sort || searchParams.sort === 'aiWorkState') &&
 			(!searchParams.order || searchParams.order === 'desc') &&
-			!searchParams.groupBy &&
+			(!searchParams.groupBy || searchParams.groupBy === 'type') &&
 			!searchParams.status &&
 			!searchParams.driver &&
 			Object.keys(metadataFilters).length === 0,
@@ -1060,16 +1143,20 @@ function ObjectsPage() {
 					navigate({
 						to: '/$workspaceId/objects',
 						params: { workspaceId },
+						// Explicit fleet-status defaults on the destination tab. Matches
+						// what validateSearch would fill in for a clean URL; kept literal
+						// because the search shape requires the strings, not undefined.
 						search: {
 							type: value || undefined,
-							sort: 'createdAt',
+							sort: 'aiWorkState',
 							order: 'desc',
 							status: undefined,
 							driver: undefined,
 							q: undefined,
-							groupBy: undefined,
+							groupBy: 'type',
 							ids: undefined,
 							includeArchived: undefined,
+							showIdle: undefined,
 						},
 						replace: true,
 					})
@@ -1115,6 +1202,10 @@ function ObjectsPage() {
 							// while a number serializes as the bare digit.
 							(next) => updateSearch({ includeArchived: next ? 1 : undefined })
 						: undefined
+				}
+				showIdle={isFleetStatusSort ? showIdle : undefined}
+				onShowIdleChange={
+					isFleetStatusSort ? (next) => updateSearch({ showIdle: next ? 1 : undefined }) : undefined
 				}
 				view={effectiveView}
 				onViewChange={(next) => {
@@ -1210,7 +1301,7 @@ function ObjectsPage() {
 			) : (
 				<DataTable
 					ref={dataTableRef}
-					data={allObjects}
+					data={displayObjects}
 					columns={columns}
 					workspaceId={workspaceId}
 					actors={actors}
@@ -1228,6 +1319,15 @@ function ObjectsPage() {
 					expanded={expanded}
 					onExpandedChange={handleExpandedChange}
 					onCaptureViewState={handleCaptureViewState}
+					waitingCountByGroup={isFleetStatusSort ? waitingCountByGroup : undefined}
+					idleCountByGroup={isFleetStatusSort ? idleCountByGroup : undefined}
+					workStateByObjectId={isFleetStatusSort ? workStateByObjectId : undefined}
+					showIdle={isFleetStatusSort ? showIdle : undefined}
+					onToggleShowIdle={
+						isFleetStatusSort
+							? () => updateSearch({ showIdle: showIdle ? undefined : 1 })
+							: undefined
+					}
 				/>
 			)}
 			<BulkActionBar

@@ -1,6 +1,42 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Spinner } from '@/components/ui/spinner'
+import type { BetStatusState } from '@/lib/bet-status'
+
+const TYPE_SECTION_LABEL: Record<string, { singular: string; plural: string }> = {
+	insight: { singular: 'Insight', plural: 'Insights' },
+	bet: { singular: 'Bet', plural: 'Bets' },
+	task: { singular: 'Task', plural: 'Tasks' },
+	knowledge: { singular: 'Knowledge', plural: 'Knowledge' },
+}
+
+function typeLabel(type: string, count: number): string {
+	const entry = TYPE_SECTION_LABEL[type]
+	if (!entry) return type
+	return count === 1 ? entry.singular : entry.plural
+}
+
+// Section-header pill for fleet-status view. `IndicatorBadgeRow` (row variant)
+// carries the same red-halo dot pattern, so we reuse its tokens directly rather
+// than spinning a new primitive: `bg-status-blocked-bg` +
+// `text-status-blocked-text` for the pill body, `bg-error` + ring-2 for the dot.
+function WaitingPill({
+	count,
+	onToggleShowIdle: _unused,
+}: {
+	count: number
+	onToggleShowIdle?: () => void
+}) {
+	return (
+		<span
+			className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-error/25 bg-status-blocked-bg px-2 py-0.5 text-[11px] font-semibold text-status-blocked-text"
+			aria-label={`${count} waiting on human`}
+		>
+			<span aria-hidden="true" className="inline-block h-1.5 w-1.5 rounded-full bg-error" />
+			{count} waiting
+		</span>
+	)
+}
 
 const DATE_GROUP_RE = /^\d{4}-\d{2}-\d{2}$/
 const MONTHS = [
@@ -150,6 +186,15 @@ interface DataTableProps {
 	// can restore the anchor. Single read per click — no scroll listener, so
 	// the list-page TTI guardrail (<10% regression) isn't at risk.
 	onCaptureViewState?: () => void
+	// Fleet-status (D1): when set with `grouping=['type']`, the group header
+	// renders a "N waiting" pill from `waitingCountByGroup`, idle rows are
+	// hidden behind an idle-fold row unless `showIdle` is true. Non-fleet
+	// callers omit these props and the classic grouped behavior is unchanged.
+	waitingCountByGroup?: Record<string, number>
+	idleCountByGroup?: Record<string, number>
+	workStateByObjectId?: Map<string, BetStatusState>
+	showIdle?: boolean
+	onToggleShowIdle?: () => void
 }
 
 export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function DataTable(
@@ -172,6 +217,11 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 		expanded,
 		onExpandedChange,
 		onCaptureViewState,
+		waitingCountByGroup,
+		idleCountByGroup,
+		workStateByObjectId,
+		showIdle,
+		onToggleShowIdle,
 	},
 	ref,
 ) {
@@ -342,7 +392,16 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 							if (isGrouped) {
 								const groupingColumn = grouping?.[0]
 								const rawValue = String(row.groupingValue)
-								const displayValue = resolveGroupLabel(groupingColumn, rawValue, actors)
+								const isTypeGrouping = groupingColumn === 'type'
+								const displayValue = isTypeGrouping
+									? typeLabel(rawValue, row.subRows.length)
+									: resolveGroupLabel(groupingColumn, rawValue, actors)
+								const waitingCount =
+									isTypeGrouping && waitingCountByGroup ? waitingCountByGroup[rawValue] : undefined
+								const idleHidden =
+									isTypeGrouping && !showIdle && idleCountByGroup
+										? (idleCountByGroup[rawValue] ?? 0)
+										: 0
 								return (
 									<li
 										key={row.id}
@@ -373,6 +432,14 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 												<span className="text-muted-foreground text-xs tabular-nums">
 													({row.subRows.length})
 												</span>
+												{idleHidden > 0 && (
+													<span className="text-muted-foreground text-xs">
+														· {idleHidden} idle hidden
+													</span>
+												)}
+												{waitingCount != null && waitingCount > 0 && (
+													<WaitingPill count={waitingCount} onToggleShowIdle={undefined} />
+												)}
 											</button>
 										</div>
 									</li>
@@ -403,11 +470,16 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 										isSelected={row.getIsSelected()}
 										onSelect={(selected) => row.toggleSelected(selected)}
 										onClick={() => handleRowClick(row.original.id)}
-										betStatus={
-											row.original.type === 'bet' && meta?.showBetStatusIndicator !== false
-												? meta?.betStatuses?.get(row.original.id)
-												: undefined
-										}
+										betStatus={(() => {
+											// Fleet-status: any-type indicator built from the shared work-state map.
+											const ws = workStateByObjectId?.get(row.original.id)
+											if (ws) return { state: ws, pendingAction: null, decisionsSoFar: [] }
+											// Classic: bet-only indicator behavior stays as it was.
+											if (row.original.type === 'bet' && meta?.showBetStatusIndicator !== false) {
+												return meta?.betStatuses?.get(row.original.id)
+											}
+											return undefined
+										})()}
 									/>
 								</li>
 							)
@@ -473,10 +545,20 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 								if (isGrouped) {
 									const groupingColumn = grouping?.[0]
 									const rawValue = String(row.groupingValue)
-									const displayValue =
-										groupingColumn === 'owner' || groupingColumn === 'createdBy'
+									const isTypeGrouping = groupingColumn === 'type'
+									const displayValue = isTypeGrouping
+										? typeLabel(rawValue, row.subRows.length)
+										: groupingColumn === 'owner' || groupingColumn === 'createdBy'
 											? (actors?.find((a) => a.id === rawValue)?.name ?? rawValue)
 											: rawValue
+									const waitingCount =
+										isTypeGrouping && waitingCountByGroup
+											? waitingCountByGroup[rawValue]
+											: undefined
+									const idleHidden =
+										isTypeGrouping && !showIdle && idleCountByGroup
+											? (idleCountByGroup[rawValue] ?? 0)
+											: 0
 									return (
 										<TableRow
 											key={row.id}
@@ -510,6 +592,21 @@ export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function Da
 														<span className="text-muted-foreground text-xs tabular-nums">
 															({row.subRows.length})
 														</span>
+														{idleHidden > 0 && (
+															<button
+																type="button"
+																onClick={(e) => {
+																	e.stopPropagation()
+																	onToggleShowIdle?.()
+																}}
+																className="text-muted-foreground text-xs hover:text-foreground transition-colors"
+															>
+																· {idleHidden} idle hidden
+															</button>
+														)}
+														{waitingCount != null && waitingCount > 0 && (
+															<WaitingPill count={waitingCount} onToggleShowIdle={undefined} />
+														)}
 													</button>
 												</div>
 											</TableCell>

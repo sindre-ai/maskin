@@ -43,6 +43,11 @@ interface DataTableToolbarProps {
 	// Show — per-view visibility flags. Only surfaced when the caller opts in.
 	includeArchived?: boolean
 	onIncludeArchivedChange?: (value: boolean) => void
+	// Fleet-status idle-fold toggle. Only wired when the AI-work-state sort is
+	// active (see objects/index.tsx) — passes through to the DisplayPanel's
+	// existing Show section.
+	showIdle?: boolean
+	onShowIdleChange?: (value: boolean) => void
 	// View switcher
 	view?: DisplayPanelView
 	onViewChange?: (view: DisplayPanelView) => void
@@ -80,6 +85,8 @@ export function DataTableToolbar({
 	onGroupByChange,
 	includeArchived,
 	onIncludeArchivedChange,
+	showIdle,
+	onShowIdleChange,
 	view,
 	onViewChange,
 	boardSupported,
@@ -155,6 +162,8 @@ export function DataTableToolbar({
 				onGroupByChange={onGroupByChange}
 				includeArchived={includeArchived}
 				onIncludeArchivedChange={onIncludeArchivedChange}
+				showIdle={showIdle}
+				onShowIdleChange={onShowIdleChange}
 			/>
 
 			{/* Actions — Import is occasional, New is primary. Ordered per the

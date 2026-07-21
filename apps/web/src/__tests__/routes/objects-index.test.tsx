@@ -174,16 +174,21 @@ const RouteOptions = Route as unknown as {
 const ObjectsPage = RouteOptions.component
 
 describe('validateSearch', () => {
-	it('returns defaults for missing params', () => {
+	it('returns fleet-status defaults for missing params', () => {
 		const result = RouteOptions.validateSearch({})
 		expect(result).toEqual({
 			type: undefined,
 			status: undefined,
 			driver: undefined,
-			sort: 'createdAt',
+			// T5, D1: a fresh landing renders three primitive sections with
+			// urgency-sorted rows — validateSearch fills the sort/groupBy in.
+			sort: 'aiWorkState',
 			order: 'desc',
 			q: undefined,
-			groupBy: undefined,
+			groupBy: 'type',
+			ids: undefined,
+			includeArchived: undefined,
+			showIdle: undefined,
 		})
 	})
 

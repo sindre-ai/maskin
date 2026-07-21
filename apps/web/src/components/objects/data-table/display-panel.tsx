@@ -66,6 +66,10 @@ export interface DisplayPanelProps {
 	// non-bet surfaces keep their existing panel.
 	includeArchived?: boolean
 	onIncludeArchivedChange?: (value: boolean) => void
+	// Fleet-status idle-fold toggle. Same Show-section rail as includeArchived —
+	// wired only when the AI-work-state sort is active on the caller side.
+	showIdle?: boolean
+	onShowIdleChange?: (value: boolean) => void
 	// Trigger appearance
 	iconOnly?: boolean
 	// Sections — surfaces that don't have a board view can opt out of the View pills.
@@ -144,6 +148,9 @@ function PickerRow({
 
 const DROPDOWN_CLS = 'min-w-[10rem] max-h-64 overflow-y-auto'
 const BOARD_MANUAL_SORT = 'boardOrder'
+// Fleet-status sort id. Fixed by AI-work-state weight — no ↑↓ toggle exposed
+// (matches BOARD_MANUAL_SORT's fixed-direction treatment).
+const AI_WORK_STATE_SORT = 'aiWorkState'
 
 export function DisplayPanel({
 	view = 'list',
@@ -170,6 +177,8 @@ export function DisplayPanel({
 	onGroupByChange,
 	includeArchived = false,
 	onIncludeArchivedChange,
+	showIdle = false,
+	onShowIdleChange,
 	iconOnly = false,
 	showView = true,
 }: DisplayPanelProps) {
@@ -200,7 +209,7 @@ export function DisplayPanel({
 		activeMetadataFilterCount +
 		(includeArchived ? 1 : 0)
 	const hasActiveFilters = activeFilterCount > 0
-	const showShow = !!onIncludeArchivedChange
+	const showShow = !!onIncludeArchivedChange || !!onShowIdleChange
 
 	const showMetadataFilters = !!onMetadataFilterChange && metadataFields.length > 0
 	const showOrdering = !!sort && !!order && !!onSortChange && !!onOrderChange && columns.length > 0
@@ -215,7 +224,7 @@ export function DisplayPanel({
 	const orderingColumns =
 		view === 'board'
 			? [{ id: BOARD_MANUAL_SORT, label: 'Manual', canHide: false }, ...columns]
-			: columns
+			: [{ id: AI_WORK_STATE_SORT, label: 'Urgency', canHide: false }, ...columns]
 
 	const sortLabel = orderingColumns.find((c) => c.id === sort)?.label
 	const groupLabel = columns.find((c) => c.id === groupBy)?.label
@@ -332,24 +341,43 @@ export function DisplayPanel({
 						<>
 							<div className="p-3 space-y-2">
 								<SectionHeader>Show</SectionHeader>
-								<label
-									htmlFor="display-include-archived"
-									className={cn(
-										// `relative` anchors the invisible `::before` hit surface
-										// so the visible row stays compact while the tap target
-										// meets 44 px — iOS/mobile canon.
-										'relative flex items-center justify-between gap-2 text-xs cursor-pointer',
-										"before:absolute before:-inset-3 before:h-11 before:w-full before:content-[''] before:pointer-events-none",
-									)}
-								>
-									<span className="text-foreground">Include archived</span>
-									<Switch
-										id="display-include-archived"
-										checked={includeArchived}
-										onCheckedChange={(next) => onIncludeArchivedChange?.(next)}
-										aria-label="Include archived"
-									/>
-								</label>
+								{onIncludeArchivedChange && (
+									<label
+										htmlFor="display-include-archived"
+										className={cn(
+											// `relative` anchors the invisible `::before` hit surface
+											// so the visible row stays compact while the tap target
+											// meets 44 px — iOS/mobile canon.
+											'relative flex items-center justify-between gap-2 text-xs cursor-pointer',
+											"before:absolute before:-inset-3 before:h-11 before:w-full before:content-[''] before:pointer-events-none",
+										)}
+									>
+										<span className="text-foreground">Include archived</span>
+										<Switch
+											id="display-include-archived"
+											checked={includeArchived}
+											onCheckedChange={(next) => onIncludeArchivedChange?.(next)}
+											aria-label="Include archived"
+										/>
+									</label>
+								)}
+								{onShowIdleChange && (
+									<label
+										htmlFor="display-show-idle"
+										className={cn(
+											'relative flex items-center justify-between gap-2 text-xs cursor-pointer',
+											"before:absolute before:-inset-3 before:h-11 before:w-full before:content-[''] before:pointer-events-none",
+										)}
+									>
+										<span className="text-foreground">Show idle rows</span>
+										<Switch
+											id="display-show-idle"
+											checked={showIdle}
+											onCheckedChange={(next) => onShowIdleChange?.(next)}
+											aria-label="Show idle rows"
+										/>
+									</label>
+								)}
 							</div>
 							<Separator />
 						</>
@@ -385,7 +413,7 @@ export function DisplayPanel({
 											))}
 										</DropdownMenuContent>
 									</DropdownMenu>
-									{sort !== BOARD_MANUAL_SORT && (
+									{sort !== BOARD_MANUAL_SORT && sort !== AI_WORK_STATE_SORT && (
 										<button
 											type="button"
 											aria-label={order === 'asc' ? 'Ascending' : 'Descending'}

@@ -286,12 +286,13 @@ function ForYouDashboard() {
 											type: undefined,
 											status: undefined,
 											driver: undefined,
-											sort: 'createdAt',
+											sort: 'aiWorkState',
 											order: 'desc',
 											q: undefined,
-											groupBy: undefined,
+											groupBy: 'type',
 											ids: undefined,
 											includeArchived: undefined,
+											showIdle: undefined,
 										},
 									})
 								}

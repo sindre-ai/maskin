@@ -1,8 +1,11 @@
 import {
 	type BetLike,
 	type ChildTaskLike,
+	type ObjectLike,
 	STALLED_THRESHOLD_MS,
+	WORK_STATE_WEIGHT,
 	classifyBetStatus,
+	classifyObjectWorkState,
 } from '@/lib/bet-status'
 import { describe, expect, it } from 'vitest'
 
@@ -213,5 +216,67 @@ describe('classifyBetStatus', () => {
 		const tasks = [task({ id: 't1', status: 'todo', updatedAt: null })]
 		const result = classifyBetStatus(BET, tasks, NOW)
 		expect(result.state).toBe('idle')
+	})
+})
+
+function object(overrides: Partial<ObjectLike> & { id: string; type: string }): ObjectLike {
+	return {
+		status: 'todo',
+		metadata: null,
+		updatedAt: NOW.toISOString(),
+		activeSessionId: null,
+		...overrides,
+	}
+}
+
+describe('classifyObjectWorkState', () => {
+	it('waiting_on_human wins for open objects flagged with human_decision', () => {
+		const obj = object({
+			id: 'i1',
+			type: 'insight',
+			status: 'todo',
+			metadata: { human_decision: true },
+		})
+		expect(classifyObjectWorkState(obj, NOW)).toBe('waiting_on_human')
+	})
+
+	it('progressing when the object has a live session', () => {
+		const obj = object({
+			id: 't1',
+			type: 'task',
+			status: 'in_progress',
+			activeSessionId: 'session-1',
+		})
+		expect(classifyObjectWorkState(obj, NOW)).toBe('progressing')
+	})
+
+	it('stalled when open but last update is older than 72h', () => {
+		const old = new Date(NOW.getTime() - STALLED_THRESHOLD_MS - 1000).toISOString()
+		const obj = object({ id: 't1', type: 'task', status: 'todo', updatedAt: old })
+		expect(classifyObjectWorkState(obj, NOW)).toBe('stalled')
+	})
+
+	it('idle for done and archived rows regardless of other signals', () => {
+		const done = object({
+			id: 't1',
+			type: 'task',
+			status: 'done',
+			metadata: { human_decision: true },
+			activeSessionId: 'session-1',
+		})
+		const archived = object({ id: 't2', type: 'task', status: 'archived' })
+		expect(classifyObjectWorkState(done, NOW)).toBe('idle')
+		expect(classifyObjectWorkState(archived, NOW)).toBe('idle')
+	})
+
+	it('idle when nothing else fires — recent open row without a live session', () => {
+		const obj = object({ id: 'i1', type: 'insight', status: 'todo' })
+		expect(classifyObjectWorkState(obj, NOW)).toBe('idle')
+	})
+
+	it('WORK_STATE_WEIGHT orders waiting → stalled → progressing → idle', () => {
+		expect(WORK_STATE_WEIGHT.waiting_on_human).toBeLessThan(WORK_STATE_WEIGHT.stalled)
+		expect(WORK_STATE_WEIGHT.stalled).toBeLessThan(WORK_STATE_WEIGHT.progressing)
+		expect(WORK_STATE_WEIGHT.progressing).toBeLessThan(WORK_STATE_WEIGHT.idle)
 	})
 })

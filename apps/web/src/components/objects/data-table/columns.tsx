@@ -5,7 +5,7 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { ActorListItem, ObjectResponse } from '@/lib/api'
-import type { BetStatusResult } from '@/lib/bet-status'
+import type { BetStatusResult, BetStatusState } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import type { ColumnDef, Table } from '@tanstack/react-table'
@@ -29,6 +29,10 @@ export interface ObjectsTableMeta {
 	// the display menu toggles it via this flag instead of column visibility.
 	// Absent/true → visible, matching the default-visible behavior of a real column.
 	showBetStatusIndicator?: boolean
+	// Fleet-status: when set, the Title cell renders `IndicatorBadgeRow` for
+	// every row (not just bets). Only populated when the AI-work-state sort is
+	// active, so classic sorts keep the bet-only indicator behavior.
+	workStateByObjectId?: Map<string, BetStatusState>
 }
 
 interface ColumnOptions {
@@ -129,6 +133,14 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 				const showBetStatus = meta?.showBetStatusIndicator !== false
 				const betStatus =
 					isBet && showBetStatus ? meta?.betStatuses?.get(row.original.id) : undefined
+				// Fleet-status wins over the classic bet-only indicator: when the
+				// map is populated, every row (bet or otherwise) reads from it and
+				// gets a consistent dot + word. Fall back to the bet-only result
+				// when the map isn't present (non-fleet sorts).
+				const workState = meta?.workStateByObjectId?.get(row.original.id)
+				const indicatorResult: BetStatusResult | undefined = workState
+					? { state: workState, pendingAction: null, decisionsSoFar: [] }
+					: betStatus
 				return (
 					<div className="flex items-center gap-2 min-w-0">
 						<Link
@@ -139,7 +151,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 						>
 							{row.getValue('title') || 'Untitled'}
 						</Link>
-						{betStatus && <IndicatorBadgeRow result={betStatus} />}
+						{indicatorResult && <IndicatorBadgeRow result={indicatorResult} />}
 						{row.original.activeSessionId && (
 							<AgentWorkingBadge
 								sessionId={row.original.activeSessionId}

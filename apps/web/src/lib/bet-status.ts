@@ -49,6 +49,16 @@ const DONE_STATUSES = new Set(['done', 'completed'])
 
 export const STALLED_THRESHOLD_MS = 72 * 60 * 60 * 1000
 
+// Fleet-status weight — orders rows within a primitive section on the Objects
+// page. Lower comes first; matches the AC's "waiting-on-human → stalled →
+// progressing → idle (folded)" spec.
+export const WORK_STATE_WEIGHT: Record<BetStatusState, number> = {
+	waiting_on_human: 0,
+	stalled: 1,
+	progressing: 2,
+	idle: 3,
+}
+
 function isHumanDecision(task: ChildTaskLike): boolean {
 	return task.metadata?.human_decision === true
 }
@@ -171,4 +181,32 @@ export function buildBetStatuses(
 		result.set(bet.id, classifyBetStatus(bet, childrenByBet.get(bet.id) ?? [], now))
 	}
 	return result
+}
+
+// Fleet-status classification for any object primitive (insight/task/knowledge/…).
+// Bets are already classified through their child tasks by `buildBetStatuses` —
+// the caller reads that map first and only falls through to this function for
+// non-bet rows. Keeps the fleet-status sort a pure client-side derivation.
+export interface ObjectLike {
+	id: string
+	type: string
+	status: string
+	metadata: SafeMetadata | null
+	updatedAt: string | null
+	activeSessionId: string | null
+}
+
+export function classifyObjectWorkState(
+	object: ObjectLike,
+	now: Date = new Date(),
+): BetStatusState {
+	if (DONE_STATUSES.has(object.status) || object.status === 'archived') return 'idle'
+	const humanDecision = object.metadata?.human_decision === true
+	if (humanDecision && OPEN_STATUSES.has(object.status)) return 'waiting_on_human'
+	if (WIP_STATUSES.has(object.status) && object.activeSessionId) return 'progressing'
+	if (WIP_STATUSES.has(object.status) || OPEN_STATUSES.has(object.status)) {
+		const ts = object.updatedAt ? Date.parse(object.updatedAt) : Number.NaN
+		if (Number.isFinite(ts) && now.getTime() - ts > STALLED_THRESHOLD_MS) return 'stalled'
+	}
+	return 'idle'
 }
