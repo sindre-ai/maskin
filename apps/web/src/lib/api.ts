@@ -187,8 +187,19 @@ export const api = {
 			request<KnowledgeReferencesResponse>(`/objects/${id}/references`, { workspaceId }),
 		create: (workspaceId: string, data: CreateObjectInput) =>
 			request<ObjectResponse>('/objects', { method: 'POST', body: data, workspaceId }),
-		update: (id: string, data: UpdateObjectInput) =>
-			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
+		// `expectedVersion`, when set, is sent as `If-Match: <n>` so T2's version
+		// guard can 409 on stale writes. Callers that don't yet track a version
+		// (bulk-update flows, non-content mutations on stale caches) omit it and
+		// fall through to the deprecated last-write-wins path.
+		update: (id: string, data: UpdateObjectInput, opts?: { expectedVersion?: number }) =>
+			request<ObjectResponse>(`/objects/${id}`, {
+				method: 'PATCH',
+				body: data,
+				headers:
+					opts?.expectedVersion !== undefined
+						? { 'If-Match': String(opts.expectedVersion) }
+						: undefined,
+			}),
 		verify: (id: string, verified: boolean) =>
 			request<ObjectResponse>(`/objects/${id}/verification`, {
 				method: 'POST',
@@ -829,10 +840,6 @@ export interface UpdateObjectInput {
 	status?: string
 	metadata?: SafeMetadata
 	driver?: string | null
-	// Client-supplied optimistic-concurrency stamp. When present, the server
-	// (T2) 409s if it doesn't match the current row's version. Omit to fall
-	// back to last-write-wins for callers that don't yet track versions.
-	version?: number
 }
 
 export interface BulkUpdateObjectsInput {

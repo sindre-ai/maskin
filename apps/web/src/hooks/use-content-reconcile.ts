@@ -63,9 +63,11 @@ export function useContentReconcile({
 
 	const runPatch = useCallback(
 		async (content: string, expectedVersion: number | null): Promise<void> => {
-			const payload = expectedVersion == null ? { content } : { content, version: expectedVersion }
 			try {
-				const fresh = await api.objects.update(object.id, payload)
+				const fresh =
+					expectedVersion == null
+						? await api.objects.update(object.id, { content })
+						: await api.objects.update(object.id, { content }, { expectedVersion })
 				queryClient.setQueryData(queryKeys.objects.detail(object.id), fresh)
 				queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(object.workspaceId) })
 				return
