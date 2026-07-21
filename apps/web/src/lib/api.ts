@@ -525,10 +525,6 @@ export const api = {
 			}),
 	},
 
-	briefing: {
-		get: (workspaceId: string) => request<BriefingResponse>('/briefing', { workspaceId }),
-	},
-
 	subscriptions: {
 		subscribe: (workspaceId: string, entityType: string, entityId: string) =>
 			request<{ subscribed: true }>('/subscriptions', {
@@ -784,11 +780,6 @@ export interface UnreadItem {
 
 export interface UnreadResponse {
 	items: UnreadItem[]
-}
-
-export interface BriefingResponse {
-	workspace_id: string
-	markdown: string
 }
 
 export interface UserDisplaySettingsResponse {

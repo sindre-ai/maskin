@@ -16,7 +16,7 @@ import { useUnread } from '@/hooks/use-subscriptions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { Link, useMatchRoute } from '@tanstack/react-router'
-import { Activity, Bot, FileText, Layers, Store, Zap } from 'lucide-react'
+import { Activity, Bot, Layers, Store, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 import { NavUser } from './nav-user'
 import { SidebarActivity } from './sidebar-activity'
@@ -26,7 +26,6 @@ const FOR_YOU_ROUTE = '/$workspaceId' as const
 
 const coreNavItems = [
 	{ label: 'For You', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
-	{ label: 'Briefing', to: '/$workspaceId/briefing' as const, icon: FileText },
 	{ label: 'Activity', to: '/$workspaceId/activity' as const, icon: Activity },
 	{ label: 'Agents', to: '/$workspaceId/agents' as const, icon: Bot },
 	{ label: 'Triggers', to: '/$workspaceId/triggers' as const, icon: Zap },
