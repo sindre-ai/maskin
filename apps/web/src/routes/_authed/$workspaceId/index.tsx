@@ -12,6 +12,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
 import { useBriefing } from '@/hooks/use-briefing'
+import { useFypSessionOpenedEvent } from '@/hooks/use-fyp-session'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import type { UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -60,6 +61,7 @@ function groupForItem(item: UnreadItem, nowMs: number): GroupKey {
 function ForYouDashboard() {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
+	useFypSessionOpenedEvent(workspaceId)
 	const { data, isLoading } = useUnread(workspaceId)
 	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
 	// Featured briefing — first item of the feed when a CoS briefing exists for

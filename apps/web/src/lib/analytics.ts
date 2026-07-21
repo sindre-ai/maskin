@@ -207,16 +207,25 @@ export function trackForyouSparseComposerSubmit(p: { items_count: number }): voi
 }
 
 // Ship-metric events for the featured briefing card at the top of For You.
-// `fyp_briefing_read` fires once per card mount past 50% scroll of the card
-// body; `fyp_briefing_audio_played` fires once per mount past 60s of playback.
-// Both carry the briefing knowledge object's id as `entity_id` so PostHog can
-// dedupe per briefing.
+// `fyp_briefing_read` fires past 50% scroll of the card body;
+// `fyp_briefing_audio_played` fires past 60s of playback. Both dedupe per
+// briefing per tab session via sessionStorage so scroll-back, audio replay,
+// or a card re-mount within the same session never double-counts.
+
+const FYP_BRIEFING_READ_KEY = (entityId: string) => `maskin_fyp_briefing_read_${entityId}`
+const FYP_BRIEFING_AUDIO_KEY = (entityId: string) => `maskin_fyp_briefing_audio_played_${entityId}`
 
 export function trackFypBriefingRead(p: { entity_id: string }): void {
+	const key = FYP_BRIEFING_READ_KEY(p.entity_id)
+	if (readSessionFlag(key)) return
+	writeSessionFlag(key)
 	trackEvent('fyp_briefing_read', { entity_id: p.entity_id, entity_type: 'knowledge' })
 }
 
 export function trackFypBriefingAudioPlayed(p: { entity_id: string }): void {
+	const key = FYP_BRIEFING_AUDIO_KEY(p.entity_id)
+	if (readSessionFlag(key)) return
+	writeSessionFlag(key)
 	trackEvent('fyp_briefing_audio_played', { entity_id: p.entity_id, entity_type: 'knowledge' })
 }
 
@@ -315,4 +324,41 @@ export function trackLoopGraduated(
 	p: BaseProps & { entity_type: 'loop'; source_bet_id: string | null },
 ): void {
 	trackEvent('loop_graduated', { ...fillBase(p), source_bet_id: p.source_bet_id })
+}
+
+// Ship-metric events for the For You briefing bet. `workspace_session_start`
+// is the denominator for the For-You-first rate; `fyp_opened_first` is its
+// numerator (fires once per session when For You is the first workspace
+// surface). `fyp_session_opened` is the denominator for briefing engagement
+// (fires once per session on any first arrival at For You). Both briefing
+// events dedupe per briefing per session via sessionStorage so a scroll-back
+// or audio replay never double-counts. `workspace_id` rides as an explicit
+// property so the PostHog query can filter without depending on super
+// properties having registered yet.
+function readSessionFlag(key: string): boolean {
+	try {
+		return typeof sessionStorage !== 'undefined' && sessionStorage.getItem(key) === '1'
+	} catch {
+		return false
+	}
+}
+
+function writeSessionFlag(key: string): void {
+	try {
+		sessionStorage?.setItem(key, '1')
+	} catch {
+		// sessionStorage unavailable (SSR, privacy mode) — best-effort only.
+	}
+}
+
+export function trackWorkspaceSessionStart(p: { workspace_id: string }): void {
+	trackEvent('workspace_session_start', { workspace_id: p.workspace_id })
+}
+
+export function trackFypSessionOpened(p: { workspace_id: string }): void {
+	trackEvent('fyp_session_opened', { workspace_id: p.workspace_id })
+}
+
+export function trackFypOpenedFirst(p: { workspace_id: string }): void {
+	trackEvent('fyp_opened_first', { workspace_id: p.workspace_id })
 }
