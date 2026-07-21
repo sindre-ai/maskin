@@ -8,6 +8,8 @@ import {
 	trackBetStatusChanged,
 	trackChatSessionStarted,
 	trackCommentPosted,
+	trackEditorWriteConflictDetected,
+	trackEditorWriteConflictResolved,
 	trackEvent,
 	trackLoopGraduated,
 	trackLoopViewed,
@@ -502,5 +504,59 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			source_bet_id: 'bet-77',
 		})
+	})
+
+	it('editor_write_conflict_detected carries the ship-metric guardrail contract for the TipTap bet', () => {
+		const capture = captureSpy()
+
+		trackEditorWriteConflictDetected({
+			object_id: 'obj-1',
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			source: 'patch',
+		})
+
+		expect(capture).toHaveBeenCalledWith('editor_write_conflict_detected', {
+			object_id: 'obj-1',
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			source: 'patch',
+		})
+	})
+
+	it('editor_write_conflict_resolved fires with the four-way resolution split (no boolean collapse)', () => {
+		const capture = captureSpy()
+
+		for (const resolution of [
+			'kept_mine',
+			'took_theirs',
+			'reviewed_then_kept_mine',
+			'reviewed_then_took_theirs',
+		] as const) {
+			trackEditorWriteConflictResolved({
+				object_id: 'obj-1',
+				workspace_id: 'ws-1',
+				actor_id: 'actor-1',
+				resolution,
+			})
+		}
+
+		expect(capture).toHaveBeenCalledTimes(4)
+		expect(capture.mock.calls.map((c) => c[1])).toEqual([
+			{ object_id: 'obj-1', workspace_id: 'ws-1', actor_id: 'actor-1', resolution: 'kept_mine' },
+			{ object_id: 'obj-1', workspace_id: 'ws-1', actor_id: 'actor-1', resolution: 'took_theirs' },
+			{
+				object_id: 'obj-1',
+				workspace_id: 'ws-1',
+				actor_id: 'actor-1',
+				resolution: 'reviewed_then_kept_mine',
+			},
+			{
+				object_id: 'obj-1',
+				workspace_id: 'ws-1',
+				actor_id: 'actor-1',
+				resolution: 'reviewed_then_took_theirs',
+			},
+		])
 	})
 })
