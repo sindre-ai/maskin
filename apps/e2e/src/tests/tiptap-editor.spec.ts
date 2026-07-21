@@ -59,6 +59,92 @@ test.describe('TipTap editor on object detail', () => {
 		}
 	}
 
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		for (const theme of ['light', 'dark'] as const) {
+			test(`slash-command picker opens, filters, inserts a heading @ ${vp.label} ${theme}`, async ({
+				page,
+				account,
+			}) => {
+				await page.setViewportSize({ width: vp.width, height: vp.height })
+				await setTheme(page, theme)
+
+				const object = await account.api.createObject(account.workspaceId, {
+					type: 'bet',
+					title: 'Slash-menu probe',
+					status: 'signal',
+					content: 'Existing paragraph.\n',
+				})
+
+				await page.goto(`/${account.workspaceId}/objects/${object.id}`)
+				await page.getByText('Existing paragraph.').click()
+				const editor = page.locator('[data-testid="tiptap-editor-mount"] .ProseMirror')
+				await expect(editor).toBeVisible()
+
+				// Start a new empty block so the picker triggers at start-of-line.
+				await editor.click()
+				await page.keyboard.press('End')
+				await page.keyboard.press('Enter')
+				await page.keyboard.type('/')
+
+				const menu = page.getByTestId('slash-command-menu')
+				await expect(menu).toBeVisible()
+
+				// Snapshot the open picker at this viewport × theme so Argos
+				// catches layout regressions on the DoD's 375/768/1024 × light/dark
+				// grid.
+				await argosScreenshot(page, `tiptap-slash-menu-${theme}-${vp.width}`)
+
+				// Filter to just "heading" — arrow key + Enter picks Heading 1.
+				await page.keyboard.type('head')
+				await expect(menu.getByRole('menuitem', { name: /Heading 1/ })).toBeVisible()
+				await page.keyboard.press('Enter')
+				await expect(menu).toBeHidden()
+
+				// The current empty block is now an <h1>; type the title.
+				await page.keyboard.type('Slash-inserted heading')
+				await page.waitForTimeout(400)
+				await page.locator('body').click({ position: { x: 5, y: 5 } })
+
+				await expect(page.getByRole('heading', { name: 'Slash-inserted heading' })).toBeVisible({
+					timeout: 10_000,
+				})
+			})
+		}
+	}
+
+	test('slash-command picker dismisses on Escape without inserting a block', async ({
+		page,
+		account,
+	}) => {
+		const object = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Slash-menu escape probe',
+			status: 'signal',
+			content: 'Body.\n',
+		})
+
+		await page.goto(`/${account.workspaceId}/objects/${object.id}`)
+		await page.getByText('Body.').click()
+		const editor = page.locator('[data-testid="tiptap-editor-mount"] .ProseMirror')
+		await expect(editor).toBeVisible()
+
+		await editor.click()
+		await page.keyboard.press('End')
+		await page.keyboard.press('Enter')
+		await page.keyboard.type('/')
+
+		const menu = page.getByTestId('slash-command-menu')
+		await expect(menu).toBeVisible()
+
+		await page.keyboard.press('Escape')
+		await expect(menu).toBeHidden()
+
+		// Nothing should have been inserted; the paragraph still holds the '/'
+		// character so the user can keep typing or delete it. Confirm no
+		// heading landed by checking headings elsewhere.
+		await expect(editor.getByRole('heading')).toHaveCount(0)
+	})
+
 	test('normalises HTML paste to canonical Markdown (no raw HTML enters the doc)', async ({
 		page,
 		account,

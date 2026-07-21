@@ -14,6 +14,7 @@ import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { EditorBubbleMenu } from './editor-bubble-menu'
+import { SlashCommand } from './slash-command'
 
 const lowlight = createLowlight(common)
 
@@ -88,6 +89,7 @@ export function TipTapEditor({
 			TableCell,
 			TaskList,
 			TaskItem.configure({ nested: true }),
+			SlashCommand,
 		],
 		content: initialHtml,
 		autofocus: autoFocus,
