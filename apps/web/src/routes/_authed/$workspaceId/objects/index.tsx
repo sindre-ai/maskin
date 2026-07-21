@@ -9,6 +9,7 @@ import { DataTableToolbar } from '@/components/objects/data-table/data-table-too
 import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import type { FieldDefinition } from '@/components/objects/field-value-input'
+import { FleetStatusView } from '@/components/objects/fleet-status-view'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { FilterChip } from '@/components/shared/filter-chip'
 import { RouteError } from '@/components/shared/route-error'
@@ -421,6 +422,18 @@ function ObjectsPage() {
 		[sort, order, updateSearch],
 	)
 
+	// Fleet-status view — three collapsible sections (Insights / Bets / Tasks),
+	// rows sorted waiting → stalled → progressing → idle, section-header
+	// "N waiting" pill. Applies on the All tab in List view when the user
+	// hasn't picked a bespoke `groupBy` from the DisplayPanel (blank or the
+	// canonical `type`). If someone opts into groupBy=status/driver/createdAt
+	// we fall back to the DataTable render so the section shell doesn't
+	// silently override their pick. Specific-type tabs and Board keep their
+	// existing render because the "three sections" framing only makes sense
+	// across primitives. See parent bet's ACs for the framing and T1's
+	// Component inventory for the reuse targets.
+	const isFleetView = !typeFilter && effectiveView === 'list' && (!groupBy || groupBy === 'type')
+
 	// Bet status indicator wiring — the Title cell renders `IndicatorBadgeRow`
 	// beside each bet's title. It classifies over child tasks; the overview
 	// only loads a flat page of objects, so pull the workspace's full task
@@ -428,10 +441,13 @@ function ObjectsPage() {
 	// queries page through the endpoints (`limit=50` default would silently
 	// misclassify any bet whose child tasks fell into the second page as
 	// `idle`) and are gated on whether any bets are actually visible so tabs
-	// like `insight` never pay for tasks + rels they don't render.
+	// like `insight` never pay for tasks + rels they don't render. Fleet
+	// view always shows the Bets section, so the gate opens unconditionally
+	// there — otherwise a workspace with 0 bets loaded on page 1 would show
+	// the section skeleton without the indicator data behind it.
 	const hasVisibleBets = useMemo(
-		() => visibleObjects.some((o) => o.type === 'bet'),
-		[visibleObjects],
+		() => isFleetView || visibleObjects.some((o) => o.type === 'bet'),
+		[isFleetView, visibleObjects],
 	)
 	const { data: workspaceTasks } = useQuery({
 		queryKey: queryKeys.objects.list(workspaceId, { type: 'task' }),
@@ -1207,6 +1223,21 @@ function ObjectsPage() {
 						onManualOrderChange={() => updateSearch({ sort: BOARD_MANUAL_SORT, order: 'asc' })}
 					/>
 				</div>
+			) : isFleetView ? (
+				<FleetStatusView
+					objects={allObjects}
+					betStatuses={betStatuses}
+					workspaceId={workspaceId}
+					actors={actors}
+					rowSelection={rowSelection}
+					onRowSelectionChange={setRowSelection}
+					isLoading={infiniteQuery.isLoading}
+					isError={infiniteQuery.isError}
+					hasNextPage={infiniteQuery.hasNextPage}
+					isFetchingNextPage={infiniteQuery.isFetchingNextPage}
+					fetchNextPage={infiniteQuery.fetchNextPage}
+					onCaptureViewState={handleCaptureViewState}
+				/>
 			) : (
 				<DataTable
 					ref={dataTableRef}

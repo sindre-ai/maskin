@@ -172,3 +172,39 @@ export function buildBetStatuses(
 	}
 	return result
 }
+
+export interface ObjectLike {
+	id: string
+	type: string
+	status: string
+	metadata: SafeMetadata | null
+	updatedAt: string | null
+	activeSessionId: string | null
+}
+
+// Bets use the child-task classifier (`buildBetStatuses`) because their state
+// is derived from downstream work. Insights and standalone tasks have no
+// children, so classify them from the object itself using the same four
+// states so the fleet-status view can pool all three primitives under one
+// sort order + one indicator vocabulary.
+export function classifyObjectStatus(obj: ObjectLike, now: Date = new Date()): BetStatusState {
+	const isOpen = OPEN_STATUSES.has(obj.status)
+	const isDone = DONE_STATUSES.has(obj.status)
+
+	// A task explicitly flagged as a human-decision holds up whoever it's
+	// assigned to whenever it's still open. Same predicate `classifyBetStatus`
+	// uses when it walks child tasks — kept in sync so a `human_decision` task
+	// classifies the same whether it's the fleet-view row or a child of a bet.
+	if (obj.metadata?.human_decision === true && isOpen) return 'waiting_on_human'
+
+	if (WIP_STATUSES.has(obj.status) && obj.activeSessionId) return 'progressing'
+
+	if (obj.updatedAt) {
+		const ts = Date.parse(obj.updatedAt)
+		if (!Number.isNaN(ts) && !isDone && isOpen && now.getTime() - ts > STALLED_THRESHOLD_MS) {
+			return 'stalled'
+		}
+	}
+
+	return 'idle'
+}
