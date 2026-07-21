@@ -7,13 +7,6 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import {
@@ -37,7 +30,7 @@ import type {
 import { classifyBetStatus } from '@/lib/bet-status'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { Check, PanelRight, User } from 'lucide-react'
+import { Check, PanelRight } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionBanner } from '../activity/action-banner'
 import { ObjectActivity } from '../activity/object-activity'
@@ -54,6 +47,7 @@ import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { LoopCard } from './loop-card'
 import { PropertiesDrawer } from './properties-drawer'
+import { OwnerSelect, StatusSelect } from './property-selects'
 import { VerifiedChip, isKnowledgeAuthorWrite } from './verified-chip'
 
 interface ObjectDocumentViewProps {
@@ -241,7 +235,12 @@ export function ObjectDocumentView({
 				<TypeBadge type={object.type} />
 				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
 				{statuses.length > 0 ? (
-					<StatusSelect current={object.status} options={statuses} onChange={handleStatusChange} />
+					<StatusSelect
+						current={object.status}
+						options={statuses}
+						onChange={handleStatusChange}
+						heroAnchor
+					/>
 				) : (
 					<StatusBadge status={object.status} />
 				)}
@@ -426,6 +425,20 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[object.id, updateObject],
 	)
 
+	// Archive-aware status change: `archived` on a bet dispatches to
+	// handleArchive so the picker in the ⋯ menu mutates via the same path as
+	// the picker in the hero (which composes the same behavior locally).
+	const handleAuxStatusChange = useCallback(
+		(status: string) => {
+			if (status === 'archived' && object.type === 'bet') {
+				handleArchive()
+				return
+			}
+			handleUpdateStatus(status)
+		},
+		[handleArchive, handleUpdateStatus, object.type],
+	)
+
 	const handleToggleVerified = useCallback(
 		(verified: boolean) => {
 			verifyObject.mutate({ id: object.id, verified })
@@ -568,6 +581,11 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}
+				statuses={statuses}
+				members={members}
+				currentDriverId={object.driver ?? null}
+				onStatusChange={handleAuxStatusChange}
+				onDriverChange={handleUpdateDriver}
 			/>
 		</>
 	)
@@ -654,32 +672,6 @@ export function DeleteConfirmDialog({
 		</Dialog>
 	)
 }
-
-function StatusSelect({
-	current,
-	options,
-	onChange,
-}: {
-	current: string
-	options: string[]
-	onChange: (status: string) => void
-}) {
-	return (
-		<Select value={current} onValueChange={onChange}>
-			<SelectTrigger data-hero-status-trigger>
-				<SelectValue />
-			</SelectTrigger>
-			<SelectContent>
-				{options.map((status) => (
-					<SelectItem key={status} value={status}>
-						{status.replace(/_/g, ' ')}
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
-	)
-}
-
 function StickyBetIdentity({
 	title,
 	status,
@@ -694,59 +686,5 @@ function StickyBetIdentity({
 			<span className="min-w-0 truncate text-sm font-medium text-foreground">{title}</span>
 			<StatusBadge status={status} variant="dot-word" onClick={onScrollBack} />
 		</div>
-	)
-}
-
-const UNASSIGNED_OWNER = '__none__'
-
-function OwnerSelect({
-	members,
-	currentOwnerId,
-	onChange,
-}: {
-	members: MemberResponse[]
-	currentOwnerId: string | null
-	onChange: (owner: string | null) => void
-}) {
-	const current = members.find((m) => m.actorId === currentOwnerId)
-
-	const handleChange = (value: string) => {
-		onChange(value === UNASSIGNED_OWNER ? null : value)
-	}
-
-	return (
-		<Select value={currentOwnerId ?? UNASSIGNED_OWNER} onValueChange={handleChange}>
-			<SelectTrigger>
-				<SelectValue>
-					{current ? (
-						<span className="inline-flex items-center gap-1.5">
-							{current.type !== 'agent' && <User className="size-3 text-amber-600 shrink-0" />}
-							<span className="text-muted-foreground text-[11px]">Driver:</span>
-							<ActorAvatar name={current.name} type={current.type} size="sm" />
-							{current.name}
-						</span>
-					) : currentOwnerId ? (
-						<span className="italic text-muted-foreground">
-							Unknown ({currentOwnerId.slice(0, 8)})
-						</span>
-					) : (
-						<span className="text-muted-foreground">Driver: Unassigned</span>
-					)}
-				</SelectValue>
-			</SelectTrigger>
-			<SelectContent>
-				<SelectItem value={UNASSIGNED_OWNER}>
-					<span className="text-muted-foreground">Unassigned</span>
-				</SelectItem>
-				{members.map((m) => (
-					<SelectItem key={m.actorId} value={m.actorId}>
-						<span className="inline-flex items-center gap-1.5">
-							<ActorAvatar name={m.name} type={m.type} size="sm" />
-							{m.name}
-						</span>
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
 	)
 }
