@@ -72,13 +72,19 @@ async function stub409(page: import('@playwright/test').Page, objectId: string, 
 }
 
 async function makeDirtyEdit(page: import('@playwright/test').Page, newText: string) {
-	// MarkdownContent enters edit mode on click; the on-blur commit fires the
-	// autosave PATCH — which the stub intercepts.
+	// MarkdownContent enters edit mode on click and mounts the TipTap editor.
+	// Driving the contenteditable directly — `.fill()` doesn't work on a
+	// ProseMirror surface. Blur flushes the pending debounced autosave, which
+	// is the PATCH the 409 stub intercepts.
 	const prose = page.locator('.prose').first()
 	await prose.click()
-	const textarea = page.getByRole('textbox').last()
-	await textarea.fill(newText)
-	await textarea.blur()
+	const editor = page.locator('[data-testid="tiptap-editor-mount"] .ProseMirror')
+	await expect(editor).toBeVisible()
+	await editor.click()
+	await page.keyboard.press('ControlOrMeta+A')
+	await page.keyboard.press('Delete')
+	await page.keyboard.type(newText)
+	await page.locator('body').click({ position: { x: 5, y: 5 } })
 }
 
 test.describe('Reconcile banner — 409 conflict UX', () => {
