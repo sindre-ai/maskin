@@ -89,7 +89,10 @@ export type BriefingAudioRenderResult =
  * Render the audio track for a briefing knowledge object: fetch TTS from
  * OpenAI, upload the MP3 to S3, and attach it to the briefing via a
  * `relationships` row. Idempotent per briefing — a briefing that already has
- * an `attached` file relationship short-circuits with `already_attached`.
+ * an attached file whose MIME type is `audio/mpeg` short-circuits with
+ * `already_attached`. Non-audio attachments on the briefing are ignored by the
+ * idempotency check so an audio render still fires for briefings that also
+ * carry diagrams, transcripts, or other reference files.
  *
  * The renderer intentionally throws on `OPENAI_API_KEY` missing so the trigger
  * runner's existing backoff surfaces the misconfig via `recordTriggerFailure`
@@ -105,27 +108,17 @@ export async function renderBriefingAudio(
 	const fetchTts = deps.fetchTts ?? defaultTtsFetcher
 
 	// 1. Exactly-once: bail before hitting OpenAI if this briefing already has
-	// an attached file. Runs first so a retry after a partial commit is a no-op
-	// instead of another paid render.
-	const existing = await db
-		.select({ targetId: relationships.targetId })
-		.from(relationships)
-		.where(
-			and(
-				eq(relationships.sourceType, 'object'),
-				eq(relationships.sourceId, briefingId),
-				eq(relationships.targetType, 'file'),
-				eq(relationships.type, BRIEFING_AUDIO_RELATIONSHIP_TYPE),
-			),
-		)
-		.limit(1)
-	if (existing.length > 0 && existing[0]?.targetId) {
+	// an attached audio file. The MIME-scoped join keeps non-audio attachments
+	// (diagrams, transcripts, reference docs) from tripping the short-circuit,
+	// so an audio render still fires for briefings that carry other artefacts.
+	const existingAudioId = await findAttachedAudioFileId(db, briefingId)
+	if (existingAudioId) {
 		logger.info('Briefing audio already attached — skipping render', {
 			workspaceId,
 			briefingId,
-			fileId: existing[0].targetId,
+			fileId: existingAudioId,
 		})
-		return { status: 'already_attached', fileId: existing[0].targetId }
+		return { status: 'already_attached', fileId: existingAudioId }
 	}
 
 	// 2. Load the briefing text. Missing row → skip; a trigger fired ahead of
@@ -183,46 +176,63 @@ export async function renderBriefingAudio(
 	const storageKey = briefingAudioStorageKey(workspaceId, briefingId)
 	await storage.put(storageKey, mp3)
 
-	// 6. Insert file row + attachment relationship + audit event. If either
-	// insert races another concurrent render, the relationships uniqueness
-	// constraint (source_id, target_id, type) will still allow the second
-	// attachment because target_ids differ — but the exactly-once check at
-	// step 1 guards against the wasted TTS spend in that path. Cleanup on
-	// insert failure removes the orphan S3 object.
+	// 6. Insert file row + attachment relationship + audit event under a
+	// `SELECT ... FOR UPDATE` lock on the briefing row. Two triggers that both
+	// clear the fast-path in step 1 (the race window flagged in the T1 review)
+	// serialize here: the first commits its attachment, the second's locked
+	// re-check sees that row and skips the insert. TTS may still run twice in
+	// that window — accepted, since one trigger row per workspace and one event
+	// per briefing creation keep the real-world exposure vanishingly small —
+	// but only one audio attachment survives.
+	let raceLostToFileId: string | null = null
 	try {
-		await db.insert(files).values({
-			id: fileId,
-			workspaceId,
-			name: BRIEFING_AUDIO_FILE_NAME,
-			description: 'Auto-rendered briefing audio',
-			mimeType: BRIEFING_AUDIO_MIME_TYPE,
-			sizeBytes: mp3.byteLength,
-			storageKey,
-			createdBy: actorId,
-		})
+		raceLostToFileId = await db.transaction(async (tx) => {
+			await tx
+				.select({ id: objects.id })
+				.from(objects)
+				.where(eq(objects.id, briefingId))
+				.for('update')
+				.limit(1)
 
-		await db.insert(relationships).values({
-			sourceType: 'object',
-			sourceId: briefingId,
-			targetType: 'file',
-			targetId: fileId,
-			type: BRIEFING_AUDIO_RELATIONSHIP_TYPE,
-			createdBy: actorId,
-		})
+			const raceExistingId = await findAttachedAudioFileId(tx, briefingId)
+			if (raceExistingId) return raceExistingId
 
-		await db.insert(events).values({
-			workspaceId,
-			actorId,
-			action: 'created',
-			entityType: 'file',
-			entityId: fileId,
-			data: {
+			await tx.insert(files).values({
 				id: fileId,
+				workspaceId,
 				name: BRIEFING_AUDIO_FILE_NAME,
+				description: 'Auto-rendered briefing audio',
 				mimeType: BRIEFING_AUDIO_MIME_TYPE,
 				sizeBytes: mp3.byteLength,
-				attachedToBriefingId: briefingId,
-			},
+				storageKey,
+				createdBy: actorId,
+			})
+
+			await tx.insert(relationships).values({
+				sourceType: 'object',
+				sourceId: briefingId,
+				targetType: 'file',
+				targetId: fileId,
+				type: BRIEFING_AUDIO_RELATIONSHIP_TYPE,
+				createdBy: actorId,
+			})
+
+			await tx.insert(events).values({
+				workspaceId,
+				actorId,
+				action: 'created',
+				entityType: 'file',
+				entityId: fileId,
+				data: {
+					id: fileId,
+					name: BRIEFING_AUDIO_FILE_NAME,
+					mimeType: BRIEFING_AUDIO_MIME_TYPE,
+					sizeBytes: mp3.byteLength,
+					attachedToBriefingId: briefingId,
+				},
+			})
+
+			return null
 		})
 	} catch (err) {
 		logger.error('Failed to persist briefing audio row — deleting orphan S3 object', {
@@ -242,6 +252,21 @@ export async function renderBriefingAudio(
 		throw err
 	}
 
+	if (raceLostToFileId) {
+		// Both callers write to the same deterministic per-briefing S3 key, so
+		// the loser's `put` already overwrote (or was overwritten by) the
+		// winner's bytes at the same key. There is no orphan to clean up here —
+		// deleting the key would strand the winning row. Just resolve against
+		// the winner's fileId and let the shared object remain.
+		logger.info('Concurrent render already attached briefing audio', {
+			workspaceId,
+			briefingId,
+			winningFileId: raceLostToFileId,
+			storageKey,
+		})
+		return { status: 'already_attached', fileId: raceLostToFileId }
+	}
+
 	logger.info('Rendered briefing audio', {
 		workspaceId,
 		briefingId,
@@ -249,4 +274,26 @@ export async function renderBriefingAudio(
 		sizeBytes: mp3.byteLength,
 	})
 	return { status: 'rendered', fileId, sizeBytes: mp3.byteLength }
+}
+
+// Accepts either the top-level Database or a Drizzle tx handle — both expose
+// the query-builder surface this helper needs.
+type SelectorDb = Pick<Database, 'select'>
+
+async function findAttachedAudioFileId(db: SelectorDb, briefingId: string): Promise<string | null> {
+	const rows = await db
+		.select({ targetId: relationships.targetId })
+		.from(relationships)
+		.innerJoin(files, eq(files.id, relationships.targetId))
+		.where(
+			and(
+				eq(relationships.sourceType, 'object'),
+				eq(relationships.sourceId, briefingId),
+				eq(relationships.targetType, 'file'),
+				eq(relationships.type, BRIEFING_AUDIO_RELATIONSHIP_TYPE),
+				eq(files.mimeType, BRIEFING_AUDIO_MIME_TYPE),
+			),
+		)
+		.limit(1)
+	return rows[0]?.targetId ?? null
 }
