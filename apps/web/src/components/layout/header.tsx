@@ -65,9 +65,11 @@ const routeConfig: Record<string, RouteConfig> = {
 
 const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$workspaceId'])
 
+const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
+
 export function Header() {
 	const matches = useMatches()
-	const { actions } = usePageHeader()
+	const { actions, stickyIdentity } = usePageHeader()
 	const { setOpen: setChatOpen } = useChat()
 	const router = useRouter()
 	const [createOpen, setCreateOpen] = useState(false)
@@ -96,6 +98,14 @@ export function Header() {
 		crumbs.push({ label: leafConfig.label, path: leafMatch.pathname })
 	}
 
+	// Object-detail pages drop the global `+ Create` — the button lands users on
+	// the generic picker, which is disorienting when they're mid-edit on a
+	// specific object. Kept on every list surface (Objects, Agents, Triggers).
+	const isObjectDetail = leafMatch?.routeId === OBJECT_DETAIL_ROUTE_ID
+
+	const parentCrumbs = crumbs.slice(0, -1)
+	const hasSticky = Boolean(stickyIdentity)
+
 	return (
 		<header className="relative flex h-11 shrink-0 items-center gap-2 after:pointer-events-none after:absolute after:top-full after:right-0 after:left-0 after:z-10 after:h-8 after:bg-gradient-to-b after:from-background after:to-transparent after:content-['']">
 			<div className="flex w-full min-w-0 items-center gap-1 px-3 lg:gap-2 lg:px-4">
@@ -123,42 +133,74 @@ export function Header() {
 							<span className="sr-only">Go back</span>
 						</Button>
 					)}
-					{crumbs.length > 0 && (
-						<Breadcrumb>
-							<BreadcrumbList>
-								{crumbs.map((crumb, index) => {
-									const isLast = index === crumbs.length - 1
-									return (
-										<Fragment key={crumb.path}>
-											{index > 0 && <BreadcrumbSeparator />}
-											<BreadcrumbItem>
-												{isLast ? (
-													<BreadcrumbPage className="font-medium">{crumb.label}</BreadcrumbPage>
-												) : (
-													<BreadcrumbLink asChild>
-														<a href={crumb.path}>{crumb.label}</a>
-													</BreadcrumbLink>
-												)}
-											</BreadcrumbItem>
-										</Fragment>
-									)
-								})}
-							</BreadcrumbList>
-						</Breadcrumb>
+					{hasSticky ? (
+						<div className="flex min-w-0 flex-1 items-center gap-1 lg:gap-2">
+							{parentCrumbs.length > 0 && (
+								<div className="hidden xl:flex min-w-0 items-center">
+									<Breadcrumb>
+										<BreadcrumbList>
+											{parentCrumbs.map((crumb, index) => (
+												<Fragment key={crumb.path}>
+													{index > 0 && <BreadcrumbSeparator />}
+													<BreadcrumbItem>
+														<BreadcrumbLink asChild>
+															<a href={crumb.path}>{crumb.label}</a>
+														</BreadcrumbLink>
+													</BreadcrumbItem>
+												</Fragment>
+											))}
+											<BreadcrumbSeparator />
+										</BreadcrumbList>
+									</Breadcrumb>
+								</div>
+							)}
+							<div className="min-w-0 flex-1">{stickyIdentity}</div>
+						</div>
+					) : (
+						crumbs.length > 0 && (
+							<Breadcrumb>
+								<BreadcrumbList>
+									{crumbs.map((crumb, index) => {
+										const isLast = index === crumbs.length - 1
+										return (
+											<Fragment key={crumb.path}>
+												{index > 0 && <BreadcrumbSeparator />}
+												<BreadcrumbItem>
+													{isLast ? (
+														<BreadcrumbPage className="font-medium">{crumb.label}</BreadcrumbPage>
+													) : (
+														<BreadcrumbLink asChild>
+															<a href={crumb.path}>{crumb.label}</a>
+														</BreadcrumbLink>
+													)}
+												</BreadcrumbItem>
+											</Fragment>
+										)
+									})}
+								</BreadcrumbList>
+							</Breadcrumb>
+						)
 					)}
 				</div>
+				{hasSticky && (
+					<div className="md:hidden flex min-w-0 flex-1 items-center overflow-hidden">
+						{stickyIdentity}
+					</div>
+				)}
 				<div className="ml-auto flex shrink-0 items-center gap-2">
 					{actions}
-					<Button
-						variant="ghost"
-						size="icon"
-						className="h-7 w-7"
-						onClick={() => setCreateOpen(true)}
-						aria-label="Create new"
-						title="Create new…"
-					>
-						<Plus size={15} />
-					</Button>
+					{!isObjectDetail && (
+						<Button
+							variant="ghost"
+							size="icon"
+							className="h-7 w-7"
+							onClick={() => setCreateOpen(true)}
+							aria-label="Create new"
+							title="Create new…"
+						>
+							<Plus size={15} />
+						</Button>
+					)}
 					<Button
 						variant="ghost"
 						size="icon"

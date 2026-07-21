@@ -85,6 +85,10 @@ interface ObjectDocumentViewProps {
 	// the object legitimately having no content. Callers that always fetch the
 	// full object (the webapp page) never need to set this.
 	contentLoaded?: boolean
+	// Marker for the sticky-nav IntersectionObserver + smooth-scroll target.
+	// Attached to the metadata badges row (which also hosts StatusSelect) so
+	// the sticky chip can land the user right on the picker.
+	heroIdentityRef?: React.Ref<HTMLDivElement>
 }
 
 // Renders "Referenced by N contexts/week" alongside the other prov-row chips
@@ -144,6 +148,7 @@ export function ObjectDocumentView({
 	showSaved = false,
 	betStatus,
 	contentLoaded = true,
+	heroIdentityRef,
 }: ObjectDocumentViewProps) {
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
 	// Reset the local title draft when navigating to a different object — this
@@ -228,8 +233,11 @@ export function ObjectDocumentView({
 
 			{/* Metadata badges row — editable cluster stays inline; provenance
 			 * (creator + createdAt) drops to its own row below sm so 375px never
-			 * spills into a jagged partial wrap. */}
-			<div className="flex flex-wrap items-center gap-2 mb-6">
+			 * spills into a jagged partial wrap. Also the anchor for the sticky-nav
+			 * projection: when this row scrolls out of view, the header sprouts a
+			 * title + read-only status chip; tapping the chip smooth-scrolls back
+			 * here and focuses the StatusSelect. */}
+			<div ref={heroIdentityRef} className="flex flex-wrap items-center gap-2 mb-6">
 				<TypeBadge type={object.type} />
 				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
 				{statuses.length > 0 ? (
@@ -502,6 +510,45 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		return () => document.removeEventListener('keydown', handler)
 	}, [])
 
+	// Bet-scoped sticky nav — when the hero identity row exits the viewport, the
+	// header sprouts title + read-only status chip. `threshold: 0` fires as soon
+	// as any part of the row is off-screen, which matches the design's "hero
+	// scrolls off" wording better than a partial threshold would.
+	const heroIdentityRef = useRef<HTMLDivElement>(null)
+	const [heroVisible, setHeroVisible] = useState(true)
+	useEffect(() => {
+		if (object.type !== 'bet') return
+		const el = heroIdentityRef.current
+		if (!el || typeof IntersectionObserver === 'undefined') return
+		const observer = new IntersectionObserver(([entry]) => setHeroVisible(entry.isIntersecting), {
+			threshold: 0,
+		})
+		observer.observe(el)
+		return () => observer.disconnect()
+	}, [object.type])
+
+	const scrollBackToHero = useCallback(() => {
+		const target = heroIdentityRef.current
+		if (!target) return
+		target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+		// Focus lands on the status trigger once the smooth-scroll settles —
+		// progressive disclosure per the design (chip is read-only in the header;
+		// editing happens against the same StatusSelect the hero renders).
+		window.setTimeout(() => {
+			const trigger = document.querySelector<HTMLElement>('[data-hero-status-trigger]')
+			trigger?.focus()
+		}, 400)
+	}, [])
+
+	const stickyIdentity =
+		object.type === 'bet' && !heroVisible ? (
+			<StickyBetIdentity
+				title={object.title ?? 'Untitled'}
+				status={object.status}
+				onScrollBack={scrollBackToHero}
+			/>
+		) : null
+
 	const headerActions = (
 		<>
 			<Button
@@ -527,7 +574,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 
 	return (
 		<>
-			<PageHeader actions={headerActions} />
+			<PageHeader actions={headerActions} stickyIdentity={stickyIdentity} />
 			<DeleteConfirmDialog
 				open={confirmDelete}
 				onOpenChange={handleDeleteOpenChange}
@@ -557,6 +604,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				isVerifying={verifyObject.isPending}
 				isDeleting={deleteObject.isPending}
 				betStatus={betStatus}
+				heroIdentityRef={heroIdentityRef}
 			/>
 			<PropertiesDrawer
 				open={drawerOpen}
@@ -618,7 +666,7 @@ function StatusSelect({
 }) {
 	return (
 		<Select value={current} onValueChange={onChange}>
-			<SelectTrigger>
+			<SelectTrigger data-hero-status-trigger>
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
@@ -629,6 +677,23 @@ function StatusSelect({
 				))}
 			</SelectContent>
 		</Select>
+	)
+}
+
+function StickyBetIdentity({
+	title,
+	status,
+	onScrollBack,
+}: {
+	title: string
+	status: string
+	onScrollBack: () => void
+}) {
+	return (
+		<div className="flex min-w-0 items-center gap-1.5">
+			<span className="min-w-0 truncate text-sm font-medium text-foreground">{title}</span>
+			<StatusBadge status={status} variant="dot-word" onClick={onScrollBack} />
+		</div>
 	)
 }
 
