@@ -35,11 +35,12 @@ Fixtures in this directory follow these forms exactly. Anything else is by defin
 
 ## Non-canonical inputs
 
-Three shapes named in the task DoD do **not** round-trip byte-exact and never can while the write path emits canonical Markdown:
+Four shapes do **not** round-trip byte-exact and never can while the write path emits canonical Markdown:
 
 - Indented code blocks → fenced
 - Setext headings (`=====`, `-----`) → ATX
 - Two-space hard breaks (`  \n`) → backslash breaks
+- Soft breaks inside a multi-line paragraph → backslash breaks (`remark-breaks` promotes every source newline to a hard break, so multi-line paragraphs should not be added as round-trip fixtures)
 
 These are covered by paired `NAME.input.md` + `NAME.expected.md` files under `packages/markdown/src/__fixtures__/canonicalize/`. The test asserts (a) the first pass normalises input to the expected canonical form, and (b) the second pass is stable — no further changes. That's the deterministic-normalisation contract; a non-idempotent serializer would surface as a test failure there.
 
