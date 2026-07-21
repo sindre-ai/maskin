@@ -13,15 +13,21 @@ import { API_BASE } from './constants'
 
 export class ApiError extends Error {
 	fieldErrors: Record<string, string[]>
+	// Raw parsed JSON body from the error response. On 409 the server ships the
+	// current server state so the reconcile banner can render "take theirs"
+	// without a second fetch (see `useContentReconcile`).
+	body: unknown
 
 	constructor(
 		public status: number,
 		message: string,
 		fieldErrors?: Record<string, string[]>,
+		body?: unknown,
 	) {
 		super(message)
 		this.name = 'ApiError'
 		this.fieldErrors = fieldErrors ?? {}
+		this.body = body
 	}
 
 	hasFieldErrors(): boolean {
@@ -84,7 +90,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			message = data.error?.message || res.statusText
 		}
 
-		throw new ApiError(res.status, message, fieldErrors)
+		throw new ApiError(res.status, message, fieldErrors, data)
 	}
 
 	return res.json()
@@ -126,8 +132,10 @@ function uploadFileWithProgress(
 			}
 			let message = xhr.statusText
 			let fieldErrors: Record<string, string[]> | undefined
+			let parsedBody: unknown
 			try {
 				const data = JSON.parse(xhr.responseText)
+				parsedBody = data
 				if (typeof data.error === 'object' && data.error?.message) {
 					message = data.error.message
 					if (Array.isArray(data.error.details)) {
@@ -144,7 +152,7 @@ function uploadFileWithProgress(
 			} catch {
 				// keep statusText
 			}
-			reject(new ApiError(xhr.status, message, fieldErrors))
+			reject(new ApiError(xhr.status, message, fieldErrors, parsedBody))
 		}
 		xhr.onerror = () => reject(new ApiError(0, 'Network error'))
 		xhr.onabort = () => reject(new ApiError(0, 'Upload aborted'))
@@ -748,6 +756,9 @@ export interface ObjectResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+	// Optimistic-concurrency version stamp — the reconcile banner echoes this
+	// back on PATCH so the server can 409 on stale writes (T2 wires the guard).
+	version?: number
 	// Populated by detail / graph routes only — list routes omit to avoid N+1.
 	is_subscribed?: boolean
 	unread_count?: number
@@ -818,6 +829,10 @@ export interface UpdateObjectInput {
 	status?: string
 	metadata?: SafeMetadata
 	driver?: string | null
+	// Client-supplied optimistic-concurrency stamp. When present, the server
+	// (T2) 409s if it doesn't match the current row's version. Omit to fall
+	// back to last-write-wins for callers that don't yet track versions.
+	version?: number
 }
 
 export interface BulkUpdateObjectsInput {
