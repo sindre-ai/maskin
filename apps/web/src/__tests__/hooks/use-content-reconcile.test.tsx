@@ -55,10 +55,11 @@ describe('useContentReconcile', () => {
 		})
 
 		await waitFor(() => {
-			expect(api.objects.update).toHaveBeenCalledWith('obj-1', {
-				content: 'client text v2',
-				version: 3,
-			})
+			expect(api.objects.update).toHaveBeenCalledWith(
+				'obj-1',
+				{ content: 'client text v2' },
+				{ expectedVersion: 3 },
+			)
 		})
 		expect(result.current.status).toBe('idle')
 		expect(result.current.conflict).toBeNull()
@@ -113,10 +114,11 @@ describe('useContentReconcile', () => {
 			await result.current.keepMine()
 		})
 
-		expect(api.objects.update).toHaveBeenLastCalledWith('obj-1', {
-			content: 'new draft',
-			version: 5,
-		})
+		expect(api.objects.update).toHaveBeenLastCalledWith(
+			'obj-1',
+			{ content: 'new draft' },
+			{ expectedVersion: 5 },
+		)
 		expect(result.current.status).toBe('idle')
 		expect(result.current.conflict).toBeNull()
 		expect(onConflictResolved).toHaveBeenCalledWith(

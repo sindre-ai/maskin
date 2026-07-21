@@ -216,6 +216,46 @@ describe('useUpdateObject', () => {
 		expect(api.objects.update).toHaveBeenCalledWith('obj-1', { title: 'Updated' })
 	})
 
+	// Autosave-with-version wiring: the mutation forwards a caller-supplied
+	// `expectedVersion` to `api.objects.update` as an opts arg, which becomes
+	// the `If-Match: <n>` header on the wire so T2's server-side version guard
+	// can 409 on a stale write. Omitting the field falls through to the
+	// deprecated last-write-wins path (bulk-status, driver flips, and other
+	// mutations whose cache may be stale continue to work exactly as before).
+	it('forwards expectedVersion to api.objects.update as an If-Match opt', async () => {
+		vi.mocked(api.objects.update).mockResolvedValue(
+			buildObject({ id: 'obj-1', content: 'new body', version: 8 }),
+		)
+
+		const { result } = renderHook(() => useUpdateObject(workspaceId), { wrapper: TestWrapper })
+
+		result.current.mutate({
+			id: 'obj-1',
+			data: { content: 'new body' },
+			expectedVersion: 7,
+		})
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.objects.update).toHaveBeenCalledWith(
+			'obj-1',
+			{ content: 'new body' },
+			{ expectedVersion: 7 },
+		)
+	})
+
+	it('omits the opts arg when expectedVersion is not supplied', async () => {
+		vi.mocked(api.objects.update).mockResolvedValue(buildObject({ id: 'obj-1', title: 'Renamed' }))
+
+		const { result } = renderHook(() => useUpdateObject(workspaceId), { wrapper: TestWrapper })
+
+		result.current.mutate({ id: 'obj-1', data: { title: 'Renamed' } })
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.objects.update).toHaveBeenCalledWith('obj-1', { title: 'Renamed' })
+		// The call was made with exactly two positional args — no undefined
+		// trailing opts — so a legacy client without version tracking stays on
+		// the last-write-wins path and doesn't send a spurious If-Match header.
+		expect(vi.mocked(api.objects.update).mock.calls[0]).toHaveLength(2)
+	})
+
 	// Archive is the one status transition that must vanish from default
 	// reads. Optimistically removing the row from list + infinite caches keeps
 	// the UI in step with T3's server-side `include_archived=false` gate,
