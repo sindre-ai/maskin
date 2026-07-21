@@ -73,7 +73,10 @@ test.describe('Sticky nav — bet identity', () => {
 
 		await scrollHeroOff(page)
 
-		const chip = page.locator('header').getByRole('button', { name: /status active/i }).first()
+		const chip = page
+			.locator('header')
+			.getByRole('button', { name: /status active/i })
+			.first()
 		await expect(chip).toBeVisible()
 		await chip.click()
 
@@ -98,7 +101,9 @@ test.describe('Sticky nav — bet identity', () => {
 				timeout: 10000,
 			})
 
-			const preHeight = await page.locator('header').evaluate((el) => el.getBoundingClientRect().height)
+			const preHeight = await page
+				.locator('header')
+				.evaluate((el) => el.getBoundingClientRect().height)
 			expect(preHeight, `header height at ${viewport.width}px pre-scroll`).toBe(44)
 
 			await scrollHeroOff(page)
@@ -125,13 +130,9 @@ test.describe('+ Create button on nav', () => {
 		await expect(page.locator('textarea').first()).toHaveValue('Nav Create removal check', {
 			timeout: 10000,
 		})
-		await expect(page.locator('header').getByRole('button', { name: /create new/i })).toHaveCount(
-			0,
-		)
+		await expect(page.locator('header').getByRole('button', { name: /create new/i })).toHaveCount(0)
 
 		await page.goto(`/${account.workspaceId}/objects`)
-		await expect(
-			page.locator('header').getByRole('button', { name: /create new/i }),
-		).toBeVisible()
+		await expect(page.locator('header').getByRole('button', { name: /create new/i })).toBeVisible()
 	})
 })
