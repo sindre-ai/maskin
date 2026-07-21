@@ -1,0 +1,30 @@
+name: GFM round-trip
+
+on:
+  pull_request:
+    branches: [main, bet/tiptap-editor]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gfm-round-trip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Round-trip corpus (byte-exact serialize(parse(source)) === source)
+        run: pnpm --filter=@maskin/markdown test:round-trip
