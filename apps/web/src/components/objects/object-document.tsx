@@ -26,7 +26,11 @@ import {
 } from '@/hooks/use-objects'
 import { useDeleteRelationship } from '@/hooks/use-relationships'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
-import { trackEvent } from '@/lib/analytics'
+import {
+	trackEditorWriteConflictDetected,
+	trackEditorWriteConflictResolved,
+	trackEvent,
+} from '@/lib/analytics'
 import type {
 	ActorResponse,
 	EventResponse,
@@ -34,7 +38,9 @@ import type {
 	ObjectResponse,
 	RelationshipResponse,
 } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { classifyBetStatus } from '@/lib/bet-status'
+import type { ConflictDetectedPayload, ConflictResolvedPayload } from '@/lib/reconcile/types'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Check, PanelRight, User } from 'lucide-react'
@@ -383,7 +389,33 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[object.id, updateObject],
 	)
 
-	const reconcile = useContentReconcile({ object })
+	const onConflictDetected = useCallback(
+		(payload: ConflictDetectedPayload) => {
+			trackEditorWriteConflictDetected({
+				object_id: payload.objectId,
+				workspace_id: workspaceId,
+				actor_id: getStoredActor()?.id ?? '',
+				source: 'patch',
+			})
+		},
+		[workspaceId],
+	)
+	const onConflictResolved = useCallback(
+		(payload: ConflictResolvedPayload) => {
+			trackEditorWriteConflictResolved({
+				object_id: payload.objectId,
+				workspace_id: workspaceId,
+				actor_id: getStoredActor()?.id ?? '',
+				resolution: payload.resolution,
+			})
+		},
+		[workspaceId],
+	)
+	const reconcile = useContentReconcile({
+		object,
+		onConflictDetected,
+		onConflictResolved,
+	})
 
 	const handleUpdateContent = useCallback(
 		(content: string) => {
