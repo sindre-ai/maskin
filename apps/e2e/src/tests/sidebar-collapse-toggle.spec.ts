@@ -17,7 +17,11 @@ test.describe('Left-nav collapse toggle', () => {
 			const sidebar = page.locator('[data-side="left"]').first()
 			await expect(sidebar).toHaveAttribute('data-state', 'expanded')
 
-			const trigger = page.getByRole('button', { name: /toggle sidebar/i }).first()
+			// Target the header's `SidebarTrigger` specifically (data-sidebar="trigger"),
+			// not the `SidebarRail` (data-sidebar="rail") — the rail was already reachable
+			// before this fix but is not discoverable. The regression was the missing
+			// header button.
+			const trigger = page.locator('button[data-sidebar="trigger"]')
 			await expect(trigger).toBeVisible()
 
 			await trigger.click()
