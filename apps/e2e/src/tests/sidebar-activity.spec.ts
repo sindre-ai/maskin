@@ -339,7 +339,9 @@ test.describe('Sidebar Activity group', () => {
 		// Toggle sidebar to icon-collapsed mode via the rail. Icon-collapse hides
 		// the group via `group-data-[collapsible=icon]:hidden` (CSS display:none),
 		// it doesn't unmount it — so assert on visibility, not DOM presence.
-		const rail = page.getByRole('button', { name: 'Toggle Sidebar' })
+		// Scope by `data-sidebar="rail"` because the header now also renders a
+		// visible "Toggle Sidebar" button on desktop viewports.
+		const rail = page.locator('button[data-sidebar="rail"]')
 		await rail.click()
 		await expect(group.getByText('Planner')).not.toBeVisible()
 

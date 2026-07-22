@@ -84,9 +84,10 @@ describe('Header', () => {
 		expect(screen.getByRole('button', { name: 'Custom Action' })).toBeInTheDocument()
 	})
 
-	it('only shows the hamburger SidebarTrigger below md', () => {
+	it('renders the SidebarTrigger on every viewport', () => {
 		render(<Header />)
 		const trigger = screen.getByRole('button', { name: /toggle sidebar/i })
-		expect(trigger.className).toMatch(/\bmd:hidden\b/)
+		expect(trigger).toBeInTheDocument()
+		expect(trigger.className).not.toMatch(/\bmd:hidden\b/)
 	})
 })
