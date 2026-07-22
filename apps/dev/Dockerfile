@@ -26,6 +26,16 @@ COPY extensions/ extensions/
 COPY apps/dev/ apps/dev/
 COPY apps/web/ apps/web/
 
+# Vite reads `import.meta.env.VITE_*` from `process.env` at build time, but a
+# Docker ARG alone is not exposed to the shell environment of a RUN command —
+# it's only substitutable via `$VAR`. Promote to ENV so pnpm --filter=@maskin/web
+# build actually bakes the values into the SPA bundle. Empty defaults keep local
+# `docker build` (without --build-arg) working.
+ARG VITE_POSTHOG_KEY=""
+ARG VITE_POSTHOG_HOST=""
+ENV VITE_POSTHOG_KEY=$VITE_POSTHOG_KEY
+ENV VITE_POSTHOG_HOST=$VITE_POSTHOG_HOST
+
 # Build sequentially to stay within 8GB server memory
 RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter='./packages/*' build
 RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/dev build
