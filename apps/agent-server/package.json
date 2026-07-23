@@ -12,7 +12,7 @@
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@hono/node-server": "^1.19.13",
+		"@hono/node-server": "^2.0.10",
 		"@maskin/storage": "workspace:*",
 		"hono": "^4.12.14",
 		"zod": "^3.24.0"
