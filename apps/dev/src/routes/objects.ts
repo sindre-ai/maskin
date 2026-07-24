@@ -52,6 +52,10 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
+import {
+	type EditorWriteConflictSource,
+	capturePosthogEditorWriteConflictDetected,
+} from '../lib/analytics/editor-conflict'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
@@ -62,6 +66,7 @@ import {
 	idParamSchema,
 	objectGraphResponseSchema,
 	objectResponseSchema,
+	staleVersionErrorSchema,
 	traverseGraphResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
@@ -86,6 +91,24 @@ type Env = {
 const app = new OpenAPIHono<Env>()
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// RFC 7232 `If-Match` header: accept both the bare integer form ("5") and the
+// weak/quoted ETag form ("W/\"5\"" or "\"5\"") so a standard HTTP client
+// toolchain (fetch, curl -H, browser cache-control) interoperates without the
+// caller having to strip quotes. Wildcard ("*") is intentionally rejected —
+// version-guarded PATCH is only meaningful with a concrete integer, and "match
+// any" would silently degrade to last-write-wins.
+function parseIfMatch(header: string | undefined): number | undefined {
+	if (!header) return undefined
+	const trimmed = header.trim()
+	if (!trimmed || trimmed === '*') return undefined
+	const stripped = trimmed
+		.replace(/^W\//i, '')
+		.replace(/^"(.*)"$/, '$1')
+		.trim()
+	const parsed = Number(stripped)
+	return Number.isFinite(parsed) && Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
+}
 
 // Keep in sync with KNOWN_SORT_COLUMNS in packages/shared/src/schemas/objects.ts
 const sortColumns: Record<string, Column | SQL> = {
@@ -1429,6 +1452,10 @@ const updateObjectRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Object not found',
 		},
+		409: {
+			content: { 'application/json': { schema: staleVersionErrorSchema } },
+			description: 'Version mismatch — a concurrent writer bumped the row',
+		},
 	},
 })
 
@@ -1437,6 +1464,14 @@ app.openapi(updateObjectRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
+
+	// Optimistic-concurrency guard. `If-Match` wins over `expected_version` in the
+	// body when both are present so a client sending both can't accidentally get
+	// last-write-wins by shipping a header that overrides itself. Header parsing
+	// tolerates the RFC 7232 weak/quoted form ("W/\"5\"") so an HTTP client using
+	// a standard ETag toolchain interoperates without the caller having to strip.
+	const { expected_version: bodyVersion, ...updateBody } = body
+	const expectedVersion = parseIfMatch(c.req.header('if-match')) ?? bodyVersion
 
 	// Get existing object for workspace context
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
@@ -1478,15 +1513,15 @@ app.openapi(updateObjectRoute, async (c) => {
 	}
 
 	const updateData = {
-		...body,
+		...updateBody,
 		updatedAt: new Date(),
 	}
 
 	// Shallow-merge metadata: new fields are added/overwritten, existing fields are preserved
-	if (body.metadata && existing.metadata) {
+	if (updateBody.metadata && existing.metadata) {
 		updateData.metadata = {
-			...(existing.metadata as typeof body.metadata),
-			...body.metadata,
+			...(existing.metadata as typeof updateBody.metadata),
+			...updateBody.metadata,
 		}
 	}
 
@@ -1494,6 +1529,7 @@ app.openapi(updateObjectRoute, async (c) => {
 	// one transaction so a fan-out failure cannot leave the bet updated but
 	// watchers un-notified.
 	let updated: typeof objects.$inferSelect | undefined
+	let staleCurrent: typeof objects.$inferSelect | undefined
 
 	await db.transaction(async (tx) => {
 		// Re-read the row under FOR UPDATE *inside* the transaction rather than
@@ -1513,8 +1549,42 @@ app.openapi(updateObjectRoute, async (c) => {
 			.limit(1)
 		if (!current) return // object deleted concurrently; 404 handled below
 
-		const [row] = await tx.update(objects).set(updateData).where(eq(objects.id, id)).returning()
-		if (!row) return
+		// Optimistic-concurrency guard — Recipe 3 (state-predicated WHERE) from the
+		// claim-first idiom knowledge article. The version predicate lives in the
+		// UPDATE's WHERE clause so the check runs in the same statement as the
+		// write; FOR UPDATE already serializes concurrent PATCHes on this row, but
+		// the WHERE clause makes the "0 rows updated" outcome the sole safe path
+		// for a stale write. Missing `expectedVersion` falls through to the legacy
+		// last-write-wins path (see T2 Ship Notes) so already-shipped clients
+		// (textarea, existing MCP callers, internal write paths) don't 428 on
+		// rollout. `console.warn` marks the deprecation so we can measure adoption
+		// before flipping to strict mode.
+		if (expectedVersion !== undefined && current.version !== expectedVersion) {
+			staleCurrent = current
+			return
+		}
+		if (expectedVersion === undefined) {
+			logger.warn('PATCH /api/objects/:id sent without If-Match/expected_version', {
+				id,
+				workspaceId: current.workspaceId,
+				actorId,
+			})
+		}
+
+		const whereClause =
+			expectedVersion !== undefined
+				? and(eq(objects.id, id), eq(objects.version, expectedVersion))
+				: eq(objects.id, id)
+
+		const [row] = await tx.update(objects).set(updateData).where(whereClause).returning()
+		if (!row) {
+			// Zero rows means the version changed between the FOR UPDATE read and
+			// the UPDATE — only possible if the trigger definition or an unlocked
+			// path changed the row, but return the locked read either way so the
+			// caller sees the actual current state.
+			staleCurrent = current
+			return
+		}
 
 		updated = row
 
@@ -1563,6 +1633,45 @@ app.openapi(updateObjectRoute, async (c) => {
 			})
 		}
 	})
+
+	if (staleCurrent) {
+		// Ship-metric guardrail: fire the editor_write_conflict_detected event on
+		// every 409. MCP `update_objects` passes through this handler too, so a
+		// single emission covers both HTTP and MCP; the `X-Maskin-Client` header
+		// tags which of the two ran the request so PostHog can slice either way.
+		// Fire-and-forget — never block the response on analytics.
+		const source: EditorWriteConflictSource =
+			c.req.header('x-maskin-client') === 'mcp' ? 'mcp' : 'patch'
+		void capturePosthogEditorWriteConflictDetected({
+			objectId: id,
+			workspaceId: staleCurrent.workspaceId,
+			actorId,
+			source,
+		})
+
+		const currentSerialized = serialize(staleCurrent) as unknown as z.infer<
+			typeof objectResponseSchema
+		>
+		return c.json(
+			{
+				...createApiError(
+					'CONFLICT',
+					`Object version ${expectedVersion} is stale — current version is ${staleCurrent.version}`,
+					[
+						{
+							field: 'expected_version',
+							message: 'Version mismatch — a concurrent writer bumped the row.',
+							expected: String(staleCurrent.version),
+							received: String(expectedVersion),
+						},
+					],
+					'Reconcile against `current` and resend with the current version.',
+				),
+				current: currentSerialized,
+			} satisfies z.infer<typeof staleVersionErrorSchema>,
+			409,
+		)
+	}
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)

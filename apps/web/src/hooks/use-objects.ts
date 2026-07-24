@@ -96,8 +96,23 @@ export function useCreateObject(workspaceId: string) {
 export function useUpdateObject(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: ({ id, data }: { id: string; data: UpdateObjectInput }) =>
-			api.objects.update(id, data),
+		mutationFn: ({
+			id,
+			data,
+			expectedVersion,
+		}: {
+			id: string
+			data: UpdateObjectInput
+			// When set, forwarded to `api.objects.update` as an `If-Match: <n>`
+			// header so T2's version guard can 409 on a stale write. Autosave
+			// call sites (`useContentReconcile.runPatch`) pass the object's
+			// current `version`; non-content mutations on stale caches (bulk
+			// status, driver flips) omit it and fall through to last-write-wins.
+			expectedVersion?: number
+		}) =>
+			expectedVersion === undefined
+				? api.objects.update(id, data)
+				: api.objects.update(id, data, { expectedVersion }),
 		onMutate: ({ id, data }) => {
 			const cached = queryClient.getQueryData<ObjectResponse>(queryKeys.objects.detail(id))
 			// Archiving is the one status transition where the row must disappear

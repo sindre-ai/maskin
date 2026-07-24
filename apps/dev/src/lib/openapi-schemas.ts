@@ -47,12 +47,27 @@ export const objectResponseSchema = z.object({
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	// Optimistic-concurrency counter — bumped by the objects_bump_version
+	// trigger on every UPDATE. Clients echo it back on PATCH via the
+	// `If-Match` header (or `expected_version` body field) so a stale write
+	// gets a 409 with the current server state.
+	version: z.number().int().nonnegative(),
 	// Per-viewer subscription state. Populated only by detail/graph endpoints
 	// (list endpoints omit them to avoid N+1 queries — clients render lists
 	// without unread badges).
 	is_subscribed: z.boolean().optional(),
 	unread_count: z.number().optional(),
 	subscriber_count: z.number().optional(),
+})
+
+/**
+ * Body returned by `PATCH /api/objects/:id` (and MCP `update_objects`) when the
+ * client's `If-Match` / `expected_version` doesn't match the row on disk.
+ * Carries the full current server state so the reconcile banner (bet/tiptap-editor
+ * T4) can render the "take theirs" preview without a second fetch.
+ */
+export const staleVersionErrorSchema = apiErrorSchema.extend({
+	current: objectResponseSchema,
 })
 
 export const actorResponseSchema = z.object({

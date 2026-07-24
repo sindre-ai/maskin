@@ -194,6 +194,14 @@ export const tools = {
 							.describe(
 								'IDs of files currently attached to this object to detach. Removes the `attached` relationship row but leaves the file itself untouched (delete with delete_file if you also want to remove the file).',
 							),
+						expected_version: z
+							.number()
+							.int()
+							.nonnegative()
+							.optional()
+							.describe(
+								"Optimistic-concurrency guard. Pass the `version` returned by the object's last read; the PATCH is predicated on `version = expected_version`. On mismatch the result is `{success: false, error: 'stale_version', conflict: {expectedVersion, currentVersion, currentState}}` so you can reconcile against the current state without a second round trip.",
+							),
 					}),
 				)
 				.default([])

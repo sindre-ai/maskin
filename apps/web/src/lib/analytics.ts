@@ -323,3 +323,57 @@ export function trackLoopGraduated(
 ): void {
 	trackEvent('loop_graduated', { ...fillBase(p), source_bet_id: p.source_bet_id })
 }
+
+// Ship-metric guardrail events for the TipTap editor bet: "silent-write-clobbers
+// = 0 in the 30 days after ship" is only measurable if every 409 the editor
+// receives fires `editor_write_conflict_detected` and every reconcile-banner
+// action fires `editor_write_conflict_resolved`. Names + property values are a
+// stable contract — the Product Analyst's `posthog_query` on the parent bet
+// keys off these exact strings.
+//
+// The `_detected` event is normally emitted server-side from T2's PATCH 409
+// branch (see `apps/dev/src/lib/analytics/editor-conflict.ts`) so a single
+// emit covers HTTP + MCP. The client-side helper here exists as a fallback
+// for surfaces that catch the 409 without a server round trip (e.g. an
+// optimistic UI that receives a cached-conflict response).
+export type EditorWriteConflictSource = 'patch' | 'mcp'
+
+export function trackEditorWriteConflictDetected(p: {
+	object_id: string
+	workspace_id: string
+	actor_id: string
+	source: EditorWriteConflictSource
+}): void {
+	trackEvent('editor_write_conflict_detected', {
+		object_id: p.object_id,
+		workspace_id: p.workspace_id,
+		actor_id: p.actor_id,
+		source: p.source,
+	})
+}
+
+// The four `resolution` values are intentionally not collapsed to a boolean.
+// The `reviewed_then_*` split lets the retro tell "user thought about it and
+// decided" from "user reflexively clicked" — a signal the Product Analyst has
+// asked to preserve. T4's banner passes `kept_mine` / `took_theirs` when the
+// user clicks the top-level buttons directly, and the `reviewed_then_*`
+// variants when they open the diff overlay first and then commit.
+export type EditorWriteConflictResolution =
+	| 'kept_mine'
+	| 'took_theirs'
+	| 'reviewed_then_kept_mine'
+	| 'reviewed_then_took_theirs'
+
+export function trackEditorWriteConflictResolved(p: {
+	object_id: string
+	workspace_id: string
+	actor_id: string
+	resolution: EditorWriteConflictResolution
+}): void {
+	trackEvent('editor_write_conflict_resolved', {
+		object_id: p.object_id,
+		workspace_id: p.workspace_id,
+		actor_id: p.actor_id,
+		resolution: p.resolution,
+	})
+}

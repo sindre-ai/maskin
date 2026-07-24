@@ -56,6 +56,14 @@ export const updateObjectSchema = z.object({
 	status: z.string().optional(),
 	metadata: safeMetadataSchema.optional(),
 	driver: z.string().uuid().nullable().optional(),
+	// Optimistic-concurrency guard. When set, the PATCH UPDATE is predicated on
+	// `AND version = <expected_version>` — if a concurrent writer bumped the row
+	// between the client's last read and this write, the update matches zero rows
+	// and the handler returns 409 with the current server state so the client can
+	// reconcile. Also accepted via the `If-Match` header (header takes precedence
+	// when both are present). Omit both to opt out of the guard (deprecated
+	// last-write-wins path — see Ship Notes on the T2 task).
+	expected_version: z.number().int().nonnegative().optional(),
 })
 
 /** Bulk-update many objects in one call. Status/owner/metadata are validated

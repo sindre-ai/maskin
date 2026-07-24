@@ -15,6 +15,7 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
+import { useContentReconcile } from '@/hooks/use-content-reconcile'
 import { useEntityEvents } from '@/hooks/use-events'
 import {
 	useDeleteObject,
@@ -25,7 +26,11 @@ import {
 } from '@/hooks/use-objects'
 import { useDeleteRelationship } from '@/hooks/use-relationships'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
-import { trackEvent } from '@/lib/analytics'
+import {
+	trackEditorWriteConflictDetected,
+	trackEditorWriteConflictResolved,
+	trackEvent,
+} from '@/lib/analytics'
 import type {
 	ActorResponse,
 	EventResponse,
@@ -33,11 +38,13 @@ import type {
 	ObjectResponse,
 	RelationshipResponse,
 } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { classifyBetStatus } from '@/lib/bet-status'
+import type { ConflictDetectedPayload, ConflictResolvedPayload } from '@/lib/reconcile/types'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Check, PanelRight, User } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionBanner } from '../activity/action-banner'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
@@ -53,6 +60,9 @@ import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { LoopCard } from './loop-card'
 import { PropertiesDrawer } from './properties-drawer'
+import { ReconcileBanner } from './reconcile-banner'
+import { ReconcileDiffOverlay } from './reconcile-diff-overlay'
+import { ReconcileTakeTheirsConfirm } from './reconcile-take-theirs-confirm'
 import { VerifiedChip, isKnowledgeAuthorWrite } from './verified-chip'
 
 interface ObjectDocumentViewProps {
@@ -84,6 +94,10 @@ interface ObjectDocumentViewProps {
 	// the object legitimately having no content. Callers that always fetch the
 	// full object (the webapp page) never need to set this.
 	contentLoaded?: boolean
+	// Rendered above the markdown editor; owned by the container so the
+	// reconcile banner can share the editor's PATCH path without threading a
+	// second mutation through the view.
+	reconcileSlot?: ReactNode
 }
 
 // Renders "Referenced by N contexts/week" alongside the other prov-row chips
@@ -143,6 +157,7 @@ export function ObjectDocumentView({
 	showSaved = false,
 	betStatus,
 	contentLoaded = true,
+	reconcileSlot,
 }: ObjectDocumentViewProps) {
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
 	// Reset the local title draft when navigating to a different object — this
@@ -281,6 +296,7 @@ export function ObjectDocumentView({
 
 			{/* Content — long-form prose caps at 75ch on viewports ≥1280px (AC-U1). */}
 			<div className="mb-8 xl:max-w-[75ch]">
+				{reconcileSlot}
 				{contentLoaded ? (
 					<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
 				) : (
@@ -373,11 +389,39 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[object.id, updateObject],
 	)
 
+	const onConflictDetected = useCallback(
+		(payload: ConflictDetectedPayload) => {
+			trackEditorWriteConflictDetected({
+				object_id: payload.objectId,
+				workspace_id: workspaceId,
+				actor_id: getStoredActor()?.id ?? '',
+				source: 'patch',
+			})
+		},
+		[workspaceId],
+	)
+	const onConflictResolved = useCallback(
+		(payload: ConflictResolvedPayload) => {
+			trackEditorWriteConflictResolved({
+				object_id: payload.objectId,
+				workspace_id: workspaceId,
+				actor_id: getStoredActor()?.id ?? '',
+				resolution: payload.resolution,
+			})
+		},
+		[workspaceId],
+	)
+	const reconcile = useContentReconcile({
+		object,
+		onConflictDetected,
+		onConflictResolved,
+	})
+
 	const handleUpdateContent = useCallback(
 		(content: string) => {
-			updateObject.mutate({ id: object.id, data: { content } })
+			reconcile.saveContent(content)
 		},
-		[object.id, updateObject],
+		[reconcile],
 	)
 
 	const handleUpdateStatus = useCallback(
@@ -546,6 +590,38 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onArchive={handleArchive}
 				onUpdateDriver={handleUpdateDriver}
 				onDeleteRelationship={handleDeleteRelationship}
+				reconcileSlot={
+					<>
+						<ReconcileBanner
+							status={reconcile.status}
+							onReview={reconcile.openReview}
+							onKeepMine={reconcile.keepMine}
+							onTakeTheirs={reconcile.requestTakeTheirs}
+						/>
+						{reconcile.conflict && (
+							<>
+								<ReconcileDiffOverlay
+									open={reconcile.status === 'reviewing'}
+									onOpenChange={(open) => {
+										if (!open) reconcile.closeReview()
+									}}
+									mine={reconcile.conflict.mine}
+									theirs={reconcile.conflict.theirs}
+									onKeepMine={reconcile.keepMine}
+									onTakeTheirs={reconcile.requestTakeTheirs}
+									busy={reconcile.status === 'retrying'}
+								/>
+								<ReconcileTakeTheirsConfirm
+									open={reconcile.status === 'confirming_take_theirs'}
+									onOpenChange={(open) => {
+										if (!open) reconcile.cancelTakeTheirs()
+									}}
+									onConfirm={reconcile.confirmTakeTheirs}
+								/>
+							</>
+						)}
+					</>
+				}
 				onDelete={handleDelete}
 				onToggleVerified={handleToggleVerified}
 				isVerifying={verifyObject.isPending}

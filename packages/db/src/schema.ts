@@ -97,6 +97,12 @@ export const objects = pgTable(
 			.notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+		// Optimistic-concurrency counter. Bumped by the `objects_bump_version`
+		// BEFORE UPDATE trigger (migration 0049) — never set from application
+		// code. The PATCH handler reads the client's expected version from
+		// `If-Match` and adds `AND version = ?` to its UPDATE so a stale write
+		// matches zero rows and returns 409 with the current server state.
+		version: integer('version').notNull().default(1),
 	},
 	(t) => [
 		index('objects_ws_type_status_idx').on(t.workspaceId, t.type, t.status),
