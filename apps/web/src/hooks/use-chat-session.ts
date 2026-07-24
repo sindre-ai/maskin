@@ -22,6 +22,41 @@ const RUNNING_POLL_INTERVAL_MS = 300
 const RUNNING_POLL_TIMEOUT_MS = 20_000
 const TERMINAL_SESSION_STATUSES = new Set(['failed', 'timeout', 'completed', 'paused'])
 
+const SESSION_ID_STORAGE_PREFIX = 'maskin.chat.sessionId'
+
+function sessionStorageKey(workspaceId: string, agentActorId: string | null): string | null {
+	if (!workspaceId || !agentActorId) return null
+	return `${SESSION_ID_STORAGE_PREFIX}:${workspaceId}:${agentActorId}`
+}
+
+function readPersistedSessionId(workspaceId: string, agentActorId: string | null): string | null {
+	const key = sessionStorageKey(workspaceId, agentActorId)
+	if (!key) return null
+	try {
+		return window.localStorage.getItem(key)
+	} catch {
+		return null
+	}
+}
+
+function writePersistedSessionId(
+	workspaceId: string,
+	agentActorId: string | null,
+	sessionId: string | null,
+): void {
+	const key = sessionStorageKey(workspaceId, agentActorId)
+	if (!key) return
+	try {
+		if (sessionId) {
+			window.localStorage.setItem(key, sessionId)
+		} else {
+			window.localStorage.removeItem(key)
+		}
+	} catch {
+		/* localStorage may be disabled (private mode, quota) — silently no-op */
+	}
+}
+
 /**
  * Poll `GET /api/sessions/:id` until the session's container transitions to
  * `running`. The create endpoint returns as soon as the DB row is written
@@ -93,6 +128,11 @@ export function useChatSession({
 	const [error, setError] = useState<Error | null>(null)
 	const startingRef = useRef(false)
 	const prevWorkspaceIdRef = useRef(workspaceId)
+	// Tracks the highest session_logs row id we've already drained into events
+	// (either via the initial /logs replay or via the SSE stream). Used as the
+	// `Last-Event-ID` when the SSE connection opens so we don't re-emit history
+	// that the /logs replay already covered.
+	const lastLogIdRef = useRef<number>(0)
 	// Always-current status for use inside the send callback (avoids adding
 	// status to the dependency array which would recreate send on every render).
 	const statusRef = useRef(status)
@@ -111,11 +151,55 @@ export function useChatSession({
 		prevWorkspaceIdRef.current = workspaceId
 		generationRef.current += 1
 		startingRef.current = false
+		lastLogIdRef.current = 0
 		setSessionId(null)
 		setEvents([])
 		setError(null)
 		setStatus('idle')
 	}, [workspaceId])
+
+	// Hydrate from localStorage on mount (and whenever workspace/agent change).
+	// Replays the prior session's transcript via /logs so the user sees their
+	// previous turns — including any attached file cards — before SSE attaches.
+	// Skipped if there's no persisted id, no workspace, or no agent actor.
+	useEffect(() => {
+		if (!enabled) return
+		const persisted = readPersistedSessionId(workspaceId, agentActorId)
+		if (!persisted) return
+		const generation = generationRef.current
+		let cancelled = false
+		;(async () => {
+			try {
+				const logs = await api.sessions.logs(persisted, workspaceId, { limit: '500' })
+				if (cancelled || generationRef.current !== generation) return
+				const replayed: ChatEvent[] = []
+				let maxId = 0
+				for (const log of logs) {
+					if (log.id > maxId) maxId = log.id
+					if (log.stream === 'stdout') {
+						for (const ev of parseChatLine(log.content, { includeUser: true })) {
+							replayed.push(ev)
+						}
+					}
+				}
+				if (cancelled || generationRef.current !== generation) return
+				lastLogIdRef.current = maxId
+				setEvents(replayed)
+				setSessionId(persisted)
+			} catch (err) {
+				// A stale persisted id (session deleted on the server, workspace
+				// flipped) shouldn't pollute the surface — just drop it. Other
+				// failures (network, parse) leave the transcript empty so the
+				// next send creates a fresh session.
+				if (cancelled || generationRef.current !== generation) return
+				writePersistedSessionId(workspaceId, agentActorId, null)
+				console.warn('[chat-session] hydrate failed; dropping persisted id', err)
+			}
+		})()
+		return () => {
+			cancelled = true
+		}
+	}, [enabled, workspaceId, agentActorId])
 
 	// Subscribe to the session's live SSE log stream and pipe stdout through
 	// the chat-stream parser. stderr/system lines are surfaced as `debug`
@@ -130,6 +214,12 @@ export function useChatSession({
 		const apiKey = getApiKey()
 		const headers: Record<string, string> = { 'X-Workspace-Id': workspaceId }
 		if (apiKey) headers.Authorization = `Bearer ${apiKey}`
+		// When we've already drained logs up to `lastLogIdRef.current` via the
+		// hydration /logs replay, ask the SSE handler to skip those rows so we
+		// don't re-emit duplicates on first connect.
+		if (lastLogIdRef.current > 0) {
+			headers['Last-Event-ID'] = String(lastLogIdRef.current)
+		}
 
 		fetchEventSource(`${API_BASE}/sessions/${sessionId}/logs/stream`, {
 			signal: controller.signal,
@@ -157,6 +247,12 @@ export function useChatSession({
 						event: msg.event,
 						data: msg.data,
 					})
+				}
+				if (msg.id) {
+					const parsed = Number(msg.id)
+					if (Number.isFinite(parsed) && parsed > lastLogIdRef.current) {
+						lastLogIdRef.current = parsed
+					}
 				}
 				if (msg.event === 'done') {
 					setStatus('closed')
@@ -238,6 +334,7 @@ export function useChatSession({
 					}
 					currentSessionId = session.id
 					setSessionId(session.id)
+					writePersistedSessionId(workspaceId, agentActorId, session.id)
 					// Founder-substitution measurement: fires once per fresh
 					// container. Guarded by entering this bootstrap branch,
 					// which happens both on the first send (`sessionId` is
@@ -298,11 +395,13 @@ export function useChatSession({
 	const reset = useCallback(() => {
 		generationRef.current += 1
 		startingRef.current = false
+		lastLogIdRef.current = 0
+		writePersistedSessionId(workspaceId, agentActorId, null)
 		setSessionId(null)
 		setEvents([])
 		setError(null)
 		setStatus('idle')
-	}, [])
+	}, [workspaceId, agentActorId])
 
 	return useMemo(
 		() => ({ sessionId, status, events, error, send, reset }),

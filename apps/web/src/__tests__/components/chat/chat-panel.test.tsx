@@ -203,6 +203,32 @@ describe('ChatPanel', () => {
 		expect(screen.getByText('Bet Alpha')).toBeInTheDocument()
 	})
 
+	it('seeds selection from a file attachment forwarded via openWithContext', async () => {
+		render(
+			<Harness>
+				<Opener
+					attachments={[
+						{
+							kind: 'file',
+							fileId: 'file-42',
+							name: 'sunset.png',
+							sizeBytes: 4096,
+							mimeType: 'image/png',
+						},
+					]}
+				/>
+				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
+			</Harness>,
+		)
+
+		act(() => {
+			screen.getByText('open-with-context').click()
+		})
+
+		expect(await screen.findByPlaceholderText('Message agents')).toBeInTheDocument()
+		expect(screen.getByText('sunset.png')).toBeInTheDocument()
+	})
+
 	it('seeds selection from a notification attachment and renders a chip (verification #9)', async () => {
 		render(
 			<Harness>

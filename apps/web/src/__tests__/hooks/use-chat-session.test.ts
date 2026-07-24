@@ -27,6 +27,8 @@ vi.mock('@/lib/api', () => ({
 			// Lazy bootstrap polls GET /sessions/:id until status === 'running';
 			// default the mock to "already running" so tests don't hang.
 			get: vi.fn(),
+			// Hydration from localStorage replays via /logs.
+			logs: vi.fn(),
 		},
 	},
 }))
@@ -551,5 +553,130 @@ describe('useChatSession — reset & workspace switching', () => {
 		)
 		// Transcript carries across the re-bootstrap.
 		expect(result.current.events.map((e: { kind: string }) => e.kind)).toEqual(['user', 'user'])
+	})
+})
+
+describe('useChatSession — persistence and reload', () => {
+	// AC-T2 + AC-U4: a successful send writes the sessionId to localStorage
+	// keyed by (workspaceId, agentActorId) so the next mount can pick the
+	// same conversation back up.
+	it('persists the sessionId in localStorage after a successful send', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-persisted'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+		await act(async () => {
+			await result.current.send('hi')
+		})
+
+		expect(localStorage.getItem(`maskin.chat.sessionId:${workspaceId}:${agentActorId}`)).toBe(
+			'sess-persisted',
+		)
+	})
+
+	it('clears the persisted sessionId on reset()', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-A'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+		await act(async () => {
+			await result.current.send('hi')
+		})
+		act(() => {
+			result.current.reset()
+		})
+
+		expect(localStorage.getItem(`maskin.chat.sessionId:${workspaceId}:${agentActorId}`)).toBeNull()
+	})
+
+	// AC-U4: reload renders the prior conversation — including any image
+	// attachments — from /logs alone. No second POST to /files is required.
+	it('hydrates the transcript from /logs on mount when a sessionId is persisted', async () => {
+		localStorage.setItem(`maskin.chat.sessionId:${workspaceId}:${agentActorId}`, 'sess-prev')
+		const userLog = JSON.stringify({
+			type: 'user',
+			message: { role: 'user', content: 'look at this' },
+			maskin_attachments: [
+				{
+					kind: 'file',
+					id: 'file-99',
+					name: 'photo.png',
+					mime_type: 'image/png',
+					size_bytes: 1234,
+				},
+			],
+		})
+		const assistantLog = JSON.stringify({
+			type: 'assistant',
+			session_id: 'sess-prev',
+			message: { id: 'msg_1', content: [{ type: 'text', text: 'I see it' }] },
+		})
+		vi.mocked(api.sessions.logs).mockResolvedValue([
+			{
+				id: 11,
+				sessionId: 'sess-prev',
+				stream: 'stdout',
+				content: userLog,
+				createdAt: '2026-06-25T20:00:00Z',
+			},
+			{
+				id: 12,
+				sessionId: 'sess-prev',
+				stream: 'stdout',
+				content: assistantLog,
+				createdAt: '2026-06-25T20:00:01Z',
+			},
+		])
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.sessionId).toBe('sess-prev'))
+		await waitFor(() => expect(result.current.events.length).toBeGreaterThanOrEqual(2))
+
+		expect(api.sessions.logs).toHaveBeenCalledWith('sess-prev', workspaceId, { limit: '500' })
+		const [userEvent, assistantEvent] = result.current.events
+		expect(userEvent).toMatchObject({
+			kind: 'user',
+			text: 'look at this',
+			attachments: [
+				{
+					kind: 'file',
+					id: 'file-99',
+					name: 'photo.png',
+					mimeType: 'image/png',
+					sizeBytes: 1234,
+				},
+			],
+		})
+		expect(assistantEvent).toMatchObject({ kind: 'text', text: 'I see it' })
+
+		// The SSE connection that follows hydration must skip the rows we
+		// already drained — passes Last-Event-ID equal to the max log id
+		// returned from /logs so the server replays nothing.
+		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
+		expect(lastFesInit?.headers['Last-Event-ID']).toBe('12')
+	})
+
+	it('drops a stale persisted sessionId when /logs rejects', async () => {
+		localStorage.setItem(`maskin.chat.sessionId:${workspaceId}:${agentActorId}`, 'sess-gone')
+		vi.mocked(api.sessions.logs).mockRejectedValue(new Error('not found'))
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() =>
+			expect(
+				localStorage.getItem(`maskin.chat.sessionId:${workspaceId}:${agentActorId}`),
+			).toBeNull(),
+		)
+		expect(result.current.sessionId).toBeNull()
+		expect(result.current.events).toEqual([])
 	})
 })

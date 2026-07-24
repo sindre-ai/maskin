@@ -6,6 +6,7 @@ import {
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
+	trackChatImageUpload,
 	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
@@ -383,24 +384,34 @@ describe('v1 taxonomy helpers', () => {
 		})
 	})
 
-	it('north_star_prompt_impression fires with workspace_id via posthog.capture', () => {
+	it('north_star_prompt_impression fires with workspace_id via posthog.capture, bypassing the batch queue', () => {
 		const capture = captureSpy()
 
 		trackNorthStarPromptImpression({ workspace_id: 'ws-42' })
 
-		expect(capture).toHaveBeenCalledWith('north_star_prompt_impression', {
-			workspace_id: 'ws-42',
-		})
+		expect(capture).toHaveBeenCalledWith(
+			'north_star_prompt_impression',
+			{ workspace_id: 'ws-42' },
+			{ send_instantly: true },
+		)
 	})
 
-	it('north_star_prompt_response fires with workspace_id via posthog.capture', () => {
+	it('north_star_prompt_response fires with workspace_id via posthog.capture, bypassing the batch queue', () => {
+		// send_instantly is load-bearing: without it, posthog-js batches events
+		// for ~3s. The response event fires right before the card unmounts and
+		// users typically tab away immediately, so the batched event never
+		// reaches PostHog — that's why the event name was missing from the
+		// project taxonomy after PR #1003. The impression event uses the same
+		// flag for parity so the ratio isn't biased by asymmetric delivery.
 		const capture = captureSpy()
 
 		trackNorthStarPromptResponse({ workspace_id: 'ws-42' })
 
-		expect(capture).toHaveBeenCalledWith('north_star_prompt_response', {
-			workspace_id: 'ws-42',
-		})
+		expect(capture).toHaveBeenCalledWith(
+			'north_star_prompt_response',
+			{ workspace_id: 'ws-42' },
+			{ send_instantly: true },
+		)
 	})
 
 	it('scroll_to_top carries entity_id/entity_type/object_subtype so the correlation join runs without aliasing', () => {
@@ -524,6 +535,92 @@ describe('v1 taxonomy helpers', () => {
 			source: 'web',
 			flow_id: null,
 			source_bet_id: 'bet-77',
+		})
+	})
+})
+
+describe('trackChatImageUpload', () => {
+	const originalUserAgentDescriptor = Object.getOwnPropertyDescriptor(navigator, 'userAgent')
+	const originalMaxTouchDescriptor = Object.getOwnPropertyDescriptor(navigator, 'maxTouchPoints')
+
+	function setUserAgent(value: string) {
+		Object.defineProperty(navigator, 'userAgent', { value, configurable: true })
+	}
+
+	function setMaxTouchPoints(value: number) {
+		Object.defineProperty(navigator, 'maxTouchPoints', { value, configurable: true })
+	}
+
+	afterEach(() => {
+		if (originalUserAgentDescriptor) {
+			Object.defineProperty(navigator, 'userAgent', originalUserAgentDescriptor)
+		}
+		if (originalMaxTouchDescriptor) {
+			Object.defineProperty(navigator, 'maxTouchPoints', originalMaxTouchDescriptor)
+		}
+	})
+
+	function captureSpy() {
+		__setInitializedForTesting(true)
+		return vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+	}
+
+	it('emits platform=ios for an iPhone user-agent', () => {
+		const capture = captureSpy()
+		setUserAgent(
+			'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1',
+		)
+
+		trackChatImageUpload({ outcome: 'success' })
+
+		expect(capture).toHaveBeenCalledWith('chat_image_upload', {
+			platform: 'ios',
+			outcome: 'success',
+		})
+	})
+
+	it('emits platform=ios for an iPadOS 13+ user-agent that masquerades as Macintosh', () => {
+		const capture = captureSpy()
+		setUserAgent(
+			'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15',
+		)
+		setMaxTouchPoints(5)
+
+		trackChatImageUpload({ outcome: 'failure' })
+
+		expect(capture).toHaveBeenCalledWith('chat_image_upload', {
+			platform: 'ios',
+			outcome: 'failure',
+		})
+	})
+
+	it('emits platform=web for desktop Chrome on Windows', () => {
+		const capture = captureSpy()
+		setUserAgent(
+			'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+		)
+		setMaxTouchPoints(0)
+
+		trackChatImageUpload({ outcome: 'success' })
+
+		expect(capture).toHaveBeenCalledWith('chat_image_upload', {
+			platform: 'web',
+			outcome: 'success',
+		})
+	})
+
+	it('emits platform=web for Android Chrome (not conflated with iOS)', () => {
+		const capture = captureSpy()
+		setUserAgent(
+			'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+		)
+		setMaxTouchPoints(5)
+
+		trackChatImageUpload({ outcome: 'success' })
+
+		expect(capture).toHaveBeenCalledWith('chat_image_upload', {
+			platform: 'web',
+			outcome: 'success',
 		})
 	})
 })

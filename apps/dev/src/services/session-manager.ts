@@ -634,8 +634,18 @@ export class SessionManager extends EventEmitter {
 	 * agent-server when the session was dispatched there, otherwise writes to the
 	 * local Docker stdin stream. Caller must have already validated the session is
 	 * interactive and in `running` state.
+	 *
+	 * `maskinAttachments`, if provided, is a Maskin-only side-channel: it is NOT
+	 * forwarded to the CLI's stdin (which would risk a future CLI rejecting
+	 * unknown fields), but IS tacked onto the JSON envelope persisted in
+	 * `session_logs` so reload-from-history can render attached file cards on
+	 * the user turn without a second POST to `/files`.
 	 */
-	async writeInput(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
+	async writeInput(
+		sessionId: string,
+		payload: StreamJsonUserMessage,
+		maskinAttachments?: unknown[],
+	): Promise<void> {
 		const [session] = await this.db
 			.select()
 			.from(sessions)
@@ -662,12 +672,16 @@ export class SessionManager extends EventEmitter {
 		// stdin as a stdout-stream log row so historical transcripts and the
 		// live SSE feed can render the user's turn alongside the agent's
 		// reply.
+		const persistedEnvelope =
+			maskinAttachments && maskinAttachments.length > 0
+				? { ...payload, maskin_attachments: maskinAttachments }
+				: payload
 		const [log] = await this.db
 			.insert(sessionLogs)
 			.values({
 				sessionId,
 				stream: 'stdout',
-				content: JSON.stringify(payload),
+				content: JSON.stringify(persistedEnvelope),
 			})
 			.returning()
 		if (log) {

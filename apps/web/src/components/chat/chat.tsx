@@ -5,12 +5,18 @@ import {
 	SlashPicker,
 	type SlashPickerResult,
 } from '@/components/chat/slash-picker'
+import { UploadProgress } from '@/components/shared/upload-progress'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useChatOneShot } from '@/hooks/use-chat-one-shot'
 import { useChatSession } from '@/hooks/use-chat-session'
-import { deriveEntryAgentRole, trackSpecialistSummonedManually } from '@/lib/analytics'
+import { useUploadFile } from '@/hooks/use-files'
+import {
+	deriveEntryAgentRole,
+	trackChatImageUpload,
+	trackSpecialistSummonedManually,
+} from '@/lib/analytics'
 import type { SessionInputAttachment } from '@/lib/api'
 import {
 	type ChatSelection,
@@ -22,9 +28,8 @@ import {
 } from '@/lib/chat-selection'
 import type { ChatEvent, UserAttachmentView } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
-import { Bot, Box, Paperclip, Send } from 'lucide-react'
-
-const FILE_MAX_BYTES = 1024 * 1024 // 1 MB per upload — plenty for markdown
+import { readFileAsBase64 } from '@/lib/file-utils'
+import { Bot, Box, Paperclip, Send, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type FormEvent,
@@ -47,6 +52,22 @@ export interface ChatHandle {
 }
 
 export type ChatSurface = 'sheet' | 'pulse-bar'
+
+interface PendingUpload {
+	tempId: string
+	name: string
+	sizeBytes: number
+	mimeType?: string
+	status: 'uploading' | 'failed'
+	progress: number
+	error?: string
+}
+
+function makeTempId() {
+	return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+		? crypto.randomUUID()
+		: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
 
 export interface ChatProps {
 	workspaceId: string
@@ -221,6 +242,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 			const displayAttachments = buildDisplayAttachments(activeSelection)
 			const hasContext =
 				selectedObjects.length > 0 || selectedNotifications.length > 0 || selectedFiles.length > 0
+			const hasImage = selectedFiles.some((f) => f.mimeType?.startsWith('image/'))
 			try {
 				if (selectedAgent) {
 					// The one-shot hook builds its own action_prompt — pass raw
@@ -236,7 +258,11 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 						displayAttachments,
 					})
 				} else {
-					const attachments = selectionToAttachments(selectedObjects, selectedNotifications)
+					const attachments = selectionToAttachments(
+						selectedObjects,
+						selectedNotifications,
+						selectedFiles,
+					)
 					// The backend's interactive-session input endpoint currently
 					// forwards only `content` to the container's stdin (attachments
 					// are accepted by the schema for future first-class handling but
@@ -253,11 +279,13 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 						: content
 					await session.send(enriched, attachments, content, displayAttachments)
 				}
+				if (hasImage) trackChatImageUpload({ outcome: 'success' })
 				// Confirmed sent — clear the composer's chips so the same agent /
 				// objects / notifications don't ride along on the next turn. The
 				// user message bubble already displays them as context.
 				onDispatchSelection?.({ type: 'clear_all' })
 			} catch (err) {
+				if (hasImage) trackChatImageUpload({ outcome: 'failure' })
 				setPendingTurn(false)
 				throw err
 			}
@@ -320,8 +348,8 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	)
 
 	const handleRemoveFile = useCallback(
-		(name: string) => {
-			onDispatchSelection?.({ type: 'remove_file', name })
+		(fileId: string) => {
+			onDispatchSelection?.({ type: 'remove_file', fileId })
 		},
 		[onDispatchSelection],
 	)
@@ -339,6 +367,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 		>
 			{showTranscript && (
 				<ChatTranscript
+					workspaceId={workspaceId}
 					events={events}
 					starting={starting}
 					error={error}
@@ -446,7 +475,13 @@ function buildDisplayAttachments(selection: ChatSelection): UserAttachmentView[]
 		out.push({ kind: 'notification', id: n.id, title: n.title ?? null })
 	}
 	for (const f of selection.files) {
-		out.push({ kind: 'file', name: f.name, sizeBytes: f.sizeBytes })
+		out.push({
+			kind: 'file',
+			id: f.fileId,
+			name: f.name,
+			sizeBytes: f.sizeBytes,
+			...(f.mimeType ? { mimeType: f.mimeType } : {}),
+		})
 	}
 	return out.length > 0 ? out : undefined
 }
@@ -454,11 +489,19 @@ function buildDisplayAttachments(selection: ChatSelection): UserAttachmentView[]
 function selectionToAttachments(
 	objects: ChatSelectionObject[],
 	notifications: ChatSelectionNotification[],
+	files: import('@/lib/chat-selection').ChatSelectionFile[],
 ): SessionInputAttachment[] | undefined {
-	if (objects.length === 0 && notifications.length === 0) return undefined
+	if (objects.length === 0 && notifications.length === 0 && files.length === 0) return undefined
 	const attachments: SessionInputAttachment[] = [
 		...objects.map((o) => ({ kind: 'object', id: o.id })),
 		...notifications.map((n) => ({ kind: 'notification', id: n.id })),
+		...files.map((f) => ({
+			kind: 'file',
+			id: f.fileId,
+			name: f.name,
+			size_bytes: f.sizeBytes,
+			...(f.mimeType ? { mime_type: f.mimeType } : {}),
+		})),
 	]
 	return attachments
 }
@@ -482,7 +525,7 @@ export interface ComposerProps {
 	onRemoveAgent: () => void
 	onRemoveObject: (id: string) => void
 	onRemoveNotification: (id: string) => void
-	onRemoveFile: (name: string) => void
+	onRemoveFile: (fileId: string) => void
 	externalError?: string | null
 	onDismissExternalError?: () => void
 	/** Forwarded as `aria-label` on the textarea. Defaults to the surface placeholder. */
@@ -528,9 +571,31 @@ export function Composer({
 	const [sendError, setSendError] = useState<string | null>(null)
 	const [pickerOpen, setPickerOpen] = useState(false)
 	const [pickerKind, setPickerKind] = useState<SlashKindId | null>(null)
+	// In-flight + failed uploads. Only the resolved fileId enters `ChatSelection`
+	// (high-frequency upload events would otherwise churn the selection reducer);
+	// these are the chips shown while bytes are still transferring or after the
+	// upload failed, removable in either state.
+	const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
 	const slashPosRef = useRef<number | null>(null)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
-	const canSend = value.trim().length > 0 && !disabled && !sending && !pending
+	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
+	const uploadFile = useUploadFile(workspaceId)
+
+	// Abort every in-flight upload when the composer unmounts so a closed
+	// chat sheet doesn't leave XHRs hanging (and doesn't race-dispatch
+	// add_file into a selection state that's already been thrown away).
+	useEffect(() => {
+		const controllers = abortControllersRef.current
+		return () => {
+			for (const controller of controllers.values()) controller.abort()
+			controllers.clear()
+		}
+	}, [])
+	// Block send while any attachment is still uploading or has failed — the
+	// user must let it resolve or remove it (AC-T3). Mirrors the comment input's
+	// rule that send requires every chip to be in a final, sendable state.
+	const canSend =
+		value.trim().length > 0 && !disabled && !sending && !pending && pendingUploads.length === 0
 	const showSpinner = sending || pending
 
 	const handleSubmit = useCallback(
@@ -636,32 +701,98 @@ export function Composer({
 		}
 	}, [])
 
+	const uploadPickedFile = useCallback(
+		async (tempId: string, file: File) => {
+			const controller = new AbortController()
+			abortControllersRef.current.set(tempId, controller)
+			try {
+				const content = await readFileAsBase64(file)
+				const created = await uploadFile(
+					{
+						name: file.name,
+						mime_type: file.type || 'application/octet-stream',
+						content,
+						encoding: 'base64',
+					},
+					{
+						signal: controller.signal,
+						onProgress: (progress) => {
+							setPendingUploads((prev) =>
+								prev.map((p) => (p.tempId === tempId ? { ...p, progress } : p)),
+							)
+						},
+					},
+				)
+				// Cancel-vs-resolve race: if the user removed the chip between the
+				// XHR completing on the wire and this microtask firing, the chip is
+				// already gone and the abort fired — don't dispatch add_file so the
+				// user's intent is honoured (closes T4 reviewer SHOULD).
+				if (controller.signal.aborted) return
+				console.info(
+					'[chat] uploaded image attachment',
+					JSON.stringify({ fileId: created.id, name: file.name, sizeBytes: file.size }),
+				)
+				setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId))
+				onDispatchSelection?.({
+					type: 'add_file',
+					file: {
+						fileId: created.id,
+						name: file.name,
+						sizeBytes: file.size,
+						mimeType: file.type || undefined,
+					},
+				})
+			} catch (err) {
+				// An aborted upload was a user-initiated cancel — the pending row
+				// has already been removed by handleRemovePending; nothing to
+				// surface and no error state to set.
+				if (controller.signal.aborted) return
+				console.error(`[chat] failed to upload ${file.name}`, err)
+				const message = err instanceof Error ? err.message : 'Upload failed'
+				// Mirror the comment input: the failed chip stays put so the user
+				// can see which attachment broke and remove it. Send stays blocked
+				// (via canSend) until every pending row is resolved or removed.
+				setPendingUploads((prev) =>
+					prev.map((p) => (p.tempId === tempId ? { ...p, status: 'failed', error: message } : p)),
+				)
+			} finally {
+				abortControllersRef.current.delete(tempId)
+			}
+		},
+		[uploadFile, onDispatchSelection],
+	)
+
 	const handleFileSelection = useCallback(
-		async (event: ChangeEvent<HTMLInputElement>) => {
+		(event: ChangeEvent<HTMLInputElement>) => {
 			const input = event.target
 			const files = Array.from(input.files ?? [])
 			input.value = '' // allow re-picking the same file after removing it
-			const failures: string[] = []
-			for (const file of files) {
-				if (file.size > FILE_MAX_BYTES) {
-					failures.push(`${file.name} is larger than ${FILE_MAX_BYTES / 1024}KB`)
-					continue
-				}
-				try {
-					const content = await file.text()
-					onDispatchSelection?.({
-						type: 'add_file',
-						file: { name: file.name, content, sizeBytes: file.size },
-					})
-				} catch (err) {
-					console.error(`[chat] failed to read ${file.name}`, err)
-					failures.push(`Failed to read ${file.name}`)
-				}
-			}
-			if (failures.length > 0) setSendError(failures.join('; '))
+			const additions: PendingUpload[] = files.map((file) => ({
+				tempId: makeTempId(),
+				name: file.name,
+				sizeBytes: file.size,
+				mimeType: file.type || undefined,
+				status: 'uploading',
+				progress: 0,
+			}))
+			if (additions.length === 0) return
+			setPendingUploads((prev) => [...prev, ...additions])
+			additions.forEach((p, idx) => {
+				void uploadPickedFile(p.tempId, files[idx])
+			})
 		},
-		[onDispatchSelection],
+		[uploadPickedFile],
 	)
+
+	const handleRemovePending = useCallback((tempId: string) => {
+		// Abort first so the in-flight XHR is cancelled before the request can
+		// finish on the server. uploadPickedFile's catch branch sees
+		// signal.aborted=true and skips the error toast; the file row never
+		// gets created in the backend (AC-T4).
+		abortControllersRef.current.get(tempId)?.abort()
+		abortControllersRef.current.delete(tempId)
+		setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId))
+	}, [])
 
 	return (
 		<div
@@ -687,13 +818,50 @@ export function Composer({
 				onRemoveNotification={onRemoveNotification}
 				onRemoveFile={onRemoveFile}
 			/>
+			{pendingUploads.length > 0 && (
+				<ul
+					className="flex list-none flex-wrap items-center gap-1 p-0"
+					aria-label="Uploading attachments"
+				>
+					{pendingUploads.map((p) => (
+						<li
+							key={p.tempId}
+							data-upload-status={p.status}
+							className={cn(
+								'inline-flex max-w-full items-center gap-1 rounded-full border bg-bg-surface px-2 py-0.5 text-xs text-foreground',
+								p.status === 'failed' ? 'border-error' : 'border-border',
+							)}
+						>
+							<UploadProgress
+								progress={p.progress}
+								status={p.status}
+								error={p.error}
+								className="shrink-0"
+							/>
+							<span className="max-w-[12rem] truncate text-muted-foreground">{p.name}</span>
+							<button
+								type="button"
+								onClick={() => handleRemovePending(p.tempId)}
+								aria-label={
+									p.status === 'failed'
+										? `Remove failed upload ${p.name}`
+										: `Cancel upload ${p.name}`
+								}
+								className="-mr-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							>
+								<X size={10} aria-hidden />
+							</button>
+						</li>
+					))}
+				</ul>
+			)}
 			<input
 				ref={fileInputRef}
 				type="file"
-				accept=".md,.markdown,text/markdown,text/plain"
+				accept="image/*"
 				multiple
 				className="hidden"
-				onChange={(e) => void handleFileSelection(e)}
+				onChange={handleFileSelection}
 				aria-hidden
 				tabIndex={-1}
 			/>
@@ -743,13 +911,13 @@ export function Composer({
 						type="button"
 						size="sm"
 						variant="ghost"
-						className="h-7 gap-1 px-2 text-xs text-text-secondary"
+						className="relative h-7 gap-1 px-2 text-xs text-text-secondary before:absolute before:-inset-3 before:h-11 before:w-11 before:content-['']"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={disabled}
-						aria-label="Upload markdown file"
+						aria-label="Attach image"
 					>
 						<Paperclip size={14} aria-hidden />
-						Upload
+						Attach
 					</Button>
 					<div className="ml-auto">
 						<Button

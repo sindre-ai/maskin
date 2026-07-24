@@ -1,11 +1,16 @@
+import type { CaptureOptions } from 'posthog-js'
 import { getStoredActor } from './auth'
 import { capture, isPosthogReady } from './posthog'
 
 export type AnalyticsProps = Record<string, string | number | boolean | null | undefined>
 
-export function trackEvent(name: string, props: AnalyticsProps = {}): void {
+export function trackEvent(
+	name: string,
+	props: AnalyticsProps = {},
+	options?: CaptureOptions,
+): void {
 	try {
-		capture(name, props)
+		capture(name, props, options)
 	} catch {
 		// Analytics must never break the UI.
 	}
@@ -206,6 +211,23 @@ export function trackForyouSparseComposerSubmit(p: { items_count: number }): voi
 	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
 }
 
+// iPadOS 13+ reports `MacIntel` from `navigator.userAgent` / `navigator.platform`
+// and only the `maxTouchPoints > 1` signal distinguishes it from a real Mac, so
+// the touch-point check is load-bearing — not paranoia. Returning 'web' for
+// everything else (including Android) is deliberate: the bet's success metric
+// filters on `platform=ios`, and conflating Android into iOS would skew it.
+function detectPlatform(): 'ios' | 'web' {
+	if (typeof navigator === 'undefined') return 'web'
+	const ua = navigator.userAgent ?? ''
+	if (/iphone|ipad|ipod/i.test(ua)) return 'ios'
+	if (ua.includes('Macintosh') && (navigator.maxTouchPoints ?? 0) > 1) return 'ios'
+	return 'web'
+}
+
+export function trackChatImageUpload(p: { outcome: 'success' | 'failure' }): void {
+	trackEvent('chat_image_upload', { platform: detectPlatform(), outcome: p.outcome })
+}
+
 // Sidebar legibility bet — click-through proxy for the qualitative ship metric.
 // `workspace_id` already rides via the PostHog super-property registered on
 // workspace mount; the explicit `workspaceId` here is a duplicate the Analyst
@@ -224,12 +246,28 @@ export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): v
 // filtered to workspaces with no prior bets. `workspace_id` is passed on the
 // event (not via super properties) so the PostHog cohort filter can key off it
 // without depending on the workspace mount having already registered.
+//
+// Both events fire with `send_instantly: true` so posthog-js bypasses its
+// ~3-second batching queue. The response event was being lost in prod because
+// the card unmounts immediately after submit and users often tab away right
+// after — the batched event never made it out of the browser, so the event
+// name never even landed in the PostHog project taxonomy. The impression uses
+// the same flag for parity: both halves of the ratio must have identical
+// delivery semantics or the ship metric is biased.
 export function trackNorthStarPromptImpression(p: { workspace_id: string }): void {
-	trackEvent('north_star_prompt_impression', { workspace_id: p.workspace_id })
+	trackEvent(
+		'north_star_prompt_impression',
+		{ workspace_id: p.workspace_id },
+		{ send_instantly: true },
+	)
 }
 
 export function trackNorthStarPromptResponse(p: { workspace_id: string }): void {
-	trackEvent('north_star_prompt_response', { workspace_id: p.workspace_id })
+	trackEvent(
+		'north_star_prompt_response',
+		{ workspace_id: p.workspace_id },
+		{ send_instantly: true },
+	)
 }
 
 // Ship-metric event for the iOS bulk-select ergonomics bet. Fires once per
