@@ -45,6 +45,15 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Pinned to match docker/agent-base/Dockerfile's `deepsec` install — the
+      # runner here has no other source for this CLI, so without this step
+      # `pnpm deepsec` fails with "Command not found" and the report ends up
+      # containing that error text instead of scan output. The HIGH-severity
+      # grep below doesn't match that text, so the gate step was silently
+      # passing on every PR with no scan ever having run.
+      - name: Install DeepSec CLI
+        run: npm install -g deepsec@2.2.1
+
       - name: Run DeepSec against PR diff
         id: scan
         run: |
