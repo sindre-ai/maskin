@@ -1,11 +1,16 @@
+import type { CaptureOptions } from 'posthog-js'
 import { getStoredActor } from './auth'
 import { capture, isPosthogReady } from './posthog'
 
 export type AnalyticsProps = Record<string, string | number | boolean | null | undefined>
 
-export function trackEvent(name: string, props: AnalyticsProps = {}): void {
+export function trackEvent(
+	name: string,
+	props: AnalyticsProps = {},
+	options?: CaptureOptions,
+): void {
 	try {
-		capture(name, props)
+		capture(name, props, options)
 	} catch {
 		// Analytics must never break the UI.
 	}
@@ -224,12 +229,28 @@ export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): v
 // filtered to workspaces with no prior bets. `workspace_id` is passed on the
 // event (not via super properties) so the PostHog cohort filter can key off it
 // without depending on the workspace mount having already registered.
+//
+// Both events fire with `send_instantly: true` so posthog-js bypasses its
+// ~3-second batching queue. The response event was being lost in prod because
+// the card unmounts immediately after submit and users often tab away right
+// after — the batched event never made it out of the browser, so the event
+// name never even landed in the PostHog project taxonomy. The impression uses
+// the same flag for parity: both halves of the ratio must have identical
+// delivery semantics or the ship metric is biased.
 export function trackNorthStarPromptImpression(p: { workspace_id: string }): void {
-	trackEvent('north_star_prompt_impression', { workspace_id: p.workspace_id })
+	trackEvent(
+		'north_star_prompt_impression',
+		{ workspace_id: p.workspace_id },
+		{ send_instantly: true },
+	)
 }
 
 export function trackNorthStarPromptResponse(p: { workspace_id: string }): void {
-	trackEvent('north_star_prompt_response', { workspace_id: p.workspace_id })
+	trackEvent(
+		'north_star_prompt_response',
+		{ workspace_id: p.workspace_id },
+		{ send_instantly: true },
+	)
 }
 
 // Ship-metric event for the iOS bulk-select ergonomics bet. Fires once per
@@ -250,6 +271,39 @@ export function trackBulkEditCommit(p: {
 		action: p.action,
 		platform_device: p.platform_device,
 		source: 'web',
+	})
+}
+
+// Ship-metric events for the view-state retention bet on the Objects list.
+// The PostHog query pairs `objects_list_arrived(nav_type='back')` (denominator
+// — a back-nav landing on the list) with `objects_list_group_toggled(source=
+// 'user')` (numerator — a user-initiated group toggle) within a 30s window,
+// enforced on the query side. `nav_type` fires on every mount so the arrival
+// stream can be sliced later; `direct` is a URL-bar or hard-refresh landing,
+// `link` is an in-app SPA navigation. `source` distinguishes user toggles
+// from the eventual system-driven restore (used to wire-verify the restore).
+// `objectType` is the current tab (`bet`, `insight`, …) or `null` on the All
+// tab so the metric can be sliced per type without joining super properties.
+export type ObjectsListNavType = 'back' | 'direct' | 'link'
+
+export function trackObjectsListArrived(p: {
+	nav_type: ObjectsListNavType
+	objectType: string | null
+}): void {
+	trackEvent('objects_list_arrived', { nav_type: p.nav_type, objectType: p.objectType })
+}
+
+export type ObjectsListGroupToggleSource = 'user' | 'system'
+
+export function trackObjectsListGroupToggled(p: {
+	source: ObjectsListGroupToggleSource
+	expanded: boolean
+	objectType: string | null
+}): void {
+	trackEvent('objects_list_group_toggled', {
+		source: p.source,
+		expanded: p.expanded,
+		objectType: p.objectType,
 	})
 }
 

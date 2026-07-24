@@ -20,6 +20,7 @@
 		"@maskin/ext-knowledge": "workspace:*",
 		"@maskin/ext-notetaker": "workspace:*",
 		"@maskin/ext-work": "workspace:*",
+		"@maskin/markdown": "workspace:*",
 		"@maskin/module-sdk": "workspace:*",
 		"@maskin/shared": "workspace:*",
 		"@microsoft/fetch-event-source": "^2.0.1",

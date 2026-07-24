@@ -29,6 +29,7 @@ import installedPackagesRoutes from './routes/installed-packages'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import mcpRoutes from './routes/mcp'
+import methodRoutes from './routes/method'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
@@ -251,6 +252,13 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	}
 
 	app.route('/mcp', mcpRoutes)
+
+	// Public method-site routes — mounted BEFORE the SPA static fallthrough
+	// below so `/method/*` never falls through to `index.html`. The editorial
+	// layer inlines the `method_site_pageview` script from
+	// `lib/analytics/method-site-pageview` in every rendered page so T2's
+	// ship metric keeps firing.
+	app.route('/method', methodRoutes)
 
 	app.doc31('/api/openapi.json', getOpenApiConfig(port))
 

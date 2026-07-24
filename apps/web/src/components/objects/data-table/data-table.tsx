@@ -90,6 +90,7 @@ import { cn } from '@/lib/cn'
 import { useNavigate } from '@tanstack/react-router'
 import {
 	type ColumnDef,
+	type ExpandedState,
 	type GroupingState,
 	type OnChangeFn,
 	type Row,
@@ -104,10 +105,19 @@ import {
 } from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronRight } from 'lucide-react'
-import { useCallback, useEffect, useRef } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
 import type { ObjectsTableMeta } from './columns'
 import { ObjectCard } from './object-card'
 import { useDragSelect } from './use-drag-select'
+
+// Imperative handle the Objects route uses to read the first-visible row at
+// navigate-away time and to restore the scroll position on a POP landing.
+// Keeps the virtualizer and row model owned by DataTable — the route never
+// touches TanStack Virtual directly.
+export interface DataTableHandle {
+	getFirstVisibleRowId(): string | null
+	scrollToRowId(rowId: string): void
+}
 
 interface DataTableProps {
 	data: ObjectResponse[]
@@ -125,25 +135,46 @@ interface DataTableProps {
 	isError?: boolean
 	fetchNextPage?: () => void
 	isLoading?: boolean
+	// Controlled group-expansion state. Lifted so the Objects route can
+	// snapshot it into the session view-state store on every change and
+	// hydrate it on a POP landing. Keyed by react-table's stable row id
+	// (object id), so a refetch/filter/sort that reshapes the visible rows
+	// keeps overrides bound to the right group. Also the boundary at which
+	// the route fires the group-toggle analytics — this replaces the earlier
+	// `onGroupToggle` side-channel.
+	expanded: ExpandedState
+	onExpandedChange: OnChangeFn<ExpandedState>
+	// Fires synchronously right before a row-click navigate. The route reads
+	// the current first-visible row id via `ref.current.getFirstVisibleRowId()`
+	// and writes it into the session view-state store, so a back-nav landing
+	// can restore the anchor. Single read per click — no scroll listener, so
+	// the list-page TTI guardrail (<10% regression) isn't at risk.
+	onCaptureViewState?: () => void
 }
 
-export function DataTable({
-	data,
-	columns,
-	workspaceId,
-	actors: actorsProp,
-	rowSelection,
-	onRowSelectionChange,
-	columnVisibility,
-	onColumnVisibilityChange,
-	grouping,
-	meta,
-	hasNextPage,
-	isFetchingNextPage,
-	isError,
-	fetchNextPage,
-	isLoading,
-}: DataTableProps) {
+export const DataTable = forwardRef<DataTableHandle, DataTableProps>(function DataTable(
+	{
+		data,
+		columns,
+		workspaceId,
+		actors: actorsProp,
+		rowSelection,
+		onRowSelectionChange,
+		columnVisibility,
+		onColumnVisibilityChange,
+		grouping,
+		meta,
+		hasNextPage,
+		isFetchingNextPage,
+		isError,
+		fetchNextPage,
+		isLoading,
+		expanded,
+		onExpandedChange,
+		onCaptureViewState,
+	},
+	ref,
+) {
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
 	const isTouchViewport = useIsTouchViewport()
@@ -160,10 +191,12 @@ export function DataTable({
 			rowSelection,
 			columnVisibility,
 			grouping: grouping ?? [],
+			expanded,
 		},
 		meta: meta as Record<string, unknown>,
 		onRowSelectionChange,
 		onColumnVisibilityChange,
+		onExpandedChange,
 		getCoreRowModel: getCoreRowModel(),
 		getGroupedRowModel: grouping?.length ? getGroupedRowModel() : undefined,
 		getExpandedRowModel: grouping?.length ? getExpandedRowModel() : undefined,
@@ -178,6 +211,13 @@ export function DataTable({
 	})
 
 	const { rows } = table.getRowModel()
+
+	// Refs mirror the current render's row model + virtualizer so the imperative
+	// handle stays identity-stable (no dep-array on useImperativeHandle) while
+	// still reading fresh values inside its methods. Avoids re-registering the
+	// handle on every render — the route's ref stays valid across POPs.
+	const rowsRef = useRef(rows)
+	rowsRef.current = rows
 
 	// The scroll container only mounts once loading/empty placeholders give way
 	// to the real list below — gate attachment on that so the hook's listener
@@ -197,6 +237,37 @@ export function DataTable({
 		estimateSize: () => (isMobile ? 96 : isTouchViewport ? 60 : 48),
 		overscan: isMobile ? 10 : 20,
 	})
+	const virtualizerRef = useRef(virtualizer)
+	virtualizerRef.current = virtualizer
+
+	useImperativeHandle(
+		ref,
+		() => ({
+			getFirstVisibleRowId: () => {
+				// The virtualizer keeps overscan rows in the item list on
+				// either side of the viewport (mobile: 10, desktop: 20). Return
+				// the topmost item whose bottom is inside the viewport, not
+				// the topmost item in the overscan window — otherwise capture
+				// and restore misalign by a full overscan window.
+				const scroller = parentRef.current
+				if (!scroller) return null
+				const scrollTop = scroller.scrollTop
+				for (const item of virtualizerRef.current.getVirtualItems()) {
+					if (item.end <= scrollTop) continue
+					const row = rowsRef.current[item.index]
+					if (!row || row.getIsGrouped()) continue
+					return row.original?.id ?? null
+				}
+				return null
+			},
+			scrollToRowId: (rowId: string) => {
+				const idx = rowsRef.current.findIndex((r) => !r.getIsGrouped() && r.original?.id === rowId)
+				if (idx < 0) return
+				virtualizerRef.current.scrollToIndex(idx, { align: 'start' })
+			},
+		}),
+		[],
+	)
 
 	// Infinite scroll sentinel — skip when fetching or errored to avoid retry loops
 	useEffect(() => {
@@ -213,12 +284,15 @@ export function DataTable({
 
 	const handleRowClick = useCallback(
 		(objectId: string) => {
+			// Snapshot view state before pushing the detail route — the mount
+			// effect on the eventual POP landing back to this list reads it.
+			onCaptureViewState?.()
 			navigate({
 				to: '/$workspaceId/objects/$objectId',
 				params: { workspaceId, objectId },
 			})
 		},
-		[navigate, workspaceId],
+		[navigate, workspaceId, onCaptureViewState],
 	)
 
 	if (isLoading) {
@@ -498,4 +572,4 @@ export function DataTable({
 			)}
 		</div>
 	)
-}
+})
