@@ -19,14 +19,6 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.112
 # Pre-install Playwright MCP server (connects to external browser via CDP)
 RUN npm install -g @playwright/mcp
 
-# Pre-install the deepsec CLI so an agent session can invoke `deepsec process
-# --diff <base>` (and the `pnpm deepsec …` alias exposed by a repo's `.deepsec/`
-# workspace) without a per-session npm install. Pinned because deepsec's flag
-# surface — including --agent, --model, --diff, and --comment-out — has changed
-# between minor versions; bump this deliberately after re-checking the CLI
-# reference the CI workflow (.github/workflows/deepsec.yml) invokes.
-RUN npm install -g deepsec@2.2.1
-
 # Non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash agent
 
