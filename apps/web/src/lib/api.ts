@@ -1185,6 +1185,9 @@ export interface SessionResponse {
 export interface SessionInputAttachment {
 	kind: string
 	id: string
+	name?: string
+	mime_type?: string
+	size_bytes?: number
 }
 
 export interface SessionInputBody {

@@ -574,10 +574,14 @@ app.openapi(inputSessionRoute, (async (c) => {
 	}
 
 	try {
-		await sessionManager.writeInput(id, {
-			type: 'user',
-			message: { role: 'user', content: body.content },
-		})
+		await sessionManager.writeInput(
+			id,
+			{
+				type: 'user',
+				message: { role: 'user', content: body.content },
+			},
+			body.attachments,
+		)
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err)
 		return c.json(createApiError('BAD_REQUEST', message), 400)
@@ -677,12 +681,22 @@ app.get('/:id/logs/stream', async (c) => {
 		// Check if session is already in terminal state
 		const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
 
+		// Honored by both the terminal replay-all branch and the missed-logs
+		// replay branch below, so a client that already hydrated via GET /logs
+		// never gets rows it has already rendered re-emitted on top of them.
+		const parsedLogId = Number(lastLogId)
+		const hasLastLogId = Boolean(lastLogId) && Number.isFinite(parsedLogId) && parsedLogId > 0
+
 		if (session && terminalStatuses.includes(session.status)) {
-			// Replay all logs for completed sessions, then close
+			// Replay logs for completed sessions, then close
 			const allLogs = await db
 				.select()
 				.from(sessionLogs)
-				.where(eq(sessionLogs.sessionId, sessionId))
+				.where(
+					hasLastLogId
+						? and(eq(sessionLogs.sessionId, sessionId), gt(sessionLogs.id, parsedLogId))
+						: eq(sessionLogs.sessionId, sessionId),
+				)
 				.orderBy(asc(sessionLogs.id))
 
 			for (const log of allLogs) {
@@ -697,8 +711,7 @@ app.get('/:id/logs/stream', async (c) => {
 		}
 
 		// Replay missed logs if Last-Event-ID is provided
-		const parsedLogId = Number(lastLogId)
-		if (lastLogId && Number.isFinite(parsedLogId) && parsedLogId > 0) {
+		if (hasLastLogId) {
 			const missed = await db
 				.select()
 				.from(sessionLogs)

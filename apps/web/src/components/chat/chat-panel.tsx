@@ -19,6 +19,7 @@ import {
 } from '@/lib/chat-export'
 import {
 	type ChatSelectionAgent,
+	type ChatSelectionFile,
 	type ChatSelectionNotification,
 	type ChatSelectionObject,
 	EMPTY_CHAT_SELECTION,
@@ -342,6 +343,15 @@ function attachmentToAction(attachment: ChatAttachment) {
 			title: attachment.title ?? null,
 		}
 		return { type: 'add_notification' as const, notification }
+	}
+	if (attachment.kind === 'file') {
+		const file: ChatSelectionFile = {
+			fileId: attachment.fileId,
+			name: attachment.name,
+			sizeBytes: attachment.sizeBytes,
+			...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+		}
+		return { type: 'add_file' as const, file }
 	}
 	return null
 }

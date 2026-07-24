@@ -8,7 +8,7 @@ export interface SelectionChipsProps {
 	onRemoveAgent: () => void
 	onRemoveObject: (id: string) => void
 	onRemoveNotification: (id: string) => void
-	onRemoveFile: (name: string) => void
+	onRemoveFile: (fileId: string) => void
 	className?: string
 }
 
@@ -74,10 +74,10 @@ export function SelectionChips({
 			})}
 			{selection.files.map((file) => (
 				<Chip
-					key={file.name}
+					key={file.fileId}
 					icon={<FileText size={12} aria-hidden />}
 					label={file.name}
-					onRemove={() => onRemoveFile(file.name)}
+					onRemove={() => onRemoveFile(file.fileId)}
 					removeLabel={`Remove ${file.name}`}
 				/>
 			))}

@@ -23,7 +23,7 @@ export type UserAttachmentView =
 	| { kind: 'agent'; id: string; name: string | null }
 	| { kind: 'object'; id: string; title: string | null; type: string | null }
 	| { kind: 'notification'; id: string; title: string | null }
-	| { kind: 'file'; name: string; sizeBytes: number }
+	| { kind: 'file'; id?: string; name: string; sizeBytes: number; mimeType?: string }
 
 export type ChatEvent =
 	| { kind: 'user'; text: string; attachments?: UserAttachmentView[] }
@@ -156,11 +156,19 @@ function parseUserMessage(envelope: Record<string, unknown>): ChatEvent[] {
 	const message = envelope.message
 	if (!isRecord(message)) return []
 	const content = message.content
+	const attachments = parseMaskinAttachments(envelope.maskin_attachments)
+
+	const withAttachments = (text: string): ChatEvent => ({
+		kind: 'user',
+		text,
+		...(attachments.length > 0 ? { attachments } : {}),
+	})
 
 	if (typeof content === 'string') {
-		const trimmed = content.trim()
-		if (trimmed.length === 0) return []
-		return [{ kind: 'user', text: content }]
+		// An empty string with attachments is still meaningful — e.g. an image-
+		// only message sent via the iOS chat composer.
+		if (content.trim().length === 0 && attachments.length === 0) return []
+		return [withAttachments(content)]
 	}
 
 	if (Array.isArray(content)) {
@@ -174,11 +182,59 @@ function parseUserMessage(envelope: Record<string, unknown>): ChatEvent[] {
 			// `tool_result` blocks are intentionally skipped — the matching
 			// `tool_use` event is already in the transcript.
 		}
-		if (texts.length === 0) return []
-		return [{ kind: 'user', text: texts.join('\n') }]
+		if (texts.length === 0 && attachments.length === 0) return []
+		return [withAttachments(texts.join('\n'))]
 	}
 
 	return []
+}
+
+/**
+ * Read the Maskin-only `maskin_attachments` extension we tack onto user
+ * envelopes when they're persisted to `session_logs`. Each entry round-trips
+ * the kind + id + display metadata the composer dispatched on send, so the
+ * transcript can re-render the user bubble — including inline file cards —
+ * without a second POST to `/files` on reload.
+ */
+function parseMaskinAttachments(value: unknown): UserAttachmentView[] {
+	if (!Array.isArray(value)) return []
+	const out: UserAttachmentView[] = []
+	for (const entry of value) {
+		if (!isRecord(entry)) continue
+		const kind = asString(entry.kind)
+		if (kind === 'file') {
+			const name = asString(entry.name)
+			if (name === undefined) continue
+			const sizeBytes = asNumber(entry.size_bytes) ?? 0
+			const id = asString(entry.id)
+			const mimeType = asString(entry.mime_type)
+			out.push({
+				kind: 'file',
+				name,
+				sizeBytes,
+				...(id ? { id } : {}),
+				...(mimeType ? { mimeType } : {}),
+			})
+		} else if (kind === 'agent') {
+			const id = asString(entry.id)
+			if (id === undefined) continue
+			out.push({ kind: 'agent', id, name: asString(entry.name) ?? null })
+		} else if (kind === 'object') {
+			const id = asString(entry.id)
+			if (id === undefined) continue
+			out.push({
+				kind: 'object',
+				id,
+				title: asString(entry.title) ?? null,
+				type: asString(entry.type) ?? null,
+			})
+		} else if (kind === 'notification') {
+			const id = asString(entry.id)
+			if (id === undefined) continue
+			out.push({ kind: 'notification', id, title: asString(entry.title) ?? null })
+		}
+	}
+	return out
 }
 
 export interface ParseChatOptions {
