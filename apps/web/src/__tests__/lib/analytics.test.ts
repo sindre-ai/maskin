@@ -383,24 +383,34 @@ describe('v1 taxonomy helpers', () => {
 		})
 	})
 
-	it('north_star_prompt_impression fires with workspace_id via posthog.capture', () => {
+	it('north_star_prompt_impression fires with workspace_id via posthog.capture, bypassing the batch queue', () => {
 		const capture = captureSpy()
 
 		trackNorthStarPromptImpression({ workspace_id: 'ws-42' })
 
-		expect(capture).toHaveBeenCalledWith('north_star_prompt_impression', {
-			workspace_id: 'ws-42',
-		})
+		expect(capture).toHaveBeenCalledWith(
+			'north_star_prompt_impression',
+			{ workspace_id: 'ws-42' },
+			{ send_instantly: true },
+		)
 	})
 
-	it('north_star_prompt_response fires with workspace_id via posthog.capture', () => {
+	it('north_star_prompt_response fires with workspace_id via posthog.capture, bypassing the batch queue', () => {
+		// send_instantly is load-bearing: without it, posthog-js batches events
+		// for ~3s. The response event fires right before the card unmounts and
+		// users typically tab away immediately, so the batched event never
+		// reaches PostHog — that's why the event name was missing from the
+		// project taxonomy after PR #1003. The impression event uses the same
+		// flag for parity so the ratio isn't biased by asymmetric delivery.
 		const capture = captureSpy()
 
 		trackNorthStarPromptResponse({ workspace_id: 'ws-42' })
 
-		expect(capture).toHaveBeenCalledWith('north_star_prompt_response', {
-			workspace_id: 'ws-42',
-		})
+		expect(capture).toHaveBeenCalledWith(
+			'north_star_prompt_response',
+			{ workspace_id: 'ws-42' },
+			{ send_instantly: true },
+		)
 	})
 
 	it('loop_viewed carries entity_type=loop and the source_bet_id join key', () => {
