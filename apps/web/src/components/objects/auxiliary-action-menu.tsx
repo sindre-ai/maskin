@@ -3,16 +3,17 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuLabel,
 	DropdownMenuSeparator,
 	DropdownMenuShortcut,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
-import { useIsMobile } from '@/hooks/use-mobile'
+import { useIsMobile, useIsTouchViewport } from '@/hooks/use-mobile'
 import { useSubscribe, useUnsubscribe } from '@/hooks/use-subscriptions'
 import { trackEvent } from '@/lib/analytics'
-import type { ObjectResponse } from '@/lib/api'
+import type { MemberResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
 	Archive,
@@ -26,6 +27,7 @@ import {
 } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useMemo } from 'react'
 import { toast } from 'sonner'
+import { OwnerSelect, StatusSelect } from './property-selects'
 
 type Visibility = 'hide' | 'disable'
 
@@ -48,6 +50,14 @@ export interface AuxiliaryActionMenuProps {
 	workspaceId: string
 	open?: boolean
 	onOpenChange?: (open: boolean) => void
+	// Properties group inputs — when all present and the viewport is narrow
+	// (mobile Sheet or touch-viewport popover), the menu leads with a
+	// Status + Driver row pair that mounts the same selects used in the hero.
+	statuses?: string[]
+	members?: MemberResponse[]
+	currentDriverId?: string | null
+	onStatusChange?: (status: string) => void
+	onDriverChange?: (driver: string | null) => void
 }
 
 export function AuxiliaryActionMenu({
@@ -57,10 +67,27 @@ export function AuxiliaryActionMenu({
 	workspaceId,
 	open,
 	onOpenChange,
+	statuses,
+	members,
+	currentDriverId,
+	onStatusChange,
+	onDriverChange,
 }: AuxiliaryActionMenuProps) {
 	const isMobile = useIsMobile()
+	// ≤1024 CSS px — the design brief targets ≤1080 for the narrow-desktop
+	// compaction, but useIsTouchViewport is the existing hook and the closest
+	// standard breakpoint. Wide desktop (>1024) leaves the Properties group off.
+	const isTouchViewport = useIsTouchViewport()
 	const subscribe = useSubscribe(workspaceId)
 	const unsubscribe = useUnsubscribe(workspaceId)
+
+	const showProperties =
+		!!statuses &&
+		statuses.length > 0 &&
+		!!members &&
+		!!onStatusChange &&
+		!!onDriverChange &&
+		(isMobile || isTouchViewport)
 
 	const handleClipboard = useCallback((text: string, label: string) => {
 		navigator.clipboard.writeText(text).then(
@@ -188,6 +215,17 @@ export function AuxiliaryActionMenu({
 		</Button>
 	)
 
+	const propertiesGroup = showProperties ? (
+		<PropertiesGroup
+			currentStatus={object.status}
+			statuses={statuses ?? []}
+			members={members ?? []}
+			currentDriverId={currentDriverId ?? null}
+			onStatusChange={onStatusChange ?? (() => {})}
+			onDriverChange={onDriverChange ?? (() => {})}
+		/>
+	) : null
+
 	if (isMobile) {
 		return (
 			<Sheet open={open} onOpenChange={handleOpenChange}>
@@ -196,6 +234,12 @@ export function AuxiliaryActionMenu({
 					<SheetHeader className="px-4">
 						<SheetTitle>Actions</SheetTitle>
 					</SheetHeader>
+					{propertiesGroup && (
+						<>
+							<div className="mt-2 px-4">{propertiesGroup}</div>
+							<Separator className="my-2" />
+						</>
+					)}
 					<div className="mt-2 flex flex-col">
 						{visibleItems.map((item) => (
 							<Fragment key={item.id}>
@@ -210,9 +254,18 @@ export function AuxiliaryActionMenu({
 	}
 
 	return (
-		<DropdownMenu open={open} onOpenChange={handleOpenChange}>
+		<DropdownMenu open={open} onOpenChange={handleOpenChange} modal={false}>
 			<DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="min-w-[200px]">
+				{propertiesGroup && (
+					<>
+						<DropdownMenuLabel className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+							Properties
+						</DropdownMenuLabel>
+						<div className="px-2 pb-1.5 space-y-1.5">{propertiesGroup}</div>
+						<DropdownMenuSeparator />
+					</>
+				)}
 				{visibleItems.map((item) => (
 					<Fragment key={item.id}>
 						{item.separatorBefore && <DropdownMenuSeparator />}
@@ -221,6 +274,47 @@ export function AuxiliaryActionMenu({
 				))}
 			</DropdownMenuContent>
 		</DropdownMenu>
+	)
+}
+
+function PropertiesGroup({
+	currentStatus,
+	statuses,
+	members,
+	currentDriverId,
+	onStatusChange,
+	onDriverChange,
+}: {
+	currentStatus: string
+	statuses: string[]
+	members: MemberResponse[]
+	currentDriverId: string | null
+	onStatusChange: (status: string) => void
+	onDriverChange: (driver: string | null) => void
+}) {
+	return (
+		<div className="flex flex-col gap-1">
+			<div className="flex min-h-[44px] items-center gap-2">
+				<span className="w-14 shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground">
+					Status
+				</span>
+				<div className="flex-1 min-w-0">
+					<StatusSelect current={currentStatus} options={statuses} onChange={onStatusChange} />
+				</div>
+			</div>
+			<div className="flex min-h-[44px] items-center gap-2">
+				<span className="w-14 shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground">
+					Driver
+				</span>
+				<div className="flex-1 min-w-0">
+					<OwnerSelect
+						members={members}
+						currentOwnerId={currentDriverId}
+						onChange={onDriverChange}
+					/>
+				</div>
+			</div>
+		</div>
 	)
 }
 

@@ -324,6 +324,32 @@ export function trackObjectsListGroupToggled(p: {
 	})
 }
 
+// Ship-metric event for the sticky-nav-hero bet. Fires once per completed
+// scroll-to-top gesture on an object-detail page — the user must scroll ≥ 1
+// viewport down inside the app scroll container and return near the top before
+// the event emits. The parent bet's `metadata.posthog_query` pairs this event
+// with `objects_control_changed` fired against the same entity within 10s to
+// measure the scroll-to-top → property-edit bounce. Follows the
+// `trackObjectCreated` taxonomy — `entity_id` + `entity_type='object'` +
+// `object_subtype` — so the correlation join runs cleanly without aliasing and
+// the schema stays forward-compatible for `insight`/`task` subtypes (Product
+// Analyst signoff, 2026-07-20).
+export function trackScrollToTop(
+	p: BaseProps & {
+		entity_type: 'object'
+		object_subtype: string
+		scroll_depth_at_start_px: number
+		viewports_scrolled: number
+	},
+): void {
+	trackEvent('scroll_to_top', {
+		...fillBase(p),
+		object_subtype: p.object_subtype,
+		scroll_depth_at_start_px: p.scroll_depth_at_start_px,
+		viewports_scrolled: p.viewports_scrolled,
+	})
+}
+
 // Ship-metric events for the Loops primitive bet. `loop_viewed` fires once per
 // Loop detail page mount; `loop_graduated` fires once per Loop created from the
 // web (paired with `bet_created` — same call site pattern in `useCreateObject`).

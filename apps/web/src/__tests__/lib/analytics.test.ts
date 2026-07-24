@@ -19,6 +19,7 @@ import {
 	trackObjectsListArrived,
 	trackObjectsListGroupToggled,
 	trackRelationshipCreated,
+	trackScrollToTop,
 	trackSidebarAgentActivityExpanded,
 	trackSidebarWorkspaceSwitcherOpened,
 	trackSpecialistSummonedManually,
@@ -411,6 +412,28 @@ describe('v1 taxonomy helpers', () => {
 			{ workspace_id: 'ws-42' },
 			{ send_instantly: true },
 		)
+	})
+
+	it('scroll_to_top carries entity_id/entity_type/object_subtype so the correlation join runs without aliasing', () => {
+		const capture = captureSpy()
+
+		trackScrollToTop({
+			entity_id: 'bet-42',
+			entity_type: 'object',
+			object_subtype: 'bet',
+			scroll_depth_at_start_px: 1600,
+			viewports_scrolled: 2,
+		})
+
+		expect(capture).toHaveBeenCalledWith('scroll_to_top', {
+			entity_id: 'bet-42',
+			entity_type: 'object',
+			source: 'web',
+			flow_id: null,
+			object_subtype: 'bet',
+			scroll_depth_at_start_px: 1600,
+			viewports_scrolled: 2,
+		})
 	})
 
 	it('loop_viewed carries entity_type=loop and the source_bet_id join key', () => {

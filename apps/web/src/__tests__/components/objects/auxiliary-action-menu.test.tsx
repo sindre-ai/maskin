@@ -1,4 +1,5 @@
 import { AuxiliaryActionMenu } from '@/components/objects/auxiliary-action-menu'
+import type { MemberResponse } from '@/lib/api'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event'
@@ -10,9 +11,22 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 	useUnsubscribe: () => ({ mutate: vi.fn() }),
 }))
 
+// Mutable so individual tests can flip the viewport class.
+const viewport = { isMobile: false, isTouch: false }
 vi.mock('@/hooks/use-mobile', () => ({
-	useIsMobile: () => false,
+	useIsMobile: () => viewport.isMobile,
+	useIsTouchViewport: () => viewport.isTouch,
 }))
+
+beforeEach(() => {
+	viewport.isMobile = false
+	viewport.isTouch = false
+})
+
+const members: MemberResponse[] = [
+	{ actorId: 'a-1', role: 'owner', joinedAt: null, name: 'Alice', type: 'human' },
+	{ actorId: 'a-2', role: 'member', joinedAt: null, name: 'Bob', type: 'agent' },
+]
 
 function makeWrapper() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
@@ -154,5 +168,118 @@ describe('AuxiliaryActionMenu', () => {
 
 		await user.keyboard('a')
 		expect(onArchive).not.toHaveBeenCalled()
+	})
+
+	// Properties group — narrow desktop popover (touch viewport ≤1024). The
+	// Status + Driver rows lead the menu so users can edit those fields when
+	// the sticky nav shows only the read-only chip.
+	it('renders Properties group on narrow desktop popover when props are provided', async () => {
+		viewport.isTouch = true
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		const object = buildObjectResponse({ type: 'bet', status: 'active' })
+
+		render(
+			<AuxiliaryActionMenu
+				object={object}
+				onDeleteRequest={vi.fn()}
+				onArchiveRequest={vi.fn()}
+				workspaceId="ws-1"
+				statuses={['active', 'archived']}
+				members={members}
+				currentDriverId={null}
+				onStatusChange={vi.fn()}
+				onDriverChange={vi.fn()}
+			/>,
+			{ wrapper: makeWrapper() },
+		)
+
+		await user.click(screen.getByRole('button', { name: /more actions/i }))
+
+		expect(screen.getByText(/properties/i)).toBeInTheDocument()
+		expect(screen.getByText(/^status$/i)).toBeInTheDocument()
+		expect(screen.getByText(/^driver$/i)).toBeInTheDocument()
+	})
+
+	it('omits Properties group on wide desktop even when props are provided', async () => {
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		const object = buildObjectResponse({ type: 'bet', status: 'active' })
+
+		render(
+			<AuxiliaryActionMenu
+				object={object}
+				onDeleteRequest={vi.fn()}
+				onArchiveRequest={vi.fn()}
+				workspaceId="ws-1"
+				statuses={['active', 'archived']}
+				members={members}
+				currentDriverId={null}
+				onStatusChange={vi.fn()}
+				onDriverChange={vi.fn()}
+			/>,
+			{ wrapper: makeWrapper() },
+		)
+
+		await user.click(screen.getByRole('button', { name: /more actions/i }))
+
+		expect(screen.queryByText(/properties/i)).not.toBeInTheDocument()
+	})
+
+	// Mobile Sheet — Properties group leads before the action rows.
+	it('renders Properties group at the top of the Sheet on mobile', async () => {
+		viewport.isMobile = true
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		const object = buildObjectResponse({ type: 'bet', status: 'active' })
+
+		render(
+			<AuxiliaryActionMenu
+				object={object}
+				onDeleteRequest={vi.fn()}
+				onArchiveRequest={vi.fn()}
+				workspaceId="ws-1"
+				statuses={['active', 'archived']}
+				members={members}
+				currentDriverId="a-1"
+				onStatusChange={vi.fn()}
+				onDriverChange={vi.fn()}
+			/>,
+			{ wrapper: makeWrapper() },
+		)
+
+		await user.click(screen.getByRole('button', { name: /more actions/i }))
+
+		const statusLabel = screen.getByText(/^status$/i)
+		const driverLabel = screen.getByText(/^driver$/i)
+		const deleteRow = screen.getByRole('button', { name: /delete/i })
+		expect(statusLabel).toBeInTheDocument()
+		expect(driverLabel).toBeInTheDocument()
+		// DOM order: Status leads, then Driver, then the action rows.
+		expect(
+			statusLabel.compareDocumentPosition(driverLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy()
+		expect(
+			driverLabel.compareDocumentPosition(deleteRow) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy()
+	})
+
+	// If the parent doesn't wire the Properties props, the group is silently
+	// omitted — matches the "wide desktop untouched" DoD when callers haven't
+	// opted in.
+	it('omits Properties group when the callbacks are not provided', async () => {
+		viewport.isTouch = true
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		const object = buildObjectResponse({ type: 'bet', status: 'active' })
+
+		render(
+			<AuxiliaryActionMenu
+				object={object}
+				onDeleteRequest={vi.fn()}
+				onArchiveRequest={vi.fn()}
+				workspaceId="ws-1"
+			/>,
+			{ wrapper: makeWrapper() },
+		)
+
+		await user.click(screen.getByRole('button', { name: /more actions/i }))
+		expect(screen.queryByText(/properties/i)).not.toBeInTheDocument()
 	})
 })

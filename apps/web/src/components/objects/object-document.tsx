@@ -7,13 +7,6 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import {
@@ -24,6 +17,7 @@ import {
 	useVerifyObject,
 } from '@/hooks/use-objects'
 import { useDeleteRelationship } from '@/hooks/use-relationships'
+import { useScrollToTopEmitter } from '@/hooks/use-scroll-to-top-emitter'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { trackEvent } from '@/lib/analytics'
 import type {
@@ -36,7 +30,7 @@ import type {
 import { classifyBetStatus } from '@/lib/bet-status'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { Check, PanelRight, User } from 'lucide-react'
+import { Check, PanelRight } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionBanner } from '../activity/action-banner'
 import { ObjectActivity } from '../activity/object-activity'
@@ -53,6 +47,7 @@ import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { LoopCard } from './loop-card'
 import { PropertiesDrawer } from './properties-drawer'
+import { OwnerSelect, StatusSelect } from './property-selects'
 import { VerifiedChip, isKnowledgeAuthorWrite } from './verified-chip'
 
 interface ObjectDocumentViewProps {
@@ -84,6 +79,10 @@ interface ObjectDocumentViewProps {
 	// the object legitimately having no content. Callers that always fetch the
 	// full object (the webapp page) never need to set this.
 	contentLoaded?: boolean
+	// Marker for the sticky-nav IntersectionObserver + smooth-scroll target.
+	// Attached to the metadata badges row (which also hosts StatusSelect) so
+	// the sticky chip can land the user right on the picker.
+	heroIdentityRef?: React.Ref<HTMLDivElement>
 }
 
 // Renders "Referenced by N contexts/week" alongside the other prov-row chips
@@ -143,6 +142,7 @@ export function ObjectDocumentView({
 	showSaved = false,
 	betStatus,
 	contentLoaded = true,
+	heroIdentityRef,
 }: ObjectDocumentViewProps) {
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
 	// Reset the local title draft when navigating to a different object — this
@@ -227,12 +227,20 @@ export function ObjectDocumentView({
 
 			{/* Metadata badges row — editable cluster stays inline; provenance
 			 * (creator + createdAt) drops to its own row below sm so 375px never
-			 * spills into a jagged partial wrap. */}
-			<div className="flex flex-wrap items-center gap-2 mb-6">
+			 * spills into a jagged partial wrap. Also the anchor for the sticky-nav
+			 * projection: when this row scrolls out of view, the header sprouts a
+			 * title + read-only status chip; tapping the chip smooth-scrolls back
+			 * here and focuses the StatusSelect. */}
+			<div ref={heroIdentityRef} className="flex flex-wrap items-center gap-2 mb-6">
 				<TypeBadge type={object.type} />
 				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
 				{statuses.length > 0 ? (
-					<StatusSelect current={object.status} options={statuses} onChange={handleStatusChange} />
+					<StatusSelect
+						current={object.status}
+						options={statuses}
+						onChange={handleStatusChange}
+						heroAnchor
+					/>
 				) : (
 					<StatusBadge status={object.status} />
 				)}
@@ -310,6 +318,11 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const updateObject = useUpdateObject(workspaceId)
+	useScrollToTopEmitter({
+		enabled: object.type === 'bet',
+		objectSubtype: object.type,
+		objectId: object.id,
+	})
 	const verifyObject = useVerifyObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const deleteRelationship = useDeleteRelationship(workspaceId, object.id)
@@ -412,6 +425,20 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[object.id, updateObject],
 	)
 
+	// Archive-aware status change: `archived` on a bet dispatches to
+	// handleArchive so the picker in the ⋯ menu mutates via the same path as
+	// the picker in the hero (which composes the same behavior locally).
+	const handleAuxStatusChange = useCallback(
+		(status: string) => {
+			if (status === 'archived' && object.type === 'bet') {
+				handleArchive()
+				return
+			}
+			handleUpdateStatus(status)
+		},
+		[handleArchive, handleUpdateStatus, object.type],
+	)
+
 	const handleToggleVerified = useCallback(
 		(verified: boolean) => {
 			verifyObject.mutate({ id: object.id, verified })
@@ -496,6 +523,45 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		return () => document.removeEventListener('keydown', handler)
 	}, [])
 
+	// Bet-scoped sticky nav — when the hero identity row exits the viewport, the
+	// header sprouts title + read-only status chip. `threshold: 0` fires as soon
+	// as any part of the row is off-screen, which matches the design's "hero
+	// scrolls off" wording better than a partial threshold would.
+	const heroIdentityRef = useRef<HTMLDivElement>(null)
+	const [heroVisible, setHeroVisible] = useState(true)
+	useEffect(() => {
+		if (object.type !== 'bet') return
+		const el = heroIdentityRef.current
+		if (!el || typeof IntersectionObserver === 'undefined') return
+		const observer = new IntersectionObserver(([entry]) => setHeroVisible(entry.isIntersecting), {
+			threshold: 0,
+		})
+		observer.observe(el)
+		return () => observer.disconnect()
+	}, [object.type])
+
+	const scrollBackToHero = useCallback(() => {
+		const target = heroIdentityRef.current
+		if (!target) return
+		target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+		// Focus lands on the status trigger once the smooth-scroll settles —
+		// progressive disclosure per the design (chip is read-only in the header;
+		// editing happens against the same StatusSelect the hero renders).
+		window.setTimeout(() => {
+			const trigger = document.querySelector<HTMLElement>('[data-hero-status-trigger]')
+			trigger?.focus()
+		}, 400)
+	}, [])
+
+	const stickyIdentity =
+		object.type === 'bet' && !heroVisible ? (
+			<StickyBetIdentity
+				title={object.title ?? 'Untitled'}
+				status={object.status}
+				onScrollBack={scrollBackToHero}
+			/>
+		) : null
+
 	const headerActions = (
 		<>
 			<Button
@@ -515,13 +581,18 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}
+				statuses={statuses}
+				members={members}
+				currentDriverId={object.driver ?? null}
+				onStatusChange={handleAuxStatusChange}
+				onDriverChange={handleUpdateDriver}
 			/>
 		</>
 	)
 
 	return (
 		<>
-			<PageHeader actions={headerActions} />
+			<PageHeader actions={headerActions} stickyIdentity={stickyIdentity} />
 			<DeleteConfirmDialog
 				open={confirmDelete}
 				onOpenChange={handleDeleteOpenChange}
@@ -551,6 +622,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				isVerifying={verifyObject.isPending}
 				isDeleting={deleteObject.isPending}
 				betStatus={betStatus}
+				heroIdentityRef={heroIdentityRef}
 			/>
 			<PropertiesDrawer
 				open={drawerOpen}
@@ -600,82 +672,19 @@ export function DeleteConfirmDialog({
 		</Dialog>
 	)
 }
-
-function StatusSelect({
-	current,
-	options,
-	onChange,
+function StickyBetIdentity({
+	title,
+	status,
+	onScrollBack,
 }: {
-	current: string
-	options: string[]
-	onChange: (status: string) => void
+	title: string
+	status: string
+	onScrollBack: () => void
 }) {
 	return (
-		<Select value={current} onValueChange={onChange}>
-			<SelectTrigger>
-				<SelectValue />
-			</SelectTrigger>
-			<SelectContent>
-				{options.map((status) => (
-					<SelectItem key={status} value={status}>
-						{status.replace(/_/g, ' ')}
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
-	)
-}
-
-const UNASSIGNED_OWNER = '__none__'
-
-function OwnerSelect({
-	members,
-	currentOwnerId,
-	onChange,
-}: {
-	members: MemberResponse[]
-	currentOwnerId: string | null
-	onChange: (owner: string | null) => void
-}) {
-	const current = members.find((m) => m.actorId === currentOwnerId)
-
-	const handleChange = (value: string) => {
-		onChange(value === UNASSIGNED_OWNER ? null : value)
-	}
-
-	return (
-		<Select value={currentOwnerId ?? UNASSIGNED_OWNER} onValueChange={handleChange}>
-			<SelectTrigger>
-				<SelectValue>
-					{current ? (
-						<span className="inline-flex items-center gap-1.5">
-							{current.type !== 'agent' && <User className="size-3 text-amber-600 shrink-0" />}
-							<span className="text-muted-foreground text-[11px]">Driver:</span>
-							<ActorAvatar name={current.name} type={current.type} size="sm" />
-							{current.name}
-						</span>
-					) : currentOwnerId ? (
-						<span className="italic text-muted-foreground">
-							Unknown ({currentOwnerId.slice(0, 8)})
-						</span>
-					) : (
-						<span className="text-muted-foreground">Driver: Unassigned</span>
-					)}
-				</SelectValue>
-			</SelectTrigger>
-			<SelectContent>
-				<SelectItem value={UNASSIGNED_OWNER}>
-					<span className="text-muted-foreground">Unassigned</span>
-				</SelectItem>
-				{members.map((m) => (
-					<SelectItem key={m.actorId} value={m.actorId}>
-						<span className="inline-flex items-center gap-1.5">
-							<ActorAvatar name={m.name} type={m.type} size="sm" />
-							{m.name}
-						</span>
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
+		<div className="flex min-w-0 items-center gap-1.5">
+			<span className="min-w-0 truncate text-sm font-medium text-foreground">{title}</span>
+			<StatusBadge status={status} variant="dot-word" onClick={onScrollBack} />
+		</div>
 	)
 }
