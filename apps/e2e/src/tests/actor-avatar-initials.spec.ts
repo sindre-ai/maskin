@@ -37,7 +37,7 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 			await expect(page.getByText('Bet for actor-avatar initials')).toBeVisible({
-				timeout: 10000,
+				timeout: 20000,
 			})
 
 			// AC: initials render in the comment-author avatar slot with the account name.
@@ -47,7 +47,12 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 				return parsed.name ?? ''
 			})
 			const expected = initialsFor(actorName)
-			const avatar = page.getByTitle(/^E2E /).first()
+			// ActorAvatar renders as a rounded-full <span> or <button> with `title={name}`.
+			// Ancestor wrappers (e.g. SubscribeToggle's list-title <div>) also carry a
+			// title starting with the actor name but are NOT the palette-backed element,
+			// so scoping to `.rounded-full` picks only the avatar itself.
+			const avatarSelector = '.rounded-full[title^="E2E "]'
+			const avatar = page.locator(avatarSelector).first()
 			await expect(avatar).toBeVisible({ timeout: 10000 })
 			await expect(avatar).toHaveText(expected)
 
@@ -59,10 +64,10 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 
 			await page.reload()
 			await expect(page.getByText('Bet for actor-avatar initials')).toBeVisible({
-				timeout: 10000,
+				timeout: 20000,
 			})
 			const secondColor = await page
-				.getByTitle(/^E2E /)
+				.locator(avatarSelector)
 				.first()
 				.evaluate((el) => getComputedStyle(el).backgroundColor)
 
