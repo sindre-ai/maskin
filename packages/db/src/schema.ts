@@ -34,6 +34,7 @@ export const actors = pgTable('actors', {
 	memory: jsonb('memory'),
 	llmProvider: text('llm_provider'),
 	llmConfig: jsonb('llm_config'),
+	avatarUrl: text('avatar_url'),
 	isSystem: boolean('is_system').notNull().default(false),
 	agentState: text('agent_state').notNull().default('idle').$type<AgentState>(),
 	agentStateUpdatedAt: timestamp('agent_state_updated_at', { withTimezone: true }),

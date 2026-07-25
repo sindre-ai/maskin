@@ -12,6 +12,7 @@ import { logger as honoLogger } from 'hono/logger'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
 import { logger } from './lib/logger'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
+import actorAvatarUploadRoutes from './routes/actor-avatar-upload'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import agentServerReconcileRoutes from './routes/agent-server-reconcile'
@@ -191,6 +192,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		const method = c.req.method
 		if (path === '/api/health' || path === '/api/openapi.json') return next()
 		if (path === '/api/actors' && method === 'POST') return next()
+		// Public avatar proxy — GET /api/actors/:id/avatar serves the stored
+		// image bytes for use in <img src=…>. No auth so the URL can drop into
+		// any comment feed / notification card without a header dance.
+		if (method === 'GET' && /^\/api\/actors\/[^/]+\/avatar$/.test(path)) return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
 		if (path.startsWith('/api/webhooks/')) return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
@@ -210,6 +215,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
 	app.route('/api/admin/landing-funnel', adminLandingFunnelRoutes)
 	app.route('/api/actors', actorsRoutes)
+	app.route('/api/actors', actorAvatarUploadRoutes)
 	app.route('/api/auth', authRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
 	app.route('/api/actors', agentSkillAttachmentsRoutes)

@@ -26,3 +26,18 @@ export function fileViewerUrl(frontendUrl: string, workspaceId: string, fileId: 
 export function fileStorageKey(workspaceId: string, fileId: string): string {
 	return `workspaces/${workspaceId}/files/${fileId}`
 }
+
+export function actorAvatarStorageKey(
+	workspaceId: string,
+	actorId: string,
+	ext: 'png' | 'jpg',
+): string {
+	return `workspaces/${workspaceId}/avatars/${actorId}.${ext}`
+}
+
+// The upload endpoint stores the raw bytes in a private S3 bucket, and the
+// GET /api/actors/:id/avatar proxy serves them publicly. `v` is appended so
+// re-uploads bust the browser/CDN cache on the same actor id.
+export function actorAvatarUrl(actorId: string, versionMs: number): string {
+	return `${frontendBaseUrl()}/api/actors/${actorId}/avatar?v=${versionMs}`
+}
