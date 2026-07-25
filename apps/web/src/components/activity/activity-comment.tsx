@@ -74,13 +74,21 @@ function CommentRow({
 				aria-hidden="true"
 				tabIndex={-1}
 			>
-				<ActorAvatar name={actor.name} type={actor.type} size="sm" />
+				<ActorAvatar
+					name={actor.name}
+					type={actor.type}
+					size="sm"
+					id={actor.id}
+					imageUrl={actor.avatar_url ?? undefined}
+				/>
 			</Link>
 		) : (
 			<ActorAvatar
 				name={actor.name}
 				type={actor.type}
 				size="sm"
+				id={actor.id}
+				imageUrl={actor.avatar_url ?? undefined}
 				onClick={() => setHumanDialogActorId(actor.id)}
 			/>
 		)

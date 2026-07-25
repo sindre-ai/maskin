@@ -203,6 +203,46 @@ describe('PulseCard', () => {
 		expect(screen.getByText('Bot')).toBeInTheDocument()
 	})
 
+	it('renders ActorAvatar initials for the source actor slot (falls back to initials when avatar_url is absent)', () => {
+		const notification = buildNotificationResponse({ sourceActorId: 'actor-1' })
+		render(
+			<PulseCard
+				notification={notification}
+				actorsById={actorsById}
+				onAction={vi.fn()}
+				onDismiss={vi.fn()}
+			/>,
+			{ wrapper },
+		)
+		// ActorAvatar renders 2-letter initials — 'Bot' collapses to 'BO'.
+		expect(screen.getByText('BO')).toBeInTheDocument()
+	})
+
+	it('renders the source-actor avatar image when avatar_url is set', () => {
+		const withAvatar = new Map([
+			[
+				'actor-2',
+				buildActorListItem({
+					id: 'actor-2',
+					name: 'Ada Lovelace',
+					avatar_url: 'https://example.com/ada.png',
+				}),
+			],
+		])
+		const notification = buildNotificationResponse({ sourceActorId: 'actor-2' })
+		const { container } = render(
+			<PulseCard
+				notification={notification}
+				actorsById={withAvatar}
+				onAction={vi.fn()}
+				onDismiss={vi.fn()}
+			/>,
+			{ wrapper },
+		)
+		const img = container.querySelector('img[src="https://example.com/ada.png"]')
+		expect(img).not.toBeNull()
+	})
+
 	it('renders custom metadata.actions buttons', () => {
 		const notification = buildNotificationWithActions({
 			metadata: {
