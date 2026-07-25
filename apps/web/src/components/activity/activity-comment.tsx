@@ -1,6 +1,7 @@
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { useActor, useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
+import { useTrackFirstRender } from '@/hooks/use-track-first-render'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -52,6 +53,18 @@ function CommentRow({
 	const { data: workspaceFiles } = useFiles(workspaceId)
 	const [humanDialogActorId, setHumanDialogActorId] = useState<string | null>(null)
 	const navigate = useNavigate()
+
+	useTrackFirstRender({
+		key: actor ? String(event.id) : null,
+		eventName: 'comment_rendered',
+		enabled: !!actor,
+		props: {
+			comment_id: String(event.id),
+			actor_id: actor?.id ?? null,
+			actor_type: actor?.type ?? null,
+			workspace_id: workspaceId,
+		},
+	})
 
 	const handleMentionClick = (mentioned: ActorListItem) => {
 		if (mentioned.type === 'agent') {

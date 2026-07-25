@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
+import { useTrackFirstRender } from '@/hooks/use-track-first-render'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
 import { useChat } from '@/lib/chat-context'
 import { resolveNavigationTarget } from '@/lib/navigation'
@@ -153,6 +154,17 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 	const [replyText, setReplyText] = useState('')
 
 	const primaryObjectId = notification.objectId
+
+	useTrackFirstRender({
+		key: notification.id,
+		eventName: 'notification_rendered',
+		props: {
+			notification_id: notification.id,
+			source_actor_id: notification.sourceActorId,
+			source_actor_type: sourceActor?.type ?? null,
+			workspace_id: workspaceId,
+		},
+	})
 
 	// Extract secondary object links from metadata
 	const metadataLinks = extractMetadataObjectLinks(metadata as Record<string, unknown>).filter(
