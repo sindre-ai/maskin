@@ -55,6 +55,7 @@ import { PageHeader } from '../layout/page-header'
 import { ObjectReference } from '../shared/object-reference'
 import { RelativeTime } from '../shared/relative-time'
 import { TypeBadge } from '../shared/type-badge'
+import { AgentAvatarUpload } from './agent-avatar-upload'
 import { AgentRunPauseButton } from './agent-run-pause-button'
 import { AgentUsageChart } from './agent-usage-chart'
 import { McpServers } from './mcp-servers'
@@ -207,6 +208,9 @@ export function AgentDocumentView({
 
 	return (
 		<div className="w-full min-w-0 max-w-3xl mx-auto">
+			{/* Avatar + upload (admin-gated inside the component) */}
+			<AgentAvatarUpload agent={agent} workspaceId={workspaceId} />
+
 			{/* Name */}
 			<div className="flex items-start gap-2 mb-2">
 				<textarea
