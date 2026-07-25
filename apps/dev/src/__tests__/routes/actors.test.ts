@@ -449,6 +449,71 @@ describe('Actors Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		// PATCH's `.returning({...})` aliases camelCase columns to snake_case in
+		// production, but the mock proxy returns whatever shape the test provides.
+		// So the mocked update rows below use snake_case keys to mirror what the
+		// real handler emits when a route reads back the row it just wrote.
+		it('persists avatar_url on the update set and echoes it in the response', async () => {
+			const actor = buildActor({ type: 'agent' })
+			const avatarUrl = 'https://example.com/avatar.png'
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', actor.id)
+			mockResults.select = [{ type: actor.type }]
+			mockResults.update = [{ ...actor, avatar_url: avatarUrl }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/actors/${actor.id}`, { avatar_url: avatarUrl }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.avatar_url).toBe(avatarUrl)
+			expect(calls.updates[0]).toMatchObject({ avatarUrl })
+		})
+
+		it('rejects a non-URL avatar_url with 400', async () => {
+			const actor = buildActor({ type: 'agent' })
+			const { app } = createTestApp(actorsRoutes, '/api/actors', actor.id)
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/actors/${actor.id}`, { avatar_url: 'not-a-url' }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('clears avatar_url when the body sends null', async () => {
+			const actor = buildActor({ type: 'agent' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', actor.id)
+			mockResults.select = [{ type: actor.type }]
+			mockResults.update = [{ ...actor, avatar_url: null }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/actors/${actor.id}`, { avatar_url: null }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.avatar_url).toBeNull()
+			expect(calls.updates[0]).toMatchObject({ avatarUrl: null })
+		})
+
+		it('leaves avatar_url alone when omitted from the body', async () => {
+			const existing = 'https://example.com/keep.png'
+			const actor = buildActor({ type: 'agent' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', actor.id)
+			mockResults.select = [{ type: actor.type }]
+			mockResults.update = [{ ...actor, name: 'Renamed', avatar_url: existing }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/actors/${actor.id}`, { name: 'Renamed' }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(calls.updates[0]).not.toHaveProperty('avatarUrl')
+			const body = await res.json()
+			expect(body.avatar_url).toBe(existing)
+		})
 	})
 
 	describe('POST /api/actors/:id/api-keys', () => {

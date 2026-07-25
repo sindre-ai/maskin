@@ -185,9 +185,7 @@ describe('POST /api/actors/:id/avatar', () => {
 			get(target, prop) {
 				if (prop === 'get') {
 					return (name: string) =>
-						name.toLowerCase() === 'content-length'
-							? String(3 * 1024 * 1024)
-							: target.get(name)
+						name.toLowerCase() === 'content-length' ? String(3 * 1024 * 1024) : target.get(name)
 				}
 				const v = Reflect.get(target, prop)
 				return typeof v === 'function' ? v.bind(target) : v
