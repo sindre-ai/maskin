@@ -51,7 +51,10 @@ describe('POST /api/actors/:id/avatar', () => {
 		const updated = buildActor({ id: actorId })
 		mockResults.selectQueue = [[admin], [target]]
 		mockResults.update = [
-			{ ...updated, avatar_url: `http://localhost:5173/api/actors/${actorId}/avatar?v=1` },
+			{
+				...updated,
+				avatar_url: `http://localhost:5173/api/actors/${actorId}/avatar?ws=${workspaceId}&v=1`,
+			},
 		]
 
 		const res = await app.request(
@@ -62,7 +65,9 @@ describe('POST /api/actors/:id/avatar', () => {
 
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body.avatar_url).toMatch(new RegExp(`/api/actors/${actorId}/avatar\\?v=\\d+`))
+		expect(body.avatar_url).toMatch(
+			new RegExp(`/api/actors/${actorId}/avatar\\?ws=${workspaceId}&v=\\d+`),
+		)
 		expect(storageProvider.put).toHaveBeenCalledTimes(1)
 		const putCall = vi.mocked(storageProvider.put).mock.calls[0]
 		expect(putCall).toBeDefined()
@@ -152,6 +157,56 @@ describe('POST /api/actors/:id/avatar', () => {
 		expect(storageProvider.put).not.toHaveBeenCalled()
 	})
 
+	it('returns 413 on the Content-Length fast-reject before parsing the body', async () => {
+		// Regression guard: the header pre-check must fire before c.req.formData()
+		// is called, so a client that lies about Content-Length can't force the
+		// server to stream a huge body into memory before the size gate runs.
+		// Undici's Request constructor strips Content-Length from user-supplied
+		// headers, so we proxy the header lookup to spoof the value the handler
+		// would see from an actual over-the-wire client.
+		const { app, mockResults, storageProvider } = createImportTestApp(
+			actorAvatarUploadRoutes,
+			'/api/actors',
+			callerId,
+		)
+		const admin = buildWorkspaceMember({ workspaceId, actorId: callerId, role: 'admin' })
+		const target = buildWorkspaceMember({ workspaceId, actorId, role: 'member' })
+		mockResults.selectQueue = [[admin], [target]]
+
+		const baseReq = new Request(`http://localhost/api/actors/${actorId}/avatar`, {
+			method: 'POST',
+			body: 'irrelevant',
+			headers: {
+				'X-Workspace-Id': workspaceId,
+				'Content-Type': 'multipart/form-data; boundary=x',
+			},
+		})
+		const spoofedHeaders = new Proxy(baseReq.headers, {
+			get(target, prop) {
+				if (prop === 'get') {
+					return (name: string) =>
+						name.toLowerCase() === 'content-length'
+							? String(3 * 1024 * 1024)
+							: target.get(name)
+				}
+				const v = Reflect.get(target, prop)
+				return typeof v === 'function' ? v.bind(target) : v
+			},
+		})
+		const req = new Proxy(baseReq, {
+			get(target, prop) {
+				if (prop === 'headers') return spoofedHeaders
+				const v = Reflect.get(target, prop)
+				return typeof v === 'function' ? v.bind(target) : v
+			},
+		})
+
+		const res = await app.request(req)
+
+		expect(res.status).toBe(413)
+		expect(storageProvider.put).not.toHaveBeenCalled()
+	})
+
 	it('returns 403 when caller is a plain workspace member (not admin)', async () => {
 		const { app, mockResults, storageProvider } = createImportTestApp(
 			actorAvatarUploadRoutes,
@@ -222,13 +277,12 @@ describe('GET /api/actors/:id/avatar', () => {
 			callerId,
 		)
 		const targetActor = { id: actorId, avatarUrl: 'http://x/y' }
-		const membership = { workspaceId }
-		mockResults.selectQueue = [[targetActor], [membership]]
+		mockResults.selectQueue = [[targetActor]]
 		const pngBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 		vi.mocked(storageProvider.exists).mockResolvedValueOnce(true)
 		vi.mocked(storageProvider.get).mockResolvedValueOnce(pngBytes)
 
-		const res = await app.request(`/api/actors/${actorId}/avatar`)
+		const res = await app.request(`/api/actors/${actorId}/avatar?ws=${workspaceId}`)
 
 		expect(res.status).toBe(200)
 		expect(res.headers.get('content-type')).toBe('image/png')
@@ -242,15 +296,31 @@ describe('GET /api/actors/:id/avatar', () => {
 			'/api/actors',
 			callerId,
 		)
-		mockResults.selectQueue = [[{ id: actorId, avatarUrl: 'http://x/y' }], [{ workspaceId }]]
+		mockResults.selectQueue = [[{ id: actorId, avatarUrl: 'http://x/y' }]]
 		const jpgBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0])
 		vi.mocked(storageProvider.exists).mockResolvedValueOnce(false).mockResolvedValueOnce(true)
 		vi.mocked(storageProvider.get).mockResolvedValueOnce(jpgBytes)
 
-		const res = await app.request(`/api/actors/${actorId}/avatar`)
+		const res = await app.request(`/api/actors/${actorId}/avatar?ws=${workspaceId}`)
 
 		expect(res.status).toBe(200)
 		expect(res.headers.get('content-type')).toBe('image/jpeg')
+	})
+
+	it('returns 400 when the ws query parameter is missing', async () => {
+		const { app } = createImportTestApp(actorAvatarUploadRoutes, '/api/actors', callerId)
+
+		const res = await app.request(`/api/actors/${actorId}/avatar`)
+
+		expect(res.status).toBe(400)
+	})
+
+	it('returns 400 when the ws query parameter is not a UUID', async () => {
+		const { app } = createImportTestApp(actorAvatarUploadRoutes, '/api/actors', callerId)
+
+		const res = await app.request(`/api/actors/${actorId}/avatar?ws=not-a-uuid`)
+
+		expect(res.status).toBe(400)
 	})
 
 	it('returns 404 when the actor has no avatar_url set', async () => {
@@ -261,7 +331,7 @@ describe('GET /api/actors/:id/avatar', () => {
 		)
 		mockResults.selectQueue = [[{ id: actorId, avatarUrl: null }]]
 
-		const res = await app.request(`/api/actors/${randomUUID()}/avatar`)
+		const res = await app.request(`/api/actors/${randomUUID()}/avatar?ws=${workspaceId}`)
 
 		expect(res.status).toBe(404)
 	})
@@ -272,10 +342,10 @@ describe('GET /api/actors/:id/avatar', () => {
 			'/api/actors',
 			callerId,
 		)
-		mockResults.selectQueue = [[{ id: actorId, avatarUrl: 'http://x/y' }], [{ workspaceId }]]
+		mockResults.selectQueue = [[{ id: actorId, avatarUrl: 'http://x/y' }]]
 		vi.mocked(storageProvider.exists).mockResolvedValue(false)
 
-		const res = await app.request(`/api/actors/${actorId}/avatar`)
+		const res = await app.request(`/api/actors/${actorId}/avatar?ws=${workspaceId}`)
 
 		expect(res.status).toBe(404)
 	})

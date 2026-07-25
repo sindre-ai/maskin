@@ -71,7 +71,7 @@ export const actorResponseSchema = z.object({
 	memory: jsonbObject,
 	llm_provider: z.string().nullable(),
 	llm_config: jsonbObject,
-	avatar_url: z.string().nullable().optional(),
+	avatar_url: z.string().nullable(),
 	isSystem: z.boolean(),
 	agentState: agentStateSchema.default('idle'),
 	agentStateUpdatedAt: z.string().nullable().default(null),

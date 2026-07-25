@@ -17,6 +17,7 @@ import { actorAvatarStorageKey, actorAvatarUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
+import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -48,6 +49,24 @@ async function downsize(input: Buffer, mime: AvatarMime): Promise<Buffer> {
 const app = new OpenAPIHono<Env>()
 
 // -- POST /:id/avatar — Upload avatar for an actor ---------------------------
+
+// Fast-reject on Content-Length before OpenAPI's form-body validator buffers
+// the payload. Registered as a plain middleware so it runs ahead of the
+// generated zValidator("form", ...) chain — the handler-level check runs too
+// late for oversized bodies because parseBody() would already have streamed
+// them into memory. `Content-Length` can be spoofed or absent, so the
+// post-buffer `file.size` check in the handler stays as the source of truth.
+app.use('/:id/avatar', async (c, next) => {
+	if (c.req.method !== 'POST') return next()
+	const contentLengthRaw = c.req.header('content-length')
+	if (contentLengthRaw) {
+		const contentLength = Number(contentLengthRaw)
+		if (Number.isFinite(contentLength) && contentLength > MAX_AVATAR_BYTES) {
+			return c.json(createApiError('BAD_REQUEST', 'Avatar must be 2MB or smaller'), 413)
+		}
+	}
+	await next()
+})
 
 const uploadAvatarRoute = createRoute({
 	method: 'post',
@@ -98,17 +117,6 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 	const { id: targetActorId } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
-	// Fast reject on Content-Length so a 100MB upload never streams into memory
-	// before we notice it's too big. `Content-Length` can be spoofed or absent —
-	// the post-buffer size check below is the source of truth, this is a guard.
-	const contentLengthRaw = c.req.header('content-length')
-	if (contentLengthRaw) {
-		const contentLength = Number(contentLengthRaw)
-		if (Number.isFinite(contentLength) && contentLength > MAX_AVATAR_BYTES) {
-			return c.json(createApiError('BAD_REQUEST', 'Avatar must be 2MB or smaller'), 413)
-		}
-	}
-
 	// Admin gate — owner or admin membership on the given workspace.
 	const [callerMembership] = await db
 		.select({ role: workspaceMembers.role })
@@ -127,18 +135,7 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 
 	// Target actor must exist and belong to this workspace — 404 leak-proof
 	// (an admin in workspace A can't probe actors in workspace B).
-	const [targetMembership] = await db
-		.select({ role: workspaceMembers.role })
-		.from(workspaceMembers)
-		.where(
-			and(
-				eq(workspaceMembers.workspaceId, workspaceId),
-				eq(workspaceMembers.actorId, targetActorId),
-			),
-		)
-		.limit(1)
-
-	if (!targetMembership) {
+	if (!(await isWorkspaceMember(db, targetActorId, workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
@@ -195,7 +192,7 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 	// Cache-bust re-uploads: same S3 key + updated URL query so the CDN/browser
 	// doesn't keep serving the previous image after a fresh upload.
 	const updatedAt = new Date()
-	const avatarUrl = actorAvatarUrl(targetActorId, updatedAt.getTime())
+	const avatarUrl = actorAvatarUrl(workspaceId, targetActorId, updatedAt.getTime())
 
 	const [updated] = await db
 		.update(actors)
@@ -247,6 +244,14 @@ app.get('/:id/avatar', async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid actor id'), 400)
 	}
 
+	// The S3 prefix is workspace-scoped, and an agent can live in more than one
+	// workspace (Sindre by design). `ws` pins the prefix — actorAvatarUrl() bakes
+	// it in on write so we don't have to guess a membership row here.
+	const workspaceId = c.req.query('ws')
+	if (!workspaceId || !UUID_RE.test(workspaceId)) {
+		return c.json(createApiError('BAD_REQUEST', 'Missing or invalid ws query parameter'), 400)
+	}
+
 	const [actor] = await db
 		.select({ id: actors.id, avatarUrl: actors.avatarUrl })
 		.from(actors)
@@ -257,24 +262,10 @@ app.get('/:id/avatar', async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Avatar not found'), 404)
 	}
 
-	// The actor's workspace membership determines the storage key. An agent in
-	// multiple workspaces is rare; the upload path always keys off the workspace
-	// that PATCHed, and any of that agent's memberships will resolve the same
-	// object because we don't scope avatars per workspace beyond the S3 prefix.
-	const [membership] = await db
-		.select({ workspaceId: workspaceMembers.workspaceId })
-		.from(workspaceMembers)
-		.where(eq(workspaceMembers.actorId, targetActorId))
-		.limit(1)
-
-	if (!membership) {
-		return c.json(createApiError('NOT_FOUND', 'Avatar not found'), 404)
-	}
-
 	// Try PNG first, then JPG — the stored extension isn't recorded in the DB.
 	// Cheap: exists() is a HEAD; the fallback is one more HEAD.
-	const pngKey = actorAvatarStorageKey(membership.workspaceId, targetActorId, 'png')
-	const jpgKey = actorAvatarStorageKey(membership.workspaceId, targetActorId, 'jpg')
+	const pngKey = actorAvatarStorageKey(workspaceId, targetActorId, 'png')
+	const jpgKey = actorAvatarStorageKey(workspaceId, targetActorId, 'jpg')
 	let bytes: Buffer | null = null
 	let contentType: 'image/png' | 'image/jpeg' | null = null
 	if (await storage.exists(pngKey)) {

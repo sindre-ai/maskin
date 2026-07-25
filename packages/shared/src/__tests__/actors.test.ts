@@ -197,6 +197,7 @@ describe('actorResponseSchema', () => {
 		memory: null,
 		llm_provider: 'anthropic',
 		llm_config: null,
+		avatar_url: null,
 		isSystem: true,
 		agentState: 'idle',
 		agentStateUpdatedAt: null,
