@@ -9,11 +9,13 @@ import {
 	trackChatImageUpload,
 	trackChatSessionStarted,
 	trackCommentPosted,
+	trackCommentRendered,
 	trackEvent,
 	trackLoopGraduated,
 	trackLoopViewed,
 	trackNorthStarPromptImpression,
 	trackNorthStarPromptResponse,
+	trackNotificationRendered,
 	trackObjectAttachedFile,
 	trackObjectCreated,
 	trackObjectsListArrived,
@@ -621,6 +623,79 @@ describe('trackChatImageUpload', () => {
 		expect(capture).toHaveBeenCalledWith('chat_image_upload', {
 			platform: 'web',
 			outcome: 'success',
+		})
+	})
+})
+
+describe('per-agent avatar render-coverage events', () => {
+	function captureSpy() {
+		__setInitializedForTesting(true)
+		return vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+	}
+
+	it('comment_rendered carries the coverage-proxy properties without any PII', () => {
+		const capture = captureSpy()
+
+		trackCommentRendered({
+			comment_id: 'c-1',
+			actor_id: 'a-1',
+			actor_type: 'agent',
+			workspace_id: 'w-1',
+		})
+
+		expect(capture).toHaveBeenCalledWith('comment_rendered', {
+			comment_id: 'c-1',
+			actor_id: 'a-1',
+			actor_type: 'agent',
+			workspace_id: 'w-1',
+		})
+	})
+
+	it('notification_rendered carries the coverage-proxy properties without any PII', () => {
+		const capture = captureSpy()
+
+		trackNotificationRendered({
+			notification_id: 'n-1',
+			source_actor_id: 'a-2',
+			source_actor_type: 'human',
+			workspace_id: 'w-1',
+		})
+
+		expect(capture).toHaveBeenCalledWith('notification_rendered', {
+			notification_id: 'n-1',
+			source_actor_id: 'a-2',
+			source_actor_type: 'human',
+			workspace_id: 'w-1',
+		})
+	})
+
+	it('accepts null actor_type / source_actor_type when the actor row is not resolved', () => {
+		const capture = captureSpy()
+
+		trackCommentRendered({
+			comment_id: 'c-2',
+			actor_id: null,
+			actor_type: null,
+			workspace_id: 'w-1',
+		})
+		trackNotificationRendered({
+			notification_id: 'n-2',
+			source_actor_id: null,
+			source_actor_type: null,
+			workspace_id: 'w-1',
+		})
+
+		expect(capture).toHaveBeenNthCalledWith(1, 'comment_rendered', {
+			comment_id: 'c-2',
+			actor_id: null,
+			actor_type: null,
+			workspace_id: 'w-1',
+		})
+		expect(capture).toHaveBeenNthCalledWith(2, 'notification_rendered', {
+			notification_id: 'n-2',
+			source_actor_id: null,
+			source_actor_type: null,
+			workspace_id: 'w-1',
 		})
 	})
 })
