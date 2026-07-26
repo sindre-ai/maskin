@@ -11,13 +11,6 @@ import { useCallback, useRef, useState } from 'react'
 const ACCEPTED_MIME = new Set(['image/png', 'image/jpeg'])
 const ACCEPT_ATTR = 'image/png,image/jpeg'
 
-// Wrapping types (avatar_url arrives via T3's updateActorSchema extension).
-// Falls back to undefined until that lands; TS-safe access.
-function readAvatarUrl(agent: ActorResponse): string | undefined {
-	const url = (agent as unknown as { avatar_url?: unknown }).avatar_url
-	return typeof url === 'string' && url.length > 0 ? url : undefined
-}
-
 function isCurrentActorAdmin(members: { actorId: string; role?: string }[] | undefined): boolean {
 	const actorId = getStoredActor()?.id
 	if (!actorId || !members) return false
@@ -39,7 +32,7 @@ export function AgentAvatarUpload({
 	const inputRef = useRef<HTMLInputElement>(null)
 	const [error, setError] = useState<string | null>(null)
 	const [isDragging, setIsDragging] = useState(false)
-	const avatarUrl = readAvatarUrl(agent)
+	const avatarUrl = agent.avatar_url ?? undefined
 
 	const submit = useCallback(
 		async (file: File) => {
