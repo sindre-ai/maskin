@@ -95,6 +95,7 @@ export const actorListItemSchema = z.object({
 	description: z.string().nullable(),
 	isSystem: z.boolean(),
 	agentState: agentStateSchema,
+	avatar_url: z.string().url().nullable().optional(),
 	// Surfaced so MCP list_actors can seed a `(createdAt, id)` next-cursor
 	// without a second query, and so the AC-T3 integration test can pull
 	// the seek partner off the response.

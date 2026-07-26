@@ -398,6 +398,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					description: actors.description,
 					isSystem: actors.isSystem,
 					agentState: actors.agentState,
+					avatar_url: actors.avatarUrl,
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 				})
@@ -446,6 +447,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					description: actors.description,
 					isSystem: actors.isSystem,
 					agentState: actors.agentState,
+					avatar_url: actors.avatarUrl,
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 				})
@@ -490,6 +492,7 @@ app.openapi(listActorsRoute, (async (c) => {
 				description: actors.description,
 				isSystem: actors.isSystem,
 				agentState: actors.agentState,
+				avatar_url: actors.avatarUrl,
 				createdAt: actors.createdAt,
 				workspaceId: workspaces.id,
 				workspaceName: workspaces.name,
