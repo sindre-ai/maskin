@@ -398,6 +398,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					description: actors.description,
 					isSystem: actors.isSystem,
 					agentState: actors.agentState,
+					avatar_url: actors.avatarUrl,
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 				})
@@ -446,6 +447,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					description: actors.description,
 					isSystem: actors.isSystem,
 					agentState: actors.agentState,
+					avatar_url: actors.avatarUrl,
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 				})
@@ -490,6 +492,7 @@ app.openapi(listActorsRoute, (async (c) => {
 				description: actors.description,
 				isSystem: actors.isSystem,
 				agentState: actors.agentState,
+				avatar_url: actors.avatarUrl,
 				createdAt: actors.createdAt,
 				workspaceId: workspaces.id,
 				workspaceName: workspaces.name,
@@ -648,6 +651,7 @@ app.openapi(getActorRoute, (async (c) => {
 			memory: actors.memory,
 			llm_provider: actors.llmProvider,
 			llm_config: actors.llmConfig,
+			avatar_url: actors.avatarUrl,
 			isSystem: actors.isSystem,
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
@@ -747,6 +751,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(body.memory !== undefined && { memory: body.memory }),
 			...(body.llm_provider !== undefined && { llmProvider: body.llm_provider }),
 			...(body.llm_config !== undefined && { llmConfig: body.llm_config }),
+			...(body.avatar_url !== undefined && { avatarUrl: body.avatar_url }),
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
@@ -761,9 +766,11 @@ app.openapi(updateActorRoute, (async (c) => {
 			memory: actors.memory,
 			llm_provider: actors.llmProvider,
 			llm_config: actors.llmConfig,
+			avatar_url: actors.avatarUrl,
 			isSystem: actors.isSystem,
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
+			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
 		})
 
@@ -888,9 +895,11 @@ app.openapi(resetActorRoute, (async (c) => {
 			memory: actors.memory,
 			llm_provider: actors.llmProvider,
 			llm_config: actors.llmConfig,
+			avatar_url: actors.avatarUrl,
 			isSystem: actors.isSystem,
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
+			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
 		})
 
@@ -1047,6 +1056,7 @@ const actorReturningCols = {
 	memory: actors.memory,
 	llm_provider: actors.llmProvider,
 	llm_config: actors.llmConfig,
+	avatar_url: actors.avatarUrl,
 	isSystem: actors.isSystem,
 	agentState: actors.agentState,
 	agentStateUpdatedAt: actors.agentStateUpdatedAt,

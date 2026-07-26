@@ -1,6 +1,6 @@
 import { AgentAvatarUpload } from '@/components/agents/agent-avatar-upload'
 import { ApiError } from '@/lib/api'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildActorResponse } from '../../factories'
 import { createTestWrapper } from '../../setup'
@@ -102,5 +102,54 @@ describe('AgentAvatarUpload', () => {
 		renderWidget()
 		const input = document.querySelector('input[type="file"]') as HTMLInputElement
 		expect(input.accept).toBe('image/png,image/jpeg')
+	})
+
+	// Drag-and-drop handlers on the admin dropzone. Guards the DoD from the T6
+	// review: dropping a PNG must reach the same mutation as the file picker,
+	// and a non-PNG/JPG drop must show the same inline error without a network
+	// call. jsdom doesn't fire real DragEvents, so we drive fireEvent.drop with
+	// a plain files-carrying dataTransfer shape.
+	function findDropzone(): HTMLElement {
+		// The dropzone is the outer wrapper that owns onDrop; scope to the parent
+		// of the file input so we don't accidentally target the ActorAvatar.
+		const input = document.querySelector('input[type="file"]') as HTMLInputElement
+		const dropzone = input.closest('div[class*="border-dashed"]') as HTMLElement | null
+		if (!dropzone) throw new Error('dropzone not found')
+		return dropzone
+	}
+
+	it('drops an accepted PNG onto the dropzone and calls the upload mutation', async () => {
+		uploadMutate.mockResolvedValueOnce(agent)
+		renderWidget()
+		const png = new File(['fake'], 'headshot.png', { type: 'image/png' })
+		fireEvent.drop(findDropzone(), { dataTransfer: { files: [png] } })
+		await waitFor(() => expect(uploadMutate).toHaveBeenCalledTimes(1))
+		expect(uploadMutate).toHaveBeenCalledWith({ id: 'agent-1', file: png })
+	})
+
+	it('drops a non-PNG/JPG file and surfaces the inline error without calling the mutation', async () => {
+		renderWidget()
+		const txt = new File(['hello'], 'notes.txt', { type: 'text/plain' })
+		fireEvent.drop(findDropzone(), { dataTransfer: { files: [txt] } })
+		expect(await screen.findByText(/only png or jpg/i)).toBeInTheDocument()
+		expect(uploadMutate).not.toHaveBeenCalled()
+	})
+
+	it('toggles the drop hint while a file is being dragged over the zone', () => {
+		renderWidget()
+		const dropzone = findDropzone()
+		expect(screen.getByText(/PNG or JPG, up to 2 MB\./i)).toBeInTheDocument()
+		fireEvent.dragOver(dropzone)
+		expect(screen.getByText(/drop a png or jpg to upload/i)).toBeInTheDocument()
+		fireEvent.dragLeave(dropzone)
+		expect(screen.getByText(/PNG or JPG, up to 2 MB\./i)).toBeInTheDocument()
+	})
+
+	it('ignores drops while an upload is already in flight', () => {
+		uploadIsPending.value = true
+		renderWidget()
+		const png = new File(['fake'], 'headshot.png', { type: 'image/png' })
+		fireEvent.drop(findDropzone(), { dataTransfer: { files: [png] } })
+		expect(uploadMutate).not.toHaveBeenCalled()
 	})
 })

@@ -272,7 +272,7 @@ export const api = {
 				const raw =
 					typeof data.error === 'object' ? data.error.message : data.error || res.statusText
 				// Turn raw status codes into human-readable messages when the server
-				// returns bare 413/415 without a helpful body (per T6 DoD).
+				// returns bare codes without a helpful body (per T6 DoD).
 				let message: string = raw
 				if (res.status === 413) {
 					message = 'Image is too large. Maximum size is 2 MB.'
@@ -280,6 +280,12 @@ export const api = {
 					message = 'Unsupported image type. Upload a PNG or JPG.'
 				} else if (res.status === 403) {
 					message = 'Only workspace admins can upload avatars.'
+				} else if (res.status === 404) {
+					// Widget can render before the endpoint is deployed — a bare "Not Found"
+					// leaks a stack-trace-looking string; this is the widget-side gate.
+					message = "Avatar upload isn't available yet."
+				} else if (res.status >= 500) {
+					message = 'Avatar upload failed. Please try again.'
 				}
 				throw new ApiError(res.status, message)
 			}

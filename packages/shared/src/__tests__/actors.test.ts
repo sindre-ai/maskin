@@ -170,8 +170,23 @@ describe('updateActorSchema', () => {
 			memory: { key: 'value' },
 			llm_provider: 'anthropic',
 			llm_config: { model: 'claude-opus-4-7' },
+			avatar_url: 'https://example.com/avatar.png',
 		}
 		expect(updateActorSchema.parse(writableFromResponse)).toEqual(writableFromResponse)
+	})
+
+	it('accepts an absolute URL for avatar_url', () => {
+		const result = updateActorSchema.parse({ avatar_url: 'https://example.com/x.png' })
+		expect(result.avatar_url).toBe('https://example.com/x.png')
+	})
+
+	it('accepts null for avatar_url (clears the value)', () => {
+		const result = updateActorSchema.parse({ avatar_url: null })
+		expect(result.avatar_url).toBeNull()
+	})
+
+	it('rejects a non-URL avatar_url', () => {
+		expect(() => updateActorSchema.parse({ avatar_url: 'not-a-url' })).toThrow()
 	})
 })
 
@@ -197,6 +212,7 @@ describe('actorResponseSchema', () => {
 		memory: null,
 		llm_provider: 'anthropic',
 		llm_config: null,
+		avatar_url: null,
 		isSystem: true,
 		agentState: 'idle',
 		agentStateUpdatedAt: null,

@@ -1,3 +1,4 @@
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AgentOutput } from '@/components/shared/agent-output'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Badge } from '@/components/ui/badge'
@@ -5,6 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
+import { useTrackFirstRender } from '@/hooks/use-track-first-render'
+import { trackNotificationRendered } from '@/lib/analytics'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
 import { useChat } from '@/lib/chat-context'
 import { resolveNavigationTarget } from '@/lib/navigation'
@@ -153,6 +156,19 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 	const [replyText, setReplyText] = useState('')
 
 	const primaryObjectId = notification.objectId
+
+	useTrackFirstRender({
+		key: sourceActor ? notification.id : null,
+		eventName: 'notification_rendered',
+		enabled: !!sourceActor,
+		fire: () =>
+			trackNotificationRendered({
+				notification_id: notification.id,
+				source_actor_id: notification.sourceActorId,
+				source_actor_type: sourceActor?.type ?? null,
+				workspace_id: workspaceId,
+			}),
+	})
 
 	// Extract secondary object links from metadata
 	const metadataLinks = extractMetadataObjectLinks(metadata as Record<string, unknown>).filter(
@@ -331,9 +347,13 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 			<CardFooter className="text-xs text-muted-foreground border-t pt-3 gap-1.5">
 				{sourceActor && (
 					<>
-						<span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">
-							{sourceActor.name.charAt(0).toUpperCase()}
-						</span>
+						<ActorAvatar
+							name={sourceActor.name}
+							type={sourceActor.type}
+							size="sm"
+							id={sourceActor.id}
+							imageUrl={sourceActor.avatar_url ?? undefined}
+						/>
 						<span>{sourceActor.name}</span>
 						<span>&middot;</span>
 					</>

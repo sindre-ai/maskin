@@ -37,6 +37,7 @@ const agent: ActorResponse = {
 	memory: null,
 	llm_provider: null,
 	llm_config: null,
+	avatar_url: null,
 	isSystem: false,
 	agentState: 'idle',
 	agentStateUpdatedAt: null,

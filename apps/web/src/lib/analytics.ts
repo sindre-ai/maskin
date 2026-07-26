@@ -366,3 +366,38 @@ export function trackLoopGraduated(
 ): void {
 	trackEvent('loop_graduated', { ...fillBase(p), source_bet_id: p.source_bet_id })
 }
+
+// Coverage-proxy events for the Per-agent avatars bet. Fire once per unique
+// surface first-seen this session — see `useTrackFirstRender` for the dedup.
+// `workspace_id` is duplicated onto the event even though it also rides via
+// PostHog super-properties: the Product Analyst's query slices these events
+// without joining super-properties, matching the pattern used by the
+// sidebar/north-star events above. No PII: names, emails, comment body,
+// notification title are never included.
+export function trackCommentRendered(p: {
+	comment_id: string
+	actor_id: string | null
+	actor_type: string | null
+	workspace_id: string
+}): void {
+	trackEvent('comment_rendered', {
+		comment_id: p.comment_id,
+		actor_id: p.actor_id,
+		actor_type: p.actor_type,
+		workspace_id: p.workspace_id,
+	})
+}
+
+export function trackNotificationRendered(p: {
+	notification_id: string
+	source_actor_id: string | null
+	source_actor_type: string | null
+	workspace_id: string
+}): void {
+	trackEvent('notification_rendered', {
+		notification_id: p.notification_id,
+		source_actor_id: p.source_actor_id,
+		source_actor_type: p.source_actor_type,
+		workspace_id: p.workspace_id,
+	})
+}
