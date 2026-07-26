@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
+import { __resetFirstRenderTrackerForTesting } from '@/hooks/use-track-first-render'
 import type { EventResponse, UnreadItem } from '@/lib/api'
 import { buildEventResponse, buildObjectResponse } from '../../factories'
 import { TestWrapper } from '../../setup'
@@ -10,6 +11,16 @@ const mockUseEntityEvents = vi.fn()
 const mockMarkReadMutate = vi.fn()
 const mockUseMarkRead = vi.fn(() => ({ mutate: mockMarkReadMutate, isPending: false }))
 const mockCreateCommentMutate = vi.fn()
+const trackNotificationRenderedMock = vi.fn()
+
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return {
+		...actual,
+		trackNotificationRendered: (p: Parameters<typeof actual.trackNotificationRendered>[0]) =>
+			trackNotificationRenderedMock(p),
+	}
+})
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -73,6 +84,8 @@ describe('UnreadThreadCard', () => {
 		vi.clearAllMocks()
 		mockMarkReadMutate.mockReset()
 		mockCreateCommentMutate.mockReset()
+		trackNotificationRenderedMock.mockClear()
+		__resetFirstRenderTrackerForTesting()
 	})
 
 	it('renders the object title and unread count', () => {
@@ -775,5 +788,69 @@ describe('UnreadThreadCard', () => {
 		// keyboard users find either.
 		const dismissButtons = screen.getAllByRole('button', { name: /mark as read/i })
 		expect(dismissButtons.length).toBeGreaterThanOrEqual(2)
+	})
+
+	// Runtime-path payload assertion. `UnreadThreadCard` is the live analog of
+	// the retired `PulseCard` surface (see `apps/web/CLAUDE.md`), so the bet's
+	// notification-rendered coverage proxy attaches here. This test renders the
+	// real component and asserts the typed helper is invoked with the DoD-
+	// shaped payload — catching prop-name drift on the runtime path that a
+	// helper-shape unit test alone would silently pass.
+	it('emits notification_rendered with the DoD payload from the runtime path', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({
+					entity_type: 'object',
+					entity_id: 'obj-1',
+					object: buildObjectResponse({
+						id: 'obj-1',
+						type: 'bet',
+						driver: 'actor-driver',
+						createdBy: 'actor-1',
+					}),
+				})}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		expect(trackNotificationRenderedMock).toHaveBeenCalledTimes(1)
+		expect(trackNotificationRenderedMock).toHaveBeenCalledWith({
+			notification_id: 'object:obj-1',
+			source_actor_id: 'actor-driver',
+			source_actor_type: 'human',
+			workspace_id: 'ws-1',
+		})
+	})
+
+	it('falls back to createdBy for the source actor when the object has no driver', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({
+					entity_type: 'object',
+					entity_id: 'obj-1',
+					object: buildObjectResponse({
+						id: 'obj-1',
+						type: 'bet',
+						driver: null,
+						createdBy: 'actor-creator',
+					}),
+				})}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		expect(trackNotificationRenderedMock).toHaveBeenCalledWith(
+			expect.objectContaining({ source_actor_id: 'actor-creator' }),
+		)
 	})
 })

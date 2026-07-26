@@ -6,6 +6,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { useTrackFirstRender } from '@/hooks/use-track-first-render'
+import { trackNotificationRendered } from '@/lib/analytics'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
 import { useChat } from '@/lib/chat-context'
 import { resolveNavigationTarget } from '@/lib/navigation'
@@ -156,14 +157,16 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 	const primaryObjectId = notification.objectId
 
 	useTrackFirstRender({
-		key: notification.id,
+		key: sourceActor ? notification.id : null,
 		eventName: 'notification_rendered',
-		props: {
-			notification_id: notification.id,
-			source_actor_id: notification.sourceActorId,
-			source_actor_type: sourceActor?.type ?? null,
-			workspace_id: workspaceId,
-		},
+		enabled: !!sourceActor,
+		fire: () =>
+			trackNotificationRendered({
+				notification_id: notification.id,
+				source_actor_id: notification.sourceActorId,
+				source_actor_type: sourceActor?.type ?? null,
+				workspace_id: workspaceId,
+			}),
 	})
 
 	// Extract secondary object links from metadata

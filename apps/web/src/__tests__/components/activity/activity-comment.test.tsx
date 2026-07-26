@@ -1,7 +1,18 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
+import { __resetFirstRenderTrackerForTesting } from '@/hooks/use-track-first-render'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildEventResponse } from '../../factories'
+
+const trackCommentRenderedMock = vi.fn()
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return {
+		...actual,
+		trackCommentRendered: (p: Parameters<typeof actual.trackCommentRendered>[0]) =>
+			trackCommentRenderedMock(p),
+	}
+})
 
 vi.mock('@/hooks/use-actors', () => ({
 	useActor: () => ({
@@ -35,6 +46,11 @@ vi.mock('@/lib/auth', () => ({
 }))
 
 describe('ActivityComment', () => {
+	beforeEach(() => {
+		trackCommentRenderedMock.mockClear()
+		__resetFirstRenderTrackerForTesting()
+	})
+
 	it('renders actor name', () => {
 		const event = buildEventResponse({
 			action: 'commented',
@@ -282,5 +298,30 @@ describe('ActivityComment', () => {
 		expect(
 			screen.getAllByPlaceholderText('Write a comment... Use @ to mention an agent').length,
 		).toBeGreaterThanOrEqual(1)
+	})
+
+	// Runtime-path payload assertion. The typed helper `trackCommentRendered`
+	// defines the DoD property contract for the Per-agent avatars bet, but the
+	// component wires the render event via `useTrackFirstRender`. A prop rename
+	// on the runtime path — e.g. `actor_id` → `actorId` inside the fire closure —
+	// would leave the helper-shape unit test green while shipping the wrong
+	// payload. This test renders the real component and asserts the helper is
+	// invoked with the exact DoD-named props.
+	it('emits comment_rendered with the DoD payload from the runtime path', () => {
+		const event = buildEventResponse({
+			id: 4242,
+			actorId: 'actor-1',
+			action: 'commented',
+			data: { content: 'payload probe' },
+		})
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+
+		expect(trackCommentRenderedMock).toHaveBeenCalledTimes(1)
+		expect(trackCommentRenderedMock).toHaveBeenCalledWith({
+			comment_id: '4242',
+			actor_id: 'actor-1',
+			actor_type: 'human',
+			workspace_id: 'ws-1',
+		})
 	})
 })

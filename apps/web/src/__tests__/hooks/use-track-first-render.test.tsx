@@ -5,16 +5,6 @@ import {
 import { render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const trackEvent = vi.fn()
-
-vi.mock('@/lib/analytics', async () => {
-	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
-	return {
-		...actual,
-		trackEvent: (name: string, props: Record<string, unknown>) => trackEvent(name, props),
-	}
-})
-
 // `key` is a reserved React prop (consumed by reconciliation), so this probe
 // takes `dedupKey` instead and forwards it to the hook — otherwise the test
 // would silently pass undefined into the hook.
@@ -22,19 +12,18 @@ function Probe(props: {
 	dedupKey: string | null | undefined
 	eventName: string
 	enabled?: boolean
-	payload: Record<string, string | number | boolean | null | undefined>
+	fire: () => void
 }) {
 	useTrackFirstRender({
 		key: props.dedupKey,
 		eventName: props.eventName,
 		enabled: props.enabled,
-		props: props.payload,
+		fire: props.fire,
 	})
 	return null
 }
 
 beforeEach(() => {
-	trackEvent.mockClear()
 	__resetFirstRenderTrackerForTesting()
 })
 
@@ -43,53 +32,54 @@ afterEach(() => {
 })
 
 describe('useTrackFirstRender', () => {
-	it('fires once when key + enabled resolve on mount', () => {
-		render(<Probe dedupKey="k1" eventName="comment_rendered" payload={{ a: 1 }} />)
+	it('invokes fire once when key + enabled resolve on mount', () => {
+		const fire = vi.fn()
+		render(<Probe dedupKey="k1" eventName="comment_rendered" fire={fire} />)
 
-		expect(trackEvent).toHaveBeenCalledTimes(1)
-		expect(trackEvent).toHaveBeenCalledWith('comment_rendered', { a: 1 })
+		expect(fire).toHaveBeenCalledTimes(1)
 	})
 
-	it('does not re-fire on re-render of the same key', () => {
-		const { rerender } = render(<Probe dedupKey="k1" eventName="e" payload={{ v: 1 }} />)
-		rerender(<Probe dedupKey="k1" eventName="e" payload={{ v: 2 }} />)
-		rerender(<Probe dedupKey="k1" eventName="e" payload={{ v: 3 }} />)
+	it('does not re-invoke fire on re-render of the same key', () => {
+		const fire = vi.fn()
+		const { rerender } = render(<Probe dedupKey="k1" eventName="e" fire={fire} />)
+		rerender(<Probe dedupKey="k1" eventName="e" fire={fire} />)
+		rerender(<Probe dedupKey="k1" eventName="e" fire={fire} />)
 
-		expect(trackEvent).toHaveBeenCalledTimes(1)
-		expect(trackEvent).toHaveBeenCalledWith('e', { v: 1 })
+		expect(fire).toHaveBeenCalledTimes(1)
 	})
 
 	it('does not fire until enabled flips true (deferred until actor loads)', () => {
-		const { rerender } = render(
-			<Probe dedupKey={null} eventName="e" enabled={false} payload={{ actor_type: null }} />,
-		)
-		expect(trackEvent).not.toHaveBeenCalled()
+		const fire = vi.fn()
+		const { rerender } = render(<Probe dedupKey={null} eventName="e" enabled={false} fire={fire} />)
+		expect(fire).not.toHaveBeenCalled()
 
-		rerender(<Probe dedupKey="k1" eventName="e" enabled={true} payload={{ actor_type: 'agent' }} />)
-		expect(trackEvent).toHaveBeenCalledTimes(1)
-		expect(trackEvent).toHaveBeenCalledWith('e', { actor_type: 'agent' })
+		rerender(<Probe dedupKey="k1" eventName="e" enabled={true} fire={fire} />)
+		expect(fire).toHaveBeenCalledTimes(1)
 	})
 
 	it('dedupes across unmount + remount (virtualization scroll)', () => {
-		const { unmount } = render(<Probe dedupKey="k1" eventName="e" payload={{}} />)
-		expect(trackEvent).toHaveBeenCalledTimes(1)
+		const fire = vi.fn()
+		const { unmount } = render(<Probe dedupKey="k1" eventName="e" fire={fire} />)
+		expect(fire).toHaveBeenCalledTimes(1)
 		unmount()
 
-		render(<Probe dedupKey="k1" eventName="e" payload={{}} />)
-		expect(trackEvent).toHaveBeenCalledTimes(1)
+		render(<Probe dedupKey="k1" eventName="e" fire={fire} />)
+		expect(fire).toHaveBeenCalledTimes(1)
 	})
 
 	it('scopes dedup per event name so the same id fires each event once', () => {
-		render(<Probe dedupKey="k1" eventName="comment_rendered" payload={{}} />)
-		render(<Probe dedupKey="k1" eventName="notification_rendered" payload={{}} />)
+		const commentFire = vi.fn()
+		const notificationFire = vi.fn()
+		render(<Probe dedupKey="k1" eventName="comment_rendered" fire={commentFire} />)
+		render(<Probe dedupKey="k1" eventName="notification_rendered" fire={notificationFire} />)
 
-		expect(trackEvent).toHaveBeenCalledTimes(2)
-		expect(trackEvent.mock.calls[0][0]).toBe('comment_rendered')
-		expect(trackEvent.mock.calls[1][0]).toBe('notification_rendered')
+		expect(commentFire).toHaveBeenCalledTimes(1)
+		expect(notificationFire).toHaveBeenCalledTimes(1)
 	})
 
 	it('is a no-op when key stays null (actor never resolves)', () => {
-		render(<Probe dedupKey={null} eventName="e" enabled={true} payload={{}} />)
-		expect(trackEvent).not.toHaveBeenCalled()
+		const fire = vi.fn()
+		render(<Probe dedupKey={null} eventName="e" enabled={true} fire={fire} />)
+		expect(fire).not.toHaveBeenCalled()
 	})
 })

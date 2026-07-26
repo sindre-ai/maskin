@@ -1,4 +1,3 @@
-import { type AnalyticsProps, trackEvent } from '@/lib/analytics'
 import { useEffect } from 'react'
 
 // Session-wide de-dup so the event fires exactly once per unique surface even
@@ -10,24 +9,28 @@ const seen = new Set<string>()
 export interface TrackFirstRenderOptions {
 	key: string | null | undefined
 	eventName: string
-	props: AnalyticsProps
+	// Called at most once per unique (eventName, key) this session. Callers pass
+	// a closure that invokes the typed analytics helper for the event — routing
+	// the runtime call through the taxonomy so a prop-name drift on the wire
+	// path is caught by the helper's type contract, not silently shipped.
+	fire: () => void
 	enabled?: boolean
 }
 
 export function useTrackFirstRender({
 	key,
 	eventName,
-	props,
+	fire,
 	enabled = true,
 }: TrackFirstRenderOptions): void {
-	// biome-ignore lint/correctness/useExhaustiveDependencies: capture the props snapshot at the moment key/enabled cross the fire threshold — later per-render mutations of the same-keyed row must not re-fire
+	// biome-ignore lint/correctness/useExhaustiveDependencies: capture the fire closure at the moment key/enabled cross the fire threshold — later per-render mutations of the same-keyed row must not re-fire
 	useEffect(() => {
 		if (!enabled) return
 		if (!key) return
 		const dedupKey = `${eventName}:${key}`
 		if (seen.has(dedupKey)) return
 		seen.add(dedupKey)
-		trackEvent(eventName, props)
+		fire()
 	}, [key, eventName, enabled])
 }
 

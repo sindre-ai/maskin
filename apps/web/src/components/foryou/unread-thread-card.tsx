@@ -4,9 +4,12 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useActor } from '@/hooks/use-actors'
 import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
+import { useTrackFirstRender } from '@/hooks/use-track-first-render'
+import { trackNotificationRendered } from '@/lib/analytics'
 import type { EventResponse, UnreadItem } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -53,6 +56,29 @@ export function UnreadThreadCard({
 	onReplyTargetChange,
 }: UnreadThreadCardProps) {
 	const objectId = item.entity_id
+
+	// Coverage-proxy for the Per-agent avatars bet. `UnreadThreadCard` is the
+	// live analog of the retired `PulseCard` notification surface — see
+	// `apps/web/CLAUDE.md`'s "Retired UI surfaces" note. The event fires once
+	// per unique thread first-seen this session, keyed by the same
+	// `entity_type:entity_id` composite the feed uses for its item key.
+	// `source_actor_id` is the thread's driver (falling back to its creator when
+	// no driver is set), matching the actor whose avatar renders on the card.
+	const sourceActorId = item.object?.driver ?? item.object?.createdBy ?? null
+	const { data: sourceActor } = useActor(sourceActorId ?? '')
+	const notificationSurfaceId = `${item.entity_type}:${item.entity_id}`
+	useTrackFirstRender({
+		key: sourceActor ? notificationSurfaceId : null,
+		eventName: 'notification_rendered',
+		enabled: !!sourceActor,
+		fire: () =>
+			trackNotificationRendered({
+				notification_id: notificationSurfaceId,
+				source_actor_id: sourceActorId,
+				source_actor_type: sourceActor?.type ?? null,
+				workspace_id: workspaceId,
+			}),
+	})
 
 	const cardRef = useRef<HTMLDivElement>(null)
 	const [hasBeenVisible, setHasBeenVisible] = useState(false)
