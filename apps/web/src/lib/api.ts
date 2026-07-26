@@ -255,6 +255,36 @@ export const api = {
 			}),
 		delete: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/actors/${id}`, { method: 'DELETE', workspaceId }),
+		uploadAvatar: async (id: string, file: File, workspaceId: string): Promise<ActorResponse> => {
+			const apiKey = getApiKey()
+			const formData = new FormData()
+			formData.append('file', file)
+			const res = await fetch(`${API_BASE}/actors/${id}/avatar`, {
+				method: 'POST',
+				headers: {
+					...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+					'X-Workspace-Id': workspaceId,
+				},
+				body: formData,
+			})
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({ error: res.statusText }))
+				const raw =
+					typeof data.error === 'object' ? data.error.message : data.error || res.statusText
+				// Turn raw status codes into human-readable messages when the server
+				// returns bare 413/415 without a helpful body (per T6 DoD).
+				let message: string = raw
+				if (res.status === 413) {
+					message = 'Image is too large. Maximum size is 2 MB.'
+				} else if (res.status === 415) {
+					message = 'Unsupported image type. Upload a PNG or JPG.'
+				} else if (res.status === 403) {
+					message = 'Only workspace admins can upload avatars.'
+				}
+				throw new ApiError(res.status, message)
+			}
+			return res.json()
+		},
 	},
 
 	workspaces: {
