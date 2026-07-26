@@ -443,6 +443,14 @@ export const tools = {
 			memory: z.record(z.unknown()).optional(),
 			llm_provider: z.string().optional(),
 			llm_config: z.record(z.unknown()).optional(),
+			avatar_url: z
+				.string()
+				.url()
+				.nullable()
+				.optional()
+				.describe(
+					'Absolute URL to a per-actor avatar image. Pass null to clear. Omit to leave unchanged.',
+				),
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()

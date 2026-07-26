@@ -42,6 +42,7 @@ export const updateActorSchema = z.object({
 	memory: z.record(z.unknown()).optional(),
 	llm_provider: z.string().optional(),
 	llm_config: llmConfigSchema.optional(),
+	avatar_url: z.string().url().nullable().optional(),
 })
 
 export const actorParamsSchema = z.object({
@@ -70,10 +71,10 @@ export const actorResponseSchema = z.object({
 	memory: jsonbObject,
 	llm_provider: z.string().nullable(),
 	llm_config: jsonbObject,
+	avatar_url: z.string().nullable(),
 	isSystem: z.boolean(),
 	agentState: agentStateSchema.default('idle'),
 	agentStateUpdatedAt: z.string().nullable().default(null),
-	avatar_url: z.string().url().nullable().optional(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 	installedPackageId: z.string().uuid().nullable().optional(),
