@@ -14,12 +14,15 @@ export function useSubscribers(workspaceId: string, entityType: string, entityId
 }
 
 /**
- * Pulse-feed of entities with unread comments for the current actor.
+ * Pulse-feed of entities with unread comments for the current actor. When
+ * `includeRecentlyRead` is true the feed also carries entities the actor has
+ * marked read within the last 48h — the For You mixed-feed stream. Default
+ * off keeps the sidebar unread badge and other callers unread-only.
  */
-export function useUnread(workspaceId: string, entityType?: string) {
+export function useUnread(workspaceId: string, entityType?: string, includeRecentlyRead?: boolean) {
 	return useQuery({
-		queryKey: queryKeys.subscriptions.unread(workspaceId, entityType),
-		queryFn: () => api.subscriptions.unread(workspaceId, entityType),
+		queryKey: queryKeys.subscriptions.unread(workspaceId, entityType, includeRecentlyRead),
+		queryFn: () => api.subscriptions.unread(workspaceId, entityType, includeRecentlyRead),
 		enabled: !!workspaceId,
 	})
 }

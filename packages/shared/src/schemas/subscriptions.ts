@@ -26,4 +26,12 @@ export const markReadBodySchema = z.object({
 
 export const unreadQuerySchema = z.object({
 	entity_type: subscribableEntityTypeSchema.optional(),
+	// When true, keep recently-read entities in the feed alongside unread ones.
+	// A card is "recently read" if it has zero unread events but its latest
+	// matching event landed within the last 48 hours. Default off so the
+	// sidebar unread badge and other callers stay unread-only.
+	include_recently_read: z
+		.enum(['true', 'false'])
+		.optional()
+		.transform((v) => v === 'true'),
 })

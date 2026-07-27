@@ -281,11 +281,14 @@ app.openapi(listUnreadRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { entity_type } = c.req.valid('query')
+	const { entity_type, include_recently_read: includeRecentlyRead } = c.req.valid('query')
 
 	// Single query: for each (entity_type, entity_id) the actor is subscribed to
-	// in this workspace, count commented events whose id > last_read_event_id and
-	// whose actor_id is not the viewer's. Exclude rows with zero unread.
+	// in this workspace, join the events that count as unread (id > last_read
+	// and not by the viewer) plus, when the caller opted in, any read events
+	// still within the recently-read window. `unread_count` is computed via
+	// FILTER so a recently-read card returns unread_count = 0 while still
+	// appearing in the feed.
 	const lastReadExpr = sql<number>`coalesce(
 		(select last_read_event_id from read_state
 			where actor_id = ${actorId}
@@ -300,13 +303,22 @@ app.openapi(listUnreadRoute, (async (c) => {
 	]
 	if (entity_type) subConditions.push(eq(subscriptions.entityType, entity_type))
 
-	// Per-event mention count: how many of the unread events on this entity
-	// actually @-mention the current actor. Replaces the object-level bool_or
-	// that previously flagged the whole object as "mentions you" the moment a
-	// single buried mention existed, dragging agent-to-agent comments into
-	// human For You with it. Counted at the event grain, so the share of
-	// objects flagged tracks the share of comments that actually mention.
-	const mentioningUnreadCountExpr = sql<number>`coalesce(count(*) filter (where ${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), 0)::int`
+	// Restricts the join to events that could contribute a row: unread ones,
+	// plus (when opted in) read events still inside a 48h window. Read events
+	// outside the window drop here so aggregates don't scan the whole entity
+	// history on hot threads. 48h covers the Today and Yesterday buckets the
+	// ForYouDashboard renders (mirrors iOS Mail's mark-unread horizon).
+	const readOrRecentPredicate = includeRecentlyRead
+		? sql`(${events.id} > ${lastReadExpr} or ${events.createdAt} >= now() - interval '48 hours')`
+		: sql`${events.id} > ${lastReadExpr}`
+
+	// Per-event mention count: how many of the *unread* events on this entity
+	// actually @-mention the current actor. Recently-read events never count
+	// toward the mention pill even when they're joined.
+	const mentioningUnreadCountExpr = sql<number>`coalesce(count(*) filter (where ${events.id} > ${lastReadExpr} and ${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), 0)::int`
+
+	// True unread count regardless of whether recently-read events are joined.
+	const unreadCountExpr = sql<number>`coalesce(count(${events.id}) filter (where ${events.id} > ${lastReadExpr}), 0)::int`
 
 	// `status_changed` events carry the new-shape `data.changes` diff array
 	// (see bet/mcp-response-shape) going forward, but historical rows before
@@ -328,7 +340,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 		.select({
 			entityType: subscriptions.entityType,
 			entityId: subscriptions.entityId,
-			unreadCount: count(events.id),
+			unreadCount: unreadCountExpr,
 			mentioningUnreadCount: mentioningUnreadCountExpr,
 			latestEventId: max(events.id),
 			latestActivityAt: max(events.createdAt),
@@ -344,7 +356,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 				eq(events.workspaceId, subscriptions.workspaceId),
 				eq(events.entityId, subscriptions.entityId),
 				ne(events.actorId, actorId),
-				gt(events.id, lastReadExpr),
+				readOrRecentPredicate,
 				// Three surfaces land in the unread feed:
 				// (1) comments on the subscribed entity (events.entity_type matches the
 				//     subscription's polymorphic type, e.g. 'object'), and
@@ -425,7 +437,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 		return {
 			entity_type: r.entityType,
 			entity_id: r.entityId,
-			unread_count: r.unreadCount,
+			unread_count: Number(r.unreadCount),
 			mentioning_unread_count: Number(r.mentioningUnreadCount),
 			latest_event_id: r.latestEventId,
 			latest_activity_at:

@@ -1,6 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import type { PgNotifyBridge } from '@maskin/realtime'
+import { sql } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
 import type { SessionManager } from '../../services/session-manager'
 import { buildCreateObjectBody, insertActor, insertWorkspace } from '../factories'
@@ -1148,6 +1149,124 @@ describe('Subscriptions Integration', () => {
 		expect(itemB).toBeDefined()
 		expect(itemB.unread_count).toBe(1)
 		expect(itemB.object?.status).toBe('breached')
+	})
+
+	it('include_recently_read keeps a marked-read card in the feed within the 48h window', async () => {
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const createRes = await appA.request(
+			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA),
+		)
+		const obj = await createRes.json()
+		const commentRes = await appB.request(
+			jsonRequest('POST', '/api/events', { entity_id: obj.id, content: "B's comment" }, headersB),
+		)
+		const comment = await commentRes.json()
+		await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions/read',
+				{ entity_type: 'object', entity_id: obj.id, last_event_id: comment.id },
+				headersA,
+			),
+		)
+
+		// Opted-out default excludes the read card — same behavior as before.
+		const defaultFeed = await appA
+			.request(jsonGet('/api/subscriptions/unread', headersA))
+			.then((r) => r.json())
+		expect(
+			defaultFeed.items.find((i: { entity_id: string }) => i.entity_id === obj.id),
+		).toBeUndefined()
+
+		// Opted-in mixed feed keeps the card with unread_count = 0.
+		const mixedFeed = await appA
+			.request(jsonGet('/api/subscriptions/unread?include_recently_read=true', headersA))
+			.then((r) => r.json())
+		const item = mixedFeed.items.find((i: { entity_id: string }) => i.entity_id === obj.id)
+		expect(item).toBeDefined()
+		expect(item.unread_count).toBe(0)
+		expect(item.mentioning_unread_count).toBe(0)
+		expect(item.latest_activity_at).not.toBeNull()
+	})
+
+	it('include_recently_read drops a marked-read card whose latest activity is older than 48h', async () => {
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const createRes = await appA.request(
+			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA),
+		)
+		const obj = await createRes.json()
+		const commentRes = await appB.request(
+			jsonRequest('POST', '/api/events', { entity_id: obj.id, content: 'stale' }, headersB),
+		)
+		const comment = await commentRes.json()
+		await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions/read',
+				{ entity_type: 'object', entity_id: obj.id, last_event_id: comment.id },
+				headersA,
+			),
+		)
+
+		// Age the comment past the 48h window so the recently-read arm no
+		// longer keeps it in the feed.
+		await db.execute(
+			sql`update events set created_at = now() - interval '72 hours' where id = ${comment.id}`,
+		)
+
+		const mixedFeed = await appA
+			.request(jsonGet('/api/subscriptions/unread?include_recently_read=true', headersA))
+			.then((r) => r.json())
+		expect(
+			mixedFeed.items.find((i: { entity_id: string }) => i.entity_id === obj.id),
+		).toBeUndefined()
+	})
+
+	it('include_recently_read still reports the true unread count for partially-read cards', async () => {
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const createRes = await appA.request(
+			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA),
+		)
+		const obj = await createRes.json()
+		const c1 = await appB
+			.request(
+				jsonRequest('POST', '/api/events', { entity_id: obj.id, content: 'first' }, headersB),
+			)
+			.then((r) => r.json())
+		await appB.request(
+			jsonRequest('POST', '/api/events', { entity_id: obj.id, content: 'second' }, headersB),
+		)
+
+		// A reads up to the first comment only — second is still unread, and
+		// the first is now a recently-read event that the mixed feed also
+		// joins but does not count toward unread_count.
+		await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions/read',
+				{ entity_type: 'object', entity_id: obj.id, last_event_id: c1.id },
+				headersA,
+			),
+		)
+
+		const mixedFeed = await appA
+			.request(jsonGet('/api/subscriptions/unread?include_recently_read=true', headersA))
+			.then((r) => r.json())
+		const item = mixedFeed.items.find((i: { entity_id: string }) => i.entity_id === obj.id)
+		expect(item).toBeDefined()
+		expect(item.unread_count).toBe(1)
 	})
 })
 

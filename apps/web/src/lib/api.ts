@@ -582,9 +582,14 @@ export const api = {
 				body: { entity_type: entityType, entity_id: entityId, last_event_id: lastEventId },
 				workspaceId,
 			}),
-		unread: (workspaceId: string, entityType?: string) => {
-			const qs = entityType ? `?${new URLSearchParams({ entity_type: entityType }).toString()}` : ''
-			return request<UnreadResponse>(`/subscriptions/unread${qs}`, { workspaceId })
+		unread: (workspaceId: string, entityType?: string, includeRecentlyRead?: boolean) => {
+			const params = new URLSearchParams()
+			if (entityType) params.set('entity_type', entityType)
+			if (includeRecentlyRead) params.set('include_recently_read', 'true')
+			const qs = params.toString()
+			return request<UnreadResponse>(qs ? `/subscriptions/unread?${qs}` : '/subscriptions/unread', {
+				workspaceId,
+			})
 		},
 	},
 

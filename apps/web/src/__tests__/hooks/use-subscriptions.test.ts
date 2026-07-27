@@ -74,7 +74,7 @@ describe('useSubscriptions', () => {
 
 			await waitFor(() => expect(result.current.isSuccess).toBe(true))
 			expect(result.current.data).toEqual(payload)
-			expect(api.subscriptions.unread).toHaveBeenCalledWith('ws-1', undefined)
+			expect(api.subscriptions.unread).toHaveBeenCalledWith('ws-1', undefined, undefined)
 		})
 
 		it('passes the entity_type filter when provided', async () => {
@@ -85,7 +85,18 @@ describe('useSubscriptions', () => {
 			})
 
 			await waitFor(() => expect(result.current.isSuccess).toBe(true))
-			expect(api.subscriptions.unread).toHaveBeenCalledWith('ws-1', 'object')
+			expect(api.subscriptions.unread).toHaveBeenCalledWith('ws-1', 'object', undefined)
+		})
+
+		it('opts into the recently-read window when includeRecentlyRead is true', async () => {
+			vi.mocked(api.subscriptions.unread).mockResolvedValue({ items: [] })
+
+			const { result } = renderHook(() => useUnread('ws-1', undefined, true), {
+				wrapper: TestWrapper,
+			})
+
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(api.subscriptions.unread).toHaveBeenCalledWith('ws-1', undefined, true)
 		})
 	})
 
