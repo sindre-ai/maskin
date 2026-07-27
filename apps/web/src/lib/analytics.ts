@@ -366,3 +366,36 @@ export function trackLoopGraduated(
 ): void {
 	trackEvent('loop_graduated', { ...fillBase(p), source_bet_id: p.source_bet_id })
 }
+
+// Ship-metric event for the object-detail sidebar bet. Fires on every open and
+// every close of the right sidebar in `ObjectDocument`. `state` is the state
+// being transitioned TO; `viewport` matches the workspace's 375 / 768 / 1024
+// breakpoints (<768 mobile, 768–1023 tablet, ≥1024 desktop) so the metric can
+// be sliced per form factor without joining super properties. The bet's exit
+// gate revokes the feature if this event stays at 0/day across all dogfooders
+// for 7 consecutive days — so it must fire from every open/close path.
+export type SidebarToggleState = 'open' | 'closed'
+export type SidebarViewport = 'mobile' | 'tablet' | 'desktop'
+
+export function trackSidebarToggle(p: {
+	state: SidebarToggleState
+	viewport: SidebarViewport
+	object_id: string
+}): void {
+	trackEvent('sidebar_toggle', {
+		state: p.state,
+		viewport: p.viewport,
+		object_id: p.object_id,
+	})
+}
+
+// Maps a CSS-pixel width to the ship-metric viewport bucket. Boundaries are
+// <768 / 768–1023 / ≥1024, matching the bet's chosen breakpoints and the
+// `md`/`lg` Tailwind tokens. Callers pass `window.innerWidth`; the SSR fallback
+// (no `window`) resolves to `desktop` so the event still ships with a value
+// rather than dropping the property.
+export function deriveSidebarViewport(width: number): SidebarViewport {
+	if (width < 768) return 'mobile'
+	if (width < 1024) return 'tablet'
+	return 'desktop'
+}
