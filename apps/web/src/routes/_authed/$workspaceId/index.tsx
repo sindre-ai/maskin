@@ -1,9 +1,11 @@
+import { type ForYouViewMode, ForYouViewToggle } from '@/components/foryou/foryou-view-toggle'
 import { NewConversationComposer } from '@/components/foryou/new-conversation-composer'
 import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { PersistentReplyBar } from '@/components/foryou/persistent-reply-bar'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
 import { UnreadThreadCard } from '@/components/foryou/unread-thread-card'
+import { UnreadThreadListRow } from '@/components/foryou/unread-thread-list-row'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FilterTabs } from '@/components/shared/filter-tabs'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
@@ -11,6 +13,11 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
+import {
+	useUpdateUserDisplaySettings,
+	useUserDisplaySettings,
+} from '@/hooks/use-user-display-settings'
+import { trackForyouViewModeSelected } from '@/lib/analytics'
 import type { UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNewConversationComposer } from '@/lib/new-conversation-context'
@@ -67,6 +74,29 @@ function ForYouDashboard() {
 	const [activeReplyTarget, setActiveReplyTarget] = useState<number | null>(null)
 	const [filter, setFilter] = useState<FeedFilter>('all')
 	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
+
+	// Server-side view-mode persistence via the `__chrome__` sentinel row on
+	// user_display_settings. Card is the first-paint default until the query
+	// resolves; after that the persisted value wins. No cookie, no localStorage
+	// (per the architecture decision on this bet).
+	const chromeSettingsQuery = useUserDisplaySettings(workspaceId, '__chrome__')
+	const updateChromeSettings = useUpdateUserDisplaySettings(workspaceId)
+	const viewMode: ForYouViewMode = chromeSettingsQuery.isFetched
+		? (chromeSettingsQuery.data?.settings.foryouViewMode ?? 'card')
+		: 'card'
+	const handleViewModeChange = useCallback(
+		(mode: ForYouViewMode) => {
+			// Emit the ship-metric event first so a picked mode is counted even if
+			// the persist mutation races a page unload. Fire-and-forget by design.
+			trackForyouViewModeSelected({ mode })
+			const previous = chromeSettingsQuery.data?.settings ?? {}
+			updateChromeSettings.mutate({
+				objectType: '__chrome__',
+				settings: { ...previous, foryouViewMode: mode },
+			})
+		},
+		[chromeSettingsQuery.data, updateChromeSettings],
+	)
 
 	// Items currently hidden by an in-flight "Mark all as read" toast. Kept in
 	// component state (rather than mutated into the useUnread cache) so SSE
@@ -333,6 +363,7 @@ function ForYouDashboard() {
 								{ label: 'Mentions', value: 'mentions', count: mentionCount },
 							]}
 						/>
+						<ForYouViewToggle value={viewMode} onChange={handleViewModeChange} />
 						<Button
 							variant="ghost"
 							size="sm"
@@ -375,19 +406,27 @@ function ForYouDashboard() {
 								<h2 className="mt-4 mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground first:mt-0">
 									{GROUP_LABEL[group]}
 								</h2>
-								{rows.map((item) => (
-									<UnreadThreadCard
-										key={`${item.entity_type}-${item.entity_id}`}
-										workspaceId={workspaceId}
-										item={item}
-										isActive={activeId === item.entity_id}
-										onActivate={() => {
-											setActiveId(item.entity_id)
-											setActiveReplyTarget(null)
-										}}
-										onReplyTargetChange={setActiveReplyTarget}
-									/>
-								))}
+								{rows.map((item) =>
+									viewMode === 'list' ? (
+										<UnreadThreadListRow
+											key={`${item.entity_type}-${item.entity_id}`}
+											workspaceId={workspaceId}
+											item={item}
+										/>
+									) : (
+										<UnreadThreadCard
+											key={`${item.entity_type}-${item.entity_id}`}
+											workspaceId={workspaceId}
+											item={item}
+											isActive={activeId === item.entity_id}
+											onActivate={() => {
+												setActiveId(item.entity_id)
+												setActiveReplyTarget(null)
+											}}
+											onReplyTargetChange={setActiveReplyTarget}
+										/>
+									),
+								)}
 							</section>
 						)
 					})}

@@ -10,6 +10,9 @@ const mockMarkReadMutate = vi.fn()
 const mockToast = vi.fn()
 const mockSetComposerOpen = vi.fn()
 let mockComposerOpen = false
+const mockUseUserDisplaySettings = vi.fn()
+const mockUpdateChromeMutate = vi.fn()
+const mockTrackForyouViewModeSelected = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -70,6 +73,24 @@ vi.mock('@/components/foryou/unread-thread-card', () => ({
 	),
 }))
 
+vi.mock('@/components/foryou/unread-thread-list-row', () => ({
+	UnreadThreadListRow: ({ item }: { item: UnreadItem }) => (
+		<div data-testid="unread-thread-list-row">{item.entity_id}</div>
+	),
+}))
+
+vi.mock('@/hooks/use-user-display-settings', () => ({
+	useUserDisplaySettings: (...args: unknown[]) => mockUseUserDisplaySettings(...args),
+	useUpdateUserDisplaySettings: () => ({
+		mutate: mockUpdateChromeMutate,
+		isPending: false,
+	}),
+}))
+
+vi.mock('@/lib/analytics', () => ({
+	trackForyouViewModeSelected: (...args: unknown[]) => mockTrackForyouViewModeSelected(...args),
+}))
+
 vi.mock('@/components/foryou/onboarding-prompt-card', () => ({
 	OnboardingPromptCard: ({ item }: { item: UnreadItem }) => (
 		<div data-testid="onboarding-prompt-card">{item.entity_id}</div>
@@ -122,6 +143,12 @@ describe('ForYouDashboard', () => {
 		// Default: workspace has existing bets so NorthStarPromptCard stays hidden
 		mockUseBets.mockReturnValue({ data: [{ id: 'bet-1' }], isLoading: false })
 		mockComposerOpen = false
+		// Default: no persisted chrome row yet, but the query has resolved, so
+		// the dashboard reconciles to the 'card' first-paint default.
+		mockUseUserDisplaySettings.mockReturnValue({
+			data: null,
+			isFetched: true,
+		})
 	})
 
 	it('shows loading skeletons while loading', () => {
@@ -411,6 +438,115 @@ describe('ForYouDashboard', () => {
 		render(<ForYouDashboard />)
 		fireEvent.keyDown(window, { key: 'u', code: 'KeyU', altKey: true })
 		expect(mockToast).toHaveBeenCalledTimes(1)
+	})
+
+	it('renders UnreadThreadCard when the persisted view mode is card (default)', () => {
+		mockUseUnread.mockReturnValue({
+			data: { items: [buildUnreadItem({ entity_id: 'obj-1' })] },
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		expect(screen.getAllByTestId('unread-thread-card')).toHaveLength(1)
+		expect(screen.queryByTestId('unread-thread-list-row')).not.toBeInTheDocument()
+	})
+
+	it('renders UnreadThreadListRow when the persisted view mode is list', () => {
+		mockUseUserDisplaySettings.mockReturnValue({
+			data: {
+				object_type: '__chrome__',
+				name: 'default',
+				settings: { foryouViewMode: 'list' },
+				updated_at: '2026-07-27T00:00:00Z',
+			},
+			isFetched: true,
+		})
+		mockUseUnread.mockReturnValue({
+			data: {
+				items: [buildUnreadItem({ entity_id: 'obj-1' }), buildUnreadItem({ entity_id: 'obj-2' })],
+			},
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		expect(screen.getAllByTestId('unread-thread-list-row')).toHaveLength(2)
+		expect(screen.queryByTestId('unread-thread-card')).not.toBeInTheDocument()
+	})
+
+	it('falls back to card while the settings query has not yet fetched', () => {
+		mockUseUserDisplaySettings.mockReturnValue({
+			data: undefined,
+			isFetched: false,
+		})
+		mockUseUnread.mockReturnValue({
+			data: { items: [buildUnreadItem({ entity_id: 'obj-1' })] },
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		expect(screen.getAllByTestId('unread-thread-card')).toHaveLength(1)
+	})
+
+	it('clicking the List button persists the choice and emits the ship metric', () => {
+		mockUseUnread.mockReturnValue({
+			data: { items: [buildUnreadItem({ entity_id: 'obj-1' })] },
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		fireEvent.click(screen.getByRole('button', { name: /list view/i }))
+
+		expect(mockTrackForyouViewModeSelected).toHaveBeenCalledWith({ mode: 'list' })
+		expect(mockUpdateChromeMutate).toHaveBeenCalledWith({
+			objectType: '__chrome__',
+			settings: { foryouViewMode: 'list' },
+		})
+	})
+
+	it('preserves other __chrome__ settings when toggling view mode', () => {
+		mockUseUserDisplaySettings.mockReturnValue({
+			data: {
+				object_type: '__chrome__',
+				name: 'default',
+				settings: {
+					foryouViewMode: 'list',
+					objectDetailSidebarCollapsed: true,
+				},
+				updated_at: '2026-07-27T00:00:00Z',
+			},
+			isFetched: true,
+		})
+		mockUseUnread.mockReturnValue({
+			data: { items: [buildUnreadItem({ entity_id: 'obj-1' })] },
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		fireEvent.click(screen.getByRole('button', { name: /card view/i }))
+
+		expect(mockUpdateChromeMutate).toHaveBeenCalledWith({
+			objectType: '__chrome__',
+			settings: {
+				foryouViewMode: 'card',
+				objectDetailSidebarCollapsed: true,
+			},
+		})
+	})
+
+	it('does not render the reply bar target when a list row would be clicked (no onActivate wire)', () => {
+		mockUseUserDisplaySettings.mockReturnValue({
+			data: {
+				object_type: '__chrome__',
+				name: 'default',
+				settings: { foryouViewMode: 'list' },
+				updated_at: '2026-07-27T00:00:00Z',
+			},
+			isFetched: true,
+		})
+		mockUseUnread.mockReturnValue({
+			data: { items: [buildUnreadItem({ entity_id: 'obj-1' })] },
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		// List rows don't expose an `activate-*` button because they navigate on click;
+		// the persistent reply bar therefore stays with no active target.
+		expect(screen.queryByRole('button', { name: /activate-/ })).not.toBeInTheDocument()
+		expect(screen.getByTestId('persistent-reply-bar')).toHaveAttribute('data-active-id', '')
 	})
 })
 
