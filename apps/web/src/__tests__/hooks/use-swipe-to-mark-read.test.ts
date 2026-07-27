@@ -1,4 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -8,12 +9,33 @@ vi.mock('sonner', () => ({
 
 vi.mock('@/lib/analytics', () => ({
 	trackForyouCardMarkedRead: vi.fn(),
+	trackForyouCardMarkedUnread: vi.fn(),
 }))
 
-import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
-import { trackForyouCardMarkedRead } from '@/lib/analytics'
+import { SWIPE_THRESHOLD, useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
+import { trackForyouCardMarkedRead, trackForyouCardMarkedUnread } from '@/lib/analytics'
 
-describe('useSwipeToMarkRead', () => {
+// Minimal synthetic pointer event — jsdom doesn't give us real PointerEvent
+// synthesis and the hook only reads clientX/clientY/pointerId/target and calls
+// preventDefault + setPointerCapture. This shape matches everything the hook
+// touches without pulling in the full React SyntheticEvent contract.
+function pointerEvent(
+	clientX: number,
+	clientY = 0,
+	target: HTMLElement | null = null,
+): ReactPointerEvent<HTMLDivElement> {
+	const el = document.createElement('div')
+	return {
+		clientX,
+		clientY,
+		pointerId: 1,
+		currentTarget: el,
+		target: target ?? el,
+		preventDefault: () => {},
+	} as unknown as ReactPointerEvent<HTMLDivElement>
+}
+
+describe('useSwipeToMarkRead — analytics contract', () => {
 	beforeEach(() => {
 		vi.useFakeTimers()
 	})
@@ -32,30 +54,14 @@ describe('useSwipeToMarkRead', () => {
 			useSwipeToMarkRead(onMarkRead, { entity_type: 'bet', entity_id: 'bet-42' }),
 		)
 
-		// Simulate a completed right-swipe past the threshold.
-		act(() => {
-			result.current.handlePointerDown({
-				clientX: 0,
-				clientY: 0,
-				pointerId: 1,
-				currentTarget: {},
-				target: document.createElement('div'),
-				preventDefault: () => {},
-			} as never)
-			result.current.handlePointerMove({
-				clientX: 120,
-				clientY: 0,
-				preventDefault: () => {},
-			} as never)
-			result.current.handlePointerUp()
-		})
+		act(() => result.current.handlePointerDown(pointerEvent(0)))
+		act(() => result.current.handlePointerMove(pointerEvent(120)))
+		act(() => result.current.handlePointerUp())
 
 		expect(trackForyouCardMarkedRead).not.toHaveBeenCalled()
 		expect(onMarkRead).not.toHaveBeenCalled()
 
-		act(() => {
-			vi.advanceTimersByTime(4500)
-		})
+		act(() => vi.advanceTimersByTime(4500))
 
 		expect(onMarkRead).toHaveBeenCalledTimes(1)
 		expect(trackForyouCardMarkedRead).toHaveBeenCalledTimes(1)
@@ -71,35 +77,17 @@ describe('useSwipeToMarkRead', () => {
 			useSwipeToMarkRead(onMarkRead, { entity_type: 'bet', entity_id: 'bet-42' }),
 		)
 
-		act(() => {
-			result.current.handlePointerDown({
-				clientX: 0,
-				clientY: 0,
-				pointerId: 1,
-				currentTarget: {},
-				target: document.createElement('div'),
-				preventDefault: () => {},
-			} as never)
-			result.current.handlePointerMove({
-				clientX: 120,
-				clientY: 0,
-				preventDefault: () => {},
-			} as never)
-			result.current.handlePointerUp()
-		})
+		act(() => result.current.handlePointerDown(pointerEvent(0)))
+		act(() => result.current.handlePointerMove(pointerEvent(120)))
+		act(() => result.current.handlePointerUp())
 
-		// Simulate the Undo action passed to sonner's toast.
 		const toastCall = vi.mocked(toast).mock.calls[0]
 		expect(toastCall).toBeDefined()
 		const opts = toastCall?.[1] as { action?: { onClick: () => void } }
 		expect(opts?.action?.onClick).toBeTypeOf('function')
-		act(() => {
-			opts.action?.onClick()
-		})
+		act(() => opts.action?.onClick())
 
-		act(() => {
-			vi.advanceTimersByTime(4500)
-		})
+		act(() => vi.advanceTimersByTime(4500))
 
 		expect(onMarkRead).not.toHaveBeenCalled()
 		expect(trackForyouCardMarkedRead).not.toHaveBeenCalled()
@@ -109,28 +97,263 @@ describe('useSwipeToMarkRead', () => {
 		const onMarkRead = vi.fn()
 		const { result } = renderHook(() => useSwipeToMarkRead(onMarkRead))
 
-		act(() => {
-			result.current.handlePointerDown({
-				clientX: 0,
-				clientY: 0,
-				pointerId: 1,
-				currentTarget: {},
-				target: document.createElement('div'),
-				preventDefault: () => {},
-			} as never)
-			result.current.handlePointerMove({
-				clientX: 120,
-				clientY: 0,
-				preventDefault: () => {},
-			} as never)
-			result.current.handlePointerUp()
-		})
+		act(() => result.current.handlePointerDown(pointerEvent(0)))
+		act(() => result.current.handlePointerMove(pointerEvent(120)))
+		act(() => result.current.handlePointerUp())
 
-		act(() => {
-			vi.advanceTimersByTime(4500)
-		})
+		act(() => vi.advanceTimersByTime(4500))
 
 		expect(onMarkRead).toHaveBeenCalledTimes(1)
 		expect(trackForyouCardMarkedRead).not.toHaveBeenCalled()
+	})
+
+	// Reverse-swipe emission. Fires only after the 4.5s Undo commit — Undo
+	// suppresses it, and analytics context is required to emit at all.
+	it('emits foryou_card_marked_unread after the 4.5s Undo window expires on a read-card left-swipe', () => {
+		const onMarkUnread = vi.fn()
+		const { result } = renderHook(() =>
+			useSwipeToMarkRead({
+				onMarkRead: vi.fn(),
+				onMarkUnread,
+				isRead: true,
+				analytics: { entity_type: 'bet', entity_id: 'bet-99' },
+			}),
+		)
+
+		act(() => result.current.handlePointerDown(pointerEvent(0)))
+		act(() => result.current.handlePointerMove(pointerEvent(-120)))
+		act(() => result.current.handlePointerUp())
+
+		expect(trackForyouCardMarkedUnread).not.toHaveBeenCalled()
+		expect(onMarkUnread).not.toHaveBeenCalled()
+
+		act(() => vi.advanceTimersByTime(4500))
+
+		expect(onMarkUnread).toHaveBeenCalledTimes(1)
+		expect(trackForyouCardMarkedUnread).toHaveBeenCalledTimes(1)
+		expect(trackForyouCardMarkedUnread).toHaveBeenCalledWith({
+			entity_type: 'bet',
+			entity_id: 'bet-99',
+		})
+	})
+
+	it('Undo on a mark-unread swipe suppresses both the mutation and the analytics event', () => {
+		const onMarkUnread = vi.fn()
+		const { result } = renderHook(() =>
+			useSwipeToMarkRead({
+				onMarkRead: vi.fn(),
+				onMarkUnread,
+				isRead: true,
+				analytics: { entity_type: 'bet', entity_id: 'bet-99' },
+			}),
+		)
+
+		act(() => result.current.handlePointerDown(pointerEvent(0)))
+		act(() => result.current.handlePointerMove(pointerEvent(-120)))
+		act(() => result.current.handlePointerUp())
+
+		const opts = vi.mocked(toast).mock.calls[0]?.[1] as { action?: { onClick: () => void } }
+		act(() => opts.action?.onClick())
+		act(() => vi.advanceTimersByTime(4500))
+
+		expect(onMarkUnread).not.toHaveBeenCalled()
+		expect(trackForyouCardMarkedUnread).not.toHaveBeenCalled()
+	})
+})
+
+describe('useSwipeToMarkRead — bidirectional gesture', () => {
+	beforeEach(() => {
+		vi.useFakeTimers()
+	})
+
+	afterEach(() => {
+		vi.useRealTimers()
+		vi.clearAllMocks()
+	})
+
+	describe('unread card (isRead = false)', () => {
+		it('fires onMarkRead 4.5s after a right-swipe past threshold', () => {
+			const onMarkRead = vi.fn()
+			const onMarkUnread = vi.fn()
+			const { result } = renderHook(() =>
+				useSwipeToMarkRead({ onMarkRead, onMarkUnread, isRead: false }),
+			)
+
+			act(() => result.current.handlePointerDown(pointerEvent(0)))
+			act(() => result.current.handlePointerMove(pointerEvent(100)))
+			act(() => result.current.handlePointerUp())
+
+			expect(result.current.swipePending).toBe(true)
+			expect(toast).toHaveBeenCalledWith('Marked as read', expect.any(Object))
+			expect(onMarkRead).not.toHaveBeenCalled()
+
+			act(() => vi.advanceTimersByTime(4500))
+
+			expect(onMarkRead).toHaveBeenCalledTimes(1)
+			expect(onMarkUnread).not.toHaveBeenCalled()
+		})
+
+		it('clamps left-drag to zero displacement (wrong-direction bounce)', () => {
+			const onMarkRead = vi.fn()
+			const onMarkUnread = vi.fn()
+			const { result } = renderHook(() =>
+				useSwipeToMarkRead({ onMarkRead, onMarkUnread, isRead: false }),
+			)
+
+			act(() => result.current.handlePointerDown(pointerEvent(0)))
+			act(() => result.current.handlePointerMove(pointerEvent(-150)))
+
+			expect(result.current.dragOffset).toBe(0)
+			expect(result.current.revealVariant).toBe('mark-read')
+
+			act(() => result.current.handlePointerUp())
+			act(() => vi.advanceTimersByTime(4500))
+
+			expect(onMarkRead).not.toHaveBeenCalled()
+			expect(onMarkUnread).not.toHaveBeenCalled()
+			expect(toast).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('read card (isRead = true)', () => {
+		it('fires onMarkUnread 4.5s after a left-swipe past threshold', () => {
+			const onMarkRead = vi.fn()
+			const onMarkUnread = vi.fn()
+			const { result } = renderHook(() =>
+				useSwipeToMarkRead({ onMarkRead, onMarkUnread, isRead: true }),
+			)
+
+			expect(result.current.revealVariant).toBe('mark-unread')
+
+			act(() => result.current.handlePointerDown(pointerEvent(0)))
+			act(() => result.current.handlePointerMove(pointerEvent(-100)))
+			act(() => result.current.handlePointerUp())
+
+			expect(result.current.swipePending).toBe(true)
+			expect(toast).toHaveBeenCalledWith('Marked as unread', expect.any(Object))
+
+			act(() => vi.advanceTimersByTime(4500))
+
+			expect(onMarkUnread).toHaveBeenCalledTimes(1)
+			expect(onMarkRead).not.toHaveBeenCalled()
+		})
+
+		it('fires onMarkUnread on velocity flick above threshold even when displacement < 80px', () => {
+			const onMarkUnread = vi.fn()
+			const { result } = renderHook(() =>
+				useSwipeToMarkRead({ onMarkRead: vi.fn(), onMarkUnread, isRead: true }),
+			)
+
+			// Fake a fast leftward flick: 40px in ~50ms → velocity ≈ 0.8 px/ms
+			// (well past the 0.42 px/ms VELOCITY_THRESHOLD).
+			act(() => result.current.handlePointerDown(pointerEvent(0)))
+			act(() => {
+				vi.advanceTimersByTime(50)
+				result.current.handlePointerMove(pointerEvent(-40))
+			})
+			act(() => result.current.handlePointerUp())
+			act(() => vi.advanceTimersByTime(4500))
+
+			expect(onMarkUnread).toHaveBeenCalledTimes(1)
+		})
+
+		it('clamps right-drag to zero displacement (wrong-direction bounce)', () => {
+			const onMarkRead = vi.fn()
+			const onMarkUnread = vi.fn()
+			const { result } = renderHook(() =>
+				useSwipeToMarkRead({ onMarkRead, onMarkUnread, isRead: true }),
+			)
+
+			act(() => result.current.handlePointerDown(pointerEvent(0)))
+			act(() => result.current.handlePointerMove(pointerEvent(150)))
+
+			expect(result.current.dragOffset).toBe(0)
+			expect(result.current.swipeBgOpacity).toBe(0)
+
+			act(() => result.current.handlePointerUp())
+			act(() => vi.advanceTimersByTime(4500))
+
+			expect(onMarkRead).not.toHaveBeenCalled()
+			expect(onMarkUnread).not.toHaveBeenCalled()
+			expect(toast).not.toHaveBeenCalled()
+		})
+
+		it('does not fire onMarkUnread when the swipe is slow and under the threshold', () => {
+			const onMarkUnread = vi.fn()
+			const { result } = renderHook(() =>
+				useSwipeToMarkRead({ onMarkRead: vi.fn(), onMarkUnread, isRead: true }),
+			)
+
+			// -30px stretched over 500ms → velocity ≈ 0.06 px/ms (well below the
+			// 0.42 px/ms floor) and displacement well under the 80px threshold.
+			// Nothing should commit; the card rubber-bands back.
+			act(() => result.current.handlePointerDown(pointerEvent(0)))
+			act(() => {
+				vi.advanceTimersByTime(500)
+				result.current.handlePointerMove(pointerEvent(-30))
+			})
+			act(() => result.current.handlePointerUp())
+			act(() => vi.advanceTimersByTime(4500))
+
+			expect(onMarkUnread).not.toHaveBeenCalled()
+			expect(result.current.dragOffset).toBe(0)
+		})
+	})
+
+	describe('Undo cancels the pending timer', () => {
+		it('cancels mark-read when Undo is invoked before the 4.5s window', () => {
+			const onMarkRead = vi.fn()
+			const { result } = renderHook(() => useSwipeToMarkRead({ onMarkRead, isRead: false }))
+
+			act(() => result.current.handlePointerDown(pointerEvent(0)))
+			act(() => result.current.handlePointerMove(pointerEvent(100)))
+			act(() => result.current.handlePointerUp())
+
+			const toastCall = vi.mocked(toast).mock.calls.at(-1)
+			expect(toastCall?.[0]).toBe('Marked as read')
+			const undo = (toastCall?.[1] as { action?: { onClick: () => void } })?.action?.onClick
+			expect(typeof undo).toBe('function')
+
+			act(() => undo?.())
+			act(() => vi.advanceTimersByTime(4500))
+
+			expect(onMarkRead).not.toHaveBeenCalled()
+		})
+
+		it('cancels mark-unread when Undo is invoked before the 4.5s window', () => {
+			const onMarkUnread = vi.fn()
+			const { result } = renderHook(() =>
+				useSwipeToMarkRead({ onMarkRead: vi.fn(), onMarkUnread, isRead: true }),
+			)
+
+			act(() => result.current.handlePointerDown(pointerEvent(0)))
+			act(() => result.current.handlePointerMove(pointerEvent(-100)))
+			act(() => result.current.handlePointerUp())
+
+			const undo = (
+				vi.mocked(toast).mock.calls.at(-1)?.[1] as {
+					action?: { onClick: () => void }
+				}
+			)?.action?.onClick
+			act(() => undo?.())
+			act(() => vi.advanceTimersByTime(4500))
+
+			expect(onMarkUnread).not.toHaveBeenCalled()
+		})
+	})
+
+	it('legacy positional-callback signature still fires onMarkRead on right-swipe', () => {
+		// Callsites that only need mark-read (no reverse gesture) may still pass
+		// a bare callback — proves nothing regresses when the mark-unread path
+		// is not wired up.
+		const onMarkRead = vi.fn()
+		const { result } = renderHook(() => useSwipeToMarkRead(onMarkRead))
+
+		act(() => result.current.handlePointerDown(pointerEvent(0)))
+		act(() => result.current.handlePointerMove(pointerEvent(SWIPE_THRESHOLD + 10)))
+		act(() => result.current.handlePointerUp())
+		act(() => vi.advanceTimersByTime(4500))
+
+		expect(onMarkRead).toHaveBeenCalledTimes(1)
 	})
 })

@@ -5,6 +5,7 @@ import {
 	LOOP_ATTENTION_STATUSES,
 	TERMINAL_BET_STATUSES,
 	markReadBodySchema,
+	markUnreadBodySchema,
 	subscribeBodySchema,
 	subscribersQuerySchema,
 	unreadQuerySchema,
@@ -18,6 +19,7 @@ import {
 	autoSubscribe,
 	getSubscribers,
 	markRead as markReadService,
+	markUnread as markUnreadService,
 	unsubscribe as unsubscribeService,
 } from '../services/subscriptions'
 
@@ -254,6 +256,53 @@ app.openapi(markReadRoute, async (c) => {
 		entityType: body.entity_type,
 		entityId: body.entity_id,
 		lastReadEventId: body.last_event_id,
+	})
+
+	return c.json({ updated: true as const }, 200)
+})
+
+// POST /api/subscriptions/unread — Slack-style toggle back to unread.
+// Deletes the actor's read_state row so every event on the entity reappears
+// in their unread feed on the next read. Mirrors the shape of `POST /read`
+// (same entity_type + entity_id validation, same workspace-membership
+// guard) but carries no last_event_id.
+const markUnreadRoute = createRoute({
+	method: 'post',
+	path: '/unread',
+	tags: ['Subscriptions'],
+	summary: 'Mark an entity as unread (clear the actor’s read high-water-mark)',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: markUnreadBodySchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Read state cleared',
+			content: { 'application/json': { schema: z.object({ updated: z.literal(true) }) } },
+		},
+		404: {
+			description: 'Entity not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(markUnreadRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const body = c.req.valid('json')
+
+	// Same cross-workspace guard as POST /read — refuse to touch a row
+	// pointing at an entity_id the caller can't actually see in this
+	// workspace, even though the delete is scoped to the actor.
+	const exists = await verifyEntityInWorkspace(db, workspaceId, body.entity_type, body.entity_id)
+	if (!exists) return c.json(createApiError('NOT_FOUND', 'Entity not found'), 404)
+
+	await markUnreadService(db, {
+		actorId,
+		entityType: body.entity_type,
+		entityId: body.entity_id,
 	})
 
 	return c.json({ updated: true as const }, 200)

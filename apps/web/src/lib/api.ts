@@ -582,6 +582,12 @@ export const api = {
 				body: { entity_type: entityType, entity_id: entityId, last_event_id: lastEventId },
 				workspaceId,
 			}),
+		markUnread: (workspaceId: string, entityType: string, entityId: string) =>
+			request<{ updated: true }>('/subscriptions/unread', {
+				method: 'POST',
+				body: { entity_type: entityType, entity_id: entityId },
+				workspaceId,
+			}),
 		unread: (workspaceId: string, entityType?: string, includeRecentlyRead?: boolean) => {
 			const params = new URLSearchParams()
 			if (entityType) params.set('entity_type', entityType)

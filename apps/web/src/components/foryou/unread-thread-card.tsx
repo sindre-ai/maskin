@@ -5,13 +5,13 @@ import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
-import { useMarkRead } from '@/hooks/use-subscriptions'
+import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
 import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
 import type { EventResponse, UnreadItem } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
-import { CheckIcon, XIcon } from 'lucide-react'
+import { CheckIcon, MailIcon, XIcon } from 'lucide-react'
 import {
 	type MouseEvent as ReactMouseEvent,
 	useCallback,
@@ -174,6 +174,11 @@ export function UnreadThreadCard({
 		markRead.mutate({ entityType: item.entity_type, entityId: objectId, lastEventId: target })
 	}, [markRead, item.entity_type, objectId, item.latest_event_id, latestEventId])
 
+	const markUnread = useMarkUnread(workspaceId)
+	const handleMarkUnread = useCallback(() => {
+		markUnread.mutate({ entityType: item.entity_type, entityId: objectId })
+	}, [markUnread, item.entity_type, objectId])
+
 	// Reply target for both quick-reply chips (below) and the PersistentReplyBar
 	// (via onReplyTargetChange): nest under the first unread thread, or the
 	// latest thread if nothing's unread — same target the old per-card
@@ -204,18 +209,22 @@ export function UnreadThreadCard({
 		[onActivate],
 	)
 
+	const isRead = item.unread_count === 0
 	const {
 		dragOffset,
 		isDragging,
 		swipePending,
 		swipeBgOpacity,
+		revealVariant,
 		handlePointerDown,
 		handlePointerMove,
 		handlePointerUp,
 		handlePointerCancel,
-	} = useSwipeToMarkRead(handleMarkRead, {
-		entity_type: item.entity_type,
-		entity_id: objectId,
+	} = useSwipeToMarkRead({
+		onMarkRead: handleMarkRead,
+		onMarkUnread: handleMarkUnread,
+		isRead,
+		analytics: { entity_type: item.entity_type, entity_id: objectId },
 	})
 
 	const title = item.object?.title ?? 'Untitled'
@@ -226,17 +235,32 @@ export function UnreadThreadCard({
 	const isMention = item.mentioning_unread_count > 0
 
 	return (
-		// Outer wrapper holds the green swipe-reveal background; the card translates over it.
+		// Outer wrapper holds the swipe-reveal background; the card translates over it.
+		// One overlay per direction, keyed off revealVariant so a wrong-direction
+		// swipe (which clamps dragOffset to 0 in the hook) never leaks the wrong
+		// colour behind the card.
 		<div ref={cardRef} data-testid="unread-thread-card" className="relative overflow-hidden">
-			{/* Green background revealed on swipe-right */}
-			<div
-				aria-hidden
-				className="pointer-events-none absolute inset-0 flex items-center gap-2 bg-status-active-bg px-5 text-xs font-medium text-status-active-text"
-				style={{ opacity: isDragging ? swipeBgOpacity : 0 }}
-			>
-				<CheckIcon size={14} />
-				Mark read
-			</div>
+			{revealVariant === 'mark-read' ? (
+				<div
+					aria-hidden
+					data-testid="mark-read-reveal"
+					className="pointer-events-none absolute inset-0 flex items-center gap-2 bg-status-active-bg px-5 text-xs font-medium text-status-active-text"
+					style={{ opacity: isDragging ? swipeBgOpacity : 0 }}
+				>
+					<CheckIcon size={14} />
+					Mark read
+				</div>
+			) : (
+				<div
+					aria-hidden
+					data-testid="mark-unread-reveal"
+					className="pointer-events-none absolute inset-0 flex items-center justify-end gap-2 bg-status-in_progress-bg px-5 text-xs font-medium text-status-in_progress-text"
+					style={{ opacity: isDragging ? swipeBgOpacity : 0 }}
+				>
+					<MailIcon size={14} />
+					Mark unread
+				</div>
+			)}
 
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: card click supplements inner buttons/links, which keyboard users tab to and activate directly */}
 			<div
@@ -252,6 +276,10 @@ export function UnreadThreadCard({
 					isUnread && 'border-l-2 pl-[10px]',
 					isUnread && !isMention && 'border-l-primary',
 					isUnread && isMention && 'border-l-warning',
+					// Muted read-card style so a recently-read card in the mixed feed reads
+					// as "already seen" without disappearing. Opacity + a hairline left rail
+					// mirror the unread accent's silhouette so the feed rhythm stays even.
+					isRead && 'opacity-[0.78] border-l-2 border-l-border pl-[10px]',
 					isActive && 'bg-secondary/40',
 				)}
 				style={{ transform: `translateX(${dragOffset}px)` }}

@@ -69,6 +69,67 @@ export function useUnsubscribe(workspaceId: string) {
 }
 
 /**
+ * Slack-style toggle back to unread — deletes the actor's read_state row on
+ * the server. Optimistically sets `unread_count: 1` on the cached detail/graph
+ * so the accent rail lights up immediately; the next unread-feed refetch
+ * refreshes the true count. Mirrors `useMarkRead` so both callsites can share
+ * the same optimistic-rollback pattern.
+ */
+export function useMarkUnread(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ entityType, entityId }: { entityType: string; entityId: string }) =>
+			api.subscriptions.markUnread(workspaceId, entityType, entityId),
+		onMutate: async ({ entityType, entityId }) => {
+			if (entityType !== 'object') return
+			await queryClient.cancelQueries({ queryKey: queryKeys.objects.detail(entityId) })
+			await queryClient.cancelQueries({ queryKey: queryKeys.objects.graph(entityId) })
+
+			const previousDetail = queryClient.getQueryData<ObjectResponse>(
+				queryKeys.objects.detail(entityId),
+			)
+			if (previousDetail) {
+				queryClient.setQueryData(queryKeys.objects.detail(entityId), {
+					...previousDetail,
+					unread_count: Math.max(previousDetail.unread_count ?? 0, 1),
+				})
+			}
+			const previousGraph = queryClient.getQueryData<ObjectGraphResponse>(
+				queryKeys.objects.graph(entityId),
+			)
+			if (previousGraph) {
+				queryClient.setQueryData(queryKeys.objects.graph(entityId), {
+					...previousGraph,
+					object: {
+						...previousGraph.object,
+						unread_count: Math.max(previousGraph.object.unread_count ?? 0, 1),
+					},
+				})
+			}
+			return { previousDetail, previousGraph }
+		},
+		onError: (_err, { entityType, entityId }, context) => {
+			if (entityType !== 'object' || !context) return
+			if (context.previousDetail) {
+				queryClient.setQueryData(queryKeys.objects.detail(entityId), context.previousDetail)
+			}
+			if (context.previousGraph) {
+				queryClient.setQueryData(queryKeys.objects.graph(entityId), context.previousGraph)
+			}
+		},
+		onSettled: (_data, _err, { entityType, entityId }) => {
+			if (entityType === 'object') {
+				queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(entityId) })
+				queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(entityId) })
+			}
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.subscriptions.unread(workspaceId),
+			})
+		},
+	})
+}
+
+/**
  * Mark an entity as read up to `lastEventId`. Optimistically zeroes the cached
  * unread_count on the object detail/graph so the badge disappears immediately;
  * server is the source of truth on the next refetch.
