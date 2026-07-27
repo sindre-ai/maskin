@@ -213,7 +213,10 @@ export function UnreadThreadCard({
 		handlePointerMove,
 		handlePointerUp,
 		handlePointerCancel,
-	} = useSwipeToMarkRead(handleMarkRead)
+	} = useSwipeToMarkRead(handleMarkRead, {
+		entity_type: item.entity_type,
+		entity_id: objectId,
+	})
 
 	const title = item.object?.title ?? 'Untitled'
 	const objectType = item.object?.type

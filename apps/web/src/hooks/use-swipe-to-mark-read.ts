@@ -1,3 +1,4 @@
+import { trackForyouCardMarkedRead } from '@/lib/analytics'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { toast } from 'sonner'
@@ -16,7 +17,20 @@ interface UseSwipeToMarkReadResult {
 	handlePointerCancel: () => void
 }
 
-export function useSwipeToMarkRead(onMarkRead: () => void): UseSwipeToMarkReadResult {
+// Optional analytics context for the mark-read event. When provided, a
+// `foryou_card_marked_read` PostHog event fires inside the post-Undo timer
+// callback — i.e. only on a completed swipe. Tapping Undo cancels the timer, so
+// no event fires. Callers that don't pass this (unit tests, non-For-You surfaces
+// added later) get the pre-existing behaviour with no analytics side effect.
+interface SwipeAnalytics {
+	entity_type: string
+	entity_id: string
+}
+
+export function useSwipeToMarkRead(
+	onMarkRead: () => void,
+	analytics?: SwipeAnalytics,
+): UseSwipeToMarkReadResult {
 	const swipeRef = useRef({
 		startX: 0,
 		startY: 0,
@@ -43,6 +57,12 @@ export function useSwipeToMarkRead(onMarkRead: () => void): UseSwipeToMarkReadRe
 		setSwipePending(true)
 		pendingReadTimer.current = setTimeout(() => {
 			onMarkRead()
+			if (analytics) {
+				trackForyouCardMarkedRead({
+					entity_type: analytics.entity_type,
+					entity_id: analytics.entity_id,
+				})
+			}
 			setSwipePending(false)
 			pendingReadTimer.current = null
 		}, 4500)
@@ -59,7 +79,7 @@ export function useSwipeToMarkRead(onMarkRead: () => void): UseSwipeToMarkReadRe
 				},
 			},
 		})
-	}, [onMarkRead])
+	}, [onMarkRead, analytics])
 
 	const handlePointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
 		// Presses starting on a button/link (quick-reply chips, Reply, Mark as
