@@ -10,6 +10,7 @@ import {
 	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
+	trackForyouViewModeSelected,
 	trackLoopGraduated,
 	trackLoopViewed,
 	trackNorthStarPromptImpression,
@@ -382,6 +383,16 @@ describe('v1 taxonomy helpers', () => {
 		expect(capture).toHaveBeenCalledWith('sidebar.agent_activity.expanded', {
 			workspaceId: 'ws-42',
 		})
+	})
+
+	it('foryou_view_mode_selected carries the picked mode without an explicit workspace_id (super property)', () => {
+		const capture = captureSpy()
+
+		trackForyouViewModeSelected({ mode: 'list' })
+		trackForyouViewModeSelected({ mode: 'card' })
+
+		expect(capture).toHaveBeenNthCalledWith(1, 'foryou_view_mode_selected', { mode: 'list' })
+		expect(capture).toHaveBeenNthCalledWith(2, 'foryou_view_mode_selected', { mode: 'card' })
 	})
 
 	it('north_star_prompt_impression fires with workspace_id via posthog.capture, bypassing the batch queue', () => {

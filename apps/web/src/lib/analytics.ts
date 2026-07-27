@@ -211,6 +211,17 @@ export function trackForyouSparseComposerSubmit(p: { items_count: number }): voi
 	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
 }
 
+// Ship-metric event for the For You Card/List toggle. The parent bet reads
+// `count(sessions where mode='list') / total For You sessions, 7d rolling`
+// off this event, so a missing emit turns the whole bet unmeasurable.
+// `workspace_id` rides via PostHog super-properties registered on workspace
+// mount — do not pass it explicitly. Default batching matches the sibling
+// sparse-composer helpers; the toggle click re-renders the same page rather
+// than navigating away, so events don't get orphaned in the flush queue.
+export function trackForyouViewModeSelected(p: { mode: 'card' | 'list' }): void {
+	trackEvent('foryou_view_mode_selected', { mode: p.mode })
+}
+
 // iPadOS 13+ reports `MacIntel` from `navigator.userAgent` / `navigator.platform`
 // and only the `maxTouchPoints > 1` signal distinguishes it from a real Mac, so
 // the touch-point check is load-bearing — not paranoia. Returning 'web' for
