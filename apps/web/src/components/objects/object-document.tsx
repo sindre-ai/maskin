@@ -7,8 +7,8 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
-import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
+import { useIsMobile, useIsTouchViewport } from '@/hooks/use-mobile'
 import {
 	useDeleteObject,
 	useKnowledgeReferences,
@@ -18,10 +18,14 @@ import {
 } from '@/hooks/use-objects'
 import { useDeleteRelationship } from '@/hooks/use-relationships'
 import { useScrollToTopEmitter } from '@/hooks/use-scroll-to-top-emitter'
+import {
+	useUpdateUserDisplaySettings,
+	useUserDisplaySettings,
+} from '@/hooks/use-user-display-settings'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { deriveSidebarViewport, trackEvent, trackSidebarToggle } from '@/lib/analytics'
 import type {
-	ActorResponse,
+	DisplaySettingsBody,
 	EventResponse,
 	MemberResponse,
 	ObjectResponse,
@@ -29,24 +33,23 @@ import type {
 } from '@/lib/api'
 import { classifyBetStatus } from '@/lib/bet-status'
 import { useWorkspace } from '@/lib/workspace-context'
+import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { Check, PanelRight } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionBanner } from '../activity/action-banner'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
-import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentWorkingBadge } from '../shared/agent-working-badge'
 import { IndicatorBadgeChip } from '../shared/indicator-badge'
 import { MarkdownContent } from '../shared/markdown-content'
-import { RelativeTime } from '../shared/relative-time'
 import { SourceBadge } from '../shared/source-badge'
 import { StatusBadge } from '../shared/status-badge'
-import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { LoopCard } from './loop-card'
-import { PropertiesDrawer } from './properties-drawer'
+import { ObjectPropertiesSidebar } from './object-properties-sidebar'
+import { PropertiesSidebarProvider } from './properties-sidebar-provider'
 import { OwnerSelect, StatusSelect } from './property-selects'
 import { VerifiedChip, isKnowledgeAuthorWrite } from './verified-chip'
 
@@ -54,7 +57,6 @@ interface ObjectDocumentViewProps {
 	object: ObjectResponse
 	workspaceId: string
 	statuses: string[]
-	creator?: ActorResponse
 	members?: MemberResponse[]
 	allRelationships?: RelationshipResponse[]
 	connectedObjects?: ObjectResponse[]
@@ -111,20 +113,10 @@ function KnowledgeReferencesChip({
 	)
 }
 
-function shouldShowUpdatedChip(createdAt: string | null, updatedAt: string | null): boolean {
-	if (!updatedAt) return false
-	if (!createdAt) return true
-	const created = Date.parse(createdAt)
-	const updated = Date.parse(updatedAt)
-	if (!Number.isFinite(created) || !Number.isFinite(updated)) return false
-	return updated - created >= 60_000
-}
-
 export function ObjectDocumentView({
 	object,
 	workspaceId,
 	statuses,
-	creator,
 	members,
 	allRelationships,
 	connectedObjects,
@@ -225,12 +217,11 @@ export function ObjectDocumentView({
 
 			{object.type === 'loop' && <LoopCard object={object} workspaceId={workspaceId} />}
 
-			{/* Metadata badges row — editable cluster stays inline; provenance
-			 * (creator + createdAt) drops to its own row below sm so 375px never
-			 * spills into a jagged partial wrap. Also the anchor for the sticky-nav
-			 * projection: when this row scrolls out of view, the header sprouts a
-			 * title + read-only status chip; tapping the chip smooth-scrolls back
-			 * here and focuses the StatusSelect. */}
+			{/* Metadata badges row — editable cluster only. Subscribe + creator +
+			 * timestamps moved to the right-side properties sidebar. Still the
+			 * anchor for the sticky-nav projection: when this row scrolls out of
+			 * view, the header sprouts a title + read-only status chip; tapping
+			 * the chip smooth-scrolls back here and focuses the StatusSelect. */}
 			<div ref={heroIdentityRef} className="flex flex-wrap items-center gap-2 mb-6">
 				<TypeBadge type={object.type} />
 				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
@@ -262,29 +253,9 @@ export function ObjectDocumentView({
 						onChange={onUpdateDriver}
 					/>
 				)}
-				<SubscribeToggle
-					workspaceId={workspaceId}
-					entityType="object"
-					entityId={object.id}
-					isSubscribed={object.is_subscribed}
-				/>
-				<div className="flex basis-full items-center gap-2 sm:basis-auto">
-					{creator && (
-						<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-							<ActorAvatar name={creator.name} type={creator.type} size="sm" />
-							{creator.name}
-						</span>
-					)}
-					<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
-					{shouldShowUpdatedChip(object.createdAt, object.updatedAt) && (
-						<span className="text-[11px] text-muted-foreground">
-							updated <RelativeTime date={object.updatedAt} />
-						</span>
-					)}
-					{object.type === 'knowledge' && (
-						<KnowledgeReferencesChip workspaceId={workspaceId} objectId={object.id} />
-					)}
-				</div>
+				{object.type === 'knowledge' && (
+					<KnowledgeReferencesChip workspaceId={workspaceId} objectId={object.id} />
+				)}
 			</div>
 
 			{/* Content — long-form prose caps at 75ch on viewports ≥1280px (AC-U1). */}
@@ -326,7 +297,6 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const verifyObject = useVerifyObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const deleteRelationship = useDeleteRelationship(workspaceId, object.id)
-	const { data: creator } = useActor(object.createdBy)
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
 	const relationships = useMemo(() => {
@@ -506,7 +476,48 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	}, [handleDelete])
 
 	const [menuOpen, setMenuOpen] = useState(false)
-	const [drawerOpen, setDrawerOpen] = useState(false)
+
+	// Right-side properties sidebar: transient Sheet on mobile, persisted
+	// expanded/collapsed on tablet+. State is read from and written to
+	// `user_display_settings` under the `__chrome__` sentinel row.
+	const isMobile = useIsMobile()
+	const isTouch = useIsTouchViewport() // true at ≤1024 CSS px
+	const settingsQuery = useUserDisplaySettings(workspaceId, CHROME_KEY)
+	const upsertSettings = useUpdateUserDisplaySettings(workspaceId)
+	const persistedSettings = settingsQuery.data?.settings
+	// First-paint default per breakpoint: desktop expanded (≥1024 → not touch),
+	// tablet collapsed to rail (768–1023 → touch but not mobile), mobile Sheet
+	// starts closed. Reconciles to the persisted `objectDetailSidebarCollapsed`
+	// bit once the settings query has fetched.
+	const breakpointDefaultOpen = !isMobile && !isTouch
+	const sidebarOpen = settingsQuery.isFetched
+		? typeof persistedSettings?.objectDetailSidebarCollapsed === 'boolean'
+			? !persistedSettings.objectDetailSidebarCollapsed
+			: breakpointDefaultOpen
+		: breakpointDefaultOpen
+	const [sidebarOpenMobile, setSidebarOpenMobile] = useState(false)
+
+	const setSidebarOpen = useCallback(
+		(open: boolean) => {
+			const nextSettings: DisplaySettingsBody = {
+				...(persistedSettings ?? {}),
+				objectDetailSidebarCollapsed: !open,
+			}
+			upsertSettings.mutate({ objectType: CHROME_KEY, settings: nextSettings })
+		},
+		[persistedSettings, upsertSettings],
+	)
+
+	// One toggle callback that the PageHeader button and any programmatic
+	// caller can share. Mobile flips the transient Sheet (`openMobile`);
+	// tablet + desktop write the persisted bit.
+	const handleToggleSidebar = useCallback(() => {
+		if (isMobile) {
+			setSidebarOpenMobile((v) => !v)
+		} else {
+			setSidebarOpen(!sidebarOpen)
+		}
+	}, [isMobile, sidebarOpen, setSidebarOpen])
 
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
@@ -601,15 +612,20 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 			/>
 		) : null
 
+	// The header button lives outside the `PropertiesSidebarProvider` (the
+	// PageHeader portals into a slot up in the WorkspaceLayout), so it can't
+	// call `useSidebar()` — it drives the shared `handleToggleSidebar`
+	// callback directly, which handles the mobile-vs-persisted split.
+	const sidebarExpanded = isMobile ? sidebarOpenMobile : sidebarOpen
 	const headerActions = (
 		<>
 			<Button
 				variant="ghost"
 				size="icon"
 				className="h-7 w-7"
-				onClick={() => setDrawerOpen((v) => !v)}
+				onClick={handleToggleSidebar}
 				aria-label="Properties"
-				aria-expanded={drawerOpen}
+				aria-expanded={sidebarExpanded}
 			>
 				<PanelRight size={15} />
 			</Button>
@@ -629,6 +645,14 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		</>
 	)
 
+	// Push the doc body aside so the fixed right sidebar doesn't overlay it.
+	// The primitive's mobile Sheet branch overlays anyway (no margin needed).
+	const docMarginRight = isMobile
+		? undefined
+		: sidebarOpen
+			? 'var(--object-sidebar-width, 18rem)'
+			: 'var(--object-sidebar-width-icon, 2.75rem)'
+
 	return (
 		<>
 			<PageHeader actions={headerActions} stickyIdentity={stickyIdentity} />
@@ -641,35 +665,51 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				isPending={deleteObject.isPending}
 			/>
 			<ActionBanner events={events} workspaceId={workspaceId} />
-			<ObjectDocumentView
-				object={object}
-				workspaceId={workspaceId}
-				statuses={statuses}
-				creator={creator}
-				members={members}
-				allRelationships={allRelationships}
-				connectedObjects={graph?.connected_objects}
-				events={events}
-				onUpdateTitle={handleUpdateTitle}
-				onUpdateContent={handleUpdateContent}
-				onUpdateStatus={handleUpdateStatus}
-				onArchive={handleArchive}
-				onUpdateDriver={handleUpdateDriver}
-				onDeleteRelationship={handleDeleteRelationship}
-				onDelete={handleDelete}
-				onToggleVerified={handleToggleVerified}
-				isVerifying={verifyObject.isPending}
-				isDeleting={deleteObject.isPending}
-				betStatus={betStatus}
-				heroIdentityRef={heroIdentityRef}
-			/>
-			<PropertiesDrawer
-				open={drawerOpen}
-				onOpenChange={setDrawerOpen}
-				object={object}
-				workspaceId={workspaceId}
-				relationships={relationships}
-			/>
+			<div
+				className="transition-[margin] duration-200 ease-linear"
+				style={{
+					marginRight: docMarginRight,
+					// Expose the two design constants as CSS vars so the margin
+					// tracks the same numbers the sidebar renders at (18 rem
+					// expanded, 2.75 rem rail).
+					['--object-sidebar-width' as string]: '18rem',
+					['--object-sidebar-width-icon' as string]: '2.75rem',
+				}}
+			>
+				<ObjectDocumentView
+					object={object}
+					workspaceId={workspaceId}
+					statuses={statuses}
+					members={members}
+					allRelationships={allRelationships}
+					connectedObjects={graph?.connected_objects}
+					events={events}
+					onUpdateTitle={handleUpdateTitle}
+					onUpdateContent={handleUpdateContent}
+					onUpdateStatus={handleUpdateStatus}
+					onArchive={handleArchive}
+					onUpdateDriver={handleUpdateDriver}
+					onDeleteRelationship={handleDeleteRelationship}
+					onDelete={handleDelete}
+					onToggleVerified={handleToggleVerified}
+					isVerifying={verifyObject.isPending}
+					isDeleting={deleteObject.isPending}
+					betStatus={betStatus}
+					heroIdentityRef={heroIdentityRef}
+				/>
+			</div>
+			<PropertiesSidebarProvider
+				open={sidebarOpen}
+				onOpenChange={setSidebarOpen}
+				openMobile={sidebarOpenMobile}
+				onOpenMobileChange={setSidebarOpenMobile}
+			>
+				<ObjectPropertiesSidebar
+					object={object}
+					workspaceId={workspaceId}
+					relationships={relationships}
+				/>
+			</PropertiesSidebarProvider>
 		</>
 	)
 }

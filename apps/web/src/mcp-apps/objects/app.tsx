@@ -1,10 +1,13 @@
 import { ObjectDocumentView } from '@/components/objects/object-document'
-import { PropertiesDrawer } from '@/components/objects/properties-drawer'
+import { PropertiesPanel } from '@/components/objects/properties-panel'
 import { EmptyState } from '@/components/shared/empty-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { useObjectGraph } from '@/hooks/use-objects'
+import { cn } from '@/lib/cn'
 import { queryClient } from '@/lib/query'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { PanelRight } from 'lucide-react'
@@ -181,7 +184,7 @@ export function ObjectDocument({
 				onDelete={handlers.onDelete}
 				contentLoaded={'content' in obj}
 			/>
-			<PropertiesDrawer
+			<PropertiesSheet
 				open={drawerOpen}
 				onOpenChange={setDrawerOpen}
 				object={obj}
@@ -189,6 +192,56 @@ export function ObjectDocument({
 				relationships={relationships}
 			/>
 		</div>
+	)
+}
+
+/**
+ * Embedded MCP-Apps surface keeps the current Sheet-based properties panel:
+ * the panel is a compact widget inside the Claude UI, not a full page, so
+ * the persistent right sidebar used on the main web app doesn't fit here.
+ */
+function PropertiesSheet({
+	open,
+	onOpenChange,
+	object,
+	workspaceId,
+	relationships,
+}: {
+	open: boolean
+	onOpenChange: (open: boolean) => void
+	object: ObjectResponse
+	workspaceId: string
+	relationships?: {
+		asSource: RelationshipResponse[]
+		asTarget: RelationshipResponse[]
+	}
+}) {
+	const isMobile = useIsMobile()
+	const side = isMobile ? 'bottom' : 'right'
+	return (
+		<Sheet open={open} onOpenChange={onOpenChange}>
+			<SheetContent
+				side={side}
+				className={cn(
+					'overflow-y-auto',
+					isMobile ? 'max-h-[85dvh] rounded-t-lg rounded-b-none p-0' : 'w-full sm:max-w-sm p-0',
+				)}
+			>
+				<SheetTitle className="px-6 pt-6 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+					Properties
+				</SheetTitle>
+				<SheetDescription className="sr-only">
+					Object properties and attached files
+				</SheetDescription>
+				<div className="px-6 pt-4 pb-6">
+					<PropertiesPanel
+						object={object}
+						workspaceId={workspaceId}
+						relationships={relationships}
+					/>
+				</div>
+			</SheetContent>
+		</Sheet>
 	)
 }
 
