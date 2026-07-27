@@ -1,5 +1,6 @@
 import {
 	deriveEntryAgentRole,
+	deriveSidebarViewport,
 	trackAgentCreated,
 	trackAgentSessionCompleted,
 	trackAgentSessionStarted,
@@ -23,6 +24,7 @@ import {
 	trackRelationshipCreated,
 	trackScrollToTop,
 	trackSidebarAgentActivityExpanded,
+	trackSidebarToggle,
 	trackSidebarWorkspaceSwitcherOpened,
 	trackSpecialistSummonedManually,
 	trackTriggerCreated,
@@ -384,6 +386,33 @@ describe('v1 taxonomy helpers', () => {
 		expect(capture).toHaveBeenCalledWith('sidebar.agent_activity.expanded', {
 			workspaceId: 'ws-42',
 		})
+	})
+
+	it('sidebar_toggle carries state, viewport, and object_id for the exit-gate query', () => {
+		const capture = captureSpy()
+
+		trackSidebarToggle({ state: 'open', viewport: 'desktop', object_id: 'obj-1' })
+		trackSidebarToggle({ state: 'closed', viewport: 'mobile', object_id: 'obj-1' })
+
+		expect(capture).toHaveBeenNthCalledWith(1, 'sidebar_toggle', {
+			state: 'open',
+			viewport: 'desktop',
+			object_id: 'obj-1',
+		})
+		expect(capture).toHaveBeenNthCalledWith(2, 'sidebar_toggle', {
+			state: 'closed',
+			viewport: 'mobile',
+			object_id: 'obj-1',
+		})
+	})
+
+	it('deriveSidebarViewport maps widths onto the bet breakpoints', () => {
+		expect(deriveSidebarViewport(320)).toBe('mobile')
+		expect(deriveSidebarViewport(767)).toBe('mobile')
+		expect(deriveSidebarViewport(768)).toBe('tablet')
+		expect(deriveSidebarViewport(1023)).toBe('tablet')
+		expect(deriveSidebarViewport(1024)).toBe('desktop')
+		expect(deriveSidebarViewport(1920)).toBe('desktop')
 	})
 
 	it('north_star_prompt_impression fires with workspace_id via posthog.capture, bypassing the batch queue', () => {

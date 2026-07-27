@@ -19,7 +19,7 @@ import {
 import { useDeleteRelationship } from '@/hooks/use-relationships'
 import { useScrollToTopEmitter } from '@/hooks/use-scroll-to-top-emitter'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
-import { trackEvent } from '@/lib/analytics'
+import { deriveSidebarViewport, trackEvent, trackSidebarToggle } from '@/lib/analytics'
 import type {
 	ActorResponse,
 	EventResponse,
@@ -522,6 +522,45 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
 	}, [])
+
+	// ⌘/Ctrl+I toggles the right sidebar. The bet's chosen shortcut; sits next
+	// to the existing ⌘/Ctrl+. shortcut above so both live at the same layer.
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			if (!((e.metaKey || e.ctrlKey) && (e.key === 'i' || e.key === 'I'))) return
+			const target = e.target as HTMLElement | null
+			if (target) {
+				const tag = target.tagName
+				if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
+			}
+			e.preventDefault()
+			setDrawerOpen((v) => !v)
+		}
+		document.addEventListener('keydown', handler)
+		return () => document.removeEventListener('keydown', handler)
+	}, [])
+
+	// Emit `sidebar_toggle` on every drawerOpen transition — covers the
+	// PanelRight button, the ⌘/Ctrl+I shortcut, ESC/overlay close on the Sheet,
+	// and any future programmatic toggle without needing per-call-site
+	// instrumentation. The mount pass is skipped so the default closed state
+	// isn't counted as a toggle. `object_id` is read via a ref so mid-flight
+	// route changes don't re-fire the effect just because the id string changed.
+	const objectIdRef = useRef(object.id)
+	objectIdRef.current = object.id
+	const sidebarMountedRef = useRef(false)
+	useEffect(() => {
+		if (!sidebarMountedRef.current) {
+			sidebarMountedRef.current = true
+			return
+		}
+		const width = typeof window !== 'undefined' ? window.innerWidth : 1024
+		trackSidebarToggle({
+			state: drawerOpen ? 'open' : 'closed',
+			viewport: deriveSidebarViewport(width),
+			object_id: objectIdRef.current,
+		})
+	}, [drawerOpen])
 
 	// Bet-scoped sticky nav — when the hero identity row exits the viewport, the
 	// header sprouts title + read-only status chip. `threshold: 0` fires as soon
