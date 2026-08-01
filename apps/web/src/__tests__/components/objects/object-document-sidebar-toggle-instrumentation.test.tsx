@@ -1,10 +1,54 @@
 import { ObjectDocument } from '@/components/objects/object-document'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import * as React from 'react'
 import { buildObjectResponse, buildWorkspaceWithRole } from '../../factories'
 import { TestWrapper } from '../../setup'
 
 const trackSidebarToggleMock = vi.fn()
+
+// Stateful mock for the persisted sidebar-collapsed bit. Seeded to `true`
+// (collapsed / closed) so every viewport's initial state in these tests is
+// deterministically CLOSED — regardless of the breakpoint-default logic in
+// `ObjectDocument`. `useUpdateUserDisplaySettings.mutate()` writes to this
+// store and bumps a version, which re-renders the query consumers.
+const settingsStore: {
+	settings: { objectDetailSidebarCollapsed: boolean }
+	subscribers: Set<() => void>
+} = {
+	settings: { objectDetailSidebarCollapsed: true },
+	subscribers: new Set(),
+}
+function useSettingsStore() {
+	const [, force] = React.useReducer((x: number) => x + 1, 0)
+	React.useEffect(() => {
+		settingsStore.subscribers.add(force)
+		return () => {
+			settingsStore.subscribers.delete(force)
+		}
+	}, [])
+	return settingsStore.settings
+}
+vi.mock('@/hooks/use-user-display-settings', () => ({
+	useUserDisplaySettings: () => {
+		const settings = useSettingsStore()
+		return {
+			data: {
+				object_type: '__chrome__',
+				name: 'default',
+				settings,
+				updated_at: '2026-01-01T00:00:00Z',
+			},
+			isFetched: true,
+		}
+	},
+	useUpdateUserDisplaySettings: () => ({
+		mutate: ({ settings }: { settings: { objectDetailSidebarCollapsed: boolean } }) => {
+			settingsStore.settings = settings
+			for (const sub of settingsStore.subscribers) sub()
+		},
+	}),
+}))
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -88,6 +132,8 @@ function setInnerWidth(px: number) {
 beforeEach(() => {
 	trackSidebarToggleMock.mockClear()
 	setInnerWidth(1280)
+	settingsStore.settings = { objectDetailSidebarCollapsed: true }
+	settingsStore.subscribers.clear()
 })
 
 describe('ObjectDocument sidebar_toggle instrumentation', () => {
@@ -107,7 +153,7 @@ describe('ObjectDocument sidebar_toggle instrumentation', () => {
 		const object = buildObjectResponse({ id: 'obj-button' })
 		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: /properties/i }))
+		await user.click(screen.getByRole('button', { name: 'Properties' }))
 
 		expect(trackSidebarToggleMock).toHaveBeenCalledTimes(1)
 		expect(trackSidebarToggleMock).toHaveBeenCalledWith({
@@ -117,21 +163,25 @@ describe('ObjectDocument sidebar_toggle instrumentation', () => {
 		})
 	})
 
-	it('fires state=closed when the sidebar is dismissed via ESC on the Sheet overlay', async () => {
-		// Covers the "any programmatic toggle" leg of the DoD — the Sheet's own
-		// onOpenChange feeds the same state setter, so ESC/overlay dismissal
-		// must emit alongside explicit button/shortcut paths.
+	it('fires state=closed when the sidebar is dismissed via ESC on the mobile Sheet overlay', async () => {
+		// Covers the "any programmatic toggle" leg of the DoD — the mobile
+		// Sheet's own `onOpenChange` feeds the same state setter, so ESC /
+		// overlay dismissal must emit alongside explicit button/shortcut
+		// paths. Runs at mobile since the Sheet branch only renders below
+		// 768px; the ≥768 viewports render the sidebar inline, where ESC has
+		// nothing to dismiss.
+		setInnerWidth(375)
 		const user = userEvent.setup()
 		const object = buildObjectResponse({ id: 'obj-close-esc' })
 		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: /properties/i }))
+		await user.click(screen.getByRole('button', { name: 'Properties' }))
 		trackSidebarToggleMock.mockClear()
 		await user.keyboard('{Escape}')
 
 		expect(trackSidebarToggleMock).toHaveBeenCalledWith({
 			state: 'closed',
-			viewport: 'desktop',
+			viewport: 'mobile',
 			object_id: 'obj-close-esc',
 		})
 	})
@@ -157,7 +207,7 @@ describe('ObjectDocument sidebar_toggle instrumentation', () => {
 		const object = buildObjectResponse({ id: 'obj-tablet' })
 		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: /properties/i }))
+		await user.click(screen.getByRole('button', { name: 'Properties' }))
 
 		expect(trackSidebarToggleMock).toHaveBeenCalledWith(
 			expect.objectContaining({ viewport: 'tablet' }),
@@ -170,7 +220,7 @@ describe('ObjectDocument sidebar_toggle instrumentation', () => {
 		const object = buildObjectResponse({ id: 'obj-mobile' })
 		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: /properties/i }))
+		await user.click(screen.getByRole('button', { name: 'Properties' }))
 
 		expect(trackSidebarToggleMock).toHaveBeenCalledWith(
 			expect.objectContaining({ viewport: 'mobile' }),
