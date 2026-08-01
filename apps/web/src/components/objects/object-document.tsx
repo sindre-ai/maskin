@@ -534,8 +534,10 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		return () => document.removeEventListener('keydown', handler)
 	}, [])
 
-	// ⌘/Ctrl+I toggles the right sidebar. The bet's chosen shortcut; sits next
-	// to the existing ⌘/Ctrl+. shortcut above so both live at the same layer.
+	// ⌘/Ctrl+I toggles the right sidebar. Shares `handleToggleSidebar` with the
+	// PanelRight header button so both entry points flow through the same
+	// mobile-vs-persisted branch, and both are observable to the
+	// `sidebar_toggle` analytics effect below.
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
 			if (!((e.metaKey || e.ctrlKey) && (e.key === 'i' || e.key === 'I'))) return
@@ -545,18 +547,21 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
 			}
 			e.preventDefault()
-			setDrawerOpen((v) => !v)
+			handleToggleSidebar()
 		}
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
-	}, [])
+	}, [handleToggleSidebar])
 
-	// Emit `sidebar_toggle` on every drawerOpen transition — covers the
-	// PanelRight button, the ⌘/Ctrl+I shortcut, ESC/overlay close on the Sheet,
-	// and any future programmatic toggle without needing per-call-site
-	// instrumentation. The mount pass is skipped so the default closed state
-	// isn't counted as a toggle. `object_id` is read via a ref so mid-flight
-	// route changes don't re-fire the effect just because the id string changed.
+	// Effective open state: mobile reads the Sheet's `openMobile`, everything
+	// else reads the persisted `sidebarOpen`.
+	const sidebarExpanded = isMobile ? sidebarOpenMobile : sidebarOpen
+
+	// Emit `sidebar_toggle` on every transition — covers the PanelRight
+	// button, the ⌘/Ctrl+I shortcut, Sheet ESC/overlay close on mobile, and
+	// any programmatic toggle. The mount pass is skipped so first paint isn't
+	// counted as a toggle. `object_id` is read via a ref so mid-flight route
+	// changes don't re-fire the effect just because the id string changed.
 	const objectIdRef = useRef(object.id)
 	objectIdRef.current = object.id
 	const sidebarMountedRef = useRef(false)
@@ -567,11 +572,11 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		}
 		const width = typeof window !== 'undefined' ? window.innerWidth : 1024
 		trackSidebarToggle({
-			state: drawerOpen ? 'open' : 'closed',
+			state: sidebarExpanded ? 'open' : 'closed',
 			viewport: deriveSidebarViewport(width),
 			object_id: objectIdRef.current,
 		})
-	}, [drawerOpen])
+	}, [sidebarExpanded])
 
 	// Bet-scoped sticky nav — when the hero identity row exits the viewport, the
 	// header sprouts title + read-only status chip. `threshold: 0` fires as soon
@@ -616,7 +621,6 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	// PageHeader portals into a slot up in the WorkspaceLayout), so it can't
 	// call `useSidebar()` — it drives the shared `handleToggleSidebar`
 	// callback directly, which handles the mobile-vs-persisted split.
-	const sidebarExpanded = isMobile ? sidebarOpenMobile : sidebarOpen
 	const headerActions = (
 		<>
 			<Button

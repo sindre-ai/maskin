@@ -12,7 +12,8 @@ import { PropertiesPanel } from './properties-panel'
  * Right-side object detail sidebar. Renders Subscribe + created_by +
  * created_at + updated_at at the top, then the shared `PropertiesPanel`
  * (Metadata + Files). Consumers wrap this in `PropertiesSidebarProvider`,
- * which owns the controlled open state and the ⌘/Ctrl+I shortcut.
+ * which owns the controlled open state; the ⌘/Ctrl+I shortcut is bound in
+ * `ObjectDocument` alongside the header button's toggle callback.
  */
 export function ObjectPropertiesSidebar({
 	object,

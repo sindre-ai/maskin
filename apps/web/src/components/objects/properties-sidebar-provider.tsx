@@ -54,26 +54,13 @@ export const PropertiesSidebarProvider = React.forwardRef<
 		)
 
 		// Mobile toggles the transient Sheet; tablet/desktop toggle the
-		// persisted `open` bit.
+		// persisted `open` bit. The ⌘/Ctrl+I shortcut is bound one layer up in
+		// `ObjectDocument` so it can share the same `handleToggleSidebar`
+		// callback the header button uses, and stay observable to the analytics
+		// effect that emits `sidebar_toggle`.
 		const toggleSidebar = React.useCallback(() => {
 			return isMobile ? setOpenMobile((prev) => !prev) : setOpen((prev) => !prev)
 		}, [isMobile, setOpen, setOpenMobile])
-
-		React.useEffect(() => {
-			const handleKeyDown = (event: KeyboardEvent) => {
-				if (event.key !== 'i' || (!event.metaKey && !event.ctrlKey)) return
-				// Skip inside inputs — ⌘I is also italic in text editors.
-				const target = event.target as HTMLElement | null
-				if (target) {
-					const tag = target.tagName
-					if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
-				}
-				event.preventDefault()
-				toggleSidebar()
-			}
-			window.addEventListener('keydown', handleKeyDown)
-			return () => window.removeEventListener('keydown', handleKeyDown)
-		}, [toggleSidebar])
 
 		const state = open ? 'expanded' : 'collapsed'
 
