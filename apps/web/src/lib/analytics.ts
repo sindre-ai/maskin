@@ -366,3 +366,38 @@ export function trackLoopGraduated(
 ): void {
 	trackEvent('loop_graduated', { ...fillBase(p), source_bet_id: p.source_bet_id })
 }
+
+// Ship-metric events for the bidirectional swipe-to-read/unread bet on the For
+// You page. Fire on the *completed* swipe — inside the post-Undo timer commit,
+// so tapping Undo within the 4.5s window emits nothing. `mobile` is computed at
+// emission from `window.innerWidth <= 768` rather than snapshotted at hook mount
+// because the DoD keys the mobile/desktop split off the viewport width the
+// gesture actually completes on. `via` is fixed to 'swipe' so the toolbar
+// mark-read button can be instrumented separately later without back-filling.
+function isMobileViewport(): boolean {
+	if (typeof window === 'undefined') return false
+	return window.innerWidth <= 768
+}
+
+interface ForyouCardMarkedProps {
+	entity_type: string
+	entity_id: string
+}
+
+export function trackForyouCardMarkedRead(p: ForyouCardMarkedProps): void {
+	trackEvent('foryou_card_marked_read', {
+		entity_type: p.entity_type,
+		entity_id: p.entity_id,
+		mobile: isMobileViewport(),
+		via: 'swipe',
+	})
+}
+
+export function trackForyouCardMarkedUnread(p: ForyouCardMarkedProps): void {
+	trackEvent('foryou_card_marked_unread', {
+		entity_type: p.entity_type,
+		entity_id: p.entity_id,
+		mobile: isMobileViewport(),
+		via: 'swipe',
+	})
+}

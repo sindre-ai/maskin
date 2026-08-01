@@ -8,6 +8,7 @@ vi.mock('@/lib/api', () => ({
 			unsubscribe: vi.fn(),
 			subscribers: vi.fn(),
 			markRead: vi.fn(),
+			markUnread: vi.fn(),
 			unread: vi.fn(),
 		},
 	},
@@ -15,6 +16,7 @@ vi.mock('@/lib/api', () => ({
 
 import {
 	useMarkRead,
+	useMarkUnread,
 	useSubscribe,
 	useSubscribers,
 	useUnread,
@@ -74,7 +76,7 @@ describe('useSubscriptions', () => {
 
 			await waitFor(() => expect(result.current.isSuccess).toBe(true))
 			expect(result.current.data).toEqual(payload)
-			expect(api.subscriptions.unread).toHaveBeenCalledWith('ws-1', undefined)
+			expect(api.subscriptions.unread).toHaveBeenCalledWith('ws-1', undefined, undefined)
 		})
 
 		it('passes the entity_type filter when provided', async () => {
@@ -85,7 +87,18 @@ describe('useSubscriptions', () => {
 			})
 
 			await waitFor(() => expect(result.current.isSuccess).toBe(true))
-			expect(api.subscriptions.unread).toHaveBeenCalledWith('ws-1', 'object')
+			expect(api.subscriptions.unread).toHaveBeenCalledWith('ws-1', 'object', undefined)
+		})
+
+		it('opts into the recently-read window when includeRecentlyRead is true', async () => {
+			vi.mocked(api.subscriptions.unread).mockResolvedValue({ items: [] })
+
+			const { result } = renderHook(() => useUnread('ws-1', undefined, true), {
+				wrapper: TestWrapper,
+			})
+
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(api.subscriptions.unread).toHaveBeenCalledWith('ws-1', undefined, true)
 		})
 	})
 
@@ -126,6 +139,18 @@ describe('useSubscriptions', () => {
 			})
 			await waitFor(() => expect(result.current.isSuccess).toBe(true))
 			expect(api.subscriptions.markRead).toHaveBeenCalledWith('ws-1', 'object', 'obj-1', 42)
+		})
+	})
+
+	describe('useMarkUnread', () => {
+		it('calls the API without a last event id', async () => {
+			vi.mocked(api.subscriptions.markUnread).mockResolvedValue({ updated: true })
+
+			const { result } = renderHook(() => useMarkUnread('ws-1'), { wrapper: TestWrapper })
+
+			result.current.mutate({ entityType: 'object', entityId: 'obj-1' })
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(api.subscriptions.markUnread).toHaveBeenCalledWith('ws-1', 'object', 'obj-1')
 		})
 	})
 })
