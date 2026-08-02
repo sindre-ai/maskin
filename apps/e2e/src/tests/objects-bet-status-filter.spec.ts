@@ -74,8 +74,15 @@ test.describe('Objects — Bet status filter', () => {
 
 			// URL now carries the picked value; only the waiting bet remains visible.
 			await expect(page).toHaveURL(/betStatus=waiting_on_human/)
-			await expect(page.getByText(waitingTitle)).toBeVisible({ timeout: 10_000 })
-			await expect(page.getByText(idleTitle)).toHaveCount(0)
+			// Assert against the row's semantic link so tanstack-virtual's
+			// dynamic re-measure after the overlay closes doesn't shadow a
+			// mid-transition wrapper height. Same intent as getByText but the
+			// role query is stable at iPad portrait where the previous
+			// assertion resolved to an element that read `hidden`.
+			await expect(page.getByRole('link', { name: waitingTitle })).toBeVisible({
+				timeout: 10_000,
+			})
+			await expect(page.getByRole('link', { name: idleTitle })).toHaveCount(0)
 
 			// Widen the pick — add "idle". Both classes should now appear.
 			await page.getByRole('button', { name: /^Display/ }).click()
