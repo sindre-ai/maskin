@@ -23,7 +23,12 @@ import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
-import { trackEvent, trackObjectsListArrived, trackObjectsListGroupToggled } from '@/lib/analytics'
+import {
+	trackBetStatusFilterSelected,
+	trackEvent,
+	trackObjectsListArrived,
+	trackObjectsListGroupToggled,
+} from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
@@ -1191,6 +1196,9 @@ function ObjectsPage() {
 				betStatusFilter={supportsBetStatus ? betStatusFilter : undefined}
 				onBetStatusFilterChange={
 					supportsBetStatus ? (value) => updateSearch({ betStatus: value }) : undefined
+				}
+				onBetStatusPick={
+					supportsBetStatus ? (value) => trackBetStatusFilterSelected({ value }) : undefined
 				}
 				view={effectiveView}
 				onViewChange={(next) => {
