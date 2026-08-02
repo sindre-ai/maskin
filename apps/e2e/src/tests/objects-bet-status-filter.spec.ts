@@ -64,7 +64,10 @@ test.describe('Objects — Bet status filter', () => {
 			// Open the DisplayPanel and pick "waiting on human".
 			await page.getByRole('button', { name: /^Display/ }).click()
 			const dialog = page.getByRole('dialog')
-			await expect(dialog.getByText('Bet status')).toBeVisible()
+			// Anchor on the filter-row trigger button — "Bet status" text also
+			// appears as the Filters-row label and as a Properties-section
+			// column-toggle pill, so a bare getByText would be ambiguous.
+			await expect(dialog.getByRole('button', { name: /^\+ Bet status$/i })).toBeVisible()
 			await dialog.getByRole('button', { name: /\+ Bet status/i }).click()
 			await page.getByRole('menuitemcheckbox', { name: 'waiting on human' }).click()
 			await page.keyboard.press('Escape')
