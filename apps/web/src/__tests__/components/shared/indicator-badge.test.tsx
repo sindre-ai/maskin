@@ -1,5 +1,5 @@
 import { IndicatorBadgeChip, IndicatorBadgeRow } from '@/components/shared/indicator-badge'
-import type { BetStatusResult } from '@/lib/bet-status'
+import type { BetStatusResult } from '@maskin/shared'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TestWrapper } from '../../setup'

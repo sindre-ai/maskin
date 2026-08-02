@@ -1,6 +1,6 @@
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
-import type { BetStatusResult, BetStatusState } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
+import type { BetStatusResult, BetStatusState } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { useCallback, useState } from 'react'
 

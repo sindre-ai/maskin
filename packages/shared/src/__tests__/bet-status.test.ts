@@ -1,10 +1,10 @@
+import { describe, expect, it } from 'vitest'
 import {
 	type BetLike,
 	type ChildTaskLike,
 	STALLED_THRESHOLD_MS,
 	classifyBetStatus,
-} from '@/lib/bet-status'
-import { describe, expect, it } from 'vitest'
+} from '../bet-status'
 
 const BET: BetLike = { id: 'bet-1', type: 'bet', status: 'active' }
 const NOW = new Date('2026-07-02T13:00:00Z')

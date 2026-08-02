@@ -9,7 +9,7 @@ import {
 	type ChildTaskLike,
 	STALLED_THRESHOLD_MS,
 	buildBetStatuses,
-} from '@/lib/bet-status'
+} from '@maskin/shared'
 import type { ExpandedState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
 import { act } from '@testing-library/react'
 import type { ButtonHTMLAttributes, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
@@ -128,7 +128,7 @@ function buildBet(id: string): ObjectResponse {
 }
 
 // Shape child tasks so classifyBetStatus() lands on `state`. Faithful to the
-// classifier's branches (apps/web/src/lib/bet-status.ts) so the fixture
+// classifier's branches (packages/shared/src/bet-status.ts) so the fixture
 // exercises the real per-bet fan-out the classifier consumes at render time.
 function tasksForState(betId: string, state: BetStatusState): ChildTaskLike[] {
 	const base: Omit<ChildTaskLike, 'id' | 'status'> = {

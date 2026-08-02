@@ -27,8 +27,8 @@ import type {
 	ObjectResponse,
 	RelationshipResponse,
 } from '@/lib/api'
-import { classifyBetStatus } from '@/lib/bet-status'
 import { useWorkspace } from '@/lib/workspace-context'
+import { classifyBetStatus } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { Check, PanelRight } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'

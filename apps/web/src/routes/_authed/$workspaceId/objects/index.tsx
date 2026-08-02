@@ -27,12 +27,12 @@ import { trackEvent, trackObjectsListArrived, trackObjectsListGroupToggled } fro
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
-import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
 import { clearViewState, getViewState, patchViewState } from '@/lib/objects-view-state'
 import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getAllWebModules, getEnabledObjectTypeTabs } from '@maskin/module-sdk'
+import { type BetStatusResult, buildBetStatuses } from '@maskin/shared'
 import { ALL_TYPES_KEY, SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
 import {
 	type InfiniteData,
