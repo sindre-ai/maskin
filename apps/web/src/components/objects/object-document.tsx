@@ -469,6 +469,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 						groupBy: prev.groupBy,
 						ids: prev.ids,
 						includeArchived: prev.includeArchived,
+						betStatus: prev.betStatus,
 					}),
 				})
 			},

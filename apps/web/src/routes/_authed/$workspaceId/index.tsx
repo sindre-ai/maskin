@@ -294,6 +294,7 @@ function ForYouDashboard() {
 											groupBy: undefined,
 											ids: undefined,
 											includeArchived: undefined,
+											betStatus: undefined,
 										},
 									})
 								}
