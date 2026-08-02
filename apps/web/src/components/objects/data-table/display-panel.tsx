@@ -18,7 +18,7 @@ import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
+import { type BetStatusState, SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
 import type { VisibilityState } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, Check, ChevronDown, SlidersHorizontal } from 'lucide-react'
 
@@ -66,6 +66,14 @@ export interface DisplayPanelProps {
 	// non-bet surfaces keep their existing panel.
 	includeArchived?: boolean
 	onIncludeArchivedChange?: (value: boolean) => void
+	// Bet-status filter — surfaced when the caller opts in by wiring
+	// `onBetStatusFilterChange`. Value is a comma-separated list of the four
+	// classifier states (idle / stalled / progressing / waiting_on_human).
+	// `onBetStatusPick` fires per single toggle so downstream analytics (T4)
+	// can capture the pick without diffing state.
+	betStatusFilter?: string
+	onBetStatusFilterChange?: (value: string | undefined) => void
+	onBetStatusPick?: (value: BetStatusState) => void
 	// Trigger appearance
 	iconOnly?: boolean
 	// Sections — surfaces that don't have a board view can opt out of the View pills.
@@ -170,11 +178,17 @@ export function DisplayPanel({
 	onGroupByChange,
 	includeArchived = false,
 	onIncludeArchivedChange,
+	betStatusFilter,
+	onBetStatusFilterChange,
+	onBetStatusPick,
 	iconOnly = false,
 	showView = true,
 }: DisplayPanelProps) {
 	const activeStatuses = statusFilter ? statusFilter.split(',').filter(Boolean) : []
 	const activeDrivers = driverFilter ? driverFilter.split(',').filter(Boolean) : []
+	const activeBetStatuses = betStatusFilter
+		? (betStatusFilter.split(',').filter(Boolean) as BetStatusState[])
+		: []
 	const metadataFields = fieldDefinitions ?? []
 	// Fields whose name can't be inlined into a `metadata.<field>` filter (must
 	// start with a letter, letters/numbers/underscores only — same rule the
@@ -197,6 +211,7 @@ export function DisplayPanel({
 	const activeFilterCount =
 		(activeStatuses.length > 0 ? 1 : 0) +
 		(activeDrivers.length > 0 ? 1 : 0) +
+		(activeBetStatuses.length > 0 ? 1 : 0) +
 		activeMetadataFilterCount +
 		(includeArchived ? 1 : 0)
 	const hasActiveFilters = activeFilterCount > 0
@@ -208,6 +223,7 @@ export function DisplayPanel({
 	const showFilters =
 		!!onStatusFilterChange ||
 		!!onDriverFilterChange ||
+		!!onBetStatusFilterChange ||
 		showMetadataFilters ||
 		activeMetadataFilterCount > 0
 	const hideableColumns = columns.filter((col) => col.canHide)
@@ -240,6 +256,16 @@ export function DisplayPanel({
 		onDriverFilterChange?.(next.length > 0 ? next.join(',') : undefined)
 	}
 
+	function toggleBetStatus(value: BetStatusState) {
+		const next = activeBetStatuses.includes(value)
+			? activeBetStatuses.filter((s) => s !== value)
+			: [...activeBetStatuses, value]
+		onBetStatusFilterChange?.(next.length > 0 ? next.join(',') : undefined)
+		// Per-pick side-effect (T4 wires PostHog capture here). Fires on both
+		// select and deselect — T4 decides which transitions to instrument.
+		onBetStatusPick?.(value)
+	}
+
 	const statusTriggerLabel =
 		activeStatuses.length === 0
 			? '+ Status'
@@ -253,6 +279,22 @@ export function DisplayPanel({
 			: activeDrivers.length === 1
 				? (driverOptions.find((a) => a.id === activeDrivers[0])?.name ?? '1 driver')
 				: `${activeDrivers.length} drivers`
+
+	// Fixed enum of the four classifier states — order mirrors the classifier
+	// severity chain (progressing → waiting_on_human → stalled → idle) so the
+	// most actionable value sits first when the picker opens.
+	const BET_STATUS_VALUES: readonly BetStatusState[] = [
+		'progressing',
+		'waiting_on_human',
+		'stalled',
+		'idle',
+	] as const
+	const betStatusTriggerLabel =
+		activeBetStatuses.length === 0
+			? '+ Bet status'
+			: activeBetStatuses.length === 1
+				? (activeBetStatuses[0]?.replace(/_/g, ' ') ?? '')
+				: `${activeBetStatuses.length} bet statuses`
 
 	// Inline sort/group reading rendered as a sibling next to the Display
 	// trigger — Linear's Display-options pattern. Filter chips communicate
@@ -458,6 +500,7 @@ export function DisplayPanel({
 												} else {
 													onStatusFilterChange?.(undefined)
 													onDriverFilterChange?.(undefined)
+													onBetStatusFilterChange?.(undefined)
 													for (const f of metadataFields) {
 														onMetadataFilterChange?.(f.name, undefined)
 													}
@@ -560,6 +603,56 @@ export function DisplayPanel({
 												aria-label="Clear Driver filter"
 												title="Clear Driver filter"
 												onClick={() => onDriverFilterChange?.(undefined)}
+												className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
+											>
+												Clear
+											</button>
+										)}
+									</div>
+								)}
+
+								{/* Bet status — client-side classifier filter, bet-tab only.
+								 * Fixed enum picker over the four `classifyBetStatus()` states.
+								 * Multi-select OR semantics: picking a second value widens the
+								 * visible set. Filter applies against the already-computed
+								 * `betStatuses` map upstream — no reclassification. */}
+								{onBetStatusFilterChange && (
+									<div className="flex items-center gap-2">
+										<span className="w-16 shrink-0 text-xs text-text-secondary">Bet status</span>
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild>
+												<Button
+													variant={activeBetStatuses.length > 0 ? 'outline' : 'ghost'}
+													size="sm"
+													className={cn(
+														'h-7 gap-1.5 px-2 text-xs',
+														activeBetStatuses.length === 0 &&
+															'text-text-secondary hover:text-foreground',
+													)}
+												>
+													<span className="truncate capitalize">{betStatusTriggerLabel}</span>
+													<ChevronDown size={12} className="shrink-0 opacity-60" />
+												</Button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
+												{BET_STATUS_VALUES.map((value) => (
+													<DropdownMenuCheckboxItem
+														key={value}
+														checked={activeBetStatuses.includes(value)}
+														onCheckedChange={() => toggleBetStatus(value)}
+														className="capitalize"
+													>
+														{value.replace(/_/g, ' ')}
+													</DropdownMenuCheckboxItem>
+												))}
+											</DropdownMenuContent>
+										</DropdownMenu>
+										{activeBetStatuses.length > 0 && (
+											<button
+												type="button"
+												aria-label="Clear Bet status filter"
+												title="Clear Bet status filter"
+												onClick={() => onBetStatusFilterChange?.(undefined)}
 												className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
 											>
 												Clear

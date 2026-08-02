@@ -409,6 +409,92 @@ describe('DisplayPanel', () => {
 			expect(headers).toEqual(['View', 'Show', 'Ordering', 'Grouping', 'Filters', 'Properties'])
 		})
 
+		it('does not render the Bet-status row when onBetStatusFilterChange is unset', async () => {
+			const user = userEvent.setup()
+			renderPanel()
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.queryByText('Bet status')).toBeNull()
+		})
+
+		it('renders the Bet-status row with the four classifier values when opted in', async () => {
+			const user = userEvent.setup()
+			renderPanel({ onBetStatusFilterChange: vi.fn() })
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByText('Bet status')).toBeInTheDocument()
+			await user.click(screen.getByRole('button', { name: /\+ Bet status/i }))
+			for (const label of ['progressing', 'waiting on human', 'stalled', 'idle']) {
+				expect(screen.getByRole('menuitemcheckbox', { name: label })).toBeInTheDocument()
+			}
+		})
+
+		it('toggles a value and calls onBetStatusFilterChange with the comma-joined list', async () => {
+			const user = userEvent.setup()
+			const onBetStatusFilterChange = vi.fn()
+			renderPanel({ onBetStatusFilterChange })
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			await user.click(screen.getByRole('button', { name: /\+ Bet status/i }))
+			await user.click(screen.getByRole('menuitemcheckbox', { name: 'stalled' }))
+			expect(onBetStatusFilterChange).toHaveBeenCalledWith('stalled')
+		})
+
+		it('widens the selection (OR semantics) — appends the second value', async () => {
+			const user = userEvent.setup()
+			const onBetStatusFilterChange = vi.fn()
+			renderPanel({
+				betStatusFilter: 'stalled',
+				onBetStatusFilterChange,
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			// The trigger collapses to the single value's label when 1 is picked.
+			await user.click(screen.getByRole('button', { name: /stalled/i }))
+			await user.click(screen.getByRole('menuitemcheckbox', { name: 'waiting on human' }))
+			expect(onBetStatusFilterChange).toHaveBeenCalledWith('stalled,waiting_on_human')
+		})
+
+		it('unchecking the last value clears the param (undefined, not empty string)', async () => {
+			const user = userEvent.setup()
+			const onBetStatusFilterChange = vi.fn()
+			renderPanel({
+				betStatusFilter: 'idle',
+				onBetStatusFilterChange,
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			await user.click(screen.getByRole('button', { name: /idle/i }))
+			await user.click(screen.getByRole('menuitemcheckbox', { name: 'idle' }))
+			expect(onBetStatusFilterChange).toHaveBeenCalledWith(undefined)
+		})
+
+		it('fires onBetStatusPick on every toggle (T4 hook)', async () => {
+			const user = userEvent.setup()
+			const onBetStatusPick = vi.fn()
+			renderPanel({
+				onBetStatusFilterChange: vi.fn(),
+				onBetStatusPick,
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			await user.click(screen.getByRole('button', { name: /\+ Bet status/i }))
+			await user.click(screen.getByRole('menuitemcheckbox', { name: 'progressing' }))
+			expect(onBetStatusPick).toHaveBeenCalledWith('progressing')
+		})
+
+		it('counts an active bet-status pick in the trigger badge', () => {
+			renderPanel({
+				betStatusFilter: 'stalled',
+				onBetStatusFilterChange: vi.fn(),
+			})
+			expect(screen.getByText('1')).toBeInTheDocument()
+		})
+
+		it('trigger label collapses to "{N} bet statuses" when more than one value is picked', async () => {
+			const user = userEvent.setup()
+			renderPanel({
+				betStatusFilter: 'stalled,idle',
+				onBetStatusFilterChange: vi.fn(),
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByRole('button', { name: /2 bet statuses/i })).toBeInTheDocument()
+		})
+
 		it('keeps the popover open when includeArchived toggles false→true (e.g. via URL commit)', async () => {
 			// Regression guard: the panel used to switch its returned root
 			// between the bare trigger and a wrapping div depending on whether
