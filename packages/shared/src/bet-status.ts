@@ -1,4 +1,4 @@
-import type { SafeMetadata } from '@maskin/shared'
+import type { SafeMetadata } from './schemas/primitives'
 
 export type BetStatusState = 'progressing' | 'waiting_on_human' | 'stalled' | 'idle'
 

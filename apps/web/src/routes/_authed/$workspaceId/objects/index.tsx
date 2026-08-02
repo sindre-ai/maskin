@@ -23,16 +23,21 @@ import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
-import { trackEvent, trackObjectsListArrived, trackObjectsListGroupToggled } from '@/lib/analytics'
+import {
+	trackBetStatusFilterSelected,
+	trackEvent,
+	trackObjectsListArrived,
+	trackObjectsListGroupToggled,
+} from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
-import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
 import { clearViewState, getViewState, patchViewState } from '@/lib/objects-view-state'
 import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getAllWebModules, getEnabledObjectTypeTabs } from '@maskin/module-sdk'
+import { type BetStatusResult, type BetStatusState, buildBetStatuses } from '@maskin/shared'
 import { ALL_TYPES_KEY, SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
 import {
 	type InfiniteData,
@@ -83,6 +88,22 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 			rawIncludeArchived === 1 ||
 			rawIncludeArchived === true ||
 			rawIncludeArchived === 'true'
+		// Bet-status is a comma-separated list of the four classifier states.
+		// Validate against the allowlist here so a hand-typed URL can't inject
+		// an unknown value that would otherwise widen the filter to a no-op
+		// state the classifier never produces. Drop unknowns silently; empty
+		// list collapses to undefined so the param disappears from the URL.
+		const rawBetStatus = search.betStatus
+		let betStatus: string | undefined
+		if (typeof rawBetStatus === 'string' && rawBetStatus.length > 0) {
+			const kept = rawBetStatus
+				.split(',')
+				.filter(
+					(v): v is BetStatusState =>
+						v === 'idle' || v === 'stalled' || v === 'progressing' || v === 'waiting_on_human',
+				)
+			betStatus = kept.length > 0 ? kept.join(',') : undefined
+		}
 		return {
 			type: typeof search.type === 'string' ? search.type : undefined,
 			status: typeof search.status === 'string' ? search.status : undefined,
@@ -96,6 +117,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 			groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
 			ids: typeof search.ids === 'string' ? search.ids : undefined,
 			includeArchived: includeArchived ? (1 as const) : undefined,
+			betStatus,
 			...metadataFilters,
 		}
 	},
@@ -119,12 +141,17 @@ function ObjectsPage() {
 		groupBy,
 		ids: idsFilter,
 		includeArchived: includeArchivedParam,
+		betStatus: betStatusFilter,
 	} = searchParams
 	const includeArchived = includeArchivedParam === 1
 	// Per the task scope, the "Show" section (with the Include archived toggle)
 	// is bet-only for now — surfaced when the bet tab is active. Non-bet tabs
 	// keep the existing panel shape until archive lands for their type.
 	const supportsIncludeArchived = typeFilter === 'bet'
+	// Same gating for the bet-status filter row — bet-tab only. Non-bet tabs
+	// don't render the row, don't apply the filter, and don't surface the chip
+	// even if a leftover URL param sneaks in from a bet-tab deep link.
+	const supportsBetStatus = typeFilter === 'bet'
 
 	const [importOpen, setImportOpen] = useState(false)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
@@ -361,6 +388,14 @@ function ObjectsPage() {
 		() => boardQuery.data?.columns.flatMap((column) => column.objects) ?? [],
 		[boardQuery.data],
 	)
+	// Active bet-status picks parsed off the URL param. Bet-tab only — on
+	// other tabs the param is ignored (see supportsBetStatus). The set stays
+	// stable across renders that don't change the URL so downstream memos
+	// don't invalidate on every render.
+	const activeBetStatusSet = useMemo<ReadonlySet<BetStatusState>>(() => {
+		if (!supportsBetStatus || !betStatusFilter) return new Set()
+		return new Set(betStatusFilter.split(',').filter(Boolean) as BetStatusState[])
+	}, [supportsBetStatus, betStatusFilter])
 	const visibleObjects = effectiveView === 'board' ? boardInitialObjects : allObjects
 
 	// Field definitions for dynamic columns. Layer enabled-module defaults under
@@ -462,6 +497,31 @@ function ObjectsPage() {
 		const bets = visibleObjects.filter((o) => o.type === 'bet')
 		return buildBetStatuses(bets, workspaceTasks, breaksIntoRels, new Date())
 	}, [hasVisibleBets, workspaceTasks, breaksIntoRels, visibleObjects])
+
+	// Client-side bet-status filter: reslices `allObjects` and the board's
+	// per-column objects against the already-computed `betStatuses` map, so
+	// re-applying the filter never triggers a reclassification. Non-bet rows
+	// are always kept — the filter narrows bets, not the mixed row set (which
+	// on the bet tab is bets-only anyway). Applies OR semantics across the
+	// picked values, matching the DoD.
+	const filterBets = useCallback(
+		(row: ObjectResponse): boolean => {
+			if (activeBetStatusSet.size === 0) return true
+			if (row.type !== 'bet') return true
+			const state = betStatuses.get(row.id)?.state
+			return state ? activeBetStatusSet.has(state) : false
+		},
+		[activeBetStatusSet, betStatuses],
+	)
+	const filteredAllObjects = useMemo(() => {
+		if (activeBetStatusSet.size === 0) return allObjects
+		return allObjects.filter(filterBets)
+	}, [allObjects, activeBetStatusSet, filterBets])
+	const filteredBoardColumns = useMemo(() => {
+		const cols = boardQuery.data?.columns ?? []
+		if (activeBetStatusSet.size === 0) return cols
+		return cols.map((column) => ({ ...column, objects: column.objects.filter(filterBets) }))
+	}, [boardQuery.data, activeBetStatusSet, filterBets])
 
 	// Bet status is rendered inside the Title cell (not as its own column), so
 	// its show/hide toggle lives in the same `columnVisibility` map as the real
@@ -817,7 +877,22 @@ function ObjectsPage() {
 	// the toggle in DisplayPanel; mirroring it here keeps the chip in lockstep
 	// so a leftover URL param on a non-bet tab doesn't render an orphan chip.
 	const archivedChipActive = supportsIncludeArchived && includeArchived
-	const hasChipFilters = activeStatuses.length > 0 || activeDrivers.length > 0 || archivedChipActive
+	// Bet-status is the fourth chip source. `supportsBetStatus` mirrors the
+	// DisplayPanel gate so a leftover `?betStatus=` from a bet-tab deep link
+	// doesn't render an orphan chip on tasks/insights/All.
+	const activeBetStatusList = useMemo(
+		() => (supportsBetStatus && betStatusFilter ? betStatusFilter.split(',').filter(Boolean) : []),
+		[supportsBetStatus, betStatusFilter],
+	)
+	const betStatusChipValue =
+		activeBetStatusList.length === 1
+			? (activeBetStatusList[0]?.replace(/_/g, ' ') ?? '')
+			: `${activeBetStatusList.length} bet statuses`
+	const hasChipFilters =
+		activeStatuses.length > 0 ||
+		activeDrivers.length > 0 ||
+		archivedChipActive ||
+		activeBetStatusList.length > 0
 
 	const bulkOwnerOptions = useMemo(
 		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),
@@ -1070,6 +1145,7 @@ function ObjectsPage() {
 							groupBy: undefined,
 							ids: undefined,
 							includeArchived: undefined,
+							betStatus: undefined,
 						},
 						replace: true,
 					})
@@ -1089,6 +1165,7 @@ function ObjectsPage() {
 					const cleared: Record<string, string | undefined> = {
 						status: undefined,
 						driver: undefined,
+						betStatus: undefined,
 					}
 					for (const key of Object.keys(searchParams)) {
 						if (key.startsWith('metadata.')) cleared[key] = undefined
@@ -1115,6 +1192,13 @@ function ObjectsPage() {
 							// while a number serializes as the bare digit.
 							(next) => updateSearch({ includeArchived: next ? 1 : undefined })
 						: undefined
+				}
+				betStatusFilter={supportsBetStatus ? betStatusFilter : undefined}
+				onBetStatusFilterChange={
+					supportsBetStatus ? (value) => updateSearch({ betStatus: value }) : undefined
+				}
+				onBetStatusPick={
+					supportsBetStatus ? (value) => trackBetStatusFilterSelected({ value }) : undefined
 				}
 				view={effectiveView}
 				onViewChange={(next) => {
@@ -1160,6 +1244,13 @@ function ObjectsPage() {
 							onRemove={() => updateSearch({ includeArchived: undefined })}
 						/>
 					)}
+					{activeBetStatusList.length > 0 && (
+						<FilterChip
+							label="Bet status"
+							value={betStatusChipValue}
+							onRemove={() => updateSearch({ betStatus: undefined })}
+						/>
+					)}
 					<Button
 						variant="ghost"
 						size="sm"
@@ -1169,6 +1260,7 @@ function ObjectsPage() {
 								status: undefined,
 								driver: undefined,
 								includeArchived: undefined,
+								betStatus: undefined,
 							})
 						}
 					>
@@ -1189,7 +1281,7 @@ function ObjectsPage() {
 				<div className="pb-4 flex-1 min-h-0 overflow-x-auto overflow-y-hidden md:px-6">
 					<BoardView
 						objectType={typeFilter}
-						columns={boardQuery.data?.columns ?? []}
+						columns={filteredBoardColumns}
 						boardParams={boardParams ?? {}}
 						pageSize={BOARD_PAGE_SIZE}
 						statusesByType={statusesByType}
@@ -1210,7 +1302,7 @@ function ObjectsPage() {
 			) : (
 				<DataTable
 					ref={dataTableRef}
-					data={allObjects}
+					data={filteredAllObjects}
 					columns={columns}
 					workspaceId={workspaceId}
 					actors={actors}

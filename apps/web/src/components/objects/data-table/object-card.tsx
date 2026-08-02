@@ -6,8 +6,8 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { ActorListItem, ObjectResponse } from '@/lib/api'
-import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
+import type { BetStatusResult } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 
 interface ObjectCardProps {

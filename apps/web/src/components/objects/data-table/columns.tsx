@@ -5,8 +5,8 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { ActorListItem, ObjectResponse } from '@/lib/api'
-import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
+import type { BetStatusResult } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import type { ColumnDef, Table } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
@@ -129,8 +129,15 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 				const showBetStatus = meta?.showBetStatusIndicator !== false
 				const betStatus =
 					isBet && showBetStatus ? meta?.betStatuses?.get(row.original.id) : undefined
+				// min-w-[12rem]: at iPad portrait (768) with sidebar expanded, the sum
+				// of fixed columns exceeds the main area and auto-layout hands the
+				// title <td> 0 rendered width — collapsing the flex-1 truncated link
+				// to 0 behind the badge. The floor forces the title column to ~192px,
+				// pushing the table past its container so the wrapper's overflow-auto
+				// scrolls horizontally (same pattern used elsewhere for narrow-viewport
+				// tables). Doesn't affect desktop widths where leftover already exceeds 192px.
 				return (
-					<div className="flex items-center gap-2 min-w-0">
+					<div className="flex items-center gap-2 min-w-[12rem]">
 						<Link
 							to="/$workspaceId/objects/$objectId"
 							params={{ workspaceId, objectId: row.original.id }}

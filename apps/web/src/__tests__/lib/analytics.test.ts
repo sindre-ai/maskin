@@ -6,6 +6,7 @@ import {
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
+	trackBetStatusFilterSelected,
 	trackChatImageUpload,
 	trackChatSessionStarted,
 	trackCommentPosted,
@@ -601,6 +602,35 @@ describe('v1 taxonomy helpers', () => {
 				mobile: true,
 				via: 'swipe',
 			})
+		})
+	})
+
+	describe('bet_status_filter_selected', () => {
+		it('fires bet_status_filter_selected with the picked classification value and nothing else', () => {
+			// PII contract: the payload must carry ONLY the four-enum classification
+			// — no user id, workspace id, or row id — per the bet brief.
+			const capture = captureSpy()
+
+			trackBetStatusFilterSelected({ value: 'progressing' })
+
+			expect(capture).toHaveBeenCalledTimes(1)
+			expect(capture).toHaveBeenCalledWith('bet_status_filter_selected', {
+				value: 'progressing',
+			})
+		})
+
+		it('fires once per pick across all four classification values', () => {
+			const capture = captureSpy()
+			const values = ['idle', 'stalled', 'progressing', 'waiting_on_human'] as const
+
+			for (const value of values) {
+				trackBetStatusFilterSelected({ value })
+			}
+
+			expect(capture).toHaveBeenCalledTimes(4)
+			for (const [i, value] of values.entries()) {
+				expect(capture).toHaveBeenNthCalledWith(i + 1, 'bet_status_filter_selected', { value })
+			}
 		})
 	})
 })

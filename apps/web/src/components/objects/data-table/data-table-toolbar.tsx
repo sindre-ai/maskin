@@ -3,6 +3,7 @@ import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { ActorListItem } from '@/lib/api'
+import type { BetStatusState } from '@maskin/shared'
 import type { VisibilityState } from '@tanstack/react-table'
 import { Plus, Search, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -43,6 +44,11 @@ interface DataTableToolbarProps {
 	// Show — per-view visibility flags. Only surfaced when the caller opts in.
 	includeArchived?: boolean
 	onIncludeArchivedChange?: (value: boolean) => void
+	// Bet-status filter — surfaced only when the caller opts in
+	// (`onBetStatusFilterChange` wired). Bet-tab only in the current bet.
+	betStatusFilter?: string
+	onBetStatusFilterChange?: (value: string | undefined) => void
+	onBetStatusPick?: (value: BetStatusState) => void
 	// View switcher
 	view?: DisplayPanelView
 	onViewChange?: (view: DisplayPanelView) => void
@@ -80,6 +86,9 @@ export function DataTableToolbar({
 	onGroupByChange,
 	includeArchived,
 	onIncludeArchivedChange,
+	betStatusFilter,
+	onBetStatusFilterChange,
+	onBetStatusPick,
 	view,
 	onViewChange,
 	boardSupported,
@@ -155,6 +164,9 @@ export function DataTableToolbar({
 				onGroupByChange={onGroupByChange}
 				includeArchived={includeArchived}
 				onIncludeArchivedChange={onIncludeArchivedChange}
+				betStatusFilter={betStatusFilter}
+				onBetStatusFilterChange={onBetStatusFilterChange}
+				onBetStatusPick={onBetStatusPick}
 			/>
 
 			{/* Actions — Import is occasional, New is primary. Ordered per the

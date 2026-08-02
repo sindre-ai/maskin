@@ -1,10 +1,10 @@
+import { fetchAllPages } from '@/lib/pagination'
 import {
 	type BetLike,
 	type BreaksIntoRel,
 	type ChildTaskLike,
 	buildBetStatuses,
-} from '@/lib/bet-status'
-import { fetchAllPages } from '@/lib/pagination'
+} from '@maskin/shared'
 import { describe, expect, it, vi } from 'vitest'
 
 const NOW = new Date('2026-07-02T13:00:00Z')
