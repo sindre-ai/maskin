@@ -56,16 +56,12 @@ test.describe('Objects — Bet status filter', () => {
 				type: 'breaks_into',
 			})
 
-			// Default state on the bet tab shows both. Assert row-presence
-			// (link count) rather than pixel visibility so the assertion
-			// remains stable at iPad portrait, where the title cell shares
-			// its row with the bet-status badge and the flex-1 link can
-			// collapse to 0 width behind it.
+			// Default state on the bet tab shows both.
 			await page.goto(`/${account.workspaceId}/objects?type=bet`)
-			await expect(page.getByRole('link', { name: waitingTitle })).toHaveCount(1, {
+			await expect(page.getByRole('link', { name: waitingTitle })).toBeVisible({
 				timeout: 10_000,
 			})
-			await expect(page.getByRole('link', { name: idleTitle })).toHaveCount(1)
+			await expect(page.getByRole('link', { name: idleTitle })).toBeVisible()
 
 			// Open the DisplayPanel and pick "waiting on human".
 			await page.getByRole('button', { name: /^Display/ }).click()
@@ -78,15 +74,9 @@ test.describe('Objects — Bet status filter', () => {
 			await page.getByRole('menuitemcheckbox', { name: 'waiting on human' }).click()
 			await page.keyboard.press('Escape')
 
-			// URL now carries the picked value; only the waiting bet remains
-			// in the list — check by row-presence + row-absence rather than
-			// pixel visibility. At iPad portrait the title cell shares its
-			// row with the bet-status badge and the flex-1 truncated link
-			// can collapse to 0 width behind the badge (pre-existing layout
-			// gap tracked separately on the bet); the filter itself is
-			// verified correctly by the URL and the idle row's absence.
+			// URL now carries the picked value; only the waiting bet remains visible.
 			await expect(page).toHaveURL(/betStatus=waiting_on_human/)
-			await expect(page.getByRole('link', { name: waitingTitle })).toHaveCount(1)
+			await expect(page.getByRole('link', { name: waitingTitle })).toBeVisible()
 			await expect(page.getByRole('link', { name: idleTitle })).toHaveCount(0)
 
 			// Widen the pick — add "idle". Both classes should now appear.
@@ -99,8 +89,8 @@ test.describe('Objects — Bet status filter', () => {
 			await page.keyboard.press('Escape')
 
 			await expect(page).toHaveURL(/betStatus=(waiting_on_human%2Cidle|idle%2Cwaiting_on_human)/)
-			await expect(page.getByRole('link', { name: waitingTitle })).toHaveCount(1)
-			await expect(page.getByRole('link', { name: idleTitle })).toHaveCount(1)
+			await expect(page.getByRole('link', { name: waitingTitle })).toBeVisible()
+			await expect(page.getByRole('link', { name: idleTitle })).toBeVisible()
 
 			// Clear — deselect both from the panel and the URL param drops.
 			// Radix DropdownMenuCheckboxItem closes the menu on select, so we
@@ -120,8 +110,8 @@ test.describe('Objects — Bet status filter', () => {
 			await page.keyboard.press('Escape')
 
 			await expect(page).not.toHaveURL(/betStatus=/)
-			await expect(page.getByRole('link', { name: waitingTitle })).toHaveCount(1)
-			await expect(page.getByRole('link', { name: idleTitle })).toHaveCount(1)
+			await expect(page.getByRole('link', { name: waitingTitle })).toBeVisible()
+			await expect(page.getByRole('link', { name: idleTitle })).toBeVisible()
 		})
 	}
 
@@ -265,9 +255,7 @@ test.describe('Objects — Bet status filter', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects?type=bet`)
-			// Row-presence over pixel visibility — see the sibling test above
-			// for the iPad-portrait title/badge collision background.
-			await expect(page.getByRole('link', { name: waitingTitle })).toHaveCount(1, {
+			await expect(page.getByRole('link', { name: waitingTitle })).toBeVisible({
 				timeout: 10_000,
 			})
 
