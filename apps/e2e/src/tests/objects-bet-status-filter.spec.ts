@@ -91,12 +91,19 @@ test.describe('Objects — Bet status filter', () => {
 			await expect(page.getByText(idleTitle)).toBeVisible()
 
 			// Clear — deselect both from the panel and the URL param drops.
+			// Radix DropdownMenuCheckboxItem closes the menu on select, so we
+			// re-open the trigger between the two deselects. After the first
+			// toggle-off the label reflects the sole remaining pick.
 			await page.getByRole('button', { name: /^Display/ }).click()
 			await page
 				.getByRole('dialog')
 				.getByRole('button', { name: /2 bet statuses/i })
 				.click()
 			await page.getByRole('menuitemcheckbox', { name: 'idle' }).click()
+			await page
+				.getByRole('dialog')
+				.getByRole('button', { name: /^waiting on human$/i })
+				.click()
 			await page.getByRole('menuitemcheckbox', { name: 'waiting on human' }).click()
 			await page.keyboard.press('Escape')
 
