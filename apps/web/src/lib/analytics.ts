@@ -1,3 +1,4 @@
+import type { BetStatusState } from '@maskin/shared'
 import type { CaptureOptions } from 'posthog-js'
 import { getStoredActor } from './auth'
 import { capture, isPosthogReady } from './posthog'
@@ -400,4 +401,13 @@ export function trackForyouCardMarkedUnread(p: ForyouCardMarkedProps): void {
 		mobile: isMobileViewport(),
 		via: 'swipe',
 	})
+}
+
+// Signal-of-use for the "Objects page — filter by computed status" bet. Fires
+// once per single filter-value pick (add or remove) in the DisplayPanel
+// bet-status filter row shipped in T3. The payload is intentionally just the
+// picked classification — no user/workspace/row ids — so the event stays free
+// of PII and matches the bet's `metadata.posthog_query` contract.
+export function trackBetStatusFilterSelected(p: { value: BetStatusState }): void {
+	trackEvent('bet_status_filter_selected', { value: p.value })
 }
