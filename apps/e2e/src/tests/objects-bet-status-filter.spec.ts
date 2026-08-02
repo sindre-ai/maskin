@@ -76,7 +76,10 @@ test.describe('Objects — Bet status filter', () => {
 
 			// Widen the pick — add "idle". Both classes should now appear.
 			await page.getByRole('button', { name: /^Display/ }).click()
-			await page.getByRole('dialog').getByRole('button', { name: /waiting on human/i }).click()
+			await page
+				.getByRole('dialog')
+				.getByRole('button', { name: /waiting on human/i })
+				.click()
 			await page.getByRole('menuitemcheckbox', { name: 'idle' }).click()
 			await page.keyboard.press('Escape')
 
@@ -86,7 +89,10 @@ test.describe('Objects — Bet status filter', () => {
 
 			// Clear — deselect both from the panel and the URL param drops.
 			await page.getByRole('button', { name: /^Display/ }).click()
-			await page.getByRole('dialog').getByRole('button', { name: /2 bet statuses/i }).click()
+			await page
+				.getByRole('dialog')
+				.getByRole('button', { name: /2 bet statuses/i })
+				.click()
 			await page.getByRole('menuitemcheckbox', { name: 'idle' }).click()
 			await page.getByRole('menuitemcheckbox', { name: 'waiting on human' }).click()
 			await page.keyboard.press('Escape')
