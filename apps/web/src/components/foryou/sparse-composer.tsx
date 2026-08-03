@@ -57,6 +57,18 @@ export function SparseComposer({ itemsCount, onFocusChange }: SparseComposerProp
 					type: obj.type ?? undefined,
 				})
 			}
+			for (const notif of selection.notifications) {
+				attachments.push({ kind: 'notification', id: notif.id, title: notif.title })
+			}
+			for (const file of selection.files) {
+				attachments.push({
+					kind: 'file',
+					fileId: file.fileId,
+					name: file.name,
+					sizeBytes: file.sizeBytes,
+					...(file.mimeType ? { mimeType: file.mimeType } : {}),
+				})
+			}
 			const itemsCountAtSubmit = itemsCount
 			await openWithContext(attachments, content)
 			trackForyouSparseComposerSubmit({ items_count: itemsCountAtSubmit })
@@ -130,7 +142,7 @@ export function SparseComposer({ itemsCount, onFocusChange }: SparseComposerProp
 					onRemoveAgent={() => dispatchSelection({ type: 'remove_agent' })}
 					onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
 					onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
-					onRemoveFile={(name) => dispatchSelection({ type: 'remove_file', name })}
+					onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
 					externalError={chipError}
 					onDismissExternalError={() => setChipError(null)}
 				/>

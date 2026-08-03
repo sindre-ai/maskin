@@ -25,6 +25,11 @@ vi.mock('@/hooks/use-actors', () => ({
 	useUpdateActor: () => ({ mutate: vi.fn(), isPending: false }),
 	useAgentRun: () => ({ mutate: vi.fn(), isPending: false }),
 	useAgentPause: () => ({ mutate: vi.fn(), isPending: false }),
+	useUploadActorAvatar: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}))
+
+vi.mock('@/components/agents/agent-avatar-upload', () => ({
+	AgentAvatarUpload: () => null,
 }))
 
 vi.mock('@/hooks/use-events', () => ({

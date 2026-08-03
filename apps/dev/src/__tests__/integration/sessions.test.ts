@@ -581,6 +581,66 @@ describe('Sessions Integration', () => {
 		})
 	})
 
+	describe('Logs stream (SSE) — terminal-session replay honors Last-Event-ID', () => {
+		it('replays every log when no Last-Event-ID is provided', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+				status: 'completed',
+			})
+			const log1 = await insertSessionLog(db, session.id, { stream: 'stdout', content: 'line 1' })
+			const log2 = await insertSessionLog(db, session.id, { stream: 'stdout', content: 'line 2' })
+
+			const res = await app.request(jsonGet(`/api/sessions/${session.id}/logs/stream`, headers))
+
+			expect(res.status).toBe(200)
+			const text = await res.text()
+			expect(text).toContain('line 1')
+			expect(text).toContain('line 2')
+			expect(text).toContain(`id: ${log1.id}`)
+			expect(text).toContain(`id: ${log2.id}`)
+			expect(text).toContain('event: done')
+			expect(text).toContain('data: completed')
+		})
+
+		it('does not re-emit rows the client already drained (regression: reload duplicated the transcript)', async () => {
+			const app = createSessionApp()
+
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+				status: 'completed',
+			})
+			await insertSessionLog(db, session.id, { stream: 'stdout', content: 'first turn' })
+			const log2 = await insertSessionLog(db, session.id, {
+				stream: 'stdout',
+				content: 'second turn',
+			})
+			const log3 = await insertSessionLog(db, session.id, {
+				stream: 'stdout',
+				content: 'third turn',
+			})
+
+			// Simulates a client that already hydrated "first turn" + "second turn"
+			// via GET /logs (persisted sessionId + reload), then reconnects SSE with
+			// Last-Event-ID set to the last id it already rendered.
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/logs/stream`, {
+					'x-workspace-id': workspaceId,
+					'Last-Event-ID': String(log2.id),
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const text = await res.text()
+			expect(text).not.toContain('first turn')
+			expect(text).not.toContain('second turn')
+			expect(text).toContain('third turn')
+			expect(text).toContain(`id: ${log3.id}`)
+			expect(text).toContain('event: done')
+			expect(text).toContain('data: completed')
+		})
+	})
+
 	describe('sourceSessionId', () => {
 		it('stores source_session_id on the session row and returns it', async () => {
 			const app = createSessionApp()

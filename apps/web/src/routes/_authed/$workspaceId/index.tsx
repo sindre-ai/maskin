@@ -62,7 +62,9 @@ function ForYouDashboard() {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	useFypSessionOpenedEvent(workspaceId)
-	const { data, isLoading } = useUnread(workspaceId)
+	// Mixed feed: unread + cards read within the last 48h stay in the stream so
+	// the reverse-swipe (T2) has a target to flip back to unread.
+	const { data, isLoading } = useUnread(workspaceId, undefined, true)
 	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
 	// Featured briefing — first item of the feed when a CoS briefing exists for
 	// the workspace. Absent (null) when the API returns no briefing.

@@ -98,8 +98,14 @@ export const queryKeys = {
 	subscriptions: {
 		subscribers: (entityType: string, entityId: string) =>
 			['subscriptions', 'subscribers', entityType, entityId] as const,
-		unread: (workspaceId: string, entityType?: string) =>
-			['subscriptions', 'unread', workspaceId, entityType ?? 'all'] as const,
+		unread: (workspaceId: string, entityType?: string, includeRecentlyRead?: boolean) =>
+			[
+				'subscriptions',
+				'unread',
+				workspaceId,
+				entityType ?? 'all',
+				includeRecentlyRead ? 'with-recent' : 'unread-only',
+			] as const,
 	},
 	userDisplaySettings: {
 		list: (workspaceId: string) => ['user-display-settings', workspaceId, 'list'] as const,

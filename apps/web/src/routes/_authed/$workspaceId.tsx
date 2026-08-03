@@ -146,7 +146,10 @@ function WorkspaceLayout() {
 									<AppSidebar />
 									<SidebarInset className="min-w-0">
 										<Header />
-										<div className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8">
+										<div
+											className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8"
+											data-scroll-root
+										>
 											<Outlet />
 										</div>
 									</SidebarInset>

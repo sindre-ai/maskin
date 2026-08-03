@@ -138,6 +138,9 @@ export const sessionParamsSchema = z.object({
 export const sessionInputAttachmentSchema = z.object({
 	kind: z.string().min(1),
 	id: z.string().min(1),
+	name: z.string().optional(),
+	mime_type: z.string().optional(),
+	size_bytes: z.number().int().nonnegative().optional(),
 })
 
 export const sessionInputSchema = z.object({

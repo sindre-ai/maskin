@@ -50,6 +50,18 @@ export function useUpdateActor(workspaceId?: string) {
 	})
 }
 
+export function useUploadActorAvatar(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, file }: { id: string; file: File }) =>
+			api.actors.uploadAvatar(id, file, workspaceId),
+		onSuccess: (_result, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+		},
+	})
+}
+
 export function useDeleteActor(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({

@@ -1944,6 +1944,49 @@ describe('SessionManager', () => {
 			])
 		})
 
+		// AC-T2: the persisted `session_logs` envelope tacks a
+		// `maskin_attachments` field onto the JSON we write to stdin so
+		// reload-from-history (via /logs replay) can render attached file
+		// cards on the user turn. The CLI stdin write must NOT see the extra
+		// field — keeping it Maskin-only protects against a future CLI
+		// version rejecting unknown keys.
+		it('persists maskin_attachments in the log envelope but keeps stdin clean', async () => {
+			const session = buildSession({ interactive: true, status: 'running' })
+			mockResults.insert = [{ id: 99, ...session, stream: 'stdout', content: '' }]
+
+			const attachments = [
+				{ kind: 'file', id: 'file-abc', name: 'photo.png', mime_type: 'image/png', size_bytes: 4 },
+				{ kind: 'object', id: 'obj-1' },
+			]
+			await manager.writeInput(
+				session.id,
+				{ type: 'user', message: { role: 'user', content: 'look' } },
+				attachments,
+			)
+
+			// 1. The CLI stdin payload must NOT carry maskin_attachments — keeping
+			//    it Maskin-only protects against a future CLI version rejecting
+			//    unknown keys.
+			expect(mockContainerManager.write).toHaveBeenCalledWith(session.id, {
+				type: 'user',
+				message: { role: 'user', content: 'look' },
+			})
+			const wirePayload = (mockContainerManager.write.mock.calls[0] as unknown[])[1]
+			expect(wirePayload).not.toHaveProperty('maskin_attachments')
+
+			// 2. The session_logs row DOES carry it so reload can re-render the
+			//    user bubble — including any image cards — without a second
+			//    POST to /files.
+			expect(calls.inserts.length).toBeGreaterThanOrEqual(1)
+			const inserted = calls.inserts.at(-1) as { content: string; stream: string }
+			expect(inserted.stream).toBe('stdout')
+			expect(JSON.parse(inserted.content)).toEqual({
+				type: 'user',
+				message: { role: 'user', content: 'look' },
+				maskin_attachments: attachments,
+			})
+		})
+
 		it('does not record a log row when the stdin write fails', async () => {
 			const session = buildSession({ interactive: true, status: 'running' })
 			mockContainerManager.write.mockRejectedValueOnce(new Error('stream closed'))

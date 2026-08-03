@@ -1,11 +1,16 @@
+import type { CaptureOptions } from 'posthog-js'
 import { getStoredActor } from './auth'
 import { capture, isPosthogReady } from './posthog'
 
 export type AnalyticsProps = Record<string, string | number | boolean | null | undefined>
 
-export function trackEvent(name: string, props: AnalyticsProps = {}): void {
+export function trackEvent(
+	name: string,
+	props: AnalyticsProps = {},
+	options?: CaptureOptions,
+): void {
 	try {
-		capture(name, props)
+		capture(name, props, options)
 	} catch {
 		// Analytics must never break the UI.
 	}
@@ -229,6 +234,23 @@ export function trackFypBriefingAudioPlayed(p: { entity_id: string }): void {
 	trackEvent('fyp_briefing_audio_played', { entity_id: p.entity_id, entity_type: 'knowledge' })
 }
 
+// iPadOS 13+ reports `MacIntel` from `navigator.userAgent` / `navigator.platform`
+// and only the `maxTouchPoints > 1` signal distinguishes it from a real Mac, so
+// the touch-point check is load-bearing — not paranoia. Returning 'web' for
+// everything else (including Android) is deliberate: the bet's success metric
+// filters on `platform=ios`, and conflating Android into iOS would skew it.
+function detectPlatform(): 'ios' | 'web' {
+	if (typeof navigator === 'undefined') return 'web'
+	const ua = navigator.userAgent ?? ''
+	if (/iphone|ipad|ipod/i.test(ua)) return 'ios'
+	if (ua.includes('Macintosh') && (navigator.maxTouchPoints ?? 0) > 1) return 'ios'
+	return 'web'
+}
+
+export function trackChatImageUpload(p: { outcome: 'success' | 'failure' }): void {
+	trackEvent('chat_image_upload', { platform: detectPlatform(), outcome: p.outcome })
+}
+
 // Sidebar legibility bet — click-through proxy for the qualitative ship metric.
 // `workspace_id` already rides via the PostHog super-property registered on
 // workspace mount; the explicit `workspaceId` here is a duplicate the Analyst
@@ -247,12 +269,28 @@ export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): v
 // filtered to workspaces with no prior bets. `workspace_id` is passed on the
 // event (not via super properties) so the PostHog cohort filter can key off it
 // without depending on the workspace mount having already registered.
+//
+// Both events fire with `send_instantly: true` so posthog-js bypasses its
+// ~3-second batching queue. The response event was being lost in prod because
+// the card unmounts immediately after submit and users often tab away right
+// after — the batched event never made it out of the browser, so the event
+// name never even landed in the PostHog project taxonomy. The impression uses
+// the same flag for parity: both halves of the ratio must have identical
+// delivery semantics or the ship metric is biased.
 export function trackNorthStarPromptImpression(p: { workspace_id: string }): void {
-	trackEvent('north_star_prompt_impression', { workspace_id: p.workspace_id })
+	trackEvent(
+		'north_star_prompt_impression',
+		{ workspace_id: p.workspace_id },
+		{ send_instantly: true },
+	)
 }
 
 export function trackNorthStarPromptResponse(p: { workspace_id: string }): void {
-	trackEvent('north_star_prompt_response', { workspace_id: p.workspace_id })
+	trackEvent(
+		'north_star_prompt_response',
+		{ workspace_id: p.workspace_id },
+		{ send_instantly: true },
+	)
 }
 
 // Ship-metric event for the iOS bulk-select ergonomics bet. Fires once per
@@ -309,6 +347,32 @@ export function trackObjectsListGroupToggled(p: {
 	})
 }
 
+// Ship-metric event for the sticky-nav-hero bet. Fires once per completed
+// scroll-to-top gesture on an object-detail page — the user must scroll ≥ 1
+// viewport down inside the app scroll container and return near the top before
+// the event emits. The parent bet's `metadata.posthog_query` pairs this event
+// with `objects_control_changed` fired against the same entity within 10s to
+// measure the scroll-to-top → property-edit bounce. Follows the
+// `trackObjectCreated` taxonomy — `entity_id` + `entity_type='object'` +
+// `object_subtype` — so the correlation join runs cleanly without aliasing and
+// the schema stays forward-compatible for `insight`/`task` subtypes (Product
+// Analyst signoff, 2026-07-20).
+export function trackScrollToTop(
+	p: BaseProps & {
+		entity_type: 'object'
+		object_subtype: string
+		scroll_depth_at_start_px: number
+		viewports_scrolled: number
+	},
+): void {
+	trackEvent('scroll_to_top', {
+		...fillBase(p),
+		object_subtype: p.object_subtype,
+		scroll_depth_at_start_px: p.scroll_depth_at_start_px,
+		viewports_scrolled: p.viewports_scrolled,
+	})
+}
+
 // Ship-metric events for the Loops primitive bet. `loop_viewed` fires once per
 // Loop detail page mount; `loop_graduated` fires once per Loop created from the
 // web (paired with `bet_created` — same call site pattern in `useCreateObject`).
@@ -361,4 +425,39 @@ export function trackFypSessionOpened(p: { workspace_id: string }): void {
 
 export function trackFypOpenedFirst(p: { workspace_id: string }): void {
 	trackEvent('fyp_opened_first', { workspace_id: p.workspace_id })
+}
+
+// Ship-metric events for the bidirectional swipe-to-read/unread bet on the For
+// You page. Fire on the *completed* swipe — inside the post-Undo timer commit,
+// so tapping Undo within the 4.5s window emits nothing. `mobile` is computed at
+// emission from `window.innerWidth <= 768` rather than snapshotted at hook mount
+// because the DoD keys the mobile/desktop split off the viewport width the
+// gesture actually completes on. `via` is fixed to 'swipe' so the toolbar
+// mark-read button can be instrumented separately later without back-filling.
+function isMobileViewport(): boolean {
+	if (typeof window === 'undefined') return false
+	return window.innerWidth <= 768
+}
+
+interface ForyouCardMarkedProps {
+	entity_type: string
+	entity_id: string
+}
+
+export function trackForyouCardMarkedRead(p: ForyouCardMarkedProps): void {
+	trackEvent('foryou_card_marked_read', {
+		entity_type: p.entity_type,
+		entity_id: p.entity_id,
+		mobile: isMobileViewport(),
+		via: 'swipe',
+	})
+}
+
+export function trackForyouCardMarkedUnread(p: ForyouCardMarkedProps): void {
+	trackEvent('foryou_card_marked_unread', {
+		entity_type: p.entity_type,
+		entity_id: p.entity_id,
+		mobile: isMobileViewport(),
+		via: 'swipe',
+	})
 }

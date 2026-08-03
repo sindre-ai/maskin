@@ -6,9 +6,12 @@ import {
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
+	trackChatImageUpload,
 	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
+	trackForyouCardMarkedRead,
+	trackForyouCardMarkedUnread,
 	trackFypBriefingAudioPlayed,
 	trackFypBriefingRead,
 	trackFypOpenedFirst,
@@ -22,6 +25,7 @@ import {
 	trackObjectsListArrived,
 	trackObjectsListGroupToggled,
 	trackRelationshipCreated,
+	trackScrollToTop,
 	trackSidebarAgentActivityExpanded,
 	trackSidebarWorkspaceSwitcherOpened,
 	trackSpecialistSummonedManually,
@@ -388,23 +392,55 @@ describe('v1 taxonomy helpers', () => {
 		})
 	})
 
-	it('north_star_prompt_impression fires with workspace_id via posthog.capture', () => {
+	it('north_star_prompt_impression fires with workspace_id via posthog.capture, bypassing the batch queue', () => {
 		const capture = captureSpy()
 
 		trackNorthStarPromptImpression({ workspace_id: 'ws-42' })
 
-		expect(capture).toHaveBeenCalledWith('north_star_prompt_impression', {
-			workspace_id: 'ws-42',
-		})
+		expect(capture).toHaveBeenCalledWith(
+			'north_star_prompt_impression',
+			{ workspace_id: 'ws-42' },
+			{ send_instantly: true },
+		)
 	})
 
-	it('north_star_prompt_response fires with workspace_id via posthog.capture', () => {
+	it('north_star_prompt_response fires with workspace_id via posthog.capture, bypassing the batch queue', () => {
+		// send_instantly is load-bearing: without it, posthog-js batches events
+		// for ~3s. The response event fires right before the card unmounts and
+		// users typically tab away immediately, so the batched event never
+		// reaches PostHog — that's why the event name was missing from the
+		// project taxonomy after PR #1003. The impression event uses the same
+		// flag for parity so the ratio isn't biased by asymmetric delivery.
 		const capture = captureSpy()
 
 		trackNorthStarPromptResponse({ workspace_id: 'ws-42' })
 
-		expect(capture).toHaveBeenCalledWith('north_star_prompt_response', {
-			workspace_id: 'ws-42',
+		expect(capture).toHaveBeenCalledWith(
+			'north_star_prompt_response',
+			{ workspace_id: 'ws-42' },
+			{ send_instantly: true },
+		)
+	})
+
+	it('scroll_to_top carries entity_id/entity_type/object_subtype so the correlation join runs without aliasing', () => {
+		const capture = captureSpy()
+
+		trackScrollToTop({
+			entity_id: 'bet-42',
+			entity_type: 'object',
+			object_subtype: 'bet',
+			scroll_depth_at_start_px: 1600,
+			viewports_scrolled: 2,
+		})
+
+		expect(capture).toHaveBeenCalledWith('scroll_to_top', {
+			entity_id: 'bet-42',
+			entity_type: 'object',
+			source: 'web',
+			flow_id: null,
+			object_subtype: 'bet',
+			scroll_depth_at_start_px: 1600,
+			viewports_scrolled: 2,
 		})
 	})
 
@@ -544,5 +580,155 @@ describe('v1 taxonomy helpers', () => {
 		expect(audioCalls).toHaveLength(2)
 		expect(audioCalls[0][1]).toEqual({ entity_id: 'brief-a', entity_type: 'knowledge' })
 		expect(audioCalls[1][1]).toEqual({ entity_id: 'brief-b', entity_type: 'knowledge' })
+	})
+
+	describe('foryou_card_marked_read / _unread', () => {
+		const originalInnerWidth = window.innerWidth
+
+		function setInnerWidth(value: number) {
+			Object.defineProperty(window, 'innerWidth', { value, configurable: true, writable: true })
+		}
+
+		afterEach(() => {
+			setInnerWidth(originalInnerWidth)
+		})
+
+		it('foryou_card_marked_read carries entity_type/entity_id/via, and mobile=true at ≤768px', () => {
+			const capture = captureSpy()
+			setInnerWidth(375)
+
+			trackForyouCardMarkedRead({ entity_type: 'bet', entity_id: 'bet-1' })
+
+			expect(capture).toHaveBeenCalledWith('foryou_card_marked_read', {
+				entity_type: 'bet',
+				entity_id: 'bet-1',
+				mobile: true,
+				via: 'swipe',
+			})
+		})
+
+		it('foryou_card_marked_read reports mobile=false above 768px', () => {
+			const capture = captureSpy()
+			setInnerWidth(1024)
+
+			trackForyouCardMarkedRead({ entity_type: 'insight', entity_id: 'ins-2' })
+
+			expect(capture).toHaveBeenCalledWith(
+				'foryou_card_marked_read',
+				expect.objectContaining({ mobile: false, via: 'swipe' }),
+			)
+		})
+
+		it('foryou_card_marked_read includes 768px in the mobile bucket (DoD boundary)', () => {
+			const capture = captureSpy()
+			setInnerWidth(768)
+
+			trackForyouCardMarkedRead({ entity_type: 'bet', entity_id: 'bet-3' })
+
+			expect(capture).toHaveBeenCalledWith(
+				'foryou_card_marked_read',
+				expect.objectContaining({ mobile: true }),
+			)
+		})
+
+		it('foryou_card_marked_unread mirrors _read with the same property shape', () => {
+			const capture = captureSpy()
+			setInnerWidth(375)
+
+			trackForyouCardMarkedUnread({ entity_type: 'task', entity_id: 'task-9' })
+
+			expect(capture).toHaveBeenCalledWith('foryou_card_marked_unread', {
+				entity_type: 'task',
+				entity_id: 'task-9',
+				mobile: true,
+				via: 'swipe',
+			})
+		})
+	})
+})
+
+describe('trackChatImageUpload', () => {
+	const originalUserAgentDescriptor = Object.getOwnPropertyDescriptor(navigator, 'userAgent')
+	const originalMaxTouchDescriptor = Object.getOwnPropertyDescriptor(navigator, 'maxTouchPoints')
+
+	function setUserAgent(value: string) {
+		Object.defineProperty(navigator, 'userAgent', { value, configurable: true })
+	}
+
+	function setMaxTouchPoints(value: number) {
+		Object.defineProperty(navigator, 'maxTouchPoints', { value, configurable: true })
+	}
+
+	afterEach(() => {
+		if (originalUserAgentDescriptor) {
+			Object.defineProperty(navigator, 'userAgent', originalUserAgentDescriptor)
+		}
+		if (originalMaxTouchDescriptor) {
+			Object.defineProperty(navigator, 'maxTouchPoints', originalMaxTouchDescriptor)
+		}
+	})
+
+	function captureSpy() {
+		__setInitializedForTesting(true)
+		return vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+	}
+
+	it('emits platform=ios for an iPhone user-agent', () => {
+		const capture = captureSpy()
+		setUserAgent(
+			'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1',
+		)
+
+		trackChatImageUpload({ outcome: 'success' })
+
+		expect(capture).toHaveBeenCalledWith('chat_image_upload', {
+			platform: 'ios',
+			outcome: 'success',
+		})
+	})
+
+	it('emits platform=ios for an iPadOS 13+ user-agent that masquerades as Macintosh', () => {
+		const capture = captureSpy()
+		setUserAgent(
+			'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15',
+		)
+		setMaxTouchPoints(5)
+
+		trackChatImageUpload({ outcome: 'failure' })
+
+		expect(capture).toHaveBeenCalledWith('chat_image_upload', {
+			platform: 'ios',
+			outcome: 'failure',
+		})
+	})
+
+	it('emits platform=web for desktop Chrome on Windows', () => {
+		const capture = captureSpy()
+		setUserAgent(
+			'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+		)
+		setMaxTouchPoints(0)
+
+		trackChatImageUpload({ outcome: 'success' })
+
+		expect(capture).toHaveBeenCalledWith('chat_image_upload', {
+			platform: 'web',
+			outcome: 'success',
+		})
+	})
+
+	it('emits platform=web for Android Chrome (not conflated with iOS)', () => {
+		const capture = captureSpy()
+		setUserAgent(
+			'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+		)
+		setMaxTouchPoints(5)
+
+		trackChatImageUpload({ outcome: 'success' })
+
+		expect(capture).toHaveBeenCalledWith('chat_image_upload', {
+			platform: 'web',
+			outcome: 'success',
+		})
 	})
 })
