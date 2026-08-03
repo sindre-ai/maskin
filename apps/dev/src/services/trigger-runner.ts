@@ -23,12 +23,21 @@ export type NativeTriggerHandler = (input: {
 }) => Promise<void>
 
 /**
- * The bridge for the briefing pipeline: CoS currently writes daily briefings
- * as `type='knowledge'` objects tagged with `metadata.kind='briefing'`, but
- * the audio-render trigger config (per the ADR + DoD on T1) uses
- * `entity_type='briefing'`. Rather than fork the trigger config shape, this
- * table lets the runner alias one incoming event type to another for
- * trigger-matching purposes only — the event row itself is not rewritten.
+ * The bridge for the briefing pipeline: the audio-render trigger config (per
+ * the ADR + DoD on T1) uses `entity_type='briefing'`, but no producer emits
+ * events under that entity type today. Rather than fork the trigger config
+ * shape, this table lets the runner alias one incoming event type to another
+ * for trigger-matching purposes only — the event row itself is not rewritten.
+ *
+ * Two aliases target `'briefing'`:
+ * - `metadata.kind === 'briefing'` — the canonical shape, honoured for any
+ *   future producer that writes it directly.
+ * - `title` startsWith `'Daily Briefing'` — the actual shape the workspace's
+ *   Chief-of-Staff cron produces today (`type='knowledge'`,
+ *   `metadata.doc_type='note'`, title `Daily Briefing — YYYY-MM-DD`). Title
+ *   is the strongest signal here: other `doc_type='note'` knowledge objects
+ *   in the workspace (e.g. Knowledge Author learnings) don't share the
+ *   prefix, so this stays scoped to real briefings.
  */
 interface EventTypeAlias {
 	/** The alias trigger configs can name (e.g. 'briefing'). */
@@ -46,7 +55,21 @@ const KNOWLEDGE_BRIEFING_ALIAS: EventTypeAlias = {
 	},
 }
 
-const EVENT_TYPE_ALIASES: EventTypeAlias[] = [KNOWLEDGE_BRIEFING_ALIAS]
+const DAILY_BRIEFING_TITLE_PREFIX = 'Daily Briefing'
+
+const KNOWLEDGE_DAILY_BRIEFING_TITLE_ALIAS: EventTypeAlias = {
+	alias: 'briefing',
+	matches: (event, object) => {
+		if (event.entity_type !== 'knowledge') return false
+		const title = typeof object?.title === 'string' ? object.title : ''
+		return title.startsWith(DAILY_BRIEFING_TITLE_PREFIX)
+	},
+}
+
+const EVENT_TYPE_ALIASES: EventTypeAlias[] = [
+	KNOWLEDGE_BRIEFING_ALIAS,
+	KNOWLEDGE_DAILY_BRIEFING_TITLE_ALIAS,
+]
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
@@ -295,11 +318,15 @@ export class TriggerRunner {
 				resolvedAliases = applicable.map((a) => a.alias)
 				return resolvedAliases
 			}
-			// Need the object row to evaluate metadata-gated aliases.
+			// Need the object row to evaluate metadata- and title-gated aliases.
 			const objectForAlias = event.entity_id
 				? (
 						await this.db
-							.select({ metadata: objects.metadata, type: objects.type })
+							.select({
+								metadata: objects.metadata,
+								type: objects.type,
+								title: objects.title,
+							})
 							.from(objects)
 							.where(eq(objects.id, event.entity_id))
 							.limit(1)
@@ -738,6 +765,8 @@ export function parseCronScope(raw: unknown): CronScope | null {
 
 export interface ObjectData {
 	status?: string
+	title?: string
+	type?: string
 	metadata?: Record<string, unknown>
 }
 
