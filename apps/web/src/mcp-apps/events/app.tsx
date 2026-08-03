@@ -1,4 +1,4 @@
-import { ActivityFeedView } from '@/components/activity/activity-feed'
+import { ActivityFeedView } from '@/components/activity/activity-feed-view'
 import { useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
 import type { EventResponse } from '../shared/types'
