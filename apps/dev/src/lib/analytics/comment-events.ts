@@ -23,5 +23,9 @@ export async function trackAgentCommentPosted(p: AgentCommentPostedProps): Promi
 		char_count: p.content.length,
 		has_visual: VISUAL_FENCE_RE.test(p.content),
 		has_task_list: p.hasTaskList,
+		// Verbatim body so PostHog queries can grep prose (e.g. addressing-style
+		// audits) without re-scraping Maskin comment events. Length is API-capped
+		// at COMMENT_MAX_LENGTH upstream.
+		content: p.content,
 	})
 }
