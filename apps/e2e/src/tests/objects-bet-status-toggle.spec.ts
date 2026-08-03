@@ -37,7 +37,11 @@ test.describe('Objects display panel — bet status toggle', () => {
 				type: 'breaks_into',
 			})
 
-			await page.goto(`/${account.workspaceId}/objects`)
+			// Anchored to the Bets tab — the "Bet status" Display-panel toggle
+			// controls the DataTable render path; T5 flips the All-tab landing
+			// to FleetStatusView where the pill renders on every row regardless
+			// of that toggle.
+			await page.goto(`/${account.workspaceId}/objects?type=bet`)
 			await expect(page.getByText(`Toggle probe bet ${vp.width}`)).toBeVisible({
 				timeout: 10_000,
 			})

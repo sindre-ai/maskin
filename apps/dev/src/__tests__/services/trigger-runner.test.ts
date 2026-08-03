@@ -430,6 +430,148 @@ describe('TriggerRunner', () => {
 		})
 	})
 
+	describe('native handler dispatch', () => {
+		let nativeRunner: TriggerRunner
+		let nativeMockResults: Record<string, unknown>
+		const nativeHandler = vi.fn().mockResolvedValue(undefined)
+		const baseEvent: PgEvent = {
+			workspace_id: 'ws-1',
+			entity_type: 'knowledge',
+			entity_id: 'briefing-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-1',
+		}
+
+		beforeEach(async () => {
+			nativeHandler.mockClear()
+			const ctx = createTestContext()
+			nativeMockResults = ctx.mockResults
+			nativeMockResults.selectQueue = [
+				[], // cron triggers (start())
+				[], // reminder triggers (start())
+			]
+			nativeRunner = new TriggerRunner(ctx.db, bridge, sessionManager, {
+				nativeHandlers: { render_briefing_audio: nativeHandler },
+			})
+			await nativeRunner.start()
+		})
+
+		afterEach(async () => {
+			await nativeRunner.stop()
+		})
+
+		it('dispatches to the native handler when config.handler is set and skips session creation', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'briefing',
+					action: 'created',
+					handler: 'render_briefing_audio',
+				},
+			})
+			nativeMockResults.selectQueue = [
+				[trigger], // matchingTriggers
+				[{ metadata: { kind: 'briefing' }, type: 'knowledge' }], // alias object lookup
+			]
+			nativeMockResults.insert = []
+
+			bridge.emit('event', baseEvent)
+			await vi.advanceTimersByTimeAsync(0)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+			expect(nativeHandler).toHaveBeenCalledOnce()
+			const [call] = nativeHandler.mock.calls
+			expect(call[0].event.entity_id).toBe('briefing-1')
+			expect(call[0].trigger.id).toBe(trigger.id)
+		})
+
+		it('does not fire the briefing trigger for knowledge objects that are not briefings', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'briefing',
+					action: 'created',
+					handler: 'render_briefing_audio',
+				},
+			})
+			nativeMockResults.selectQueue = [
+				[trigger],
+				[{ metadata: { kind: 'daily_report' }, type: 'knowledge' }], // not a briefing
+			]
+
+			bridge.emit('event', baseEvent)
+			await vi.advanceTimersByTimeAsync(0)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(nativeHandler).not.toHaveBeenCalled()
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('fires the briefing trigger for CoS-shaped knowledge objects (title-prefix alias)', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'briefing',
+					action: 'created',
+					handler: 'render_briefing_audio',
+				},
+			})
+			nativeMockResults.selectQueue = [
+				[trigger],
+				[
+					{
+						metadata: { doc_type: 'note' },
+						type: 'knowledge',
+						title: 'Daily Briefing — 2026-08-03',
+					},
+				],
+			]
+			nativeMockResults.insert = []
+
+			bridge.emit('event', baseEvent)
+			await vi.advanceTimersByTimeAsync(0)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(nativeHandler).toHaveBeenCalledOnce()
+			const [call] = nativeHandler.mock.calls
+			expect(call[0].event.entity_id).toBe('briefing-1')
+		})
+
+		it('does not fire the briefing trigger for other doc_type=note knowledge objects (title-prefix discriminator)', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'briefing',
+					action: 'created',
+					handler: 'render_briefing_audio',
+				},
+			})
+			nativeMockResults.selectQueue = [
+				[trigger],
+				[
+					{
+						metadata: { doc_type: 'note' },
+						type: 'knowledge',
+						title: 'Agent MCP-handler verification tops out at wire-response',
+					},
+				],
+			]
+
+			bridge.emit('event', baseEvent)
+			await vi.advanceTimersByTimeAsync(0)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(nativeHandler).not.toHaveBeenCalled()
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+	})
+
 	describe('cron scheduling', () => {
 		it('fires cron trigger at correct interval', async () => {
 			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))

@@ -110,6 +110,10 @@ vi.mock('@/components/objects/data-table/data-table', () => ({
 	DataTable: () => <div data-testid="data-table" />,
 }))
 
+vi.mock('@/components/objects/fleet-status-view', () => ({
+	FleetStatusView: () => <div data-testid="fleet-status-view" />,
+}))
+
 vi.mock('@/components/objects/data-table/data-table-toolbar', () => ({
 	DataTableToolbar: () => <div data-testid="data-table-toolbar" />,
 }))
@@ -236,10 +240,12 @@ describe('validateSearch', () => {
 })
 
 describe('ObjectsPage', () => {
-	it('renders page header and data table', () => {
+	it('renders page header and fleet-status view on the All tab (default landing)', () => {
 		render(<ObjectsPage />)
 		expect(screen.getByText('Objects')).toBeInTheDocument()
-		expect(screen.getByTestId('data-table')).toBeInTheDocument()
+		// T5 flips the All-tab landing from DataTable to FleetStatusView so a
+		// mixed-portfolio workspace shows all three primitive sections on open.
+		expect(screen.getByTestId('fleet-status-view')).toBeInTheDocument()
 		expect(screen.getByTestId('data-table-toolbar')).toBeInTheDocument()
 	})
 })

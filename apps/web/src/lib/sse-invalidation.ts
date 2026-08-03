@@ -50,6 +50,14 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			if (event.entity_type === 'bet') {
 				queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
 			}
+			// SSE payload doesn't carry metadata, so a knowledge event of any kind
+			// invalidates the briefing query — the refetch is a single small
+			// route call and a non-briefing knowledge write returns the same
+			// object, keeping the featured card in sync when CoS lands a new
+			// briefing.
+			if (event.entity_type === 'knowledge') {
+				queryClient.invalidateQueries({ queryKey: queryKeys.briefing.latest(workspaceId) })
+			}
 			break
 		case 'relationship':
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })

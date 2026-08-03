@@ -12,6 +12,10 @@ import {
 	trackEvent,
 	trackForyouCardMarkedRead,
 	trackForyouCardMarkedUnread,
+	trackFypBriefingAudioPlayed,
+	trackFypBriefingRead,
+	trackFypOpenedFirst,
+	trackFypSessionOpened,
 	trackLoopGraduated,
 	trackLoopViewed,
 	trackNorthStarPromptImpression,
@@ -27,6 +31,7 @@ import {
 	trackSpecialistSummonedManually,
 	trackTriggerCreated,
 	trackTriggerFired,
+	trackWorkspaceSessionStart,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
 import { __setInitializedForTesting } from '@/lib/posthog'
@@ -35,6 +40,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 beforeEach(() => {
 	localStorage.clear()
+	sessionStorage.clear()
 	vi.spyOn(console, 'info').mockImplementation(() => {})
 })
 
@@ -538,6 +544,42 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			source_bet_id: 'bet-77',
 		})
+	})
+
+	it('workspace_session_start carries the workspace_id property', () => {
+		const capture = captureSpy()
+		trackWorkspaceSessionStart({ workspace_id: 'ws-1' })
+		expect(capture).toHaveBeenCalledWith('workspace_session_start', { workspace_id: 'ws-1' })
+	})
+
+	it('fyp_session_opened and fyp_opened_first carry the workspace_id property', () => {
+		const capture = captureSpy()
+		trackFypSessionOpened({ workspace_id: 'ws-1' })
+		trackFypOpenedFirst({ workspace_id: 'ws-1' })
+		expect(capture).toHaveBeenCalledWith('fyp_session_opened', { workspace_id: 'ws-1' })
+		expect(capture).toHaveBeenCalledWith('fyp_opened_first', { workspace_id: 'ws-1' })
+	})
+
+	it('fyp_briefing_read dedupes per briefing per session', () => {
+		const capture = captureSpy()
+		trackFypBriefingRead({ entity_id: 'brief-a' })
+		trackFypBriefingRead({ entity_id: 'brief-a' })
+		trackFypBriefingRead({ entity_id: 'brief-b' })
+		const readCalls = capture.mock.calls.filter(([name]) => name === 'fyp_briefing_read')
+		expect(readCalls).toHaveLength(2)
+		expect(readCalls[0][1]).toEqual({ entity_id: 'brief-a', entity_type: 'knowledge' })
+		expect(readCalls[1][1]).toEqual({ entity_id: 'brief-b', entity_type: 'knowledge' })
+	})
+
+	it('fyp_briefing_audio_played dedupes per briefing per session', () => {
+		const capture = captureSpy()
+		trackFypBriefingAudioPlayed({ entity_id: 'brief-a' })
+		trackFypBriefingAudioPlayed({ entity_id: 'brief-a' })
+		trackFypBriefingAudioPlayed({ entity_id: 'brief-b' })
+		const audioCalls = capture.mock.calls.filter(([name]) => name === 'fyp_briefing_audio_played')
+		expect(audioCalls).toHaveLength(2)
+		expect(audioCalls[0][1]).toEqual({ entity_id: 'brief-a', entity_type: 'knowledge' })
+		expect(audioCalls[1][1]).toEqual({ entity_id: 'brief-b', entity_type: 'knowledge' })
 	})
 
 	describe('foryou_card_marked_read / _unread', () => {

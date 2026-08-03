@@ -43,7 +43,10 @@ test.describe('Object table — Title column grows to fill available width', () 
 				status: 'signal',
 			})
 
-			await page.goto(`/${account.workspaceId}/objects`)
+			// Anchored to the Bets tab — T5 flips the All-tab landing to a
+			// non-tabular FleetStatusView; the title-column grow behavior
+			// this spec covers is DataTable-only.
+			await page.goto(`/${account.workspaceId}/objects?type=bet`)
 
 			// The long-titled row must be reachable at every ship-gate viewport,
 			// whether the DataTable renders as a table (≥ md) or a card (< md).
@@ -72,7 +75,7 @@ test.describe('Object table — Title column grows to fill available width', () 
 				status: 'signal',
 			})
 
-			await page.goto(`/${account.workspaceId}/objects`)
+			await page.goto(`/${account.workspaceId}/objects?type=bet`)
 			const titleLink = page.getByRole('link', { name: LONG_TITLE })
 			await expect(titleLink).toBeVisible({ timeout: 10000 })
 

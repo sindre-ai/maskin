@@ -5,6 +5,7 @@ import { AppSidebar } from '@/components/layout/sidebar'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useActors } from '@/hooks/use-actors'
+import { useFypWorkspaceMountEvents } from '@/hooks/use-fyp-session'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
@@ -56,6 +57,12 @@ function WorkspaceLayout() {
 
 	// Connect SSE for real-time updates
 	const sseStatus = useSSE(workspaceId)
+
+	// For You briefing bet — session-scoped ship metrics. `workspace_session_start`
+	// (denominator) and `fyp_opened_first` (numerator) both key off the first
+	// workspace mount in a tab session, so they belong on the layout, not the
+	// inner routes.
+	useFypWorkspaceMountEvents(workspaceId)
 
 	const workspace = useMemo(
 		() => workspaces?.find((w) => w.id === workspaceId),

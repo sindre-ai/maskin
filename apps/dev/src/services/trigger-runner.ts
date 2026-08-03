@@ -2,10 +2,74 @@ import type { Database } from '@maskin/db'
 import { events, objects, sessions, triggers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { Cron } from 'croner'
 import { type SQL, and, eq, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { BRIEFING_AUDIO_HANDLER, renderBriefingAudio } from './briefing-audio-renderer'
 import type { SessionManager } from './session-manager'
+
+/**
+ * In-process handlers a trigger can dispatch to instead of spawning an agent
+ * session. Match on `trigger.config.handler === '<key>'`. Kept small on
+ * purpose — every entry here is a case where a real API call replaces what
+ * would otherwise be a session-driven agent turn.
+ */
+export type NativeTriggerHandler = (input: {
+	db: Database
+	storage: StorageProvider
+	event: PgEvent
+	trigger: typeof triggers.$inferSelect
+}) => Promise<void>
+
+/**
+ * The bridge for the briefing pipeline: the audio-render trigger config (per
+ * the ADR + DoD on T1) uses `entity_type='briefing'`, but no producer emits
+ * events under that entity type today. Rather than fork the trigger config
+ * shape, this table lets the runner alias one incoming event type to another
+ * for trigger-matching purposes only — the event row itself is not rewritten.
+ *
+ * Two aliases target `'briefing'`:
+ * - `metadata.kind === 'briefing'` — the canonical shape, honoured for any
+ *   future producer that writes it directly.
+ * - `title` startsWith `'Daily Briefing'` — the actual shape the workspace's
+ *   Chief-of-Staff cron produces today (`type='knowledge'`,
+ *   `metadata.doc_type='note'`, title `Daily Briefing — YYYY-MM-DD`). Title
+ *   is the strongest signal here: other `doc_type='note'` knowledge objects
+ *   in the workspace (e.g. Knowledge Author learnings) don't share the
+ *   prefix, so this stays scoped to real briefings.
+ */
+interface EventTypeAlias {
+	/** The alias trigger configs can name (e.g. 'briefing'). */
+	alias: string
+	/** Function that decides whether the concrete event should be treated as the alias. */
+	matches: (event: PgEvent, object: ObjectData | undefined) => boolean
+}
+
+const KNOWLEDGE_BRIEFING_ALIAS: EventTypeAlias = {
+	alias: 'briefing',
+	matches: (event, object) => {
+		if (event.entity_type !== 'knowledge') return false
+		const meta = (object?.metadata ?? {}) as Record<string, unknown>
+		return meta.kind === 'briefing'
+	},
+}
+
+const DAILY_BRIEFING_TITLE_PREFIX = 'Daily Briefing'
+
+const KNOWLEDGE_DAILY_BRIEFING_TITLE_ALIAS: EventTypeAlias = {
+	alias: 'briefing',
+	matches: (event, object) => {
+		if (event.entity_type !== 'knowledge') return false
+		const title = typeof object?.title === 'string' ? object.title : ''
+		return title.startsWith(DAILY_BRIEFING_TITLE_PREFIX)
+	},
+}
+
+const EVENT_TYPE_ALIASES: EventTypeAlias[] = [
+	KNOWLEDGE_BRIEFING_ALIAS,
+	KNOWLEDGE_DAILY_BRIEFING_TITLE_ALIAS,
+]
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
@@ -32,16 +96,44 @@ export class TriggerRunner {
 	private db: Database
 	private bridge: PgNotifyBridge
 	private sessionManager: SessionManager
+	private storage: StorageProvider | null
+	private nativeHandlers: Map<string, NativeTriggerHandler>
 	private cronJobs: Map<string, Cron> = new Map()
 	private reminderTimeouts: Map<string, NodeJS.Timeout> = new Map()
 	private eventHandler: ((event: PgEvent) => void) | null = null
 	private sessionEventHandler: ((event: PgEvent) => void) | null = null
 	private triggerFailures: Map<string, TriggerFailureState> = new Map()
 
-	constructor(db: Database, bridge: PgNotifyBridge, sessionManager: SessionManager) {
+	constructor(
+		db: Database,
+		bridge: PgNotifyBridge,
+		sessionManager: SessionManager,
+		options: {
+			storage?: StorageProvider
+			nativeHandlers?: Record<string, NativeTriggerHandler>
+		} = {},
+	) {
 		this.db = db
 		this.bridge = bridge
 		this.sessionManager = sessionManager
+		this.storage = options.storage ?? null
+		this.nativeHandlers = new Map(Object.entries(options.nativeHandlers ?? {}))
+		// Storage-backed defaults — registered only when the caller wired storage
+		// so unit tests that don't need S3 can construct a runner without it.
+		if (this.storage && !this.nativeHandlers.has(BRIEFING_AUDIO_HANDLER)) {
+			const storage = this.storage
+			this.nativeHandlers.set(BRIEFING_AUDIO_HANDLER, async ({ event, trigger }) => {
+				if (!event.entity_id) return
+				await renderBriefingAudio(
+					{ db: this.db, storage },
+					{
+						workspaceId: event.workspace_id,
+						briefingId: event.entity_id,
+						actorId: trigger.targetActorId,
+					},
+				)
+			})
+		}
 	}
 
 	async start() {
@@ -212,18 +304,56 @@ export class TriggerRunner {
 			return objectContext
 		}
 
+		// Resolve aliases for `created` events on unknown-to-the-alias entity
+		// types (e.g. knowledge → briefing). Runs once per event and needs the
+		// current object row, so it lazily hydrates via getObjectContext(). An
+		// event ever only aliases into extra types; the concrete `entity_type`
+		// still matches on its own.
+		let resolvedAliases: string[] | undefined
+		const getResolvedAliases = async (): Promise<string[]> => {
+			if (resolvedAliases !== undefined) return resolvedAliases
+			const applicable = EVENT_TYPE_ALIASES.filter((a) => a.matches(event, undefined))
+			// A same-event-type alias needs no object lookup (unusual, but possible).
+			if (applicable.length === EVENT_TYPE_ALIASES.length) {
+				resolvedAliases = applicable.map((a) => a.alias)
+				return resolvedAliases
+			}
+			// Need the object row to evaluate metadata- and title-gated aliases.
+			const objectForAlias = event.entity_id
+				? (
+						await this.db
+							.select({
+								metadata: objects.metadata,
+								type: objects.type,
+								title: objects.title,
+							})
+							.from(objects)
+							.where(eq(objects.id, event.entity_id))
+							.limit(1)
+					)[0]
+				: undefined
+			resolvedAliases = EVENT_TYPE_ALIASES.filter((a) =>
+				a.matches(event, objectForAlias as ObjectData | undefined),
+			).map((a) => a.alias)
+			return resolvedAliases
+		}
+
 		for (const trigger of matchingTriggers) {
 			const config = trigger.config as Record<string, unknown>
 
 			// Check if event matches trigger config
 			// slack.message is a catch-all that matches any slack message subtype
 			if (config.entity_type && config.entity_type !== event.entity_type) {
-				if (
-					config.entity_type !== 'slack.message' ||
-					!event.entity_type.startsWith('slack.') ||
-					!event.entity_type.endsWith('_message')
-				) {
-					continue
+				const isSlackAlias =
+					config.entity_type === 'slack.message' &&
+					event.entity_type.startsWith('slack.') &&
+					event.entity_type.endsWith('_message')
+				if (!isSlackAlias) {
+					// Fall through to the alias table (knowledge → briefing, etc.) before
+					// giving up. Alias resolution is lazy — first trigger to name a
+					// non-native type pays the object lookup, the rest reuse the cache.
+					const aliases = await getResolvedAliases()
+					if (!aliases.includes(config.entity_type as string)) continue
 				}
 			}
 			if (config.action && config.action !== event.action) continue
@@ -302,6 +432,34 @@ export class TriggerRunner {
 					source_event: event,
 				},
 			})
+
+			// Native-handler branch — trigger dispatches to an in-process handler
+			// (TTS, image generation, etc.) instead of spawning an agent session.
+			// A handler named in config but not registered is a misconfig, not a
+			// silent skip: it flows through the failure-backoff path.
+			const handlerName = typeof config.handler === 'string' ? config.handler : null
+			if (handlerName) {
+				const handler = this.nativeHandlers.get(handlerName)
+				if (!handler) {
+					logger.error(`Trigger '${trigger.name}' names unknown native handler`, {
+						triggerId: trigger.id,
+						handler: handlerName,
+					})
+					this.recordTriggerFailure(trigger.id)
+					continue
+				}
+				handler({ db: this.db, storage: this.storage as StorageProvider, event, trigger })
+					.then(() => this.resetTriggerBackoff(trigger.id))
+					.catch((err) => {
+						logger.error(`Native trigger handler '${handlerName}' failed`, {
+							triggerId: trigger.id,
+							triggerName: trigger.name,
+							error: String(err),
+						})
+						this.recordTriggerFailure(trigger.id)
+					})
+				continue
+			}
 
 			const prompt = `${trigger.actionPrompt}\n\nTriggering event: ${JSON.stringify(eventForPrompt)}`
 			this.sessionManager
@@ -607,6 +765,8 @@ export function parseCronScope(raw: unknown): CronScope | null {
 
 export interface ObjectData {
 	status?: string
+	title?: string
+	type?: string
 	metadata?: Record<string, unknown>
 }
 

@@ -27,13 +27,19 @@ vi.mock('@/lib/analytics', async () => {
 	}
 })
 
+// Uses the `insight` tab (typed) rather than the All tab so the route's
+// list rendering hits `DataTable` — the imperative-handle-based scroll
+// restore and row-selection stubs below are DataTable-specific. T5 flips
+// the All-tab render to a non-virtualized `FleetStatusView` where scroll
+// restore doesn't apply the same way; the tab-scoped rails covered here
+// are unaffected.
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
 		createFileRoute: () => (options: Record<string, unknown>) => options,
 		useSearch: () => ({
-			type: undefined,
+			type: 'insight',
 			status: undefined,
 			driver: undefined,
 			sort: 'createdAt',
@@ -214,7 +220,7 @@ beforeEach(() => {
 
 describe('ObjectsPage — silent scroll restore on POP landing', () => {
 	it('calls scrollToRowId with the persisted first-visible row id when the mount was a POP and data has loaded', async () => {
-		patchViewState('ws-1', '__all__', { firstVisibleRowId: 'obj-b' })
+		patchViewState('ws-1', 'insight', { firstVisibleRowId: 'obj-b' })
 		await setBackNav(true)
 
 		render(<ObjectsPage />)
@@ -226,7 +232,7 @@ describe('ObjectsPage — silent scroll restore on POP landing', () => {
 	})
 
 	it('does nothing on a PUSH/REPLACE landing even if a stale anchor lingers in the store', async () => {
-		patchViewState('ws-1', '__all__', { firstVisibleRowId: 'obj-b' })
+		patchViewState('ws-1', 'insight', { firstVisibleRowId: 'obj-b' })
 		await setBackNav(false)
 
 		render(<ObjectsPage />)

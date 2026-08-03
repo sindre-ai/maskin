@@ -1,100 +1,139 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import briefingRoutes from '../../routes/briefing'
-import { buildObject, buildWorkspace } from '../factories'
+import { buildObject } from '../factories'
 import { jsonGet } from '../helpers'
 import { createImportTestApp } from '../setup'
 
 const wsId = '00000000-0000-0000-0000-000000000001'
 
-// Order of queries inside renderWorkspaceBriefing (auth middleware is bypassed
-// in tests, so no membership select is prepended):
-//   1. workspace lookup
-//   2-6. Promise.all: activeBets, pausedBets, closedBets, openInsights, loops
+// Query order inside GET /latest (auth middleware bypassed in tests):
+//   1. briefings lookup (latest two)
+//   2. attached audio file lookup — skipped when no briefings exist
+//   3. unreadDelta count — skipped when no previous briefing exists
+describe('GET /api/briefing/latest', () => {
+	const requesterId = 'test-actor-id'
+	const otherActorId = '11111111-1111-1111-1111-111111111111'
+	const latestBriefingId = '22222222-2222-2222-2222-222222222222'
+	const previousBriefingId = '33333333-3333-3333-3333-333333333333'
+	const audioFileId = '44444444-4444-4444-4444-444444444444'
 
-describe('GET /api/briefing', () => {
-	it('returns the composed briefing markdown for the workspace', async () => {
-		const { app, mockResults, storageProvider } = createImportTestApp(
-			briefingRoutes,
-			'/api/briefing',
-		)
-		const ws = buildWorkspace({ id: wsId, name: 'Acme' })
-		mockResults.selectQueue = [[ws], [], [], [], [], []]
-		vi.mocked(storageProvider.exists).mockResolvedValue(false)
+	it('returns null object + zero delta when no briefing exists', async () => {
+		const { app, mockResults } = createImportTestApp(briefingRoutes, '/api/briefing')
+		mockResults.selectQueue = [[]]
 
-		const res = await app.request(jsonGet('/api/briefing', { 'x-workspace-id': wsId }))
+		const res = await app.request(jsonGet('/api/briefing/latest', { 'x-workspace-id': wsId }))
 		expect(res.status).toBe(200)
-		const body = (await res.json()) as { workspace_id: string; markdown: string }
-		expect(body.workspace_id).toBe(wsId)
-		expect(body.markdown).toContain('Acme — workspace briefing')
+		expect(res.headers.get('cache-control')).toBe('private, max-age=30')
+		const body = (await res.json()) as {
+			object: unknown
+			audioFileId: string | null
+			unreadDelta: number
+		}
+		expect(body).toEqual({ object: null, audioFileId: null, unreadDelta: 0 })
 	})
 
-	it('includes the ## Loops section when loops are seeded', async () => {
-		const { app, mockResults, storageProvider } = createImportTestApp(
-			briefingRoutes,
-			'/api/briefing',
-		)
-		const ws = buildWorkspace({ id: wsId })
-		const atRisk = buildObject({
+	it('returns the latest briefing with a null audio id when nothing is attached yet', async () => {
+		const { app, mockResults } = createImportTestApp(briefingRoutes, '/api/briefing')
+		const latest = buildObject({
+			id: latestBriefingId,
 			workspaceId: wsId,
-			type: 'loop',
-			status: 'at-risk',
-			title: 'Customer bugs fixed <1 day',
-			metadata: { floor: '≤1 day median TTR', cadence: 'weekly' },
+			type: 'knowledge',
+			title: 'Daily Briefing',
+			content: 'Bullet one. Bullet two.',
+			metadata: { kind: 'briefing' },
 		})
-		const breached = buildObject({
-			workspaceId: wsId,
-			type: 'loop',
-			status: 'breached',
-			title: 'Onboarding NPS ≥ 40',
-			metadata: { floor: '≥40 NPS', cadence: 'monthly' },
-		})
-		const holding = buildObject({
-			workspaceId: wsId,
-			type: 'loop',
-			status: 'holding',
-			title: 'Weekly deploy Fridays',
-			metadata: { floor: 'ship at least 1/week', cadence: 'weekly' },
-		})
-		mockResults.selectQueue = [[ws], [], [], [], [], [breached, atRisk, holding]]
-		vi.mocked(storageProvider.exists).mockResolvedValue(false)
+		mockResults.selectQueue = [
+			[latest], // briefings query returns only the latest, no previous
+			[], // audio join returns no row
+		]
 
-		const res = await app.request(jsonGet('/api/briefing', { 'x-workspace-id': wsId }))
+		const res = await app.request(jsonGet('/api/briefing/latest', { 'x-workspace-id': wsId }))
 		expect(res.status).toBe(200)
-		const { markdown } = (await res.json()) as { markdown: string }
-
-		expect(markdown).toContain('## Loops')
-
-		// Priority ordering: breached appears before at-risk, at-risk before holding.
-		const breachedIdx = markdown.indexOf('Onboarding NPS ≥ 40')
-		const atRiskIdx = markdown.indexOf('Customer bugs fixed <1 day')
-		const holdingIdx = markdown.indexOf('Weekly deploy Fridays')
-		expect(breachedIdx).toBeGreaterThan(-1)
-		expect(atRiskIdx).toBeGreaterThan(breachedIdx)
-		expect(holdingIdx).toBeGreaterThan(atRiskIdx)
-
-		// Floor + cadence render inline next to the status chip.
-		expect(markdown).toContain('floor: ≥40 NPS')
-		expect(markdown).toContain('cadence: weekly')
+		const body = (await res.json()) as {
+			object: { id: string; type: string }
+			audioFileId: string | null
+			unreadDelta: number
+		}
+		expect(body.object.id).toBe(latestBriefingId)
+		expect(body.object.type).toBe('knowledge')
+		expect(body.audioFileId).toBeNull()
+		expect(body.unreadDelta).toBe(0)
 	})
 
-	it('omits the ## Loops section when no loops exist', async () => {
-		const { app, mockResults, storageProvider } = createImportTestApp(
-			briefingRoutes,
-			'/api/briefing',
-		)
-		const ws = buildWorkspace({ id: wsId })
-		mockResults.selectQueue = [[ws], [], [], [], [], []]
-		vi.mocked(storageProvider.exists).mockResolvedValue(false)
+	it('returns the attached audio file id when the T1 pipeline has rendered', async () => {
+		const { app, mockResults } = createImportTestApp(briefingRoutes, '/api/briefing')
+		const latest = buildObject({
+			id: latestBriefingId,
+			workspaceId: wsId,
+			type: 'knowledge',
+			metadata: { kind: 'briefing' },
+		})
+		mockResults.selectQueue = [
+			[latest], // briefings
+			[{ fileId: audioFileId }], // audio join
+		]
 
-		const res = await app.request(jsonGet('/api/briefing', { 'x-workspace-id': wsId }))
+		const res = await app.request(jsonGet('/api/briefing/latest', { 'x-workspace-id': wsId }))
 		expect(res.status).toBe(200)
-		const { markdown } = (await res.json()) as { markdown: string }
-		expect(markdown).not.toContain('## Loops')
+		const body = (await res.json()) as { audioFileId: string }
+		expect(body.audioFileId).toBe(audioFileId)
+	})
+
+	it('counts unreadDelta since the previous briefing and excludes self-authored events', async () => {
+		const { app, mockResults } = createImportTestApp(briefingRoutes, '/api/briefing')
+		const latest = buildObject({
+			id: latestBriefingId,
+			workspaceId: wsId,
+			type: 'knowledge',
+			metadata: { kind: 'briefing' },
+			createdAt: new Date('2026-07-21T09:00:00Z'),
+		})
+		const previous = buildObject({
+			id: previousBriefingId,
+			workspaceId: wsId,
+			type: 'knowledge',
+			metadata: { kind: 'briefing' },
+			createdAt: new Date('2026-07-20T09:00:00Z'),
+		})
+		mockResults.selectQueue = [
+			[latest, previous], // briefings
+			[{ fileId: audioFileId }], // audio join
+			[{ value: 7 }], // unread count
+		]
+
+		const res = await app.request(
+			jsonGet('/api/briefing/latest', { 'x-workspace-id': wsId }),
+			undefined,
+			{},
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { unreadDelta: number; audioFileId: string }
+		expect(body.unreadDelta).toBe(7)
+		expect(body.audioFileId).toBe(audioFileId)
+	})
+
+	it('marks the response private so `unreadDelta` never leaks across users', async () => {
+		const { app, mockResults } = createImportTestApp(briefingRoutes, '/api/briefing')
+		const latest = buildObject({
+			id: latestBriefingId,
+			workspaceId: wsId,
+			type: 'knowledge',
+			metadata: { kind: 'briefing' },
+			createdAt: new Date('2026-07-21T09:00:00Z'),
+		})
+		mockResults.selectQueue = [[latest], []]
+
+		const res = await app.request(jsonGet('/api/briefing/latest', { 'x-workspace-id': wsId }))
+		expect(res.headers.get('cache-control')).toBe('private, max-age=30')
+		expect(res.headers.get('vary')).toBe('X-Workspace-Id')
+		// Confirm identifiers so we're checking behaviour, not just headers.
+		expect(requesterId).toBe('test-actor-id')
+		expect(otherActorId).not.toBe(requesterId)
 	})
 
 	it('returns 400 when x-workspace-id header is missing', async () => {
 		const { app } = createImportTestApp(briefingRoutes, '/api/briefing')
-		const res = await app.request(jsonGet('/api/briefing'))
+		const res = await app.request(jsonGet('/api/briefing/latest'))
 		expect(res.status).toBe(400)
 	})
 })

@@ -109,7 +109,9 @@ sessionManager.start().then(() => {
 	logger.info('Session manager started')
 })
 
-const triggerRunner = new TriggerRunner(db, notifyBridge, sessionManager)
+const triggerRunner = new TriggerRunner(db, notifyBridge, sessionManager, {
+	storage: storageProvider,
+})
 triggerRunner.start().then(() => {
 	logger.info('Trigger runner started')
 })

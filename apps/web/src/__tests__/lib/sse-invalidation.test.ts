@@ -116,6 +116,18 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('invalidates the featured briefing query on a knowledge event', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'knowledge',
+			entity_id: entityId,
+			action: 'created',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.briefing.latest(workspaceId),
+		})
+	})
+
 	it('invalidates relationships for relationship entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
