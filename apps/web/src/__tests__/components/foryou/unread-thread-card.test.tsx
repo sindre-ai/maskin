@@ -9,6 +9,8 @@ import { TestWrapper } from '../../setup'
 const mockUseEntityEvents = vi.fn()
 const mockMarkReadMutate = vi.fn()
 const mockUseMarkRead = vi.fn(() => ({ mutate: mockMarkReadMutate, isPending: false }))
+const mockMarkUnreadMutate = vi.fn()
+const mockUseMarkUnread = vi.fn(() => ({ mutate: mockMarkUnreadMutate, isPending: false }))
 const mockCreateCommentMutate = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
@@ -23,6 +25,7 @@ vi.mock('@/hooks/use-events', () => ({
 
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useMarkRead: () => mockUseMarkRead(),
+	useMarkUnread: () => mockUseMarkUnread(),
 }))
 
 vi.mock('@/lib/auth', () => ({
@@ -72,6 +75,7 @@ describe('UnreadThreadCard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockMarkReadMutate.mockReset()
+		mockMarkUnreadMutate.mockReset()
 		mockCreateCommentMutate.mockReset()
 	})
 
@@ -775,5 +779,80 @@ describe('UnreadThreadCard', () => {
 		// keyboard users find either.
 		const dismissButtons = screen.getAllByRole('button', { name: /mark as read/i })
 		expect(dismissButtons.length).toBeGreaterThanOrEqual(2)
+	})
+
+	it('renders the Blue Envelope reveal on a read card and mark-read reveal on an unread card', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+
+		const readRender = render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ unread_count: 0, mentioning_unread_count: 0 })}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const unreadReveal = readRender.getByTestId('mark-unread-reveal')
+		expect(unreadReveal.className).toContain('bg-status-in_progress-bg')
+		expect(unreadReveal.className).toContain('text-status-in_progress-text')
+		expect(unreadReveal.textContent).toMatch(/Mark unread/)
+		expect(readRender.queryByTestId('mark-read-reveal')).toBeNull()
+		readRender.unmount()
+
+		const unreadRender = render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ unread_count: 3 })}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const readReveal = unreadRender.getByTestId('mark-read-reveal')
+		expect(readReveal.className).toContain('bg-status-active-bg')
+		expect(readReveal.textContent).toMatch(/Mark read/)
+		expect(unreadRender.queryByTestId('mark-unread-reveal')).toBeNull()
+	})
+
+	it('applies the muted read-card style (opacity + hairline left rail) when unread_count is 0', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		const { container } = render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ unread_count: 0, mentioning_unread_count: 0 })}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		// The inner card is the second child of the outer wrapper (the first is
+		// the swipe-reveal overlay).
+		const card = container.firstChild?.childNodes[1] as HTMLElement
+		expect(card.className).toMatch(/opacity-\[0\.78\]/)
+		expect(card.className).toMatch(/border-l-border/)
+		// The unread accent rails must not fire on a read card.
+		expect(card.className).not.toMatch(/border-l-primary/)
+		expect(card.className).not.toMatch(/border-l-warning/)
+	})
+
+	it('does not apply the muted read style when the card is still unread', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		const { container } = render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ unread_count: 2 })}
+				isActive={false}
+				onActivate={noop}
+				onReplyTargetChange={noop}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const card = container.firstChild?.childNodes[1] as HTMLElement
+		expect(card.className).not.toMatch(/opacity-\[0\.78\]/)
+		expect(card.className).not.toMatch(/border-l-border/)
 	})
 })

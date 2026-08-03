@@ -10,6 +10,8 @@ import {
 	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
+	trackForyouCardMarkedRead,
+	trackForyouCardMarkedUnread,
 	trackForyouViewModeSelected,
 	trackLoopGraduated,
 	trackLoopViewed,
@@ -546,6 +548,70 @@ describe('v1 taxonomy helpers', () => {
 			source: 'web',
 			flow_id: null,
 			source_bet_id: 'bet-77',
+		})
+	})
+
+	describe('foryou_card_marked_read / _unread', () => {
+		const originalInnerWidth = window.innerWidth
+
+		function setInnerWidth(value: number) {
+			Object.defineProperty(window, 'innerWidth', { value, configurable: true, writable: true })
+		}
+
+		afterEach(() => {
+			setInnerWidth(originalInnerWidth)
+		})
+
+		it('foryou_card_marked_read carries entity_type/entity_id/via, and mobile=true at ≤768px', () => {
+			const capture = captureSpy()
+			setInnerWidth(375)
+
+			trackForyouCardMarkedRead({ entity_type: 'bet', entity_id: 'bet-1' })
+
+			expect(capture).toHaveBeenCalledWith('foryou_card_marked_read', {
+				entity_type: 'bet',
+				entity_id: 'bet-1',
+				mobile: true,
+				via: 'swipe',
+			})
+		})
+
+		it('foryou_card_marked_read reports mobile=false above 768px', () => {
+			const capture = captureSpy()
+			setInnerWidth(1024)
+
+			trackForyouCardMarkedRead({ entity_type: 'insight', entity_id: 'ins-2' })
+
+			expect(capture).toHaveBeenCalledWith(
+				'foryou_card_marked_read',
+				expect.objectContaining({ mobile: false, via: 'swipe' }),
+			)
+		})
+
+		it('foryou_card_marked_read includes 768px in the mobile bucket (DoD boundary)', () => {
+			const capture = captureSpy()
+			setInnerWidth(768)
+
+			trackForyouCardMarkedRead({ entity_type: 'bet', entity_id: 'bet-3' })
+
+			expect(capture).toHaveBeenCalledWith(
+				'foryou_card_marked_read',
+				expect.objectContaining({ mobile: true }),
+			)
+		})
+
+		it('foryou_card_marked_unread mirrors _read with the same property shape', () => {
+			const capture = captureSpy()
+			setInnerWidth(375)
+
+			trackForyouCardMarkedUnread({ entity_type: 'task', entity_id: 'task-9' })
+
+			expect(capture).toHaveBeenCalledWith('foryou_card_marked_unread', {
+				entity_type: 'task',
+				entity_id: 'task-9',
+				mobile: true,
+				via: 'swipe',
+			})
 		})
 	})
 })

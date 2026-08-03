@@ -148,6 +148,26 @@ export async function markRead(
 		})
 }
 
+/**
+ * Slack-style toggle back to unread: delete the actor's read_state row for
+ * this entity so every event with id > 0 counts as unread again on the next
+ * read of the unread feed / detail. Idempotent — no row is a no-op.
+ */
+export async function markUnread(
+	db: Database,
+	args: { actorId: string } & EntityRef,
+): Promise<void> {
+	await db
+		.delete(readState)
+		.where(
+			and(
+				eq(readState.actorId, args.actorId),
+				eq(readState.entityType, args.entityType),
+				eq(readState.entityId, args.entityId),
+			),
+		)
+}
+
 /** Remove the actor's manual subscription. */
 export async function unsubscribe(
 	db: Database,
