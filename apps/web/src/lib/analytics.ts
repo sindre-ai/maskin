@@ -241,6 +241,18 @@ export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): v
 	trackEvent('sidebar.agent_activity.expanded', { workspaceId: p.workspaceId })
 }
 
+// Nav-cleanup bet — Marketplace footer position must reach ≥80% of its prior
+// top-nav CTR within 14 days of ship, which requires per-entry click emission.
+// `item_key` is the stable route-agnostic identifier (`for-you`, `objects`,
+// `marketplace`, …) — never the display label, which is i18n-flexible. `source`
+// distinguishes the top-nav slot from the footer slot so the ratio can be
+// sliced before/after T4 moves Marketplace between them.
+export type NavItemSource = 'top-nav' | 'footer'
+
+export function trackNavItemClicked(p: { item_key: string; source: NavItemSource }): void {
+	trackEvent('nav_item_clicked', { item_key: p.item_key, source: p.source })
+}
+
 // Ship-metric events for the For You onboarding prompt bet — response rate =
 // count(north_star_prompt_response) / count(north_star_prompt_impression),
 // filtered to workspaces with no prior bets. `workspace_id` is passed on the
