@@ -82,7 +82,15 @@ export async function upsertSkjaldMeeting(
 		folder_path: payload.folder_path ?? null,
 		segment_count: payload.segment_count,
 		diarization_status: payload.diarization_status,
-		speaker_segments: payload.speaker_segments ?? null,
+		// `_`-prefixed key: hidden from the object Properties panel (see
+		// metadata-properties.tsx / metadata-badges.tsx's `startsWith('_')` filter)
+		// and JSON-stringified rather than stored as a nested array, since
+		// `safeMetadataSchema` (packages/shared/src/schemas/primitives.ts) only
+		// allows scalars and arrays of scalars — an array of segment objects would
+		// fail validation the next time any property on this object is edited or
+		// removed through the standard PATCH /api/objects/:id route, which
+		// round-trips the full metadata blob.
+		_speaker_segments: payload.speaker_segments ? JSON.stringify(payload.speaker_segments) : null,
 	}
 
 	const existing = await findByExternalId(db, workspaceId, payload.meeting_id)

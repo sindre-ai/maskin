@@ -161,7 +161,7 @@ describe('POST /api/webhooks/skjald/:token (integration)', () => {
 		const firstMetadata = afterFirst[0].metadata as Record<string, unknown>
 		expect(firstMetadata.external_id).toBe(meetingId)
 		expect(firstMetadata.diarization_status).toBe('completed')
-		expect(firstMetadata.speaker_segments).toEqual([
+		expect(JSON.parse(firstMetadata._speaker_segments as string)).toEqual([
 			{
 				transcript_id: expect.any(String),
 				speaker_id: 'speaker-1',
@@ -207,7 +207,7 @@ describe('POST /api/webhooks/skjald/:token (integration)', () => {
 		expect(afterSecond[0].title).toBe('Weekly Sync (updated)')
 		const secondMetadata = afterSecond[0].metadata as Record<string, unknown>
 		expect(secondMetadata.diarization_status).toBe('unavailable')
-		expect(secondMetadata.speaker_segments).toBeNull()
+		expect(secondMetadata._speaker_segments).toBeNull()
 
 		const eventsAfterSecond = await db
 			.select()
