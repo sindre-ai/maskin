@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -12,6 +12,8 @@ const mockUseMarkRead = vi.fn(() => ({ mutate: mockMarkReadMutate, isPending: fa
 const mockMarkUnreadMutate = vi.fn()
 const mockUseMarkUnread = vi.fn(() => ({ mutate: mockMarkUnreadMutate, isPending: false }))
 const mockCreateCommentMutate = vi.fn()
+const mockTrackForyouCardShown = vi.fn()
+const mockTrackForyouCardAction = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -27,6 +29,15 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 	useMarkRead: () => mockUseMarkRead(),
 	useMarkUnread: () => mockUseMarkUnread(),
 }))
+
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return {
+		...actual,
+		trackForyouCardShown: (...args: unknown[]) => mockTrackForyouCardShown(...args),
+		trackForyouCardAction: (...args: unknown[]) => mockTrackForyouCardAction(...args),
+	}
+})
 
 vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => ({ id: 'viewer', name: 'Viewer', type: 'human', email: null }),
@@ -77,6 +88,8 @@ describe('UnreadThreadCard', () => {
 		mockMarkReadMutate.mockReset()
 		mockMarkUnreadMutate.mockReset()
 		mockCreateCommentMutate.mockReset()
+		mockTrackForyouCardShown.mockReset()
+		mockTrackForyouCardAction.mockReset()
 	})
 
 	it('renders the object title and unread count', () => {
@@ -1031,6 +1044,211 @@ describe('UnreadThreadCard', () => {
 			)
 			expect(screen.queryByTestId('chip-row')).not.toBeInTheDocument()
 			expect(screen.queryByRole('button', { name: 'Sign off' })).not.toBeInTheDocument()
+		})
+	})
+
+	// T6 — instrumentation for the parent bet's success metric
+	// (`count(foryou_card_action) / count(foryou_card_shown)`). These tests lock
+	// the emission points against regressions; the analytics module itself is
+	// unit-tested separately in `lib/analytics.test.ts`.
+	describe('analytics', () => {
+		// Grab-and-fire IntersectionObserver stub so `hasBeenVisible` can be
+		// driven deterministically without waiting for a real viewport hit.
+		type ObserverCallback = (entries: Array<{ isIntersecting: boolean }>) => void
+		let observerCallbacks: ObserverCallback[] = []
+		class StubObserver {
+			constructor(cb: ObserverCallback) {
+				observerCallbacks.push(cb)
+			}
+			observe() {}
+			disconnect() {}
+			unobserve() {}
+			takeRecords() {
+				return []
+			}
+		}
+
+		beforeEach(() => {
+			observerCallbacks = []
+			// biome-ignore lint/suspicious/noExplicitAny: replacing the global for tests
+			;(globalThis as any).IntersectionObserver = StubObserver
+		})
+
+		function fireIntersect() {
+			act(() => {
+				for (const cb of observerCallbacks) cb([{ isIntersecting: true }])
+			})
+		}
+
+		it('emits foryou_card_shown once when the card first intersects — card_kind carries the classifier output, card_id carries the object id', () => {
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'in_review' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(mockTrackForyouCardShown).not.toHaveBeenCalled()
+			fireIntersect()
+			expect(mockTrackForyouCardShown).toHaveBeenCalledTimes(1)
+			expect(mockTrackForyouCardShown).toHaveBeenCalledWith({
+				card_kind: 'decision',
+				card_id: 'obj-1',
+			})
+		})
+
+		it('emits foryou_card_shown exactly once per mount even when the observer callback fires repeatedly (mark-read state churn must not inflate the impression count)', () => {
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem()}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			fireIntersect()
+			fireIntersect()
+			fireIntersect()
+			expect(mockTrackForyouCardShown).toHaveBeenCalledTimes(1)
+		})
+
+		it('does not emit foryou_card_shown while the card stays below the prefetch window', () => {
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem()}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			for (const cb of observerCallbacks) cb([{ isIntersecting: false }])
+			expect(mockTrackForyouCardShown).not.toHaveBeenCalled()
+		})
+
+		it('emits foryou_card_action on a decision-footer button click, with the classifier kind and the stable action id', async () => {
+			const user = userEvent.setup()
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'in_review' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			await user.click(screen.getByRole('button', { name: 'Approve' }))
+			expect(mockTrackForyouCardAction).toHaveBeenCalledWith({
+				card_kind: 'decision',
+				card_id: 'obj-1',
+				action_id: 'approve',
+			})
+		})
+
+		it('emits foryou_card_action on a sign_off chip with the sign_off card_kind', async () => {
+			const user = userEvent.setup()
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'task', status: 'in_review' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			await user.click(screen.getByRole('button', { name: 'Sign off' }))
+			expect(mockTrackForyouCardAction).toHaveBeenCalledWith({
+				card_kind: 'sign_off',
+				card_id: 'obj-1',
+				action_id: 'sign_off',
+			})
+		})
+
+		it('emits foryou_card_action on a proposed_bet chip with the proposed_bet card_kind', async () => {
+			const user = userEvent.setup()
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'signal' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			await user.click(screen.getByRole('button', { name: 'Open bet' }))
+			expect(mockTrackForyouCardAction).toHaveBeenCalledWith({
+				card_kind: 'proposed_bet',
+				card_id: 'obj-1',
+				action_id: 'open_bet',
+			})
+		})
+
+		it('emits foryou_card_action on the generic thread quick-reply chips too — thread cards feed the ratio metric alongside decision-shaped cards', async () => {
+			const user = userEvent.setup()
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'active' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			await user.click(screen.getByRole('button', { name: 'On it' }))
+			expect(mockTrackForyouCardAction).toHaveBeenCalledWith({
+				card_kind: 'thread',
+				card_id: 'obj-1',
+				action_id: 'on_it',
+			})
+		})
+
+		it('emits foryou_card_action before the comment mutation, so a network failure or backgrounded tab does not swallow the intent signal', async () => {
+			const user = userEvent.setup()
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			const callOrder: string[] = []
+			mockTrackForyouCardAction.mockImplementation(() => callOrder.push('track'))
+			mockCreateCommentMutate.mockImplementation(() => callOrder.push('mutate'))
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'in_review' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			await user.click(screen.getByRole('button', { name: 'Approve' }))
+			expect(callOrder).toEqual(['track', 'mutate'])
 		})
 	})
 })

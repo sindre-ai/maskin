@@ -10,8 +10,10 @@ import {
 	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
+	trackForyouCardAction,
 	trackForyouCardMarkedRead,
 	trackForyouCardMarkedUnread,
+	trackForyouCardShown,
 	trackLoopGraduated,
 	trackLoopViewed,
 	trackNavItemClicked,
@@ -624,6 +626,64 @@ describe('v1 taxonomy helpers', () => {
 				mobile: true,
 				via: 'swipe',
 			})
+		})
+	})
+
+	describe('foryou_card_shown / _action', () => {
+		it('foryou_card_shown carries card_kind and card_id — and only those, so the PostHog ratio joins cleanly on the emitted properties without stray fields', () => {
+			const capture = captureSpy()
+
+			trackForyouCardShown({ card_kind: 'decision', card_id: 'bet-42' })
+
+			expect(capture).toHaveBeenCalledWith('foryou_card_shown', {
+				card_kind: 'decision',
+				card_id: 'bet-42',
+			})
+		})
+
+		it.each(['decision', 'sign_off', 'proposed_bet', 'thread'] as const)(
+			'foryou_card_shown emits every card_kind the redesign labels — %s',
+			(kind) => {
+				const capture = captureSpy()
+
+				trackForyouCardShown({ card_kind: kind, card_id: `${kind}-id` })
+
+				expect(capture).toHaveBeenCalledWith(
+					'foryou_card_shown',
+					expect.objectContaining({ card_kind: kind }),
+				)
+			},
+		)
+
+		it('foryou_card_action carries card_kind, card_id, and action_id so the ratio metric can slice by both card weight and the specific affordance', () => {
+			const capture = captureSpy()
+
+			trackForyouCardAction({
+				card_kind: 'decision',
+				card_id: 'bet-42',
+				action_id: 'approve',
+			})
+
+			expect(capture).toHaveBeenCalledWith('foryou_card_action', {
+				card_kind: 'decision',
+				card_id: 'bet-42',
+				action_id: 'approve',
+			})
+		})
+
+		it('foryou_card_action passes through thread-fallback action ids unchanged so a taxonomy churn is not required for the generic quick-reply chips', () => {
+			const capture = captureSpy()
+
+			trackForyouCardAction({
+				card_kind: 'thread',
+				card_id: 'ins-9',
+				action_id: 'need_context',
+			})
+
+			expect(capture).toHaveBeenCalledWith(
+				'foryou_card_action',
+				expect.objectContaining({ card_kind: 'thread', action_id: 'need_context' }),
+			)
 		})
 	})
 })

@@ -8,6 +8,7 @@ import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
 import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
+import { trackForyouCardAction, trackForyouCardShown } from '@/lib/analytics'
 import type { EventResponse, UnreadItem } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -73,9 +74,17 @@ export function UnreadThreadCard({
 	mode = 'cards',
 }: UnreadThreadCardProps) {
 	const objectId = item.entity_id
+	// Classified up here so the impression event below has it in scope without
+	// re-running the observer on kind changes.
+	const cardKind: CardKind = classifyCardKind(item)
 
 	const cardRef = useRef<HTMLDivElement>(null)
 	const [hasBeenVisible, setHasBeenVisible] = useState(false)
+	// Guards `foryou_card_shown` to one emission per mount — the impression is
+	// "first time this card entered the prefetch window", not "any re-render
+	// after it became visible" (which would double-count on mark-read state
+	// churn).
+	const hasEmittedShownRef = useRef(false)
 	useEffect(() => {
 		if (hasBeenVisible) return
 		const node = cardRef.current
@@ -84,6 +93,10 @@ export function UnreadThreadCard({
 			(entries) => {
 				if (entries.some((entry) => entry.isIntersecting)) {
 					setHasBeenVisible(true)
+					if (!hasEmittedShownRef.current) {
+						hasEmittedShownRef.current = true
+						trackForyouCardShown({ card_kind: cardKind, card_id: objectId })
+					}
 					observer.disconnect()
 				}
 			},
@@ -91,7 +104,7 @@ export function UnreadThreadCard({
 		)
 		observer.observe(node)
 		return () => observer.disconnect()
-	}, [hasBeenVisible])
+	}, [hasBeenVisible, cardKind, objectId])
 
 	const { data: events } = useEntityEvents(workspaceId, objectId, {
 		enabled: hasBeenVisible,
@@ -253,7 +266,6 @@ export function UnreadThreadCard({
 	const insightPreview = (item.object?.content ?? '').trim()
 	const isUnread = item.unread_count > 0
 	const isMention = item.mentioning_unread_count > 0
-	const cardKind: CardKind = classifyCardKind(item)
 	const isListMode = mode === 'list'
 	const isMobileViewport = useIsMobile()
 	// Kind-specific action set; `thread` reuses the generic quick-reply chips
@@ -267,6 +279,10 @@ export function UnreadThreadCard({
 
 	const runCardAction = useCallback(
 		(action: CardAction) => {
+			// Emit up-front (before the network hop) so the ratio metric counts the
+			// user's intent even if the comment mutation later fails or the tab is
+			// backgrounded — matches the pattern the swipe hook uses.
+			trackForyouCardAction({ card_kind: cardKind, card_id: objectId, action_id: action.id })
 			quickReply.mutate(
 				{ entity_id: objectId, content: action.label, parent_event_id: replyTarget },
 				{
@@ -277,7 +293,7 @@ export function UnreadThreadCard({
 				},
 			)
 		},
-		[quickReply, objectId, replyTarget, handleMarkRead],
+		[quickReply, objectId, replyTarget, handleMarkRead, cardKind],
 	)
 
 	return (

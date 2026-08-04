@@ -413,3 +413,46 @@ export function trackForyouCardMarkedUnread(p: ForyouCardMarkedProps): void {
 		via: 'swipe',
 	})
 }
+
+// Ship-metric events for the For You prototype redesign — the bet's success
+// query is `count(foryou_card_action) / count(foryou_card_shown)`. `card_kind`
+// slices the ratio per action-UI weight (`decision` / `sign_off` /
+// `proposed_bet` / `thread`) so the button-vs-chip bet the redesign is testing
+// can be read directly from PostHog without joining any other event stream.
+// `card_id` is the underlying object id (bet / task / insight the card is
+// pointing to) so PostHog can dedupe per-card impressions/actions.
+//
+// `foryou_card_shown` fires once per card the first time it enters (or
+// approaches) the viewport — deliberately per-mount, not per-render, so a
+// re-render triggered by a mark-read state change doesn't inflate the shown
+// count. Drop-to-graph (title link) is intentionally not an action — that path
+// is captured by object-detail navigation instrumentation elsewhere.
+export type ForyouCardKind = 'decision' | 'sign_off' | 'proposed_bet' | 'thread'
+
+interface ForyouCardShownProps {
+	card_kind: ForyouCardKind
+	card_id: string
+}
+
+export function trackForyouCardShown(p: ForyouCardShownProps): void {
+	trackEvent('foryou_card_shown', {
+		card_kind: p.card_kind,
+		card_id: p.card_id,
+	})
+}
+
+interface ForyouCardActionProps extends ForyouCardShownProps {
+	// Stable id defined in `foryou-card-kind.ts` (`CardAction.id`), e.g.
+	// `approve` / `send_back` / `sign_off` / `open_bet` / `refine` / `dismiss`.
+	// Kept as an open string so thread-fallback chip ids (`on_it`, `approved`,
+	// `looks_good`, `need_context`) ride through without a taxonomy churn.
+	action_id: string
+}
+
+export function trackForyouCardAction(p: ForyouCardActionProps): void {
+	trackEvent('foryou_card_action', {
+		card_kind: p.card_kind,
+		card_id: p.card_id,
+		action_id: p.action_id,
+	})
+}
