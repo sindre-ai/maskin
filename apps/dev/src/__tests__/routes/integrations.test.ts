@@ -844,6 +844,159 @@ describe('Integrations Routes', () => {
 		})
 	})
 
+	describe('POST /api/integrations/:id/complete', () => {
+		it('returns 400 when secret is missing from the request body', async () => {
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'skjald',
+				status: 'awaiting_secret',
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/integrations/${integration.id}/complete`,
+					{},
+					{
+						'x-workspace-id': wsId,
+					},
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('secret is required')
+		})
+
+		it('returns 400 when secret is blank/whitespace-only', async () => {
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'skjald',
+				status: 'awaiting_secret',
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/integrations/${integration.id}/complete`,
+					{ secret: '   ' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('secret is required')
+		})
+
+		it('returns 404 when integration is not found (wrong id/workspace)', async () => {
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [] // id/workspaceId filter matches nothing
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/00000000-0000-0000-0000-000000000099/complete',
+					{ secret: 'sk-test-secret' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+			const body = await res.json()
+			expect(body.error.message).toContain('not found')
+		})
+
+		it('returns 400 when the provider does not use manual auth', async () => {
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'slack', // registered provider whose auth.type is 'oauth2', not 'manual'
+				status: 'awaiting_secret',
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/integrations/${integration.id}/complete`,
+					{ secret: 'sk-test-secret' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('does not use manual auth')
+		})
+
+		it('returns 400 when the integration is not awaiting a secret', async () => {
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'skjald',
+				status: 'active', // already completed — not awaiting_secret
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/integrations/${integration.id}/complete`,
+					{ secret: 'sk-test-secret' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('not awaiting a secret')
+		})
+
+		it('activates the integration when given a valid secret for an awaiting-secret manual-auth provider', async () => {
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'skjald',
+				status: 'awaiting_secret',
+			})
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/integrations/${integration.id}/complete`,
+					{ secret: 'sk-test-secret' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toEqual({ activated: true })
+
+			const activateCall = calls.updates.find(
+				(u) => u && typeof u === 'object' && (u as { status?: string }).status === 'active',
+			) as { status?: string; credentials?: string } | undefined
+			expect(activateCall).toBeDefined()
+			expect(activateCall?.credentials).not.toBe('sk-test-secret')
+
+			const eventInsert = calls.inserts[0] as
+				| { action: string; entityType: string; entityId: string; data: Record<string, unknown> }
+				| undefined
+			expect(eventInsert).toMatchObject({
+				action: 'updated',
+				entityType: 'integration',
+				entityId: integration.id,
+				data: { status: 'active', provider: 'skjald' },
+			})
+		})
+	})
+
 	describe('GET /api/integrations/:id/github-token', () => {
 		const { privateKey: testPrivateKeyPem } = generateKeyPairSync('rsa', {
 			modulusLength: 2048,
