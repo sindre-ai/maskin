@@ -18,18 +18,51 @@ function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 }
 
 describe('classifyCardKind', () => {
-	it('classifies a bet in in_review as a decision card', () => {
-		const item = buildItem({
-			object: buildObjectResponse({ type: 'bet', status: 'in_review' }),
-		})
-		expect(classifyCardKind(item)).toBe('decision')
-	})
+	it.each(['ux', 'architecture', 'copy', 'pricing'])(
+		'classifies a task in in_review with decision_type=%s as a decision card',
+		(decisionType) => {
+			const item = buildItem({
+				object: buildObjectResponse({
+					type: 'task',
+					status: 'in_review',
+					metadata: { decision_type: decisionType },
+				}),
+			})
+			expect(classifyCardKind(item)).toBe('decision')
+		},
+	)
 
-	it('classifies a task in in_review as a sign_off card', () => {
+	it('classifies a task in in_review with no decision_type as a sign_off card', () => {
 		const item = buildItem({
 			object: buildObjectResponse({ type: 'task', status: 'in_review' }),
 		})
 		expect(classifyCardKind(item)).toBe('sign_off')
+	})
+
+	// Regression lock for the bug this task fixes: `in_review` is not a valid
+	// status for type `bet` (see workspace schema — bet accepts signal / qualified
+	// / define / active / live / succeeded / failed / paused / archived). A bet
+	// can never be in_review in prod, so the classifier must not key `decision`
+	// off `bet.status`. This test would fail if a reviewer tries to re-introduce
+	// the old bet→decision branch.
+	it('never classifies a bet as a decision card (bet has no in_review status in schema)', () => {
+		for (const status of [
+			'signal',
+			'qualified',
+			'define',
+			'active',
+			'live',
+			'succeeded',
+			'failed',
+			'paused',
+			'archived',
+			'in_review',
+		]) {
+			const item = buildItem({
+				object: buildObjectResponse({ type: 'bet', status }),
+			})
+			expect(classifyCardKind(item)).not.toBe('decision')
+		}
 	})
 
 	it.each(['signal', 'proposed', 'define', 'clustered'])(

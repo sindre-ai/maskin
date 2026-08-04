@@ -53,14 +53,21 @@ interface UnreadFixture {
 		status: string
 		content: string
 		workspaceId: string
+		metadata?: Record<string, string> | null
 	}
 }
 
 function buildItem(
 	workspaceId: string,
-	overrides: Partial<UnreadFixture> & { id: string; title: string; type: string },
+	overrides: Partial<UnreadFixture> & {
+		id: string
+		title: string
+		type: string
+		status?: string
+		metadata?: Record<string, string> | null
+	},
 ): UnreadFixture {
-	const { id, title, type, ...rest } = overrides
+	const { id, title, type, status, metadata, ...rest } = overrides
 	return {
 		entity_type: 'object',
 		entity_id: id,
@@ -72,37 +79,46 @@ function buildItem(
 			id,
 			title,
 			type,
-			status: type === 'bet' ? 'in_review' : 'active',
+			// `bet` has no `in_review` status in the workspace schema, so
+			// decision cards ride on tasks with `metadata.decision_type` set.
+			// Callers pass an explicit status when the classifier needs one.
+			status: status ?? (type === 'task' ? 'in_review' : 'active'),
 			content: 'Preview line — leads the card body before any action UI.',
 			workspaceId,
+			metadata: metadata ?? null,
 		},
 		...rest,
 	}
 }
 
-// One card of each kind. T3 classifies by `object.type`:
-//   - bet + status=in_review → decision  (needs a call — shaded footer + buttons)
-//   - task                    → sign_off (light-touch — chip-row)
-//   - insight                 → proposed_bet (light-touch — chip-row)
-// If T3 lands with a different mapping the fixture can be adjusted; the
-// assertions key off the `data-card-kind` attribute the DoD requires anyway.
+// One card of each kind. T3 classifies by object shape:
+//   - task + status=in_review + metadata.decision_type set → decision
+//     (needs a call — shaded footer + buttons)
+//   - task + status=in_review + no decision_type          → sign_off
+//     (light-touch — chip-row)
+//   - bet + status=signal                                  → proposed_bet
+//     (light-touch — chip-row)
 function threeKindFeed(workspaceId: string): UnreadFixture[] {
 	return [
 		buildItem(workspaceId, {
 			id: 'decision-1',
 			title: 'Approve the go/no-go for the Q3 canary',
-			type: 'bet',
+			type: 'task',
+			status: 'in_review',
+			metadata: { decision_type: 'architecture' },
 			mentioning_unread_count: 1,
 		}),
 		buildItem(workspaceId, {
 			id: 'sign-off-1',
 			title: 'Sign off on the migration playbook',
 			type: 'task',
+			status: 'in_review',
 		}),
 		buildItem(workspaceId, {
 			id: 'proposed-bet-1',
 			title: 'Proposed bet: staffing lift for the outbound funnel',
-			type: 'insight',
+			type: 'bet',
+			status: 'signal',
 			unread_count: 2,
 		}),
 	]
@@ -392,7 +408,9 @@ test.describe('For You prototype redesign — swipe regression across card kinds
 			buildItem(account.workspaceId, {
 				id: 'decision-read',
 				title: 'Already-read decision',
-				type: 'bet',
+				type: 'task',
+				status: 'in_review',
+				metadata: { decision_type: 'architecture' },
 				unread_count: 0,
 				latest_event_id: 99,
 			}),

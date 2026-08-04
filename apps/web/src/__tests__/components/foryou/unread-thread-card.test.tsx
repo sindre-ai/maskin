@@ -875,13 +875,18 @@ describe('UnreadThreadCard', () => {
 	// `foryou_card_shown` / `foryou_card_action`, so this classification is a
 	// contract shared with the analytics pipeline.
 	describe('card kinds', () => {
-		it('classifies a bet in in_review as a decision card and renders the shaded footer', () => {
+		it('classifies a task in in_review with decision_type as a decision card and renders the shaded footer', () => {
 			mockUseEntityEvents.mockReturnValue({ data: [] })
 			const { container } = render(
 				<UnreadThreadCard
 					workspaceId="ws-1"
 					item={buildItem({
-						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'in_review' }),
+						object: buildObjectResponse({
+							id: 'obj-1',
+							type: 'task',
+							status: 'in_review',
+							metadata: { decision_type: 'ux' },
+						}),
 					})}
 					isActive={false}
 					onActivate={noop}
@@ -947,7 +952,12 @@ describe('UnreadThreadCard', () => {
 				<UnreadThreadCard
 					workspaceId="ws-1"
 					item={buildItem({
-						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'in_review' }),
+						object: buildObjectResponse({
+							id: 'obj-1',
+							type: 'task',
+							status: 'in_review',
+							metadata: { decision_type: 'ux' },
+						}),
 					})}
 					isActive={false}
 					onActivate={noop}
@@ -988,7 +998,12 @@ describe('UnreadThreadCard', () => {
 				<UnreadThreadCard
 					workspaceId="ws-1"
 					item={buildItem({
-						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'in_review' }),
+						object: buildObjectResponse({
+							id: 'obj-1',
+							type: 'task',
+							status: 'in_review',
+							metadata: { decision_type: 'ux' },
+						}),
 						latest_event_id: 42,
 					})}
 					isActive={false}
@@ -1015,7 +1030,12 @@ describe('UnreadThreadCard', () => {
 				<UnreadThreadCard
 					workspaceId="ws-1"
 					item={buildItem({
-						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'in_review' }),
+						object: buildObjectResponse({
+							id: 'obj-1',
+							type: 'task',
+							status: 'in_review',
+							metadata: { decision_type: 'ux' },
+						}),
 					})}
 					isActive={false}
 					onActivate={noop}
@@ -1085,12 +1105,13 @@ describe('UnreadThreadCard', () => {
 				<UnreadThreadCard
 					workspaceId="ws-1"
 					item={buildItem({
-						entity_id: 'bet-42',
+						entity_id: 'task-42',
 						object: buildObjectResponse({
-							id: 'bet-42',
-							title: 'Bet',
-							type: 'bet',
+							id: 'task-42',
+							title: 'Task',
+							type: 'task',
 							status: 'in_review',
+							metadata: { decision_type: 'ux' },
 						}),
 					})}
 					isActive={false}
@@ -1103,7 +1124,7 @@ describe('UnreadThreadCard', () => {
 			expect(trackForyouCardShownMock).toHaveBeenCalledTimes(1)
 			expect(trackForyouCardShownMock).toHaveBeenCalledWith({
 				card_kind: 'decision',
-				card_id: 'bet-42',
+				card_id: 'task-42',
 			})
 		})
 
@@ -1134,12 +1155,13 @@ describe('UnreadThreadCard', () => {
 				<UnreadThreadCard
 					workspaceId="ws-1"
 					item={buildItem({
-						entity_id: 'bet-1',
+						entity_id: 'task-1',
 						object: buildObjectResponse({
-							id: 'bet-1',
-							title: 'Bet',
-							type: 'bet',
+							id: 'task-1',
+							title: 'Task',
+							type: 'task',
 							status: 'in_review',
+							metadata: { decision_type: 'ux' },
 						}),
 					})}
 					isActive={false}
@@ -1153,7 +1175,7 @@ describe('UnreadThreadCard', () => {
 
 			expect(trackForyouCardActionMock).toHaveBeenCalledWith({
 				card_kind: 'decision',
-				card_id: 'bet-1',
+				card_id: 'task-1',
 				action_id: 'reply',
 			})
 		})
@@ -1237,12 +1259,13 @@ describe('UnreadThreadCard', () => {
 				<UnreadThreadCard
 					workspaceId="ws-1"
 					item={buildItem({
-						entity_id: 'bet-9',
+						entity_id: 'task-9',
 						object: buildObjectResponse({
-							id: 'bet-9',
-							title: 'Bet',
-							type: 'bet',
+							id: 'task-9',
+							title: 'Task',
+							type: 'task',
 							status: 'in_review',
+							metadata: { decision_type: 'ux' },
 						}),
 					})}
 					isActive={false}
@@ -1256,7 +1279,7 @@ describe('UnreadThreadCard', () => {
 
 			expect(trackForyouCardActionMock).toHaveBeenCalledWith({
 				card_kind: 'decision',
-				card_id: 'bet-9',
+				card_id: 'task-9',
 				action_id: 'approve',
 			})
 		})

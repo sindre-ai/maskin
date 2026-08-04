@@ -5,9 +5,12 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // T3 of bet `foryou-prototype-redesign`: three card kinds with intentionally
 // different action-UI weight.
 //
-// - Decision (bet in `in_review`): shaded --st-in_review-bg footer bar with
-//   full-width primary/secondary buttons.
-// - Sign-off (task in `in_review`): flat chip-row inside the card body.
+// - Decision (task in `in_review` with `metadata.decision_type` set): shaded
+//   --st-in_review-bg footer bar with full-width primary/secondary buttons.
+//   `in_review` doesn't exist on `bet` in the workspace schema, so decisions
+//   ride on tasks the human owns (ux / architecture / copy / pricing).
+// - Sign-off (task in `in_review`, no decision_type): flat chip-row inside
+//   the card body — an agent asking for a light-touch approval.
 // - Proposed-bet (bet in `signal`): flat chip-row inside the card body.
 //
 // The load-bearing wager is that button-vs-chip weight, as a stakes-signal,
@@ -33,6 +36,7 @@ interface UnreadFixture {
 		status: string
 		content: string
 		workspaceId: string
+		metadata?: Record<string, string> | null
 	}
 }
 
@@ -42,6 +46,7 @@ function buildItem(
 	type: string,
 	status: string,
 	title: string,
+	metadata: Record<string, string> | null = null,
 ): UnreadFixture {
 	return {
 		entity_type: 'object',
@@ -50,13 +55,18 @@ function buildItem(
 		mentioning_unread_count: 0,
 		latest_event_id: 10,
 		latest_activity_at: new Date().toISOString(),
-		object: { id: entityId, title, type, status, content: '', workspaceId },
+		object: { id: entityId, title, type, status, content: '', workspaceId, metadata },
 	}
 }
 
 async function mockThreeKinds(page: Page, workspaceId: string) {
 	const items = [
-		buildItem(workspaceId, 'bet-decision', 'bet', 'in_review', 'Recover failed payments'),
+		// Decision → task in in_review with a decision_type (ux/architecture/copy/pricing).
+		// The bet schema has no `in_review` status, so decisions live on tasks the human owns.
+		buildItem(workspaceId, 'task-decision', 'task', 'in_review', 'Approve migration playbook', {
+			decision_type: 'architecture',
+		}),
+		// Sign-off → task in in_review with no decision_type (agent asking for rubber-stamp).
 		buildItem(workspaceId, 'task-signoff', 'task', 'in_review', 'Wire acquisition source'),
 		buildItem(workspaceId, 'bet-proposed', 'bet', 'signal', 'Onboarding checklist redesign'),
 	]

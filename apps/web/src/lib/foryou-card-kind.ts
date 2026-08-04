@@ -11,18 +11,26 @@ export type CardKind = 'decision' | 'sign_off' | 'proposed_bet' | 'thread'
 // A bet in one of these needs a "yes / refine / dismiss" call, not an approval.
 const PROPOSED_BET_STATUSES = new Set(['signal', 'proposed', 'define', 'clustered'])
 
-// Bets in these statuses signal a decision-point that expects approve / send-back.
-const DECISION_BET_STATUSES = new Set(['in_review'])
+// A task waiting on review can be either a bet-level decision the human owns
+// (Design/Architecture/Copy — tagged `metadata.decision_type`) or an agent
+// asking for a light-touch sign-off. `in_review` is the only task status the
+// workspace schema exposes for either — the `decision_type` metadata is what
+// splits the two. Bets themselves have no `in_review` status (see the API
+// error the parent bet-qa surfaced), so `decision` never keys off `bet.status`.
+const REVIEW_TASK_STATUSES = new Set(['in_review'])
 
-// Tasks in these statuses signal an agent asking for sign-off.
-const SIGN_OFF_TASK_STATUSES = new Set(['in_review'])
+function hasDecisionType(item: UnreadItem): boolean {
+	const decisionType = item.object?.metadata?.decision_type
+	return typeof decisionType === 'string' && decisionType.length > 0
+}
 
 export function classifyCardKind(item: UnreadItem): CardKind {
 	const type = item.object?.type
 	const status = item.object?.status
 	if (!type || !status) return 'thread'
-	if (type === 'bet' && DECISION_BET_STATUSES.has(status)) return 'decision'
-	if (type === 'task' && SIGN_OFF_TASK_STATUSES.has(status)) return 'sign_off'
+	if (type === 'task' && REVIEW_TASK_STATUSES.has(status)) {
+		return hasDecisionType(item) ? 'decision' : 'sign_off'
+	}
 	if (type === 'bet' && PROPOSED_BET_STATUSES.has(status)) return 'proposed_bet'
 	return 'thread'
 }
