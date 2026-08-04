@@ -14,7 +14,12 @@ import { VIEWPORTS } from '../helpers/viewports'
 // of what the seeded workspace happens to have.
 //
 // Prototype-redesign selectors this spec relies on (T2/T3/T4 must expose
-// them — see Ship Notes on the PR):
+// them — see PR body's "Selector contract" section):
+//   T1 founder flag:
+//     - useForyouRedesignFlag() also returns true when
+//       import.meta.env.DEV && localStorage.getItem('maskin-flag-foryou-redesign') === '1'
+//     - DEV guard keeps the override out of production; canary stays
+//       founder-only there.
 //   T2 header controls:
 //     - Cards/List toggle → tab role, tabs named "Cards" / "List"
 //     - Sort control      → button named /sort/i
@@ -27,6 +32,9 @@ import { VIEWPORTS } from '../helpers/viewports'
 //     Decision cards render a shaded footer with two full-width buttons
 //     (data-testid="decision-footer" carrying data-stack-layout so the 375
 //     stack-vs-side-by-side assertion doesn't rely on measuring pixel widths).
+//     Swipe reveal overlays must survive the restructuring on every kind:
+//     - data-testid="mark-read-reveal"    (right-swipe on unread)
+//     - data-testid="mark-unread-reveal"  (left-swipe on read)
 //   T4 Today's Brief panel:
 //     - Container: data-testid="todays-brief-panel"
 //     - Rendering mode: data-mode="rail" at ≥1024, data-mode="sheet" below
@@ -120,22 +128,22 @@ async function mockFeed(page: Page, items: UnreadFixture[]) {
 	})
 }
 
-// T1 gates the whole redesign behind a founder-only flag. We set both the
-// storage key and the URL query param — whichever wiring T1 lands with will
-// pick one up. Ship Notes call this out so T1 can align the key if it drifts.
+// The T1 flag gates the redesign on founder actor id in production and on
+// this localStorage key when `import.meta.env.DEV` is true. auth.fixture.ts
+// mints a random-UUID actor, so the DEV override is the only mechanism that
+// puts CI on the redesigned surface.
 async function enableRedesignFlag(page: Page) {
 	await page.addInitScript(() => {
 		try {
 			window.localStorage.setItem('maskin-flag-foryou-redesign', '1')
-			window.localStorage.setItem('maskin-flag-foryou-prototype', '1')
 		} catch {
-			// Storage not writable in some contexts — the query param fallback still applies.
+			// Storage not writable in some contexts — nothing else to fall back to.
 		}
 	})
 }
 
 async function gotoForyou(page: Page, workspaceId: string) {
-	await page.goto(`/${workspaceId}?flag_foryou_redesign=1`)
+	await page.goto(`/${workspaceId}`)
 }
 
 async function assertNoHorizontalOverflow(page: Page, label: string) {
