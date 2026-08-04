@@ -40,6 +40,11 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 	useMarkUnread: () => mockUseMarkUnread(),
 }))
 
+const mockUseObjectGraph = vi.fn()
+vi.mock('@/hooks/use-objects', () => ({
+	useObjectGraph: (...args: unknown[]) => mockUseObjectGraph(...args),
+}))
+
 vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => ({ id: 'viewer', name: 'Viewer', type: 'human', email: null }),
 }))
@@ -91,6 +96,7 @@ describe('UnreadThreadCard', () => {
 		mockCreateCommentMutate.mockReset()
 		trackForyouCardShownMock.mockReset()
 		trackForyouCardActionMock.mockReset()
+		mockUseObjectGraph.mockReturnValue({ data: undefined })
 	})
 
 	it('renders the object title and unread count', () => {
@@ -1062,6 +1068,99 @@ describe('UnreadThreadCard', () => {
 			)
 			expect(screen.queryByTestId('chip-row')).not.toBeInTheDocument()
 			expect(screen.queryByRole('button', { name: 'Sign off' })).not.toBeInTheDocument()
+		})
+
+		it('mirrors the parent bet in the body of a decision card so the human sees which bet the call belongs to', () => {
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			mockUseObjectGraph.mockReturnValue({
+				data: {
+					object: buildObjectResponse({
+						id: 'obj-1',
+						type: 'task',
+						status: 'in_review',
+						metadata: { decision_type: 'ux' },
+					}),
+					relationships: [
+						{
+							id: 'rel-1',
+							sourceType: 'object',
+							sourceId: 'bet-parent',
+							targetType: 'object',
+							targetId: 'obj-1',
+							type: 'breaks_into',
+							createdBy: 'actor-1',
+							createdAt: null,
+						},
+					],
+					connected_objects: [
+						buildObjectResponse({
+							id: 'bet-parent',
+							type: 'bet',
+							title: 'For You redesign umbrella bet',
+							status: 'active',
+						}),
+					],
+					events: [],
+				},
+			})
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({
+							id: 'obj-1',
+							type: 'task',
+							status: 'in_review',
+							metadata: { decision_type: 'ux' },
+						}),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			const mirror = screen.getByTestId('parent-bet-context')
+			expect(mirror).toBeInTheDocument()
+			expect(mirror.textContent).toMatch(/For You redesign umbrella bet/)
+		})
+
+		it('does not render the parent-bet mirror on non-decision cards even when a parent bet exists', () => {
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			mockUseObjectGraph.mockReturnValue({
+				data: {
+					object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'signal' }),
+					relationships: [
+						{
+							id: 'rel-1',
+							sourceType: 'object',
+							sourceId: 'bet-parent',
+							targetType: 'object',
+							targetId: 'obj-1',
+							type: 'breaks_into',
+							createdBy: 'actor-1',
+							createdAt: null,
+						},
+					],
+					connected_objects: [
+						buildObjectResponse({ id: 'bet-parent', type: 'bet', title: 'Parent bet' }),
+					],
+					events: [],
+				},
+			})
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'signal' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(screen.queryByTestId('parent-bet-context')).not.toBeInTheDocument()
 		})
 	})
 

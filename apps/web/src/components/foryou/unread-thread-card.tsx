@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { useObjectGraph } from '@/hooks/use-objects'
 import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
 import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
 import { trackForyouCardAction, trackForyouCardShown } from '@/lib/analytics'
@@ -286,6 +287,24 @@ export function UnreadThreadCard({
 	const decisionActions: readonly CardAction[] | null =
 		cardKind === 'decision' ? CARD_ACTIONS.decision : null
 
+	// Decision cards mirror the task's parent bet so the human can see which
+	// bet the call belongs to without opening the object. Only fetched when
+	// the card is actually a decision — a per-row graph fetch on every feed
+	// card would be expensive at scale.
+	const graphQuery = useObjectGraph(workspaceId, objectId)
+	const parentBet =
+		cardKind === 'decision' && graphQuery.data
+			? (graphQuery.data.relationships
+					.filter(
+						(rel) =>
+							rel.type === 'breaks_into' &&
+							rel.targetId === objectId &&
+							rel.sourceType === 'object',
+					)
+					.map((rel) => graphQuery.data?.connected_objects.find((o) => o.id === rel.sourceId))
+					.find((obj) => obj?.type === 'bet') ?? null)
+			: null
+
 	const runCardAction = useCallback(
 		(action: CardAction) => {
 			emitAction(action.id)
@@ -462,6 +481,22 @@ export function UnreadThreadCard({
 				    task's List-mode AC. */}
 				{!isListMode && (
 					<>
+						{/* Decision cards mirror the parent bet so the human knows which
+						    bet the call belongs to without opening the object. */}
+						{parentBet && (
+							<Link
+								to="/$workspaceId/objects/$objectId"
+								params={{ workspaceId, objectId: parentBet.id }}
+								data-testid="parent-bet-context"
+								className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+								onClick={(e) => e.stopPropagation()}
+							>
+								<span className="inline-flex shrink-0 items-center rounded bg-type-bet-bg px-1.5 py-0.5 text-[10px] font-semibold text-type-bet-text">
+									B
+								</span>
+								<span className="truncate">{parentBet.title ?? 'Untitled bet'}</span>
+							</Link>
+						)}
 						{/* 2-line insight preview from the object body (the "what this thread is about"
 						    hook that leads before the agent take, per AC-U7). */}
 						{insightPreview && (
