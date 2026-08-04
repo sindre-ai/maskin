@@ -855,4 +855,182 @@ describe('UnreadThreadCard', () => {
 		expect(card.className).not.toMatch(/opacity-\[0\.78\]/)
 		expect(card.className).not.toMatch(/border-l-border/)
 	})
+
+	// The three action-UI kinds — the load-bearing distinction the bet is
+	// wagering on. T6 reads `data-card-kind` off the card root to emit
+	// `foryou_card_shown` / `foryou_card_action`, so this attribute is a
+	// contract, not an implementation detail.
+	describe('card kinds', () => {
+		it('classifies a bet in in_review as a decision card and renders the shaded footer', () => {
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			const { container } = render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'in_review' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			const card = container.querySelector('[data-card-kind]') as HTMLElement
+			expect(card.dataset.cardKind).toBe('decision')
+			const footer = screen.getByTestId('decision-footer')
+			// The shaded footer uses the --st-in_review-bg design token to signal stakes.
+			expect(footer.className).toContain('bg-status-in_review-bg')
+			expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Send back' })).toBeInTheDocument()
+			// Decision cards do NOT render the generic chip-row — the shaded footer is
+			// their action zone.
+			expect(screen.queryByTestId('chip-row')).not.toBeInTheDocument()
+		})
+
+		it('classifies a task in in_review as a sign_off card and renders the chip-row', () => {
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			const { container } = render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'task', status: 'in_review' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			const card = container.querySelector('[data-card-kind]') as HTMLElement
+			expect(card.dataset.cardKind).toBe('sign_off')
+			expect(screen.getByTestId('chip-row')).toBeInTheDocument()
+			expect(screen.queryByTestId('decision-footer')).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Sign off' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Snooze 24h' })).toBeInTheDocument()
+		})
+
+		it('classifies a proposed bet (signal status) as a proposed_bet card', () => {
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			const { container } = render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'signal' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			const card = container.querySelector('[data-card-kind]') as HTMLElement
+			expect(card.dataset.cardKind).toBe('proposed_bet')
+			expect(screen.getByRole('button', { name: 'Open bet' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Refine first' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
+		})
+
+		it('exposes stable data-action-id values on chip and decision buttons so T6 can wire without restructuring', () => {
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			const { rerender } = render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'in_review' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(screen.getByRole('button', { name: 'Approve' })).toHaveAttribute(
+				'data-action-id',
+				'approve',
+			)
+			rerender(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'task', status: 'in_review' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+			)
+			expect(screen.getByRole('button', { name: 'Sign off' })).toHaveAttribute(
+				'data-action-id',
+				'sign_off',
+			)
+		})
+
+		it('routes a decision-footer click through the same comment+mark-read pipeline as chips', async () => {
+			mockCreateCommentMutate.mockImplementation(
+				(_args: unknown, opts?: { onSuccess?: () => void }) => {
+					opts?.onSuccess?.()
+				},
+			)
+			const user = userEvent.setup()
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'in_review' }),
+						latest_event_id: 42,
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			await user.click(screen.getByRole('button', { name: 'Approve' }))
+			expect(mockCreateCommentMutate).toHaveBeenCalledWith(
+				{ entity_id: 'obj-1', content: 'Approve', parent_event_id: undefined },
+				expect.objectContaining({ onSuccess: expect.any(Function) }),
+			)
+			expect(mockMarkReadMutate).toHaveBeenCalledWith({
+				entityType: 'object',
+				entityId: 'obj-1',
+				lastEventId: 42,
+			})
+		})
+
+		it('hides both the chip-row and the decision footer in list mode, on every kind', () => {
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+			const { rerender } = render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'in_review' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+					mode="list"
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(screen.queryByTestId('decision-footer')).not.toBeInTheDocument()
+			expect(screen.queryByTestId('chip-row')).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+
+			rerender(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({ id: 'obj-1', type: 'task', status: 'in_review' }),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+					mode="list"
+				/>,
+			)
+			expect(screen.queryByTestId('chip-row')).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Sign off' })).not.toBeInTheDocument()
+		})
+	})
 })

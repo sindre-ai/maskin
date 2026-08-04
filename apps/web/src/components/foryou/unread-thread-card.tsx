@@ -5,11 +5,18 @@ import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
 import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
 import type { EventResponse, UnreadItem } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import {
+	CARD_ACTIONS,
+	type CardAction,
+	type CardKind,
+	classifyCardKind,
+} from '@/lib/foryou-card-kind'
 import { Link } from '@tanstack/react-router'
 import { CheckIcon, MailIcon, XIcon } from 'lucide-react'
 import {
@@ -32,6 +39,10 @@ interface UnreadThreadCardProps {
 	// that target changes — so PersistentReplyBar can thread its replies
 	// correctly. Only fires while isActive; other cards' updates are ignored.
 	onReplyTargetChange: (replyTarget: number | null) => void
+	// `cards` (default) shows kind-specific affordances (decision footer or
+	// chip-row). `list` collapses to a single-line row — hides the affordance
+	// zone entirely so List mode has no inline actions on any kind (T2/T3 AC).
+	mode?: 'cards' | 'list'
 }
 
 interface CommentNode {
@@ -39,7 +50,15 @@ interface CommentNode {
 	replies: EventResponse[]
 }
 
-const QUICK_REPLY_CHIPS = ['On it', 'Approved', 'Looks good', 'Need more context'] as const
+// Fallback chips used when a card doesn't map to a specific action-UI kind
+// (decision / sign_off / proposed_bet). Keeps the pre-redesign feel on plain
+// threads so we don't regress non-decision items.
+const QUICK_REPLY_CHIPS: readonly CardAction[] = [
+	{ id: 'on_it', label: 'On it', tone: 'secondary' },
+	{ id: 'approved', label: 'Approved', tone: 'secondary' },
+	{ id: 'looks_good', label: 'Looks good', tone: 'secondary' },
+	{ id: 'need_context', label: 'Need more context', tone: 'secondary' },
+]
 
 // Cards within this distance of the viewport start fetching their events, so
 // the next card or two below the fold is ready by the time the user scrolls.
@@ -51,6 +70,7 @@ export function UnreadThreadCard({
 	isActive,
 	onActivate,
 	onReplyTargetChange,
+	mode = 'cards',
 }: UnreadThreadCardProps) {
 	const objectId = item.entity_id
 
@@ -233,6 +253,32 @@ export function UnreadThreadCard({
 	const insightPreview = (item.object?.content ?? '').trim()
 	const isUnread = item.unread_count > 0
 	const isMention = item.mentioning_unread_count > 0
+	const cardKind: CardKind = classifyCardKind(item)
+	const isListMode = mode === 'list'
+	const isMobileViewport = useIsMobile()
+	// Kind-specific action set; `thread` reuses the generic quick-reply chips
+	// so nothing regresses on non-decision items.
+	const chipActions: readonly CardAction[] =
+		cardKind === 'sign_off' || cardKind === 'proposed_bet'
+			? CARD_ACTIONS[cardKind]
+			: QUICK_REPLY_CHIPS
+	const decisionActions: readonly CardAction[] | null =
+		cardKind === 'decision' ? CARD_ACTIONS.decision : null
+
+	const runCardAction = useCallback(
+		(action: CardAction) => {
+			quickReply.mutate(
+				{ entity_id: objectId, content: action.label, parent_event_id: replyTarget },
+				{
+					onSuccess: () => {
+						handleMarkRead()
+						toast(`✓ ${action.label}`)
+					},
+				},
+			)
+		},
+		[quickReply, objectId, replyTarget, handleMarkRead],
+	)
 
 	return (
 		// Outer wrapper holds the swipe-reveal background; the card translates over it.
@@ -264,6 +310,8 @@ export function UnreadThreadCard({
 
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: card click supplements inner buttons/links, which keyboard users tab to and activate directly */}
 			<div
+				data-card-kind={cardKind}
+				data-view-mode={mode}
 				className={cn(
 					// Hairline top-rule for the shared-rhythm feel; no outer ring or bg-card shell.
 					'group relative border-t border-border bg-background pt-3 pb-2.5 pl-3 pr-3 cursor-pointer touch-pan-y',
@@ -281,6 +329,9 @@ export function UnreadThreadCard({
 					// mirror the unread accent's silhouette so the feed rhythm stays even.
 					isRead && 'opacity-[0.78] border-l-2 border-l-border pl-[10px]',
 					isActive && 'bg-secondary/40',
+					// List mode collapses the row visually so multi-line body/threads don't
+					// waste vertical space; kind-specific affordances are hidden below.
+					isListMode && 'pt-2 pb-2',
 				)}
 				style={{ transform: `translateX(${dragOffset}px)` }}
 				onClick={handleCardClick}
@@ -382,101 +433,156 @@ export function UnreadThreadCard({
 					)}
 				</div>
 
-				{/* 2-line insight preview from the object body (the "what this thread is about"
-				    hook that leads before the agent take, per AC-U7). */}
-				{insightPreview && (
-					<p className="mt-2 line-clamp-2 text-[13.5px] leading-relaxed text-muted-foreground">
-						{insightPreview}
-					</p>
-				)}
-
-				{/* Thread — all messages inline, page scrolls naturally.
-				    Dashed hairline separates the insight preview above from the agent take
-				    to match the prototype's `border-t dashed` rhythm. */}
-				<div className="mt-2.5 border-t border-dashed border-border pt-2.5">
-					{nodes.length === 0 ? (
-						<p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>
-					) : (
-						<div className="space-y-1">
-							{nodes.map((node) => {
-								const dividerOnRoot =
-									firstUnreadEventId !== null && firstUnreadEventId === node.root.id
-								const dividerInsideThread =
-									firstUnreadRootId === node.root.id &&
-									firstUnreadEventId !== null &&
-									firstUnreadEventId !== node.root.id
-								return (
-									<div key={node.root.id}>
-										{dividerOnRoot && <NewDivider />}
-										<ActivityComment
-											event={node.root}
-											replies={node.replies}
-											workspaceId={workspaceId}
-											objectId={objectId}
-											dividerBeforeReplyId={
-												dividerInsideThread ? (firstUnreadEventId ?? undefined) : undefined
-											}
-											divider={dividerInsideThread ? <NewDivider /> : undefined}
-										/>
-									</div>
-								)
-							})}
-						</div>
-					)}
-				</div>
-
-				{/* Quick-reply chips — one-tap sends immediately with a toast */}
-				<div className="mt-2 flex gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-					{QUICK_REPLY_CHIPS.map((chip) => (
-						<button
-							key={chip}
-							type="button"
-							className="shrink-0 whitespace-nowrap rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground hover:bg-secondary hover:text-foreground active:bg-foreground active:text-background disabled:opacity-50"
-							onClick={(e) => {
-								e.stopPropagation()
-								quickReply.mutate(
-									{ entity_id: objectId, content: chip, parent_event_id: replyTarget },
-									{
-										onSuccess: () => {
-											handleMarkRead()
-											toast(`✓ Sent: "${chip}"`)
-										},
-									},
-								)
-							}}
-							disabled={quickReply.isPending}
-						>
-							{chip}
-						</button>
-					))}
-				</div>
-
-				{/* Footer: Reply + Mark read */}
-				<div className="mt-1.5 flex items-center gap-1">
-					<Button
-						size="sm"
-						variant="outline"
-						className={cn(
-							'h-7 px-2 text-xs font-medium',
-							isActive && 'bg-foreground text-background border-foreground hover:bg-foreground/90',
+				{/* Body, thread, and inline actions are only rendered in Cards mode.
+				    List mode collapses the row to the head/title/meta above so the feed
+				    reads as a scannable stream with no inline chips or buttons — the
+				    task's List-mode AC. */}
+				{!isListMode && (
+					<>
+						{/* 2-line insight preview from the object body (the "what this thread is about"
+						    hook that leads before the agent take, per AC-U7). */}
+						{insightPreview && (
+							<p className="mt-2 line-clamp-2 text-[13.5px] leading-relaxed text-muted-foreground">
+								{insightPreview}
+							</p>
 						)}
-						onClick={handleReplyClick}
-					>
-						{isActive ? 'Replying…' : 'Reply'}
-					</Button>
-					<Button
-						size="sm"
-						variant="ghost"
-						className="h-7 px-2 text-xs"
-						onClick={(e) => {
-							e.stopPropagation()
-							handleMarkRead()
-						}}
-						disabled={markRead.isPending}
-					>
-						Mark as read
-					</Button>
-				</div>
+
+						{/* Thread — all messages inline, page scrolls naturally.
+						    Dashed hairline separates the insight preview above from the agent take
+						    to match the prototype's `border-t dashed` rhythm. */}
+						<div className="mt-2.5 border-t border-dashed border-border pt-2.5">
+							{nodes.length === 0 ? (
+								<p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>
+							) : (
+								<div className="space-y-1">
+									{nodes.map((node) => {
+										const dividerOnRoot =
+											firstUnreadEventId !== null && firstUnreadEventId === node.root.id
+										const dividerInsideThread =
+											firstUnreadRootId === node.root.id &&
+											firstUnreadEventId !== null &&
+											firstUnreadEventId !== node.root.id
+										return (
+											<div key={node.root.id}>
+												{dividerOnRoot && <NewDivider />}
+												<ActivityComment
+													event={node.root}
+													replies={node.replies}
+													workspaceId={workspaceId}
+													objectId={objectId}
+													dividerBeforeReplyId={
+														dividerInsideThread ? (firstUnreadEventId ?? undefined) : undefined
+													}
+													divider={dividerInsideThread ? <NewDivider /> : undefined}
+												/>
+											</div>
+										)
+									})}
+								</div>
+							)}
+						</div>
+
+						{/* Kind-specific chip-row for sign_off / proposed_bet (and the generic
+						    thread fallback). Decision cards render the shaded footer instead
+						    (below the Reply/Mark-as-read row). */}
+						{!decisionActions && (
+							<div
+								data-testid="chip-row"
+								data-chip-row={cardKind}
+								className="mt-2 flex gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+							>
+								{chipActions.map((action) => (
+									<button
+										key={action.id}
+										type="button"
+										data-action-id={action.id}
+										className={cn(
+											'shrink-0 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50',
+											action.tone === 'primary'
+												? 'border-foreground bg-foreground text-background hover:bg-foreground/90'
+												: 'border-border bg-background text-muted-foreground hover:border-foreground hover:bg-secondary hover:text-foreground active:bg-foreground active:text-background',
+										)}
+										onClick={(e) => {
+											e.stopPropagation()
+											runCardAction(action)
+										}}
+										disabled={quickReply.isPending}
+									>
+										{action.label}
+									</button>
+								))}
+							</div>
+						)}
+
+						{/* Footer: Reply + Mark read */}
+						<div className="mt-1.5 flex items-center gap-1">
+							<Button
+								size="sm"
+								variant="outline"
+								className={cn(
+									'h-7 px-2 text-xs font-medium',
+									isActive &&
+										'bg-foreground text-background border-foreground hover:bg-foreground/90',
+								)}
+								onClick={handleReplyClick}
+							>
+								{isActive ? 'Replying…' : 'Reply'}
+							</Button>
+							<Button
+								size="sm"
+								variant="ghost"
+								className="h-7 px-2 text-xs"
+								onClick={(e) => {
+									e.stopPropagation()
+									handleMarkRead()
+								}}
+								disabled={markRead.isPending}
+							>
+								Mark as read
+							</Button>
+						</div>
+
+						{/* Decision cards: shaded footer bar with full-width primary/secondary
+						    buttons. Uses --st-in_review-bg to signal "needs a call" weight —
+						    the load-bearing distinction the bet is testing. Negative margins
+						    pull it flush to the row edges; buttons stack vertically at 375.
+						    `data-stack-layout` exposes the layout to Playwright so the mobile
+						    stack assertion doesn't have to measure pixel widths. */}
+						{decisionActions && (
+							<div
+								data-testid="decision-footer"
+								data-stack-layout={isMobileViewport ? 'stacked' : 'row'}
+								className={cn(
+									'mt-3 -mx-3 -mb-2.5 flex flex-col gap-2 border-t border-border/70 bg-status-in_review-bg px-3 py-3',
+									'md:flex-row',
+									// Undo the outer `pl-[10px]` when the row itself carries the unread
+									// accent so the footer still lines up with the card's left edge.
+									(isUnread || isRead) && '-ml-[10px]',
+								)}
+							>
+								{decisionActions.map((action) => (
+									<Button
+										key={action.id}
+										size="sm"
+										variant={action.tone === 'primary' ? 'default' : 'outline'}
+										data-action-id={action.id}
+										className={cn(
+											'h-9 flex-1 justify-center text-sm font-medium',
+											action.tone === 'secondary' && 'bg-background',
+										)}
+										onClick={(e) => {
+											e.stopPropagation()
+											runCardAction(action)
+										}}
+										disabled={quickReply.isPending}
+									>
+										{action.label}
+									</Button>
+								))}
+							</div>
+						)}
+					</>
+				)}
 			</div>
 		</div>
 	)
