@@ -86,10 +86,6 @@ const SURFACES: Surface[] = [
 		path: (ws, ids) => `/${ws}/objects/${ids.taskId}`,
 	},
 	{
-		name: 'Activity',
-		path: (ws) => `/${ws}/activity`,
-	},
-	{
 		name: 'Agents list',
 		path: (ws) => `/${ws}/agents`,
 	},

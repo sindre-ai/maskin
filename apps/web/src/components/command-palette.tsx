@@ -97,12 +97,6 @@ export function CommandPalette() {
 							</Command.Item>
 							<Command.Item
 								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-accent data-[selected]:text-accent-foreground"
-								onSelect={() => navigateTo(`/${workspaceId}/activity`)}
-							>
-								Activity Feed
-							</Command.Item>
-							<Command.Item
-								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-accent data-[selected]:text-accent-foreground"
 								onSelect={() => navigateTo(`/${workspaceId}/agents`)}
 							>
 								Agents

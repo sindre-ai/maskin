@@ -252,7 +252,7 @@ function SessionListView({ sessions }: { sessions: EnrichedSession[] }) {
 	return (
 		<div className="p-4 space-y-2">
 			<div className="flex justify-end mb-2">
-				<WebAppLink target={{ kind: 'activity' }} label="Open activity in Maskin" />
+				<WebAppLink target={{ kind: 'agent' }} label="View agents in Maskin" />
 			</div>
 			{local.map((session) => (
 				<SessionRow
