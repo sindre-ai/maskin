@@ -5,6 +5,7 @@ import {
 	events,
 	actors,
 	agentFiles,
+	agentSkills,
 	files,
 	imports,
 	integrations,
@@ -636,34 +637,41 @@ app.openapi(getActorRoute, (async (c) => {
 	const db = c.get('db')
 	const { id } = c.req.valid('param')
 
-	const [actor] = await db
-		.select({
-			id: actors.id,
-			type: actors.type,
-			name: actors.name,
-			email: actors.email,
-			description: actors.description,
-			system_prompt: actors.systemPrompt,
-			tools: actors.tools,
-			memory: actors.memory,
-			llm_provider: actors.llmProvider,
-			llm_config: actors.llmConfig,
-			isSystem: actors.isSystem,
-			agentState: actors.agentState,
-			agentStateUpdatedAt: actors.agentStateUpdatedAt,
-			createdAt: actors.createdAt,
-			updatedAt: actors.updatedAt,
-			installedPackageId: sql<string | null>`${actors.metadata}->>'installed_package_id'`,
-		})
-		.from(actors)
-		.where(eq(actors.id, id))
-		.limit(1)
+	const [[actor], skills] = await Promise.all([
+		db
+			.select({
+				id: actors.id,
+				type: actors.type,
+				name: actors.name,
+				email: actors.email,
+				description: actors.description,
+				system_prompt: actors.systemPrompt,
+				tools: actors.tools,
+				memory: actors.memory,
+				llm_provider: actors.llmProvider,
+				llm_config: actors.llmConfig,
+				isSystem: actors.isSystem,
+				agentState: actors.agentState,
+				agentStateUpdatedAt: actors.agentStateUpdatedAt,
+				createdAt: actors.createdAt,
+				updatedAt: actors.updatedAt,
+				installedPackageId: sql<string | null>`${actors.metadata}->>'installed_package_id'`,
+			})
+			.from(actors)
+			.where(eq(actors.id, id))
+			.limit(1),
+		db
+			.select({ id: workspaceSkills.id, name: workspaceSkills.name })
+			.from(agentSkills)
+			.innerJoin(workspaceSkills, eq(agentSkills.workspaceSkillId, workspaceSkills.id))
+			.where(eq(agentSkills.actorId, id)),
+	])
 
 	if (!actor) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	return c.json(serialize(actor) as z.infer<typeof actorResponseSchema>)
+	return c.json(serialize({ ...actor, skills }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof getActorRoute, Env>)
 
 // PATCH /:id - Update actor
