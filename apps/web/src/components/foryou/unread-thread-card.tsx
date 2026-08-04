@@ -288,10 +288,11 @@ export function UnreadThreadCard({
 		cardKind === 'decision' ? CARD_ACTIONS.decision : null
 
 	// Decision cards mirror the task's parent bet so the human can see which
-	// bet the call belongs to without opening the object. Only fetched when
-	// the card is actually a decision — a per-row graph fetch on every feed
-	// card would be expensive at scale.
-	const graphQuery = useObjectGraph(workspaceId, objectId)
+	// bet the call belongs to without opening the object. `enabled` gates
+	// the network call itself, so non-decision feed rows never fire.
+	const graphQuery = useObjectGraph(workspaceId, objectId, {
+		enabled: cardKind === 'decision',
+	})
 	const parentBet =
 		cardKind === 'decision' && graphQuery.data
 			? (graphQuery.data.relationships
