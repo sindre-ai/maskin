@@ -29,6 +29,12 @@ vi.mock('@/hooks/use-bets', () => ({
 vi.mock('@/lib/new-conversation-context', () => ({
 	useNewConversationComposer: () => ({ open: false, setOpen: vi.fn() }),
 }))
+vi.mock('@/lib/today-brief-context', () => ({
+	useTodayBrief: () => ({ open: false, setOpen: vi.fn(), toggle: vi.fn() }),
+}))
+vi.mock('@/components/foryou/today-brief-panel', () => ({
+	TodayBriefPanel: () => null,
+}))
 vi.mock('sonner', () => ({ toast: vi.fn() }))
 vi.mock('@/components/foryou/persistent-reply-bar', () => ({
 	PersistentReplyBar: () => null,

@@ -3,6 +3,7 @@ import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { PersistentReplyBar } from '@/components/foryou/persistent-reply-bar'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
+import { TodayBriefPanel } from '@/components/foryou/today-brief-panel'
 import { UnreadThreadCard } from '@/components/foryou/unread-thread-card'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FilterTabs } from '@/components/shared/filter-tabs'
@@ -15,6 +16,7 @@ import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import type { UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNewConversationComposer } from '@/lib/new-conversation-context'
+import { useTodayBrief } from '@/lib/today-brief-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
@@ -38,14 +40,32 @@ function ForYouRoute() {
 }
 
 function ForYouRedesign() {
+	const { toggle: toggleBrief, open: briefOpen } = useTodayBrief()
 	return (
-		<div className="flex flex-col gap-3" data-testid="foryou-redesign-root">
-			<header className="mb-1">
-				<h1 className="text-2xl font-semibold leading-tight tracking-tight">For You</h1>
-				<p className="mt-0.5 text-sm text-muted-foreground">
-					Founder canary — the redesigned feed lands here.
-				</p>
-			</header>
+		<div className="flex flex-1 min-w-0" data-testid="foryou-redesign-root">
+			<div className="flex flex-1 min-w-0 flex-col gap-3">
+				<header className="mb-1 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+					<div>
+						<h1 className="text-2xl font-semibold leading-tight tracking-tight">For You</h1>
+						<p className="mt-0.5 text-sm text-muted-foreground">
+							Founder canary — the redesigned feed lands here.
+						</p>
+					</div>
+					<div className="flex flex-wrap items-center gap-2">
+						<Button
+							variant="outline"
+							size="sm"
+							className="h-7 px-2 text-xs"
+							onClick={toggleBrief}
+							aria-pressed={briefOpen}
+							aria-label="Today's brief"
+						>
+							Today's brief
+						</Button>
+					</div>
+				</header>
+			</div>
+			<TodayBriefPanel />
 		</div>
 	)
 }
