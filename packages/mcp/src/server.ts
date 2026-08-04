@@ -918,6 +918,7 @@ export interface HeroCardObject {
 	tools?: Record<string, unknown> | null
 	llmProvider?: string | null
 	llmConfig?: Record<string, unknown> | null
+	skills?: Array<{ id: string; name: string }> | null
 	// Full detail fields — populated by list_triggers
 	actionPrompt?: string | null
 	config?: Record<string, unknown> | null
@@ -1144,6 +1145,7 @@ interface RawActor {
 	tools?: Record<string, unknown> | null
 	llm_provider?: string | null
 	llm_config?: Record<string, unknown> | null
+	skills?: Array<{ id: string; name: string }> | null
 }
 
 interface RawWorkspace {
@@ -1178,6 +1180,7 @@ function buildActorHeroCardObject(actor: RawActor, includeDetails = false): Hero
 		obj.tools = actor.tools ?? null
 		obj.llmProvider = actor.llm_provider ?? null
 		obj.llmConfig = actor.llm_config ?? null
+		obj.skills = actor.skills ?? null
 	}
 	return obj
 }

@@ -381,6 +381,31 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body.isSystem).toBe(false)
 		})
+
+		it('includes id and name of attached workspace skills', async () => {
+			const actor = buildActor()
+			const skill = { id: randomUUID(), name: 'PDF Extraction' }
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [[actor], [skill]]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.skills).toEqual([skill])
+		})
+
+		it('returns an empty skills array when no skills are attached', async () => {
+			const actor = buildActor()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [[actor], []]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.skills).toEqual([])
+		})
 	})
 
 	describe('PATCH /api/actors/:id', () => {
