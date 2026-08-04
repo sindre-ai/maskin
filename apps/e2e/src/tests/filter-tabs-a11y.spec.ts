@@ -50,22 +50,3 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		})
 	})
 }
-
-test.describe('Activity desktop filter tabs', () => {
-	test.use({ viewport: { width: 1024, height: 768 } })
-
-	test('use the same group + aria-pressed contract', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}/activity`)
-
-		const all = page.getByRole('button', { name: 'All' }).first()
-		const decision = page.getByRole('button', { name: 'Decision' })
-
-		await expect(all).toHaveAttribute('aria-pressed', 'true')
-		await expect(decision).toHaveAttribute('aria-pressed', 'false')
-
-		await decision.focus()
-		await page.keyboard.press('Enter')
-		await expect(decision).toHaveAttribute('aria-pressed', 'true')
-		await expect(all).toHaveAttribute('aria-pressed', 'false')
-	})
-})

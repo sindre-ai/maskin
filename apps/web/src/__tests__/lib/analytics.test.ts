@@ -14,6 +14,7 @@ import {
 	trackForyouCardMarkedUnread,
 	trackLoopGraduated,
 	trackLoopViewed,
+	trackNavItemClicked,
 	trackNorthStarPromptImpression,
 	trackNorthStarPromptResponse,
 	trackObjectAttachedFile,
@@ -383,6 +384,28 @@ describe('v1 taxonomy helpers', () => {
 
 		expect(capture).toHaveBeenCalledWith('sidebar.agent_activity.expanded', {
 			workspaceId: 'ws-42',
+		})
+	})
+
+	it('nav_item_clicked carries the stable item_key and top-nav source', () => {
+		const capture = captureSpy()
+
+		trackNavItemClicked({ item_key: 'marketplace', source: 'top-nav' })
+
+		expect(capture).toHaveBeenCalledWith('nav_item_clicked', {
+			item_key: 'marketplace',
+			source: 'top-nav',
+		})
+	})
+
+	it('nav_item_clicked flips the source to footer when emitted from a footer nav entry', () => {
+		const capture = captureSpy()
+
+		trackNavItemClicked({ item_key: 'marketplace', source: 'footer' })
+
+		expect(capture).toHaveBeenCalledWith('nav_item_clicked', {
+			item_key: 'marketplace',
+			source: 'footer',
 		})
 	})
 
