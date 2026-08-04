@@ -12,7 +12,7 @@ import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useUnread } from '@/hooks/use-subscriptions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
-import { Activity, Bot, FileText, Layers, Store, Zap } from 'lucide-react'
+import { Bot, Layers, Store, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 import { NavUser } from './nav-user'
 import { SidebarActivity } from './sidebar-activity'
@@ -26,12 +26,16 @@ const FOR_YOU_ROUTE = '/$workspaceId' as const
 // (`metadata.posthog_query`).
 const coreNavItems: SidebarNavItemDef[] = [
 	{ key: 'for-you', label: 'For You', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
-	{ key: 'briefing', label: 'Briefing', to: '/$workspaceId/briefing', icon: FileText },
-	{ key: 'activity', label: 'Activity', to: '/$workspaceId/activity', icon: Activity },
 	{ key: 'agents', label: 'Agents', to: '/$workspaceId/agents', icon: Bot },
 	{ key: 'triggers', label: 'Triggers', to: '/$workspaceId/triggers', icon: Zap },
-	{ key: 'marketplace', label: 'Marketplace', to: '/$workspaceId/marketplace', icon: Store },
 ]
+
+const marketplaceItem: SidebarNavItemDef = {
+	key: 'marketplace',
+	label: 'Marketplace',
+	to: '/$workspaceId/marketplace',
+	icon: Store,
+}
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const { workspaceId } = useWorkspace()
@@ -70,6 +74,9 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 				</SidebarGroup>
 			</SidebarContent>
 			<SidebarFooter>
+				<SidebarMenu>
+					<SidebarNavItem item={marketplaceItem} source="footer" />
+				</SidebarMenu>
 				<SidebarActivity workspaceId={workspaceId} />
 				<NavUser />
 			</SidebarFooter>

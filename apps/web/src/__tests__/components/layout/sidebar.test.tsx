@@ -79,9 +79,24 @@ describe('AppSidebar', () => {
 	it('renders core navigation items', () => {
 		render(<AppSidebar />)
 		expect(screen.getByText('For You')).toBeInTheDocument()
-		expect(screen.getByText('Activity')).toBeInTheDocument()
 		expect(screen.getByText('Agents')).toBeInTheDocument()
 		expect(screen.getByText('Triggers')).toBeInTheDocument()
+	})
+
+	it('does not render Activity or Briefing top-nav entries', () => {
+		render(<AppSidebar />)
+		expect(screen.queryByText('Activity')).not.toBeInTheDocument()
+		expect(screen.queryByText('Briefing')).not.toBeInTheDocument()
+	})
+
+	it('renders Marketplace as a footer nav entry above SidebarActivity', () => {
+		render(<AppSidebar />)
+		const marketplace = screen.getByText('Marketplace')
+		const sidebarActivity = screen.getByTestId('sidebar-activity')
+		expect(marketplace).toBeInTheDocument()
+		expect(
+			marketplace.compareDocumentPosition(sidebarActivity) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy()
 	})
 
 	it('shows Objects nav item when object types are enabled', () => {
