@@ -91,8 +91,8 @@ async function findByExternalId(db: Database, workspaceId: string, meetingId: st
  * `transcription.completed` delivery — no agent tool call involved, so a
  * finished meeting always shows up even if no agent session ever runs.
  * Matches by `metadata->>'external_id' = payload.meeting_id`, scoped to the
- * workspace, mirroring `findKnowledgeDuplicate`'s metadata-filter pattern
- * (apps/dev/src/routes/objects.ts).
+ * workspace — an exact-id lookup, unlike `findKnowledgeDuplicate`'s fuzzy
+ * title matching (apps/dev/src/lib/knowledge-dedup.ts).
  */
 export async function upsertSkjaldMeeting(
 	db: Database,
