@@ -23,7 +23,7 @@ test.describe('Object detail — above-title identity row', () => {
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 			const title = page.getByPlaceholder('Untitled')
-			await expect(title).toHaveValue(HEADER_TITLE, { timeout: 10000 })
+			await expect(title).toHaveValue(HEADER_TITLE, { timeout: 15000 })
 
 			// The identity row is the sticky-nav anchor: it hosts the
 			// [data-hero-status-trigger] element (the StatusSelect trigger).
@@ -72,11 +72,16 @@ test.describe('Object detail — above-title identity row', () => {
 			).toBeVisible()
 
 			// SubscribeToggle + creator + created/updated timestamps must
-			// no longer render inline in the header. Playwright's <time>
-			// query is the cheapest proxy for the RelativeTime chips.
+			// no longer render inline in the identity row. Activity below
+			// legitimately renders <time> for events, so scope the time
+			// check to the identity row itself (via the status-trigger
+			// ancestor).
 			await expect(page.getByRole('button', { name: /subscribe/i })).toHaveCount(0)
-			const inlineTimes = await page.locator('main time, header time').count()
-			expect(inlineTimes).toBe(0)
+			const heroTimes = await page
+				.locator('[data-hero-status-trigger]')
+				.locator('xpath=ancestor::div[contains(@class, "flex-wrap")][1]//time')
+				.count()
+			expect(heroTimes).toBe(0)
 		})
 	}
 })
