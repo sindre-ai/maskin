@@ -1,7 +1,7 @@
 import { ObjectDocumentView } from '@/components/objects/object-document'
 import { render, screen } from '@testing-library/react'
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event'
-import { buildActorResponse, buildObjectResponse } from '../../factories'
+import { buildObjectResponse } from '../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -19,22 +19,6 @@ vi.mock('@/components/shared/markdown-content', () => ({
 vi.mock('@/components/activity/object-activity', () => ({
 	ObjectActivity: () => <div data-testid="object-activity" />,
 }))
-
-vi.mock('@/components/shared/subscribe-toggle', () => ({
-	SubscribeToggle: () => <div data-testid="subscribe-toggle" />,
-}))
-
-// The knowledge doc-header chip reads live counts through `useKnowledgeReferences`.
-// Mock the whole use-objects module here so the ObjectDocumentView tests below
-// can drive chip visibility deterministically (0 → hidden, N>0 → visible).
-const mockUseKnowledgeReferences = vi.fn()
-vi.mock('@/hooks/use-objects', async () => {
-	const actual = await vi.importActual<typeof import('@/hooks/use-objects')>('@/hooks/use-objects')
-	return {
-		...actual,
-		useKnowledgeReferences: (...args: unknown[]) => mockUseKnowledgeReferences(...args),
-	}
-})
 
 vi.mock('@/components/objects/loop-card', () => ({
 	LoopCard: () => <div data-testid="loop-card" />,
@@ -63,28 +47,6 @@ describe('ObjectDocumentView', () => {
 		const object = buildObjectResponse({ type: 'bet' })
 		render(<ObjectDocumentView {...baseProps} object={object} />)
 		expect(screen.getByText('bet')).toBeInTheDocument()
-	})
-
-	it('shows creator name and avatar when provided', () => {
-		const object = buildObjectResponse()
-		const creator = buildActorResponse({ name: 'Alice' })
-		render(<ObjectDocumentView {...baseProps} object={object} creator={creator} />)
-		expect(screen.getByText('Alice')).toBeInTheDocument()
-	})
-
-	it('wraps the provenance cluster on its own row below the sm breakpoint', () => {
-		// Creator + createdAt must group into a sub-div with basis-full so
-		// 375px never spills into a jagged partial wrap; sm:basis-auto lets
-		// them flow inline again on wider phones.
-		const object = buildObjectResponse()
-		const creator = buildActorResponse({ name: 'Alice' })
-		render(<ObjectDocumentView {...baseProps} object={object} creator={creator} />)
-		const creatorLabel = screen.getByText('Alice')
-		// creator span → provenance cluster (has basis-full sm:basis-auto)
-		const cluster = creatorLabel.parentElement
-		expect(cluster).not.toBeNull()
-		expect(cluster?.className).toContain('basis-full')
-		expect(cluster?.className).toContain('sm:basis-auto')
 	})
 
 	it('calls onUpdateTitle on blur when title changed', async () => {
@@ -182,51 +144,6 @@ describe('ObjectDocumentView', () => {
 		expect(screen.queryByText('agent working')).not.toBeInTheDocument()
 	})
 
-	describe('updated chip', () => {
-		it('renders an "updated" chip when updatedAt is materially after createdAt', () => {
-			const createdAt = '2026-06-01T10:00:00.000Z'
-			const updatedAt = '2026-06-01T10:05:00.000Z'
-			const object = buildObjectResponse({ createdAt, updatedAt })
-			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
-			const timeEls = container.querySelectorAll('time')
-			expect(timeEls.length).toBe(2)
-			expect(timeEls[0].getAttribute('datetime')).toBe(createdAt)
-			expect(timeEls[1].getAttribute('datetime')).toBe(updatedAt)
-			const chipParent = timeEls[1].parentElement
-			expect(chipParent?.textContent?.startsWith('updated ')).toBe(true)
-			expect(chipParent?.className).toContain('text-[11px]')
-			expect(chipParent?.className).toContain('text-muted-foreground')
-		})
-
-		it('suppresses the updated chip when updatedAt is null', () => {
-			const object = buildObjectResponse({
-				createdAt: '2026-06-01T10:00:00.000Z',
-				updatedAt: null,
-			})
-			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(container.querySelectorAll('time').length).toBe(1)
-			expect(container.textContent).not.toMatch(/updated \d/)
-		})
-
-		it('suppresses the updated chip when updatedAt − createdAt < 60s', () => {
-			const object = buildObjectResponse({
-				createdAt: '2026-06-01T10:00:00.000Z',
-				updatedAt: '2026-06-01T10:00:30.000Z',
-			})
-			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(container.querySelectorAll('time').length).toBe(1)
-		})
-
-		it('renders the chip when createdAt is null but updatedAt is present', () => {
-			const updatedAt = '2026-06-01T10:00:00.000Z'
-			const object = buildObjectResponse({ createdAt: null, updatedAt })
-			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
-			const timeEls = container.querySelectorAll('time')
-			expect(timeEls.length).toBe(1)
-			expect(timeEls[0].getAttribute('datetime')).toBe(updatedAt)
-		})
-	})
-
 	describe('OwnerSelect', () => {
 		const members = [
 			{ actorId: 'actor-alice', role: 'owner', joinedAt: null, name: 'Alice', type: 'human' },
@@ -298,54 +215,45 @@ describe('ObjectDocumentView', () => {
 		})
 	})
 
-	describe('Referenced-by-N-contexts chip on knowledge headers', () => {
-		beforeEach(() => {
-			mockUseKnowledgeReferences.mockReset()
+	describe('above-title header row order', () => {
+		// DoD contract for T2: the four editable identity elements sit above
+		// the <h1> textarea in the DOM, in the order TypeBadge → status →
+		// IndicatorBadgeChip → OwnerSelect. This is the frame test — the
+		// per-viewport fold assertion lives in the Playwright spec.
+		it('renders TypeBadge, StatusSelect, IndicatorBadgeChip, and OwnerSelect above the title', () => {
+			const members = [
+				{ actorId: 'actor-alice', role: 'owner', joinedAt: null, name: 'Alice', type: 'human' },
+			]
+			const object = buildObjectResponse({ type: 'bet', status: 'active' })
+			const { container } = render(
+				<ObjectDocumentView
+					{...baseProps}
+					object={object}
+					statuses={betStatuses}
+					members={members}
+					betStatus={{ state: 'progressing', pendingAction: null, decisionsSoFar: [] }}
+				/>,
+			)
+			const textarea = container.querySelector('textarea')
+			expect(textarea).not.toBeNull()
+			if (!textarea) return
+			const typeBadge = screen.getByText('bet')
+			// Node.DOCUMENT_POSITION_FOLLOWING = 4 — bit set when `textarea`
+			// follows `typeBadge` in DOM order.
+			expect(typeBadge.compareDocumentPosition(textarea) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+				Node.DOCUMENT_POSITION_FOLLOWING,
+			)
 		})
 
-		it('renders the chip on knowledge objects when count > 0', () => {
-			mockUseKnowledgeReferences.mockReturnValue({
-				data: { window_days: 7, unique_contexts: 3 },
+		it('no longer renders SubscribeToggle, creator, or created/updated chips inline', () => {
+			const object = buildObjectResponse({
+				type: 'knowledge',
+				createdAt: '2026-06-01T10:00:00.000Z',
+				updatedAt: '2026-06-01T10:05:00.000Z',
 			})
-			const object = buildObjectResponse({ type: 'knowledge', title: 'About Maskin' })
-			render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(screen.getByText('Referenced by 3 contexts/week')).toBeInTheDocument()
-		})
-
-		it('singularises the label at count === 1', () => {
-			mockUseKnowledgeReferences.mockReturnValue({
-				data: { window_days: 7, unique_contexts: 1 },
-			})
-			const object = buildObjectResponse({ type: 'knowledge' })
-			render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(screen.getByText('Referenced by 1 context/week')).toBeInTheDocument()
-		})
-
-		it('hides the chip when count is 0 (empty state stays invisible)', () => {
-			mockUseKnowledgeReferences.mockReturnValue({
-				data: { window_days: 7, unique_contexts: 0 },
-			})
-			const object = buildObjectResponse({ type: 'knowledge' })
-			render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(screen.queryByText(/Referenced by/)).not.toBeInTheDocument()
-		})
-
-		it('hides the chip while the count is still loading (no data yet)', () => {
-			mockUseKnowledgeReferences.mockReturnValue({ data: undefined })
-			const object = buildObjectResponse({ type: 'knowledge' })
-			render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(screen.queryByText(/Referenced by/)).not.toBeInTheDocument()
-		})
-
-		it('does not render on non-knowledge object types', () => {
-			mockUseKnowledgeReferences.mockReturnValue({
-				data: { window_days: 7, unique_contexts: 9 },
-			})
-			const object = buildObjectResponse({ type: 'bet' })
-			render(<ObjectDocumentView {...baseProps} object={object} />)
-			// The chip is not rendered on bets even though the hook would
-			// return a positive count — the header prov row must stay
-			// knowledge-only. The chip's own render guard is a safety net.
+			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(screen.queryByTestId('subscribe-toggle')).not.toBeInTheDocument()
+			expect(container.querySelectorAll('time').length).toBe(0)
 			expect(screen.queryByText(/Referenced by/)).not.toBeInTheDocument()
 		})
 	})

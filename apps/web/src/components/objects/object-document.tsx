@@ -7,11 +7,9 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
-import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import {
 	useDeleteObject,
-	useKnowledgeReferences,
 	useObjectGraph,
 	useUpdateObject,
 	useVerifyObject,
@@ -20,13 +18,7 @@ import { useDeleteRelationship } from '@/hooks/use-relationships'
 import { useScrollToTopEmitter } from '@/hooks/use-scroll-to-top-emitter'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { trackEvent } from '@/lib/analytics'
-import type {
-	ActorResponse,
-	EventResponse,
-	MemberResponse,
-	ObjectResponse,
-	RelationshipResponse,
-} from '@/lib/api'
+import type { EventResponse, MemberResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { classifyBetStatus } from '@/lib/bet-status'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
@@ -35,14 +27,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionBanner } from '../activity/action-banner'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
-import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentWorkingBadge } from '../shared/agent-working-badge'
 import { IndicatorBadgeChip } from '../shared/indicator-badge'
 import { MarkdownContent } from '../shared/markdown-content'
-import { RelativeTime } from '../shared/relative-time'
 import { SourceBadge } from '../shared/source-badge'
 import { StatusBadge } from '../shared/status-badge'
-import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { LoopCard } from './loop-card'
@@ -54,7 +43,6 @@ interface ObjectDocumentViewProps {
 	object: ObjectResponse
 	workspaceId: string
 	statuses: string[]
-	creator?: ActorResponse
 	members?: MemberResponse[]
 	allRelationships?: RelationshipResponse[]
 	connectedObjects?: ObjectResponse[]
@@ -85,46 +73,10 @@ interface ObjectDocumentViewProps {
 	heroIdentityRef?: React.Ref<HTMLDivElement>
 }
 
-// Renders "Referenced by N contexts/week" alongside the other prov-row chips
-// on knowledge object headers. Hidden when N is 0 (per DoD — the empty state
-// stays invisible so the row doesn't grow a permanent "Never referenced"
-// footprint). Also hidden while the count is loading or on API failure — the
-// chip is decorative, not load-bearing, so it must never block the header
-// from rendering.
-function KnowledgeReferencesChip({
-	workspaceId,
-	objectId,
-}: {
-	workspaceId: string
-	objectId: string
-}) {
-	const { data } = useKnowledgeReferences(workspaceId, objectId)
-	const count = data?.unique_contexts ?? 0
-	if (count <= 0) return null
-	return (
-		<span
-			className="text-[11px] text-muted-foreground"
-			title="Unique bets/tasks/insights that cited this knowledge object in the last 7 days (rolling window)"
-		>
-			Referenced by {count} {count === 1 ? 'context' : 'contexts'}/week
-		</span>
-	)
-}
-
-function shouldShowUpdatedChip(createdAt: string | null, updatedAt: string | null): boolean {
-	if (!updatedAt) return false
-	if (!createdAt) return true
-	const created = Date.parse(createdAt)
-	const updated = Date.parse(updatedAt)
-	if (!Number.isFinite(created) || !Number.isFinite(updated)) return false
-	return updated - created >= 60_000
-}
-
 export function ObjectDocumentView({
 	object,
 	workspaceId,
 	statuses,
-	creator,
 	members,
 	allRelationships,
 	connectedObjects,
@@ -186,52 +138,12 @@ export function ObjectDocumentView({
 
 	return (
 		<div className="w-full min-w-0 max-w-3xl mx-auto">
-			{/* Title */}
-			<div className="flex items-start gap-2 mb-2">
-				<textarea
-					value={titleDraft}
-					onChange={(e) => {
-						setTitleDraft(e.target.value)
-						e.target.style.height = 'auto'
-						e.target.style.height = `${e.target.scrollHeight}px`
-					}}
-					onBlur={handleTitleBlur}
-					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-					placeholder="Untitled"
-					rows={1}
-					className="w-full text-2xl font-semibold tracking-[-0.022em] bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
-					ref={(el) => {
-						if (el) {
-							el.style.height = 'auto'
-							el.style.height = `${el.scrollHeight}px`
-						}
-					}}
-				/>
-				{showSaved && (
-					<span className="flex items-center gap-1 text-xs text-muted-foreground mt-1.5">
-						<Check size={14} /> Saved
-					</span>
-				)}
-			</div>
-
-			{/* Agent working banner */}
-			{object.activeSessionId && (
-				<AgentWorkingBadge
-					sessionId={object.activeSessionId}
-					workspaceId={workspaceId}
-					variant="banner"
-				/>
-			)}
-
-			{object.type === 'loop' && <LoopCard object={object} workspaceId={workspaceId} />}
-
-			{/* Metadata badges row — editable cluster stays inline; provenance
-			 * (creator + createdAt) drops to its own row below sm so 375px never
-			 * spills into a jagged partial wrap. Also the anchor for the sticky-nav
-			 * projection: when this row scrolls out of view, the header sprouts a
-			 * title + read-only status chip; tapping the chip smooth-scrolls back
-			 * here and focuses the StatusSelect. */}
-			<div ref={heroIdentityRef} className="flex flex-wrap items-center gap-2 mb-6">
+			{/* Identity row — TypeBadge, status, bet-status chip, driver hoisted
+			 * above the title so type/state/owner are readable before the reader
+			 * scans past the h1. Anchors the sticky-nav sprout-back: when this row
+			 * scrolls out, the header projects title + read-only chip; tapping the
+			 * chip smooth-scrolls here and focuses [data-hero-status-trigger]. */}
+			<div ref={heroIdentityRef} className="flex flex-wrap items-center gap-2 mb-3">
 				<TypeBadge type={object.type} />
 				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
 				{statuses.length > 0 ? (
@@ -262,29 +174,48 @@ export function ObjectDocumentView({
 						onChange={onUpdateDriver}
 					/>
 				)}
-				<SubscribeToggle
-					workspaceId={workspaceId}
-					entityType="object"
-					entityId={object.id}
-					isSubscribed={object.is_subscribed}
-				/>
-				<div className="flex basis-full items-center gap-2 sm:basis-auto">
-					{creator && (
-						<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-							<ActorAvatar name={creator.name} type={creator.type} size="sm" />
-							{creator.name}
+			</div>
+
+			{/* Title + working banner + loop card share a 6-unit bottom margin so
+			 * the gap to content stays consistent whether or not the optional
+			 * banner or loop card renders. */}
+			<div className="mb-6">
+				<div className="flex items-start gap-2 mb-2">
+					<textarea
+						value={titleDraft}
+						onChange={(e) => {
+							setTitleDraft(e.target.value)
+							e.target.style.height = 'auto'
+							e.target.style.height = `${e.target.scrollHeight}px`
+						}}
+						onBlur={handleTitleBlur}
+						onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+						placeholder="Untitled"
+						rows={1}
+						className="w-full text-2xl font-semibold tracking-[-0.022em] bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
+						ref={(el) => {
+							if (el) {
+								el.style.height = 'auto'
+								el.style.height = `${el.scrollHeight}px`
+							}
+						}}
+					/>
+					{showSaved && (
+						<span className="flex items-center gap-1 text-xs text-muted-foreground mt-1.5">
+							<Check size={14} /> Saved
 						</span>
-					)}
-					<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
-					{shouldShowUpdatedChip(object.createdAt, object.updatedAt) && (
-						<span className="text-[11px] text-muted-foreground">
-							updated <RelativeTime date={object.updatedAt} />
-						</span>
-					)}
-					{object.type === 'knowledge' && (
-						<KnowledgeReferencesChip workspaceId={workspaceId} objectId={object.id} />
 					)}
 				</div>
+
+				{object.activeSessionId && (
+					<AgentWorkingBadge
+						sessionId={object.activeSessionId}
+						workspaceId={workspaceId}
+						variant="banner"
+					/>
+				)}
+
+				{object.type === 'loop' && <LoopCard object={object} workspaceId={workspaceId} />}
 			</div>
 
 			{/* Content — long-form prose caps at 75ch on viewports ≥1280px (AC-U1). */}
@@ -326,7 +257,6 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const verifyObject = useVerifyObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const deleteRelationship = useDeleteRelationship(workspaceId, object.id)
-	const { data: creator } = useActor(object.createdBy)
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
 	const relationships = useMemo(() => {
@@ -606,7 +536,6 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				object={object}
 				workspaceId={workspaceId}
 				statuses={statuses}
-				creator={creator}
 				members={members}
 				allRelationships={allRelationships}
 				connectedObjects={graph?.connected_objects}
