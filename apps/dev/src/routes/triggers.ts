@@ -1,7 +1,7 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, triggers } from '@maskin/db/schema'
-import { createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
+import { configSchemaForType, createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
 import { Cron } from 'croner'
 import { and, asc, count, desc, eq } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
@@ -242,17 +242,27 @@ app.openapi(updateTriggerRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
 
-	// Validate cron expression if updating config on a trigger that is (or is
-	// becoming) a cron trigger. Use the effective post-update type, not the
-	// stale DB value, so a type change is validated against its new config.
+	// Validate config against the effective post-update type — the type in the
+	// body if changing it, otherwise the stale DB value — so a config-only PATCH
+	// can't silently persist a shape mismatched with the trigger's type (e.g. an
+	// event-shaped config on a still-cron-typed row).
 	const effectiveType = body.type ?? trigger.type
-	if (body.config && effectiveType === 'cron') {
-		const expr = (body.config as Record<string, unknown>).expression
-		if (expr != null) {
-			try {
-				new Cron(expr as string, { maxRuns: 0 })
-			} catch {
-				return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
+	if (body.config) {
+		const configSchema = configSchemaForType[effectiveType as keyof typeof configSchemaForType]
+		if (configSchema && !configSchema.safeParse(body.config).success) {
+			return c.json(
+				createApiError('VALIDATION_ERROR', `config does not match ${effectiveType} trigger shape`),
+				400,
+			)
+		}
+		if (effectiveType === 'cron') {
+			const expr = (body.config as Record<string, unknown>).expression
+			if (expr != null) {
+				try {
+					new Cron(expr as string, { maxRuns: 0 })
+				} catch {
+					return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
+				}
 			}
 		}
 	}

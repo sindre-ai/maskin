@@ -59,7 +59,12 @@ export const skjaldTranscriptionCompletedPayloadSchema = z.object({
 	segment_count: z.number(),
 	folder_path: z.string().nullable().optional(),
 	created_at: z.string(),
+	// Only present when the webhook's payload mode is "Full content".
 	transcript_text: z.string().nullable().optional(),
 	diarization_status: z.string(),
+	// Only present when `diarization_status` is `"completed"`.
 	speaker_segments: z.array(skjaldDiarizedSegmentSchema).nullable().optional(),
 })
+
+export type SkjaldDiarizedSegment = z.infer<typeof skjaldDiarizedSegmentSchema>
+export type SkjaldTranscriptionCompletedPayload = z.infer<typeof skjaldTranscriptionCompletedPayloadSchema>

@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
+import type { SkjaldTranscriptionCompletedPayload } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 
 // Name of the partial unique index defined in
@@ -35,29 +36,6 @@ export function isMeetingExternalIdUniqueViolation(err: unknown): boolean {
 		current = e.cause
 	}
 	return false
-}
-
-/** Mirrors Skjald's `DiarizedSegment` (webhooks/events.rs). */
-export interface SkjaldDiarizedSegment {
-	transcript_id: string
-	speaker_id: string
-	speaker_name: string
-	audio_start_time?: number | null
-	audio_end_time?: number | null
-}
-
-/** Mirrors Skjald's `TranscriptionCompletedPayload` (webhooks/events.rs). */
-export interface SkjaldTranscriptionCompletedPayload {
-	meeting_id: string
-	meeting_title: string
-	segment_count: number
-	folder_path?: string | null
-	created_at: string
-	/** Only present when the webhook's payload mode is "Full content". */
-	transcript_text?: string | null
-	diarization_status: string
-	/** Only present when `diarization_status` is `"completed"`. */
-	speaker_segments?: SkjaldDiarizedSegment[] | null
 }
 
 export interface UpsertSkjaldMeetingArgs {

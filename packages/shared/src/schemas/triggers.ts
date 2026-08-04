@@ -97,11 +97,11 @@ export const createTriggerSchema = z.discriminatedUnion('type', [
 // otherwise a caller could flip `type` to 'event' while leaving a stale cron
 // `config` (or vice versa) on the row, which is exactly the corruption this
 // schema previously allowed by omitting `type` entirely.
-const configSchemaForType = {
+export const configSchemaForType: Record<z.infer<typeof triggerTypeSchema>, z.ZodTypeAny> = {
 	cron: cronConfigSchema,
 	event: eventConfigSchema,
 	reminder: reminderConfigSchema,
-} as const
+}
 
 export const updateTriggerSchema = z
 	.object({
