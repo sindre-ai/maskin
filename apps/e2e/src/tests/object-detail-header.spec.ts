@@ -59,10 +59,14 @@ test.describe('Object detail — above-title identity row', () => {
 
 			// The four identity elements the DoD names: TypeBadge, status
 			// control, IndicatorBadgeChip, OwnerSelect — all present and
-			// visible in the row. OwnerSelect + StatusSelect wrap Radix
-			// SelectTrigger, which renders as role="combobox" (not "button").
+			// visible in the row. OwnerSelect wraps a Radix SelectTrigger
+			// (role="combobox") which has no aria-label; ARIA disallows
+			// name-from-content for combobox, so locate it via its visible
+			// "Driver:" prefix instead.
 			await expect(page.getByText('bet', { exact: true }).first()).toBeVisible()
-			await expect(page.getByRole('combobox', { name: /driver/i }).first()).toBeVisible()
+			await expect(
+				page.getByRole('combobox').filter({ hasText: /driver/i }).first(),
+			).toBeVisible()
 
 			// SubscribeToggle + creator + created/updated timestamps must
 			// no longer render inline in the header. Playwright's <time>
