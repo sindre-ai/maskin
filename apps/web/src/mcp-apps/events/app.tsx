@@ -22,7 +22,7 @@ function EventsApp() {
 	return (
 		<div>
 			<div className="flex justify-end px-4 pt-4">
-				<WebAppLink target={{ kind: 'activity' }} label="Open activity in Maskin" />
+				<WebAppLink target={{ kind: 'objects' }} label="View objects in Maskin" />
 			</div>
 			<ActivityFeedView events={events} />
 		</div>

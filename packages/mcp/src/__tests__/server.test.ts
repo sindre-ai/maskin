@@ -3542,7 +3542,7 @@ describe('url field injection', () => {
 			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-9')
 		})
 
-		it('create_session — url falls back to activity when actorId absent', async () => {
+		it('create_session — url falls back to agents list when actorId absent', async () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
 				headers: new Headers(),
@@ -3556,7 +3556,7 @@ describe('url field injection', () => {
 			})) as { content: Array<{ text: string }> }
 
 			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
-			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/activity')
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents')
 		})
 
 		it('list_sessions — url added to each session', async () => {
