@@ -83,7 +83,7 @@ function ForYouRedesign() {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const { data, isLoading } = useUnread(workspaceId, undefined, true)
-	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
+	const { isLoading: betsLoading } = useBets(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
 	const { open: briefOpen, toggle: toggleBrief } = useTodayBrief()
