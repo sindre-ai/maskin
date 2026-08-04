@@ -855,9 +855,14 @@ describe('Integrations Routes', () => {
 			mockResults.select = [integration]
 
 			const res = await app.request(
-				jsonRequest('POST', `/api/integrations/${integration.id}/complete`, {}, {
-					'x-workspace-id': wsId,
-				}),
+				jsonRequest(
+					'POST',
+					`/api/integrations/${integration.id}/complete`,
+					{},
+					{
+						'x-workspace-id': wsId,
+					},
+				),
 			)
 
 			expect(res.status).toBe(400)

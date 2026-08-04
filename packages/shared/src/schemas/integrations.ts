@@ -67,4 +67,6 @@ export const skjaldTranscriptionCompletedPayloadSchema = z.object({
 })
 
 export type SkjaldDiarizedSegment = z.infer<typeof skjaldDiarizedSegmentSchema>
-export type SkjaldTranscriptionCompletedPayload = z.infer<typeof skjaldTranscriptionCompletedPayloadSchema>
+export type SkjaldTranscriptionCompletedPayload = z.infer<
+	typeof skjaldTranscriptionCompletedPayloadSchema
+>
