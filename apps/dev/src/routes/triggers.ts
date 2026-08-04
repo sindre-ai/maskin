@@ -242,8 +242,11 @@ app.openapi(updateTriggerRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
 
-	// Validate cron expression if updating config on a cron trigger
-	if (body.config && trigger.type === 'cron') {
+	// Validate cron expression if updating config on a trigger that is (or is
+	// becoming) a cron trigger. Use the effective post-update type, not the
+	// stale DB value, so a type change is validated against its new config.
+	const effectiveType = body.type ?? trigger.type
+	if (body.config && effectiveType === 'cron') {
 		const expr = (body.config as Record<string, unknown>).expression
 		if (expr != null) {
 			try {
@@ -256,6 +259,7 @@ app.openapi(updateTriggerRoute, (async (c) => {
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
+	if (body.type) updateData.type = body.type
 	if (body.config) updateData.config = body.config
 	if (body.action_prompt) updateData.actionPrompt = body.action_prompt
 	if (body.target_actor_id) updateData.targetActorId = body.target_actor_id

@@ -26,6 +26,7 @@ vi.mock('@/hooks/use-integrations', () => ({
 	useProviders: () => mockUseProviders(),
 	useConnectIntegration: () => ({ mutate: mockConnect, isPending: false }),
 	useDisconnectIntegration: () => ({ mutate: mockDisconnect, isPending: false }),
+	useCompleteIntegration: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/components/shared/empty-state', () => ({
