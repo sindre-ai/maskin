@@ -37,6 +37,15 @@ export function isMeetingExternalIdUniqueViolation(err: unknown): boolean {
 	return false
 }
 
+/** Mirrors Skjald's `DiarizedSegment` (webhooks/events.rs). */
+export interface SkjaldDiarizedSegment {
+	transcript_id: string
+	speaker_id: string
+	speaker_name: string
+	audio_start_time?: number | null
+	audio_end_time?: number | null
+}
+
 /** Mirrors Skjald's `TranscriptionCompletedPayload` (webhooks/events.rs). */
 export interface SkjaldTranscriptionCompletedPayload {
 	meeting_id: string
@@ -46,6 +55,9 @@ export interface SkjaldTranscriptionCompletedPayload {
 	created_at: string
 	/** Only present when the webhook's payload mode is "Full content". */
 	transcript_text?: string | null
+	diarization_status: string
+	/** Only present when `diarization_status` is `"completed"`. */
+	speaker_segments?: SkjaldDiarizedSegment[] | null
 }
 
 export interface UpsertSkjaldMeetingArgs {
@@ -91,6 +103,8 @@ export async function upsertSkjaldMeeting(
 		source: 'skjald',
 		folder_path: payload.folder_path ?? null,
 		segment_count: payload.segment_count,
+		diarization_status: payload.diarization_status,
+		speaker_segments: payload.speaker_segments ?? null,
 	}
 
 	const existing = await findByExternalId(db, workspaceId, payload.meeting_id)

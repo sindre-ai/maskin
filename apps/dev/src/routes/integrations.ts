@@ -10,6 +10,7 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
+import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { trackSlackMentionReceived } from '../lib/analytics/catalog-events'
@@ -27,10 +28,7 @@ import {
 	mintInstallationTokenWithRecovery,
 } from '../lib/integrations/providers/github/auth'
 import { persistRecoveredInstallationId } from '../lib/integrations/providers/github/installation-recovery'
-import {
-	type SkjaldTranscriptionCompletedPayload,
-	upsertSkjaldMeeting,
-} from '../lib/integrations/providers/skjald/meeting-sync'
+import { upsertSkjaldMeeting } from '../lib/integrations/providers/skjald/meeting-sync'
 import {
 	dispatchAccountLinkAction,
 	dispatchMaskinWorkspaceCommand,
@@ -1702,12 +1700,8 @@ webhookApp.post('/skjald/:token', async (c) => {
 		return c.json({ ok: true, skipped: 'unhandled_event' })
 	}
 
-	if (
-		typeof payload !== 'object' ||
-		payload === null ||
-		typeof (payload as Record<string, unknown>).meeting_id !== 'string' ||
-		typeof (payload as Record<string, unknown>).meeting_title !== 'string'
-	) {
+	const parsedPayload = skjaldTranscriptionCompletedPayloadSchema.safeParse(payload)
+	if (!parsedPayload.success) {
 		await releaseClaim()
 		return c.json(createApiError('BAD_REQUEST', 'Invalid transcription.completed payload'), 400)
 	}
@@ -1716,7 +1710,7 @@ webhookApp.post('/skjald/:token', async (c) => {
 		const result = await upsertSkjaldMeeting(db, {
 			workspaceId: integration.workspaceId,
 			systemActorId,
-			payload: payload as SkjaldTranscriptionCompletedPayload,
+			payload: parsedPayload.data,
 		})
 
 		await commitWebhookDelivery(db, {

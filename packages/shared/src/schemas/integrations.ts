@@ -42,3 +42,24 @@ export const gmailPubsubMessageDataSchema = z.object({
 export function githubOwnerLoginToEnvKey(ownerLogin: string): string {
 	return ownerLogin.toUpperCase().replace(/[^A-Z0-9]/g, '_')
 }
+
+/** Mirrors Skjald's `DiarizedSegment` (webhooks/events.rs). */
+export const skjaldDiarizedSegmentSchema = z.object({
+	transcript_id: z.string(),
+	speaker_id: z.string(),
+	speaker_name: z.string(),
+	audio_start_time: z.number().nullable().optional(),
+	audio_end_time: z.number().nullable().optional(),
+})
+
+/** Mirrors Skjald's `TranscriptionCompletedPayload` (webhooks/events.rs). */
+export const skjaldTranscriptionCompletedPayloadSchema = z.object({
+	meeting_id: z.string().min(1),
+	meeting_title: z.string().min(1),
+	segment_count: z.number(),
+	folder_path: z.string().nullable().optional(),
+	created_at: z.string(),
+	transcript_text: z.string().nullable().optional(),
+	diarization_status: z.string(),
+	speaker_segments: z.array(skjaldDiarizedSegmentSchema).nullable().optional(),
+})

@@ -42,6 +42,16 @@ function buildTranscriptionPayload(overrides: Record<string, unknown> = {}) {
 		folder_path: '/meetings/weekly-sync',
 		created_at: '2026-08-01T10:00:00.000Z',
 		transcript_text: 'Full transcript text.',
+		diarization_status: 'completed',
+		speaker_segments: [
+			{
+				transcript_id: randomUUID(),
+				speaker_id: 'speaker-1',
+				speaker_name: 'Me',
+				audio_start_time: 0.5,
+				audio_end_time: 4.2,
+			},
+		],
 		...overrides,
 	})
 }
@@ -148,7 +158,18 @@ describe('POST /api/webhooks/skjald/:token (integration)', () => {
 		expect(afterFirst).toHaveLength(1)
 		expect(afterFirst[0].content).toBe('v1')
 		expect(afterFirst[0].status).toBe('done')
-		expect((afterFirst[0].metadata as Record<string, unknown>).external_id).toBe(meetingId)
+		const firstMetadata = afterFirst[0].metadata as Record<string, unknown>
+		expect(firstMetadata.external_id).toBe(meetingId)
+		expect(firstMetadata.diarization_status).toBe('completed')
+		expect(firstMetadata.speaker_segments).toEqual([
+			{
+				transcript_id: expect.any(String),
+				speaker_id: 'speaker-1',
+				speaker_name: 'Me',
+				audio_start_time: 0.5,
+				audio_end_time: 4.2,
+			},
+		])
 
 		const eventsAfterFirst = await db
 			.select()
@@ -162,6 +183,8 @@ describe('POST /api/webhooks/skjald/:token (integration)', () => {
 			meeting_id: meetingId,
 			meeting_title: 'Weekly Sync (updated)',
 			transcript_text: 'v2',
+			diarization_status: 'unavailable',
+			speaker_segments: null,
 		})
 		const secondTimestamp = String(Math.floor(Date.now() / 1000))
 		const secondRes = await app.request(
@@ -182,6 +205,9 @@ describe('POST /api/webhooks/skjald/:token (integration)', () => {
 		expect(afterSecond[0].id).toBe(afterFirst[0].id)
 		expect(afterSecond[0].content).toBe('v2')
 		expect(afterSecond[0].title).toBe('Weekly Sync (updated)')
+		const secondMetadata = afterSecond[0].metadata as Record<string, unknown>
+		expect(secondMetadata.diarization_status).toBe('unavailable')
+		expect(secondMetadata.speaker_segments).toBeNull()
 
 		const eventsAfterSecond = await db
 			.select()
@@ -286,6 +312,28 @@ describe('POST /api/webhooks/skjald/:token (integration)', () => {
 			}),
 		)
 		expect(res.status).toBe(404)
+	})
+
+	it('rejects a delivery whose payload fails schema validation', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		const app = buildApp()
+		const { token } = await connectAndActivate(app, ws.id, SECRET)
+
+		const body = JSON.stringify({ meeting_id: randomUUID() })
+		const timestamp = String(Math.floor(Date.now() / 1000))
+		const res = await app.request(
+			skjaldWebhookRequest(token, body, {
+				'x-skjald-event': 'transcription.completed',
+				'x-skjald-timestamp': timestamp,
+				'x-skjald-signature': signSkjaldBody(SECRET, timestamp, body),
+				'x-skjald-delivery-id': randomUUID(),
+			}),
+		)
+		expect(res.status).toBe(400)
+
+		const rows = await db.select().from(objects).where(eq(objects.workspaceId, ws.id))
+		expect(rows).toHaveLength(0)
 	})
 
 	describe('concurrent deliveries for the same meeting_id (TOCTOU backstop)', () => {
