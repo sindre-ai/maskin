@@ -58,13 +58,39 @@ describe('Development Workspace single-agent package configs', () => {
 	})
 
 	it('gives every package a slug, name, description, version, and use case', () => {
+		const validUseCases = new Set(['Development', 'Discovery', 'Growth', 'Operations'])
 		for (const config of DEV_AGENT_PACKAGES) {
 			expect(config.package.slug.length).toBeGreaterThan(0)
 			expect(config.package.name.length).toBeGreaterThan(0)
 			expect(config.package.description.length).toBeGreaterThan(0)
 			expect(config.package.version).toBe('1.0.0')
-			expect(config.package.useCase).toBe('Development')
+			expect(validUseCases.has(config.package.useCase)).toBe(true)
 		}
+	})
+
+	it('groups packages into the four product-lifecycle use cases', () => {
+		const useCaseBySlug = Object.fromEntries(
+			DEV_AGENT_PACKAGES.map((c) => [c.package.slug, c.package.useCase]),
+		)
+		expect(useCaseBySlug).toMatchObject({
+			planner: 'Development',
+			developer: 'Development',
+			architect: 'Development',
+			designer: 'Development',
+			'code-reviewer': 'Development',
+			'workspace-driver': 'Development',
+			'customer-feedback-agent': 'Discovery',
+			'insights-triage-agent': 'Discovery',
+			'product-ideator': 'Discovery',
+			'research-agent': 'Discovery',
+			'summarization-agent': 'Discovery',
+			strategist: 'Growth',
+			'product-analyst': 'Growth',
+			'product-marketer': 'Growth',
+			'product-pricing-specialist': 'Growth',
+			'workspace-coach': 'Operations',
+			'retro-knowledge-author': 'Operations',
+		})
 	})
 
 	it('gives every package at least one actor and one trigger', () => {

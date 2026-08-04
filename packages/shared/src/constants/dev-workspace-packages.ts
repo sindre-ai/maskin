@@ -64,6 +64,9 @@ export const DEV_PACKAGE_VERSION = '1.0.0'
 // ── Use cases ────────────────────────────────────────────────────────────────
 
 export const DEV_PACKAGE_USE_CASE_DEVELOPMENT = 'Development'
+export const DEV_PACKAGE_USE_CASE_DISCOVERY = 'Discovery'
+export const DEV_PACKAGE_USE_CASE_GROWTH = 'Growth'
+export const DEV_PACKAGE_USE_CASE_OPERATIONS = 'Operations'
 
 // ── Descriptions ────────────────────────────────────────────────────────────
 
