@@ -10,6 +10,7 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
+import { useForyouRedesignFlag } from '@/hooks/use-foryou-redesign-flag'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import type { UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -21,9 +22,33 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
-	component: ForYouDashboard,
+	component: ForYouRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
+
+// Founder-only canary gate. When the flag is on, render the redesign entry
+// point that T2 (header), T3 (cards), and T4 (Today's Brief) will fill in.
+// Until those land, the entry point is a minimal marker so a deployed-surface
+// probe can confirm founders and non-founders see different surfaces without
+// leaking half-built UI to the rest of the workspace.
+function ForYouRoute() {
+	const showRedesign = useForyouRedesignFlag()
+	if (showRedesign) return <ForYouRedesign />
+	return <ForYouDashboard />
+}
+
+function ForYouRedesign() {
+	return (
+		<div className="flex flex-col gap-3" data-testid="foryou-redesign-root">
+			<header className="mb-1">
+				<h1 className="text-2xl font-semibold leading-tight tracking-tight">For You</h1>
+				<p className="mt-0.5 text-sm text-muted-foreground">
+					Founder canary — the redesigned feed lands here.
+				</p>
+			</header>
+		</div>
+	)
+}
 
 const UNDO_WINDOW_MS = 15_000
 
