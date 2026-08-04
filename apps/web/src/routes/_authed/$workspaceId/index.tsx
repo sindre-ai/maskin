@@ -1,3 +1,10 @@
+import {
+	type FeedFilter,
+	type FeedMode,
+	type FeedSort,
+	ForYouHeader,
+} from '@/components/foryou/foryou-header'
+import { ForYouListRow } from '@/components/foryou/foryou-list-row'
 import { NewConversationComposer } from '@/components/foryou/new-conversation-composer'
 import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
@@ -12,12 +19,14 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
 import { useForyouRedesignFlag } from '@/hooks/use-foryou-redesign-flag'
+import { useCreateObject } from '@/hooks/use-objects'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import type { UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNewConversationComposer } from '@/lib/new-conversation-context'
 import { useTodayBrief } from '@/lib/today-brief-context'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getDefaultStatusForType } from '@maskin/module-sdk'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -28,51 +37,17 @@ export const Route = createFileRoute('/_authed/$workspaceId/')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-// Founder-only canary gate. When the flag is on, render the redesign entry
-// point that T2 (header), T3 (cards), and T4 (Today's Brief) will fill in.
-// Until those land, the entry point is a minimal marker so a deployed-surface
-// probe can confirm founders and non-founders see different surfaces without
-// leaking half-built UI to the rest of the workspace.
+// Founder-only canary gate (T1). Non-founders keep the current dashboard;
+// founders drop into the redesigned surface T2/T3/T4 fill in.
 function ForYouRoute() {
 	const showRedesign = useForyouRedesignFlag()
 	if (showRedesign) return <ForYouRedesign />
 	return <ForYouDashboard />
 }
 
-function ForYouRedesign() {
-	const { toggle: toggleBrief, open: briefOpen } = useTodayBrief()
-	return (
-		<div className="flex flex-1 min-w-0" data-testid="foryou-redesign-root">
-			<div className="flex flex-1 min-w-0 flex-col gap-3">
-				<header className="mb-1 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-					<div>
-						<h1 className="text-2xl font-semibold leading-tight tracking-tight">For You</h1>
-						<p className="mt-0.5 text-sm text-muted-foreground">
-							Founder canary — the redesigned feed lands here.
-						</p>
-					</div>
-					<div className="flex flex-wrap items-center gap-2">
-						<Button
-							variant="outline"
-							size="sm"
-							className="h-7 px-2 text-xs"
-							onClick={toggleBrief}
-							aria-pressed={briefOpen}
-							aria-label="Today's brief"
-						>
-							Today's brief
-						</Button>
-					</div>
-				</header>
-			</div>
-			<TodayBriefPanel />
-		</div>
-	)
-}
-
 const UNDO_WINDOW_MS = 15_000
 
-type FeedFilter = 'all' | 'mentions'
+type LegacyFeedFilter = 'all' | 'mentions'
 
 function itemKey(item: UnreadItem): string {
 	return `${item.entity_type}:${item.entity_id}`
@@ -100,6 +75,325 @@ function groupForItem(item: UnreadItem, nowMs: number): GroupKey {
 	return 'earlier'
 }
 
+// -----------------------------------------------------------------------------
+// Redesign path (T2 — founder-only until T1 flips the flag production-wide).
+// -----------------------------------------------------------------------------
+
+function ForYouRedesign() {
+	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
+	const { data, isLoading } = useUnread(workspaceId, undefined, true)
+	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
+	const items = data?.items ?? []
+	const markRead = useMarkRead(workspaceId)
+	const { open: briefOpen, toggle: toggleBrief } = useTodayBrief()
+	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
+
+	const [activeId, setActiveId] = useState<string | null>(null)
+	const [activeReplyTarget, setActiveReplyTarget] = useState<number | null>(null)
+	const [filter, setFilter] = useState<FeedFilter>('all')
+	const [mode, setMode] = useState<FeedMode>('cards')
+	const [sort, setSort] = useState<FeedSort>('priority')
+
+	const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
+	const settledRef = useRef(false)
+
+	const onboardingItems = useMemo(
+		() => items.filter((item) => item.object?.type === 'onboarding_session'),
+		[items],
+	)
+
+	// `priority` (default) puts mentions above FYI, stable within tiers.
+	// `latest` is a straight latest_activity_at desc — the alternative surfaced
+	// by the sort control per the design directions task.
+	const sortedRegular = useMemo(() => {
+		const base = items.filter((item) => item.object?.type !== 'onboarding_session')
+		if (sort === 'latest') {
+			return base.slice().sort((a, b) => {
+				const at = a.latest_activity_at ? new Date(a.latest_activity_at).getTime() : 0
+				const bt = b.latest_activity_at ? new Date(b.latest_activity_at).getTime() : 0
+				return bt - at
+			})
+		}
+		return base.slice().sort((a, b) => {
+			const aMentions = a.mentioning_unread_count > 0
+			const bMentions = b.mentioning_unread_count > 0
+			if (aMentions && !bMentions) return -1
+			if (!aMentions && bMentions) return 1
+			return 0
+		})
+	}, [items, sort])
+
+	const visibleRegular = useMemo(() => {
+		if (pendingKeys.size === 0) return sortedRegular
+		return sortedRegular.filter((item) => !pendingKeys.has(itemKey(item)))
+	}, [sortedRegular, pendingKeys])
+
+	const mentionCount = useMemo(
+		() => visibleRegular.filter((item) => item.mentioning_unread_count > 0).length,
+		[visibleRegular],
+	)
+
+	const filteredRegular = useMemo(
+		() =>
+			filter === 'mentions'
+				? visibleRegular.filter((item) => item.mentioning_unread_count > 0)
+				: visibleRegular,
+		[visibleRegular, filter],
+	)
+
+	const groupedRegular = useMemo(() => {
+		const nowMs = Date.now()
+		const buckets: Record<GroupKey, UnreadItem[]> = {
+			today: [],
+			yesterday: [],
+			earlier: [],
+		}
+		for (const item of filteredRegular) {
+			buckets[groupForItem(item, nowMs)].push(item)
+		}
+		return buckets
+	}, [filteredRegular])
+
+	const activeItem = useMemo(
+		() => (activeId ? items.find((item) => item.entity_id === activeId) : null),
+		[activeId, items],
+	)
+
+	useEffect(() => {
+		if (activeId && !activeItem) {
+			setActiveId(null)
+			setActiveReplyTarget(null)
+		}
+	}, [activeId, activeItem])
+
+	const markItemRead = useCallback(
+		(item: UnreadItem) => {
+			const eventId = item.latest_event_id ?? 0
+			if (eventId <= 0) return
+			markRead.mutate({
+				entityType: item.entity_type,
+				entityId: item.entity_id,
+				lastEventId: eventId,
+			})
+		},
+		[markRead],
+	)
+
+	const handleMarkAllRead = useCallback(() => {
+		if (visibleRegular.length === 0) return
+		const snapshot = visibleRegular
+		const snapshotKeys = new Set(snapshot.map(itemKey))
+		settledRef.current = false
+		setPendingKeys((prev) => new Set([...prev, ...snapshotKeys]))
+
+		const commit = () => {
+			if (settledRef.current) return
+			settledRef.current = true
+			for (const item of snapshot) markItemRead(item)
+			setPendingKeys((prev) => {
+				const next = new Set(prev)
+				for (const key of snapshotKeys) next.delete(key)
+				return next
+			})
+		}
+		const restore = () => {
+			if (settledRef.current) return
+			settledRef.current = true
+			setPendingKeys((prev) => {
+				const next = new Set(prev)
+				for (const key of snapshotKeys) next.delete(key)
+				return next
+			})
+		}
+
+		const count = snapshot.length
+		toast(`Marked ${count} thread${count === 1 ? '' : 's'} as read`, {
+			duration: UNDO_WINDOW_MS,
+			action: { label: 'Undo', onClick: restore },
+			onAutoClose: commit,
+			onDismiss: commit,
+		})
+	}, [markItemRead, visibleRegular])
+
+	// Alt+U shortcut stays live in the redesign even though the visible "Mark
+	// all as read" button is dropped from the redesigned header. Matches the
+	// prototype — power-user keyboard access continues to work.
+	useEffect(() => {
+		function onKeydown(event: KeyboardEvent) {
+			if (!isMarkAllReadShortcut(event)) return
+			event.preventDefault()
+			handleMarkAllRead()
+		}
+		window.addEventListener('keydown', onKeydown)
+		return () => window.removeEventListener('keydown', onKeydown)
+	}, [handleMarkAllRead])
+
+	// +New dropdown creates a bet/insight/task without navigating away — the
+	// toast is the affordance to jump into the new object if the user wants to
+	// edit further. Status seed uses the module SDK's per-type default; the
+	// per-workspace override is the concern of the object detail bootstrap and
+	// is intentionally out of scope for this shortcut.
+	const createObject = useCreateObject(workspaceId)
+	const handleCreateObject = useCallback(
+		(type: 'bet' | 'insight' | 'task') => {
+			const label =
+				type === 'bet' ? 'Untitled bet' : type === 'insight' ? 'Untitled insight' : 'Untitled task'
+			createObject.mutate(
+				{ type, title: label, status: getDefaultStatusForType(type) ?? 'new' },
+				{
+					onSuccess: (created) => {
+						toast(`${label} created`, {
+							action: {
+								label: 'Open',
+								onClick: () =>
+									navigate({
+										to: '/$workspaceId/objects/$objectId',
+										params: { workspaceId, objectId: created.id },
+									}).catch(() => {}),
+							},
+						})
+					},
+					onError: (err) => {
+						toast.error(err instanceof Error ? err.message : `Failed to create ${type}`)
+					},
+				},
+			)
+		},
+		[createObject, navigate, workspaceId],
+	)
+
+	const composer = (
+		<NewConversationComposer
+			workspaceId={workspaceId}
+			open={composerOpen}
+			onOpenChange={setComposerOpen}
+		/>
+	)
+
+	if (isLoading || betsLoading) {
+		return (
+			<div className="flex flex-1 min-w-0" data-testid="foryou-redesign-root">
+				<div className="flex flex-1 min-w-0 flex-col space-y-4">
+					<CardSkeleton />
+					<CardSkeleton />
+					<CardSkeleton />
+				</div>
+				<TodayBriefPanel />
+			</div>
+		)
+	}
+
+	const isSparse = filteredRegular.length + onboardingItems.length < 3
+
+	return (
+		<>
+			<div className="flex flex-1 min-w-0" data-testid="foryou-redesign-root">
+				<div className={cn('flex min-w-0 flex-1 flex-col gap-3', activeId && 'pb-28')}>
+					<ForYouHeader
+						unreadCount={visibleRegular.length}
+						filter={filter}
+						onFilterChange={setFilter}
+						allCount={visibleRegular.length}
+						mentionCount={mentionCount}
+						mode={mode}
+						onModeChange={setMode}
+						sort={sort}
+						onSortChange={setSort}
+						briefOpen={briefOpen}
+						onBriefToggle={toggleBrief}
+						onStartConversation={() => setComposerOpen(true)}
+						onCreateObject={handleCreateObject}
+					/>
+
+					<div className="flex flex-col">
+						{onboardingItems.length > 0 && (
+							<div className="mb-3 space-y-3">
+								{onboardingItems.map((item) => (
+									<OnboardingPromptCard
+										key={`${item.entity_type}-${item.entity_id}`}
+										workspaceId={workspaceId}
+										item={item}
+									/>
+								))}
+							</div>
+						)}
+						{mode === 'list' ? (
+							<div className="border-t border-border">
+								{filteredRegular.map((item) => (
+									<ForYouListRow
+										key={`${item.entity_type}-${item.entity_id}`}
+										workspaceId={workspaceId}
+										item={item}
+										onActivate={() => setActiveId(item.entity_id)}
+									/>
+								))}
+							</div>
+						) : (
+							(['today', 'yesterday', 'earlier'] as const).map((group) => {
+								const rows = groupedRegular[group]
+								if (rows.length === 0) return null
+								return (
+									<section key={group} aria-label={GROUP_LABEL[group]}>
+										<h2 className="mt-4 mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground first:mt-0">
+											{GROUP_LABEL[group]}
+										</h2>
+										{rows.map((item) => (
+											<UnreadThreadCard
+												key={`${item.entity_type}-${item.entity_id}`}
+												workspaceId={workspaceId}
+												item={item}
+												isActive={activeId === item.entity_id}
+												onActivate={() => {
+													setActiveId(item.entity_id)
+													setActiveReplyTarget(null)
+												}}
+												onReplyTargetChange={setActiveReplyTarget}
+											/>
+										))}
+									</section>
+								)
+							})
+						)}
+						{filter === 'mentions' && filteredRegular.length === 0 && (
+							<p className="py-10 text-center text-sm text-muted-foreground">No unread mentions.</p>
+						)}
+						{isSparse ? (
+							<div className="mt-4">
+								<SparseComposer
+									itemsCount={filteredRegular.length + onboardingItems.length}
+									onFocusChange={() => {}}
+								/>
+							</div>
+						) : null}
+					</div>
+				</div>
+				<TodayBriefPanel />
+			</div>
+			<PersistentReplyBar
+				workspaceId={workspaceId}
+				activeId={activeId}
+				activeTitle={activeItem?.object?.title ?? null}
+				parentEventId={activeReplyTarget}
+				onClear={() => {
+					setActiveId(null)
+					setActiveReplyTarget(null)
+				}}
+				onSent={() => {
+					if (activeItem) markItemRead(activeItem)
+				}}
+			/>
+			{composer}
+		</>
+	)
+}
+
+// -----------------------------------------------------------------------------
+// Existing dashboard path (non-founder / flag=off). Preserved verbatim so the
+// canary is a strict superset — non-founders see nothing different until
+// broader rollout.
+// -----------------------------------------------------------------------------
+
 function ForYouDashboard() {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
@@ -112,7 +406,7 @@ function ForYouDashboard() {
 
 	const [activeId, setActiveId] = useState<string | null>(null)
 	const [activeReplyTarget, setActiveReplyTarget] = useState<number | null>(null)
-	const [filter, setFilter] = useState<FeedFilter>('all')
+	const [filter, setFilter] = useState<LegacyFeedFilter>('all')
 	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
 
 	// Items currently hidden by an in-flight "Mark all as read" toast. Kept in

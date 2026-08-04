@@ -49,6 +49,14 @@ vi.mock('@/hooks/use-bets', () => ({
 	useBets: (...args: unknown[]) => mockUseBets(...args),
 }))
 
+vi.mock('@/hooks/use-objects', () => ({
+	useCreateObject: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
+vi.mock('@/hooks/use-foryou-redesign-flag', () => ({
+	useForyouRedesignFlag: () => false,
+}))
+
 vi.mock('@/components/foryou/north-star-prompt-card', () => ({
 	NorthStarPromptCard: () => <div data-testid="north-star-prompt-card" />,
 }))

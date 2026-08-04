@@ -54,6 +54,9 @@ vi.mock('@/components/foryou/unread-thread-card', () => ({
 vi.mock('@/components/foryou/sparse-composer', () => ({
 	SparseComposer: () => null,
 }))
+vi.mock('@/hooks/use-objects', () => ({
+	useCreateObject: () => ({ mutate: vi.fn(), isPending: false }),
+}))
 vi.mock('@/components/shared/empty-state', () => ({
 	EmptyState: ({ title }: { title: string }) => <div>{title}</div>,
 }))
@@ -77,7 +80,8 @@ describe('For You route — founder canary gate', () => {
 		mockUseFlag.mockReturnValue(true)
 		render(<ForYouRoute />)
 		expect(screen.getByTestId('foryou-redesign-root')).toBeInTheDocument()
-		expect(screen.getByText(/founder canary/i)).toBeInTheDocument()
+		// Redesign header exposes the Today's brief trigger.
+		expect(screen.getByRole('button', { name: /today.?s brief/i })).toBeInTheDocument()
 		// Non-founder feed markers must not appear behind the gate.
 		expect(screen.queryByText('All caught up')).not.toBeInTheDocument()
 	})
