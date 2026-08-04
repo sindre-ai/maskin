@@ -59,9 +59,10 @@ test.describe('Object detail — above-title identity row', () => {
 
 			// The four identity elements the DoD names: TypeBadge, status
 			// control, IndicatorBadgeChip, OwnerSelect — all present and
-			// visible in the row.
+			// visible in the row. OwnerSelect + StatusSelect wrap Radix
+			// SelectTrigger, which renders as role="combobox" (not "button").
 			await expect(page.getByText('bet', { exact: true }).first()).toBeVisible()
-			await expect(page.getByRole('button', { name: /driver/i }).first()).toBeVisible()
+			await expect(page.getByRole('combobox', { name: /driver/i }).first()).toBeVisible()
 
 			// SubscribeToggle + creator + created/updated timestamps must
 			// no longer render inline in the header. Playwright's <time>
