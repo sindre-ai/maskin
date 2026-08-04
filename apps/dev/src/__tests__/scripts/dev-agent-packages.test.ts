@@ -1,12 +1,10 @@
 import type { actors, triggers } from '@maskin/db/schema'
 import { describe, expect, it } from 'vitest'
 import {
-	CCD_ACTOR_IDS,
-	CCD_PACKAGE,
-	CCD_TRIGGER_IDS,
+	DEV_AGENT_PACKAGES,
 	actorSnapshot,
 	triggerSnapshot,
-} from '../../../scripts/ccd-package'
+} from '../../../scripts/dev-agent-packages'
 
 type ActorRow = typeof actors.$inferSelect
 type TriggerRow = typeof triggers.$inferSelect
@@ -24,7 +22,7 @@ function fakeActor(over: Partial<ActorRow> = {}): ActorRow {
 		tools: { allowed: ['done'] },
 		memory: { jobs_done: 42 },
 		llmProvider: 'anthropic',
-		llmConfig: { model: 'claude-opus-4-7' },
+		llmConfig: { model: 'claude-sonnet-4-6' },
 		isSystem: false,
 		agentState: 'idle',
 		agentStateUpdatedAt: new Date('2026-01-01'),
@@ -42,7 +40,7 @@ function fakeTrigger(over: Partial<TriggerRow> = {}): TriggerRow {
 		workspaceId: 'fe944fe6-7b45-478c-afc7-b889cea63c08',
 		name: 'Trigger',
 		type: 'event',
-		config: { entity_type: 'insight', action: 'created' },
+		config: { entity_type: 'task', action: 'status_changed', to_status: 'in_progress' },
 		actionPrompt: 'do the thing',
 		targetActorId: '11111111-1111-4111-9111-111111111111',
 		enabled: true,
@@ -54,25 +52,45 @@ function fakeTrigger(over: Partial<TriggerRow> = {}): TriggerRow {
 	return { ...base, ...over }
 }
 
-describe('CCD package definition', () => {
-	it('uses the locked T6 copy', () => {
-		expect(CCD_PACKAGE.slug).toBe('customer-continuous-discovery')
-		expect(CCD_PACKAGE.name).toBe('Customer Continuous Discovery')
-		expect(CCD_PACKAGE.useCase).toBe('Discovery')
-		expect(CCD_PACKAGE.version).toBe('1.0.0')
-		expect(CCD_PACKAGE.description.length).toBeLessThanOrEqual(120)
-		expect(CCD_PACKAGE.description).toMatch(/feedback/)
+describe('Development Workspace single-agent package configs', () => {
+	it('defines exactly 17 packages', () => {
+		expect(DEV_AGENT_PACKAGES.length).toBe(17)
 	})
 
-	it('ships three actors and seven triggers, no duplicates', () => {
-		expect(CCD_ACTOR_IDS.length).toBe(3)
-		expect(CCD_TRIGGER_IDS.length).toBe(7)
-		expect(new Set(CCD_ACTOR_IDS).size).toBe(CCD_ACTOR_IDS.length)
-		expect(new Set(CCD_TRIGGER_IDS).size).toBe(CCD_TRIGGER_IDS.length)
+	it('gives every package a slug, name, description, version, and use case', () => {
+		for (const config of DEV_AGENT_PACKAGES) {
+			expect(config.package.slug.length).toBeGreaterThan(0)
+			expect(config.package.name.length).toBeGreaterThan(0)
+			expect(config.package.description.length).toBeGreaterThan(0)
+			expect(config.package.version).toBe('1.0.0')
+			expect(config.package.useCase).toBe('Development')
+		}
+	})
+
+	it('gives every package at least one actor and one trigger', () => {
+		for (const config of DEV_AGENT_PACKAGES) {
+			expect(config.actorIds.length).toBeGreaterThan(0)
+			expect(config.triggerIds.length).toBeGreaterThan(0)
+		}
+	})
+
+	it('has no duplicate slugs across packages', () => {
+		const slugs = DEV_AGENT_PACKAGES.map((c) => c.package.slug)
+		expect(new Set(slugs).size).toBe(slugs.length)
+	})
+
+	it('has no duplicate actor ids within or across packages', () => {
+		const actorIds = DEV_AGENT_PACKAGES.flatMap((c) => c.actorIds)
+		expect(new Set(actorIds).size).toBe(actorIds.length)
+	})
+
+	it('has no duplicate trigger ids within or across packages', () => {
+		const triggerIds = DEV_AGENT_PACKAGES.flatMap((c) => c.triggerIds)
+		expect(new Set(triggerIds).size).toBe(triggerIds.length)
 	})
 })
 
-describe('actorSnapshot', () => {
+describe('actorSnapshot (re-exported from package-snapshot)', () => {
 	it('omits credentials and runtime state', () => {
 		const snap = actorSnapshot(fakeActor())
 		expect(snap).not.toHaveProperty('apiKey')
@@ -90,22 +108,43 @@ describe('actorSnapshot', () => {
 		const snap = actorSnapshot(
 			fakeActor({
 				type: 'agent',
-				name: 'Insights Triage Agent',
-				systemPrompt: 'cluster things',
+				name: 'Planner',
+				systemPrompt: 'decompose bets into tasks',
 				tools: { allowed: ['create_object'] },
 			}),
 		)
 		expect(snap).toMatchObject({
 			type: 'agent',
-			name: 'Insights Triage Agent',
-			systemPrompt: 'cluster things',
+			name: 'Planner',
+			systemPrompt: 'decompose bets into tasks',
 			tools: { allowed: ['create_object'] },
 			llmProvider: 'anthropic',
 		})
 	})
+
+	it('strips tools.mcpServers so live credentials never reach the snapshot', () => {
+		const snap = actorSnapshot(
+			fakeActor({
+				tools: {
+					allowed: ['create_object'],
+					mcpServers: {
+						github: {
+							type: 'stdio',
+							command: 'npx',
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_live_secret_do_not_leak' },
+						},
+					},
+				},
+			}),
+		)
+		const tools = snap.tools as Record<string, unknown>
+		expect(tools).not.toHaveProperty('mcpServers')
+		expect(tools.allowed).toEqual(['create_object'])
+		expect(JSON.stringify(snap)).not.toContain('ghp_live_secret_do_not_leak')
+	})
 })
 
-describe('triggerSnapshot', () => {
+describe('triggerSnapshot (re-exported from package-snapshot)', () => {
 	it('omits workspace, createdBy, metadata, timestamps', () => {
 		const snap = triggerSnapshot(fakeTrigger())
 		expect(snap).not.toHaveProperty('workspaceId')

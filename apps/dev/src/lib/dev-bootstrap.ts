@@ -31,6 +31,9 @@ import { logger } from './logger'
  * count check makes it a no-op once any package exists.
  */
 export async function seedCatalogIfEmpty(db: Database): Promise<void> {
+	if (process.env.NODE_ENV === 'production') return
+	if (process.env.MASKIN_AUTO_BOOTSTRAP === 'false') return
+
 	const [row] = await db.select({ n: count() }).from(catalogPackages)
 	if (row && row.n > 0) return
 

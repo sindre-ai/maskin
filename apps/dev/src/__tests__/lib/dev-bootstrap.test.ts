@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { maybeBootstrapDev } from '../../lib/dev-bootstrap'
+import { maybeBootstrapDev, seedCatalogIfEmpty } from '../../lib/dev-bootstrap'
 import { createTestContext } from '../setup'
 
 describe('maybeBootstrapDev', () => {
@@ -114,5 +114,58 @@ describe('maybeBootstrapDev', () => {
 		]
 
 		await expect(maybeBootstrapDev(db)).rejects.toThrow(/Chief of Staff/)
+	})
+})
+
+describe('seedCatalogIfEmpty', () => {
+	const originalEnv = { ...process.env }
+
+	afterEach(() => {
+		process.env = { ...originalEnv }
+		vi.restoreAllMocks()
+	})
+
+	it('does nothing in production, even on an empty catalog', async () => {
+		process.env.NODE_ENV = 'production'
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = [{ n: 0 }]
+
+		await seedCatalogIfEmpty(db)
+
+		expect(calls.inserts).toEqual([])
+	})
+
+	it('does nothing when explicitly disabled', async () => {
+		process.env.NODE_ENV = 'development'
+		process.env.MASKIN_AUTO_BOOTSTRAP = 'false'
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = [{ n: 0 }]
+
+		await seedCatalogIfEmpty(db)
+
+		expect(calls.inserts).toEqual([])
+	})
+
+	it('no-ops when the catalog already has packages', async () => {
+		process.env.NODE_ENV = 'development'
+		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = [{ n: 3 }]
+
+		await seedCatalogIfEmpty(db)
+
+		expect(calls.inserts).toEqual([])
+	})
+
+	it('seeds the CCD package when the catalog is empty outside production', async () => {
+		process.env.NODE_ENV = 'development'
+		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = [{ n: 0 }]
+		mockResults.insertQueue = [[{ id: 'pkg-1' }], []]
+
+		await seedCatalogIfEmpty(db)
+
+		expect(calls.inserts.length).toBeGreaterThan(0)
 	})
 })

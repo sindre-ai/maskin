@@ -215,4 +215,33 @@ export const DEV_TRIGGER_SUMMARIZATION_AGENT_MEETING_DONE = '5eefd3e7-396b-4de1-
 export const DEV_PACKAGE_DEVELOPMENT_PIPELINE_SLUG = 'development-pipeline'
 export const DEV_PACKAGE_DEVELOPMENT_PIPELINE_NAME = 'Development Pipeline'
 export const DEV_PACKAGE_DEVELOPMENT_PIPELINE_DESCRIPTION =
-	'Implements tasks, reviews PRs for quality and risk, and validates that implementations deliver their stated goals before marking work done.'
+	'Implements coding tasks and hands off to the Code Reviewer, who reviews for quality and risk, validates the work delivers its goals, and merges under the risk-gate.'
+
+// ── 2026 roster refresh: new single-agent packages ────────────────────────────
+//
+// These four actors gained their own single-agent catalog packages when the
+// Development-workspace roster was rebuilt from live data. The three CCD actor
+// ids live in ./ccd-package; only the net-new Product Pricing Specialist id is
+// declared here.
+
+export const DEV_ACTOR_PRODUCT_PRICING_SPECIALIST = '9ba1b897-028a-4267-b11f-1bded4bcd86a'
+
+export const DEV_PACKAGE_CUSTOMER_FEEDBACK_AGENT_SLUG = 'customer-feedback-agent'
+export const DEV_PACKAGE_CUSTOMER_FEEDBACK_AGENT_NAME = 'Customer Feedback Agent'
+export const DEV_PACKAGE_CUSTOMER_FEEDBACK_AGENT_DESCRIPTION =
+	'Ingests customer feedback from connected channels, triages it into clean deduplicated insights, and closes the loop with the customer.'
+
+export const DEV_PACKAGE_INSIGHTS_TRIAGE_AGENT_SLUG = 'insights-triage-agent'
+export const DEV_PACKAGE_INSIGHTS_TRIAGE_AGENT_NAME = 'Insights Triage Agent'
+export const DEV_PACKAGE_INSIGHTS_TRIAGE_AGENT_DESCRIPTION =
+	'Clusters incoming customer and process insights into evidence-anchored patterns and promotes the strongest as bet candidates.'
+
+export const DEV_PACKAGE_PRODUCT_IDEATOR_SLUG = 'product-ideator'
+export const DEV_PACKAGE_PRODUCT_IDEATOR_NAME = 'Product Ideator'
+export const DEV_PACKAGE_PRODUCT_IDEATOR_DESCRIPTION =
+	'Reviews accumulated workspace signal weekly and surfaces the rare bet candidates worth the founders’ scarce review time.'
+
+export const DEV_PACKAGE_PRODUCT_PRICING_SPECIALIST_SLUG = 'product-pricing-specialist'
+export const DEV_PACKAGE_PRODUCT_PRICING_SPECIALIST_NAME = 'Product Pricing Specialist'
+export const DEV_PACKAGE_PRODUCT_PRICING_SPECIALIST_DESCRIPTION =
+	'Owns pricing, packaging, and unit economics — models the money and brings recommendations while the founders make the call.'

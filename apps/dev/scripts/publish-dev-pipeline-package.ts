@@ -1,14 +1,13 @@
-// One-shot publisher for the Development Pipeline catalog package.
+// One-shot publisher for the Development Pipeline catalog bundle.
 //
-// Snapshots Developer + Code Reviewer + Acceptance Validator and their four
-// wiring triggers from the Development workspace into a single
-// `catalog_packages` row at version 1.0.0 plus one `catalog_package_items`
-// row per element. Triggers carry the publisher's live `target_actor_id`
-// inside the snapshot — the install path rewrites that against the install's
-// `source_item_id` map, which is set to the live publisher id here so the
-// lookup is direct.
+// Snapshots Developer + Code Reviewer and every trigger they drive from the
+// checked-in data/dev-actors.json + data/dev-triggers.json (captured live,
+// since the local dev Postgres is empty) into a single `catalog_packages` row
+// at version 1.0.0 plus one `catalog_package_items` row per element. Triggers
+// carry the source `target_actor_id` inside the snapshot — the install path
+// rewrites that against the install's `source_item_id` map.
 //
-// Run once against the dev DB:
+// Run once against the local dev DB:
 //   pnpm --filter @maskin/dev exec tsx scripts/publish-dev-pipeline-package.ts
 //
 // Idempotency: the `catalog_packages.slug` unique constraint blocks a second
@@ -16,14 +15,8 @@
 // its items. `--force` is refused if the package already has installs.
 
 import { createDb } from '@maskin/db'
-import {
-	actors,
-	catalogPackageItems,
-	catalogPackages,
-	installedPackages,
-	triggers,
-} from '@maskin/db/schema'
-import { eq, inArray } from 'drizzle-orm'
+import { catalogPackageItems, catalogPackages, installedPackages } from '@maskin/db/schema'
+import { eq } from 'drizzle-orm'
 import {
 	DEV_PIPELINE_ACTOR_IDS,
 	DEV_PIPELINE_PACKAGE,
@@ -32,6 +25,7 @@ import {
 	actorSnapshot,
 	triggerSnapshot,
 } from './dev-pipeline-package'
+import { getActorData, getTriggerData } from './package-data'
 
 const SOURCE_WORKSPACE_ID =
 	process.env.DEV_PIPELINE_SOURCE_WORKSPACE_ID ?? DEV_PIPELINE_SOURCE_WORKSPACE_ID
@@ -46,30 +40,10 @@ async function main(): Promise<void> {
 
 	const db = createDb(url)
 
-	const actorRows = await db
-		.select()
-		.from(actors)
-		.where(inArray(actors.id, [...DEV_PIPELINE_ACTOR_IDS]))
-
-	const triggerRows = await db
-		.select()
-		.from(triggers)
-		.where(inArray(triggers.id, [...DEV_PIPELINE_TRIGGER_IDS]))
-
-	if (actorRows.length !== DEV_PIPELINE_ACTOR_IDS.length) {
-		const found = new Set(actorRows.map((a) => a.id))
-		const missing = DEV_PIPELINE_ACTOR_IDS.filter((id) => !found.has(id))
-		throw new Error(
-			`Development Pipeline actors missing from source workspace: ${missing.join(', ')}`,
-		)
-	}
-	if (triggerRows.length !== DEV_PIPELINE_TRIGGER_IDS.length) {
-		const found = new Set(triggerRows.map((t) => t.id))
-		const missing = DEV_PIPELINE_TRIGGER_IDS.filter((id) => !found.has(id))
-		throw new Error(
-			`Development Pipeline triggers missing from source workspace: ${missing.join(', ')}`,
-		)
-	}
+	// Resolve actor/trigger content from the checked-in snapshot data (not the
+	// local DB, which has none). These throw a clear error naming any missing id.
+	const actorRows = DEV_PIPELINE_ACTOR_IDS.map(getActorData)
+	const triggerRows = DEV_PIPELINE_TRIGGER_IDS.map(getTriggerData)
 
 	// Every published trigger must fire one of the published actors or the
 	// install will resolve target_actor_id to a stale, unrelated UUID in the
@@ -84,8 +58,8 @@ async function main(): Promise<void> {
 	}
 
 	// Guard against pulling an item from the wrong workspace. Only triggers
-	// carry a workspaceId column — actors are global (workspace membership lives
-	// in workspace_members, not on the actor row), so they pass through by design.
+	// carry a workspaceId — actors are global (workspace membership lives in
+	// workspace_members, not on the actor row), so they pass through by design.
 	for (const row of [...actorRows, ...triggerRows]) {
 		const wsId = (row as { workspaceId?: string }).workspaceId
 		if (wsId !== undefined && wsId !== SOURCE_WORKSPACE_ID) {

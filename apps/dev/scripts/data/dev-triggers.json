@@ -1,0 +1,896 @@
+{
+	"f3442d78-b02b-4f42-b12b-3a8467a71d92": {
+		"id": "f3442d78-b02b-4f42-b12b-3a8467a71d92",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Active-Bet Liveness Watchdog (hourly)",
+		"type": "cron",
+		"config": {
+			"expression": "0 * * * *"
+		},
+		"actionPrompt": "**Hourly check that active bets are still moving.** Load and follow the pipeline-liveness-watchdog skill in full (Mode 5).",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": true
+	},
+	"28c063e2-4a39-4f5a-883d-5f5ef6a29a9e": {
+		"id": "28c063e2-4a39-4f5a-883d-5f5ef6a29a9e",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Weekly Product Ideation",
+		"type": "cron",
+		"config": {
+			"expression": "0 7 * * 5"
+		},
+		"actionPrompt": "**Weekly product ideation — surface a candidate or two, no more.** Load and follow the product-ideation skill in full — it owns the procedure, quality bar, and output format. Surface only what clears the bar; zero candidates is a valid, common outcome and the ceiling is two. Don't create bets, don't advance any status — the humans decide what moves forward.",
+		"targetActorId": "11cda8bc-1048-4139-8fa3-fa142dfcb397",
+		"enabled": true
+	},
+	"665c1b46-23bf-4666-98a2-a6902a0d1dc5": {
+		"id": "665c1b46-23bf-4666-98a2-a6902a0d1dc5",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Weekly Analytics Discovery Sweep",
+		"type": "cron",
+		"config": {
+			"expression": "0 20 * * 0"
+		},
+		"actionPrompt": "**Weekly analytics scan for product signals.** Load maskin-voice only if/when you create insights, then load and follow the analytics-discovery skill in full — it's the source of truth. Run against whatever analytics MCP this workspace has connected; discover its query tools at runtime, don't assume a platform. In brief: compare the last 14 days vs the prior 14 across funnels, retention, adoption, segments, and friction. Respect the signal bar (min 50 users / 200 events, >15% relative change, max 6 insights). Dedup via search_objects before creating anything. Emit qualifying findings as atomic insights, status new, tagged `source:analytics` + `analytics` + a theme tag. Insight producer only — don't edit customers/bets/knowledge, no Slack or comments. Nothing clears the bar → exit silently.",
+		"targetActorId": "21cce128-9c80-4ebe-982f-41c82820c6aa",
+		"enabled": true
+	},
+	"2e39b3b0-f923-4b46-99d8-168e495fc834": {
+		"id": "2e39b3b0-f923-4b46-99d8-168e495fc834",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily Velocity Observation",
+		"type": "cron",
+		"config": {
+			"expression": "0 6 * * *"
+		},
+		"actionPrompt": "**Daily velocity & flow review — spot what's slowing the workspace down, including yesterday's incidents.**\n\n## STEP 0 — Activity check (do this FIRST)\nCall get_events with limit=50. Filter to the last 24 hours. If fewer than 5 events (workspace was quiet), exit silently. No insights, no comments. A quiet day costs nothing.\n\n## BOUNDARY — what you do NOT do\nYou do NOT remediate live work: don't unstick a specific object, don't retry a session, don't fire a runtime alarm, don't change any status. The Workspace Driver owns live remediation and always will.\n\nBut you DO own the *pattern* behind a failure — including an infra or tool failure that happened yesterday. A recurring auth failure, a category of PR blocked at merge, a credential that broke four ways in one day: that is not \"the Driver's alert\", that is a longitudinal defect the workspace will keep paying for, and filing it is your job. The old carve-out (\"never touch auth failures / infra\") was wrong and is retired. The test is not the *topic*, it's the *lens*: \"PR #1042 is stuck right now, someone go merge it\" = Driver. \"Agent merges failed across four identities all day and every one needed a human\" = you, same day.\n\n## STEP 1 — Incident scan (run before the flow review)\nRead the last 24h for repeated failure signatures:\n- `list_sessions` with status `failed` and `timeout` (updated_after = 24h ago). Group by actor and by error signature.\n- `get_events` for the same window: repeated escalation comments, repeated human interventions on agent-driven objects, tasks bouncing back from review, work that reached `validated`/`done` and then needed a human to finish the job.\n\nA signature that repeated 2+ times in the window, or that forced a human in the loop even once on a path meant to be autonomous, is same-day insight-worthy. Do not wait for the weekly review. Do not wait for it to happen twice more.\n\n## STEP 2 — Velocity & flow review\nYour north star is workspace velocity: is work flowing fast and efficiently? Read the last 24h against these flow signals, comparing to your prior observations for trend:\n1. **Flow time** — dwell per status (todo → in_progress → in_review → done; signal → define → active → live). Watch stages where dwell is rising.\n2. **Bottlenecks (WIP pile-ups)** — a *category* of work repeatedly queuing at one stage. Name the stage and the number.\n3. **Rework rate** — tasks reopened after done, bets failing then retried, the same insight recurring.\n4. **Flow efficiency** — active-work time vs waiting time. Objects sitting in handoff/blocked states is the signal.\n5. **Throughput & batch size** — steady cadence, or large infrequent batches clogging review?\n6. **What's flowing well** — name it so the team keeps doing it.\nReason from lean/agile first principles (WIP limits, bottleneck theory, small batches, handoff waste). Only web-search (Exa, via deep-research) when you need an external benchmark you don't hold.\n\n## STEP 3 — Before you file: check for an open bet on the theme\nFor each finding, run `search_objects` for a non-terminal bet (`signal | qualified | define | active | live`) on the same theme.\n- **A bet exists** → file the insight AND create an `informs` edge from the insight to that bet in the same run. That edge fires the Strategist's disposition trigger (absorb / spin-off / note-only), which is how your evidence actually reaches work in flight. An insight that belongs on an open bet and isn't linked to it is a finding you did not deliver.\n- **No bet exists** → file the insight normally; the Synthesizer routes it.\nNever create or advance a bet yourself. Linking is the whole of your reach into open work — use it every time it applies.\n\n## STEP 4 — Write each finding as a clusterable insight\nRead the writing-standards skill first. One insight per distinct finding — never bundle. Status `new`, `metadata.source = \"workspace_coach\"` — that exact string, always. (`workspace_observer` is a retired term: read it when querying your own back-catalogue, never write it.) Tag incident findings `metadata.tags` with `incident`.\nUse the template from your system prompt: Observation → Evidence (counts, windows, object IDs) → Proposed change → Owner → Expected effect.\nDo NOT re-file something already reported unless it materially changed. Nothing noteworthy → exit silently.",
+		"targetActorId": "9b4820ab-3d00-4e15-b737-8adf7f94d15c",
+		"enabled": true
+	},
+	"506dc2c1-8567-4d1a-9ebd-992b7e1620a3": {
+		"id": "506dc2c1-8567-4d1a-9ebd-992b7e1620a3",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Task Created → Dedup + Actuation Guard",
+		"type": "event",
+		"config": {
+			"action": "created",
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Vet a newly-created task before it runs.** A new task was created. Load and follow the pipeline-task-actuation-guard skill in full. Source actor: d625cf31-fb6c-45df-a8c2-e2823d6053ae. Don't call create_notification — output is in-product only, no Slack.",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": true
+	},
+	"79fecd6f-e8fa-4ac8-b0b0-5e238a534786": {
+		"id": "79fecd6f-e8fa-4ac8-b0b0-5e238a534786",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Slack DM → Research Agent",
+		"type": "event",
+		"config": {
+			"action": "created",
+			"filter": {
+				"event.channel_type": "im"
+			},
+			"entity_type": "slack.message"
+		},
+		"actionPrompt": "**Extract insights from a link someone DM'd the Maskin Slack app.** Load `social-extraction` via get_workspace_skill and run it in full — it owns platform detection, fetch, calibration, persistence, Customer Feedback Agent handoff, and the Slack reply.\n\nIf there's no supported URL in the message, reply:\n> Hi! Send me a link from YouTube, TikTok, Instagram (Reels), X, Facebook (video), LinkedIn, Reddit, Medium, or Substack and I'll extract structured insights from it.\n\nIgnore bot messages and channel messages.",
+		"targetActorId": "3b0337d0-7bed-467d-8239-544e7611a587",
+		"enabled": true
+	},
+	"f118bef0-73f6-423f-a16b-e38f243f64c6": {
+		"id": "f118bef0-73f6-423f-a16b-e38f243f64c6",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Task In Progress → Driver: Architect",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"driver": "3008a649-df16-41f1-a187-5d4613d3767a"
+			},
+			"to_status": "in_progress",
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Propose the architecture for this task.** You're the driver of task {{entity_id}} and it just moved to in_progress. Read it via get_objects and follow your system prompt: research the codebase, post a concrete architectural proposal, then move the task to in_review.\n\nAfter moving to in_review, resolve Magnus's actor id via list_actors (never hardcode it), then post a comment on the task:\n- mentions: [Magnus's actor id]\n- content: \"@Magnus architecture proposal above — reply with **architecture approved** to proceed, or leave feedback and I'll iterate.\"\n\nDon't mark the task done. Magnus is the sole decision-maker on architecture — it stays in in_review until he explicitly approves.",
+		"targetActorId": "3008a649-df16-41f1-a187-5d4613d3767a",
+		"enabled": true
+	},
+	"870c7aae-a391-4180-9c69-2a1c627b3cc3": {
+		"id": "870c7aae-a391-4180-9c69-2a1c627b3cc3",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Task In Progress → Driver: Product Marketer",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"driver": "e8ff87f1-f5ac-44cd-a35a-60d01dd12470"
+			},
+			"to_status": "in_progress",
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Draft the customer-facing copy for this task.** You're the driver of task {{entity_id}} and it just moved to in_progress. Read it via get_objects and follow your system prompt: ground in what actually shipped (read the bet, tasks, and PRs), draft the copy, post a concrete proposal, then move the task to in_review.\n\nAfter moving to in_review, resolve Sebastian's actor id via list_actors (never hardcode it), then post a comment on the task:\n- mentions: [Sebastian's actor id]\n- content: \"@Sebk copy proposal above — reply with **copy approved** to proceed, or leave feedback and I'll iterate.\"\n\nDon't mark the task done. Sebastian is the sole decision-maker on copy — it stays in in_review until he explicitly approves.",
+		"targetActorId": "e8ff87f1-f5ac-44cd-a35a-60d01dd12470",
+		"enabled": true
+	},
+	"ecc87493-64f9-4bb6-8aa3-639b10b2821a": {
+		"id": "ecc87493-64f9-4bb6-8aa3-639b10b2821a",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily meeting insights sweep",
+		"type": "cron",
+		"config": {
+			"expression": "30 9,15 * * *"
+		},
+		"actionPrompt": "**Twice-daily sweep of meetings for insights.** Load meeting-harvest via get_workspace_skill and run it in full — it owns meeting classification, dedup, insight extraction, customer-feedback fast-lane tagging, and the end-of-run report format.",
+		"targetActorId": "3b0337d0-7bed-467d-8239-544e7611a587",
+		"enabled": true
+	},
+	"34b43df6-a012-49f3-bdf3-de1b5017612b": {
+		"id": "34b43df6-a012-49f3-bdf3-de1b5017612b",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Bet Created → Strategist Intake",
+		"type": "event",
+		"config": {
+			"action": "created",
+			"conditions": [
+				{
+					"field": "status",
+					"value": ["define", "active"],
+					"operator": "in"
+				}
+			],
+			"entity_type": "bet"
+		},
+		"actionPrompt": "**Shape or route a newly-created bet, depending on its status.**\n\n## AUTO-FIX GUARD — read this FIRST\nRead the bet via get_objects. If `metadata.auto_bug` is `true`: this bet skips shaping, but it still needs an owner — do NOT just exit. Resolve the Workspace Driver's actor id via `list_actors` and, if the bet's `driver` is not already set to it, set it via update_objects (metadata write only — this does NOT spawn the Driver; the liveness/bet-sweep watchdogs pick it up and advance its tasks). Never set yourself (the Strategist) as driver. Then exit silently — do NOT run intake, the commitment gate, or the Planner handoff for an auto_bug bet. (This is the born-at-active ownership stamp for fast-track bug bets, which would otherwise land driverless and stall until a sweep trips over them.)\n\n---\n\nA bet was just created.\n\n1. **Dispatch by status**:\n   - **signal**: stand down. Exit silently. (Ownership stays with the human creator; the Workspace Driver takes over at `define`.)\n   - **define**: continue to step 2.\n   - **active**: a bet was created directly in `active`, bypassing the shaping pipeline. status_changed→active triggers do NOT fire for a bet created at active, so this branch is the ONLY place these bets are handled — do all of the following in order:\n     - **a. Assign ownership.** Resolve the Workspace Driver's actor id via `list_actors` and set the bet's `driver` to it via update_objects if it is not already. This is the born-at-active equivalent of the define-intake ownership stamp. Metadata write only; it does NOT spawn the Driver. Never set yourself (the Strategist) as driver.\n     - **b. Commitment gate.** Run the Step 2 commitment-gate check from your system prompt. If it **FAILS**: post a comment recommending revert to `define` (which re-enters the normal shaping pipeline, where the define-intake trigger re-stamps the Workspace Driver and you draft it properly). Do not proceed to planning — a bet that should revert must not be planned. Exit.\n     - **c. If the gate PASSES — hand off to the Planner to review and fill gaps.** Resolve the Planner's actor id via `list_actors` and post a comment @mentioning them: \"Bet created directly in active — @Planner please review existing tasks and create any that are missing.\" The Planner's own pre-flight guard reviews what already exists, dedupes, and plans only the gaps (or exits cleanly if planning is already complete). Do NOT run intake and do NOT author a fresh draft for an active bet. Note: the Planner needs a `## Chosen direction` in the description to create tasks; a born-at-active bet without one will be reviewed and then exit without planning — if that happens, post a comment flagging that the bet needs a direction before it can be planned.\n   - **live | succeeded | failed | paused**: stand down.\n\n2. Load the `bet-intake` workspace skill via get_workspace_skill and execute it in full. It is the single source of truth for the intake procedure — identical to the \"Bet → Define: Strategist Intake\" trigger by design. Do not improvise extra steps, do not skip its gates, and never extend this prompt instead of the skill.\n\nSource actor: this agent (the Strategist).",
+		"targetActorId": "c524aac2-4373-485b-b709-bbb4eb2d021e",
+		"enabled": true
+	},
+	"ae20bd9c-c039-4786-b6eb-e8e70ef7926e": {
+		"id": "ae20bd9c-c039-4786-b6eb-e8e70ef7926e",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Weekly Knowledge Revision Sweep",
+		"type": "cron",
+		"config": {
+			"expression": "0 2 * * 1"
+		},
+		"actionPrompt": "**Weekly check that knowledge articles still hold up.** Load knowledge-revision and follow it exactly — it's the source of truth. In brief: list knowledge objects, skip any validated in the last 7 days, take the oldest 20, check for new evidence (clustered insights, terminal bets) since `last_validated_at`, classify each (NO NEW EVIDENCE / CONFIRMING / REFINING / CONTRADICTING / EXPIRED), and update or supersede accordingly. Exit silently if nothing needed revision. In-product only — no Slack.",
+		"targetActorId": "3322def3-7d6b-4615-beaf-b43b291f95a8",
+		"enabled": true
+	},
+	"2cfdf16d-87ee-4bae-b909-574ddc42add3": {
+		"id": "2cfdf16d-87ee-4bae-b909-574ddc42add3",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Bi-weekly Bet Council — Strategist",
+		"type": "cron",
+		"config": {
+			"expression": "0 1 8-14,22-28 * 1"
+		},
+		"actionPrompt": "**Bi-weekly Bet Council — score the insight backlog and route what's worth betting on.** Run the council pass for the \"Strategic Intake & Evaluation Layer\" bet (resolve its id via search_objects(q=\"Strategic Intake & Evaluation Layer\", type=\"bet\") if you don't have it this session).\n\nSTEP 0 — Cadence guard. get_comments on the council bet (limit 50); find your most recent council digest comment (authored by you, the Strategist). If it's less than 13 days old, this is a duplicate Monday firing — stop silently, post nothing.\n\nSTEP 1 — Load strategic-intake-review and insight-bet-portfolio-scan, then run the council per the skill against the current `scored` + `clustered` insight backlog. The skill owns everything: the six-dimension scoring and the D1=0 strategic veto, the 18/30 four-door routing, the four-condition autonomy gate, the hardcoded `promotion_mode=human_approved` dormancy rule (never `auto` until ≥10 calibration promotions), bets created at `qualified`, fast-track reconciliation since the last council, and the single batched digest comment @mentioning Sebastian (resolve his id via list_actors). Run insight-bet-portfolio-scan Step 6 once for the workspace D6 snapshot. Load maskin-voice before writing the digest.\n\nEmpty backlog → exit silently, no digest. Post EXACTLY ONE digest comment per run.\n\nDo NOT restate the skill's scoring math, thresholds, gate, or digest format here — it all lives in strategic-intake-review. If the procedure needs to change, edit the skill, not this trigger.",
+		"targetActorId": "c524aac2-4373-485b-b709-bbb4eb2d021e",
+		"enabled": true
+	},
+	"88b1e6bc-cb4f-4963-896a-4ea1d5fc2f9f": {
+		"id": "88b1e6bc-cb4f-4963-896a-4ea1d5fc2f9f",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "GitHub PR Opened → Triage",
+		"type": "event",
+		"config": {
+			"action": "opened",
+			"entity_type": "github.pull_request"
+		},
+		"actionPrompt": "**Triage a newly-opened pull request.** A PR was opened on GitHub. Load and follow the `pipeline-pr-tracking` skill (PR-opened section) in full.",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": false
+	},
+	"7fc5b39f-d27d-4786-b194-d2105fc32dbf": {
+		"id": "7fc5b39f-d27d-4786-b194-d2105fc32dbf",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Universal Pipeline Watchdog (dead-session recovery + signatures)",
+		"type": "cron",
+		"config": {
+			"expression": "0 */4 * * *"
+		},
+		"actionPrompt": "**Broad 4-hourly sweep to recover dead sessions and catch stuck work.** Load and follow the pipeline-universal-watchdog skill in full. Your actor ID is `d625cf31-fb6c-45df-a8c2-e2823d6053ae`. Don't call create_notification.",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": true
+	},
+	"d8a7671e-c68b-4a8f-b933-6d4a98756b74": {
+		"id": "d8a7671e-c68b-4a8f-b933-6d4a98756b74",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily Bet Sweep → Unstick Stalled Work",
+		"type": "cron",
+		"config": {
+			"expression": "15 5 * * *"
+		},
+		"actionPrompt": "**Daily sweep to unstick stalled bets and push them through the pipeline.**\n\nRun your Mode 3 daily bet sweep. Five responsibilities: advance define bets whose direction and tasks are ready, catch bets that were never broken down, run health checks on all active bets, unstick stalled work, then run bet stage-progression (including the backup live-bet verdict).\n\nThis is not an event-triggered run — there is no `Triggering event` payload. Your job is to scan all bets in the workspace.\n\n**Nothing is ever blocked.** There is no `blocked` task status. `blocks` edges are deprecated and must be ignored. Task ordering is by sequence number (T1, T2, …) only. A predecessor PR being unmerged is NOT a reason to hold a task. Every `todo` task is an agent task and is startable — there is no \"human decision\" task type. (The only task that waits on a human is a `decision_type: ux | architecture` task in `in_review`, which is design/architecture approval — not part of this stalled-work sweep.) **One deliberate exception:** a bet itself can wait on its own open architecture/UX/copy decisions before its coding tasks start at all — that's `metadata.awaiting_decisions`, owned by the Planner's `bet-decomposition` gate. Respect it; don't override it.\n\n## STEP 0 — Define bets ready to advance (direction chosen, tasks ready)\n\nBefore anything else, scan `define` bets for ones the Strategist drafted but nobody flipped forward. `list_objects(type=bet, status=define)`, then `get_objects` for each.\n\n(Note: a define bet that was never *shaped* at all — the Strategist intake never ran — is recovered hourly by the Workspace Driver's liveness watchdog, `pipeline-liveness-watchdog` Step 4c, which is the single owner of that reconciliation. Don't duplicate it here.)\n\n**Check A — direction chosen, tasks exist, still in define.** If `## Chosen direction` is present in the description AND at least one task exists via `breaks_into` AND the bet is still `define`:\n1. Check for bet-level blockers: read relationships for `blocks` or `relates_to` edges to OTHER bets still in `define` or `active`. If found, skip and post ONE comment: \"Waiting on [blocking bet title] to complete before this can start.\" Dedup: skip if posted in the last 48h.\n2. Check `metadata.awaiting_decisions`. If `true`, skip — the bet is intentionally held in `define` pending an architecture/UX/copy decision; the hourly liveness watchdog (`pipeline-liveness-watchdog` Step 4b) advances it once that clears. Do not override.\n3. Otherwise, whether this bet is actually ready to go active is the Planner's call, not yours — spawn it instead of flipping the status yourself: create_session(actor_id=\"aebcb7eb-6403-4df8-8275-a229fd7fc94d\", action_prompt=\"Bet {bet_id} has a chosen direction and existing tasks but is still `define`. Load `bet-decomposition` and resume from Step 0(f) — verify the decision gate (Step 7b) and advance to `active` (Step 8) if it's clear.\"). The Planner's gate is the single source of truth for readiness; don't duplicate that check here.\n4. Dedup: skip if the bet was updated in the last 5 minutes, or if you already spawned the Planner for this bet in the last 10 minutes (check list_sessions).\n\n**Check B — direction chosen, no tasks yet.** If `## Chosen direction` is present AND no tasks exist via `breaks_into`: post a comment @mentioning the Planner (`aebcb7eb-6403-4df8-8275-a229fd7fc94d`): \"Direction is recorded — @Planner please create tasks for this bet.\" Dedup: skip if posted in the last 24h.\n\nSkip define bets created in the last 24h, and any with a design/arch task currently `in_progress`.\n\n## STEP 1 — Bets with no task breakdown (decomposer never ran)\n\nBefore the stalled-bet sweep, scan for `active` bets with ZERO outbound `breaks_into` edges (no tasks at all).\n\nFor each such bet:\n- Skip if a recent comment from you (actor d625cf31-fb6c-45df-a8c2-e2823d6053ae) with \"no task breakdown\" already exists on this bet in the last 24h (call get_comments to check).\n- Otherwise post a comment on the bet via create_comment:\n  - entity_id: <bet_id>\n  - mentions: [\"3e16ed51-e5e1-4b87-959f-7eda01b21bea\", \"08964c08-4ea5-45b0-bfa9-251f956909c7\"]\n  - content: \"⚠️ This bet has no task breakdown — the decomposer never ran. It went straight to active and was never planned. Reply by @mentioning me with: `redecompose` (to re-trigger task planning) · `manual` (I'll plan it myself) · `pause` (to mark bet paused)\"\n- Maximum one comment per bet per run.\n\n## STEP 2 — Bet health checks (run on ALL active bets with tasks)\n\nFor each `active` bet with at least one `breaks_into` task:\n- Load the `bet-health` skill via get_workspace_skill.\n- Run it in full against the bet.\n- The skill handles its own comment/silence policy — if everything is clean it exits silently. Only post when issues are found.\n- Auto-remediation (discarding duplicates, starting stalled-eligible tasks) is handled by the skill itself.\n\nRun health checks before the stalled-bet sweep in Step 3 — the health check may already fix what the sweep would otherwise catch.\n\n## STEP 3 — Stalled bets (have tasks, but no movement)\n\nA bet is stalled when ALL of these are true:\n1. It is in `active` status.\n2. It has at least one task in `todo`.\n3. It has ZERO tasks currently in `in_progress`, `in_review`, or `validated`.\n4. It has ZERO currently running sessions for any of its sibling tasks (use list_sessions with status=running and cross-reference task IDs).\n5. Its most recent task status change is older than 24 hours.\n6. `metadata.awaiting_decisions` is not `true`. A bet waiting on an open architecture/UX/copy decision is not stalled — it's correctly held by the Planner's decision gate. Never force-start its coding tasks; the hourly liveness watchdog (`pipeline-liveness-watchdog` Step 4b) handles it once decisions clear. (In practice an `active` bet shouldn't carry this flag — the Planner only sets it pre-`active` — but check it anyway as a safety net against the born-at-active bypass path.)\n\nFor each stalled bet:\n- Pick the next eligible task = the lowest-numbered (T1, T2, …) `todo` task. Ignore any `blocks` edges — they are deprecated and never gate eligibility. Unmerged predecessor PRs are not a gate.\n- Advance it to `in_progress` silently. The Task Todo → Develop trigger will then fire the Developer.\n- Advance at most ONE task per bet per run.\n\nThere is ALWAYS an eligible task when a `todo` exists and the bet isn't decision-gated — nothing else is blocked, so a stalled active bet with a `todo` always gets advanced. Never leave one parked for any other reason.\n\nThe platform enforces `max_concurrent_sessions` at session-creation time — don't pre-check or self-ration before advancing a task.\n\nSkip bets that are paused, live, succeeded, or failed in this STALLED-TASK step (those are handled in Step 4).\n\nIf an `active` bet has all tasks `done` and no open PRs, the Strategist handles acceptance review; Step 4 handles the live promotion if the Strategist's automated path hasn't. Do NOT post about it here.\n\nSkip bets where your most recent comment is from less than 24h ago (to avoid re-commenting on the same stall).\n\n## STEP 4 — Bet stage-progression + backup verdict (load `pipeline-monitor-sweep-rules`)\n\nAfter the stalled-work sweep, load `pipeline-monitor-sweep-rules` via get_workspace_skill and run its bet-progression sub-modes:\n- **3m — Active bet ready to go live:** an `active` bet with all tasks `done` (settled >30 min) → promote it to `live`.\n- **3n — Live bet verdict (you are the BACKUP mover):** the Product Analyst owns the live verdict. You only step in when the Analyst hasn't, and only on a CLEAR result. Per 3n: close `auto_bug` bets whose fix the Acceptance Validator verified (`metadata.bug_verified`); move a non-auto_bug live bet to `succeeded`/`failed` ONLY when the Analyst's own measurement report makes the call clear AND the Analyst hasn't moved it in 24h (never re-derive PostHog numbers yourself); leave ambiguous / Analyst-escalated bets for the humans (nudge after 48h); and spawn the Analyst if a past-review-date bet was never measured.\n\nFollow the skill's exact conditions and dedup windows for both sub-modes. Never invent a verdict.\n\nAfter the sweep, if you advanced any tasks, promoted/closed any bets, or posted any comments, do not send a summary Slack message. Silence is golden. Only Slack when something genuinely needs human input.\n\nSource actor: d625cf31-fb6c-45df-a8c2-e2823d6053ae. Do NOT call create_notification.",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": true
+	},
+	"ecabedc3-f114-4073-aa08-b5e193291e7e": {
+		"id": "ecabedc3-f114-4073-aa08-b5e193291e7e",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily Human-Parked Escalation — re-nudge bets waiting on a person",
+		"type": "cron",
+		"config": {
+			"expression": "0 16 * * *"
+		},
+		"actionPrompt": "**Daily re-nudge for bets waiting on a person.** Load and follow the `pipeline-human-parked-escalation` skill in full. No payload — scan the workspace yourself. Your actor ID is `d625cf31-fb6c-45df-a8c2-e2823d6053ae`. Don't call create_notification.",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": true
+	},
+	"af3e6208-ccf0-4124-ace4-1d2cd6903b79": {
+		"id": "af3e6208-ccf0-4124-ace4-1d2cd6903b79",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Task In Progress → Driver: Product Analyst",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"driver": "21cce128-9c80-4ebe-982f-41c82820c6aa"
+			},
+			"to_status": "in_progress",
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Do the analysis this task asks for.** You're the driver of task {{entity_id}} and it just moved to in_progress. Read it via get_objects and follow your system prompt: do the analysis/verification, post your findings as a comment, and advance the task to its next pipeline status. Don't leave it sitting in in_progress.",
+		"targetActorId": "21cce128-9c80-4ebe-982f-41c82820c6aa",
+		"enabled": true
+	},
+	"731af1d4-4eb3-4a74-98c3-8a59b671183e": {
+		"id": "731af1d4-4eb3-4a74-98c3-8a59b671183e",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Design/Arch Task → In Review: Ping Strategist for Direction",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "in_review",
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Give direction on a design/architecture proposal that's ready for review.** A design or architecture task just moved to in_review.\n\n1. Read the task: get_objects on the task ID from the event.\n2. Confirm it's a design or architecture proposal — the task's driver is the Designer or Architect. If not, stop — this trigger doesn't apply.\n3. Set yourself as driver: list_actors to find the actor titled \"Strategist\" (that's you), then update_objects to set the task's top-level driver to your ID. Never hardcode a UUID.\n4. Read the proposal comment(s) (the Designer's design proposal or the Architect's ADR), including the proposer's flag of whether the direction is an *extension* of the existing design system or *net-new / system-level*.\n5. Decide and post one comment per maskin-voice (plain, one thought, direct):\n   - **Approve** (default for extensions): post your verdict and @mention the next actor — the Developer for a build, or the relevant actor if no build follows.\n   - **Request changes**: post what needs to change and @mention the proposer.\n   - **Escalate to Sebastian**: ONLY when the proposal introduces something the existing design system can't absorb — a net-new pattern/component, or a change to a system-level design rule — not for extensions of existing tokens/components/conventions. Post why it crosses that line and @mention Sebastian (resolve via list_actors).\n\nYou're the first decision-maker on UX/architecture direction. Don't route extensions to the founders. Escalate to Sebastian only on the net-new / system-level criterion. Never hardcode any actor UUID — always resolve via list_actors.",
+		"targetActorId": "c524aac2-4373-485b-b709-bbb4eb2d021e",
+		"enabled": true
+	},
+	"4468b005-ca7b-4b7d-9813-829321be4b40": {
+		"id": "4468b005-ca7b-4b7d-9813-829321be4b40",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Task In Progress → Driver: Designer",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"driver": "222901a5-8bac-43c9-9291-94c09c820829"
+			},
+			"to_status": "in_progress",
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Design the UX for this task.** You're the driver of task {{entity_id}} and it just moved to in_progress. Read it via get_objects and follow your system prompt end to end: consult prior knowledge, read the codebase, pull external references, produce and render an HTML mockup, run your pre/post checks, post the proposal, then move the task to in_review and hand off the driver per your system prompt.\n\nDon't mark it done — UX direction needs approval first. Routing (default approver = Strategist; escalate to Sebastian only for net-new patterns/components or system-level rule changes) is owned by your system prompt and the in_review trigger. Don't hardcode any approver UUID; resolve via list_actors.",
+		"targetActorId": "222901a5-8bac-43c9-9291-94c09c820829",
+		"enabled": true
+	},
+	"9e0a4be4-cfa9-40e3-a187-8241648827b9": {
+		"id": "9e0a4be4-cfa9-40e3-a187-8241648827b9",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Weekly External Research Sweep (competitor + market)",
+		"type": "cron",
+		"config": {
+			"expression": "0 22 * * 0"
+		},
+		"actionPrompt": "**Weekly competitor + market scan.** One session, two parts in sequence. Part A: load `competitive-scan` via get_workspace_skill and run it in full. Part B: load `market-scan` and run Mode A (Weekly Twitter/X + Reddit sweep) in full. Both skills own their own dedup, tagging, and signal-bar rules. You're an insight producer only — the Synthesizer triages and clusters what you create. Stay silent on a quiet week.",
+		"targetActorId": "3b0337d0-7bed-467d-8239-544e7611a587",
+		"enabled": true
+	},
+	"4b30f54f-ff12-4208-9cd6-147e603aa2d2": {
+		"id": "4b30f54f-ff12-4208-9cd6-147e603aa2d2",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Bet Failed → Write Knowledge",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "failed",
+			"entity_type": "bet"
+		},
+		"actionPrompt": "**Write up a failed bet so the lesson sticks.** Follow your system prompt: Part 1 (retro), then Part 2 (knowledge, applying investigate). No Part 3. Lead the article with what was tried, why it broke, and the generalizable lesson — the mechanism, not blame.",
+		"targetActorId": "3322def3-7d6b-4615-beaf-b43b291f95a8",
+		"enabled": true
+	},
+	"d458e38d-d486-4da3-8c89-74f989b2f104": {
+		"id": "d458e38d-d486-4da3-8c89-74f989b2f104",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily Triage Sweep",
+		"type": "cron",
+		"config": {
+			"expression": "0 22 * * *"
+		},
+		"actionPrompt": "**Daily safety-net triage for insights that slipped through.** Your system prompt and the insight-triage skill are the source of truth; this is just the scheduler.\n1. Load the insight-triage skill.\n2. Triage every insight in new / processing untouched >24h, plus any scored / parked worth revisiting (both domains).\n3. Run evidence-weighted promotion for any cluster (last 14 days) with no non-terminal bet on its theme. Create bets only in `signal`; hand off to the founders per the skill.\nNothing found → exit silently. In-product only — no Slack. Don't call create_notification.",
+		"targetActorId": "99b416f2-a0c3-4ffb-8299-ff9d0e2be0e8",
+		"enabled": true
+	},
+	"a7dead80-190e-4da0-86bf-e5500994716b": {
+		"id": "a7dead80-190e-4da0-86bf-e5500994716b",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "GitHub PR Synchronize → Re-score Risk",
+		"type": "event",
+		"config": {
+			"action": "synchronize",
+			"entity_type": "github.pull_request"
+		},
+		"actionPrompt": "**Re-score a PR's risk after new commits — cheaply, only when needed.** A PR was updated with new commits (`synchronize`). Most pushes need nothing. Run the cheap exits in order and stop at the first hit:\n\n1. **Find the linked task.** Read the PR URL from the event payload. Search tasks with `metadata.github_link` matching it. None found → exit silently (untracked PR — human-driven PRs to `main` mid-iteration usually land here).\n2. **Review window.** If the task's status is NOT in_review or validated → exit silently.\n3. **Debounce — 30 minutes.** Read the task's `## Risk Score` block. If its `re-scored:` timestamp (or the original score's timestamp, inferable from recent events) is newer than 30 minutes → exit silently. Rapid push streaks re-score at most once per half hour. The per-SHA contract still holds because the score consumed at any handoff/merge decision is recomputed from the latest SHA at that point.\n\nIf no exit hit, re-score:\n\n4. **Re-run risk-classifier.** Fetch and follow risk-classifier from your system prompt's Step 6. Apply the signal table and all floors — including the UX floor for interaction-handler diffs without browser evidence.\n5. **Replace the `## Risk Score` block AND reset the bounce counter** on the task content via update_objects. Do NOT append — the previous block is stale. Mark the re-score with a `re-scored: <ISO timestamp>` line so the human (and the debounce above) can see the SHA moved. In the SAME update_objects call, set `metadata.review_round_trips = 0` (a new commit = a fresh attempt, per-SHA), and clear `metadata.loop_circuit_broken_at` / `metadata.loop_circuit_broken_reason` if they were set.\n6. **Re-evaluate handoff** based on the new band:\n   - Unchanged or moved DOWN → exit silently. Task continues on its current path.\n   - Moved UP (e.g. AUTO-APPROVE ELIGIBLE → AGENT RECOMMENDS HUMAN, or AGENT RECOMMENDS HUMAN → TWO-HUMAN REQUIRED) → post a comment on the task via create_comment:\n     - entity_id: <task_id>\n     - mentions: [\"3e16ed51-e5e1-4b87-959f-7eda01b21bea\", \"08964c08-4ea5-45b0-bfa9-251f956909c7\"]\n     - content: \"⚠️ Risk band increased after push: <old band> → <new band>. Top new risk signals: [list]. PR: [url]. Reply by @mentioning me with: `approved` (to continue at new band) · `block-two-human` (if a second human reviewer is required)\"\n   - If the task was already validated and the band moved up: ALSO move it back to in_review so the Code Reviewer re-validates against the new commits.\n7. **Post the `maskin/risk-score` GitHub check run** for the new SHA if you have permissions (skip silently if not).\n\nSource actor: your own ID (`01936a6b-258e-4daa-8637-a926f16040ce`). Don't call create_notification. All human escalations go through create_comment with mentions.\n\nStale scores on updated PRs are how high-risk follow-up commits sail through gates — but a session per push is how the workspace burns its LLM budget on lint fixes. The debounce balances the two.",
+		"targetActorId": "01936a6b-258e-4daa-8637-a926f16040ce",
+		"enabled": false
+	},
+	"b65382c4-0287-4aa8-a477-9a61296e5702": {
+		"id": "b65382c4-0287-4aa8-a477-9a61296e5702",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Weekly Triage Digest",
+		"type": "cron",
+		"config": {
+			"expression": "0 1 * * 1"
+		},
+		"actionPrompt": "**Weekly \"what changed\" digest.** Load the insight-triage skill and follow its Weekly Digest section — one skim-able \"What changed this week\" (≤400 words) covering both domains: shifts in customer truth and shifts in how the workspace runs. Link the bets/clusters it references; @mention the founders once. Uneventful week → exit silently. In-product only — no Slack. Don't call create_notification.",
+		"targetActorId": "99b416f2-a0c3-4ffb-8299-ff9d0e2be0e8",
+		"enabled": true
+	},
+	"e54bb3bf-818e-423a-8c49-d1009528a006": {
+		"id": "e54bb3bf-818e-423a-8c49-d1009528a006",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Insight Clustered → Write Knowledge",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "clustered",
+			"entity_type": "insight"
+		},
+		"actionPrompt": "**Turn a clustered insight into durable knowledge.**\n\nFirst, a concurrency gate: call list_sessions(status='running'). If the count ≥ the workspace `max_concurrent_sessions` (or 6 if unset), exit immediately and write nothing — a metadata write would re-fire this trigger and worsen a fan-out stampede. (Overflowed insights get re-captured by the Weekly Revision sweep or a terminal bet's retro.)\n\nOtherwise follow the \"Insight clustered\" path in your system prompt. Exit silently if nothing's generalizable.",
+		"targetActorId": "3322def3-7d6b-4615-beaf-b43b291f95a8",
+		"enabled": true
+	},
+	"545a8ca8-457b-4bf1-96d8-6f66b46c9496": {
+		"id": "545a8ca8-457b-4bf1-96d8-6f66b46c9496",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Task Validated → Start Next Task",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "validated",
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Advance the bet after a task passes review.** \n\nA task moved to validated (Code Reviewer approved it). Load and follow the pipeline-task-progression skill in full - it advances eligible sibling tasks and handles risk-gated auto-merge of the task PR.",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": true
+	},
+	"c812c750-c26e-4cff-912b-4e9d51575816": {
+		"id": "c812c750-c26e-4cff-912b-4e9d51575816",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily Sweep: Escalate Stuck Unmerged Bets",
+		"type": "cron",
+		"config": {
+			"expression": "15 6 * * *"
+		},
+		"actionPrompt": "**Daily nudge for bets that are done but never merged.** \n\nLoad and follow the pipeline-merge-gate-escalation skill in full. No event payload - scan the whole workspace.",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": true
+	},
+	"273c2dc3-ce7b-462f-959a-aea2376922ab": {
+		"id": "273c2dc3-ce7b-462f-959a-aea2376922ab",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily Terminal-Bet Backstop → Knowledge",
+		"type": "cron",
+		"config": {
+			"expression": "0 7 * * *"
+		},
+		"actionPrompt": "**Daily backstop for terminal bets whose retro/article never got written.** Idempotent — act only on what's missing.\n1. list_objects for bets in succeeded and failed updated in the last 7 days. Cap at the 5 oldest-incomplete per run.\n2. For each, check via get_objects: (a) does the description contain a `## Retro` section? (b) does any knowledge object link to it via `about`?\n3. Both present → skip.\n4. Retro missing → run Part 1 of your system prompt. Article missing → run Part 2 (with investigate for \"failed\"). Do only the missing part; never redraft what exists. Changelog is out of scope here.\n5. Nothing missing → exit silently. No Slack, no notifications.",
+		"targetActorId": "3322def3-7d6b-4615-beaf-b43b291f95a8",
+		"enabled": true
+	},
+	"f5ab2e5b-cd2c-4ff2-85fb-5d5f8470b6f0": {
+		"id": "f5ab2e5b-cd2c-4ff2-85fb-5d5f8470b6f0",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Insight status_changed → Fast-track Bet Council (Strategist)",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"entity_type": "insight"
+		},
+		"actionPrompt": "**Fast-track a clustered/scored insight into a bet — if it clears a tight bar.** You're the Strategist. A `status_changed` event on an `insight` fired you. The default at every gate is silent NO-OP.\n\nSTEP 0 — Cheap guard (do NOT load any skill yet). Re-fetch the insight via get_objects. NO-OP silently if any of: (i) the new status is not `clustered` or `scored`; (ii) the insight is already `parked`, `discarded`, or `promoted`; (iii) the insight already has an outbound `informs` edge to a bet. A NO-OP here leaves zero trace — no comment, no metadata write, no bet.\n\nSTEP 1 — If it survives Step 0, load strategic-intake-review and run its fast-track lane against this insight. The skill owns the whole lane: the urgent + reversible + pre-defined-class test, the D2/D3/D4 scoring, the Effort≤1 AND reversible hard gate, bet creation at status `qualified` with `promotion_mode=human_approved` + `fast_track_reconcile=true` + `fast_track_class`, the `informs` edge from insight to bet, marking the source insight `promoted` with `promoted_to_bet_id`, the verify step, and the single digest comment @mentioning Sebastian (resolve his id via list_actors). Load maskin-voice before the comment.\n\nDo NOT restate the lane's classes, scoring, gates, or digest format here — they live in strategic-intake-review. Edit the skill, not this trigger.",
+		"targetActorId": "c524aac2-4373-485b-b709-bbb4eb2d021e",
+		"enabled": true
+	},
+	"519c5226-7844-4a59-be01-9cff7738956f": {
+		"id": "519c5226-7844-4a59-be01-9cff7738956f",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Decision Task Approval SLA → Proceed + Flag",
+		"type": "cron",
+		"config": {
+			"expression": "0 7 * * *"
+		},
+		"actionPrompt": "**Daily: proceed on design/arch decisions that have stalled 3+ days waiting on a human.** A ux or architecture decision must not block its bet for more than 3 days waiting on a human. Past that, PROCEED and FLAG — don't keep waiting. This is the one place the \"never kick a human-gated in_review task\" rule is overridden. Scan the whole workspace.\n\n1. List all tasks in in_review with metadata.decision_type of ux or architecture.\n2. Determine how long each has been in in_review (most recent status-change-to-in_review event; fall back to updatedAt). Skip any in_review for LESS than 3 days.\n3. For each task in_review 3+ days with NO approving/changes-requested comment from a HUMAN actor (resolve Sebastian's and Magnus's ids via list_actors) since it entered in_review:\n   a. Read the task and its proposal comment(s). If the proposal is sound and within your remit as Strategist, approve and proceed: move the task to done so downstream review/planning/fan-out continues, and @mention the next pipeline actor if one is owed.\n   b. Post ONE comment recording the auto-approval, @mentioning the relevant founder as FYI — Magnus for architecture, Sebastian for ux (default Sebastian): \"⏭️ Auto-proceeded after the 3-day approval SLA — no human decision was recorded, so I approved this proposal and unblocked the bet. Reply **revert** to take it back.\"\n   c. EXCEPTION — do NOT auto-approve a proposal that makes an irreversible or costly commitment outside your authority (production data migration, money, security/compliance posture, public launch). For those, don't move the task; instead post a fresh, sharper escalation @mentioning the right founder: the decision is now N days overdue and the bet is stalled until they answer.\n   d. If the task has a null driver, set it to yourself when you touch it.\n4. Dedup: skip a task where you already auto-proceeded or re-escalated in the last 24h (check get_comments).\n\nSource actor: this agent (the Strategist). Don't call create_notification. All escalations go through create_comment with mentions. Silence when there's nothing past SLA.",
+		"targetActorId": "c524aac2-4373-485b-b709-bbb4eb2d021e",
+		"enabled": true
+	},
+	"a6c1ec67-23f5-4fbb-aff6-78c8c883995f": {
+		"id": "a6c1ec67-23f5-4fbb-aff6-78c8c883995f",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily Influencer Content Sweep",
+		"type": "cron",
+		"config": {
+			"expression": "0 2 * * *"
+		},
+		"actionPrompt": "**Daily sweep of influencer content for insights.** Load `market-scan` via get_workspace_skill and run Mode B (Daily influencer content sweep) in full — it owns the influencer list, scoring rubric, and extraction. Exit silently when done, per the skill's silence policy.",
+		"targetActorId": "3b0337d0-7bed-467d-8239-544e7611a587",
+		"enabled": true
+	},
+	"7b407bdb-d0a3-4fb8-9856-be7d04192da3": {
+		"id": "7b407bdb-d0a3-4fb8-9856-be7d04192da3",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Bet Created → Coach Evidence Scan",
+		"type": "event",
+		"config": {
+			"action": "created",
+			"entity_type": "bet"
+		},
+		"actionPrompt": "**A bet was just created — go find the evidence that should already be under it.** You are the Workspace Coach. The default at every gate is a silent NO-OP; this trigger exists so a bet never reaches the Strategist's thin-evidence gate with nothing under it that you could have seen.\n\n## STEP 0 — Cheap guards (load no skill yet)\nRead the bet via get_objects (include `metadata`, `relationships`). NO-OP silently if ANY of:\n- `metadata.auto_bug` is `true` (fast-track bug fix — skips shaping, skips you).\n- The bet already has 2+ inbound `informs` edges from insights (it's already evidenced).\n- You already ran an evidence scan on this bet (check get_comments for your own scan receipt).\n\nOtherwise continue. A bet with `metadata.evidence_quality = \"gut_feeling\"`, or zero inbound `informs` edges, is the primary case — treat it as urgent.\n\n## STEP 1 — Scan the last 7 days for evidence the bet is built on\nRead the bet's title, content, and `metric_baseline` for the pattern it's claiming. Then go look for whether the workspace actually saw it:\n- `list_sessions` status `failed` and `timeout` over the last 7 days — group by actor and error signature; keep signatures matching the bet's theme.\n- `get_events` over the same window — repeated escalations, human interventions on agent-driven objects, work that reached a terminal-ish state and still needed a person, tasks bouncing back through review.\n- `search_objects` for existing insights on the theme that were filed but never linked to this bet.\n\n## STEP 2 — File and link\nFor each distinct pattern the scan confirms:\n- Create ONE insight per finding — status `new`, `metadata.source = \"workspace_coach\"` (that exact string; `workspace_observer` is retired — read it, never write it), tags including `incident` where it applies. Follow the template in your system prompt: Observation → Evidence (counts, windows, object IDs) → Proposed change → Owner → Expected effect. Load writing-standards and maskin-voice first.\n- Create an `informs` edge from each insight → this bet.\n- Existing unlinked insights on the theme: link them too (`informs` → this bet). Don't duplicate what already exists.\n\n## STEP 3 — Receipt\nPost ONE short comment on the bet naming what you filed and linked, and — if the scan found nothing — say so plainly: the bet's premise isn't visible in the last 7 days of workspace signal, which is itself worth the Strategist knowing before it advances. Never pad a thin bet with weak evidence to make it look supported; an honest \"no supporting signal found\" is a real result.\n\nNever create a bet, never change any status, never plan a task. Insights + edges + one comment. That's the whole reach.",
+		"targetActorId": "9b4820ab-3d00-4e15-b737-8adf7f94d15c",
+		"enabled": true
+	},
+	"df3dbfb9-0aa7-4b89-ad99-10d606ae4068": {
+		"id": "df3dbfb9-0aa7-4b89-ad99-10d606ae4068",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Inspiration Resources → Insight Harvester",
+		"type": "event",
+		"config": {
+			"action": "created",
+			"filter": {
+				"event.channel": "C04ASH4HFDY"
+			},
+			"entity_type": "slack.channel_message"
+		},
+		"actionPrompt": "**Harvest insights from a #inspiration-resources Slack post.** A new message was posted in #inspiration-resources. Load `market-scan` via get_workspace_skill and run Mode C (#inspiration-resources Slack message) in full — it owns the classify/extract/dedup/relevance-filter logic. Only act on messages from #inspiration-resources.",
+		"targetActorId": "3b0337d0-7bed-467d-8239-544e7611a587",
+		"enabled": true
+	},
+	"5eefd3e7-396b-4de1-9fdf-a22ccfc0d120": {
+		"id": "5eefd3e7-396b-4de1-9fdf-a22ccfc0d120",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Meeting Done → Summarize",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "done",
+			"entity_type": "meeting"
+		},
+		"actionPrompt": "**Summarize a finished meeting and wire up what it produced.** A meeting object moved to 'done' — the transcript is now on it. Read it via get_objects (transcript in `content`; fall back to `metadata.transcriptUrl` if empty), extract insights and tasks worth keeping, upsert attendees as `contact` objects matched by email, and wire the relationships (insight→meeting `about`, meeting→task `produced`, meeting→contact `attended_by`). Link insights/tasks to existing bets via `relates_to` where it fits. Post a one-comment summary when done. Skip the obvious; lean toward fewer, higher-quality objects.",
+		"targetActorId": "29a22f4b-3d56-4377-a226-968b0192c39e",
+		"enabled": true
+	},
+	"d02d5e55-c1c3-4091-b344-fea157579095": {
+		"id": "d02d5e55-c1c3-4091-b344-fea157579095",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Bet → Define: Strategist Intake",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "define",
+			"entity_type": "bet"
+		},
+		"actionPrompt": "**Shape a newly-defined bet into a buildable spec.** A bet just moved to `define` — you (the Strategist) draft it, then ownership passes to the Workspace Driver.\n\n1. If `metadata.auto_bug` is true, exit silently — auto bug-fixes skip shaping.\n2. Set the bet's `driver` to the Workspace Driver (resolve via list_actors; metadata only — this doesn't spawn them, and you still do the drafting). This also re-claims ownership if the bet was reverted from `active`.\n3. Re-fire check: if the spec sections (`## Success`, `## Not doing`, `## Acceptance criteria`, `## Exit criteria`, `## First test`, `## Duration`) are mostly already present and a \"Design Artifacts\" comment exists, exit silently.\n4. Load the `bet-intake` skill and run it in full — it's the source of truth. Don't improvise.\n\nTriggering event: {triggering_event}",
+		"targetActorId": "c524aac2-4373-485b-b709-bbb4eb2d021e",
+		"enabled": true
+	},
+	"243d019f-f012-419e-9128-7fa20406b6e8": {
+		"id": "243d019f-f012-419e-9128-7fa20406b6e8",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Bet Activated → Start Work",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "active",
+			"entity_type": "bet"
+		},
+		"actionPrompt": "**Start work on a newly-active bet.** Load and follow the `pipeline-bet-activation` skill in full. Don't call create_notification.",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": false
+	},
+	"b5d72026-3af7-4984-bf48-3c9704ecebac": {
+		"id": "b5d72026-3af7-4984-bf48-3c9704ecebac",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Task In Progress → Driver: Developer",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"driver": "212d2818-09df-4751-b8df-d0f1108ec0c1"
+			},
+			"to_status": "in_progress",
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Build the task you've been handed.** You're the driver of task {{entity_id}} and it just moved to in_progress. Read it via get_objects and follow your system prompt: implement the change on the bet branch, open a PR, and move the task to in_review. Don't mark it done yourself (the review pipeline does that), and don't leave it sitting in in_progress.",
+		"targetActorId": "212d2818-09df-4751-b8df-d0f1108ec0c1",
+		"enabled": true
+	},
+	"5d6db16c-278a-4831-a5ff-12be6d200726": {
+		"id": "5d6db16c-278a-4831-a5ff-12be6d200726",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Bet Define → Plan Tasks",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "define",
+			"entity_type": "bet"
+		},
+		"actionPrompt": "**Break a defined bet into tasks (fallback path).** Load the `bet-decomposition` skill and follow it. The primary path is the Shaper @mentioning the Planner after recording `## Chosen direction` — you're the backstop. The skill's pre-flight exits silently if there's no chosen direction yet, and its duplicate guard exits silently if planning already happened.",
+		"targetActorId": "aebcb7eb-6403-4df8-8275-a229fd7fc94d",
+		"enabled": true
+	},
+	"eb7c50a1-817f-4447-b45e-1f304ca2926a": {
+		"id": "eb7c50a1-817f-4447-b45e-1f304ca2926a",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Weekly Coverage Pass",
+		"type": "cron",
+		"config": {
+			"expression": "0 8 * * 3"
+		},
+		"actionPrompt": "Run the proactive knowledge coverage pass (Part 4). Load the `knowledge-coverage-pass` skill and follow it. Read the Coverage Map (knowledge id 308cfe3c-0503-47f3-9c41-2ae51335d3fb), pick the single highest-value uncovered (🔴) or unsynthesized (🟡) domain that has gone longest without a pass, and run exactly ONE gap-closing loop: classify research-first vs interview-first, gather evidence (brief the Research Agent, or ask a founder via one comment + chips), draft the canonical topic_page in `draft` with doc_type:topic_page, the canonical topic: tag, and informs edges, run the corpus pass, then route to the domain owner/founder to validate and update the Coverage Map's status. One domain only — cadence over volume. If every domain is 🟢 and fresh, exit silently.",
+		"targetActorId": "3322def3-7d6b-4615-beaf-b43b291f95a8",
+		"enabled": true
+	},
+	"11ee9406-254b-4621-be03-487565f250a0": {
+		"id": "11ee9406-254b-4621-be03-487565f250a0",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Bet → Live: Shaper Measurement Gate Check",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "live",
+			"entity_type": "bet"
+		},
+		"actionPrompt": "**Check a bet is ready to measure as it goes live.** A bet just hit `live` — run the measurement gate and open its review window.\n\n1. If `metadata.auto_bug` is true, exit silently — auto bug-fixes skip the measurement gate (the Pipeline Monitor handles them).\n2. Run Step 2b (Measurement gate) of your system prompt and post the verdict in its standard format. Status changes aren't blocking, so you're either blessing it or recommending revert to `active`.\n\n**If FAIL:** post the blocked-gate comment (mention the bet's `createdBy` and Sebastian, resolve via list_actors), offering `revert` / `override`. Stop.\n\n**If PASS** — these hand-off steps are trigger-specific (not in your system prompt):\n1. Pull `## Live period`, `## Ship metric`, `## Kill criteria`, and the riskiest-assumption outcome from the description. Compute `review_date` = today + live-period length. Write `live_started_at`, `review_date`, `posthog_query`, `metric_baseline`, `metric_target`, `kill_threshold` in one update_objects call.\n2. Spawn the Product Analyst (resolve via list_actors) to verify the metric resolves in PostHog and confirm the baseline. Don't wait on it.\n3. Comment \"Live — measurement window opens. Review on [date]\": ship metric + baseline → target, kill criteria, validation sources, review date, and that the Analyst measures daily and reports on the review date.\n4. Post the same again, mentioning the bet's `createdBy` and Sebastian, offering `acknowledged` / `add-sources`.\n\nDon't call create_notification. All human escalations go through comments with mentions.",
+		"targetActorId": "c524aac2-4373-485b-b709-bbb4eb2d021e",
+		"enabled": true
+	},
+	"b498f4cc-98b7-4778-9267-d7faeacac943": {
+		"id": "b498f4cc-98b7-4778-9267-d7faeacac943",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Customer Feedback Slack → Triage",
+		"type": "event",
+		"config": {
+			"action": "created",
+			"conditions": [
+				{
+					"field": "event.channel",
+					"value": ["C06HGMU9725"],
+					"operator": "in"
+				}
+			],
+			"entity_type": "slack.channel_message"
+		},
+		"actionPrompt": "**Route a #customer-feedback Slack message into the feedback loop.** A new message was posted in #customer-feedback (C06HGMU9725). This trigger is the SLACK SOURCE ADAPTER for the feedback loop.\n\n## Guard\nSkip bot/app messages, reactions, and Slack system messages. If the message is empty or clearly not feedback, exit silently.\n\n## Route\nThread root = the event's `thread_ts` if present, else the message `ts`.\n- **Has `thread_ts` AND we already own the thread** — search insights where `metadata.source_message_ref` == thread root AND `metadata.source_conversation_id` == C06HGMU9725 (legacy fallback: `metadata.slack_thread_ts` == thread root):\n  - match found → follow-up on a tracked thread. Load feedback-followup, pass it the matched insight id, run it. Stop.\n- **Otherwise** (no `thread_ts`, or a threaded reply with no matching tracked insight) → new feedback. Normalize this Slack event into the shared source contract, then load feedback-intake and run it:\n  - `feedback_source` = `slack`\n  - `source_conversation_id` = C06HGMU9725\n  - `source_message_ref` = the thread root computed above (same value used as `thread_ts` for any reply)\n  - `source_author_ref` = the poster's Slack user id\n  - `source_permalink` = the message permalink when the event provides it\n  - `data.maskin_file_ids` = any uploaded file ids on the event\n  Stop.",
+		"targetActorId": "0e03b5fb-300a-4c46-97f4-3bbfbd1ba3d6",
+		"enabled": true
+	},
+	"af9b6afc-67d2-481b-8b28-0df09a6e7c76": {
+		"id": "af9b6afc-67d2-481b-8b28-0df09a6e7c76",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Bet → Active: Shaper Gate Check",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "active",
+			"entity_type": "bet"
+		},
+		"actionPrompt": "**Check a bet is ready to go active.** A bet just hit `active` — verify it cleared the commitment gate, after the fact.\n\n1. Ownership backstop: if the bet's `driver` isn't the Workspace Driver, set it (resolve via list_actors; metadata only — doesn't spawn them, never set yourself). Bets *created* directly in active don't fire this — those go through \"Bet Created → Strategist Intake\".\n2. Run Step 2 (Commitment gate) of your system prompt in full: load `shape-and-run-a-bet` and `anchors-and-premises-check` fresh, evaluate, post the verdict, and handle `revert` / `override` replies. Your system prompt is the source of truth for the gate logic and verdict format — don't improvise.",
+		"targetActorId": "c524aac2-4373-485b-b709-bbb4eb2d021e",
+		"enabled": true
+	},
+	"f41f513a-5a58-4ab2-aab3-83e002f2c3b7": {
+		"id": "f41f513a-5a58-4ab2-aab3-83e002f2c3b7",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Insight Created → Triage",
+		"type": "event",
+		"config": {
+			"action": "created",
+			"entity_type": "insight"
+		},
+		"actionPrompt": "**Triage a new insight.** Run per-event triage from your system prompt.\n1. get_objects on the insight.\n2. Classify domain, dedup, and decide: discard / park / cluster / score & hold.\n3. If clustering or it could promote a pattern, load the insight-triage skill and follow it (clustering, bet-linking, evidence-weighted promotion, bug-triage for customer-feedback-tagged insights).\nExit silently if it wires cleanly. Don't call create_notification.",
+		"targetActorId": "99b416f2-a0c3-4ffb-8299-ff9d0e2be0e8",
+		"enabled": true
+	},
+	"fe28005d-f465-49b9-a73d-2dc599036345": {
+		"id": "fe28005d-f465-49b9-a73d-2dc599036345",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily Live Bet Measurement & Verdict Pass",
+		"type": "cron",
+		"config": {
+			"expression": "45 5 * * *"
+		},
+		"actionPrompt": "**Daily measurement + verdict pass for live bets.** Load bet-measurement — it's the source of truth for ALL per-bet logic (measurement, the gap-closing ladder, auto_bug handling, verdict classification, and the \"Never freeze a live bet\" rule). Don't re-derive any of that here. Load maskin-voice only if/when you're about to post a comment; on a silent run, skip it.\n\nOrchestration for this cron (the skill assumes a bet is already chosen — this wrapper chooses them):\n1. Build the actionable set cheaply — metadata/comments only, no deep PostHog yet. List all bets in `live`. A bet is actionable TODAY if ANY of: (a) review_date is today or past; (b) a new insight or comment tagged direction:validates / direction:invalidates landed since your last verdict/measurement comment on it; (c) it's an auto_bug bet whose umbrella PR merged and you haven't yet resolved or flagged it; (d) it qualifies for the skill's \"Never freeze a live bet\" rule (stale escalation 7+ days, review_date 14+ days past, or unset review_date with live_started_at 21+ days past). Everything else — future review_date, no new conclusive signal — skip immediately and silently.\n2. Cap: at most 6 actionable bets per run, oldest review_date first. If more qualify, handle 6 and note the remainder count in the summary.\n3. Run bet-measurement on each actionable bet.\n4. End with a one-line-per-bet summary (promoted / escalated to <human> / left live / closed-expired) plus a count of bets skipped as not-yet-due.\n\nNo live bets → exit silently. Don't call create_notification.",
+		"targetActorId": "21cce128-9c80-4ebe-982f-41c82820c6aa",
+		"enabled": true
+	},
+	"17b7f5b9-2b56-4c82-a6ef-1378e1c5b9f3": {
+		"id": "17b7f5b9-2b56-4c82-a6ef-1378e1c5b9f3",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Weekly Coach Review (outcomes + agent effectiveness + patterns)",
+		"type": "cron",
+		"config": {
+			"expression": "0 23 * * 0"
+		},
+		"actionPrompt": "**Weekly Coach review — did past advice land, how are the agents doing, what patterns ran this week.** One session, four lenses: (1) did your past coaching actually land, (2) what did you *miss*, (3) how are the delivery agents performing, (4) what higher-order patterns ran across the week. All output is clusterable insights (status `new`, `metadata.source = \"workspace_coach\"` — that exact string) so the Synthesizer can route them toward bets. You READ outcomes; you never change a bet's or task's status.\n\n## Step 0 — Read the skills\nget_workspace_skill on writing-standards (before any output) and capture-knowledge-in-flight (in case a forward-applicable rule surfaces).\n\n## Step 1 — Did your advice land?\nPull your own insights from the past ~quarter. **Read both provenance values:** `metadata.source = \"workspace_coach\"` (canonical, what you write now) AND `metadata.source = \"workspace_observer\"` (retired term, still on everything you filed before 2026-07-12). Never write the old one; always read it here, or you'll under-count your own history.\n\nFor each, follow its `informs` edges to see whether the Synthesizer clustered it into a bet, and if so, that bet's current status. Summarize honestly: how many converged into bets, and of those, how many reached `live` / were marked `succeeded` vs `failed`. A recurring theme of yours that never clustered is itself a signal — either it isn't landing or the proposed change wasn't concrete enough. If something is worth acting on, file it as a new insight.\n\n## Step 2 — What did you miss? (the other direction)\nList bets created in the last 7 days. For each, ask: was there evidence in the workspace — failed sessions, repeated escalations, human interventions, blocked work — that you should have filed as an insight *before* that bet was opened, and didn't? Two hard signals:\n- a bet carrying `metadata.evidence_quality = \"gut_feeling\"` or zero supporting insights on a theme your daily scans could see;\n- a human @mentioning you on a bet asking for insights you should already have filed.\nEither one is a miss. File it as an insight about your own coverage — name the gap and the concrete change to your scan that closes it. A coach who only audits everyone else is not doing the job.\n\n## Step 3 — Agent effectiveness (delivery quality)\nUse list_sessions over the last 7 days for:\n- Code Reviewer (01936a6b-258e-4daa-8637-a926f16040ce) — what categories of fix it makes and whose PRs triggered them, plus its PASS / CONDITIONAL PASS / FAIL verdicts (it absorbed the old Acceptance Validator, so review + validation are now one actor). A FAIL means the Developer shipped something the review caught — the highest-signal events.\nGroup issues into recurring categories (missing error handling, unwired integrations, spec deviations, missing infra/config, silent failures, incomplete end-to-end flows, version mismatches, credential/tool-path failures, etc.) and attribute each: Developer gap, Code Reviewer gap, or systemic gap neither could catch alone. Only a pattern across 2+ instances or a clear week-over-week move is worth an insight; name improving trends too.\n\n## Step 4 — Higher-order pattern review\nRead your insights from the past 7 days. Look across days for recurring themes, escalating vs improving trends, correlated signals pointing to one root cause, and agent-reliability patterns. Compare against prior weekly reviews — flag issues persisting across multiple weeks.\n\n## Step 5 — Link, then file\nFor each finding, first `search_objects` for a non-terminal bet (`signal | qualified | define | active | live`) on the same theme. If one exists, create the insight AND an `informs` edge from it to that bet in the same run — that edge is what pulls the Strategist in to dispose of it (absorb / spin-off / note-only). If none exists, file normally and let the Synthesizer route it. Never create or advance a bet yourself.\n\nEach insight: status `new`, `metadata.source = \"workspace_coach\"`, tags `weekly-pattern` / `agent-effectiveness` / `coverage-gap` as they apply. Follow the output template in your system prompt: Observation → Evidence (counts/windows/object IDs) → Proposed change → Owner → Expected effect.\n\nOne insight per distinct finding — never bundle. Do NOT re-file something already reported unless it materially changed. If the week was uneventful, exit silently.",
+		"targetActorId": "9b4820ab-3d00-4e15-b737-8adf7f94d15c",
+		"enabled": true
+	},
+	"9309764c-d5fa-4558-b1cc-a273ca4ad64c": {
+		"id": "9309764c-d5fa-4558-b1cc-a273ca4ad64c",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily Handbook Drift Sweep",
+		"type": "cron",
+		"config": {
+			"expression": "0 1 * * *"
+		},
+		"actionPrompt": "**Daily check that the handbook matches reality.** Call get_workspace_skill on handbook-update and follow its method exactly — the skill is the source of truth, this is just the dispatcher. Silence on no drift; one comment per run if drift exists. No derivative insights — the comment thread is the audit trail. Source actor: d625cf31-fb6c-45df-a8c2-e2823d6053ae. Don't call create_notification.",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": true
+	},
+	"f1d1c055-432f-462a-a177-f27ae7bc5c0e": {
+		"id": "f1d1c055-432f-462a-a177-f27ae7bc5c0e",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Bug Fix Live → Reply to Customer",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "live",
+			"entity_type": "bet"
+		},
+		"actionPrompt": "**Tell the customer their reported bug is fixed and live.** A bet hit `live` — if it came from customer feedback, send the all-clear on whatever channel they used. This is the single \"it's live\" message; there's no separate deploy reply.\n\n1. Read the bet. Require `metadata.auto_bug == true` AND reply coordinates: `feedback_source` + `source_conversation_id` (plus `source_message_ref` for slack/email). If auto_bug isn't true or coordinates are missing, exit silently — other live bets are the Shaper's job. (Legacy fallback: no `source_*` block but `slack_channel_id` + `slack_thread_ts` present → treat as slack with those values.)\n2. Idempotency: if a prior comment already records the \"it's live\" update, exit silently.\n3. Write the message first — short, warm, customer-facing: e.g. \"Good news — the fix for this is live now. Thanks again for flagging it.\" Strip internal prefixes like \"Fix:\" from the title. No IDs, jargon, or mention of agents/automation/statuses.\n4. Send by `feedback_source`:\n   - slack: `mcp__integration-slack__slack_send_message` (as the Maskin bot), `channel_id` = `source_conversation_id`, `thread_ts` = `source_message_ref`.\n   - email: via Resend MCP from support@maskin.io to `source_author_ref`, threaded (`In-Reply-To` / `References` = `source_message_ref`).\n   - intercom / hubspot / meeting / any source with no wired reply tool: don't fake an API call — post a comment mentioning [\"3e16ed51-e5e1-4b87-959f-7eda01b21bea\", \"08964c08-4ea5-45b0-bfa9-251f956909c7\"] with the drafted message and source link, asking a human to send it.\n   - If the send errors, fall back to that same human-handoff comment — never leave the customer un-notified.\n5. Post one short comment recording that the update went out, and how.",
+		"targetActorId": "0e03b5fb-300a-4c46-97f4-3bbfbd1ba3d6",
+		"enabled": true
+	},
+	"a7470be0-05c7-46b9-a003-f48b43a1a6b4": {
+		"id": "a7470be0-05c7-46b9-a003-f48b43a1a6b4",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Insight Updated → Re-triage",
+		"type": "event",
+		"config": {
+			"action": "updated",
+			"entity_type": "insight"
+		},
+		"actionPrompt": "**Re-triage an edited insight (only if it materially changed).** Most updates aren't worth re-triaging — bias hard toward exit.\nCheap skip test (before loading any skill): if the only change is metadata you wrote yourself, or status is already clustered / discarded / parked, exit silently now. If you can't tell what changed cheaply, default to skip.\nRe-triage only if the title or content changed materially, or status moved back to new / processing. Then:\n1. get_objects on the insight.\n2. Run per-event triage from your system prompt; re-evaluate cluster membership and edges.\n3. If the edit now contradicts a non-terminal bet's central assumption, follow the contradiction path in your system prompt (comment + @mention founders).\nDon't call create_notification.",
+		"targetActorId": "99b416f2-a0c3-4ffb-8299-ff9d0e2be0e8",
+		"enabled": true
+	},
+	"b1f9a467-9fc7-4377-a50a-95735fed1e92": {
+		"id": "b1f9a467-9fc7-4377-a50a-95735fed1e92",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily Live Bet Evidence Pull",
+		"type": "cron",
+		"config": {
+			"expression": "30 6 * * *"
+		},
+		"actionPrompt": "**Daily qualitative evidence pull for live bets.** Load maskin-voice, then load and follow the live-bet-evidence-pull skill in full — it's the source of truth.\n\n1. List all bets in `live` via list_objects. Skip bets where `metadata.auto_bug` is true.\n2. For each remaining live bet, run the skill's method: hypothesis keywords → Slack search (last 7 days) → meeting search → create direction-tagged insights (`direction:validates` / `direction:invalidates` / `direction:touches`) linked via \"informs\" → escalate per the skill only if invalidating evidence was found.\n3. Respect the skill's budgets: 3 Slack searches, 1 meeting search, 5 insights, 1 escalation comment per bet per run. Dedup per the skill.\n\nThis is the qualitative half of live-bet validation — the Product Analyst handles the quantitative PostHog half. Your `direction:` tags are what the Strategist's bet-verdict counts at the review date.\n\nNo live bets, or nothing clears the bar → exit silently. Don't call create_notification.",
+		"targetActorId": "3b0337d0-7bed-467d-8239-544e7611a587",
+		"enabled": true
+	},
+	"3578d807-78cc-48dc-a12b-5028eb973103": {
+		"id": "3578d807-78cc-48dc-a12b-5028eb973103",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily Human-Correction → Knowledge Sweep",
+		"type": "cron",
+		"config": {
+			"expression": "30 8 * * *"
+		},
+		"actionPrompt": "**Daily: turn human corrections of agent work into durable knowledge.**\n1. Find human activity: get_events for the last 24h (widen to 72h on Mondays). Keep events where the actor is a HUMAN and the action is `commented` or `updated`, on an object whose top-level `driver` is an AGENT — that's where a human corrected agent work.\n2. Idempotency: for each candidate, get_comments; skip if a receipt comment containing \"Captured\" already exists with a timestamp after the human event. Never double-capture.\n3. Capture: for each remaining object, load human-feedback-to-knowledge and run it fully — both surfaces: (a) human comments correcting the agent, and (b) post-delivery overrides (diff the decision section against what the driver agent last recorded; the delta is the rule). Write \"validated\" knowledge with a `topic:` tag + `human-correction` marker + `provenance:human-review`, wired with both `about` (source) and `informs` (the work it should shape) edges, then post the receipt: \"Captured N rule(s): [titles].\"\n4. No matches → exit silently. The per-object receipt is the only output. Surface a separate comment only on a genuine error.",
+		"targetActorId": "3322def3-7d6b-4615-beaf-b43b291f95a8",
+		"enabled": true
+	},
+	"34ed237f-658e-45d2-b77d-4d8be60cccbd": {
+		"id": "34ed237f-658e-45d2-b77d-4d8be60cccbd",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Task In Progress → Driver: Economist",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"driver": "9ba1b897-028a-4267-b11f-1bded4bcd86a"
+			},
+			"to_status": "in_progress",
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Do the pricing / cost analysis this task asks for.** You're the driver of task {{entity_id}} and it just moved to in_progress. Read it via get_objects and follow your system prompt: run the analysis (pull the numbers from analytics, model the unit economics, benchmark via exa if needed), then post your findings and a clear recommendation as a comment — name the value metric, the trade-off, and the assumptions. Because money is a human call, @mention the relevant founder (resolve via list_actors — Sebastian owns pricing/business) so they can make the call; you recommend, you don't enact. Then advance the task to its next pipeline status — don't leave it sitting in in_progress. This is an analysis deliverable, not a code task: no PR, no branch.",
+		"targetActorId": "9ba1b897-028a-4267-b11f-1bded4bcd86a",
+		"enabled": true
+	},
+	"2a8f9709-c239-4f92-9ebf-6e21022d4b80": {
+		"id": "2a8f9709-c239-4f92-9ebf-6e21022d4b80",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Task In Review → Code Review",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "in_review",
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Review the code on a task that's ready, then merge it.** A task moved to in_review — review it per your system prompt.\n\nDecision-task guard: read the task. If the driver is the Architect (3008a649-df16-41f1-a187-5d4613d3767a) or Designer (222901a5-8bac-43c9-9291-94c09c820829), exit silently — it's awaiting human approval on a design/architecture proposal, not code review.\n\nCircuit breaker: if metadata.review_round_trips (default 0) is ≥ 3, exit silently — escalation on FAIL is handled by your system prompt, not on entry.\n\nOtherwise, in brief: read the task, bet, and context → check spec conformance → run /review and fix critical + important findings → run lints, type-checks, tests → run e2e → run risk-classifier and write the Risk Score block → issue your verdict. On PASS: move the task to validated (fans out siblings), then load pr-merge and merge the task PR into the bet branch under risk-gate, then move to done. On the last task of the bet, also ship the umbrella to main per your system prompt (ARP → pr-merge Surface B). FAIL → in_progress. A fired Risk Signal routes the merge to a human — that is not a FAIL, and you never override risk-gate or merge past red checks.",
+		"targetActorId": "01936a6b-258e-4daa-8637-a926f16040ce",
+		"enabled": false
+	},
+	"6310ae18-d8ff-435a-93ce-13a92bd71b7a": {
+		"id": "6310ae18-d8ff-435a-93ce-13a92bd71b7a",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Informs edge on active/live bet → Strategist disposition",
+		"type": "event",
+		"config": {
+			"action": "created",
+			"filter": {
+				"type": "informs"
+			},
+			"entity_type": "relationship"
+		},
+		"actionPrompt": "**Decide what to do when an insight gets linked to an active/live bet.** An `informs` relationship was just created. The source is the informing insight (or object); the target is the object being informed.\n\n1. Read the triggering event to get the source (insight) ID and target (bet) ID.\n2. Fetch the target. If it's NOT a bet with status `active` or `live`, stop — no action needed.\n3. Fetch the source insight for its title and content.\n4. **Do NOT touch the bet's `driver`.** A bet at `qualified` or later is always owned by the Workspace Driver — that invariant holds here too. You render the disposition as a comment; you do not reassign ownership to yourself. (Previously this trigger set the driver to the Strategist; that's been removed — leave the Workspace Driver in place.)\n5. **Render an explicit disposition — notification without disposition is the failure mode this trigger exists to prevent.** (The Board View bet collected two customer-reported interaction bugs as `informs` comments while live; neither became scoped work.) Pick exactly one:\n   - **absorb** — the insight changes this bet's scope AND the bet is `active`: resolve the Planner's id via list_actors and comment @mentioning them: \"[insight title] changes scope: [one line]. @Planner add a task covering [the specific change].\"\n   - **spin-off** — the insight warrants separate work, or the bet is `live` (its build window is closed; new scope can't ride it): create a new bet in `signal` titled after the struggle, link the insight to it via `informs` and this bet via `relates_to`, then comment on this bet: \"[insight title] → spun off to [new bet title].\"\n   - **note-only** — genuinely no scope impact: comment \"[insight title] linked. [One-line summary]. No scope change — [one-line why].\"\n6. One comment, short, per the disposition above. Insight title, one-line summary, the disposition. Nothing else. The disposition is yours to make, not to defer — even though you're not the driver, you own the call on what a linked insight means for the bet.\n\nIdempotency: if you already posted a disposition comment for this same insight on this bet, exit silently.",
+		"targetActorId": "c524aac2-4373-485b-b709-bbb4eb2d021e",
+		"enabled": true
+	},
+	"d31f331f-6721-4c2c-92cb-2ac57276d0d9": {
+		"id": "d31f331f-6721-4c2c-92cb-2ac57276d0d9",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Bet → Qualified: Stamp Workspace Driver",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "qualified",
+			"entity_type": "bet"
+		},
+		"actionPrompt": "**Backstop the ownership invariant when a bet transitions into `qualified`.** A bet just moved to `qualified` — enforce the rule that a bet at `qualified` or later is always owned by the Workspace Driver.\n\nThis is a metadata write only. It does NOT spawn the Driver, and it does not touch shaping (the Strategist still drafts on `define`).\n\n1. Read the bet via get_objects.\n2. If `metadata.auto_bug` is `true`, exit silently.\n3. Resolve the Workspace Driver actor via list_actors (match by role/name — never hardcode the UUID).\n4. If the bet's top-level `driver` is already the Workspace Driver, exit silently — do NOT write (a redundant update re-fires this trigger). Otherwise set the top-level `driver` to the Workspace Driver via update_objects. Never `metadata.driver` (deprecated), never the Strategist.\n\nNo comment, no Slack, no notification — this is a silent ownership stamp.\n\nNote: bets *created* directly at `qualified` (Bet Council / fast-track) don't fire this — `status_changed` doesn't fire on creation. Those are stamped at creation by the `strategic-intake-review` bet-creation contract. This trigger only covers the rarer case of a bet dragged or transitioned into `qualified` from `signal`.\n\nSource actor: this agent (the Workspace Driver).",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": true
+	},
+	"ecbebd9e-6700-4375-8482-efd96f1d9377": {
+		"id": "ecbebd9e-6700-4375-8482-efd96f1d9377",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Council intake on signup research",
+		"type": "event",
+		"config": {
+			"action": "created",
+			"conditions": [
+				{
+					"field": "source",
+					"value": "signup_research",
+					"operator": "equals"
+				}
+			],
+			"entity_type": "knowledge"
+		},
+		"actionPrompt": "A signup-research knowledge object just landed in this workspace. The triggering event carries the full object under `data`. Your job: run the Bet Council promote-door on this single new-workspace user, decide whether to promote one qualified bet in their first session, and stop.\n\nDo the work in this order:\n\n1. Read the triggering event. The knowledge id is in `data.id`; the workspace context lives on the linked signup-capture object (walk `about` edges from this knowledge back to the signup-capture knowledge row for name / organization / role). Cluster the full `signup_research` set: run `list_objects` on `knowledge` filtered to this workspace, then keep the objects with `metadata.source = signup_research`. These sibling knowledge rows are the cluster this council pass evaluates.\n2. Load `strategic-intake-review` via `get_workspace_skill`. Follow its `context: signup` branch — that branch is the contract for this trigger. Do not run the cadence-council flow; do not batch across other workspaces; the scope is this one workspace's `scored` queue (the freshly-landed signup-research cluster).\n3. Apply the four-condition autonomy gate exactly as the skill defines it. Enforce the ≥3 independent-source floor via primary-domain dedup — collapse sources that share one registered domain to a single source (multiple URLs from `example.com/a` and `example.com/b` count once). Lift D1 (Strategic Alignment) and D6 (Portfolio Fit) baselines from the workspace-stored cohort table when a cohort match exists, but do NOT add the cohort lift to D2's source count.\n4. On PASS: create exactly one bet with `create_objects`.\n   - `type: 'bet'`, `status: 'qualified'`\n   - `title`, `content` per `shape-and-run-a-bet` seeding (1–2 sentences grounded in the cluster's most-impactful thread)\n   - `metadata.source: 'signup_first_bet_draft'` — this tag is how T3 distinguishes signup-driven draft cards from council-cadence promotions; do not skip it\n   - `metadata.promotion_mode: 'human_approved'` — hardcoded until the council logs ≥10 calibration promotions\n   - `metadata.tags: 'bet-council'` per the skill's Bet creation contract\n   Then create `informs` relationships from every source-cluster knowledge id → the new bet id via `create_relationships`.\n5. On FAIL (any of the four autonomy conditions unmet, or Sub-A stays below 4 after primary-domain dedup): do NOT create a bet. T3's starter-card fallback covers the user. Post one short comment on the source `signup_capture` knowledge naming which conditions failed so the ship-metric review has a paper trail. Stop.\n\nDo not touch UI wiring, do not emit `qualified_bet_visible` (T3 owns that event — it fires when the card renders, not when the bet is created), and do not wait on the bi-weekly council cron. This trigger is deliberately async from signup; do not block the signup webhook. Signup uptime is not coupled to council uptime.",
+		"targetActorId": "c524aac2-4373-485b-b709-bbb4eb2d021e",
+		"enabled": true
+	},
+	"b3a919d9-adaa-4521-88dd-e2e3df7093b5": {
+		"id": "b3a919d9-adaa-4521-88dd-e2e3df7093b5",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Human Reply → Unpark Task",
+		"type": "cron",
+		"config": {
+			"expression": "30 * * * *"
+		},
+		"actionPrompt": "**Resume a task when the human it was parked on has replied.** No event payload — scan the workspace. Your actor ID is `d625cf31-fb6c-45df-a8c2-e2823d6053ae`. Silence on success; only comment on a genuine error. This is the counterpart to the `awaiting_human` park set by `unblock-before-escalate` and the actuation guard — it closes the loop so a parked task resumes promptly once the person answers, instead of waiting for the daily escalation.\n\n## Step 1 — Find parked tasks\n`list_objects(type=task, status='in_progress')` and `list_objects(type=task, status='in_review')`; keep only tasks with `metadata.awaiting_human == true` AND not `metadata.awaiting_human_paused == true`. None → exit silently.\n\n## Step 2 — Was there a human reply since we parked?\nFor each parked task, `get_comments` (limit 20). Let `parked_at` = `metadata.parked_on_human_at` (fall back to the task's `updatedAt`). Find the most recent comment authored by a HUMAN — Sebastian (`3e16ed51-e5e1-4b87-959f-7eda01b21bea`) or Magnus (`08964c08-4ea5-45b0-bfa9-251f956909c7`) — whose `createdAt` is after `parked_at` AND after `metadata.unparked_at` if that is set.\n- No such human reply → skip this task (still genuinely waiting; the daily `pipeline-human-parked-escalation` owns the re-nudge).\n\n## Step 3 — Interpret the reply\nRead the human's reply text:\n- Contains \"drop\" / \"discard\" / \"cancel\" → set the task `status` to `discarded`, set `metadata.awaiting_human = false`, post one short comment confirming, and stop for this task.\n- Contains \"pause\" → set `metadata.awaiting_human_paused = true` (the escalation skill then stops nudging) and stop; leave it parked.\n- Otherwise → treat the reply as the answer that unblocks the task; go to Step 4.\n\n## Step 4 — Unpark and resume\n1. **Clear the park:** `update_objects` setting `metadata.awaiting_human = false` and `metadata.unparked_at = <ISO now>`.\n2. **Restore the agent owner.** Set the top-level `driver` to the owning AGENT — prefer `metadata.pre_park_driver` if set; else resolve via the routing table in `task-routing` (do NOT invent a different mapping): `metadata.task_kind` `validation` → Code Reviewer `01936a6b-258e-4daa-8637-a926f16040ce`, `coordination` → Workspace Driver `d625cf31-fb6c-45df-a8c2-e2823d6053ae`; else `metadata.decision_type` `ux` → Designer `222901a5-8bac-43c9-9291-94c09c820829`, `architecture` → Architect `3008a649-df16-41f1-a187-5d4613d3767a`, `copy` → Product Marketer `e8ff87f1-f5ac-44cd-a35a-60d01dd12470`, `pricing` → Economist `9ba1b897-028a-4267-b11f-1bded4bcd86a`; else (coding) → Developer `212d2818-09df-4751-b8df-d0f1108ec0c1`. If `task_kind` is `human_execution` and there is no agent owner to resume, just leave the cleared flag in place and stop — the human advances it themselves.\n3. **Actuate the owner so it picks up the answer:**\n   - `in_progress` coding task (no `decision_type`/`task_kind`): re-fire the transition — set `status` to `todo`, then immediately back to `in_progress` (intermediate MUST differ) so the canonical router spawns the owner.\n   - otherwise: `create_session(auto_start=true, actor_id=<owner>)`, action_prompt: \"Task {task_id} (parent bet {bet_id}) was parked waiting on a human, who has now replied: '{one-line paraphrase of the human's answer}'. Read the task and its latest comments via get_objects / get_comments, incorporate the answer, and drive the task to its next state per your system prompt. Do not redo finished work.\"\n4. **Idempotency:** `metadata.unparked_at` prevents re-processing the same reply; a resumed task has `awaiting_human = false` so it is no longer a candidate next run.\n\nDon't call create_notification. Reuse the routing table in `task-routing` — do not invent a different mapping. Silence on success.",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": true
+	},
+	"ff35ec6d-162d-4585-bc2a-2fa63a2718aa": {
+		"id": "ff35ec6d-162d-4585-bc2a-2fa63a2718aa",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Coding Task → In Review: Spawn Code Reviewer",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "in_review",
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Review a coding task that just moved to in_review.** Task `{{entity_id}}` transitioned to `in_review`. You are the Code Reviewer (`01936a6b-258e-4daa-8637-a926f16040ce`).\n\n## Guard — read the task via get_objects, then exit silently if ANY of these hold\n1. **Positive scope — code review only.** Proceed ONLY if the task is a coding task: its `driver` is the Developer (`212d2818-09df-4751-b8df-d0f1108ec0c1`) OR it has a PR (`metadata.github_link` present). If neither holds, exit silently — analysis, design, and other `in_review` tasks are not yours.\n2. **Not a decision task.** If `metadata.decision_type` ∈ {`ux`,`architecture`,`copy`}, OR the task's `driver` is the Designer, Architect, or Product Marketer (resolve those roles via list_actors — don't hardcode), exit silently. The \"Design/Arch Task → In Review: Ping Strategist\" trigger owns those.\n3. **Human-driven.** If the task's `driver` is a human, exit silently — it's parked on that person.\n4. **Already resolved.** If the task is already `validated` or `done`, exit silently.\n5. **Circuit-broken.** If `metadata.review_round_trips ≥ 3`, `metadata.loop_circuit_broken_at` is set, or `metadata.watchdog_gave_up = true`, exit silently — a human owns it now.\n6. **Idempotent re-fire.** If you already posted a review verdict for the current PR head SHA (check get_comments), exit silently — this is a re-fire, not a fresh submission.\n\n## Claim, then review\n1. **Claim the task so recovery can find you.** Set the task's top-level `driver` to yourself (the Code Reviewer) via update_objects — write the canonical top-level `driver`, never `metadata.driver`. This is the handoff the Developer doesn't do: it leaves `driver` on itself when it ships, so without this the dead-session watchdogs re-spawn the Developer (who has nothing left to do) and the review never starts. This is exactly the failure that left T3 hanging.\n2. **Run your standard review** per your system prompt / review skill (they are the source of truth — don't restate the rubric here): read the linked PR (`metadata.github_link`), run the risk-classifier, then either PASS → move the task to `validated`; or request changes → post the specific changes as a comment @mentioning the Developer (`212d2818-09df-4751-b8df-d0f1108ec0c1`) and move the task back to `in_progress`.\n\nDon't call create_notification. All human escalations go through create_comment with mentions.",
+		"targetActorId": "01936a6b-258e-4daa-8637-a926f16040ce",
+		"enabled": true
+	},
+	"4ab6ed02-da19-4856-8fc1-529621a3a14a": {
+		"id": "4ab6ed02-da19-4856-8fc1-529621a3a14a",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Umbrella PR Merged → Promote Bet to Live",
+		"type": "event",
+		"config": {
+			"action": "merged",
+			"entity_type": "github.pull_request"
+		},
+		"actionPrompt": "**Promote a bet to \"live\" when its umbrella PR merges to main.** \n\nA GitHub PR was merged. The default at every guard is a silent NO-OP.\n\n## STEP 0 — Read the PR\nFrom the event payload, read: head (source) branch, base (target) branch, repository, PR URL. If branch names are missing, resolve them from the PR URL via the github MCP.\n\n## STEP 1 — Classify the merge\nUmbrella merge = base is the repo default (`main`) AND head matches `bet/*`. Anything else (task merge into a `bet/*` branch, or neither) → exit silently.\n\n## STEP 2 — Find the bet\nFind the bet whose `metadata.branch` equals the `bet/*` head branch. search_objects on the slug, or list_objects(type=bet) + get_objects. No match → exit silently.\n\n## STEP 3 — Guards\n- Bet status is not `active` → exit silently (already live/terminal, or another path beat you to it).\n- `metadata.auto_bug` true OR `metadata.auto_merge_eligible` true → exit silently.\n\n## STEP 4 — Promote\nupdate_objects: set the bet's status to `live`. Nothing else — no acceptance review, no comments, no other metadata writes. The `live` transition fires the downstream \"Bet → Live\" triggers automatically.",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": true
+	},
+	"51608c47-485f-49dd-bc8e-a700e042ba69": {
+		"id": "51608c47-485f-49dd-bc8e-a700e042ba69",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Weekly Changelog Curation — Thursdays 08:00 UTC",
+		"type": "cron",
+		"config": {
+			"expression": "0 8 * * 4"
+		},
+		"actionPrompt": "**Weekly changelog curation — group shipped work into proposed releases (Thursdays, ahead of the Friday publish).**\n\nLoad and follow the `changelog-curation` skill in full via get_workspace_skill — it is the source of truth for what a release is, how to cluster bets into one, sourcing, drafting, and the hard boundaries. In brief: read what shipped since the last release (changelog-eligible `succeeded`/`live` bets + GitHub release deployments on sindre-ai/maskin and sindre-ai/sindre-ai.github.io), and either extend an existing open `changelog_entry` draft or, only if a genuinely new story has accumulated, draft a new one. Group — never one entry per bet, never one per deployment.\n\nThe changelog roadmap is already seeded (7 draft releases, `metadata.doc_type: \"changelog\"`): Initial release → Marketplace + closed loops → Knowledge base → the four remaining close-loop releases. Prefer folding new shipped work into the right existing draft over creating new entries. Wire a `relates_to` edge from the entry to every bet it groups.\n\nHard rules from the skill: draft-only — never set status beyond `draft` (approval is a human call, publishing is the Changelog Publisher's Friday job). At most one comment per pass — when you've drafted or materially extended a release, @mention Sebastian (resolve via list_actors) asking him to review/approve. Load `maskin-voice` before that comment. Nothing shipped that changes a story → exit silently. In-product only; no create_notification, no Slack.",
+		"targetActorId": "e8ff87f1-f5ac-44cd-a35a-60d01dd12470",
+		"enabled": true
+	},
+	"8e9deb8f-1941-4271-9da7-f696c2fb1490": {
+		"id": "8e9deb8f-1941-4271-9da7-f696c2fb1490",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Bet Succeeded → Write Knowledge",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "succeeded",
+			"entity_type": "bet"
+		},
+		"actionPrompt": "**Write up a successful bet so it can be repeated.** Follow your system prompt in order: Part 1 (retro), then Part 2 (knowledge). Lead the article with what succeeded and why.\n\nDo NOT do Part 3 (per-bet changelog). Changelog is no longer written one-entry-per-bet — it's now owned by the weekly Changelog Curation pass, which groups shipped work into themed releases. Your only changelog-related job here is to make sure the bet carries `metadata.changelog_eligible: true` if it's a user-facing shipped capability, so the curation pass picks it up; then stop.",
+		"targetActorId": "3322def3-7d6b-4615-beaf-b43b291f95a8",
+		"enabled": true
+	},
+	"1edef7ba-a74c-45dd-9294-f0e81f946b85": {
+		"id": "1edef7ba-a74c-45dd-9294-f0e81f946b85",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Task In Progress → Driver: Code Reviewer (validation)",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"driver": "01936a6b-258e-4daa-8637-a926f16040ce"
+			},
+			"to_status": "in_progress",
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Run the validation/QA check this task asks for.** You're the driver of task {{entity_id}} (a `task_kind: validation` check) and it just moved to `in_progress`. Read it via get_objects.\n\nGuard: if this is NOT a validation task you're meant to *execute* — e.g. it's a coding task whose PR you'll review at `in_review` (`metadata.github_link` present and `metadata.task_kind` is not `validation`) — exit silently; the `in_review` review triggers own that.\n\nOtherwise drive it per your system prompt and the `qa` / `bet-qa` skills: drive the real client (browser, API, terminal) through the task's verification recipe, capture observable evidence, render a PASS / FAIL / INCONCLUSIVE verdict, post it as a comment, and advance the task to its next state. On FAIL, create the specific numbered fix tasks (never block). If the check genuinely can only be done by a person (eyes on a mobile client, a human to run it), do NOT leave it sitting in `in_progress` — park it via `unblock-before-escalate`: set `metadata.awaiting_human = true`, set `driver` to the right human, post the one ask. Don't leave it sitting in `in_progress`.",
+		"targetActorId": "01936a6b-258e-4daa-8637-a926f16040ce",
+		"enabled": true
+	},
+	"3a622295-3fa4-401a-869d-50af034d6ee7": {
+		"id": "3a622295-3fa4-401a-869d-50af034d6ee7",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Task In Progress → Driver: Workspace Driver (coordination)",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"filter": {
+				"driver": "d625cf31-fb6c-45df-a8c2-e2823d6053ae"
+			},
+			"to_status": "in_progress",
+			"entity_type": "task"
+		},
+		"actionPrompt": "**Do the coordination this task asks for.** You're the driver of task {{entity_id}} (a `task_kind: coordination` task) and it just moved to `in_progress`. Read it via get_objects, then do the coordination per the brief — chase a URL, verify a repo/settings state via the GitHub API, post a status, ping the owner, reconcile a duplicate PR, etc.\n\nThe moment the task is genuinely waiting on a *human* action or decision (a toggle only an admin can click, a go/no-go answer, a person to provision something), do NOT leave it sitting in `in_progress` where a watchdog will re-spawn you every few hours. Park it via `unblock-before-escalate`: set `metadata.awaiting_human = true`, set `driver` to the right human (Magnus for technical/infra, Sebastian for product/strategy or when unclear), and post the one specific ask. The `Human Reply → Unpark Task` cron resumes you when they answer.\n\nIf the coordination is fully within your reach, complete it and advance the task. Don't leave it sitting in `in_progress`. Don't call create_notification.",
+		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
+		"enabled": true
+	},
+	"8b68c8af-8652-42ef-a47a-e9ad7a86a34a": {
+		"id": "8b68c8af-8652-42ef-a47a-e9ad7a86a34a",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily Loop Health Scan",
+		"type": "cron",
+		"config": {
+			"expression": "0 8 * * *"
+		},
+		"actionPrompt": "**Daily Loop health scan.** Load the `loop-health-scan` skill via `get_workspace_skill` and follow it in full — it owns the enumeration, source-bet walk, cadence-window evaluation, `metadata.last_breach_at` stamping, status transitions to `at-risk`/`breached`, and the one-insight-per-moved-Loop rule. Loops are the standing-commitment object type sibling to bets (statuses `holding | at-risk | breached`, metadata `floor, cadence, source_bet_id, last_breach_at`; provenance via a `derived_from` edge). Read Loops with `list_objects(type='loop')` — never `metadata_eq`. Every Loop `holding` and no floor missed → exit silently. In-product only; do not create notifications, do not Slack.",
+		"targetActorId": "9b4820ab-3d00-4e15-b737-8adf7f94d15c",
+		"enabled": true
+	},
+	"a908b082-7b8c-4eb4-b4cb-b77470a1358f": {
+		"id": "a908b082-7b8c-4eb4-b4cb-b77470a1358f",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Weekly Workspace Hygiene Sweep",
+		"type": "cron",
+		"config": {
+			"expression": "0 3 * * 1"
+		},
+		"actionPrompt": "**Weekly backlog hygiene sweep — clear the graveyard.** Load `workspace-hygiene` via get_workspace_skill and follow it in full — it owns the sweep filters, approval states, budgets, and digest format. Do not restate or improvise its rules here; if the procedure needs to change, edit the skill, not this trigger.\n\nRetrospective only: never touch bets in `qualified | define | active | live`, never touch objects with running sessions, never call delete_object. Execute only sweep classes the skill marks APPROVED; everything else is proposed in the single digest comment with chips. Nothing stale anywhere → exit silently. In-product only — no Slack, don't call create_notification.",
+		"targetActorId": "9b4820ab-3d00-4e15-b737-8adf7f94d15c",
+		"enabled": true
+	},
+	"2486e963-b62c-42a6-9f9d-9d47bc9d8d12": {
+		"id": "2486e963-b62c-42a6-9f9d-9d47bc9d8d12",
+		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
+		"name": "Daily Knowledge Corpus Lint",
+		"type": "cron",
+		"config": {
+			"expression": "0 7 * * *"
+		},
+		"actionPrompt": "**Daily lint of the knowledge corpus against T1's v1 frontmatter + compression test.** Load `knowledge-corpus-lint` via `get_workspace_skill` and run it in full — the skill owns the checks, severities, artifact schema, and post/dedup policy. Read-only: this skill never writes to a knowledge row. Post the machine-readable JSON artifact on the parent bet [Three-layer knowledge — compiled articles + index so agents navigate instead of dumping context](https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/9a589a23-4aaa-43c7-a872-a503efc91c1e). In-product only — no Slack, no `create_notification`. The artifact IS the deliverable — post even on clean runs so AC #3 has a fresh dated `severity_high.v1_subset == 0` datapoint every day.",
+		"targetActorId": "3322def3-7d6b-4615-beaf-b43b291f95a8",
+		"enabled": true
+	}
+}

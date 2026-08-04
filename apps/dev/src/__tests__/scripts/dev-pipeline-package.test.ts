@@ -63,9 +63,9 @@ describe('Development Pipeline package definition', () => {
 		expect(DEV_PIPELINE_PACKAGE.description.length).toBeGreaterThan(0)
 	})
 
-	it('ships three actors and four triggers, no duplicates', () => {
-		expect(DEV_PIPELINE_ACTOR_IDS.length).toBe(3)
-		expect(DEV_PIPELINE_TRIGGER_IDS.length).toBe(4)
+	it('ships two actors and five triggers, no duplicates', () => {
+		expect(DEV_PIPELINE_ACTOR_IDS.length).toBe(2)
+		expect(DEV_PIPELINE_TRIGGER_IDS.length).toBe(5)
 		expect(new Set(DEV_PIPELINE_ACTOR_IDS).size).toBe(DEV_PIPELINE_ACTOR_IDS.length)
 		expect(new Set(DEV_PIPELINE_TRIGGER_IDS).size).toBe(DEV_PIPELINE_TRIGGER_IDS.length)
 	})
