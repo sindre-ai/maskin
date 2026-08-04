@@ -413,3 +413,31 @@ export function trackForyouCardMarkedUnread(p: ForyouCardMarkedProps): void {
 		via: 'swipe',
 	})
 }
+
+// For You redesign (Direction A) surface-adoption events. The success metric —
+// in-card action rate — pairs `foryou_card_action` (numerator) with
+// `foryou_card_shown` (denominator) on `card_id`, so both events MUST carry the
+// same shape and identity. `card_kind` comes from `classifyCardKind()` in
+// `@/lib/foryou-card-kind`, which also feeds the DOM `data-card-kind` attribute
+// on the card root — one source of truth so the reading and the rendered
+// weight never drift.
+import type { CardKind } from './foryou-card-kind'
+
+export function trackForyouCardShown(p: { card_kind: CardKind; card_id: string }): void {
+	trackEvent('foryou_card_shown', {
+		card_kind: p.card_kind,
+		card_id: p.card_id,
+	})
+}
+
+export function trackForyouCardAction(p: {
+	card_kind: CardKind
+	card_id: string
+	action_id: string
+}): void {
+	trackEvent('foryou_card_action', {
+		card_kind: p.card_kind,
+		card_id: p.card_id,
+		action_id: p.action_id,
+	})
+}

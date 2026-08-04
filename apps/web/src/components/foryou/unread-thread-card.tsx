@@ -8,6 +8,7 @@ import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
 import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
+import { trackForyouCardAction, trackForyouCardShown } from '@/lib/analytics'
 import type { EventResponse, UnreadItem } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -92,6 +93,26 @@ export function UnreadThreadCard({
 		observer.observe(node)
 		return () => observer.disconnect()
 	}, [hasBeenVisible])
+
+	const cardKind: CardKind = classifyCardKind(item)
+
+	// Fires once per mount, on the first IntersectionObserver hit — the natural
+	// impression signal. The observer disconnects immediately after, so remount
+	// (scroll off + back) is the only way to re-fire, matching PostHog's
+	// intent-per-view expectation for the success-metric denominator.
+	const impressionFiredRef = useRef(false)
+	useEffect(() => {
+		if (!hasBeenVisible || impressionFiredRef.current) return
+		impressionFiredRef.current = true
+		trackForyouCardShown({ card_kind: cardKind, card_id: objectId })
+	}, [hasBeenVisible, cardKind, objectId])
+
+	const emitAction = useCallback(
+		(actionId: string) => {
+			trackForyouCardAction({ card_kind: cardKind, card_id: objectId, action_id: actionId })
+		},
+		[cardKind, objectId],
+	)
 
 	const { data: events } = useEntityEvents(workspaceId, objectId, {
 		enabled: hasBeenVisible,
@@ -224,9 +245,10 @@ export function UnreadThreadCard({
 	const handleReplyClick = useCallback(
 		(e: ReactMouseEvent) => {
 			e.stopPropagation()
+			emitAction('reply')
 			onActivate()
 		},
-		[onActivate],
+		[onActivate, emitAction],
 	)
 
 	const isRead = item.unread_count === 0
@@ -253,7 +275,6 @@ export function UnreadThreadCard({
 	const insightPreview = (item.object?.content ?? '').trim()
 	const isUnread = item.unread_count > 0
 	const isMention = item.mentioning_unread_count > 0
-	const cardKind: CardKind = classifyCardKind(item)
 	const isListMode = mode === 'list'
 	const isMobileViewport = useIsMobile()
 	// Kind-specific action set; `thread` reuses the generic quick-reply chips
@@ -267,6 +288,7 @@ export function UnreadThreadCard({
 
 	const runCardAction = useCallback(
 		(action: CardAction) => {
+			emitAction(action.id)
 			quickReply.mutate(
 				{ entity_id: objectId, content: action.label, parent_event_id: replyTarget },
 				{
@@ -277,7 +299,7 @@ export function UnreadThreadCard({
 				},
 			)
 		},
-		[quickReply, objectId, replyTarget, handleMarkRead],
+		[quickReply, objectId, replyTarget, handleMarkRead, emitAction],
 	)
 
 	return (
@@ -367,6 +389,7 @@ export function UnreadThreadCard({
 						title="Mark as read"
 						onClick={(e) => {
 							e.stopPropagation()
+							emitAction('mark_read_corner')
 							handleMarkRead()
 						}}
 						disabled={markRead.isPending}
@@ -534,6 +557,7 @@ export function UnreadThreadCard({
 								className="h-7 px-2 text-xs"
 								onClick={(e) => {
 									e.stopPropagation()
+									emitAction('mark_read_button')
 									handleMarkRead()
 								}}
 								disabled={markRead.isPending}

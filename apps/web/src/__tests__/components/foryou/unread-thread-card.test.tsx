@@ -6,6 +6,18 @@ import type { EventResponse, UnreadItem } from '@/lib/api'
 import { buildEventResponse, buildObjectResponse } from '../../factories'
 import { TestWrapper } from '../../setup'
 
+const trackForyouCardShownMock = vi.fn()
+const trackForyouCardActionMock = vi.fn()
+
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return {
+		...actual,
+		trackForyouCardShown: (...args: unknown[]) => trackForyouCardShownMock(...args),
+		trackForyouCardAction: (...args: unknown[]) => trackForyouCardActionMock(...args),
+	}
+})
+
 const mockUseEntityEvents = vi.fn()
 const mockMarkReadMutate = vi.fn()
 const mockUseMarkRead = vi.fn(() => ({ mutate: mockMarkReadMutate, isPending: false }))
@@ -77,6 +89,8 @@ describe('UnreadThreadCard', () => {
 		mockMarkReadMutate.mockReset()
 		mockMarkUnreadMutate.mockReset()
 		mockCreateCommentMutate.mockReset()
+		trackForyouCardShownMock.mockReset()
+		trackForyouCardActionMock.mockReset()
 	})
 
 	it('renders the object title and unread count', () => {
@@ -857,9 +871,9 @@ describe('UnreadThreadCard', () => {
 	})
 
 	// The three action-UI kinds — the load-bearing distinction the bet is
-	// wagering on. T6 reads `data-card-kind` off the card root to emit
-	// `foryou_card_shown` / `foryou_card_action`, so this attribute is a
-	// contract, not an implementation detail.
+	// wagering on. T6 reads the same `classifyCardKind` helper to emit
+	// `foryou_card_shown` / `foryou_card_action`, so this classification is a
+	// contract shared with the analytics pipeline.
 	describe('card kinds', () => {
 		it('classifies a bet in in_review as a decision card and renders the shaded footer', () => {
 			mockUseEntityEvents.mockReturnValue({ data: [] })
@@ -878,12 +892,9 @@ describe('UnreadThreadCard', () => {
 			const card = container.querySelector('[data-card-kind]') as HTMLElement
 			expect(card.dataset.cardKind).toBe('decision')
 			const footer = screen.getByTestId('decision-footer')
-			// The shaded footer uses the --st-in_review-bg design token to signal stakes.
 			expect(footer.className).toContain('bg-status-in_review-bg')
 			expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
 			expect(screen.getByRole('button', { name: 'Send back' })).toBeInTheDocument()
-			// Decision cards do NOT render the generic chip-row — the shaded footer is
-			// their action zone.
 			expect(screen.queryByTestId('chip-row')).not.toBeInTheDocument()
 		})
 
@@ -1031,6 +1042,223 @@ describe('UnreadThreadCard', () => {
 			)
 			expect(screen.queryByTestId('chip-row')).not.toBeInTheDocument()
 			expect(screen.queryByRole('button', { name: 'Sign off' })).not.toBeInTheDocument()
+		})
+	})
+
+	describe('PostHog instrumentation (T6)', () => {
+		// Success metric = count(foryou_card_action) / count(foryou_card_shown) on
+		// matching card_id. Both events must ride the same identity or the ratio
+		// silently reads wrong at rollout — these tests are the wire check.
+
+		const originalIntersectionObserver = globalThis.IntersectionObserver
+
+		function useEagerIntersectionObserver() {
+			class EagerObserver {
+				private callback: IntersectionObserverCallback
+				constructor(cb: IntersectionObserverCallback) {
+					this.callback = cb
+				}
+				observe(target: Element) {
+					this.callback(
+						[{ isIntersecting: true, target } as unknown as IntersectionObserverEntry],
+						this as unknown as IntersectionObserver,
+					)
+				}
+				unobserve() {}
+				disconnect() {}
+				takeRecords() {
+					return []
+				}
+			}
+			globalThis.IntersectionObserver = EagerObserver as unknown as typeof IntersectionObserver
+		}
+
+		afterEach(() => {
+			globalThis.IntersectionObserver = originalIntersectionObserver
+		})
+
+		it('emits foryou_card_shown once when the card first intersects the viewport, keyed by classifyCardKind', () => {
+			useEagerIntersectionObserver()
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						entity_id: 'bet-42',
+						object: buildObjectResponse({
+							id: 'bet-42',
+							title: 'Bet',
+							type: 'bet',
+							status: 'in_review',
+						}),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(trackForyouCardShownMock).toHaveBeenCalledTimes(1)
+			expect(trackForyouCardShownMock).toHaveBeenCalledWith({
+				card_kind: 'decision',
+				card_id: 'bet-42',
+			})
+		})
+
+		it('does not emit foryou_card_shown when the card never becomes visible', () => {
+			// Default stub observer (from setup.ts) never fires — mirrors a card
+			// that mounts below the fold and is scrolled past before intersection.
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem()}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(trackForyouCardShownMock).not.toHaveBeenCalled()
+		})
+
+		it('emits foryou_card_action with action_id=reply when the Reply button is clicked', async () => {
+			const user = userEvent.setup()
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						entity_id: 'bet-1',
+						object: buildObjectResponse({
+							id: 'bet-1',
+							title: 'Bet',
+							type: 'bet',
+							status: 'in_review',
+						}),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			await user.click(screen.getByRole('button', { name: /reply/i }))
+
+			expect(trackForyouCardActionMock).toHaveBeenCalledWith({
+				card_kind: 'decision',
+				card_id: 'bet-1',
+				action_id: 'reply',
+			})
+		})
+
+		it('emits foryou_card_action with action_id=mark_read_button from the footer Mark-as-read', async () => {
+			const user = userEvent.setup()
+			mockUseEntityEvents.mockReturnValue({
+				data: [buildComment({ id: 42, actorId: 'other', data: { content: 'unread' } })],
+			})
+
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						entity_id: 'task-9',
+						unread_count: 1,
+						latest_event_id: 42,
+						object: buildObjectResponse({
+							id: 'task-9',
+							title: 'Task',
+							type: 'task',
+							status: 'in_review',
+						}),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			const buttons = screen.getAllByRole('button', { name: /^mark as read$/i })
+			// Footer Mark-as-read is the last matching button; the corner ✓ uses
+			// the same aria-label but sits earlier in DOM order.
+			await user.click(buttons[buttons.length - 1])
+
+			expect(trackForyouCardActionMock).toHaveBeenCalledWith({
+				card_kind: 'sign_off',
+				card_id: 'task-9',
+				action_id: 'mark_read_button',
+			})
+		})
+
+		it('emits foryou_card_action with the CardAction id when a sign_off chip is clicked', async () => {
+			const user = userEvent.setup()
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						entity_id: 'task-3',
+						object: buildObjectResponse({
+							id: 'task-3',
+							title: 'Task',
+							type: 'task',
+							status: 'in_review',
+						}),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			await user.click(screen.getByRole('button', { name: 'Snooze 24h' }))
+
+			expect(trackForyouCardActionMock).toHaveBeenCalledWith({
+				card_kind: 'sign_off',
+				card_id: 'task-3',
+				action_id: 'snooze_24h',
+			})
+		})
+
+		it('emits foryou_card_action from decision-footer buttons with their stable action_id', async () => {
+			const user = userEvent.setup()
+			mockUseEntityEvents.mockReturnValue({ data: [] })
+
+			render(
+				<UnreadThreadCard
+					workspaceId="ws-1"
+					item={buildItem({
+						entity_id: 'bet-9',
+						object: buildObjectResponse({
+							id: 'bet-9',
+							title: 'Bet',
+							type: 'bet',
+							status: 'in_review',
+						}),
+					})}
+					isActive={false}
+					onActivate={noop}
+					onReplyTargetChange={noop}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			await user.click(screen.getByRole('button', { name: 'Approve' }))
+
+			expect(trackForyouCardActionMock).toHaveBeenCalledWith({
+				card_kind: 'decision',
+				card_id: 'bet-9',
+				action_id: 'approve',
+			})
 		})
 	})
 })
