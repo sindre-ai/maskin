@@ -51,4 +51,15 @@ describe('useForyouRedesignFlag', () => {
 		const { result } = renderHook(() => useForyouRedesignFlag())
 		expect(result.current).toBe(false)
 	})
+
+	it('honours the DEV-only localStorage override even without a founder actor', () => {
+		vi.mocked(getStoredActor).mockReturnValue(null)
+		localStorage.setItem('maskin-flag-foryou-redesign', '1')
+		try {
+			const { result } = renderHook(() => useForyouRedesignFlag())
+			expect(result.current).toBe(true)
+		} finally {
+			localStorage.removeItem('maskin-flag-foryou-redesign')
+		}
+	})
 })

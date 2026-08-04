@@ -7,7 +7,15 @@ const FOUNDER_ACTOR_IDS = new Set([
 	'08964c08-4ea5-45b0-bfa9-251f956909c7', // Magnus
 ])
 
+// DEV-only bypass so the T5 Playwright spec can drive the redesign path
+// without being a founder actor. Stripped from the production bundle by Vite
+// so the canary stays founder-only on the deployed slot.
+const DEV_OVERRIDE_KEY = 'maskin-flag-foryou-redesign'
+
 export function useForyouRedesignFlag(): boolean {
+	if (import.meta.env.DEV && localStorage.getItem(DEV_OVERRIDE_KEY) === '1') {
+		return true
+	}
 	const actor = getStoredActor()
 	if (!actor) return false
 	return FOUNDER_ACTOR_IDS.has(actor.id)
