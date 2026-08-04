@@ -65,7 +65,10 @@ test.describe('Object detail — above-title identity row', () => {
 			// "Driver:" prefix instead.
 			await expect(page.getByText('bet', { exact: true }).first()).toBeVisible()
 			await expect(
-				page.getByRole('combobox').filter({ hasText: /driver/i }).first(),
+				page
+					.getByRole('combobox')
+					.filter({ hasText: /driver/i })
+					.first(),
 			).toBeVisible()
 
 			// SubscribeToggle + creator + created/updated timestamps must
