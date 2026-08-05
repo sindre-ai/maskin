@@ -47,6 +47,7 @@ type TaxonomyEntityType =
 	| 'trigger'
 	| 'relationship'
 	| 'file'
+	| 'commitment'
 	| 'loop'
 
 type EventSource = 'web' | 'mcp' | 'trigger'
@@ -362,21 +363,23 @@ export function trackScrollToTop(
 	})
 }
 
-// Ship-metric events for the Loops primitive bet. `loop_viewed` fires once per
-// Loop detail page mount; `loop_graduated` fires once per Loop created from the
-// web (paired with `bet_created` — same call site pattern in `useCreateObject`).
-// `source_bet_id` mirrors the Loop's `metadata.source_bet_id` so PostHog can
-// join Loop reads back to the bet that produced them.
-export function trackLoopViewed(
-	p: BaseProps & { entity_type: 'loop'; source_bet_id: string | null },
+// Ship-metric events for the commitment primitive (previously registered as
+// `loop`, renamed 2026-08 so the `loop` name is free for the multi-agent
+// pipeline type). `commitment_viewed` fires once per detail page mount;
+// `commitment_graduated` fires once per commitment created from the web
+// (paired with `bet_created` — same call site pattern in `useCreateObject`).
+// `source_bet_id` mirrors `metadata.source_bet_id` so PostHog can join
+// reads back to the bet that produced them.
+export function trackCommitmentViewed(
+	p: BaseProps & { entity_type: 'commitment'; source_bet_id: string | null },
 ): void {
-	trackEvent('loop_viewed', { ...fillBase(p), source_bet_id: p.source_bet_id })
+	trackEvent('commitment_viewed', { ...fillBase(p), source_bet_id: p.source_bet_id })
 }
 
-export function trackLoopGraduated(
-	p: BaseProps & { entity_type: 'loop'; source_bet_id: string | null },
+export function trackCommitmentGraduated(
+	p: BaseProps & { entity_type: 'commitment'; source_bet_id: string | null },
 ): void {
-	trackEvent('loop_graduated', { ...fillBase(p), source_bet_id: p.source_bet_id })
+	trackEvent('commitment_graduated', { ...fillBase(p), source_bet_id: p.source_bet_id })
 }
 
 // Ship-metric events for the bidirectional swipe-to-read/unread bet on the For

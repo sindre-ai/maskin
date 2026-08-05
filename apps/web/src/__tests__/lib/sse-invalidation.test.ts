@@ -80,10 +80,10 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
-	it('invalidates objects for loop entity', () => {
+	it('invalidates objects for commitment entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
-			entity_type: 'loop',
+			entity_type: 'commitment',
 			entity_id: entityId,
 			action: 'status_changed',
 		} as never)

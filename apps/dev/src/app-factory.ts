@@ -28,6 +28,7 @@ import importsRoutes from './routes/imports'
 import installedPackagesRoutes from './routes/installed-packages'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import loopsRoutes from './routes/loops'
 import mcpRoutes from './routes/mcp'
 import methodRoutes from './routes/method'
 import notificationsRoutes from './routes/notifications'
@@ -205,6 +206,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/api/*', createIdempotencyMiddleware(db))
 
 	app.route('/api/objects', objectsRoutes)
+	app.route('/api/loops', loopsRoutes)
 	app.route('/api/briefing', briefingRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
 	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)

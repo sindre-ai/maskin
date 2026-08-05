@@ -25,7 +25,7 @@ vi.mock('@/lib/analytics', async () => {
 		trackAgentSessionStarted: vi.fn(),
 		trackCommentPosted: vi.fn(),
 		trackRelationshipCreated: vi.fn(),
-		trackLoopGraduated: vi.fn(),
+		trackCommitmentGraduated: vi.fn(),
 		trackEvent: vi.fn(),
 	}
 })
@@ -36,8 +36,8 @@ import {
 	trackBetCreated,
 	trackBetStatusChanged,
 	trackCommentPosted,
+	trackCommitmentGraduated,
 	trackEvent,
-	trackLoopGraduated,
 	trackRelationshipCreated,
 } from '@/lib/analytics'
 
@@ -109,12 +109,12 @@ describe('useCreateObject — bet_created', () => {
 	})
 })
 
-describe('useCreateObject — loop_graduated', () => {
-	it('emits loop_graduated with the source_bet_id join key when a loop is created', async () => {
+describe('useCreateObject — commitment_graduated', () => {
+	it('emits commitment_graduated with the source_bet_id join key when a commitment is created', async () => {
 		vi.mocked(api.objects.create).mockResolvedValue(
 			buildObject({
-				id: 'loop-1',
-				type: 'loop',
+				id: 'commitment-1',
+				type: 'commitment',
 				status: 'holding',
 				metadata: { source_bet_id: 'bet-abc' },
 			}),
@@ -123,39 +123,39 @@ describe('useCreateObject — loop_graduated', () => {
 		const { result } = renderHook(() => useCreateObject(workspaceId), { wrapper: Wrapper })
 
 		result.current.mutate({
-			type: 'loop',
+			type: 'commitment',
 			title: 'Customer bugs fixed <1 day',
 			status: 'holding',
 			metadata: { source_bet_id: 'bet-abc' },
 		})
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
-		expect(trackLoopGraduated).toHaveBeenCalledTimes(1)
-		expect(trackLoopGraduated).toHaveBeenCalledWith({
-			entity_id: 'loop-1',
-			entity_type: 'loop',
+		expect(trackCommitmentGraduated).toHaveBeenCalledTimes(1)
+		expect(trackCommitmentGraduated).toHaveBeenCalledWith({
+			entity_id: 'commitment-1',
+			entity_type: 'commitment',
 			source_bet_id: 'bet-abc',
 		})
 	})
 
-	it('emits loop_graduated with a null source_bet_id when the metadata is absent', async () => {
+	it('emits commitment_graduated with a null source_bet_id when the metadata is absent', async () => {
 		vi.mocked(api.objects.create).mockResolvedValue(
-			buildObject({ id: 'loop-2', type: 'loop', status: 'holding', metadata: null }),
+			buildObject({ id: 'commitment-2', type: 'commitment', status: 'holding', metadata: null }),
 		)
 		const { Wrapper } = makeWrapper()
 		const { result } = renderHook(() => useCreateObject(workspaceId), { wrapper: Wrapper })
 
-		result.current.mutate({ type: 'loop', title: 'New loop', status: 'holding' })
+		result.current.mutate({ type: 'commitment', title: 'New commitment', status: 'holding' })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
-		expect(trackLoopGraduated).toHaveBeenCalledWith({
-			entity_id: 'loop-2',
-			entity_type: 'loop',
+		expect(trackCommitmentGraduated).toHaveBeenCalledWith({
+			entity_id: 'commitment-2',
+			entity_type: 'commitment',
 			source_bet_id: null,
 		})
 	})
 
-	it('does not emit loop_graduated for tasks, insights, or bets', async () => {
+	it('does not emit commitment_graduated for tasks, insights, or bets', async () => {
 		vi.mocked(api.objects.create).mockResolvedValue(buildObject({ id: 'bet-1', type: 'bet' }))
 		const { Wrapper } = makeWrapper()
 		const { result } = renderHook(() => useCreateObject(workspaceId), { wrapper: Wrapper })
@@ -163,7 +163,7 @@ describe('useCreateObject — loop_graduated', () => {
 		result.current.mutate({ type: 'bet', title: 'New bet', status: 'signal' })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
-		expect(trackLoopGraduated).not.toHaveBeenCalled()
+		expect(trackCommitmentGraduated).not.toHaveBeenCalled()
 	})
 })
 

@@ -9,7 +9,7 @@ const wsId = '00000000-0000-0000-0000-000000000001'
 // Order of queries inside renderWorkspaceBriefing (auth middleware is bypassed
 // in tests, so no membership select is prepended):
 //   1. workspace lookup
-//   2-6. Promise.all: activeBets, pausedBets, closedBets, openInsights, loops
+//   2-6. Promise.all: activeBets, pausedBets, closedBets, openInsights, commitments
 
 describe('GET /api/briefing', () => {
 	it('returns the composed briefing markdown for the workspace', async () => {
@@ -28,7 +28,7 @@ describe('GET /api/briefing', () => {
 		expect(body.markdown).toContain('Acme — workspace briefing')
 	})
 
-	it('includes the ## Loops section when loops are seeded', async () => {
+	it('includes the ## Commitments section when commitments are seeded', async () => {
 		const { app, mockResults, storageProvider } = createImportTestApp(
 			briefingRoutes,
 			'/api/briefing',
@@ -36,21 +36,21 @@ describe('GET /api/briefing', () => {
 		const ws = buildWorkspace({ id: wsId })
 		const atRisk = buildObject({
 			workspaceId: wsId,
-			type: 'loop',
+			type: 'commitment',
 			status: 'at-risk',
 			title: 'Customer bugs fixed <1 day',
 			metadata: { floor: '≤1 day median TTR', cadence: 'weekly' },
 		})
 		const breached = buildObject({
 			workspaceId: wsId,
-			type: 'loop',
+			type: 'commitment',
 			status: 'breached',
 			title: 'Onboarding NPS ≥ 40',
 			metadata: { floor: '≥40 NPS', cadence: 'monthly' },
 		})
 		const holding = buildObject({
 			workspaceId: wsId,
-			type: 'loop',
+			type: 'commitment',
 			status: 'holding',
 			title: 'Weekly deploy Fridays',
 			metadata: { floor: 'ship at least 1/week', cadence: 'weekly' },
@@ -62,7 +62,7 @@ describe('GET /api/briefing', () => {
 		expect(res.status).toBe(200)
 		const { markdown } = (await res.json()) as { markdown: string }
 
-		expect(markdown).toContain('## Loops')
+		expect(markdown).toContain('## Commitments')
 
 		// Priority ordering: breached appears before at-risk, at-risk before holding.
 		const breachedIdx = markdown.indexOf('Onboarding NPS ≥ 40')
@@ -77,7 +77,7 @@ describe('GET /api/briefing', () => {
 		expect(markdown).toContain('cadence: weekly')
 	})
 
-	it('omits the ## Loops section when no loops exist', async () => {
+	it('omits the ## Commitments section when no commitments exist', async () => {
 		const { app, mockResults, storageProvider } = createImportTestApp(
 			briefingRoutes,
 			'/api/briefing',
@@ -89,7 +89,7 @@ describe('GET /api/briefing', () => {
 		const res = await app.request(jsonGet('/api/briefing', { 'x-workspace-id': wsId }))
 		expect(res.status).toBe(200)
 		const { markdown } = (await res.json()) as { markdown: string }
-		expect(markdown).not.toContain('## Loops')
+		expect(markdown).not.toContain('## Commitments')
 	})
 
 	it('returns 400 when x-workspace-id header is missing', async () => {

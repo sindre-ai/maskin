@@ -144,7 +144,7 @@ export function ForYouCardQueue({ workspaceId, queue }: ForYouCardQueueProps) {
 			) : (
 				<EmptyState
 					title="You're caught up"
-					description="Nothing needs you right now. The loops keep running — you'll hear when one does."
+					description="Nothing needs you right now. The commitments keep running — you'll hear when one does."
 					action={
 						<div className="flex flex-wrap items-center justify-center gap-3">
 							<Button size="sm" variant="outline" asChild>
@@ -157,7 +157,7 @@ export function ForYouCardQueue({ workspaceId, queue }: ForYouCardQueueProps) {
 									to="/$workspaceId/objects"
 									params={{ workspaceId }}
 									search={{
-										type: 'loop',
+										type: 'commitment',
 										sort: 'createdAt',
 										order: 'desc',
 										status: undefined,
@@ -168,7 +168,7 @@ export function ForYouCardQueue({ workspaceId, queue }: ForYouCardQueueProps) {
 										includeArchived: undefined,
 									}}
 								>
-									Review loops →
+									Review commitments →
 								</Link>
 							</Button>
 						</div>

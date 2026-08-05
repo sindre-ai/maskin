@@ -27,18 +27,25 @@ export const TERMINAL_BET_STATUSES = ['succeeded', 'failed', 'paused'] as const
 export type TerminalBetStatus = (typeof TERMINAL_BET_STATUSES)[number]
 
 /**
- * Loop statuses that warrant an unread-feed entry when transitioned into —
- * the "your standing commitment needs attention" signal that mirrors the
- * bet's terminal-status signal. `holding` is deliberately omitted: a Loop
- * settling back into holding is quiet news, not a For You surface. Shared
- * between the briefing composer (`apps/dev/src/services/workspace-briefing.ts`,
- * where these Loops sort ahead of holding) and the unread-feed join
+ * Commitment statuses that warrant an unread-feed entry when transitioned
+ * into — the "your standing commitment needs attention" signal that mirrors
+ * the bet's terminal-status signal. `holding` is deliberately omitted: a
+ * commitment settling back into holding is quiet news, not a For You
+ * surface. Shared between the briefing composer
+ * (`apps/dev/src/services/workspace-briefing.ts`, where these sort ahead
+ * of holding) and the unread-feed join
  * (`apps/dev/src/routes/subscriptions.ts`, where a `status_changed` into
  * these values enters the feed). Single source of truth so the two surfaces
  * can't drift.
+ *
+ * Historical note: this type was originally registered as `loop` on
+ * 2026-07-11. Renamed to `commitment` in the loops-first-class-type bet
+ * (2026-08) so the `loop` name is free for the multi-agent pipeline
+ * primitive. Migration `0050_rename_loop_to_commitment.sql` flips existing
+ * rows.
  */
-export const LOOP_ATTENTION_STATUSES = ['at-risk', 'breached'] as const
-export type LoopAttentionStatus = (typeof LOOP_ATTENTION_STATUSES)[number]
+export const COMMITMENT_ATTENTION_STATUSES = ['at-risk', 'breached'] as const
+export type CommitmentAttentionStatus = (typeof COMMITMENT_ATTENTION_STATUSES)[number]
 
 export const createObjectSchema = z.object({
 	id: z.string().uuid().optional(),

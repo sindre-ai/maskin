@@ -8,7 +8,7 @@ import {
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
-	trackLoopGraduated,
+	trackCommitmentGraduated,
 } from '../lib/analytics'
 import type {
 	BulkUpdateObjectsInput,
@@ -76,14 +76,14 @@ export function useCreateObject(workspaceId: string) {
 			if (data.type === 'bet') {
 				trackBetCreated({ entity_id: data.id, entity_type: 'bet' })
 			}
-			if (data.type === 'loop') {
+			if (data.type === 'commitment') {
 				const metadata = data.metadata as Record<string, unknown> | null
 				const rawSourceBetId = metadata?.source_bet_id
 				const sourceBetId =
 					typeof rawSourceBetId === 'string' && rawSourceBetId.length > 0 ? rawSourceBetId : null
-				trackLoopGraduated({
+				trackCommitmentGraduated({
 					entity_id: data.id,
-					entity_type: 'loop',
+					entity_type: 'commitment',
 					source_bet_id: sourceBetId,
 				})
 			}

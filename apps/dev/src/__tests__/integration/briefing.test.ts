@@ -27,24 +27,24 @@ async function briefingApp() {
 }
 
 describe('GET /api/briefing (integration)', () => {
-	it('returns markdown with the ## Loops section for seeded loops', async () => {
+	it('returns markdown with the ## Commitments section for seeded commitments', async () => {
 		const actor = await insertActor(db)
 		const workspace = await insertWorkspace(db, actor.id)
 
 		await insertObject(db, workspace.id, actor.id, {
-			type: 'loop',
+			type: 'commitment',
 			status: 'breached',
 			title: 'Onboarding NPS floor',
 			metadata: { floor: '≥40 NPS', cadence: 'monthly' },
 		})
 		await insertObject(db, workspace.id, actor.id, {
-			type: 'loop',
+			type: 'commitment',
 			status: 'at-risk',
 			title: 'Customer bugs fixed <1 day',
 			metadata: { floor: '<1 day median TTR', cadence: 'weekly' },
 		})
 		await insertObject(db, workspace.id, actor.id, {
-			type: 'loop',
+			type: 'commitment',
 			status: 'holding',
 			title: 'Weekly release cadence',
 			metadata: { floor: 'ship at least 1/week', cadence: 'weekly' },
@@ -62,13 +62,13 @@ describe('GET /api/briefing (integration)', () => {
 		expect(body.workspace_id).toBe(workspace.id)
 
 		const md = body.markdown
-		expect(md).toContain('## Loops')
+		expect(md).toContain('## Commitments')
 
 		// Breached must sort ahead of at-risk, at-risk ahead of holding.
-		const loopSection = md.slice(md.indexOf('## Loops'))
-		const breachedIdx = loopSection.indexOf('Onboarding NPS floor')
-		const atRiskIdx = loopSection.indexOf('Customer bugs fixed <1 day')
-		const holdingIdx = loopSection.indexOf('Weekly release cadence')
+		const commitmentSection = md.slice(md.indexOf('## Commitments'))
+		const breachedIdx = commitmentSection.indexOf('Onboarding NPS floor')
+		const atRiskIdx = commitmentSection.indexOf('Customer bugs fixed <1 day')
+		const holdingIdx = commitmentSection.indexOf('Weekly release cadence')
 		expect(breachedIdx).toBeGreaterThanOrEqual(0)
 		expect(atRiskIdx).toBeGreaterThan(breachedIdx)
 		expect(holdingIdx).toBeGreaterThan(atRiskIdx)
@@ -78,7 +78,7 @@ describe('GET /api/briefing (integration)', () => {
 		expect(md).toContain('cadence: weekly')
 	})
 
-	it('stays silent (no ## Loops section) when no loops exist', async () => {
+	it('stays silent (no ## Commitments section) when no commitments exist', async () => {
 		const actor = await insertActor(db)
 		const workspace = await insertWorkspace(db, actor.id)
 
@@ -91,6 +91,6 @@ describe('GET /api/briefing (integration)', () => {
 
 		expect(res.status).toBe(200)
 		const { markdown } = (await res.json()) as { markdown: string }
-		expect(markdown).not.toContain('## Loops')
+		expect(markdown).not.toContain('## Commitments')
 	})
 })

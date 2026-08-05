@@ -42,6 +42,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'insight':
 		case 'bet':
 		case 'task':
+		case 'commitment':
 		case 'loop':
 		case 'knowledge':
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })

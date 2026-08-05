@@ -36,8 +36,8 @@ vi.mock('@/hooks/use-objects', async () => {
 	}
 })
 
-vi.mock('@/components/objects/loop-card', () => ({
-	LoopCard: () => <div data-testid="loop-card" />,
+vi.mock('@/components/objects/commitment-card', () => ({
+	CommitmentCard: () => <div data-testid="commitment-card" />,
 }))
 
 const baseProps = {
@@ -156,17 +156,17 @@ describe('ObjectDocumentView', () => {
 		expect(screen.queryByTestId('linked-objects')).not.toBeInTheDocument()
 	})
 
-	describe('LoopCard wiring', () => {
-		it('renders LoopCard when type is loop', () => {
-			const object = buildObjectResponse({ type: 'loop', status: 'holding' })
+	describe('CommitmentCard wiring', () => {
+		it('renders CommitmentCard when type is commitment', () => {
+			const object = buildObjectResponse({ type: 'commitment', status: 'holding' })
 			render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(screen.getByTestId('loop-card')).toBeInTheDocument()
+			expect(screen.getByTestId('commitment-card')).toBeInTheDocument()
 		})
 
-		it('does not render LoopCard for other types', () => {
+		it('does not render CommitmentCard for other types', () => {
 			const object = buildObjectResponse({ type: 'bet' })
 			render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(screen.queryByTestId('loop-card')).not.toBeInTheDocument()
+			expect(screen.queryByTestId('commitment-card')).not.toBeInTheDocument()
 		})
 	})
 

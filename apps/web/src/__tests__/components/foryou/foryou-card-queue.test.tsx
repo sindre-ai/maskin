@@ -94,7 +94,7 @@ describe('ForYouCardQueue', () => {
 		callbacksByKey.clear()
 	})
 
-	it('renders the empty state with brief and loops links when the queue is empty', () => {
+	it('renders the empty state with brief and commitments links when the queue is empty', () => {
 		render(<ForYouCardQueue workspaceId="ws-1" queue={[]} />)
 
 		expect(screen.getByText("You're caught up")).toBeInTheDocument()
@@ -103,8 +103,8 @@ describe('ForYouCardQueue', () => {
 		const briefLink = screen.getByRole('link', { name: "Today's brief" })
 		expect(briefLink).toHaveAttribute('to', '/$workspaceId/briefing')
 
-		const loopsLink = screen.getByRole('link', { name: /review loops/i })
-		expect(loopsLink).toHaveAttribute('to', '/$workspaceId/objects')
+		const commitmentsLink = screen.getByRole('link', { name: /review commitments/i })
+		expect(commitmentsLink).toHaveAttribute('to', '/$workspaceId/objects')
 	})
 
 	it('renders the first item in the queue and the remaining count', () => {

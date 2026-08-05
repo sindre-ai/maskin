@@ -45,7 +45,7 @@ import { StatusBadge } from '../shared/status-badge'
 import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
-import { LoopCard } from './loop-card'
+import { CommitmentCard } from './commitment-card'
 import { PropertiesDrawer } from './properties-drawer'
 import { OwnerSelect, StatusSelect } from './property-selects'
 import { VerifiedChip, isKnowledgeAuthorWrite } from './verified-chip'
@@ -223,7 +223,7 @@ export function ObjectDocumentView({
 				/>
 			)}
 
-			{object.type === 'loop' && <LoopCard object={object} workspaceId={workspaceId} />}
+			{object.type === 'commitment' && <CommitmentCard object={object} workspaceId={workspaceId} />}
 
 			{/* Metadata badges row — editable cluster stays inline; provenance
 			 * (creator + createdAt) drops to its own row below sm so 375px never
