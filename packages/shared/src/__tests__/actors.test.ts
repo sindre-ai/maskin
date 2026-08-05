@@ -39,6 +39,21 @@ describe('actorToolsSchema', () => {
 		expect(server).toBeDefined()
 		expect(server?.type).toBe('stdio')
 	})
+
+	it('accepts capabilities as a string array (opts an agent into LinkedIn UI, etc.)', () => {
+		const result = actorToolsSchema.parse({ mcpServers: {}, capabilities: ['linkedin'] })
+		expect(result.capabilities).toEqual(['linkedin'])
+	})
+
+	it('omits capabilities when absent (backwards-compatible with existing tools blobs)', () => {
+		const result = actorToolsSchema.parse({ mcpServers: {} })
+		expect(result.capabilities).toBeUndefined()
+	})
+
+	it('rejects capabilities that are not string arrays', () => {
+		expect(() => actorToolsSchema.parse({ mcpServers: {}, capabilities: 'linkedin' })).toThrow()
+		expect(() => actorToolsSchema.parse({ mcpServers: {}, capabilities: [1] })).toThrow()
+	})
 })
 
 describe('llmConfigSchema', () => {

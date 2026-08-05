@@ -10,6 +10,8 @@ export function AgentRunPauseButton({
 	isPausePending = false,
 	runLabel = 'Run',
 	fullWidth = false,
+	disabled = false,
+	disabledReason,
 }: {
 	isActive: boolean
 	onRun: () => void
@@ -18,6 +20,8 @@ export function AgentRunPauseButton({
 	isPausePending?: boolean
 	runLabel?: string
 	fullWidth?: boolean
+	disabled?: boolean
+	disabledReason?: string
 }) {
 	const className = cn('min-h-[44px]', fullWidth && 'w-full')
 
@@ -51,7 +55,8 @@ export function AgentRunPauseButton({
 				e.stopPropagation()
 				onRun()
 			}}
-			disabled={isRunPending}
+			disabled={isRunPending || disabled}
+			title={disabled ? disabledReason : undefined}
 		>
 			<Play size={14} aria-hidden="true" />
 			{isRunPending ? 'Starting…' : runLabel}

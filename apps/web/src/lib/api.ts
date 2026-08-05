@@ -372,6 +372,20 @@ export const api = {
 			request<SlackUser[]>(`/integrations/${id}/slack/users`, { workspaceId }),
 	},
 
+	linkedin: {
+		account: (workspaceId: string) =>
+			request<LinkedinAccountResponse | null>('/linkedin/account', { workspaceId }),
+		connect: (workspaceId: string, payload: { agentId?: string; returnPath?: string }) =>
+			request<{ url: string }>('/linkedin/connect', {
+				method: 'POST',
+				body: {
+					...(payload.agentId ? { agent_id: payload.agentId } : {}),
+					...(payload.returnPath ? { return_path: payload.returnPath } : {}),
+				},
+				workspaceId,
+			}),
+	},
+
 	notifications: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
@@ -1060,6 +1074,36 @@ export interface SlackUser {
 	name: string
 	real_name: string
 	is_bot: boolean
+}
+
+export type LinkedinAccountState =
+	| 'handoff'
+	| 'syncing'
+	| 'warm_up'
+	| 'healthy'
+	| 'restricted'
+	| 'reconnect'
+
+export interface LinkedinPacingSnapshot {
+	dailyCap: number
+	dailySent: number
+	weeklyCap: number
+	weeklySent: number
+	warmup: { day: number; total: number } | null
+}
+
+export interface LinkedinAccountResponse {
+	id: string
+	workspaceId: string
+	state: LinkedinAccountState
+	unipileAccountId: string | null
+	sendingAsName: string | null
+	sendingAsProviderId: string | null
+	connectedAt: string | null
+	createdAt: string | null
+	updatedAt: string | null
+	pacing: LinkedinPacingSnapshot
+	acceptanceRate: number | null
 }
 
 export interface NotificationResponse {

@@ -18,7 +18,13 @@ import {
 	useIntegrations,
 	useProviders,
 } from '@/hooks/use-integrations'
-import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
+import { useConnectLinkedin, useLinkedinAccount } from '@/hooks/use-linkedin-account'
+import type {
+	IntegrationResponse,
+	LinkedinAccountResponse,
+	LinkedinAccountState,
+	ProviderInfo,
+} from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { Check, Copy, Plus } from 'lucide-react'
@@ -64,6 +70,7 @@ function IntegrationsPage() {
 				/>
 			) : (
 				<div className="space-y-2">
+					<LinkedinProviderRow workspaceId={workspaceId} />
 					{providers.map((provider) => {
 						const installations = activeByProvider.get(provider.name) ?? []
 						if (provider.name === 'github' && installations.length > 0) {
@@ -451,4 +458,87 @@ function NestedInstallationRow({
 			</Button>
 		</div>
 	)
+}
+
+// LinkedIn is a hosted-auth (Unipile) integration, not an OAuth provider in the
+// registry, so it renders as its own row alongside the OAuth provider list.
+// State comes from the workspace's `linkedin_accounts` row (see T1); connecting
+// from Settings passes `returnPath` so the Unipile callback lands the user
+// back here instead of on the agent detail page.
+
+const LINKEDIN_STATE_LABELS: Record<LinkedinAccountState, string> = {
+	handoff: 'Connecting…',
+	syncing: 'Syncing',
+	warm_up: 'Warming up',
+	healthy: 'Healthy',
+	restricted: 'Restricted — sending is blocked',
+	reconnect: 'Reconnect required',
+}
+
+function LinkedinProviderRow({ workspaceId }: { workspaceId: string }) {
+	const { data: account, isLoading } = useLinkedinAccount(workspaceId)
+	const connect = useConnectLinkedin(workspaceId)
+
+	const handleConnect = () => {
+		connect.mutate({ returnPath: `/${workspaceId}/settings/integrations` })
+	}
+
+	const view = describeLinkedinRow(account ?? null)
+
+	return (
+		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
+			<div className={`h-3 w-3 shrink-0 rounded-full ${view.dotClass}`} />
+			<div className="flex-1 min-w-0">
+				<p className="text-sm font-medium text-foreground truncate">LinkedIn</p>
+				<p className="text-xs text-muted-foreground truncate">
+					{isLoading ? 'Loading…' : view.description}
+				</p>
+			</div>
+			{view.action === 'connect' && (
+				<Button
+					size="sm"
+					className="shrink-0"
+					onClick={handleConnect}
+					disabled={connect.isPending || isLoading}
+				>
+					{connect.isPending ? 'Opening…' : 'Connect'}
+				</Button>
+			)}
+			{view.action === 'reconnect' && (
+				<Button size="sm" className="shrink-0" onClick={handleConnect} disabled={connect.isPending}>
+					{connect.isPending ? 'Opening…' : 'Reconnect'}
+				</Button>
+			)}
+		</div>
+	)
+}
+
+interface LinkedinRowView {
+	dotClass: string
+	description: string
+	action: 'connect' | 'reconnect' | 'none'
+}
+
+export function describeLinkedinRow(account: LinkedinAccountResponse | null): LinkedinRowView {
+	if (!account) {
+		return {
+			dotClass: 'bg-zinc-600',
+			description: 'Available to connect',
+			action: 'connect',
+		}
+	}
+	const label = LINKEDIN_STATE_LABELS[account.state]
+	const identity = account.sendingAsName ? `Connected as ${account.sendingAsName}` : 'Connected'
+	switch (account.state) {
+		case 'healthy':
+		case 'warm_up':
+			return { dotClass: 'bg-success', description: `${identity} · ${label}`, action: 'none' }
+		case 'syncing':
+		case 'handoff':
+			return { dotClass: 'bg-warning', description: `${identity} · ${label}`, action: 'none' }
+		case 'restricted':
+			return { dotClass: 'bg-error', description: `${identity} · ${label}`, action: 'none' }
+		case 'reconnect':
+			return { dotClass: 'bg-warning', description: `${identity} · ${label}`, action: 'reconnect' }
+	}
 }

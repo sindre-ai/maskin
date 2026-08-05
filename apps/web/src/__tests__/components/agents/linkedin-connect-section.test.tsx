@@ -1,0 +1,315 @@
+import {
+	LinkedinChannelsSection,
+	LinkedinHeroPill,
+	hasLinkedinCapability,
+	useLinkedinSendingBlock,
+} from '@/components/agents/linkedin-connect-section'
+import type { LinkedinAccountResponse, LinkedinAccountState } from '@/lib/api'
+import { render, renderHook, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { TestWrapper } from '../../setup'
+
+vi.mock('@/lib/api', () => ({
+	api: {
+		linkedin: {
+			account: vi.fn(),
+			connect: vi.fn(),
+		},
+	},
+}))
+
+vi.mock('sonner', () => ({
+	toast: { success: vi.fn(), error: vi.fn() },
+}))
+
+import { api } from '@/lib/api'
+
+const workspaceId = '00000000-0000-0000-0000-000000000001'
+const agentId = '11111111-1111-1111-1111-111111111111'
+
+function buildAccount(overrides: Partial<LinkedinAccountResponse>): LinkedinAccountResponse {
+	return {
+		id: 'acc-1',
+		workspaceId,
+		state: 'healthy' as LinkedinAccountState,
+		unipileAccountId: 'unipile-1',
+		sendingAsName: 'Sebastian Bakke',
+		sendingAsProviderId: 'urn:li:1',
+		connectedAt: '2026-07-10T12:00:00.000Z',
+		createdAt: null,
+		updatedAt: null,
+		pacing: {
+			dailyCap: 20,
+			dailySent: 4,
+			weeklyCap: 80,
+			weeklySent: 18,
+			warmup: null,
+		},
+		acceptanceRate: 0.62,
+		...overrides,
+	}
+}
+
+beforeEach(() => {
+	vi.clearAllMocks()
+})
+
+describe('LinkedinChannelsSection — state coverage', () => {
+	it('renders the empty state with a Connect LinkedIn CTA when no account exists', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(null)
+		render(
+			<TestWrapper>
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
+			</TestWrapper>,
+		)
+		expect(await screen.findByRole('button', { name: /connect linkedin/i })).toBeInTheDocument()
+		// No account panel until an account row exists.
+		expect(screen.queryByText(/sending as/i)).not.toBeInTheDocument()
+	})
+
+	it('calls the connect API with the workspaceId prop when no account is connected', async () => {
+		// Regression: previously the row derived workspaceId from `account?.workspaceId ?? ''`,
+		// which was empty in the not-connected state, so the API client dropped the
+		// x-workspace-id header and the server 400'd with a Zod error. The row must use
+		// the workspaceId prop threaded from the parent so the header is always sent.
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(null)
+		vi.mocked(api.linkedin.connect).mockRejectedValueOnce(new Error('handled'))
+		render(
+			<TestWrapper>
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
+			</TestWrapper>,
+		)
+		const button = await screen.findByRole('button', { name: /connect linkedin/i })
+		await userEvent.click(button)
+		await waitFor(() => expect(api.linkedin.connect).toHaveBeenCalledWith(workspaceId, { agentId }))
+	})
+
+	it('renders the handoff state with a Reopen Unipile control', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(buildAccount({ state: 'handoff' }))
+		render(
+			<TestWrapper>
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
+			</TestWrapper>,
+		)
+		expect(await screen.findByRole('button', { name: /reopen unipile/i })).toBeInTheDocument()
+	})
+
+	it('renders the syncing state with a disabled syncing button and info callout', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(
+			buildAccount({
+				state: 'syncing',
+				pacing: { dailyCap: 0, dailySent: 0, weeklyCap: 0, weeklySent: 0, warmup: null },
+			}),
+		)
+		render(
+			<TestWrapper>
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
+			</TestWrapper>,
+		)
+		const syncButton = await screen.findByRole('button', { name: /syncing/i })
+		expect(syncButton).toBeDisabled()
+		expect(screen.getByText(/first-sync in progress/i)).toBeInTheDocument()
+	})
+
+	it('renders the warm-up state with day/total in the callout and the warm-up pacing caps', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(
+			buildAccount({
+				state: 'warm_up',
+				pacing: {
+					dailyCap: 5,
+					dailySent: 2,
+					weeklyCap: 25,
+					weeklySent: 9,
+					warmup: { day: 3, total: 14 },
+				},
+				acceptanceRate: null,
+			}),
+		)
+		render(
+			<TestWrapper>
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
+			</TestWrapper>,
+		)
+		expect(await screen.findByText(/warm-up · day 3 of 14/i)).toBeInTheDocument()
+		expect(screen.getByText('2 / 5')).toBeInTheDocument()
+		expect(screen.getByText('9 / 25')).toBeInTheDocument()
+	})
+
+	it('renders the healthy state with sending-as identity, pacing counters, and acceptance rate', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(buildAccount({ state: 'healthy' }))
+		render(
+			<TestWrapper>
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
+			</TestWrapper>,
+		)
+		expect(await screen.findByText('Sebastian Bakke')).toBeInTheDocument()
+		expect(screen.getByText('4 / 20')).toBeInTheDocument()
+		expect(screen.getByText('18 / 80')).toBeInTheDocument()
+		expect(screen.getByText(/acceptance 62%/i)).toBeInTheDocument()
+	})
+
+	it('renders the reconnect state with a Reconnect CTA and a warn callout', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(buildAccount({ state: 'reconnect' }))
+		render(
+			<TestWrapper>
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
+			</TestWrapper>,
+		)
+		expect(await screen.findByRole('button', { name: /reconnect/i })).toBeInTheDocument()
+		expect(screen.getByText(/linkedin signed you out/i)).toBeInTheDocument()
+	})
+
+	it('renders the restricted state WITHOUT a reconnect CTA and with an error callout', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(buildAccount({ state: 'restricted' }))
+		render(
+			<TestWrapper>
+				<LinkedinChannelsSection
+					agentId={agentId}
+					workspaceId={workspaceId}
+					tools={{ capabilities: ['linkedin'] }}
+				/>
+			</TestWrapper>,
+		)
+		await screen.findByText(/restricted by linkedin/i)
+		expect(screen.queryByRole('button', { name: /reconnect/i })).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /recovery guide/i })).toBeInTheDocument()
+	})
+})
+
+describe('LinkedinHeroPill', () => {
+	it('renders "Needs LinkedIn" when no account is connected', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(null)
+		render(
+			<TestWrapper>
+				<LinkedinHeroPill workspaceId={workspaceId} tools={{ capabilities: ['linkedin'] }} />
+			</TestWrapper>,
+		)
+		expect(await screen.findByText(/needs linkedin/i)).toBeInTheDocument()
+	})
+
+	it('renders the warm-up day/total on the pill', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(
+			buildAccount({
+				state: 'warm_up',
+				pacing: {
+					dailyCap: 5,
+					dailySent: 0,
+					weeklyCap: 25,
+					weeklySent: 0,
+					warmup: { day: 5, total: 14 },
+				},
+			}),
+		)
+		render(
+			<TestWrapper>
+				<LinkedinHeroPill workspaceId={workspaceId} tools={{ capabilities: ['linkedin'] }} />
+			</TestWrapper>,
+		)
+		expect(await screen.findByText(/warming up · day 5 of 14/i)).toBeInTheDocument()
+	})
+
+	it('renders "Restricted · stopped" for the restricted state', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(buildAccount({ state: 'restricted' }))
+		render(
+			<TestWrapper>
+				<LinkedinHeroPill workspaceId={workspaceId} tools={{ capabilities: ['linkedin'] }} />
+			</TestWrapper>,
+		)
+		expect(await screen.findByText(/restricted · stopped/i)).toBeInTheDocument()
+	})
+})
+
+describe('hasLinkedinCapability', () => {
+	it('returns true when tools.capabilities contains "linkedin"', () => {
+		expect(hasLinkedinCapability({ capabilities: ['linkedin'] })).toBe(true)
+		expect(hasLinkedinCapability({ capabilities: ['linkedin', 'other'] })).toBe(true)
+	})
+
+	it('returns false for null, undefined, or missing capabilities', () => {
+		expect(hasLinkedinCapability(null)).toBe(false)
+		expect(hasLinkedinCapability(undefined)).toBe(false)
+		expect(hasLinkedinCapability({})).toBe(false)
+		expect(hasLinkedinCapability({ mcpServers: {} })).toBe(false)
+	})
+
+	it('returns false when capabilities is not an array or lacks "linkedin"', () => {
+		expect(hasLinkedinCapability({ capabilities: [] })).toBe(false)
+		expect(hasLinkedinCapability({ capabilities: ['github'] })).toBe(false)
+		expect(hasLinkedinCapability({ capabilities: 'linkedin' })).toBe(false)
+	})
+})
+
+describe('LinkedIn UI gating on non-SDR agents', () => {
+	it('LinkedinChannelsSection renders nothing when the agent lacks the capability', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(buildAccount({ state: 'restricted' }))
+		const { container } = render(
+			<TestWrapper>
+				<LinkedinChannelsSection agentId={agentId} workspaceId={workspaceId} tools={null} />
+			</TestWrapper>,
+		)
+		expect(container).toBeEmptyDOMElement()
+		expect(api.linkedin.account).not.toHaveBeenCalled()
+	})
+
+	it('LinkedinHeroPill renders nothing when the agent lacks the capability', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValueOnce(null)
+		const { container } = render(
+			<TestWrapper>
+				<LinkedinHeroPill workspaceId={workspaceId} tools={{ mcpServers: {} }} />
+			</TestWrapper>,
+		)
+		expect(container).toBeEmptyDOMElement()
+		expect(api.linkedin.account).not.toHaveBeenCalled()
+	})
+
+	it('useLinkedinSendingBlock returns unblocked for agents without the capability, even if the account is restricted', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValue(buildAccount({ state: 'restricted' }))
+		const { result } = renderHook(() => useLinkedinSendingBlock({ workspaceId, tools: null }), {
+			wrapper: TestWrapper,
+		})
+		expect(result.current).toEqual({ blocked: false, reason: null })
+		expect(api.linkedin.account).not.toHaveBeenCalled()
+	})
+
+	it('useLinkedinSendingBlock blocks the SDR agent when the account is restricted', async () => {
+		vi.mocked(api.linkedin.account).mockResolvedValue(buildAccount({ state: 'restricted' }))
+		const { result } = renderHook(
+			() =>
+				useLinkedinSendingBlock({
+					workspaceId,
+					tools: { capabilities: ['linkedin'] },
+				}),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.blocked).toBe(true))
+		expect(result.current.reason).toMatch(/restricted/i)
+	})
+})
