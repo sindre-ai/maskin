@@ -92,13 +92,43 @@ export const createTriggerSchema = z.discriminatedUnion('type', [
 	}),
 ])
 
-export const updateTriggerSchema = z.object({
-	name: z.string().min(1).optional(),
-	config: triggerConfigSchema.optional(),
-	action_prompt: z.string().min(1).optional(),
-	target_actor_id: z.string().uuid().optional(),
-	enabled: z.boolean().optional(),
-})
+// `type` is optional (a PATCH may only touch `enabled`, `name`, etc.) but when
+// present it must arrive together with a `config` that matches its shape —
+// otherwise a caller could flip `type` to 'event' while leaving a stale cron
+// `config` (or vice versa) on the row, which is exactly the corruption this
+// schema previously allowed by omitting `type` entirely.
+export const configSchemaForType: Record<z.infer<typeof triggerTypeSchema>, z.ZodTypeAny> = {
+	cron: cronConfigSchema,
+	event: eventConfigSchema,
+	reminder: reminderConfigSchema,
+}
+
+export const updateTriggerSchema = z
+	.object({
+		name: z.string().min(1).optional(),
+		type: triggerTypeSchema.optional(),
+		config: triggerConfigSchema.optional(),
+		action_prompt: z.string().min(1).optional(),
+		target_actor_id: z.string().uuid().optional(),
+		enabled: z.boolean().optional(),
+	})
+	.superRefine((data, ctx) => {
+		if (!data.type) return
+		if (!data.config) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'config is required when changing type',
+				path: ['config'],
+			})
+			return
+		}
+		const result = configSchemaForType[data.type].safeParse(data.config)
+		if (!result.success) {
+			for (const issue of result.error.issues) {
+				ctx.addIssue({ ...issue, path: ['config', ...issue.path] })
+			}
+		}
+	})
 
 export const triggerParamsSchema = z.object({
 	id: z.string().uuid(),

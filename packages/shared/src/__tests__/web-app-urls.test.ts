@@ -56,10 +56,6 @@ describe('buildWebAppPath', () => {
 		expect(buildWebAppPath(ws, { kind: 'pulse' })).toBe('/ws-123')
 	})
 
-	it('builds activity feed path', () => {
-		expect(buildWebAppPath(ws, { kind: 'activity' })).toBe('/ws-123/activity')
-	})
-
 	it('builds object detail path for any objects-table type', () => {
 		expect(buildWebAppPath(ws, { kind: 'object', id: 'obj-9' })).toBe('/ws-123/objects/obj-9')
 		// `type` is informational only — the URL shape is identical for every
@@ -93,11 +89,11 @@ describe('buildWebAppPath', () => {
 		expect(buildWebAppPath(ws, { kind: 'trigger', id: 't-1' })).toBe('/ws-123/triggers/t-1')
 	})
 
-	it('routes session links to the actor that ran them, falling back to activity', () => {
+	it('routes session links to the actor that ran them, falling back to the agents list', () => {
 		expect(buildWebAppPath(ws, { kind: 'session', id: 'sess-1', actorId: 'a-1' })).toBe(
 			'/ws-123/agents/a-1',
 		)
-		expect(buildWebAppPath(ws, { kind: 'session', id: 'sess-1' })).toBe('/ws-123/activity')
+		expect(buildWebAppPath(ws, { kind: 'session', id: 'sess-1' })).toBe('/ws-123/agents')
 	})
 
 	it('routes notification links to the pulse dashboard (no detail page yet)', () => {
@@ -149,7 +145,6 @@ describe('buildWebAppPath', () => {
 		const targets: WebAppTarget[] = [
 			{ kind: 'workspace' },
 			{ kind: 'pulse' },
-			{ kind: 'activity' },
 			{ kind: 'object', id: 'x' },
 			{ kind: 'actor', id: 'x' },
 			{ kind: 'agent', id: 'x' },

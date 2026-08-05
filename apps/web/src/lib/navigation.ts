@@ -49,7 +49,7 @@ export function resolveNavigationTarget(
 			return { path: `/${workspaceId}/objects` }
 		}
 		case 'activity':
-			return { path: `/${workspaceId}/activity` }
+			return { path: `/${workspaceId}/agents` }
 		case 'agent':
 			return id ? { path: `/${workspaceId}/agents/${id}` } : null
 		case 'trigger':

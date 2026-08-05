@@ -237,7 +237,7 @@ test.describe('Typography — notification feed', () => {
 		await page.goto(`/${account.workspaceId}`)
 		await waitForApp(page)
 
-		// The "for you" landing page shows UnreadThreadCards with <RelativeTime>
+		// The "for you" landing page shows queue cards with <RelativeTime>
 		// Look for <time> elements that carry font-mono and tabular-nums
 		const timestampClasses = await page.evaluate(() => {
 			const times = Array.from(document.querySelectorAll('time'))

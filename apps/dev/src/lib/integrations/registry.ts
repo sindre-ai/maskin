@@ -17,6 +17,7 @@ import {
 } from './providers/linear/config'
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as posthogConfig } from './providers/posthog/config'
+import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
 import {
 	config as slackConfig,
@@ -95,6 +96,10 @@ providers.set('google-calendar', {
 
 providers.set('posthog', {
 	config: posthogConfig,
+})
+
+providers.set('skjald', {
+	config: skjaldConfig,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────

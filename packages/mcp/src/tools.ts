@@ -482,7 +482,7 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			'Get an actor by ID — returns the full record including `description` (short one-liner) and `system_prompt` / instructions (longer context on who the actor is and how to work with them). When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.',
+			'Get an actor by ID — returns the full record including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), and `skills` (id + name of workspace skills attached to the actor). When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 		}),
