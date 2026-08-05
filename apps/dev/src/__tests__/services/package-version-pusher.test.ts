@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { rewriteWiring } from '../../services/package-provisioning'
 import { PackageVersionPusher } from '../../services/package-version-pusher'
-import { createTestContext } from '../setup'
+import { createMockAgentStorage, createTestContext } from '../setup'
 
 // UUID-format IDs used across rewriteWiring tests.
 const SRC_1 = '11111111-1111-4111-a111-111111111111'
@@ -66,7 +66,7 @@ describe('PackageVersionPusher', () => {
 		const { db, mockResults, calls } = createTestContext()
 		mockResults.select = []
 
-		const pusher = new PackageVersionPusher(db, 60_000)
+		const pusher = new PackageVersionPusher(db, createMockAgentStorage(), 60_000)
 		await pusher.tick()
 
 		expect(calls.inserts).toEqual([])
@@ -98,7 +98,7 @@ describe('PackageVersionPusher', () => {
 			[{ id: 'system-actor' }],
 		]
 
-		const pusher = new PackageVersionPusher(db, 60_000)
+		const pusher = new PackageVersionPusher(db, createMockAgentStorage(), 60_000)
 		await pusher.tick()
 
 		expect(calls.inserts).toHaveLength(1)
@@ -136,13 +136,13 @@ describe('PackageVersionPusher', () => {
 			[{ id: 'noti-existing' }],
 		]
 
-		const pusher = new PackageVersionPusher(db, 60_000)
+		const pusher = new PackageVersionPusher(db, createMockAgentStorage(), 60_000)
 		await pusher.tick()
 
 		expect(calls.inserts).toEqual([])
 	})
 
-	it('bumps installed_version on a locked install with an empty catalog', async () => {
+	it('bumps installed_version on a locked install with an empty catalog and audits the push', async () => {
 		const { db, mockResults, calls } = createTestContext()
 		mockResults.selectQueue = [
 			// tick(): pending installs join — one locked install at v1 vs catalog v2
@@ -171,15 +171,35 @@ describe('PackageVersionPusher', () => {
 			[],
 			// loadInstalledRows(): integration rows
 			[],
+			// resolveWorkspaceActor(): a system actor is a member of the workspace —
+			// resolved unconditionally now, since the audit event always needs an actorId.
+			[{ id: 'system-actor' }],
 		]
 
-		const pusher = new PackageVersionPusher(db, 60_000)
+		const pusher = new PackageVersionPusher(db, createMockAgentStorage(), 60_000)
 		await pusher.tick()
 
 		// One update on installed_packages bumping the version.
 		expect(calls.updates).toHaveLength(1)
 		const update = calls.updates[0] as Record<string, unknown>
 		expect(update.installedVersion).toBe('2.0.0')
+
+		// Even an update-only (no adds/removes) push writes an audit event.
+		expect(calls.inserts).toHaveLength(1)
+		const eventInsert = calls.inserts[0] as Record<string, unknown>
+		expect(eventInsert).toMatchObject({
+			workspaceId: 'ws-1',
+			actorId: 'system-actor',
+			action: 'updated',
+			entityType: 'installed_package',
+			entityId: 'install-2',
+		})
+		expect(eventInsert.data).toMatchObject({
+			source_package_id: 'pkg-1',
+			from_version: '1.0.0',
+			to_version: '2.0.0',
+			items: { adds: 0, updates: 0, removes: 0 },
+		})
 	})
 
 	it('adds a new catalog item to a locked install: actor gets a fresh apiKey + workspace_members binding, trigger gets a resolved createdBy and rewritten target', async () => {
@@ -239,10 +259,11 @@ describe('PackageVersionPusher', () => {
 			// resolveWorkspaceActor(): a system actor is a member of the workspace.
 			[{ id: 'system-actor' }],
 		]
-		// Inserts fire in order: actor, workspace_members (binds the actor), trigger.
-		mockResults.insertQueue = [[{ id: 'new-actor' }], [], [{ id: 'new-trigger' }]]
+		// Inserts fire in order: actor, workspace_members (binds the actor), trigger,
+		// then the audit event.
+		mockResults.insertQueue = [[{ id: 'new-actor' }], [], [{ id: 'new-trigger' }], []]
 
-		const pusher = new PackageVersionPusher(db, 60_000)
+		const pusher = new PackageVersionPusher(db, createMockAgentStorage(), 60_000)
 		await pusher.tick()
 
 		// #1 — actor minted a fresh, cryptographically-secure apiKey; the
@@ -271,11 +292,22 @@ describe('PackageVersionPusher', () => {
 		// The install row's version is bumped on success.
 		const update = calls.updates[0] as Record<string, unknown>
 		expect(update.installedVersion).toBe('2.0.0')
+
+		// The push is audited with the add count for both new items.
+		const eventInsert = calls.inserts[3] as Record<string, unknown>
+		expect(eventInsert).toMatchObject({
+			workspaceId: 'ws-1',
+			actorId: 'system-actor',
+			action: 'updated',
+			entityType: 'installed_package',
+			entityId: 'install-1',
+		})
+		expect(eventInsert.data).toMatchObject({ items: { adds: 2, updates: 0, removes: 0 } })
 	})
 
 	it('start() does not blow up and stop() clears timers', async () => {
 		const { db } = createTestContext()
-		const pusher = new PackageVersionPusher(db, 60_000)
+		const pusher = new PackageVersionPusher(db, createMockAgentStorage(), 60_000)
 		pusher.start()
 		// idempotent: second start is a no-op
 		pusher.start()

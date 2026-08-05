@@ -2,7 +2,7 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, actors, objects, workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
-import { DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME } from '@maskin/shared'
+import { DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { insertActor, insertObject, insertWorkspace } from '../factories'
@@ -60,7 +60,7 @@ async function seedKAWrite(
 		(
 			await insertActor(db, {
 				type: 'agent',
-				name: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME,
+				name: DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME,
 				email: null,
 			})
 		).id
@@ -286,11 +286,11 @@ describe('Objects undo-write integration', () => {
 		const kaAgents = await db
 			.select({ id: actors.id })
 			.from(actors)
-			.where(eq(actors.name, DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME))
+			.where(eq(actors.name, DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME))
 		if (kaAgents.length > 0) {
 			const ids = kaAgents.map((a) => a.id)
 			await db.delete(events).where(inArray(events.actorId, ids))
-			await db.delete(actors).where(eq(actors.name, DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME))
+			await db.delete(actors).where(eq(actors.name, DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME))
 		}
 	})
 })

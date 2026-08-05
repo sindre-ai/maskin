@@ -66,3 +66,37 @@ test.describe('Visual — Objects list', () => {
 		await argosScreenshot(page, 'objects-list-mobile-375')
 	})
 })
+
+// Baselines for the object-detail right sidebar across the ship-gate
+// viewports in both themes — 6 shots covering the three breakpoint modes
+// (Sheet closed at 375, off-canvas collapsed at 768, 288 px inline expanded
+// at 1024) with a seeded bet on the page so the sidebar has real content to
+// render where it's open by default.
+test.describe('Visual — Object detail (right sidebar)', () => {
+	const viewports = [
+		{ width: 375, height: 812, label: 'mobile-375' },
+		{ width: 768, height: 1024, label: 'tablet-768' },
+		{ width: 1024, height: 768, label: 'desktop-1024' },
+	]
+
+	for (const vp of viewports) {
+		for (const mode of ['light', 'dark'] as const) {
+			test(`${vp.label} ${mode}`, async ({ page, account }) => {
+				await setTheme(page, mode)
+				await page.setViewportSize({ width: vp.width, height: vp.height })
+				const bet = await account.api.createObject(account.workspaceId, {
+					type: 'bet',
+					title: 'Object detail sidebar visual',
+					status: 'active',
+					content: 'Hypothesis line so the body carries real content.',
+				})
+				await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+				await waitForApp(page)
+				// Wait for the title textarea to hydrate before snapshotting so
+				// the hero row isn't captured mid-render.
+				await page.getByPlaceholder('Untitled').waitFor({ state: 'visible', timeout: 10_000 })
+				await argosScreenshot(page, `object-detail-sidebar-${vp.label}-${mode}`)
+			})
+		}
+	}
+})

@@ -50,7 +50,10 @@ test.describe('AuxiliaryActionMenu — Properties group on bet detail', () => {
 
 		await page.getByRole('button', { name: /more actions/i }).click()
 		// The Properties group is gated behind the touch/mobile viewport hooks —
-		// on wide desktop only the existing action rows show.
-		await expect(page.getByText(/^Properties$/i)).toHaveCount(0)
+		// on wide desktop only the existing action rows show. Scope to the menu
+		// itself so this doesn't match the object-detail sidebar's own
+		// "Properties" section label, which is legitimately visible at this
+		// viewport.
+		await expect(page.getByRole('menu').getByText(/^Properties$/i)).toHaveCount(0)
 	})
 })

@@ -8,19 +8,32 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { useEntityEvents } from '@/hooks/use-events'
+import { useIsDesktopViewport, useIsMobile } from '@/hooks/use-mobile'
 import {
 	useDeleteObject,
+	useKnowledgeReferences,
 	useObjectGraph,
 	useUpdateObject,
 	useVerifyObject,
 } from '@/hooks/use-objects'
 import { useDeleteRelationship } from '@/hooks/use-relationships'
 import { useScrollToTopEmitter } from '@/hooks/use-scroll-to-top-emitter'
+import {
+	useUpdateUserDisplaySettings,
+	useUserDisplaySettings,
+} from '@/hooks/use-user-display-settings'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
-import { trackEvent } from '@/lib/analytics'
-import type { EventResponse, MemberResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
+import { deriveSidebarViewport, trackEvent, trackSidebarToggle } from '@/lib/analytics'
+import type {
+	DisplaySettingsBody,
+	EventResponse,
+	MemberResponse,
+	ObjectResponse,
+	RelationshipResponse,
+} from '@/lib/api'
 import { classifyBetStatus } from '@/lib/bet-status'
 import { useWorkspace } from '@/lib/workspace-context'
+import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { Check, PanelRight } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -35,7 +48,8 @@ import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { LoopCard } from './loop-card'
-import { PropertiesDrawer } from './properties-drawer'
+import { ObjectPropertiesSidebar } from './object-properties-sidebar'
+import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
 import { OwnerSelect, StatusSelect } from './property-selects'
 import { VerifiedChip, isKnowledgeAuthorWrite } from './verified-chip'
 
@@ -71,6 +85,32 @@ interface ObjectDocumentViewProps {
 	// Attached to the metadata badges row (which also hosts StatusSelect) so
 	// the sticky chip can land the user right on the picker.
 	heroIdentityRef?: React.Ref<HTMLDivElement>
+}
+
+// Renders "Referenced by N contexts/week" alongside the other prov-row chips
+// on knowledge object headers. Hidden when N is 0 (per DoD — the empty state
+// stays invisible so the row doesn't grow a permanent "Never referenced"
+// footprint). Also hidden while the count is loading or on API failure — the
+// chip is decorative, not load-bearing, so it must never block the header
+// from rendering.
+function KnowledgeReferencesChip({
+	workspaceId,
+	objectId,
+}: {
+	workspaceId: string
+	objectId: string
+}) {
+	const { data } = useKnowledgeReferences(workspaceId, objectId)
+	const count = data?.unique_contexts ?? 0
+	if (count <= 0) return null
+	return (
+		<span
+			className="text-[11px] text-muted-foreground"
+			title="Unique bets/tasks/insights that cited this knowledge object in the last 7 days (rolling window)"
+		>
+			Referenced by {count} {count === 1 ? 'context' : 'contexts'}/week
+		</span>
+	)
 }
 
 export function ObjectDocumentView({
@@ -140,9 +180,11 @@ export function ObjectDocumentView({
 		<div className="w-full min-w-0 max-w-3xl mx-auto">
 			{/* Identity row — TypeBadge, status, bet-status chip, driver hoisted
 			 * above the title so type/state/owner are readable before the reader
-			 * scans past the h1. Anchors the sticky-nav sprout-back: when this row
-			 * scrolls out, the header projects title + read-only chip; tapping the
-			 * chip smooth-scrolls here and focuses [data-hero-status-trigger]. */}
+			 * scans past the h1. Subscribe + creator + timestamps moved to the
+			 * right-side properties sidebar. Anchors the sticky-nav sprout-back:
+			 * when this row scrolls out, the header projects title + read-only
+			 * chip; tapping the chip smooth-scrolls here and focuses
+			 * [data-hero-status-trigger]. */}
 			<div ref={heroIdentityRef} className="flex flex-wrap items-center gap-2 mb-3">
 				<TypeBadge type={object.type} />
 				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
@@ -173,6 +215,9 @@ export function ObjectDocumentView({
 						currentOwnerId={object.driver ?? null}
 						onChange={onUpdateDriver}
 					/>
+				)}
+				{object.type === 'knowledge' && (
+					<KnowledgeReferencesChip workspaceId={workspaceId} objectId={object.id} />
 				)}
 			</div>
 
@@ -436,7 +481,48 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	}, [handleDelete])
 
 	const [menuOpen, setMenuOpen] = useState(false)
-	const [drawerOpen, setDrawerOpen] = useState(false)
+
+	// Right-side properties sidebar: transient Sheet on mobile, persisted
+	// expanded/collapsed on tablet+. State is read from and written to
+	// `user_display_settings` under the `__chrome__` sentinel row.
+	const isMobile = useIsMobile()
+	const isDesktop = useIsDesktopViewport() // true at ≥1024 CSS px
+	const settingsQuery = useUserDisplaySettings(workspaceId, CHROME_KEY)
+	const upsertSettings = useUpdateUserDisplaySettings(workspaceId)
+	const persistedSettings = settingsQuery.data?.settings
+	// First-paint default per breakpoint: desktop expanded (≥1024 → not touch),
+	// tablet collapsed off-canvas (768–1023 → touch but not mobile), mobile
+	// Sheet starts closed. Reconciles to the persisted
+	// `objectDetailSidebarCollapsed` bit once the settings query has fetched.
+	const breakpointDefaultOpen = !isMobile && isDesktop
+	const sidebarOpen = settingsQuery.isFetched
+		? typeof persistedSettings?.objectDetailSidebarCollapsed === 'boolean'
+			? !persistedSettings.objectDetailSidebarCollapsed
+			: breakpointDefaultOpen
+		: breakpointDefaultOpen
+	const [sidebarOpenMobile, setSidebarOpenMobile] = useState(false)
+
+	const setSidebarOpen = useCallback(
+		(open: boolean) => {
+			const nextSettings: DisplaySettingsBody = {
+				...(persistedSettings ?? {}),
+				objectDetailSidebarCollapsed: !open,
+			}
+			upsertSettings.mutate({ objectType: CHROME_KEY, settings: nextSettings })
+		},
+		[persistedSettings, upsertSettings],
+	)
+
+	// One toggle callback that the PageHeader button and any programmatic
+	// caller can share. Mobile flips the transient Sheet (`openMobile`);
+	// tablet + desktop write the persisted bit.
+	const handleToggleSidebar = useCallback(() => {
+		if (isMobile) {
+			setSidebarOpenMobile((v) => !v)
+		} else {
+			setSidebarOpen(!sidebarOpen)
+		}
+	}, [isMobile, sidebarOpen, setSidebarOpen])
 
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
@@ -452,6 +538,50 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
 	}, [])
+
+	// ⌘/Ctrl+I toggles the right sidebar. Shares `handleToggleSidebar` with the
+	// PanelRight header button so both entry points flow through the same
+	// mobile-vs-persisted branch, and both are observable to the
+	// `sidebar_toggle` analytics effect below.
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			if (!((e.metaKey || e.ctrlKey) && (e.key === 'i' || e.key === 'I'))) return
+			const target = e.target as HTMLElement | null
+			if (target) {
+				const tag = target.tagName
+				if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
+			}
+			e.preventDefault()
+			handleToggleSidebar()
+		}
+		document.addEventListener('keydown', handler)
+		return () => document.removeEventListener('keydown', handler)
+	}, [handleToggleSidebar])
+
+	// Effective open state: mobile reads the Sheet's `openMobile`, everything
+	// else reads the persisted `sidebarOpen`.
+	const sidebarExpanded = isMobile ? sidebarOpenMobile : sidebarOpen
+
+	// Emit `sidebar_toggle` on every transition — covers the PanelRight
+	// button, the ⌘/Ctrl+I shortcut, Sheet ESC/overlay close on mobile, and
+	// any programmatic toggle. The mount pass is skipped so first paint isn't
+	// counted as a toggle. `object_id` is read via a ref so mid-flight route
+	// changes don't re-fire the effect just because the id string changed.
+	const objectIdRef = useRef(object.id)
+	objectIdRef.current = object.id
+	const sidebarMountedRef = useRef(false)
+	useEffect(() => {
+		if (!sidebarMountedRef.current) {
+			sidebarMountedRef.current = true
+			return
+		}
+		const width = typeof window !== 'undefined' ? window.innerWidth : 1024
+		trackSidebarToggle({
+			state: sidebarExpanded ? 'open' : 'closed',
+			viewport: deriveSidebarViewport(width),
+			object_id: objectIdRef.current,
+		})
+	}, [sidebarExpanded])
 
 	// Bet-scoped sticky nav — when the hero identity row exits the viewport, the
 	// header sprouts title + read-only status chip. `threshold: 0` fires as soon
@@ -492,15 +622,19 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 			/>
 		) : null
 
+	// The header button lives outside the `PropertiesSidebarProvider` (the
+	// PageHeader portals into a slot up in the WorkspaceLayout), so it can't
+	// call `useSidebar()` — it drives the shared `handleToggleSidebar`
+	// callback directly, which handles the mobile-vs-persisted split.
 	const headerActions = (
 		<>
 			<Button
 				variant="ghost"
 				size="icon"
 				className="h-7 w-7"
-				onClick={() => setDrawerOpen((v) => !v)}
+				onClick={handleToggleSidebar}
 				aria-label="Properties"
-				aria-expanded={drawerOpen}
+				aria-expanded={sidebarExpanded}
 			>
 				<PanelRight size={15} />
 			</Button>
@@ -520,9 +654,21 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		</>
 	)
 
+	// Push the doc body aside so the fixed right sidebar doesn't overlay it.
+	// The primitive's mobile Sheet branch overlays anyway (no margin needed).
+	// Collapsed is fully off-canvas (no rail), so it reserves no margin.
+	const docMarginRight = !isMobile && sidebarOpen ? SIDEBAR_WIDTH : undefined
+
 	return (
 		<>
-			<PageHeader actions={headerActions} stickyIdentity={stickyIdentity} />
+			{/* Same margin also reaches the top nav via PageHeaderContext — see
+			 * ChatPinShell in the $workspaceId route, which pushes the header
+			 * left so its action buttons stay clear of the fixed sidebar. */}
+			<PageHeader
+				actions={headerActions}
+				stickyIdentity={stickyIdentity}
+				contentPush={docMarginRight}
+			/>
 			<DeleteConfirmDialog
 				open={confirmDelete}
 				onOpenChange={handleDeleteOpenChange}
@@ -532,34 +678,48 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				isPending={deleteObject.isPending}
 			/>
 			<ActionBanner events={events} workspaceId={workspaceId} />
-			<ObjectDocumentView
-				object={object}
-				workspaceId={workspaceId}
-				statuses={statuses}
-				members={members}
-				allRelationships={allRelationships}
-				connectedObjects={graph?.connected_objects}
-				events={events}
-				onUpdateTitle={handleUpdateTitle}
-				onUpdateContent={handleUpdateContent}
-				onUpdateStatus={handleUpdateStatus}
-				onArchive={handleArchive}
-				onUpdateDriver={handleUpdateDriver}
-				onDeleteRelationship={handleDeleteRelationship}
-				onDelete={handleDelete}
-				onToggleVerified={handleToggleVerified}
-				isVerifying={verifyObject.isPending}
-				isDeleting={deleteObject.isPending}
-				betStatus={betStatus}
-				heroIdentityRef={heroIdentityRef}
-			/>
-			<PropertiesDrawer
-				open={drawerOpen}
-				onOpenChange={setDrawerOpen}
-				object={object}
-				workspaceId={workspaceId}
-				relationships={relationships}
-			/>
+			<div
+				className="transition-[margin] duration-200 ease-linear"
+				style={{ marginRight: docMarginRight }}
+			>
+				<ObjectDocumentView
+					object={object}
+					workspaceId={workspaceId}
+					statuses={statuses}
+					members={members}
+					allRelationships={allRelationships}
+					connectedObjects={graph?.connected_objects}
+					events={events}
+					onUpdateTitle={handleUpdateTitle}
+					onUpdateContent={handleUpdateContent}
+					onUpdateStatus={handleUpdateStatus}
+					onArchive={handleArchive}
+					onUpdateDriver={handleUpdateDriver}
+					onDeleteRelationship={handleDeleteRelationship}
+					onDelete={handleDelete}
+					onToggleVerified={handleToggleVerified}
+					isVerifying={verifyObject.isPending}
+					isDeleting={deleteObject.isPending}
+					betStatus={betStatus}
+					heroIdentityRef={heroIdentityRef}
+				/>
+			</div>
+			<PropertiesSidebarProvider
+				open={sidebarOpen}
+				onOpenChange={setSidebarOpen}
+				openMobile={sidebarOpenMobile}
+				onOpenMobileChange={setSidebarOpenMobile}
+			>
+				<ObjectPropertiesSidebar
+					object={object}
+					workspaceId={workspaceId}
+					relationships={relationships}
+					statuses={statuses}
+					members={members}
+					onUpdateStatus={handleAuxStatusChange}
+					onUpdateDriver={handleUpdateDriver}
+				/>
+			</PropertiesSidebarProvider>
 		</>
 	)
 }

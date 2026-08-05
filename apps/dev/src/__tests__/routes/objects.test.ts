@@ -1062,7 +1062,7 @@ describe('Objects Routes', () => {
 	})
 
 	describe('POST /api/objects/:id/undo-write', () => {
-		const KA_NAME = 'Retro & Knowledge Author'
+		const KA_NAME = 'Knowledge Author'
 
 		function buildKnowledgeObject(overrides?: Record<string, unknown>) {
 			return buildObject({
