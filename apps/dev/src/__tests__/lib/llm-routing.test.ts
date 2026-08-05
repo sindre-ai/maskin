@@ -162,6 +162,25 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars.ANTHROPIC_BASE_URL).toBeUndefined()
 	})
 
+	it('1b. agent-level model preference is forwarded as ANTHROPIC_MODEL', async () => {
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: emptySettings(),
+			agent: { provider: 'anthropic', apiKey: 'sk-agent', model: 'claude-sonnet-4-6' },
+		})
+		expect(result?.route).toBe(LLM_ROUTE_AGENT)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+	})
+
+	it('omits ANTHROPIC_MODEL when agent has no model preference', async () => {
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: emptySettings(),
+			agent: { provider: 'anthropic', apiKey: 'sk-agent' },
+		})
+		expect(result?.envVars.ANTHROPIC_MODEL).toBeUndefined()
+	})
+
 	it('returns null for non-anthropic agent override (caller handles)', async () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
@@ -194,6 +213,23 @@ describe('resolveLlmRoute priority order', () => {
 		})
 		// OAuth env vars should NOT be set when custom_llm wins.
 		expect(result?.envVars.CLAUDE_OAUTH_ACCESS_TOKEN).toBeUndefined()
+	})
+
+	it('2b. agent-level model preference is NOT forwarded on the custom_llm route (workspace-configured model wins)', async () => {
+		const settings = emptySettings()
+		settings.custom_llm = {
+			enabled: true,
+			base_url: 'https://openrouter.ai/api',
+			api_key: 'sk-or-test',
+			model: 'deepseek/deepseek-v4-flash',
+		}
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: settings,
+			agent: { model: 'claude-sonnet-4-6' },
+		})
+		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
 	})
 
 	it('skips custom_llm when enabled but missing fields', async () => {
@@ -241,6 +277,29 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars.ANTHROPIC_API_KEY).toBeUndefined()
 	})
 
+	it('3b. agent-level model preference is forwarded on the OAuth route', async () => {
+		const expiresAt = Date.now() + 60 * 60 * 1000
+		const db = dbWithFallbackUsage(
+			[],
+			claudeOAuthWorkspaceRow({
+				encryptedAccessToken: 'oauth-access',
+				encryptedRefreshToken: 'oauth-refresh',
+				expiresAt,
+				scopes: ['read'],
+				subscriptionType: 'pro',
+			}),
+		)
+		const result = await resolveLlmRoute({
+			db,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: emptySettings(),
+			agent: { model: 'claude-sonnet-4-6' },
+		})
+		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+	})
+
 	it('4. workspace api_key when OAuth absent', async () => {
 		const settings = emptySettings()
 		settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
@@ -251,6 +310,18 @@ describe('resolveLlmRoute priority order', () => {
 		})
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
 		expect(result?.envVars.ANTHROPIC_API_KEY).toBe('sk-ant-from-ws')
+	})
+
+	it('4b. agent-level model preference is forwarded on the workspace api_key route', async () => {
+		const settings = emptySettings()
+		settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: settings,
+			agent: { model: 'claude-opus-4-7' },
+		})
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-opus-4-7')
 	})
 
 	it('falls through OAuth errors to next route', async () => {
@@ -292,6 +363,19 @@ describe('resolveLlmRoute priority order', () => {
 			ANTHROPIC_API_KEY: '',
 			ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
 		})
+	})
+
+	it('5b. agent-level model preference is NOT forwarded on the system fallback route (operator-configured model wins)', async () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
+		process.env.MASKIN_FALLBACK_BASE_URL = 'https://openrouter.ai/api'
+		process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: emptySettings(),
+			agent: { model: 'claude-sonnet-4-6' },
+		})
+		expect(result?.route).toBe(LLM_ROUTE_SYSTEM_FALLBACK)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
 	})
 
 	it('returns null when nothing is configured', async () => {
