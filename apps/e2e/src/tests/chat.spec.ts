@@ -16,6 +16,11 @@ import { buildNotificationFixture, installChatMocks } from '../helpers/chat.help
  * require a live Docker-backed interactive session; the real backend is
  * still used for auth, workspaces, and anything else not explicitly
  * intercepted.
+ *
+ * These tests exercise the header's global "Open chat" button, which is
+ * intentionally hidden on the For You page (its own header already surfaces
+ * equivalent actions — see header.tsx) — so they open chat from the Objects
+ * list instead, where the header button is still rendered.
  */
 
 async function openSheetFromSidebar(page: Page) {
@@ -40,7 +45,9 @@ test.describe('Chat surfaces', () => {
 			],
 		})
 
-		await page.goto(`/${account.workspaceId}`)
+		// The header's "Open chat" button is hidden on the For You page (its own
+		// header surfaces equivalent actions) — use the Objects list instead.
+		await page.goto(`/${account.workspaceId}/objects`)
 
 		// Open the chat panel via the header button
 		await page.getByRole('button', { name: 'Open chat' }).click()
@@ -84,7 +91,9 @@ test.describe('Chat surfaces', () => {
 			],
 		})
 
-		await page.goto(`/${account.workspaceId}`)
+		// The header's "Open chat" button is hidden on the For You page (its own
+		// header surfaces equivalent actions) — use the Objects list instead.
+		await page.goto(`/${account.workspaceId}/objects`)
 		await openSheetFromSidebar(page)
 
 		const sheet = page.locator('[data-surface="sheet"]')
@@ -144,7 +153,9 @@ test.describe('Chat surfaces', () => {
 			],
 		})
 
-		await page.goto(`/${account.workspaceId}`)
+		// The header's "Open chat" button is hidden on the For You page (its own
+		// header surfaces equivalent actions) — use the Objects list instead.
+		await page.goto(`/${account.workspaceId}/objects`)
 		await openSheetFromSidebar(page)
 
 		// Sessions are bootstrapped lazily on the first user turn — send a

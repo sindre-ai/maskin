@@ -65,6 +65,7 @@ const routeConfig: Record<string, RouteConfig> = {
 const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$workspaceId'])
 
 const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
+const FOR_YOU_ROUTE_ID = '/_authed/$workspaceId/'
 
 export function Header() {
 	const matches = useMatches()
@@ -101,6 +102,10 @@ export function Header() {
 	// the generic picker, which is disorienting when they're mid-edit on a
 	// specific object. Kept on every list surface (Objects, Agents, Triggers).
 	const isObjectDetail = leafMatch?.routeId === OBJECT_DETAIL_ROUTE_ID
+	// The For You page's own header already surfaces equivalent actions
+	// (title, "Today's brief", "New") — the global Create/Chat icons here
+	// would just duplicate them.
+	const isForYouPage = leafMatch?.routeId === FOR_YOU_ROUTE_ID
 
 	const parentCrumbs = crumbs.slice(0, -1)
 	const hasSticky = Boolean(stickyIdentity)
@@ -188,7 +193,7 @@ export function Header() {
 				)}
 				<div className="ml-auto flex shrink-0 items-center gap-2">
 					{actions}
-					{!isObjectDetail && (
+					{!isObjectDetail && !isForYouPage && (
 						<Button
 							variant="ghost"
 							size="icon"
@@ -200,15 +205,17 @@ export function Header() {
 							<Plus size={15} />
 						</Button>
 					)}
-					<Button
-						variant="ghost"
-						size="icon"
-						className="h-7 w-7"
-						onClick={() => setChatOpen(true)}
-						aria-label="Open chat"
-					>
-						<Sparkles size={15} />
-					</Button>
+					{!isForYouPage && (
+						<Button
+							variant="ghost"
+							size="icon"
+							className="h-7 w-7"
+							onClick={() => setChatOpen(true)}
+							aria-label="Open chat"
+						>
+							<Sparkles size={15} />
+						</Button>
+					)}
 				</div>
 			</div>
 			<CreatePicker open={createOpen} onOpenChange={setCreateOpen} />
