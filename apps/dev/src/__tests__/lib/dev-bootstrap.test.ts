@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { maybeBootstrapDev, seedCatalogIfEmpty } from '../../lib/dev-bootstrap'
+import { maybeBootstrapDev, seedCatalogIfEmpty, seedCatalogPackages } from '../../lib/dev-bootstrap'
 import { createTestContext } from '../setup'
 
 describe('maybeBootstrapDev', () => {
@@ -211,5 +211,37 @@ describe('seedCatalogIfEmpty', () => {
 		const ccdItems = itemInserts[0] as Array<{ itemType: string; sourceItemId: string }>
 		expect(ccdItems.filter((i) => i.itemType === 'actor').length).toBe(3)
 		expect(ccdItems.filter((i) => i.itemType === 'trigger').length).toBe(7)
+	})
+})
+
+describe('seedCatalogPackages', () => {
+	const originalEnv = { ...process.env }
+
+	afterEach(() => {
+		process.env = { ...originalEnv }
+		vi.restoreAllMocks()
+	})
+
+	it('seeds even when NODE_ENV is production — scripts/seed-catalog.ts (the deploy-time entrypoint) calls this directly, unguarded', async () => {
+		process.env.NODE_ENV = 'production'
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = [{ n: 0 }]
+		mockResults.insert = [{ id: 'pkg-1' }]
+
+		const result = await seedCatalogPackages(db)
+
+		expect(result).toEqual({ seeded: true, packageCount: 19 })
+		expect(calls.inserts.length).toBeGreaterThan(0)
+	})
+
+	it('no-ops when the catalog already has packages, regardless of NODE_ENV', async () => {
+		process.env.NODE_ENV = 'production'
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = [{ n: 3 }]
+
+		const result = await seedCatalogPackages(db)
+
+		expect(result).toEqual({ seeded: false, packageCount: 0 })
+		expect(calls.inserts).toEqual([])
 	})
 })

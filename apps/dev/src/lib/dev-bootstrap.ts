@@ -56,13 +56,16 @@ const CATALOG_SEED_CONFIGS: readonly DevAgentPackageConfig[] = [
  * Reuses the exact same package configs + snapshot data the publish-*.ts
  * scripts publish to a shared catalog DB, so local dev never drifts from what
  * those scripts ship (see apps/dev/src/lib/catalog-packages/).
+ *
+ * No env guards here — production seeding goes through this function too, via
+ * `scripts/seed-catalog.ts` (wired into the Docker boot sequence). Env-gating
+ * lives in `seedCatalogIfEmpty` below, the dev-server-boot entrypoint.
  */
-export async function seedCatalogIfEmpty(db: Database): Promise<void> {
-	if (process.env.NODE_ENV === 'production') return
-	if (process.env.MASKIN_AUTO_BOOTSTRAP === 'false') return
-
+export async function seedCatalogPackages(
+	db: Database,
+): Promise<{ seeded: boolean; packageCount: number }> {
 	const [row] = await db.select({ n: count() }).from(catalogPackages)
-	if (row && row.n > 0) return
+	if (row && row.n > 0) return { seeded: false, packageCount: 0 }
 
 	// One transaction for every package: this only runs when the catalog is
 	// completely empty, so a partial failure would leave count() > 0 and
@@ -120,6 +123,20 @@ export async function seedCatalogIfEmpty(db: Database): Promise<void> {
 			])
 		}
 	})
+
+	return { seeded: true, packageCount: CATALOG_SEED_CONFIGS.length }
+}
+
+/**
+ * Dev-server-boot entrypoint for catalog seeding — called unconditionally from
+ * index.ts on every startup, so it no-ops itself outside local dev. Production
+ * seeding is a deliberate, separate step: see `seedCatalogPackages` above.
+ */
+export async function seedCatalogIfEmpty(db: Database): Promise<void> {
+	if (process.env.NODE_ENV === 'production') return
+	if (process.env.MASKIN_AUTO_BOOTSTRAP === 'false') return
+
+	await seedCatalogPackages(db)
 }
 
 export interface DevBootstrapResult {
