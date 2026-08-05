@@ -58,7 +58,7 @@ test.describe('For You status pill (dot+word)', () => {
 				})
 			})
 			await page.goto(`/${account.workspaceId}`)
-			const card = page.getByTestId('unread-thread-card').first()
+			const card = page.getByTestId('foryou-queue-card').first()
 			await expect(card).toBeVisible()
 
 			const pill = card.getByLabel('Status in progress')
@@ -80,7 +80,7 @@ test.describe('For You status pill (dot+word)', () => {
 			})
 		})
 		await page.goto(`/${account.workspaceId}`)
-		const card = page.getByTestId('unread-thread-card').first()
+		const card = page.getByTestId('foryou-queue-card').first()
 		await expect(card).toBeVisible()
 		await expect(card.getByLabel('Status active')).toBeVisible()
 	})

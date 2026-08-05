@@ -87,7 +87,7 @@ test.describe('For You sparse composer', () => {
 	test('is hidden when items.length >= 3 (AC-U3)', async ({ page, account }) => {
 		await mockUnreadCount(page, account.workspaceId, 3)
 		await page.goto(`/${account.workspaceId}`)
-		await expect(page.getByTestId('unread-thread-card').first()).toBeVisible()
+		await expect(page.getByTestId('foryou-queue-card').first()).toBeVisible()
 		await expect(page.getByTestId('sparse-composer')).toHaveCount(0)
 	})
 

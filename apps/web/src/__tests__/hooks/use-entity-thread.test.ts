@@ -49,9 +49,7 @@ function renderHarness(unreadCount: number): { current: UseEntityThreadResult | 
 	return box
 }
 
-// Mirrors the EagerObserver pattern established in
-// unread-thread-card.test.tsx's "PostHog instrumentation" suite — fires
-// isIntersecting synchronously on observe() so hasBeenVisible flips true.
+// Fires isIntersecting synchronously on observe() so hasBeenVisible flips true.
 class EagerObserver {
 	private callback: IntersectionObserverCallback
 	constructor(cb: IntersectionObserverCallback) {

@@ -130,20 +130,6 @@ async function mockFeed(page: Page, items: UnreadFixture[]) {
 	})
 }
 
-// T1: flag gates the redesign on the founder actor id in production, or on
-// this localStorage key when import.meta.env.DEV is true. auth.fixture mints
-// a random-UUID actor, so the DEV override is the only mechanism that puts
-// CI on the redesigned surface.
-async function enableRedesignFlag(page: Page) {
-	await page.addInitScript(() => {
-		try {
-			window.localStorage.setItem('maskin-flag-foryou-redesign', '1')
-		} catch {
-			// Storage not writable in some contexts — nothing else to fall back to.
-		}
-	})
-}
-
 async function gotoForyou(page: Page, workspaceId: string) {
 	await page.goto(`/${workspaceId}`)
 }
@@ -198,7 +184,6 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 		page,
 		account,
 	}) => {
-		await enableRedesignFlag(page)
 		await mockFeed(page, threeKindFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
@@ -241,7 +226,6 @@ test.describe('For You prototype redesign — layout at 768', () => {
 	test.use({ viewport: VIEWPORTS.tabletPortrait })
 
 	test('header controls stay reachable and decision buttons stay side-by-side', async ({ page, account }) => {
-		await enableRedesignFlag(page)
 		await mockFeed(page, threeKindFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
@@ -262,7 +246,6 @@ test.describe('For You prototype redesign — layout at 375', () => {
 	test.use({ viewport: VIEWPORTS.mobile })
 
 	test('decision buttons stack, Display popover still opens, no horizontal scroll', async ({ page, account }) => {
-		await enableRedesignFlag(page)
 		await mockFeed(page, threeKindFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
@@ -296,7 +279,6 @@ test.describe('For You prototype redesign — decision → receipt → reverse',
 			postedComments.push(route.request().postDataJSON())
 			await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1 }) })
 		})
-		await enableRedesignFlag(page)
 		await mockFeed(page, [
 			buildItem(account.workspaceId, {
 				id: 'decision-1',
@@ -347,7 +329,6 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 		account,
 	}) => {
 		const { calls: readCalls } = await captureRead(page)
-		await enableRedesignFlag(page)
 		await mockFeed(page, plainFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
@@ -373,7 +354,6 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 
 	test('"Keep unread" skips without any mutation and advances the queue', async ({ page, account }) => {
 		const { calls: readCalls } = await captureRead(page)
-		await enableRedesignFlag(page)
 		await mockFeed(page, plainFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
@@ -389,7 +369,6 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 		account,
 	}) => {
 		const { calls: readCalls } = await captureRead(page)
-		await enableRedesignFlag(page)
 		await mockFeed(page, [buildItem(account.workspaceId, { id: 'thread-1', title: 'Only item left', type: 'insight' })])
 		await gotoForyou(page, account.workspaceId)
 

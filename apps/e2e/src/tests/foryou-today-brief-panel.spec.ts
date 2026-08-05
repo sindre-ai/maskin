@@ -1,4 +1,3 @@
-import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
@@ -6,26 +5,11 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // panel was deleted from the single-card queue redesign. The button now
 // navigates straight to the real /briefing route instead of toggling a
 // placeholder panel.
-//
-// The redesign is founder-gated by T1's useForyouRedesignFlag(). auth.fixture
-// mints a random-UUID actor, so this spec flips the DEV localStorage override
-// to land on the founder-flagged surface — same mechanism T5 uses.
-
-async function enableRedesignFlag(page: Page) {
-	await page.addInitScript(() => {
-		try {
-			window.localStorage.setItem('maskin-flag-foryou-redesign', '1')
-		} catch {
-			// Storage not writable in some contexts — nothing else to fall back to.
-		}
-	})
-}
 
 test.describe("For You — Today's brief button", () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
 		test(`navigates to the briefing route at ${viewport.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
-			await enableRedesignFlag(page)
 			await page.goto(`/${account.workspaceId}`)
 
 			const trigger = page.getByRole('button', { name: /today.?s brief/i })
