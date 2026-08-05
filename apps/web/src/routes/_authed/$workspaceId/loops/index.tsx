@@ -38,29 +38,16 @@ function LoopsPage() {
 
 	const standaloneTriggers = useMemo(() => {
 		if (!triggers) return []
-		const claimed = new Set<string>()
-		if (loops) {
-			for (const loop of loops) {
-				for (const agentId of loop.agentIds) void agentId
-			}
-		}
-		// A trigger is standalone iff no loop names it in metadata.trigger_ids.
-		// The read API resolves loop → trigger via loop.metadata.trigger_ids, so
-		// membership is expressed on the loop side. useLoops projects that as
-		// agentIds, not trigger ids — so we derive tied trigger ids from any
-		// loop that shares the target actor. That's a coarse heuristic; the
-		// canonical membership lives on the loop's metadata, and if it becomes
-		// wrong for a workspace we'd surface trigger_ids on LoopSummary. For
-		// now: a trigger is tied to a loop when its targetActorId is in some
-		// loop's agentIds set.
+		// A trigger is standalone iff its targetActorId isn't in any loop's agentIds.
+		// Canonical membership lives on the loop's metadata.trigger_ids; until
+		// LoopSummary exposes trigger_ids directly, actor overlap is the proxy.
 		const tiedActorIds = new Set<string>()
 		for (const loop of loops ?? []) {
 			for (const id of loop.agentIds) tiedActorIds.add(id)
 		}
-		return triggers.filter((t) => {
-			if (claimed.has(t.id)) return false
-			return !(t.targetActorId && tiedActorIds.has(t.targetActorId))
-		})
+		return triggers.filter(
+			(t) => !(t.targetActorId && tiedActorIds.has(t.targetActorId)),
+		)
 	}, [loops, triggers])
 
 	const newButton = (
