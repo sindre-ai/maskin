@@ -8,7 +8,7 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useIsMobile, useIsTouchViewport } from '@/hooks/use-mobile'
+import { useIsDesktopViewport, useIsMobile } from '@/hooks/use-mobile'
 import {
 	useDeleteObject,
 	useKnowledgeReferences,
@@ -481,7 +481,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	// expanded/collapsed on tablet+. State is read from and written to
 	// `user_display_settings` under the `__chrome__` sentinel row.
 	const isMobile = useIsMobile()
-	const isTouch = useIsTouchViewport() // true at ≤1024 CSS px
+	const isDesktop = useIsDesktopViewport() // true at ≥1024 CSS px
 	const settingsQuery = useUserDisplaySettings(workspaceId, CHROME_KEY)
 	const upsertSettings = useUpdateUserDisplaySettings(workspaceId)
 	const persistedSettings = settingsQuery.data?.settings
@@ -489,7 +489,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	// tablet collapsed off-canvas (768–1023 → touch but not mobile), mobile
 	// Sheet starts closed. Reconciles to the persisted
 	// `objectDetailSidebarCollapsed` bit once the settings query has fetched.
-	const breakpointDefaultOpen = !isMobile && !isTouch
+	const breakpointDefaultOpen = !isMobile && isDesktop
 	const sidebarOpen = settingsQuery.isFetched
 		? typeof persistedSettings?.objectDetailSidebarCollapsed === 'boolean'
 			? !persistedSettings.objectDetailSidebarCollapsed

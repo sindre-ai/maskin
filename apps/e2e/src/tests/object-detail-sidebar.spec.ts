@@ -37,7 +37,10 @@ test.describe('Object detail — right sidebar', () => {
 		// Default at 1024 = 288 px inline expanded. Toggle button reports its
 		// state via aria-expanded; the Files section is rendered inside the
 		// sidebar and is a reliable content-visibility indicator.
-		const toggle = page.getByRole('button', { name: 'Properties' })
+		// The sidebar's own collapse toggle also has an accessible name
+		// containing "Properties" ("Expand/Collapse properties"), so this must
+		// be an exact match to avoid a strict-mode violation.
+		const toggle = page.getByRole('button', { name: 'Properties', exact: true })
 		await expect(toggle).toHaveAttribute('aria-expanded', 'true')
 		await expect(page.getByRole('heading', { name: /^Files \(/ })).toBeVisible()
 
@@ -58,7 +61,7 @@ test.describe('Object detail — right sidebar', () => {
 
 		// Persisted state (objectDetailSidebarCollapsed: true) rides through the
 		// reload — sidebar must NOT snap back to the breakpoint default.
-		await expect(page.getByRole('button', { name: 'Properties' })).toHaveAttribute(
+		await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveAttribute(
 			'aria-expanded',
 			'false',
 		)
@@ -84,7 +87,7 @@ test.describe('Object detail — right sidebar', () => {
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 			await waitForObjectDetail(page, 'Breakpoint default probe')
 
-			await expect(page.getByRole('button', { name: 'Properties' })).toHaveAttribute(
+			await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveAttribute(
 				'aria-expanded',
 				expanded ? 'true' : 'false',
 			)
@@ -108,7 +111,7 @@ test.describe('Object detail — right sidebar', () => {
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 		await waitForObjectDetail(page, 'Sidebar shortcut probe')
 
-		const toggle = page.getByRole('button', { name: 'Properties' })
+		const toggle = page.getByRole('button', { name: 'Properties', exact: true })
 		await expect(toggle).toHaveAttribute('aria-expanded', 'true')
 
 		// CI runs Chromium on Linux — Control+I is the effective binding. The
@@ -142,7 +145,7 @@ test.describe('Object detail — right sidebar', () => {
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 		await waitForObjectDetail(page, 'Sidebar contents probe')
 
-		await expect(page.getByRole('button', { name: 'Properties' })).toHaveAttribute(
+		await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveAttribute(
 			'aria-expanded',
 			'true',
 		)
@@ -153,12 +156,9 @@ test.describe('Object detail — right sidebar', () => {
 			page.getByRole('button', { name: /(subscribe to|unsubscribe from) this object/i }).first(),
 		).toBeVisible()
 
-		// created_at + updated_at — RelativeTime renders phrasings like
-		// "just now", "less than a minute ago", "N seconds ago" for a freshly
-		// created object.
-		await expect(
-			page.getByText(/(just now|less than a minute|seconds? ago)/i).first(),
-		).toBeVisible()
+		// created_at + updated_at — RelativeTime (relative-time.tsx) renders "now"
+		// for anything under 10s, else "Ns ago", for a freshly created object.
+		await expect(page.getByText(/^(now|\d+s ago)$/i).first()).toBeVisible()
 
 		// MetadataProperties on an object with no metadata + no field defs
 		// renders a "+ Add property" trigger; that's the observable presence
