@@ -1,10 +1,11 @@
-// One-shot idempotent catalog seed for real deploys (staging/production).
+// Idempotent catalog sync for real deploys (staging/production).
 //
 // Wired into `apps/dev/Dockerfile`'s CMD, right after `packages/db/dist/migrate.js`
 // and before the server starts, so every deploy reaches the same catalog state
-// the local dev server auto-seeds — not just local dev. No-ops once
-// catalog_packages has any rows, so it's safe to run on every boot, exactly
-// like migrate.js is safe to run on every boot.
+// the local dev server auto-seeds — not just local dev. Upserts by slug, so
+// it's safe to run on every boot: a package is inserted if missing, updated in
+// place if its code-defined version has moved on, or left untouched if the
+// version already matches — exactly like migrate.js is safe to run on every boot.
 //
 // Delegates to `seedCatalogPackages` in ../src/lib/dev-bootstrap.ts, the same
 // function the dev-server-boot path (`seedCatalogIfEmpty`) calls — so this
@@ -28,10 +29,10 @@ async function main(): Promise<void> {
 	const result = await seedCatalogPackages(db)
 
 	console.log(
-		result.seeded
-			? `Seeded ${result.packageCount} catalog package(s).`
-			: 'Catalog already has packages — no-op.',
+		`Catalog sync: ${result.inserted.length} inserted, ${result.updated.length} updated, ${result.unchanged.length} unchanged.`,
 	)
+	if (result.inserted.length > 0) console.log(`  Inserted: ${result.inserted.join(', ')}`)
+	if (result.updated.length > 0) console.log(`  Updated: ${result.updated.join(', ')}`)
 	process.exit(0)
 }
 

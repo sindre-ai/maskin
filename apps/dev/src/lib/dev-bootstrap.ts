@@ -8,7 +8,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import { CHIEF_OF_STAFF_DEFAULT, WORKSPACE_COACH_DEFAULT } from '@maskin/shared'
-import { and, count, eq, isNotNull } from 'drizzle-orm'
+import { and, eq, isNotNull } from 'drizzle-orm'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
 import {
@@ -71,11 +71,24 @@ const CATALOG_SEED_CONFIGS: readonly CatalogPackageSeedConfig[] = [
 	},
 ]
 
+export interface CatalogSyncResult {
+	inserted: string[]
+	updated: string[]
+	unchanged: string[]
+}
+
 /**
- * Seeds the global catalog with the four installable Loop bundles (Discover &
- * Research, Build & Ship, Strategy & Growth, Team Ops & Retro) if
- * catalog_packages is empty. Safe to call on every startup — the count check
- * makes it a no-op once any package exists.
+ * Syncs the global catalog with the four installable Loop bundles (Discover &
+ * Research, Build & Ship, Strategy & Growth, Team Ops & Retro), upserting by
+ * slug. A package missing from catalog_packages is inserted; a package whose
+ * code-defined version differs from the stored row is updated in place (its
+ * catalog_package_items are replaced wholesale); a package whose version
+ * matches is left untouched. Safe to call on every startup/deploy.
+ *
+ * Bumping a package's `version` is the deliberate signal that propagates a
+ * change: `PackageVersionPusher` (services/package-version-pusher.ts) polls
+ * hourly for installed_packages rows whose installedVersion has fallen behind
+ * catalogPackages.version and re-provisions locked installs accordingly.
  *
  * Reuses the exact same package configs + snapshot data the publish-*.ts
  * scripts publish to a shared catalog DB, so local dev never drifts from what
@@ -85,17 +98,28 @@ const CATALOG_SEED_CONFIGS: readonly CatalogPackageSeedConfig[] = [
  * `scripts/seed-catalog.ts` (wired into the Docker boot sequence). Env-gating
  * lives in `seedCatalogIfEmpty` below, the dev-server-boot entrypoint.
  */
-export async function seedCatalogPackages(
-	db: Database,
-): Promise<{ seeded: boolean; packageCount: number }> {
-	const [row] = await db.select({ n: count() }).from(catalogPackages)
-	if (row && row.n > 0) return { seeded: false, packageCount: 0 }
+export async function seedCatalogPackages(db: Database): Promise<CatalogSyncResult> {
+	const existingRows = await db
+		.select({
+			id: catalogPackages.id,
+			slug: catalogPackages.slug,
+			version: catalogPackages.version,
+		})
+		.from(catalogPackages)
+	const existingBySlug = new Map(existingRows.map((r) => [r.slug, r]))
 
-	// One transaction for every package: this only runs when the catalog is
-	// completely empty, so a partial failure would leave count() > 0 and
-	// silently skip seeding the rest of the catalog on every future startup.
+	const inserted: string[] = []
+	const updated: string[] = []
+	const unchanged: string[] = []
+
 	await db.transaction(async (tx) => {
 		for (const config of CATALOG_SEED_CONFIGS) {
+			const existing = existingBySlug.get(config.package.slug)
+			if (existing && existing.version === config.package.version) {
+				unchanged.push(config.package.slug)
+				continue
+			}
+
 			const actorRows = config.actorIds.map(getActorData)
 			const triggerRows = config.triggerIds.map(getTriggerData)
 			const skillRows = config.skillIds.map(getSkillData)
@@ -109,34 +133,53 @@ export async function seedCatalogPackages(
 				}
 			}
 
-			const [pkg] = await tx
-				.insert(catalogPackages)
-				.values({
-					slug: config.package.slug,
-					name: config.package.name,
-					description: config.package.description,
-					version: config.package.version,
-					useCase: config.package.useCase,
-				})
-				.returning()
+			let packageId: string
+			if (existing) {
+				await tx
+					.update(catalogPackages)
+					.set({
+						name: config.package.name,
+						description: config.package.description,
+						version: config.package.version,
+						useCase: config.package.useCase,
+						updatedAt: new Date(),
+					})
+					.where(eq(catalogPackages.id, existing.id))
+				await tx.delete(catalogPackageItems).where(eq(catalogPackageItems.packageId, existing.id))
+				packageId = existing.id
+				updated.push(config.package.slug)
+			} else {
+				const [pkg] = await tx
+					.insert(catalogPackages)
+					.values({
+						slug: config.package.slug,
+						name: config.package.name,
+						description: config.package.description,
+						version: config.package.version,
+						useCase: config.package.useCase,
+					})
+					.returning()
 
-			if (!pkg) throw new Error(`${config.package.slug}: catalog_packages insert returned no row`)
+				if (!pkg) throw new Error(`${config.package.slug}: catalog_packages insert returned no row`)
+				packageId = pkg.id
+				inserted.push(config.package.slug)
+			}
 
 			await tx.insert(catalogPackageItems).values([
 				...actorRows.map((actorRow) => ({
-					packageId: pkg.id,
+					packageId,
 					itemType: 'actor' as const,
 					sourceItemId: actorRow.id,
 					itemSnapshot: actorSnapshot(actorRow),
 				})),
 				...triggerRows.map((triggerRow) => ({
-					packageId: pkg.id,
+					packageId,
 					itemType: 'trigger' as const,
 					sourceItemId: triggerRow.id,
 					itemSnapshot: triggerSnapshot(triggerRow),
 				})),
 				...skillRows.map((skillRow) => ({
-					packageId: pkg.id,
+					packageId,
 					itemType: 'skill' as const,
 					sourceItemId: skillRow.id,
 					itemSnapshot: skillSnapshot(
@@ -148,7 +191,7 @@ export async function seedCatalogPackages(
 		}
 	})
 
-	return { seeded: true, packageCount: CATALOG_SEED_CONFIGS.length }
+	return { inserted, updated, unchanged }
 }
 
 /**

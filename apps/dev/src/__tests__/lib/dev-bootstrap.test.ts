@@ -1,6 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { CCD_ACTOR_IDS, CCD_PACKAGE, CCD_TRIGGER_IDS } from '../../lib/catalog-packages/ccd-package'
+import { DEV_PIPELINE_PACKAGE } from '../../lib/catalog-packages/dev-pipeline-package'
+import { STRATEGY_GROWTH_PACKAGE } from '../../lib/catalog-packages/strategy-growth-package'
+import { TEAM_OPS_PACKAGE } from '../../lib/catalog-packages/team-ops-package'
 import { maybeBootstrapDev, seedCatalogIfEmpty, seedCatalogPackages } from '../../lib/dev-bootstrap'
 import { createTestContext } from '../setup'
+
+const ALL_PACKAGES = [CCD_PACKAGE, DEV_PIPELINE_PACKAGE, STRATEGY_GROWTH_PACKAGE, TEAM_OPS_PACKAGE]
+
+function matchingCatalogRows() {
+	return ALL_PACKAGES.map((pkg, i) => ({ id: `pkg-${i}`, slug: pkg.slug, version: pkg.version }))
+}
 
 describe('maybeBootstrapDev', () => {
 	const originalEnv = { ...process.env }
@@ -128,7 +138,7 @@ describe('seedCatalogIfEmpty', () => {
 	it('does nothing in production, even on an empty catalog', async () => {
 		process.env.NODE_ENV = 'production'
 		const { db, mockResults, calls } = createTestContext()
-		mockResults.select = [{ n: 0 }]
+		mockResults.select = []
 
 		await seedCatalogIfEmpty(db)
 
@@ -139,29 +149,30 @@ describe('seedCatalogIfEmpty', () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'false'
 		const { db, mockResults, calls } = createTestContext()
-		mockResults.select = [{ n: 0 }]
+		mockResults.select = []
 
 		await seedCatalogIfEmpty(db)
 
 		expect(calls.inserts).toEqual([])
 	})
 
-	it('no-ops when the catalog already has packages', async () => {
+	it("no-ops when every package's version already matches the catalog", async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults, calls } = createTestContext()
-		mockResults.select = [{ n: 3 }]
+		mockResults.select = matchingCatalogRows()
 
 		await seedCatalogIfEmpty(db)
 
 		expect(calls.inserts).toEqual([])
+		expect(calls.updates).toEqual([])
 	})
 
-	it('seeds all 19 live catalog packages (CCD + dev pipeline + 17 single-agent) when the catalog is empty', async () => {
+	it('inserts all 4 Loop packages when the catalog is empty', async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults, calls } = createTestContext()
-		mockResults.select = [{ n: 0 }]
+		mockResults.select = []
 		mockResults.insert = [{ id: 'pkg-1' }]
 
 		await seedCatalogIfEmpty(db)
@@ -175,42 +186,17 @@ describe('seedCatalogIfEmpty', () => {
 		)
 		const itemInserts = calls.inserts.filter((v): v is unknown[] => Array.isArray(v))
 
-		expect(packageInserts.length).toBe(19)
-		expect(itemInserts.length).toBe(19)
+		expect(packageInserts.length).toBe(4)
+		expect(itemInserts.length).toBe(4)
 
 		const slugs = packageInserts.map((p) => p.slug)
-		expect(new Set(slugs).size).toBe(19)
-		expect(slugs).toEqual(
-			expect.arrayContaining([
-				'customer-continuous-discovery',
-				'development-pipeline',
-				'planner',
-				'developer',
-				'architect',
-				'designer',
-				'code-reviewer',
-				'workspace-driver',
-				'customer-feedback-agent',
-				'insights-triage-agent',
-				'product-ideator',
-				'research-agent',
-				'summarization-agent',
-				'strategist',
-				'product-analyst',
-				'product-marketer',
-				'product-pricing-specialist',
-				'workspace-coach',
-				'retro-knowledge-author',
-			]),
-		)
+		expect(new Set(slugs).size).toBe(4)
+		expect(slugs).toEqual(expect.arrayContaining(ALL_PACKAGES.map((p) => p.slug)))
 
-		// CCD is seeded first — it must ship the current, live 3-actor bundle
-		// (Customer Feedback Agent, Insights Triage Agent, Product Ideator), not
-		// the old hardcoded 4-actor bundle that still referenced the
-		// since-removed Customer Curator actor.
+		// CCD is seeded first — assert its actor/trigger counts match the live bundle.
 		const ccdItems = itemInserts[0] as Array<{ itemType: string; sourceItemId: string }>
-		expect(ccdItems.filter((i) => i.itemType === 'actor').length).toBe(3)
-		expect(ccdItems.filter((i) => i.itemType === 'trigger').length).toBe(7)
+		expect(ccdItems.filter((i) => i.itemType === 'actor').length).toBe(CCD_ACTOR_IDS.length)
+		expect(ccdItems.filter((i) => i.itemType === 'trigger').length).toBe(CCD_TRIGGER_IDS.length)
 	})
 })
 
@@ -222,26 +208,51 @@ describe('seedCatalogPackages', () => {
 		vi.restoreAllMocks()
 	})
 
-	it('seeds even when NODE_ENV is production — scripts/seed-catalog.ts (the deploy-time entrypoint) calls this directly, unguarded', async () => {
+	it('inserts every package even when NODE_ENV is production — scripts/seed-catalog.ts (the deploy-time entrypoint) calls this directly, unguarded', async () => {
 		process.env.NODE_ENV = 'production'
 		const { db, mockResults, calls } = createTestContext()
-		mockResults.select = [{ n: 0 }]
+		mockResults.select = []
 		mockResults.insert = [{ id: 'pkg-1' }]
 
 		const result = await seedCatalogPackages(db)
 
-		expect(result).toEqual({ seeded: true, packageCount: 19 })
+		expect(result.inserted.length).toBe(4)
+		expect(result.updated).toEqual([])
+		expect(result.unchanged).toEqual([])
 		expect(calls.inserts.length).toBeGreaterThan(0)
 	})
 
-	it('no-ops when the catalog already has packages, regardless of NODE_ENV', async () => {
+	it("no-ops when every package's version already matches, regardless of NODE_ENV", async () => {
 		process.env.NODE_ENV = 'production'
 		const { db, mockResults, calls } = createTestContext()
-		mockResults.select = [{ n: 3 }]
+		mockResults.select = matchingCatalogRows()
 
 		const result = await seedCatalogPackages(db)
 
-		expect(result).toEqual({ seeded: false, packageCount: 0 })
+		expect(result.inserted).toEqual([])
+		expect(result.updated).toEqual([])
+		expect(result.unchanged.length).toBe(4)
 		expect(calls.inserts).toEqual([])
+	})
+
+	it('updates a package and replaces its items when its version has changed', async () => {
+		process.env.NODE_ENV = 'production'
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = matchingCatalogRows().map((row) =>
+			row.slug === CCD_PACKAGE.slug ? { ...row, version: 'stale-version' } : row,
+		)
+		mockResults.insert = [{ id: 'pkg-1' }]
+
+		const result = await seedCatalogPackages(db)
+
+		expect(result.updated).toEqual([CCD_PACKAGE.slug])
+		expect(result.inserted).toEqual([])
+		expect(result.unchanged.length).toBe(3)
+		expect(calls.updates.length).toBe(1)
+
+		const itemInserts = calls.inserts.filter((v): v is unknown[] => Array.isArray(v))
+		expect(itemInserts.length).toBe(1)
+		const ccdItems = itemInserts[0] as Array<{ itemType: string }>
+		expect(ccdItems.filter((i) => i.itemType === 'actor').length).toBe(CCD_ACTOR_IDS.length)
 	})
 })
