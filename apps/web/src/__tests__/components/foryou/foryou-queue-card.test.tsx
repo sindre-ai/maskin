@@ -104,8 +104,9 @@ describe('ForYouQueueCard', () => {
 					object: buildObjectResponse({
 						id: 'obj-1',
 						title: 'Onboarding A/B',
-						type: 'bet',
+						type: 'task',
 						status: 'in_review',
+						metadata: { decision_type: 'ux' },
 					}),
 				})}
 				onProcessed={vi.fn()}
@@ -122,15 +123,17 @@ describe('ForYouQueueCard', () => {
 	})
 
 	it.each([
-		['in_review', 'bet', 'decision'],
-		['in_review', 'task', 'sign_off'],
-		['proposed', 'bet', 'proposed_bet'],
-		['active', 'insight', 'thread'],
-	])('classifies status=%s type=%s as %s', (status, type, expectedKind) => {
+		['in_review', 'task', 'decision', { decision_type: 'ux' }],
+		['in_review', 'task', 'sign_off', null],
+		['proposed', 'bet', 'proposed_bet', null],
+		['active', 'insight', 'thread', null],
+	])('classifies status=%s type=%s as %s', (status, type, expectedKind, metadata) => {
 		render(
 			<ForYouQueueCard
 				workspaceId="ws-1"
-				item={buildItem({ object: buildObjectResponse({ id: 'obj-1', title: 'X', type, status }) })}
+				item={buildItem({
+					object: buildObjectResponse({ id: 'obj-1', title: 'X', type, status, metadata }),
+				})}
 				onProcessed={vi.fn()}
 				onRestored={vi.fn()}
 				onCommitScheduled={vi.fn()}
@@ -150,8 +153,9 @@ describe('ForYouQueueCard', () => {
 					object: buildObjectResponse({
 						id: 'obj-1',
 						title: 'Bet',
-						type: 'bet',
+						type: 'task',
 						status: 'in_review',
+						metadata: { decision_type: 'ux' },
 					}),
 				})}
 				onProcessed={vi.fn()}
@@ -175,8 +179,9 @@ describe('ForYouQueueCard', () => {
 				object: buildObjectResponse({
 					id: 'obj-1',
 					title: 'Bet',
-					type: 'bet',
+					type: 'task',
 					status: 'in_review',
+					metadata: { decision_type: 'ux' },
 				}),
 			})
 			render(
