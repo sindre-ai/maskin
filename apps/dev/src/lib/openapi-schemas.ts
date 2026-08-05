@@ -55,6 +55,11 @@ export const objectResponseSchema = z.object({
 	subscriber_count: z.number().optional(),
 })
 
+export const actorSkillSchema = z.object({
+	id: z.string().uuid(),
+	name: z.string(),
+})
+
 export const actorResponseSchema = z.object({
 	id: z.string().uuid(),
 	type: z.string(),
@@ -72,6 +77,7 @@ export const actorResponseSchema = z.object({
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 	installedPackageId: z.string().uuid().nullable().optional(),
+	skills: z.array(actorSkillSchema).optional(),
 })
 
 export const actorWithKeySchema = actorResponseSchema.extend({
