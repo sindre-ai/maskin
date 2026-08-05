@@ -97,6 +97,7 @@ describe('Header', () => {
 			stickyIdentity: null,
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setContentPush: vi.fn(),
 		})
 
 		render(<Header />)
