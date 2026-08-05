@@ -538,7 +538,11 @@ test.describe('For You prototype redesign — metadata row', () => {
 test.describe('For You prototype redesign — composer', () => {
 	async function gotoWithSingleThread(page: Page, workspaceId: string) {
 		await mockFeed(page, [
-			buildItem(workspaceId, { id: 'thread-1', title: 'Renewal terms need a read', type: 'insight' }),
+			buildItem(workspaceId, {
+				id: 'thread-1',
+				title: 'Renewal terms need a read',
+				type: 'insight',
+			}),
 		])
 		await gotoForyou(page, workspaceId)
 	}
@@ -548,9 +552,9 @@ test.describe('For You prototype redesign — composer', () => {
 		await gotoWithSingleThread(page, account.workspaceId)
 
 		await expect(page.getByPlaceholder('Write a comment...')).toBeVisible()
-		await expect(
-			page.getByPlaceholder('Write a comment... Use @ to mention an agent'),
-		).toHaveCount(0)
+		await expect(page.getByPlaceholder('Write a comment... Use @ to mention an agent')).toHaveCount(
+			0,
+		)
 	})
 
 	test('placeholder includes the full hint at 1024px', async ({ page, account }) => {
