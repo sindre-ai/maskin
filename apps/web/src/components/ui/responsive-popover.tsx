@@ -44,17 +44,19 @@ type ResponsivePopoverContentProps = React.ComponentPropsWithoutRef<
 	typeof PopoverPrimitive.Content
 > & {
 	accessibleTitle?: string
+	hideCloseButton?: boolean
 }
 
 const ResponsivePopoverContent = React.forwardRef<
 	React.ElementRef<typeof PopoverPrimitive.Content>,
 	ResponsivePopoverContentProps
->(({ className, children, accessibleTitle = 'Options', ...props }, ref) => {
+>(({ className, children, accessibleTitle = 'Options', hideCloseButton, ...props }, ref) => {
 	if (useMode() === 'sheet') {
 		return (
 			<SheetContent
 				ref={ref}
 				side="bottom"
+				hideCloseButton={hideCloseButton}
 				className={cn(
 					'flex max-h-[85dvh] flex-col rounded-t-lg rounded-b-none p-4',
 					className,

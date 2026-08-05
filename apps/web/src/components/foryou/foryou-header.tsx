@@ -187,7 +187,12 @@ export function ForYouHeader({
 							<span className="hidden sm:inline">Display</span>
 						</Button>
 					</ResponsivePopoverTrigger>
-					<ResponsivePopoverContent align="end" accessibleTitle="Display options" className="w-64">
+					<ResponsivePopoverContent
+						align="end"
+						accessibleTitle="Display options"
+						hideCloseButton
+						className="w-64"
+					>
 						<div className="space-y-3">
 							<Tabs
 								value={mode}
