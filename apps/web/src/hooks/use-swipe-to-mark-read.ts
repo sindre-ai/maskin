@@ -256,7 +256,12 @@ export function useSwipeToMarkRead(
 		s.dx = callbacksRef.current.isRead ? Math.min(dx, 0) : dx
 		e.preventDefault()
 		const now = Date.now()
-		s.vel = (e.clientX - s.lastX) / (now - s.lastTime || 1)
+		const elapsed = now - s.lastTime
+		// Same-millisecond pointermove events (coalesced input, or a single
+		// synthetic move in tests) have no reliable elapsed time to divide by —
+		// treat velocity as 0 rather than fabricating a huge value from a
+		// near-zero denominator, which would spuriously cross VELOCITY_THRESHOLD.
+		s.vel = elapsed > 0 ? (e.clientX - s.lastX) / elapsed : 0
 		s.lastX = e.clientX
 		s.lastTime = now
 		setDragOffset(s.dx)

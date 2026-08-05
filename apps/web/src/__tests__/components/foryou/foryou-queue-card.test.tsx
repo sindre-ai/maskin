@@ -263,7 +263,7 @@ describe('ForYouQueueCard', () => {
 			})
 
 			const card = screen.getByTestId('foryou-queue-card')
-			expect(card.style.transform).toBe('translateX(140%)')
+			expect(card.style.transform).toBe('translateX(140%) rotate(8deg)')
 			expect(onProcessed).not.toHaveBeenCalled()
 
 			fireTransitionEnd(card)
@@ -312,7 +312,7 @@ describe('ForYouQueueCard', () => {
 			})
 
 			const card = screen.getByTestId('foryou-queue-card')
-			expect(card.style.transform).toBe('translateX(0px)')
+			expect(card.style.transform).toBe('translateX(0px) rotate(0deg)')
 		})
 
 		it('sign_off kind renders its own action chips instead of the decision block', () => {
@@ -476,7 +476,7 @@ describe('ForYouQueueCard', () => {
 			expect(mockCreateCommentMutate).not.toHaveBeenCalled()
 
 			const card = screen.getByTestId('foryou-queue-card')
-			expect(card.style.transform).toBe('translateX(-140%)')
+			expect(card.style.transform).toBe('translateX(-140%) rotate(-8deg)')
 			expect(onProcessed).not.toHaveBeenCalled()
 
 			fireTransitionEnd(card)
@@ -506,7 +506,7 @@ describe('ForYouQueueCard', () => {
 			})
 
 			const card = screen.getByTestId('foryou-queue-card')
-			expect(card.style.transform).toBe('translateX(140%)')
+			expect(card.style.transform).toBe('translateX(140%) rotate(8deg)')
 			expect(mockMarkReadMutate).not.toHaveBeenCalled()
 
 			act(() => {
