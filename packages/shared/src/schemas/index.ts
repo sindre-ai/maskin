@@ -1,5 +1,6 @@
 export * from './primitives'
 export * from './objects'
+export * from './loops'
 export * from './actors'
 export * from './workspaces'
 export * from './relationships'

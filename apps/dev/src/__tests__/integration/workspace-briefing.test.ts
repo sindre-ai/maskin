@@ -35,7 +35,7 @@ describe('renderWorkspaceBriefing — loop ordering', () => {
 		// not, ignoring the breached/at-risk split), this row loses every tiebreak
 		// against the fresher at-risk rows below and falls outside .limit(MAX_LOOPS).
 		await insertObject(db, workspaceId, actorId, {
-			type: 'loop',
+			type: 'commitment',
 			status: 'breached',
 			title: 'Weekly release cadence',
 			updatedAt: new Date(now - 30 * 24 * 60 * 60 * 1000),
@@ -45,7 +45,7 @@ describe('renderWorkspaceBriefing — loop ordering', () => {
 		// breached loop above.
 		for (let i = 0; i < 10; i++) {
 			await insertObject(db, workspaceId, actorId, {
-				type: 'loop',
+				type: 'commitment',
 				status: 'at-risk',
 				title: `At-risk loop ${i}`,
 				updatedAt: new Date(now - i * 1000),
@@ -55,7 +55,7 @@ describe('renderWorkspaceBriefing — loop ordering', () => {
 		const storage = createNoopStorage()
 		const result = await renderWorkspaceBriefing(db, storage, workspaceId)
 
-		const loopSection = result.slice(result.indexOf('## Loops'))
+		const loopSection = result.slice(result.indexOf('## Commitments'))
 		expect(loopSection).toContain('Weekly release cadence')
 
 		// Breached must sort ahead of every at-risk loop, not just survive the limit.

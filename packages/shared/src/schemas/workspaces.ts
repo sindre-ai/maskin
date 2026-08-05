@@ -76,6 +76,8 @@ export const workspaceSettingsSchema = z.object({
 		insight: 'Insight',
 		bet: 'Bet',
 		task: 'Task',
+		commitment: 'Commitment',
+		loop: 'Loop',
 	}),
 	statuses: z.record(z.array(z.string())).default({
 		insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
@@ -94,6 +96,8 @@ export const workspaceSettingsSchema = z.object({
 			'archived',
 		],
 		task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
+		commitment: ['holding', 'at-risk', 'breached'],
+		loop: ['running', 'waiting', 'paused', 'archived'],
 	}),
 	field_definitions: z.record(z.array(fieldDefinitionSchema)).default({
 		bet: [{ name: 'archive_reason', type: 'text', required: false }],

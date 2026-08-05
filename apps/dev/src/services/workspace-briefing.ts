@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { objects, relationships, workspaces } from '@maskin/db/schema'
-import { LOOP_ATTENTION_STATUSES, buildWebAppHref, stripTrailingSlash } from '@maskin/shared'
+import { COMMITMENT_ATTENTION_STATUSES, buildWebAppHref, stripTrailingSlash } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
@@ -10,16 +10,16 @@ const MAX_ACTIVE_BETS = 10
 const MAX_PAUSED_BETS = 5
 const MAX_CLOSED_BETS = 5
 const MAX_OPEN_INSIGHTS = 10
-const MAX_LOOPS = 10
+const MAX_COMMITMENTS = 10
 const MAX_LEDGER_LINES = 20
 
-// Loops are ordered by how loud a signal they carry: `breached` (floor
+// Commitments are ordered by how loud a signal they carry: `breached` (floor
 // already broken) first, then `at-risk`, then `holding` (steady-state). This
 // mirrors the bet convention where terminal transitions surface ahead of
-// lifecycle noise — the DoD on T2 (Loops primitive) requires at-risk and
-// breached appear ahead of holding using the composer's existing per-type
-// grouping.
-const LOOP_STATUS_PRIORITY: Record<string, number> = {
+// lifecycle noise — the DoD on the original Loops primitive (now the
+// Commitment type post-rename) requires at-risk and breached appear ahead of
+// holding using the composer's existing per-type grouping.
+const COMMITMENT_STATUS_PRIORITY: Record<string, number> = {
 	breached: 0,
 	'at-risk': 1,
 	holding: 2,
@@ -176,30 +176,34 @@ export async function renderWorkspaceBriefing(
 	const betLabel = displayNames.bet ?? 'Bet'
 	const taskLabel = displayNames.task ?? 'Task'
 	const insightLabel = displayNames.insight ?? 'Insight'
-	const loopLabel = displayNames.loop ?? 'Loop'
+	// Fall back to legacy `loop` display name for workspaces that haven't yet
+	// re-seeded post-rename (0-row prod today, but dev/test fixtures still
+	// carry the old key).
+	const commitmentLabel = displayNames.commitment ?? displayNames.loop ?? 'Commitment'
 
 	const since = new Date(Date.now() - CLOSED_BETS_DAYS * 24 * 60 * 60 * 1000)
 
-	// Loops sort with attention-worthy statuses (breached, at-risk) ahead of
-	// holding so the briefing surfaces "your standing commitments that need
-	// you" at the top of the section. Uses `inArray` so `LOOP_ATTENTION_STATUSES`
-	// stays the single source of truth shared with the unread-feed join in
-	// routes/subscriptions.ts — no drift between the two surfaces.
+	// Commitments sort with attention-worthy statuses (breached, at-risk)
+	// ahead of holding so the briefing surfaces "your standing commitments
+	// that need you" at the top of the section. Uses `inArray` so
+	// `COMMITMENT_ATTENTION_STATUSES` stays the single source of truth shared
+	// with the unread-feed join in routes/subscriptions.ts — no drift between
+	// the two surfaces.
 	//
-	// This coarse tier alone is not enough: `.limit(MAX_LOOPS)` is applied
-	// against this ORDER BY at the DB level, so it must fully match
-	// LOOP_STATUS_PRIORITY (breached > at-risk > holding), not just
+	// This coarse tier alone is not enough: `.limit(MAX_COMMITMENTS)` is
+	// applied against this ORDER BY at the DB level, so it must fully match
+	// COMMITMENT_STATUS_PRIORITY (breached > at-risk > holding), not just
 	// "attention-worthy vs not". A 2-tier ORDER BY would let a fresher
-	// `at-risk` loop win one of the MAX_LOOPS slots over an older `breached`
-	// one, because the in-memory 3-tier sort below only re-sorts whatever
-	// already survived the LIMIT. `loopBreachedPriority` breaks the tie within
-	// the attention-worthy tier so breached rows are never truncated in favor
-	// of at-risk ones.
-	const loopHealthPriority = sql<number>`case when ${inArray(objects.status, [...LOOP_ATTENTION_STATUSES])} then 1 else 0 end`
-	const loopBreachedPriority = sql<number>`case when ${eq(objects.status, 'breached')} then 1 else 0 end`
+	// `at-risk` commitment win one of the MAX_COMMITMENTS slots over an older
+	// `breached` one, because the in-memory 3-tier sort below only re-sorts
+	// whatever already survived the LIMIT. `commitmentBreachedPriority` breaks
+	// the tie within the attention-worthy tier so breached rows are never
+	// truncated in favor of at-risk ones.
+	const commitmentHealthPriority = sql<number>`case when ${inArray(objects.status, [...COMMITMENT_ATTENTION_STATUSES])} then 1 else 0 end`
+	const commitmentBreachedPriority = sql<number>`case when ${eq(objects.status, 'breached')} then 1 else 0 end`
 
 	// Independent queries run in parallel — they don't depend on each other.
-	const [activeBets, pausedBets, closedBets, openInsights, loops] = await Promise.all([
+	const [activeBets, pausedBets, closedBets, openInsights, commitments] = await Promise.all([
 		db
 			.select()
 			.from(objects)
@@ -249,23 +253,28 @@ export async function renderWorkspaceBriefing(
 			)
 			.orderBy(desc(objects.createdAt))
 			.limit(MAX_OPEN_INSIGHTS),
-		// Loops — polymorphic filter on `type='loop'`, never `metadata_eq`, so
-		// the week-4 kill signal on the parent bet can read this as usage of
-		// the primitive rather than a bespoke query path.
+		// Commitments — polymorphic filter on `type='commitment'` (renamed from
+		// the legacy `loop` type in T1 of bet/loops-first-class), never
+		// `metadata_eq`, so downstream usage checks can still read this as
+		// primitive usage rather than a bespoke query path.
 		db
 			.select()
 			.from(objects)
-			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')))
-			.orderBy(desc(loopHealthPriority), desc(loopBreachedPriority), desc(objects.updatedAt))
-			.limit(MAX_LOOPS),
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'commitment')))
+			.orderBy(
+				desc(commitmentHealthPriority),
+				desc(commitmentBreachedPriority),
+				desc(objects.updatedAt),
+			)
+			.limit(MAX_COMMITMENTS),
 	])
 
 	// In-memory sort by health priority (breached → at-risk → holding), then
 	// by recency within a status tier. Unknown statuses sort last so a future
 	// schema addition doesn't silently jump the queue.
-	const sortedLoops = [...loops].sort((a, b) => {
-		const aRank = LOOP_STATUS_PRIORITY[a.status] ?? Number.POSITIVE_INFINITY
-		const bRank = LOOP_STATUS_PRIORITY[b.status] ?? Number.POSITIVE_INFINITY
+	const sortedCommitments = [...commitments].sort((a, b) => {
+		const aRank = COMMITMENT_STATUS_PRIORITY[a.status] ?? Number.POSITIVE_INFINITY
+		const bRank = COMMITMENT_STATUS_PRIORITY[b.status] ?? Number.POSITIVE_INFINITY
 		if (aRank !== bRank) return aRank - bRank
 		const aTime = a.updatedAt instanceof Date ? a.updatedAt.getTime() : 0
 		const bTime = b.updatedAt instanceof Date ? b.updatedAt.getTime() : 0
@@ -364,14 +373,14 @@ export async function renderWorkspaceBriefing(
 	}
 	out.push('')
 
-	// Silent when empty — matches the paused-bets pattern. An empty Loop set
-	// (the day-1 state before any bet has graduated) should not shout at the
-	// reader with a placeholder line.
-	if (sortedLoops.length > 0) {
-		out.push(`## ${loopLabel}s`)
+	// Silent when empty — matches the paused-bets pattern. An empty commitment
+	// set (the day-1 state before any bet has graduated) should not shout at
+	// the reader with a placeholder line.
+	if (sortedCommitments.length > 0) {
+		out.push(`## ${commitmentLabel}s`)
 		out.push('')
-		for (const loop of sortedLoops) {
-			const meta = (loop.metadata as Record<string, unknown> | null) ?? {}
+		for (const commitment of sortedCommitments) {
+			const meta = (commitment.metadata as Record<string, unknown> | null) ?? {}
 			const floor =
 				typeof meta.floor === 'string' && meta.floor.length > 0
 					? ` · floor: ${truncate(meta.floor, 60)}`
@@ -380,7 +389,9 @@ export async function renderWorkspaceBriefing(
 				typeof meta.cadence === 'string' && meta.cadence.length > 0
 					? ` · cadence: ${truncate(meta.cadence, 40)}`
 					: ''
-			out.push(`- **${truncate(loop.title, TITLE_MAX)}** [${loop.status}]${floor}${cadence}`)
+			out.push(
+				`- **${truncate(commitment.title, TITLE_MAX)}** [${commitment.status}]${floor}${cadence}`,
+			)
 		}
 		out.push('')
 	}

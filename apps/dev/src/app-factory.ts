@@ -28,6 +28,7 @@ import importsRoutes from './routes/imports'
 import installedPackagesRoutes from './routes/installed-packages'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import loopsRoutes from './routes/loops'
 import mcpRoutes from './routes/mcp'
 import methodRoutes from './routes/method'
 import notificationsRoutes from './routes/notifications'
@@ -217,6 +218,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/workspaces', workspaceSkillsRoutes)
 	app.route('/api/relationships', relationshipsRoutes)
 	app.route('/api/triggers', triggersRoutes)
+	app.route('/api/loops', loopsRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	app.route('/api/catalog', catalogPackagesRoutes)
