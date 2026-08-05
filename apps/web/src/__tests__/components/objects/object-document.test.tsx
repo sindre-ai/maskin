@@ -24,6 +24,7 @@ vi.mock('@/components/activity/object-activity', () => ({
 // Mock the whole use-objects module here so the ObjectDocumentView tests below
 // can drive chip visibility deterministically (0 → hidden, N>0 → visible).
 const mockUseKnowledgeReferences = vi.fn()
+mockUseKnowledgeReferences.mockReturnValue({ data: undefined })
 vi.mock('@/hooks/use-objects', async () => {
 	const actual = await vi.importActual<typeof import('@/hooks/use-objects')>('@/hooks/use-objects')
 	return {
