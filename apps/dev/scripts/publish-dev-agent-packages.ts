@@ -28,9 +28,10 @@ import {
 	DEV_AGENT_PACKAGES_SOURCE_WORKSPACE_ID,
 	type DevAgentPackageConfig,
 	actorSnapshot,
+	skillSnapshot,
 	triggerSnapshot,
 } from './dev-agent-packages'
-import { getActorData, getTriggerData } from './package-data'
+import { getActorData, getSkillData, getTriggerData } from './package-data'
 
 const SOURCE_WORKSPACE_ID =
 	process.env.DEV_AGENT_PACKAGES_SOURCE_WORKSPACE_ID ?? DEV_AGENT_PACKAGES_SOURCE_WORKSPACE_ID
@@ -47,6 +48,7 @@ async function publishOne(
 	// naming any id that isn't present in the JSON.
 	const actorRows = config.actorIds.map(getActorData)
 	const triggerRows = config.triggerIds.map(getTriggerData)
+	const skillRows = config.skillIds.map(getSkillData)
 
 	// Every published trigger must fire one of the published actors or the
 	// install will resolve target_actor_id to a stale, unrelated UUID in the
@@ -60,10 +62,11 @@ async function publishOne(
 		}
 	}
 
-	// Guard against pulling an item from the wrong workspace. Only triggers
-	// carry a workspaceId — actors are global (workspace membership lives in
-	// workspace_members, not on the actor row), so they pass through by design.
-	for (const row of [...actorRows, ...triggerRows]) {
+	// Guard against pulling an item from the wrong workspace. Only triggers and
+	// skills carry a workspaceId — actors are global (workspace membership
+	// lives in workspace_members, not on the actor row), so they pass through
+	// by design.
+	for (const row of [...actorRows, ...triggerRows, ...skillRows]) {
 		const wsId = (row as { workspaceId?: string }).workspaceId
 		if (wsId !== undefined && wsId !== SOURCE_WORKSPACE_ID) {
 			throw new Error(
@@ -128,6 +131,15 @@ async function publishOne(
 				sourceItemId: row.id,
 				itemSnapshot: triggerSnapshot(row),
 			})),
+			...skillRows.map((row) => ({
+				packageId: pkg.id,
+				itemType: 'skill' as const,
+				sourceItemId: row.id,
+				itemSnapshot: skillSnapshot(
+					row,
+					row.attachedActorIds.filter((id) => publishedActorIds.has(id)),
+				),
+			})),
 		]
 
 		await tx.insert(catalogPackageItems).values(itemRows)
@@ -135,7 +147,7 @@ async function publishOne(
 	})
 
 	console.log(
-		`Published ${slug} v${config.package.version} as ${inserted.pkg.id} (${actorRows.length} actors + ${triggerRows.length} triggers = ${inserted.itemCount} items).`,
+		`Published ${slug} v${config.package.version} as ${inserted.pkg.id} (${actorRows.length} actors + ${triggerRows.length} triggers + ${skillRows.length} skills = ${inserted.itemCount} items).`,
 	)
 }
 

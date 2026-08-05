@@ -20,9 +20,9 @@ import {
 	CCD_PACKAGE_USE_CASE,
 	CCD_PACKAGE_VERSION,
 } from '@maskin/shared'
-import { triggerIdsForActor } from './package-data'
+import { skillIdsForActor, triggerIdsForActor } from './package-data'
 
-export { actorSnapshot, triggerSnapshot } from './package-snapshot'
+export { actorSnapshot, skillSnapshot, triggerSnapshot } from './package-snapshot'
 
 export const CCD_SOURCE_WORKSPACE_ID = 'fe944fe6-7b45-478c-afc7-b889cea63c08'
 
@@ -41,3 +41,10 @@ export const CCD_ACTOR_IDS = [
 ] as const
 
 export const CCD_TRIGGER_IDS: readonly string[] = CCD_ACTOR_IDS.flatMap(triggerIdsForActor)
+
+// A skill can be attached to more than one of the bundle's actors — dedupe so
+// it's only published once instead of colliding on the (packageId, itemType,
+// sourceItemId) uniqueness the install path relies on.
+export const CCD_SKILL_IDS: readonly string[] = [
+	...new Set(CCD_ACTOR_IDS.flatMap(skillIdsForActor)),
+]

@@ -20,12 +20,14 @@ import { eq } from 'drizzle-orm'
 import {
 	DEV_PIPELINE_ACTOR_IDS,
 	DEV_PIPELINE_PACKAGE,
+	DEV_PIPELINE_SKILL_IDS,
 	DEV_PIPELINE_SOURCE_WORKSPACE_ID,
 	DEV_PIPELINE_TRIGGER_IDS,
 	actorSnapshot,
+	skillSnapshot,
 	triggerSnapshot,
 } from './dev-pipeline-package'
-import { getActorData, getTriggerData } from './package-data'
+import { getActorData, getSkillData, getTriggerData } from './package-data'
 
 const SOURCE_WORKSPACE_ID =
 	process.env.DEV_PIPELINE_SOURCE_WORKSPACE_ID ?? DEV_PIPELINE_SOURCE_WORKSPACE_ID
@@ -44,6 +46,7 @@ async function main(): Promise<void> {
 	// local DB, which has none). These throw a clear error naming any missing id.
 	const actorRows = DEV_PIPELINE_ACTOR_IDS.map(getActorData)
 	const triggerRows = DEV_PIPELINE_TRIGGER_IDS.map(getTriggerData)
+	const skillRows = DEV_PIPELINE_SKILL_IDS.map(getSkillData)
 
 	// Every published trigger must fire one of the published actors or the
 	// install will resolve target_actor_id to a stale, unrelated UUID in the
@@ -57,10 +60,11 @@ async function main(): Promise<void> {
 		}
 	}
 
-	// Guard against pulling an item from the wrong workspace. Only triggers
-	// carry a workspaceId — actors are global (workspace membership lives in
-	// workspace_members, not on the actor row), so they pass through by design.
-	for (const row of [...actorRows, ...triggerRows]) {
+	// Guard against pulling an item from the wrong workspace. Only triggers and
+	// skills carry a workspaceId — actors are global (workspace membership
+	// lives in workspace_members, not on the actor row), so they pass through
+	// by design.
+	for (const row of [...actorRows, ...triggerRows, ...skillRows]) {
 		const wsId = (row as { workspaceId?: string }).workspaceId
 		if (wsId !== undefined && wsId !== SOURCE_WORKSPACE_ID) {
 			throw new Error(`Item ${row.id} lives in workspace ${wsId}, expected ${SOURCE_WORKSPACE_ID}.`)
@@ -125,6 +129,15 @@ async function main(): Promise<void> {
 				sourceItemId: row.id,
 				itemSnapshot: triggerSnapshot(row),
 			})),
+			...skillRows.map((row) => ({
+				packageId: pkg.id,
+				itemType: 'skill' as const,
+				sourceItemId: row.id,
+				itemSnapshot: skillSnapshot(
+					row,
+					row.attachedActorIds.filter((id) => publishedActorIds.has(id)),
+				),
+			})),
 		]
 
 		await tx.insert(catalogPackageItems).values(itemRows)
@@ -132,7 +145,7 @@ async function main(): Promise<void> {
 	})
 
 	console.log(
-		`Published ${DEV_PIPELINE_PACKAGE.slug} v${DEV_PIPELINE_PACKAGE.version} as ${inserted.pkg.id} (${actorRows.length} actors + ${triggerRows.length} triggers = ${inserted.itemCount} items).`,
+		`Published ${DEV_PIPELINE_PACKAGE.slug} v${DEV_PIPELINE_PACKAGE.version} as ${inserted.pkg.id} (${actorRows.length} actors + ${triggerRows.length} triggers + ${skillRows.length} skills = ${inserted.itemCount} items).`,
 	)
 	process.exit(0)
 }

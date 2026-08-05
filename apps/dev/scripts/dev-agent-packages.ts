@@ -90,9 +90,9 @@ import {
 	DEV_PACKAGE_WORKSPACE_DRIVER_NAME,
 	DEV_PACKAGE_WORKSPACE_DRIVER_SLUG,
 } from '@maskin/shared'
-import { triggerIdsForActor } from './package-data'
+import { skillIdsForActor, triggerIdsForActor } from './package-data'
 
-export { actorSnapshot, triggerSnapshot } from './package-snapshot'
+export { actorSnapshot, skillSnapshot, triggerSnapshot } from './package-snapshot'
 
 export const DEV_AGENT_PACKAGES_SOURCE_WORKSPACE_ID = 'fe944fe6-7b45-478c-afc7-b889cea63c08'
 
@@ -106,6 +106,7 @@ export interface DevAgentPackageConfig {
 	}
 	actorIds: readonly string[]
 	triggerIds: readonly string[]
+	skillIds: readonly string[]
 }
 
 function singleAgentPackage(
@@ -125,6 +126,7 @@ function singleAgentPackage(
 		},
 		actorIds: [actorId],
 		triggerIds: triggerIdsForActor(actorId),
+		skillIds: skillIdsForActor(actorId),
 	}
 }
 

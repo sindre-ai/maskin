@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { rewriteWiring } from '../../services/package-provisioning'
 import { PackageVersionPusher } from '../../services/package-version-pusher'
-import { createTestContext } from '../setup'
+import { createMockAgentStorage, createTestContext } from '../setup'
 
 // UUID-format IDs used across rewriteWiring tests.
 const SRC_1 = '11111111-1111-4111-a111-111111111111'
@@ -66,7 +66,7 @@ describe('PackageVersionPusher', () => {
 		const { db, mockResults, calls } = createTestContext()
 		mockResults.select = []
 
-		const pusher = new PackageVersionPusher(db, 60_000)
+		const pusher = new PackageVersionPusher(db, createMockAgentStorage(), 60_000)
 		await pusher.tick()
 
 		expect(calls.inserts).toEqual([])
@@ -98,7 +98,7 @@ describe('PackageVersionPusher', () => {
 			[{ id: 'system-actor' }],
 		]
 
-		const pusher = new PackageVersionPusher(db, 60_000)
+		const pusher = new PackageVersionPusher(db, createMockAgentStorage(), 60_000)
 		await pusher.tick()
 
 		expect(calls.inserts).toHaveLength(1)
@@ -136,7 +136,7 @@ describe('PackageVersionPusher', () => {
 			[{ id: 'noti-existing' }],
 		]
 
-		const pusher = new PackageVersionPusher(db, 60_000)
+		const pusher = new PackageVersionPusher(db, createMockAgentStorage(), 60_000)
 		await pusher.tick()
 
 		expect(calls.inserts).toEqual([])
@@ -173,7 +173,7 @@ describe('PackageVersionPusher', () => {
 			[],
 		]
 
-		const pusher = new PackageVersionPusher(db, 60_000)
+		const pusher = new PackageVersionPusher(db, createMockAgentStorage(), 60_000)
 		await pusher.tick()
 
 		// One update on installed_packages bumping the version.
@@ -242,7 +242,7 @@ describe('PackageVersionPusher', () => {
 		// Inserts fire in order: actor, workspace_members (binds the actor), trigger.
 		mockResults.insertQueue = [[{ id: 'new-actor' }], [], [{ id: 'new-trigger' }]]
 
-		const pusher = new PackageVersionPusher(db, 60_000)
+		const pusher = new PackageVersionPusher(db, createMockAgentStorage(), 60_000)
 		await pusher.tick()
 
 		// #1 — actor minted a fresh, cryptographically-secure apiKey; the
@@ -275,7 +275,7 @@ describe('PackageVersionPusher', () => {
 
 	it('start() does not blow up and stop() clears timers', async () => {
 		const { db } = createTestContext()
-		const pusher = new PackageVersionPusher(db, 60_000)
+		const pusher = new PackageVersionPusher(db, createMockAgentStorage(), 60_000)
 		pusher.start()
 		// idempotent: second start is a no-op
 		pusher.start()

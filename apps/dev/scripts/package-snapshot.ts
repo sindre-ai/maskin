@@ -28,6 +28,13 @@ export interface TriggerSnapshotSource {
 	enabled: boolean | null
 }
 
+export interface SkillSnapshotSource {
+	name: string | null
+	description: string | null
+	content: string | null
+	isValid: boolean | null
+}
+
 // tools.mcpServers.*.env / headers routinely carry live secrets (API keys,
 // bearer tokens) hardcoded by source-workspace admins instead of ${VAR}
 // placeholders. catalog_package_items.item_snapshot is readable by any
@@ -66,5 +73,28 @@ export function triggerSnapshot(row: TriggerSnapshotSource): Record<string, unkn
 		// swaps it for the installed actor's local id using the source_item_id → local_id map.
 		targetActorId: row.targetActorId,
 		enabled: row.enabled,
+	}
+}
+
+// storageKey/sizeBytes are deliberately NOT captured here. The install path
+// mints a fresh UUID + workspace-scoped S3 key for every provisioned skill
+// (see buildSkillInsert) instead of trusting the publisher's storageKey —
+// carrying it through would point every installer's skill row at the
+// publisher's own S3 object.
+export function skillSnapshot(
+	row: SkillSnapshotSource,
+	attachedActorIds: string[],
+): Record<string, unknown> {
+	return {
+		name: row.name,
+		description: row.description,
+		content: row.content,
+		isValid: row.isValid,
+		// Source actor ids (from the publisher workspace's agent_skills rows)
+		// this skill is attached to, filtered to actors published in the same
+		// package. The install path's rewriteWiring() swaps them for local actor
+		// ids using the source_item_id → local_id map, then inserts a fresh
+		// agent_skills row per pair.
+		attachedActorIds,
 	}
 }

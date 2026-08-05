@@ -126,7 +126,7 @@ const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
 
-const packageVersionPusher = new PackageVersionPusher(db)
+const packageVersionPusher = new PackageVersionPusher(db, agentStorage)
 packageVersionPusher.start()
 logger.info('Package version pusher started')
 

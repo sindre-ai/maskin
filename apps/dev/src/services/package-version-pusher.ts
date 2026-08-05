@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
 	agentFiles,
+	agentSkills,
 	catalogPackageItems,
 	catalogPackages,
 	files,
@@ -23,6 +25,7 @@ import {
 } from '@maskin/db/schema'
 import { and, eq, inArray, ne, or, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import {
 	buildActorInsert,
 	buildIntegrationInsert,
@@ -86,6 +89,7 @@ export class PackageVersionPusher {
 
 	constructor(
 		private db: Database,
+		private agentStorage: AgentStorageManager,
 		private tickMs: number = TICK_MS,
 	) {}
 
@@ -216,6 +220,14 @@ export class PackageVersionPusher {
 		let adds = 0
 		let updates = 0
 		let removes = 0
+		// Ids of workspace_skills rows deleted by the "removes" pass below,
+		// cleaned up from S3 after the tx commits (see the post-commit loop).
+		const removedSkillIds: string[] = []
+
+		// Skill → source-actor-id bindings, resolved to agent_skills rows once
+		// the add/update/remove passes below finish (mirrors the install route's
+		// pass-1.5 — see installed-packages.ts).
+		const skillActorBindings: Array<{ sourceSkillId: string; sourceActorIds: string[] }> = []
 
 		await this.db.transaction(async (tx) => {
 			// Adds + updates — iterate the catalog so adds happen in a stable order.
@@ -223,6 +235,17 @@ export class PackageVersionPusher {
 				const existing = installedBySourceId.get(item.sourceItemId)
 				const rewritten = rewriteWiring(item.itemSnapshot, sourceToLocal)
 				const metadata = installMetadata(install.id, item.sourceItemId, rewritten)
+				if (item.itemType === 'skill') {
+					const attachedActorIds = Array.isArray(item.itemSnapshot.attachedActorIds)
+						? (item.itemSnapshot.attachedActorIds as string[])
+						: []
+					if (attachedActorIds.length > 0) {
+						skillActorBindings.push({
+							sourceSkillId: item.sourceItemId,
+							sourceActorIds: attachedActorIds,
+						})
+					}
+				}
 				if (existing) {
 					if (snapshotsEqual(existing.snapshot, rewritten)) continue
 					switch (item.itemType) {
@@ -243,6 +266,13 @@ export class PackageVersionPusher {
 								.update(workspaceSkills)
 								.set({ ...buildSkillUpdate(rewritten), metadata, updatedAt: new Date() })
 								.where(eq(workspaceSkills.id, existing.id))
+							// Existing row keeps its own workspace-scoped storageKey — only the
+							// bytes at that key need refreshing.
+							await this.agentStorage.putWorkspaceSkill(
+								install.workspaceId,
+								existing.id,
+								(rewritten.content as string) ?? '',
+							)
 							break
 						case 'integration':
 							await tx
@@ -293,11 +323,31 @@ export class PackageVersionPusher {
 							break
 						}
 						case 'skill': {
+							// Fresh id + workspace-scoped S3 key — never reuse the publisher's
+							// storageKey (see buildSkillInsert). Mirrors installed-packages.ts.
+							const skillId = randomUUID()
+							const storageKey = workspaceSkillKey(install.workspaceId, skillId)
 							const [row] = await tx
 								.insert(workspaceSkills)
-								.values(buildSkillInsert(install.workspaceId, rewritten, metadata, createdBy))
+								.values(
+									buildSkillInsert(
+										install.workspaceId,
+										skillId,
+										storageKey,
+										rewritten,
+										metadata,
+										createdBy,
+									),
+								)
 								.returning({ id: workspaceSkills.id })
 							newId = row?.id
+							if (newId) {
+								await this.agentStorage.putWorkspaceSkill(
+									install.workspaceId,
+									skillId,
+									(rewritten.content as string) ?? '',
+								)
+							}
 							break
 						}
 						case 'integration': {
@@ -337,6 +387,7 @@ export class PackageVersionPusher {
 						break
 					case 'skill':
 						await tx.delete(workspaceSkills).where(eq(workspaceSkills.id, row.id))
+						removedSkillIds.push(row.id)
 						break
 					case 'integration':
 						await tx.delete(integrations).where(eq(integrations.id, row.id))
@@ -421,11 +472,41 @@ export class PackageVersionPusher {
 				await tx.delete(actors).where(inArray(actors.id, removedActorIds))
 			}
 
+			// Bind each new/updated skill to the actor(s) it's attached to in the
+			// source workspace, now that every actor/skill this tick touched has a
+			// resolved local id. Source actor ids removed above are skipped — their
+			// local row no longer exists, so a bind would violate the FK. Already-
+			// bound pairs are a no-op (onConflictDoNothing).
+			for (const { sourceSkillId, sourceActorIds } of skillActorBindings) {
+				const localSkillId = sourceToLocal.get(sourceSkillId)
+				if (!localSkillId) continue
+				for (const sourceActorId of sourceActorIds) {
+					const localActorId = sourceToLocal.get(sourceActorId)
+					if (!localActorId || removedActorIds.includes(localActorId)) continue
+					await tx
+						.insert(agentSkills)
+						.values({ actorId: localActorId, workspaceSkillId: localSkillId })
+						.onConflictDoNothing()
+				}
+			}
+
 			await tx
 				.update(installedPackages)
 				.set({ installedVersion: targetVersion, updatedAt: new Date() })
 				.where(eq(installedPackages.id, install.id))
 		})
+
+		for (const skillId of removedSkillIds) {
+			try {
+				await this.agentStorage.deleteWorkspaceSkill(install.workspaceId, skillId)
+			} catch (err) {
+				logger.error('Failed to delete workspace skill from storage (orphan object left)', {
+					workspaceId: install.workspaceId,
+					skillId,
+					error: String(err),
+				})
+			}
+		}
 
 		logger.info('Re-provisioned locked install', {
 			installId: install.id,
@@ -591,19 +672,17 @@ function buildTriggerUpdate(
 	}
 }
 
+// storageKey is deliberately omitted — the existing row keeps its own
+// workspace-scoped S3 key. The caller re-uploads the new content to that key
+// via agentStorage.putWorkspaceSkill() alongside this update.
 function buildSkillUpdate(
 	snapshot: Record<string, unknown>,
 ): Partial<typeof workspaceSkills.$inferInsert> {
+	const content = (snapshot.content as string) ?? ''
 	return {
 		description: (snapshot.description as string) ?? null,
-		content: (snapshot.content as string) ?? '',
-		storageKey: (snapshot.storageKey as string) ?? (snapshot.storage_key as string) ?? '',
-		sizeBytes:
-			typeof snapshot.sizeBytes === 'number'
-				? snapshot.sizeBytes
-				: typeof snapshot.size_bytes === 'number'
-					? (snapshot.size_bytes as number)
-					: 0,
+		content,
+		sizeBytes: Buffer.byteLength(content, 'utf-8'),
 		isValid: typeof snapshot.isValid === 'boolean' ? snapshot.isValid : true,
 	}
 }
