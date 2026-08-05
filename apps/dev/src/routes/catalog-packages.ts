@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
@@ -28,6 +29,7 @@ import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 import {
 	type CatalogItemType,
 	buildActorInsert,
@@ -40,6 +42,7 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		agentStorage: AgentStorageManager
 	}
 }
 
@@ -598,6 +601,10 @@ app.openapi(uninstallItemRoute, (async (c) => {
 	}
 
 	const { entityId } = localEntity
+	const agentStorage = c.get('agentStorage')
+	// Set only on the skill hard-delete branch below; cleaned up from S3 after
+	// the tx commits (see the post-commit block), mirroring installed-packages.ts.
+	let removedSkillId: string | null = null
 
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {
@@ -700,6 +707,7 @@ app.openapi(uninstallItemRoute, (async (c) => {
 					break
 				case 'skill':
 					await tx.delete(workspaceSkills).where(eq(workspaceSkills.id, entityId))
+					removedSkillId = entityId
 					break
 				case 'integration':
 					await tx.delete(integrations).where(eq(integrations.id, entityId))
@@ -720,6 +728,18 @@ app.openapi(uninstallItemRoute, (async (c) => {
 			},
 		})
 	})
+
+	if (removedSkillId) {
+		try {
+			await agentStorage.deleteWorkspaceSkill(workspaceId, removedSkillId)
+		} catch (err) {
+			logger.error('Failed to delete workspace skill from storage (orphan object left)', {
+				workspaceId,
+				skillId: removedSkillId,
+				error: String(err),
+			})
+		}
+	}
 
 	logger.info('Catalog item uninstalled', {
 		itemId,
@@ -936,12 +956,23 @@ app.openapi(installItemRoute, (async (c) => {
 					409,
 				)
 			}
+			const agentStorage = c.get('agentStorage')
+			// Fresh id + workspace-scoped S3 key — never reuse the publisher's
+			// storageKey (see buildSkillInsert). The S3 put happens inside the
+			// tx, right after the insert, mirroring workspace-skills.ts's POST.
+			const skillId = randomUUID()
+			const storageKey = workspaceSkillKey(workspaceId, skillId)
 			const [row] = await db.transaction(async (tx) => {
 				const [s] = await tx
 					.insert(workspaceSkills)
-					.values(buildSkillInsert(workspaceId, snapshot, meta, actorId))
+					.values(buildSkillInsert(workspaceId, skillId, storageKey, snapshot, meta, actorId))
 					.returning({ id: workspaceSkills.id, name: workspaceSkills.name })
 				if (!s) throw new Error('Skill insert returned no row')
+				await agentStorage.putWorkspaceSkill(
+					workspaceId,
+					skillId,
+					(snapshot.content as string) ?? '',
+				)
 				await tx.insert(events).values({
 					workspaceId,
 					actorId,
