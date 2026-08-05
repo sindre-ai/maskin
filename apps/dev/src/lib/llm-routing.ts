@@ -40,6 +40,7 @@ export interface FallbackConfig {
 export interface AgentLlmConfig {
 	provider?: string | null
 	apiKey?: string | null
+	model?: string | null
 }
 
 /**
@@ -148,6 +149,11 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
  *
  * Returns null if the agent uses a non-anthropic provider (e.g. OpenAI native);
  * caller continues to handle OPENAI_API_KEY injection itself.
+ *
+ * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1, #3,
+ * and #4 (the routes that don't already carry an explicit model of their
+ * own). Routes #2 and #5 already source their model from workspace/operator
+ * config and are left as-is.
  */
 export async function resolveLlmRoute(params: {
 	db: Database
@@ -170,10 +176,11 @@ export async function resolveLlmRoute(params: {
 	//    providers fall through to caller (matches existing behavior).
 	if (agent.apiKey) {
 		if (agent.provider === 'anthropic') {
-			return {
-				route: LLM_ROUTE_AGENT,
-				envVars: { ANTHROPIC_API_KEY: agent.apiKey },
+			const envVars: Record<string, string> = { ANTHROPIC_API_KEY: agent.apiKey }
+			if (agent.model) {
+				envVars.ANTHROPIC_MODEL = agent.model
 			}
+			return { route: LLM_ROUTE_AGENT, envVars }
 		}
 		// caller (session-manager) handles OPENAI_API_KEY etc.
 		return null
@@ -207,6 +214,9 @@ export async function resolveLlmRoute(params: {
 			if (oauthResult.tokens.subscriptionType) {
 				envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
 			}
+			if (agent.model) {
+				envVars.ANTHROPIC_MODEL = agent.model
+			}
 			return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
 		}
 	} catch {
@@ -217,10 +227,11 @@ export async function resolveLlmRoute(params: {
 	// 4. Workspace anthropic api key
 	const wsAnthropic = wsSettings.llm_keys?.anthropic
 	if (wsAnthropic) {
-		return {
-			route: LLM_ROUTE_API_KEY,
-			envVars: { ANTHROPIC_API_KEY: wsAnthropic },
+		const envVars: Record<string, string> = { ANTHROPIC_API_KEY: wsAnthropic }
+		if (agent.model) {
+			envVars.ANTHROPIC_MODEL = agent.model
 		}
+		return { route: LLM_ROUTE_API_KEY, envVars }
 	}
 
 	// 5. System fallback

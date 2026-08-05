@@ -1186,6 +1186,7 @@ export class SessionManager extends EventEmitter {
 				agent: {
 					provider: agent.llmProvider,
 					apiKey: (llmConfig.api_key as string | undefined) ?? null,
+					model: (llmConfig.model as string | undefined)?.trim() || null,
 				},
 			})
 			if (resolved) {
