@@ -14,7 +14,8 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-export const Route = createFileRoute('/_authed/$workspaceId/loops/')({\n	component: LoopsPage,
+export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
+	component: LoopsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
