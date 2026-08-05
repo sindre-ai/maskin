@@ -86,9 +86,12 @@ export function MetadataPropertiesView({
 
 	if (metaEntries.length === 0 && unsetFields.length === 0 && !showAddMenu) {
 		return (
-			<Button variant="ghost" size="sm" onClick={() => setShowAddMenu(true)}>
-				+ Add property
-			</Button>
+			<div className="space-y-1">
+				<p className="text-xs text-muted-foreground">No custom fields on this object.</p>
+				<Button variant="ghost" size="sm" onClick={() => setShowAddMenu(true)}>
+					+ Add property
+				</Button>
+			</div>
 		)
 	}
 

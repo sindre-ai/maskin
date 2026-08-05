@@ -13,7 +13,7 @@ import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { ChatProvider, useChat } from '@/lib/chat-context'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
-import { PageHeaderProvider } from '@/lib/page-header-context'
+import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
 import {
 	identifyForWorkspace,
@@ -223,23 +223,33 @@ function PendingPromptBootstrap({ agentActorId }: { agentActorId: string | null 
 }
 
 /**
- * Wraps the main layout so that when the chat panel is pinned AND open, the layout
- * gets a right margin equal to the chat panel width — the panel is always
- * fixed-positioned, so this margin is what makes it "push content aside"
- * instead of floating over it.
+ * Wraps the main layout (left sidebar + header + outlet) so that when the
+ * chat panel is pinned AND open, or the current route reports its own fixed
+ * right sidebar via PageHeaderContext (e.g. the object-detail properties
+ * sidebar), the layout gets a right margin equal to whichever is wider — both
+ * panels are fixed-positioned, so this margin is what makes them "push
+ * content aside" instead of floating over it, and keeps the header's action
+ * buttons clear of either.
  */
 function ChatPinShell({ children }: { children: ReactNode }) {
 	const { pinned, open, panelWidth } = useChat()
+	const { contentPush } = usePageHeader()
 	const isMobile = useIsMobile()
-	// On mobile the panel overlays the viewport and the pin toggle is hidden,
-	// so a stale `pinned=true` from desktop must not apply a margin that would
-	// squash the main content off-screen.
-	const pushed = pinned && open && !isMobile
+	// On mobile both panels overlay the viewport (Sheet/Sheet), so a stale
+	// `pinned=true` from desktop must not apply a margin that would squash
+	// the main content off-screen.
+	const chatPushed = pinned && open && !isMobile
+	const pagePushed = Boolean(contentPush) && !isMobile
+	let marginRight: string | number = 0
+	if (chatPushed && pagePushed) {
+		marginRight = `max(${panelWidth}px, ${contentPush})`
+	} else if (chatPushed) {
+		marginRight = `${panelWidth}px`
+	} else if (pagePushed) {
+		marginRight = contentPush as string
+	}
 	return (
-		<div
-			className="transition-[margin] duration-200 ease-linear"
-			style={{ marginRight: pushed ? `${panelWidth}px` : 0 }}
-		>
+		<div className="transition-[margin] duration-200 ease-linear" style={{ marginRight }}>
 			{children}
 		</div>
 	)
