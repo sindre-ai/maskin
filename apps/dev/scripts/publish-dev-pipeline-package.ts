@@ -1,9 +1,10 @@
-// One-shot publisher for the Development Pipeline catalog bundle.
+// One-shot publisher for the Build & Ship Loop catalog bundle.
 //
-// Snapshots Developer + Code Reviewer and every trigger they drive from the
-// checked-in data/dev-actors.json + data/dev-triggers.json (captured live,
-// since the local dev Postgres is empty) into a single `catalog_packages` row
-// at version 1.0.0 plus one `catalog_package_items` row per element. Triggers
+// Snapshots Planner, Developer, Architect, Designer, Code Reviewer, and
+// Workspace Driver, plus every trigger they drive, from the checked-in
+// data/dev-actors.json + data/dev-triggers.json (captured live, since the
+// local dev Postgres is empty) into a single `catalog_packages` row at
+// version 1.0.0 plus one `catalog_package_items` row per element. Triggers
 // carry the source `target_actor_id` inside the snapshot — the install path
 // rewrites that against the install's `source_item_id` map.
 //

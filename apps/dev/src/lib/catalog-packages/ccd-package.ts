@@ -1,11 +1,10 @@
-// Shared constants for the Customer Continuous Discovery catalog bundle.
+// Shared constants for the Discover & Research Loop catalog bundle.
 //
-// The bundle now ships three actors — Customer Feedback Agent, Insights Triage
-// Agent, and Product Ideator — plus every trigger those three drive. (The old
-// Customer Curator actor no longer exists in the live workspace, so it and its
-// close-the-loop triggers are dropped.) Triggers are derived from the same
-// checked-in snapshot data the single-agent packages use, so the set stays in
-// sync with the live workspace instead of a hardcoded, drift-prone id list.
+// The bundle ships five actors — Customer Feedback Agent, Insights Triage
+// Agent, Product Ideator, Research Agent, and Summarization Agent — plus every
+// trigger those five drive. Triggers are derived from the same checked-in
+// snapshot data the single-agent packages used, so the set stays in sync with
+// the live workspace instead of a hardcoded, drift-prone id list.
 //
 // Exported so the publish script and its tests can share the exact same shape.
 // Snapshot helpers live in ./package-snapshot; snapshot data in ./package-data.
@@ -19,6 +18,8 @@ import {
 	CCD_PACKAGE_SLUG,
 	CCD_PACKAGE_USE_CASE,
 	CCD_PACKAGE_VERSION,
+	DEV_ACTOR_RESEARCH_AGENT,
+	DEV_ACTOR_SUMMARIZATION_AGENT,
 } from '@maskin/shared'
 import { skillIdsForActor, triggerIdsForActor } from './package-data'
 
@@ -38,6 +39,8 @@ export const CCD_ACTOR_IDS = [
 	CCD_ACTOR_CUSTOMER_FEEDBACK, // Customer Feedback Agent
 	CCD_ACTOR_INSIGHTS_TRIAGE, // Insights Triage Agent
 	CCD_ACTOR_PRODUCT_IDEATOR, // Product Ideator
+	DEV_ACTOR_RESEARCH_AGENT, // Research Agent
+	DEV_ACTOR_SUMMARIZATION_AGENT, // Summarization Agent
 ] as const
 
 export const CCD_TRIGGER_IDS: readonly string[] = CCD_ACTOR_IDS.flatMap(triggerIdsForActor)

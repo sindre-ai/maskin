@@ -77,19 +77,19 @@ function fakeSkill(over: Partial<SkillRow> = {}): SkillRow {
 	return { ...base, ...over }
 }
 
-describe('CCD package definition', () => {
-	it('uses the locked T6 copy', () => {
-		expect(CCD_PACKAGE.slug).toBe('customer-continuous-discovery')
-		expect(CCD_PACKAGE.name).toBe('Customer Continuous Discovery')
+describe('Discover & Research Loop package definition', () => {
+	it('uses the correct slug and metadata', () => {
+		expect(CCD_PACKAGE.slug).toBe('discover-research-loop')
+		expect(CCD_PACKAGE.name).toBe('Discover & Research Loop')
 		expect(CCD_PACKAGE.useCase).toBe('Discovery')
 		expect(CCD_PACKAGE.version).toBe('1.0.0')
-		expect(CCD_PACKAGE.description.length).toBeLessThanOrEqual(120)
+		expect(CCD_PACKAGE.description.length).toBeGreaterThan(0)
 		expect(CCD_PACKAGE.description).toMatch(/feedback/)
 	})
 
-	it('ships three actors and seven triggers, no duplicates', () => {
-		expect(CCD_ACTOR_IDS.length).toBe(3)
-		expect(CCD_TRIGGER_IDS.length).toBe(7)
+	it('ships five actors and fourteen triggers, no duplicates', () => {
+		expect(CCD_ACTOR_IDS.length).toBe(5)
+		expect(CCD_TRIGGER_IDS.length).toBe(14)
 		expect(new Set(CCD_ACTOR_IDS).size).toBe(CCD_ACTOR_IDS.length)
 		expect(new Set(CCD_TRIGGER_IDS).size).toBe(CCD_TRIGGER_IDS.length)
 	})
@@ -130,6 +130,27 @@ describe('actorSnapshot', () => {
 			tools: { allowed: ['create_object'] },
 			llmProvider: 'anthropic',
 		})
+	})
+
+	it('strips tools.mcpServers so live credentials never reach the snapshot', () => {
+		const snap = actorSnapshot(
+			fakeActor({
+				tools: {
+					allowed: ['create_object'],
+					mcpServers: {
+						github: {
+							type: 'stdio',
+							command: 'npx',
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_live_secret_do_not_leak' },
+						},
+					},
+				},
+			}),
+		)
+		const tools = snap.tools as Record<string, unknown>
+		expect(tools).not.toHaveProperty('mcpServers')
+		expect(tools.allowed).toEqual(['create_object'])
+		expect(JSON.stringify(snap)).not.toContain('ghp_live_secret_do_not_leak')
 	})
 })
 

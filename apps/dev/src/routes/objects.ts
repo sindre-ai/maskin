@@ -14,7 +14,7 @@ import {
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
-	DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME,
+	DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME,
 	KNOWLEDGE_WRITE_UNDO_WINDOW_MS,
 	OBJECT_DIFF_FIELDS,
 	SAFE_METADATA_FIELD_NAME_RE,
@@ -1815,7 +1815,7 @@ app.openapi(undoWriteRoute, async (c) => {
 
 	if (
 		eventRow.authorType !== 'agent' ||
-		eventRow.authorName !== DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME
+		eventRow.authorName !== DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME
 	) {
 		return c.json(createApiError('CONFLICT', 'Event is not a Knowledge Author write.'), 409)
 	}

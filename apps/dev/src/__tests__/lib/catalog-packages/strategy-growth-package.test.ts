@@ -1,14 +1,14 @@
 import type { actors, triggers, workspaceSkills } from '@maskin/db/schema'
 import { describe, expect, it } from 'vitest'
 import {
-	DEV_PIPELINE_ACTOR_IDS,
-	DEV_PIPELINE_PACKAGE,
-	DEV_PIPELINE_SKILL_IDS,
-	DEV_PIPELINE_TRIGGER_IDS,
+	STRATEGY_GROWTH_ACTOR_IDS,
+	STRATEGY_GROWTH_PACKAGE,
+	STRATEGY_GROWTH_SKILL_IDS,
+	STRATEGY_GROWTH_TRIGGER_IDS,
 	actorSnapshot,
 	skillSnapshot,
 	triggerSnapshot,
-} from '../../../lib/catalog-packages/dev-pipeline-package'
+} from '../../../lib/catalog-packages/strategy-growth-package'
 
 type ActorRow = typeof actors.$inferSelect
 type TriggerRow = typeof triggers.$inferSelect
@@ -45,7 +45,7 @@ function fakeTrigger(over: Partial<TriggerRow> = {}): TriggerRow {
 		workspaceId: 'fe944fe6-7b45-478c-afc7-b889cea63c08',
 		name: 'Trigger',
 		type: 'event',
-		config: { entity_type: 'task', action: 'status_changed' },
+		config: { entity_type: 'bet', action: 'status_changed' },
 		actionPrompt: 'do the thing',
 		targetActorId: '11111111-1111-4111-9111-111111111111',
 		enabled: true,
@@ -77,25 +77,25 @@ function fakeSkill(over: Partial<SkillRow> = {}): SkillRow {
 	return { ...base, ...over }
 }
 
-describe('Build & Ship Loop package definition', () => {
+describe('Strategy & Growth Loop package definition', () => {
 	it('uses the correct slug and metadata', () => {
-		expect(DEV_PIPELINE_PACKAGE.slug).toBe('build-ship-loop')
-		expect(DEV_PIPELINE_PACKAGE.name).toBe('Build & Ship Loop')
-		expect(DEV_PIPELINE_PACKAGE.useCase).toBe('Development')
-		expect(DEV_PIPELINE_PACKAGE.version).toBe('1.0.0')
-		expect(DEV_PIPELINE_PACKAGE.description.length).toBeGreaterThan(0)
+		expect(STRATEGY_GROWTH_PACKAGE.slug).toBe('strategy-growth-loop')
+		expect(STRATEGY_GROWTH_PACKAGE.name).toBe('Strategy & Growth Loop')
+		expect(STRATEGY_GROWTH_PACKAGE.useCase).toBe('Growth')
+		expect(STRATEGY_GROWTH_PACKAGE.version).toBe('1.0.0')
+		expect(STRATEGY_GROWTH_PACKAGE.description.length).toBeGreaterThan(0)
 	})
 
-	it('ships six actors and twenty-two triggers, no duplicates', () => {
-		expect(DEV_PIPELINE_ACTOR_IDS.length).toBe(6)
-		expect(DEV_PIPELINE_TRIGGER_IDS.length).toBe(22)
-		expect(new Set(DEV_PIPELINE_ACTOR_IDS).size).toBe(DEV_PIPELINE_ACTOR_IDS.length)
-		expect(new Set(DEV_PIPELINE_TRIGGER_IDS).size).toBe(DEV_PIPELINE_TRIGGER_IDS.length)
+	it('ships four actors and sixteen triggers, no duplicates', () => {
+		expect(STRATEGY_GROWTH_ACTOR_IDS.length).toBe(4)
+		expect(STRATEGY_GROWTH_TRIGGER_IDS.length).toBe(16)
+		expect(new Set(STRATEGY_GROWTH_ACTOR_IDS).size).toBe(STRATEGY_GROWTH_ACTOR_IDS.length)
+		expect(new Set(STRATEGY_GROWTH_TRIGGER_IDS).size).toBe(STRATEGY_GROWTH_TRIGGER_IDS.length)
 	})
 
-	it('gives DEV_PIPELINE_SKILL_IDS an array shape, deduped — a skill may be shared across actors', () => {
-		expect(Array.isArray(DEV_PIPELINE_SKILL_IDS)).toBe(true)
-		expect(new Set(DEV_PIPELINE_SKILL_IDS).size).toBe(DEV_PIPELINE_SKILL_IDS.length)
+	it('gives STRATEGY_GROWTH_SKILL_IDS an array shape, deduped — a skill may be shared across actors', () => {
+		expect(Array.isArray(STRATEGY_GROWTH_SKILL_IDS)).toBe(true)
+		expect(new Set(STRATEGY_GROWTH_SKILL_IDS).size).toBe(STRATEGY_GROWTH_SKILL_IDS.length)
 	})
 })
 
@@ -117,15 +117,15 @@ describe('actorSnapshot', () => {
 		const snap = actorSnapshot(
 			fakeActor({
 				type: 'agent',
-				name: 'Developer',
-				systemPrompt: 'implement things',
+				name: 'Strategist',
+				systemPrompt: 'shape bets',
 				tools: { allowed: ['create_object'] },
 			}),
 		)
 		expect(snap).toMatchObject({
 			type: 'agent',
-			name: 'Developer',
-			systemPrompt: 'implement things',
+			name: 'Strategist',
+			systemPrompt: 'shape bets',
 			tools: { allowed: ['create_object'] },
 			llmProvider: 'anthropic',
 		})

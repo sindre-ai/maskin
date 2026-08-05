@@ -1,11 +1,14 @@
 import type { actors, triggers, workspaceSkills } from '@maskin/db/schema'
 import { describe, expect, it } from 'vitest'
 import {
-	DEV_AGENT_PACKAGES,
+	TEAM_OPS_ACTOR_IDS,
+	TEAM_OPS_PACKAGE,
+	TEAM_OPS_SKILL_IDS,
+	TEAM_OPS_TRIGGER_IDS,
 	actorSnapshot,
 	skillSnapshot,
 	triggerSnapshot,
-} from '../../../lib/catalog-packages/dev-agent-packages'
+} from '../../../lib/catalog-packages/team-ops-package'
 
 type ActorRow = typeof actors.$inferSelect
 type TriggerRow = typeof triggers.$inferSelect
@@ -24,12 +27,30 @@ function fakeActor(over: Partial<ActorRow> = {}): ActorRow {
 		tools: { allowed: ['done'] },
 		memory: { jobs_done: 42 },
 		llmProvider: 'anthropic',
-		llmConfig: { model: 'claude-sonnet-4-6' },
+		llmConfig: { model: 'claude-opus-4-7' },
 		isSystem: false,
 		agentState: 'idle',
 		agentStateUpdatedAt: new Date('2026-01-01'),
 		metadata: { installed_package_id: '00000000-0000-0000-0000-000000000000' },
 		createdBy: null,
+		createdAt: new Date('2026-01-01'),
+		updatedAt: new Date('2026-01-01'),
+	}
+	return { ...base, ...over }
+}
+
+function fakeTrigger(over: Partial<TriggerRow> = {}): TriggerRow {
+	const base: TriggerRow = {
+		id: '22222222-2222-4222-9222-222222222222',
+		workspaceId: 'fe944fe6-7b45-478c-afc7-b889cea63c08',
+		name: 'Trigger',
+		type: 'cron',
+		config: { schedule: '0 9 * * *' },
+		actionPrompt: 'do the thing',
+		targetActorId: '11111111-1111-4111-9111-111111111111',
+		enabled: true,
+		metadata: { installed_package_id: '00000000-0000-0000-0000-000000000000' },
+		createdBy: '11111111-1111-4111-9111-111111111111',
 		createdAt: new Date('2026-01-01'),
 		updatedAt: new Date('2026-01-01'),
 	}
@@ -56,95 +77,29 @@ function fakeSkill(over: Partial<SkillRow> = {}): SkillRow {
 	return { ...base, ...over }
 }
 
-function fakeTrigger(over: Partial<TriggerRow> = {}): TriggerRow {
-	const base: TriggerRow = {
-		id: '22222222-2222-4222-9222-222222222222',
-		workspaceId: 'fe944fe6-7b45-478c-afc7-b889cea63c08',
-		name: 'Trigger',
-		type: 'event',
-		config: { entity_type: 'task', action: 'status_changed', to_status: 'in_progress' },
-		actionPrompt: 'do the thing',
-		targetActorId: '11111111-1111-4111-9111-111111111111',
-		enabled: true,
-		metadata: { installed_package_id: '00000000-0000-0000-0000-000000000000' },
-		createdBy: '11111111-1111-4111-9111-111111111111',
-		createdAt: new Date('2026-01-01'),
-		updatedAt: new Date('2026-01-01'),
-	}
-	return { ...base, ...over }
-}
-
-describe('Development Workspace single-agent package configs', () => {
-	it('defines exactly 17 packages', () => {
-		expect(DEV_AGENT_PACKAGES.length).toBe(17)
+describe('Team Ops & Retro Loop package definition', () => {
+	it('uses the correct slug and metadata', () => {
+		expect(TEAM_OPS_PACKAGE.slug).toBe('team-ops-retro-loop')
+		expect(TEAM_OPS_PACKAGE.name).toBe('Team Ops & Retro Loop')
+		expect(TEAM_OPS_PACKAGE.useCase).toBe('Operations')
+		expect(TEAM_OPS_PACKAGE.version).toBe('1.0.0')
+		expect(TEAM_OPS_PACKAGE.description.length).toBeGreaterThan(0)
 	})
 
-	it('gives every package a slug, name, description, version, and use case', () => {
-		const validUseCases = new Set(['Development', 'Discovery', 'Growth', 'Operations'])
-		for (const config of DEV_AGENT_PACKAGES) {
-			expect(config.package.slug.length).toBeGreaterThan(0)
-			expect(config.package.name.length).toBeGreaterThan(0)
-			expect(config.package.description.length).toBeGreaterThan(0)
-			expect(config.package.version).toBe('1.0.0')
-			expect(validUseCases.has(config.package.useCase)).toBe(true)
-		}
+	it('ships two actors and thirteen triggers, no duplicates', () => {
+		expect(TEAM_OPS_ACTOR_IDS.length).toBe(2)
+		expect(TEAM_OPS_TRIGGER_IDS.length).toBe(13)
+		expect(new Set(TEAM_OPS_ACTOR_IDS).size).toBe(TEAM_OPS_ACTOR_IDS.length)
+		expect(new Set(TEAM_OPS_TRIGGER_IDS).size).toBe(TEAM_OPS_TRIGGER_IDS.length)
 	})
 
-	it('groups packages into the four product-lifecycle use cases', () => {
-		const useCaseBySlug = Object.fromEntries(
-			DEV_AGENT_PACKAGES.map((c) => [c.package.slug, c.package.useCase]),
-		)
-		expect(useCaseBySlug).toMatchObject({
-			planner: 'Development',
-			developer: 'Development',
-			architect: 'Development',
-			designer: 'Development',
-			'code-reviewer': 'Development',
-			'workspace-driver': 'Development',
-			'customer-feedback-agent': 'Discovery',
-			'insights-triage-agent': 'Discovery',
-			'product-ideator': 'Discovery',
-			'research-agent': 'Discovery',
-			'summarization-agent': 'Discovery',
-			strategist: 'Growth',
-			'product-analyst': 'Growth',
-			'product-marketer': 'Growth',
-			'product-pricing-specialist': 'Growth',
-			'workspace-coach': 'Operations',
-			'retro-knowledge-author': 'Operations',
-		})
-	})
-
-	it('gives every package at least one actor and one trigger', () => {
-		for (const config of DEV_AGENT_PACKAGES) {
-			expect(config.actorIds.length).toBeGreaterThan(0)
-			expect(config.triggerIds.length).toBeGreaterThan(0)
-		}
-	})
-
-	it('gives every package a skillIds array — possibly empty, since not every actor has a skill', () => {
-		for (const config of DEV_AGENT_PACKAGES) {
-			expect(Array.isArray(config.skillIds)).toBe(true)
-		}
-	})
-
-	it('has no duplicate slugs across packages', () => {
-		const slugs = DEV_AGENT_PACKAGES.map((c) => c.package.slug)
-		expect(new Set(slugs).size).toBe(slugs.length)
-	})
-
-	it('has no duplicate actor ids within or across packages', () => {
-		const actorIds = DEV_AGENT_PACKAGES.flatMap((c) => c.actorIds)
-		expect(new Set(actorIds).size).toBe(actorIds.length)
-	})
-
-	it('has no duplicate trigger ids within or across packages', () => {
-		const triggerIds = DEV_AGENT_PACKAGES.flatMap((c) => c.triggerIds)
-		expect(new Set(triggerIds).size).toBe(triggerIds.length)
+	it('gives TEAM_OPS_SKILL_IDS an array shape, deduped — a skill may be shared across actors', () => {
+		expect(Array.isArray(TEAM_OPS_SKILL_IDS)).toBe(true)
+		expect(new Set(TEAM_OPS_SKILL_IDS).size).toBe(TEAM_OPS_SKILL_IDS.length)
 	})
 })
 
-describe('actorSnapshot (re-exported from package-snapshot)', () => {
+describe('actorSnapshot', () => {
 	it('omits credentials and runtime state', () => {
 		const snap = actorSnapshot(fakeActor())
 		expect(snap).not.toHaveProperty('apiKey')
@@ -162,15 +117,15 @@ describe('actorSnapshot (re-exported from package-snapshot)', () => {
 		const snap = actorSnapshot(
 			fakeActor({
 				type: 'agent',
-				name: 'Planner',
-				systemPrompt: 'decompose bets into tasks',
+				name: 'Workspace Coach',
+				systemPrompt: 'observe patterns',
 				tools: { allowed: ['create_object'] },
 			}),
 		)
 		expect(snap).toMatchObject({
 			type: 'agent',
-			name: 'Planner',
-			systemPrompt: 'decompose bets into tasks',
+			name: 'Workspace Coach',
+			systemPrompt: 'observe patterns',
 			tools: { allowed: ['create_object'] },
 			llmProvider: 'anthropic',
 		})
@@ -198,7 +153,7 @@ describe('actorSnapshot (re-exported from package-snapshot)', () => {
 	})
 })
 
-describe('triggerSnapshot (re-exported from package-snapshot)', () => {
+describe('triggerSnapshot', () => {
 	it('omits workspace, createdBy, metadata, timestamps', () => {
 		const snap = triggerSnapshot(fakeTrigger())
 		expect(snap).not.toHaveProperty('workspaceId')
@@ -216,7 +171,7 @@ describe('triggerSnapshot (re-exported from package-snapshot)', () => {
 	})
 })
 
-describe('skillSnapshot (re-exported from package-snapshot)', () => {
+describe('skillSnapshot', () => {
 	it('omits id, workspaceId, storageKey, sizeBytes, createdBy, metadata, timestamps', () => {
 		const snap = skillSnapshot(fakeSkill(), [])
 		expect(snap).not.toHaveProperty('id')

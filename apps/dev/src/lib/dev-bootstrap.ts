@@ -18,20 +18,33 @@ import {
 	CCD_TRIGGER_IDS,
 } from './catalog-packages/ccd-package'
 import {
-	DEV_AGENT_PACKAGES,
-	type DevAgentPackageConfig,
-} from './catalog-packages/dev-agent-packages'
-import {
 	DEV_PIPELINE_ACTOR_IDS,
 	DEV_PIPELINE_PACKAGE,
 	DEV_PIPELINE_SKILL_IDS,
 	DEV_PIPELINE_TRIGGER_IDS,
 } from './catalog-packages/dev-pipeline-package'
-import { getActorData, getSkillData, getTriggerData } from './catalog-packages/package-data'
+import {
+	type CatalogPackageSeedConfig,
+	getActorData,
+	getSkillData,
+	getTriggerData,
+} from './catalog-packages/package-data'
 import { actorSnapshot, skillSnapshot, triggerSnapshot } from './catalog-packages/package-snapshot'
+import {
+	STRATEGY_GROWTH_ACTOR_IDS,
+	STRATEGY_GROWTH_PACKAGE,
+	STRATEGY_GROWTH_SKILL_IDS,
+	STRATEGY_GROWTH_TRIGGER_IDS,
+} from './catalog-packages/strategy-growth-package'
+import {
+	TEAM_OPS_ACTOR_IDS,
+	TEAM_OPS_PACKAGE,
+	TEAM_OPS_SKILL_IDS,
+	TEAM_OPS_TRIGGER_IDS,
+} from './catalog-packages/team-ops-package'
 import { logger } from './logger'
 
-const CATALOG_SEED_CONFIGS: readonly DevAgentPackageConfig[] = [
+const CATALOG_SEED_CONFIGS: readonly CatalogPackageSeedConfig[] = [
 	{
 		package: CCD_PACKAGE,
 		actorIds: CCD_ACTOR_IDS,
@@ -44,14 +57,25 @@ const CATALOG_SEED_CONFIGS: readonly DevAgentPackageConfig[] = [
 		triggerIds: DEV_PIPELINE_TRIGGER_IDS,
 		skillIds: DEV_PIPELINE_SKILL_IDS,
 	},
-	...DEV_AGENT_PACKAGES,
+	{
+		package: STRATEGY_GROWTH_PACKAGE,
+		actorIds: STRATEGY_GROWTH_ACTOR_IDS,
+		triggerIds: STRATEGY_GROWTH_TRIGGER_IDS,
+		skillIds: STRATEGY_GROWTH_SKILL_IDS,
+	},
+	{
+		package: TEAM_OPS_PACKAGE,
+		actorIds: TEAM_OPS_ACTOR_IDS,
+		triggerIds: TEAM_OPS_TRIGGER_IDS,
+		skillIds: TEAM_OPS_SKILL_IDS,
+	},
 ]
 
 /**
- * Seeds the global catalog with the live Development-workspace packages (the
- * Customer Continuous Discovery bundle, the Development Pipeline bundle, and
- * the 17 single-agent packages) if catalog_packages is empty. Safe to call on
- * every startup — the count check makes it a no-op once any package exists.
+ * Seeds the global catalog with the four installable Loop bundles (Discover &
+ * Research, Build & Ship, Strategy & Growth, Team Ops & Retro) if
+ * catalog_packages is empty. Safe to call on every startup — the count check
+ * makes it a no-op once any package exists.
  *
  * Reuses the exact same package configs + snapshot data the publish-*.ts
  * scripts publish to a shared catalog DB, so local dev never drifts from what

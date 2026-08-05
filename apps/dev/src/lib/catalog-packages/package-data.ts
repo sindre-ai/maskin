@@ -39,6 +39,22 @@ export interface SkillData extends SkillSnapshotSource {
 	attachedActorIds: string[]
 }
 
+// Shape shared by every catalog Loop bundle (./ccd-package, ./dev-pipeline-package,
+// ./strategy-growth-package, ./team-ops-package) so dev-bootstrap.ts's
+// CATALOG_SEED_CONFIGS and the publish-*.ts scripts can treat them uniformly.
+export interface CatalogPackageSeedConfig {
+	package: {
+		slug: string
+		name: string
+		version: string
+		useCase: string
+		description: string
+	}
+	actorIds: readonly string[]
+	triggerIds: readonly string[]
+	skillIds: readonly string[]
+}
+
 const dataDir = join(dirname(fileURLToPath(import.meta.url)), 'data')
 
 const actorsById = JSON.parse(readFileSync(join(dataDir, 'dev-actors.json'), 'utf8')) as Record<

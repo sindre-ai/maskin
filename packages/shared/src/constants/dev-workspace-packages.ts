@@ -20,42 +20,12 @@ export const DEV_ACTOR_WORKSPACE_COACH = '9b4820ab-3d00-4e15-b737-8adf7f94d15c'
 export const DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR = '3322def3-7d6b-4615-beaf-b43b291f95a8'
 export const DEV_ACTOR_PRODUCT_ANALYST = '21cce128-9c80-4ebe-982f-41c82820c6aa'
 export const DEV_ACTOR_SUMMARIZATION_AGENT = '29a22f4b-3d56-4377-a226-968b0192c39e'
+export const DEV_ACTOR_PRODUCT_PRICING_SPECIALIST = '9ba1b897-028a-4267-b11f-1bded4bcd86a'
 
-// ── Package slugs ────────────────────────────────────────────────────────────
-
-export const DEV_PACKAGE_PLANNER_SLUG = 'planner'
-export const DEV_PACKAGE_DEVELOPER_SLUG = 'developer'
-export const DEV_PACKAGE_ARCHITECT_SLUG = 'architect'
-export const DEV_PACKAGE_DESIGNER_SLUG = 'designer'
-export const DEV_PACKAGE_PRODUCT_MARKETER_SLUG = 'product-marketer'
-export const DEV_PACKAGE_CODE_REVIEWER_SLUG = 'code-reviewer'
-export const DEV_PACKAGE_ACCEPTANCE_VALIDATOR_SLUG = 'acceptance-validator'
-export const DEV_PACKAGE_AUTO_MERGE_BOT_SLUG = 'auto-merge-bot'
-export const DEV_PACKAGE_STRATEGIST_SLUG = 'strategist'
-export const DEV_PACKAGE_WORKSPACE_DRIVER_SLUG = 'workspace-driver'
-export const DEV_PACKAGE_RESEARCH_AGENT_SLUG = 'research-agent'
-export const DEV_PACKAGE_WORKSPACE_COACH_SLUG = 'workspace-coach'
-export const DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_SLUG = 'retro-knowledge-author'
-export const DEV_PACKAGE_PRODUCT_ANALYST_SLUG = 'product-analyst'
-export const DEV_PACKAGE_SUMMARIZATION_AGENT_SLUG = 'summarization-agent'
-
-// ── Package names ────────────────────────────────────────────────────────────
-
-export const DEV_PACKAGE_PLANNER_NAME = 'Planner'
-export const DEV_PACKAGE_DEVELOPER_NAME = 'Developer'
-export const DEV_PACKAGE_ARCHITECT_NAME = 'Architect'
-export const DEV_PACKAGE_DESIGNER_NAME = 'Designer'
-export const DEV_PACKAGE_PRODUCT_MARKETER_NAME = 'Product Marketer'
-export const DEV_PACKAGE_CODE_REVIEWER_NAME = 'Code Reviewer'
-export const DEV_PACKAGE_ACCEPTANCE_VALIDATOR_NAME = 'Acceptance Validator'
-export const DEV_PACKAGE_AUTO_MERGE_BOT_NAME = 'Auto-Merge Bot'
-export const DEV_PACKAGE_STRATEGIST_NAME = 'Strategist'
-export const DEV_PACKAGE_WORKSPACE_DRIVER_NAME = 'Workspace Driver'
-export const DEV_PACKAGE_RESEARCH_AGENT_NAME = 'Research Agent'
-export const DEV_PACKAGE_WORKSPACE_COACH_NAME = 'Workspace Coach'
-export const DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME = 'Retro & Knowledge Author'
-export const DEV_PACKAGE_PRODUCT_ANALYST_NAME = 'Product Analyst'
-export const DEV_PACKAGE_SUMMARIZATION_AGENT_NAME = 'Summarization Agent'
+// Display name for the Retro Knowledge Author actor — used to identify its
+// events by name (e.g. the undo-write chip) independent of which catalog
+// package currently bundles it.
+export const DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME = 'Knowledge Author'
 
 // ── Shared version ────────────────────────────────────────────────────────────
 
@@ -67,53 +37,6 @@ export const DEV_PACKAGE_USE_CASE_DEVELOPMENT = 'Development'
 export const DEV_PACKAGE_USE_CASE_DISCOVERY = 'Discovery'
 export const DEV_PACKAGE_USE_CASE_GROWTH = 'Growth'
 export const DEV_PACKAGE_USE_CASE_OPERATIONS = 'Operations'
-
-// ── Descriptions ────────────────────────────────────────────────────────────
-
-export const DEV_PACKAGE_PLANNER_DESCRIPTION =
-	'Decomposes bets into ordered tasks and advances the bet to active, kicking off agent implementation.'
-
-export const DEV_PACKAGE_DEVELOPER_DESCRIPTION =
-	'Implements coding tasks, opens PRs on the bet branch, and self-reviews before handing off to the Code Reviewer.'
-
-export const DEV_PACKAGE_ARCHITECT_DESCRIPTION =
-	'Researches the codebase, evaluates technical options, and posts a concrete ADR-style proposal for human approval before development begins.'
-
-export const DEV_PACKAGE_DESIGNER_DESCRIPTION =
-	'Produces interactive HTML prototypes grounded in the live design system and verified in-browser before posting for approval.'
-
-export const DEV_PACKAGE_PRODUCT_MARKETER_DESCRIPTION =
-	'Writes customer-facing copy (release log entries, landing pages, in-app announcements) grounded in what actually shipped.'
-
-export const DEV_PACKAGE_CODE_REVIEWER_DESCRIPTION =
-	'Reviews PRs for quality and correctness, fixes critical issues, computes a deterministic risk score, and hands off to the Acceptance Validator.'
-
-export const DEV_PACKAGE_ACCEPTANCE_VALIDATOR_DESCRIPTION =
-	'Validates that implementations actually deliver their stated goals and match approved design and architecture specs before marking tasks done.'
-
-export const DEV_PACKAGE_AUTO_MERGE_BOT_DESCRIPTION =
-	'Automatically merges low-risk PRs into the bet branch and, on qualifying bets, squash-merges to main and advances the bet to live.'
-
-export const DEV_PACKAGE_STRATEGIST_DESCRIPTION =
-	'Shapes bets, enforces quality gates at every lifecycle transition, runs bi-weekly Bet Council scoring, and drives acceptance review after PRs merge.'
-
-export const DEV_PACKAGE_WORKSPACE_DRIVER_DESCRIPTION =
-	'Keeps the pipeline moving: advances stalled tasks, triages GitHub PRs, runs liveness watchdogs, and handles bet-lifecycle plumbing in real time.'
-
-export const DEV_PACKAGE_RESEARCH_AGENT_DESCRIPTION =
-	'Pulls external intelligence: daily meeting insights, live-bet evidence, influencer content, market research, and on-demand social URL extraction.'
-
-export const DEV_PACKAGE_WORKSPACE_COACH_DESCRIPTION =
-	'Observes longitudinal patterns in how the team and agents perform, surfaces rework signals and bottlenecks, and digests daily actions for human review.'
-
-export const DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_DESCRIPTION =
-	'Writes retros at bet terminal events, converts clustered insights into validated Knowledge articles, and runs weekly knowledge revision sweeps.'
-
-export const DEV_PACKAGE_PRODUCT_ANALYST_DESCRIPTION =
-	'Measures live bets against PostHog metrics daily and runs weekly discovery sweeps to surface adoption and friction signals from analytics data.'
-
-export const DEV_PACKAGE_SUMMARIZATION_AGENT_DESCRIPTION =
-	'Turns finished meetings into insights, tasks, and contact objects, wiring relationships so context flows into active bets automatically.'
 
 // ── Trigger IDs ───────────────────────────────────────────────────────────────
 
@@ -213,38 +136,29 @@ export const DEV_TRIGGER_PRODUCT_ANALYST_WEEKLY_DISCOVERY = '665c1b46-23bf-4666-
 // Summarization Agent
 export const DEV_TRIGGER_SUMMARIZATION_AGENT_MEETING_DONE = '5eefd3e7-396b-4de1-9fdf-a22ccfc0d120'
 
-// ── Development Pipeline bundle ───────────────────────────────────────────────
+// ── Build & Ship Loop ─────────────────────────────────────────────────────────
+// Planner, Developer, Architect, Designer, Code Reviewer, Workspace Driver —
+// bet definition through PR merge.
 
-export const DEV_PACKAGE_DEVELOPMENT_PIPELINE_SLUG = 'development-pipeline'
-export const DEV_PACKAGE_DEVELOPMENT_PIPELINE_NAME = 'Development Pipeline'
-export const DEV_PACKAGE_DEVELOPMENT_PIPELINE_DESCRIPTION =
-	'Implements coding tasks and hands off to the Code Reviewer, who reviews for quality and risk, validates the work delivers its goals, and merges under the risk-gate.'
+export const DEV_PACKAGE_BUILD_SHIP_LOOP_SLUG = 'build-ship-loop'
+export const DEV_PACKAGE_BUILD_SHIP_LOOP_NAME = 'Build & Ship Loop'
+export const DEV_PACKAGE_BUILD_SHIP_LOOP_DESCRIPTION =
+	'Decomposes bets into tasks, researches architecture, prototypes designs, implements and reviews code, and keeps the pipeline moving from bet definition through PR merge.'
 
-// ── 2026 roster refresh: new single-agent packages ────────────────────────────
-//
-// These four actors gained their own single-agent catalog packages when the
-// Development-workspace roster was rebuilt from live data. The three CCD actor
-// ids live in ./ccd-package; only the net-new Product Pricing Specialist id is
-// declared here.
+// ── Strategy & Growth Loop ────────────────────────────────────────────────────
+// Strategist, Product Analyst, Product Marketer, Product Pricing Specialist —
+// decide what to build, measure live bets, price and market it.
 
-export const DEV_ACTOR_PRODUCT_PRICING_SPECIALIST = '9ba1b897-028a-4267-b11f-1bded4bcd86a'
+export const DEV_PACKAGE_STRATEGY_GROWTH_LOOP_SLUG = 'strategy-growth-loop'
+export const DEV_PACKAGE_STRATEGY_GROWTH_LOOP_NAME = 'Strategy & Growth Loop'
+export const DEV_PACKAGE_STRATEGY_GROWTH_LOOP_DESCRIPTION =
+	'Shapes bets and enforces quality gates, measures live bets against analytics, writes customer-facing launch copy, and owns pricing and packaging recommendations.'
 
-export const DEV_PACKAGE_CUSTOMER_FEEDBACK_AGENT_SLUG = 'customer-feedback-agent'
-export const DEV_PACKAGE_CUSTOMER_FEEDBACK_AGENT_NAME = 'Customer Feedback Agent'
-export const DEV_PACKAGE_CUSTOMER_FEEDBACK_AGENT_DESCRIPTION =
-	'Ingests customer feedback from connected channels, triages it into clean deduplicated insights, and closes the loop with the customer.'
+// ── Team Ops & Retro Loop ─────────────────────────────────────────────────────
+// Workspace Coach, Retro Knowledge Author — looks backward at how the team and
+// agents performed.
 
-export const DEV_PACKAGE_INSIGHTS_TRIAGE_AGENT_SLUG = 'insights-triage-agent'
-export const DEV_PACKAGE_INSIGHTS_TRIAGE_AGENT_NAME = 'Insights Triage Agent'
-export const DEV_PACKAGE_INSIGHTS_TRIAGE_AGENT_DESCRIPTION =
-	'Clusters incoming customer and process insights into evidence-anchored patterns and promotes the strongest as bet candidates.'
-
-export const DEV_PACKAGE_PRODUCT_IDEATOR_SLUG = 'product-ideator'
-export const DEV_PACKAGE_PRODUCT_IDEATOR_NAME = 'Product Ideator'
-export const DEV_PACKAGE_PRODUCT_IDEATOR_DESCRIPTION =
-	'Reviews accumulated workspace signal weekly and surfaces the rare bet candidates worth the founders’ scarce review time.'
-
-export const DEV_PACKAGE_PRODUCT_PRICING_SPECIALIST_SLUG = 'product-pricing-specialist'
-export const DEV_PACKAGE_PRODUCT_PRICING_SPECIALIST_NAME = 'Product Pricing Specialist'
-export const DEV_PACKAGE_PRODUCT_PRICING_SPECIALIST_DESCRIPTION =
-	'Owns pricing, packaging, and unit economics — models the money and brings recommendations while the founders make the call.'
+export const DEV_PACKAGE_TEAM_OPS_RETRO_LOOP_SLUG = 'team-ops-retro-loop'
+export const DEV_PACKAGE_TEAM_OPS_RETRO_LOOP_NAME = 'Team Ops & Retro Loop'
+export const DEV_PACKAGE_TEAM_OPS_RETRO_LOOP_DESCRIPTION =
+	'Observes longitudinal team and agent performance patterns, and writes retros and validated knowledge articles at bet terminal events.'
