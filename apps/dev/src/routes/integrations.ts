@@ -10,6 +10,7 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
+import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { trackSlackMentionReceived } from '../lib/analytics/catalog-events'
@@ -27,6 +28,7 @@ import {
 	mintInstallationTokenWithRecovery,
 } from '../lib/integrations/providers/github/auth'
 import { persistRecoveredInstallationId } from '../lib/integrations/providers/github/installation-recovery'
+import { upsertSkjaldMeeting } from '../lib/integrations/providers/skjald/meeting-sync'
 import {
 	dispatchAccountLinkAction,
 	dispatchMaskinWorkspaceCommand,
@@ -59,6 +61,7 @@ import type {
 } from '../lib/integrations/types'
 import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
+import { verifyTimestampSignature } from '../lib/integrations/webhooks/signatures'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -160,8 +163,17 @@ const connectRoute = createRoute({
 	},
 	responses: {
 		200: {
-			description: 'Install URL for OAuth/GitHub App',
-			content: { 'application/json': { schema: z.object({ install_url: z.string() }) } },
+			description:
+				'Install URL for OAuth/GitHub App, or a webhook URL + integration id for manual-auth providers',
+			content: {
+				'application/json': {
+					schema: z.object({
+						install_url: z.string().optional(),
+						webhook_url: z.string().optional(),
+						integration_id: z.string().optional(),
+					}),
+				},
+			},
 		},
 		400: {
 			description: 'Error',
@@ -272,6 +284,89 @@ app.openapi(connectRoute, (async (c) => {
 
 		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 		return c.json({ install_url: `${frontendUrl}/${workspaceId}/settings/integrations` })
+	}
+
+	// manual providers have no OAuth redirect and no outbound-callable API key —
+	// Maskin invents the credential handshake itself: mint an opaque routing
+	// token now (embedded in the webhook URL we hand back), then wait for the
+	// user to paste the provider-generated secret via POST /:id/complete.
+	if (resolved.config.auth.type === 'manual') {
+		const systemActorName = resolved.config.displayName
+		let [systemActor] = await db
+			.select()
+			.from(actors)
+			.where(and(eq(actors.type, 'system'), eq(actors.name, systemActorName)))
+			.limit(1)
+
+		if (!systemActor) {
+			const [newActor] = await db
+				.insert(actors)
+				.values({
+					type: 'system',
+					name: systemActorName,
+					apiKey: generateApiKey().key,
+					createdBy: actorId,
+				})
+				.returning()
+			if (!newActor) {
+				return c.json(
+					createApiError('INTERNAL_ERROR', 'Failed to create system actor for integration'),
+					500,
+				)
+			}
+			systemActor = newActor
+		}
+
+		const [existingMember] = await db
+			.select()
+			.from(workspaceMembers)
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, workspaceId),
+					eq(workspaceMembers.actorId, systemActor.id),
+				),
+			)
+			.limit(1)
+
+		if (!existingMember) {
+			await db.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: systemActor.id,
+				role: 'system',
+			})
+		}
+
+		const token = randomBytes(24).toString('hex')
+		const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
+
+		const [row] = await db
+			.insert(integrations)
+			.values({
+				workspaceId,
+				provider: providerName,
+				status: 'awaiting_secret',
+				externalId: token,
+				credentials: '',
+				config: activeConfig,
+				createdBy: actorId,
+			})
+			.returning({ id: integrations.id })
+
+		if (!row) {
+			return c.json(createApiError('INTERNAL_ERROR', 'Failed to create integration'), 500)
+		}
+
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'created',
+			entityType: 'integration',
+			entityId: row.id,
+			data: { provider: providerName, external_id: token, auth_type: 'manual' },
+		})
+
+		const webhookUrl = `${resolvePublicOrigin(c.req.url, c.req.header())}/api/webhooks/${providerName}/${token}`
+		return c.json({ webhook_url: webhookUrl, integration_id: row.id })
 	}
 
 	// Create signed state containing workspace + actor info + one-time nonce
@@ -733,6 +828,86 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)
+
+// ── POST /api/integrations/:id/complete ─────────────────────────────────────
+// Finishes a manual-auth handshake: the user pastes the provider-generated
+// secret (e.g. Skjald's per-webhook HMAC secret) into Maskin over an
+// authenticated session, completing the row the connect route's 'manual'
+// branch created with status 'awaiting_secret'.
+
+const completeIntegrationRoute = createRoute({
+	method: 'post',
+	path: '/{id}/complete',
+	tags: ['integrations'],
+	summary: 'Complete a manual-auth integration handshake by supplying the provider secret',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			description: 'Integration activated',
+			content: { 'application/json': { schema: z.object({ activated: z.boolean() }) } },
+		},
+		400: {
+			description: 'Error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Integration not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(completeIntegrationRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const body = (await c.req.json().catch(() => ({}))) as { secret?: string }
+	const secret = body.secret?.trim()
+	if (!secret) {
+		return c.json(createApiError('BAD_REQUEST', 'secret is required'), 400)
+	}
+
+	const [existing] = await db
+		.select()
+		.from(integrations)
+		.where(and(eq(integrations.id, id), eq(integrations.workspaceId, workspaceId)))
+		.limit(1)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+
+	const resolved = getProvider(existing.provider)
+	if (resolved.config.auth.type !== 'manual') {
+		return c.json(
+			createApiError('BAD_REQUEST', `Provider ${existing.provider} does not use manual auth`),
+			400,
+		)
+	}
+	if (existing.status !== 'awaiting_secret') {
+		return c.json(createApiError('BAD_REQUEST', 'Integration is not awaiting a secret'), 400)
+	}
+
+	await db.transaction(async (tx) => {
+		await tx
+			.update(integrations)
+			.set({ credentials: encrypt(secret), status: 'active', updatedAt: new Date() })
+			.where(eq(integrations.id, id))
+
+		await tx.insert(events).values({
+			workspaceId: existing.workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: { status: 'active', provider: existing.provider },
+		})
+	})
+
+	return c.json({ activated: true })
+}) as RouteHandler<typeof completeIntegrationRoute, Env>)
 
 // ── GET /api/integrations/:id/github-token ─────────────────────────────────
 
@@ -1399,6 +1574,180 @@ webhookApp.post('/slack-interactive', async (c) => {
 	return c.json({ ok: true })
 })
 
+// ── Skjald meeting-completed webhook ────────────────────────────────────────
+// Registered before the generic `/:provider` catch-all so this path-literal
+// route wins. Skjald has no central app-level secret — every desktop install
+// mints its own locally — so this bypasses the generic single-secret
+// verifier entirely: `:token` is the opaque routing factor minted by the
+// `manual` connect branch (identifies the integrations row / workspace), and
+// the per-row decrypted `credentials` is the authentication factor, checked
+// directly via `verifyTimestampSignature()` against Skjald's known signing
+// scheme (frontend/src-tauri/src/webhooks/signing.rs: `sha256=<hex>` over
+// `"{timestamp}.{body}"`).
+webhookApp.post('/skjald/:token', async (c) => {
+	const db = c.get('db')
+	const token = c.req.param('token')
+
+	const [integration] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.provider, 'skjald'),
+				eq(integrations.externalId, token),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+
+	if (!integration) {
+		return c.json(createApiError('NOT_FOUND', 'Unknown webhook'), 404)
+	}
+
+	const body = await c.req.text()
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	const secret = decrypt(integration.credentials)
+	const verified = verifyTimestampSignature(body, headers, secret, {
+		signatureHeader: 'x-skjald-signature',
+		timestampHeader: 'x-skjald-timestamp',
+		bodyTemplate: '{timestamp}.{body}',
+		signaturePrefix: 'sha256=',
+		maxAgeSeconds: 300,
+	})
+	if (!verified) {
+		logger.warn('Skjald webhook: signature verification failed', { integrationId: integration.id })
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+	}
+
+	const integrationConfig = integration.config as IntegrationConfig
+	const systemActorId = integrationConfig?.system_actor_id
+	if (!systemActorId) {
+		logger.error('Skjald webhook: integration missing system_actor_id', {
+			integrationId: integration.id,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Integration misconfigured'), 500)
+	}
+
+	let payload: unknown
+	try {
+		payload = JSON.parse(body)
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON'), 400)
+	}
+
+	const eventType = headers['x-skjald-event']
+	const deliveryId = headers['x-skjald-delivery-id'] ?? null
+
+	// Claim the delivery before processing so a retry that arrives while this
+	// request is still in flight is recognised as a duplicate — same dedup
+	// pattern the generic `/:provider` route uses via `extractDeliveryId`.
+	let claimRowId: string | null = null
+	if (deliveryId) {
+		try {
+			const rows = await db
+				.insert(webhookDeliveries)
+				.values({
+					provider: 'skjald',
+					externalId: deliveryId,
+					workspaceId: integration.workspaceId,
+				})
+				.onConflictDoNothing({
+					target: [
+						webhookDeliveries.provider,
+						webhookDeliveries.externalId,
+						webhookDeliveries.workspaceId,
+					],
+				})
+				.returning({ id: webhookDeliveries.id })
+			if (rows.length === 0) {
+				logger.info('Skipping duplicate skjald delivery', {
+					deliveryId,
+					workspaceId: integration.workspaceId,
+				})
+				return c.json({ ok: true, skipped: true })
+			}
+			claimRowId = rows[0]?.id ?? null
+		} catch (err) {
+			// Fail open: dedup-table outage must not stop us processing.
+			logger.error('Failed to claim skjald delivery; processing without dedup', {
+				deliveryId,
+				workspaceId: integration.workspaceId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	const releaseClaim = async () => {
+		if (!claimRowId) return
+		try {
+			await db.delete(webhookDeliveries).where(eq(webhookDeliveries.id, claimRowId))
+		} catch (err) {
+			logger.error('Failed to release skjald webhook delivery claim', {
+				deliveryId,
+				workspaceId: integration.workspaceId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	if (eventType !== 'transcription.completed') {
+		// Unknown/future event type — ack without processing so Skjald doesn't retry.
+		await releaseClaim()
+		return c.json({ ok: true, skipped: 'unhandled_event' })
+	}
+
+	const parsedPayload = skjaldTranscriptionCompletedPayloadSchema.safeParse(payload)
+	if (!parsedPayload.success) {
+		await releaseClaim()
+		return c.json(createApiError('BAD_REQUEST', 'Invalid transcription.completed payload'), 400)
+	}
+
+	try {
+		const result = await upsertSkjaldMeeting(db, {
+			workspaceId: integration.workspaceId,
+			systemActorId,
+			payload: parsedPayload.data,
+		})
+
+		await commitWebhookDelivery(db, {
+			eventRows: [
+				{
+					workspaceId: integration.workspaceId,
+					actorId: systemActorId,
+					action: result.action,
+					entityType: 'meeting',
+					entityId: result.objectId,
+					data: payload as Record<string, unknown>,
+				},
+			],
+			claimRowId,
+		})
+
+		return c.json({ ok: true })
+	} catch (err) {
+		if (err instanceof ClaimReleasedError) {
+			logger.warn('Skjald webhook claim gone or already processed at commit time; txn aborted', {
+				integrationId: integration.id,
+				workspaceId: integration.workspaceId,
+				deliveryId,
+				claimRowId: err.claimRowId,
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+		logger.error('Skjald webhook processing failed', {
+			integrationId: integration.id,
+			workspaceId: integration.workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		await releaseClaim()
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to process webhook'), 500)
+	}
+})
+
 // `asyncProcessing` providers (Slack) hand fan-out + events insert off to the
 // event loop so the route can ack fast — the caller never gets a handle on
 // that background promise. Track it here so integration tests (running
@@ -1798,30 +2147,32 @@ webhookApp.post('/:provider', async (c) => {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Build the OAuth redirect URI, using CORS_ORIGIN when set to prevent header injection */
-function buildRedirectUri(
+// In production, use the configured origin to prevent X-Forwarded-Host injection
+function resolvePublicOrigin(
 	requestUrl: string,
-	providerName: string,
 	headers: Record<string, string | undefined>,
 ): string {
-	// In production, use the configured origin to prevent X-Forwarded-Host injection
 	const corsOrigin = process.env.CORS_ORIGIN
 	if (corsOrigin) {
-		const origin = (corsOrigin.split(',')[0] ?? corsOrigin).trim().replace(/\/$/, '')
-		return `${origin}/api/integrations/${providerName}/callback`
+		return (corsOrigin.split(',')[0] ?? corsOrigin).trim().replace(/\/$/, '')
 	}
 
 	// Fallback for local development
 	const forwardedHost = headers['x-forwarded-host']
 	const forwardedProto = headers['x-forwarded-proto']
 
-	let origin: string
 	if (forwardedHost) {
 		const proto = forwardedProto ?? 'https'
-		origin = `${proto}://${forwardedHost}`
-	} else {
-		const url = new URL(requestUrl)
-		origin = url.origin
+		return `${proto}://${forwardedHost}`
 	}
 
-	return `${origin}/api/integrations/${providerName}/callback`
+	return new URL(requestUrl).origin
+}
+
+function buildRedirectUri(
+	requestUrl: string,
+	providerName: string,
+	headers: Record<string, string | undefined>,
+): string {
+	return `${resolvePublicOrigin(requestUrl, headers)}/api/integrations/${providerName}/callback`
 }

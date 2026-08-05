@@ -1,5 +1,6 @@
 import type { CaptureOptions } from 'posthog-js'
 import { getStoredActor } from './auth'
+import type { CardKind } from './foryou-card-kind'
 import { capture, isPosthogReady } from './posthog'
 
 export type AnalyticsProps = Record<string, string | number | boolean | null | undefined>
@@ -241,6 +242,18 @@ export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): v
 	trackEvent('sidebar.agent_activity.expanded', { workspaceId: p.workspaceId })
 }
 
+// Nav-cleanup bet — Marketplace footer position must reach ≥80% of its prior
+// top-nav CTR within 14 days of ship, which requires per-entry click emission.
+// `item_key` is the stable route-agnostic identifier (`for-you`, `objects`,
+// `marketplace`, …) — never the display label, which is i18n-flexible. `source`
+// distinguishes the top-nav slot from the footer slot so the ratio can be
+// sliced before/after T4 moves Marketplace between them.
+export type NavItemSource = 'top-nav' | 'footer'
+
+export function trackNavItemClicked(p: { item_key: string; source: NavItemSource }): void {
+	trackEvent('nav_item_clicked', { item_key: p.item_key, source: p.source })
+}
+
 // Ship-metric events for the For You onboarding prompt bet — response rate =
 // count(north_star_prompt_response) / count(north_star_prompt_impression),
 // filtered to workspaces with no prior bets. `workspace_id` is passed on the
@@ -433,4 +446,31 @@ export function deriveSidebarViewport(width: number): SidebarViewport {
 	if (width < 768) return 'mobile'
 	if (width < 1024) return 'tablet'
 	return 'desktop'
+}
+
+// For You redesign (Direction A) surface-adoption events. The success metric —
+// in-card action rate — pairs `foryou_card_action` (numerator) with
+// `foryou_card_shown` (denominator) on `card_id`, so both events MUST carry the
+// same shape and identity. `card_kind` comes from `classifyCardKind()` in
+// `@/lib/foryou-card-kind`, which also feeds the DOM `data-card-kind` attribute
+// on the card root — one source of truth so the reading and the rendered
+// weight never drift.
+
+export function trackForyouCardShown(p: { card_kind: CardKind; card_id: string }): void {
+	trackEvent('foryou_card_shown', {
+		card_kind: p.card_kind,
+		card_id: p.card_id,
+	})
+}
+
+export function trackForyouCardAction(p: {
+	card_kind: CardKind
+	card_id: string
+	action_id: string
+}): void {
+	trackEvent('foryou_card_action', {
+		card_kind: p.card_kind,
+		card_id: p.card_id,
+		action_id: p.action_id,
+	})
 }

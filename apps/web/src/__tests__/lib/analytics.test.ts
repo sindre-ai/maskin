@@ -11,10 +11,13 @@ import {
 	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
+	trackForyouCardAction,
 	trackForyouCardMarkedRead,
 	trackForyouCardMarkedUnread,
+	trackForyouCardShown,
 	trackLoopGraduated,
 	trackLoopViewed,
+	trackNavItemClicked,
 	trackNorthStarPromptImpression,
 	trackNorthStarPromptResponse,
 	trackObjectAttachedFile,
@@ -415,6 +418,28 @@ describe('v1 taxonomy helpers', () => {
 		expect(deriveSidebarViewport(1920)).toBe('desktop')
 	})
 
+	it('nav_item_clicked carries the stable item_key and top-nav source', () => {
+		const capture = captureSpy()
+
+		trackNavItemClicked({ item_key: 'marketplace', source: 'top-nav' })
+
+		expect(capture).toHaveBeenCalledWith('nav_item_clicked', {
+			item_key: 'marketplace',
+			source: 'top-nav',
+		})
+	})
+
+	it('nav_item_clicked flips the source to footer when emitted from a footer nav entry', () => {
+		const capture = captureSpy()
+
+		trackNavItemClicked({ item_key: 'marketplace', source: 'footer' })
+
+		expect(capture).toHaveBeenCalledWith('nav_item_clicked', {
+			item_key: 'marketplace',
+			source: 'footer',
+		})
+	})
+
 	it('north_star_prompt_impression fires with workspace_id via posthog.capture, bypassing the batch queue', () => {
 		const capture = captureSpy()
 
@@ -629,6 +654,35 @@ describe('v1 taxonomy helpers', () => {
 				entity_id: 'task-9',
 				mobile: true,
 				via: 'swipe',
+			})
+		})
+	})
+
+	describe('foryou_card_shown / foryou_card_action (Direction A instrumentation)', () => {
+		it('foryou_card_shown carries card_kind + card_id for the denominator', () => {
+			const capture = captureSpy()
+
+			trackForyouCardShown({ card_kind: 'decision', card_id: 'bet-1' })
+
+			expect(capture).toHaveBeenCalledWith('foryou_card_shown', {
+				card_kind: 'decision',
+				card_id: 'bet-1',
+			})
+		})
+
+		it('foryou_card_action carries card_kind + card_id + action_id for the numerator', () => {
+			const capture = captureSpy()
+
+			trackForyouCardAction({
+				card_kind: 'decision',
+				card_id: 'bet-1',
+				action_id: 'quick_reply:approved',
+			})
+
+			expect(capture).toHaveBeenCalledWith('foryou_card_action', {
+				card_kind: 'decision',
+				card_id: 'bet-1',
+				action_id: 'quick_reply:approved',
 			})
 		})
 	})

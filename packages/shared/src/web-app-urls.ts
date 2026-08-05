@@ -95,8 +95,6 @@ export type WebAppTarget =
 	/** Pulse dashboard — alias for the workspace root, kept distinct so the
 	 * intent of the link survives if the dashboard moves. */
 	| { kind: 'pulse' }
-	/** Cross-workspace activity feed (`/_authed/$workspaceId/activity`). */
-	| { kind: 'activity' }
 	/** Detail page for any object stored in the unified `objects` table. */
 	| { kind: 'object'; id: string; type?: WebAppObjectType }
 	/** Workspace-level objects list. Used as the footer CTA target for list/
@@ -110,8 +108,9 @@ export type WebAppTarget =
 	/** Trigger list or detail. */
 	| { kind: 'trigger'; id?: string }
 	/** Container session — no dedicated detail page yet, falls back to the
-	 * actor that ran it. Pass `actorId` so the link lands on the right page;
-	 * if omitted we link to the activity feed where sessions surface. */
+	 * actor that ran it (its logs surface in the session panel on the agent
+	 * detail page). Pass `actorId` so the link lands on the right page; if
+	 * omitted we link to the agents list instead. */
 	| { kind: 'session'; id: string; actorId?: string }
 	/** Notification — no detail page yet, falls back to the Pulse Dashboard
 	 * where notifications surface. The `id` is recorded for forward-compat
@@ -188,8 +187,6 @@ export function buildWebAppPath(workspaceId: string, target: WebAppTarget): stri
 			return root
 		case 'notification':
 			return root
-		case 'activity':
-			return `${root}/activity`
 		case 'object':
 			return `${root}/objects/${target.id}`
 		case 'objects':
@@ -200,7 +197,7 @@ export function buildWebAppPath(workspaceId: string, target: WebAppTarget): stri
 		case 'trigger':
 			return target.id ? `${root}/triggers/${target.id}` : `${root}/triggers`
 		case 'session':
-			return target.actorId ? `${root}/agents/${target.actorId}` : `${root}/activity`
+			return target.actorId ? `${root}/agents/${target.actorId}` : `${root}/agents`
 		case 'extension':
 			return `${root}/settings`
 		case 'relationship':

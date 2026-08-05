@@ -37,11 +37,15 @@ export function useObject(id: string, options?: { enabled?: boolean }) {
 	})
 }
 
-export function useObjectGraph(workspaceId: string, id: string) {
+export function useObjectGraph(
+	workspaceId: string,
+	id: string,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
 	return useQuery({
 		queryKey: queryKeys.objects.graph(id),
 		queryFn: () => api.objects.graph(id, workspaceId),
-		enabled: !!id && !!workspaceId,
+		enabled: enabled && !!id && !!workspaceId,
 	})
 }
 

@@ -1,6 +1,6 @@
 import type { ComposerProps } from '@/components/chat/chat'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -204,6 +204,73 @@ describe('SparseComposer', () => {
 				],
 				'look at this',
 			)
+		})
+	})
+
+	it('shifts up via translateY while focused when the visual viewport shrinks (soft keyboard)', async () => {
+		const user = userEvent.setup()
+		const originalVisualViewport = window.visualViewport
+		const listeners: Record<string, () => void> = {}
+		const vv = {
+			height: 667,
+			offsetTop: 0,
+			addEventListener: (type: string, cb: () => void) => {
+				listeners[type] = cb
+			},
+			removeEventListener: vi.fn(),
+		}
+		Object.defineProperty(window, 'visualViewport', { configurable: true, value: vv })
+		Object.defineProperty(window, 'innerHeight', { configurable: true, value: 667 })
+
+		const { container } = render(<SparseComposer itemsCount={0} />)
+		const wrapper = container.firstElementChild as HTMLElement
+		await user.click(getTextarea())
+		expect(wrapper.style.transform).toBe('')
+
+		vv.height = 377
+		act(() => listeners.resize?.())
+		await waitFor(() => expect(wrapper.style.transform).toBe('translateY(-290px)'))
+
+		// Keyboard-down: viewport restored, shift is removed.
+		vv.height = 667
+		act(() => listeners.resize?.())
+		await waitFor(() => expect(wrapper.style.transform).toBe(''))
+
+		Object.defineProperty(window, 'visualViewport', {
+			configurable: true,
+			value: originalVisualViewport,
+		})
+	})
+
+	it('applies the shift when a resize event fires immediately after focus, before any render gap (regression: listener must be attached at mount, not after the focus re-render)', async () => {
+		const originalVisualViewport = window.visualViewport
+		const listeners: Record<string, () => void> = {}
+		const vv = {
+			height: 667,
+			offsetTop: 0,
+			addEventListener: (type: string, cb: () => void) => {
+				listeners[type] = cb
+			},
+			removeEventListener: vi.fn(),
+		}
+		Object.defineProperty(window, 'visualViewport', { configurable: true, value: vv })
+		Object.defineProperty(window, 'innerHeight', { configurable: true, value: 667 })
+
+		const { container } = render(<SparseComposer itemsCount={0} />)
+		const wrapper = container.firstElementChild as HTMLElement
+
+		// Fire focus and the resize event back-to-back with no intervening
+		// await — mirrors a real browser dispatching a keyboard-open resize
+		// before React has re-rendered from the focus state update.
+		fireEvent.focus(getTextarea())
+		vv.height = 377
+		act(() => listeners.resize?.())
+
+		await waitFor(() => expect(wrapper.style.transform).toBe('translateY(-290px)'))
+
+		Object.defineProperty(window, 'visualViewport', {
+			configurable: true,
+			value: originalVisualViewport,
 		})
 	})
 

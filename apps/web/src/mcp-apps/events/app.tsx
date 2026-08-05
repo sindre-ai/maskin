@@ -1,4 +1,4 @@
-import { ActivityFeedView } from '@/components/activity/activity-feed'
+import { ActivityFeedView } from '@/components/activity/activity-feed-view'
 import { useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
 import type { EventResponse } from '../shared/types'
@@ -22,7 +22,7 @@ function EventsApp() {
 	return (
 		<div>
 			<div className="flex justify-end px-4 pt-4">
-				<WebAppLink target={{ kind: 'activity' }} label="Open activity in Maskin" />
+				<WebAppLink target={{ kind: 'objects' }} label="View objects in Maskin" />
 			</div>
 			<ActivityFeedView events={events} />
 		</div>

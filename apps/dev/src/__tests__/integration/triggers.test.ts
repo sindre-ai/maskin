@@ -99,6 +99,98 @@ describe('Triggers Integration', () => {
 		})
 	})
 
+	describe('updating type', () => {
+		it('persists a type change alongside its matching config', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			// Seed as a cron placeholder, mirroring how CreatePicker creates new triggers.
+			const createRes = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({
+						target_actor_id: targetActorId,
+						type: 'cron',
+						config: { expression: '0 0 * * *' },
+					}),
+					headers,
+				),
+			)
+			expect(createRes.status).toBe(201)
+			const created = await createRes.json()
+
+			// User reconfigures it to an event trigger via the detail-page form.
+			const updateRes = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/triggers/${created.id}`,
+					{ type: 'event', config: { entity_type: 'meeting', action: 'created' } },
+					headers,
+				),
+			)
+			expect(updateRes.status).toBe(200)
+			const updated = await updateRes.json()
+			expect(updated.type).toBe('event')
+			expect(updated.config.entity_type).toBe('meeting')
+			expect(updated.config.action).toBe('created')
+
+			// Refetch to confirm it was actually persisted, not just echoed back.
+			const listRes = await app.request(jsonGet('/api/triggers', headers))
+			const list = await listRes.json()
+			const refetched = list.find((t: { id: string }) => t.id === created.id)
+			expect(refetched.type).toBe('event')
+			expect(refetched.config.entity_type).toBe('meeting')
+		})
+
+		it('rejects a type change without a matching config', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const createRes = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({
+						target_actor_id: targetActorId,
+						type: 'cron',
+						config: { expression: '0 0 * * *' },
+					}),
+					headers,
+				),
+			)
+			const created = await createRes.json()
+
+			const updateRes = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${created.id}`, { type: 'event' }, headers),
+			)
+			expect(updateRes.status).toBe(400)
+		})
+
+		it('leaves type unchanged when the update omits it', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const createRes = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({ target_actor_id: targetActorId }),
+					headers,
+				),
+			)
+			const created = await createRes.json()
+			expect(created.type).toBe('event')
+
+			const updateRes = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${created.id}`, { enabled: false }, headers),
+			)
+			const updated = await updateRes.json()
+			expect(updated.type).toBe('event')
+			expect(updated.enabled).toBe(false)
+		})
+	})
+
 	describe('event matching config', () => {
 		it('stores trigger with complex event config', async () => {
 			const app = createApp()
