@@ -37,3 +37,22 @@ export function useIsTouchViewport() {
 
 	return !!isTouch
 }
+
+// True at ≥1024 CSS px — the viewport class where side rails (e.g. Today's
+// Brief) render inline beside primary content instead of as an overlay Sheet.
+// Boundary is inclusive of 1024 to match the redesign's AC ("right-rail at 1024").
+export function useIsDesktopViewport() {
+	const [isDesktop, setIsDesktop] = React.useState<boolean | undefined>(undefined)
+
+	React.useEffect(() => {
+		const mql = window.matchMedia(`(min-width: ${TOUCH_VIEWPORT_BREAKPOINT}px)`)
+		const onChange = () => {
+			setIsDesktop(window.innerWidth >= TOUCH_VIEWPORT_BREAKPOINT)
+		}
+		mql.addEventListener('change', onChange)
+		setIsDesktop(window.innerWidth >= TOUCH_VIEWPORT_BREAKPOINT)
+		return () => mql.removeEventListener('change', onChange)
+	}, [])
+
+	return !!isDesktop
+}

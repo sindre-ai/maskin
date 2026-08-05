@@ -26,8 +26,23 @@ export function useConnectIntegration(workspaceId: string) {
 				input.apiKey ? { api_key: input.apiKey } : undefined,
 			),
 		onSuccess: (data) => {
-			// Redirect to the provider's install/OAuth page
-			window.location.href = data.install_url
+			// Manual-auth providers (e.g. Skjald) return a webhook_url to display
+			// instead of an OAuth install_url to redirect to — the caller handles
+			// showing it via a per-call onSuccess.
+			if (data.webhook_url) return
+			if (data.install_url) window.location.href = data.install_url
+		},
+	})
+}
+
+export function useCompleteIntegration(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, secret }: { id: string; secret: string }) =>
+			api.integrations.complete(id, workspaceId, secret),
+		onSuccess: () => {
+			toast.success('Integration connected')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 		},
 	})
 }

@@ -343,9 +343,18 @@ export const api = {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
 		connect: (workspaceId: string, provider: string, body?: { api_key?: string }) =>
-			request<{ install_url: string }>(`/integrations/${provider}/connect`, {
+			request<{ install_url?: string; webhook_url?: string; integration_id?: string }>(
+				`/integrations/${provider}/connect`,
+				{
+					method: 'POST',
+					body,
+					workspaceId,
+				},
+			),
+		complete: (id: string, workspaceId: string, secret: string) =>
+			request<{ activated: boolean }>(`/integrations/${id}/complete`, {
 				method: 'POST',
-				body,
+				body: { secret },
 				workspaceId,
 			}),
 		disconnect: (id: string, workspaceId: string) =>
@@ -1032,7 +1041,7 @@ export interface ProviderEventDefinition {
 export interface ProviderInfo {
 	name: string
 	displayName: string
-	authType: 'oauth2' | 'oauth2_custom' | 'api_key'
+	authType: 'oauth2' | 'oauth2_custom' | 'api_key' | 'manual'
 	events: ProviderEventDefinition[]
 	externalIdDisplay?: 'email' | 'installation'
 }

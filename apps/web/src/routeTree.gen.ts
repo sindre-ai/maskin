@@ -20,7 +20,6 @@ import { Route as AuthedWorkspaceIdIndexRouteImport } from './routes/_authed/$wo
 import { Route as AuthedWorkspaceIdSettingsRouteImport } from './routes/_authed/$workspaceId/settings'
 import { Route as AuthedWorkspaceIdMarketplaceRouteImport } from './routes/_authed/$workspaceId/marketplace'
 import { Route as AuthedWorkspaceIdBriefingRouteImport } from './routes/_authed/$workspaceId/briefing'
-import { Route as AuthedWorkspaceIdActivityRouteImport } from './routes/_authed/$workspaceId/activity'
 import { Route as AuthedWorkspaceIdTriggersIndexRouteImport } from './routes/_authed/$workspaceId/triggers/index'
 import { Route as AuthedWorkspaceIdSettingsIndexRouteImport } from './routes/_authed/$workspaceId/settings/index'
 import { Route as AuthedWorkspaceIdObjectsIndexRouteImport } from './routes/_authed/$workspaceId/objects/index'
@@ -93,12 +92,6 @@ const AuthedWorkspaceIdBriefingRoute =
   AuthedWorkspaceIdBriefingRouteImport.update({
     id: '/briefing',
     path: '/briefing',
-    getParentRoute: () => AuthedWorkspaceIdRoute,
-  } as any)
-const AuthedWorkspaceIdActivityRoute =
-  AuthedWorkspaceIdActivityRouteImport.update({
-    id: '/activity',
-    path: '/activity',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
 const AuthedWorkspaceIdTriggersIndexRoute =
@@ -199,7 +192,6 @@ export interface FileRoutesByFullPath {
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/workspaces': typeof AuthedWorkspacesRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
-  '/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
   '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/$workspaceId/marketplace': typeof AuthedWorkspaceIdMarketplaceRoute
   '/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
@@ -226,7 +218,6 @@ export interface FileRoutesByTo {
   '/workspaces': typeof AuthedWorkspacesRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/': typeof AuthedIndexRoute
-  '/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
   '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/$workspaceId/marketplace': typeof AuthedWorkspaceIdMarketplaceRoute
   '/$workspaceId': typeof AuthedWorkspaceIdIndexRoute
@@ -255,7 +246,6 @@ export interface FileRoutesById {
   '/_authed/workspaces': typeof AuthedWorkspacesRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/_authed/': typeof AuthedIndexRoute
-  '/_authed/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
   '/_authed/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/_authed/$workspaceId/marketplace': typeof AuthedWorkspaceIdMarketplaceRoute
   '/_authed/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
@@ -285,7 +275,6 @@ export interface FileRouteTypes {
     | '/$workspaceId'
     | '/workspaces'
     | '/prototypes/above-title-header'
-    | '/$workspaceId/activity'
     | '/$workspaceId/briefing'
     | '/$workspaceId/marketplace'
     | '/$workspaceId/settings'
@@ -312,7 +301,6 @@ export interface FileRouteTypes {
     | '/workspaces'
     | '/prototypes/above-title-header'
     | '/'
-    | '/$workspaceId/activity'
     | '/$workspaceId/briefing'
     | '/$workspaceId/marketplace'
     | '/$workspaceId'
@@ -340,7 +328,6 @@ export interface FileRouteTypes {
     | '/_authed/workspaces'
     | '/prototypes/above-title-header'
     | '/_authed/'
-    | '/_authed/$workspaceId/activity'
     | '/_authed/$workspaceId/briefing'
     | '/_authed/$workspaceId/marketplace'
     | '/_authed/$workspaceId/settings'
@@ -446,13 +433,6 @@ declare module '@tanstack/react-router' {
       path: '/briefing'
       fullPath: '/$workspaceId/briefing'
       preLoaderRoute: typeof AuthedWorkspaceIdBriefingRouteImport
-      parentRoute: typeof AuthedWorkspaceIdRoute
-    }
-    '/_authed/$workspaceId/activity': {
-      id: '/_authed/$workspaceId/activity'
-      path: '/activity'
-      fullPath: '/$workspaceId/activity'
-      preLoaderRoute: typeof AuthedWorkspaceIdActivityRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
     '/_authed/$workspaceId/triggers/': {
@@ -596,7 +576,6 @@ const AuthedWorkspaceIdSettingsRouteWithChildren =
   )
 
 interface AuthedWorkspaceIdRouteChildren {
-  AuthedWorkspaceIdActivityRoute: typeof AuthedWorkspaceIdActivityRoute
   AuthedWorkspaceIdBriefingRoute: typeof AuthedWorkspaceIdBriefingRoute
   AuthedWorkspaceIdMarketplaceRoute: typeof AuthedWorkspaceIdMarketplaceRoute
   AuthedWorkspaceIdSettingsRoute: typeof AuthedWorkspaceIdSettingsRouteWithChildren
@@ -611,7 +590,6 @@ interface AuthedWorkspaceIdRouteChildren {
 }
 
 const AuthedWorkspaceIdRouteChildren: AuthedWorkspaceIdRouteChildren = {
-  AuthedWorkspaceIdActivityRoute: AuthedWorkspaceIdActivityRoute,
   AuthedWorkspaceIdBriefingRoute: AuthedWorkspaceIdBriefingRoute,
   AuthedWorkspaceIdMarketplaceRoute: AuthedWorkspaceIdMarketplaceRoute,
   AuthedWorkspaceIdSettingsRoute: AuthedWorkspaceIdSettingsRouteWithChildren,

@@ -99,7 +99,6 @@ describe('CommandPalette', () => {
 		await user.keyboard('{Control>}k{/Control}')
 		expect(screen.getByText('Bets Dashboard')).toBeInTheDocument()
 		expect(screen.getByText('All Objects')).toBeInTheDocument()
-		expect(screen.getByText('Activity Feed')).toBeInTheDocument()
 		expect(screen.getByText('Agents')).toBeInTheDocument()
 	})
 

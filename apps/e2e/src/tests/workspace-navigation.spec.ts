@@ -11,10 +11,6 @@ test.describe('Workspace Navigation', () => {
 		await page.getByRole('link', { name: 'Objects' }).click()
 		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/objects`))
 
-		// Navigate to Activity
-		await page.getByRole('link', { name: 'Activity' }).click()
-		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/activity`))
-
 		// Navigate to Agents
 		await page.getByRole('link', { name: 'Agents' }).click()
 		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/agents`))

@@ -30,6 +30,21 @@ interface UseSwipeToMarkReadOptions {
 	// mark-unread. When false the mark-read path stays exactly as before.
 	isRead?: boolean
 	analytics?: SwipeAnalytics
+	// Fires synchronously when a commit is scheduled (swipe past threshold, or
+	// `commit()` called directly), before the 4.5s Undo timer starts. Lets a
+	// single-card queue advance immediately instead of waiting on the deferred
+	// mutation — nothing in the underlying data changes until the timer lands.
+	onCommitScheduled?: (variant: SwipeRevealVariant) => void
+	// Fires when the Undo action is clicked, after the pending timer is
+	// cleared. Lets a single-card queue restore the card that was optimistically
+	// advanced past.
+	onUndo?: (variant: SwipeRevealVariant) => void
+	// Fires once the deferred mutation (onMarkRead/onMarkUnread) actually runs,
+	// after the 4.5s Undo window elapses without Undo. A caller that advanced
+	// away from this card immediately (via onCommitScheduled) uses this to
+	// know the real mutation has landed and it's now safe to fully discard —
+	// e.g. unmount a card that was kept alive only to let this timer finish.
+	onCommitSettled?: (variant: SwipeRevealVariant) => void
 }
 
 interface UseSwipeToMarkReadResult {
@@ -45,6 +60,10 @@ interface UseSwipeToMarkReadResult {
 	handlePointerMove: (e: ReactPointerEvent<HTMLDivElement>) => void
 	handlePointerUp: () => void
 	handlePointerCancel: () => void
+	// Runs the same toast/timer/deferred-commit path a completed swipe
+	// triggers, for callers that commit via a button instead of a drag
+	// (e.g. a fixed action bar with no gesture).
+	commit: (variant: SwipeRevealVariant) => void
 }
 
 /**
@@ -71,12 +90,36 @@ export function useSwipeToMarkRead(
 		typeof onMarkReadOrOptions === 'function'
 			? { onMarkRead: onMarkReadOrOptions, analytics: analyticsPositional }
 			: onMarkReadOrOptions
-	const { onMarkRead, onMarkUnread, isRead = false, analytics } = options
+	const {
+		onMarkRead,
+		onMarkUnread,
+		isRead = false,
+		analytics,
+		onCommitScheduled,
+		onUndo,
+		onCommitSettled,
+	} = options
 
 	// Ref keeps callbacks fresh without resetting the swipe callbacks each
 	// render — the hook's outward-facing handlers stay referentially stable.
-	const callbacksRef = useRef({ onMarkRead, onMarkUnread, isRead, analytics })
-	callbacksRef.current = { onMarkRead, onMarkUnread, isRead, analytics }
+	const callbacksRef = useRef({
+		onMarkRead,
+		onMarkUnread,
+		isRead,
+		analytics,
+		onCommitScheduled,
+		onUndo,
+		onCommitSettled,
+	})
+	callbacksRef.current = {
+		onMarkRead,
+		onMarkUnread,
+		isRead,
+		analytics,
+		onCommitScheduled,
+		onUndo,
+		onCommitSettled,
+	}
 
 	const swipeRef = useRef({
 		startX: 0,
@@ -117,6 +160,7 @@ export function useSwipeToMarkRead(
 	}, [isRead])
 
 	const triggerWithUndo = useCallback((variant: SwipeRevealVariant) => {
+		callbacksRef.current.onCommitScheduled?.(variant)
 		setSwipePending(true)
 		pendingTimer.current = setTimeout(() => {
 			const c = callbacksRef.current
@@ -139,6 +183,7 @@ export function useSwipeToMarkRead(
 			}
 			setSwipePending(false)
 			pendingTimer.current = null
+			c.onCommitSettled?.(variant)
 		}, 4500)
 		toast(variant === 'mark-read' ? 'Marked as read' : 'Marked as unread', {
 			duration: 4500,
@@ -150,6 +195,7 @@ export function useSwipeToMarkRead(
 						pendingTimer.current = null
 					}
 					setSwipePending(false)
+					callbacksRef.current.onUndo?.(variant)
 				},
 			},
 		})
@@ -247,5 +293,6 @@ export function useSwipeToMarkRead(
 		handlePointerMove,
 		handlePointerUp,
 		handlePointerCancel,
+		commit: triggerWithUndo,
 	}
 }

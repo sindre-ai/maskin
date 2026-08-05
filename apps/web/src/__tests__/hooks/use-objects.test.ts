@@ -166,6 +166,14 @@ describe('useObjectGraph', () => {
 		expect(result.current.isFetching).toBe(false)
 		expect(api.objects.graph).not.toHaveBeenCalled()
 	})
+
+	it('is disabled when enabled=false so callers can gate per-row on card kind', () => {
+		const { result } = renderHook(() => useObjectGraph(workspaceId, 'bet-1', { enabled: false }), {
+			wrapper: TestWrapper,
+		})
+		expect(result.current.fetchStatus).toBe('idle')
+		expect(api.objects.graph).not.toHaveBeenCalled()
+	})
 })
 
 describe('useCreateObject', () => {

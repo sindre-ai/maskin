@@ -19,8 +19,8 @@ interface CommentInputProps {
 	onSubmitted?: () => void
 	// Direction the @-mention dropdown opens. Defaults to 'below' (object detail
 	// page, plenty of room underneath). Callers pinned to the viewport bottom
-	// (e.g. the For You page's PersistentReplyBar) pass 'above' so the dropdown
-	// doesn't render off-screen.
+	// (e.g. ForYouQueueCard) pass 'above' so the dropdown doesn't render
+	// off-screen.
 	mentionDropdownPlacement?: 'below' | 'above'
 }
 

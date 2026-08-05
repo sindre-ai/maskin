@@ -1,11 +1,8 @@
-import { useActors } from '@/hooks/use-actors'
-import { useEvents } from '@/hooks/use-events'
 import type { ActorListItem, EventResponse } from '@/lib/api'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useMemo, useRef } from 'react'
+import { useRef } from 'react'
 import { EmptyState } from '../shared/empty-state'
 import { ListSkeleton } from '../shared/loading-skeleton'
-import { type CategoryFilter, matchesFilter } from './activity-filters'
 import { ActivityItem } from './activity-item'
 
 interface ActivityFeedViewProps {
@@ -53,29 +50,4 @@ export function ActivityFeedView({ events, isLoading = false, actorsById }: Acti
 			</div>
 		</div>
 	)
-}
-
-export function ActivityFeed({
-	workspaceId,
-	filter,
-}: {
-	workspaceId: string
-	filter?: CategoryFilter
-}) {
-	const { data: events, isLoading } = useEvents(workspaceId)
-	const { data: actors } = useActors(workspaceId)
-
-	const actorsById = useMemo(() => {
-		const map = new Map<string, ActorListItem>()
-		for (const actor of actors ?? []) map.set(actor.id, actor)
-		return map
-	}, [actors])
-
-	const filteredEvents = useMemo(() => {
-		const all = events ?? []
-		if (!filter) return all
-		return all.filter((event) => matchesFilter(event, filter, actorsById))
-	}, [events, filter, actorsById])
-
-	return <ActivityFeedView events={filteredEvents} isLoading={isLoading} actorsById={actorsById} />
 }

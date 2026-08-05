@@ -23,10 +23,6 @@ describe('buildWebAppPath', () => {
 		expect(buildWebAppPath(ws, { kind: 'agent', id: 'a-1' })).toBe('/ws-123/agents/a-1')
 	})
 
-	it('builds activity path', () => {
-		expect(buildWebAppPath(ws, { kind: 'activity' })).toBe('/ws-123/activity')
-	})
-
 	it('builds settings index and section paths', () => {
 		expect(buildWebAppPath(ws, { kind: 'settings' })).toBe('/ws-123/settings')
 		expect(buildWebAppPath(ws, { kind: 'settings', section: 'keys' })).toBe('/ws-123/settings/keys')
