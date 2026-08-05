@@ -94,6 +94,36 @@ jobs:
           job-name: integration-tests
 
       - run: pnpm build
+
+      # Boots the actual bundled artifact (apps/dev/dist/index.js) that ships to
+      # production — not `tsx src/index.ts` like the dev server or e2e webServer
+      # use. Catches bugs that only exist in the flattened esbuild bundle, e.g. a
+      # module reading a file relative to its own compiled path (which points
+      # into dist/ once bundled, not next to a checked-in data/ folder anymore).
+      - name: Smoke test — boot the built server
+        run: |
+          set -e
+          pnpm db:migrate
+          node apps/dev/dist/index.js &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/health > /dev/null; then
+              echo "Server booted and responded to /api/health"
+              exit 0
+            fi
+            if ! kill -0 $SERVER_PID 2>/dev/null; then
+              echo "Server process exited before responding to /api/health — see logs above"
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "Server did not respond to /api/health within 30s"
+          exit 1
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
+          INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+
       - run: pnpm test:integration -- --run
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test

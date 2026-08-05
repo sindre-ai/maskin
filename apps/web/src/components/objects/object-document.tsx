@@ -146,6 +146,7 @@ export function ObjectDocumentView({
 
 	return (
 		<div className="w-full min-w-0 max-w-3xl mx-auto">
+<<<<<<< HEAD
 			{/* Identity row — TypeBadge and driver hoisted above the title so
 			 * type/owner are readable before the reader scans past the h1. Status
 			 * and the bet-status chip live in the properties sidebar instead.
@@ -158,6 +159,14 @@ export function ObjectDocumentView({
 				data-testid="object-identity-row"
 				className="flex flex-wrap items-center gap-2 mb-3"
 			>
+=======
+			{/* Identity row — TypeBadge, status, bet-status chip, driver hoisted
+			 * above the title so type/state/owner are readable before the reader
+			 * scans past the h1. Anchors the sticky-nav sprout-back: when this row
+			 * scrolls out, the header projects title + read-only chip; tapping the
+			 * chip smooth-scrolls here and focuses [data-hero-status-trigger]. */}
+			<div ref={heroIdentityRef} className="flex flex-wrap items-center gap-2 mb-3">
+>>>>>>> ea24de97d56d89b3d4e7a60d535febc648d62fa1
 				<TypeBadge type={object.type} />
 				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
 				{isKnowledgeAuthorWrite(object) && onToggleVerified && (
