@@ -178,51 +178,12 @@ export function ObjectDocumentView({
 
 	return (
 		<div className="w-full min-w-0 max-w-3xl mx-auto">
-			{/* Title */}
-			<div className="flex items-start gap-2 mb-2">
-				<textarea
-					value={titleDraft}
-					onChange={(e) => {
-						setTitleDraft(e.target.value)
-						e.target.style.height = 'auto'
-						e.target.style.height = `${e.target.scrollHeight}px`
-					}}
-					onBlur={handleTitleBlur}
-					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-					placeholder="Untitled"
-					rows={1}
-					className="w-full text-2xl font-semibold tracking-[-0.022em] bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
-					ref={(el) => {
-						if (el) {
-							el.style.height = 'auto'
-							el.style.height = `${el.scrollHeight}px`
-						}
-					}}
-				/>
-				{showSaved && (
-					<span className="flex items-center gap-1 text-xs text-muted-foreground mt-1.5">
-						<Check size={14} /> Saved
-					</span>
-				)}
-			</div>
-
-			{/* Agent working banner */}
-			{object.activeSessionId && (
-				<AgentWorkingBadge
-					sessionId={object.activeSessionId}
-					workspaceId={workspaceId}
-					variant="banner"
-				/>
-			)}
-
-			{object.type === 'loop' && <LoopCard object={object} workspaceId={workspaceId} />}
-
-			{/* Metadata badges row — editable cluster only. Subscribe + creator +
-			 * timestamps moved to the right-side properties sidebar. Still the
-			 * anchor for the sticky-nav projection: when this row scrolls out of
-			 * view, the header sprouts a title + read-only status chip; tapping
-			 * the chip smooth-scrolls back here and focuses the StatusSelect. */}
-			<div ref={heroIdentityRef} className="flex flex-wrap items-center gap-2 mb-6">
+			{/* Identity row — TypeBadge, status, bet-status chip, driver hoisted
+			 * above the title so type/state/owner are readable before the reader
+			 * scans past the h1. Anchors the sticky-nav sprout-back: when this row
+			 * scrolls out, the header projects title + read-only chip; tapping the
+			 * chip smooth-scrolls here and focuses [data-hero-status-trigger]. */}
+			<div ref={heroIdentityRef} className="flex flex-wrap items-center gap-2 mb-3">
 				<TypeBadge type={object.type} />
 				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
 				{statuses.length > 0 ? (
@@ -256,6 +217,48 @@ export function ObjectDocumentView({
 				{object.type === 'knowledge' && (
 					<KnowledgeReferencesChip workspaceId={workspaceId} objectId={object.id} />
 				)}
+			</div>
+
+			{/* Title + working banner + loop card share a 6-unit bottom margin so
+			 * the gap to content stays consistent whether or not the optional
+			 * banner or loop card renders. */}
+			<div className="mb-6">
+				<div className="flex items-start gap-2 mb-2">
+					<textarea
+						value={titleDraft}
+						onChange={(e) => {
+							setTitleDraft(e.target.value)
+							e.target.style.height = 'auto'
+							e.target.style.height = `${e.target.scrollHeight}px`
+						}}
+						onBlur={handleTitleBlur}
+						onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+						placeholder="Untitled"
+						rows={1}
+						className="w-full text-2xl font-semibold tracking-[-0.022em] bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
+						ref={(el) => {
+							if (el) {
+								el.style.height = 'auto'
+								el.style.height = `${el.scrollHeight}px`
+							}
+						}}
+					/>
+					{showSaved && (
+						<span className="flex items-center gap-1 text-xs text-muted-foreground mt-1.5">
+							<Check size={14} /> Saved
+						</span>
+					)}
+				</div>
+
+				{object.activeSessionId && (
+					<AgentWorkingBadge
+						sessionId={object.activeSessionId}
+						workspaceId={workspaceId}
+						variant="banner"
+					/>
+				)}
+
+				{object.type === 'loop' && <LoopCard object={object} workspaceId={workspaceId} />}
 			</div>
 
 			{/* Content — long-form prose caps at 75ch on viewports ≥1280px (AC-U1). */}
