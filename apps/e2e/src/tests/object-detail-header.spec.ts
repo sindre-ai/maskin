@@ -122,15 +122,19 @@ test.describe('Object detail — above-title identity row', () => {
 			).toBeVisible()
 
 			// SubscribeToggle + creator + created/updated timestamps must
-			// no longer render inline in the identity row. Activity below
-			// legitimately renders <time> for events, so scope the time
-			// check to the identity row itself (via the status-trigger
-			// ancestor).
-			await expect(page.getByRole('button', { name: /subscribe/i })).toHaveCount(0)
-			const heroTimes = await page
+			// no longer render inline in the identity row. Both checks are
+			// scoped to the identity row itself (via the status-trigger
+			// ancestor) — the page-wide Subscribe toggle in the properties
+			// sidebar stays mounted off-screen (not display:none) at
+			// tablet/desktop widths even when collapsed, so an unscoped
+			// page-wide locator would false-positive on it. Activity below
+			// the identity row also legitimately renders <time> for events,
+			// so that check must stay scoped too.
+			const identityRow = page
 				.locator('[data-hero-status-trigger]')
-				.locator('xpath=ancestor::div[contains(@class, "flex-wrap")][1]//time')
-				.count()
+				.locator('xpath=ancestor::div[contains(@class, "flex-wrap")][1]')
+			await expect(identityRow.getByRole('button', { name: /subscribe/i })).toHaveCount(0)
+			const heroTimes = await identityRow.locator('xpath=.//time').count()
 			expect(heroTimes).toBe(0)
 >>>>>>> ea24de97d56d89b3d4e7a60d535febc648d62fa1
 		})

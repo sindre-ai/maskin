@@ -1,10 +1,17 @@
 import { ForYouCardQueue } from '@/components/foryou/foryou-card-queue'
-import { type FeedMode, type FeedSort, ForYouHeader } from '@/components/foryou/foryou-header'
+import {
+	type FeedMode,
+	type FeedSort,
+	ForYouHeader,
+	ForYouHeaderActions,
+	ForYouHeaderIdentity,
+} from '@/components/foryou/foryou-header'
 import { ForYouListRow } from '@/components/foryou/foryou-list-row'
 import { NewConversationComposer } from '@/components/foryou/new-conversation-composer'
 import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
+import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FilterTabs } from '@/components/shared/filter-tabs'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
@@ -175,9 +182,8 @@ function ForYouRedesign() {
 		})
 	}, [markItemRead, visibleRegular])
 
-	// Alt+U shortcut stays live in the redesign even though the visible "Mark
-	// all as read" button is dropped from the redesigned header. Matches the
-	// prototype — power-user keyboard access continues to work.
+	// Alt+U shortcut mirrors the visible "Mark all read" button in
+	// ForYouHeaderActions — power-user keyboard access alongside the click target.
 	useEffect(() => {
 		function onKeydown(event: KeyboardEvent) {
 			if (!isMarkAllReadShortcut(event)) return
@@ -254,6 +260,17 @@ function ForYouRedesign() {
 	return (
 		<>
 			<div className="flex min-w-0 flex-1 flex-col gap-3" data-testid="foryou-redesign-root">
+				<PageHeader
+					stickyIdentity={<ForYouHeaderIdentity unreadCount={unreadRegular.length} />}
+					actions={
+						<ForYouHeaderActions
+							onStartConversation={() => setComposerOpen(true)}
+							onCreateObject={handleCreateObject}
+							onMarkAllRead={handleMarkAllRead}
+							markAllReadDisabled={unreadRegular.length === 0}
+						/>
+					}
+				/>
 				{northStarCard}
 				<ForYouHeader
 					unreadCount={unreadRegular.length}
@@ -265,11 +282,9 @@ function ForYouRedesign() {
 					onModeChange={setMode}
 					sort={sort}
 					onSortChange={setSort}
-					onStartConversation={() => setComposerOpen(true)}
-					onCreateObject={handleCreateObject}
 				/>
 
-				<div className="flex flex-col">
+				<div className="flex flex-1 min-h-0 flex-col">
 					{onboardingItems.length > 0 && (
 						<div className="mb-3 space-y-3">
 							{onboardingItems.map((item) => (

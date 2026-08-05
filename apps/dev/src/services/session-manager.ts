@@ -282,6 +282,7 @@ export class SessionManager extends EventEmitter {
 	private static readonly SIDECAR_TEARDOWN_POLL_INTERVAL_MS = 500
 	private agentBaseBuildContext: string | null = null
 	private browserSidecarBuildContext: string | null = null
+	private agentBaseImageReady: Promise<void> | null = null
 	private browserSidecarImageReady: Promise<void> | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 	private dispatchQueue: SessionDispatchQueue | null = null
@@ -322,6 +323,10 @@ export class SessionManager extends EventEmitter {
 
 	warmBrowserSidecarImage(): Promise<void> {
 		return this.prepareBrowserSidecarImage()
+	}
+
+	warmAgentBaseImage(): Promise<void> {
+		return this.prepareAgentBaseImage()
 	}
 
 	/**
@@ -1713,9 +1718,11 @@ export class SessionManager extends EventEmitter {
 		const envVars = { ...spec.env }
 		const name = containerName ?? `anko-session-${session.id.slice(0, 8)}`
 
-		// Ensure the image exists — rebuild if it was pruned or lost
+		// Ensure the image exists — rebuild if it was pruned or lost. Shares an
+		// in-flight build with warmAgentBaseImage() so a session starting during
+		// boot warm-up doesn't trigger a redundant concurrent build.
 		if (spec.image === 'agent-base:latest' && this.agentBaseBuildContext) {
-			await this.containers.ensureImage(spec.image, this.agentBaseBuildContext)
+			await this.prepareAgentBaseImage()
 		}
 
 		// Write exec-trigger so the entrypoint starts the agent. The entrypoint
@@ -2894,6 +2901,19 @@ export class SessionManager extends EventEmitter {
 
 			return null
 		}
+	}
+
+	private prepareAgentBaseImage(): Promise<void> {
+		if (!this.agentBaseBuildContext) return Promise.resolve()
+		if (!this.agentBaseImageReady) {
+			this.agentBaseImageReady = this.containers
+				.ensureImage('agent-base:latest', this.agentBaseBuildContext)
+				.catch((err) => {
+					this.agentBaseImageReady = null
+					throw err
+				})
+		}
+		return this.agentBaseImageReady
 	}
 
 	private prepareBrowserSidecarImage(): Promise<void> {

@@ -240,6 +240,39 @@ describe('ForYouCardQueue', () => {
 		expect(skipMock).not.toHaveBeenCalled()
 	})
 
+	it('keeps the current card pinned when a background refetch re-sorts the queue ahead of it', () => {
+		const queue = [buildItem('a'), buildItem('b')]
+		const { rerender } = render(<ForYouCardQueue workspaceId="ws-1" queue={queue} />)
+
+		expect(screen.getByTestId('stub-card')).toHaveTextContent('a')
+
+		// Simulate the SSE-triggered `useUnread` refetch reordering the list —
+		// e.g. a new mention on "c" now sorts ahead of "a" — without the user
+		// having processed "a". The card being read must not be swapped out;
+		// "c" waits behind it.
+		rerender(
+			<ForYouCardQueue
+				workspaceId="ws-1"
+				queue={[buildItem('c'), buildItem('a'), buildItem('b')]}
+			/>,
+		)
+
+		expect(screen.getByTestId('stub-card')).toHaveTextContent('a')
+
+		act(() => {
+			fireProcessed(itemQueueKeyImpl(buildItem('a')))
+		})
+
+		expect(screen.getByTestId('stub-card')).toHaveTextContent('c')
+	})
+
+	it('stretches the root and the current card wrapper to fill available height', () => {
+		const { container } = render(<ForYouCardQueue workspaceId="ws-1" queue={[buildItem('a')]} />)
+
+		expect(container.firstElementChild).toHaveClass('flex-1', 'min-h-0')
+		expect(screen.getByTestId('stub-card').parentElement).toHaveClass('flex-1', 'min-h-0')
+	})
+
 	it('falls back to the first visible item when the current key drops out of an updated queue', () => {
 		const queue = [buildItem('a'), buildItem('b')]
 		const { rerender } = render(<ForYouCardQueue workspaceId="ws-1" queue={queue} />)
