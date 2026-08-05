@@ -215,6 +215,23 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars.CLAUDE_OAUTH_ACCESS_TOKEN).toBeUndefined()
 	})
 
+	it('2b. agent-level model preference is NOT forwarded on the custom_llm route (workspace-configured model wins)', async () => {
+		const settings = emptySettings()
+		settings.custom_llm = {
+			enabled: true,
+			base_url: 'https://openrouter.ai/api',
+			api_key: 'sk-or-test',
+			model: 'deepseek/deepseek-v4-flash',
+		}
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: settings,
+			agent: { model: 'claude-sonnet-4-6' },
+		})
+		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
+	})
+
 	it('skips custom_llm when enabled but missing fields', async () => {
 		const settings = emptySettings()
 		settings.custom_llm = { enabled: true, base_url: 'https://x', api_key: '', model: 'm' }
@@ -346,6 +363,19 @@ describe('resolveLlmRoute priority order', () => {
 			ANTHROPIC_API_KEY: '',
 			ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
 		})
+	})
+
+	it('5b. agent-level model preference is NOT forwarded on the system fallback route (operator-configured model wins)', async () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
+		process.env.MASKIN_FALLBACK_BASE_URL = 'https://openrouter.ai/api'
+		process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: emptySettings(),
+			agent: { model: 'claude-sonnet-4-6' },
+		})
+		expect(result?.route).toBe(LLM_ROUTE_SYSTEM_FALLBACK)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
 	})
 
 	it('returns null when nothing is configured', async () => {
