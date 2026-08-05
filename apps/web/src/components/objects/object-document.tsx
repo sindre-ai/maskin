@@ -49,7 +49,7 @@ import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { LoopCard } from './loop-card'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
-import { PropertiesSidebarProvider } from './properties-sidebar-provider'
+import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
 import { OwnerSelect, StatusSelect } from './property-selects'
 import { VerifiedChip, isKnowledgeAuthorWrite } from './verified-chip'
 
@@ -486,9 +486,9 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const upsertSettings = useUpdateUserDisplaySettings(workspaceId)
 	const persistedSettings = settingsQuery.data?.settings
 	// First-paint default per breakpoint: desktop expanded (≥1024 → not touch),
-	// tablet collapsed to rail (768–1023 → touch but not mobile), mobile Sheet
-	// starts closed. Reconciles to the persisted `objectDetailSidebarCollapsed`
-	// bit once the settings query has fetched.
+	// tablet collapsed off-canvas (768–1023 → touch but not mobile), mobile
+	// Sheet starts closed. Reconciles to the persisted
+	// `objectDetailSidebarCollapsed` bit once the settings query has fetched.
 	const breakpointDefaultOpen = !isMobile && !isTouch
 	const sidebarOpen = settingsQuery.isFetched
 		? typeof persistedSettings?.objectDetailSidebarCollapsed === 'boolean'
@@ -651,15 +651,15 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 
 	// Push the doc body aside so the fixed right sidebar doesn't overlay it.
 	// The primitive's mobile Sheet branch overlays anyway (no margin needed).
-	const docMarginRight = isMobile
-		? undefined
-		: sidebarOpen
-			? 'var(--object-sidebar-width, 18rem)'
-			: 'var(--object-sidebar-width-icon, 2.75rem)'
+	// Collapsed is fully off-canvas (no rail), so it reserves no margin.
+	const docMarginRight = !isMobile && sidebarOpen ? SIDEBAR_WIDTH : undefined
 
 	return (
 		<>
-			<PageHeader actions={headerActions} stickyIdentity={stickyIdentity} />
+			{/* Same margin also reaches the top nav via PageHeaderContext — see
+			 * ChatPinShell in the $workspaceId route, which pushes the header
+			 * left so its action buttons stay clear of the fixed sidebar. */}
+			<PageHeader actions={headerActions} stickyIdentity={stickyIdentity} contentPush={docMarginRight} />
 			<DeleteConfirmDialog
 				open={confirmDelete}
 				onOpenChange={handleDeleteOpenChange}
@@ -671,14 +671,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 			<ActionBanner events={events} workspaceId={workspaceId} />
 			<div
 				className="transition-[margin] duration-200 ease-linear"
-				style={{
-					marginRight: docMarginRight,
-					// Expose the two design constants as CSS vars so the margin
-					// tracks the same numbers the sidebar renders at (18 rem
-					// expanded, 2.75 rem rail).
-					['--object-sidebar-width' as string]: '18rem',
-					['--object-sidebar-width-icon' as string]: '2.75rem',
-				}}
+				style={{ marginRight: docMarginRight }}
 			>
 				<ObjectDocumentView
 					object={object}
@@ -712,6 +705,10 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 					object={object}
 					workspaceId={workspaceId}
 					relationships={relationships}
+					statuses={statuses}
+					members={members}
+					onUpdateStatus={handleAuxStatusChange}
+					onUpdateDriver={handleUpdateDriver}
 				/>
 			</PropertiesSidebarProvider>
 		</>

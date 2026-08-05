@@ -45,10 +45,15 @@ export function OwnerSelect({
 	members,
 	currentOwnerId,
 	onChange,
+	// Sidebar usage already renders a "driver" label to the left of the
+	// trigger (CorePropertyRow) — repeating the icon + "Driver:" text there
+	// just pushes the trigger wide enough to force horizontal scroll.
+	compact = false,
 }: {
 	members: MemberResponse[]
 	currentOwnerId: string | null
 	onChange: (owner: string | null) => void
+	compact?: boolean
 }) {
 	const current = members.find((m) => m.actorId === currentOwnerId)
 
@@ -62,8 +67,10 @@ export function OwnerSelect({
 				<SelectValue>
 					{current ? (
 						<span className="inline-flex items-center gap-1.5">
-							{current.type !== 'agent' && <User className="size-3 text-amber-600 shrink-0" />}
-							<span className="text-muted-foreground text-[11px]">Driver:</span>
+							{!compact && current.type !== 'agent' && (
+								<User className="size-3 text-amber-600 shrink-0" />
+							)}
+							{!compact && <span className="text-muted-foreground text-[11px]">Driver:</span>}
 							<ActorAvatar name={current.name} type={current.type} size="sm" />
 							{current.name}
 						</span>
@@ -72,7 +79,9 @@ export function OwnerSelect({
 							Unknown ({currentOwnerId.slice(0, 8)})
 						</span>
 					) : (
-						<span className="text-muted-foreground">Driver: Unassigned</span>
+						<span className="text-muted-foreground">
+							{compact ? 'Unassigned' : 'Driver: Unassigned'}
+						</span>
 					)}
 				</SelectValue>
 			</SelectTrigger>

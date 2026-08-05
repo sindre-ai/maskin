@@ -4,9 +4,10 @@ import { cn } from '@/lib/cn'
 import { TooltipProvider } from '@radix-ui/react-tooltip'
 import * as React from 'react'
 
-// 288px = 18rem expanded; 44px = 2.75rem collapsed rail. Design constants.
-const SIDEBAR_WIDTH = '18rem'
-const SIDEBAR_WIDTH_ICON = '2.75rem'
+// 288px = 18rem expanded. Collapsed is fully off-canvas (0 width).
+// Exported so consumers that push other layout (doc body margin, header
+// margin) share this single source of truth instead of re-hardcoding it.
+export const SIDEBAR_WIDTH = '18rem'
 
 /**
  * Fork of shadcn's `SidebarProvider` for the object-detail right sidebar.
@@ -84,7 +85,6 @@ export const PropertiesSidebarProvider = React.forwardRef<
 						style={
 							{
 								'--sidebar-width': SIDEBAR_WIDTH,
-								'--sidebar-width-icon': SIDEBAR_WIDTH_ICON,
 								...style,
 							} as React.CSSProperties
 						}
