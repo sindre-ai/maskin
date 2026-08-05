@@ -6,7 +6,7 @@ import {
 } from '@/components/activity/undo-write-chip'
 import type { EventResponse, MemberResponse } from '@/lib/api'
 import { setStoredActor } from '@/lib/auth'
-import { DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME } from '@maskin/shared'
+import { DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME } from '@maskin/shared'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
@@ -62,7 +62,7 @@ describe('isKnowledgeAuthorWriteEvent', () => {
 		expect(
 			isKnowledgeAuthorWriteEvent(baseEvent(), {
 				type: 'agent',
-				name: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME,
+				name: DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME,
 			}),
 		).toBe(true)
 	})
@@ -71,7 +71,7 @@ describe('isKnowledgeAuthorWriteEvent', () => {
 		expect(
 			isKnowledgeAuthorWriteEvent(baseEvent({ action: 'status_changed' }), {
 				type: 'agent',
-				name: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME,
+				name: DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME,
 			}),
 		).toBe(true)
 	})
@@ -80,7 +80,7 @@ describe('isKnowledgeAuthorWriteEvent', () => {
 		expect(
 			isKnowledgeAuthorWriteEvent(baseEvent({ entityType: 'bet' }), {
 				type: 'agent',
-				name: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME,
+				name: DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME,
 			}),
 		).toBe(false)
 	})
@@ -89,7 +89,7 @@ describe('isKnowledgeAuthorWriteEvent', () => {
 		expect(
 			isKnowledgeAuthorWriteEvent(baseEvent({ action: 'created' }), {
 				type: 'agent',
-				name: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME,
+				name: DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME,
 			}),
 		).toBe(false)
 	})
@@ -104,7 +104,7 @@ describe('isKnowledgeAuthorWriteEvent', () => {
 		expect(
 			isKnowledgeAuthorWriteEvent(baseEvent(), {
 				type: 'human',
-				name: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME,
+				name: DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME,
 			}),
 		).toBe(false)
 	})
@@ -182,7 +182,7 @@ describe('UndoWriteChip', () => {
 		localStorage.clear()
 	})
 
-	const kaActor = { type: 'agent', name: DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME }
+	const kaActor = { type: 'agent', name: DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME }
 
 	it('renders an Undo button for a fresh KA write when caller is admin', async () => {
 		render(

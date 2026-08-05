@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	ALL_TYPES_KEY,
+	CHROME_KEY,
 	displaySettingsBodySchema,
 	userDisplaySettingsParamsSchema,
 } from '../schemas/user-display-settings'
@@ -106,6 +107,46 @@ describe('displaySettingsBodySchema', () => {
 		})
 	})
 
+	describe('chrome-level fields', () => {
+		it('accepts objectDetailSidebarCollapsed as a boolean', () => {
+			const parsed = displaySettingsBodySchema.parse({ objectDetailSidebarCollapsed: true })
+			expect(parsed.objectDetailSidebarCollapsed).toBe(true)
+		})
+
+		it('accepts foryouViewMode=card and foryouViewMode=list', () => {
+			expect(displaySettingsBodySchema.parse({ foryouViewMode: 'card' }).foryouViewMode).toBe(
+				'card',
+			)
+			expect(displaySettingsBodySchema.parse({ foryouViewMode: 'list' }).foryouViewMode).toBe(
+				'list',
+			)
+		})
+
+		it('accepts both new chrome fields alongside legacy settings', () => {
+			const parsed = displaySettingsBodySchema.parse({
+				view: 'list',
+				objectDetailSidebarCollapsed: false,
+				foryouViewMode: 'list',
+			})
+			expect(parsed.objectDetailSidebarCollapsed).toBe(false)
+			expect(parsed.foryouViewMode).toBe('list')
+		})
+
+		it('rejects unknown foryouViewMode values', () => {
+			expect(() => displaySettingsBodySchema.parse({ foryouViewMode: 'grid' })).toThrow()
+		})
+
+		it('still rejects unknown top-level keys when new chrome fields are set', () => {
+			expect(() =>
+				displaySettingsBodySchema.parse({
+					objectDetailSidebarCollapsed: true,
+					foryouViewMode: 'card',
+					sidebarSomething: 'nope',
+				}),
+			).toThrow()
+		})
+	})
+
 	it('accepts filters.metadata as a field->value record', () => {
 		const result = displaySettingsBodySchema.parse({
 			filters: { status: 'active', metadata: { segment: 'enterprise', confidence: 'high' } },
@@ -130,6 +171,12 @@ describe('userDisplaySettingsParamsSchema', () => {
 	it('accepts the All-tab sentinel', () => {
 		expect(userDisplaySettingsParamsSchema.parse({ object_type: ALL_TYPES_KEY })).toEqual({
 			object_type: '__all__',
+		})
+	})
+
+	it('accepts the chrome sentinel', () => {
+		expect(userDisplaySettingsParamsSchema.parse({ object_type: CHROME_KEY })).toEqual({
+			object_type: '__chrome__',
 		})
 	})
 

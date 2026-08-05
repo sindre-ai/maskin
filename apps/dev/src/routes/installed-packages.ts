@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
 	agentFiles,
+	agentSkills,
 	catalogPackageItems,
 	catalogPackages,
 	files,
@@ -33,6 +35,7 @@ import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 import {
 	type CatalogItemType,
 	buildActorInsert,
@@ -47,6 +50,7 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		agentStorage: AgentStorageManager
 	}
 }
 
@@ -213,6 +217,7 @@ const installPackageRoute = createRoute({
 app.openapi(installPackageRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+	const agentStorage = c.get('agentStorage')
 	const { packageId, workspaceId } = c.req.valid('json')
 
 	// 1. Caller must belong to the target workspace. We check resource-scoped
@@ -283,6 +288,9 @@ app.openapi(installPackageRoute, async (c) => {
 		const sourceToLocal = new Map<string, string>()
 
 		const triggerItems: Array<{ sourceItemId: string; snapshot: Record<string, unknown> }> = []
+		// Skill → source-actor-id bindings, resolved to agent_skills rows once
+		// pass 1 finishes and every actor/skill in the package has a local id.
+		const skillActorBindings: Array<{ sourceSkillId: string; sourceActorIds: string[] }> = []
 
 		for (const item of items) {
 			const type = item.itemType as CatalogItemType
@@ -312,13 +320,32 @@ app.openapi(installPackageRoute, async (c) => {
 					break
 				}
 				case 'skill': {
+					// Fresh id + workspace-scoped S3 key — never reuse the publisher's
+					// storageKey (see buildSkillInsert). The S3 put happens inside the
+					// tx, right after the insert, mirroring workspace-skills.ts's POST.
+					const skillId = randomUUID()
+					const storageKey = workspaceSkillKey(workspaceId, skillId)
 					const [row] = await tx
 						.insert(workspaceSkills)
-						.values(buildSkillInsert(workspaceId, snapshot, metadata, actorId))
+						.values(buildSkillInsert(workspaceId, skillId, storageKey, snapshot, metadata, actorId))
 						.returning({ id: workspaceSkills.id })
 					if (!row) throw new Error(`insert returned no row for skill ${item.sourceItemId}`)
+					await agentStorage.putWorkspaceSkill(
+						workspaceId,
+						skillId,
+						(snapshot.content as string) ?? '',
+					)
 					sourceToLocal.set(item.sourceItemId, row.id)
 					provisioned.skills++
+					const attachedActorIds = Array.isArray(snapshot.attachedActorIds)
+						? (snapshot.attachedActorIds as string[])
+						: []
+					if (attachedActorIds.length > 0) {
+						skillActorBindings.push({
+							sourceSkillId: item.sourceItemId,
+							sourceActorIds: attachedActorIds,
+						})
+					}
 					break
 				}
 				case 'integration': {
@@ -334,6 +361,24 @@ app.openapi(installPackageRoute, async (c) => {
 				case 'trigger':
 					triggerItems.push({ sourceItemId: item.sourceItemId, snapshot })
 					break
+			}
+		}
+
+		// Bind each provisioned skill to the actor(s) it was attached to in the
+		// source workspace, now that pass 1 has resolved both sides to local ids.
+		// Source actor ids that weren't part of this package (or weren't resolved
+		// for any reason) are silently skipped rather than treated as an error —
+		// a skill can legitimately be attached to actors outside the package.
+		for (const { sourceSkillId, sourceActorIds } of skillActorBindings) {
+			const localSkillId = sourceToLocal.get(sourceSkillId)
+			if (!localSkillId) continue
+			for (const sourceActorId of sourceActorIds) {
+				const localActorId = sourceToLocal.get(sourceActorId)
+				if (!localActorId) continue
+				await tx
+					.insert(agentSkills)
+					.values({ actorId: localActorId, workspaceSkillId: localSkillId })
+					.onConflictDoNothing()
 			}
 		}
 
@@ -665,6 +710,7 @@ const uninstallPackageRoute = createRoute({
 app.openapi(uninstallPackageRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+	const agentStorage = c.get('agentStorage')
 	const { id } = c.req.valid('param')
 	const { keepProvisionedItems } = c.req.valid('json')
 
@@ -685,6 +731,10 @@ app.openapi(uninstallPackageRoute, async (c) => {
 	let removedElements:
 		| { actors: number; triggers: number; skills: number; integrations: number }
 		| undefined
+	// Ids of workspace_skills rows deleted below, cleaned up from S3 after the
+	// tx commits (DB row is the source of truth; an orphan S3 object left by a
+	// failed post-commit delete is inert — see workspace-skills.ts's DELETE route).
+	let removedSkillIds: string[] = []
 
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {
@@ -743,6 +793,7 @@ app.openapi(uninstallPackageRoute, async (c) => {
 					sql`${workspaceSkills.metadata}->>'installed_package_id' = ${install.id} OR ${workspaceSkills.metadata}->>'forked_from_installed_package_id' = ${install.id}`,
 				)
 				.returning({ id: workspaceSkills.id })
+			removedSkillIds = skillRes.map((r) => r.id)
 
 			const integrationRes = await tx
 				.delete(integrations)
@@ -860,6 +911,18 @@ app.openapi(uninstallPackageRoute, async (c) => {
 			},
 		})
 	})
+
+	for (const skillId of removedSkillIds) {
+		try {
+			await agentStorage.deleteWorkspaceSkill(install.workspaceId, skillId)
+		} catch (err) {
+			logger.error('Failed to delete workspace skill from storage (orphan object left)', {
+				workspaceId: install.workspaceId,
+				skillId,
+				error: String(err),
+			})
+		}
+	}
 
 	logger.info('Installed package removed', {
 		installedPackageId: install.id,
