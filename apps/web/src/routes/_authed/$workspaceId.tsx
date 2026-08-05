@@ -20,7 +20,6 @@ import {
 	registerWorkspaceProperties,
 	setCapturingEnabled,
 } from '@/lib/posthog'
-import { TodayBriefProvider } from '@/lib/today-brief-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -131,34 +130,32 @@ function WorkspaceLayout() {
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
 			<ChatProvider workspaceId={workspaceId}>
 				<NewConversationProvider>
-					<TodayBriefProvider>
-						<PendingPromptBootstrap agentActorId={agentActorId} />
-						<GuestDraftClaimBootstrap workspaceId={workspaceId} />
-						<PendingCommentsProvider workspaceId={workspaceId}>
-							<PageHeaderProvider>
-								<ChatPinShell>
-									<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
-										<AppSidebar />
-										<SidebarInset className="min-w-0">
-											<Header />
-											<div
-												className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8"
-												data-scroll-root
-											>
-												<Outlet />
-											</div>
-										</SidebarInset>
-									</SidebarProvider>
-								</ChatPinShell>
-							</PageHeaderProvider>
-							<CommandPalette />
-							<ChatPanel
-								workspaceId={workspaceId}
-								agentActorId={agentActorId}
-								entryAgentRole={entryAgentRole}
-							/>
-						</PendingCommentsProvider>
-					</TodayBriefProvider>
+					<PendingPromptBootstrap agentActorId={agentActorId} />
+					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
+					<PendingCommentsProvider workspaceId={workspaceId}>
+						<PageHeaderProvider>
+							<ChatPinShell>
+								<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
+									<AppSidebar />
+									<SidebarInset className="min-w-0">
+										<Header />
+										<div
+											className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8"
+											data-scroll-root
+										>
+											<Outlet />
+										</div>
+									</SidebarInset>
+								</SidebarProvider>
+							</ChatPinShell>
+						</PageHeaderProvider>
+						<CommandPalette />
+						<ChatPanel
+							workspaceId={workspaceId}
+							agentActorId={agentActorId}
+							entryAgentRole={entryAgentRole}
+						/>
+					</PendingCommentsProvider>
 				</NewConversationProvider>
 			</ChatProvider>
 		</WorkspaceContext.Provider>
