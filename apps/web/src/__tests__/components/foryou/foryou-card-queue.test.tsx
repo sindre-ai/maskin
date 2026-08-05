@@ -1,5 +1,5 @@
-import { type Ref, act, forwardRef, useImperativeHandle } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
+import { type Ref, act, forwardRef, useImperativeHandle } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { UnreadItem } from '@/lib/api'
@@ -49,21 +49,23 @@ function fireCommitSettled(key: string) {
 
 vi.mock('@/components/foryou/foryou-queue-card', () => ({
 	itemQueueKey: (item: UnreadItem) => itemQueueKeyImpl(item),
-	ForYouQueueCard: forwardRef((props: StubProps, ref: Ref<{ commit: () => void; skip: () => void }>) => {
-		const key = itemQueueKeyImpl(props.item)
-		callbacksByKey.set(key, {
-			onProcessed: props.onProcessed,
-			onRestored: props.onRestored,
-			onCommitScheduled: props.onCommitScheduled,
-			onCommitSettled: props.onCommitSettled,
-		})
-		useImperativeHandle(ref, () => ({ commit: commitMock, skip: skipMock }))
-		return (
-			<div data-testid="stub-card" data-key={key}>
-				{props.item.entity_id}
-			</div>
-		)
-	}),
+	ForYouQueueCard: forwardRef(
+		(props: StubProps, ref: Ref<{ commit: () => void; skip: () => void }>) => {
+			const key = itemQueueKeyImpl(props.item)
+			callbacksByKey.set(key, {
+				onProcessed: props.onProcessed,
+				onRestored: props.onRestored,
+				onCommitScheduled: props.onCommitScheduled,
+				onCommitSettled: props.onCommitSettled,
+			})
+			useImperativeHandle(ref, () => ({ commit: commitMock, skip: skipMock }))
+			return (
+				<div data-testid="stub-card" data-key={key}>
+					{props.item.entity_id}
+				</div>
+			)
+		},
+	),
 }))
 
 import { ForYouCardQueue } from '@/components/foryou/foryou-card-queue'
@@ -76,7 +78,12 @@ function buildItem(entityId: string, overrides: Partial<UnreadItem> = {}): Unrea
 		mentioning_unread_count: 0,
 		latest_event_id: 10,
 		latest_activity_at: '2026-01-01T00:00:00Z',
-		object: buildObjectResponse({ id: entityId, title: `Item ${entityId}`, type: 'bet', status: 'active' }),
+		object: buildObjectResponse({
+			id: entityId,
+			title: `Item ${entityId}`,
+			type: 'bet',
+			status: 'active',
+		}),
 		...overrides,
 	}
 }

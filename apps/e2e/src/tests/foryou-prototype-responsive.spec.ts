@@ -115,18 +115,30 @@ function threeKindFeed(workspaceId: string): UnreadFixture[] {
 function plainFeed(workspaceId: string): UnreadFixture[] {
 	return [
 		buildItem(workspaceId, { id: 'thread-1', title: 'Renewal terms need a read', type: 'insight' }),
-		buildItem(workspaceId, { id: 'thread-2', title: 'Follow-up from customer call', type: 'insight' }),
+		buildItem(workspaceId, {
+			id: 'thread-2',
+			title: 'Follow-up from customer call',
+			type: 'insight',
+		}),
 	]
 }
 
 async function mockFeed(page: Page, items: UnreadFixture[]) {
 	await page.route('**/api/subscriptions/unread*', async (route) => {
 		if (route.request().method() !== 'GET') return route.fallback()
-		await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items }) })
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ items }),
+		})
 	})
 	await page.route('**/api/events*', async (route) => {
 		if (route.request().method() !== 'GET') return route.fallback()
-		await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ events: [] }) })
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ events: [] }),
+		})
 	})
 }
 
@@ -165,7 +177,10 @@ async function swipeCurrentCard(page: Page, direction: 'left' | 'right') {
 async function assertDecisionButtonsSideBySide(page: Page, expected: boolean, label: string) {
 	const approve = page.getByRole('button', { name: 'Approve' })
 	const sendBack = page.getByRole('button', { name: 'Send back' })
-	const [approveBox, sendBackBox] = await Promise.all([approve.boundingBox(), sendBack.boundingBox()])
+	const [approveBox, sendBackBox] = await Promise.all([
+		approve.boundingBox(),
+		sendBack.boundingBox(),
+	])
 	expect(approveBox, `${label}: Approve button has no layout box`).not.toBeNull()
 	expect(sendBackBox, `${label}: Send back button has no layout box`).not.toBeNull()
 	if (!approveBox || !sendBackBox) return
@@ -225,7 +240,10 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 test.describe('For You prototype redesign — layout at 768', () => {
 	test.use({ viewport: VIEWPORTS.tabletPortrait })
 
-	test('header controls stay reachable and decision buttons stay side-by-side', async ({ page, account }) => {
+	test('header controls stay reachable and decision buttons stay side-by-side', async ({
+		page,
+		account,
+	}) => {
 		await mockFeed(page, threeKindFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
@@ -245,7 +263,10 @@ test.describe('For You prototype redesign — layout at 768', () => {
 test.describe('For You prototype redesign — layout at 375', () => {
 	test.use({ viewport: VIEWPORTS.mobile })
 
-	test('decision buttons stack, Display popover still opens, no horizontal scroll', async ({ page, account }) => {
+	test('decision buttons stack, Display popover still opens, no horizontal scroll', async ({
+		page,
+		account,
+	}) => {
 		await mockFeed(page, threeKindFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
@@ -272,12 +293,19 @@ test.describe('For You prototype redesign — layout at 375', () => {
 test.describe('For You prototype redesign — decision → receipt → reverse', () => {
 	test.use({ viewport: VIEWPORTS.mobile })
 
-	test('choosing a decision defers the comment behind a reversible receipt', async ({ page, account }) => {
+	test('choosing a decision defers the comment behind a reversible receipt', async ({
+		page,
+		account,
+	}) => {
 		const postedComments: unknown[] = []
 		await page.route('**/api/events', async (route) => {
 			if (route.request().method() !== 'POST') return route.fallback()
 			postedComments.push(route.request().postDataJSON())
-			await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1 }) })
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ id: 1 }),
+			})
 		})
 		await mockFeed(page, [
 			buildItem(account.workspaceId, {
@@ -319,7 +347,11 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 			} catch {
 				calls.push(null)
 			}
-			await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ updated: true }) })
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ updated: true }),
+			})
 		})
 		return { calls }
 	}
@@ -352,13 +384,18 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 		expect(readCalls.length).toBeGreaterThanOrEqual(1)
 	})
 
-	test('"Keep unread" skips without any mutation and advances the queue', async ({ page, account }) => {
+	test('"Keep unread" skips without any mutation and advances the queue', async ({
+		page,
+		account,
+	}) => {
 		const { calls: readCalls } = await captureRead(page)
 		await mockFeed(page, plainFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
 		await page.getByRole('button', { name: 'Keep unread' }).click()
-		await expect(page.getByTestId('foryou-queue-card')).toContainText('Follow-up from customer call')
+		await expect(page.getByTestId('foryou-queue-card')).toContainText(
+			'Follow-up from customer call',
+		)
 
 		await page.waitForTimeout(1000)
 		expect(readCalls).toHaveLength(0)
@@ -369,7 +406,9 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 		account,
 	}) => {
 		const { calls: readCalls } = await captureRead(page)
-		await mockFeed(page, [buildItem(account.workspaceId, { id: 'thread-1', title: 'Only item left', type: 'insight' })])
+		await mockFeed(page, [
+			buildItem(account.workspaceId, { id: 'thread-1', title: 'Only item left', type: 'insight' }),
+		])
 		await gotoForyou(page, account.workspaceId)
 
 		await page.getByRole('button', { name: 'Mark as read' }).click()

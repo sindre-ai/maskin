@@ -90,8 +90,15 @@ export function useSwipeToMarkRead(
 		typeof onMarkReadOrOptions === 'function'
 			? { onMarkRead: onMarkReadOrOptions, analytics: analyticsPositional }
 			: onMarkReadOrOptions
-	const { onMarkRead, onMarkUnread, isRead = false, analytics, onCommitScheduled, onUndo, onCommitSettled } =
-		options
+	const {
+		onMarkRead,
+		onMarkUnread,
+		isRead = false,
+		analytics,
+		onCommitScheduled,
+		onUndo,
+		onCommitSettled,
+	} = options
 
 	// Ref keeps callbacks fresh without resetting the swipe callbacks each
 	// render — the hook's outward-facing handlers stay referentially stable.

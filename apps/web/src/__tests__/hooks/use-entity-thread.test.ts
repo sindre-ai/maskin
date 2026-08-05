@@ -13,7 +13,7 @@ vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => mockGetStoredActor(),
 }))
 
-import { useEntityThread, type UseEntityThreadResult } from '@/hooks/use-entity-thread'
+import { type UseEntityThreadResult, useEntityThread } from '@/hooks/use-entity-thread'
 import { buildEventResponse } from '../factories'
 import { TestWrapper } from '../setup'
 

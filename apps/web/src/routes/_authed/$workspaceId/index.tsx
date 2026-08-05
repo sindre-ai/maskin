@@ -243,7 +243,10 @@ function ForYouRedesign() {
 	const showNorthStarPrompt = (bets?.length ?? 0) === 0 && !northStarDismissed
 	const northStarCard =
 		showNorthStarPrompt && !composerFocused ? (
-			<NorthStarPromptCard workspaceId={workspaceId} onDismiss={() => setNorthStarDismissed(true)} />
+			<NorthStarPromptCard
+				workspaceId={workspaceId}
+				onDismiss={() => setNorthStarDismissed(true)}
+			/>
 		) : null
 
 	const isSparse = filteredRegular.length + onboardingItems.length < 3

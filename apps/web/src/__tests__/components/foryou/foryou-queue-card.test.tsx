@@ -1,6 +1,6 @@
+import { fireEvent, render, screen } from '@testing-library/react'
 import { act } from 'react'
 import { createRef } from 'react'
-import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { UnreadItem } from '@/lib/api'
@@ -76,7 +76,12 @@ function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 		mentioning_unread_count: 0,
 		latest_event_id: 20,
 		latest_activity_at: '2026-01-01T00:00:00Z',
-		object: buildObjectResponse({ id: 'obj-1', title: 'Onboarding A/B', type: 'bet', status: 'active' }),
+		object: buildObjectResponse({
+			id: 'obj-1',
+			title: 'Onboarding A/B',
+			type: 'bet',
+			status: 'active',
+		}),
 		...overrides,
 	}
 }
@@ -142,7 +147,12 @@ describe('ForYouQueueCard', () => {
 			<ForYouQueueCard
 				workspaceId="ws-1"
 				item={buildItem({
-					object: buildObjectResponse({ id: 'obj-1', title: 'Bet', type: 'bet', status: 'in_review' }),
+					object: buildObjectResponse({
+						id: 'obj-1',
+						title: 'Bet',
+						type: 'bet',
+						status: 'in_review',
+					}),
 				})}
 				onProcessed={vi.fn()}
 				onRestored={vi.fn()}
@@ -153,13 +163,21 @@ describe('ForYouQueueCard', () => {
 		)
 
 		expect(trackForyouCardShownMock).toHaveBeenCalledTimes(1)
-		expect(trackForyouCardShownMock).toHaveBeenCalledWith({ card_kind: 'decision', card_id: 'obj-1' })
+		expect(trackForyouCardShownMock).toHaveBeenCalledWith({
+			card_kind: 'decision',
+			card_id: 'obj-1',
+		})
 	})
 
 	describe('decision → decided-receipt', () => {
 		function renderDecisionCard(onProcessed = vi.fn(), onRestored = vi.fn()) {
 			const item = buildItem({
-				object: buildObjectResponse({ id: 'obj-1', title: 'Bet', type: 'bet', status: 'in_review' }),
+				object: buildObjectResponse({
+					id: 'obj-1',
+					title: 'Bet',
+					type: 'bet',
+					status: 'in_review',
+				}),
 			})
 			render(
 				<ForYouQueueCard
@@ -252,7 +270,12 @@ describe('ForYouQueueCard', () => {
 		it('sending a chip posts the comment and marks read, without exiting the card', () => {
 			mockCreateCommentMutate.mockImplementation((_vars, opts) => opts?.onSuccess?.())
 			const item = buildItem({
-				object: buildObjectResponse({ id: 'obj-1', title: 'Thread item', type: 'insight', status: 'active' }),
+				object: buildObjectResponse({
+					id: 'obj-1',
+					title: 'Thread item',
+					type: 'insight',
+					status: 'active',
+				}),
 			})
 			render(
 				<ForYouQueueCard
@@ -289,7 +312,12 @@ describe('ForYouQueueCard', () => {
 
 		it('sign_off kind renders its own action chips instead of the decision block', () => {
 			const item = buildItem({
-				object: buildObjectResponse({ id: 'obj-1', title: 'Task', type: 'task', status: 'in_review' }),
+				object: buildObjectResponse({
+					id: 'obj-1',
+					title: 'Task',
+					type: 'task',
+					status: 'in_review',
+				}),
 			})
 			render(
 				<ForYouQueueCard

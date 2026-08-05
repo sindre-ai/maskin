@@ -21,8 +21,8 @@ import {
 import { Link } from '@tanstack/react-router'
 import { CheckIcon } from 'lucide-react'
 import {
-	forwardRef,
 	type TransitionEvent,
+	forwardRef,
 	useCallback,
 	useEffect,
 	useImperativeHandle,
@@ -126,20 +126,28 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			[exitDir, onProcessed, itemKey],
 		)
 
-		const { dragOffset, isDragging, swipeBgOpacity, handlePointerDown, handlePointerMove, handlePointerUp, handlePointerCancel, commit } =
-			useSwipeToMarkRead({
-				onMarkRead: handleMarkRead,
-				analytics: { entity_type: item.entity_type, entity_id: objectId },
-				onCommitScheduled: () => {
-					beginExit('right')
-					onCommitScheduled(itemKey)
-				},
-				onUndo: () => {
-					setExitDir(null)
-					onRestored(itemKey)
-				},
-				onCommitSettled: () => onCommitSettled(itemKey),
-			})
+		const {
+			dragOffset,
+			isDragging,
+			swipeBgOpacity,
+			handlePointerDown,
+			handlePointerMove,
+			handlePointerUp,
+			handlePointerCancel,
+			commit,
+		} = useSwipeToMarkRead({
+			onMarkRead: handleMarkRead,
+			analytics: { entity_type: item.entity_type, entity_id: objectId },
+			onCommitScheduled: () => {
+				beginExit('right')
+				onCommitScheduled(itemKey)
+			},
+			onUndo: () => {
+				setExitDir(null)
+				onRestored(itemKey)
+			},
+			onCommitSettled: () => onCommitSettled(itemKey),
+		})
 
 		// "Keep unread" is a pure skip — no mutation, no undo, distinct from the
 		// hook's mark-unread variant (which reverses a previously *read* item;
@@ -232,7 +240,9 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 		const objectStatus = item.object?.status
 		const insightPreview = (item.object?.content ?? '').trim()
 		const chipActions: readonly CardAction[] =
-			cardKind === 'sign_off' || cardKind === 'proposed_bet' ? CARD_ACTIONS[cardKind] : QUICK_REPLY_CHIPS
+			cardKind === 'sign_off' || cardKind === 'proposed_bet'
+				? CARD_ACTIONS[cardKind]
+				: QUICK_REPLY_CHIPS
 		const decisionActions: readonly CardAction[] | null =
 			cardKind === 'decision' ? CARD_ACTIONS.decision : null
 
@@ -299,7 +309,10 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 										<span aria-hidden className="opacity-50">
 											·
 										</span>
-										<RelativeTime date={item.latest_activity_at} className="font-mono tabular-nums" />
+										<RelativeTime
+											date={item.latest_activity_at}
+											className="font-mono tabular-nums"
+										/>
 									</>
 								)}
 							</div>
@@ -330,7 +343,8 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 						) : (
 							<div className="space-y-1.5">
 								{nodes.map((node) => {
-									const dividerOnRoot = firstUnreadEventId !== null && firstUnreadEventId === node.root.id
+									const dividerOnRoot =
+										firstUnreadEventId !== null && firstUnreadEventId === node.root.id
 									const dividerInsideThread =
 										firstUnreadRootId === node.root.id &&
 										firstUnreadEventId !== null &&
@@ -398,7 +412,9 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 									>
 										Reverse this
 									</Button>
-									<span className="text-xs text-muted-foreground">Reversible for {secondsLeft}s</span>
+									<span className="text-xs text-muted-foreground">
+										Reversible for {secondsLeft}s
+									</span>
 								</div>
 							</div>
 						)}

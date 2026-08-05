@@ -89,7 +89,11 @@ export function ForYouCardQueue({ workspaceId, queue }: ForYouCardQueueProps) {
 		const key = itemQueueKey(item)
 		const isCurrent = key === currentItemKey
 		return (
-			<div key={key} className={isCurrent ? undefined : 'hidden'} aria-hidden={isCurrent ? undefined : true}>
+			<div
+				key={key}
+				className={isCurrent ? undefined : 'hidden'}
+				aria-hidden={isCurrent ? undefined : true}
+			>
 				<ForYouQueueCard
 					ref={isCurrent ? cardRef : undefined}
 					workspaceId={workspaceId}
