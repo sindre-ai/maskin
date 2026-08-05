@@ -3,11 +3,21 @@ import type {
 	ActorResponse,
 	AgentState,
 	DisplaySettingsBody,
+	ListLoopsResponse,
+	LoopSummary,
 	SafeMetadata,
 	TriggerResponse,
 } from '@maskin/shared'
 
-export type { ActorListItem, ActorResponse, AgentState, DisplaySettingsBody, TriggerResponse }
+export type {
+	ActorListItem,
+	ActorResponse,
+	AgentState,
+	DisplaySettingsBody,
+	ListLoopsResponse,
+	LoopSummary,
+	TriggerResponse,
+}
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -318,6 +328,10 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+	},
+
+	loops: {
+		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
 	},
 
 	triggers: {
