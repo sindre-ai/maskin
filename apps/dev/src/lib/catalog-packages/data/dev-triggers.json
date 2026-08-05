@@ -553,7 +553,9 @@
 			"conditions": [
 				{
 					"field": "event.channel",
-					"value": ["REPLACE_WITH_SLACK_CHANNEL_ID (ask the workspace admin which channel to watch)"],
+					"value": [
+						"REPLACE_WITH_SLACK_CHANNEL_ID (ask the workspace admin which channel to watch)"
+					],
 					"operator": "in"
 				}
 			],
