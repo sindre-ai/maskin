@@ -122,30 +122,29 @@ export function buildTriggerInsert(
 	}
 }
 
+// skillId/storageKey are caller-provided (minted via randomUUID() +
+// workspaceSkillKey()) rather than derived from the snapshot — every
+// provisioned skill gets its own fresh, workspace-scoped S3 object instead of
+// pointing at the publisher's copy. The caller is responsible for writing the
+// content to that storageKey (see workspace-skills.ts's POST route for the
+// atomic DB-insert-then-S3-put pattern this mirrors).
 export function buildSkillInsert(
 	workspaceId: string,
+	skillId: string,
+	storageKey: string,
 	snapshot: Record<string, unknown>,
 	metadata: Record<string, unknown>,
 	createdBy: string | null,
 ): typeof workspaceSkills.$inferInsert {
-	const storageKey = (snapshot.storageKey as string) ?? (snapshot.storage_key as string) ?? null
-	if (!storageKey) {
-		throw new Error(
-			'Skill snapshot is missing a storageKey — cannot provision a skill without a valid S3 path',
-		)
-	}
+	const content = (snapshot.content as string) ?? ''
 	return {
+		id: skillId,
 		workspaceId,
 		name: (snapshot.name as string) ?? 'untitled-skill',
 		description: (snapshot.description as string) ?? null,
-		content: (snapshot.content as string) ?? '',
+		content,
 		storageKey,
-		sizeBytes:
-			typeof snapshot.sizeBytes === 'number'
-				? snapshot.sizeBytes
-				: typeof snapshot.size_bytes === 'number'
-					? (snapshot.size_bytes as number)
-					: 0,
+		sizeBytes: Buffer.byteLength(content, 'utf-8'),
 		isValid: typeof snapshot.isValid === 'boolean' ? snapshot.isValid : true,
 		metadata,
 		createdBy,

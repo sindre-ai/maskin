@@ -5,7 +5,7 @@ import type { EventResponse, MemberResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
-	DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME,
+	DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME,
 	KNOWLEDGE_WRITE_UNDO_WINDOW_MS,
 } from '@maskin/shared'
 import { Undo2 } from 'lucide-react'
@@ -37,7 +37,7 @@ export function isKnowledgeAuthorWriteEvent(
 	if (event.entityType !== 'knowledge') return false
 	if (event.action !== 'updated' && event.action !== 'status_changed') return false
 	if (!actor || actor.type !== 'agent') return false
-	return actor.name === DEV_PACKAGE_RETRO_KNOWLEDGE_AUTHOR_NAME
+	return actor.name === DEV_ACTOR_RETRO_KNOWLEDGE_AUTHOR_NAME
 }
 
 export function isUndoWindowOpen(eventCreatedAt: string | null | undefined, now: number): boolean {
