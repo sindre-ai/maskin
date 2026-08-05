@@ -110,6 +110,7 @@ describe('Header', () => {
 			stickyIdentity: null,
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setContentPush: vi.fn(),
 		})
 
 		render(<Header />)
@@ -122,6 +123,7 @@ describe('Header', () => {
 			stickyIdentity: null,
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setContentPush: vi.fn(),
 		})
 		render(<Header />)
 		const trigger = screen.getByRole('button', { name: /toggle sidebar/i })
@@ -146,6 +148,7 @@ describe('Header', () => {
 			stickyIdentity: null,
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setContentPush: vi.fn(),
 		})
 
 		render(<Header />)
@@ -165,6 +168,7 @@ describe('Header', () => {
 			stickyIdentity: null,
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setContentPush: vi.fn(),
 		})
 
 		render(<Header />)
@@ -184,6 +188,7 @@ describe('Header', () => {
 			stickyIdentity: null,
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setContentPush: vi.fn(),
 		})
 
 		render(<Header />)
@@ -203,6 +208,7 @@ describe('Header', () => {
 			stickyIdentity: null,
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setContentPush: vi.fn(),
 		})
 
 		render(<Header />)
@@ -227,6 +233,7 @@ describe('Header', () => {
 			stickyIdentity: <div data-testid="sticky-identity">Sticky nav bet</div>,
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setContentPush: vi.fn(),
 		})
 
 		render(<Header />)

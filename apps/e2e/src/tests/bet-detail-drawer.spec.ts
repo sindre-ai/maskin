@@ -2,9 +2,11 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // AC-U5: the bet detail page leads with hypothesis + activity timeline; properties
-// and files live in a Linear-style right drawer, closed by default. This spec
-// drives the toggle at 375/768/1024 to confirm the drawer opens, the body holds
-// no inline property grid, and the Properties + Files sections are reachable.
+// and files live in a right sidebar — an overlay Sheet below 768px (closed by
+// default), and an inline docked panel at 768px+ (collapsed rail @768, expanded
+// @1024 by default — see breakpointDefaultOpen in object-document.tsx). This spec
+// drives the toggle at 375/768/1024 to confirm the sidebar opens per viewport and
+// the Properties + Files sections are reachable.
 
 test.describe('Bet detail — properties drawer', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
@@ -31,24 +33,38 @@ test.describe('Bet detail — properties drawer', () => {
 				page.getByText('Hypothesis: operators read state from description + timeline alone.'),
 			).toBeVisible()
 
-			// Drawer is closed by default — Properties heading does not appear in the
-			// drawer surface. Use a role-scoped query so we don't accidentally match
-			// other "Properties" strings on the page.
-			await expect(page.getByRole('dialog')).toHaveCount(0)
+			// The sidebar's own collapse toggle also has an accessible name
+			// containing "Properties" ("Expand/Collapse properties"), so this must
+			// be an exact match to avoid a strict-mode violation.
+			const toggle = page.getByRole('button', { name: 'Properties', exact: true })
 
-			// Open the drawer via the header toggle.
-			await page.getByRole('button', { name: 'Properties' }).click()
+			if (viewport.width < 768) {
+				// Below 768px the sidebar renders as an overlay Sheet — closed by
+				// default, opened via the header toggle, closed via Escape.
+				await expect(page.getByRole('dialog')).toHaveCount(0)
 
-			const drawer = page.getByRole('dialog')
-			await expect(drawer).toBeVisible()
+				await toggle.click()
 
-			// Drawer renders Properties + Files sections.
-			await expect(drawer.getByText('Properties', { exact: true })).toBeVisible()
-			await expect(drawer.getByText(/Files \(/)).toBeVisible()
+				const drawer = page.getByRole('dialog')
+				await expect(drawer).toBeVisible()
+				await expect(drawer.getByText('Properties', { exact: true })).toBeVisible()
+				await expect(drawer.getByText(/Files \(/)).toBeVisible()
 
-			// Close via Escape.
-			await page.keyboard.press('Escape')
-			await expect(page.getByRole('dialog')).toHaveCount(0)
+				await page.keyboard.press('Escape')
+				await expect(page.getByRole('dialog')).toHaveCount(0)
+			} else {
+				// At 768px+ the sidebar docks inline and is never a modal dialog —
+				// open it via the toggle if the breakpoint default left it collapsed.
+				await expect(page.getByRole('dialog')).toHaveCount(0)
+
+				if ((await toggle.getAttribute('aria-expanded')) === 'false') {
+					await toggle.click()
+				}
+				await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+				await expect(page.getByText('Properties', { exact: true })).toBeVisible()
+				await expect(page.getByRole('heading', { name: /^Files \(/ })).toBeVisible()
+				await expect(page.getByRole('dialog')).toHaveCount(0)
+			}
 		})
 	}
 })

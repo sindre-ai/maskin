@@ -8,10 +8,20 @@ import { objectTypeSchema } from './objects'
 // so this can never collide with a real workspace-defined type.
 export const ALL_TYPES_KEY = '__all__'
 
-// Accepts a real object type OR the All-tab sentinel. Used only on the
+/** Sentinel row that stores chrome-level (cross-type) preferences per actor,
+ * e.g. the object-detail right-sidebar collapsed bit and the For You view mode.
+ * Mirrors the double-underscore convention of `ALL_TYPES_KEY`, so it can never
+ * collide with a real workspace-defined object type. */
+export const CHROME_KEY = '__chrome__'
+
+// Accepts a real object type OR the All-tab / chrome sentinels. Used only on the
 // user-display-settings endpoint — the rest of the codebase keeps the
 // strict `objectTypeSchema`.
-export const displaySettingsTypeKeySchema = z.union([objectTypeSchema, z.literal(ALL_TYPES_KEY)])
+export const displaySettingsTypeKeySchema = z.union([
+	objectTypeSchema,
+	z.literal(ALL_TYPES_KEY),
+	z.literal(CHROME_KEY),
+])
 
 // Bounded shape the Display panel writes. Each field maps 1:1 to a panel
 // section (View, Ordering, Grouping, Filters, Properties). Constraining
@@ -71,6 +81,8 @@ export const displaySettingsBodySchema = z
 			})
 			.optional(),
 		firstVisibleRowId: rowIdSchema.nullable().optional(),
+		objectDetailSidebarCollapsed: z.boolean().optional(),
+		foryouViewMode: z.enum(['card', 'list']).optional(),
 	})
 	.strict()
 
