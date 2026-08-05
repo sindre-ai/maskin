@@ -1,16 +1,11 @@
-import {
-	type FeedFilter,
-	type FeedMode,
-	type FeedSort,
-	ForYouHeader,
-} from '@/components/foryou/foryou-header'
+import { ForYouCardQueue } from '@/components/foryou/foryou-card-queue'
+import { type FeedMode, type FeedSort, ForYouHeader } from '@/components/foryou/foryou-header'
 import { ForYouListRow } from '@/components/foryou/foryou-list-row'
 import { NewConversationComposer } from '@/components/foryou/new-conversation-composer'
 import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { PersistentReplyBar } from '@/components/foryou/persistent-reply-bar'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
-import { TodayBriefPanel } from '@/components/foryou/today-brief-panel'
 import { UnreadThreadCard } from '@/components/foryou/unread-thread-card'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FilterTabs } from '@/components/shared/filter-tabs'
@@ -24,7 +19,6 @@ import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import type { UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNewConversationComposer } from '@/lib/new-conversation-context'
-import { useTodayBrief } from '@/lib/today-brief-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getDefaultStatusForType } from '@maskin/module-sdk'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -86,12 +80,9 @@ function ForYouRedesign() {
 	const { isLoading: betsLoading } = useBets(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
-	const { open: briefOpen, toggle: toggleBrief } = useTodayBrief()
 	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
 
-	const [activeId, setActiveId] = useState<string | null>(null)
-	const [activeReplyTarget, setActiveReplyTarget] = useState<number | null>(null)
-	const [filter, setFilter] = useState<FeedFilter>('all')
+	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
 	const [mode, setMode] = useState<FeedMode>('cards')
 	const [sort, setSort] = useState<FeedSort>('priority')
 
@@ -129,43 +120,43 @@ function ForYouRedesign() {
 		return sortedRegular.filter((item) => !pendingKeys.has(itemKey(item)))
 	}, [sortedRegular, pendingKeys])
 
-	const mentionCount = useMemo(
-		() => visibleRegular.filter((item) => item.mentioning_unread_count > 0).length,
+	const unreadRegular = useMemo(
+		() => visibleRegular.filter((item) => item.unread_count > 0),
 		[visibleRegular],
 	)
 
-	const filteredRegular = useMemo(
-		() =>
-			filter === 'mentions'
-				? visibleRegular.filter((item) => item.mentioning_unread_count > 0)
-				: visibleRegular,
-		[visibleRegular, filter],
+	const mentionCount = useMemo(
+		() => unreadRegular.filter((item) => item.mentioning_unread_count > 0).length,
+		[unreadRegular],
 	)
 
-	const groupedRegular = useMemo(() => {
-		const nowMs = Date.now()
-		const buckets: Record<GroupKey, UnreadItem[]> = {
-			today: [],
-			yesterday: [],
-			earlier: [],
+	// Chip counts reflect the unread queue regardless of the active filter, so
+	// switching chips never makes the other counts disappear.
+	const typeCounts = useMemo(() => {
+		const counts = new Map<string, number>()
+		for (const item of unreadRegular) {
+			const type = item.object?.type
+			if (!type) continue
+			counts.set(type, (counts.get(type) ?? 0) + 1)
 		}
-		for (const item of filteredRegular) {
-			buckets[groupForItem(item, nowMs)].push(item)
-		}
-		return buckets
-	}, [filteredRegular])
+		return counts
+	}, [unreadRegular])
 
-	const activeItem = useMemo(
-		() => (activeId ? items.find((item) => item.entity_id === activeId) : null),
-		[activeId, items],
+	const filteredRegular = useMemo(() => {
+		if (typeFilter === 'mentions') {
+			return visibleRegular.filter((item) => item.mentioning_unread_count > 0)
+		}
+		if (typeFilter) return visibleRegular.filter((item) => item.object?.type === typeFilter)
+		return visibleRegular
+	}, [visibleRegular, typeFilter])
+
+	// The swipeable queue only ever shows unread items — read items lingering
+	// in `filteredRegular` (kept around so a reverse-swipe has a target) are
+	// excluded here, not from the List-mode row list above.
+	const queue = useMemo(
+		() => filteredRegular.filter((item) => item.unread_count > 0),
+		[filteredRegular],
 	)
-
-	useEffect(() => {
-		if (activeId && !activeItem) {
-			setActiveId(null)
-			setActiveReplyTarget(null)
-		}
-	}, [activeId, activeItem])
 
 	const markItemRead = useCallback(
 		(item: UnreadItem) => {
@@ -273,13 +264,10 @@ function ForYouRedesign() {
 
 	if (isLoading || betsLoading) {
 		return (
-			<div className="flex flex-1 min-w-0" data-testid="foryou-redesign-root">
-				<div className="flex flex-1 min-w-0 flex-col space-y-4">
-					<CardSkeleton />
-					<CardSkeleton />
-					<CardSkeleton />
-				</div>
-				<TodayBriefPanel />
+			<div className="flex flex-1 min-w-0 flex-col space-y-4" data-testid="foryou-redesign-root">
+				<CardSkeleton />
+				<CardSkeleton />
+				<CardSkeleton />
 			</div>
 		)
 	}
@@ -288,101 +276,59 @@ function ForYouRedesign() {
 
 	return (
 		<>
-			<div className="flex flex-1 min-w-0" data-testid="foryou-redesign-root">
-				<div className={cn('flex min-w-0 flex-1 flex-col gap-3', activeId && 'pb-28')}>
-					<ForYouHeader
-						unreadCount={visibleRegular.length}
-						filter={filter}
-						onFilterChange={setFilter}
-						allCount={visibleRegular.length}
-						mentionCount={mentionCount}
-						mode={mode}
-						onModeChange={setMode}
-						sort={sort}
-						onSortChange={setSort}
-						briefOpen={briefOpen}
-						onBriefToggle={toggleBrief}
-						onStartConversation={() => setComposerOpen(true)}
-						onCreateObject={handleCreateObject}
-					/>
+			<div className="flex min-w-0 flex-1 flex-col gap-3" data-testid="foryou-redesign-root">
+				<ForYouHeader
+					unreadCount={unreadRegular.length}
+					typeFilter={typeFilter}
+					onTypeFilterChange={setTypeFilter}
+					typeCounts={typeCounts}
+					mentionCount={mentionCount}
+					mode={mode}
+					onModeChange={setMode}
+					sort={sort}
+					onSortChange={setSort}
+					onStartConversation={() => setComposerOpen(true)}
+					onCreateObject={handleCreateObject}
+				/>
 
-					<div className="flex flex-col">
-						{onboardingItems.length > 0 && (
-							<div className="mb-3 space-y-3">
-								{onboardingItems.map((item) => (
-									<OnboardingPromptCard
-										key={`${item.entity_type}-${item.entity_id}`}
-										workspaceId={workspaceId}
-										item={item}
-									/>
-								))}
-							</div>
-						)}
-						{mode === 'list' ? (
-							<div className="border-t border-border">
-								{filteredRegular.map((item) => (
-									<ForYouListRow
-										key={`${item.entity_type}-${item.entity_id}`}
-										workspaceId={workspaceId}
-										item={item}
-										onActivate={() => setActiveId(item.entity_id)}
-									/>
-								))}
-							</div>
-						) : (
-							(['today', 'yesterday', 'earlier'] as const).map((group) => {
-								const rows = groupedRegular[group]
-								if (rows.length === 0) return null
-								return (
-									<section key={group} aria-label={GROUP_LABEL[group]}>
-										<h2 className="mt-4 mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground first:mt-0">
-											{GROUP_LABEL[group]}
-										</h2>
-										{rows.map((item) => (
-											<UnreadThreadCard
-												key={`${item.entity_type}-${item.entity_id}`}
-												workspaceId={workspaceId}
-												item={item}
-												isActive={activeId === item.entity_id}
-												onActivate={() => {
-													setActiveId(item.entity_id)
-													setActiveReplyTarget(null)
-												}}
-												onReplyTargetChange={setActiveReplyTarget}
-											/>
-										))}
-									</section>
-								)
-							})
-						)}
-						{filter === 'mentions' && filteredRegular.length === 0 && (
-							<p className="py-10 text-center text-sm text-muted-foreground">No unread mentions.</p>
-						)}
-						{isSparse ? (
-							<div className="mt-4">
-								<SparseComposer
-									itemsCount={filteredRegular.length + onboardingItems.length}
-									onFocusChange={() => {}}
+				<div className="flex flex-col">
+					{onboardingItems.length > 0 && (
+						<div className="mb-3 space-y-3">
+							{onboardingItems.map((item) => (
+								<OnboardingPromptCard
+									key={`${item.entity_type}-${item.entity_id}`}
+									workspaceId={workspaceId}
+									item={item}
 								/>
-							</div>
-						) : null}
-					</div>
+							))}
+						</div>
+					)}
+					{mode === 'list' ? (
+						<div className="border-t border-border">
+							{filteredRegular.map((item) => (
+								<ForYouListRow
+									key={`${item.entity_type}-${item.entity_id}`}
+									workspaceId={workspaceId}
+									item={item}
+								/>
+							))}
+						</div>
+					) : (
+						<ForYouCardQueue workspaceId={workspaceId} queue={queue} />
+					)}
+					{mode === 'list' && typeFilter === 'mentions' && filteredRegular.length === 0 && (
+						<p className="py-10 text-center text-sm text-muted-foreground">No unread mentions.</p>
+					)}
+					{isSparse ? (
+						<div className="mt-4">
+							<SparseComposer
+								itemsCount={filteredRegular.length + onboardingItems.length}
+								onFocusChange={() => {}}
+							/>
+						</div>
+					) : null}
 				</div>
-				<TodayBriefPanel />
 			</div>
-			<PersistentReplyBar
-				workspaceId={workspaceId}
-				activeId={activeId}
-				activeTitle={activeItem?.object?.title ?? null}
-				parentEventId={activeReplyTarget}
-				onClear={() => {
-					setActiveId(null)
-					setActiveReplyTarget(null)
-				}}
-				onSent={() => {
-					if (activeItem) markItemRead(activeItem)
-				}}
-			/>
 			{composer}
 		</>
 	)

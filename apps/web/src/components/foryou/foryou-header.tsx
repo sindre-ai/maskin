@@ -4,16 +4,21 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
-	DropdownMenuRadioGroup,
-	DropdownMenuRadioItem,
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import {
+	ResponsivePopover,
+	ResponsivePopoverContent,
+	ResponsivePopoverTrigger,
+} from '@/components/ui/responsive-popover'
+import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { cn } from '@/lib/cn'
-import { ArrowUpDown, LayoutGrid, List, Newspaper, Plus } from 'lucide-react'
+import { useWorkspace } from '@/lib/workspace-context'
+import { useNavigate } from '@tanstack/react-router'
+import { ArrowUpDown, LayoutGrid, List, Newspaper, Plus, SlidersHorizontal } from 'lucide-react'
 
-export type FeedFilter = 'all' | 'mentions'
 export type FeedMode = 'cards' | 'list'
 export type FeedSort = 'latest' | 'priority'
 
@@ -22,42 +27,55 @@ const SORT_LABEL: Record<FeedSort, string> = {
 	priority: 'Priority',
 }
 
+const SORT_OPTIONS: readonly FeedSort[] = ['priority', 'latest']
+
 interface ForYouHeaderProps {
 	unreadCount: number
-	filter: FeedFilter
-	onFilterChange: (value: FeedFilter) => void
-	allCount: number
+	typeFilter: string | undefined
+	onTypeFilterChange: (value: string | undefined) => void
+	typeCounts: Map<string, number>
 	mentionCount: number
 	mode: FeedMode
 	onModeChange: (mode: FeedMode) => void
 	sort: FeedSort
 	onSortChange: (sort: FeedSort) => void
-	briefOpen: boolean
-	onBriefToggle: () => void
 	onStartConversation: () => void
 	onCreateObject: (type: 'bet' | 'insight' | 'task') => void
 }
 
-// Redesigned For You header (parent bet 37865542). Layout matches the
-// prototype: title row with count + Brief/+New actions; a sub-row with
-// Cards/List toggle + sort + filter tabs. Below sm the labels collapse to
-// icons; every icon-only control carries an explicit `aria-label` so the
-// getByRole assertions T5's regression spec runs at 375 still hit.
+// Redesigned For You header (parent bet 37865542). Title row with count +
+// Brief/+New actions; a sub-row with a dynamic type-filter chip bar (All,
+// Mentions, then one chip per object type present in the unread queue) and a
+// single "Display" popover holding Cards/List + Sort — replaces the previous
+// separate Cards/List tabs + sort dropdown + All/Mentions tabs. Below sm the
+// title labels collapse to icons; every icon-only control carries an explicit
+// `aria-label`.
 export function ForYouHeader({
 	unreadCount,
-	filter,
-	onFilterChange,
-	allCount,
+	typeFilter,
+	onTypeFilterChange,
+	typeCounts,
 	mentionCount,
 	mode,
 	onModeChange,
 	sort,
 	onSortChange,
-	briefOpen,
-	onBriefToggle,
 	onStartConversation,
 	onCreateObject,
 }: ForYouHeaderProps) {
+	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
+
+	const filterTabs = [
+		{ label: 'All', value: undefined as string | undefined, count: unreadCount },
+		{ label: 'Mentions', value: 'mentions', count: mentionCount },
+		...Array.from(typeCounts.entries()).map(([type, count]) => ({
+			label: type.charAt(0).toUpperCase() + type.slice(1),
+			value: type,
+			count,
+		})),
+	]
+
 	return (
 		<header className="mb-2 flex flex-col gap-3">
 			<div className="flex items-center gap-3">
@@ -71,10 +89,9 @@ export function ForYouHeader({
 					<Button
 						variant="outline"
 						size="sm"
-						aria-pressed={briefOpen}
 						aria-label="Today's brief"
-						onClick={onBriefToggle}
-						className={cn('h-8 gap-1.5 px-2 sm:px-3', briefOpen && 'bg-muted text-foreground')}
+						onClick={() => navigate({ to: '/$workspaceId/briefing', params: { workspaceId } })}
+						className="h-8 gap-1.5 px-2 sm:px-3"
 					>
 						<Newspaper size={14} aria-hidden />
 						<span className="hidden sm:inline">Today's brief</span>
@@ -99,56 +116,78 @@ export function ForYouHeader({
 				</div>
 			</div>
 
-			<div className="flex flex-wrap items-center gap-2">
-				<Tabs
-					value={mode}
-					onValueChange={(v) => onModeChange(v as FeedMode)}
-					aria-label="Display mode"
-				>
-					<TabsList className="h-8 gap-1 p-1">
-						<TabsTrigger value="cards" aria-label="Cards" className="h-6 gap-1.5 px-2 text-xs">
-							<LayoutGrid size={14} aria-hidden />
-							<span className="hidden sm:inline">Cards</span>
-						</TabsTrigger>
-						<TabsTrigger value="list" aria-label="List" className="h-6 gap-1.5 px-2 text-xs">
-							<List size={14} aria-hidden />
-							<span className="hidden sm:inline">List</span>
-						</TabsTrigger>
-					</TabsList>
-				</Tabs>
+			<div className="flex items-center gap-2">
+				<div className="min-w-0 flex-1 overflow-x-auto">
+					<FilterTabs
+						aria-label="Filter unread feed"
+						value={typeFilter}
+						onChange={onTypeFilterChange}
+						tabs={filterTabs}
+					/>
+				</div>
 
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
+				<ResponsivePopover>
+					<ResponsivePopoverTrigger asChild>
 						<Button
 							variant="outline"
 							size="sm"
-							aria-label={`Sort by ${SORT_LABEL[sort]}`}
-							className="h-8 gap-1.5 px-2 sm:px-3"
+							aria-label="Display options"
+							className="h-8 shrink-0 gap-1.5 px-2 sm:px-3"
 						>
-							<ArrowUpDown size={14} aria-hidden />
-							<span className="hidden sm:inline">Sort: </span>
-							<span>{SORT_LABEL[sort]}</span>
+							<SlidersHorizontal size={14} aria-hidden />
+							<span className="hidden sm:inline">Display</span>
 						</Button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="start">
-						<DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSortChange(v as FeedSort)}>
-							<DropdownMenuRadioItem value="latest">{SORT_LABEL.latest}</DropdownMenuRadioItem>
-							<DropdownMenuRadioItem value="priority">{SORT_LABEL.priority}</DropdownMenuRadioItem>
-						</DropdownMenuRadioGroup>
-					</DropdownMenuContent>
-				</DropdownMenu>
+					</ResponsivePopoverTrigger>
+					<ResponsivePopoverContent align="end" accessibleTitle="Display options" className="w-64">
+						<div className="space-y-3">
+							<Tabs
+								value={mode}
+								onValueChange={(v) => onModeChange(v as FeedMode)}
+								aria-label="Display mode"
+							>
+								<TabsList className="h-8 w-full gap-1 p-1">
+									<TabsTrigger
+										value="cards"
+										aria-label="Cards"
+										className="h-6 flex-1 gap-1.5 px-2 text-xs"
+									>
+										<LayoutGrid size={14} aria-hidden />
+										Cards
+									</TabsTrigger>
+									<TabsTrigger
+										value="list"
+										aria-label="List"
+										className="h-6 flex-1 gap-1.5 px-2 text-xs"
+									>
+										<List size={14} aria-hidden />
+										List
+									</TabsTrigger>
+								</TabsList>
+							</Tabs>
 
-				<div className="ml-auto">
-					<FilterTabs
-						aria-label="Filter unread feed"
-						value={filter}
-						onChange={onFilterChange}
-						tabs={[
-							{ label: 'All', value: 'all', count: allCount },
-							{ label: 'Mentions', value: 'mentions', count: mentionCount },
-						]}
-					/>
-				</div>
+							<Separator />
+
+							<div>
+								<p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+									<ArrowUpDown size={12} aria-hidden />
+									Sort by
+								</p>
+								<RadioGroup value={sort} onValueChange={(v) => onSortChange(v as FeedSort)}>
+									{SORT_OPTIONS.map((value) => (
+										<label
+											key={value}
+											htmlFor={`sort-${value}`}
+											className="flex items-center gap-2 text-sm"
+										>
+											<RadioGroupItem value={value} id={`sort-${value}`} />
+											{SORT_LABEL[value]}
+										</label>
+									))}
+								</RadioGroup>
+							</div>
+						</div>
+					</ResponsivePopoverContent>
+				</ResponsivePopover>
 			</div>
 		</header>
 	)

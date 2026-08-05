@@ -4,31 +4,25 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
+import { useEntityThread } from '@/hooks/use-entity-thread'
+import { useCreateComment } from '@/hooks/use-events'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useObjectGraph } from '@/hooks/use-objects'
 import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
 import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
 import { trackForyouCardAction, trackForyouCardShown } from '@/lib/analytics'
-import type { EventResponse, UnreadItem } from '@/lib/api'
-import { getStoredActor } from '@/lib/auth'
+import type { UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
 	CARD_ACTIONS,
 	type CardAction,
 	type CardKind,
+	QUICK_REPLY_CHIPS,
 	classifyCardKind,
 } from '@/lib/foryou-card-kind'
 import { Link } from '@tanstack/react-router'
 import { CheckIcon, MailIcon, XIcon } from 'lucide-react'
-import {
-	type MouseEvent as ReactMouseEvent,
-	useCallback,
-	useEffect,
-	useMemo,
-	useRef,
-	useState,
-} from 'react'
+import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
 interface UnreadThreadCardProps {
@@ -47,25 +41,6 @@ interface UnreadThreadCardProps {
 	mode?: 'cards' | 'list'
 }
 
-interface CommentNode {
-	root: EventResponse
-	replies: EventResponse[]
-}
-
-// Fallback chips used when a card doesn't map to a specific action-UI kind
-// (decision / sign_off / proposed_bet). Keeps the pre-redesign feel on plain
-// threads so we don't regress non-decision items.
-const QUICK_REPLY_CHIPS: readonly CardAction[] = [
-	{ id: 'on_it', label: 'On it', tone: 'secondary' },
-	{ id: 'approved', label: 'Approved', tone: 'secondary' },
-	{ id: 'looks_good', label: 'Looks good', tone: 'secondary' },
-	{ id: 'need_context', label: 'Need more context', tone: 'secondary' },
-]
-
-// Cards within this distance of the viewport start fetching their events, so
-// the next card or two below the fold is ready by the time the user scrolls.
-const PREFETCH_ROOT_MARGIN = '400px'
-
 export function UnreadThreadCard({
 	workspaceId,
 	item,
@@ -76,24 +51,15 @@ export function UnreadThreadCard({
 }: UnreadThreadCardProps) {
 	const objectId = item.entity_id
 
-	const cardRef = useRef<HTMLDivElement>(null)
-	const [hasBeenVisible, setHasBeenVisible] = useState(false)
-	useEffect(() => {
-		if (hasBeenVisible) return
-		const node = cardRef.current
-		if (!node) return
-		const observer = new IntersectionObserver(
-			(entries) => {
-				if (entries.some((entry) => entry.isIntersecting)) {
-					setHasBeenVisible(true)
-					observer.disconnect()
-				}
-			},
-			{ rootMargin: PREFETCH_ROOT_MARGIN },
-		)
-		observer.observe(node)
-		return () => observer.disconnect()
-	}, [hasBeenVisible])
+	const {
+		containerRef: cardRef,
+		hasBeenVisible,
+		nodes,
+		firstUnreadRootId,
+		firstUnreadEventId,
+		latestRootId,
+		latestEventId,
+	} = useEntityThread(workspaceId, objectId, item.unread_count)
 
 	const cardKind: CardKind = classifyCardKind(item)
 
@@ -114,100 +80,6 @@ export function UnreadThreadCard({
 		},
 		[cardKind, objectId],
 	)
-
-	const { data: events } = useEntityEvents(workspaceId, objectId, {
-		enabled: hasBeenVisible,
-	})
-	const currentActorId = getStoredActor()?.id ?? null
-
-	const { nodes, firstUnreadRootId, firstUnreadEventId, latestRootId, latestEventId } =
-		useMemo(() => {
-			if (!events) {
-				return {
-					nodes: [] as CommentNode[],
-					firstUnreadRootId: null as number | null,
-					firstUnreadEventId: null as number | null,
-					latestRootId: null as number | null,
-					latestEventId: 0,
-				}
-			}
-			const chronological = [...events].reverse()
-
-			const repliesByParent = new Map<number, EventResponse[]>()
-			const roots: EventResponse[] = []
-			for (const event of chronological) {
-				if (event.action !== 'commented') continue
-				const parentId = event.data?.parentEventId as number | undefined
-				if (parentId) {
-					const list = repliesByParent.get(parentId) ?? []
-					list.push(event)
-					repliesByParent.set(parentId, list)
-					continue
-				}
-				roots.push(event)
-			}
-
-			const built: CommentNode[] = roots.map((root) => ({
-				root,
-				replies: repliesByParent.get(root.id) ?? [],
-			}))
-
-			let maxId = 0
-			for (const node of built) {
-				if (node.root.id > maxId) maxId = node.root.id
-				for (const reply of node.replies) if (reply.id > maxId) maxId = reply.id
-			}
-
-			// Walk the *flat* timeline (root + replies in chronological order)
-			// from the newest backward, counting comments that don't belong to
-			// the viewer. item.unread_count anchors the boundary so the divider
-			// always reflects the server's count even when the local event list
-			// is partial.
-			const flat: { rootId: number; eventId: number; actorId: string }[] = []
-			for (const node of built) {
-				flat.push({ rootId: node.root.id, eventId: node.root.id, actorId: node.root.actorId })
-				for (const reply of node.replies) {
-					flat.push({ rootId: node.root.id, eventId: reply.id, actorId: reply.actorId })
-				}
-			}
-
-			const targetCount = item.unread_count
-			let counted = 0
-			let boundaryRootId: number | null = null
-			let boundaryEventId: number | null = null
-			let oldestUnreadRootId: number | null = null
-			let oldestUnreadEventId: number | null = null
-			for (let i = flat.length - 1; i >= 0 && counted < targetCount; i--) {
-				const entry = flat[i]
-				if (!entry) continue
-				if (currentActorId && entry.actorId === currentActorId) continue
-				counted++
-				oldestUnreadRootId = entry.rootId
-				oldestUnreadEventId = entry.eventId
-				if (counted === targetCount) {
-					boundaryRootId = entry.rootId
-					boundaryEventId = entry.eventId
-				}
-			}
-
-			// If the server reports more unread events than we have loaded (the
-			// events query is capped at 50), anchor to the oldest non-viewer comment
-			// in the loaded window so the divider still appears above visible unread activity.
-			if (boundaryEventId === null && targetCount > 0 && oldestUnreadEventId !== null) {
-				boundaryRootId = oldestUnreadRootId
-				boundaryEventId = oldestUnreadEventId
-			}
-
-			const lastNode = built.length > 0 ? built[built.length - 1] : null
-
-			return {
-				nodes: built,
-				firstUnreadRootId: boundaryRootId,
-				firstUnreadEventId: boundaryEventId,
-				latestRootId: lastNode?.root.id ?? null,
-				latestEventId: maxId,
-			}
-		}, [events, item.unread_count, currentActorId])
 
 	const markRead = useMarkRead(workspaceId)
 	const handleMarkRead = useCallback(() => {

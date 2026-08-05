@@ -62,3 +62,13 @@ export const CARD_ACTIONS: Record<Exclude<CardKind, 'thread'>, readonly CardActi
 		{ id: 'dismiss', label: 'Dismiss', tone: 'secondary' },
 	],
 } as const
+
+// Fallback chips used when a card doesn't map to a specific action-UI kind
+// (decision / sign_off / proposed_bet). Keeps the pre-redesign feel on plain
+// threads so we don't regress non-decision items.
+export const QUICK_REPLY_CHIPS: readonly CardAction[] = [
+	{ id: 'on_it', label: 'On it', tone: 'secondary' },
+	{ id: 'approved', label: 'Approved', tone: 'secondary' },
+	{ id: 'looks_good', label: 'Looks good', tone: 'secondary' },
+	{ id: 'need_context', label: 'Need more context', tone: 'secondary' },
+]

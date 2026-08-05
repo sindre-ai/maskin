@@ -7,14 +7,13 @@ import { Link } from '@tanstack/react-router'
 interface ForYouListRowProps {
 	workspaceId: string
 	item: UnreadItem
-	onActivate: () => void
 }
 
 // Single-line row used when the header toggle switches the feed to List
 // mode. Deliberately carries no chips or buttons — the redesign's list mode
 // is a scan surface, not an action surface. Click drops the user into the
 // object detail where the full card actions live.
-export function ForYouListRow({ workspaceId, item, onActivate }: ForYouListRowProps) {
+export function ForYouListRow({ workspaceId, item }: ForYouListRowProps) {
 	const isMentioned = item.mentioning_unread_count > 0
 	const isUnread = item.unread_count > 0
 	const title = item.object?.title || 'Untitled'
@@ -24,7 +23,6 @@ export function ForYouListRow({ workspaceId, item, onActivate }: ForYouListRowPr
 		<Link
 			to="/$workspaceId/objects/$objectId"
 			params={{ workspaceId, objectId: item.entity_id }}
-			onClick={onActivate}
 			className="group flex items-center gap-3 border-b border-border px-3 py-2 text-sm hover:bg-muted/60 focus-visible:bg-muted focus-visible:outline-none"
 			aria-label={title}
 		>

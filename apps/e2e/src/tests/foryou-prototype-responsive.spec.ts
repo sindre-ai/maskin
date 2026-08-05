@@ -2,42 +2,30 @@ import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { VIEWPORTS } from '../helpers/viewports'
 
-// T5 of bet `foryou-prototype-redesign` (Direction A): responsive layout at
-// 375 / 768 / 1024 and swipe-gesture regression against T3's card
-// restructuring. One focused pass per AC bullet — this is the ship-gate
-// regression harness the umbrella PR runs before merging, not an exhaustive
-// visual suite.
+// T2-T6 of bet foryou-prototype-redesign (single-card swipeable queue
+// rebuild): responsive layout + interaction regression at 375/768/1024 for
+// the new ForYouHeader (Display popover, type-filter chips) and
+// ForYouCardQueue (one visible card, decision->receipt->reverse, swipe/
+// button-driven commit, empty state).
 //
-// The unread feed is mocked so the three card kinds land deterministically —
-// one Decision, one Sign-off, one Proposed-bet — driven by `object.type` on
-// each row. That keeps the layout assertions stable across CI runs regardless
-// of what the seeded workspace happens to have.
+// Unread feed is mocked so card kinds land deterministically, driven off
+// `object.type`/`status`/`metadata.decision_type` per `classifyCardKind` in
+// `lib/foryou-card-kind.ts`: task+in_review+decision_type -> decision,
+// task+in_review (no decision_type) -> sign_off, bet+signal/proposed/
+// define/clustered -> proposed_bet, everything else (including all insight
+// items) -> thread. Bets have no `in_review` status in the workspace
+// schema, so `decision` never keys off `bet.status`.
 //
-// Prototype-redesign selectors this spec relies on (T2/T3/T4 must expose
-// them — see PR body's "Selector contract" section):
-//   T1 founder flag:
-//     - useForyouRedesignFlag() also returns true when
-//       import.meta.env.DEV && localStorage.getItem('maskin-flag-foryou-redesign') === '1'
-//     - DEV guard keeps the override out of production; canary stays
-//       founder-only there.
-//   T2 header controls:
-//     - Cards/List toggle → tab role, tabs named "Cards" / "List"
-//     - Sort control      → button named /sort/i
-//     - +New dropdown     → button named /new/i (opens a DropdownMenu, not a modal)
-//     - Today's Brief     → button named /today.?s brief/i
-//   T3 card kinds (attribute on the card root):
-//     - data-card-kind="decision"
-//     - data-card-kind="sign_off"
-//     - data-card-kind="proposed_bet"
-//     Decision cards render a shaded footer with two full-width buttons
-//     (data-testid="decision-footer" carrying data-stack-layout so the 375
-//     stack-vs-side-by-side assertion doesn't rely on measuring pixel widths).
-//     Swipe reveal overlays must survive the restructuring on every kind:
-//     - data-testid="mark-read-reveal"    (right-swipe on unread)
-//     - data-testid="mark-unread-reveal"  (left-swipe on read)
-//   T4 Today's Brief panel:
-//     - Container: data-testid="todays-brief-panel"
-//     - Rendering mode: data-mode="rail" at ≥1024, data-mode="sheet" below
+// Selector contract this spec relies on:
+// - ForYouHeader: h1 "For You", "{n} unread" badge, type-filter chips as
+//   named buttons ("All (n)", "Mentions (n)", "{Type} (n)"), "Today's
+//   brief" / "New" buttons (aria-label), "Display options" button opening
+//   a Cards/List Tabs (role=tab) + Sort RadioGroup (role=radio).
+// - ForYouQueueCard: data-testid="foryou-queue-card" with a
+//   data-card-kind attribute, data-testid="decision-block" /
+//   "decision-receipt", data-testid="mark-read-reveal" (swipe overlay).
+// - ForYouCardQueue: "Keep unread" / "Mark as read" fixed-bar buttons, an
+//   "{n} item(s) left" counter (hidden below md), EmptyState "You're caught up".
 
 interface UnreadFixture {
 	entity_type: 'object'
@@ -59,7 +47,7 @@ interface UnreadFixture {
 
 function buildItem(
 	workspaceId: string,
-	overrides: Partial<UnreadFixture> & {
+	overrides: Partial<Omit<UnreadFixture, 'object'>> & {
 		id: string
 		title: string
 		type: string
@@ -83,7 +71,7 @@ function buildItem(
 			// decision cards ride on tasks with `metadata.decision_type` set.
 			// Callers pass an explicit status when the classifier needs one.
 			status: status ?? (type === 'task' ? 'in_review' : 'active'),
-			content: 'Preview line — leads the card body before any action UI.',
+			content: 'Preview line leads the card body before the action UI.',
 			workspaceId,
 			metadata: metadata ?? null,
 		},
@@ -91,18 +79,16 @@ function buildItem(
 	}
 }
 
-// One card of each kind. T3 classifies by object shape:
+// One card per kind — decision sorts first (it's the only one mentioning
+// the viewer, and default sort is "priority").
 //   - task + status=in_review + metadata.decision_type set → decision
-//     (needs a call — shaded footer + buttons)
 //   - task + status=in_review + no decision_type          → sign_off
-//     (light-touch — chip-row)
 //   - bet + status=signal                                  → proposed_bet
-//     (light-touch — chip-row)
 function threeKindFeed(workspaceId: string): UnreadFixture[] {
 	return [
 		buildItem(workspaceId, {
 			id: 'decision-1',
-			title: 'Approve the go/no-go for the Q3 canary',
+			title: 'Approve go/no-go for Q3 canary',
 			type: 'task',
 			status: 'in_review',
 			metadata: { decision_type: 'architecture' },
@@ -110,44 +96,44 @@ function threeKindFeed(workspaceId: string): UnreadFixture[] {
 		}),
 		buildItem(workspaceId, {
 			id: 'sign-off-1',
-			title: 'Sign off on the migration playbook',
+			title: 'Sign off on migration playbook',
 			type: 'task',
 			status: 'in_review',
 		}),
 		buildItem(workspaceId, {
 			id: 'proposed-bet-1',
-			title: 'Proposed bet: staffing lift for the outbound funnel',
+			title: 'Proposed bet: expand canary to EU region',
 			type: 'bet',
 			status: 'signal',
-			unread_count: 2,
+			latest_event_id: 43,
 		}),
+	]
+}
+
+// Two plain "thread"-kind items for the swipe/skip/commit regression — kept
+// independent of the decision defer-then-commit state machine.
+function plainFeed(workspaceId: string): UnreadFixture[] {
+	return [
+		buildItem(workspaceId, { id: 'thread-1', title: 'Renewal terms need a read', type: 'insight' }),
+		buildItem(workspaceId, { id: 'thread-2', title: 'Follow-up from customer call', type: 'insight' }),
 	]
 }
 
 async function mockFeed(page: Page, items: UnreadFixture[]) {
 	await page.route('**/api/subscriptions/unread*', async (route) => {
 		if (route.request().method() !== 'GET') return route.fallback()
-		await route.fulfill({
-			status: 200,
-			contentType: 'application/json',
-			body: JSON.stringify({ items }),
-		})
+		await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items }) })
 	})
-	// Cards fetch thread events on visibility; empty is fine for layout.
 	await page.route('**/api/events*', async (route) => {
 		if (route.request().method() !== 'GET') return route.fallback()
-		await route.fulfill({
-			status: 200,
-			contentType: 'application/json',
-			body: JSON.stringify({ events: [] }),
-		})
+		await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ events: [] }) })
 	})
 }
 
-// The T1 flag gates the redesign on founder actor id in production and on
-// this localStorage key when `import.meta.env.DEV` is true. auth.fixture.ts
-// mints a random-UUID actor, so the DEV override is the only mechanism that
-// puts CI on the redesigned surface.
+// T1: flag gates the redesign on the founder actor id in production, or on
+// this localStorage key when import.meta.env.DEV is true. auth.fixture mints
+// a random-UUID actor, so the DEV override is the only mechanism that puts
+// CI on the redesigned surface.
 async function enableRedesignFlag(page: Page) {
 	await page.addInitScript(() => {
 		try {
@@ -164,8 +150,8 @@ async function gotoForyou(page: Page, workspaceId: string) {
 
 async function assertNoHorizontalOverflow(page: Page, label: string) {
 	await page.waitForLoadState('load')
-	// SSE holds a long-lived connection so networkidle never fires — brief
-	// layout-settle wait after `load`.
+	// SSE holds a long-lived connection so networkidle never fires — a brief
+	// layout-settle wait after `load` instead.
 	await page.waitForTimeout(200)
 	const { scrollWidth, innerWidth } = await page.evaluate(() => ({
 		scrollWidth: document.documentElement.scrollWidth,
@@ -173,29 +159,42 @@ async function assertNoHorizontalOverflow(page: Page, label: string) {
 	}))
 	expect(
 		scrollWidth,
-		`${label}: page overflows horizontally — scrollWidth=${scrollWidth} > innerWidth=${innerWidth}`,
+		`${label}: page overflows horizontally — scrollWidth=${scrollWidth} innerWidth=${innerWidth}`,
 	).toBeLessThanOrEqual(innerWidth + 1)
 }
 
-async function swipeCard(page: Page, cardIndex: number, direction: 'left' | 'right') {
-	const card = page.getByTestId('unread-thread-card').nth(cardIndex)
+async function swipeCurrentCard(page: Page, direction: 'left' | 'right') {
+	const card = page.getByTestId('foryou-queue-card')
 	const box = await card.boundingBox()
-	if (!box) throw new Error(`Card ${cardIndex} has no layout box`)
+	if (!box) throw new Error('Current queue card has no layout box')
 	const startX = box.x + box.width / 2
-	const y = box.y + box.height / 2
-	const endX = direction === 'left' ? startX - 150 : startX + 150
-	await page.mouse.move(startX, y)
+	const startY = box.y + 80 // upper card body — clear of footer buttons
+	const endX = direction === 'right' ? startX + 150 : startX - 150
+	await page.mouse.move(startX, startY)
 	await page.mouse.down()
-	// Multiple intermediate steps — velocity registers and the pointer-move
-	// handler unlocks the horizontal axis (locked at ±4px).
-	await page.mouse.move(endX, y, { steps: 12 })
+	await page.mouse.move(endX, startY, { steps: 12 })
 	await page.mouse.up()
+}
+
+async function assertDecisionButtonsSideBySide(page: Page, expected: boolean, label: string) {
+	const approve = page.getByRole('button', { name: 'Approve' })
+	const sendBack = page.getByRole('button', { name: 'Send back' })
+	const [approveBox, sendBackBox] = await Promise.all([approve.boundingBox(), sendBack.boundingBox()])
+	expect(approveBox, `${label}: Approve button has no layout box`).not.toBeNull()
+	expect(sendBackBox, `${label}: Send back button has no layout box`).not.toBeNull()
+	if (!approveBox || !sendBackBox) return
+	const yDelta = Math.abs(approveBox.y - sendBackBox.y)
+	if (expected) {
+		expect(yDelta, `${label}: decision buttons must sit side-by-side`).toBeLessThan(4)
+	} else {
+		expect(yDelta, `${label}: decision buttons must stack vertically`).toBeGreaterThan(8)
+	}
 }
 
 test.describe('For You prototype redesign — layout at 1024', () => {
 	test.use({ viewport: VIEWPORTS.tabletLandscape })
 
-	test("sidebar full, feed + Today's Brief rail side-by-side, header controls + all three card kinds render", async ({
+	test('header controls, Display popover, and decision buttons render side-by-side', async ({
 		page,
 		account,
 	}) => {
@@ -203,36 +202,36 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 		await mockFeed(page, threeKindFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
-		// Sidebar renders full-width at ≥1024 (shadcn Sidebar in expanded state).
-		// The primitive exposes data-state="expanded" on its wrapper when open.
-		const sidebar = page.locator('[data-slot="sidebar"], [data-sidebar="sidebar"]').first()
-		await expect(sidebar).toBeVisible()
-		const sidebarState = await sidebar.getAttribute('data-state')
-		expect(sidebarState, 'sidebar must be expanded at 1024').toBe('expanded')
+		await expect(page.getByRole('heading', { name: 'For You' })).toBeVisible()
+		await expect(page.getByText('3 unread')).toBeVisible()
 
-		// Header controls (T2) — Cards/List toggle, sort, +New, Today's Brief.
+		await expect(page.getByRole('button', { name: /^All/ })).toBeVisible()
+		await expect(page.getByRole('button', { name: /^Mentions/ })).toBeVisible()
+		await expect(page.getByRole('button', { name: /^Bet/ })).toBeVisible()
+		await expect(page.getByRole('button', { name: /^Task/ })).toBeVisible()
+
+		await expect(page.getByRole('button', { name: /today.?s brief/i })).toBeVisible()
+		await expect(page.getByRole('button', { name: /^new$/i })).toBeVisible()
+
+		const displayTrigger = page.getByRole('button', { name: /display options/i })
+		await displayTrigger.click()
 		await expect(page.getByRole('tab', { name: /cards/i })).toBeVisible()
 		await expect(page.getByRole('tab', { name: /list/i })).toBeVisible()
-		await expect(page.getByRole('button', { name: /sort/i })).toBeVisible()
-		await expect(page.getByRole('button', { name: /^\+?\s*new/i })).toBeVisible()
-		const briefTrigger = page.getByRole('button', { name: /today.?s brief/i })
-		await expect(briefTrigger).toBeVisible()
+		await expect(page.getByRole('radio', { name: /priority/i })).toBeVisible()
+		await expect(page.getByRole('radio', { name: /latest activity/i })).toBeVisible()
+		await page.keyboard.press('Escape')
 
-		// Open Today's Brief — at ≥1024 it renders as a right-rail beside the feed,
-		// not a Sheet overlay.
-		await briefTrigger.click()
-		const briefPanel = page.getByTestId('todays-brief-panel')
-		await expect(briefPanel).toBeVisible()
-		await expect(briefPanel).toHaveAttribute('data-mode', 'rail')
+		// One card visible at a time — priority sort puts the mentioned
+		// decision card first.
+		const card = page.getByTestId('foryou-queue-card')
+		await expect(card).toHaveCount(1)
+		await expect(card).toHaveAttribute('data-card-kind', 'decision')
+		await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
+		await assertDecisionButtonsSideBySide(page, true, '1024')
 
-		// Feed stays visible next to the rail (the AC's "feed does not disappear"
-		// invariant — rules out a modal Sheet swap at desktop).
-		await expect(page.getByTestId('unread-thread-card').first()).toBeVisible()
-
-		// One card of each kind renders (T3 attribute contract).
-		await expect(page.locator('[data-card-kind="decision"]')).toHaveCount(1)
-		await expect(page.locator('[data-card-kind="sign_off"]')).toHaveCount(1)
-		await expect(page.locator('[data-card-kind="proposed_bet"]')).toHaveCount(1)
+		await expect(page.getByRole('button', { name: 'Keep unread' })).toBeVisible()
+		await expect(page.getByRole('button', { name: 'Mark as read' })).toBeVisible()
+		await expect(page.getByText('3 items left')).toBeVisible()
 
 		await assertNoHorizontalOverflow(page, '1024')
 	})
@@ -241,46 +240,20 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 test.describe('For You prototype redesign — layout at 768', () => {
 	test.use({ viewport: VIEWPORTS.tabletPortrait })
 
-	test("sidebar collapses to 56px icon rail, Today's Brief opens as Sheet, header controls reachable", async ({
-		page,
-		account,
-	}) => {
+	test('header controls stay reachable and decision buttons stay side-by-side', async ({ page, account }) => {
 		await enableRedesignFlag(page)
 		await mockFeed(page, threeKindFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
-		// Sidebar collapses to icons at iPad portrait — shadcn drives this via
-		// data-state="collapsed" on the wrapper (collapsible="icon" mode).
-		const sidebar = page.locator('[data-slot="sidebar"], [data-sidebar="sidebar"]').first()
-		await expect(sidebar).toBeVisible()
-		const collapsedBox = await sidebar.boundingBox()
-		expect(collapsedBox, 'sidebar must have a layout box at 768').not.toBeNull()
-		// AC calls for a 56px icon rail — allow a small tolerance for border/padding
-		// deltas across primitive versions (48–72px accepts the shadcn default and
-		// hand-tuned rails within the AC intent).
-		if (collapsedBox) {
-			expect(collapsedBox.width).toBeGreaterThanOrEqual(48)
-			expect(collapsedBox.width).toBeLessThanOrEqual(72)
-		}
+		await expect(page.getByRole('button', { name: /today.?s brief/i })).toBeVisible()
+		await expect(page.getByRole('button', { name: /^new$/i })).toBeVisible()
+		await expect(page.getByRole('button', { name: /display options/i })).toBeVisible()
 
-		// Header controls reachable — the AC allows wrapping at 768 as long as
-		// each control is visible and interactive on touch.
-		for (const name of [/cards/i, /list/i]) {
-			await expect(page.getByRole('tab', { name })).toBeVisible()
-		}
-		await expect(page.getByRole('button', { name: /sort/i })).toBeVisible()
-		await expect(page.getByRole('button', { name: /^\+?\s*new/i })).toBeVisible()
+		const card = page.getByTestId('foryou-queue-card')
+		await expect(card).toHaveAttribute('data-card-kind', 'decision')
+		await assertDecisionButtonsSideBySide(page, true, '768')
 
-		const briefTrigger = page.getByRole('button', { name: /today.?s brief/i })
-		await expect(briefTrigger).toBeVisible()
-		await briefTrigger.click()
-
-		// Below 1024 the panel becomes a Sheet overlay (bottom-anchored on
-		// mobile — see apps/web/CLAUDE.md `Dialogs, sheets, popovers`).
-		const briefPanel = page.getByTestId('todays-brief-panel')
-		await expect(briefPanel).toBeVisible()
-		await expect(briefPanel).toHaveAttribute('data-mode', 'sheet')
-
+		await expect(page.getByText('3 items left')).toBeVisible()
 		await assertNoHorizontalOverflow(page, '768')
 	})
 })
@@ -288,51 +261,71 @@ test.describe('For You prototype redesign — layout at 768', () => {
 test.describe('For You prototype redesign — layout at 375', () => {
 	test.use({ viewport: VIEWPORTS.mobile })
 
-	test('sidebar hidden, decision buttons stack, header collapses to essentials, no horizontal scroll', async ({
-		page,
-		account,
-	}) => {
+	test('decision buttons stack, Display popover still opens, no horizontal scroll', async ({ page, account }) => {
 		await enableRedesignFlag(page)
 		await mockFeed(page, threeKindFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
-		// Sidebar becomes a Sheet drawer at mobile — closed by default, so no
-		// visible sidebar chrome should be occupying viewport width. The trigger
-		// (hamburger) lives in the header at `md:hidden` — that's the touchable
-		// entry point, and the AC's "sidebar hidden" invariant.
-		const sidebarSheet = page.locator('[data-slot="sidebar"][data-state="open"]')
-		await expect(sidebarSheet).toHaveCount(0)
-
-		// The +New and Today's Brief triggers remain reachable at 375 — either
-		// visible on the row or collapsed into an overflow/icon control per
-		// the AC's "essential set (icon-only where necessary)" allowance.
-		// getByRole picks up both label and aria-label so icon-only buttons
-		// with `aria-label="New"` still match.
-		await expect(page.getByRole('button', { name: /^\+?\s*new/i })).toBeVisible()
+		// Icon-only at 375 — accessible name still comes from aria-label.
 		await expect(page.getByRole('button', { name: /today.?s brief/i })).toBeVisible()
+		await expect(page.getByRole('button', { name: /^new$/i })).toBeVisible()
 
-		// Decision buttons stack vertically at 375. T3's Decision card exposes
-		// its footer with `data-testid="decision-footer"` and a
-		// `data-stack-layout` attribute so this doesn't have to measure widths.
-		const decisionFooter = page
-			.locator('[data-card-kind="decision"] [data-testid="decision-footer"]')
-			.first()
-		await expect(decisionFooter).toBeVisible()
-		const stackLayout = await decisionFooter.getAttribute('data-stack-layout')
-		expect(stackLayout, 'Decision card footer must stack its buttons vertically at 375').toBe(
-			'stacked',
-		)
+		const displayTrigger = page.getByRole('button', { name: /display options/i })
+		await displayTrigger.click()
+		await expect(page.getByRole('tab', { name: /cards/i })).toBeVisible()
+		await page.keyboard.press('Escape')
 
-		// No page-level horizontal overflow at 375 — the frontend rule.
+		const card = page.getByTestId('foryou-queue-card')
+		await expect(card).toHaveAttribute('data-card-kind', 'decision')
+		await assertDecisionButtonsSideBySide(page, false, '375')
+
+		// "N items left" is a desktop-only affordance (`hidden md:inline`).
+		await expect(page.getByText(/items left/)).toBeHidden()
+
 		await assertNoHorizontalOverflow(page, '375')
 	})
 })
 
-test.describe('For You prototype redesign — swipe regression across card kinds', () => {
-	// One focused pass at 375 (where the swipe gesture is the primary
-	// interaction). Right-swipe on unread → mark-read green reveal +
-	// /api/subscriptions/read POST after the 4.5s Undo window. Left-swipe on a
-	// read card → mark-unread blue reveal + /api/subscriptions/unread POST.
+test.describe('For You prototype redesign — decision → receipt → reverse', () => {
+	test.use({ viewport: VIEWPORTS.mobile })
+
+	test('choosing a decision defers the comment behind a reversible receipt', async ({ page, account }) => {
+		const postedComments: unknown[] = []
+		await page.route('**/api/events', async (route) => {
+			if (route.request().method() !== 'POST') return route.fallback()
+			postedComments.push(route.request().postDataJSON())
+			await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1 }) })
+		})
+		await enableRedesignFlag(page)
+		await mockFeed(page, [
+			buildItem(account.workspaceId, {
+				id: 'decision-1',
+				title: 'Approve go/no-go for Q3 canary',
+				type: 'task',
+				status: 'in_review',
+				metadata: { decision_type: 'architecture' },
+			}),
+		])
+		await gotoForyou(page, account.workspaceId)
+
+		await page.getByRole('button', { name: 'Approve' }).click()
+
+		const receipt = page.getByTestId('decision-receipt')
+		await expect(receipt).toBeVisible()
+		await expect(receipt).toContainText(/you chose approve/i)
+		await expect(receipt).toContainText(/reversible for \d+s/i)
+
+		await receipt.getByRole('button', { name: 'Reverse this' }).click()
+		await expect(page.getByTestId('decision-block')).toBeVisible()
+		await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
+
+		// Nothing was posted — the reverse window never elapsed.
+		await page.waitForTimeout(6500)
+		expect(postedComments).toHaveLength(0)
+	})
+})
+
+test.describe('For You prototype redesign — swipe & button commit regression', () => {
 	test.use({ viewport: VIEWPORTS.mobile })
 
 	async function captureRead(page: Page): Promise<{ readonly calls: unknown[] }> {
@@ -344,91 +337,69 @@ test.describe('For You prototype redesign — swipe regression across card kinds
 			} catch {
 				calls.push(null)
 			}
-			await route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({ updated: true }),
-			})
+			await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ updated: true }) })
 		})
 		return { calls }
 	}
 
-	async function captureUnread(page: Page): Promise<{ readonly calls: unknown[] }> {
-		const calls: unknown[] = []
-		await page.route('**/api/subscriptions/unread', async (route) => {
-			if (route.request().method() !== 'POST') return route.fallback()
-			try {
-				calls.push(route.request().postDataJSON())
-			} catch {
-				calls.push(null)
-			}
-			await route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({ updated: true }),
-			})
-		})
-		return { calls }
-	}
-
-	test('right-swipe on unread card reveals mark-read affordance and commits', async ({
+	test('right-swipe reveals mark-read and advances the queue, committing after the undo window', async ({
 		page,
 		account,
 	}) => {
 		const { calls: readCalls } = await captureRead(page)
 		await enableRedesignFlag(page)
-		await mockFeed(page, threeKindFeed(account.workspaceId))
+		await mockFeed(page, plainFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
-		const cards = page.getByTestId('unread-thread-card')
-		await expect(cards).toHaveCount(3)
+		await expect(page.locator('[data-testid="foryou-queue-card"]:visible')).toContainText(
+			'Renewal terms need a read',
+		)
 
-		await swipeCard(page, 0, 'right')
-
-		// Green mark-read reveal + toast with Undo appear during the 4.5s window.
+		await swipeCurrentCard(page, 'right')
 		await expect(page.getByTestId('mark-read-reveal').first()).toBeVisible()
-		await expect(page.getByText(/Marked as read/i)).toBeVisible()
-		await expect(page.getByRole('button', { name: /^undo$/i })).toBeVisible()
 
-		// Commit fires after the Undo window elapses.
+		// The queue advances optimistically as soon as the exit transition
+		// ends — well before the 4.5s undo window elapses. The just-committed
+		// card stays mounted (hidden) until its deferred mutation lands, so
+		// the locator must be scoped to the currently-visible card only.
+		await expect(page.locator('[data-testid="foryou-queue-card"]:visible')).toContainText(
+			'Follow-up from customer call',
+		)
+		expect(readCalls).toHaveLength(0)
+
 		await page.waitForTimeout(4800)
 		expect(readCalls.length).toBeGreaterThanOrEqual(1)
 	})
 
-	test('left-swipe on a read card reveals mark-unread affordance and commits', async ({
+	test('"Keep unread" skips without any mutation and advances the queue', async ({ page, account }) => {
+		const { calls: readCalls } = await captureRead(page)
+		await enableRedesignFlag(page)
+		await mockFeed(page, plainFeed(account.workspaceId))
+		await gotoForyou(page, account.workspaceId)
+
+		await page.getByRole('button', { name: 'Keep unread' }).click()
+		await expect(page.getByTestId('foryou-queue-card')).toContainText('Follow-up from customer call')
+
+		await page.waitForTimeout(1000)
+		expect(readCalls).toHaveLength(0)
+	})
+
+	test('"Mark as read" commits through the same undo path as a swipe and empties the queue', async ({
 		page,
 		account,
 	}) => {
-		const { calls: unreadCalls } = await captureUnread(page)
+		const { calls: readCalls } = await captureRead(page)
 		await enableRedesignFlag(page)
-		// One read card in the mix so the reverse-swipe has a target — mirrors
-		// the mixed-feed pattern the existing foryou-swipe-mark-unread spec uses.
-		const items = threeKindFeed(account.workspaceId)
-		items.push(
-			buildItem(account.workspaceId, {
-				id: 'decision-read',
-				title: 'Already-read decision',
-				type: 'task',
-				status: 'in_review',
-				metadata: { decision_type: 'architecture' },
-				unread_count: 0,
-				latest_event_id: 99,
-			}),
-		)
-		await mockFeed(page, items)
+		await mockFeed(page, [buildItem(account.workspaceId, { id: 'thread-1', title: 'Only item left', type: 'insight' })])
 		await gotoForyou(page, account.workspaceId)
 
-		const cards = page.getByTestId('unread-thread-card')
-		await expect(cards).toHaveCount(4)
+		await page.getByRole('button', { name: 'Mark as read' }).click()
+		await expect(page.getByText("You're caught up")).toBeVisible()
 
-		// Read card is the last one in the mocked feed (unread_count === 0).
-		await swipeCard(page, 3, 'left')
-
-		await expect(page.getByTestId('mark-unread-reveal').first()).toBeVisible()
-		await expect(page.getByText(/Marked as unread/i)).toBeVisible()
-		await expect(page.getByRole('button', { name: /^undo$/i })).toBeVisible()
+		await expect(page.getByRole('link', { name: "Today's brief" })).toBeVisible()
+		await expect(page.getByRole('link', { name: /review loops/i })).toBeVisible()
 
 		await page.waitForTimeout(4800)
-		expect(unreadCalls.length).toBeGreaterThanOrEqual(1)
+		expect(readCalls.length).toBeGreaterThanOrEqual(1)
 	})
 })
