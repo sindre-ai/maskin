@@ -659,7 +659,11 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 			{/* Same margin also reaches the top nav via PageHeaderContext — see
 			 * ChatPinShell in the $workspaceId route, which pushes the header
 			 * left so its action buttons stay clear of the fixed sidebar. */}
-			<PageHeader actions={headerActions} stickyIdentity={stickyIdentity} contentPush={docMarginRight} />
+			<PageHeader
+				actions={headerActions}
+				stickyIdentity={stickyIdentity}
+				contentPush={docMarginRight}
+			/>
 			<DeleteConfirmDialog
 				open={confirmDelete}
 				onOpenChange={handleDeleteOpenChange}
