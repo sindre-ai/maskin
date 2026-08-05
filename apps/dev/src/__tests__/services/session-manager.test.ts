@@ -399,6 +399,102 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('startSession() — LLM model routing (llmConfig.model)', () => {
+		it('forwards agent llmConfig.model as ANTHROPIC_MODEL on the workspace api_key route', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: { model: 'claude-sonnet-4-6' },
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				settings: { llm_keys: { anthropic: 'sk-ant-ws' } },
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace lookup
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace lookup (llm keys)
+				[workspace], // resolveLlmRoute -> resolveClaudeCredentialsWithFailover: workspace lookup
+				// (no claude_oauth in settings, so OAuth resolution falls through to
+				// the workspace anthropic api_key route)
+				[], // launchContainer: integrations lookup
+			]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.ANTHROPIC_API_KEY).toBe('sk-ant-ws')
+			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+		})
+
+		it('omits ANTHROPIC_MODEL when the agent has no model preference', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				settings: { llm_keys: { anthropic: 'sk-ant-ws' } },
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session],
+				[workspace],
+				[{ count: 0 }],
+				[agent],
+				[workspace],
+				[workspace],
+				[],
+			]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.ANTHROPIC_API_KEY).toBe('sk-ant-ws')
+			expect(createArgs.env.ANTHROPIC_MODEL).toBeUndefined()
+		})
+	})
+
 	describe('startSession() — browser sidecar provisioning', () => {
 		function buildTestSession(overrides: Record<string, unknown> = {}) {
 			return buildSession({

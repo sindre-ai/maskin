@@ -162,6 +162,25 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars.ANTHROPIC_BASE_URL).toBeUndefined()
 	})
 
+	it('1b. agent-level model preference is forwarded as ANTHROPIC_MODEL', async () => {
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: emptySettings(),
+			agent: { provider: 'anthropic', apiKey: 'sk-agent', model: 'claude-sonnet-4-6' },
+		})
+		expect(result?.route).toBe(LLM_ROUTE_AGENT)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+	})
+
+	it('omits ANTHROPIC_MODEL when agent has no model preference', async () => {
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: emptySettings(),
+			agent: { provider: 'anthropic', apiKey: 'sk-agent' },
+		})
+		expect(result?.envVars.ANTHROPIC_MODEL).toBeUndefined()
+	})
+
 	it('returns null for non-anthropic agent override (caller handles)', async () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
@@ -241,6 +260,29 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars.ANTHROPIC_API_KEY).toBeUndefined()
 	})
 
+	it('3b. agent-level model preference is forwarded on the OAuth route', async () => {
+		const expiresAt = Date.now() + 60 * 60 * 1000
+		const db = dbWithFallbackUsage(
+			[],
+			claudeOAuthWorkspaceRow({
+				encryptedAccessToken: 'oauth-access',
+				encryptedRefreshToken: 'oauth-refresh',
+				expiresAt,
+				scopes: ['read'],
+				subscriptionType: 'pro',
+			}),
+		)
+		const result = await resolveLlmRoute({
+			db,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: emptySettings(),
+			agent: { model: 'claude-sonnet-4-6' },
+		})
+		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+	})
+
 	it('4. workspace api_key when OAuth absent', async () => {
 		const settings = emptySettings()
 		settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
@@ -251,6 +293,18 @@ describe('resolveLlmRoute priority order', () => {
 		})
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
 		expect(result?.envVars.ANTHROPIC_API_KEY).toBe('sk-ant-from-ws')
+	})
+
+	it('4b. agent-level model preference is forwarded on the workspace api_key route', async () => {
+		const settings = emptySettings()
+		settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: settings,
+			agent: { model: 'claude-opus-4-7' },
+		})
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-opus-4-7')
 	})
 
 	it('falls through OAuth errors to next route', async () => {
