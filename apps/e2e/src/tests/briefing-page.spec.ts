@@ -47,7 +47,10 @@ test.describe('Briefing page — /$workspaceId/briefing', () => {
 		})
 	}
 
-	test('stays silent (no ## Commitments heading) when no commitments are seeded', async ({ page, account }) => {
+	test('stays silent (no ## Commitments heading) when no commitments are seeded', async ({
+		page,
+		account,
+	}) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await page.goto(`/${account.workspaceId}/briefing`)
 
