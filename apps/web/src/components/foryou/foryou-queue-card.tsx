@@ -19,7 +19,7 @@ import {
 	classifyCardKind,
 } from '@/lib/foryou-card-kind'
 import { Link } from '@tanstack/react-router'
-import { CheckIcon } from 'lucide-react'
+import { CheckIcon, X } from 'lucide-react'
 import {
 	type TransitionEvent,
 	forwardRef,
@@ -126,6 +126,15 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			[exitDir, onProcessed, itemKey],
 		)
 
+		// "Keep unread" is a pure skip — no mutation, no undo, distinct from the
+		// hook's mark-unread variant (which reverses a previously *read* item;
+		// queue cards are always unread). Wired to both the fixed action bar and
+		// left-swipe (via onSwipeLeft below).
+		const handleSkip = useCallback(() => {
+			emitAction('keep_unread')
+			beginExit('left')
+		}, [emitAction, beginExit])
+
 		const {
 			dragOffset,
 			isDragging,
@@ -147,16 +156,10 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 				onRestored(itemKey)
 			},
 			onCommitSettled: () => onCommitSettled(itemKey),
+			onSwipeLeft: handleSkip,
 		})
 
-		// "Keep unread" is a pure skip — no mutation, no undo, distinct from the
-		// hook's mark-unread variant (which reverses a previously *read* item;
-		// queue cards are always unread). Exposed only via the fixed action bar,
-		// not drag — left-drag tracking is out of scope for v1.
-		const handleSkip = useCallback(() => {
-			emitAction('keep_unread')
-			beginExit('left')
-		}, [emitAction, beginExit])
+		const [summaryExpanded, setSummaryExpanded] = useState(false)
 
 		// Decision → decided-receipt is fully independent of the swipe hook: its
 		// own phase state, own timer, own "Reverse this" undo. Defer-then-commit
@@ -247,25 +250,40 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			cardKind === 'decision' ? CARD_ACTIONS.decision : null
 
 		const exitTransform =
-			exitDir === 'right' ? 'translateX(140%)' : exitDir === 'left' ? 'translateX(-140%)' : null
+			exitDir === 'right'
+				? 'translateX(140%) rotate(8deg)'
+				: exitDir === 'left'
+					? 'translateX(-140%) rotate(-8deg)'
+					: null
+		const dragTransform = `translateX(${dragOffset}px) rotate(${dragOffset / 24}deg)`
 
 		return (
-			<div ref={threadRef} className="relative mx-auto w-full max-w-[760px]">
+			<div ref={threadRef} className="relative mx-auto h-full w-full max-w-[760px]">
 				<div
 					aria-hidden
 					data-testid="mark-read-reveal"
 					className="pointer-events-none absolute inset-0 flex items-center justify-end gap-2 rounded-[18px] bg-status-active-bg px-5 text-xs font-medium text-status-active-text"
-					style={{ opacity: isDragging ? swipeBgOpacity : 0 }}
+					style={{ opacity: isDragging && dragOffset > 0 ? swipeBgOpacity : 0 }}
 				>
 					<CheckIcon size={14} />
 					Mark as read
 				</div>
 
 				<div
+					aria-hidden
+					data-testid="keep-unread-reveal"
+					className="pointer-events-none absolute inset-0 flex items-center justify-start gap-2 rounded-[18px] bg-muted px-5 text-xs font-medium text-muted-foreground"
+					style={{ opacity: isDragging && dragOffset < 0 ? swipeBgOpacity : 0 }}
+				>
+					<X size={14} />
+					Keep unread
+				</div>
+
+				<div
 					data-testid="foryou-queue-card"
 					data-card-kind={cardKind}
 					className={cn(
-						'relative flex max-h-[min(680px,calc(100vh-220px))] flex-col overflow-hidden rounded-[18px] border border-border bg-background shadow-md cursor-grab touch-pan-y',
+						'relative flex h-full max-h-[680px] flex-col overflow-hidden rounded-[18px] border border-border bg-background shadow-md cursor-grab touch-pan-y',
 						exitDir
 							? 'transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]'
 							: isDragging
@@ -273,7 +291,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 								: 'transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]',
 					)}
 					style={{
-						transform: exitTransform ?? `translateX(${dragOffset}px)`,
+						transform: exitTransform ?? dragTransform,
 						opacity: exitDir ? 0 : undefined,
 					}}
 					onPointerDown={handlePointerDown}
@@ -295,20 +313,14 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 								{title}
 							</Link>
 							<div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-								{objectType && <span className="capitalize">{objectType}</span>}
-								{objectStatus && (
-									<>
-										<span aria-hidden className="opacity-50">
-											·
-										</span>
-										<StatusBadge status={objectStatus} variant="dot-word" />
-									</>
-								)}
+								{objectStatus && <StatusBadge status={objectStatus} variant="dot-word" />}
 								{item.latest_activity_at && (
 									<>
-										<span aria-hidden className="opacity-50">
-											·
-										</span>
+										{objectStatus && (
+											<span aria-hidden className="opacity-50">
+												·
+											</span>
+										)}
 										<RelativeTime
 											date={item.latest_activity_at}
 											className="font-mono tabular-nums"
@@ -327,10 +339,24 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 					{/* Summary strip */}
 					{insightPreview && (
 						<div className="border-b border-border bg-secondary/25 px-4 py-2.5">
-							<p className="text-[9.5px] font-bold uppercase tracking-wider text-muted-foreground">
-								✦ Summary
-							</p>
-							<p className="mt-1 line-clamp-3 text-[13px] leading-relaxed text-muted-foreground">
+							<div className="flex items-center justify-between gap-2">
+								<p className="text-[9.5px] font-bold uppercase tracking-wider text-muted-foreground">
+									✦ Summary
+								</p>
+								<button
+									type="button"
+									onClick={() => setSummaryExpanded((v) => !v)}
+									className="shrink-0 text-[10.5px] font-medium text-muted-foreground hover:text-foreground"
+								>
+									{summaryExpanded ? 'Hide' : 'Show full'}
+								</button>
+							</div>
+							<p
+								className={cn(
+									'mt-1 text-[13px] leading-relaxed text-muted-foreground',
+									!summaryExpanded && 'line-clamp-3',
+								)}
+							>
 								{insightPreview}
 							</p>
 						</div>

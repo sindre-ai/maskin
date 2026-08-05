@@ -44,7 +44,11 @@ import { useMatches } from '@tanstack/react-router'
 describe('Header', () => {
 	it('renders Create dropdown button', () => {
 		vi.mocked(useMatches).mockReturnValue([
-			{ routeId: '/_authed/$workspaceId/', pathname: '/ws-1', params: { workspaceId: 'ws-1' } },
+			{
+				routeId: '/_authed/$workspaceId/objects/',
+				pathname: '/ws-1/objects',
+				params: { workspaceId: 'ws-1' },
+			},
 		] as ReturnType<typeof useMatches>)
 		render(<Header />)
 		expect(screen.getByRole('button', { name: /create new/i })).toBeInTheDocument()
@@ -71,10 +75,33 @@ describe('Header', () => {
 
 	it('renders a chat launcher that opens the panel without navigating', () => {
 		setChatOpen.mockClear()
+		vi.mocked(useMatches).mockReturnValue([
+			{
+				routeId: '/_authed/$workspaceId/objects/',
+				pathname: '/ws-1/objects',
+				params: { workspaceId: 'ws-1' },
+			},
+		] as ReturnType<typeof useMatches>)
 		render(<Header />)
 		const launcher = screen.getByRole('button', { name: /open chat/i })
 		fireEvent.click(launcher)
 		expect(setChatOpen).toHaveBeenCalledWith(true)
+	})
+
+	it('hides the Create and Open chat buttons on the For You page', () => {
+		vi.mocked(useMatches).mockReturnValue([
+			{ routeId: '/_authed/$workspaceId/', pathname: '/ws-1', params: { workspaceId: 'ws-1' } },
+		] as ReturnType<typeof useMatches>)
+		vi.mocked(usePageHeader).mockReturnValue({
+			actions: null,
+			stickyIdentity: null,
+			setActions: vi.fn(),
+			setStickyIdentity: vi.fn(),
+		})
+
+		render(<Header />)
+		expect(screen.queryByRole('button', { name: /create new/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /open chat/i })).not.toBeInTheDocument()
 	})
 
 	it('renders page header actions from usePageHeader', () => {

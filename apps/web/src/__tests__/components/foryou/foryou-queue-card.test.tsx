@@ -342,6 +342,109 @@ describe('ForYouQueueCard', () => {
 		})
 	})
 
+	describe('summary strip', () => {
+		it('truncates the summary by default and expands/collapses it via the toggle', () => {
+			const longSummary = 'This is a long insight summary. '.repeat(10)
+			render(
+				<ForYouQueueCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({
+							id: 'obj-1',
+							title: 'Thread item',
+							type: 'insight',
+							status: 'active',
+							content: longSummary,
+						}),
+					})}
+					onProcessed={vi.fn()}
+					onRestored={vi.fn()}
+					onCommitScheduled={vi.fn()}
+					onCommitSettled={vi.fn()}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			const summaryText = screen.getByText(longSummary.trim())
+			expect(summaryText).toHaveClass('line-clamp-3')
+
+			fireEvent.click(screen.getByRole('button', { name: 'Show full' }))
+			expect(summaryText).not.toHaveClass('line-clamp-3')
+
+			fireEvent.click(screen.getByRole('button', { name: 'Hide' }))
+			expect(summaryText).toHaveClass('line-clamp-3')
+		})
+
+		it('renders no summary strip or toggle when the object has no content', () => {
+			render(
+				<ForYouQueueCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({
+							id: 'obj-1',
+							title: 'Thread item',
+							type: 'insight',
+							status: 'active',
+							content: null,
+						}),
+					})}
+					onProcessed={vi.fn()}
+					onRestored={vi.fn()}
+					onCommitScheduled={vi.fn()}
+					onCommitSettled={vi.fn()}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(screen.queryByRole('button', { name: 'Show full' })).not.toBeInTheDocument()
+		})
+	})
+
+	describe('header metadata', () => {
+		it('does not render a redundant plain-text object type next to the title', () => {
+			render(
+				<ForYouQueueCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({
+							id: 'obj-1',
+							title: 'Onboarding A/B',
+							type: 'bet',
+							status: 'active',
+						}),
+					})}
+					onProcessed={vi.fn()}
+					onRestored={vi.fn()}
+					onCommitScheduled={vi.fn()}
+					onCommitSettled={vi.fn()}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			// TypeBadge still renders the type; the plain-text duplicate below the
+			// title must be gone.
+			expect(screen.queryByText('bet', { selector: 'span.capitalize' })).not.toBeInTheDocument()
+		})
+	})
+
+	describe('card sizing', () => {
+		it('stretches to fill its container height instead of shrinking to content', () => {
+			render(
+				<ForYouQueueCard
+					workspaceId="ws-1"
+					item={buildItem()}
+					onProcessed={vi.fn()}
+					onRestored={vi.fn()}
+					onCommitScheduled={vi.fn()}
+					onCommitSettled={vi.fn()}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(screen.getByTestId('foryou-queue-card')).toHaveClass('h-full')
+		})
+	})
+
 	describe('imperative handle', () => {
 		it('skip() exits left immediately with no mutation, advancing only after the exit transition ends', () => {
 			const onProcessed = vi.fn()

@@ -56,8 +56,9 @@ const ResponsivePopoverContent = React.forwardRef<
 				ref={ref}
 				side="bottom"
 				className={cn(
-					'flex max-h-[85dvh] w-full max-w-none flex-col rounded-t-lg rounded-b-none p-4',
+					'flex max-h-[85dvh] flex-col rounded-t-lg rounded-b-none p-4',
 					className,
+					'w-full max-w-none',
 				)}
 				{...props}
 			>

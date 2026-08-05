@@ -17,10 +17,14 @@ import { VIEWPORTS } from '../helpers/viewports'
 // schema, so `decision` never keys off `bet.status`.
 //
 // Selector contract this spec relies on:
-// - ForYouHeader: h1 "For You", "{n} unread" badge, type-filter chips as
-//   named buttons ("All (n)", "Mentions (n)", "{Type} (n)"), "Today's
-//   brief" / "New" buttons (aria-label), "Display options" button opening
-//   a Cards/List Tabs (role=tab) + Sort RadioGroup (role=radio).
+// - ForYouHeaderIdentity: projected into the global header's sticky-identity
+//   slot (data-testid="foryou-header-identity", rendered twice — a desktop
+//   and a mobile copy — so scope to `.first()`), "For You" + "{n} unread".
+// - ForYouHeaderActions: projected into the global header's actions slot —
+//   "Today's brief" / "New" buttons (aria-label).
+// - ForYouHeader: type-filter chips as named buttons ("All (n)",
+//   "Mentions (n)", "{Type} (n)"), "Display options" button opening a
+//   Cards/List Tabs (role=tab) + Sort RadioGroup (role=radio).
 // - ForYouQueueCard: data-testid="foryou-queue-card" with a
 //   data-card-kind attribute, data-testid="decision-block" /
 //   "decision-receipt", data-testid="mark-read-reveal" (swipe overlay).
@@ -202,8 +206,10 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 		await mockFeed(page, threeKindFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
-		await expect(page.getByRole('heading', { name: 'For You' })).toBeVisible()
-		await expect(page.getByText('3 unread')).toBeVisible()
+		const identity = page.getByTestId('foryou-header-identity').first()
+		await expect(identity).toBeVisible()
+		await expect(identity).toContainText('For You')
+		await expect(identity).toContainText('3 unread')
 
 		await expect(page.getByRole('button', { name: /^All/ })).toBeVisible()
 		await expect(page.getByRole('button', { name: /^Mentions/ })).toBeVisible()
@@ -212,6 +218,12 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 
 		await expect(page.getByRole('button', { name: /today.?s brief/i })).toBeVisible()
 		await expect(page.getByRole('button', { name: /^new$/i })).toBeVisible()
+
+		// The global header's generic Create/Chat icon buttons are dropped on
+		// the For You page — ForYouHeader's title, "Today's brief", and "New"
+		// already cover the same actions.
+		await expect(page.getByRole('button', { name: /create new/i })).toHaveCount(0)
+		await expect(page.getByRole('button', { name: /open chat/i })).toHaveCount(0)
 
 		const displayTrigger = page.getByRole('button', { name: /display options/i })
 		await displayTrigger.click()
@@ -419,5 +431,143 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 
 		await page.waitForTimeout(4800)
 		expect(readCalls.length).toBeGreaterThanOrEqual(1)
+	})
+})
+
+// Regression coverage for five card/composer fixes: summary hide/show toggle,
+// removal of the redundant plain-text object type under the title, the card
+// stretching to fill its container instead of leaving empty space below it,
+// the shortened single-line composer placeholder on mobile, and the
+// composer textarea being focusable with a single tap (the fix excludes
+// form controls from the swipe-to-mark-read pointer-capture handler).
+async function assertCardFillsAvailableHeight(page: Page, label: string) {
+	const cardBox = await page.getByTestId('foryou-queue-card').boundingBox()
+	if (!cardBox) throw new Error(`${label}: card has no layout box`)
+	const actionBox = await page.getByRole('button', { name: 'Mark as read' }).boundingBox()
+	if (!actionBox) throw new Error(`${label}: action bar has no layout box`)
+	const gap = actionBox.y - (cardBox.y + cardBox.height)
+	// Threshold tolerates the pre-existing max-h-[min(680px,calc(100vh-220px))]
+	// chrome estimate on the card (not exact at every viewport) while still
+	// catching a regression back to shrink-to-content sizing, which leaves
+	// hundreds of px of empty space rather than tens.
+	expect(
+		gap,
+		`${label}: card leaves ${gap}px of empty space above the action bar instead of stretching to fill the container`,
+	).toBeLessThan(150)
+}
+
+test.describe('For You prototype redesign — card fills container height', () => {
+	for (const [label, viewport] of [
+		['375', VIEWPORTS.mobile],
+		['768', VIEWPORTS.tabletPortrait],
+		['1024', VIEWPORTS.tabletLandscape],
+	] as const) {
+		test(`card stretches to the bottom action bar with no empty space at ${label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize(viewport)
+			await mockFeed(page, [
+				buildItem(account.workspaceId, {
+					id: 'thread-1',
+					title: 'Renewal terms need a read',
+					type: 'insight',
+				}),
+			])
+			await gotoForyou(page, account.workspaceId)
+
+			await expect(page.getByTestId('foryou-queue-card')).toBeVisible()
+			await assertCardFillsAvailableHeight(page, label)
+		})
+	}
+})
+
+test.describe('For You prototype redesign — summary toggle', () => {
+	test.use({ viewport: VIEWPORTS.tabletLandscape })
+
+	test('the summary strip truncates by default and expands/collapses via the toggle', async ({
+		page,
+		account,
+	}) => {
+		await mockFeed(page, [
+			buildItem(account.workspaceId, {
+				id: 'thread-1',
+				title: 'Renewal terms need a read',
+				type: 'insight',
+			}),
+		])
+		await gotoForyou(page, account.workspaceId)
+
+		const summary = page.locator('p', {
+			hasText: 'Preview line leads the card body before the action UI.',
+		})
+		await expect(summary).toHaveClass(/line-clamp-3/)
+
+		await page.getByRole('button', { name: 'Show full' }).click()
+		await expect(summary).not.toHaveClass(/line-clamp-3/)
+
+		await page.getByRole('button', { name: 'Hide' }).click()
+		await expect(summary).toHaveClass(/line-clamp-3/)
+	})
+})
+
+test.describe('For You prototype redesign — metadata row', () => {
+	test.use({ viewport: VIEWPORTS.tabletLandscape })
+
+	test('does not render the object type a second time as a plain-text label under the title', async ({
+		page,
+		account,
+	}) => {
+		await mockFeed(page, [
+			buildItem(account.workspaceId, {
+				id: 'thread-1',
+				title: 'Renewal terms need a read',
+				type: 'insight',
+			}),
+		])
+		await gotoForyou(page, account.workspaceId)
+
+		const card = page.getByTestId('foryou-queue-card')
+		await expect(card).toBeVisible()
+		// The TypeBadge icon badge is the only place "insight" should render —
+		// no redundant plain-text span duplicating it beneath the title.
+		await expect(card.getByText('insight', { exact: true })).toHaveCount(1)
+	})
+})
+
+test.describe('For You prototype redesign — composer', () => {
+	async function gotoWithSingleThread(page: Page, workspaceId: string) {
+		await mockFeed(page, [
+			buildItem(workspaceId, { id: 'thread-1', title: 'Renewal terms need a read', type: 'insight' }),
+		])
+		await gotoForyou(page, workspaceId)
+	}
+
+	test('placeholder is a single short line at 375px', async ({ page, account }) => {
+		await page.setViewportSize(VIEWPORTS.mobile)
+		await gotoWithSingleThread(page, account.workspaceId)
+
+		await expect(page.getByPlaceholder('Write a comment...')).toBeVisible()
+		await expect(
+			page.getByPlaceholder('Write a comment... Use @ to mention an agent'),
+		).toHaveCount(0)
+	})
+
+	test('placeholder includes the full hint at 1024px', async ({ page, account }) => {
+		await page.setViewportSize(VIEWPORTS.tabletLandscape)
+		await gotoWithSingleThread(page, account.workspaceId)
+
+		await expect(
+			page.getByPlaceholder('Write a comment... Use @ to mention an agent'),
+		).toBeVisible()
+	})
+
+	test('a single tap focuses the composer textarea', async ({ page, account }) => {
+		await page.setViewportSize(VIEWPORTS.mobile)
+		await gotoWithSingleThread(page, account.workspaceId)
+
+		const textarea = page.getByPlaceholder('Write a comment...')
+		await textarea.click()
+		await expect(textarea).toBeFocused()
 	})
 })

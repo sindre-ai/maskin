@@ -17,7 +17,15 @@ import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { ArrowUpDown, LayoutGrid, List, Newspaper, Plus, SlidersHorizontal } from 'lucide-react'
+import {
+	ArrowUpDown,
+	CheckCheck,
+	LayoutGrid,
+	List,
+	Newspaper,
+	Plus,
+	SlidersHorizontal,
+} from 'lucide-react'
 
 export type FeedMode = 'cards' | 'list'
 export type FeedSort = 'latest' | 'priority'
@@ -29,6 +37,91 @@ const SORT_LABEL: Record<FeedSort, string> = {
 
 const SORT_OPTIONS: readonly FeedSort[] = ['priority', 'latest']
 
+interface ForYouHeaderIdentityProps {
+	unreadCount: number
+}
+
+// Compact "For You" title + unread badge projected into the global header's
+// sticky-identity slot (same slot/style bet-detail pages use via
+// StickyBetIdentity) — this replaces the breadcrumb on the For You route so
+// the title only appears once.
+export function ForYouHeaderIdentity({ unreadCount }: ForYouHeaderIdentityProps) {
+	return (
+		<div className="flex min-w-0 items-baseline gap-2" data-testid="foryou-header-identity">
+			<span className="truncate text-base font-semibold text-foreground">For You</span>
+			<span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground tabular-nums">
+				{unreadCount} unread
+			</span>
+		</div>
+	)
+}
+
+interface ForYouHeaderActionsProps {
+	onStartConversation: () => void
+	onCreateObject: (type: 'bet' | 'insight' | 'task') => void
+	// Optional so the button only renders where a caller wires it up — kept out
+	// of test render helpers that don't pass it.
+	onMarkAllRead?: () => void
+	markAllReadDisabled?: boolean
+}
+
+// "Mark all read" + "Today's brief" + "New" projected into the global header's
+// actions slot — replaces the generic Create/Chat icon buttons on the For You route.
+export function ForYouHeaderActions({
+	onStartConversation,
+	onCreateObject,
+	onMarkAllRead,
+	markAllReadDisabled,
+}: ForYouHeaderActionsProps) {
+	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
+
+	return (
+		<div className="flex items-center gap-2">
+			{onMarkAllRead && (
+				<Button
+					variant="outline"
+					size="sm"
+					aria-label="Mark all as read"
+					onClick={onMarkAllRead}
+					disabled={markAllReadDisabled}
+					className="h-8 gap-1.5 px-2 sm:px-3"
+				>
+					<CheckCheck size={14} aria-hidden />
+					<span className="hidden sm:inline">Mark all read</span>
+				</Button>
+			)}
+			<Button
+				variant="outline"
+				size="sm"
+				aria-label="Today's brief"
+				onClick={() => navigate({ to: '/$workspaceId/briefing', params: { workspaceId } })}
+				className="h-8 gap-1.5 px-2 sm:px-3"
+			>
+				<Newspaper size={14} aria-hidden />
+				<span className="hidden sm:inline">Today's brief</span>
+			</Button>
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<Button size="sm" aria-label="New" className="h-8 gap-1.5 px-2 sm:px-3">
+						<Plus size={14} aria-hidden />
+						<span className="hidden sm:inline">New</span>
+					</Button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="end" className="min-w-[200px]">
+					<DropdownMenuItem onSelect={onStartConversation}>Start conversation</DropdownMenuItem>
+					<DropdownMenuSeparator />
+					<DropdownMenuItem onSelect={() => onCreateObject('bet')}>New bet</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => onCreateObject('insight')}>
+						New insight
+					</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => onCreateObject('task')}>New task</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</div>
+	)
+}
+
 interface ForYouHeaderProps {
 	unreadCount: number
 	typeFilter: string | undefined
@@ -39,17 +132,14 @@ interface ForYouHeaderProps {
 	onModeChange: (mode: FeedMode) => void
 	sort: FeedSort
 	onSortChange: (sort: FeedSort) => void
-	onStartConversation: () => void
-	onCreateObject: (type: 'bet' | 'insight' | 'task') => void
 }
 
-// Redesigned For You header (parent bet 37865542). Title row with count +
-// Brief/+New actions; a sub-row with a dynamic type-filter chip bar (All,
-// Mentions, then one chip per object type present in the unread queue) and a
-// single "Display" popover holding Cards/List + Sort — replaces the previous
-// separate Cards/List tabs + sort dropdown + All/Mentions tabs. Below sm the
-// title labels collapse to icons; every icon-only control carries an explicit
-// `aria-label`.
+// Redesigned For You header (parent bet 37865542). Dynamic type-filter chip
+// bar (All, Mentions, then one chip per object type present in the unread
+// queue) and a single "Display" popover holding Cards/List + Sort — replaces
+// the previous separate Cards/List tabs + sort dropdown + All/Mentions tabs.
+// The title and Brief/New actions live in the global header instead (see
+// ForYouHeaderIdentity/ForYouHeaderActions) so they aren't duplicated here.
 export function ForYouHeader({
 	unreadCount,
 	typeFilter,
@@ -60,62 +150,21 @@ export function ForYouHeader({
 	onModeChange,
 	sort,
 	onSortChange,
-	onStartConversation,
-	onCreateObject,
 }: ForYouHeaderProps) {
-	const { workspaceId } = useWorkspace()
-	const navigate = useNavigate()
-
 	const filterTabs = [
 		{ label: 'All', value: undefined as string | undefined, count: unreadCount },
-		{ label: 'Mentions', value: 'mentions', count: mentionCount },
-		...Array.from(typeCounts.entries()).map(([type, count]) => ({
-			label: type.charAt(0).toUpperCase() + type.slice(1),
-			value: type,
-			count,
-		})),
+		...(mentionCount > 0 ? [{ label: 'Mentions', value: 'mentions', count: mentionCount }] : []),
+		...Array.from(typeCounts.entries())
+			.filter(([, count]) => count > 0)
+			.map(([type, count]) => ({
+				label: type.charAt(0).toUpperCase() + type.slice(1),
+				value: type,
+				count,
+			})),
 	]
 
 	return (
-		<header className="mb-2 flex flex-col gap-3">
-			<div className="flex items-center gap-3">
-				<h1 className="flex items-baseline gap-2 text-2xl font-semibold leading-tight tracking-tight">
-					For You
-					<span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground tabular-nums">
-						{unreadCount} unread
-					</span>
-				</h1>
-				<div className="ml-auto flex items-center gap-2">
-					<Button
-						variant="outline"
-						size="sm"
-						aria-label="Today's brief"
-						onClick={() => navigate({ to: '/$workspaceId/briefing', params: { workspaceId } })}
-						className="h-8 gap-1.5 px-2 sm:px-3"
-					>
-						<Newspaper size={14} aria-hidden />
-						<span className="hidden sm:inline">Today's brief</span>
-					</Button>
-					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							<Button size="sm" aria-label="New" className="h-8 gap-1.5 px-2 sm:px-3">
-								<Plus size={14} aria-hidden />
-								<span className="hidden sm:inline">New</span>
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end" className="min-w-[200px]">
-							<DropdownMenuItem onSelect={onStartConversation}>Start conversation</DropdownMenuItem>
-							<DropdownMenuSeparator />
-							<DropdownMenuItem onSelect={() => onCreateObject('bet')}>New bet</DropdownMenuItem>
-							<DropdownMenuItem onSelect={() => onCreateObject('insight')}>
-								New insight
-							</DropdownMenuItem>
-							<DropdownMenuItem onSelect={() => onCreateObject('task')}>New task</DropdownMenuItem>
-						</DropdownMenuContent>
-					</DropdownMenu>
-				</div>
-			</div>
-
+		<header className="mb-2">
 			<div className="flex items-center gap-2">
 				<div className="min-w-0 flex-1 overflow-x-auto">
 					<FilterTabs

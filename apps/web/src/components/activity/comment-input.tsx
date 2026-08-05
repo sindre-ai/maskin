@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCreateComment } from '@/hooks/use-events'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { formatSize } from '@/lib/file-utils'
@@ -29,8 +30,8 @@ function randomDraftId(): string {
 	return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-// ~5 lines at text-base (line-height 24px) + py-1.5 (12px) + 2px border
-const MAX_INPUT_HEIGHT_PX = 134
+// ~5 lines at text-base (line-height 24px) + py-1 (8px) + 2px border
+const MAX_INPUT_HEIGHT_PX = 130
 
 // Show the live character counter once the draft reaches this fraction of the
 // limit. Keeps the UI quiet for the common short-comment case.
@@ -46,6 +47,7 @@ export function CommentInput({
 	const actor = getStoredActor()
 	const createComment = useCreateComment(workspaceId, objectId)
 	const { data: actors } = useActors(workspaceId)
+	const isMobile = useIsMobile()
 
 	const [content, setContent] = useState('')
 	const [mentions, setMentions] = useState<string[]>([])
@@ -343,8 +345,8 @@ export function CommentInput({
 							<div
 								ref={overlayRef}
 								aria-hidden
-								className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-base"
-								style={{ minHeight: '32px' }}
+								className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-1 text-base"
+								style={{ minHeight: '28px' }}
 							>
 								<MentionedText
 									content={content}
@@ -365,12 +367,14 @@ export function CommentInput({
 								onChange={handleInput}
 								onKeyDown={handleKeyDown}
 								onScroll={handleScroll}
-								placeholder="Write a comment... Use @ to mention an agent"
+								placeholder={
+									isMobile ? 'Write a comment...' : 'Write a comment... Use @ to mention an agent'
+								}
 								rows={1}
 								wrap="soft"
 								aria-invalid={overLimit || undefined}
-								className="relative w-full resize-none overflow-x-hidden overflow-y-hidden break-words border-0 bg-transparent px-2 py-1.5 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
-								style={{ minHeight: '32px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
+								className="relative w-full resize-none overflow-x-hidden overflow-y-hidden break-words border-0 bg-transparent px-2 py-1 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
+								style={{ minHeight: '28px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
 							/>
 						</div>
 					</div>
