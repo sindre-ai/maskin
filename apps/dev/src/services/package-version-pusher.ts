@@ -205,17 +205,11 @@ export class PackageVersionPusher {
 			if (row.sourceItemId) sourceToLocal.set(row.sourceItemId, row.id)
 		}
 
-		// The cron has no request actor, so provisioned rows are attributed to a
-		// workspace actor (system actor if present, else any member). Resolved
-		// when there are adds (triggers/integrations require a NOT NULL created_by)
-		// or actor removes (cascade reassigns FK references on objects/files/etc.).
-		const hasActorRemoves = installed.some(
-			(row) =>
-				row.type === 'actor' && !(row.sourceItemId && catalogBySourceId.has(row.sourceItemId)),
-		)
-		const needsCreatedBy =
-			hasActorRemoves || catalogItems.some((item) => !installedBySourceId.has(item.sourceItemId))
-		const createdBy = needsCreatedBy ? await this.resolveWorkspaceActor(install.workspaceId) : null
+		// The cron has no request actor, so provisioned rows — and the audit event
+		// below — are attributed to a workspace actor (system actor if present,
+		// else any member). Always resolved: adds/actor-removes need it for FK
+		// attribution, and the events row always needs a non-null actorId.
+		const createdBy = await this.resolveWorkspaceActor(install.workspaceId)
 
 		let adds = 0
 		let updates = 0
@@ -494,6 +488,27 @@ export class PackageVersionPusher {
 				.update(installedPackages)
 				.set({ installedVersion: targetVersion, updatedAt: new Date() })
 				.where(eq(installedPackages.id, install.id))
+
+			if (createdBy) {
+				await tx.insert(events).values({
+					workspaceId: install.workspaceId,
+					actorId: createdBy,
+					action: 'updated',
+					entityType: 'installed_package',
+					entityId: install.id,
+					data: {
+						source_package_id: install.sourcePackageId,
+						from_version: install.installedVersion,
+						to_version: targetVersion,
+						items: { adds, updates, removes },
+					},
+				})
+			} else {
+				logger.warn('No workspace actor available to attribute package version push event', {
+					installId: install.id,
+					workspaceId: install.workspaceId,
+				})
+			}
 		})
 
 		for (const skillId of removedSkillIds) {

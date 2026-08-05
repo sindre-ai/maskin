@@ -30,8 +30,12 @@ import {
 	actorSnapshot,
 	skillSnapshot,
 	triggerSnapshot,
-} from './dev-agent-packages'
-import { getActorData, getSkillData, getTriggerData } from './package-data'
+} from '../src/lib/catalog-packages/dev-agent-packages'
+import {
+	getActorData,
+	getSkillData,
+	getTriggerData,
+} from '../src/lib/catalog-packages/package-data'
 
 const SOURCE_WORKSPACE_ID =
 	process.env.DEV_AGENT_PACKAGES_SOURCE_WORKSPACE_ID ?? DEV_AGENT_PACKAGES_SOURCE_WORKSPACE_ID

@@ -1,14 +1,14 @@
 import type { actors, triggers, workspaceSkills } from '@maskin/db/schema'
 import { describe, expect, it } from 'vitest'
 import {
-	DEV_PIPELINE_ACTOR_IDS,
-	DEV_PIPELINE_PACKAGE,
-	DEV_PIPELINE_SKILL_IDS,
-	DEV_PIPELINE_TRIGGER_IDS,
+	CCD_ACTOR_IDS,
+	CCD_PACKAGE,
+	CCD_SKILL_IDS,
+	CCD_TRIGGER_IDS,
 	actorSnapshot,
 	skillSnapshot,
 	triggerSnapshot,
-} from '../../../scripts/dev-pipeline-package'
+} from '../../../lib/catalog-packages/ccd-package'
 
 type ActorRow = typeof actors.$inferSelect
 type TriggerRow = typeof triggers.$inferSelect
@@ -27,7 +27,7 @@ function fakeActor(over: Partial<ActorRow> = {}): ActorRow {
 		tools: { allowed: ['done'] },
 		memory: { jobs_done: 42 },
 		llmProvider: 'anthropic',
-		llmConfig: { model: 'claude-sonnet-4-6' },
+		llmConfig: { model: 'claude-opus-4-7' },
 		isSystem: false,
 		agentState: 'idle',
 		agentStateUpdatedAt: new Date('2026-01-01'),
@@ -45,7 +45,7 @@ function fakeTrigger(over: Partial<TriggerRow> = {}): TriggerRow {
 		workspaceId: 'fe944fe6-7b45-478c-afc7-b889cea63c08',
 		name: 'Trigger',
 		type: 'event',
-		config: { entity_type: 'task', action: 'status_changed', to_status: 'in_progress' },
+		config: { entity_type: 'insight', action: 'created' },
 		actionPrompt: 'do the thing',
 		targetActorId: '11111111-1111-4111-9111-111111111111',
 		enabled: true,
@@ -77,25 +77,26 @@ function fakeSkill(over: Partial<SkillRow> = {}): SkillRow {
 	return { ...base, ...over }
 }
 
-describe('Development Pipeline package definition', () => {
-	it('uses the correct slug and metadata', () => {
-		expect(DEV_PIPELINE_PACKAGE.slug).toBe('development-pipeline')
-		expect(DEV_PIPELINE_PACKAGE.name).toBe('Development Pipeline')
-		expect(DEV_PIPELINE_PACKAGE.useCase).toBe('Development')
-		expect(DEV_PIPELINE_PACKAGE.version).toBe('1.0.0')
-		expect(DEV_PIPELINE_PACKAGE.description.length).toBeGreaterThan(0)
+describe('CCD package definition', () => {
+	it('uses the locked T6 copy', () => {
+		expect(CCD_PACKAGE.slug).toBe('customer-continuous-discovery')
+		expect(CCD_PACKAGE.name).toBe('Customer Continuous Discovery')
+		expect(CCD_PACKAGE.useCase).toBe('Discovery')
+		expect(CCD_PACKAGE.version).toBe('1.0.0')
+		expect(CCD_PACKAGE.description.length).toBeLessThanOrEqual(120)
+		expect(CCD_PACKAGE.description).toMatch(/feedback/)
 	})
 
-	it('ships two actors and five triggers, no duplicates', () => {
-		expect(DEV_PIPELINE_ACTOR_IDS.length).toBe(2)
-		expect(DEV_PIPELINE_TRIGGER_IDS.length).toBe(5)
-		expect(new Set(DEV_PIPELINE_ACTOR_IDS).size).toBe(DEV_PIPELINE_ACTOR_IDS.length)
-		expect(new Set(DEV_PIPELINE_TRIGGER_IDS).size).toBe(DEV_PIPELINE_TRIGGER_IDS.length)
+	it('ships three actors and seven triggers, no duplicates', () => {
+		expect(CCD_ACTOR_IDS.length).toBe(3)
+		expect(CCD_TRIGGER_IDS.length).toBe(7)
+		expect(new Set(CCD_ACTOR_IDS).size).toBe(CCD_ACTOR_IDS.length)
+		expect(new Set(CCD_TRIGGER_IDS).size).toBe(CCD_TRIGGER_IDS.length)
 	})
 
-	it('gives DEV_PIPELINE_SKILL_IDS an array shape, deduped — a skill may be shared across actors', () => {
-		expect(Array.isArray(DEV_PIPELINE_SKILL_IDS)).toBe(true)
-		expect(new Set(DEV_PIPELINE_SKILL_IDS).size).toBe(DEV_PIPELINE_SKILL_IDS.length)
+	it('gives CCD_SKILL_IDS an array shape, deduped — a skill may be shared across actors', () => {
+		expect(Array.isArray(CCD_SKILL_IDS)).toBe(true)
+		expect(new Set(CCD_SKILL_IDS).size).toBe(CCD_SKILL_IDS.length)
 	})
 })
 
@@ -117,15 +118,15 @@ describe('actorSnapshot', () => {
 		const snap = actorSnapshot(
 			fakeActor({
 				type: 'agent',
-				name: 'Developer',
-				systemPrompt: 'implement things',
+				name: 'Insights Triage Agent',
+				systemPrompt: 'cluster things',
 				tools: { allowed: ['create_object'] },
 			}),
 		)
 		expect(snap).toMatchObject({
 			type: 'agent',
-			name: 'Developer',
-			systemPrompt: 'implement things',
+			name: 'Insights Triage Agent',
+			systemPrompt: 'cluster things',
 			tools: { allowed: ['create_object'] },
 			llmProvider: 'anthropic',
 		})

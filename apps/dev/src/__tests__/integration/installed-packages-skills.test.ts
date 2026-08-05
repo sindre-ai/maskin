@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
+	events,
 	actors,
 	agentSkills,
 	catalogPackageItems,
@@ -450,6 +451,27 @@ describe('Installed Packages — Skills Integration', () => {
 				.where(eq(installedPackages.id, installed.id))
 			if (!inst) throw new Error('installed_packages row not found')
 			expect(inst.installedVersion).toBe('1.1.0')
+
+			// The re-provisioning is audited even though this push was update-only
+			// (no adds/removes) — the actor is still resolved for attribution.
+			const [versionPushEvent] = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityType, 'installed_package'),
+						eq(events.entityId, installed.id),
+						eq(events.action, 'updated'),
+					),
+				)
+			expect(versionPushEvent).toBeDefined()
+			expect(versionPushEvent?.workspaceId).toBe(workspaceId)
+			expect(versionPushEvent?.data).toMatchObject({
+				source_package_id: pkg.id,
+				from_version: '1.0.0',
+				to_version: '1.1.0',
+				items: { adds: 0, updates: 1, removes: 0 },
+			})
 		})
 	})
 })

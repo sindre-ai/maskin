@@ -27,8 +27,12 @@ import {
 	actorSnapshot,
 	skillSnapshot,
 	triggerSnapshot,
-} from './ccd-package'
-import { getActorData, getSkillData, getTriggerData } from './package-data'
+} from '../src/lib/catalog-packages/ccd-package'
+import {
+	getActorData,
+	getSkillData,
+	getTriggerData,
+} from '../src/lib/catalog-packages/package-data'
 
 const SOURCE_WORKSPACE_ID = process.env.CCD_SOURCE_WORKSPACE_ID ?? CCD_SOURCE_WORKSPACE_ID
 const FORCE = process.argv.includes('--force')

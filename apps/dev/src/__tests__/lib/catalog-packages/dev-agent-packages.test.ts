@@ -5,7 +5,7 @@ import {
 	actorSnapshot,
 	skillSnapshot,
 	triggerSnapshot,
-} from '../../../scripts/dev-agent-packages'
+} from '../../../lib/catalog-packages/dev-agent-packages'
 
 type ActorRow = typeof actors.$inferSelect
 type TriggerRow = typeof triggers.$inferSelect

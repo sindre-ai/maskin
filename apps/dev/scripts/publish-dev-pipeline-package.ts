@@ -26,8 +26,12 @@ import {
 	actorSnapshot,
 	skillSnapshot,
 	triggerSnapshot,
-} from './dev-pipeline-package'
-import { getActorData, getSkillData, getTriggerData } from './package-data'
+} from '../src/lib/catalog-packages/dev-pipeline-package'
+import {
+	getActorData,
+	getSkillData,
+	getTriggerData,
+} from '../src/lib/catalog-packages/package-data'
 
 const SOURCE_WORKSPACE_ID =
 	process.env.DEV_PIPELINE_SOURCE_WORKSPACE_ID ?? DEV_PIPELINE_SOURCE_WORKSPACE_ID

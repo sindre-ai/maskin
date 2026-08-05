@@ -157,15 +157,59 @@ describe('seedCatalogIfEmpty', () => {
 		expect(calls.inserts).toEqual([])
 	})
 
-	it('seeds the CCD package when the catalog is empty outside production', async () => {
+	it('seeds all 19 live catalog packages (CCD + dev pipeline + 17 single-agent) when the catalog is empty', async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults, calls } = createTestContext()
 		mockResults.select = [{ n: 0 }]
-		mockResults.insertQueue = [[{ id: 'pkg-1' }], []]
+		mockResults.insert = [{ id: 'pkg-1' }]
 
 		await seedCatalogIfEmpty(db)
 
-		expect(calls.inserts.length).toBeGreaterThan(0)
+		// Every package does one catalog_packages insert (values() called with a
+		// single object carrying `slug`) and one catalog_package_items insert
+		// (values() called with an array), in that order.
+		const packageInserts = calls.inserts.filter(
+			(v): v is { slug: string } =>
+				typeof v === 'object' && v !== null && !Array.isArray(v) && 'slug' in v,
+		)
+		const itemInserts = calls.inserts.filter((v): v is unknown[] => Array.isArray(v))
+
+		expect(packageInserts.length).toBe(19)
+		expect(itemInserts.length).toBe(19)
+
+		const slugs = packageInserts.map((p) => p.slug)
+		expect(new Set(slugs).size).toBe(19)
+		expect(slugs).toEqual(
+			expect.arrayContaining([
+				'customer-continuous-discovery',
+				'development-pipeline',
+				'planner',
+				'developer',
+				'architect',
+				'designer',
+				'code-reviewer',
+				'workspace-driver',
+				'customer-feedback-agent',
+				'insights-triage-agent',
+				'product-ideator',
+				'research-agent',
+				'summarization-agent',
+				'strategist',
+				'product-analyst',
+				'product-marketer',
+				'product-pricing-specialist',
+				'workspace-coach',
+				'retro-knowledge-author',
+			]),
+		)
+
+		// CCD is seeded first — it must ship the current, live 3-actor bundle
+		// (Customer Feedback Agent, Insights Triage Agent, Product Ideator), not
+		// the old hardcoded 4-actor bundle that still referenced the
+		// since-removed Customer Curator actor.
+		const ccdItems = itemInserts[0] as Array<{ itemType: string; sourceItemId: string }>
+		expect(ccdItems.filter((i) => i.itemType === 'actor').length).toBe(3)
+		expect(ccdItems.filter((i) => i.itemType === 'trigger').length).toBe(7)
 	})
 })
