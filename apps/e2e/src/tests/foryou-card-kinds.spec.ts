@@ -21,6 +21,12 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // Also locks the T6 contract: `data-card-kind` on the card root and
 // `data-action-id` on every affordance so instrumentation can wire without
 // restructuring.
+//
+// T7 rebuilt the feed into a single-card swipeable queue — only the current
+// head of the queue is ever mounted (see `ForYouCardQueue`'s `activeItems`).
+// So this spec drives the queue with the mutation-free "Keep unread" control
+// (`ForYouQueueCardHandle.skip`) to walk through all three kinds one at a
+// time, rather than asserting all three are on screen simultaneously.
 
 interface UnreadFixture {
 	entity_type: 'object'
@@ -80,45 +86,54 @@ async function mockThreeKinds(page: Page, workspaceId: string) {
 	})
 }
 
+// Advances the single-card queue via the mutation-free "Keep unread" control
+// so the next item becomes the current (and only) mounted card.
+async function skipCurrentCard(page: Page) {
+	await page.getByRole('button', { name: 'Keep unread' }).click()
+}
+
 for (const viewport of SHIP_GATE_VIEWPORTS) {
 	test.describe(`For You — three card kinds @ ${viewport.label}`, () => {
 		test.use({ viewport: { width: viewport.width, height: viewport.height } })
 
-		test('renders decision, sign_off, and proposed_bet with kind-specific affordances', async ({
+		test('cycles decision, sign_off, and proposed_bet with kind-specific affordances', async ({
 			page,
 			account,
 		}) => {
 			await mockThreeKinds(page, account.workspaceId)
 			await page.goto(`/${account.workspaceId}`)
 
-			// One card per kind, each exposing data-card-kind for T6.
+			// The single-card queue only ever mounts the current head — never all
+			// three kinds at once.
+			await expect(page.locator('[data-card-kind]')).toHaveCount(1)
+
+			// 1. Decision (queue head) → shaded footer with Approve + Send back.
 			const decision = page.locator('[data-card-kind="decision"]')
-			const signOff = page.locator('[data-card-kind="sign_off"]')
-			const proposedBet = page.locator('[data-card-kind="proposed_bet"]')
-
 			await expect(decision).toHaveCount(1)
-			await expect(signOff).toHaveCount(1)
-			await expect(proposedBet).toHaveCount(1)
-
-			// Decision → shaded footer with Approve + Send back.
-			const decisionFooter = decision.getByTestId('decision-footer')
-			await expect(decisionFooter).toBeVisible()
-			await expect(decisionFooter).toHaveClass(/bg-status-in_review-bg/)
+			const decisionBlock = decision.getByTestId('decision-block')
+			await expect(decisionBlock).toBeVisible()
+			await expect(decisionBlock).toHaveClass(/bg-status-in_review-bg/)
 			await expect(decision.getByRole('button', { name: 'Approve' })).toBeVisible()
 			await expect(decision.getByRole('button', { name: 'Send back' })).toBeVisible()
 			// Decision cards must NOT render the flat chip-row — the shaded
 			// footer IS their action zone. Softening this defeats the bet.
 			await expect(decision.getByTestId('chip-row')).toHaveCount(0)
 
-			// Sign-off → flat chip-row, NO shaded footer.
+			// 2. Sign-off → flat chip-row, NO shaded footer.
+			await skipCurrentCard(page)
+			const signOff = page.locator('[data-card-kind="sign_off"]')
+			await expect(signOff).toHaveCount(1)
 			await expect(signOff.getByTestId('chip-row')).toBeVisible()
-			await expect(signOff.getByTestId('decision-footer')).toHaveCount(0)
+			await expect(signOff.getByTestId('decision-block')).toHaveCount(0)
 			await expect(signOff.getByRole('button', { name: 'Sign off' })).toBeVisible()
 			await expect(signOff.getByRole('button', { name: 'Snooze 24h' })).toBeVisible()
 
-			// Proposed-bet → flat chip-row, NO shaded footer.
+			// 3. Proposed-bet → flat chip-row, NO shaded footer.
+			await skipCurrentCard(page)
+			const proposedBet = page.locator('[data-card-kind="proposed_bet"]')
+			await expect(proposedBet).toHaveCount(1)
 			await expect(proposedBet.getByTestId('chip-row')).toBeVisible()
-			await expect(proposedBet.getByTestId('decision-footer')).toHaveCount(0)
+			await expect(proposedBet.getByTestId('decision-block')).toHaveCount(0)
 			await expect(proposedBet.getByRole('button', { name: 'Open bet' })).toBeVisible()
 			await expect(proposedBet.getByRole('button', { name: 'Refine first' })).toBeVisible()
 		})
@@ -134,9 +149,11 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 			await expect(decision.locator('[data-action-id="approve"]')).toBeVisible()
 			await expect(decision.locator('[data-action-id="send_back"]')).toBeVisible()
 
+			await skipCurrentCard(page)
 			const signOff = page.locator('[data-card-kind="sign_off"]')
 			await expect(signOff.locator('[data-action-id="sign_off"]')).toBeVisible()
 
+			await skipCurrentCard(page)
 			const proposedBet = page.locator('[data-card-kind="proposed_bet"]')
 			await expect(proposedBet.locator('[data-action-id="open_bet"]')).toBeVisible()
 		})

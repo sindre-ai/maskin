@@ -68,7 +68,7 @@ test.describe('For You sparse composer', () => {
 	}) => {
 		await mockUnreadCount(page, account.workspaceId, 0)
 		await page.goto(`/${account.workspaceId}`)
-		await expect(page.getByText('All caught up')).toBeVisible()
+		await expect(page.getByText("You're caught up")).toBeVisible()
 		const composer = page.getByTestId('sparse-composer')
 		await expect(composer.getByLabel(COMPOSER_LABEL)).toBeVisible()
 		await expect(composer.getByRole('button', { name: 'Send message' })).toBeVisible()
@@ -164,16 +164,26 @@ test.describe('For You sparse composer', () => {
 			vv.dispatchEvent(new Event('resize'))
 		}, reducedHeight)
 
-		const inputBoxKeyboardUp = await input.boundingBox()
-		const sendBoxKeyboardUp = await sendButton.boundingBox()
-		if (!inputBoxKeyboardUp) throw new Error('input has no layout box with keyboard up')
-		if (!sendBoxKeyboardUp) throw new Error('send button has no layout box with keyboard up')
-		// Both controls must end below 0 (above the page top) and above the
-		// reduced visual viewport's bottom (i.e. above the simulated keyboard).
-		expect(inputBoxKeyboardUp.y).toBeGreaterThanOrEqual(0)
-		expect(sendBoxKeyboardUp.y).toBeGreaterThanOrEqual(0)
-		expect(inputBoxKeyboardUp.y + inputBoxKeyboardUp.height).toBeLessThanOrEqual(reducedHeight)
-		expect(sendBoxKeyboardUp.y + sendBoxKeyboardUp.height).toBeLessThanOrEqual(reducedHeight)
+		// The shift is applied via a React state update made from the resize
+		// listener (lands on the next render commit, not within the same
+		// synchronous turn as the dispatched event), and the wrapper animates via
+		// `transition-transform duration-150` (same pattern as the drag transform
+		// in foryou-queue-card.tsx) — so the rendered box takes a moment to settle
+		// into its final position after the style changes. Poll rather than
+		// reading a single frame mid-transition; a real iOS keyboard's own rise
+		// animation (~250ms) makes this settle time invisible in practice.
+		await expect(async () => {
+			const inputBoxKeyboardUp = await input.boundingBox()
+			const sendBoxKeyboardUp = await sendButton.boundingBox()
+			if (!inputBoxKeyboardUp) throw new Error('input has no layout box with keyboard up')
+			if (!sendBoxKeyboardUp) throw new Error('send button has no layout box with keyboard up')
+			// Both controls must end below 0 (above the page top) and above the
+			// reduced visual viewport's bottom (i.e. above the simulated keyboard).
+			expect(inputBoxKeyboardUp.y).toBeGreaterThanOrEqual(0)
+			expect(sendBoxKeyboardUp.y).toBeGreaterThanOrEqual(0)
+			expect(inputBoxKeyboardUp.y + inputBoxKeyboardUp.height).toBeLessThanOrEqual(reducedHeight)
+			expect(sendBoxKeyboardUp.y + sendBoxKeyboardUp.height).toBeLessThanOrEqual(reducedHeight)
+		}).toPass({ timeout: 1_000 })
 
 		// Submit fires while the keyboard is "up" — Enter on the focused
 		// textarea, not a click on the button (which on real iOS would dismiss

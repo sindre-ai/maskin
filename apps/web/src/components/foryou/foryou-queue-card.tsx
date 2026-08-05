@@ -420,7 +420,10 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 						)}
 
 						{!decisionActions && (
-							<div className="mb-3 flex gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+							<div
+								data-testid="chip-row"
+								className="mb-3 flex gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+							>
 								{chipActions.map((action) => (
 									<button
 										key={action.id}
