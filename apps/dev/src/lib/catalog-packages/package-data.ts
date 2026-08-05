@@ -12,14 +12,14 @@
 // or published — see package-snapshot.ts stripMcpServers for the redundant
 // runtime guard.
 
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type {
 	ActorSnapshotSource,
 	SkillSnapshotSource,
 	TriggerSnapshotSource,
 } from './package-snapshot'
+import devActorsData from './data/dev-actors.json'
+import devSkillsData from './data/dev-skills.json'
+import devTriggersData from './data/dev-triggers.json'
 
 export interface ActorData extends ActorSnapshotSource {
 	id: string
@@ -55,22 +55,11 @@ export interface CatalogPackageSeedConfig {
 	skillIds: readonly string[]
 }
 
-const dataDir = join(dirname(fileURLToPath(import.meta.url)), 'data')
+const actorsById = devActorsData as Record<string, ActorData>
 
-const actorsById = JSON.parse(readFileSync(join(dataDir, 'dev-actors.json'), 'utf8')) as Record<
-	string,
-	ActorData
->
+const triggersById = devTriggersData as Record<string, TriggerData>
 
-const triggersById = JSON.parse(readFileSync(join(dataDir, 'dev-triggers.json'), 'utf8')) as Record<
-	string,
-	TriggerData
->
-
-const skillsById = JSON.parse(readFileSync(join(dataDir, 'dev-skills.json'), 'utf8')) as Record<
-	string,
-	SkillData
->
+const skillsById = devSkillsData as Record<string, SkillData>
 
 export function getActorData(id: string): ActorData {
 	const actor = actorsById[id]
