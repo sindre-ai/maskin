@@ -57,10 +57,7 @@ test.describe('Sticky nav — bet identity', () => {
 		})
 	}
 
-	test('sticky chip smooth-scrolls back to hero and focuses the status picker', async ({
-		page,
-		account,
-	}) => {
+	test('sticky chip smooth-scrolls back to the hero identity row', async ({ page, account }) => {
 		await page.setViewportSize(WIDE_DESKTOP)
 
 		const bet = await account.api.createObject(account.workspaceId, {
@@ -84,10 +81,10 @@ test.describe('Sticky nav — bet identity', () => {
 		await expect(chip).toBeVisible()
 		await chip.click()
 
-		// The scrollIntoView('smooth') plus the deferred focus land the user back
-		// on the hero StatusSelect trigger. Give the smooth-scroll a beat.
-		const trigger = page.locator('[data-hero-status-trigger]')
-		await expect(trigger).toBeFocused({ timeout: 2000 })
+		// The scrollIntoView('smooth') lands the user back on the hero identity
+		// row.
+		const identityRow = page.getByTestId('object-identity-row')
+		await expect(identityRow).toBeInViewport({ timeout: 2000 })
 	})
 
 	test('header stays at 44px across all three widths', async ({ page, account }) => {

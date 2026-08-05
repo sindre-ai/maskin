@@ -31,7 +31,6 @@ import type {
 	ObjectResponse,
 	RelationshipResponse,
 } from '@/lib/api'
-import { classifyBetStatus } from '@/lib/bet-status'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
@@ -41,7 +40,6 @@ import { ActionBanner } from '../activity/action-banner'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
 import { AgentWorkingBadge } from '../shared/agent-working-badge'
-import { IndicatorBadgeChip } from '../shared/indicator-badge'
 import { MarkdownContent } from '../shared/markdown-content'
 import { SourceBadge } from '../shared/source-badge'
 import { StatusBadge } from '../shared/status-badge'
@@ -50,24 +48,18 @@ import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { LoopCard } from './loop-card'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
-import { OwnerSelect, StatusSelect } from './property-selects'
+import { OwnerSelect } from './property-selects'
 import { VerifiedChip, isKnowledgeAuthorWrite } from './verified-chip'
 
 interface ObjectDocumentViewProps {
 	object: ObjectResponse
 	workspaceId: string
-	statuses: string[]
 	members?: MemberResponse[]
 	allRelationships?: RelationshipResponse[]
 	connectedObjects?: ObjectResponse[]
 	events?: EventResponse[]
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
-	onUpdateStatus: (status: string) => void
-	// Optional archive route — when provided, picking `archived` in the status
-	// picker is dispatched here instead of `onUpdateStatus`, keeping the
-	// single-handler contract with the row's Archive menu action.
-	onArchive?: () => void
 	onUpdateDriver: (driver: string | null) => void
 	onDeleteRelationship?: (relationshipId: string) => void
 	onDelete: () => void
@@ -75,15 +67,12 @@ interface ObjectDocumentViewProps {
 	isVerifying?: boolean
 	isDeleting?: boolean
 	showSaved?: boolean
-	betStatus?: ReturnType<typeof classifyBetStatus>
 	// False only when `object.content` genuinely wasn't fetched (e.g. an MCP
 	// `get_objects` response without `include: ['content']`) — as opposed to
 	// the object legitimately having no content. Callers that always fetch the
 	// full object (the webapp page) never need to set this.
 	contentLoaded?: boolean
 	// Marker for the sticky-nav IntersectionObserver + smooth-scroll target.
-	// Attached to the metadata badges row (which also hosts StatusSelect) so
-	// the sticky chip can land the user right on the picker.
 	heroIdentityRef?: React.Ref<HTMLDivElement>
 }
 
@@ -116,15 +105,12 @@ function KnowledgeReferencesChip({
 export function ObjectDocumentView({
 	object,
 	workspaceId,
-	statuses,
 	members,
 	allRelationships,
 	connectedObjects,
 	events,
 	onUpdateTitle,
 	onUpdateContent,
-	onUpdateStatus,
-	onArchive,
 	onUpdateDriver,
 	onDeleteRelationship,
 	onDelete,
@@ -132,7 +118,6 @@ export function ObjectDocumentView({
 	isVerifying = false,
 	isDeleting = false,
 	showSaved = false,
-	betStatus,
 	contentLoaded = true,
 	heroIdentityRef,
 }: ObjectDocumentViewProps) {
@@ -159,48 +144,22 @@ export function ObjectDocumentView({
 		[onUpdateContent],
 	)
 
-	// One handler, two entry points: the status picker's `archived` option
-	// dispatches to the same archive route as the row Archive menu. Falls back
-	// to the generic status update if no archive handler was supplied — the
-	// dropdown item is still there because the workspace's bet status enum
-	// includes `archived`, but without a bet-typed object it just moves the
-	// status like any other value.
-	const handleStatusChange = useCallback(
-		(status: string) => {
-			if (status === 'archived' && onArchive && object.type === 'bet') {
-				onArchive()
-				return
-			}
-			onUpdateStatus(status)
-		},
-		[onUpdateStatus, onArchive, object.type],
-	)
-
 	return (
 		<div className="w-full min-w-0 max-w-3xl mx-auto">
-			{/* Identity row — TypeBadge, status, bet-status chip, driver hoisted
-			 * above the title so type/state/owner are readable before the reader
-			 * scans past the h1. Subscribe + creator + timestamps moved to the
-			 * right-side properties sidebar. Anchors the sticky-nav sprout-back:
-			 * when this row scrolls out, the header projects title + read-only
-			 * chip; tapping the chip smooth-scrolls here and focuses
-			 * [data-hero-status-trigger]. */}
-			<div ref={heroIdentityRef} className="flex flex-wrap items-center gap-2 mb-3">
+			{/* Identity row — TypeBadge and driver hoisted above the title so
+			 * type/owner are readable before the reader scans past the h1. Status
+			 * and the bet-status chip live in the properties sidebar instead.
+			 * Subscribe + creator + timestamps moved to the right-side properties
+			 * sidebar. Anchors the sticky-nav sprout-back: when this row scrolls
+			 * out, the header projects title + read-only status chip; tapping the
+			 * chip smooth-scrolls back here. */}
+			<div
+				ref={heroIdentityRef}
+				data-testid="object-identity-row"
+				className="flex flex-wrap items-center gap-2 mb-3"
+			>
 				<TypeBadge type={object.type} />
 				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
-				{statuses.length > 0 ? (
-					<StatusSelect
-						current={object.status}
-						options={statuses}
-						onChange={handleStatusChange}
-						heroAnchor
-					/>
-				) : (
-					<StatusBadge status={object.status} />
-				)}
-				{object.type === 'bet' && betStatus && (
-					<IndicatorBadgeChip result={betStatus} workspaceId={workspaceId} />
-				)}
 				{isKnowledgeAuthorWrite(object) && onToggleVerified && (
 					<VerifiedChip
 						object={object}
@@ -337,22 +296,6 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 
 	const settings = workspace.settings as Record<string, unknown>
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[object.type] ?? []
-
-	// Bets get a `waiting/progressing/stalled/idle` chip in the header. Classify
-	// over child tasks derived from `breaks_into` relationships already loaded
-	// by `useObjectGraph` — no extra API call.
-	const betStatus = useMemo(() => {
-		if (object.type !== 'bet' || !graph) return undefined
-		const childTaskIds = new Set<string>()
-		for (const rel of graph.relationships) {
-			if (rel.type !== 'breaks_into' || rel.sourceId !== object.id) continue
-			childTaskIds.add(rel.targetId)
-		}
-		const childTasks = graph.connected_objects.filter(
-			(o) => o.type === 'task' && childTaskIds.has(o.id),
-		)
-		return classifyBetStatus(object, childTasks)
-	}, [object, graph])
 
 	const handleUpdateTitle = useCallback(
 		(title: string) => {
@@ -604,13 +547,6 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		const target = heroIdentityRef.current
 		if (!target) return
 		target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-		// Focus lands on the status trigger once the smooth-scroll settles —
-		// progressive disclosure per the design (chip is read-only in the header;
-		// editing happens against the same StatusSelect the hero renders).
-		window.setTimeout(() => {
-			const trigger = document.querySelector<HTMLElement>('[data-hero-status-trigger]')
-			trigger?.focus()
-		}, 400)
 	}, [])
 
 	const stickyIdentity =
@@ -685,22 +621,18 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				<ObjectDocumentView
 					object={object}
 					workspaceId={workspaceId}
-					statuses={statuses}
 					members={members}
 					allRelationships={allRelationships}
 					connectedObjects={graph?.connected_objects}
 					events={events}
 					onUpdateTitle={handleUpdateTitle}
 					onUpdateContent={handleUpdateContent}
-					onUpdateStatus={handleUpdateStatus}
-					onArchive={handleArchive}
 					onUpdateDriver={handleUpdateDriver}
 					onDeleteRelationship={handleDeleteRelationship}
 					onDelete={handleDelete}
 					onToggleVerified={handleToggleVerified}
 					isVerifying={verifyObject.isPending}
 					isDeleting={deleteObject.isPending}
-					betStatus={betStatus}
 					heroIdentityRef={heroIdentityRef}
 				/>
 			</div>
