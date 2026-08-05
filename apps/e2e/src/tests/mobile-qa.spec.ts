@@ -41,7 +41,9 @@ async function assertReplyButtonVisibleOnObjectDetail(
 // Mirrors useIsMobile()'s 768px boundary (apps/web/src/hooks/use-mobile.tsx) —
 // comment-input.tsx shortens its placeholder below that width.
 function commentPlaceholderFor(viewport: NamedViewport): string {
-	return viewport.width < 768 ? 'Write a comment...' : 'Write a comment... Use @ to mention an agent'
+	return viewport.width < 768
+		? 'Write a comment...'
+		: 'Write a comment... Use @ to mention an agent'
 }
 
 async function assertCommentComposerVisible(page: Page, surface: string, viewport: NamedViewport) {

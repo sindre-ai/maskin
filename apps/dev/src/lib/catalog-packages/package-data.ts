@@ -12,14 +12,14 @@
 // or published — see package-snapshot.ts stripMcpServers for the redundant
 // runtime guard.
 
+import devActorsData from './data/dev-actors.json'
+import devSkillsData from './data/dev-skills.json'
+import devTriggersData from './data/dev-triggers.json'
 import type {
 	ActorSnapshotSource,
 	SkillSnapshotSource,
 	TriggerSnapshotSource,
 } from './package-snapshot'
-import devActorsData from './data/dev-actors.json'
-import devSkillsData from './data/dev-skills.json'
-import devTriggersData from './data/dev-triggers.json'
 
 export interface ActorData extends ActorSnapshotSource {
 	id: string
