@@ -10,8 +10,10 @@ import {
 	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
+	trackForyouCardAction,
 	trackForyouCardMarkedRead,
 	trackForyouCardMarkedUnread,
+	trackForyouCardShown,
 	trackLoopGraduated,
 	trackLoopViewed,
 	trackNavItemClicked,
@@ -623,6 +625,35 @@ describe('v1 taxonomy helpers', () => {
 				entity_id: 'task-9',
 				mobile: true,
 				via: 'swipe',
+			})
+		})
+	})
+
+	describe('foryou_card_shown / foryou_card_action (Direction A instrumentation)', () => {
+		it('foryou_card_shown carries card_kind + card_id for the denominator', () => {
+			const capture = captureSpy()
+
+			trackForyouCardShown({ card_kind: 'decision', card_id: 'bet-1' })
+
+			expect(capture).toHaveBeenCalledWith('foryou_card_shown', {
+				card_kind: 'decision',
+				card_id: 'bet-1',
+			})
+		})
+
+		it('foryou_card_action carries card_kind + card_id + action_id for the numerator', () => {
+			const capture = captureSpy()
+
+			trackForyouCardAction({
+				card_kind: 'decision',
+				card_id: 'bet-1',
+				action_id: 'quick_reply:approved',
+			})
+
+			expect(capture).toHaveBeenCalledWith('foryou_card_action', {
+				card_kind: 'decision',
+				card_id: 'bet-1',
+				action_id: 'quick_reply:approved',
 			})
 		})
 	})

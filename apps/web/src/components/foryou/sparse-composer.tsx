@@ -37,9 +37,38 @@ export function SparseComposer({ itemsCount, onFocusChange }: SparseComposerProp
 	const [chipSending, setChipSending] = useState(false)
 	const [chipError, setChipError] = useState<string | null>(null)
 	const [focused, setFocused] = useState(false)
+	// Read inside the visualViewport listener instead of `focused` directly —
+	// the listener is attached once on mount (see below), so it must see focus
+	// changes synchronously rather than waiting for the subscribing effect to
+	// re-run after a render, which loses events that fire in that gap (e.g. a
+	// keyboard-open resize dispatched right after focus).
+	const focusedRef = useRef(false)
+	// iOS Safari shrinks `visualViewport` (not `window.innerHeight`) when the
+	// on-screen keyboard rises, so a normal-flow element can end up hidden
+	// behind it. While focused, track how far the visual viewport has been
+	// pushed up and shift the composer by that amount so it stays reachable.
+	const [keyboardInset, setKeyboardInset] = useState(0)
 
 	useEffect(() => {
 		trackForyouSparseComposerShown({ items_count: mountedItemsCount.current })
+	}, [])
+
+	useEffect(() => {
+		const vv = window.visualViewport
+		if (!vv) return
+		const updateInset = () => {
+			if (!focusedRef.current) {
+				setKeyboardInset(0)
+				return
+			}
+			setKeyboardInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop))
+		}
+		vv.addEventListener('resize', updateInset)
+		vv.addEventListener('scroll', updateInset)
+		return () => {
+			vv.removeEventListener('resize', updateInset)
+			vv.removeEventListener('scroll', updateInset)
+		}
 	}, [])
 
 	const onSend = useCallback(
@@ -96,9 +125,11 @@ export function SparseComposer({ itemsCount, onFocusChange }: SparseComposerProp
 
 	return (
 		<div
-			className="mx-auto space-y-2 md:max-w-2xl"
+			className="mx-auto space-y-2 transition-transform duration-150 md:max-w-2xl"
+			style={keyboardInset > 0 ? { transform: `translateY(-${keyboardInset}px)` } : undefined}
 			onFocus={() => {
 				if (focused) return
+				focusedRef.current = true
 				setFocused(true)
 				onFocusChange?.(true)
 			}}
@@ -107,7 +138,9 @@ export function SparseComposer({ itemsCount, onFocusChange }: SparseComposerProp
 				// slash-picker buttons, send button) — only report unfocused once
 				// focus actually leaves the whole composer.
 				if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+				focusedRef.current = false
 				setFocused(false)
+				setKeyboardInset(0)
 				onFocusChange?.(false)
 			}}
 		>
