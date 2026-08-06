@@ -476,7 +476,7 @@ function LLMKeysEditor({
 			delete updatedKeys[provider]
 		}
 		updateWorkspace.mutate({
-			settings: { ...settings, llm_keys: updatedKeys },
+			settings: { llm_keys: updatedKeys },
 		})
 	}
 
@@ -566,7 +566,7 @@ function CustomLlmEditor({
 			small_fast_model: smallModel.trim() || null,
 		}
 		updateWorkspace.mutate({
-			settings: { ...settings, custom_llm: next },
+			settings: { custom_llm: next },
 		})
 	}
 
