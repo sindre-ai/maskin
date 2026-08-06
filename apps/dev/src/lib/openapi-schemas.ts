@@ -94,6 +94,7 @@ export const workspaceResponseSchema = z.object({
 	name: z.string(),
 	settings: jsonbField.transform((v) => v ?? {}),
 	onboardingEnabled: z.boolean(),
+	byollmAllowed: z.boolean(),
 	createdBy: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),

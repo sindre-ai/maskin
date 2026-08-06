@@ -23,6 +23,7 @@ import {
 	billingAfterByoTransition,
 	cancelActivePaidSubscription,
 	hasActivePaidPlan,
+	patchAddsAnyByoCredential,
 	patchAddsByoSource,
 } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
@@ -249,6 +250,10 @@ const updateWorkspaceRoute = createRoute({
 			description: 'Invalid request',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		403: {
+			description: 'Workspace is not entitled to BYO LLM credentials',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Workspace not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -288,6 +293,20 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		// are treated as deletions.
 		const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
 		if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+		// Entitlement gate: every workspace defaults to the Maskin-provided LLM
+		// plan; only ops-flagged exception workspaces may add a BYO Anthropic/
+		// OpenAI key or enable custom_llm. See PR #970.
+		if (!existing.byollmAllowed && patchAddsAnyByoCredential(body.settings)) {
+			return c.json(
+				createApiError(
+					'FORBIDDEN',
+					'This workspace is on the Maskin-provided LLM plan and cannot add BYO LLM credentials',
+				),
+				403,
+			)
+		}
+
 		const existingSettings = (existing.settings ?? {}) as Record<string, unknown>
 		const merged: Record<string, unknown> = { ...existingSettings, ...body.settings }
 		if (body.settings.llm_keys) {
@@ -443,9 +462,13 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a workspace owner'), 403)
 	}
 
+	const adminUpdate: Record<string, unknown> = { updatedAt: new Date() }
+	if (body.onboarding_enabled !== undefined) adminUpdate.onboardingEnabled = body.onboarding_enabled
+	if (body.byollm_allowed !== undefined) adminUpdate.byollmAllowed = body.byollm_allowed
+
 	const [updated] = await db
 		.update(workspaces)
-		.set({ onboardingEnabled: body.onboarding_enabled, updatedAt: new Date() })
+		.set(adminUpdate)
 		.where(eq(workspaces.id, id))
 		.returning()
 

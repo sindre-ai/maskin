@@ -117,6 +117,7 @@ describe('resolveLlmRoute priority order', () => {
 		db: dbWithFallbackUsage([]),
 		workspaceId: 'ws-1',
 		actorId: 'actor-1',
+		byollmAllowed: true,
 	}
 
 	it('1. agent anthropic api_key wins over everything', async () => {
@@ -189,6 +190,7 @@ describe('resolveLlmRoute priority order', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			wsSettings: settings,
+			byollmAllowed: true,
 			agent: {},
 		})
 		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
@@ -246,6 +248,7 @@ describe('resolveLlmRoute priority order', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			wsSettings: settings,
+			byollmAllowed: true,
 			agent: {},
 		})
 		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
@@ -276,6 +279,7 @@ describe('resolveLlmRoute priority order', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			wsSettings: emptySettings(),
+			byollmAllowed: true,
 			agent: { model: 'claude-sonnet-4-6' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
@@ -324,6 +328,7 @@ describe('resolveLlmRoute priority order', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			wsSettings: settings,
+			byollmAllowed: true,
 			agent: {},
 		})
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
@@ -629,7 +634,9 @@ describe('checkPlanCap', () => {
 			resolveLlmRoute({
 				db,
 				workspaceId: 'ws-1',
+				actorId: 'actor-1',
 				wsSettings: settings,
+				byollmAllowed: false,
 				agent: {},
 			}),
 		).rejects.toBeInstanceOf(PlanCapExceededError)

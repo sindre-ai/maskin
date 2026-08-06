@@ -136,6 +136,7 @@ export function buildWorkspaceWithRole(
 		id,
 		name: 'Test Workspace',
 		settings: {},
+		byollmAllowed: false,
 		role: 'admin',
 		createdBy: 'actor-1',
 		createdAt: null,

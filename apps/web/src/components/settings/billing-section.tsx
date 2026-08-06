@@ -72,7 +72,13 @@ function statusBadge(plan: BillingPlan, status: BillingStatus): { label: string;
 	return { label: status, tone: 'bg-muted text-muted-foreground' }
 }
 
-export function BillingSection({ workspaceId }: { workspaceId: string }) {
+export function BillingSection({
+	workspaceId,
+	byollmAllowed = false,
+}: {
+	workspaceId: string
+	byollmAllowed?: boolean
+}) {
 	const usageQuery = useBillingUsage(workspaceId)
 	const checkout = useStripeCheckout(workspaceId)
 	const [switchOpen, setSwitchOpen] = useState(false)
@@ -216,7 +222,7 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 					)}
 					{isPaid && usage.status === 'active' && (
 						<Button size="sm" variant="ghost" onClick={() => setSwitchOpen(true)}>
-							Downgrade to Free
+							{byollmAllowed ? 'Downgrade to Free' : 'Cancel subscription'}
 						</Button>
 					)}
 				</div>
@@ -228,7 +234,12 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 				)}
 			</div>
 
-			<DowngradeDialog open={switchOpen} onOpenChange={setSwitchOpen} workspaceId={workspaceId} />
+			<DowngradeDialog
+				open={switchOpen}
+				onOpenChange={setSwitchOpen}
+				workspaceId={workspaceId}
+				byollmAllowed={byollmAllowed}
+			/>
 		</div>
 	)
 }
@@ -237,10 +248,12 @@ function DowngradeDialog({
 	open,
 	onOpenChange,
 	workspaceId,
+	byollmAllowed,
 }: {
 	open: boolean
 	onOpenChange: (open: boolean) => void
 	workspaceId: string
+	byollmAllowed: boolean
 }) {
 	const cancel = useBillingCancel(workspaceId)
 
@@ -252,10 +265,11 @@ function DowngradeDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>Downgrade to Free?</DialogTitle>
+					<DialogTitle>{byollmAllowed ? 'Downgrade to Free?' : 'Cancel subscription?'}</DialogTitle>
 					<DialogDescription>
-						You'll lose access to Maskin's hosted LLM and your remaining token credits for this
-						period. You won't be charged again.
+						{byollmAllowed
+							? "You'll lose access to Maskin's hosted LLM and your remaining token credits for this period. You won't be charged again."
+							: "You'll go back to the free trial plan with Maskin's hosted LLM, on the trial's lower usage cap. You won't be charged again."}
 					</DialogDescription>
 				</DialogHeader>
 				{cancel.isError && (

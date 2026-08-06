@@ -262,13 +262,19 @@ function buildMaskinPlanEnv(
  *   4. Workspace anthropic api_key (`settings.llm_keys.anthropic`)
  *   5. Maskin plan (starter/pro/trial) — Maskin's funded OR account, counts against cap
  *
- * BYO credentials (2-4) always take precedence over the Maskin-funded route so
+ * BYO credentials (1-4) always take precedence over the Maskin-funded route so
  * a connected Claude subscription or custom endpoint is never bypassed and never
  * counts against the workspace's token cap. Returns null when no credentials are
  * available (session fails to start rather than silently consuming Maskin tokens).
  *
+ * Routes 1 (anthropic branch only), 2, 3, and 4 are all BYO credentials and are
+ * only reachable when `byollmAllowed` is true — every workspace defaults to the
+ * Maskin plan, and only ops-flagged exception workspaces may bring their own
+ * Claude subscription / endpoint / key. See PR #970.
+ *
  * Returns null if the agent uses a non-anthropic provider (e.g. OpenAI native);
- * caller continues to handle OPENAI_API_KEY injection itself.
+ * caller continues to handle OPENAI_API_KEY injection itself (also gated on
+ * `byollmAllowed` — see session-manager.ts).
  *
  * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1, #3,
  * and #4 (the routes that don't already carry an explicit model of their
@@ -281,6 +287,8 @@ export async function resolveLlmRoute(params: {
 	actorId: string
 	wsSettings: WorkspaceSettings
 	agent: AgentLlmConfig
+	/** Workspace entitlement to BYO LLM credentials. Defaults false. */
+	byollmAllowed: boolean
 	/**
 	 * Overrides the default `probeClaudeSubscription` probe used by the
 	 * failover path when `MASKIN_CLAUDE_FAILOVER_ENABLED=true`. Only tests
@@ -290,70 +298,76 @@ export async function resolveLlmRoute(params: {
 	 */
 	claudeProbe?: SubscriptionProbe
 }): Promise<LlmRoutingResult | null> {
-	const { db, workspaceId, actorId, wsSettings, agent, claudeProbe } = params
+	const { db, workspaceId, actorId, wsSettings, agent, byollmAllowed, claudeProbe } = params
 
 	// 1. Agent-level override — only handled here for anthropic; non-anthropic
-	//    providers fall through to caller (matches existing behavior).
+	//    providers fall through to caller (matches existing behavior). The
+	//    anthropic branch is a BYO credential, so it's gated like routes 2-4.
 	if (agent.apiKey) {
 		if (agent.provider === 'anthropic') {
-			const envVars: Record<string, string> = { ANTHROPIC_API_KEY: agent.apiKey }
+			if (byollmAllowed) {
+				const envVars: Record<string, string> = { ANTHROPIC_API_KEY: agent.apiKey }
+				if (agent.model) {
+					envVars.ANTHROPIC_MODEL = agent.model
+				}
+				return { route: LLM_ROUTE_AGENT, envVars }
+			}
+		} else {
+			// caller (session-manager) handles OPENAI_API_KEY etc.
+			return null
+		}
+	}
+
+	if (byollmAllowed) {
+		// 2. Claude OAuth subscription — checked first among BYO routes so a
+		//    connected Pro/Max subscription is always preferred over custom endpoints
+		//    and never consumes maskin plan tokens. Primary→backup failover kicks in
+		//    when MASKIN_CLAUDE_FAILOVER_ENABLED is set; otherwise legacy
+		//    primary-only behaviour applies.
+		try {
+			const oauthResult = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId,
+				actorId,
+				probe: claudeProbe,
+			})
+			if (oauthResult) {
+				const envVars: Record<string, string> = {
+					CLAUDE_OAUTH_ACCESS_TOKEN: oauthResult.tokens.accessToken,
+					CLAUDE_OAUTH_REFRESH_TOKEN: oauthResult.tokens.refreshToken,
+					CLAUDE_OAUTH_EXPIRES_AT: String(oauthResult.tokens.expiresAt),
+				}
+				if (oauthResult.tokens.scopes) {
+					envVars.CLAUDE_OAUTH_SCOPES = JSON.stringify(oauthResult.tokens.scopes)
+				}
+				if (oauthResult.tokens.subscriptionType) {
+					envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
+				}
+				if (agent.model) {
+					envVars.ANTHROPIC_MODEL = agent.model
+				}
+				return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
+			}
+		} catch {
+			// Swallow OAuth errors and let the next route take over — the warning
+			// is logged by the caller for parity with the previous behavior.
+		}
+
+		// 3. Workspace custom_llm
+		const customEnv = buildCustomLlmEnv(wsSettings.custom_llm)
+		if (customEnv) {
+			return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
+		}
+
+		// 4. Workspace anthropic api key
+		const wsAnthropic = wsSettings.llm_keys?.anthropic
+		if (wsAnthropic) {
+			const envVars: Record<string, string> = { ANTHROPIC_API_KEY: wsAnthropic }
 			if (agent.model) {
 				envVars.ANTHROPIC_MODEL = agent.model
 			}
-			return { route: LLM_ROUTE_AGENT, envVars }
+			return { route: LLM_ROUTE_API_KEY, envVars }
 		}
-		// caller (session-manager) handles OPENAI_API_KEY etc.
-		return null
-	}
-
-	// 2. Claude OAuth subscription — checked first among BYO routes so a
-	//    connected Pro/Max subscription is always preferred over custom endpoints
-	//    and never consumes maskin plan tokens. Primary→backup failover kicks in
-	//    when MASKIN_CLAUDE_FAILOVER_ENABLED is set; otherwise legacy
-	//    primary-only behaviour applies.
-	try {
-		const oauthResult = await resolveClaudeCredentialsWithFailover({
-			db,
-			workspaceId,
-			actorId,
-			probe: claudeProbe,
-		})
-		if (oauthResult) {
-			const envVars: Record<string, string> = {
-				CLAUDE_OAUTH_ACCESS_TOKEN: oauthResult.tokens.accessToken,
-				CLAUDE_OAUTH_REFRESH_TOKEN: oauthResult.tokens.refreshToken,
-				CLAUDE_OAUTH_EXPIRES_AT: String(oauthResult.tokens.expiresAt),
-			}
-			if (oauthResult.tokens.scopes) {
-				envVars.CLAUDE_OAUTH_SCOPES = JSON.stringify(oauthResult.tokens.scopes)
-			}
-			if (oauthResult.tokens.subscriptionType) {
-				envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
-			}
-			if (agent.model) {
-				envVars.ANTHROPIC_MODEL = agent.model
-			}
-			return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
-		}
-	} catch {
-		// Swallow OAuth errors and let the next route take over — the warning
-		// is logged by the caller for parity with the previous behavior.
-	}
-
-	// 3. Workspace custom_llm
-	const customEnv = buildCustomLlmEnv(wsSettings.custom_llm)
-	if (customEnv) {
-		return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
-	}
-
-	// 4. Workspace anthropic api key
-	const wsAnthropic = wsSettings.llm_keys?.anthropic
-	if (wsAnthropic) {
-		const envVars: Record<string, string> = { ANTHROPIC_API_KEY: wsAnthropic }
-		if (agent.model) {
-			envVars.ANTHROPIC_MODEL = agent.model
-		}
-		return { route: LLM_ROUTE_API_KEY, envVars }
 	}
 
 	// 5. Maskin plan (starter/pro/trial) — routed through Maskin's funded OR

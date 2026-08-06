@@ -124,3 +124,50 @@ export function patchAddsByoSource(patchSettings: Partial<WorkspaceSettings>): b
 	}
 	return false
 }
+
+/**
+ * Apply the billing half of a "Downgrade to Free" cancellation
+ * (`POST /api/billing/cancel`). Entitled workspaces land on `byollm` same as
+ * before (`billingAfterByoTransition`). Workspaces without BYO entitlement
+ * can't configure any BYO credential, so landing them on `byollm` would leave
+ * them with no working LLM at all (`byollm` is deliberately excluded from
+ * `MASKIN_PLAN_ROUTED_PLANS`) — they fall back to `trial` instead, with a
+ * fresh period_start so they get a clean trial allotment rather than
+ * inheriting their paid-period usage against the trial's much lower cap.
+ * See PR #970.
+ */
+export function billingAfterCancel(
+	current: WorkspaceSettings['billing'] | undefined,
+	byollmAllowed: boolean,
+): WorkspaceSettings['billing'] | undefined {
+	if (byollmAllowed) return billingAfterByoTransition(current)
+	if (!current) return undefined
+	if (
+		!current.stripe_subscription_id &&
+		current.status === 'canceled' &&
+		current.plan === 'trial'
+	) {
+		return current
+	}
+	return {
+		...current,
+		plan: 'trial',
+		stripe_subscription_id: null,
+		status: 'canceled',
+		period_start: Math.floor(Date.now() / 1000),
+		hard_cap_tokens: null,
+	}
+}
+
+/**
+ * `true` when the incoming PATCH body adds/enables ANY BYO LLM credential —
+ * Anthropic key, OpenAI key, or custom_llm. Broader than `patchAddsByoSource`
+ * (which only covers the two sources that participate in the paid-plan
+ * mutex): this gate is the workspace-entitlement check that blocks every BYO
+ * credential path for workspaces not flagged `byollmAllowed`. See PR #970.
+ */
+export function patchAddsAnyByoCredential(patchSettings: Partial<WorkspaceSettings>): boolean {
+	if (patchAddsByoSource(patchSettings)) return true
+	if (patchSettings.llm_keys && typeof patchSettings.llm_keys.openai === 'string') return true
+	return false
+}

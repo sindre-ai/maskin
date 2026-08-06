@@ -1202,6 +1202,7 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
 		const wsLlmKeys = wsSettings.llm_keys ?? {}
+		const byollmAllowed = ws?.byollmAllowed ?? false
 
 		let routeTaken: LlmRoute | null = null
 		let oauthSlotTaken: string | undefined
@@ -1211,6 +1212,7 @@ export class SessionManager extends EventEmitter {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				wsSettings,
+				byollmAllowed,
 				agent: {
 					provider: agent.llmProvider,
 					apiKey: (llmConfig.api_key as string | undefined) ?? null,
@@ -1235,13 +1237,17 @@ export class SessionManager extends EventEmitter {
 			throw err
 		}
 
-		// Non-anthropic agent override (OpenAI native via OPENAI_API_KEY).
-		if (llmConfig.api_key && agent.llmProvider === 'openai') {
-			envVars.OPENAI_API_KEY = llmConfig.api_key as string
-		}
-		// Workspace OpenAI key — independent of the anthropic-side routing above.
-		if (!llmConfig.api_key && wsLlmKeys.openai) {
-			envVars.OPENAI_API_KEY = wsLlmKeys.openai
+		// Non-anthropic agent override (OpenAI native via OPENAI_API_KEY) and the
+		// workspace-level OpenAI key are both BYO credentials, gated the same as
+		// the anthropic-side routes in resolveLlmRoute above.
+		if (byollmAllowed) {
+			if (llmConfig.api_key && agent.llmProvider === 'openai') {
+				envVars.OPENAI_API_KEY = llmConfig.api_key as string
+			}
+			// Workspace OpenAI key — independent of the anthropic-side routing above.
+			if (!llmConfig.api_key && wsLlmKeys.openai) {
+				envVars.OPENAI_API_KEY = wsLlmKeys.openai
+			}
 		}
 
 		// Persist the chosen route on the session config so cron-based quota

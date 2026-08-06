@@ -199,9 +199,17 @@ export const updateWorkspaceSchema = z.object({
 	settings: workspaceSettingsSchema.partial().optional(),
 })
 
-export const updateWorkspaceAdminSchema = z.object({
-	onboarding_enabled: z.boolean(),
-})
+export const updateWorkspaceAdminSchema = z
+	.object({
+		onboarding_enabled: z.boolean().optional(),
+		// Entitlement to BYO LLM credentials (Claude OAuth, custom_llm, llm_keys).
+		// Defaults to false for every workspace; only ops-flagged exceptions may
+		// bypass the Maskin-provided LLM plan. See PR #970.
+		byollm_allowed: z.boolean().optional(),
+	})
+	.refine((v) => v.onboarding_enabled !== undefined || v.byollm_allowed !== undefined, {
+		message: 'At least one of onboarding_enabled or byollm_allowed must be provided',
+	})
 
 export const workspaceParamsSchema = z.object({
 	id: z.string().uuid(),

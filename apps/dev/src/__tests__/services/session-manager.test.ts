@@ -295,7 +295,7 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -342,7 +342,7 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -382,7 +382,7 @@ describe('SessionManager', () => {
 				apiKey: null,
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -419,7 +419,7 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -457,6 +457,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
+				byollmAllowed: true,
 				settings: { llm_keys: { anthropic: 'sk-ant-ws' } },
 			}
 
@@ -505,6 +506,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
+				byollmAllowed: true,
 				settings: { llm_keys: { anthropic: 'sk-ant-ws' } },
 			}
 
@@ -552,6 +554,7 @@ describe('SessionManager', () => {
 			const expiresAt = Date.now() + 60 * 60 * 1000
 			const workspace = {
 				id: session.workspaceId,
+				byollmAllowed: true,
 				settings: {
 					llm_keys: { anthropic: 'sk-ant-ws' },
 					claude_oauth: {
@@ -614,7 +617,7 @@ describe('SessionManager', () => {
 		}
 
 		function buildTestWorkspace(workspaceId: string) {
-			return { id: workspaceId, settings: {} }
+			return { id: workspaceId, byollmAllowed: true, settings: {} }
 		}
 
 		beforeEach(() => {
@@ -759,7 +762,7 @@ describe('SessionManager', () => {
 		}
 
 		function buildTestWorkspace(workspaceId: string) {
-			return { id: workspaceId, settings: {} }
+			return { id: workspaceId, byollmAllowed: true, settings: {} }
 		}
 
 		beforeEach(() => {
@@ -976,7 +979,7 @@ describe('SessionManager', () => {
 			})
 			return {
 				session,
-				workspace: { id: session.workspaceId, settings: {} },
+				workspace: { id: session.workspaceId, byollmAllowed: true, settings: {} },
 				agent: {
 					id: session.actorId,
 					type: 'agent',
@@ -1348,7 +1351,7 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				containerId: null,
 			})
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 			const agent = {
 				id: session.actorId,
 				type: 'agent' as const,
@@ -2234,7 +2237,7 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -2276,7 +2279,7 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullAgentFiles').mockResolvedValue(undefined)
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({

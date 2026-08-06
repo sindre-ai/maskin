@@ -986,6 +986,7 @@ export interface WorkspaceResponse {
 	id: string
 	name: string
 	settings: Record<string, unknown>
+	byollmAllowed: boolean
 	createdBy: string | null
 	createdAt: string | null
 	updatedAt: string | null

@@ -28,22 +28,35 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/keys')({
 
 function KeysPage() {
 	const { workspace, workspaceId } = useWorkspace()
+	const byollmAllowed = Boolean(workspace.byollmAllowed)
 
 	return (
 		<div className="max-w-lg space-y-6">
-			<BillingSection workspaceId={workspaceId} />
+			<BillingSection workspaceId={workspaceId} byollmAllowed={byollmAllowed} />
 
-			<div className="border-t border-border pt-6">
-				<ClaudeOAuthSection workspaceId={workspaceId} />
-			</div>
+			{byollmAllowed ? (
+				<>
+					<div className="border-t border-border pt-6">
+						<ClaudeOAuthSection workspaceId={workspaceId} />
+					</div>
 
-			<div className="border-t border-border pt-6">
-				<LLMKeysEditor workspace={workspace} workspaceId={workspaceId} />
-			</div>
+					<div className="border-t border-border pt-6">
+						<LLMKeysEditor workspace={workspace} workspaceId={workspaceId} />
+					</div>
 
-			<div className="border-t border-border pt-6">
-				<CustomLlmEditor workspace={workspace} workspaceId={workspaceId} />
-			</div>
+					<div className="border-t border-border pt-6">
+						<CustomLlmEditor workspace={workspace} workspaceId={workspaceId} />
+					</div>
+				</>
+			) : (
+				<div className="border-t border-border pt-6" data-testid="byollm-disabled-notice">
+					<Label className="mb-1 text-bold">Claude Subscription & API Keys</Label>
+					<p className="text-xs text-muted-foreground">
+						This workspace uses the Maskin-provided LLM plan. Bringing your own Claude subscription,
+						API key, or custom endpoint isn't available here.
+					</p>
+				</div>
+			)}
 		</div>
 	)
 }

@@ -153,6 +153,12 @@ describe('Workspaces Integration', () => {
 			)
 			const ws = await createRes.json()
 
+			// New workspaces default to byollmAllowed: false — grant entitlement so
+			// this test can exercise the llm_keys deep-merge itself, not the gate.
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
+			)
+
 			await app.request(
 				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
 					settings: { llm_keys: { anthropic: 'sk-ant-AAA' } },
@@ -177,6 +183,127 @@ describe('Workspaces Integration', () => {
 			)
 			const afterDelete = await third.json()
 			expect(afterDelete.settings.llm_keys).toEqual({ openai: 'sk-oai-BBB' })
+		})
+	})
+
+	describe('byollmAllowed entitlement gate', () => {
+		it('defaults new workspaces to byollmAllowed: false', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Entitlement Default' }),
+			)
+			const ws = await createRes.json()
+			expect(ws.byollmAllowed).toBe(false)
+		})
+
+		it('blocks adding a BYO anthropic key when not entitled', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Blocked Anthropic Key' }),
+			)
+			const ws = await createRes.json()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: 'sk-ant-blocked' } },
+				}),
+			)
+			expect(res.status).toBe(403)
+
+			const [row] = await db.select().from(workspacesTable).where(eq(workspacesTable.id, ws.id))
+			const llmKeys = (row.settings as Record<string, unknown>).llm_keys as Record<string, unknown>
+			expect(llmKeys.anthropic).toBeUndefined()
+		})
+
+		it('blocks adding a BYO openai key when not entitled', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Blocked OpenAI Key' }),
+			)
+			const ws = await createRes.json()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { openai: 'sk-oai-blocked' } },
+				}),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('blocks enabling custom_llm when not entitled', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Blocked Custom LLM' }),
+			)
+			const ws = await createRes.json()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: {
+						custom_llm: {
+							enabled: true,
+							base_url: 'https://openrouter.ai/api',
+							api_key: 'sk-or-blocked',
+							model: 'deepseek/deepseek-v4-flash',
+						},
+					},
+				}),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('allows adding BYO credentials once an admin flips byollm_allowed', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Allowed After Admin Flip' }),
+			)
+			const ws = await createRes.json()
+
+			const adminRes = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
+			)
+			expect(adminRes.status).toBe(200)
+			const adminBody = await adminRes.json()
+			expect(adminBody.byollmAllowed).toBe(true)
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: 'sk-ant-allowed' } },
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.settings.llm_keys.anthropic).toBe('sk-ant-allowed')
+		})
+
+		it('does not block deleting an existing (pre-entitlement) BYO key', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Delete Still Allowed' }),
+			)
+			const ws = await createRes.json()
+
+			// Grant, add a key, then revoke entitlement while the key is still set.
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
+			)
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: 'sk-ant-old' } },
+				}),
+			)
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: false }),
+			)
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: null } },
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.settings.llm_keys).toEqual({})
 		})
 	})
 

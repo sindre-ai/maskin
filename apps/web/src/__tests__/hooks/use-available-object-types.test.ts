@@ -11,6 +11,7 @@ function createWrapper(settings: Record<string, unknown>) {
 			id: 'ws-1',
 			name: 'Test',
 			settings,
+			byollmAllowed: false,
 			role: 'owner',
 			createdBy: 'actor-1',
 			createdAt: null,

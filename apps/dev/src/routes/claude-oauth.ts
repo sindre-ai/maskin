@@ -361,7 +361,7 @@ app.openapi(importRoute, (async (c) => {
 	// with new BYO tokens AND a still-billing paid plan. Sentinel outcomes
 	// let the outer handler translate the txn result into the right HTTP
 	// status without throwing across the transaction boundary.
-	type ImportOutcome = 'ok' | 'not-found' | 'stripe-config' | 'stripe-cancel'
+	type ImportOutcome = 'ok' | 'not-found' | 'not-allowed' | 'stripe-config' | 'stripe-cancel'
 	const outcome: ImportOutcome = await db.transaction(async (tx) => {
 		const [ws] = await tx
 			.select()
@@ -370,6 +370,10 @@ app.openapi(importRoute, (async (c) => {
 			.for('update')
 			.limit(1)
 		if (!ws) return 'not-found'
+		// Every workspace defaults to the Maskin-provided LLM plan; only
+		// ops-flagged exception workspaces may import a BYO Claude subscription.
+		// See PR #970.
+		if (!ws.byollmAllowed) return 'not-allowed'
 
 		const settings = (ws.settings as WorkspaceSettings) ?? {}
 		const currentFailover = readFailoverState(settings.claude_oauth)
@@ -444,6 +448,15 @@ app.openapi(importRoute, (async (c) => {
 
 	if (outcome === 'not-found') {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+	if (outcome === 'not-allowed') {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'This workspace is on the Maskin-provided LLM plan and cannot import BYO Claude credentials',
+			),
+			403,
+		)
 	}
 	if (outcome === 'stripe-config') {
 		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)

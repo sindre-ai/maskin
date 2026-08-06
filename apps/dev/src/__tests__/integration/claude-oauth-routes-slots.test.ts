@@ -43,9 +43,36 @@ async function readClaudeOAuth(wsId: string): Promise<Record<string, unknown> | 
 	return settings.claude_oauth as Record<string, unknown> | undefined
 }
 
+describe('Claude OAuth Routes — byollmAllowed entitlement gate (integration)', () => {
+	it('POST /import returns 403 when the workspace is not byollmAllowed', async () => {
+		const ws = await insertWorkspace(db, getTestActorId(), {
+			byollmAllowed: false,
+			settings: { enabled_modules: ['work'] },
+		})
+
+		const res = await makeApp().request(
+			jsonRequest(
+				'POST',
+				'/api/claude-oauth/import',
+				{
+					accessToken: 'blocked-access',
+					refreshToken: 'blocked-refresh',
+					expiresAt: 1_960_000_000_000,
+				},
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+
+		expect(res.status).toBe(403)
+		const oauth = await readClaudeOAuth(ws.id)
+		expect(oauth).toBeUndefined()
+	})
+})
+
 describe('Claude OAuth Routes — slot writes (integration)', () => {
 	it('POST /import to backup adds the slot next to an existing primary', async () => {
 		const ws = await insertWorkspace(db, getTestActorId(), {
+			byollmAllowed: true,
 			settings: { enabled_modules: ['work'], claude_oauth: { primary: seededPrimary } },
 		})
 
@@ -75,6 +102,7 @@ describe('Claude OAuth Routes — slot writes (integration)', () => {
 
 	it('POST /import clears stale failover state so session-start re-evaluates', async () => {
 		const ws = await insertWorkspace(db, getTestActorId(), {
+			byollmAllowed: true,
 			settings: {
 				enabled_modules: ['work'],
 				claude_oauth: {
@@ -111,6 +139,7 @@ describe('Claude OAuth Routes — slot writes (integration)', () => {
 
 	it('POST /import to backup keeps active_slot on backup while primary is still unhealthy', async () => {
 		const ws = await insertWorkspace(db, getTestActorId(), {
+			byollmAllowed: true,
 			settings: {
 				enabled_modules: ['work'],
 				claude_oauth: {

@@ -13,7 +13,7 @@ import {
 import { createApiError } from '../lib/errors'
 import { getWorkspacePlanTokenUsage } from '../lib/llm-routing'
 import {
-	billingAfterByoTransition,
+	billingAfterCancel,
 	cancelActivePaidSubscription,
 	hasActivePaidPlan,
 } from '../lib/llm-source-mutex'
@@ -292,7 +292,11 @@ app.openapi(cancelRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const [workspace] = await db
-		.select({ id: workspaces.id, settings: workspaces.settings })
+		.select({
+			id: workspaces.id,
+			settings: workspaces.settings,
+			byollmAllowed: workspaces.byollmAllowed,
+		})
 		.from(workspaces)
 		.where(eq(workspaces.id, workspaceId))
 		.limit(1)
@@ -321,7 +325,7 @@ app.openapi(cancelRoute, async (c) => {
 		}
 	}
 
-	const downgraded = billingAfterByoTransition(billing)
+	const downgraded = billingAfterCancel(billing, workspace.byollmAllowed)
 	if (downgraded) {
 		await db
 			.update(workspaces)

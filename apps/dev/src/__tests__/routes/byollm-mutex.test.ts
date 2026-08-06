@@ -77,6 +77,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 			[
 				{
 					id: wsId,
+					byollmAllowed: true,
 					settings: {
 						billing: {
 							plan: 'pro',
@@ -117,6 +118,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 			[
 				{
 					id: wsId,
+					byollmAllowed: true,
 					settings: {
 						billing: {
 							plan: 'starter',
@@ -157,6 +159,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 			[
 				{
 					id: wsId,
+					byollmAllowed: true,
 					settings: {
 						billing: {
 							plan: 'pro',
@@ -192,6 +195,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 			[
 				{
 					id: wsId,
+					byollmAllowed: true,
 					settings: { billing: { plan: 'byollm', status: 'canceled' } },
 				},
 			],
@@ -215,6 +219,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 			[
 				{
 					id: wsId,
+					byollmAllowed: true,
 					settings: {
 						billing: {
 							plan: 'pro',
@@ -246,6 +251,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 			[
 				{
 					id: wsId,
+					byollmAllowed: true,
 					settings: {
 						billing: {
 							plan: 'pro',
@@ -289,6 +295,7 @@ describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 			[
 				{
 					id: wsId,
+					byollmAllowed: true,
 					settings: {
 						billing: { plan: 'pro', status: 'active', stripe_subscription_id: 'sub_live' },
 					},
@@ -319,6 +326,7 @@ describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 			[
 				{
 					id: wsId,
+					byollmAllowed: true,
 					settings: {
 						billing: { plan: 'pro', status: 'active', stripe_subscription_id: 'sub_live' },
 					},
@@ -336,7 +344,10 @@ describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 
 	it('skips Stripe entirely when the workspace has no active paid plan', async () => {
 		const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
-		mockResults.selectQueue = [[buildWorkspaceMember()], [{ id: wsId, settings: {} }]]
+		mockResults.selectQueue = [
+			[buildWorkspaceMember()],
+			[{ id: wsId, byollmAllowed: true, settings: {} }],
+		]
 
 		const res = await app.request(
 			jsonRequest('POST', '/api/claude-oauth/import', importBody, headers),
@@ -358,6 +369,7 @@ describe('BYOLLM ↔ paid plan mutex — Stripe webhook clears BYO slots on acti
 			[
 				{
 					id: wsId,
+					byollmAllowed: true,
 					settings: {
 						llm_keys: { anthropic: 'sk-ant', openai: 'sk-open' },
 						custom_llm: { enabled: true, api_key: 'sk-or' },
@@ -409,6 +421,7 @@ describe('BYOLLM ↔ paid plan mutex — Stripe webhook clears BYO slots on acti
 			[
 				{
 					id: wsId,
+					byollmAllowed: true,
 					settings: {
 						llm_keys: { anthropic: 'sk-ant' },
 						custom_llm: { enabled: true, api_key: 'sk-or' },

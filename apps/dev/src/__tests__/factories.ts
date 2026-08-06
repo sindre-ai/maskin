@@ -61,6 +61,11 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 			relationship_types: ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates'],
 		},
 		onboardingEnabled: true,
+		// Defaults to true here (unlike the real DB column default of false) so
+		// the many existing BYO-credential route tests that predate the
+		// byollmAllowed gate don't all need an explicit override. Tests for the
+		// gate itself pass `{ byollmAllowed: false }`. See PR #970.
+		byollmAllowed: true,
 		createdBy: randomUUID(),
 		createdAt: new Date(),
 		updatedAt: new Date(),

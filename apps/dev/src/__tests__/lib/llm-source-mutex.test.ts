@@ -2,8 +2,10 @@ import type Stripe from 'stripe'
 import { describe, expect, it, vi } from 'vitest'
 import {
 	billingAfterByoTransition,
+	billingAfterCancel,
 	cancelActivePaidSubscription,
 	hasActivePaidPlan,
+	patchAddsAnyByoCredential,
 	patchAddsByoSource,
 	settingsAfterPaidPlanActivation,
 } from '../../lib/llm-source-mutex'
@@ -94,6 +96,76 @@ describe('billingAfterByoTransition', () => {
 			stripe_customer_id: 'cus_99',
 			hard_cap_tokens: 96_000_000,
 		})
+	})
+})
+
+describe('billingAfterCancel', () => {
+	it('entitled workspace lands on byollm, same as billingAfterByoTransition', () => {
+		const current = {
+			plan: 'pro' as const,
+			status: 'active' as const,
+			stripe_subscription_id: 'sub_99',
+			stripe_customer_id: 'cus_99',
+			hard_cap_tokens: 96_000_000,
+		}
+		expect(billingAfterCancel(current, true)).toEqual({
+			plan: 'byollm',
+			status: 'canceled',
+			stripe_subscription_id: null,
+			stripe_customer_id: 'cus_99',
+			hard_cap_tokens: 96_000_000,
+		})
+	})
+
+	it('non-entitled workspace falls back to trial (byollm has no working LLM without entitlement)', () => {
+		const current = {
+			plan: 'pro' as const,
+			status: 'active' as const,
+			stripe_subscription_id: 'sub_99',
+			stripe_customer_id: 'cus_99',
+			hard_cap_tokens: 96_000_000,
+		}
+		const result = billingAfterCancel(current, false)
+		expect(result?.plan).toBe('trial')
+		expect(result?.status).toBe('canceled')
+		expect(result?.stripe_subscription_id).toBeNull()
+		expect(result?.stripe_customer_id).toBe('cus_99')
+		// hard_cap_tokens is cleared so the trial default cap (not the paid
+		// plan's cap) applies going forward.
+		expect(result?.hard_cap_tokens).toBeNull()
+		expect(typeof result?.period_start).toBe('number')
+	})
+
+	it('non-entitled: returns undefined when there was no billing block to start with', () => {
+		expect(billingAfterCancel(undefined, false)).toBeUndefined()
+	})
+
+	it('non-entitled: leaves an already-canceled trial block untouched', () => {
+		const current = { plan: 'trial' as const, status: 'canceled' as const }
+		expect(billingAfterCancel(current, false)).toEqual(current)
+	})
+})
+
+describe('patchAddsAnyByoCredential', () => {
+	it('true when adding an anthropic key', () => {
+		expect(patchAddsAnyByoCredential({ llm_keys: { anthropic: 'sk-ant' } })).toBe(true)
+	})
+
+	it('true when adding an openai key (broader than patchAddsByoSource)', () => {
+		expect(patchAddsAnyByoCredential({ llm_keys: { openai: 'sk-oai' } })).toBe(true)
+	})
+
+	it('true when enabling custom_llm with an api_key', () => {
+		expect(
+			patchAddsAnyByoCredential({
+				custom_llm: { enabled: true, api_key: 'sk-or', base_url: 'https://x', model: 'm' },
+			}),
+		).toBe(true)
+	})
+
+	it('false when deleting a key (null) or patching unrelated settings', () => {
+		expect(patchAddsAnyByoCredential({ llm_keys: { anthropic: null } })).toBe(false)
+		expect(patchAddsAnyByoCredential({ north_star_metric: 'grow' })).toBe(false)
 	})
 })
 

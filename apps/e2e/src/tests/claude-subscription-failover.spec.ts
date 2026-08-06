@@ -40,6 +40,23 @@ async function getWorkspaceSettings(apiKey: string, workspaceId: string) {
 	return ws.settings
 }
 
+// Workspaces default to byollmAllowed: false — the platform-provided LLM plan.
+// These specs exercise the Claude OAuth UI directly, so grant entitlement
+// first (mirrors an ops-flagged exception workspace). See PR #970.
+async function grantByollmAllowed(apiKey: string, workspaceId: string) {
+	const res = await fetch(`${BASE}/api/workspaces/admin/${workspaceId}`, {
+		method: 'PATCH',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({ byollm_allowed: true }),
+	})
+	if (!res.ok) {
+		throw new Error(`Grant byollm_allowed failed: ${res.status} ${await res.text()}`)
+	}
+}
+
 const seedPrimary = {
 	accessToken: 'e2e-primary-access',
 	refreshToken: 'e2e-primary-refresh',
@@ -83,6 +100,7 @@ test.describe('Claude subscription failover — settings UI', () => {
 		page,
 		account,
 	}) => {
+		await grantByollmAllowed(account.apiKey, account.workspaceId)
 		await mockFailedOverStatus(page)
 
 		await page.goto(`/${account.workspaceId}/settings/keys`)
@@ -113,6 +131,7 @@ test.describe('Claude subscription failover — settings UI', () => {
 	})
 
 	test('AC-U5: backup designation persists across reload', async ({ page, account }) => {
+		await grantByollmAllowed(account.apiKey, account.workspaceId)
 		// Seed a primary so the "Add a backup" CTA renders. The slot field on the
 		// import body is what the customer designation flows through.
 		await importClaudeOAuth(account.apiKey, account.workspaceId, {

@@ -70,7 +70,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" />
+				<BillingSection workspaceId="ws-1" byollmAllowed />
 			</TestWrapper>,
 		)
 
@@ -98,7 +98,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" />
+				<BillingSection workspaceId="ws-1" byollmAllowed />
 			</TestWrapper>,
 		)
 
@@ -124,7 +124,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" />
+				<BillingSection workspaceId="ws-1" byollmAllowed />
 			</TestWrapper>,
 		)
 
@@ -144,7 +144,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" />
+				<BillingSection workspaceId="ws-1" byollmAllowed />
 			</TestWrapper>,
 		)
 
@@ -173,7 +173,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" />
+				<BillingSection workspaceId="ws-1" byollmAllowed />
 			</TestWrapper>,
 		)
 
@@ -204,7 +204,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" />
+				<BillingSection workspaceId="ws-1" byollmAllowed />
 			</TestWrapper>,
 		)
 
