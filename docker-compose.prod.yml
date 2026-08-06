@@ -43,7 +43,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:
       - "${DOCKER_GID:-999}"
-    command: ["sh", "-c", "node packages/db/dist/migrate.js && node apps/dev/dist/index.js"]
+    command: ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-catalog.ts && node apps/dev/dist/index.js"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-maskin}
       POSTGRES_URL: ${POSTGRES_URL:-}
