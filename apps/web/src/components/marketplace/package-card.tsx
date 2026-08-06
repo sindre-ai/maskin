@@ -1,6 +1,14 @@
+import { getActorAvatarPaletteClass, getActorInitials } from '@/components/shared/actor-avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import type { CatalogPackageSummary, InstalledPackageRow } from '@/lib/api'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import type {
+	CatalogItemType,
+	CatalogPackageItem,
+	CatalogPackageSummary,
+	InstalledPackageRow,
+} from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useState } from 'react'
 import { ForkDialog } from './fork-dialog'
 import { InstallButton } from './install-button'
@@ -11,14 +19,21 @@ interface PackageCardProps {
 	workspaceId: string
 	pkg: CatalogPackageSummary
 	install?: InstalledPackageRow
+	/**
+	 * Items belonging to this package. Used to render the composition chip row
+	 * on bundle cards (packages with ≥2 component types). When omitted or empty
+	 * on a bundle card, the row silently hides.
+	 */
+	items?: CatalogPackageItem[]
 }
 
-export function PackageCard({ workspaceId, pkg, install }: PackageCardProps) {
+export function PackageCard({ workspaceId, pkg, install, items }: PackageCardProps) {
 	const [forkOpen, setForkOpen] = useState(false)
 	const [uninstallOpen, setUninstallOpen] = useState(false)
 	const locked = install?.isLocked ?? false
 	const forked = install ? !install.isLocked : false
 	const showUpdateBanner = locked && install?.hasUpdate === true
+	const isBundle = pkg.item_types.length >= 2
 
 	return (
 		<article className="flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm">
@@ -46,16 +61,20 @@ export function PackageCard({ workspaceId, pkg, install }: PackageCardProps) {
 				) : null}
 			</div>
 
-			<div className="flex flex-wrap gap-1">
-				{pkg.item_types.map((type) => (
-					<span
-						key={type}
-						className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-					>
-						{type}
-					</span>
-				))}
-			</div>
+			{isBundle && items && items.length > 0 ? (
+				<CompositionChipRow items={items} />
+			) : (
+				<div className="flex flex-wrap gap-1">
+					{pkg.item_types.map((type) => (
+						<span
+							key={type}
+							className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+						>
+							{type}
+						</span>
+					))}
+				</div>
+			)}
 
 			{showUpdateBanner ? <UpdateAvailableBanner newVersion={install.availableVersion} /> : null}
 
@@ -114,4 +133,130 @@ export function PackageCard({ workspaceId, pkg, install }: PackageCardProps) {
 function forkedHint(install: InstalledPackageRow): string {
 	if (!install.hasUpdate) return ''
 	return `v${install.availableVersion} of the source is available. Your fork stays at v${install.installedVersion}.`
+}
+
+// Shape the raw catalog items into the chip descriptors the row renders:
+// one chip per actor + integration, and a single count chip for triggers.
+type CompositionChip =
+	| { key: string; kind: 'actor'; name: string; label: string; initial: string }
+	| { key: string; kind: 'trigger'; count: number; names: string[] }
+	| { key: string; kind: 'integration'; name: string; label: string; initial: string }
+
+function itemName(item: CatalogPackageItem): string {
+	const raw = (item.item_snapshot as { name?: unknown } | null)?.name
+	return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : 'Untitled'
+}
+
+function buildChips(items: CatalogPackageItem[]): CompositionChip[] {
+	const chips: CompositionChip[] = []
+	const triggerNames: string[] = []
+
+	for (const item of items) {
+		const type = item.item_type as CatalogItemType
+		if (type === 'actor') {
+			const name = itemName(item)
+			chips.push({
+				key: `actor-${item.id}`,
+				kind: 'actor',
+				name,
+				label: name,
+				initial: (getActorInitials(name)[0] ?? '?').toUpperCase(),
+			})
+		} else if (type === 'integration') {
+			const name = itemName(item)
+			chips.push({
+				key: `integration-${item.id}`,
+				kind: 'integration',
+				name,
+				label: name,
+				initial: (name[0] ?? '?').toUpperCase(),
+			})
+		} else if (type === 'trigger') {
+			triggerNames.push(itemName(item))
+		}
+	}
+
+	if (triggerNames.length > 0) {
+		chips.push({
+			key: 'triggers-count',
+			kind: 'trigger',
+			count: triggerNames.length,
+			names: triggerNames,
+		})
+	}
+
+	return chips
+}
+
+function CompositionChipRow({ items }: { items: CatalogPackageItem[] }) {
+	const chips = buildChips(items)
+	if (chips.length === 0) return null
+
+	return (
+		<TooltipProvider delayDuration={150}>
+			<div
+				className="flex flex-wrap gap-1"
+				aria-label="Bundle composition"
+				data-testid="composition-chip-row"
+			>
+				{chips.map((chip) => {
+					const tip =
+						chip.kind === 'actor'
+							? `Agent · ${chip.name}`
+							: chip.kind === 'integration'
+								? `Integration · ${chip.name}`
+								: chip.names.join(' · ')
+					const label =
+						chip.kind === 'trigger'
+							? `${chip.count} ${chip.count === 1 ? 'trigger' : 'triggers'}`
+							: chip.label
+					return (
+						<Tooltip key={chip.key}>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									aria-label={tip}
+									className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/40 py-0.5 pr-2 pl-0.5 text-[11px] font-medium text-muted-foreground cursor-help hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								>
+									<CompositionGlyph chip={chip} />
+									<span className="truncate">{label}</span>
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="top">{tip}</TooltipContent>
+						</Tooltip>
+					)
+				})}
+			</div>
+		</TooltipProvider>
+	)
+}
+
+function CompositionGlyph({ chip }: { chip: CompositionChip }) {
+	const base =
+		'inline-flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-semibold leading-none shrink-0'
+	if (chip.kind === 'actor') {
+		return (
+			<span className={cn(base, getActorAvatarPaletteClass(chip.name))} aria-hidden="true">
+				{chip.initial}
+			</span>
+		)
+	}
+	if (chip.kind === 'integration') {
+		return (
+			<span
+				className={cn(base, 'border border-border bg-muted text-muted-foreground')}
+				aria-hidden="true"
+			>
+				{chip.initial}
+			</span>
+		)
+	}
+	return (
+		<span
+			className={cn(base, 'border border-border bg-muted text-muted-foreground')}
+			aria-hidden="true"
+		>
+			↯
+		</span>
+	)
 }

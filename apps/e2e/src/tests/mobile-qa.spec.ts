@@ -38,8 +38,16 @@ async function assertReplyButtonVisibleOnObjectDetail(
 	).toBeVisible({ timeout: 5000 })
 }
 
+// Mirrors useIsMobile()'s 768px boundary (apps/web/src/hooks/use-mobile.tsx) —
+// comment-input.tsx shortens its placeholder below that width.
+function commentPlaceholderFor(viewport: NamedViewport): string {
+	return viewport.width < 768
+		? 'Write a comment...'
+		: 'Write a comment... Use @ to mention an agent'
+}
+
 async function assertCommentComposerVisible(page: Page, surface: string, viewport: NamedViewport) {
-	const composer = page.getByPlaceholder('Write a comment... Use @ to mention an agent').first()
+	const composer = page.getByPlaceholder(commentPlaceholderFor(viewport)).first()
 	await expect(
 		composer,
 		`${surface}: comment composer must be visible at ${viewport.label}`,
@@ -220,7 +228,7 @@ test.describe('Mobile first-test flow — For You → object → comment', () =>
 		await assertNoHorizontalOverflow(page, 'Object detail (step 2)', VIEWPORTS.mobile)
 
 		// 3. Comment — type and send via the composer
-		const composer = page.getByPlaceholder('Write a comment... Use @ to mention an agent')
+		const composer = page.getByPlaceholder(commentPlaceholderFor(VIEWPORTS.mobile))
 		await composer.click()
 		await composer.fill('QA comment from mobile')
 		await page.getByRole('button', { name: 'Send comment' }).click()

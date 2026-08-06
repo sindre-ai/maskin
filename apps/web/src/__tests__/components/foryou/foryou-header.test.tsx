@@ -11,7 +11,11 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
-import { ForYouHeader } from '@/components/foryou/foryou-header'
+import {
+	ForYouHeader,
+	ForYouHeaderActions,
+	ForYouHeaderIdentity,
+} from '@/components/foryou/foryou-header'
 
 function renderHeader(overrides: Partial<React.ComponentProps<typeof ForYouHeader>> = {}) {
 	const props: React.ComponentProps<typeof ForYouHeader> = {
@@ -27,19 +31,57 @@ function renderHeader(overrides: Partial<React.ComponentProps<typeof ForYouHeade
 		onModeChange: vi.fn(),
 		sort: 'priority',
 		onSortChange: vi.fn(),
-		onStartConversation: vi.fn(),
-		onCreateObject: vi.fn(),
 		...overrides,
 	}
 	return { props, ...render(<ForYouHeader {...props} />) }
 }
 
-describe('ForYouHeader', () => {
+function renderActions(overrides: Partial<React.ComponentProps<typeof ForYouHeaderActions>> = {}) {
+	const props: React.ComponentProps<typeof ForYouHeaderActions> = {
+		onStartConversation: vi.fn(),
+		onCreateObject: vi.fn(),
+		...overrides,
+	}
+	return { props, ...render(<ForYouHeaderActions {...props} />) }
+}
+
+describe('ForYouHeaderIdentity', () => {
 	it('shows the unread count', () => {
-		renderHeader({ unreadCount: 7 })
+		render(<ForYouHeaderIdentity unreadCount={7} />)
 		expect(screen.getByText('7 unread')).toBeInTheDocument()
 	})
+})
 
+describe('ForYouHeaderActions', () => {
+	it("navigates to the briefing route when Today's brief is clicked", () => {
+		renderActions()
+		fireEvent.click(screen.getByRole('button', { name: /today.?s brief/i }))
+		expect(mockNavigate).toHaveBeenCalledWith({
+			to: '/$workspaceId/briefing',
+			params: { workspaceId: 'ws-1' },
+		})
+	})
+
+	it('opens the New menu and starts a conversation', async () => {
+		const user = userEvent.setup()
+		const onStartConversation = vi.fn()
+		renderActions({ onStartConversation })
+		await user.click(screen.getByRole('button', { name: /^new$/i }))
+		await user.click(screen.getByRole('menuitem', { name: /start conversation/i }))
+		expect(onStartConversation).toHaveBeenCalledTimes(1)
+	})
+
+	it('opens the New menu and creates a bet', async () => {
+		const user = userEvent.setup()
+		const onCreateObject = vi.fn()
+		renderActions({ onCreateObject })
+		await user.click(screen.getByRole('button', { name: /^new$/i }))
+		await user.click(screen.getByRole('menuitem', { name: /new bet/i }))
+		expect(onCreateObject).toHaveBeenCalledWith('bet')
+	})
+})
+
+describe('ForYouHeader', () => {
 	it('renders All + Mentions plus one chip per type present in typeCounts', () => {
 		renderHeader({
 			unreadCount: 7,
@@ -76,31 +118,21 @@ describe('ForYouHeader', () => {
 		expect(onTypeFilterChange).toHaveBeenCalledWith('bet')
 	})
 
-	it("navigates to the briefing route when Today's brief is clicked", () => {
-		renderHeader()
-		fireEvent.click(screen.getByRole('button', { name: /today.?s brief/i }))
-		expect(mockNavigate).toHaveBeenCalledWith({
-			to: '/$workspaceId/briefing',
-			params: { workspaceId: 'ws-1' },
+	it('hides the Mentions chip and zero-count type chips instead of showing (0)', () => {
+		renderHeader({
+			unreadCount: 4,
+			mentionCount: 0,
+			typeCounts: new Map([
+				['task', 3],
+				['bet', 1],
+				['insight', 0],
+			]),
 		})
-	})
-
-	it('opens the New menu and starts a conversation', async () => {
-		const user = userEvent.setup()
-		const onStartConversation = vi.fn()
-		renderHeader({ onStartConversation })
-		await user.click(screen.getByRole('button', { name: /^new$/i }))
-		await user.click(screen.getByRole('menuitem', { name: /start conversation/i }))
-		expect(onStartConversation).toHaveBeenCalledTimes(1)
-	})
-
-	it('opens the New menu and creates a bet', async () => {
-		const user = userEvent.setup()
-		const onCreateObject = vi.fn()
-		renderHeader({ onCreateObject })
-		await user.click(screen.getByRole('button', { name: /^new$/i }))
-		await user.click(screen.getByRole('menuitem', { name: /new bet/i }))
-		expect(onCreateObject).toHaveBeenCalledWith('bet')
+		expect(screen.getByRole('button', { name: 'All (4)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Task (3)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Bet (1)' })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /^Mentions/ })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /^Insight/ })).not.toBeInTheDocument()
 	})
 
 	it('opens the Display popover with Cards/List tabs and Sort options', async () => {

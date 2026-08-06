@@ -45,6 +45,12 @@ interface UseSwipeToMarkReadOptions {
 	// know the real mutation has landed and it's now safe to fully discard —
 	// e.g. unmount a card that was kept alive only to let this timer finish.
 	onCommitSettled?: (variant: SwipeRevealVariant) => void
+	// Fires on pointer-up after a leftward drag past threshold/velocity on an
+	// unread card — i.e. the Tinder-style "skip" gesture. Distinct from
+	// onMarkUnread (which reverses an already-read item via the deferred
+	// Undo-timer path): this fires synchronously, no toast, no timer, matching
+	// the non-mutating "Keep unread" button semantics.
+	onSwipeLeft?: () => void
 }
 
 interface UseSwipeToMarkReadResult {
@@ -98,6 +104,7 @@ export function useSwipeToMarkRead(
 		onCommitScheduled,
 		onUndo,
 		onCommitSettled,
+		onSwipeLeft,
 	} = options
 
 	// Ref keeps callbacks fresh without resetting the swipe callbacks each
@@ -110,6 +117,7 @@ export function useSwipeToMarkRead(
 		onCommitScheduled,
 		onUndo,
 		onCommitSettled,
+		onSwipeLeft,
 	})
 	callbacksRef.current = {
 		onMarkRead,
@@ -119,6 +127,7 @@ export function useSwipeToMarkRead(
 		onCommitScheduled,
 		onUndo,
 		onCommitSettled,
+		onSwipeLeft,
 	}
 
 	const swipeRef = useRef({
@@ -205,8 +214,12 @@ export function useSwipeToMarkRead(
 		// Presses starting on a button/link (quick-reply chips, Reply, Mark as
 		// read) must not engage the swipe gesture — setPointerCapture below
 		// retargets the resulting `click` event to this card, so the button's
-		// own onClick never fires and the card's onClick fires instead.
-		if ((e.target as HTMLElement).closest('button, a')) return
+		// own onClick never fires and the card's onClick fires instead. Form
+		// controls (composer textarea/input) are excluded for the same reason:
+		// capturing the pointer here breaks iOS Safari's native tap-to-focus,
+		// requiring a second tap to enter the field.
+		if ((e.target as HTMLElement).closest('button, a, textarea, input, [contenteditable="true"]'))
+			return
 		const s = swipeRef.current
 		s.startX = e.clientX
 		s.startY = e.clientY
@@ -230,21 +243,25 @@ export function useSwipeToMarkRead(
 		const dx = e.clientX - s.startX
 		const dy = e.clientY - s.startY
 		if (!s.locked) {
-			if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+			if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
 				s.locked = true
-				s.isHoriz = Math.abs(dx) > Math.abs(dy) * 1.5
+				s.isHoriz = Math.abs(dx) >= Math.abs(dy)
 			}
 		}
 		if (!s.isHoriz) return
-		// Clamp to the direction that matches the card's state: read cards
-		// only track a leftward drag (mark-unread), unread cards only track a
-		// rightward drag (mark-read). Wrong-direction pointer motion produces
-		// a translation of 0 — the card visually rubber-bands on release and
-		// the wrong-colour reveal never becomes visible.
-		s.dx = callbacksRef.current.isRead ? Math.min(dx, 0) : Math.max(dx, 0)
+		// Read cards only track a leftward drag (mark-unread) — rightward
+		// motion clamps to 0 and rubber-bands back on release. Unread cards
+		// track both directions: right reveals mark-read, left reveals the
+		// non-mutating "keep unread"/skip gesture (onSwipeLeft).
+		s.dx = callbacksRef.current.isRead ? Math.min(dx, 0) : dx
 		e.preventDefault()
 		const now = Date.now()
-		s.vel = (e.clientX - s.lastX) / (now - s.lastTime || 1)
+		const elapsed = now - s.lastTime
+		// Same-millisecond pointermove events (coalesced input, or a single
+		// synthetic move in tests) have no reliable elapsed time to divide by —
+		// treat velocity as 0 rather than fabricating a huge value from a
+		// near-zero denominator, which would spuriously cross VELOCITY_THRESHOLD.
+		s.vel = elapsed > 0 ? (e.clientX - s.lastX) / elapsed : 0
 		s.lastX = e.clientX
 		s.lastTime = now
 		setDragOffset(s.dx)
@@ -269,6 +286,10 @@ export function useSwipeToMarkRead(
 		}
 		if (dx > SWIPE_THRESHOLD || (vel > VELOCITY_THRESHOLD && dx > 20)) {
 			triggerWithUndo('mark-read')
+			return
+		}
+		if (dx < -SWIPE_THRESHOLD || (vel < -VELOCITY_THRESHOLD && dx < -20)) {
+			callbacksRef.current.onSwipeLeft?.()
 		}
 	}, [triggerWithUndo])
 

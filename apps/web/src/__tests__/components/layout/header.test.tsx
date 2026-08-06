@@ -5,7 +5,11 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tanstack/react-router', () => ({
 	useMatches: vi.fn(() => [
-		{ routeId: '/_authed/$workspaceId/', pathname: '/ws-1', params: { workspaceId: 'ws-1' } },
+		{
+			routeId: '/_authed/$workspaceId/objects/',
+			pathname: '/ws-1/objects',
+			params: { workspaceId: 'ws-1' },
+		},
 	]),
 	useNavigate: () => vi.fn(),
 	useRouter: () => ({ history: { back: vi.fn() } }),
@@ -66,7 +70,11 @@ import { useMatches } from '@tanstack/react-router'
 describe('Header', () => {
 	it('renders the New menu trigger', () => {
 		vi.mocked(useMatches).mockReturnValue([
-			{ routeId: '/_authed/$workspaceId/', pathname: '/ws-1', params: { workspaceId: 'ws-1' } },
+			{
+				routeId: '/_authed/$workspaceId/objects/',
+				pathname: '/ws-1/objects',
+				params: { workspaceId: 'ws-1' },
+			},
 		] as ReturnType<typeof useMatches>)
 		render(<Header />)
 		expect(screen.getByRole('button', { name: /^new$/i })).toBeInTheDocument()
@@ -143,6 +151,22 @@ describe('Header', () => {
 		await user.click(screen.getByRole('menuitem', { name: /find a past conversation/i }))
 
 		expect(setPaletteOpen).toHaveBeenCalledWith(true)
+	})
+
+	it('hides the New menu on the For You page', () => {
+		vi.mocked(useMatches).mockReturnValue([
+			{ routeId: '/_authed/$workspaceId/', pathname: '/ws-1', params: { workspaceId: 'ws-1' } },
+		] as ReturnType<typeof useMatches>)
+		vi.mocked(usePageHeader).mockReturnValue({
+			actions: null,
+			stickyIdentity: null,
+			setActions: vi.fn(),
+			setStickyIdentity: vi.fn(),
+			setContentPush: vi.fn(),
+		})
+
+		render(<Header />)
+		expect(screen.queryByRole('button', { name: /^new$/i })).not.toBeInTheDocument()
 	})
 
 	it('renders page header actions from usePageHeader', () => {

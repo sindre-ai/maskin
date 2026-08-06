@@ -2,7 +2,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import type { UnreadItem } from '@/lib/api'
 import { Link } from '@tanstack/react-router'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ForYouQueueCard, type ForYouQueueCardHandle, itemQueueKey } from './foryou-queue-card'
 
 interface ForYouCardQueueProps {
@@ -28,6 +28,19 @@ export function ForYouCardQueue({ workspaceId, queue }: ForYouCardQueueProps) {
 		() => queue.filter((item) => !processedKeys.has(itemQueueKey(item))),
 		[queue, processedKeys],
 	)
+
+	// Pin the front card once shown. `queue` re-sorts on every background
+	// refetch (SSE-triggered unread invalidation) — without pinning, the card
+	// the user is mid-read/mid-reply on would get silently swapped out
+	// whenever a re-sort put a different item first. New/reprioritized items
+	// just wait behind the pinned card until it's processed or drops out.
+	useEffect(() => {
+		if (currentKey !== null && visibleQueue.some((item) => itemQueueKey(item) === currentKey)) {
+			return
+		}
+		setCurrentKey(visibleQueue[0] ? itemQueueKey(visibleQueue[0]) : null)
+	}, [visibleQueue, currentKey])
+
 	const currentItem =
 		visibleQueue.find((item) => itemQueueKey(item) === currentKey) ?? visibleQueue[0] ?? null
 	const currentItemKey = currentItem ? itemQueueKey(currentItem) : null
@@ -91,7 +104,7 @@ export function ForYouCardQueue({ workspaceId, queue }: ForYouCardQueueProps) {
 		return (
 			<div
 				key={key}
-				className={isCurrent ? undefined : 'hidden'}
+				className={isCurrent ? 'flex-1 min-h-0' : 'hidden'}
 				aria-hidden={isCurrent ? undefined : true}
 			>
 				<ForYouQueueCard
@@ -115,11 +128,11 @@ export function ForYouCardQueue({ workspaceId, queue }: ForYouCardQueueProps) {
 	// still-running use-swipe-to-mark-read timer. Only the second slot
 	// (action bar vs. empty state) is allowed to swap type.
 	return (
-		<div className="flex flex-col gap-4 pb-24">
+		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-24">
 			{cards}
 
 			{currentItem ? (
-				<div className="fixed inset-x-0 bottom-0 z-10 flex justify-center border-t border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:sticky md:border-0 md:bg-transparent md:px-0 md:py-0">
+				<div className="fixed inset-x-0 bottom-0 z-10 flex justify-center px-4 py-3 md:sticky md:px-0 md:py-0">
 					<div className="flex w-full max-w-[760px] items-center justify-between gap-3">
 						<Button
 							size="sm"

@@ -1,20 +1,30 @@
-// Static snapshot data for the Development-workspace catalog packages.
+// Static snapshot data for the Development-workspace AND Growth-workspace
+// catalog packages.
 //
 // The local dev Postgres is empty on a fresh clone, and the real actor/trigger
-// content lives in the remote Development workspace — not in any table the
-// publish scripts can query locally. So the actor system prompts + trigger
-// action prompts are captured once, live, and checked in as JSON here. The
-// publish-*.ts scripts read this data (by id) instead of running db.select()
-// against local actors/triggers, and snapshot it into catalog_package_items.
+// content lives in the remote Development and Growth workspaces — not in any
+// table the publish scripts can query locally. So the actor system prompts +
+// trigger action prompts are captured once, live, and checked in as JSON here.
+// The publish-*.ts scripts and seedCatalogPackages read this data (by id)
+// instead of running db.select() against local actors/triggers, and snapshot
+// it into catalog_package_items.
 //
-// tools.mcpServers has already been stripped from dev-actors.json at capture
-// time (it carried live plaintext secrets), so no credential is ever committed
-// or published — see package-snapshot.ts stripMcpServers for the redundant
-// runtime guard.
+// tools.mcpServers has already been stripped from every data/*.json file at
+// capture time (it carried live plaintext secrets), so no credential is ever
+// committed or published — see package-snapshot.ts stripMcpServers for the
+// redundant runtime guard.
+//
+// Actor/trigger/skill ids are globally unique UUIDs regardless of source
+// workspace, so the dev-* and growth-* snapshots are merged into one lookup
+// per entity type below — every package config, whichever workspace it was
+// captured from, calls the same getActorData/getTriggerData/getSkillData.
 
 import devActorsData from './data/dev-actors.json'
 import devSkillsData from './data/dev-skills.json'
 import devTriggersData from './data/dev-triggers.json'
+import growthActorsData from './data/growth-actors.json'
+import growthSkillsData from './data/growth-skills.json'
+import growthTriggersData from './data/growth-triggers.json'
 import type {
 	ActorSnapshotSource,
 	SkillSnapshotSource,
@@ -55,11 +65,20 @@ export interface CatalogPackageSeedConfig {
 	skillIds: readonly string[]
 }
 
-const actorsById = devActorsData as Record<string, ActorData>
+const actorsById: Record<string, ActorData> = {
+	...(devActorsData as Record<string, ActorData>),
+	...(growthActorsData as Record<string, ActorData>),
+}
 
-const triggersById = devTriggersData as Record<string, TriggerData>
+const triggersById: Record<string, TriggerData> = {
+	...(devTriggersData as Record<string, TriggerData>),
+	...(growthTriggersData as Record<string, TriggerData>),
+}
 
-const skillsById = devSkillsData as Record<string, SkillData>
+const skillsById: Record<string, SkillData> = {
+	...(devSkillsData as Record<string, SkillData>),
+	...(growthSkillsData as Record<string, SkillData>),
+}
 
 export function getActorData(id: string): ActorData {
 	const actor = actorsById[id]

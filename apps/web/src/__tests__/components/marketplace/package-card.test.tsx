@@ -17,7 +17,7 @@ vi.mock('sonner', () => ({
 }))
 
 import { PackageCard } from '@/components/marketplace/package-card'
-import type { CatalogPackageSummary, InstalledPackageRow } from '@/lib/api'
+import type { CatalogPackageItem, CatalogPackageSummary, InstalledPackageRow } from '@/lib/api'
 import { TestWrapper } from '../../setup'
 
 const workspaceId = 'ws-1'
@@ -120,5 +120,98 @@ describe('PackageCard', () => {
 		)
 		await userEvent.click(screen.getByRole('button', { name: /fork/i }))
 		expect(screen.getByText(/v1\.1\.0 is ready to install/)).toBeInTheDocument()
+	})
+
+	describe('composition chip row', () => {
+		function item(overrides: {
+			id: string
+			itemType: CatalogPackageItem['item_type']
+			name: string
+		}): CatalogPackageItem {
+			return {
+				id: overrides.id,
+				package_id: 'pkg-1',
+				item_type: overrides.itemType,
+				source_item_id: overrides.id,
+				item_snapshot: { name: overrides.name },
+				created_at: null,
+			}
+		}
+
+		it('renders one chip per actor and one count chip for triggers on a bundle', () => {
+			render(
+				<PackageCard
+					workspaceId={workspaceId}
+					pkg={pkg({ item_types: ['actor', 'trigger'] })}
+					items={[
+						item({ id: 'a1', itemType: 'actor', name: 'Relay' }),
+						item({ id: 'a2', itemType: 'actor', name: 'Compass' }),
+						item({ id: 't1', itemType: 'trigger', name: 'On Slack message' }),
+						item({ id: 't2', itemType: 'trigger', name: 'Fri 5 PM digest' }),
+					]}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			const row = screen.getByLabelText('Bundle composition')
+			expect(row).toHaveTextContent('Relay')
+			expect(row).toHaveTextContent('Compass')
+			expect(row).toHaveTextContent('2 triggers')
+			// Single count chip for triggers, not one per trigger name
+			expect(row).not.toHaveTextContent('On Slack message')
+			expect(row).not.toHaveTextContent('Fri 5 PM digest')
+		})
+
+		it('renders one chip per integration on a bundle', () => {
+			render(
+				<PackageCard
+					workspaceId={workspaceId}
+					pkg={pkg({ item_types: ['actor', 'integration'] })}
+					items={[
+						item({ id: 'a1', itemType: 'actor', name: 'Compass' }),
+						item({ id: 'i1', itemType: 'integration', name: 'Intercom' }),
+						item({ id: 'i2', itemType: 'integration', name: 'Slack' }),
+					]}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			const row = screen.getByLabelText('Bundle composition')
+			expect(row).toHaveTextContent('Intercom')
+			expect(row).toHaveTextContent('Slack')
+		})
+
+		it('uses singular label when exactly one trigger', () => {
+			render(
+				<PackageCard
+					workspaceId={workspaceId}
+					pkg={pkg({ item_types: ['actor', 'trigger'] })}
+					items={[
+						item({ id: 'a1', itemType: 'actor', name: 'Compass' }),
+						item({ id: 't1', itemType: 'trigger', name: 'On new signup' }),
+					]}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(screen.getByLabelText('Bundle composition')).toHaveTextContent('1 trigger')
+		})
+
+		it('does not render the chip row when the package has fewer than two component types', () => {
+			render(
+				<PackageCard
+					workspaceId={workspaceId}
+					pkg={pkg({ item_types: ['actor'] })}
+					items={[item({ id: 'a1', itemType: 'actor', name: 'Relay' })]}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(screen.queryByLabelText('Bundle composition')).not.toBeInTheDocument()
+		})
+
+		it('falls back to the type-badge row when items have not loaded yet', () => {
+			render(
+				<PackageCard workspaceId={workspaceId} pkg={pkg({ item_types: ['actor', 'trigger'] })} />,
+				{ wrapper: TestWrapper },
+			)
+			expect(screen.queryByLabelText('Bundle composition')).not.toBeInTheDocument()
+		})
 	})
 })

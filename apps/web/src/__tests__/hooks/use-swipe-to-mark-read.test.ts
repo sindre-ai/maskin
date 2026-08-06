@@ -193,25 +193,36 @@ describe('useSwipeToMarkRead — bidirectional gesture', () => {
 			expect(onMarkUnread).not.toHaveBeenCalled()
 		})
 
-		it('clamps left-drag to zero displacement (wrong-direction bounce)', () => {
+		it('fires onSwipeLeft after a left-swipe past threshold (keep-unread gesture)', () => {
 			const onMarkRead = vi.fn()
-			const onMarkUnread = vi.fn()
+			const onSwipeLeft = vi.fn()
 			const { result } = renderHook(() =>
-				useSwipeToMarkRead({ onMarkRead, onMarkUnread, isRead: false }),
+				useSwipeToMarkRead({ onMarkRead, isRead: false, onSwipeLeft }),
 			)
 
 			act(() => result.current.handlePointerDown(pointerEvent(0)))
 			act(() => result.current.handlePointerMove(pointerEvent(-150)))
 
-			expect(result.current.dragOffset).toBe(0)
-			expect(result.current.revealVariant).toBe('mark-read')
+			expect(result.current.dragOffset).toBe(-150)
 
 			act(() => result.current.handlePointerUp())
-			act(() => vi.advanceTimersByTime(4500))
 
+			expect(onSwipeLeft).toHaveBeenCalledTimes(1)
 			expect(onMarkRead).not.toHaveBeenCalled()
-			expect(onMarkUnread).not.toHaveBeenCalled()
 			expect(toast).not.toHaveBeenCalled()
+		})
+
+		it('does not fire onSwipeLeft when the left-drag stays under threshold', () => {
+			const onSwipeLeft = vi.fn()
+			const { result } = renderHook(() =>
+				useSwipeToMarkRead({ onMarkRead: vi.fn(), isRead: false, onSwipeLeft }),
+			)
+
+			act(() => result.current.handlePointerDown(pointerEvent(0)))
+			act(() => result.current.handlePointerMove(pointerEvent(-30)))
+			act(() => result.current.handlePointerUp())
+
+			expect(onSwipeLeft).not.toHaveBeenCalled()
 		})
 	})
 
@@ -339,6 +350,51 @@ describe('useSwipeToMarkRead — bidirectional gesture', () => {
 			act(() => vi.advanceTimersByTime(4500))
 
 			expect(onMarkUnread).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('form control exclusion', () => {
+		// A press starting inside the composer's textarea must not engage the
+		// swipe gesture — setPointerCapture on the card would otherwise retarget
+		// the pointer and break iOS Safari's native tap-to-focus, requiring a
+		// second tap before the user can type.
+		it('ignores pointerdown on a textarea and never engages the drag', () => {
+			const onMarkRead = vi.fn()
+			const { result } = renderHook(() => useSwipeToMarkRead(onMarkRead))
+			const textarea = document.createElement('textarea')
+
+			act(() => result.current.handlePointerDown(pointerEvent(0, 0, textarea)))
+			expect(result.current.isDragging).toBe(false)
+
+			act(() => result.current.handlePointerMove(pointerEvent(SWIPE_THRESHOLD + 10)))
+			act(() => result.current.handlePointerUp())
+			act(() => vi.advanceTimersByTime(4500))
+
+			expect(onMarkRead).not.toHaveBeenCalled()
+		})
+
+		it('ignores pointerdown on an input and never engages the drag', () => {
+			const onMarkRead = vi.fn()
+			const { result } = renderHook(() => useSwipeToMarkRead(onMarkRead))
+			const input = document.createElement('input')
+
+			act(() => result.current.handlePointerDown(pointerEvent(0, 0, input)))
+			expect(result.current.isDragging).toBe(false)
+
+			act(() => result.current.handlePointerMove(pointerEvent(SWIPE_THRESHOLD + 10)))
+			act(() => result.current.handlePointerUp())
+			act(() => vi.advanceTimersByTime(4500))
+
+			expect(onMarkRead).not.toHaveBeenCalled()
+		})
+
+		it('still engages the drag for presses outside form controls', () => {
+			const onMarkRead = vi.fn()
+			const { result } = renderHook(() => useSwipeToMarkRead(onMarkRead))
+			const card = document.createElement('div')
+
+			act(() => result.current.handlePointerDown(pointerEvent(0, 0, card)))
+			expect(result.current.isDragging).toBe(true)
 		})
 	})
 

@@ -113,6 +113,34 @@ describe('CommentInput', () => {
 		}
 	})
 
+	it('shortens the placeholder to a single line on mobile viewports', () => {
+		const originalMatchMedia = window.matchMedia
+		const originalInnerWidth = window.innerWidth
+		window.matchMedia = ((query: string) =>
+			({
+				matches: query === '(max-width: 767px)',
+				media: query,
+				onchange: null,
+				addEventListener: () => {},
+				removeEventListener: () => {},
+				addListener: () => {},
+				removeListener: () => {},
+				dispatchEvent: () => false,
+			}) as unknown as MediaQueryList) as typeof window.matchMedia
+		Object.defineProperty(window, 'innerWidth', { writable: true, value: 500 })
+
+		try {
+			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+			expect(screen.getByPlaceholderText('Write a comment...')).toBeInTheDocument()
+			expect(
+				screen.queryByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			).not.toBeInTheDocument()
+		} finally {
+			window.matchMedia = originalMatchMedia
+			Object.defineProperty(window, 'innerWidth', { writable: true, value: originalInnerWidth })
+		}
+	})
+
 	it('hides system actors from the @mention dropdown', async () => {
 		const user = userEvent.setup()
 		mockUseActors.mockReturnValue({

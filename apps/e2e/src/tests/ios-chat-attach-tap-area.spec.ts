@@ -20,7 +20,9 @@ const VISIBLE_HEIGHT_TOLERANCE_PX = 4
 const TAP_TARGET_MIN_PX = 44
 
 async function openChatAndLocateAttach(page: Page, workspaceId: string) {
-	await page.goto(`/${workspaceId}`)
+	// The header's "New" menu is hidden on the For You page (its own header
+	// surfaces equivalent actions) — use the Objects list instead.
+	await page.goto(`/${workspaceId}/objects`)
 	await page.getByRole('button', { name: /^new$/i }).click()
 	await page.getByRole('menuitem', { name: /new chat/i }).click()
 	await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible({ timeout: 10_000 })
