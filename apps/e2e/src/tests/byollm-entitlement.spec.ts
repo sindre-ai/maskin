@@ -21,23 +21,17 @@ async function grantByollmAllowed(apiKey: string, workspaceId: string) {
 }
 
 test.describe('BYOLLM entitlement gate — settings UI', () => {
-	test('hides BYO controls and shows the platform-plan notice for a non-entitled workspace', async ({
-		page,
-		account,
-	}) => {
+	test('hides BYO controls for a non-entitled workspace', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}/settings/keys`)
 
-		await expect(page.getByTestId('byollm-disabled-notice')).toBeVisible()
-		await expect(page.getByTestId('byollm-disabled-notice')).toContainText(
-			'Maskin-provided LLM plan',
-		)
+		await expect(page.getByTestId('byollm-disabled-notice')).toHaveCount(0)
 		await expect(page.getByTestId('claude-oauth-slots')).toHaveCount(0)
 		await expect(page.getByText('LLM API Keys')).toHaveCount(0)
 		await expect(page.getByText('Custom Model Endpoint (beta)')).toHaveCount(0)
 
 		for (const vp of SHIP_GATE_VIEWPORTS) {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await expect(page.getByTestId('byollm-disabled-notice')).toBeVisible()
+			await expect(page.getByTestId('claude-oauth-slots')).toHaveCount(0)
 		}
 	})
 

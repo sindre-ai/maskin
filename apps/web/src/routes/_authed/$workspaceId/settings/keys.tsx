@@ -48,15 +48,7 @@ function KeysPage() {
 						<CustomLlmEditor workspace={workspace} workspaceId={workspaceId} />
 					</div>
 				</>
-			) : (
-				<div className="border-t border-border pt-6" data-testid="byollm-disabled-notice">
-					<Label className="mb-1 text-bold">Claude Subscription & API Keys</Label>
-					<p className="text-xs text-muted-foreground">
-						This workspace uses the Maskin-provided LLM plan. Bringing your own Claude subscription,
-						API key, or custom endpoint isn't available here.
-					</p>
-				</div>
-			)}
+			) : null}
 		</div>
 	)
 }
