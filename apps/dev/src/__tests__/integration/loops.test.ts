@@ -1,6 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { objects, triggers as triggersTable } from '@maskin/db/schema'
+import { events, objects, triggers as triggersTable } from '@maskin/db/schema'
 import { and, sql as drizzleSql, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
@@ -293,6 +293,49 @@ describe('Loops read API integration', () => {
 		expect(byId.get(running.id)?.pill).toBe('running')
 		expect(byId.get(waiting.id)?.pill).toBe('waiting_on_you')
 		expect(byId.get(paused.id)?.pill).toBe('paused')
+	})
+
+	it('flips `waitingOnViewer` true on an unread status-change event on a child object, not just comments', async () => {
+		const otherActor = await insertActor(db)
+
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Needs attention',
+		})
+		const childTask = await insertObject(db, workspaceId, actorId, {
+			type: 'task',
+			status: 'in_review',
+			title: 'Agent-driven task',
+		})
+		await insertRelationship(db, actorId, {
+			sourceType: 'object',
+			sourceId: loop.id,
+			targetType: 'object',
+			targetId: childTask.id,
+			type: 'in_loop',
+		})
+
+		// A lifecycle event logged with entity_type set to the object's
+		// concrete type (mirrors how objects.ts logs `status_changed`/
+		// `updated` events) — not a comment, and not entity_type='object'.
+		await db.insert(events).values({
+			workspaceId,
+			actorId: otherActor.id,
+			action: 'status_changed',
+			entityType: 'task',
+			entityId: childTask.id,
+			data: { status: 'in_review' },
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; waitingOnViewer: boolean; pill: string }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.waitingOnViewer).toBe(true)
+		expect(row?.pill).toBe('waiting_on_you')
 	})
 })
 

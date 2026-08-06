@@ -2,7 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, objects, readState, relationships, triggers } from '@maskin/db/schema'
 import { listLoopsResponseSchema } from '@maskin/shared'
-import { and, eq, ne, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 
 /** Relationship `type` marking "this object is a member of this loop's
@@ -178,8 +178,18 @@ app.openapi(listLoopsRoute, (async (c) => {
 
 	// Per-viewer "waiting on you" flag: does the viewer have any unread event
 	// on any object currently linked to this loop? Reuses the `read_state`
-	// last-read expression pattern from `subscriptions.ts`. A loop with zero
-	// child objects always resolves to false.
+	// last-read expression pattern from `subscriptions.ts`. Unlike
+	// `getUnreadCount` (which filters `action = 'commented'` to count unread
+	// comments specifically), this matches ANY event on the child object —
+	// a status/lifecycle change is exactly the "needs a human" signal this
+	// flag exists for, and those events are logged with `entity_type` set to
+	// the object's concrete type (task/bet/insight), not `'object'` (that
+	// value is reserved for comment events — see objects.ts's object-detail
+	// route). So we match on `entity_id` alone, which already scopes
+	// precisely to this one object regardless of which entity_type the event
+	// was logged under. `read_state` itself is always keyed by the generic
+	// `entity_type = 'object'` for objects, so that half stays fixed.
+	// A loop with zero child objects always resolves to false.
 	const waitingRows = await db.execute<{ loop_id: string; waiting: boolean }>(
 		sql`
 			SELECT
@@ -188,7 +198,6 @@ app.openapi(listLoopsRoute, (async (c) => {
 					SELECT 1
 					FROM ${events} e
 					WHERE e.workspace_id = ${workspaceId}
-						AND e.entity_type = 'object'
 						AND e.entity_id = o.id
 						AND e.actor_id <> ${actorId}
 						AND e.id > COALESCE(
@@ -216,10 +225,6 @@ app.openapi(listLoopsRoute, (async (c) => {
 	for (const row of waitingRows) {
 		waitingByLoop.set(row.loop_id, waitingByLoop.get(row.loop_id) === true || row.waiting === true)
 	}
-	// Suppress "unused import" for `ne` on the untriggered path — kept for
-	// symmetry with subscriptions.ts if the "exclude viewer's own events" arm
-	// gets promoted into a shared helper.
-	void ne
 
 	const response = {
 		loops: loopRows.map((row) => {

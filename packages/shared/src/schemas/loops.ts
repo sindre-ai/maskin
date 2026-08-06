@@ -13,7 +13,6 @@ import { z } from 'zod'
  * the parent bet — status pill, per-loop stats, agent-avatar chips.
  */
 export const loopPillSchema = z.enum(['running', 'waiting_on_you', 'paused', 'archived'])
-export type LoopPill = z.infer<typeof loopPillSchema>
 
 export const loopSummarySchema = z.object({
 	id: z.string().uuid(),

@@ -4,12 +4,7 @@ import type { RowSelectionState } from '@tanstack/react-table'
 import { type Dispatch, type SetStateAction, useCallback } from 'react'
 import { toast } from 'sonner'
 import type { z } from 'zod'
-import {
-	trackBetArchived,
-	trackBetCreated,
-	trackBetStatusChanged,
-	trackLoopGraduated,
-} from '../lib/analytics'
+import { trackBetArchived, trackBetCreated, trackBetStatusChanged } from '../lib/analytics'
 import type {
 	BulkUpdateObjectsInput,
 	BulkUpdateObjectsResponse,
@@ -80,17 +75,6 @@ export function useCreateObject(workspaceId: string) {
 			queryClient.setQueryData(queryKeys.objects.detail(data.id), data)
 			if (data.type === 'bet') {
 				trackBetCreated({ entity_id: data.id, entity_type: 'bet' })
-			}
-			if (data.type === 'loop') {
-				const metadata = data.metadata as Record<string, unknown> | null
-				const rawSourceBetId = metadata?.source_bet_id
-				const sourceBetId =
-					typeof rawSourceBetId === 'string' && rawSourceBetId.length > 0 ? rawSourceBetId : null
-				trackLoopGraduated({
-					entity_id: data.id,
-					entity_type: 'loop',
-					source_bet_id: sourceBetId,
-				})
 			}
 		},
 		onSettled: (_data, _err, variables) => {

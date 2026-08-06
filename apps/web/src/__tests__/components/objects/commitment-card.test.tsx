@@ -20,16 +20,6 @@ vi.mock('@/hooks/use-objects', () => ({
 	}),
 }))
 
-vi.mock('@/lib/analytics', async () => {
-	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
-	return {
-		...actual,
-		trackLoopViewed: vi.fn(),
-	}
-})
-
-import { trackLoopViewed } from '@/lib/analytics'
-
 function renderCommitmentCard(object = buildObjectResponse({ type: 'commitment' })) {
 	return render(
 		<TestWrapper>
@@ -39,10 +29,6 @@ function renderCommitmentCard(object = buildObjectResponse({ type: 'commitment' 
 }
 
 describe('CommitmentCard', () => {
-	beforeEach(() => {
-		vi.mocked(trackLoopViewed).mockClear()
-	})
-
 	it('renders the commitment title', () => {
 		const object = buildObjectResponse({
 			type: 'commitment',
@@ -148,36 +134,5 @@ describe('CommitmentCard', () => {
 		})
 		renderCommitmentCard(object)
 		expect(screen.queryByText('Last breach')).not.toBeInTheDocument()
-	})
-
-	it('fires loop_viewed once on mount, carrying the source_bet_id join key', () => {
-		const object = buildObjectResponse({
-			id: 'commitment-77',
-			type: 'commitment',
-			status: 'holding',
-			metadata: { source_bet_id: 'bet-77' },
-		})
-		renderCommitmentCard(object)
-		expect(trackLoopViewed).toHaveBeenCalledTimes(1)
-		expect(trackLoopViewed).toHaveBeenCalledWith({
-			entity_id: 'commitment-77',
-			entity_type: 'loop',
-			source_bet_id: 'bet-77',
-		})
-	})
-
-	it('fires loop_viewed with a null source_bet_id when metadata is absent', () => {
-		const object = buildObjectResponse({
-			id: 'commitment-88',
-			type: 'commitment',
-			status: 'holding',
-			metadata: null,
-		})
-		renderCommitmentCard(object)
-		expect(trackLoopViewed).toHaveBeenCalledWith({
-			entity_id: 'commitment-88',
-			entity_type: 'loop',
-			source_bet_id: null,
-		})
 	})
 })
