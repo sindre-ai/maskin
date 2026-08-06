@@ -162,7 +162,7 @@ function MarketplacePage() {
 				<p className="mt-1 text-sm text-muted-foreground max-w-2xl">{SUBHEAD}</p>
 			</div>
 
-			<div className="flex flex-col md:flex-row md:gap-8 flex-1 min-h-0">
+			<div className="flex flex-col md:flex-row md:gap-4 lg:gap-8 flex-1 min-h-0">
 				{/* Mobile: horizontal chip strip. Hidden ≥md. */}
 				<nav aria-label="Marketplace filters" className="md:hidden -mx-1 mb-4 flex flex-col gap-2">
 					<div className="px-1">
@@ -193,7 +193,7 @@ function MarketplacePage() {
 				</nav>
 
 				{/* Desktop sidebar. Hidden <md. */}
-				<aside className="hidden md:block md:w-48 md:shrink-0">
+				<aside className="hidden md:block md:w-36 lg:w-48 md:shrink-0">
 					<SidebarGroup label="Type">
 						{TYPE_ITEMS.map((item) => (
 							<SidebarItem
@@ -296,14 +296,17 @@ function SidebarItem({
 			>
 				<span>{label}</span>
 				{typeof count === 'number' ? (
-					<span
-						className={cn(
-							'text-xs tabular-nums',
-							active ? 'text-muted-foreground' : 'text-muted-foreground/70',
-						)}
-					>
-						{count}
-					</span>
+					<>
+						{' '}
+						<span
+							className={cn(
+								'text-xs tabular-nums',
+								active ? 'text-muted-foreground' : 'text-muted-foreground/70',
+							)}
+						>
+							{count}
+						</span>
+					</>
 				) : null}
 			</button>
 		</li>
@@ -347,9 +350,12 @@ function ChipStrip({
 					>
 						{item.label}
 						{typeof count === 'number' ? (
-							<span className={cn('ml-1.5 tabular-nums', isActive ? 'opacity-80' : 'opacity-60')}>
-								{count}
-							</span>
+							<>
+								{' '}
+								<span className={cn('ml-1.5 tabular-nums', isActive ? 'opacity-80' : 'opacity-60')}>
+									{count}
+								</span>
+							</>
 						) : null}
 					</button>
 				)

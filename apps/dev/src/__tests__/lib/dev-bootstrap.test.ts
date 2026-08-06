@@ -1,12 +1,33 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CCD_ACTOR_IDS, CCD_PACKAGE, CCD_TRIGGER_IDS } from '../../lib/catalog-packages/ccd-package'
 import { DEV_PIPELINE_PACKAGE } from '../../lib/catalog-packages/dev-pipeline-package'
+import { GROWTH_BET_PACKAGE } from '../../lib/catalog-packages/growth-bet-package'
+import { GROWTH_BRAND_DEMAND_PACKAGE } from '../../lib/catalog-packages/growth-brand-demand-package'
+import { GROWTH_CONTENT_INSIGHT_PACKAGE } from '../../lib/catalog-packages/growth-content-insight-package'
+import { GROWTH_DEAL_RELATIONSHIP_PACKAGE } from '../../lib/catalog-packages/growth-deal-relationship-package'
+import { GROWTH_LEAD_GEN_PACKAGE } from '../../lib/catalog-packages/growth-lead-gen-package'
+import { GROWTH_MEETING_PACKAGE } from '../../lib/catalog-packages/growth-meeting-package'
+import { GROWTH_OPS_KNOWLEDGE_PACKAGE } from '../../lib/catalog-packages/growth-ops-knowledge-package'
+import { GROWTH_SDR_OUTREACH_PACKAGE } from '../../lib/catalog-packages/growth-sdr-outreach-package'
 import { STRATEGY_GROWTH_PACKAGE } from '../../lib/catalog-packages/strategy-growth-package'
 import { TEAM_OPS_PACKAGE } from '../../lib/catalog-packages/team-ops-package'
 import { maybeBootstrapDev, seedCatalogIfEmpty, seedCatalogPackages } from '../../lib/dev-bootstrap'
 import { createTestContext } from '../setup'
 
-const ALL_PACKAGES = [CCD_PACKAGE, DEV_PIPELINE_PACKAGE, STRATEGY_GROWTH_PACKAGE, TEAM_OPS_PACKAGE]
+const ALL_PACKAGES = [
+	CCD_PACKAGE,
+	DEV_PIPELINE_PACKAGE,
+	STRATEGY_GROWTH_PACKAGE,
+	TEAM_OPS_PACKAGE,
+	GROWTH_LEAD_GEN_PACKAGE,
+	GROWTH_SDR_OUTREACH_PACKAGE,
+	GROWTH_DEAL_RELATIONSHIP_PACKAGE,
+	GROWTH_CONTENT_INSIGHT_PACKAGE,
+	GROWTH_BRAND_DEMAND_PACKAGE,
+	GROWTH_BET_PACKAGE,
+	GROWTH_OPS_KNOWLEDGE_PACKAGE,
+	GROWTH_MEETING_PACKAGE,
+]
 
 function matchingCatalogRows() {
 	return ALL_PACKAGES.map((pkg, i) => ({ id: `pkg-${i}`, slug: pkg.slug, version: pkg.version }))
@@ -168,7 +189,7 @@ describe('seedCatalogIfEmpty', () => {
 		expect(calls.updates).toEqual([])
 	})
 
-	it('inserts all 4 Loop packages when the catalog is empty', async () => {
+	it('inserts all 12 Loop packages when the catalog is empty', async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults, calls } = createTestContext()
@@ -186,11 +207,11 @@ describe('seedCatalogIfEmpty', () => {
 		)
 		const itemInserts = calls.inserts.filter((v): v is unknown[] => Array.isArray(v))
 
-		expect(packageInserts.length).toBe(4)
-		expect(itemInserts.length).toBe(4)
+		expect(packageInserts.length).toBe(12)
+		expect(itemInserts.length).toBe(12)
 
 		const slugs = packageInserts.map((p) => p.slug)
-		expect(new Set(slugs).size).toBe(4)
+		expect(new Set(slugs).size).toBe(12)
 		expect(slugs).toEqual(expect.arrayContaining(ALL_PACKAGES.map((p) => p.slug)))
 
 		// CCD is seeded first — assert its actor/trigger counts match the live bundle.
@@ -216,7 +237,7 @@ describe('seedCatalogPackages', () => {
 
 		const result = await seedCatalogPackages(db)
 
-		expect(result.inserted.length).toBe(4)
+		expect(result.inserted.length).toBe(12)
 		expect(result.updated).toEqual([])
 		expect(result.unchanged).toEqual([])
 		expect(calls.inserts.length).toBeGreaterThan(0)
@@ -231,7 +252,7 @@ describe('seedCatalogPackages', () => {
 
 		expect(result.inserted).toEqual([])
 		expect(result.updated).toEqual([])
-		expect(result.unchanged.length).toBe(4)
+		expect(result.unchanged.length).toBe(12)
 		expect(calls.inserts).toEqual([])
 	})
 
@@ -247,7 +268,7 @@ describe('seedCatalogPackages', () => {
 
 		expect(result.updated).toEqual([CCD_PACKAGE.slug])
 		expect(result.inserted).toEqual([])
-		expect(result.unchanged.length).toBe(3)
+		expect(result.unchanged.length).toBe(11)
 		expect(calls.updates.length).toBe(1)
 
 		const itemInserts = calls.inserts.filter((v): v is unknown[] => Array.isArray(v))
