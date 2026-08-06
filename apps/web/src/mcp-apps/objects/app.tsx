@@ -50,16 +50,6 @@ function ObjectsApp() {
 		[callTool],
 	)
 
-	const handleUpdateStatus = useCallback(
-		(obj: ObjectResponse) => async (status: string) => {
-			setLocalObject({ ...obj, status })
-			const result = await callTool('update_objects', { updates: [{ id: obj.id, status }] })
-			const updated = extractFirstUpdatedObject(result)
-			if (updated) setLocalObject(updated)
-		},
-		[callTool],
-	)
-
 	const handleUpdateDriver = useCallback(
 		(obj: ObjectResponse) => async (driver: string | null) => {
 			setLocalObject({ ...obj, driver })
@@ -104,7 +94,6 @@ function ObjectsApp() {
 	const editHandlers = (obj: ObjectResponse) => ({
 		onUpdateTitle: handleUpdateTitle(obj),
 		onUpdateContent: handleUpdateContent(obj),
-		onUpdateStatus: handleUpdateStatus(obj),
 		onUpdateDriver: handleUpdateDriver(obj),
 		onDelete: handleDelete(obj),
 	})
@@ -139,7 +128,6 @@ export function ObjectDocument({
 	handlers: {
 		onUpdateTitle: (title: string) => Promise<void>
 		onUpdateContent: (content: string) => Promise<void>
-		onUpdateStatus: (status: string) => Promise<void>
 		onUpdateDriver: (driver: string | null) => Promise<void>
 		onDelete: () => Promise<void>
 	}
@@ -176,10 +164,8 @@ export function ObjectDocument({
 			<ObjectDocumentView
 				object={obj}
 				workspaceId={workspaceId}
-				statuses={[]}
 				onUpdateTitle={handlers.onUpdateTitle}
 				onUpdateContent={handlers.onUpdateContent}
-				onUpdateStatus={handlers.onUpdateStatus}
 				onUpdateDriver={handlers.onUpdateDriver}
 				onDelete={handlers.onDelete}
 				contentLoaded={'content' in obj}

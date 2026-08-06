@@ -33,21 +33,21 @@ vi.mock('@/hooks/use-objects', async () => {
 	}
 })
 
+beforeEach(() => {
+	mockUseKnowledgeReferences.mockReturnValue({ data: undefined })
+})
+
 vi.mock('@/components/objects/loop-card', () => ({
 	LoopCard: () => <div data-testid="loop-card" />,
 }))
 
 const baseProps = {
 	workspaceId: 'ws-1',
-	statuses: ['proposed', 'active', 'done'],
 	onUpdateTitle: vi.fn(),
 	onUpdateContent: vi.fn(),
-	onUpdateStatus: vi.fn(),
 	onUpdateDriver: vi.fn(),
 	onDelete: vi.fn(),
 }
-
-const betStatuses = ['proposed', 'active', 'paused', 'succeeded', 'failed', 'archived']
 
 describe('ObjectDocumentView', () => {
 	it('renders title in textarea', () => {
@@ -242,23 +242,17 @@ describe('ObjectDocumentView', () => {
 	})
 
 	describe('above-title header row order', () => {
-		// DoD contract for T2: the four editable identity elements sit above
-		// the <h1> textarea in the DOM, in the order TypeBadge → status →
-		// IndicatorBadgeChip → OwnerSelect. This is the frame test — the
-		// per-viewport fold assertion lives in the Playwright spec.
-		it('renders TypeBadge, StatusSelect, IndicatorBadgeChip, and OwnerSelect above the title', () => {
+		// The identity row above the <h1> textarea carries only TypeBadge and
+		// the driver (OwnerSelect) — status and the bet-status chip moved to
+		// the properties sidebar. This is the frame test — the per-viewport
+		// fold assertion lives in the Playwright spec.
+		it('renders TypeBadge and OwnerSelect above the title, without status controls', () => {
 			const members = [
 				{ actorId: 'actor-alice', role: 'owner', joinedAt: null, name: 'Alice', type: 'human' },
 			]
 			const object = buildObjectResponse({ type: 'bet', status: 'active' })
 			const { container } = render(
-				<ObjectDocumentView
-					{...baseProps}
-					object={object}
-					statuses={betStatuses}
-					members={members}
-					betStatus={{ state: 'progressing', pendingAction: null, decisionsSoFar: [] }}
-				/>,
+				<ObjectDocumentView {...baseProps} object={object} members={members} />,
 			)
 			const textarea = container.querySelector('textarea')
 			expect(textarea).not.toBeNull()
@@ -269,6 +263,8 @@ describe('ObjectDocumentView', () => {
 			expect(typeBadge.compareDocumentPosition(textarea) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
 				Node.DOCUMENT_POSITION_FOLLOWING,
 			)
+			expect(screen.getByRole('combobox')).toBeInTheDocument()
+			expect(screen.queryAllByRole('combobox')).toHaveLength(1)
 		})
 
 		it('no longer renders SubscribeToggle, creator, or created/updated chips inline', () => {
@@ -281,88 +277,6 @@ describe('ObjectDocumentView', () => {
 			expect(screen.queryByTestId('subscribe-toggle')).not.toBeInTheDocument()
 			expect(container.querySelectorAll('time').length).toBe(0)
 			expect(screen.queryByText(/Referenced by/)).not.toBeInTheDocument()
-		})
-	})
-
-	// One handler, two entry points: picking `archived` in the status picker
-	// dispatches through `onArchive` — the same handler the row `⋯` menu's
-	// Archive item calls. Prevents the picker path from silently duplicating
-	// or bypassing archive logic.
-	describe('status picker → archive routing', () => {
-		it('routes archived picks through onArchive for bets when handler is provided', async () => {
-			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
-			const onArchive = vi.fn()
-			const onUpdateStatus = vi.fn()
-			const object = buildObjectResponse({ type: 'bet', status: 'active' })
-
-			render(
-				<ObjectDocumentView
-					{...baseProps}
-					object={object}
-					statuses={betStatuses}
-					onArchive={onArchive}
-					onUpdateStatus={onUpdateStatus}
-				/>,
-			)
-
-			const triggers = screen.getAllByRole('combobox')
-			// StatusSelect is the first combobox (mounted before OwnerSelect).
-			await user.click(triggers[0])
-			await user.click(screen.getByRole('option', { name: /archived/i }))
-
-			expect(onArchive).toHaveBeenCalledTimes(1)
-			expect(onUpdateStatus).not.toHaveBeenCalled()
-		})
-
-		it('routes non-archived picks through onUpdateStatus even when onArchive is provided', async () => {
-			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
-			const onArchive = vi.fn()
-			const onUpdateStatus = vi.fn()
-			const object = buildObjectResponse({ type: 'bet', status: 'active' })
-
-			render(
-				<ObjectDocumentView
-					{...baseProps}
-					object={object}
-					statuses={betStatuses}
-					onArchive={onArchive}
-					onUpdateStatus={onUpdateStatus}
-				/>,
-			)
-
-			const triggers = screen.getAllByRole('combobox')
-			await user.click(triggers[0])
-			await user.click(screen.getByRole('option', { name: /paused/i }))
-
-			expect(onUpdateStatus).toHaveBeenCalledWith('paused')
-			expect(onArchive).not.toHaveBeenCalled()
-		})
-
-		it('leaves non-bet types on the generic onUpdateStatus path', async () => {
-			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
-			const onArchive = vi.fn()
-			const onUpdateStatus = vi.fn()
-			// A task in a workspace whose enum still happens to include
-			// `archived` should fall through to the generic status route — archive
-			// isn't a supported action on non-bet types in this ship.
-			const object = buildObjectResponse({ type: 'task', status: 'todo' })
-
-			render(
-				<ObjectDocumentView
-					{...baseProps}
-					object={object}
-					statuses={['todo', 'archived']}
-					onArchive={onArchive}
-					onUpdateStatus={onUpdateStatus}
-				/>,
-			)
-
-			const triggers = screen.getAllByRole('combobox')
-			await user.click(triggers[0])
-			await user.click(screen.getByRole('option', { name: /archived/i }))
-
-			expect(onUpdateStatus).toHaveBeenCalledWith('archived')
-			expect(onArchive).not.toHaveBeenCalled()
 		})
 	})
 })

@@ -13,19 +13,14 @@ export function StatusSelect({
 	current,
 	options,
 	onChange,
-	// Opt-in flag: only the hero copy carries the anchor. The sticky nav's chip
-	// smooth-scrolls to the hero and focuses this trigger — a menu copy would
-	// steal that focus target and break the "click chip → land on hero" path.
-	heroAnchor = false,
 }: {
 	current: string
 	options: string[]
 	onChange: (status: string) => void
-	heroAnchor?: boolean
 }) {
 	return (
 		<Select value={current} onValueChange={onChange}>
-			<SelectTrigger data-hero-status-trigger={heroAnchor ? '' : undefined}>
+			<SelectTrigger>
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
