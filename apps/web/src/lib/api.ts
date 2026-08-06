@@ -797,11 +797,11 @@ export interface ClaudeOAuthImportInput {
 	slot?: ClaudeOAuthSlot
 }
 
-export type BillingPlan = 'trial' | 'starter' | 'pro' | 'byollm'
+export type BillingPlan = 'trial' | 'pro' | 'team' | 'byollm'
 export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'incomplete'
 
 export interface BillingCheckoutInput {
-	plan: 'starter' | 'pro'
+	plan: 'pro' | 'team'
 	success_url: string
 	cancel_url: string
 }

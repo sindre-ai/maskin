@@ -55,7 +55,7 @@ export const workspaces = pgTable('workspaces', {
 	settings: jsonb('settings').notNull().default({}),
 	onboardingEnabled: boolean('onboarding_enabled').notNull().default(true),
 	// Admin-only entitlement: workspaces default to the Maskin-provided LLM plan
-	// (trial → starter/pro). Only workspaces explicitly flagged here may use
+	// (trial → pro/team). Only workspaces explicitly flagged here may use
 	// BYO LLM credentials (Claude OAuth, custom_llm, llm_keys). See PR #970.
 	byollmAllowed: boolean('byollm_allowed').notNull().default(false),
 	createdBy: uuid('created_by').references(() => actors.id),

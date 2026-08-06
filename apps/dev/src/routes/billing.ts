@@ -6,7 +6,7 @@ import { eq } from 'drizzle-orm'
 import {
 	DEFAULT_PERIOD_LENGTH_MS,
 	PRO_HARD_CAP_DEFAULT_TOKENS,
-	STARTER_HARD_CAP_DEFAULT_TOKENS,
+	TEAM_HARD_CAP_DEFAULT_TOKENS,
 	TRIAL_HARD_CAP_DEFAULT_TOKENS,
 	parsePositiveIntEnv,
 } from '../lib/billing-defaults'
@@ -32,17 +32,15 @@ import type { WorkspaceSettings } from '../lib/types'
  * that helper throws when Stripe is unconfigured, and `/api/billing/usage`
  * must keep serving usage to workspaces regardless.
  */
-function planHardCapFallback(plan: 'trial' | 'starter' | 'pro' | 'byollm'): number | null {
+function planHardCapFallback(plan: 'trial' | 'pro' | 'team' | 'byollm'): number | null {
 	switch (plan) {
 		case 'trial':
 		case 'byollm':
 			return TRIAL_HARD_CAP_DEFAULT_TOKENS
-		case 'starter':
-			return (
-				parsePositiveIntEnv('MASKIN_STARTER_HARD_CAP_TOKENS') ?? STARTER_HARD_CAP_DEFAULT_TOKENS
-			)
 		case 'pro':
 			return parsePositiveIntEnv('MASKIN_PRO_HARD_CAP_TOKENS') ?? PRO_HARD_CAP_DEFAULT_TOKENS
+		case 'team':
+			return parsePositiveIntEnv('MASKIN_TEAM_HARD_CAP_TOKENS') ?? TEAM_HARD_CAP_DEFAULT_TOKENS
 	}
 }
 
@@ -57,7 +55,7 @@ type Env = {
 const app = new OpenAPIHono<Env>()
 
 const checkoutBodySchema = z.object({
-	plan: z.enum(['starter', 'pro']),
+	plan: z.enum(['pro', 'team']),
 	success_url: z.string().url(),
 	cancel_url: z.string().url(),
 })
@@ -100,7 +98,7 @@ const checkoutRoute = createRoute({
 })
 
 const usageResponseSchema = z.object({
-	plan: z.enum(['trial', 'starter', 'pro', 'byollm']),
+	plan: z.enum(['trial', 'pro', 'team', 'byollm']),
 	status: z.enum(['active', 'past_due', 'canceled', 'incomplete']),
 	tokens_used: z.number().int().nonnegative(),
 	hard_cap_tokens: z.number().int().positive().nullable(),

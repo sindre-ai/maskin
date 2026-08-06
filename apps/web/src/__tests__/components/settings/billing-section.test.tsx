@@ -1,6 +1,7 @@
-// 32_000_000 / 96_000_000 below mirror STARTER_HARD_CAP_DEFAULT_TOKENS /
-// PRO_HARD_CAP_DEFAULT_TOKENS in apps/dev/src/lib/billing-defaults.ts and the
-// .env.example MASKIN_*_HARD_CAP_TOKENS defaults. Keep in sync when bumping.
+// 8_000_000 / 32_000_000 / 320_000_000 below mirror TRIAL_HARD_CAP_DEFAULT_TOKENS /
+// PRO_HARD_CAP_DEFAULT_TOKENS / TEAM_HARD_CAP_DEFAULT_TOKENS in
+// apps/dev/src/lib/billing-defaults.ts and the .env.example
+// MASKIN_*_HARD_CAP_TOKENS defaults. Keep in sync when bumping.
 import { BillingSection, formatResetsIn, formatTokens } from '@/components/settings/billing-section'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -21,7 +22,7 @@ const baseUsage = {
 	plan: 'trial' as const,
 	status: 'active' as const,
 	tokens_used: 0,
-	hard_cap_tokens: 100_000,
+	hard_cap_tokens: 8_000_000,
 	period_start: null,
 	period_resets_in_ms: 30 * 24 * 60 * 60 * 1000,
 	stripe_customer_id: null,
@@ -75,20 +76,20 @@ describe('BillingSection', () => {
 		)
 
 		await screen.findByText('Trial')
-		expect(screen.getByText('25k / 100k tokens')).toBeInTheDocument()
+		expect(screen.getByText('25k / 8.0M tokens')).toBeInTheDocument()
 		// Trial (non-paid-active) plans start with the comparison grid expanded.
-		expect(screen.getByRole('button', { name: 'Upgrade to Starter' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Upgrade to Team' })).toBeInTheDocument()
 		expect(
 			screen.queryByRole('button', { name: /Switch to bring-your-own/ }),
 		).not.toBeInTheDocument()
 	})
 
-	it('renders Starter plan with Pro upgrade + Switch-to-BYO + Manage in Stripe', async () => {
+	it('renders Pro plan with Team upgrade + Switch-to-BYO + Manage in Stripe', async () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
-			plan: 'starter',
+			plan: 'pro',
 			status: 'active',
 			tokens_used: 12_000_000,
 			hard_cap_tokens: 32_000_000,
@@ -104,27 +105,27 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Starter — $20/mo')
+		await screen.findByText('Pro — $20/mo')
 		expect(screen.getByText(/12M \/ 32M tokens/)).toBeInTheDocument()
 		expect(screen.getByText(/resets in 23d/)).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /Manage in Stripe/ })).toBeInTheDocument()
 
 		// Paid+active plans start with the comparison grid collapsed.
-		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Upgrade to Team' })).not.toBeInTheDocument()
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 
-		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Upgrade to Team' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Downgrade to Free' })).toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
 	})
 
-	it('renders Pro plan with Switch-to-BYO but no further upgrade', async () => {
+	it('renders Team plan with Switch-to-BYO but no further upgrade', async () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
-			plan: 'pro',
+			plan: 'team',
 			status: 'active',
-			hard_cap_tokens: 96_000_000,
+			hard_cap_tokens: 320_000_000,
 			tokens_used: 1_000_000,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
@@ -136,7 +137,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $60/mo')
+		await screen.findByText('Team — $200/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 
 		expect(screen.queryByRole('button', { name: /Upgrade/ })).not.toBeInTheDocument()
@@ -158,10 +159,10 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findAllByText('Free')
+		await screen.findByText('Enterprise')
 		expect(screen.getByText(/Using your own Claude subscription/)).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Upgrade to Starter' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Upgrade to Team' })).toBeInTheDocument()
 		expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
 	})
 
@@ -187,12 +188,12 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await user.click(await screen.findByRole('button', { name: 'Upgrade to Starter' }))
+		await user.click(await screen.findByRole('button', { name: 'Upgrade to Pro' }))
 
 		await vi.waitFor(() => {
 			expect(api.billing.checkout).toHaveBeenCalledWith(
 				'ws-1',
-				expect.objectContaining({ plan: 'starter' }),
+				expect.objectContaining({ plan: 'pro' }),
 			)
 		})
 		await vi.waitFor(() => {
@@ -206,7 +207,7 @@ describe('BillingSection', () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
-			plan: 'starter',
+			plan: 'pro',
 			hard_cap_tokens: 32_000_000,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
@@ -218,7 +219,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Starter — $20/mo')
+		await screen.findByText('Pro — $20/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 		await user.click(screen.getByRole('button', { name: 'Downgrade to Free' }))
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
@@ -229,7 +230,7 @@ describe('BillingSection', () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
-			plan: 'starter',
+			plan: 'pro',
 			status: 'active',
 			hard_cap_tokens: 32_000_000,
 			stripe_customer_id: 'cus_x',
@@ -242,7 +243,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Starter — $20/mo')
+		await screen.findByText('Pro — $20/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 
 		expect(screen.queryByRole('button', { name: 'Downgrade to Free' })).not.toBeInTheDocument()
@@ -272,7 +273,7 @@ describe('BillingSection', () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
-			plan: 'starter',
+			plan: 'pro',
 			status: 'active',
 			hard_cap_tokens: 32_000_000,
 			stripe_customer_id: 'cus_x',
@@ -285,7 +286,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Starter — $20/mo')
+		await screen.findByText('Pro — $20/mo')
 		expect(screen.queryByRole('button', { name: 'Downgrade to Free' })).not.toBeInTheDocument()
 
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))

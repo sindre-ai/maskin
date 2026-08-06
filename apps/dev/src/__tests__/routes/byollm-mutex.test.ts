@@ -37,10 +37,10 @@ const { default: stripeWebhookRoutes } = await import('../../routes/stripe-webho
 const STRIPE_ENV = {
 	STRIPE_SECRET_KEY: 'sk_test_x',
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
-	STRIPE_PRICE_STARTER: 'price_starter',
 	STRIPE_PRICE_PRO: 'price_pro',
-	MASKIN_STARTER_HARD_CAP_TOKENS: '32000000',
-	MASKIN_PRO_HARD_CAP_TOKENS: '96000000',
+	STRIPE_PRICE_TEAM: 'price_team',
+	MASKIN_PRO_HARD_CAP_TOKENS: '32000000',
+	MASKIN_TEAM_HARD_CAP_TOKENS: '320000000',
 }
 const setStripeEnv = () => {
 	for (const [k, v] of Object.entries(STRIPE_ENV)) process.env[k] = v
@@ -80,11 +80,11 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 					byollmAllowed: true,
 					settings: {
 						billing: {
-							plan: 'pro',
+							plan: 'team',
 							status: 'active',
 							stripe_subscription_id: 'sub_live',
 							stripe_customer_id: 'cus_live',
-							hard_cap_tokens: 96_000_000,
+							hard_cap_tokens: 320_000_000,
 						},
 					},
 				},
@@ -121,7 +121,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 					byollmAllowed: true,
 					settings: {
 						billing: {
-							plan: 'starter',
+							plan: 'pro',
 							status: 'active',
 							stripe_subscription_id: 'sub_starter',
 						},

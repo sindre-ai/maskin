@@ -17,9 +17,9 @@ import { useEffect, useState } from 'react'
 
 const PLAN_LABEL: Record<BillingPlan, string> = {
 	trial: 'Trial',
-	starter: 'Starter — $20/mo',
-	pro: 'Pro — $60/mo',
-	byollm: 'Free',
+	pro: 'Pro — $20/mo',
+	team: 'Team — $200/mo',
+	byollm: 'Enterprise',
 }
 
 const STRIPE_BILLING_PORTAL = 'https://billing.stripe.com/p/login/maskin'
@@ -39,11 +39,12 @@ export function formatResetsIn(ms: number | null): string {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-// 32_000_000 / 96_000_000 below mirror STARTER_HARD_CAP_DEFAULT_TOKENS /
-// PRO_HARD_CAP_DEFAULT_TOKENS in apps/dev/src/lib/billing-defaults.ts and the
-// .env.example MASKIN_*_HARD_CAP_TOKENS defaults. Keep in sync when bumping —
-// enforced by scripts/verify-billing-cap-literals.mjs.
-const CAP_DEFAULTS = { trial: 100_000, starter: 32_000_000, pro: 96_000_000 } as const
+// 8_000_000 / 32_000_000 / 320_000_000 below mirror TRIAL_HARD_CAP_DEFAULT_TOKENS /
+// PRO_HARD_CAP_DEFAULT_TOKENS / TEAM_HARD_CAP_DEFAULT_TOKENS in
+// apps/dev/src/lib/billing-defaults.ts and the .env.example
+// MASKIN_*_HARD_CAP_TOKENS defaults. Keep in sync when bumping — enforced by
+// scripts/verify-billing-cap-literals.mjs.
+const CAP_DEFAULTS = { trial: 8_000_000, pro: 32_000_000, team: 320_000_000 } as const
 
 interface PlanCardConfig {
 	plan: BillingPlan
@@ -59,41 +60,43 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		plan: 'trial',
 		eyebrow: 'TRIAL',
 		price: 'Free',
-		priceSuffix: '',
-		tagline: "Try Maskin's hosted LLM before you subscribe.",
+		priceSuffix: '/14 days',
+		tagline: 'Full product, no card. $5 of usage on the house.',
 		features: [
-			`${formatTokens(CAP_DEFAULTS.trial)} tokens, 30-day rolling window`,
-			'Hosted by Maskin — no API key needed',
-		],
-	},
-	{
-		plan: 'starter',
-		eyebrow: 'STARTER',
-		price: '$20',
-		priceSuffix: '/mo',
-		tagline: 'For workspaces running agents regularly.',
-		features: [
-			`${formatTokens(CAP_DEFAULTS.starter)} tokens/month`,
+			`${formatTokens(CAP_DEFAULTS.trial)} tokens included`,
 			'Hosted by Maskin — no API key needed',
 		],
 	},
 	{
 		plan: 'pro',
 		eyebrow: 'PRO',
-		price: '$60',
+		price: '$20',
 		priceSuffix: '/mo',
-		tagline: 'For heavier agent workloads.',
+		tagline: 'For teams running real workflows day to day.',
 		features: [
-			`${formatTokens(CAP_DEFAULTS.pro)} tokens/month`,
+			`${formatTokens(CAP_DEFAULTS.pro)} tokens of usage included each month`,
+			'More usage at cost, no markup',
+			'Hosted by Maskin — no API key needed',
+		],
+	},
+	{
+		plan: 'team',
+		eyebrow: 'TEAM',
+		price: '$200',
+		priceSuffix: '/mo',
+		tagline: 'Heavier loops, volume rates, one invoice.',
+		features: [
+			`${formatTokens(CAP_DEFAULTS.team)} tokens of usage included each month`,
+			'Volume rate beyond that',
 			'Hosted by Maskin — no API key needed',
 		],
 	},
 	{
 		plan: 'byollm',
-		eyebrow: 'FREE',
-		price: 'Free',
+		eyebrow: 'ENTERPRISE',
+		price: 'BYOL',
 		priceSuffix: '',
-		tagline: 'Bring your own Claude subscription, API key, or custom endpoint.',
+		tagline: 'Bring your own LLM. Pay by invoice. Full control.',
 		features: [
 			'No Maskin-hosted token cap',
 			'Use your own Claude Pro/Max, Anthropic API key, or custom endpoint',
@@ -129,7 +132,7 @@ function PeriodCountdown({ ms, label }: { ms: number; label: string }) {
 }
 
 function statusBadge(plan: BillingPlan, status: BillingStatus): { label: string; tone: string } {
-	if (plan === 'byollm') return { label: 'Free', tone: 'bg-muted text-muted-foreground' }
+	if (plan === 'byollm') return { label: 'BYOL', tone: 'bg-muted text-muted-foreground' }
 	if (status === 'active') return { label: 'Active', tone: 'bg-success/10 text-success' }
 	if (status === 'past_due') return { label: 'Past due', tone: 'bg-warning/10 text-warning' }
 	if (status === 'canceled') return { label: 'Canceled', tone: 'bg-muted text-muted-foreground' }
@@ -150,7 +153,7 @@ function getPlanCta(
 	isPaid: boolean,
 	byollmAllowed: boolean,
 	checkoutPending: boolean,
-	handleUpgrade: (plan: 'starter' | 'pro') => void,
+	handleUpgrade: (plan: 'pro' | 'team') => void,
 	openSwitch: () => void,
 ): PlanCta | null {
 	if (planKey === usage.plan) return null
@@ -167,26 +170,26 @@ function getPlanCta(
 		return null
 	}
 
-	if (planKey === 'starter') {
+	if (planKey === 'pro') {
 		if (isTrial || usage.status !== 'active') {
 			return {
-				label: 'Upgrade to Starter',
-				onClick: () => handleUpgrade('starter'),
+				label: 'Upgrade to Pro',
+				onClick: () => handleUpgrade('pro'),
 				disabled: checkoutPending,
 			}
 		}
 		return null
 	}
 
-	if (planKey === 'pro') {
+	if (planKey === 'team') {
 		if (
 			isTrial ||
 			usage.status !== 'active' ||
-			(usage.plan === 'starter' && usage.status === 'active')
+			(usage.plan === 'pro' && usage.status === 'active')
 		) {
 			return {
-				label: 'Upgrade to Pro',
-				onClick: () => handleUpgrade('pro'),
+				label: 'Upgrade to Team',
+				onClick: () => handleUpgrade('team'),
 				disabled: checkoutPending,
 				variant: 'outline',
 			}
@@ -217,7 +220,7 @@ export function BillingSection({
 	// called on every render regardless of loading/error state.
 	const [plansOpenOverride, setPlansOpenOverride] = useState<boolean | null>(null)
 
-	const handleUpgrade = (plan: 'starter' | 'pro') => {
+	const handleUpgrade = (plan: 'pro' | 'team') => {
 		const base = window.location.href.split('?')[0]
 		checkout.mutate(
 			{
@@ -256,7 +259,7 @@ export function BillingSection({
 	const usage = usageQuery.data
 	const badge = statusBadge(usage.plan, usage.status)
 	const isByo = usage.plan === 'byollm'
-	const isPaid = usage.plan === 'starter' || usage.plan === 'pro'
+	const isPaid = usage.plan === 'pro' || usage.plan === 'team'
 	const isTrial = usage.plan === 'trial'
 	const cap = usage.hard_cap_tokens ?? 0
 	const pct = cap > 0 ? Math.min(100, Math.round((usage.tokens_used / cap) * 100)) : 0

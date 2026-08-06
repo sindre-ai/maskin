@@ -91,7 +91,7 @@ function createErrorTestApp() {
 	// Route that throws a plan-cap-exceeded error
 	app.get('/plan-cap', () => {
 		throw new PlanCapExceededError({
-			plan: 'starter',
+			plan: 'pro',
 			used: 1_500_000,
 			cap: 1_000_000,
 			periodEnd: 1_700_000_000_000,
@@ -209,7 +209,7 @@ describe('Error Handling', () => {
 			const body = await res.json()
 			expect(body.error).toMatchObject({
 				code: 'PLAN_CAP_EXCEEDED',
-				plan: 'starter',
+				plan: 'pro',
 				used: 1_500_000,
 				cap: 1_000_000,
 				period_end: 1_700_000_000_000,

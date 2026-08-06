@@ -13,16 +13,16 @@ import { Link } from '@tanstack/react-router'
 import { AlertTriangle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-const EXPIRED_PLANS = new Set<BillingPlan>(['trial', 'starter', 'pro'])
+const EXPIRED_PLANS = new Set<BillingPlan>(['trial', 'pro', 'team'])
 
 function bannerText(plan: BillingPlan): string {
 	if (plan === 'trial') return "Your trial has expired. Upgrade to keep using Maskin's hosted LLM."
-	return `Your ${plan === 'pro' ? 'Pro' : 'Starter'} plan period has ended. Renew to continue.`
+	return `Your ${plan === 'team' ? 'Team' : 'Pro'} plan period has ended. Renew to continue.`
 }
 
 function dialogTitle(plan: BillingPlan): string {
 	if (plan === 'trial') return 'Your trial has expired'
-	return `Your ${plan === 'pro' ? 'Pro' : 'Starter'} plan period has ended`
+	return `Your ${plan === 'team' ? 'Team' : 'Pro'} plan period has ended`
 }
 
 export function TrialExpiredBanner({ workspaceId }: { workspaceId: string }) {
@@ -37,7 +37,7 @@ export function TrialExpiredBanner({ workspaceId }: { workspaceId: string }) {
 			return
 		}
 		if (usage.period_resets_in_ms === 0) {
-			// For paid plans (starter/pro), suppress the banner while the subscription
+			// For paid plans (pro/team), suppress the banner while the subscription
 			// is still marked active. After checkout, Stripe webhooks can take several
 			// seconds to update period_end — showing "period ended" during this window
 			// is a false positive. Trial users always have status='active' locally, so
@@ -93,7 +93,7 @@ function PlanExpiredDialog({
 	const checkout = useStripeCheckout(workspaceId)
 	const cancel = useBillingCancel(workspaceId)
 
-	const handleUpgrade = (target: 'starter' | 'pro') => {
+	const handleUpgrade = (target: 'pro' | 'team') => {
 		const base = window.location.href.split('?')[0]
 		checkout.mutate(
 			{
@@ -127,40 +127,40 @@ function PlanExpiredDialog({
 				</DialogHeader>
 
 				<div className="flex flex-col gap-2">
-					{plan === 'pro' ? (
+					{plan === 'team' ? (
 						<>
 							<Button
 								className="w-full justify-start"
-								onClick={() => handleUpgrade('pro')}
+								onClick={() => handleUpgrade('team')}
 								disabled={isPending}
 							>
-								Renew Pro — $60/mo
+								Renew Team — $200/mo
 							</Button>
 							<Button
 								className="w-full justify-start"
 								variant="outline"
-								onClick={() => handleUpgrade('starter')}
+								onClick={() => handleUpgrade('pro')}
 								disabled={isPending}
 							>
-								Downgrade to Starter — $20/mo
+								Downgrade to Pro — $20/mo
 							</Button>
 						</>
 					) : (
 						<>
 							<Button
 								className="w-full justify-start"
-								onClick={() => handleUpgrade('starter')}
+								onClick={() => handleUpgrade('pro')}
 								disabled={isPending}
 							>
-								Renew Starter — $20/mo
+								Renew Pro — $20/mo
 							</Button>
 							<Button
 								className="w-full justify-start"
 								variant="outline"
-								onClick={() => handleUpgrade('pro')}
+								onClick={() => handleUpgrade('team')}
 								disabled={isPending}
 							>
-								Upgrade to Pro — $60/mo
+								Upgrade to Team — $200/mo
 							</Button>
 						</>
 					)}

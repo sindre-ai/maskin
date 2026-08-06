@@ -7,7 +7,7 @@ vi.mock('../../lib/logger', () => ({
 import {
 	MAX_ENV_CAP,
 	PRO_HARD_CAP_DEFAULT_TOKENS,
-	STARTER_HARD_CAP_DEFAULT_TOKENS,
+	TEAM_HARD_CAP_DEFAULT_TOKENS,
 	parsePositiveIntEnv,
 } from '../../lib/billing-defaults'
 import { logger } from '../../lib/logger'
@@ -139,8 +139,8 @@ describe('parsePositiveIntEnv', () => {
 
 describe('cap defaults', () => {
 	it('exports the prod literals', () => {
-		expect(STARTER_HARD_CAP_DEFAULT_TOKENS).toBe(32_000_000)
-		expect(PRO_HARD_CAP_DEFAULT_TOKENS).toBe(96_000_000)
+		expect(PRO_HARD_CAP_DEFAULT_TOKENS).toBe(32_000_000)
+		expect(TEAM_HARD_CAP_DEFAULT_TOKENS).toBe(320_000_000)
 	})
 
 	it('exposes MAX_ENV_CAP as MAX_SAFE_INTEGER for callers that need the ceiling', () => {

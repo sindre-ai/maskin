@@ -18,10 +18,10 @@ import { createTestApp } from '../setup'
 const VALID_ENV = {
 	STRIPE_SECRET_KEY: 'sk_test_x',
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
-	STRIPE_PRICE_STARTER: 'price_starter',
 	STRIPE_PRICE_PRO: 'price_pro',
-	MASKIN_STARTER_HARD_CAP_TOKENS: '32000000',
-	MASKIN_PRO_HARD_CAP_TOKENS: '96000000',
+	STRIPE_PRICE_TEAM: 'price_team',
+	MASKIN_PRO_HARD_CAP_TOKENS: '32000000',
+	MASKIN_TEAM_HARD_CAP_TOKENS: '320000000',
 }
 
 const setupEnv = () => {
@@ -111,7 +111,7 @@ describe('POST /api/webhooks/stripe', () => {
 		// 2nd select = applyEvent reading the workspace settings.
 		mockResults.selectQueue = [
 			[{ id: workspaceId }],
-			[{ id: workspaceId, settings: { billing: { plan: 'starter', status: 'active' } } }],
+			[{ id: workspaceId, settings: { billing: { plan: 'pro', status: 'active' } } }],
 		]
 		mockResults.insertQueue = [[{ id: 'claim-fallback' }]]
 
@@ -162,7 +162,7 @@ describe('POST /api/webhooks/stripe', () => {
 	})
 
 	it('clears stale period_end on checkout.session.completed so the re-subscribe banner does not show', async () => {
-		// Re-subscriber: their previous Starter period ended (period_end in the past).
+		// Re-subscriber: their previous Pro period ended (period_end in the past).
 		// checkout.session.completed arrives before customer.subscription.created; the
 		// stale period bounds must be cleared so the billing route falls back to a
 		// future estimate rather than returning period_resets_in_ms=0.
@@ -175,7 +175,7 @@ describe('POST /api/webhooks/stripe', () => {
 					id: workspaceId,
 					settings: {
 						billing: {
-							plan: 'starter',
+							plan: 'pro',
 							status: 'canceled',
 							period_start: 1_700_000_000,
 							period_end: 1_702_592_000, // past timestamp
@@ -225,7 +225,7 @@ describe('POST /api/webhooks/stripe', () => {
 					id: workspaceId,
 					settings: {
 						billing: {
-							plan: 'starter',
+							plan: 'pro',
 							status: 'active',
 							period_start: 1_700_000_000,
 							period_end: futurePeriodEnd,
@@ -274,7 +274,7 @@ describe('POST /api/webhooks/stripe', () => {
 					current_period_start: 1_700_000_000,
 					current_period_end: 1_702_592_000,
 					metadata: { workspace_id: workspaceId },
-					items: { data: [{ price: { id: 'price_pro' } }] },
+					items: { data: [{ price: { id: 'price_team' } }] },
 				},
 			},
 		} as unknown as Stripe.Event)
@@ -283,11 +283,11 @@ describe('POST /api/webhooks/stripe', () => {
 		expect(res.status).toBe(200)
 		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings.billing).toMatchObject({
-			plan: 'pro',
+			plan: 'team',
 			stripe_customer_id: 'cus_99',
 			stripe_subscription_id: 'sub_99',
 			status: 'active',
-			hard_cap_tokens: 96_000_000,
+			hard_cap_tokens: 320_000_000,
 			period_start: 1_700_000_000,
 			period_end: 1_702_592_000,
 		})
@@ -302,7 +302,7 @@ describe('POST /api/webhooks/stripe', () => {
 				{
 					id: workspaceId,
 					settings: {
-						billing: { plan: 'pro', status: 'active', stripe_subscription_id: 'sub_x' },
+						billing: { plan: 'team', status: 'active', stripe_subscription_id: 'sub_x' },
 					},
 				},
 			],
@@ -318,7 +318,7 @@ describe('POST /api/webhooks/stripe', () => {
 					status: 'canceled',
 					canceled_at: 1_700_001_000,
 					metadata: { workspace_id: workspaceId },
-					items: { data: [{ price: { id: 'price_pro' } }] },
+					items: { data: [{ price: { id: 'price_team' } }] },
 				},
 			},
 		} as unknown as Stripe.Event)
@@ -338,7 +338,7 @@ describe('POST /api/webhooks/stripe', () => {
 		const workspaceId = randomUUID()
 		mockResults.insertQueue = [[{ id: 'claim-4' }]]
 		mockResults.selectQueue = [
-			[{ id: workspaceId, settings: { billing: { plan: 'starter', status: 'active' } } }],
+			[{ id: workspaceId, settings: { billing: { plan: 'pro', status: 'active' } } }],
 		]
 
 		vi.mocked(verifyStripeWebhook).mockReturnValue({
@@ -355,7 +355,7 @@ describe('POST /api/webhooks/stripe', () => {
 		const res = await postWebhook(app, {})
 		expect(res.status).toBe(200)
 		const update = findWorkspaceUpdate(calls.updates)
-		expect(update.settings.billing).toMatchObject({ plan: 'starter', status: 'past_due' })
+		expect(update.settings.billing).toMatchObject({ plan: 'pro', status: 'past_due' })
 	})
 
 	it('writes period_start and period_end on invoice.paid', async () => {
@@ -363,7 +363,7 @@ describe('POST /api/webhooks/stripe', () => {
 		const workspaceId = randomUUID()
 		mockResults.insertQueue = [[{ id: 'claim-inv' }]]
 		mockResults.selectQueue = [
-			[{ id: workspaceId, settings: { billing: { plan: 'starter', status: 'active' } } }],
+			[{ id: workspaceId, settings: { billing: { plan: 'pro', status: 'active' } } }],
 		]
 
 		vi.mocked(verifyStripeWebhook).mockReturnValue({
@@ -439,9 +439,9 @@ describe('POST /api/webhooks/stripe', () => {
 					id: workspaceId,
 					settings: {
 						billing: {
-							plan: 'pro',
+							plan: 'team',
 							status: 'active',
-							hard_cap_tokens: 96_000_000,
+							hard_cap_tokens: 320_000_000,
 							period_start: 1_700_000_000,
 							stripe_subscription_id: 'sub_42',
 							stripe_customer_id: 'cus_42',
@@ -462,7 +462,7 @@ describe('POST /api/webhooks/stripe', () => {
 						status: 'active',
 						current_period_start: 1_700_000_000,
 						metadata: { workspace_id: workspaceId },
-						items: { data: [{ price: { id: 'price_pro' } }] },
+						items: { data: [{ price: { id: 'price_team' } }] },
 					},
 				},
 			} as unknown as Stripe.Event)
@@ -491,8 +491,8 @@ describe('POST /api/webhooks/stripe', () => {
 		// The final write must merge A's plan/cap with B's customer/subscription —
 		// the lost-update bug would surface here as plan='trial' or missing cap.
 		expect(workspaceUpdates[1]?.settings.billing).toMatchObject({
-			plan: 'pro',
-			hard_cap_tokens: 96_000_000,
+			plan: 'team',
+			hard_cap_tokens: 320_000_000,
 			period_start: 1_700_000_000,
 			stripe_customer_id: 'cus_42',
 			stripe_subscription_id: 'sub_42',

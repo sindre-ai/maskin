@@ -350,7 +350,7 @@ describe('resolveLlmRoute priority order', () => {
 			process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
 		})
 
-		it.each(['starter', 'pro', 'trial'] as const)(
+		it.each(['pro', 'team', 'trial'] as const)(
 			'%s plan routes through Maskin OR + Deepseek v4 Flash',
 			async (plan) => {
 				const settings = emptySettings()
@@ -463,7 +463,7 @@ describe('resolveLlmRoute priority order', () => {
 		it('falls through when paid plan is set but operator OR key is missing', async () => {
 			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = ''
 			const settings = emptySettings()
-			settings.billing = { plan: 'starter' }
+			settings.billing = { plan: 'pro' }
 			settings.llm_keys = { anthropic: 'sk-ant-recover' }
 			const result = await resolveLlmRoute({
 				...baseParams,
@@ -511,7 +511,7 @@ describe('checkPlanCap', () => {
 	})
 
 	it('treats missing billing as trial — enforces cap when over limit', async () => {
-		const db = dbWithSessionUsage([{ inputTokens: 999_999, outputTokens: 0 }])
+		const db = dbWithSessionUsage([{ inputTokens: 8_000_001, outputTokens: 0 }])
 		const err = await checkPlanCap({
 			db,
 			workspaceId: 'ws-1',
@@ -519,7 +519,7 @@ describe('checkPlanCap', () => {
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
 		expect(err.plan).toBe('trial')
-		expect(err.cap).toBe(100_000)
+		expect(err.cap).toBe(8_000_000)
 	})
 
 	it('is a no-op for byollm — explicit opt-out', async () => {
@@ -531,7 +531,7 @@ describe('checkPlanCap', () => {
 		).resolves.toBeUndefined()
 	})
 
-	it.each(['starter', 'pro'] as const)(
+	it.each(['pro', 'team'] as const)(
 		'is a no-op for %s when Stripe has not written hard_cap_tokens (fail-open pre-Task 5)',
 		async (plan) => {
 			const settings = emptySettings()
@@ -548,7 +548,7 @@ describe('checkPlanCap', () => {
 		const periodStartSec = Math.floor(Date.now() / 1000) - 60
 		const settings = emptySettings()
 		settings.billing = {
-			plan: 'starter',
+			plan: 'pro',
 			hard_cap_tokens: 1_000_000,
 			period_start: periodStartSec,
 		}
@@ -561,7 +561,7 @@ describe('checkPlanCap', () => {
 			wsSettings: settings,
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
-		expect(err.plan).toBe('starter')
+		expect(err.plan).toBe('pro')
 		expect(err.used).toBe(1_000_000)
 		expect(err.cap).toBe(1_000_000)
 		// period_end is in ms: period_start (seconds → ms) + 30 days.
@@ -604,11 +604,11 @@ describe('checkPlanCap', () => {
 		expect(err.periodEnd).toBeNull()
 	})
 
-	it('falls back to 100k trial default when env var is unset/invalid', async () => {
+	it('falls back to 8M trial default when env var is unset/invalid', async () => {
 		process.env.MASKIN_TRIAL_HARD_CAP_TOKENS = undefined
 		const settings = emptySettings()
 		settings.billing = { plan: 'trial' }
-		const db = dbWithSessionUsage([{ inputTokens: 100_000, outputTokens: 0 }])
+		const db = dbWithSessionUsage([{ inputTokens: 8_000_000, outputTokens: 0 }])
 		await expect(
 			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
 		).rejects.toBeInstanceOf(PlanCapExceededError)

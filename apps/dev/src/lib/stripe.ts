@@ -2,15 +2,15 @@ import Stripe from 'stripe'
 import { parsePositiveIntEnv } from './billing-defaults'
 import { logger } from './logger'
 
-type PaidMaskinPlan = 'starter' | 'pro'
+type PaidMaskinPlan = 'pro' | 'team'
 
 export interface StripeEnv {
 	secretKey: string
 	webhookSecret: string
-	priceStarter: string
 	pricePro: string
-	starterHardCapTokens: number
+	priceTeam: string
 	proHardCapTokens: number
+	teamHardCapTokens: number
 }
 
 interface CheckoutInputs {
@@ -32,16 +32,16 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 	const required = [
 		'STRIPE_SECRET_KEY',
 		'STRIPE_WEBHOOK_SECRET',
-		'STRIPE_PRICE_STARTER',
 		'STRIPE_PRICE_PRO',
-		'MASKIN_STARTER_HARD_CAP_TOKENS',
+		'STRIPE_PRICE_TEAM',
 		'MASKIN_PRO_HARD_CAP_TOKENS',
+		'MASKIN_TEAM_HARD_CAP_TOKENS',
 	] as const
 	const missing = required.filter((k) => !env[k])
 	if (missing.length > 0) {
 		throw new Error(`Stripe env vars missing: ${missing.join(', ')}`)
 	}
-	const parseTokenCap = (key: 'MASKIN_STARTER_HARD_CAP_TOKENS' | 'MASKIN_PRO_HARD_CAP_TOKENS') => {
+	const parseTokenCap = (key: 'MASKIN_PRO_HARD_CAP_TOKENS' | 'MASKIN_TEAM_HARD_CAP_TOKENS') => {
 		// Boot-time strict variant: env was just confirmed non-empty by the
 		// `missing` check above, so a `null` return from the shared parser means
 		// the value is malformed (non-digit, zero, or negative). Throw so misconfig
@@ -59,10 +59,10 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 	return {
 		secretKey: env.STRIPE_SECRET_KEY as string,
 		webhookSecret: env.STRIPE_WEBHOOK_SECRET as string,
-		priceStarter: env.STRIPE_PRICE_STARTER as string,
 		pricePro: env.STRIPE_PRICE_PRO as string,
-		starterHardCapTokens: parseTokenCap('MASKIN_STARTER_HARD_CAP_TOKENS'),
+		priceTeam: env.STRIPE_PRICE_TEAM as string,
 		proHardCapTokens: parseTokenCap('MASKIN_PRO_HARD_CAP_TOKENS'),
+		teamHardCapTokens: parseTokenCap('MASKIN_TEAM_HARD_CAP_TOKENS'),
 	}
 }
 
@@ -83,17 +83,17 @@ export function resetStripeClientForTests() {
 }
 
 export function priceIdForPlan(plan: PaidMaskinPlan, env: StripeEnv): string {
-	return plan === 'starter' ? env.priceStarter : env.pricePro
+	return plan === 'pro' ? env.pricePro : env.priceTeam
 }
 
 export function planForPriceId(priceId: string, env: StripeEnv): PaidMaskinPlan | null {
-	if (priceId === env.priceStarter) return 'starter'
 	if (priceId === env.pricePro) return 'pro'
+	if (priceId === env.priceTeam) return 'team'
 	return null
 }
 
 export function hardCapForPlan(plan: PaidMaskinPlan, env: StripeEnv): number {
-	return plan === 'starter' ? env.starterHardCapTokens : env.proHardCapTokens
+	return plan === 'pro' ? env.proHardCapTokens : env.teamHardCapTokens
 }
 
 /**

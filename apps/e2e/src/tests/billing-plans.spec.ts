@@ -15,7 +15,7 @@ async function setTheme(page: Page, theme: 'light' | 'dark') {
 async function mockUsage(
 	page: Page,
 	usage: {
-		plan: 'trial' | 'starter' | 'pro' | 'byollm'
+		plan: 'trial' | 'pro' | 'team' | 'byollm'
 		status: 'active' | 'past_due' | 'canceled' | 'incomplete'
 		tokens_used: number
 		hard_cap_tokens: number | null
@@ -46,8 +46,8 @@ test.describe('Billing plans — Settings UI', () => {
 			await page.goto(`/${account.workspaceId}/settings/keys`)
 
 			await expect(page.getByText('Trial')).toBeVisible()
-			await expect(page.getByRole('button', { name: 'Upgrade to Starter' })).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Upgrade to Pro' })).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Upgrade to Team' })).toBeVisible()
 		})
 	}
 
@@ -55,12 +55,12 @@ test.describe('Billing plans — Settings UI', () => {
 		await page.goto(`/${account.workspaceId}/settings/keys`)
 
 		// Trial (non paid+active) starts with the comparison grid expanded.
-		await expect(page.getByRole('button', { name: 'Upgrade to Starter' })).toBeVisible()
+		await expect(page.getByRole('button', { name: 'Upgrade to Pro' })).toBeVisible()
 		await page.getByRole('button', { name: 'Hide plans' }).click()
-		await expect(page.getByRole('button', { name: 'Upgrade to Starter' })).not.toBeVisible()
+		await expect(page.getByRole('button', { name: 'Upgrade to Pro' })).not.toBeVisible()
 
 		await page.getByRole('button', { name: 'Compare plans' }).click()
-		await expect(page.getByRole('button', { name: 'Upgrade to Starter' })).toBeVisible()
+		await expect(page.getByRole('button', { name: 'Upgrade to Pro' })).toBeVisible()
 	})
 
 	test('upgrade click redirects to the mocked Stripe checkout url', async ({ page, account }) => {
@@ -74,7 +74,7 @@ test.describe('Billing plans — Settings UI', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/settings/keys`)
-		await page.getByRole('button', { name: 'Upgrade to Starter' }).click()
+		await page.getByRole('button', { name: 'Upgrade to Pro' }).click()
 
 		await page.waitForURL((url) => url.toString().includes('billing=mock-checkout'))
 	})
@@ -84,7 +84,7 @@ test.describe('Billing plans — Settings UI', () => {
 		account,
 	}) => {
 		await mockUsage(page, {
-			plan: 'starter',
+			plan: 'pro',
 			status: 'past_due',
 			tokens_used: 30_000_000,
 			hard_cap_tokens: 32_000_000,

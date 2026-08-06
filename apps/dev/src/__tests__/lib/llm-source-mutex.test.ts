@@ -34,7 +34,7 @@ describe('hasActivePaidPlan', () => {
 	it('returns true for active and past_due Stripe subs', () => {
 		expect(
 			hasActivePaidPlan({
-				billing: { plan: 'starter', status: 'active', stripe_subscription_id: 'sub_a' },
+				billing: { plan: 'pro', status: 'active', stripe_subscription_id: 'sub_a' },
 			}),
 		).toBe(true)
 		expect(

@@ -28,7 +28,7 @@ export type LlmRoute =
  * Trial is included so BYOLLM-less users can try the product without their
  * own credentials — capped low via `MASKIN_TRIAL_HARD_CAP_TOKENS`.
  */
-const MASKIN_PLAN_ROUTED_PLANS = new Set(['starter', 'pro', 'trial'])
+const MASKIN_PLAN_ROUTED_PLANS = new Set(['pro', 'team', 'trial'])
 
 export interface LlmRoutingResult {
 	route: LlmRoute
@@ -101,7 +101,7 @@ export async function getWorkspacePlanTokenUsage(
 	return total
 }
 
-export type MaskinPlan = 'trial' | 'starter' | 'pro'
+export type MaskinPlan = 'trial' | 'pro' | 'team'
 
 interface PlanCapContext {
 	plan: MaskinPlan
@@ -260,7 +260,7 @@ function buildMaskinPlanEnv(
  *   2. Workspace Claude OAuth (Pro/Max/Teams subscription)
  *   3. Workspace custom_llm (BYO endpoint — OpenRouter, Ollama, vLLM, …)
  *   4. Workspace anthropic api_key (`settings.llm_keys.anthropic`)
- *   5. Maskin plan (starter/pro/trial) — Maskin's funded OR account, counts against cap
+ *   5. Maskin plan (pro/team/trial) — Maskin's funded OR account, counts against cap
  *
  * BYO credentials (1-4) always take precedence over the Maskin-funded route so
  * a connected Claude subscription or custom endpoint is never bypassed and never
@@ -370,7 +370,7 @@ export async function resolveLlmRoute(params: {
 		}
 	}
 
-	// 5. Maskin plan (starter/pro/trial) — routed through Maskin's funded OR
+	// 5. Maskin plan (pro/team/trial) — routed through Maskin's funded OR
 	//    account. Only reached when no BYO credentials are present so tokens are
 	//    never counted against the cap when the user has their own LLM configured.
 	//    The cap check here is defense-in-depth; the pre-flight in `createSession`
