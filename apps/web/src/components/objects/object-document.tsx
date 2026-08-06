@@ -31,6 +31,7 @@ import type {
 	ObjectResponse,
 	RelationshipResponse,
 } from '@/lib/api'
+import { classifyBetStatus } from '@/lib/bet-status'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
@@ -40,6 +41,7 @@ import { ActionBanner } from '../activity/action-banner'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
 import { AgentWorkingBadge } from '../shared/agent-working-badge'
+import { IndicatorBadgeChip } from '../shared/indicator-badge'
 import { MarkdownContent } from '../shared/markdown-content'
 import { SourceBadge } from '../shared/source-badge'
 import { StatusBadge } from '../shared/status-badge'
@@ -74,6 +76,10 @@ interface ObjectDocumentViewProps {
 	contentLoaded?: boolean
 	// Marker for the sticky-nav IntersectionObserver + smooth-scroll target.
 	heroIdentityRef?: React.Ref<HTMLDivElement>
+	// Read-only idle/progressing/waiting-on-human indicator for bets — the
+	// interactive status control moved to the properties sidebar, but this
+	// summary chip stays in the identity row (T3 surface wiring).
+	betStatus?: ReturnType<typeof classifyBetStatus>
 }
 
 // Renders "Referenced by N contexts/week" alongside the other prov-row chips
@@ -120,6 +126,7 @@ export function ObjectDocumentView({
 	showSaved = false,
 	contentLoaded = true,
 	heroIdentityRef,
+	betStatus,
 }: ObjectDocumentViewProps) {
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
 	// Reset the local title draft when navigating to a different object — this
@@ -160,6 +167,9 @@ export function ObjectDocumentView({
 			>
 				<TypeBadge type={object.type} />
 				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
+				{object.type === 'bet' && betStatus && (
+					<IndicatorBadgeChip result={betStatus} workspaceId={workspaceId} />
+				)}
 				{isKnowledgeAuthorWrite(object) && onToggleVerified && (
 					<VerifiedChip
 						object={object}
@@ -293,6 +303,22 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[deleteRelationship],
 	)
 	const { data: events } = useEntityEvents(workspaceId, object.id)
+
+	// Bets get a `waiting/progressing/stalled/idle` chip in the header. Classify
+	// over child tasks derived from `breaks_into` relationships already loaded
+	// by `useObjectGraph` — no extra API call.
+	const betStatus = useMemo(() => {
+		if (object.type !== 'bet' || !graph) return undefined
+		const childTaskIds = new Set<string>()
+		for (const rel of graph.relationships) {
+			if (rel.type !== 'breaks_into' || rel.sourceId !== object.id) continue
+			childTaskIds.add(rel.targetId)
+		}
+		const childTasks = graph.connected_objects.filter(
+			(o) => o.type === 'task' && childTaskIds.has(o.id),
+		)
+		return classifyBetStatus(object, childTasks)
+	}, [object, graph])
 
 	const settings = workspace.settings as Record<string, unknown>
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[object.type] ?? []
@@ -634,6 +660,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 					isVerifying={verifyObject.isPending}
 					isDeleting={deleteObject.isPending}
 					heroIdentityRef={heroIdentityRef}
+					betStatus={betStatus}
 				/>
 			</div>
 			<PropertiesSidebarProvider
