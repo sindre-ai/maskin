@@ -242,13 +242,73 @@ describe('POST /api/installed-packages', () => {
 		// Fire-and-forget — give the microtask queue a tick to drain.
 		await Promise.resolve()
 		expect(trackPackageInstalledMock).toHaveBeenCalledOnce()
+		// Empty-package install: no items provisioned, so component_types is []
+		// and component_type_count is 0. Bundle-card ship metric filters to >= 2.
 		expect(trackPackageInstalledMock).toHaveBeenCalledWith({
 			packageId,
 			packageSlug: 'customer-continuous-discovery',
 			packageVersion: '1.4.2',
 			workspaceId,
 			actorId: ACTOR_ID,
+			componentTypeCount: 0,
+			componentTypes: [],
 		})
+	})
+
+	it('emits component_type_count + component_types derived from provisioned items', async () => {
+		const { app, mockResults } = setup()
+		const workspaceId = randomUUID()
+		const packageId = randomUUID()
+		const install = installRow({ workspaceId, sourcePackageId: packageId })
+
+		const sourceActorId = '11111111-1111-1111-1111-111111111111'
+		const newActorId = '22222222-2222-2222-2222-222222222222'
+		const newTriggerId = '33333333-3333-3333-3333-333333333333'
+
+		// Actor + trigger bundle: distinct types = ['actor','trigger'].
+		const items = [
+			{
+				id: randomUUID(),
+				packageId,
+				itemType: 'actor',
+				sourceItemId: sourceActorId,
+				itemSnapshot: { name: 'Researcher', type: 'agent', systemPrompt: 'Listen.' },
+				createdAt: new Date(),
+			},
+			{
+				id: randomUUID(),
+				packageId,
+				itemType: 'trigger',
+				sourceItemId: '44444444-4444-4444-4444-444444444444',
+				itemSnapshot: {
+					name: 'Daily',
+					type: 'cron',
+					config: { expression: '0 9 * * *' },
+					actionPrompt: 'Run.',
+					target_actor_id: sourceActorId,
+				},
+				createdAt: new Date(),
+			},
+		]
+
+		mockResults.selectQueue = [
+			[buildWorkspaceMember({ workspaceId, actorId: ACTOR_ID })],
+			[pkg({ id: packageId, slug: 'agent-plus-cron', version: '1.0.0' })],
+			items,
+			[],
+		]
+		mockResults.insertQueue = [[install], [{ id: newActorId }], [], [{ id: newTriggerId }], []]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/installed-packages', { packageId, workspaceId }),
+		)
+
+		expect(res.status).toBe(201)
+		await Promise.resolve()
+		expect(trackPackageInstalledMock).toHaveBeenCalledOnce()
+		const call = trackPackageInstalledMock.mock.calls[0]?.[0] as Record<string, unknown>
+		expect(call.componentTypeCount).toBe(2)
+		expect(call.componentTypes).toEqual(['actor', 'trigger'])
 	})
 
 	it('does not emit package_installed when the install fails', async () => {

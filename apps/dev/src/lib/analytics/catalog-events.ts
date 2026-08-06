@@ -17,6 +17,11 @@ interface PackageInstalledProps {
 	packageVersion: string
 	workspaceId: string
 	actorId: string
+	// Distinct component types on the installed package (actor / trigger /
+	// skill / integration). Discriminates bundle-card installs (count >= 2)
+	// from single-item cards in the marketplace-polish ship metric.
+	componentTypeCount: number
+	componentTypes: string[]
 }
 
 export async function trackPackageInstalled(p: PackageInstalledProps): Promise<void> {
@@ -26,6 +31,8 @@ export async function trackPackageInstalled(p: PackageInstalledProps): Promise<v
 		package_version: p.packageVersion,
 		workspace_id: p.workspaceId,
 		actor_id: p.actorId,
+		component_type_count: p.componentTypeCount,
+		component_types: p.componentTypes,
 	})
 }
 

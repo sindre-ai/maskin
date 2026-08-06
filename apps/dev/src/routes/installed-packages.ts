@@ -418,6 +418,18 @@ app.openapi(installPackageRoute, async (c) => {
 		provisioned,
 	})
 
+	// Distinct types actually provisioned in this install. Derived from the
+	// per-type `provisioned` counter so a bundle card that ships (say) an actor
+	// + trigger + integration lands as component_types=['actor','trigger',
+	// 'integration'] and component_type_count=3, while a single-item card lands
+	// as 1. Names use the singular CatalogItemType strings to stay consistent
+	// with catalogPackageItems.itemType.
+	const componentTypes: string[] = []
+	if (provisioned.actors > 0) componentTypes.push('actor')
+	if (provisioned.triggers > 0) componentTypes.push('trigger')
+	if (provisioned.skills > 0) componentTypes.push('skill')
+	if (provisioned.integrations > 0) componentTypes.push('integration')
+
 	// Fire-and-forget the ship-metric emit. `trackPackageInstalled` swallows
 	// failures internally — analytics gaps must never break the install.
 	void trackPackageInstalled({
@@ -426,6 +438,8 @@ app.openapi(installPackageRoute, async (c) => {
 		packageVersion: pkg.version,
 		workspaceId,
 		actorId,
+		componentTypeCount: componentTypes.length,
+		componentTypes,
 	})
 
 	return c.json(

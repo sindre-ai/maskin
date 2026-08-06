@@ -45,6 +45,8 @@ describe('trackPackageInstalled', () => {
 			packageVersion: '1.0.0',
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
+			componentTypeCount: 3,
+			componentTypes: ['actor', 'trigger', 'integration'],
 		})
 
 		expect(capturePosthogEventMock).toHaveBeenCalledOnce()
@@ -54,7 +56,26 @@ describe('trackPackageInstalled', () => {
 			package_version: '1.0.0',
 			workspace_id: 'ws-1',
 			actor_id: 'actor-1',
+			component_type_count: 3,
+			component_types: ['actor', 'trigger', 'integration'],
 		})
+	})
+
+	it('carries component_type_count = 1 for a single-item card', async () => {
+		// Ship-metric discriminator: bundle-card queries filter on
+		// component_type_count >= 2, so a single-item install must land as 1.
+		await trackPackageInstalled({
+			packageId: 'pkg-2',
+			packageSlug: 'lone-skill',
+			packageVersion: '1.0.0',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			componentTypeCount: 1,
+			componentTypes: ['skill'],
+		})
+		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+		expect(props.component_type_count).toBe(1)
+		expect(props.component_types).toEqual(['skill'])
 	})
 })
 
