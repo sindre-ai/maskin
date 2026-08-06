@@ -1,6 +1,7 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { Link } from '@tanstack/react-router'
 import { ChevronRight } from 'lucide-react'
 
 const PILL_STYLES: Record<LoopSummary['pill'], { label: string; dot: string; text: string }> = {
@@ -42,7 +43,11 @@ export function LoopRow({
 		.filter((a): a is ActorListItem => Boolean(a))
 
 	return (
-		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors">
+		<Link
+			to="/$workspaceId/objects/$objectId"
+			params={{ workspaceId: loop.workspaceId, objectId: loop.id }}
+			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
+		>
 			<div className="flex flex-col items-center gap-1">
 				<span className={cn('h-3 w-3 rounded-full shrink-0', pill.dot)} />
 			</div>
@@ -79,6 +84,6 @@ export function LoopRow({
 				</p>
 			</div>
 			<ChevronRight size={15} className="shrink-0 text-muted-foreground/60" aria-hidden="true" />
-		</div>
+		</Link>
 	)
 }
