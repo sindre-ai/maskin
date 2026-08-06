@@ -19,7 +19,8 @@ import { buildNotificationFixture, installChatMocks } from '../helpers/chat.help
  */
 
 async function openSheetFromSidebar(page: Page) {
-	await page.getByRole('button', { name: 'Open chat' }).click()
+	await page.getByRole('button', { name: /^new$/i }).click()
+	await page.getByRole('menuitem', { name: /new chat/i }).click()
 	await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible()
 }
 
@@ -42,8 +43,9 @@ test.describe('Chat surfaces', () => {
 
 		await page.goto(`/${account.workspaceId}`)
 
-		// Open the chat panel via the header button
-		await page.getByRole('button', { name: 'Open chat' }).click()
+		// Open the chat panel via the header "New" menu
+		await page.getByRole('button', { name: /^new$/i }).click()
+		await page.getByRole('menuitem', { name: /new chat/i }).click()
 		await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible({
 			timeout: 10_000,
 		})

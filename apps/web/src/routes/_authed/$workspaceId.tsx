@@ -12,6 +12,7 @@ import { deriveEntryAgentRole } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { ChatProvider, useChat } from '@/lib/chat-context'
+import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
@@ -130,32 +131,34 @@ function WorkspaceLayout() {
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
 			<ChatProvider workspaceId={workspaceId}>
 				<NewConversationProvider>
-					<PendingPromptBootstrap agentActorId={agentActorId} />
-					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
-					<PendingCommentsProvider workspaceId={workspaceId}>
-						<PageHeaderProvider>
-							<ChatPinShell>
-								<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
-									<AppSidebar />
-									<SidebarInset className="min-w-0">
-										<Header />
-										<div
-											className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8"
-											data-scroll-root
-										>
-											<Outlet />
-										</div>
-									</SidebarInset>
-								</SidebarProvider>
-							</ChatPinShell>
-						</PageHeaderProvider>
-						<CommandPalette />
-						<ChatPanel
-							workspaceId={workspaceId}
-							agentActorId={agentActorId}
-							entryAgentRole={entryAgentRole}
-						/>
-					</PendingCommentsProvider>
+					<CommandPaletteProvider>
+						<PendingPromptBootstrap agentActorId={agentActorId} />
+						<GuestDraftClaimBootstrap workspaceId={workspaceId} />
+						<PendingCommentsProvider workspaceId={workspaceId}>
+							<PageHeaderProvider>
+								<ChatPinShell>
+									<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
+										<AppSidebar />
+										<SidebarInset className="min-w-0">
+											<Header />
+											<div
+												className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8"
+												data-scroll-root
+											>
+												<Outlet />
+											</div>
+										</SidebarInset>
+									</SidebarProvider>
+								</ChatPinShell>
+							</PageHeaderProvider>
+							<CommandPalette />
+							<ChatPanel
+								workspaceId={workspaceId}
+								agentActorId={agentActorId}
+								entryAgentRole={entryAgentRole}
+							/>
+						</PendingCommentsProvider>
+					</CommandPaletteProvider>
 				</NewConversationProvider>
 			</ChatProvider>
 		</WorkspaceContext.Provider>

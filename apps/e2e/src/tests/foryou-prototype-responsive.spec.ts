@@ -146,6 +146,16 @@ async function gotoForyou(page: Page, workspaceId: string) {
 	await page.goto(`/${workspaceId}`)
 }
 
+// The global layout header (layout/header.tsx) now also has its own "New"
+// menu, so `getByRole('button', { name: /^new$/i })` alone matches two
+// buttons on this page. Scope to ForYouHeader's own <header> via its unique
+// "Today's brief" button to disambiguate.
+function foryouHeader(page: Page) {
+	return page
+		.locator('header')
+		.filter({ has: page.getByRole('button', { name: /today.?s brief/i }) })
+}
+
 async function assertNoHorizontalOverflow(page: Page, label: string) {
 	await page.waitForLoadState('load')
 	// SSE holds a long-lived connection so networkidle never fires — a brief
@@ -211,7 +221,7 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 		await expect(page.getByRole('button', { name: /^Task/ })).toBeVisible()
 
 		await expect(page.getByRole('button', { name: /today.?s brief/i })).toBeVisible()
-		await expect(page.getByRole('button', { name: /^new$/i })).toBeVisible()
+		await expect(foryouHeader(page).getByRole('button', { name: /^new$/i })).toBeVisible()
 
 		const displayTrigger = page.getByRole('button', { name: /display options/i })
 		await displayTrigger.click()
@@ -248,7 +258,7 @@ test.describe('For You prototype redesign — layout at 768', () => {
 		await gotoForyou(page, account.workspaceId)
 
 		await expect(page.getByRole('button', { name: /today.?s brief/i })).toBeVisible()
-		await expect(page.getByRole('button', { name: /^new$/i })).toBeVisible()
+		await expect(foryouHeader(page).getByRole('button', { name: /^new$/i })).toBeVisible()
 		await expect(page.getByRole('button', { name: /display options/i })).toBeVisible()
 
 		const card = page.getByTestId('foryou-queue-card')
@@ -272,7 +282,7 @@ test.describe('For You prototype redesign — layout at 375', () => {
 
 		// Icon-only at 375 — accessible name still comes from aria-label.
 		await expect(page.getByRole('button', { name: /today.?s brief/i })).toBeVisible()
-		await expect(page.getByRole('button', { name: /^new$/i })).toBeVisible()
+		await expect(foryouHeader(page).getByRole('button', { name: /^new$/i })).toBeVisible()
 
 		const displayTrigger = page.getByRole('button', { name: /display options/i })
 		await displayTrigger.click()

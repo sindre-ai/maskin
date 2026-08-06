@@ -5,13 +5,11 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { TriggerRow } from '@/components/triggers/trigger-row'
-import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useLoops } from '@/hooks/use-loops'
 import { useTriggers } from '@/hooks/use-triggers'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
@@ -54,13 +52,6 @@ function LoopsPage() {
 		return triggers.filter((t) => !(t.targetActorId && tiedActorIds.has(t.targetActorId)))
 	}, [loops, triggers])
 
-	const newButton = (
-		<Button size="sm" className="gap-1.5" onClick={() => setCreatePickerOpen(true)}>
-			<Plus size={14} />
-			New
-		</Button>
-	)
-
 	const hasLoops = (loops?.length ?? 0) > 0
 	// Task spec: the "Not tied to a loop" section only surfaces for workspaces
 	// that have both loops AND standalone triggers — a workspace with no loops
@@ -69,7 +60,7 @@ function LoopsPage() {
 
 	return (
 		<div>
-			<PageHeader title="Loops" actions={newButton} />
+			<PageHeader title="Loops" />
 
 			{loopsLoading ? (
 				<ListSkeleton />

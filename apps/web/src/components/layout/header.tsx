@@ -1,4 +1,4 @@
-import { CreatePicker } from '@/components/shared/create-picker'
+import { type CreatableType, CreatePicker } from '@/components/shared/create-picker'
 import {
 	Breadcrumb,
 	BreadcrumbItem,
@@ -8,12 +8,32 @@ import {
 	BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuShortcut,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { useChat } from '@/lib/chat-context'
+import { useCommandPalette } from '@/lib/command-palette-context'
 import { usePageHeader } from '@/lib/page-header-context'
 import { useMatches, useRouter } from '@tanstack/react-router'
-import { ArrowLeft, Plus, Sparkles } from 'lucide-react'
+import { ArrowLeft, Bot, ChevronDown, MessageSquare, Plus, RefreshCw, Search } from 'lucide-react'
 import { Fragment, useState } from 'react'
+
+interface CreateConfig {
+	type: CreatableType
+	subtype?: string
+}
+
+const OBJECT_TYPE_ITEMS: { subtype: string; label: string; swatchClassName: string }[] = [
+	{ subtype: 'task', label: 'Task', swatchClassName: 'bg-type-task-bg' },
+	{ subtype: 'insight', label: 'Insight', swatchClassName: 'bg-type-insight-bg' },
+	{ subtype: 'bet', label: 'Bet', swatchClassName: 'bg-type-bet-bg' },
+]
 
 interface RouteConfig {
 	label: string
@@ -77,8 +97,9 @@ export function Header() {
 	const matches = useMatches()
 	const { actions, stickyIdentity } = usePageHeader()
 	const { setOpen: setChatOpen } = useChat()
+	const { setOpen: setPaletteOpen } = useCommandPalette()
 	const router = useRouter()
-	const [createOpen, setCreateOpen] = useState(false)
+	const [createConfig, setCreateConfig] = useState<CreateConfig | null>(null)
 
 	// Find the leaf (last non-hidden) match
 	const leafMatch = [...matches].reverse().find((m) => !hiddenRoutes.has(m.routeId))
@@ -104,9 +125,9 @@ export function Header() {
 		crumbs.push({ label: leafConfig.label, path: leafMatch.pathname })
 	}
 
-	// Object-detail pages drop the global `+ Create` — the button lands users on
-	// the generic picker, which is disorienting when they're mid-edit on a
-	// specific object. Kept on every list surface (Objects, Agents, Triggers).
+	// Object-detail pages drop the "Create an object" section from the New
+	// menu — landing users on the generic object picker is disorienting when
+	// they're mid-edit on a specific object. New chat/loop/agent/search stay.
 	const isObjectDetail = leafMatch?.routeId === OBJECT_DETAIL_ROUTE_ID
 
 	const parentCrumbs = crumbs.slice(0, -1)
@@ -195,30 +216,75 @@ export function Header() {
 				)}
 				<div className="ml-auto flex shrink-0 items-center gap-2">
 					{actions}
-					{!isObjectDetail && (
-						<Button
-							variant="ghost"
-							size="icon"
-							className="h-7 w-7"
-							onClick={() => setCreateOpen(true)}
-							aria-label="Create new"
-							title="Create new…"
-						>
-							<Plus size={15} />
-						</Button>
-					)}
-					<Button
-						variant="ghost"
-						size="icon"
-						className="h-7 w-7"
-						onClick={() => setChatOpen(true)}
-						aria-label="Open chat"
-					>
-						<Sparkles size={15} />
-					</Button>
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<Button size="sm" aria-label="New" className="h-7 gap-1 px-2">
+								<Plus size={14} aria-hidden />
+								<span className="hidden sm:inline">New</span>
+								<ChevronDown size={12} aria-hidden className="opacity-70" />
+							</Button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end" className="w-72">
+							<DropdownMenuItem
+								onSelect={() => setChatOpen(true)}
+								className="items-start gap-2.5 py-2"
+							>
+								<span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-foreground text-background">
+									<MessageSquare size={13} />
+								</span>
+								<span className="min-w-0 flex-1">
+									<span className="block text-sm font-medium">New chat</span>
+									<span className="block text-xs text-muted-foreground">
+										Talk — your agents have the context
+									</span>
+								</span>
+							</DropdownMenuItem>
+							{!isObjectDetail && (
+								<>
+									<DropdownMenuSeparator />
+									<div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+										Create an object
+									</div>
+									{OBJECT_TYPE_ITEMS.map((item) => (
+										<DropdownMenuItem
+											key={item.subtype}
+											onSelect={() => setCreateConfig({ type: 'object', subtype: item.subtype })}
+										>
+											<span
+												className={`h-2.5 w-2.5 shrink-0 rounded-[3px] ${item.swatchClassName}`}
+											/>
+											New {item.label.toLowerCase()}
+										</DropdownMenuItem>
+									))}
+								</>
+							)}
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={() => setCreateConfig({ type: 'trigger' })}>
+								<RefreshCw size={14} className="text-muted-foreground" />
+								New loop
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={() => setCreateConfig({ type: 'agent' })}>
+								<Bot size={14} className="text-muted-foreground" />
+								New agent
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={() => setPaletteOpen(true)}>
+								<Search size={14} className="text-muted-foreground" />
+								Find a past conversation
+								<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
 				</div>
 			</div>
-			<CreatePicker open={createOpen} onOpenChange={setCreateOpen} />
+			<CreatePicker
+				open={createConfig !== null}
+				onOpenChange={(next) => {
+					if (!next) setCreateConfig(null)
+				}}
+				defaultType={createConfig?.type}
+				defaultObjectSubtype={createConfig?.subtype}
+			/>
 		</header>
 	)
 }

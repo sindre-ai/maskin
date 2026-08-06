@@ -10,14 +10,12 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { FilterTabs } from '@/components/shared/filter-tabs'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
-import { Button } from '@/components/ui/button'
 import { useActors, useAgentPause, useAgentRun } from '@/hooks/use-actors'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -88,17 +86,10 @@ function AgentsPage() {
 		{ label: 'Failed', value: 'failed', count: counts.failed },
 	]
 
-	const newButton = (
-		<Button size="sm" className="gap-1.5" onClick={() => setCreatePickerOpen(true)}>
-			<Plus size={14} />
-			New
-		</Button>
-	)
-
 	if (isLoading) {
 		return (
 			<div>
-				<PageHeader title="Agents" actions={newButton} />
+				<PageHeader title="Agents" />
 				<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
 					<CardSkeleton />
 					<CardSkeleton />
@@ -115,7 +106,7 @@ function AgentsPage() {
 
 	return (
 		<div>
-			<PageHeader title="Agents" actions={newButton} />
+			<PageHeader title="Agents" />
 
 			{agents.length === 0 ? (
 				<EmptyState

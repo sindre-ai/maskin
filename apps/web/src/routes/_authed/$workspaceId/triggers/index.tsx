@@ -4,12 +4,10 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { TriggerRow } from '@/components/triggers/trigger-row'
-import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useTriggers } from '@/hooks/use-triggers'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/triggers/')({
@@ -33,16 +31,9 @@ function TriggersPage() {
 		return () => window.removeEventListener('keydown', onKeydown)
 	}, [])
 
-	const newButton = (
-		<Button size="sm" className="gap-1.5" onClick={() => setCreatePickerOpen(true)}>
-			<Plus size={14} />
-			New
-		</Button>
-	)
-
 	return (
 		<div>
-			<PageHeader title="Triggers" actions={newButton} />
+			<PageHeader title="Triggers" />
 
 			{isLoading ? (
 				<ListSkeleton />

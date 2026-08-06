@@ -1,6 +1,7 @@
 import { CommandPalette } from '@/components/command-palette'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { buildObjectResponse } from '../factories'
 
 // cmdk uses ResizeObserver and scrollIntoView internally. Established here and
@@ -29,6 +30,16 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/lib/chat-context', () => ({
 	useChat: () => ({ setOpen: mockSetChatOpen }),
+}))
+
+// Stand in for CommandPaletteProvider — real useState so open/close behavior
+// (driven by CommandPalette's own keydown handlers) works exactly like the
+// real context, without needing to render the provider tree in these tests.
+vi.mock('@/lib/command-palette-context', () => ({
+	useCommandPalette: () => {
+		const [open, setOpen] = useState(false)
+		return { open, setOpen }
+	},
 }))
 
 vi.mock('@tanstack/react-router', () => ({

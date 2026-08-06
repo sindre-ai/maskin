@@ -21,7 +21,8 @@ const TAP_TARGET_MIN_PX = 44
 
 async function openChatAndLocateAttach(page: Page, workspaceId: string) {
 	await page.goto(`/${workspaceId}`)
-	await page.getByRole('button', { name: 'Open chat' }).click()
+	await page.getByRole('button', { name: /^new$/i }).click()
+	await page.getByRole('menuitem', { name: /new chat/i }).click()
 	await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible({ timeout: 10_000 })
 	const sheet = page.locator('[data-surface="sheet"]')
 	const attach = sheet.getByRole('button', { name: 'Attach image' })
