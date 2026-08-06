@@ -248,7 +248,61 @@ describe('POST /api/installed-packages', () => {
 			packageVersion: '1.4.2',
 			workspaceId,
 			actorId: ACTOR_ID,
+			provisioned: { actors: 0, triggers: 0, skills: 0, integrations: 0 },
 		})
+	})
+
+	it('passes the provisioned counter through to the emit so the bundle-card discriminator can be derived', async () => {
+		const { app, mockResults } = setup()
+		const workspaceId = randomUUID()
+		const packageId = randomUUID()
+		const install = installRow({ workspaceId, sourcePackageId: packageId })
+
+		const sourceActorId = '11111111-1111-1111-1111-111111111111'
+		const newActorId = '22222222-2222-2222-2222-222222222222'
+		const newTriggerId = '33333333-3333-3333-3333-333333333333'
+		const items = [
+			{
+				id: randomUUID(),
+				packageId,
+				itemType: 'actor',
+				sourceItemId: sourceActorId,
+				itemSnapshot: { name: 'Researcher', type: 'agent', systemPrompt: 'Listen.' },
+				createdAt: new Date(),
+			},
+			{
+				id: randomUUID(),
+				packageId,
+				itemType: 'trigger',
+				sourceItemId: '44444444-4444-4444-4444-444444444444',
+				itemSnapshot: {
+					name: 'Daily',
+					type: 'cron',
+					config: { expression: '0 9 * * *' },
+					actionPrompt: 'Run.',
+					target_actor_id: sourceActorId,
+				},
+				createdAt: new Date(),
+			},
+		]
+
+		mockResults.selectQueue = [
+			[buildWorkspaceMember({ workspaceId, actorId: ACTOR_ID })],
+			[pkg({ id: packageId })],
+			items,
+			[],
+		]
+		mockResults.insertQueue = [[install], [{ id: newActorId }], [], [{ id: newTriggerId }], []]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/installed-packages', { packageId, workspaceId }),
+		)
+
+		expect(res.status).toBe(201)
+		await Promise.resolve()
+		expect(trackPackageInstalledMock).toHaveBeenCalledOnce()
+		const call = trackPackageInstalledMock.mock.calls[0]?.[0] as { provisioned: unknown }
+		expect(call.provisioned).toEqual({ actors: 1, triggers: 1, skills: 0, integrations: 0 })
 	})
 
 	it('does not emit package_installed when the install fails', async () => {

@@ -45,6 +45,7 @@ describe('trackPackageInstalled', () => {
 			packageVersion: '1.0.0',
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
+			provisioned: { actors: 2, triggers: 1, skills: 0, integrations: 1 },
 		})
 
 		expect(capturePosthogEventMock).toHaveBeenCalledOnce()
@@ -54,7 +55,39 @@ describe('trackPackageInstalled', () => {
 			package_version: '1.0.0',
 			workspace_id: 'ws-1',
 			actor_id: 'actor-1',
+			component_type_count: 3,
+			component_types: ['actor', 'trigger', 'integration'],
 		})
+	})
+
+	it('reports component_type_count 0 with an empty component_types array for an item-less install', async () => {
+		await trackPackageInstalled({
+			packageId: 'pkg-1',
+			packageSlug: 'placeholder',
+			packageVersion: '0.1.0',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			provisioned: { actors: 0, triggers: 0, skills: 0, integrations: 0 },
+		})
+
+		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+		expect(props.component_type_count).toBe(0)
+		expect(props.component_types).toEqual([])
+	})
+
+	it('counts distinct types, not element counts (single-item card stays at count 1)', async () => {
+		await trackPackageInstalled({
+			packageId: 'pkg-1',
+			packageSlug: 'triple-actor',
+			packageVersion: '1.0.0',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			provisioned: { actors: 3, triggers: 0, skills: 0, integrations: 0 },
+		})
+
+		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+		expect(props.component_type_count).toBe(1)
+		expect(props.component_types).toEqual(['actor'])
 	})
 })
 

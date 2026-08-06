@@ -17,15 +17,40 @@ interface PackageInstalledProps {
 	packageVersion: string
 	workspaceId: string
 	actorId: string
+	// Counts of each element type provisioned by the install, keyed the same as
+	// the install route's `provisioned` counter. Drives the bundle-card
+	// discriminator on the emitted event.
+	provisioned: {
+		actors: number
+		triggers: number
+		skills: number
+		integrations: number
+	}
 }
 
+// Ordering here is the wire ordering downstream queries will see in
+// `component_types`; keep it stable so PostHog aggregations don't need to sort.
+const PROVISIONED_TO_COMPONENT_TYPE: ReadonlyArray<
+	readonly [keyof PackageInstalledProps['provisioned'], string]
+> = [
+	['actors', 'actor'],
+	['triggers', 'trigger'],
+	['skills', 'skill'],
+	['integrations', 'integration'],
+]
+
 export async function trackPackageInstalled(p: PackageInstalledProps): Promise<void> {
+	const componentTypes = PROVISIONED_TO_COMPONENT_TYPE.filter(
+		([key]) => p.provisioned[key] > 0,
+	).map(([, type]) => type)
 	await capturePosthogEvent('package_installed', p.workspaceId, {
 		package_id: p.packageId,
 		package_slug: p.packageSlug,
 		package_version: p.packageVersion,
 		workspace_id: p.workspaceId,
 		actor_id: p.actorId,
+		component_type_count: componentTypes.length,
+		component_types: componentTypes,
 	})
 }
 
