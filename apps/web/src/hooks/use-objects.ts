@@ -22,10 +22,15 @@ import { queryKeys } from '../lib/query-keys'
 type CreateObjectInput = z.input<typeof createObjectSchema>
 type UpdateObjectInput = z.input<typeof updateObjectSchema>
 
-export function useObjects(workspaceId: string, filters?: Record<string, string>) {
+export function useObjects(
+	workspaceId: string,
+	filters?: Record<string, string>,
+	options?: { enabled?: boolean },
+) {
 	return useQuery({
 		queryKey: queryKeys.objects.list(workspaceId, filters),
 		queryFn: () => api.objects.list(workspaceId, filters),
+		enabled: options?.enabled ?? true,
 	})
 }
 

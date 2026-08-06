@@ -1,9 +1,17 @@
 import { OpenAPIHono, type RouteHandler, createRoute } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, readState, triggers } from '@maskin/db/schema'
+import { events, objects, readState, relationships, triggers } from '@maskin/db/schema'
 import { listLoopsResponseSchema } from '@maskin/shared'
 import { and, eq, ne, sql } from 'drizzle-orm'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+
+/** Relationship `type` marking "this object is a member of this loop's
+ * pipeline" — `source_id` is the loop, `target_id` is the child object.
+ * Not part of the workspace's user-facing `relationship_types` list (that's
+ * for narrative connections a human picks from a dropdown); this one is
+ * written structurally, the same way `create_objects`/`update_objects`
+ * write any other edge. */
+const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
 
 type Env = {
 	Variables: {
@@ -95,15 +103,14 @@ app.openapi(listLoopsRoute, (async (c) => {
 	})
 	const allTriggerIds = Array.from(new Set(perLoopTriggers.flatMap((r) => r.triggerIds)))
 
-	// Aggregate queries — each returns one row per loop id. Keeping them as
-	// `metadata->>'loop_id' = <id>` string comparisons per T1(b): child
-	// objects reach back at their parent loop via metadata, not an edge, so
-	// no relationship rows to consult.
+	// Aggregate queries — each returns one row per loop id. Membership is a
+	// real relationship edge (`type='in_loop'`, source=loop, target=child) —
+	// child objects don't carry a `metadata.loop_id` back-reference; the loop
+	// row is the source of truth for who's a member, same as any other edge.
 	//
-	// Postgres JSON path: `objects.metadata->>'loop_id'` returns the string
-	// value at that key or NULL if the key is absent. `= ANY(...)` filters
-	// to only loops we're rendering (skip stragglers pointing at unknown ids).
-	const loopIdText = sql.raw(`ARRAY[${loopIds.map((id) => `'${id}'`).join(',')}]::text[]`)
+	// `= ANY(...)` filters to only loops we're rendering (skip stragglers
+	// pointing at unknown ids).
+	const loopIdArray = sql.raw(`ARRAY[${loopIds.map((id) => `'${id}'`).join(',')}]::uuid[]`)
 
 	// Per-loop child-object counts + median close time in a single scan.
 	const childStatsRows = await db.execute<{
@@ -114,7 +121,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 	}>(
 		sql`
 			SELECT
-				(o.metadata->>'loop_id') AS loop_id,
+				r.source_id AS loop_id,
 				COUNT(*) FILTER (
 					WHERE (o.type, o.status) NOT IN ${TERMINAL_STATUS_LITERAL_LIST}
 				)::int AS in_progress_count,
@@ -126,10 +133,12 @@ app.openapi(listLoopsRoute, (async (c) => {
 				) FILTER (
 					WHERE (o.type, o.status) IN ${TERMINAL_STATUS_LITERAL_LIST}
 				) AS median_close_ms
-			FROM ${objects} o
-			WHERE o.workspace_id = ${workspaceId}
-				AND (o.metadata->>'loop_id') = ANY(${loopIdText})
-			GROUP BY o.metadata->>'loop_id'
+			FROM ${relationships} r
+			JOIN ${objects} o ON o.id = r.target_id
+			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
+				AND r.source_id = ANY(${loopIdArray})
+				AND o.workspace_id = ${workspaceId}
+			GROUP BY r.source_id
 		`,
 	)
 
@@ -174,7 +183,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 	const waitingRows = await db.execute<{ loop_id: string; waiting: boolean }>(
 		sql`
 			SELECT
-				(o.metadata->>'loop_id') AS loop_id,
+				r.source_id AS loop_id,
 				EXISTS (
 					SELECT 1
 					FROM ${events} e
@@ -192,10 +201,12 @@ app.openapi(listLoopsRoute, (async (c) => {
 							0
 						)
 				) AS waiting
-			FROM ${objects} o
-			WHERE o.workspace_id = ${workspaceId}
-				AND (o.metadata->>'loop_id') = ANY(${loopIdText})
-			GROUP BY o.metadata->>'loop_id', o.id
+			FROM ${relationships} r
+			JOIN ${objects} o ON o.id = r.target_id
+			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
+				AND r.source_id = ANY(${loopIdArray})
+				AND o.workspace_id = ${workspaceId}
+			GROUP BY r.source_id, o.id
 		`,
 	)
 

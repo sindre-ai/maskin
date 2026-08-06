@@ -4,9 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
 	api: {
-		objects: {
-			board: vi.fn(),
-		},
 		relationships: {
 			list: vi.fn(),
 		},
@@ -19,10 +16,10 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 import { LoopFlow } from '@/components/loops/loop-flow'
-import type { BoardObjectResponse, RelationshipResponse } from '@/lib/api'
+import type { RelationshipResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { buildActorListItem, buildObjectResponse, buildTriggerResponse } from '../../factories'
-import { TestWrapper } from '../../setup'
+import { createWorkspaceWrapper } from '../../setup'
 
 const relay = buildActorListItem({ id: 'relay', name: 'Relay', type: 'agent' })
 const compass = buildActorListItem({ id: 'compass', name: 'Compass', type: 'agent' })
@@ -60,19 +57,11 @@ const task = buildObjectResponse({
 
 const childObjects = [insightNew, insightClustered, insightScored, bet, task]
 
-const board: BoardObjectResponse = {
-	columns: [
-		{ id: 'status:new', label: 'new', value: 'new', total: 1, objects: [insightNew] },
-		{ id: 'status:processing', label: 'processing', value: 'processing', total: 0, objects: [] },
-		{
-			id: 'status:clustered',
-			label: 'clustered',
-			value: 'clustered',
-			total: 1,
-			objects: [insightClustered],
-		},
-		{ id: 'status:scored', label: 'scored', value: 'scored', total: 1, objects: [insightScored] },
-	],
+function wrapper() {
+	return createWorkspaceWrapper({
+		id: 'ws-1',
+		settings: { statuses: { insight: ['new', 'processing', 'clustered', 'scored'] } },
+	})
 }
 
 function relationshipsFor(objectId: string): RelationshipResponse[] {
@@ -96,7 +85,6 @@ function relationshipsFor(objectId: string): RelationshipResponse[] {
 describe('LoopFlow', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		vi.mocked(api.objects.board).mockResolvedValue(board)
 		vi.mocked(api.relationships.list).mockImplementation((_workspaceId, params) =>
 			Promise.resolve(relationshipsFor(params?.object_id ?? '')),
 		)
@@ -110,12 +98,11 @@ describe('LoopFlow', () => {
 		render(
 			<LoopFlow
 				workspaceId="ws-1"
-				loopId="loop-1"
 				triggers={triggers}
 				actors={[relay, compass]}
 				childObjects={childObjects}
 			/>,
-			{ wrapper: TestWrapper },
+			{ wrapper: wrapper() },
 		)
 
 		expect(await screen.findByText('2 triggers · 2 agents')).toBeInTheDocument()
@@ -134,12 +121,11 @@ describe('LoopFlow', () => {
 		render(
 			<LoopFlow
 				workspaceId="ws-1"
-				loopId="loop-1"
 				triggers={triggers}
 				actors={[relay]}
 				childObjects={childObjects}
 			/>,
-			{ wrapper: TestWrapper },
+			{ wrapper: wrapper() },
 		)
 
 		expect(await screen.findByText('Comes in')).toBeInTheDocument()
@@ -161,12 +147,11 @@ describe('LoopFlow', () => {
 		render(
 			<LoopFlow
 				workspaceId="ws-1"
-				loopId="loop-1"
 				triggers={triggers}
 				actors={[compass]}
 				childObjects={childObjects}
 			/>,
-			{ wrapper: TestWrapper },
+			{ wrapper: wrapper() },
 		)
 
 		expect(await screen.findByText('Runs alongside')).toBeInTheDocument()
@@ -186,49 +171,34 @@ describe('LoopFlow', () => {
 		render(
 			<LoopFlow
 				workspaceId="ws-1"
-				loopId="loop-1"
 				triggers={triggers}
 				actors={[compass]}
 				childObjects={childObjects}
 			/>,
-			{ wrapper: TestWrapper },
+			{ wrapper: wrapper() },
 		)
 
-		// Wait for the board query to settle before asserting placement — the
-		// trigger renders immediately (props are synchronous) but only lands in
-		// its stage-relative slot once `columns` has loaded.
-		await screen.findByText('clustered')
+		// This one is settled synchronously (columns are computed from props,
+		// not an async board fetch), but the relationship-derived cards below
+		// need an await, so wait for one of those first for a stable assertion.
+		await screen.findByText('Slack images do not render inline')
 		expect(screen.getByText('Writes the generalisable version')).toBeInTheDocument()
 		expect(screen.queryByText('Comes in')).not.toBeInTheDocument()
 	})
 
 	it('renders a cycle card with companions for an object that has relationships', async () => {
-		render(
-			<LoopFlow
-				workspaceId="ws-1"
-				loopId="loop-1"
-				triggers={[]}
-				actors={[]}
-				childObjects={childObjects}
-			/>,
-			{ wrapper: TestWrapper },
-		)
+		render(<LoopFlow workspaceId="ws-1" triggers={[]} actors={[]} childObjects={childObjects} />, {
+			wrapper: wrapper(),
+		})
 
 		expect(await screen.findByText('Slack images do not render inline')).toBeInTheDocument()
 		expect(screen.getByText('Inline attachments')).toBeInTheDocument()
 	})
 
 	it('does not render a card for an object with no relationships, only its stage count', async () => {
-		render(
-			<LoopFlow
-				workspaceId="ws-1"
-				loopId="loop-1"
-				triggers={[]}
-				actors={[]}
-				childObjects={childObjects}
-			/>,
-			{ wrapper: TestWrapper },
-		)
+		render(<LoopFlow workspaceId="ws-1" triggers={[]} actors={[]} childObjects={childObjects} />, {
+			wrapper: wrapper(),
+		})
 
 		await screen.findByText('Slack images do not render inline')
 		expect(screen.queryByText('New insight')).not.toBeInTheDocument()
@@ -257,12 +227,11 @@ describe('LoopFlow', () => {
 		render(
 			<LoopFlow
 				workspaceId="ws-1"
-				loopId="loop-1"
 				triggers={triggers}
 				actors={[relay, compass]}
 				childObjects={childObjects}
 			/>,
-			{ wrapper: TestWrapper },
+			{ wrapper: wrapper() },
 		)
 
 		expect(await screen.findByText('Relay step')).toBeInTheDocument()
@@ -273,14 +242,13 @@ describe('LoopFlow', () => {
 		expect(screen.queryByText('Relay step')).not.toBeInTheDocument()
 		expect(screen.getByText('Compass step')).toBeInTheDocument()
 		// Stage cards are unaffected by the agent filter.
-		expect(screen.getByText('Slack images do not render inline')).toBeInTheDocument()
+		expect(await screen.findByText('Slack images do not render inline')).toBeInTheDocument()
 	})
 
-	it('renders nothing when there are no triggers and no populated board columns', () => {
-		vi.mocked(api.objects.board).mockResolvedValue({ columns: [] })
+	it('renders nothing when there are no triggers and no child objects', () => {
 		const { container } = render(
-			<LoopFlow workspaceId="ws-1" loopId="loop-1" triggers={[]} actors={[]} childObjects={[]} />,
-			{ wrapper: TestWrapper },
+			<LoopFlow workspaceId="ws-1" triggers={[]} actors={[]} childObjects={[]} />,
+			{ wrapper: wrapper() },
 		)
 
 		expect(container).toBeEmptyDOMElement()

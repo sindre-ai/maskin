@@ -21,11 +21,17 @@ test.describe('Loop detail page', () => {
 				target_actor_id: agent.id,
 				config: { entity_type: 'object', action: 'created' },
 			})
-			await account.api.createObject(account.workspaceId, {
+			const insight = await account.api.createObject(account.workspaceId, {
 				type: 'insight',
 				title: 'Setup confusion drives trial churn',
 				status: 'new',
-				metadata: { loop_id: loop.id },
+			})
+			await account.api.createRelationship(account.workspaceId, {
+				source_type: 'object',
+				source_id: loop.id,
+				target_type: 'object',
+				target_id: insight.id,
+				type: 'in_loop',
 			})
 
 			await page.goto(`/${account.workspaceId}/loops`)

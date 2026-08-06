@@ -10,9 +10,15 @@ import { useActors } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useLoop } from '@/hooks/use-loops'
 import { useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
+import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
+
+/** Relationship type marking loop membership — mirrors
+ * `LOOP_MEMBERSHIP_RELATIONSHIP_TYPE` in `apps/dev/src/routes/loops.ts`.
+ * Source is the loop, target is the child object. */
+const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 	component: LoopDetailPage,
@@ -26,7 +32,16 @@ function LoopDetailPage() {
 	const { data: object } = useObject(loopId)
 	const { data: triggers } = useTriggers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
-	const { data: children } = useObjects(workspaceId, { 'metadata.loop_id': loopId })
+	const { data: membershipEdges } = useRelationships(workspaceId, {
+		source_id: loopId,
+		type: LOOP_MEMBERSHIP_RELATIONSHIP_TYPE,
+	})
+	const childIds = (membershipEdges ?? []).map((r) => r.targetId)
+	const { data: children } = useObjects(
+		workspaceId,
+		{ ids: childIds.join(',') },
+		{ enabled: childIds.length > 0 },
+	)
 	const { data: events } = useEntityEvents(workspaceId, loopId)
 	const updateObject = useUpdateObject(workspaceId)
 
@@ -73,7 +88,6 @@ function LoopDetailPage() {
 
 				<LoopFlow
 					workspaceId={workspaceId}
-					loopId={loop.id}
 					triggers={loopTriggers}
 					actors={actors}
 					childObjects={children ?? []}

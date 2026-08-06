@@ -4,7 +4,7 @@ import { objects, triggers as triggersTable } from '@maskin/db/schema'
 import { and, sql as drizzleSql, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
-import { insertActor, insertObject, insertWorkspace } from '../factories'
+import { insertActor, insertObject, insertRelationship, insertWorkspace } from '../factories'
 import { jsonGet } from '../helpers'
 import { db, getTestActorId, sql } from './global-setup'
 
@@ -125,39 +125,57 @@ describe('Loops read API integration', () => {
 		expect(row.waitingOnViewer).toBe(false)
 	})
 
-	it('derives in-progress and closed counts from child objects linked via metadata.loop_id', async () => {
+	it('derives in-progress and closed counts from child objects linked via an in_loop relationship', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
 			status: 'running',
 			title: 'Bug intake',
 		})
+		const otherLoop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Unrelated loop',
+		})
 
-		// One in-progress task, one done task, one non-terminal task, plus
-		// stragglers on other loops that must NOT leak in.
-		await insertObject(db, workspaceId, actorId, {
+		// One in-progress task, one done task, one non-terminal bet, plus a
+		// straggler linked to a DIFFERENT real loop — must not leak in.
+		const inProgressTask = await insertObject(db, workspaceId, actorId, {
 			type: 'task',
 			status: 'in_progress',
 			title: 'Fix crash on export',
-			metadata: { loop_id: loop.id },
 		})
-		await insertObject(db, workspaceId, actorId, {
+		const doneTask = await insertObject(db, workspaceId, actorId, {
 			type: 'task',
 			status: 'done',
 			title: 'Fix null pointer',
-			metadata: { loop_id: loop.id },
 		})
-		await insertObject(db, workspaceId, actorId, {
+		const activeBet = await insertObject(db, workspaceId, actorId, {
 			type: 'bet',
 			status: 'active',
 			title: 'A bet on the loop',
-			metadata: { loop_id: loop.id },
 		})
-		// Straggler pointing at a made-up loop id — must not count against the real loop.
-		await insertObject(db, workspaceId, actorId, {
+		const unrelatedTask = await insertObject(db, workspaceId, actorId, {
 			type: 'task',
 			status: 'in_progress',
 			title: 'Unrelated task',
-			metadata: { loop_id: '00000000-0000-0000-0000-000000000001' },
+		})
+
+		for (const target of [inProgressTask, doneTask, activeBet]) {
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: target.id,
+				type: 'in_loop',
+			})
+		}
+		// Linked to the OTHER loop, not the one under test.
+		await insertRelationship(db, actorId, {
+			sourceType: 'object',
+			sourceId: otherLoop.id,
+			targetType: 'object',
+			targetId: unrelatedTask.id,
+			type: 'in_loop',
 		})
 
 		const app = makeApp(actorId)
@@ -169,6 +187,38 @@ describe('Loops read API integration', () => {
 		expect(row).toBeDefined()
 		expect(row?.inProgressCount).toBe(2)
 		expect(row?.closedCount).toBe(1)
+		const otherRow = body.loops.find((l) => l.id === otherLoop.id)
+		expect(otherRow?.inProgressCount).toBe(1)
+		expect(otherRow?.closedCount).toBe(0)
+	})
+
+	it('ignores relationships of a different type when computing loop membership', async () => {
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Narrow membership',
+		})
+		const relatedButNotMember = await insertObject(db, workspaceId, actorId, {
+			type: 'task',
+			status: 'in_progress',
+			title: 'Merely informs the loop',
+		})
+		await insertRelationship(db, actorId, {
+			sourceType: 'object',
+			sourceId: loop.id,
+			targetType: 'object',
+			targetId: relatedButNotMember.id,
+			type: 'informs',
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; inProgressCount: number; closedCount: number }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.inProgressCount).toBe(0)
+		expect(row?.closedCount).toBe(0)
 	})
 
 	it('collects agent-actor ids from triggers referenced in metadata.trigger_ids', async () => {

@@ -5,15 +5,22 @@ import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { getStatusColor } from '@/lib/constants'
 import { queryKeys } from '@/lib/query-keys'
-import { useQueries, useQuery } from '@tanstack/react-query'
+import { useWorkspace } from '@/lib/workspace-context'
+import { useQueries } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 
 // Relationship lookups are one request per object shown in the pipeline
 // board (no bulk-by-many-ids endpoint exists yet) — capped so a very active
-// loop can't fan out into a request storm. Covers the default board page
-// size (20/column) across a couple of populated stages.
+// loop can't fan out into a request storm.
 const MAX_COMPANION_LOOKUPS = 30
+
+interface StageColumn {
+	value: string
+	label: string
+	total: number
+	objects: ObjectResponse[]
+}
 
 function primaryChildType(children: ObjectResponse[]): string | null {
 	const counts = new Map<string, number>()
@@ -29,6 +36,35 @@ function primaryChildType(children: ObjectResponse[]): string | null {
 		}
 	}
 	return best
+}
+
+/** Groups this type's objects into ordered status columns — same shape the
+ * board endpoint used to return, computed client-side now that loop
+ * membership is a relationship rather than a `metadata.loop_id` filter the
+ * board's query builder could key off. Column order follows the workspace's
+ * configured statuses for the type; any status seen on an object but not in
+ * that list is appended (mirrors the board endpoint's own fallback so a
+ * custom/unlisted status never gets silently dropped). */
+function buildStageColumns(
+	primaryObjects: ObjectResponse[],
+	configuredStatuses: string[],
+): StageColumn[] {
+	const byStatus = new Map<string, ObjectResponse[]>()
+	for (const obj of primaryObjects) {
+		const list = byStatus.get(obj.status) ?? []
+		list.push(obj)
+		byStatus.set(obj.status, list)
+	}
+	const order = [...configuredStatuses]
+	for (const status of byStatus.keys()) {
+		if (!order.includes(status)) order.push(status)
+	}
+	return order.map((value) => ({
+		value,
+		label: value,
+		total: byStatus.get(value)?.length ?? 0,
+		objects: byStatus.get(value) ?? [],
+	}))
 }
 
 /** Event triggers with an explicit `from_status` that matches a known stage
@@ -115,43 +151,38 @@ function CycleCard({
 
 export function LoopFlow({
 	workspaceId,
-	loopId,
 	triggers,
 	actors,
 	childObjects,
 }: {
 	workspaceId: string
-	loopId: string
 	triggers: TriggerResponse[]
 	actors: ActorListItem[] | undefined
 	childObjects: ObjectResponse[]
 }) {
 	const [agentFilter, setAgentFilter] = useState<string | null>(null)
+	const { workspace } = useWorkspace()
 	const actorsById = new Map((actors ?? []).map((a) => [a.id, a]))
 	const childrenById = new Map(childObjects.map((c) => [c.id, c]))
 
 	const primaryType = primaryChildType(childObjects)
-	const boardParams = primaryType
-		? { type: primaryType, groupBy: 'status', 'metadata.loop_id': loopId }
-		: undefined
-	const { data: board } = useQuery({
-		queryKey: queryKeys.objects.board(workspaceId, boardParams),
-		queryFn: () => api.objects.board(workspaceId, boardParams as Record<string, string>),
-		enabled: !!boardParams,
-	})
-	const columns = board?.columns ?? []
-	const primaryObjects = columns.flatMap((c) => c.objects).slice(0, MAX_COMPANION_LOOKUPS)
+	const primaryObjects = primaryType ? childObjects.filter((o) => o.type === primaryType) : []
+	const configuredStatuses =
+		(workspace.settings as { statuses?: Record<string, string[]> }).statuses?.[primaryType ?? ''] ??
+		[]
+	const columns = primaryType ? buildStageColumns(primaryObjects, configuredStatuses) : []
 
 	// One relationship lookup per primary object — merged below into a
 	// "companions" list (any loop child directly linked to it, any type).
+	const lookupTargets = primaryObjects.slice(0, MAX_COMPANION_LOOKUPS)
 	const relationshipQueries = useQueries({
-		queries: primaryObjects.map((obj) => ({
+		queries: lookupTargets.map((obj) => ({
 			queryKey: queryKeys.relationships.byObject(workspaceId, obj.id),
 			queryFn: () => api.relationships.list(workspaceId, { object_id: obj.id }),
 		})),
 	})
 	const companionsByPrimaryId = new Map<string, ObjectResponse[]>()
-	primaryObjects.forEach((obj, i) => {
+	lookupTargets.forEach((obj, i) => {
 		const rels = relationshipQueries[i]?.data ?? []
 		const seen = new Set<string>()
 		const companions: ObjectResponse[] = []
@@ -188,8 +219,8 @@ export function LoopFlow({
 	const shownAlongside = cronTriggers.filter(matchesFilter)
 
 	const hasTriggers = triggers.length > 0
-	const hasBoard = columns.some((c) => c.total > 0)
-	if (!hasTriggers && !hasBoard) return null
+	const hasStages = columns.some((c) => c.total > 0)
+	if (!hasTriggers && !hasStages) return null
 
 	return (
 		<div>
@@ -253,7 +284,7 @@ export function LoopFlow({
 					const cardObjects = column.objects.filter((o) => companionsByPrimaryId.has(o.id))
 					const gapTriggers = (gapTriggersByStatus.get(column.value) ?? []).filter(matchesFilter)
 					return (
-						<div key={column.id}>
+						<div key={column.value}>
 							<div className="flex items-center gap-2">
 								<span
 									className={cn('h-2 w-2 rounded-full', column.total > 0 ? colors.bg : 'bg-muted')}
