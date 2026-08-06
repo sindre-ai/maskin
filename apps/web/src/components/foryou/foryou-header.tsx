@@ -20,6 +20,7 @@ import { useNavigate } from '@tanstack/react-router'
 import {
 	ArrowUpDown,
 	CheckCheck,
+	ChevronDown,
 	LayoutGrid,
 	List,
 	Newspaper,
@@ -103,9 +104,10 @@ export function ForYouHeaderActions({
 			</Button>
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
-					<Button size="sm" aria-label="New" className="h-8 gap-1.5 px-2 sm:px-3">
+					<Button size="sm" aria-label="New" className="h-7 gap-1 px-2">
 						<Plus size={14} aria-hidden />
 						<span className="hidden sm:inline">New</span>
+						<ChevronDown size={12} aria-hidden className="opacity-70" />
 					</Button>
 				</DropdownMenuTrigger>
 				<DropdownMenuContent align="end" className="min-w-[200px]">
