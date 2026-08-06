@@ -31,11 +31,13 @@ function KeysPage() {
 	const byollmAllowed = Boolean(workspace.byollmAllowed)
 
 	return (
-		<div className="max-w-lg space-y-6">
-			<BillingSection workspaceId={workspaceId} byollmAllowed={byollmAllowed} />
+		<div className="space-y-6">
+			<div className="max-w-4xl">
+				<BillingSection workspaceId={workspaceId} byollmAllowed={byollmAllowed} />
+			</div>
 
 			{byollmAllowed ? (
-				<>
+				<div className="max-w-lg space-y-6">
 					<div className="border-t border-border pt-6">
 						<ClaudeOAuthSection workspaceId={workspaceId} />
 					</div>
@@ -47,7 +49,7 @@ function KeysPage() {
 					<div className="border-t border-border pt-6">
 						<CustomLlmEditor workspace={workspace} workspaceId={workspaceId} />
 					</div>
-				</>
+				</div>
 			) : null}
 		</div>
 	)

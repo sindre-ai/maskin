@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
 	Dialog,
 	DialogContent,
@@ -9,8 +10,9 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
-import type { BillingPlan, BillingStatus } from '@/lib/api'
-import { ExternalLink } from 'lucide-react'
+import type { BillingPlan, BillingStatus, BillingUsageResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
+import { Check, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 const PLAN_LABEL: Record<BillingPlan, string> = {
@@ -36,6 +38,68 @@ export function formatResetsIn(ms: number | null): string {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
+
+// 32_000_000 / 96_000_000 below mirror STARTER_HARD_CAP_DEFAULT_TOKENS /
+// PRO_HARD_CAP_DEFAULT_TOKENS in apps/dev/src/lib/billing-defaults.ts and the
+// .env.example MASKIN_*_HARD_CAP_TOKENS defaults. Keep in sync when bumping —
+// enforced by scripts/verify-billing-cap-literals.mjs.
+const CAP_DEFAULTS = { trial: 100_000, starter: 32_000_000, pro: 96_000_000 } as const
+
+interface PlanCardConfig {
+	plan: BillingPlan
+	eyebrow: string
+	price: string
+	priceSuffix: string
+	tagline: string
+	features: string[]
+}
+
+const PLAN_CONFIG: PlanCardConfig[] = [
+	{
+		plan: 'trial',
+		eyebrow: 'TRIAL',
+		price: 'Free',
+		priceSuffix: '',
+		tagline: "Try Maskin's hosted LLM before you subscribe.",
+		features: [
+			`${formatTokens(CAP_DEFAULTS.trial)} tokens, 30-day rolling window`,
+			'Hosted by Maskin — no API key needed',
+		],
+	},
+	{
+		plan: 'starter',
+		eyebrow: 'STARTER',
+		price: '$20',
+		priceSuffix: '/mo',
+		tagline: 'For workspaces running agents regularly.',
+		features: [
+			`${formatTokens(CAP_DEFAULTS.starter)} tokens/month`,
+			'Hosted by Maskin — no API key needed',
+		],
+	},
+	{
+		plan: 'pro',
+		eyebrow: 'PRO',
+		price: '$60',
+		priceSuffix: '/mo',
+		tagline: 'For heavier agent workloads.',
+		features: [
+			`${formatTokens(CAP_DEFAULTS.pro)} tokens/month`,
+			'Hosted by Maskin — no API key needed',
+		],
+	},
+	{
+		plan: 'byollm',
+		eyebrow: 'FREE',
+		price: 'Free',
+		priceSuffix: '',
+		tagline: 'Bring your own Claude subscription, API key, or custom endpoint.',
+		features: [
+			'No Maskin-hosted token cap',
+			'Use your own Claude Pro/Max, Anthropic API key, or custom endpoint',
+		],
+	},
+]
 
 function PeriodCountdown({ ms, label }: { ms: number; label: string }) {
 	const [remaining, setRemaining] = useState(ms)
@@ -72,6 +136,71 @@ function statusBadge(plan: BillingPlan, status: BillingStatus): { label: string;
 	return { label: status, tone: 'bg-muted text-muted-foreground' }
 }
 
+interface PlanCta {
+	label: string
+	onClick: () => void
+	disabled: boolean
+	variant?: 'outline' | 'ghost'
+}
+
+function getPlanCta(
+	planKey: BillingPlan,
+	usage: BillingUsageResponse,
+	isTrial: boolean,
+	isPaid: boolean,
+	byollmAllowed: boolean,
+	checkoutPending: boolean,
+	handleUpgrade: (plan: 'starter' | 'pro') => void,
+	openSwitch: () => void,
+): PlanCta | null {
+	if (planKey === usage.plan) return null
+
+	if (planKey === 'trial') {
+		if (isPaid && usage.status === 'active' && !byollmAllowed) {
+			return {
+				label: 'Cancel subscription',
+				onClick: openSwitch,
+				disabled: false,
+				variant: 'ghost',
+			}
+		}
+		return null
+	}
+
+	if (planKey === 'starter') {
+		if (isTrial || usage.status !== 'active') {
+			return {
+				label: 'Upgrade to Starter',
+				onClick: () => handleUpgrade('starter'),
+				disabled: checkoutPending,
+			}
+		}
+		return null
+	}
+
+	if (planKey === 'pro') {
+		if (
+			isTrial ||
+			usage.status !== 'active' ||
+			(usage.plan === 'starter' && usage.status === 'active')
+		) {
+			return {
+				label: 'Upgrade to Pro',
+				onClick: () => handleUpgrade('pro'),
+				disabled: checkoutPending,
+				variant: 'outline',
+			}
+		}
+		return null
+	}
+
+	// byollm
+	if (isPaid && usage.status === 'active') {
+		return { label: 'Downgrade to Free', onClick: openSwitch, disabled: false, variant: 'ghost' }
+	}
+	return null
+}
+
 export function BillingSection({
 	workspaceId,
 	byollmAllowed = false,
@@ -82,6 +211,11 @@ export function BillingSection({
 	const usageQuery = useBillingUsage(workspaceId)
 	const checkout = useStripeCheckout(workspaceId)
 	const [switchOpen, setSwitchOpen] = useState(false)
+	// null = no explicit user choice yet — fall back to a computed default once
+	// `usage` is known (collapsed for paid+active plans, expanded otherwise).
+	// Declared here (not after the early returns below) so the hook is always
+	// called on every render regardless of loading/error state.
+	const [plansOpenOverride, setPlansOpenOverride] = useState<boolean | null>(null)
 
 	const handleUpgrade = (plan: 'starter' | 'pro') => {
 		const base = window.location.href.split('?')[0]
@@ -129,6 +263,10 @@ export function BillingSection({
 	const periodMs = usage.period_resets_in_ms
 	const resetsIn = formatResetsIn(periodMs)
 
+	const visiblePlans = PLAN_CONFIG.filter((config) => config.plan !== 'byollm' || byollmAllowed)
+	const defaultPlansOpen = !(isPaid && usage.status === 'active')
+	const plansOpen = plansOpenOverride ?? defaultPlansOpen
+
 	return (
 		<div>
 			<Label className="mb-1 text-bold">Maskin Subscription</Label>
@@ -137,102 +275,51 @@ export function BillingSection({
 				surprises you.
 			</p>
 
-			<div className="rounded-lg border border-border bg-bg-surface p-3 space-y-3">
-				<div className="flex items-center justify-between gap-2">
-					<div className="flex items-center gap-2 min-w-0">
-						<span className="text-sm font-medium text-foreground truncate">
-							{PLAN_LABEL[usage.plan]}
-						</span>
-						<span className={`rounded-full px-2 py-0.5 text-xs ${badge.tone}`}>{badge.label}</span>
-					</div>
-					{isPaid && usage.stripe_customer_id && (
-						<a
-							href={STRIPE_BILLING_PORTAL}
-							target="_blank"
-							rel="noreferrer"
-							className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-						>
-							Manage in Stripe <ExternalLink size={12} />
-						</a>
-					)}
-				</div>
+			<UsageBanner
+				usage={usage}
+				badge={badge}
+				isByo={isByo}
+				isTrial={isTrial}
+				isPaid={isPaid}
+				cap={cap}
+				pct={pct}
+				periodMs={periodMs}
+				resetsIn={resetsIn}
+			/>
 
-				{!isByo && cap > 0 && (
-					<div>
-						<div className="flex items-baseline justify-between text-xs text-muted-foreground">
-							<span>
-								{formatTokens(usage.tokens_used)} / {formatTokens(cap)} tokens
-							</span>
-							{periodMs !== null && periodMs > 0 && periodMs < DAY_MS ? (
-								<PeriodCountdown ms={periodMs} label={isTrial ? 'expires' : 'resets'} />
-							) : resetsIn ? (
-								<span>· {resetsIn}</span>
-							) : null}
-						</div>
-						<div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
-							<div
-								className={`h-full transition-all ${pct >= 100 ? 'bg-error' : pct >= 85 ? 'bg-warning' : 'bg-primary'}`}
-								style={{ width: `${pct}%` }}
-								role="progressbar"
-								aria-valuenow={pct}
-								aria-valuemin={0}
-								aria-valuemax={100}
-								tabIndex={-1}
+			{checkout.isError && (
+				<p className="mt-2 text-xs text-error">
+					{checkout.error?.message ?? 'Could not start checkout.'}
+				</p>
+			)}
+
+			<Collapsible open={plansOpen} onOpenChange={setPlansOpenOverride} className="mt-4">
+				<CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+					{plansOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+					{plansOpen ? 'Hide plans' : 'Compare plans'}
+				</CollapsibleTrigger>
+				<CollapsibleContent>
+					<div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+						{visiblePlans.map((config) => (
+							<PlanCard
+								key={config.plan}
+								config={config}
+								isCurrent={config.plan === usage.plan}
+								cta={getPlanCta(
+									config.plan,
+									usage,
+									isTrial,
+									isPaid,
+									byollmAllowed,
+									checkout.isPending,
+									handleUpgrade,
+									() => setSwitchOpen(true),
+								)}
 							/>
-						</div>
+						))}
 					</div>
-				)}
-
-				{isByo && (
-					<p className="text-xs text-muted-foreground">
-						Using your own Claude subscription, Anthropic API key, or custom endpoint. Manage in the
-						rows below.
-					</p>
-				)}
-
-				<div className="flex flex-wrap items-center gap-2">
-					{(isTrial || usage.status !== 'active') && (
-						<>
-							<Button
-								size="sm"
-								onClick={() => handleUpgrade('starter')}
-								disabled={checkout.isPending}
-							>
-								Upgrade to Starter
-							</Button>
-							<Button
-								size="sm"
-								variant="outline"
-								onClick={() => handleUpgrade('pro')}
-								disabled={checkout.isPending}
-							>
-								Upgrade to Pro
-							</Button>
-						</>
-					)}
-					{usage.plan === 'starter' && usage.status === 'active' && (
-						<Button
-							size="sm"
-							variant="outline"
-							onClick={() => handleUpgrade('pro')}
-							disabled={checkout.isPending}
-						>
-							Upgrade to Pro
-						</Button>
-					)}
-					{isPaid && usage.status === 'active' && (
-						<Button size="sm" variant="ghost" onClick={() => setSwitchOpen(true)}>
-							{byollmAllowed ? 'Downgrade to Free' : 'Cancel subscription'}
-						</Button>
-					)}
-				</div>
-
-				{checkout.isError && (
-					<p className="text-xs text-error">
-						{checkout.error?.message ?? 'Could not start checkout.'}
-					</p>
-				)}
-			</div>
+				</CollapsibleContent>
+			</Collapsible>
 
 			<DowngradeDialog
 				open={switchOpen}
@@ -240,6 +327,138 @@ export function BillingSection({
 				workspaceId={workspaceId}
 				byollmAllowed={byollmAllowed}
 			/>
+		</div>
+	)
+}
+
+function UsageBanner({
+	usage,
+	badge,
+	isByo,
+	isTrial,
+	isPaid,
+	cap,
+	pct,
+	periodMs,
+	resetsIn,
+}: {
+	usage: BillingUsageResponse
+	badge: { label: string; tone: string }
+	isByo: boolean
+	isTrial: boolean
+	isPaid: boolean
+	cap: number
+	pct: number
+	periodMs: number | null
+	resetsIn: string
+}) {
+	const needsAttention = usage.status === 'past_due' || usage.status === 'canceled' || pct >= 85
+
+	return (
+		<div
+			data-testid="usage-banner"
+			className={cn(
+				'rounded-lg border p-3 space-y-3',
+				needsAttention ? 'border-warning/30 bg-warning/10' : 'border-border bg-bg-surface',
+			)}
+		>
+			<div className="flex items-center justify-between gap-2">
+				<div className="flex items-center gap-2 min-w-0">
+					<span className="text-sm font-medium text-foreground truncate">
+						{PLAN_LABEL[usage.plan]}
+					</span>
+					<span className={`rounded-full px-2 py-0.5 text-xs ${badge.tone}`}>{badge.label}</span>
+				</div>
+				{isPaid && usage.stripe_customer_id && (
+					<a
+						href={STRIPE_BILLING_PORTAL}
+						target="_blank"
+						rel="noreferrer"
+						className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+					>
+						Manage in Stripe <ExternalLink size={12} />
+					</a>
+				)}
+			</div>
+
+			{!isByo && cap > 0 && (
+				<div>
+					<div className="flex items-baseline justify-between text-xs text-muted-foreground">
+						<span>
+							{formatTokens(usage.tokens_used)} / {formatTokens(cap)} tokens
+						</span>
+						{periodMs !== null && periodMs > 0 && periodMs < DAY_MS ? (
+							<PeriodCountdown ms={periodMs} label={isTrial ? 'expires' : 'resets'} />
+						) : resetsIn ? (
+							<span>· {resetsIn}</span>
+						) : null}
+					</div>
+					<div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
+						<div
+							className={`h-full transition-all ${pct >= 100 ? 'bg-error' : pct >= 85 ? 'bg-warning' : 'bg-primary'}`}
+							style={{ width: `${pct}%` }}
+							role="progressbar"
+							aria-valuenow={pct}
+							aria-valuemin={0}
+							aria-valuemax={100}
+							tabIndex={-1}
+						/>
+					</div>
+				</div>
+			)}
+
+			{isByo && (
+				<p className="text-xs text-muted-foreground">
+					Using your own Claude subscription, Anthropic API key, or custom endpoint. Manage in the
+					rows below.
+				</p>
+			)}
+		</div>
+	)
+}
+
+function PlanCard({
+	config,
+	isCurrent,
+	cta,
+}: {
+	config: PlanCardConfig
+	isCurrent: boolean
+	cta: PlanCta | null
+}) {
+	return (
+		<div className="flex flex-col rounded-lg border border-border bg-bg-surface p-3 gap-3">
+			<div>
+				<div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+					{config.eyebrow}
+				</div>
+				<div className="mt-1 flex items-baseline gap-1">
+					<span className="text-lg font-semibold text-foreground">{config.price}</span>
+					{config.priceSuffix && (
+						<span className="text-xs text-muted-foreground">{config.priceSuffix}</span>
+					)}
+				</div>
+				<p className="mt-1 text-xs text-muted-foreground">{config.tagline}</p>
+			</div>
+
+			<ul className="flex-1 space-y-1.5">
+				{config.features.map((feature) => (
+					<li key={feature} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+						<Check size={14} className="mt-0.5 shrink-0 text-success" />
+						<span>{feature}</span>
+					</li>
+				))}
+			</ul>
+
+			{isCurrent ? (
+				<Button size="sm" variant="outline" disabled>
+					Current plan
+				</Button>
+			) : cta ? (
+				<Button size="sm" variant={cta.variant} onClick={cta.onClick} disabled={cta.disabled}>
+					{cta.label}
+				</Button>
+			) : null}
 		</div>
 	)
 }

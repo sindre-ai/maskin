@@ -76,6 +76,7 @@ describe('BillingSection', () => {
 
 		await screen.findByText('Trial')
 		expect(screen.getByText('25k / 100k tokens')).toBeInTheDocument()
+		// Trial (non-paid-active) plans start with the comparison grid expanded.
 		expect(screen.getByRole('button', { name: 'Upgrade to Starter' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
 		expect(
@@ -84,6 +85,7 @@ describe('BillingSection', () => {
 	})
 
 	it('renders Starter plan with Pro upgrade + Switch-to-BYO + Manage in Stripe', async () => {
+		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
 			plan: 'starter',
@@ -105,13 +107,19 @@ describe('BillingSection', () => {
 		await screen.findByText('Starter — $20/mo')
 		expect(screen.getByText(/12M \/ 32M tokens/)).toBeInTheDocument()
 		expect(screen.getByText(/resets in 23d/)).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /Manage in Stripe/ })).toBeInTheDocument()
+
+		// Paid+active plans start with the comparison grid collapsed.
+		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
+
 		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Downgrade to Free' })).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: /Manage in Stripe/ })).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
 	})
 
 	it('renders Pro plan with Switch-to-BYO but no further upgrade', async () => {
+		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
 			plan: 'pro',
@@ -129,6 +137,8 @@ describe('BillingSection', () => {
 		)
 
 		await screen.findByText('Pro — $60/mo')
+		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
+
 		expect(screen.queryByRole('button', { name: /Upgrade/ })).not.toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Downgrade to Free' })).toBeInTheDocument()
 	})
@@ -208,8 +218,82 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await user.click(await screen.findByRole('button', { name: 'Downgrade to Free' }))
+		await screen.findByText('Starter — $20/mo')
+		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
+		await user.click(screen.getByRole('button', { name: 'Downgrade to Free' }))
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
 		expect(screen.getByText(/lose access to Maskin's hosted LLM/)).toBeInTheDocument()
+	})
+
+	it('shows Cancel subscription (not Downgrade to Free) on the Trial card when byollmAllowed is false', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'active',
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" byollmAllowed={false} />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Starter — $20/mo')
+		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
+
+		expect(screen.queryByRole('button', { name: 'Downgrade to Free' })).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Cancel subscription' }))
+		expect(screen.getByRole('dialog')).toBeInTheDocument()
+		expect(screen.getByText(/go back to the free trial plan/)).toBeInTheDocument()
+	})
+
+	it('shows a disabled "Current plan" button on the plan card matching the active plan', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			tokens_used: 25_000,
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" byollmAllowed />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Trial')
+		const currentPlanButton = screen.getByRole('button', { name: 'Current plan' })
+		expect(currentPlanButton).toBeDisabled()
+	})
+
+	it('toggles the plan comparison grid via Compare plans / Hide plans', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'active',
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" byollmAllowed />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Starter — $20/mo')
+		expect(screen.queryByRole('button', { name: 'Downgrade to Free' })).not.toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
+		expect(screen.getByRole('button', { name: 'Downgrade to Free' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Hide plans' })).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Hide plans' }))
+		expect(screen.queryByRole('button', { name: 'Downgrade to Free' })).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Compare plans' })).toBeInTheDocument()
 	})
 })

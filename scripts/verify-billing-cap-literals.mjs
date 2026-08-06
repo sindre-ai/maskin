@@ -9,6 +9,8 @@
  *   2. .env.example                                    (operator-facing default)
  *   3. apps/web/src/__tests__/components/settings/
  *      billing-section.test.tsx                        (frontend pinned literals)
+ *   4. apps/web/src/components/settings/
+ *      billing-section.tsx                             (CAP_DEFAULTS — plan card copy)
  *
  * A bumper who edits one but forgets to grep the others silently drifts prod
  * away from `.env.example` and the frontend tests. JSDoc cross-references are
@@ -111,16 +113,45 @@ const expected = { trial: 0, starter: 0, pro: 0 }
 	})
 }
 
+// Site 4 — apps/web/src/components/settings/billing-section.tsx (CAP_DEFAULTS)
+//
+// Drives the token counts shown in the plan comparison cards via
+// formatTokens(CAP_DEFAULTS.<plan>) — must match the backend source of truth.
+{
+	const path = 'apps/web/src/components/settings/billing-section.tsx'
+	const source = read(path)
+	const trialMatch = source.match(/CAP_DEFAULTS\s*=\s*\{[^}]*trial:\s*([\d_]+)/)
+	const starterMatch = source.match(/CAP_DEFAULTS\s*=\s*\{[^}]*starter:\s*([\d_]+)/)
+	const proMatch = source.match(/CAP_DEFAULTS\s*=\s*\{[^}]*pro:\s*([\d_]+)/)
+	if (!trialMatch || !starterMatch || !proMatch) {
+		errors.push(`${path}: could not find CAP_DEFAULTS trial/starter/pro literals`)
+	} else {
+		const trial = Number(stripUnderscores(trialMatch[1]))
+		const starter = Number(stripUnderscores(starterMatch[1]))
+		const pro = Number(stripUnderscores(proMatch[1]))
+		observed.push({ path, trial, starter, pro })
+		if (trial !== expected.trial) {
+			errors.push(`${path}: trial cap ${trial} ≠ expected ${expected.trial}`)
+		}
+		if (starter !== expected.starter) {
+			errors.push(`${path}: starter cap ${starter} ≠ expected ${expected.starter}`)
+		}
+		if (pro !== expected.pro) {
+			errors.push(`${path}: pro cap ${pro} ≠ expected ${expected.pro}`)
+		}
+	}
+}
+
 if (errors.length > 0) {
 	console.error('Billing-cap literal contract VIOLATED:')
 	for (const e of errors) console.error(`  - ${e}`)
 	console.error('\nObserved values:')
 	for (const o of observed) console.error(`  ${JSON.stringify(o)}`)
-	console.error('\nFix by updating all three sites to the same numbers. See')
+	console.error('\nFix by updating all four sites to the same numbers. See')
 	console.error('apps/dev/src/lib/billing-defaults.ts for the source of truth.')
 	process.exit(1)
 }
 
 console.log(
-	`verify-billing-cap-literals: OK — trial=${expected.trial}, starter=${expected.starter}, pro=${expected.pro} across 3 sites`,
+	`verify-billing-cap-literals: OK — trial=${expected.trial}, starter=${expected.starter}, pro=${expected.pro} across 4 sites`,
 )

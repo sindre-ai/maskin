@@ -39,7 +39,7 @@ describe('SettingsLayout', () => {
 		expect(screen.getByText('Members')).toBeInTheDocument()
 		expect(screen.getByText('Integrations')).toBeInTheDocument()
 		expect(screen.getByText('Skills')).toBeInTheDocument()
-		expect(screen.getByText('LLM')).toBeInTheDocument()
+		expect(screen.getByText('Billing')).toBeInTheDocument()
 		expect(screen.getByText('MCP')).toBeInTheDocument()
 	})
 
