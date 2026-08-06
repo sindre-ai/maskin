@@ -426,6 +426,7 @@ app.openapi(installPackageRoute, async (c) => {
 		packageVersion: pkg.version,
 		workspaceId,
 		actorId,
+		provisioned,
 	})
 
 	return c.json(
