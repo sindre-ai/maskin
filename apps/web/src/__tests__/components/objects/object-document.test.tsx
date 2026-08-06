@@ -242,35 +242,17 @@ describe('ObjectDocumentView', () => {
 	})
 
 	describe('above-title header row order', () => {
-<<<<<<< HEAD
 		// The identity row above the <h1> textarea carries only TypeBadge and
 		// the driver (OwnerSelect) — status and the bet-status chip moved to
 		// the properties sidebar. This is the frame test — the per-viewport
 		// fold assertion lives in the Playwright spec.
 		it('renders TypeBadge and OwnerSelect above the title, without status controls', () => {
-=======
-		// DoD contract for T2: the four editable identity elements sit above
-		// the <h1> textarea in the DOM, in the order TypeBadge → status →
-		// IndicatorBadgeChip → OwnerSelect. This is the frame test — the
-		// per-viewport fold assertion lives in the Playwright spec.
-		it('renders TypeBadge, StatusSelect, IndicatorBadgeChip, and OwnerSelect above the title', () => {
->>>>>>> ea24de97d56d89b3d4e7a60d535febc648d62fa1
 			const members = [
 				{ actorId: 'actor-alice', role: 'owner', joinedAt: null, name: 'Alice', type: 'human' },
 			]
 			const object = buildObjectResponse({ type: 'bet', status: 'active' })
 			const { container } = render(
-<<<<<<< HEAD
 				<ObjectDocumentView {...baseProps} object={object} members={members} />,
-=======
-				<ObjectDocumentView
-					{...baseProps}
-					object={object}
-					statuses={betStatuses}
-					members={members}
-					betStatus={{ state: 'progressing', pendingAction: null, decisionsSoFar: [] }}
-				/>,
->>>>>>> ea24de97d56d89b3d4e7a60d535febc648d62fa1
 			)
 			const textarea = container.querySelector('textarea')
 			expect(textarea).not.toBeNull()
@@ -281,11 +263,8 @@ describe('ObjectDocumentView', () => {
 			expect(typeBadge.compareDocumentPosition(textarea) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
 				Node.DOCUMENT_POSITION_FOLLOWING,
 			)
-<<<<<<< HEAD
 			expect(screen.getByRole('combobox')).toBeInTheDocument()
 			expect(screen.queryAllByRole('combobox')).toHaveLength(1)
-=======
->>>>>>> ea24de97d56d89b3d4e7a60d535febc648d62fa1
 		})
 
 		it('no longer renders SubscribeToggle, creator, or created/updated chips inline', () => {
@@ -293,21 +272,6 @@ describe('ObjectDocumentView', () => {
 				type: 'knowledge',
 				createdAt: '2026-06-01T10:00:00.000Z',
 				updatedAt: '2026-06-01T10:05:00.000Z',
-<<<<<<< HEAD
-			})
-			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(screen.queryByTestId('subscribe-toggle')).not.toBeInTheDocument()
-			expect(container.querySelectorAll('time').length).toBe(0)
-			expect(screen.queryByText(/Referenced by/)).not.toBeInTheDocument()
-		})
-	})
-
-	describe('Referenced-by-N-contexts chip on knowledge headers', () => {
-		it('renders the chip on knowledge objects when count > 0', () => {
-			mockUseKnowledgeReferences.mockReturnValue({
-				data: { window_days: 7, unique_contexts: 3 },
-=======
->>>>>>> ea24de97d56d89b3d4e7a60d535febc648d62fa1
 			})
 			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
 			expect(screen.queryByTestId('subscribe-toggle')).not.toBeInTheDocument()
