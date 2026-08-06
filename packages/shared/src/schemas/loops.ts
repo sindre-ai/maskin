@@ -47,6 +47,11 @@ export const loopSummarySchema = z.object({
 	 * `metadata.trigger_ids` — used by T3 for the avatar chip strip. Never
 	 * null; empty array when no triggers are linked. */
 	agentIds: z.array(z.string().uuid()),
+	/** Trigger ids referenced in `metadata.trigger_ids` on the loop row —
+	 * the loop's raw step membership, used by the loop detail page to read
+	 * each trigger's own name/action_prompt/agent. Never null; empty array
+	 * when no triggers are linked. */
+	triggerIds: z.array(z.string().uuid()),
 	/** Per-viewer signal: does the viewer have unread activity on any object
 	 * currently linked to this loop? Reused from the same expression the
 	 * unread-feed uses in `subscriptions.ts`. */

@@ -3,6 +3,32 @@ import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
+vi.mock('@tanstack/react-router', () => ({
+	Link: ({
+		to,
+		params,
+		children,
+		...rest
+	}: {
+		to: string
+		params?: Record<string, string>
+		children: React.ReactNode
+		[key: string]: unknown
+	}) => {
+		let href = to
+		if (params) {
+			for (const [k, v] of Object.entries(params)) {
+				href = href.replace(`$${k}`, v)
+			}
+		}
+		return (
+			<a href={href} {...rest}>
+				{children}
+			</a>
+		)
+	},
+}))
+
 function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 	return {
 		id: 'loop-1',
@@ -18,6 +44,7 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		closedCount: 128,
 		medianTimeToCloseMs: 11 * 24 * 3600 * 1000,
 		agentIds: [],
+		triggerIds: [],
 		waitingOnViewer: false,
 		createdAt: null,
 		updatedAt: null,
@@ -90,5 +117,12 @@ describe('LoopRow', () => {
 		render(<LoopRow loop={buildLoop({ medianTimeToCloseMs: null })} actors={[]} />)
 
 		expect(screen.queryByText(/median/)).not.toBeInTheDocument()
+	})
+
+	it('links to the dedicated loop detail route, not the generic object page', () => {
+		render(<LoopRow loop={buildLoop()} actors={[]} />)
+
+		const link = screen.getByRole('link')
+		expect(link).toHaveAttribute('href', '/ws-1/loops/loop-1')
 	})
 })

@@ -60,6 +60,13 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Trigger Details',
 		parent: '/_authed/$workspaceId/triggers/',
 	},
+	'/_authed/$workspaceId/loops/': {
+		label: 'Loops',
+	},
+	'/_authed/$workspaceId/loops/$loopId': {
+		label: 'Loop Details',
+		parent: '/_authed/$workspaceId/loops/',
+	},
 }
 
 const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$workspaceId'])

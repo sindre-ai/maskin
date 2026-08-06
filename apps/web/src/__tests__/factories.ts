@@ -5,6 +5,7 @@ import type {
 	EventResponse,
 	ImportResponse,
 	IntegrationResponse,
+	LoopSummary,
 	NotificationResponse,
 	ObjectResponse,
 	RelationshipResponse,
@@ -203,6 +204,30 @@ export function buildTriggerResponse(overrides: Partial<TriggerResponse> = {}): 
 		targetActorId: 'actor-1',
 		enabled: true,
 		createdBy: 'actor-1',
+		createdAt: null,
+		updatedAt: null,
+		...overrides,
+	}
+}
+
+export function buildLoopSummary(overrides: Partial<LoopSummary> = {}): LoopSummary {
+	const id = overrides.id ?? nextId('loop')
+	return {
+		id,
+		workspaceId: 'ws-1',
+		name: 'Test loop',
+		guarantee: 'A guarantee the loop makes',
+		status: 'running',
+		pill: 'running',
+		entryCondition: null,
+		closeCondition: null,
+		humanDecisionPoints: null,
+		inProgressCount: 0,
+		closedCount: 0,
+		medianTimeToCloseMs: null,
+		agentIds: [],
+		triggerIds: [],
+		waitingOnViewer: false,
 		createdAt: null,
 		updatedAt: null,
 		...overrides,

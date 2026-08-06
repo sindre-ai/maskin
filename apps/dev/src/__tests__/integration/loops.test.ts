@@ -104,6 +104,7 @@ describe('Loops read API integration', () => {
 				inProgressCount: number
 				closedCount: number
 				agentIds: string[]
+				triggerIds: string[]
 				waitingOnViewer: boolean
 			}>
 		}
@@ -120,6 +121,7 @@ describe('Loops read API integration', () => {
 		expect(row.inProgressCount).toBe(0)
 		expect(row.closedCount).toBe(0)
 		expect(row.agentIds).toEqual([])
+		expect(row.triggerIds).toEqual([])
 		expect(row.waitingOnViewer).toBe(false)
 	})
 
@@ -209,9 +211,12 @@ describe('Loops read API integration', () => {
 
 		const app = makeApp(actorId)
 		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
-		const body = (await res.json()) as { loops: Array<{ id: string; agentIds: string[] }> }
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; agentIds: string[]; triggerIds: string[] }>
+		}
 		const row = body.loops.find((l) => l.id === loop.id)
 		expect(row?.agentIds.sort()).toEqual([agentA.id, agentB.id].sort())
+		expect(row?.triggerIds.sort()).toEqual([trigA.id, trigB.id].sort())
 	})
 
 	it('composes the `pill` field from lifecycle status + waiting_on_viewer', async () => {

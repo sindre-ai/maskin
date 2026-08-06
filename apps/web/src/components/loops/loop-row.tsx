@@ -1,27 +1,10 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { formatLoopMedianMs } from '@/lib/loop-duration'
 import { Link } from '@tanstack/react-router'
 import { ChevronRight } from 'lucide-react'
-
-const PILL_STYLES: Record<LoopSummary['pill'], { label: string; dot: string; text: string }> = {
-	running: { label: 'Running', dot: 'bg-success', text: 'text-success' },
-	waiting_on_you: { label: 'Waiting on you', dot: 'bg-warning', text: 'text-warning' },
-	paused: { label: 'Paused', dot: 'bg-zinc-500', text: 'text-muted-foreground' },
-	archived: { label: 'Archived', dot: 'bg-zinc-600', text: 'text-muted-foreground' },
-}
-
-function formatMedianMs(ms: number | null): string | null {
-	if (ms === null || ms === undefined || !Number.isFinite(ms) || ms <= 0) return null
-	const seconds = ms / 1000
-	const minutes = seconds / 60
-	const hours = minutes / 60
-	const days = hours / 24
-	if (days >= 1) return `${Math.round(days)}d median`
-	if (hours >= 1) return `${Math.round(hours)}h median`
-	if (minutes >= 1) return `${Math.round(minutes)}m median`
-	return `${Math.round(seconds)}s median`
-}
+import { LOOP_PILL_STYLES } from './loop-pill'
 
 export function LoopRow({
 	loop,
@@ -30,22 +13,22 @@ export function LoopRow({
 	loop: LoopSummary
 	actors: ActorListItem[] | undefined
 }) {
-	const pill = PILL_STYLES[loop.pill]
+	const pill = LOOP_PILL_STYLES[loop.pill]
 	const isWaiting = loop.pill === 'waiting_on_you'
 	const inProgressColor = isWaiting
 		? 'text-warning'
 		: loop.pill === 'running'
 			? 'text-success'
 			: 'text-muted-foreground'
-	const median = formatMedianMs(loop.medianTimeToCloseMs)
+	const median = formatLoopMedianMs(loop.medianTimeToCloseMs)
 	const agentCards = loop.agentIds
 		.map((id) => actors?.find((a) => a.id === id))
 		.filter((a): a is ActorListItem => Boolean(a))
 
 	return (
 		<Link
-			to="/$workspaceId/objects/$objectId"
-			params={{ workspaceId: loop.workspaceId, objectId: loop.id }}
+			to="/$workspaceId/loops/$loopId"
+			params={{ workspaceId: loop.workspaceId, loopId: loop.id }}
 			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
 		>
 			<div className="flex flex-col items-center gap-1">

@@ -288,6 +288,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				closedCount: stats.closedCount,
 				medianTimeToCloseMs: stats.medianCloseMs,
 				agentIds,
+				triggerIds,
 				waitingOnViewer,
 				createdAt: row.createdAt ? row.createdAt.toISOString() : null,
 				updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,

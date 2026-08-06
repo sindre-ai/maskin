@@ -9,3 +9,11 @@ export function useLoops(workspaceId: string) {
 		select: (data) => data.loops,
 	})
 }
+
+export function useLoop(id: string, workspaceId: string) {
+	const { data: loops, ...rest } = useLoops(workspaceId)
+	return {
+		...rest,
+		data: loops?.find((l) => l.id === id),
+	}
+}

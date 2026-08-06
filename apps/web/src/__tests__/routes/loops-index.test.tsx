@@ -57,6 +57,7 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		closedCount: 128,
 		medianTimeToCloseMs: 11 * 24 * 3600 * 1000,
 		agentIds: [],
+		triggerIds: [],
 		waitingOnViewer: false,
 		createdAt: null,
 		updatedAt: null,

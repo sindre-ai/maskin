@@ -9,7 +9,7 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
-import { useLoops } from '@/hooks/use-loops'
+import { useLoop, useLoops } from '@/hooks/use-loops'
 import { type LoopSummary, api } from '@/lib/api'
 import { TestWrapper } from '../setup'
 
@@ -30,6 +30,7 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		closedCount: 128,
 		medianTimeToCloseMs: 11 * 24 * 3600 * 1000,
 		agentIds: [],
+		triggerIds: [],
 		waitingOnViewer: false,
 		createdAt: '2026-08-01T00:00:00.000Z',
 		updatedAt: '2026-08-04T00:00:00.000Z',
@@ -69,5 +70,26 @@ describe('useLoops', () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Network error')
+	})
+})
+
+describe('useLoop', () => {
+	it('finds the matching loop by id from the list', async () => {
+		const loops = [buildLoop(), buildLoop({ id: 'loop-2', name: 'Build pipeline' })]
+		vi.mocked(api.loops.list).mockResolvedValue({ loops })
+
+		const { result } = renderHook(() => useLoop('loop-2', workspaceId), { wrapper: TestWrapper })
+
+		await waitFor(() => expect(result.current.data).toBeDefined())
+		expect(result.current.data?.name).toBe('Build pipeline')
+	})
+
+	it('returns undefined when no loop matches the id', async () => {
+		vi.mocked(api.loops.list).mockResolvedValue({ loops: [buildLoop()] })
+
+		const { result } = renderHook(() => useLoop('missing', workspaceId), { wrapper: TestWrapper })
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toBeUndefined()
 	})
 })
