@@ -18,14 +18,12 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
-import { useCreateObject } from '@/hooks/use-objects'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import type { UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNewConversationComposer } from '@/lib/new-conversation-context'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getDefaultStatusForType } from '@maskin/module-sdk'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -43,7 +41,6 @@ function itemKey(item: UnreadItem): string {
 
 function ForYouRedesign() {
 	const { workspaceId } = useWorkspace()
-	const navigate = useNavigate()
 	const { data, isLoading } = useUnread(workspaceId, undefined, true)
 	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
 	const items = data?.items ?? []
@@ -194,40 +191,6 @@ function ForYouRedesign() {
 		return () => window.removeEventListener('keydown', onKeydown)
 	}, [handleMarkAllRead])
 
-	// +New dropdown creates a bet/insight/task without navigating away — the
-	// toast is the affordance to jump into the new object if the user wants to
-	// edit further. Status seed uses the module SDK's per-type default; the
-	// per-workspace override is the concern of the object detail bootstrap and
-	// is intentionally out of scope for this shortcut.
-	const createObject = useCreateObject(workspaceId)
-	const handleCreateObject = useCallback(
-		(type: 'bet' | 'insight' | 'task') => {
-			const label =
-				type === 'bet' ? 'Untitled bet' : type === 'insight' ? 'Untitled insight' : 'Untitled task'
-			createObject.mutate(
-				{ type, title: label, status: getDefaultStatusForType(type) ?? 'new' },
-				{
-					onSuccess: (created) => {
-						toast(`${label} created`, {
-							action: {
-								label: 'Open',
-								onClick: () =>
-									navigate({
-										to: '/$workspaceId/objects/$objectId',
-										params: { workspaceId, objectId: created.id },
-									}).catch(() => {}),
-							},
-						})
-					},
-					onError: (err) => {
-						toast.error(err instanceof Error ? err.message : `Failed to create ${type}`)
-					},
-				},
-			)
-		},
-		[createObject, navigate, workspaceId],
-	)
-
 	const composer = (
 		<NewConversationComposer
 			workspaceId={workspaceId}
@@ -265,7 +228,6 @@ function ForYouRedesign() {
 					actions={
 						<ForYouHeaderActions
 							onStartConversation={() => setComposerOpen(true)}
-							onCreateObject={handleCreateObject}
 							onMarkAllRead={handleMarkAllRead}
 							markAllReadDisabled={unreadRegular.length === 0}
 						/>
