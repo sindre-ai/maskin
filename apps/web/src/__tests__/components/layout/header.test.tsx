@@ -122,14 +122,14 @@ describe('Header', () => {
 		expect(picker).toHaveAttribute('data-subtype', 'insight')
 	})
 
-	it('opens CreatePicker as a trigger from New loop', async () => {
+	it('opens CreatePicker as a loop from New loop', async () => {
 		const user = userEvent.setup()
 		render(<Header />)
 
 		await user.click(screen.getByRole('button', { name: /^new$/i }))
 		await user.click(screen.getByRole('menuitem', { name: /new loop/i }))
 
-		expect(screen.getByTestId('create-picker')).toHaveAttribute('data-type', 'trigger')
+		expect(screen.getByTestId('create-picker')).toHaveAttribute('data-type', 'loop')
 	})
 
 	it('opens CreatePicker as an agent from New agent', async () => {

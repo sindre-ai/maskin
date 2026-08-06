@@ -18,11 +18,11 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { Bot, Layers, Zap } from 'lucide-react'
+import { Bot, Layers, RefreshCw, Zap } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
-export type CreatableType = 'object' | 'agent' | 'trigger'
+export type CreatableType = 'object' | 'agent' | 'trigger' | 'loop'
 
 interface CreatePickerProps {
 	open: boolean
@@ -45,6 +45,7 @@ const TYPE_OPTIONS: TypeOption[] = [
 	{ value: 'object', label: 'Object', icon: Layers },
 	{ value: 'agent', label: 'Agent', icon: Bot },
 	{ value: 'trigger', label: 'Trigger', icon: Zap },
+	{ value: 'loop', label: 'Loop', icon: RefreshCw },
 ]
 
 const TYPE_TILE_STYLES = {
@@ -126,6 +127,29 @@ export function CreatePicker({
 				navigate({
 					to: '/$workspaceId/objects/$objectId',
 					params: { workspaceId, objectId: created.id },
+				})
+				return
+			}
+			if (type === 'loop') {
+				// A loop is an object row with type='loop' (see apps/dev/src/routes/loops.ts) —
+				// not a trigger. Status uses the loop lifecycle enum (LOOP_STATUSES), not the
+				// workspace's per-object-type status list, so it can't go through
+				// pickDefaultStatus. entry/close conditions and trigger wiring are configured
+				// later from the loop detail page; the picker only seeds a name.
+				const created = await createObject.mutateAsync({
+					type: 'loop',
+					title: trimmed,
+					status: 'running',
+				})
+				trackObjectCreated({
+					entity_id: created.id,
+					entity_type: 'object',
+					object_subtype: 'loop',
+				})
+				onOpenChange(false)
+				navigate({
+					to: '/$workspaceId/loops/$loopId',
+					params: { workspaceId, loopId: created.id },
 				})
 				return
 			}

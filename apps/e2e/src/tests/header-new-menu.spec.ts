@@ -58,15 +58,27 @@ test.describe('Header New menu', () => {
 		await expect(page.getByRole('radiogroup', { name: 'Type' })).toHaveCount(0)
 	})
 
-	test('New loop opens CreatePicker for a trigger', async ({ page, account }) => {
+	test('New loop opens CreatePicker for a loop and creates a loop object', async ({
+		page,
+		account,
+	}) => {
 		await page.goto(`/${account.workspaceId}`)
 
 		await headerNewTrigger(page).click()
 		await page.getByRole('menuitem', { name: /new loop/i }).click()
 
 		const dialog = page.getByRole('dialog')
-		await expect(dialog.getByText('New trigger')).toBeVisible()
-		await expect(page.getByPlaceholder('What are you creating?')).toBeVisible()
+		await expect(dialog.getByText('New loop')).toBeVisible()
+		const titleInput = page.getByPlaceholder('What are you creating?')
+		await expect(titleInput).toBeVisible()
+
+		await titleInput.fill('Header New menu loop check')
+		await dialog.getByRole('button', { name: /^create$/i }).click()
+
+		// Creating a loop must land on the loop detail page, not the trigger one —
+		// confirms it created an objects row with type='loop', not a trigger.
+		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/loops/[^/]+$`))
+		await expect(page.getByText('Header New menu loop check')).toBeVisible({ timeout: 10000 })
 	})
 
 	test('New agent opens CreatePicker for an agent', async ({ page, account }) => {

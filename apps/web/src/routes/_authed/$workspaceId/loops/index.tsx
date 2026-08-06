@@ -117,11 +117,7 @@ function LoopsPage() {
 					)}
 				</div>
 			)}
-			<CreatePicker
-				open={createPickerOpen}
-				onOpenChange={setCreatePickerOpen}
-				defaultType="trigger"
-			/>
+			<CreatePicker open={createPickerOpen} onOpenChange={setCreatePickerOpen} defaultType="loop" />
 		</div>
 	)
 }

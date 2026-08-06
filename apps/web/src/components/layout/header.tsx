@@ -265,7 +265,7 @@ export function Header() {
 									</>
 								)}
 								<DropdownMenuSeparator />
-								<DropdownMenuItem onSelect={() => setCreateConfig({ type: 'trigger' })}>
+								<DropdownMenuItem onSelect={() => setCreateConfig({ type: 'loop' })}>
 									<RefreshCw size={14} className="text-muted-foreground" />
 									New loop
 								</DropdownMenuItem>
