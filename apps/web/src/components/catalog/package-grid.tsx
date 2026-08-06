@@ -47,6 +47,13 @@ export function PackageGrid({
 	const multiTypePkgs = packages.filter((p) => p.item_types.length > 1)
 	const singleTypePkgs = packages.filter((p) => p.item_types.length === 1)
 
+	const itemsByPackage = new Map<string, typeof items>()
+	for (const item of items) {
+		const list = itemsByPackage.get(item.package_id) ?? []
+		list.push(item)
+		itemsByPackage.set(item.package_id, list)
+	}
+
 	const showPackagesSection = filter === 'all' || filter === 'packages'
 	const typesToShow: CatalogItemType[] =
 		filter === 'packages' ? [] : filter === 'all' ? SECTION_ORDER : [filter as CatalogItemType]
@@ -74,6 +81,7 @@ export function PackageGrid({
 								workspaceId={workspaceId}
 								pkg={pkg}
 								install={installLookup?.(pkg.id)}
+								items={itemsByPackage.get(pkg.id)}
 							/>
 						))}
 					</div>
@@ -89,6 +97,7 @@ export function PackageGrid({
 								workspaceId={workspaceId}
 								pkg={pkg}
 								install={installLookup?.(pkg.id)}
+								items={itemsByPackage.get(pkg.id)}
 							/>
 						))}
 						{itemCards.map((item) => (
