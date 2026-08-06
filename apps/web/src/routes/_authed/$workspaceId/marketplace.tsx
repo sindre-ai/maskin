@@ -1,5 +1,7 @@
 import { PackageGrid } from '@/components/catalog/package-grid'
+import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
+import { Input } from '@/components/ui/input'
 import { useCatalogPackages, useInstalledCatalogItems } from '@/hooks/use-catalog-packages'
 import { useInstalledPackages } from '@/hooks/use-installed-packages'
 import type {
@@ -63,6 +65,8 @@ function MarketplacePage() {
 	const { workspaceId } = useWorkspace()
 	const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
 	const [useCaseFilter, setUseCaseFilter] = useState<UseCaseFilter>('all')
+	const [query, setQuery] = useState('')
+	const trimmedQuery = query.trim()
 
 	const { data, isLoading, isError } = useCatalogPackages()
 	const counts = data?.counts
@@ -102,16 +106,21 @@ function MarketplacePage() {
 
 	const filteredPackages = useMemo(
 		() =>
-			useCaseFilter === 'all' ? packages : packages.filter((pkg) => pkg.use_case === useCaseFilter),
-		[packages, useCaseFilter],
+			packages
+				.filter((pkg) => useCaseFilter === 'all' || pkg.use_case === useCaseFilter)
+				.filter((pkg) => matchesPackageQuery(pkg, trimmedQuery)),
+		[packages, useCaseFilter, trimmedQuery],
 	)
 
 	const filteredItems = useMemo(
 		() =>
-			useCaseFilter === 'all'
-				? allItems
-				: allItems.filter((item) => packageById.get(item.package_id)?.use_case === useCaseFilter),
-		[allItems, useCaseFilter, packageById],
+			allItems
+				.filter(
+					(item) =>
+						useCaseFilter === 'all' || packageById.get(item.package_id)?.use_case === useCaseFilter,
+				)
+				.filter((item) => matchesItemQuery(item, trimmedQuery)),
+		[allItems, useCaseFilter, packageById, trimmedQuery],
 	)
 
 	const { data: installsData } = useInstalledPackages(workspaceId)
@@ -132,7 +141,9 @@ function MarketplacePage() {
 		return map
 	}, [installedItemsData])
 
-	const isEmpty = !isLoading && !isError && packages.length === 0
+	const isCatalogEmpty = !isLoading && !isError && packages.length === 0
+	const hasResults = filteredPackages.length > 0 || filteredItems.length > 0
+	const isFilterEmpty = !isLoading && !isError && !isCatalogEmpty && !hasResults
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
@@ -154,6 +165,15 @@ function MarketplacePage() {
 			<div className="flex flex-col md:flex-row md:gap-8 flex-1 min-h-0">
 				{/* Mobile: horizontal chip strip. Hidden ≥md. */}
 				<nav aria-label="Marketplace filters" className="md:hidden -mx-1 mb-4 flex flex-col gap-2">
+					<div className="px-1">
+						<Input
+							type="search"
+							value={query}
+							onChange={(e) => setQuery(e.target.value)}
+							placeholder="Search the catalog…"
+							aria-label="Filter catalog"
+						/>
+					</div>
 					<ChipStrip
 						items={TYPE_ITEMS}
 						active={typeFilter}
@@ -199,16 +219,31 @@ function MarketplacePage() {
 				</aside>
 
 				<section className="flex-1 min-w-0">
+					<div className="hidden md:flex md:justify-end md:mb-4">
+						<Input
+							type="search"
+							value={query}
+							onChange={(e) => setQuery(e.target.value)}
+							placeholder="Search the catalog…"
+							aria-label="Filter catalog"
+							className="md:w-80"
+						/>
+					</div>
 					{isError ? (
 						<p className="text-sm text-muted-foreground">
 							Couldn't load the catalog right now. Try refreshing.
 						</p>
 					) : isLoading ? (
 						<p className="text-sm text-muted-foreground">Loading catalog…</p>
-					) : isEmpty ? (
+					) : isCatalogEmpty ? (
 						<p className="text-sm text-muted-foreground">
 							No packages yet — check back once Maskin publishes the first one.
 						</p>
+					) : isFilterEmpty ? (
+						<EmptyState
+							title="No matches"
+							description="Try a different search term or clear the filters."
+						/>
 					) : (
 						<PackageGrid
 							packages={filteredPackages}
@@ -341,4 +376,23 @@ function countForUseCase(
 	if (!counts) return undefined
 	if (value === 'all') return counts.total
 	return counts.by_use_case[value] ?? 0
+}
+
+function matchesPackageQuery(pkg: CatalogPackageSummary, query: string): boolean {
+	if (!query) return true
+	const needle = query.toLowerCase()
+	return (
+		pkg.name.toLowerCase().includes(needle) ||
+		pkg.description.toLowerCase().includes(needle) ||
+		(pkg.use_case?.toLowerCase().includes(needle) ?? false)
+	)
+}
+
+function matchesItemQuery(item: CatalogPackageItem, query: string): boolean {
+	if (!query) return true
+	const needle = query.toLowerCase()
+	const snapshot = item.item_snapshot as { name?: unknown; description?: unknown } | null
+	const name = typeof snapshot?.name === 'string' ? snapshot.name : ''
+	const description = typeof snapshot?.description === 'string' ? snapshot.description : ''
+	return name.toLowerCase().includes(needle) || description.toLowerCase().includes(needle)
 }

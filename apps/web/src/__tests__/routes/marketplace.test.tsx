@@ -203,4 +203,112 @@ describe('MarketplacePage', () => {
 		expect(aside?.className).toMatch(/hidden/)
 		expect(aside?.className).toMatch(/md:block/)
 	})
+
+	it('renders the free-text filter input in both the mobile nav and the desktop section', () => {
+		mockUseCatalogPackages.mockReturnValue({
+			data: {
+				packages: [
+					{
+						id: 'p1',
+						name: 'Alpha',
+						slug: 'alpha',
+						description: '',
+						version: '1',
+						use_case: null,
+						item_types: ['actor'],
+						created_at: null,
+						updated_at: null,
+					},
+				],
+				counts: COUNTS,
+			},
+			isLoading: false,
+			isError: false,
+		})
+		render(<MarketplacePage />)
+		const inputs = screen.getAllByRole('searchbox', { name: 'Filter catalog' })
+		expect(inputs).toHaveLength(2)
+		// The mobile input sits inside the filter nav; the desktop input sits
+		// inside the content <section>. Both share the same query state.
+		const chipNav = screen.getByRole('navigation', { name: 'Marketplace filters' })
+		expect(chipNav.contains(inputs[0])).toBe(true)
+		expect(chipNav.contains(inputs[1])).toBe(false)
+	})
+
+	it('narrows the visible packages when the user types into the filter', async () => {
+		mockUseCatalogPackages.mockReturnValue({
+			data: {
+				packages: [
+					{
+						id: 'p1',
+						name: 'Discover & Research',
+						slug: 'discover',
+						description: 'Insight loop',
+						version: '1',
+						use_case: null,
+						item_types: ['actor', 'trigger'],
+						created_at: null,
+						updated_at: null,
+					},
+					{
+						id: 'p2',
+						name: 'Build & Ship',
+						slug: 'build-ship',
+						description: 'Delivery loop',
+						version: '1',
+						use_case: null,
+						item_types: ['actor', 'trigger'],
+						created_at: null,
+						updated_at: null,
+					},
+				],
+				counts: COUNTS,
+			},
+			isLoading: false,
+			isError: false,
+		})
+		render(<MarketplacePage />)
+		const packages = screen.getByRole('region', { name: 'Packages' })
+		expect(packages).toHaveTextContent('Discover & Research')
+		expect(packages).toHaveTextContent('Build & Ship')
+
+		const user = userEvent.setup()
+		const [mobileInput] = screen.getAllByRole('searchbox', { name: 'Filter catalog' })
+		await user.type(mobileInput, 'discover')
+		expect(screen.getByRole('region', { name: 'Packages' })).toHaveTextContent(
+			'Discover & Research',
+		)
+		expect(screen.getByRole('region', { name: 'Packages' })).not.toHaveTextContent('Build & Ship')
+	})
+
+	it('renders a clean empty state when the query matches nothing', async () => {
+		mockUseCatalogPackages.mockReturnValue({
+			data: {
+				packages: [
+					{
+						id: 'p1',
+						name: 'Alpha',
+						slug: 'alpha',
+						description: '',
+						version: '1',
+						use_case: null,
+						item_types: ['actor'],
+						created_at: null,
+						updated_at: null,
+					},
+				],
+				counts: COUNTS,
+			},
+			isLoading: false,
+			isError: false,
+		})
+		render(<MarketplacePage />)
+		const user = userEvent.setup()
+		const [mobileInput] = screen.getAllByRole('searchbox', { name: 'Filter catalog' })
+		await user.type(mobileInput, 'zzzznomatchxyz')
+		expect(screen.getByText('No matches')).toBeInTheDocument()
+		expect(screen.queryByRole('region', { name: 'Packages' })).not.toBeInTheDocument()
+		expect(screen.queryByText(/Showing all/i)).not.toBeInTheDocument()
+		expect(screen.queryByText(/No packages yet/i)).not.toBeInTheDocument()
+	})
 })
