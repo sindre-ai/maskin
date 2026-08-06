@@ -1,9 +1,10 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, triggers } from '@maskin/db/schema'
-import { createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
+import { configSchemaForType, createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
 import { Cron } from 'croner'
-import { count, eq } from 'drizzle-orm'
+import { and, asc, count, desc, eq } from 'drizzle-orm'
+import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
@@ -113,6 +114,11 @@ app.openapi(createTriggerRoute, async (c) => {
 const listTriggersQuerySchema = z.object({
 	limit: z.coerce.number().int().min(1).max(100).optional(),
 	offset: z.coerce.number().int().min(0).optional(),
+	order: z.enum(['asc', 'desc']).optional(),
+	// Snapshot-consistent cursor pagination — mirrors `objectQuerySchema`.
+	snapshot_at: z.string().datetime().optional(),
+	cursor_created_at: z.string().datetime().optional(),
+	cursor_id: z.string().uuid().optional(),
 })
 
 // GET /api/triggers
@@ -145,7 +151,8 @@ const listTriggersRoute = createRoute({
 app.openapi(listTriggersRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { limit, offset } = c.req.valid('query')
+	const query = c.req.valid('query')
+	const { limit, offset } = query
 
 	if (limit === undefined) {
 		const results = await db.select().from(triggers).where(eq(triggers.workspaceId, workspaceId))
@@ -153,14 +160,42 @@ app.openapi(listTriggersRoute, (async (c) => {
 		return c.json(serializeArray(results) as z.infer<typeof triggerResponseSchema>[])
 	}
 
+	const cursorOn = Boolean(query.snapshot_at)
+	const cursorConditions = buildCreatedAtCursorConditions(
+		{ createdAt: triggers.createdAt, id: triggers.id },
+		query,
+	)
+	const listWhere = cursorConditions.length
+		? and(eq(triggers.workspaceId, workspaceId), ...cursorConditions)
+		: eq(triggers.workspaceId, workspaceId)
+
+	const orderBy = cursorOn
+		? query.order === 'asc'
+			? [asc(triggers.createdAt), asc(triggers.id)]
+			: [desc(triggers.createdAt), asc(triggers.id)]
+		: []
+
+	const skipOffset = useKeysetSeek(query)
+	const listQuery = db.select().from(triggers).where(listWhere)
+	const listQueryOrdered = orderBy.length ? listQuery.orderBy(...orderBy) : listQuery
+
+	// X-Total-Count reflects the workspace's total under the snapshot upper
+	// bound so a caller walking pages sees a stable count. The keyset seek is
+	// intentionally left out — the header should not shrink as the cursor
+	// advances.
+	const totalWhere = query.snapshot_at
+		? and(
+				eq(triggers.workspaceId, workspaceId),
+				...buildCreatedAtCursorConditions(
+					{ createdAt: triggers.createdAt, id: triggers.id },
+					{ snapshot_at: query.snapshot_at },
+				),
+			)
+		: eq(triggers.workspaceId, workspaceId)
+
 	const [results, totalRow] = await Promise.all([
-		db
-			.select()
-			.from(triggers)
-			.where(eq(triggers.workspaceId, workspaceId))
-			.limit(limit)
-			.offset(offset ?? 0),
-		db.select({ value: count() }).from(triggers).where(eq(triggers.workspaceId, workspaceId)),
+		listQueryOrdered.limit(limit).offset(skipOffset ? 0 : (offset ?? 0)),
+		db.select({ value: count() }).from(triggers).where(totalWhere),
 	])
 
 	c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
@@ -207,20 +242,34 @@ app.openapi(updateTriggerRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
 
-	// Validate cron expression if updating config on a cron trigger
-	if (body.config && trigger.type === 'cron') {
-		const expr = (body.config as Record<string, unknown>).expression
-		if (expr != null) {
-			try {
-				new Cron(expr as string, { maxRuns: 0 })
-			} catch {
-				return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
+	// Validate config against the effective post-update type — the type in the
+	// body if changing it, otherwise the stale DB value — so a config-only PATCH
+	// can't silently persist a shape mismatched with the trigger's type (e.g. an
+	// event-shaped config on a still-cron-typed row).
+	const effectiveType = body.type ?? trigger.type
+	if (body.config) {
+		const configSchema = configSchemaForType[effectiveType as keyof typeof configSchemaForType]
+		if (configSchema && !configSchema.safeParse(body.config).success) {
+			return c.json(
+				createApiError('VALIDATION_ERROR', `config does not match ${effectiveType} trigger shape`),
+				400,
+			)
+		}
+		if (effectiveType === 'cron') {
+			const expr = (body.config as Record<string, unknown>).expression
+			if (expr != null) {
+				try {
+					new Cron(expr as string, { maxRuns: 0 })
+				} catch {
+					return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
+				}
 			}
 		}
 	}
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
+	if (body.type) updateData.type = body.type
 	if (body.config) updateData.config = body.config
 	if (body.action_prompt) updateData.actionPrompt = body.action_prompt
 	if (body.target_actor_id) updateData.targetActorId = body.target_actor_id

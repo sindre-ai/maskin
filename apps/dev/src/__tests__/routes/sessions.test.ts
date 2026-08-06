@@ -24,6 +24,50 @@ describe('Sessions Routes', () => {
 			expect(body.id).toBe(session.id)
 			expect(body.status).toBe('running')
 		})
+
+		it('persists entry_agent_role onto sessions.config for downstream analytics', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, sessionManager } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue(session)
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions',
+					buildCreateSessionBody({
+						config: { interactive: true },
+						entry_agent_role: 'chief-of-staff',
+					}),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const createArgs = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
+			expect(createArgs?.[0]).toBe(wsId)
+			expect(createArgs?.[1]?.config).toMatchObject({
+				interactive: true,
+				entry_agent_role: 'chief-of-staff',
+			})
+		})
+
+		it('leaves config untouched when entry_agent_role is omitted', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, sessionManager } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue(session)
+
+			await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions',
+					buildCreateSessionBody({ config: { interactive: true } }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			const createArgs = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
+			expect(createArgs?.[1]?.config).not.toHaveProperty('entry_agent_role')
+		})
 	})
 
 	describe('GET /api/sessions', () => {
@@ -370,13 +414,22 @@ describe('Sessions Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body).toEqual({ ok: true })
-			expect(sessionManager.writeInput).toHaveBeenCalledWith(session.id, {
-				type: 'user',
-				message: { role: 'user', content: 'hello workspace coach' },
-			})
+			expect(sessionManager.writeInput).toHaveBeenCalledWith(
+				session.id,
+				{
+					type: 'user',
+					message: { role: 'user', content: 'hello workspace coach' },
+				},
+				undefined,
+			)
 		})
 
-		it('accepts attachments alongside content without affecting the payload shape', async () => {
+		// AC-T2: the input route forwards attachments through as a side-channel
+		// so writeInput can persist them in the session_logs envelope (as
+		// `maskin_attachments`) without leaking them to the CLI's stdin. This
+		// is what lets reload render image attachments inline without a
+		// second POST to `/files`.
+		it('forwards attachments to writeInput as a separate maskinAttachments argument', async () => {
 			const session = buildSession({ workspaceId: wsId, interactive: true, status: 'running' })
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
@@ -385,23 +438,35 @@ describe('Sessions Routes', () => {
 			mockResults.selectQueue = [[session]]
 			;(sessionManager.writeInput as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
 
+			const attachments = [
+				{
+					kind: 'file',
+					id: '00000000-0000-0000-0000-000000000abc',
+					name: 'photo.png',
+					mime_type: 'image/png',
+					size_bytes: 4096,
+				},
+				{ kind: 'object', id: '00000000-0000-0000-0000-000000000123' },
+			]
+
 			const res = await app.request(
 				jsonRequest(
 					'POST',
 					`/api/sessions/${session.id}/input`,
-					{
-						content: 'what about this?',
-						attachments: [{ kind: 'object', id: '00000000-0000-0000-0000-000000000123' }],
-					},
+					{ content: 'what about this?', attachments },
 					{ 'x-workspace-id': wsId },
 				),
 			)
 
 			expect(res.status).toBe(200)
-			expect(sessionManager.writeInput).toHaveBeenCalledWith(session.id, {
-				type: 'user',
-				message: { role: 'user', content: 'what about this?' },
-			})
+			expect(sessionManager.writeInput).toHaveBeenCalledWith(
+				session.id,
+				{
+					type: 'user',
+					message: { role: 'user', content: 'what about this?' },
+				},
+				attachments,
+			)
 		})
 
 		it('returns 404 when session not found', async () => {

@@ -10,8 +10,11 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
+import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
+import { trackSlackMentionReceived } from '../lib/analytics/catalog-events'
+import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
 import { isAuthRevokedError } from '../lib/integrations/errors'
@@ -19,16 +22,46 @@ import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
-import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
+import {
+	DiscoveryError,
+	fetchInstallationOwnerLogin,
+	mintInstallationTokenWithRecovery,
+} from '../lib/integrations/providers/github/auth'
+import { persistRecoveredInstallationId } from '../lib/integrations/providers/github/installation-recovery'
+import { upsertSkjaldMeeting } from '../lib/integrations/providers/skjald/meeting-sync'
+import {
+	dispatchAccountLinkAction,
+	dispatchMaskinWorkspaceCommand,
+	maybePromptAccountLink,
+	ownsAccountLinkInteraction,
+} from '../lib/integrations/providers/slack/account-link'
 import {
 	type SlackConversationType,
 	listSlackConversations,
 	listSlackUsers,
 } from '../lib/integrations/providers/slack/client'
+import { config as slackProviderConfig } from '../lib/integrations/providers/slack/config'
+import {
+	extractChannelId,
+	extractMentioningSlackUserId,
+	getMentionSurface,
+	resolveMentionDispatch,
+} from '../lib/integrations/providers/slack/identity'
+import {
+	handleSlackInteractivePayload,
+	parseSlackInteractivePayload,
+	sendEphemeralResponse,
+	slackInteractiveDeliveryId,
+} from '../lib/integrations/providers/slack/interactive'
 import { getProvider, listProviders } from '../lib/integrations/registry'
-import type { ResolvedProvider, StoredCredentials } from '../lib/integrations/types'
+import type {
+	NormalizedEvent,
+	ResolvedProvider,
+	StoredCredentials,
+} from '../lib/integrations/types'
 import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
+import { verifyTimestampSignature } from '../lib/integrations/webhooks/signatures'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -130,8 +163,17 @@ const connectRoute = createRoute({
 	},
 	responses: {
 		200: {
-			description: 'Install URL for OAuth/GitHub App',
-			content: { 'application/json': { schema: z.object({ install_url: z.string() }) } },
+			description:
+				'Install URL for OAuth/GitHub App, or a webhook URL + integration id for manual-auth providers',
+			content: {
+				'application/json': {
+					schema: z.object({
+						install_url: z.string().optional(),
+						webhook_url: z.string().optional(),
+						integration_id: z.string().optional(),
+					}),
+				},
+			},
 		},
 		400: {
 			description: 'Error',
@@ -242,6 +284,89 @@ app.openapi(connectRoute, (async (c) => {
 
 		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 		return c.json({ install_url: `${frontendUrl}/${workspaceId}/settings/integrations` })
+	}
+
+	// manual providers have no OAuth redirect and no outbound-callable API key —
+	// Maskin invents the credential handshake itself: mint an opaque routing
+	// token now (embedded in the webhook URL we hand back), then wait for the
+	// user to paste the provider-generated secret via POST /:id/complete.
+	if (resolved.config.auth.type === 'manual') {
+		const systemActorName = resolved.config.displayName
+		let [systemActor] = await db
+			.select()
+			.from(actors)
+			.where(and(eq(actors.type, 'system'), eq(actors.name, systemActorName)))
+			.limit(1)
+
+		if (!systemActor) {
+			const [newActor] = await db
+				.insert(actors)
+				.values({
+					type: 'system',
+					name: systemActorName,
+					apiKey: generateApiKey().key,
+					createdBy: actorId,
+				})
+				.returning()
+			if (!newActor) {
+				return c.json(
+					createApiError('INTERNAL_ERROR', 'Failed to create system actor for integration'),
+					500,
+				)
+			}
+			systemActor = newActor
+		}
+
+		const [existingMember] = await db
+			.select()
+			.from(workspaceMembers)
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, workspaceId),
+					eq(workspaceMembers.actorId, systemActor.id),
+				),
+			)
+			.limit(1)
+
+		if (!existingMember) {
+			await db.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: systemActor.id,
+				role: 'system',
+			})
+		}
+
+		const token = randomBytes(24).toString('hex')
+		const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
+
+		const [row] = await db
+			.insert(integrations)
+			.values({
+				workspaceId,
+				provider: providerName,
+				status: 'awaiting_secret',
+				externalId: token,
+				credentials: '',
+				config: activeConfig,
+				createdBy: actorId,
+			})
+			.returning({ id: integrations.id })
+
+		if (!row) {
+			return c.json(createApiError('INTERNAL_ERROR', 'Failed to create integration'), 500)
+		}
+
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'created',
+			entityType: 'integration',
+			entityId: row.id,
+			data: { provider: providerName, external_id: token, auth_type: 'manual' },
+		})
+
+		const webhookUrl = `${resolvePublicOrigin(c.req.url, c.req.header())}/api/webhooks/${providerName}/${token}`
+		return c.json({ webhook_url: webhookUrl, integration_id: row.id })
 	}
 
 	// Create signed state containing workspace + actor info + one-time nonce
@@ -519,16 +644,17 @@ app.openapi(callbackRoute, (async (c) => {
 	const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
 	if (ownerLogin) activeConfig.owner_login = ownerLogin
 
-	// Re-connecting an already-active integration: refresh the existing row in
-	// place and drop the pending nonce row. Without this, we'd UPDATE the pending
-	// row to the resolved externalId and hit the (workspace_id, provider,
-	// external_id) unique constraint at commit time whenever externalId is stable
-	// across connects — GitHub installation_id, or a resolveExternalId provider
-	// like Google Calendar's account email. Nonce-derived externalIds
-	// (`oauth-${nonce}`) are unique per attempt, so this lookup naturally finds
-	// nothing for them and falls through to the plain update below.
+	// Re-connecting an installation whose externalId is stable across connects
+	// (GitHub installation ids, Slack team ids via resolveExternalId): refresh
+	// the existing row in place — whatever its status — and drop the pending
+	// nonce row. Without this, the UPDATE below trips the partial unique index
+	// on (workspace_id, provider, external_id): a previous row for the same
+	// installation — active, or revoked by a disconnect — blocks re-activation
+	// with a 23505 at commit time. Nonce-derived externalIds are random per
+	// connect and never collide, so this lookup simply misses for providers
+	// without stable ids.
 	let integrationId = pendingIntegration.id
-	const [existingActive] = await db
+	const [existingSameInstall] = await db
 		.select()
 		.from(integrations)
 		.where(
@@ -536,30 +662,29 @@ app.openapi(callbackRoute, (async (c) => {
 				eq(integrations.workspaceId, stateData.workspaceId),
 				eq(integrations.provider, providerName),
 				eq(integrations.externalId, externalId),
-				eq(integrations.status, 'active'),
 			),
 		)
 		.limit(1)
 
-	if (existingActive) {
-		await db.transaction(async (tx) => {
-			await tx
-				.update(integrations)
-				.set({
-					credentials: encryptedCredentials,
-					config: activeConfig,
-					updatedAt: new Date(),
-				})
-				.where(eq(integrations.id, existingActive.id))
+	if (existingSameInstall) {
+		await db
+			.update(integrations)
+			.set({
+				status: 'active',
+				credentials: encryptedCredentials,
+				config: activeConfig,
+				updatedAt: new Date(),
+			})
+			.where(eq(integrations.id, existingSameInstall.id))
 
-			await tx.delete(integrations).where(eq(integrations.id, pendingIntegration.id))
-		})
+		await db.delete(integrations).where(eq(integrations.id, pendingIntegration.id))
 
-		integrationId = existingActive.id
-		logger.info(`Refreshed existing ${providerName} integration`, {
+		integrationId = existingSameInstall.id
+		logger.info(`Refreshed existing ${providerName} installation`, {
 			integrationId,
 			workspaceId: stateData.workspaceId,
 			externalId,
+			previousStatus: existingSameInstall.status,
 			ownerLogin,
 		})
 	} else {
@@ -703,6 +828,250 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)
+
+// ── POST /api/integrations/:id/complete ─────────────────────────────────────
+// Finishes a manual-auth handshake: the user pastes the provider-generated
+// secret (e.g. Skjald's per-webhook HMAC secret) into Maskin over an
+// authenticated session, completing the row the connect route's 'manual'
+// branch created with status 'awaiting_secret'.
+
+const completeIntegrationRoute = createRoute({
+	method: 'post',
+	path: '/{id}/complete',
+	tags: ['integrations'],
+	summary: 'Complete a manual-auth integration handshake by supplying the provider secret',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			description: 'Integration activated',
+			content: { 'application/json': { schema: z.object({ activated: z.boolean() }) } },
+		},
+		400: {
+			description: 'Error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Integration not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(completeIntegrationRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const body = (await c.req.json().catch(() => ({}))) as { secret?: string }
+	const secret = body.secret?.trim()
+	if (!secret) {
+		return c.json(createApiError('BAD_REQUEST', 'secret is required'), 400)
+	}
+
+	const [existing] = await db
+		.select()
+		.from(integrations)
+		.where(and(eq(integrations.id, id), eq(integrations.workspaceId, workspaceId)))
+		.limit(1)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+
+	const resolved = getProvider(existing.provider)
+	if (resolved.config.auth.type !== 'manual') {
+		return c.json(
+			createApiError('BAD_REQUEST', `Provider ${existing.provider} does not use manual auth`),
+			400,
+		)
+	}
+	if (existing.status !== 'awaiting_secret') {
+		return c.json(createApiError('BAD_REQUEST', 'Integration is not awaiting a secret'), 400)
+	}
+
+	await db.transaction(async (tx) => {
+		await tx
+			.update(integrations)
+			.set({ credentials: encrypt(secret), status: 'active', updatedAt: new Date() })
+			.where(eq(integrations.id, id))
+
+		await tx.insert(events).values({
+			workspaceId: existing.workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: { status: 'active', provider: existing.provider },
+		})
+	})
+
+	return c.json({ activated: true })
+}) as RouteHandler<typeof completeIntegrationRoute, Env>)
+
+// ── GET /api/integrations/:id/github-token ─────────────────────────────────
+
+const REPO_SLUG_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+
+const githubTokenRoute = createRoute({
+	method: 'get',
+	path: '/{id}/github-token',
+	tags: ['integrations'],
+	summary: 'Mint a fresh GitHub App installation access token',
+	request: {
+		params: idParamSchema,
+		query: z.object({
+			repo: z
+				.string()
+				.optional()
+				.openapi({
+					description:
+						'owner/name hint. When set AND GITHUB_APP_INSTALLATION_RECOVERY_ENABLED=true, ' +
+						'a 404 on the cached installation id triggers re-discovery for this repo ' +
+						'and mints against the fresh install (mid-session App-reinstall recovery). ' +
+						'Ignored when the flag is off — behavior is identical to the legacy path.',
+					example: 'sindre-ai/maskin',
+				}),
+		}),
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			description: 'Freshly minted installation access token (1-hour GitHub-imposed TTL)',
+			content: { 'application/json': { schema: z.object({ token: z.string() }) } },
+		},
+		400: {
+			description: 'Failed to mint token',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		401: {
+			description: 'Integration authorization revoked',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'GitHub integration not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(githubTokenRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { repo } = c.req.valid('query')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [integration] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.id, id),
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'github'),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+	if (!integration) return c.json(createApiError('NOT_FOUND', 'GitHub integration not found'), 404)
+
+	// Recovery path: on stale-cache 404 we re-discover the current install for
+	// the target repo and mint against it, so an App reinstalled mid-session
+	// doesn't surface raw 401 as a task failure. Gated by env flag (default off)
+	// and requires a well-formed `?repo=owner/name` hint. The legacy path stays
+	// unchanged when either is missing, so PAT-mode identities are unaffected
+	// (they never reach this route in the first place — this is App-mode only).
+	const recoveryEnabled = process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED === 'true'
+	const recoveryRepo = recoveryEnabled && repo && REPO_SLUG_RE.test(repo) ? repo : undefined
+
+	if (recoveryRepo) {
+		try {
+			const credentials: StoredCredentials = JSON.parse(decrypt(integration.credentials))
+			const result = await mintInstallationTokenWithRecovery(credentials, { repo: recoveryRepo })
+			if (result.recovered) {
+				const oldInstallationId = credentials.installation_id as string | undefined
+				if (oldInstallationId) {
+					// Guard against concurrent-recovery duplicate audit rows: two parallel
+					// callers can both 404 on the same cached id and both discover the
+					// same new id. The helper takes a `SELECT … FOR UPDATE` on the row
+					// so the second caller blocks on the first's lock, re-reads the
+					// already-rotated value, and short-circuits without writing again.
+					await persistRecoveredInstallationId(db, {
+						integrationId: integration.id,
+						workspaceId,
+						actorId,
+						expectedOldInstallationId: oldInstallationId,
+						newInstallationId: result.installationId,
+						repo: recoveryRepo,
+					})
+				}
+				logger.info('Recovered GitHub App installation id mid-session', {
+					integrationId: integration.id,
+					oldInstallationId,
+					newInstallationId: result.installationId,
+					repo: recoveryRepo,
+				})
+			}
+			return c.json({ token: result.token })
+		} catch (err) {
+			// Only a discovery 404 means "App is no longer installed for this
+			// repo" — that's the case where the caller genuinely needs the
+			// reconnect prompt. Every other discovery status (5xx, 429, network)
+			// is a transient GitHub failure and must NOT tell the caller their
+			// grant is revoked; it drops into the BAD_REQUEST branch so T5's
+			// tagger classifies it as a transient failure instead.
+			if (err instanceof DiscoveryError && err.status === 404) {
+				logger.warn('GitHub App installation no longer resolvable — treating as revoked', {
+					integrationId: integration.id,
+					repo: recoveryRepo,
+					error: err.message,
+				})
+				return c.json(
+					createApiError(
+						'AUTH_REVOKED',
+						'GitHub App installation is no longer resolvable — please reconnect',
+					),
+					401,
+				)
+			}
+			logger.warn('GitHub token mint failed (recovery path)', {
+				integrationId: integration.id,
+				repo: recoveryRepo,
+				error: err instanceof Error ? err.message : String(err),
+				...(err instanceof DiscoveryError ? { discovery_status: err.status } : {}),
+			})
+			return c.json(createApiError('BAD_REQUEST', 'Failed to mint GitHub access token'), 400)
+		}
+	}
+
+	try {
+		const provider = getProvider('github')
+		const tokenManager = new TokenManager()
+		// GitHub App installation tokens expire after exactly 1 hour with no refresh
+		// token. getValidToken's customAuth branch mints a brand new one on every
+		// call (no caching), so a caller hitting this route just-in-time always gets
+		// a live token — unlike the value baked into a session's env vars once at
+		// container launch, which goes stale for any session running past ~1 hour.
+		const token = await tokenManager.getValidToken(db, integration.id, provider)
+		return c.json({ token })
+	} catch (err) {
+		if (isAuthRevokedError(err)) {
+			return c.json(
+				createApiError(
+					'AUTH_REVOKED',
+					'GitHub integration authorization has been revoked — please reconnect',
+				),
+				401,
+			)
+		}
+		logger.warn('GitHub token mint failed', {
+			integrationId: integration.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('BAD_REQUEST', 'Failed to mint GitHub access token'), 400)
+	}
+}) as RouteHandler<typeof githubTokenRoute, Env>)
 
 // ── GET /api/integrations/:id/slack/conversations ──────────────────────────
 
@@ -893,9 +1262,504 @@ export default app
 
 // ── Webhook handler (mounted separately at /api/webhooks) ──────────────────
 
+// Slack entity types the normalizer emits for inbound user-to-agent traffic.
+// `slack.app_mention` covers `@Maskin` in any channel; `slack.direct_message`
+// covers DMs to the bot. Anything else (channel/group messages without an
+// app_mention, reactions, channel events) is not what the ship metric is
+// counting and stays untagged.
+const SLACK_MENTION_ENTITY_TYPES = new Set(['slack.app_mention', 'slack.direct_message'])
+
+function slackChannelType(entityType: string): 'channel' | 'group' | 'im' {
+	if (entityType === 'slack.direct_message') return 'im'
+	if (entityType === 'slack.group_message') return 'group'
+	return 'channel'
+}
+
+function extractSlackTeamId(data: unknown): string | null {
+	if (!data || typeof data !== 'object') return null
+	const teamId = (data as Record<string, unknown>).team_id
+	return typeof teamId === 'string' && teamId.length > 0 ? teamId : null
+}
+
+// Tag every Slack mention/DM event in `events` with `source: 'slack_mention'`,
+// open the attribution window for the workspace, and emit the ship metric.
+// Pure on non-Slack providers — returns the input unchanged so the cost on the
+// rest of the webhook traffic stays zero.
+function tagSlackMentionEventsAndEmit(
+	providerName: string,
+	normalizedEvents: NormalizedEvent[],
+	workspaceId: string,
+	systemActorId: string,
+): NormalizedEvent[] {
+	if (providerName !== 'slack') return normalizedEvents
+
+	let emittedOnce = false
+	return normalizedEvents.map((e) => {
+		if (!SLACK_MENTION_ENTITY_TYPES.has(e.entityType)) return e
+
+		// Open the in-memory attribution window once per delivery so T4's reply
+		// path and T6's interactive edit handler can attach `source: 'slack_mention'`
+		// to the object change they write inside the next 4h, without each call
+		// site having to plumb the mention through.
+		markSlackMention(workspaceId)
+
+		// Emit the bet's ship metric exactly once per delivery — even if Slack
+		// somehow delivered two mention events in one envelope, the ship metric
+		// counts distinct deliveries, not distinct events. The PostHog capture is
+		// fire-and-forget by contract (see `posthog.ts`), so failures here never
+		// stall webhook ingest.
+		if (!emittedOnce) {
+			emittedOnce = true
+			const slackTeamId = extractSlackTeamId(e.data)
+			if (slackTeamId) {
+				void trackSlackMentionReceived({
+					workspaceId,
+					actorId: systemActorId,
+					channelType: slackChannelType(e.entityType),
+					slackTeamId,
+				})
+			} else {
+				logger.warn('Slack mention webhook missing team_id; skipping metric emit', {
+					workspaceId,
+					entityType: e.entityType,
+				})
+			}
+		}
+
+		return {
+			...e,
+			data: { ...(e.data as Record<string, unknown>), source: 'slack_mention' },
+		}
+	})
+}
+
 const webhookHandler = new WebhookHandler()
 
+/**
+ * Sentinel `workspace_id` used on `webhook_deliveries` rows for the Slack
+ * interactive dedup ledger. Slack `trigger_id` is globally unique per
+ * click; collapsing dedup to a single scope means a retry of the same
+ * click is caught regardless of which maskin workspace the block_id
+ * points at. The column is `notNull` with no FK, so a non-routable UUID
+ * is safe.
+ */
+const SLACK_INTERACTIVE_DEDUP_WORKSPACE_ID = '00000000-0000-0000-0000-000000000000'
+
 export const webhookApp = new OpenAPIHono<Env>()
+
+// ── Slack slash command: /maskin workspace <name> ─────────────────────────
+//
+// Slack POSTs form-encoded payloads here, signed with the same `v0` HMAC as
+// the Events API. The literal route MUST be declared before `/:provider` so
+// it wins over the catch-all param route.
+//
+// Per AC-U3 the slash command is the per-Slack-workspace override: it
+// switches `slack_user_links.default_workspace_id` to the named Maskin
+// workspace. Returns an immediate ephemeral via the response body — no
+// follow-up POST to `response_url` needed for this surface.
+webhookApp.post('/slack-commands', async (c) => {
+	const db = c.get('db')
+	const body = await c.req.text()
+
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	const webhookConfig = slackProviderConfig.webhook
+	if (!webhookConfig || 'type' in webhookConfig) {
+		// Should be unreachable — slack config is always timestamp-scheme.
+		return c.json(createApiError('INTERNAL_ERROR', 'Slack webhook config missing'), 500)
+	}
+	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+		logger.warn('Slack slash-command signature verification failed')
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid Slack signature'), 401)
+	}
+
+	const params = new URLSearchParams(body)
+	const payload = {
+		team_id: params.get('team_id') ?? undefined,
+		user_id: params.get('user_id') ?? undefined,
+		command: params.get('command') ?? undefined,
+		text: params.get('text') ?? undefined,
+		response_url: params.get('response_url') ?? undefined,
+	}
+
+	const result = await dispatchMaskinWorkspaceCommand(db, payload)
+	// Slack expects either {text} (channel-visible) or {response_type:'ephemeral', text}.
+	// Ephemeral is the safe default for personal routing decisions.
+	return c.json({ response_type: 'ephemeral', text: result.responseText })
+})
+
+// ── Slack account-link interactivity ──────────────────────────────────────
+//
+// Slack POSTs Block Kit `block_actions` payloads here when the user interacts
+// with the account-link picker (form-encoded with a `payload` field). The
+// dispatcher returns 200 with an ephemeral body so Slack's 3s timeout is
+// always met.
+webhookApp.post('/slack-actions-account-link', async (c) => {
+	const db = c.get('db')
+	const body = await c.req.text()
+
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	const webhookConfig = slackProviderConfig.webhook
+	if (!webhookConfig || 'type' in webhookConfig) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Slack webhook config missing'), 500)
+	}
+	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+		logger.warn('Slack interactive signature verification failed')
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid Slack signature'), 401)
+	}
+
+	const params = new URLSearchParams(body)
+	const rawPayload = params.get('payload')
+	if (!rawPayload) {
+		return c.json({ response_type: 'ephemeral', text: 'Missing payload.' })
+	}
+	let payload: Record<string, unknown>
+	try {
+		payload = JSON.parse(rawPayload) as Record<string, unknown>
+	} catch {
+		return c.json({ response_type: 'ephemeral', text: 'Could not parse Slack payload.' })
+	}
+
+	const result = await dispatchAccountLinkAction(db, payload)
+	if (result.kind === 'unhandled') {
+		return c.json({})
+	}
+	const text =
+		result.message ??
+		(result.kind === 'linked'
+			? 'Linked.'
+			: result.kind === 'noop'
+				? 'OK.'
+				: 'Could not complete account-link.')
+	return c.json({ response_type: 'ephemeral', replace_original: false, text })
+})
+
+// Slack Interactivity Request URL. Registered before the generic
+// `/:provider` route so the path-literal wins over the param. Slack signs
+// these the same way as Events API POSTs (`v0=...` over
+// `v0:{timestamp}:{body}`) but the body is `application/x-www-form-urlencoded`
+// with a single `payload` field, not JSON. See
+// `lib/integrations/providers/slack/interactive.ts` for the contract the
+// unfurl pipeline (T5) emits.
+webhookApp.post('/slack-interactive', async (c) => {
+	const db = c.get('db')
+
+	const body = await c.req.text()
+
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	let slackProvider: ResolvedProvider
+	try {
+		slackProvider = getProvider('slack')
+	} catch {
+		return c.json(createApiError('INTERNAL_ERROR', 'Slack provider not registered'), 500)
+	}
+
+	const webhookConfig = slackProvider.config.webhook
+	if (!webhookConfig || 'type' in webhookConfig) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Slack provider webhook config missing'), 500)
+	}
+
+	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+		logger.warn('Slack interactive: signature verification failed')
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+	}
+
+	const payload = parseSlackInteractivePayload(body)
+	if (!payload) {
+		// Unparseable payload: ack 200 so Slack doesn't retry into the same wall.
+		return c.json({ ok: true, skipped: 'unparseable' })
+	}
+
+	// Best-effort dedup. Slack retries interactive POSTs on any non-2xx
+	// response inside 3s; `trigger_id` is unique per click, so a retry that
+	// reaches us after we've already committed the side-effect is caught
+	// here and short-circuited before we double-fire the audit event.
+	const deliveryId = slackInteractiveDeliveryId(payload)
+	const dedupWorkspaceId = SLACK_INTERACTIVE_DEDUP_WORKSPACE_ID
+
+	if (deliveryId) {
+		try {
+			const rows = await db
+				.insert(webhookDeliveries)
+				.values({
+					provider: 'slack-interactive',
+					externalId: deliveryId,
+					workspaceId: dedupWorkspaceId,
+					processedAt: new Date(),
+				})
+				.onConflictDoNothing({
+					target: [
+						webhookDeliveries.provider,
+						webhookDeliveries.externalId,
+						webhookDeliveries.workspaceId,
+					],
+				})
+				.returning({ id: webhookDeliveries.id })
+
+			if (rows.length === 0) {
+				logger.info('Slack interactive: duplicate delivery short-circuited', {
+					deliveryId,
+				})
+				return c.json({ ok: true, skipped: 'duplicate' })
+			}
+		} catch (err) {
+			// Fail-open: a dedup outage must not block legitimate user actions.
+			logger.error('Slack interactive: dedup claim failed; processing without dedup', {
+				deliveryId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	// The account-link picker (T2) posts its block_actions to this same URL —
+	// a Slack app has exactly one Interactivity Request URL, so both surfaces
+	// share it. Route by block ownership: picker payloads go to the link
+	// dispatcher, everything else falls through to the object-edit handler.
+	if (ownsAccountLinkInteraction(payload)) {
+		try {
+			const linkResult = await dispatchAccountLinkAction(
+				db,
+				payload as Parameters<typeof dispatchAccountLinkAction>[1],
+			)
+			// `noop` covers picker interactions before the confirm click (select,
+			// checkbox) — no feedback wanted. Slack ignores the HTTP body on
+			// block_actions POSTs, so visible feedback must go via response_url.
+			if (linkResult.kind !== 'noop' && linkResult.kind !== 'unhandled' && payload.response_url) {
+				await sendEphemeralResponse(payload.response_url, {
+					text:
+						linkResult.message ??
+						(linkResult.kind === 'linked'
+							? 'Linked your Maskin account.'
+							: 'Could not complete account-link.'),
+				})
+			}
+		} catch (err) {
+			logger.error('Slack interactive: account-link dispatch crashed', {
+				error: err instanceof Error ? err.message : String(err),
+			})
+			// Ack 200 either way — Slack retries on non-2xx and the retry would
+			// hit the same crash.
+		}
+		return c.json({ ok: true })
+	}
+
+	try {
+		const result = await handleSlackInteractivePayload(db, payload)
+		if (result.updated) {
+			logger.info('Slack interactive: object change committed', {
+				workspaceId: result.workspaceId,
+				objectId: result.objectId,
+				actorId: result.actorId,
+			})
+		}
+	} catch (err) {
+		logger.error('Slack interactive: handler crashed', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+		// Still ack 200 so Slack doesn't retry — a retry would hit the same
+		// crash and the user already saw their selection land in the picker.
+	}
+
+	return c.json({ ok: true })
+})
+
+// ── Skjald meeting-completed webhook ────────────────────────────────────────
+// Registered before the generic `/:provider` catch-all so this path-literal
+// route wins. Skjald has no central app-level secret — every desktop install
+// mints its own locally — so this bypasses the generic single-secret
+// verifier entirely: `:token` is the opaque routing factor minted by the
+// `manual` connect branch (identifies the integrations row / workspace), and
+// the per-row decrypted `credentials` is the authentication factor, checked
+// directly via `verifyTimestampSignature()` against Skjald's known signing
+// scheme (frontend/src-tauri/src/webhooks/signing.rs: `sha256=<hex>` over
+// `"{timestamp}.{body}"`).
+webhookApp.post('/skjald/:token', async (c) => {
+	const db = c.get('db')
+	const token = c.req.param('token')
+
+	const [integration] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.provider, 'skjald'),
+				eq(integrations.externalId, token),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+
+	if (!integration) {
+		return c.json(createApiError('NOT_FOUND', 'Unknown webhook'), 404)
+	}
+
+	const body = await c.req.text()
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	const secret = decrypt(integration.credentials)
+	const verified = verifyTimestampSignature(body, headers, secret, {
+		signatureHeader: 'x-skjald-signature',
+		timestampHeader: 'x-skjald-timestamp',
+		bodyTemplate: '{timestamp}.{body}',
+		signaturePrefix: 'sha256=',
+		maxAgeSeconds: 300,
+	})
+	if (!verified) {
+		logger.warn('Skjald webhook: signature verification failed', { integrationId: integration.id })
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+	}
+
+	const integrationConfig = integration.config as IntegrationConfig
+	const systemActorId = integrationConfig?.system_actor_id
+	if (!systemActorId) {
+		logger.error('Skjald webhook: integration missing system_actor_id', {
+			integrationId: integration.id,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Integration misconfigured'), 500)
+	}
+
+	let payload: unknown
+	try {
+		payload = JSON.parse(body)
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON'), 400)
+	}
+
+	const eventType = headers['x-skjald-event']
+	const deliveryId = headers['x-skjald-delivery-id'] ?? null
+
+	// Claim the delivery before processing so a retry that arrives while this
+	// request is still in flight is recognised as a duplicate — same dedup
+	// pattern the generic `/:provider` route uses via `extractDeliveryId`.
+	let claimRowId: string | null = null
+	if (deliveryId) {
+		try {
+			const rows = await db
+				.insert(webhookDeliveries)
+				.values({
+					provider: 'skjald',
+					externalId: deliveryId,
+					workspaceId: integration.workspaceId,
+				})
+				.onConflictDoNothing({
+					target: [
+						webhookDeliveries.provider,
+						webhookDeliveries.externalId,
+						webhookDeliveries.workspaceId,
+					],
+				})
+				.returning({ id: webhookDeliveries.id })
+			if (rows.length === 0) {
+				logger.info('Skipping duplicate skjald delivery', {
+					deliveryId,
+					workspaceId: integration.workspaceId,
+				})
+				return c.json({ ok: true, skipped: true })
+			}
+			claimRowId = rows[0]?.id ?? null
+		} catch (err) {
+			// Fail open: dedup-table outage must not stop us processing.
+			logger.error('Failed to claim skjald delivery; processing without dedup', {
+				deliveryId,
+				workspaceId: integration.workspaceId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	const releaseClaim = async () => {
+		if (!claimRowId) return
+		try {
+			await db.delete(webhookDeliveries).where(eq(webhookDeliveries.id, claimRowId))
+		} catch (err) {
+			logger.error('Failed to release skjald webhook delivery claim', {
+				deliveryId,
+				workspaceId: integration.workspaceId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	if (eventType !== 'transcription.completed') {
+		// Unknown/future event type — ack without processing so Skjald doesn't retry.
+		await releaseClaim()
+		return c.json({ ok: true, skipped: 'unhandled_event' })
+	}
+
+	const parsedPayload = skjaldTranscriptionCompletedPayloadSchema.safeParse(payload)
+	if (!parsedPayload.success) {
+		await releaseClaim()
+		return c.json(createApiError('BAD_REQUEST', 'Invalid transcription.completed payload'), 400)
+	}
+
+	try {
+		const result = await upsertSkjaldMeeting(db, {
+			workspaceId: integration.workspaceId,
+			systemActorId,
+			payload: parsedPayload.data,
+		})
+
+		await commitWebhookDelivery(db, {
+			eventRows: [
+				{
+					workspaceId: integration.workspaceId,
+					actorId: systemActorId,
+					action: result.action,
+					entityType: 'meeting',
+					entityId: result.objectId,
+					data: payload as Record<string, unknown>,
+				},
+			],
+			claimRowId,
+		})
+
+		return c.json({ ok: true })
+	} catch (err) {
+		if (err instanceof ClaimReleasedError) {
+			logger.warn('Skjald webhook claim gone or already processed at commit time; txn aborted', {
+				integrationId: integration.id,
+				workspaceId: integration.workspaceId,
+				deliveryId,
+				claimRowId: err.claimRowId,
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+		logger.error('Skjald webhook processing failed', {
+			integrationId: integration.id,
+			workspaceId: integration.workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		await releaseClaim()
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to process webhook'), 500)
+	}
+})
+
+// `asyncProcessing` providers (Slack) hand fan-out + events insert off to the
+// event loop so the route can ack fast — the caller never gets a handle on
+// that background promise. Track it here so integration tests (running
+// against real Postgres, where the work is genuine socket I/O spanning many
+// event-loop turns, not a single microtask) can deterministically wait for it
+// instead of racing an arbitrary number of `setImmediate`/timer ticks.
+const pendingAsyncWebhookWork = new Set<Promise<unknown>>()
+
+/** Exported for tests only — await all in-flight asyncProcessing work. */
+export async function __flushAsyncWebhookProcessingForTests(): Promise<void> {
+	await Promise.all(pendingAsyncWebhookWork)
+}
 
 webhookApp.post('/:provider', async (c) => {
 	const db = c.get('db')
@@ -994,6 +1858,68 @@ webhookApp.post('/:provider', async (c) => {
 		return c.json({ ok: true, skipped: true })
 	}
 
+	// Slack DM vs channel identity split (AC-U1, AC-T2). Every candidate
+	// integration bound to this Slack team is a channel-surface target; a DM
+	// gets narrowed to the mentioning user's `slack_user_links` workspace, or
+	// dropped with an AC-U5 re-link prompt if no personal link exists. Channel
+	// mentions pass through unchanged so multi-workspace fan-out still lands
+	// one event per bound workspace.
+	let dispatchList = eligible
+	if (providerName === 'slack') {
+		const surface = getMentionSurface(normalized)
+		if (surface !== null) {
+			const slackUserId = extractMentioningSlackUserId(normalized)
+			const slackTeamId = normalized.installationId
+			const channelId = extractChannelId(normalized)
+			if (slackUserId && slackTeamId) {
+				const resolution = await resolveMentionDispatch(
+					db,
+					slackTeamId,
+					slackUserId,
+					surface,
+					eligible,
+				)
+				dispatchList = resolution.targets
+				if (resolution.needsRelinkPrompt && channelId) {
+					// DM landed with no personal link — post the re-link picker so the
+					// user can pick a workspace explicitly (AC-U5), then drop the
+					// event. Any active integration for the team owns a bot token
+					// that can post the ephemeral (bot tokens are team-scoped on
+					// Slack's side), so we prompt off the first eligible one.
+					const promptIntegration = eligible[0]
+					if (promptIntegration) {
+						const frontendUrl = process.env.FRONTEND_URL || 'https://maskin.io'
+						const promptTask = maybePromptAccountLink({
+							db,
+							integrationId: promptIntegration.id,
+							integrationCredentials: promptIntegration.credentials,
+							slackTeamId,
+							slackUserId,
+							channelId,
+							frontendUrl,
+						})
+							.catch((err) => {
+								logger.warn('Slack DM re-link prompt failed', {
+									integrationId: promptIntegration.id,
+									slackTeamId,
+									slackUserId,
+									error: err instanceof Error ? err.message : String(err),
+								})
+							})
+							.finally(() => {
+								pendingAsyncWebhookWork.delete(promptTask)
+							})
+						pendingAsyncWebhookWork.add(promptTask)
+					}
+				}
+			}
+		}
+	}
+
+	if (dispatchList.length === 0) {
+		return c.json({ ok: true, skipped: true })
+	}
+
 	// Some providers (Gmail) deliver pointer-style webhooks where one push expands
 	// into N concrete events. webhookFanOut returns the list to insert; if absent
 	// we insert the single normalized event as-is. Run fan-out per integration so
@@ -1011,7 +1937,7 @@ webhookApp.post('/:provider', async (c) => {
 	const asyncProcessing = resolved.asyncProcessing === true
 
 	const perWorkspaceResults: Outcome[] = await Promise.all(
-		eligible.map(async (integration): Promise<Outcome> => {
+		dispatchList.map(async (integration): Promise<Outcome> => {
 			const config = integration.config as IntegrationConfig
 			const systemActorId = config.system_actor_id as string
 
@@ -1100,6 +2026,20 @@ webhookApp.post('/:provider', async (c) => {
 
 				if (toInsert.length === 0) return { kind: 'inserted', count: 0 }
 
+				// Slack-app ship metric (T8 of bet/slack-app). Tag every inbound mention/DM
+				// event with `source: 'slack_mention'` so downstream attribution joins can
+				// be computed off the events table, open the in-memory attribution window
+				// so T4's reply path and T6's interactive edit can carry the same tag, and
+				// fire the PostHog ship metric once per dedup'd delivery. Skipped silently
+				// when the event isn't a mention or the provider isn't Slack — keeps every
+				// other webhook path byte-for-byte unchanged.
+				toInsert = tagSlackMentionEventsAndEmit(
+					providerName,
+					toInsert,
+					integration.workspaceId,
+					systemActorId,
+				)
+
 				// Mark the claim processed in the SAME transaction as the events insert,
 				// gated on the claim row still existing and being unprocessed. Without
 				// the gate, a long fan-out (>STALE_THRESHOLD_MS) could race the
@@ -1155,13 +2095,18 @@ webhookApp.post('/:provider', async (c) => {
 				// The delivery claim above already committed, so a Slack retry that
 				// arrives while this background task is still running is recognised as
 				// a duplicate and skipped.
-				void runFanOutAndInsert().catch((err) => {
-					logger.error(`Async ${providerName} processing crashed`, {
-						integrationId: integration.id,
-						workspaceId: integration.workspaceId,
-						error: err instanceof Error ? err.message : String(err),
+				const task = runFanOutAndInsert()
+					.catch((err) => {
+						logger.error(`Async ${providerName} processing crashed`, {
+							integrationId: integration.id,
+							workspaceId: integration.workspaceId,
+							error: err instanceof Error ? err.message : String(err),
+						})
 					})
-				})
+					.finally(() => {
+						pendingAsyncWebhookWork.delete(task)
+					})
+				pendingAsyncWebhookWork.add(task)
 				return { kind: 'queued' }
 			}
 
@@ -1202,30 +2147,32 @@ webhookApp.post('/:provider', async (c) => {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Build the OAuth redirect URI, using CORS_ORIGIN when set to prevent header injection */
-function buildRedirectUri(
+// In production, use the configured origin to prevent X-Forwarded-Host injection
+function resolvePublicOrigin(
 	requestUrl: string,
-	providerName: string,
 	headers: Record<string, string | undefined>,
 ): string {
-	// In production, use the configured origin to prevent X-Forwarded-Host injection
 	const corsOrigin = process.env.CORS_ORIGIN
 	if (corsOrigin) {
-		const origin = (corsOrigin.split(',')[0] ?? corsOrigin).trim().replace(/\/$/, '')
-		return `${origin}/api/integrations/${providerName}/callback`
+		return (corsOrigin.split(',')[0] ?? corsOrigin).trim().replace(/\/$/, '')
 	}
 
 	// Fallback for local development
 	const forwardedHost = headers['x-forwarded-host']
 	const forwardedProto = headers['x-forwarded-proto']
 
-	let origin: string
 	if (forwardedHost) {
 		const proto = forwardedProto ?? 'https'
-		origin = `${proto}://${forwardedHost}`
-	} else {
-		const url = new URL(requestUrl)
-		origin = url.origin
+		return `${proto}://${forwardedHost}`
 	}
 
-	return `${origin}/api/integrations/${providerName}/callback`
+	return new URL(requestUrl).origin
+}
+
+function buildRedirectUri(
+	requestUrl: string,
+	providerName: string,
+	headers: Record<string, string | undefined>,
+): string {
+	return `${resolvePublicOrigin(requestUrl, headers)}/api/integrations/${providerName}/callback`
 }

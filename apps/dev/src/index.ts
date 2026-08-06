@@ -10,7 +10,6 @@ import { createApp } from './app-factory'
 import { type DevBootstrapResult, maybeBootstrapDev, seedCatalogIfEmpty } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
-import { ContainerManager } from './services/container-manager'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { PackageVersionPusher } from './services/package-version-pusher'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
@@ -74,17 +73,6 @@ try {
 	)
 }
 
-const containers = new ContainerManager()
-try {
-	await containers.ensureImage(
-		'agent-base:latest',
-		path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
-	)
-} catch (err) {
-	logger.error('Failed to build agent-base image — sessions will fail until image is available', {
-		error: err instanceof Error ? err.message : String(err),
-	})
-}
 const agentStorage = new AgentStorageManager(storageProvider, db)
 
 const runtimeTelemetry = new RuntimeTelemetry({
@@ -126,7 +114,7 @@ const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
 
-const packageVersionPusher = new PackageVersionPusher(db)
+const packageVersionPusher = new PackageVersionPusher(db, agentStorage)
 packageVersionPusher.start()
 logger.info('Package version pusher started')
 
@@ -152,6 +140,7 @@ if (process.env.NODE_ENV === 'production') {
 				memoryMib: spec.memoryMib,
 				cpus: spec.cpus,
 				...(spec.browserRequired && { browserRequired: true }),
+				...(spec.previewGuestPorts.length > 0 && { previewGuestPorts: spec.previewGuestPorts }),
 				sourceSessionId: session.sourceSessionId ?? undefined,
 			}
 		},
@@ -229,6 +218,11 @@ ${mcpSetup}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `
 	process.stdout.write(banner)
+	sessionManager.warmAgentBaseImage().catch((err) => {
+		logger.error('Failed to build agent-base image — sessions will fail until image is available', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+	})
 	sessionManager.warmBrowserSidecarImage().catch((err) => {
 		logger.error('Failed to prepare browser-sidecar image; browser sessions will retry on demand', {
 			error: err instanceof Error ? err.message : String(err),

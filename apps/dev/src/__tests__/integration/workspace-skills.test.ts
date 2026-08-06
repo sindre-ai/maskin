@@ -3,9 +3,14 @@ import type { Database } from '@maskin/db'
 import { events, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
+import AdmZip from 'adm-zip'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
-import { AgentStorageManager, workspaceSkillKey } from '../../services/agent-storage'
+import {
+	AgentStorageManager,
+	workspaceSkillFileKey,
+	workspaceSkillKey,
+} from '../../services/agent-storage'
 import { insertActor, insertWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
@@ -49,6 +54,11 @@ function createMemoryStorage(): StorageProvider & { _store: Map<string, Buffer> 
 		},
 		async list(prefix) {
 			return [...store.keys()].filter((k) => k.startsWith(prefix))
+		},
+		async listWithMetadata(prefix) {
+			return [...store.entries()]
+				.filter(([k]) => k.startsWith(prefix))
+				.map(([key, buf]) => ({ key, size: buf.length }))
 		},
 		async delete(key) {
 			store.delete(key)
@@ -362,6 +372,204 @@ describe('Workspace Skills Integration', () => {
 
 			// S3 object was deleted.
 			expect(storage._store.has(workspaceSkillKey(workspaceId, skill.id))).toBe(false)
+		})
+	})
+
+	describe('folder skill upload', () => {
+		const ANTHROPIC_SKILL_MD =
+			'---\nname: docx\ndescription: Generate Microsoft Word documents\n---\n\nDocx skill body.'
+
+		function uploadRequest(name: string, body: Buffer, query = '') {
+			const formData = new FormData()
+			formData.append('file', new File([body], name))
+			return new Request(`http://localhost/api/workspaces/${workspaceId}/skills/upload${query}`, {
+				method: 'POST',
+				body: formData,
+			})
+		}
+
+		it('uploads an Anthropic-shaped docx bundle end-to-end', async () => {
+			const app = createSkillsApp(storage)
+			const zip = new AdmZip()
+			zip.addFile('docx/SKILL.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8'))
+			zip.addFile('docx/reference/style.md', Buffer.from('Style guide', 'utf-8'))
+			zip.addFile('docx/scripts/run.py', Buffer.from('print("hi")', 'utf-8'))
+
+			const res = await app.request(uploadRequest('docx.zip', zip.toBuffer()))
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.name).toBe('docx')
+			expect(body.isFolder).toBe(true)
+			expect(body.fileCount).toBe(3)
+			expect(body.isValid).toBe(true)
+			expect(body.error).toBeNull()
+
+			// Row landed with the folder flag set.
+			const [row] = await db.select().from(workspaceSkills).where(eq(workspaceSkills.id, body.id))
+			expect(row?.isFolder).toBe(true)
+			expect(row?.fileCount).toBe(3)
+
+			// Every bundled file is visible under the skill prefix.
+			expect(storage._store.has(workspaceSkillKey(workspaceId, body.id))).toBe(true)
+			expect(
+				storage._store.has(workspaceSkillFileKey(workspaceId, body.id, 'reference/style.md')),
+			).toBe(true)
+			expect(
+				storage._store.has(workspaceSkillFileKey(workspaceId, body.id, 'scripts/run.py')),
+			).toBe(true)
+		})
+
+		it('uploads a single SKILL.md via the same endpoint and marks it non-folder', async () => {
+			const app = createSkillsApp(storage)
+			const res = await app.request(
+				uploadRequest('docx.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8')),
+			)
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.isFolder).toBe(false)
+			expect(body.fileCount).toBeNull()
+
+			const [row] = await db.select().from(workspaceSkills).where(eq(workspaceSkills.id, body.id))
+			expect(row?.isFolder).toBe(false)
+			expect(row?.fileCount).toBeNull()
+		})
+
+		it('replaces a folder skill in place and clears stale bundled files', async () => {
+			const app = createSkillsApp(storage)
+
+			const firstZip = new AdmZip()
+			firstZip.addFile('docx/SKILL.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8'))
+			firstZip.addFile('docx/reference/old.md', Buffer.from('old', 'utf-8'))
+			const firstRes = await app.request(uploadRequest('docx.zip', firstZip.toBuffer()))
+			const first = await firstRes.json()
+			expect(
+				storage._store.has(workspaceSkillFileKey(workspaceId, first.id, 'reference/old.md')),
+			).toBe(true)
+
+			// Re-upload with a different layout — `old.md` should be gone.
+			const secondZip = new AdmZip()
+			secondZip.addFile('docx/SKILL.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8'))
+			secondZip.addFile('docx/reference/new.md', Buffer.from('new', 'utf-8'))
+			const secondRes = await app.request(
+				uploadRequest('docx.zip', secondZip.toBuffer(), `?skillId=${first.id}`),
+			)
+			expect(secondRes.status).toBe(201)
+			expect(
+				storage._store.has(workspaceSkillFileKey(workspaceId, first.id, 'reference/old.md')),
+			).toBe(false)
+			expect(
+				storage._store.has(workspaceSkillFileKey(workspaceId, first.id, 'reference/new.md')),
+			).toBe(true)
+		})
+
+		it('rejects a malformed bundle on replace and leaves the existing bundle intact', async () => {
+			const app = createSkillsApp(storage)
+			const zip = new AdmZip()
+			zip.addFile('docx/SKILL.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8'))
+			zip.addFile('docx/reference/keep.md', Buffer.from('keep me', 'utf-8'))
+			const firstRes = await app.request(uploadRequest('docx.zip', zip.toBuffer()))
+			expect(firstRes.status).toBe(201)
+			const first = await firstRes.json()
+
+			// Replace with a zip that has no SKILL.md — must be rejected without
+			// touching the row or the stored bundle.
+			const badZip = new AdmZip()
+			badZip.addFile('README.md', Buffer.from('not a skill', 'utf-8'))
+			const res = await app.request(
+				uploadRequest('docx.zip', badZip.toBuffer(), `?skillId=${first.id}`),
+			)
+			expect(res.status).toBe(400)
+
+			expect(storage._store.has(workspaceSkillKey(workspaceId, first.id))).toBe(true)
+			expect(
+				storage._store.has(workspaceSkillFileKey(workspaceId, first.id, 'reference/keep.md')),
+			).toBe(true)
+			const [row] = await db.select().from(workspaceSkills).where(eq(workspaceSkills.id, first.id))
+			expect(row?.isValid).toBe(true)
+			expect(row?.fileCount).toBe(2)
+			expect(row?.content).toContain('Docx skill body.')
+		})
+	})
+
+	describe('folder skill download', () => {
+		const ANTHROPIC_SKILL_MD =
+			'---\nname: docx\ndescription: Generate Microsoft Word documents\n---\n\nDocx skill body.'
+
+		function uploadRequest(name: string, body: Buffer, query = '') {
+			const formData = new FormData()
+			formData.append('file', new File([body], name))
+			return new Request(`http://localhost/api/workspaces/${workspaceId}/skills/upload${query}`, {
+				method: 'POST',
+				body: formData,
+			})
+		}
+
+		function downloadRequest(skillId: string) {
+			return new Request(
+				`http://localhost/api/workspaces/${workspaceId}/skills/${skillId}/download`,
+			)
+		}
+
+		it('round-trips through T2 upload — download zip re-uploads cleanly with the same file count', async () => {
+			const app = createSkillsApp(storage)
+
+			// Upload an Anthropic-shaped bundle so the row + S3 prefix is realistic.
+			const zip = new AdmZip()
+			zip.addFile('docx/SKILL.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8'))
+			zip.addFile('docx/reference/style.md', Buffer.from('Style guide', 'utf-8'))
+			zip.addFile('docx/scripts/run.py', Buffer.from('print("hi")', 'utf-8'))
+			const uploadRes = await app.request(uploadRequest('docx.zip', zip.toBuffer()))
+			expect(uploadRes.status).toBe(201)
+			const uploaded = await uploadRes.json()
+			expect(uploaded.isFolder).toBe(true)
+			expect(uploaded.fileCount).toBe(3)
+
+			// Download the bundle back as a zip.
+			const downloadRes = await app.request(downloadRequest(uploaded.id))
+			expect(downloadRes.status).toBe(200)
+			expect(downloadRes.headers.get('Content-Type')).toBe('application/zip')
+			expect(downloadRes.headers.get('Content-Disposition')).toContain('filename="docx.zip"')
+			const zipBuffer = Buffer.from(await downloadRes.arrayBuffer())
+
+			// Sanity-check the response zip structure.
+			const downloaded = new AdmZip(zipBuffer)
+			const entryNames = downloaded.getEntries().map((e) => e.entryName)
+			expect(entryNames.sort()).toEqual(['SKILL.md', 'reference/style.md', 'scripts/run.py'].sort())
+
+			// Re-upload the downloaded zip as a Replace of the same skill — same
+			// `file_count`, still folder skill. A round-trip re-upload keeps the
+			// SKILL.md frontmatter `name: docx` unchanged, so uploading it as a
+			// brand-new skill (no `?skillId=`) would collide with the original on
+			// the workspace's unique name constraint. Replacing is also the real
+			// user flow this proves: Download .zip → edit → Replace.
+			// This is the DoD round-trip: the downloaded zip must re-upload cleanly.
+			const reuploadRes = await app.request(
+				uploadRequest('docx-roundtrip.zip', zipBuffer, `?skillId=${uploaded.id}`),
+			)
+			expect(reuploadRes.status).toBe(201)
+			const reuploaded = await reuploadRes.json()
+			expect(reuploaded.isFolder).toBe(true)
+			expect(reuploaded.fileCount).toBe(3)
+			expect(reuploaded.isValid).toBe(true)
+			expect(reuploaded.error).toBeNull()
+		})
+
+		it('returns 404 for single-file skills', async () => {
+			const app = createSkillsApp(storage)
+			const uploadRes = await app.request(
+				uploadRequest('docx.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8')),
+			)
+			const uploaded = await uploadRes.json()
+			expect(uploaded.isFolder).toBe(false)
+
+			const downloadRes = await app.request(downloadRequest(uploaded.id))
+			expect(downloadRes.status).toBe(404)
+		})
+
+		it('returns 404 when the skill does not exist', async () => {
+			const app = createSkillsApp(storage)
+			const downloadRes = await app.request(downloadRequest('00000000-0000-0000-0000-0000ddddffff'))
+			expect(downloadRes.status).toBe(404)
 		})
 	})
 })

@@ -50,11 +50,12 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 		name: `Workspace ${n}`,
 		settings: {
 			enabled_modules: ['work'],
-			display_names: { insight: 'Insight', bet: 'Bet', task: 'Task' },
+			display_names: { insight: 'Insight', bet: 'Bet', task: 'Task', loop: 'Loop' },
 			statuses: {
 				insight: ['new', 'processing', 'clustered', 'discarded'],
 				bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
 				task: ['todo', 'in_progress', 'done', 'blocked'],
+				loop: ['holding', 'at-risk', 'breached'],
 			},
 			field_definitions: {},
 			relationship_types: ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates'],
@@ -384,6 +385,8 @@ export function buildWorkspaceSkill(overrides?: Record<string, unknown>) {
 		storageKey: `workspaces/${workspaceId}/skills/${id}/SKILL.md`,
 		sizeBytes: 128,
 		isValid: true,
+		isFolder: false,
+		fileCount: null,
 		createdBy: randomUUID(),
 		createdAt: new Date(),
 		updatedAt: new Date(),

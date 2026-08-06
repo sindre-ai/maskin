@@ -165,6 +165,29 @@ describe('sessionConfigSchema', () => {
 		})
 		expect(result.mcps).toHaveLength(1)
 	})
+
+	it('accepts previewGuestPorts alongside browserRequired', () => {
+		const result = sessionConfigSchema.parse({
+			browserRequired: true,
+			previewGuestPorts: [5173, 3000],
+		})
+		expect(result.previewGuestPorts).toEqual([5173, 3000])
+	})
+
+	it('leaves previewGuestPorts undefined by default', () => {
+		const result = sessionConfigSchema.parse({})
+		expect(result.previewGuestPorts).toBeUndefined()
+	})
+
+	it('rejects previewGuestPorts entries above 65535', () => {
+		expect(() => sessionConfigSchema.parse({ previewGuestPorts: [70000] })).toThrow()
+	})
+
+	it('rejects more than 8 previewGuestPorts entries', () => {
+		expect(() =>
+			sessionConfigSchema.parse({ previewGuestPorts: [1, 2, 3, 4, 5, 6, 7, 8, 9] }),
+		).toThrow()
+	})
 })
 
 describe('createSessionSchema', () => {
@@ -223,6 +246,30 @@ describe('createSessionSchema', () => {
 	it('rejects empty action_prompt', () => {
 		expect(() => createSessionSchema.parse({ actor_id: uuid, action_prompt: '' })).toThrow()
 	})
+
+	it('accepts optional entry_agent_role', () => {
+		const result = createSessionSchema.parse({
+			actor_id: uuid,
+			action_prompt: 'Test',
+			entry_agent_role: 'chief-of-staff',
+		})
+		expect(result.entry_agent_role).toBe('chief-of-staff')
+	})
+
+	it('leaves entry_agent_role undefined when omitted', () => {
+		const result = createSessionSchema.parse({ actor_id: uuid, action_prompt: 'Test' })
+		expect(result.entry_agent_role).toBeUndefined()
+	})
+
+	it('rejects entry_agent_role longer than 64 chars', () => {
+		expect(() =>
+			createSessionSchema.parse({
+				actor_id: uuid,
+				action_prompt: 'Test',
+				entry_agent_role: 'x'.repeat(65),
+			}),
+		).toThrow()
+	})
 })
 
 describe('sessionQuerySchema', () => {
@@ -240,6 +287,24 @@ describe('sessionQuerySchema', () => {
 	it('accepts optional actor_id filter', () => {
 		const result = sessionQuerySchema.parse({ actor_id: uuid })
 		expect(result.actor_id).toBe(uuid)
+	})
+
+	it('accepts ISO-8601 updated_before and updated_after', () => {
+		const result = sessionQuerySchema.parse({
+			updated_before: '2026-06-30T00:00:00.000Z',
+			updated_after: '2026-06-01T00:00:00.000Z',
+		})
+		expect(result.updated_before).toBe('2026-06-30T00:00:00.000Z')
+		expect(result.updated_after).toBe('2026-06-01T00:00:00.000Z')
+	})
+
+	it('rejects malformed updated_before (AC-T6)', () => {
+		expect(() => sessionQuerySchema.parse({ updated_before: 'not-a-date' })).toThrow()
+		expect(() => sessionQuerySchema.parse({ updated_before: '2026-06-30' })).toThrow()
+	})
+
+	it('rejects malformed updated_after (AC-T6)', () => {
+		expect(() => sessionQuerySchema.parse({ updated_after: 'yesterday' })).toThrow()
 	})
 })
 

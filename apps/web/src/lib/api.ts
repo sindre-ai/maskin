@@ -1,12 +1,13 @@
 import type {
 	ActorListItem,
 	ActorResponse,
+	AgentState,
 	DisplaySettingsBody,
 	SafeMetadata,
 	TriggerResponse,
 } from '@maskin/shared'
 
-export type { ActorListItem, ActorResponse, DisplaySettingsBody, TriggerResponse }
+export type { ActorListItem, ActorResponse, AgentState, DisplaySettingsBody, TriggerResponse }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -174,10 +175,22 @@ export const api = {
 		get: (id: string) => request<ObjectResponse>(`/objects/${id}`),
 		graph: (id: string, workspaceId: string) =>
 			request<ObjectGraphResponse>(`/objects/${id}/graph`, { workspaceId }),
+		references: (id: string, workspaceId: string) =>
+			request<KnowledgeReferencesResponse>(`/objects/${id}/references`, { workspaceId }),
 		create: (workspaceId: string, data: CreateObjectInput) =>
 			request<ObjectResponse>('/objects', { method: 'POST', body: data, workspaceId }),
 		update: (id: string, data: UpdateObjectInput) =>
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
+		verify: (id: string, verified: boolean) =>
+			request<ObjectResponse>(`/objects/${id}/verification`, {
+				method: 'POST',
+				body: { verified },
+			}),
+		undoWrite: (id: string, eventId: number) =>
+			request<ObjectResponse>(`/objects/${id}/undo-write`, {
+				method: 'POST',
+				body: { eventId },
+			}),
 		delete: (id: string) => request<{ deleted: boolean }>(`/objects/${id}`, { method: 'DELETE' }),
 		search: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
@@ -242,6 +255,36 @@ export const api = {
 			}),
 		delete: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/actors/${id}`, { method: 'DELETE', workspaceId }),
+		uploadAvatar: async (id: string, file: File, workspaceId: string): Promise<ActorResponse> => {
+			const apiKey = getApiKey()
+			const formData = new FormData()
+			formData.append('file', file)
+			const res = await fetch(`${API_BASE}/actors/${id}/avatar`, {
+				method: 'POST',
+				headers: {
+					...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+					'X-Workspace-Id': workspaceId,
+				},
+				body: formData,
+			})
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({ error: res.statusText }))
+				const raw =
+					typeof data.error === 'object' ? data.error.message : data.error || res.statusText
+				// Turn raw status codes into human-readable messages when the server
+				// returns bare 413/415 without a helpful body (per T6 DoD).
+				let message: string = raw
+				if (res.status === 413) {
+					message = 'Image is too large. Maximum size is 2 MB.'
+				} else if (res.status === 415) {
+					message = 'Unsupported image type. Upload a PNG or JPG.'
+				} else if (res.status === 403) {
+					message = 'Only workspace admins can upload avatars.'
+				}
+				throw new ApiError(res.status, message)
+			}
+			return res.json()
+		},
 	},
 
 	workspaces: {
@@ -300,9 +343,18 @@ export const api = {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
 		connect: (workspaceId: string, provider: string, body?: { api_key?: string }) =>
-			request<{ install_url: string }>(`/integrations/${provider}/connect`, {
+			request<{ install_url?: string; webhook_url?: string; integration_id?: string }>(
+				`/integrations/${provider}/connect`,
+				{
+					method: 'POST',
+					body,
+					workspaceId,
+				},
+			),
+		complete: (id: string, workspaceId: string, secret: string) =>
+			request<{ activated: boolean }>(`/integrations/${id}/complete`, {
 				method: 'POST',
-				body,
+				body: { secret },
 				workspaceId,
 			}),
 		disconnect: (id: string, workspaceId: string) =>
@@ -525,6 +577,10 @@ export const api = {
 			}),
 	},
 
+	briefing: {
+		get: (workspaceId: string) => request<BriefingResponse>('/briefing', { workspaceId }),
+	},
+
 	subscriptions: {
 		subscribe: (workspaceId: string, entityType: string, entityId: string) =>
 			request<{ subscribed: true }>('/subscriptions', {
@@ -548,9 +604,20 @@ export const api = {
 				body: { entity_type: entityType, entity_id: entityId, last_event_id: lastEventId },
 				workspaceId,
 			}),
-		unread: (workspaceId: string, entityType?: string) => {
-			const qs = entityType ? `?${new URLSearchParams({ entity_type: entityType }).toString()}` : ''
-			return request<UnreadResponse>(`/subscriptions/unread${qs}`, { workspaceId })
+		markUnread: (workspaceId: string, entityType: string, entityId: string) =>
+			request<{ updated: true }>('/subscriptions/unread', {
+				method: 'POST',
+				body: { entity_type: entityType, entity_id: entityId },
+				workspaceId,
+			}),
+		unread: (workspaceId: string, entityType?: string, includeRecentlyRead?: boolean) => {
+			const params = new URLSearchParams()
+			if (entityType) params.set('entity_type', entityType)
+			if (includeRecentlyRead) params.set('include_recently_read', 'true')
+			const qs = params.toString()
+			return request<UnreadResponse>(qs ? `/subscriptions/unread?${qs}` : '/subscriptions/unread', {
+				workspaceId,
+			})
 		},
 	},
 
@@ -591,6 +658,60 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		upload: async (
+			workspaceId: string,
+			file: File,
+			opts?: { skillId?: string },
+		): Promise<WorkspaceSkillUploadResult> => {
+			const apiKey = getApiKey()
+			const formData = new FormData()
+			formData.append('file', file)
+			const qs = opts?.skillId ? `?skillId=${encodeURIComponent(opts.skillId)}` : ''
+			const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/skills/upload${qs}`, {
+				method: 'POST',
+				headers: {
+					...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+					'X-Workspace-Id': workspaceId,
+				},
+				body: formData,
+			})
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({ error: res.statusText }))
+				const message =
+					typeof data.error === 'object' ? data.error.message : data.error || res.statusText
+				throw new ApiError(res.status, message)
+			}
+			return res.json()
+		},
+		listFiles: (workspaceId: string, skillId: string) =>
+			request<WorkspaceSkillFileEntry[]>(`/workspaces/${workspaceId}/skills/${skillId}/files`, {
+				workspaceId,
+			}),
+		download: async (
+			workspaceId: string,
+			skillId: string,
+		): Promise<{ blob: Blob; filename: string }> => {
+			const apiKey = getApiKey()
+			const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/skills/${skillId}/download`, {
+				headers: {
+					...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+					'X-Workspace-Id': workspaceId,
+				},
+			})
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({ error: res.statusText }))
+				const message =
+					typeof data.error === 'object' ? data.error.message : data.error || res.statusText
+				throw new ApiError(res.status, message)
+			}
+			const disposition = res.headers.get('content-disposition') ?? ''
+			// Prefer the RFC 5987 filename* parameter (UTF-8) over the ASCII fallback
+			// so non-ASCII skill names round-trip cleanly.
+			const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1]
+			const ascii = /filename="([^"]+)"/.exec(disposition)?.[1]
+			const filename = (utf8 ? decodeURIComponent(utf8) : ascii) ?? `${skillId}.zip`
+			return { blob: await res.blob(), filename }
+		},
 		listForActor: (actorId: string) =>
 			request<AttachedWorkspaceSkill[]>(`/actors/${actorId}/workspace-skills`),
 		attach: (actorId: string, workspaceSkillId: string) =>
@@ -741,7 +862,9 @@ export interface UnreadItem {
 	entity_type: string
 	entity_id: string
 	unread_count: number
-	mentions_you: boolean
+	// Count of unread events on the entity that actually @-mention the viewer.
+	// Drives the "Mentioned" pill on the For You card when > 0.
+	mentioning_unread_count: number
 	latest_event_id: number | null
 	latest_activity_at: string | null
 	object?: ObjectResponse
@@ -749,6 +872,11 @@ export interface UnreadItem {
 
 export interface UnreadResponse {
 	items: UnreadItem[]
+}
+
+export interface BriefingResponse {
+	workspace_id: string
+	markdown: string
 }
 
 export interface UserDisplaySettingsResponse {
@@ -900,6 +1028,11 @@ export interface ObjectGraphResponse {
 	events: EventResponse[]
 }
 
+export interface KnowledgeReferencesResponse {
+	window_days: number
+	unique_contexts: number
+}
+
 export interface CreateRelationshipInput {
 	source_type: string
 	source_id: string
@@ -946,7 +1079,7 @@ export interface ProviderEventDefinition {
 export interface ProviderInfo {
 	name: string
 	displayName: string
-	authType: 'oauth2' | 'oauth2_custom' | 'api_key'
+	authType: 'oauth2' | 'oauth2_custom' | 'api_key' | 'manual'
 	events: ProviderEventDefinition[]
 	externalIdDisplay?: 'email' | 'installation'
 }
@@ -1015,6 +1148,10 @@ export interface WorkspaceSkillListItem {
 	storageKey: string
 	sizeBytes: number
 	isValid: boolean
+	// Optional so a row from a backend that hasn't shipped T2 yet still types — falsy
+	// values fall through to the single-file render path.
+	isFolder?: boolean
+	fileCount?: number | null
 	createdBy: string | null
 	createdAt: string
 	updatedAt: string
@@ -1022,6 +1159,15 @@ export interface WorkspaceSkillListItem {
 
 export interface WorkspaceSkillDetail extends WorkspaceSkillListItem {
 	content: string
+}
+
+export interface WorkspaceSkillUploadResult extends WorkspaceSkillDetail {
+	error: { kind: string; message: string } | null
+}
+
+export interface WorkspaceSkillFileEntry {
+	relativePath: string
+	sizeBytes: number
 }
 
 export interface AttachedWorkspaceSkill extends WorkspaceSkillListItem {
@@ -1101,6 +1247,7 @@ export interface CreateSessionInput {
 	action_prompt: string
 	config?: SessionConfigInput
 	auto_start?: boolean
+	entry_agent_role?: string
 }
 
 export interface SessionResponse {
@@ -1126,6 +1273,9 @@ export interface SessionResponse {
 export interface SessionInputAttachment {
 	kind: string
 	id: string
+	name?: string
+	mime_type?: string
+	size_bytes?: number
 }
 
 export interface SessionInputBody {

@@ -7,266 +7,203 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import {
-	CCD_ACTOR_CUSTOMER_CURATOR,
-	CCD_ACTOR_CUSTOMER_FEEDBACK,
-	CCD_ACTOR_INSIGHTS_TRIAGE,
-	CCD_ACTOR_PRODUCT_IDEATOR,
-	CCD_PACKAGE_DESCRIPTION,
-	CCD_PACKAGE_NAME,
-	CCD_PACKAGE_SLUG,
-	CCD_PACKAGE_USE_CASE,
-	CCD_PACKAGE_VERSION,
-	WORKSPACE_COACH_DEFAULT,
-} from '@maskin/shared'
-import { and, count, eq, isNotNull } from 'drizzle-orm'
+import { CHIEF_OF_STAFF_DEFAULT, WORKSPACE_COACH_DEFAULT } from '@maskin/shared'
+import { and, eq, isNotNull } from 'drizzle-orm'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
+import {
+	CCD_ACTOR_IDS,
+	CCD_PACKAGE,
+	CCD_SKILL_IDS,
+	CCD_TRIGGER_IDS,
+} from './catalog-packages/ccd-package'
+import {
+	DEV_PIPELINE_ACTOR_IDS,
+	DEV_PIPELINE_PACKAGE,
+	DEV_PIPELINE_SKILL_IDS,
+	DEV_PIPELINE_TRIGGER_IDS,
+} from './catalog-packages/dev-pipeline-package'
+import {
+	type CatalogPackageSeedConfig,
+	getActorData,
+	getSkillData,
+	getTriggerData,
+} from './catalog-packages/package-data'
+import { actorSnapshot, skillSnapshot, triggerSnapshot } from './catalog-packages/package-snapshot'
+import {
+	STRATEGY_GROWTH_ACTOR_IDS,
+	STRATEGY_GROWTH_PACKAGE,
+	STRATEGY_GROWTH_SKILL_IDS,
+	STRATEGY_GROWTH_TRIGGER_IDS,
+} from './catalog-packages/strategy-growth-package'
+import {
+	TEAM_OPS_ACTOR_IDS,
+	TEAM_OPS_PACKAGE,
+	TEAM_OPS_SKILL_IDS,
+	TEAM_OPS_TRIGGER_IDS,
+} from './catalog-packages/team-ops-package'
 import { logger } from './logger'
 
+const CATALOG_SEED_CONFIGS: readonly CatalogPackageSeedConfig[] = [
+	{
+		package: CCD_PACKAGE,
+		actorIds: CCD_ACTOR_IDS,
+		triggerIds: CCD_TRIGGER_IDS,
+		skillIds: CCD_SKILL_IDS,
+	},
+	{
+		package: DEV_PIPELINE_PACKAGE,
+		actorIds: DEV_PIPELINE_ACTOR_IDS,
+		triggerIds: DEV_PIPELINE_TRIGGER_IDS,
+		skillIds: DEV_PIPELINE_SKILL_IDS,
+	},
+	{
+		package: STRATEGY_GROWTH_PACKAGE,
+		actorIds: STRATEGY_GROWTH_ACTOR_IDS,
+		triggerIds: STRATEGY_GROWTH_TRIGGER_IDS,
+		skillIds: STRATEGY_GROWTH_SKILL_IDS,
+	},
+	{
+		package: TEAM_OPS_PACKAGE,
+		actorIds: TEAM_OPS_ACTOR_IDS,
+		triggerIds: TEAM_OPS_TRIGGER_IDS,
+		skillIds: TEAM_OPS_SKILL_IDS,
+	},
+]
+
+export interface CatalogSyncResult {
+	inserted: string[]
+	updated: string[]
+	unchanged: string[]
+}
+
 /**
- * Seeds the global catalog with the Customer Continuous Discovery package if
- * the catalog_packages table is empty. Safe to call on every startup — the
- * count check makes it a no-op once any package exists.
+ * Syncs the global catalog with the four installable Loop bundles (Discover &
+ * Research, Build & Ship, Strategy & Growth, Team Ops & Retro), upserting by
+ * slug. A package missing from catalog_packages is inserted; a package whose
+ * code-defined version differs from the stored row is updated in place (its
+ * catalog_package_items are replaced wholesale); a package whose version
+ * matches is left untouched. Safe to call on every startup/deploy.
+ *
+ * Bumping a package's `version` is the deliberate signal that propagates a
+ * change: `PackageVersionPusher` (services/package-version-pusher.ts) polls
+ * hourly for installed_packages rows whose installedVersion has fallen behind
+ * catalogPackages.version and re-provisions locked installs accordingly.
+ *
+ * Reuses the exact same package configs + snapshot data the publish-*.ts
+ * scripts publish to a shared catalog DB, so local dev never drifts from what
+ * those scripts ship (see apps/dev/src/lib/catalog-packages/).
+ *
+ * No env guards here — production seeding goes through this function too, via
+ * `scripts/seed-catalog.ts` (wired into the Docker boot sequence). Env-gating
+ * lives in `seedCatalogIfEmpty` below, the dev-server-boot entrypoint.
+ */
+export async function seedCatalogPackages(db: Database): Promise<CatalogSyncResult> {
+	const existingRows = await db
+		.select({
+			id: catalogPackages.id,
+			slug: catalogPackages.slug,
+			version: catalogPackages.version,
+		})
+		.from(catalogPackages)
+	const existingBySlug = new Map(existingRows.map((r) => [r.slug, r]))
+
+	const inserted: string[] = []
+	const updated: string[] = []
+	const unchanged: string[] = []
+
+	await db.transaction(async (tx) => {
+		for (const config of CATALOG_SEED_CONFIGS) {
+			const existing = existingBySlug.get(config.package.slug)
+			if (existing && existing.version === config.package.version) {
+				unchanged.push(config.package.slug)
+				continue
+			}
+
+			const actorRows = config.actorIds.map(getActorData)
+			const triggerRows = config.triggerIds.map(getTriggerData)
+			const skillRows = config.skillIds.map(getSkillData)
+
+			const publishedActorIds = new Set<string>(config.actorIds)
+			for (const t of triggerRows) {
+				if (!publishedActorIds.has(t.targetActorId)) {
+					throw new Error(
+						`${config.package.slug}: trigger ${t.id} (${t.name}) targets actor ${t.targetActorId}, which is not in the seeded actor set.`,
+					)
+				}
+			}
+
+			let packageId: string
+			if (existing) {
+				await tx
+					.update(catalogPackages)
+					.set({
+						name: config.package.name,
+						description: config.package.description,
+						version: config.package.version,
+						useCase: config.package.useCase,
+						updatedAt: new Date(),
+					})
+					.where(eq(catalogPackages.id, existing.id))
+				await tx.delete(catalogPackageItems).where(eq(catalogPackageItems.packageId, existing.id))
+				packageId = existing.id
+				updated.push(config.package.slug)
+			} else {
+				const [pkg] = await tx
+					.insert(catalogPackages)
+					.values({
+						slug: config.package.slug,
+						name: config.package.name,
+						description: config.package.description,
+						version: config.package.version,
+						useCase: config.package.useCase,
+					})
+					.returning()
+
+				if (!pkg) throw new Error(`${config.package.slug}: catalog_packages insert returned no row`)
+				packageId = pkg.id
+				inserted.push(config.package.slug)
+			}
+
+			await tx.insert(catalogPackageItems).values([
+				...actorRows.map((actorRow) => ({
+					packageId,
+					itemType: 'actor' as const,
+					sourceItemId: actorRow.id,
+					itemSnapshot: actorSnapshot(actorRow),
+				})),
+				...triggerRows.map((triggerRow) => ({
+					packageId,
+					itemType: 'trigger' as const,
+					sourceItemId: triggerRow.id,
+					itemSnapshot: triggerSnapshot(triggerRow),
+				})),
+				...skillRows.map((skillRow) => ({
+					packageId,
+					itemType: 'skill' as const,
+					sourceItemId: skillRow.id,
+					itemSnapshot: skillSnapshot(
+						skillRow,
+						skillRow.attachedActorIds.filter((id) => publishedActorIds.has(id)),
+					),
+				})),
+			])
+		}
+	})
+
+	return { inserted, updated, unchanged }
+}
+
+/**
+ * Dev-server-boot entrypoint for catalog seeding — called unconditionally from
+ * index.ts on every startup, so it no-ops itself outside local dev. Production
+ * seeding is a deliberate, separate step: see `seedCatalogPackages` above.
  */
 export async function seedCatalogIfEmpty(db: Database): Promise<void> {
-	const [row] = await db.select({ n: count() }).from(catalogPackages)
-	if (row && row.n > 0) return
+	if (process.env.NODE_ENV === 'production') return
+	if (process.env.MASKIN_AUTO_BOOTSTRAP === 'false') return
 
-	const [pkg] = await db
-		.insert(catalogPackages)
-		.values({
-			slug: CCD_PACKAGE_SLUG,
-			name: CCD_PACKAGE_NAME,
-			description: CCD_PACKAGE_DESCRIPTION,
-			version: CCD_PACKAGE_VERSION,
-			useCase: CCD_PACKAGE_USE_CASE,
-		})
-		.returning()
-
-	if (!pkg) return
-
-	await db.insert(catalogPackageItems).values([
-		{
-			packageId: pkg.id,
-			itemType: 'actor',
-			sourceItemId: CCD_ACTOR_CUSTOMER_FEEDBACK,
-			itemSnapshot: {
-				type: 'agent',
-				name: 'Customer Feedback Agent',
-				description: 'Ingests and normalises raw customer feedback from all connected channels.',
-				systemPrompt:
-					'You are the Customer Feedback Agent. Your job is to ingest raw feedback from connected integrations (Slack, email, support tools), normalise it into structured insights, and store them so the Insights Triage Agent can act on them.',
-				llmProvider: 'anthropic',
-				llmConfig: { model: 'claude-opus-4-8', temperature: 0.2 },
-				tools: {
-					allowed: ['create_object', 'update_object', 'list_objects', 'update_memory', 'done'],
-				},
-			},
-		},
-		{
-			packageId: pkg.id,
-			itemType: 'actor',
-			sourceItemId: CCD_ACTOR_INSIGHTS_TRIAGE,
-			itemSnapshot: {
-				type: 'agent',
-				name: 'Insights Triage Agent',
-				description: 'Clusters incoming insights and surfaces patterns as bets.',
-				systemPrompt:
-					'You are the Insights Triage Agent. When triggered, review all new insights, cluster them by theme, and create or update bet objects that represent the underlying product opportunities.',
-				llmProvider: 'anthropic',
-				llmConfig: { model: 'claude-opus-4-8', temperature: 0.3 },
-				tools: {
-					allowed: [
-						'create_object',
-						'update_object',
-						'list_objects',
-						'create_relationship',
-						'update_memory',
-						'done',
-					],
-				},
-			},
-		},
-		{
-			packageId: pkg.id,
-			itemType: 'actor',
-			sourceItemId: CCD_ACTOR_PRODUCT_IDEATOR,
-			itemSnapshot: {
-				type: 'agent',
-				name: 'Product Ideator',
-				description: 'Generates bet candidates from clustered insight patterns.',
-				systemPrompt:
-					'You are the Product Ideator. Each day you review recently clustered insights and propose up to three concrete bet candidates the team should consider, with a short rationale for each.',
-				llmProvider: 'anthropic',
-				llmConfig: { model: 'claude-opus-4-8', temperature: 0.5 },
-				tools: {
-					allowed: [
-						'create_object',
-						'list_objects',
-						'create_relationship',
-						'update_memory',
-						'done',
-					],
-				},
-			},
-		},
-		{
-			packageId: pkg.id,
-			itemType: 'actor',
-			sourceItemId: CCD_ACTOR_CUSTOMER_CURATOR,
-			itemSnapshot: {
-				type: 'agent',
-				name: 'Customer Curator',
-				description: 'Closes the loop by sending personalised replies to customers.',
-				systemPrompt:
-					'You are the Customer Curator. After a bet is confirmed or a bug fix ships, find the customers whose feedback led to it and send them a personalised update via the connected channel.',
-				llmProvider: 'anthropic',
-				llmConfig: { model: 'claude-opus-4-8', temperature: 0.4 },
-				tools: { allowed: ['list_objects', 'list_relationships', 'update_memory', 'done'] },
-			},
-		},
-		{
-			packageId: pkg.id,
-			itemType: 'trigger',
-			sourceItemId: 'f1d1c055-432f-462a-a177-f27ae7bc5c0e',
-			itemSnapshot: {
-				name: 'Bug Fix Merged → Reply in Slack',
-				description: 'Notifies customers via Slack when a bug they reported has shipped.',
-				type: 'event',
-				config: { entity_type: 'bet', action: 'status_changed', filter: { status: 'shipped' } },
-				actionPrompt:
-					'A bug-fix bet has shipped. Find all customers whose feedback contributed to it and send them a personalised Slack reply.',
-				targetActorId: CCD_ACTOR_CUSTOMER_CURATOR,
-				enabled: true,
-			},
-		},
-		{
-			packageId: pkg.id,
-			itemType: 'trigger',
-			sourceItemId: '34fa2aa8-75c0-4919-9170-27fed672528e',
-			itemSnapshot: {
-				name: 'Deploy Confirmed → Customer Reply',
-				description: 'Sends personalised updates to customers when a related deploy goes live.',
-				type: 'event',
-				config: { entity_type: 'bet', action: 'status_changed', filter: { status: 'shipped' } },
-				actionPrompt:
-					'A deploy has been confirmed. Identify customers who reported related issues and send them a personalised update.',
-				targetActorId: CCD_ACTOR_CUSTOMER_CURATOR,
-				enabled: true,
-			},
-		},
-		{
-			packageId: pkg.id,
-			itemType: 'trigger',
-			sourceItemId: 'f41f513a-5a58-4ab2-aab3-83e002f2c3b7',
-			itemSnapshot: {
-				name: 'Insight Created → Synthesizer Triage',
-				description: 'Runs triage on every new insight to update or create bets.',
-				type: 'event',
-				config: { entity_type: 'insight', action: 'created' },
-				actionPrompt:
-					'A new insight has been created. Review it alongside existing insights and update or create bets accordingly.',
-				targetActorId: CCD_ACTOR_INSIGHTS_TRIAGE,
-				enabled: true,
-			},
-		},
-		{
-			packageId: pkg.id,
-			itemType: 'trigger',
-			sourceItemId: 'a7470be0-05c7-46b9-a003-f48b43a1a6b4',
-			itemSnapshot: {
-				name: 'Insight Updated → Synthesizer Re-triage',
-				description: 'Re-evaluates bets whenever an existing insight changes.',
-				type: 'event',
-				config: { entity_type: 'insight', action: 'updated' },
-				actionPrompt:
-					'An insight has been updated. Re-evaluate whether the change affects any existing bets or warrants a new one.',
-				targetActorId: CCD_ACTOR_INSIGHTS_TRIAGE,
-				enabled: true,
-			},
-		},
-		{
-			packageId: pkg.id,
-			itemType: 'trigger',
-			sourceItemId: 'd458e38d-d486-4da3-8c89-74f989b2f104',
-			itemSnapshot: {
-				name: 'Daily Synthesizer Sweep',
-				description: 'Clusters unprocessed insights and flags new patterns every morning.',
-				type: 'cron',
-				config: { cron: '0 8 * * *' },
-				actionPrompt:
-					'Run a full sweep of all unprocessed insights. Cluster them, update existing bets, and flag any new patterns.',
-				targetActorId: CCD_ACTOR_INSIGHTS_TRIAGE,
-				enabled: true,
-			},
-		},
-		{
-			packageId: pkg.id,
-			itemType: 'trigger',
-			sourceItemId: 'b65382c4-0287-4aa8-a477-9a61296e5702',
-			itemSnapshot: {
-				name: 'Weekly Synthesizer Digest',
-				description: "Summarises the week's top insight themes and new bets every Monday.",
-				type: 'cron',
-				config: { cron: '0 9 * * 1' },
-				actionPrompt:
-					'Produce a weekly digest of all insights created in the last 7 days. Summarise the top themes and any new bets created.',
-				targetActorId: CCD_ACTOR_INSIGHTS_TRIAGE,
-				enabled: true,
-			},
-		},
-		{
-			packageId: pkg.id,
-			itemType: 'trigger',
-			sourceItemId: '28c063e2-4a39-4f5a-883d-5f5ef6a29a9e',
-			itemSnapshot: {
-				name: 'Daily Product Ideation — 3 Bet Candidates',
-				description: 'Proposes three new bet candidates from recent insights each morning.',
-				type: 'cron',
-				config: { cron: '0 10 * * *' },
-				actionPrompt:
-					'Review the most recent clustered insights and propose exactly three new bet candidates with a short rationale for each.',
-				targetActorId: CCD_ACTOR_PRODUCT_IDEATOR,
-				enabled: true,
-			},
-		},
-		{
-			packageId: pkg.id,
-			itemType: 'trigger',
-			sourceItemId: '6bcede7c-2095-43b7-b9a1-82aeceab340f',
-			itemSnapshot: {
-				name: 'Insight Clustered → Update Customer',
-				description: "Lets customers know their feedback is being acted on when it's clustered.",
-				type: 'event',
-				config: {
-					entity_type: 'insight',
-					action: 'status_changed',
-					filter: { status: 'clustered' },
-				},
-				actionPrompt:
-					'An insight has just been clustered into a bet. Notify the customer who submitted it that their feedback is being acted on.',
-				targetActorId: CCD_ACTOR_CUSTOMER_CURATOR,
-				enabled: true,
-			},
-		},
-		{
-			packageId: pkg.id,
-			itemType: 'trigger',
-			sourceItemId: 'a8862b32-31c2-4714-8c47-34d61d73aee2',
-			itemSnapshot: {
-				name: 'Daily Customer Roster Sweep',
-				description:
-					'Closes the loop with customers whose feedback was resolved in the last 24 hours.',
-				type: 'cron',
-				config: { cron: '0 7 * * *' },
-				actionPrompt:
-					'Scan all customers who have open feedback items. For any whose item was shipped or archived in the last 24 hours, send a personalised close-the-loop message.',
-				targetActorId: CCD_ACTOR_CUSTOMER_CURATOR,
-				enabled: true,
-			},
-		},
-	])
+	await seedCatalogPackages(db)
 }
 
 export interface DevBootstrapResult {
@@ -353,6 +290,40 @@ export async function maybeBootstrapDev(
 			actorId: coach.id,
 			role: 'member',
 		})
+
+		// Seed Chief of Staff synchronously so we can capture its actor id and
+		// pin it as this workspace's default chat agent in the same tx.
+		// bootstrapDefaultAgents() also has an idempotent CoS name-check so the
+		// post-commit call will simply skip this actor.
+		const [chief] = await tx
+			.insert(actors)
+			.values({
+				type: CHIEF_OF_STAFF_DEFAULT.type,
+				name: CHIEF_OF_STAFF_DEFAULT.name,
+				isSystem: CHIEF_OF_STAFF_DEFAULT.isSystem,
+				systemPrompt: CHIEF_OF_STAFF_DEFAULT.systemPrompt,
+				llmProvider: CHIEF_OF_STAFF_DEFAULT.llmProvider,
+				llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig,
+				tools: CHIEF_OF_STAFF_DEFAULT.tools,
+				apiKey: generateApiKey().key,
+				createdBy: actor.id,
+			})
+			.returning()
+
+		if (!chief) throw new Error('dev bootstrap: failed to seed Chief of Staff actor')
+
+		await tx.insert(workspaceMembers).values({
+			workspaceId: ws.id,
+			actorId: chief.id,
+			role: 'member',
+		})
+
+		// Pin Chief of Staff as the default chat agent for this workspace.
+		// Reversible via `pnpm --filter @maskin/dev exec tsx scripts/seed-default-agent.ts --unset`.
+		await tx
+			.update(workspaces)
+			.set({ settings: { default_agent_id: chief.id } })
+			.where(eq(workspaces.id, ws.id))
 
 		return ws
 	})

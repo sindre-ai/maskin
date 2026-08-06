@@ -29,9 +29,11 @@ export interface ChatSelectionNotification {
 }
 
 export interface ChatSelectionFile {
+	/** Server-side file id returned by POST /files after the binary upload. */
+	fileId: string
 	name: string
-	content: string
 	sizeBytes: number
+	mimeType?: string
 }
 
 export interface ChatSelection {
@@ -84,7 +86,7 @@ export function buildOneShotActionPrompt(
 		if (objects.length > 0 || notifications.length > 0) lines.push('')
 		lines.push('Attached files:')
 		for (const f of files) {
-			lines.push('', `--- ${f.name} ---`, f.content, `--- end ${f.name} ---`)
+			lines.push(`- ${f.name} — file_id: ${f.fileId}`)
 		}
 	}
 	return lines.join('\n')
@@ -103,7 +105,7 @@ export type ChatSelectionAction =
 	| { type: 'add_notification'; notification: ChatSelectionNotification }
 	| { type: 'remove_notification'; id: string }
 	| { type: 'add_file'; file: ChatSelectionFile }
-	| { type: 'remove_file'; name: string }
+	| { type: 'remove_file'; fileId: string }
 	| { type: 'clear_all' }
 
 /**
@@ -158,11 +160,11 @@ export function chatSelectionReducer(
 			return { ...state, notifications: next }
 		}
 		case 'add_file': {
-			if (state.files.some((f) => f.name === action.file.name)) return state
+			if (state.files.some((f) => f.fileId === action.file.fileId)) return state
 			return { ...state, files: [...state.files, action.file] }
 		}
 		case 'remove_file': {
-			const next = state.files.filter((f) => f.name !== action.name)
+			const next = state.files.filter((f) => f.fileId !== action.fileId)
 			if (next.length === state.files.length) return state
 			return { ...state, files: next }
 		}

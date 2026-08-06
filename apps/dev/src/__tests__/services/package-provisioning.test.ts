@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	buildActorInsert,
+	buildSkillInsert,
 	buildTriggerInsert,
 	installMetadata,
 	rewriteWiring,
@@ -122,5 +123,62 @@ describe('buildTriggerInsert', () => {
 		expect(out.actionPrompt).toBe('Run.')
 		expect(out.enabled).toBe(true)
 		expect(out.createdBy).toBe('actor-1')
+	})
+})
+
+describe('buildSkillInsert', () => {
+	it('threads the caller-provided id/storageKey rather than trusting the snapshot', () => {
+		const out = buildSkillInsert(
+			'ws-1',
+			'skill-local-1',
+			'workspaces/ws-1/skills/skill-local-1/SKILL.md',
+			{
+				name: 'codebase-review',
+				description: 'Review code.',
+				content: '# Review\n',
+				isValid: true,
+			},
+			{ installed_package_id: 'i' },
+			'actor-1',
+		)
+		expect(out.id).toBe('skill-local-1')
+		expect(out.workspaceId).toBe('ws-1')
+		expect(out.storageKey).toBe('workspaces/ws-1/skills/skill-local-1/SKILL.md')
+		expect(out.name).toBe('codebase-review')
+		expect(out.content).toBe('# Review\n')
+		expect(out.createdBy).toBe('actor-1')
+	})
+
+	it('ignores any storageKey carried in the snapshot — the publisher key must never be reused', () => {
+		// A malicious or stale snapshot could carry a storageKey pointing at the
+		// publisher's own S3 object. buildSkillInsert must never read
+		// snapshot.storageKey; only the caller-provided storageKey argument
+		// (minted fresh per install) may end up on the row.
+		const out = buildSkillInsert(
+			'ws-1',
+			'skill-local-1',
+			'workspaces/ws-1/skills/skill-local-1/SKILL.md',
+			{
+				name: 'codebase-review',
+				content: 'x',
+				storageKey: 'workspaces/publisher-ws/skills/leak/SKILL.md',
+			},
+			{ installed_package_id: 'i' },
+			'actor-1',
+		)
+		expect(out.storageKey).toBe('workspaces/ws-1/skills/skill-local-1/SKILL.md')
+	})
+
+	it('computes sizeBytes from content and defaults isValid to true', () => {
+		const out = buildSkillInsert(
+			'ws-1',
+			'skill-1',
+			'workspaces/ws-1/skills/skill-1/SKILL.md',
+			{ name: 'skill', content: 'hello' },
+			{ installed_package_id: 'i' },
+			null,
+		)
+		expect(out.sizeBytes).toBe(Buffer.byteLength('hello', 'utf-8'))
+		expect(out.isValid).toBe(true)
 	})
 })

@@ -244,7 +244,10 @@ describe('Objects Routes', () => {
 			const existing = buildObject()
 			const updated = { ...existing, title: 'Updated title' }
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			// First select: existing object, second: workspace membership, third:
+			// the in-transaction FOR UPDATE re-read used to derive the event action
+			// and the terminal-notification guard.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
 			mockResults.update = [updated]
 			mockResults.insert = [{}] // event insert
 
@@ -253,6 +256,99 @@ describe('Objects Routes', () => {
 			)
 
 			expect(res.status).toBe(200)
+		})
+
+		it("emits an 'updated' event with data.changes for a single-field edit", async () => {
+			const existing = buildObject({ title: 'Old title' })
+			const updated = { ...existing, title: 'New title' }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			// First select: existing object, second: workspace membership, third:
+			// the in-transaction FOR UPDATE re-read used to derive the event action
+			// and the terminal-notification guard.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			await app.request(jsonRequest('PATCH', `/api/objects/${existing.id}`, { title: 'New title' }))
+
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert).toBeDefined()
+			expect(eventInsert?.action).toBe('updated')
+			expect(eventInsert?.data).toEqual({
+				changes: [{ field: 'title', old: 'Old title', new: 'New title' }],
+			})
+			expect(eventInsert?.data).not.toHaveProperty('previous')
+			expect(eventInsert?.data).not.toHaveProperty('updated')
+		})
+
+		it("emits a 'status_changed' event with data.changes = [{field: 'status', …}] on status-only edit", async () => {
+			const existing = buildObject({ status: 'signal' })
+			const updated = { ...existing, status: 'active' }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			const ws = buildWorkspace({
+				id: existing.workspaceId,
+				settings: { statuses: { [existing.type]: ['signal', 'active'] } },
+			})
+			// First select: existing object, second: workspace membership, third:
+			// workspace settings, fourth: the in-transaction FOR UPDATE re-read.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws], [existing]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			await app.request(jsonRequest('PATCH', `/api/objects/${existing.id}`, { status: 'active' }))
+
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert?.action).toBe('status_changed')
+			expect(eventInsert?.data).toEqual({
+				changes: [{ field: 'status', old: 'signal', new: 'active' }],
+			})
+		})
+
+		it('emits N-element data.changes for a multi-field edit', async () => {
+			const existing = buildObject({ title: 'Old', status: 'signal' })
+			const updated = { ...existing, title: 'New', status: 'active' }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			const ws = buildWorkspace({
+				id: existing.workspaceId,
+				settings: { statuses: { [existing.type]: ['signal', 'active'] } },
+			})
+			// First select: existing object, second: workspace membership, third:
+			// workspace settings, fourth: the in-transaction FOR UPDATE re-read.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws], [existing]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, {
+					title: 'New',
+					status: 'active',
+				}),
+			)
+
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; data: { changes: unknown[] } } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert?.action).toBe('status_changed')
+			expect(eventInsert?.data.changes).toEqual(
+				expect.arrayContaining([
+					{ field: 'status', old: 'signal', new: 'active' },
+					{ field: 'title', old: 'Old', new: 'New' },
+				]),
+			)
+			expect(eventInsert?.data.changes).toHaveLength(2)
 		})
 
 		it('returns 404 when object not found', async () => {
@@ -298,7 +394,9 @@ describe('Objects Routes', () => {
 				},
 			}
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			// First select: existing object, second: workspace membership, third:
+			// the in-transaction FOR UPDATE re-read.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
 			mockResults.update = [merged]
 			mockResults.insert = [{}] // event insert
 
@@ -333,6 +431,54 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(Array.isArray(body)).toBe(true)
+		})
+
+		it('returns 400 when a metadata.<field> filter has an unsafe field name', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=bug&metadata.bad-field=auto', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('bad-field')
+			expect(body.error.details?.[0]?.field).toBe('metadata.bad-field')
+		})
+
+		it('accepts a valid metadata.<field> filter and returns results', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(
+				jsonGet(
+					'/api/objects/search?q=onboarding&type=bet&metadata.promotion_mode=human_approved',
+					{
+						'x-workspace-id': wsId,
+					},
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(Array.isArray(body)).toBe(true)
+		})
+
+		it('does not require a type filter to apply a metadata.<field> filter', async () => {
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=bug&metadata.segment=enterprise', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
 		})
 	})
 
@@ -388,8 +534,11 @@ describe('Objects Routes', () => {
 				action: 'created',
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select: target object, second: relationships, third: connected objects, fourth: events
-			mockResults.selectQueue = [[obj], [rel], [connectedObj], [comment, lifecycleEvent]]
+			// 1) target object, 2) relationships, 3) files-membership lookup
+			// (endpoints checked against `files` table so the read layer resolves by
+			// id — returns [] here because `connectedObj` is not a file),
+			// 4) connected objects, 5) events.
+			mockResults.selectQueue = [[obj], [rel], [], [connectedObj], [comment, lifecycleEvent]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -434,6 +583,31 @@ describe('Objects Routes', () => {
 			expect(body.events[0].description).toBe('changed driver from Alice to Bob')
 		})
 
+		it('resolves actor names for driver-change events emitted in the new {changes} shape', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const alice = { id: '00000000-0000-0000-0000-0000000000a1', name: 'Alice' }
+			const bob = { id: '00000000-0000-0000-0000-0000000000b2', name: 'Bob' }
+			const driverChange = buildEvent({
+				workspaceId: wsId,
+				entityType: 'bet',
+				entityId: obj.id,
+				action: 'updated',
+				data: {
+					changes: [{ field: 'driver', old: alice.id, new: bob.id }],
+				},
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[obj], [], [driverChange], [alice, bob]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.events[0].description).toBe('changed driver from Alice to Bob')
+		})
+
 		it('returns 404 when object not found', async () => {
 			const { app } = createTestApp(objectsRoutes, '/api/objects')
 
@@ -457,11 +631,12 @@ describe('Objects Routes', () => {
 				type: 'attached',
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// Queue order matches handler call order: 1) object, 2) relationships
-			// (file-typed endpoint → skips connected_objects), 3) events, 4-6) the
-			// three subscription queries fired in parallel (isSubscribed,
-			// getUnreadCount, getSubscriberCount), 7) files.
-			mockResults.selectQueue = [[obj], [rel], [], [], [], [], [file]]
+			// Queue order matches handler call order: 1) object, 2) relationships,
+			// 3) files-membership lookup (endpoint resolves to the `files` table so
+			// it is bucketed as a file — skips connected_objects), 4) events,
+			// 5-7) the three subscription queries fired in parallel (isSubscribed,
+			// getUnreadCount, getSubscriberCount), 8) files summary.
+			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [file]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -514,6 +689,106 @@ describe('Objects Routes', () => {
 			const body = await res.json()
 			expect(body.files).toEqual([])
 		})
+
+		it('resolves an edge whose sourceType label does not match the endpoint kind', async () => {
+			// Regression for the bet: prior to id-based endpoint resolution, an
+			// `informs` edge written with a specialised `sourceType` (`'insight'`)
+			// still surfaced as expected because the label wasn't `'file'` — but
+			// symmetric cases where a file endpoint was mislabeled would drop.
+			// This test locks in that the read path never depends on the label:
+			// the endpoint is resolved via the `files` table, and anything that
+			// isn't a file is treated as an object endpoint.
+			const bet = buildObject({ workspaceId: wsId, type: 'bet' })
+			const insight = buildObject({ workspaceId: wsId, type: 'insight' })
+			const rel = buildRelationship({
+				sourceType: 'insight', // non-canonical — T1 convention would be 'object'
+				sourceId: insight.id,
+				targetType: 'bet', // non-canonical — T1 convention would be 'object'
+				targetId: bet.id,
+				type: 'informs',
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1) bet, 2) relationships, 3) files-membership lookup (endpoint is
+			// not a file → []), 4) connected objects (insight), 5) events.
+			mockResults.selectQueue = [[bet], [rel], [], [insight], []]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${bet.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.relationships).toHaveLength(1)
+			expect(body.relationships[0].id).toBe(rel.id)
+			expect(body.connected_objects).toHaveLength(1)
+			expect(body.connected_objects[0].id).toBe(insight.id)
+		})
+
+		it('resolves a file endpoint even when the edge label is a legacy object type', async () => {
+			// The mirror case: an `attached` edge whose file endpoint is stamped
+			// with a legacy label (e.g. `'bet'`) rather than the canonical
+			// `'file'`. The endpoint id lives in the `files` table, so the read
+			// layer buckets it as a file — the attachment surfaces in
+			// `files`, not as a broken row in `connected_objects`.
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const file = buildFile({ workspaceId: wsId })
+			const rel = buildRelationship({
+				sourceType: 'bet',
+				sourceId: obj.id,
+				targetType: 'bet', // legacy mislabel — endpoint is a file
+				targetId: file.id,
+				type: 'attached',
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1) object, 2) relationships, 3) files-membership lookup returns the
+			// file (endpoint id resolves to `files.id`), so no connected_objects
+			// fetch, 4) events, 5-7) subscription queries, 8) files summary.
+			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [file]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.connected_objects).toEqual([])
+			expect(body.files).toHaveLength(1)
+			expect(body.files[0].id).toBe(file.id)
+		})
+	})
+
+	describe('GET /api/objects/:id/references', () => {
+		it('returns the unique-context count with the 7-day window', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'knowledge' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// One SELECT: the COUNT DISTINCT aggregate. The mock DB harness returns
+			// whatever we queue for the aggregate row.
+			mockResults.selectQueue = [[{ unique_contexts: 3 }]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/references`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toEqual({ window_days: 7, unique_contexts: 3 })
+		})
+
+		it('returns 0 when no reference events exist', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'knowledge' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// Empty aggregate row — the coalesce in the handler falls back to 0.
+			mockResults.selectQueue = [[{ unique_contexts: null }]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/references`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.unique_contexts).toBe(0)
+			expect(body.window_days).toBe(7)
+		})
 	})
 
 	describe('DELETE /api/objects/:id', () => {
@@ -565,8 +840,9 @@ describe('Objects Routes', () => {
 			const updated = { ...existing, status: 'in_progress' }
 			const ws = buildWorkspace({ id: existing.workspaceId })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select: existing object, second: workspace membership, third: workspace settings
-			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
+			// First select: existing object, second: workspace membership, third:
+			// workspace settings, fourth: the in-transaction FOR UPDATE re-read.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws], [existing]]
 			mockResults.update = [updated]
 			mockResults.insert = [{}] // event insert
 
@@ -629,6 +905,390 @@ describe('Objects Routes', () => {
 
 			const res = await app.request(jsonDelete(`/api/objects/${existing.id}`))
 			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('POST /api/objects/:id/verification', () => {
+		// A Knowledge Author write — knowledge object with `provenance` containing "writer".
+		function buildKnowledgeWrite(overrides?: Record<string, unknown>) {
+			return buildObject({
+				type: 'knowledge',
+				metadata: { provenance: 'writer, claude-sonnet' },
+				...overrides,
+			})
+		}
+
+		it('stamps verification and emits a verified event on the object timeline', async () => {
+			const existing = buildKnowledgeWrite()
+			const updated = { ...existing }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing], // initial fetch
+				[buildWorkspaceMember()], // isWorkspaceMember
+				[{ role: 'admin', type: 'human' }], // isWorkspaceHumanAdminOrOwner
+				[existing], // in-tx FOR UPDATE re-read
+			]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(200)
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert?.action).toBe('verified')
+			expect((eventInsert?.data as { verified?: boolean }).verified).toBe(true)
+			const patchSet = calls.updates[0] as { metadata: Record<string, unknown> }
+			expect(patchSet.metadata.verified_by).toBeTruthy()
+			expect(typeof patchSet.metadata.verified_at).toBe('string')
+		})
+
+		it('unstamps verification and clears the metadata fields', async () => {
+			const existing = buildKnowledgeWrite({
+				metadata: {
+					provenance: 'writer',
+					verified_by: 'actor-x',
+					verified_at: '2026-06-01T00:00:00.000Z',
+				},
+			})
+			const updated = { ...existing }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember()],
+				[{ role: 'owner', type: 'human' }],
+				[existing],
+			]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: false }),
+			)
+
+			expect(res.status).toBe(200)
+			const eventInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(eventInsert?.action).toBe('unverified')
+			const patchSet = calls.updates[0] as { metadata: Record<string, unknown> }
+			expect(patchSet.metadata.verified_by).toBeUndefined()
+			expect(patchSet.metadata.verified_at).toBeUndefined()
+			// Provenance and other unrelated metadata are preserved.
+			expect(patchSet.metadata.provenance).toBe('writer')
+		})
+
+		it('returns 409 when the object is not a knowledge type', async () => {
+			const existing = buildObject({ type: 'task' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(409)
+		})
+
+		it('returns 409 when the knowledge object has no writer provenance', async () => {
+			const existing = buildObject({
+				type: 'knowledge',
+				metadata: { provenance: 'human-review' },
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(409)
+		})
+
+		it('returns 403 when caller is a member but not admin/owner', async () => {
+			const existing = buildKnowledgeWrite()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember({ role: 'member' })],
+				[], // isWorkspaceHumanAdminOrOwner: no matching row
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 403 when caller is an agent (even with admin role)', async () => {
+			const existing = buildKnowledgeWrite()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember({ role: 'admin' })],
+				// The join filters agents out server-side; helper returns [] here.
+				[],
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/verification`, { verified: true }),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 404 when the object does not exist', async () => {
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[]]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects/00000000-0000-0000-0000-000000000099/verification', {
+					verified: true,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('POST /api/objects/:id/undo-write', () => {
+		const KA_NAME = 'Knowledge Author'
+
+		function buildKnowledgeObject(overrides?: Record<string, unknown>) {
+			return buildObject({
+				type: 'knowledge',
+				metadata: { summary: 'About the company (post-write)' },
+				...overrides,
+			})
+		}
+
+		function buildKAUpdateEvent(
+			entityId: string,
+			overrides?: Partial<{
+				createdAt: Date
+				action: 'updated' | 'status_changed'
+				changes: Array<{ field: string; old: unknown; new: unknown }>
+			}>,
+		) {
+			return buildEvent({
+				action: overrides?.action ?? 'updated',
+				entityType: 'knowledge',
+				entityId,
+				createdAt: overrides?.createdAt ?? new Date(),
+				data: {
+					changes: overrides?.changes ?? [
+						{ field: 'title', old: 'Company (old)', new: 'Company (new)' },
+					],
+				},
+			})
+		}
+
+		function eventJoinRow(event: ReturnType<typeof buildKAUpdateEvent>) {
+			// The route reads the event via a join with actors — mirror the join
+			// row shape here so mockResults.selectQueue matches the query.
+			return {
+				id: event.id,
+				workspaceId: event.workspaceId,
+				actorId: event.actorId,
+				action: event.action,
+				entityType: event.entityType,
+				entityId: event.entityId,
+				data: event.data,
+				createdAt: event.createdAt,
+				authorType: 'agent',
+				authorName: KA_NAME,
+			}
+		}
+
+		it('reverses a KA update and emits a knowledge_write_undone event', async () => {
+			const existing = buildKnowledgeObject({ title: 'Company (new)' })
+			const event = buildKAUpdateEvent(existing.id)
+			const reverted = { ...existing, title: 'Company (old)' }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing], // initial fetch
+				[buildWorkspaceMember()], // isWorkspaceMember
+				[eventJoinRow(event)], // event + author join
+				[{ role: 'admin', type: 'human' }], // isWorkspaceHumanAdminOrOwner
+				[existing], // FOR UPDATE re-read
+			]
+			mockResults.update = [reverted]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: event.id }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.title).toBe('Company (old)')
+
+			const reversalInsert = calls.inserts.find(
+				(row): row is { action: string; entityId: string; data: unknown } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { entityId?: unknown }).entityId === existing.id,
+			)
+			expect(reversalInsert?.action).toBe('knowledge_write_undone')
+			const data = reversalInsert?.data as { original_event_id: number }
+			expect(data.original_event_id).toBe(event.id)
+
+			const patchSet = calls.updates[0] as { title: string }
+			expect(patchSet.title).toBe('Company (old)')
+		})
+
+		it('returns 404 when the actor is not a member of the object workspace', async () => {
+			const existing = buildKnowledgeObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], []] // member check returns empty
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: 1 }),
+			)
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 409 when the object is not a knowledge type', async () => {
+			const existing = buildObject({ type: 'task' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: 1 }),
+			)
+			expect(res.status).toBe(409)
+		})
+
+		it('returns 404 when the referenced event cannot be found on this object', async () => {
+			const existing = buildKnowledgeObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember()],
+				[], // event join returns nothing
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: 9999 }),
+			)
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 409 when the event was not authored by the Knowledge Author', async () => {
+			const existing = buildKnowledgeObject()
+			const event = buildKAUpdateEvent(existing.id)
+			const row = { ...eventJoinRow(event), authorName: 'Some Other Agent' }
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [row]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: event.id }),
+			)
+			expect(res.status).toBe(409)
+		})
+
+		it('returns 409 when the event action is not updated / status_changed', async () => {
+			const existing = buildKnowledgeObject()
+			const event = buildKAUpdateEvent(existing.id)
+			const row = { ...eventJoinRow(event), action: 'created' }
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [row]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: event.id }),
+			)
+			expect(res.status).toBe(409)
+		})
+
+		it('returns 410 when the event is older than 7 days', async () => {
+			const existing = buildKnowledgeObject()
+			const oldEvent = buildKAUpdateEvent(existing.id, {
+				createdAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000),
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [eventJoinRow(oldEvent)]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: oldEvent.id }),
+			)
+			expect(res.status).toBe(410)
+		})
+
+		it('returns 403 when the caller is a member but not admin/owner', async () => {
+			const existing = buildKnowledgeObject()
+			const event = buildKAUpdateEvent(existing.id)
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember({ role: 'member' })],
+				[eventJoinRow(event)],
+				[], // isWorkspaceHumanAdminOrOwner: no matching row
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: event.id }),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 403 when the caller is an agent (even with admin role)', async () => {
+			const existing = buildKnowledgeObject()
+			const event = buildKAUpdateEvent(existing.id)
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember({ role: 'admin' })],
+				[eventJoinRow(event)],
+				[], // join filters agents
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: event.id }),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('reverses only the fields carried by the event (partial-field undo)', async () => {
+			// Object has a later-written field the KA event never touched — the
+			// undo must leave that field intact rather than clobbering it.
+			const existing = buildKnowledgeObject({
+				title: 'Company (new)',
+				content: 'body written by someone else after the KA edit',
+			})
+			const event = buildKAUpdateEvent(existing.id, {
+				changes: [{ field: 'title', old: 'Company (old)', new: 'Company (new)' }],
+			})
+			const reverted = { ...existing, title: 'Company (old)' }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[existing],
+				[buildWorkspaceMember()],
+				[eventJoinRow(event)],
+				[{ role: 'owner', type: 'human' }],
+				[existing],
+			]
+			mockResults.update = [reverted]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/objects/${existing.id}/undo-write`, { eventId: event.id }),
+			)
+
+			expect(res.status).toBe(200)
+			// UPDATE only patches the fields the event changed — no 'content' key.
+			const patchSet = calls.updates[0] as Record<string, unknown>
+			expect(patchSet.title).toBe('Company (old)')
+			expect(patchSet.content).toBeUndefined()
 		})
 	})
 

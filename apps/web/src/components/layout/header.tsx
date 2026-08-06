@@ -1,3 +1,4 @@
+import { CreatePicker } from '@/components/shared/create-picker'
 import {
 	Breadcrumb,
 	BreadcrumbItem,
@@ -7,19 +8,12 @@ import {
 	BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { useChat } from '@/lib/chat-context'
 import { usePageHeader } from '@/lib/page-header-context'
-import { useWorkspace } from '@/lib/workspace-context'
-import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
-import { ArrowLeft, Bot, Layers, Plus, Sparkles, Zap } from 'lucide-react'
-import { Fragment } from 'react'
+import { useMatches, useRouter } from '@tanstack/react-router'
+import { ArrowLeft, Plus, Sparkles } from 'lucide-react'
+import { Fragment, useState } from 'react'
 
 interface RouteConfig {
 	label: string
@@ -33,7 +27,6 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Object Details',
 		parent: '/_authed/$workspaceId/objects/',
 	},
-	'/_authed/$workspaceId/activity': { label: 'Activity' },
 	'/_authed/$workspaceId/agents': { label: 'Agents' },
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
 	'/_authed/$workspaceId/settings/keys': {
@@ -71,49 +64,15 @@ const routeConfig: Record<string, RouteConfig> = {
 
 const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$workspaceId'])
 
-type CreateItem = {
-	label: string
-	icon: typeof Layers
-	navigate: (nav: ReturnType<typeof useNavigate>, workspaceId: string) => void
-}
-
-const createItems: CreateItem[] = [
-	{
-		label: 'Object',
-		icon: Layers,
-		navigate: (nav, workspaceId) =>
-			nav({
-				to: '/$workspaceId/objects/$objectId',
-				params: { workspaceId, objectId: crypto.randomUUID() },
-			}),
-	},
-	{
-		label: 'Agent',
-		icon: Bot,
-		navigate: (nav, workspaceId) =>
-			nav({
-				to: '/$workspaceId/agents/$agentId',
-				params: { workspaceId, agentId: crypto.randomUUID() },
-			}),
-	},
-	{
-		label: 'Trigger',
-		icon: Zap,
-		navigate: (nav, workspaceId) =>
-			nav({
-				to: '/$workspaceId/triggers/$triggerId',
-				params: { workspaceId, triggerId: crypto.randomUUID() },
-			}),
-	},
-]
+const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
+const FOR_YOU_ROUTE_ID = '/_authed/$workspaceId/'
 
 export function Header() {
 	const matches = useMatches()
-	const { actions } = usePageHeader()
+	const { actions, stickyIdentity } = usePageHeader()
 	const { setOpen: setChatOpen } = useChat()
 	const router = useRouter()
-	const navigate = useNavigate()
-	const { workspaceId } = useWorkspace()
+	const [createOpen, setCreateOpen] = useState(false)
 
 	// Find the leaf (last non-hidden) match
 	const leafMatch = [...matches].reverse().find((m) => !hiddenRoutes.has(m.routeId))
@@ -139,6 +98,18 @@ export function Header() {
 		crumbs.push({ label: leafConfig.label, path: leafMatch.pathname })
 	}
 
+	// Object-detail pages drop the global `+ Create` — the button lands users on
+	// the generic picker, which is disorienting when they're mid-edit on a
+	// specific object. Kept on every list surface (Objects, Agents, Triggers).
+	const isObjectDetail = leafMatch?.routeId === OBJECT_DETAIL_ROUTE_ID
+	// The For You page's own header already surfaces equivalent actions
+	// (title, "Today's brief", "New") — the global Create/Chat icons here
+	// would just duplicate them.
+	const isForYouPage = leafMatch?.routeId === FOR_YOU_ROUTE_ID
+
+	const parentCrumbs = crumbs.slice(0, -1)
+	const hasSticky = Boolean(stickyIdentity)
+
 	return (
 		<header className="relative flex h-11 shrink-0 items-center gap-2 after:pointer-events-none after:absolute after:top-full after:right-0 after:left-0 after:z-10 after:h-8 after:bg-gradient-to-b after:from-background after:to-transparent after:content-['']">
 			<div className="flex w-full min-w-0 items-center gap-1 px-3 lg:gap-2 lg:px-4">
@@ -154,7 +125,7 @@ export function Header() {
 						<span className="sr-only">Go back</span>
 					</Button>
 				)}
-				<div className="hidden md:flex min-w-0 flex-1 items-center gap-1 opacity-0 hover:opacity-100 transition-opacity duration-150 lg:gap-2">
+				<div className="hidden md:flex min-w-0 flex-1 items-center gap-1 text-muted-foreground hover:text-foreground transition-colors duration-150 lg:gap-2">
 					{crumbs.length > 1 && (
 						<Button
 							variant="ghost"
@@ -166,65 +137,88 @@ export function Header() {
 							<span className="sr-only">Go back</span>
 						</Button>
 					)}
-					{crumbs.length > 0 && (
-						<Breadcrumb>
-							<BreadcrumbList>
-								{crumbs.map((crumb, index) => {
-									const isLast = index === crumbs.length - 1
-									return (
-										<Fragment key={crumb.path}>
-											{index > 0 && <BreadcrumbSeparator />}
-											<BreadcrumbItem>
-												{isLast ? (
-													<BreadcrumbPage className="font-medium">{crumb.label}</BreadcrumbPage>
-												) : (
-													<BreadcrumbLink asChild>
-														<a href={crumb.path}>{crumb.label}</a>
-													</BreadcrumbLink>
-												)}
-											</BreadcrumbItem>
-										</Fragment>
-									)
-								})}
-							</BreadcrumbList>
-						</Breadcrumb>
+					{hasSticky ? (
+						<div className="flex min-w-0 flex-1 items-center gap-1 lg:gap-2">
+							{parentCrumbs.length > 0 && (
+								<div className="hidden xl:flex min-w-0 items-center">
+									<Breadcrumb>
+										<BreadcrumbList>
+											{parentCrumbs.map((crumb, index) => (
+												<Fragment key={crumb.path}>
+													{index > 0 && <BreadcrumbSeparator />}
+													<BreadcrumbItem>
+														<BreadcrumbLink asChild>
+															<a href={crumb.path}>{crumb.label}</a>
+														</BreadcrumbLink>
+													</BreadcrumbItem>
+												</Fragment>
+											))}
+											<BreadcrumbSeparator />
+										</BreadcrumbList>
+									</Breadcrumb>
+								</div>
+							)}
+							<div className="min-w-0 flex-1">{stickyIdentity}</div>
+						</div>
+					) : (
+						crumbs.length > 0 && (
+							<Breadcrumb>
+								<BreadcrumbList>
+									{crumbs.map((crumb, index) => {
+										const isLast = index === crumbs.length - 1
+										return (
+											<Fragment key={crumb.path}>
+												{index > 0 && <BreadcrumbSeparator />}
+												<BreadcrumbItem>
+													{isLast ? (
+														<BreadcrumbPage className="font-medium">{crumb.label}</BreadcrumbPage>
+													) : (
+														<BreadcrumbLink asChild>
+															<a href={crumb.path}>{crumb.label}</a>
+														</BreadcrumbLink>
+													)}
+												</BreadcrumbItem>
+											</Fragment>
+										)
+									})}
+								</BreadcrumbList>
+							</Breadcrumb>
+						)
 					)}
 				</div>
+				{hasSticky && (
+					<div className="md:hidden flex min-w-0 flex-1 items-center overflow-hidden">
+						{stickyIdentity}
+					</div>
+				)}
 				<div className="ml-auto flex shrink-0 items-center gap-2">
 					{actions}
-					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							<Button variant="ghost" size="icon" className="h-7 w-7">
-								<Plus size={15} />
-								<span className="sr-only">Create new</span>
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end">
-							{createItems.map((item) => {
-								const Icon = item.icon
-								return (
-									<DropdownMenuItem
-										key={item.label}
-										onClick={() => item.navigate(navigate, workspaceId)}
-									>
-										<Icon className="h-4 w-4" />
-										{item.label}
-									</DropdownMenuItem>
-								)
-							})}
-						</DropdownMenuContent>
-					</DropdownMenu>
-					<Button
-						variant="ghost"
-						size="icon"
-						className="h-7 w-7"
-						onClick={() => setChatOpen(true)}
-						aria-label="Open chat"
-					>
-						<Sparkles size={15} />
-					</Button>
+					{!isObjectDetail && !isForYouPage && (
+						<Button
+							variant="ghost"
+							size="icon"
+							className="h-7 w-7"
+							onClick={() => setCreateOpen(true)}
+							aria-label="Create new"
+							title="Create new…"
+						>
+							<Plus size={15} />
+						</Button>
+					)}
+					{!isForYouPage && (
+						<Button
+							variant="ghost"
+							size="icon"
+							className="h-7 w-7"
+							onClick={() => setChatOpen(true)}
+							aria-label="Open chat"
+						>
+							<Sparkles size={15} />
+						</Button>
+					)}
 				</div>
 			</div>
+			<CreatePicker open={createOpen} onOpenChange={setCreateOpen} />
 		</header>
 	)
 }

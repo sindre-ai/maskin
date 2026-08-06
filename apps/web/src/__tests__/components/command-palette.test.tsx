@@ -99,7 +99,6 @@ describe('CommandPalette', () => {
 		await user.keyboard('{Control>}k{/Control}')
 		expect(screen.getByText('Bets Dashboard')).toBeInTheDocument()
 		expect(screen.getByText('All Objects')).toBeInTheDocument()
-		expect(screen.getByText('Activity Feed')).toBeInTheDocument()
 		expect(screen.getByText('Agents')).toBeInTheDocument()
 	})
 
@@ -129,19 +128,15 @@ describe('CommandPalette', () => {
 		expect(screen.queryByPlaceholderText('Search objects, navigate...')).not.toBeInTheDocument()
 	})
 
-	it('Ctrl+N navigates to create new object', async () => {
+	it('does not bind Ctrl+N or Meta+N to anything (reserved by the browser for New Window)', async () => {
 		const user = userEvent.setup()
-		// Mock crypto.randomUUID
-		const mockUUID = '00000000-0000-0000-0000-000000000001'
-		vi.spyOn(crypto, 'randomUUID').mockReturnValue(
-			mockUUID as `${string}-${string}-${string}-${string}-${string}`,
-		)
-
 		render(<CommandPalette />)
-		await user.keyboard('{Control>}n{/Control}')
 
-		expect(mockNavigate).toHaveBeenCalledWith({ to: `/ws-1/objects/${mockUUID}` })
-		vi.restoreAllMocks()
+		await user.keyboard('{Control>}n{/Control}')
+		await user.keyboard('{Meta>}n{/Meta}')
+
+		expect(mockNavigate).not.toHaveBeenCalled()
+		expect(screen.queryByPlaceholderText('Search objects, navigate...')).not.toBeInTheDocument()
 	})
 
 	it('Ctrl+J opens the chat sheet without opening the palette', async () => {

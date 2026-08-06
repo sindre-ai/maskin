@@ -10,7 +10,7 @@ import {
 	sessionUsageQuerySchema,
 	sessionUsageResponseSchema,
 } from '@maskin/shared'
-import { and, asc, desc, eq, gt, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, formatZodError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -88,10 +88,18 @@ app.openapi(createSessionRoute, (async (c) => {
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
+	// Stash entry_agent_role inside the existing config JSON blob so downstream
+	// analytics (parent bet's Chief of Staff thinness query) can attribute
+	// every session to the agent that received the owner's first turn without
+	// requiring an additive column migration.
+	const config = body.entry_agent_role
+		? { ...body.config, entry_agent_role: body.entry_agent_role }
+		: body.config
+
 	const session = await sessionManager.createSession(workspaceId, {
 		actorId: body.actor_id,
 		actionPrompt: body.action_prompt,
-		config: body.config,
+		config,
 		triggerId: body.trigger_id,
 		createdBy: actorId,
 		autoStart: body.auto_start,
@@ -135,6 +143,9 @@ app.openapi(listSessionsRoute, (async (c) => {
 			sql`(${sessions.config}->'mention'->>'object_id' = ${query.mention_object_id} OR ${sessions.config}->'thread_reply'->>'object_id' = ${query.mention_object_id})`,
 		)
 	}
+	// Half-open contract — Zod has already validated these as ISO-8601 strings.
+	if (query.updated_before) conditions.push(lt(sessions.updatedAt, new Date(query.updated_before)))
+	if (query.updated_after) conditions.push(gt(sessions.updatedAt, new Date(query.updated_after)))
 
 	const results = await db
 		.select()
@@ -563,10 +574,14 @@ app.openapi(inputSessionRoute, (async (c) => {
 	}
 
 	try {
-		await sessionManager.writeInput(id, {
-			type: 'user',
-			message: { role: 'user', content: body.content },
-		})
+		await sessionManager.writeInput(
+			id,
+			{
+				type: 'user',
+				message: { role: 'user', content: body.content },
+			},
+			body.attachments,
+		)
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err)
 		return c.json(createApiError('BAD_REQUEST', message), 400)
@@ -666,12 +681,22 @@ app.get('/:id/logs/stream', async (c) => {
 		// Check if session is already in terminal state
 		const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
 
+		// Honored by both the terminal replay-all branch and the missed-logs
+		// replay branch below, so a client that already hydrated via GET /logs
+		// never gets rows it has already rendered re-emitted on top of them.
+		const parsedLogId = Number(lastLogId)
+		const hasLastLogId = Boolean(lastLogId) && Number.isFinite(parsedLogId) && parsedLogId > 0
+
 		if (session && terminalStatuses.includes(session.status)) {
-			// Replay all logs for completed sessions, then close
+			// Replay logs for completed sessions, then close
 			const allLogs = await db
 				.select()
 				.from(sessionLogs)
-				.where(eq(sessionLogs.sessionId, sessionId))
+				.where(
+					hasLastLogId
+						? and(eq(sessionLogs.sessionId, sessionId), gt(sessionLogs.id, parsedLogId))
+						: eq(sessionLogs.sessionId, sessionId),
+				)
 				.orderBy(asc(sessionLogs.id))
 
 			for (const log of allLogs) {
@@ -686,8 +711,7 @@ app.get('/:id/logs/stream', async (c) => {
 		}
 
 		// Replay missed logs if Last-Event-ID is provided
-		const parsedLogId = Number(lastLogId)
-		if (lastLogId && Number.isFinite(parsedLogId) && parsedLogId > 0) {
+		if (hasLastLogId) {
 			const missed = await db
 				.select()
 				.from(sessionLogs)

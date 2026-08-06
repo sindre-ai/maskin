@@ -5,6 +5,7 @@ import {
 	events,
 	actors,
 	agentFiles,
+	agentSkills,
 	files,
 	imports,
 	integrations,
@@ -29,6 +30,7 @@ import {
 	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -314,6 +316,14 @@ const listActorsQuerySchema = z.object({
 			description: `Comma-separated list of actor UUIDs to filter by. Max ${MAX_IDS_FILTER} entries.`,
 			example: '00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002',
 		}),
+	order: z.enum(['asc', 'desc']).optional(),
+	// Snapshot-consistent cursor pagination — mirrors `objectQuerySchema`.
+	// Only the workspace-scoped branch honours these; the cross-workspace
+	// branch uses a two-phase distinct query on `(name, id)` that is
+	// intentionally out of scope for keyset pagination.
+	snapshot_at: z.string().datetime().optional(),
+	cursor_created_at: z.string().datetime().optional(),
+	cursor_id: z.string().uuid().optional(),
 })
 
 // GET / - List actors
@@ -348,7 +358,8 @@ const listActorsRoute = createRoute({
 app.openapi(listActorsRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { limit, offset, ids: idsParam } = c.req.valid('query')
+	const query = c.req.valid('query')
+	const { limit, offset, ids: idsParam } = query
 
 	const parsed = parseIdsParam(idsParam)
 	if (!parsed.ok) {
@@ -367,9 +378,16 @@ app.openapi(listActorsRoute, (async (c) => {
 	if (workspaceId) {
 		// Workspace-scoped listing
 		const idsCondition = idsFilter ? [inArray(actors.id, idsFilter)] : []
-		const wsWhere = idsCondition.length
-			? and(eq(workspaceMembers.workspaceId, workspaceId), ...idsCondition)
-			: eq(workspaceMembers.workspaceId, workspaceId)
+		const cursorConditions = buildCreatedAtCursorConditions(
+			{ createdAt: actors.createdAt, id: actors.id },
+			query,
+		)
+		const wsWhereParts = [
+			eq(workspaceMembers.workspaceId, workspaceId),
+			...idsCondition,
+			...cursorConditions,
+		]
+		const wsWhere = wsWhereParts.length > 1 ? and(...wsWhereParts) : wsWhereParts[0]
 
 		if (limit === undefined) {
 			const members = await db
@@ -381,6 +399,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					description: actors.description,
 					isSystem: actors.isSystem,
 					agentState: actors.agentState,
+					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 				})
 				.from(workspaceMembers)
@@ -391,6 +410,33 @@ app.openapi(listActorsRoute, (async (c) => {
 			return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
 		}
 
+		// Under the cursor path the sort switches to (createdAt, id) so the
+		// keyset seek predicate agrees with the walk direction. Flag-off
+		// callers preserve the historical (name, id) sort.
+		const cursorOn = Boolean(query.snapshot_at)
+		const orderBy = cursorOn
+			? query.order === 'asc'
+				? [asc(actors.createdAt), asc(actors.id)]
+				: [desc(actors.createdAt), asc(actors.id)]
+			: [asc(actors.name), asc(actors.id)]
+
+		// X-Total-Count reflects the workspace's total under the snapshot upper
+		// bound so a caller walking pages sees a stable count. The keyset seek
+		// is intentionally left out — the header should not shrink as the
+		// cursor advances.
+		const totalWhereParts = [
+			eq(workspaceMembers.workspaceId, workspaceId),
+			...idsCondition,
+			...(query.snapshot_at
+				? buildCreatedAtCursorConditions(
+						{ createdAt: actors.createdAt, id: actors.id },
+						{ snapshot_at: query.snapshot_at },
+					)
+				: []),
+		]
+		const totalWhere = totalWhereParts.length > 1 ? and(...totalWhereParts) : totalWhereParts[0]
+
+		const skipOffset = useKeysetSeek(query)
 		const [members, totalRow] = await Promise.all([
 			db
 				.select({
@@ -401,19 +447,20 @@ app.openapi(listActorsRoute, (async (c) => {
 					description: actors.description,
 					isSystem: actors.isSystem,
 					agentState: actors.agentState,
+					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
 				.where(wsWhere)
-				.orderBy(asc(actors.name), asc(actors.id))
+				.orderBy(...orderBy)
 				.limit(limit)
-				.offset(offset ?? 0),
+				.offset(skipOffset ? 0 : (offset ?? 0)),
 			db
 				.select({ value: count() })
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-				.where(wsWhere),
+				.where(totalWhere),
 		])
 
 		c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
@@ -444,6 +491,7 @@ app.openapi(listActorsRoute, (async (c) => {
 				description: actors.description,
 				isSystem: actors.isSystem,
 				agentState: actors.agentState,
+				createdAt: actors.createdAt,
 				workspaceId: workspaces.id,
 				workspaceName: workspaces.name,
 				role: workspaceMembers.role,
@@ -511,6 +559,7 @@ interface ActorMembershipRow {
 	description: string | null
 	isSystem: boolean
 	agentState: AgentState
+	createdAt: Date | null
 	workspaceId: string
 	workspaceName: string
 	role: string
@@ -524,6 +573,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 	description: string | null
 	isSystem: boolean
 	agentState: AgentState
+	createdAt: Date | null
 	workspaces: { id: string; name: string; role: string }[]
 }> {
 	const byActor = new Map<
@@ -536,6 +586,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 			description: string | null
 			isSystem: boolean
 			agentState: AgentState
+			createdAt: Date | null
 			workspaces: { id: string; name: string; role: string }[]
 		}
 	>()
@@ -553,6 +604,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 				description: r.description,
 				isSystem: r.isSystem,
 				agentState: r.agentState,
+				createdAt: r.createdAt,
 				workspaces: [membership],
 			})
 		}
@@ -585,34 +637,41 @@ app.openapi(getActorRoute, (async (c) => {
 	const db = c.get('db')
 	const { id } = c.req.valid('param')
 
-	const [actor] = await db
-		.select({
-			id: actors.id,
-			type: actors.type,
-			name: actors.name,
-			email: actors.email,
-			description: actors.description,
-			system_prompt: actors.systemPrompt,
-			tools: actors.tools,
-			memory: actors.memory,
-			llm_provider: actors.llmProvider,
-			llm_config: actors.llmConfig,
-			isSystem: actors.isSystem,
-			agentState: actors.agentState,
-			agentStateUpdatedAt: actors.agentStateUpdatedAt,
-			createdAt: actors.createdAt,
-			updatedAt: actors.updatedAt,
-			installedPackageId: sql<string | null>`${actors.metadata}->>'installed_package_id'`,
-		})
-		.from(actors)
-		.where(eq(actors.id, id))
-		.limit(1)
+	const [[actor], skills] = await Promise.all([
+		db
+			.select({
+				id: actors.id,
+				type: actors.type,
+				name: actors.name,
+				email: actors.email,
+				description: actors.description,
+				system_prompt: actors.systemPrompt,
+				tools: actors.tools,
+				memory: actors.memory,
+				llm_provider: actors.llmProvider,
+				llm_config: actors.llmConfig,
+				isSystem: actors.isSystem,
+				agentState: actors.agentState,
+				agentStateUpdatedAt: actors.agentStateUpdatedAt,
+				createdAt: actors.createdAt,
+				updatedAt: actors.updatedAt,
+				installedPackageId: sql<string | null>`${actors.metadata}->>'installed_package_id'`,
+			})
+			.from(actors)
+			.where(eq(actors.id, id))
+			.limit(1),
+		db
+			.select({ id: workspaceSkills.id, name: workspaceSkills.name })
+			.from(agentSkills)
+			.innerJoin(workspaceSkills, eq(agentSkills.workspaceSkillId, workspaceSkills.id))
+			.where(eq(agentSkills.actorId, id)),
+	])
 
 	if (!actor) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	return c.json(serialize(actor) as z.infer<typeof actorResponseSchema>)
+	return c.json(serialize({ ...actor, skills }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof getActorRoute, Env>)
 
 // PATCH /:id - Update actor

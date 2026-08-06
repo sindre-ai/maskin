@@ -1,12 +1,21 @@
 import { ObjectDocumentView } from '@/components/objects/object-document'
+import { PropertiesPanel } from '@/components/objects/properties-panel'
 import { EmptyState } from '@/components/shared/empty-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
-import { useCallback, useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
+import { useIsMobile } from '@/hooks/use-mobile'
+import { useObjectGraph } from '@/hooks/use-objects'
+import { cn } from '@/lib/cn'
+import { queryClient } from '@/lib/query'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { PanelRight } from 'lucide-react'
+import { useCallback, useMemo, useState } from 'react'
 import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { isArray, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
-import type { ObjectResponse } from '../shared/types'
+import type { ObjectResponse, RelationshipResponse } from '../shared/types'
 import { WebAppLink, useWebAppHref } from '../shared/web-app-link'
 import {
 	extractCreateObjectsList,
@@ -122,7 +131,7 @@ function ObjectsApp() {
 	}
 }
 
-function ObjectDocument({
+export function ObjectDocument({
 	obj,
 	handlers,
 }: {
@@ -135,22 +144,104 @@ function ObjectDocument({
 		onDelete: () => Promise<void>
 	}
 }) {
+	const [drawerOpen, setDrawerOpen] = useState(false)
+	const workspaceId = obj.workspaceId ?? ''
+	const { data: graph } = useObjectGraph(workspaceId, obj.id)
+	const relationships = useMemo(() => {
+		if (!graph) return undefined
+		const asSource: RelationshipResponse[] = []
+		const asTarget: RelationshipResponse[] = []
+		for (const rel of graph.relationships) {
+			if (rel.sourceId === obj.id) asSource.push(rel)
+			if (rel.targetId === obj.id) asTarget.push(rel)
+		}
+		return { asSource, asTarget }
+	}, [graph, obj.id])
+
 	return (
 		<div className="p-4">
-			<div className="flex justify-end mb-3">
+			<div className="flex justify-end items-center gap-1 mb-3">
+				<Button
+					variant="ghost"
+					size="icon"
+					className="h-7 w-7"
+					onClick={() => setDrawerOpen((v) => !v)}
+					aria-label="Properties"
+					aria-expanded={drawerOpen}
+				>
+					<PanelRight size={15} />
+				</Button>
 				<WebAppLink target={{ kind: 'object', id: obj.id }} />
 			</div>
 			<ObjectDocumentView
 				object={obj}
-				workspaceId={obj.workspaceId ?? ''}
+				workspaceId={workspaceId}
 				statuses={[]}
 				onUpdateTitle={handlers.onUpdateTitle}
 				onUpdateContent={handlers.onUpdateContent}
 				onUpdateStatus={handlers.onUpdateStatus}
 				onUpdateDriver={handlers.onUpdateDriver}
 				onDelete={handlers.onDelete}
+				contentLoaded={'content' in obj}
+			/>
+			<PropertiesSheet
+				open={drawerOpen}
+				onOpenChange={setDrawerOpen}
+				object={obj}
+				workspaceId={workspaceId}
+				relationships={relationships}
 			/>
 		</div>
+	)
+}
+
+/**
+ * Embedded MCP-Apps surface keeps the current Sheet-based properties panel:
+ * the panel is a compact widget inside the Claude UI, not a full page, so
+ * the persistent right sidebar used on the main web app doesn't fit here.
+ */
+function PropertiesSheet({
+	open,
+	onOpenChange,
+	object,
+	workspaceId,
+	relationships,
+}: {
+	open: boolean
+	onOpenChange: (open: boolean) => void
+	object: ObjectResponse
+	workspaceId: string
+	relationships?: {
+		asSource: RelationshipResponse[]
+		asTarget: RelationshipResponse[]
+	}
+}) {
+	const isMobile = useIsMobile()
+	const side = isMobile ? 'bottom' : 'right'
+	return (
+		<Sheet open={open} onOpenChange={onOpenChange}>
+			<SheetContent
+				side={side}
+				className={cn(
+					'overflow-y-auto',
+					isMobile ? 'max-h-[85dvh] rounded-t-lg rounded-b-none p-0' : 'w-full sm:max-w-sm p-0',
+				)}
+			>
+				<SheetTitle className="px-6 pt-6 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+					Properties
+				</SheetTitle>
+				<SheetDescription className="sr-only">
+					Object properties and attached files
+				</SheetDescription>
+				<div className="px-6 pt-4 pb-6">
+					<PropertiesPanel
+						object={object}
+						workspaceId={workspaceId}
+						relationships={relationships}
+					/>
+				</div>
+			</SheetContent>
+		</Sheet>
 	)
 }
 
@@ -252,4 +343,9 @@ function UpdateSummaryView({
 	)
 }
 
-renderMcpApp('Objects', <ObjectsApp />)
+renderMcpApp(
+	'Objects',
+	<QueryClientProvider client={queryClient}>
+		<ObjectsApp />
+	</QueryClientProvider>,
+)

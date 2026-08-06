@@ -9,10 +9,12 @@ import { useActors } from '@/hooks/use-actors'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
+import { deriveEntryAgentRole } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { ChatProvider, useChat } from '@/lib/chat-context'
-import { PageHeaderProvider } from '@/lib/page-header-context'
+import { NewConversationProvider } from '@/lib/new-conversation-context'
+import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
 import {
 	identifyForWorkspace,
@@ -61,12 +63,27 @@ function WorkspaceLayout() {
 		[workspaces, workspaceId],
 	)
 
-	// Resolve the per-workspace Workspace Coach agent by name (matches WORKSPACE_COACH_DEFAULT
-	// in packages/shared/src/templates/workspace-coach-agent.ts). Null until actors load
-	// or when the workspace is missing Workspace Coach (e.g. pre-backfill).
-	const agentActorId = useMemo(
-		() => actors?.find((a) => a.type === 'agent' && a.name === 'Workspace Coach')?.id ?? null,
-		[actors],
+	// Prefer the workspace-level default_agent_id when set (Chief of Staff
+	// prototype bet); fall back to the Workspace Coach lookup by name. The
+	// fallback keeps every pre-CoS workspace unchanged — settings without a
+	// `default_agent_id` behave exactly as they did before this task.
+	const defaultAgent = useMemo(() => {
+		if (!actors) return null
+		const settings = workspace?.settings as { default_agent_id?: string | null } | undefined
+		const defaultId = settings?.default_agent_id
+		if (typeof defaultId === 'string' && defaultId.length > 0) {
+			const pinned = actors.find((a) => a.id === defaultId)
+			if (pinned) return pinned
+		}
+		return actors.find((a) => a.type === 'agent' && a.name === 'Workspace Coach') ?? null
+	}, [actors, workspace])
+	const agentActorId = defaultAgent?.id ?? null
+	// Chief of Staff prototype bet's `chat_session_started.entry_agent_role`:
+	// derived from the routing agent's display name so the property flips to
+	// `'chief-of-staff'` automatically once T3 makes CoS the default here.
+	const entryAgentRole = useMemo(
+		() => deriveEntryAgentRole(defaultAgent?.name ?? null),
+		[defaultAgent],
 	)
 
 	const [open, setOpenState] = useState(getInitialOpen)
@@ -113,26 +130,35 @@ function WorkspaceLayout() {
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
 			<ChatProvider workspaceId={workspaceId}>
-				<PendingPromptBootstrap agentActorId={agentActorId} />
-				<GuestDraftClaimBootstrap workspaceId={workspaceId} />
-				<PendingCommentsProvider workspaceId={workspaceId}>
-					<PageHeaderProvider>
-						<ChatPinShell>
-							<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
-								<AppSidebar />
-								<SidebarInset className="min-w-0">
-									<Header />
-									<TrialExpiredBanner workspaceId={workspaceId} />
-									<div className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8">
-										<Outlet />
-									</div>
-								</SidebarInset>
-							</SidebarProvider>
-						</ChatPinShell>
-					</PageHeaderProvider>
-					<CommandPalette />
-					<ChatPanel workspaceId={workspaceId} agentActorId={agentActorId} />
-				</PendingCommentsProvider>
+				<NewConversationProvider>
+					<PendingPromptBootstrap agentActorId={agentActorId} />
+					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
+					<PendingCommentsProvider workspaceId={workspaceId}>
+						<PageHeaderProvider>
+							<ChatPinShell>
+								<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
+									<AppSidebar />
+									<SidebarInset className="min-w-0">
+										<Header />
+										<TrialExpiredBanner workspaceId={workspaceId} />
+										<div
+											className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8"
+											data-scroll-root
+										>
+											<Outlet />
+										</div>
+									</SidebarInset>
+								</SidebarProvider>
+							</ChatPinShell>
+						</PageHeaderProvider>
+						<CommandPalette />
+						<ChatPanel
+							workspaceId={workspaceId}
+							agentActorId={agentActorId}
+							entryAgentRole={entryAgentRole}
+						/>
+					</PendingCommentsProvider>
+				</NewConversationProvider>
 			</ChatProvider>
 		</WorkspaceContext.Provider>
 	)
@@ -199,23 +225,33 @@ function PendingPromptBootstrap({ agentActorId }: { agentActorId: string | null 
 }
 
 /**
- * Wraps the main layout so that when the chat panel is pinned AND open, the layout
- * gets a right margin equal to the chat panel width — the panel is always
- * fixed-positioned, so this margin is what makes it "push content aside"
- * instead of floating over it.
+ * Wraps the main layout (left sidebar + header + outlet) so that when the
+ * chat panel is pinned AND open, or the current route reports its own fixed
+ * right sidebar via PageHeaderContext (e.g. the object-detail properties
+ * sidebar), the layout gets a right margin equal to whichever is wider — both
+ * panels are fixed-positioned, so this margin is what makes them "push
+ * content aside" instead of floating over it, and keeps the header's action
+ * buttons clear of either.
  */
 function ChatPinShell({ children }: { children: ReactNode }) {
 	const { pinned, open, panelWidth } = useChat()
+	const { contentPush } = usePageHeader()
 	const isMobile = useIsMobile()
-	// On mobile the panel overlays the viewport and the pin toggle is hidden,
-	// so a stale `pinned=true` from desktop must not apply a margin that would
-	// squash the main content off-screen.
-	const pushed = pinned && open && !isMobile
+	// On mobile both panels overlay the viewport (Sheet/Sheet), so a stale
+	// `pinned=true` from desktop must not apply a margin that would squash
+	// the main content off-screen.
+	const chatPushed = pinned && open && !isMobile
+	const pagePushed = Boolean(contentPush) && !isMobile
+	let marginRight: string | number = 0
+	if (chatPushed && pagePushed) {
+		marginRight = `max(${panelWidth}px, ${contentPush})`
+	} else if (chatPushed) {
+		marginRight = `${panelWidth}px`
+	} else if (pagePushed) {
+		marginRight = contentPush as string
+	}
 	return (
-		<div
-			className="transition-[margin] duration-200 ease-linear"
-			style={{ marginRight: pushed ? `${panelWidth}px` : 0 }}
-		>
+		<div className="transition-[margin] duration-200 ease-linear" style={{ marginRight }}>
 			{children}
 		</div>
 	)

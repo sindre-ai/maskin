@@ -1,38 +1,39 @@
-// One-shot publisher for the Customer Continuous Discovery catalog package.
+// One-shot publisher for the Discover & Research Loop catalog bundle.
 //
-// Snapshots the four canonical CCD-loop agents and their nine bound triggers
-// from a source workspace (the Maskin development workspace by default) into a
-// single `catalog_packages` row at version 1.0.0 plus one
-// `catalog_package_items` row per element. Triggers carry the publisher's
-// live `target_actor_id` inside the snapshot — the install path (T3) rewrites
-// that against the install's `source_item_id` map, which we set to the live
-// publisher id here so the lookup is direct.
+// Snapshots the five loop agents (Customer Feedback Agent, Insights Triage
+// Agent, Product Ideator, Research Agent, Summarization Agent) and every
+// trigger they drive from the checked-in data/dev-actors.json +
+// data/dev-triggers.json (captured live, since the local dev Postgres is
+// empty) into a single `catalog_packages` row at version 1.0.0 plus one
+// `catalog_package_items` row per element. Triggers carry the source
+// `target_actor_id` inside the snapshot — the install path rewrites that
+// against the install's `source_item_id` map.
 //
-// Run once against the dev DB:
-//   POSTGRES_URL=... pnpm --filter @maskin/dev exec tsx scripts/publish-ccd-package.ts
+// Run once against the local dev DB:
+//   pnpm --filter @maskin/dev exec tsx scripts/publish-ccd-package.ts
 //
 // Idempotency: the `catalog_packages.slug` unique constraint blocks a second
 // run at the same slug; pass `--force` to delete and re-create the row plus
-// its items. `--force` is refused if the package already has installs, since
-// the delete would orphan their lineage — bump the version instead.
+// its items. `--force` is refused if the package already has installs.
 
 import { createDb } from '@maskin/db'
-import {
-	actors,
-	catalogPackageItems,
-	catalogPackages,
-	installedPackages,
-	triggers,
-} from '@maskin/db/schema'
-import { eq, inArray } from 'drizzle-orm'
+import { catalogPackageItems, catalogPackages, installedPackages } from '@maskin/db/schema'
+import { eq } from 'drizzle-orm'
 import {
 	CCD_ACTOR_IDS,
 	CCD_PACKAGE,
+	CCD_SKILL_IDS,
 	CCD_SOURCE_WORKSPACE_ID,
 	CCD_TRIGGER_IDS,
 	actorSnapshot,
+	skillSnapshot,
 	triggerSnapshot,
-} from './ccd-package'
+} from '../src/lib/catalog-packages/ccd-package'
+import {
+	getActorData,
+	getSkillData,
+	getTriggerData,
+} from '../src/lib/catalog-packages/package-data'
 
 const SOURCE_WORKSPACE_ID = process.env.CCD_SOURCE_WORKSPACE_ID ?? CCD_SOURCE_WORKSPACE_ID
 const FORCE = process.argv.includes('--force')
@@ -46,26 +47,11 @@ async function main(): Promise<void> {
 
 	const db = createDb(url)
 
-	const actorRows = await db
-		.select()
-		.from(actors)
-		.where(inArray(actors.id, [...CCD_ACTOR_IDS]))
-
-	const triggerRows = await db
-		.select()
-		.from(triggers)
-		.where(inArray(triggers.id, [...CCD_TRIGGER_IDS]))
-
-	if (actorRows.length !== CCD_ACTOR_IDS.length) {
-		const found = new Set(actorRows.map((a) => a.id))
-		const missing = CCD_ACTOR_IDS.filter((id) => !found.has(id))
-		throw new Error(`CCD actors missing from source workspace: ${missing.join(', ')}`)
-	}
-	if (triggerRows.length !== CCD_TRIGGER_IDS.length) {
-		const found = new Set(triggerRows.map((t) => t.id))
-		const missing = CCD_TRIGGER_IDS.filter((id) => !found.has(id))
-		throw new Error(`CCD triggers missing from source workspace: ${missing.join(', ')}`)
-	}
+	// Resolve actor/trigger content from the checked-in snapshot data (not the
+	// local DB, which has none). These throw a clear error naming any missing id.
+	const actorRows = CCD_ACTOR_IDS.map(getActorData)
+	const triggerRows = CCD_TRIGGER_IDS.map(getTriggerData)
+	const skillRows = CCD_SKILL_IDS.map(getSkillData)
 
 	// Every published trigger must fire one of the published actors or the
 	// install will resolve target_actor_id to a stale, unrelated UUID in the
@@ -79,11 +65,11 @@ async function main(): Promise<void> {
 		}
 	}
 
-	// Guard against pulling an item from the wrong workspace. Only triggers carry
-	// a workspaceId column — actors are global (workspace membership lives in
-	// workspace_members, not on the actor row), so they have no workspaceId to
-	// check and pass through this guard by design.
-	for (const row of [...actorRows, ...triggerRows]) {
+	// Guard against pulling an item from the wrong workspace. Only triggers and
+	// skills carry a workspaceId — actors are global (workspace membership
+	// lives in workspace_members, not on the actor row), so they pass through
+	// by design.
+	for (const row of [...actorRows, ...triggerRows, ...skillRows]) {
 		const wsId = (row as { workspaceId?: string }).workspaceId
 		if (wsId !== undefined && wsId !== SOURCE_WORKSPACE_ID) {
 			throw new Error(`Item ${row.id} lives in workspace ${wsId}, expected ${SOURCE_WORKSPACE_ID}.`)
@@ -157,6 +143,15 @@ async function main(): Promise<void> {
 				sourceItemId: row.id,
 				itemSnapshot: triggerSnapshot(row),
 			})),
+			...skillRows.map((row) => ({
+				packageId: pkg.id,
+				itemType: 'skill' as const,
+				sourceItemId: row.id,
+				itemSnapshot: skillSnapshot(
+					row,
+					row.attachedActorIds.filter((id) => publishedActorIds.has(id)),
+				),
+			})),
 		]
 
 		await tx.insert(catalogPackageItems).values(itemRows)
@@ -164,7 +159,7 @@ async function main(): Promise<void> {
 	})
 
 	console.log(
-		`Published ${CCD_PACKAGE.slug} v${CCD_PACKAGE.version} as ${inserted.pkg.id} (${actorRows.length} actors + ${triggerRows.length} triggers = ${inserted.itemCount} items).`,
+		`Published ${CCD_PACKAGE.slug} v${CCD_PACKAGE.version} as ${inserted.pkg.id} (${actorRows.length} actors + ${triggerRows.length} triggers + ${skillRows.length} skills = ${inserted.itemCount} items).`,
 	)
 	process.exit(0)
 }

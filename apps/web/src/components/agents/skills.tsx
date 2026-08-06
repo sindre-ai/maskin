@@ -252,7 +252,12 @@ function WorkspaceSkillsSection({
 												}`}
 											/>
 											<div className="flex-1 min-w-0">
-												<p className="text-sm font-medium truncate">{skill.name}</p>
+												<div className="flex items-center gap-1.5">
+													<p className="text-sm font-medium truncate">{skill.name}</p>
+													{skill.isFolder === true && (
+														<FolderBadge fileCount={skill.fileCount ?? 0} />
+													)}
+												</div>
 												{skill.description && (
 													<p className="text-xs text-muted-foreground truncate">
 														{skill.description}
@@ -320,11 +325,16 @@ function AttachedSkillRow({
 	onRemove: () => void
 	readOnly?: boolean
 }) {
+	const isFolder = skill.isFolder === true
+	const fileCount = skill.fileCount ?? 0
 	return (
 		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-bg-surface px-3 py-2">
 			<Library className="h-4 w-4 text-muted-foreground shrink-0" />
 			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
+				<div className="flex items-center gap-1.5">
+					<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
+					{isFolder && <FolderBadge fileCount={fileCount} />}
+				</div>
 				{skill.description && (
 					<p className="text-xs text-muted-foreground truncate">{skill.description}</p>
 				)}
@@ -341,6 +351,20 @@ function AttachedSkillRow({
 				</Button>
 			)}
 		</div>
+	)
+}
+
+function FolderBadge({ fileCount }: { fileCount: number }) {
+	return (
+		<span
+			className="inline-flex items-center gap-1 rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shrink-0"
+			aria-label={`Folder skill with ${fileCount} file${fileCount === 1 ? '' : 's'}`}
+		>
+			<span aria-hidden="true">📁</span>
+			<span>
+				{fileCount} {fileCount === 1 ? 'file' : 'files'}
+			</span>
+		</span>
 	)
 }
 

@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 // Events emitted by the MCP server to /api/telemetry/mcp.
 //
-// Three event types power the bet's success metrics:
+// Four event types power the bet's success metrics:
 //   - tool_call:    every tool response. `has_rich_render` is true when the tool
 //                   returned `_meta.ui` (i.e. a widget resource was attached so a
 //                   client like Claude can render a rich card). Numerator/denominator
@@ -15,6 +15,10 @@ import { z } from 'zod'
 //                   success metric and the 48h rolling render-error kill criterion.
 //                   click_through rows correlate back to their parent render_success
 //                   by shared (session_id, tool_name, object_id).
+//   - tool_call_response_size: byte + token splits of `content` vs `structuredContent`
+//                   on every tool response. Fan-out to PostHog as
+//                   `mcp_tool_call_response_size` for the response-scoping bet's
+//                   p95-per-tool baseline.
 //
 // Tool name is constrained loosely (1–128 chars, identifier-ish characters).
 // The MCP server is the producer, but we still validate at the boundary because
@@ -72,10 +76,53 @@ export const recordMcpWidgetEventSchema = z.object({
 	ts: z.number().int().min(0),
 })
 
+// Response size telemetry for the MCP response-scoping bet's First test. Fan-out
+// is PostHog only (event name `mcp_tool_call_response_size`) — no DB row, since
+// the 5-day instrumentation window doesn't earn a schema migration. `truncated`
+// is hard-coded `false` here and flips `true` once T4's token-cap wrapper lands.
+// Byte counts use `Buffer.byteLength(_, 'utf8')` and token counts are a
+// `bytes/4` estimator (good enough to rank tools by p95).
+export const recordMcpToolCallResponseSizeSchema = z.object({
+	event_type: z.literal('tool_call_response_size'),
+	tool_name: toolNameSchema,
+	session_id: sessionIdSchema,
+	content_bytes: z.number().int().min(0),
+	content_tokens: z.number().int().min(0),
+	structured_content_bytes: z.number().int().min(0),
+	structured_content_tokens: z.number().int().min(0),
+	truncated: z.boolean(),
+})
+
+// MCP misfire events for the agent-reach-signal bet: one row per real MCP
+// runtime error we can bucket into a demand signal. Persisted in
+// `mcp_telemetry.data` (jsonb, no schema migration) and fanned out to PostHog
+// as `mcp_misfire_tool_not_found` / `mcp_misfire_unknown_param` /
+// `mcp_misfire_schema_validation_error`. `requested_shape` is a
+// `{fieldName: type}` map — values are stripped so no user-visible PII lands
+// in analytics. `agent_actor_id` is the API key's actor id, resolved by the
+// producer (server-side classifier or client sink).
+export const mcpMisfireKindSchema = z.enum([
+	'tool_not_found',
+	'unknown_param',
+	'schema_validation_error',
+])
+export type McpMisfireKind = z.infer<typeof mcpMisfireKindSchema>
+
+export const recordMcpErrorSchema = z.object({
+	event_type: z.literal('error'),
+	kind: mcpMisfireKindSchema,
+	tool_name: toolNameSchema,
+	session_id: sessionIdSchema,
+	agent_actor_id: z.string().min(1).max(128).optional(),
+	requested_shape: z.record(z.string(), z.string()).default({}),
+})
+
 export const recordMcpTelemetrySchema = z.discriminatedUnion('event_type', [
 	recordMcpToolCallSchema,
 	recordMcpMutationSchema,
 	recordMcpWidgetEventSchema,
+	recordMcpToolCallResponseSizeSchema,
+	recordMcpErrorSchema,
 ])
 
 export type RecordMcpTelemetryBody = z.infer<typeof recordMcpTelemetrySchema>

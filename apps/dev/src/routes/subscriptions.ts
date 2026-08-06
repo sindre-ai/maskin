@@ -2,13 +2,16 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, objects, subscriptions } from '@maskin/db/schema'
 import {
+	LOOP_ATTENTION_STATUSES,
+	TERMINAL_BET_STATUSES,
 	markReadBodySchema,
+	markUnreadBodySchema,
 	subscribeBodySchema,
 	subscribersQuerySchema,
 	unreadQuerySchema,
 	unsubscribeBodySchema,
 } from '@maskin/shared'
-import { and, count, desc, eq, gt, inArray, max, ne, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gt, inArray, max, ne, or, sql } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -16,6 +19,7 @@ import {
 	autoSubscribe,
 	getSubscribers,
 	markRead as markReadService,
+	markUnread as markUnreadService,
 	unsubscribe as unsubscribeService,
 } from '../services/subscriptions'
 
@@ -78,10 +82,16 @@ const subscribersResponseSchema = z.object({
 const unreadItemSchema = z.object({
 	entity_type: z.string(),
 	entity_id: z.string().uuid(),
+	// Total unread activity count. Includes both comments (action='commented') and
+	// terminal bet status transitions (action='status_changed', status in
+	// succeeded/failed). A bet with only a terminal transition and no comments will
+	// have unread_count=1 and mentioning_unread_count=0.
 	unread_count: z.number(),
-	// True when at least one unread comment on the entity @-mentions the
-	// current actor — drives the "Mentioned" badge on the For You card.
-	mentions_you: z.boolean(),
+	// Count of unread events that actually @-mention the current actor. Per-event
+	// grain — not a bool_or rollup — so a single buried mention among nine
+	// agent→agent comments yields 1. The For You card surfaces the "Mentioned"
+	// pill when > 0.
+	mentioning_unread_count: z.number(),
 	latest_event_id: z.number().nullable(),
 	latest_activity_at: z.string().nullable(),
 	object: objectResponseSchema.optional(),
@@ -251,6 +261,53 @@ app.openapi(markReadRoute, async (c) => {
 	return c.json({ updated: true as const }, 200)
 })
 
+// POST /api/subscriptions/unread — Slack-style toggle back to unread.
+// Deletes the actor's read_state row so every event on the entity reappears
+// in their unread feed on the next read. Mirrors the shape of `POST /read`
+// (same entity_type + entity_id validation, same workspace-membership
+// guard) but carries no last_event_id.
+const markUnreadRoute = createRoute({
+	method: 'post',
+	path: '/unread',
+	tags: ['Subscriptions'],
+	summary: 'Mark an entity as unread (clear the actor’s read high-water-mark)',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: markUnreadBodySchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Read state cleared',
+			content: { 'application/json': { schema: z.object({ updated: z.literal(true) }) } },
+		},
+		404: {
+			description: 'Entity not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(markUnreadRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const body = c.req.valid('json')
+
+	// Same cross-workspace guard as POST /read — refuse to touch a row
+	// pointing at an entity_id the caller can't actually see in this
+	// workspace, even though the delete is scoped to the actor.
+	const exists = await verifyEntityInWorkspace(db, workspaceId, body.entity_type, body.entity_id)
+	if (!exists) return c.json(createApiError('NOT_FOUND', 'Entity not found'), 404)
+
+	await markUnreadService(db, {
+		actorId,
+		entityType: body.entity_type,
+		entityId: body.entity_id,
+	})
+
+	return c.json({ updated: true as const }, 200)
+})
+
 // GET /api/subscriptions/unread — entities the actor is subscribed to with unread > 0.
 const listUnreadRoute = createRoute({
 	method: 'get',
@@ -273,11 +330,14 @@ app.openapi(listUnreadRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { entity_type } = c.req.valid('query')
+	const { entity_type, include_recently_read: includeRecentlyRead } = c.req.valid('query')
 
 	// Single query: for each (entity_type, entity_id) the actor is subscribed to
-	// in this workspace, count commented events whose id > last_read_event_id and
-	// whose actor_id is not the viewer's. Exclude rows with zero unread.
+	// in this workspace, join the events that count as unread (id > last_read
+	// and not by the viewer) plus, when the caller opted in, any read events
+	// still within the recently-read window. `unread_count` is computed via
+	// FILTER so a recently-read card returns unread_count = 0 while still
+	// appearing in the feed.
 	const lastReadExpr = sql<number>`coalesce(
 		(select last_read_event_id from read_state
 			where actor_id = ${actorId}
@@ -292,32 +352,114 @@ app.openapi(listUnreadRoute, (async (c) => {
 	]
 	if (entity_type) subConditions.push(eq(subscriptions.entityType, entity_type))
 
-	// Aggregate flag: does any unread comment on the entity contain the
-	// current actor in its data->'mentions' array? Uses @> with a jsonb
-	// array of the actor id (the stable form), and coalesces to false for
-	// rows where the left-join produced no events (defensive — the HAVING
-	// clause filters those out, but bool_or on an empty set is NULL).
-	const mentionsYouExpr = sql<boolean>`coalesce(bool_or(${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), false)`
+	// Restricts the join to events that could contribute a row: unread ones,
+	// plus (when opted in) read events still inside a 48h window. Read events
+	// outside the window drop here so aggregates don't scan the whole entity
+	// history on hot threads. 48h covers the Today and Yesterday buckets the
+	// ForYouDashboard renders (mirrors iOS Mail's mark-unread horizon).
+	const readOrRecentPredicate = includeRecentlyRead
+		? sql`(${events.id} > ${lastReadExpr} or ${events.createdAt} >= now() - interval '48 hours')`
+		: sql`${events.id} > ${lastReadExpr}`
+
+	// Per-event mention count: how many of the *unread* events on this entity
+	// actually @-mention the current actor. Recently-read events never count
+	// toward the mention pill even when they're joined.
+	const mentioningUnreadCountExpr = sql<number>`coalesce(count(*) filter (where ${events.id} > ${lastReadExpr} and ${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), 0)::int`
+
+	// True unread count regardless of whether recently-read events are joined.
+	const unreadCountExpr = sql<number>`coalesce(count(${events.id}) filter (where ${events.id} > ${lastReadExpr}), 0)::int`
+
+	// `status_changed` events carry the new-shape `data.changes` diff array
+	// (see bet/mcp-response-shape) going forward, but historical rows before
+	// that migration still carry the legacy `{previous, updated}` snapshot —
+	// read whichever is present so old terminal transitions don't drop out of
+	// the unread feed. The third fallback (`data->>'status'`) reads the
+	// initial status on a `created` event, whose `data` payload is the full
+	// object row — used by the Loop `created` arm below so a Loop born at
+	// `at-risk`/`breached` surfaces without waiting for a subsequent
+	// transition. `commented` and `status_changed` payloads never carry a
+	// top-level `status` field, so this fallback is safe for them.
+	const statusExpr = sql<string>`coalesce(
+		${events.data}->'updated'->>'status',
+		jsonb_path_query_first(${events.data}, '$.changes[*] ? (@.field == "status")')->>'new',
+		${events.data}->>'status'
+	)`
 
 	const rows = await db
 		.select({
 			entityType: subscriptions.entityType,
 			entityId: subscriptions.entityId,
-			unreadCount: count(events.id),
-			mentionsYou: mentionsYouExpr,
+			unreadCount: unreadCountExpr,
+			mentioningUnreadCount: mentioningUnreadCountExpr,
 			latestEventId: max(events.id),
 			latestActivityAt: max(events.createdAt),
 		})
 		.from(subscriptions)
 		.leftJoin(
+			objects,
+			and(eq(subscriptions.entityType, 'object'), eq(objects.id, subscriptions.entityId)),
+		)
+		.leftJoin(
 			events,
 			and(
 				eq(events.workspaceId, subscriptions.workspaceId),
-				eq(events.entityType, subscriptions.entityType),
 				eq(events.entityId, subscriptions.entityId),
-				eq(events.action, 'commented'),
 				ne(events.actorId, actorId),
-				gt(events.id, lastReadExpr),
+				readOrRecentPredicate,
+				// Three surfaces land in the unread feed:
+				// (1) comments on the subscribed entity (events.entity_type matches the
+				//     subscription's polymorphic type, e.g. 'object'), and
+				// (2) the bet's own terminal-status transition (events.entity_type is
+				//     the object's concrete type, e.g. 'bet', while the subscription's
+				//     entityType is 'object'). The entityType guard on this arm is
+				//     explicit to prevent other subscribable entity types from
+				//     accidentally matching bet terminal events via entityId alone.
+				// TERMINAL_BET_STATUSES (succeeded/failed/paused) is the single
+				// source of truth shared with the notification fan-out gate in
+				// objects.ts — without (2) a watcher misses the terminal signal, see
+				// T2 on bet/notif-cascade-fix.
+				// (3) a Loop transitioning into an attention-worthy status
+				//     (at-risk / breached) — mirrors (2) for the Loop primitive.
+				//     Uses `type='loop'` in the polymorphic filter path per T2 on
+				//     bet/loops-primitive; a transition back to `holding` is
+				//     quiet news and does not land in the feed.
+				//     LOOP_ATTENTION_STATUSES is the single source of truth shared
+				//     with the briefing composer's health-priority sort.
+				// (4) a Loop born already at an attention-worthy status — QA on
+				//     bet/loops-primitive found seeded `at-risk`/`breached` Loops
+				//     silent in the feed because their `created` event emits an
+				//     initial-status payload, not a transition. Mirrors (3) via
+				//     the `data->>'status'` fallback in `statusExpr` above; a
+				//     Loop born at `holding` stays quiet.
+				// Unlike TERMINAL_BET_STATUSES, a loop's status is never permanent —
+				// it can flip back to `holding` after arm (3) or (4) already matched an
+				// older unread event. Both loop arms additionally require the object's
+				// CURRENT status (via the `objects` join above) to still be
+				// attention-worthy, so a recovered loop stops surfacing once it's read
+				// back to `holding` even if the triggering event is still unread.
+				or(
+					and(eq(events.entityType, subscriptions.entityType), eq(events.action, 'commented')),
+					and(
+						eq(subscriptions.entityType, 'object'),
+						eq(events.entityType, 'bet'),
+						eq(events.action, 'status_changed'),
+						inArray(statusExpr, [...TERMINAL_BET_STATUSES]),
+					),
+					and(
+						eq(subscriptions.entityType, 'object'),
+						eq(events.entityType, 'loop'),
+						eq(events.action, 'status_changed'),
+						inArray(statusExpr, [...LOOP_ATTENTION_STATUSES]),
+						inArray(objects.status, [...LOOP_ATTENTION_STATUSES]),
+					),
+					and(
+						eq(subscriptions.entityType, 'object'),
+						eq(events.entityType, 'loop'),
+						eq(events.action, 'created'),
+						inArray(statusExpr, [...LOOP_ATTENTION_STATUSES]),
+						inArray(objects.status, [...LOOP_ATTENTION_STATUSES]),
+					),
+				),
 			),
 		)
 		.where(and(...subConditions))
@@ -344,8 +486,8 @@ app.openapi(listUnreadRoute, (async (c) => {
 		return {
 			entity_type: r.entityType,
 			entity_id: r.entityId,
-			unread_count: r.unreadCount,
-			mentions_you: Boolean(r.mentionsYou),
+			unread_count: Number(r.unreadCount),
+			mentioning_unread_count: Number(r.mentioningUnreadCount),
 			latest_event_id: r.latestEventId,
 			latest_activity_at:
 				r.latestActivityAt instanceof Date ? r.latestActivityAt.toISOString() : r.latestActivityAt,

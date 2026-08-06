@@ -2,6 +2,16 @@ import { BulkActionBar } from '@/components/objects/bulk-action-bar'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return {
+		...actual,
+		trackBulkEditCommit: vi.fn(),
+	}
+})
+
+import { trackBulkEditCommit } from '@/lib/analytics'
+
 const statusOptions = [
 	{ value: 'todo', label: 'Todo' },
 	{ value: 'in_progress', label: 'In progress' },
@@ -42,14 +52,53 @@ function renderBar(overrides: Partial<React.ComponentProps<typeof BulkActionBar>
 	return { ...render(<BulkActionBar {...props} />), props }
 }
 
+// Stash navigator descriptors per-test so the iOS UA stub doesn't bleed across
+// describes (jsdom shares one navigator across the suite).
+let savedUserAgent: PropertyDescriptor | undefined
+let savedPlatform: PropertyDescriptor | undefined
+let savedMaxTouchPoints: PropertyDescriptor | undefined
+
+function stubNavigator(partial: {
+	userAgent?: string
+	platform?: string
+	maxTouchPoints?: number
+}) {
+	if (partial.userAgent !== undefined) {
+		Object.defineProperty(window.navigator, 'userAgent', {
+			value: partial.userAgent,
+			configurable: true,
+		})
+	}
+	if (partial.platform !== undefined) {
+		Object.defineProperty(window.navigator, 'platform', {
+			value: partial.platform,
+			configurable: true,
+		})
+	}
+	if (partial.maxTouchPoints !== undefined) {
+		Object.defineProperty(window.navigator, 'maxTouchPoints', {
+			value: partial.maxTouchPoints,
+			configurable: true,
+		})
+	}
+}
+
 describe('BulkActionBar', () => {
 	beforeEach(() => {
 		setMatchMedia(false)
+		vi.mocked(trackBulkEditCommit).mockClear()
+		savedUserAgent = Object.getOwnPropertyDescriptor(window.navigator, 'userAgent')
+		savedPlatform = Object.getOwnPropertyDescriptor(window.navigator, 'platform')
+		savedMaxTouchPoints = Object.getOwnPropertyDescriptor(window.navigator, 'maxTouchPoints')
 	})
 
 	afterEach(() => {
 		vi.unstubAllGlobals()
 		vi.restoreAllMocks()
+		if (savedUserAgent) Object.defineProperty(window.navigator, 'userAgent', savedUserAgent)
+		if (savedPlatform) Object.defineProperty(window.navigator, 'platform', savedPlatform)
+		if (savedMaxTouchPoints)
+			Object.defineProperty(window.navigator, 'maxTouchPoints', savedMaxTouchPoints)
 	})
 
 	it('is hidden when selectedCount is 0', () => {
@@ -74,7 +123,7 @@ describe('BulkActionBar', () => {
 		const bar = screen.getByRole('region', { name: 'Bulk actions' })
 		expect(bar.className).toMatch(/overflow-x-auto/)
 		expect(bar.className).toMatch(/rounded-md/)
-		expect(bar.className).toMatch(/bg-white/)
+		expect(bar.className).toMatch(/bg-popover/)
 		expect(within(bar).getByText('selected').className).toMatch(/hidden/)
 		expect(within(bar).getByText('selected').className).toMatch(/sm:inline/)
 		expect(within(bar).getByLabelText('3 selected').className).toMatch(/shrink-0/)
@@ -205,5 +254,135 @@ describe('BulkActionBar', () => {
 	it('does not render the status select when onStatusChange is omitted', () => {
 		renderBar({ onStatusChange: undefined })
 		expect(screen.queryByRole('combobox', { name: 'Set status' })).toBeNull()
+	})
+
+	describe('bulk_edit_commit emitter (T4)', () => {
+		// The ship metric is `avg(selected_count)` filtered to `platform_device=ios`.
+		// Every commit path the bar triggers must fire trackBulkEditCommit exactly
+		// once with the live selectedCount and the resolved platform_device.
+		it('emits once with action=status_change and the current selectedCount on a status pick', () => {
+			renderBar({ selectedCount: 4 })
+			fireEvent.click(screen.getByRole('combobox', { name: 'Set status' }))
+			fireEvent.click(screen.getByRole('option', { name: 'Done' }))
+			expect(trackBulkEditCommit).toHaveBeenCalledTimes(1)
+			expect(trackBulkEditCommit).toHaveBeenCalledWith({
+				selected_count: 4,
+				action: 'status_change',
+				platform_device: 'desktop',
+			})
+		})
+
+		it('emits once with action=owner_change on an owner pick', () => {
+			renderBar({ selectedCount: 2 })
+			fireEvent.click(screen.getByRole('combobox', { name: 'Set owner' }))
+			fireEvent.click(screen.getByRole('option', { name: 'Bob' }))
+			expect(trackBulkEditCommit).toHaveBeenCalledTimes(1)
+			expect(trackBulkEditCommit).toHaveBeenCalledWith({
+				selected_count: 2,
+				action: 'owner_change',
+				platform_device: 'desktop',
+			})
+		})
+
+		it('emits action=copy for each of the four copy/open buttons', () => {
+			renderBar({
+				selectedCount: 3,
+				onCopyLink: vi.fn(),
+				onCopyTitle: vi.fn(),
+				onCopyTitleAsLink: vi.fn(),
+				onOpenLinks: vi.fn(),
+			})
+			fireEvent.click(screen.getByRole('button', { name: 'Copy links' }))
+			fireEvent.click(screen.getByRole('button', { name: 'Copy titles' }))
+			fireEvent.click(screen.getByRole('button', { name: 'Copy titles as links' }))
+			fireEvent.click(screen.getByRole('button', { name: 'Open in new tabs' }))
+			expect(trackBulkEditCommit).toHaveBeenCalledTimes(4)
+			for (const call of vi.mocked(trackBulkEditCommit).mock.calls) {
+				expect(call[0]).toEqual({
+					selected_count: 3,
+					action: 'copy',
+					platform_device: 'desktop',
+				})
+			}
+		})
+
+		it('emits action=delete only after the confirm dialog is confirmed', () => {
+			renderBar({ selectedCount: 5 })
+			fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+			// Opening the dialog must not fire the event yet — Trash2 click is intent,
+			// the dialog's Delete button is the commit.
+			expect(trackBulkEditCommit).not.toHaveBeenCalled()
+			fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }))
+			expect(trackBulkEditCommit).toHaveBeenCalledTimes(1)
+			expect(trackBulkEditCommit).toHaveBeenCalledWith({
+				selected_count: 5,
+				action: 'delete',
+				platform_device: 'desktop',
+			})
+		})
+
+		it('does NOT fire on delete when the user cancels the confirm dialog', () => {
+			renderBar({ selectedCount: 5 })
+			fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+			fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+			expect(trackBulkEditCommit).not.toHaveBeenCalled()
+		})
+
+		// DoD: "the iOS branch must be tested explicitly — a green suite that never
+		// enters the iOS branch is a failing DoD." Stub navigator.userAgent to an
+		// iPhone string so resolvePlatformDevice walks its first branch.
+		it('sets platform_device=ios when navigator.userAgent reports an iPhone', () => {
+			stubNavigator({
+				userAgent:
+					'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+				platform: 'iPhone',
+				maxTouchPoints: 5,
+			})
+			renderBar({ selectedCount: 6 })
+			fireEvent.click(screen.getByRole('combobox', { name: 'Set status' }))
+			fireEvent.click(screen.getByRole('option', { name: 'Done' }))
+			expect(trackBulkEditCommit).toHaveBeenCalledWith({
+				selected_count: 6,
+				action: 'status_change',
+				platform_device: 'ios',
+			})
+		})
+
+		// iPadOS 13+ reports a Mac UA — covered by the second branch of
+		// resolvePlatformDevice via maxTouchPoints. Real iPads sit at the
+		// project's own ship-gate widths (768/1024), so detection must NOT
+		// depend on a mobile-viewport check — assert both explicitly.
+		it.each([
+			['768px portrait', 768],
+			['1024px landscape', 1024],
+		])('sets platform_device=ios on iPadOS 13+ (Mac UA + touch) at %s', (_label, width) => {
+			Object.defineProperty(window, 'innerWidth', { value: width, configurable: true })
+			stubNavigator({
+				userAgent:
+					'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+				platform: 'MacIntel',
+				maxTouchPoints: 5,
+			})
+			renderBar({ selectedCount: 1 })
+			fireEvent.click(screen.getByRole('combobox', { name: 'Set status' }))
+			fireEvent.click(screen.getByRole('option', { name: 'Done' }))
+			const last = vi.mocked(trackBulkEditCommit).mock.calls.at(-1)?.[0]
+			expect(last?.platform_device).toBe('ios')
+		})
+
+		it('sets platform_device=android on an Android UA', () => {
+			stubNavigator({
+				userAgent:
+					'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+				platform: 'Linux armv8l',
+				maxTouchPoints: 5,
+			})
+			renderBar({ selectedCount: 1 })
+			fireEvent.click(screen.getByRole('combobox', { name: 'Set status' }))
+			fireEvent.click(screen.getByRole('option', { name: 'Done' }))
+			expect(trackBulkEditCommit).toHaveBeenCalledWith(
+				expect.objectContaining({ platform_device: 'android' }),
+			)
+		})
 	})
 })

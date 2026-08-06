@@ -1,10 +1,29 @@
 import { z } from 'zod'
+import { SAFE_METADATA_FIELD_NAME_RE } from './objects'
 import { safeJsonValue } from './primitives'
 
 export const triggerTypeSchema = z.enum(['cron', 'event', 'reminder'])
 
+// A cron `scope` filter narrows the pass to the objects the target agent should
+// act on. When set, the trigger runner pre-queries `objects` and skips session
+// creation entirely on a zero-row pass — no session, no `trigger_fired` event.
+// Matched rows are appended to the action prompt so the agent gets the batch
+// without a round-trip through get_objects.
+//
+// `metadata_eq` keys and `metadata_before_now` are inlined into `sql.raw`, so
+// they're pinned to `SAFE_METADATA_FIELD_NAME_RE` (same contract the
+// `metadata.<field>` filter on `/api/objects` enforces). Values in
+// `metadata_eq` are always parameter-bound.
+const safeFieldName = z.string().regex(SAFE_METADATA_FIELD_NAME_RE)
+export const cronScopeSchema = z.object({
+	entity_type: z.string().min(1),
+	metadata_eq: z.record(safeFieldName, z.string()).optional(),
+	metadata_before_now: safeFieldName.optional(),
+})
+
 export const cronConfigSchema = z.object({
 	expression: z.string(),
+	scope: cronScopeSchema.optional(),
 })
 
 export const conditionOperatorSchema = z.enum([
@@ -73,13 +92,43 @@ export const createTriggerSchema = z.discriminatedUnion('type', [
 	}),
 ])
 
-export const updateTriggerSchema = z.object({
-	name: z.string().min(1).optional(),
-	config: triggerConfigSchema.optional(),
-	action_prompt: z.string().min(1).optional(),
-	target_actor_id: z.string().uuid().optional(),
-	enabled: z.boolean().optional(),
-})
+// `type` is optional (a PATCH may only touch `enabled`, `name`, etc.) but when
+// present it must arrive together with a `config` that matches its shape —
+// otherwise a caller could flip `type` to 'event' while leaving a stale cron
+// `config` (or vice versa) on the row, which is exactly the corruption this
+// schema previously allowed by omitting `type` entirely.
+export const configSchemaForType: Record<z.infer<typeof triggerTypeSchema>, z.ZodTypeAny> = {
+	cron: cronConfigSchema,
+	event: eventConfigSchema,
+	reminder: reminderConfigSchema,
+}
+
+export const updateTriggerSchema = z
+	.object({
+		name: z.string().min(1).optional(),
+		type: triggerTypeSchema.optional(),
+		config: triggerConfigSchema.optional(),
+		action_prompt: z.string().min(1).optional(),
+		target_actor_id: z.string().uuid().optional(),
+		enabled: z.boolean().optional(),
+	})
+	.superRefine((data, ctx) => {
+		if (!data.type) return
+		if (!data.config) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'config is required when changing type',
+				path: ['config'],
+			})
+			return
+		}
+		const result = configSchemaForType[data.type].safeParse(data.config)
+		if (!result.success) {
+			for (const issue of result.error.issues) {
+				ctx.addIssue({ ...issue, path: ['config', ...issue.path] })
+			}
+		}
+	})
 
 export const triggerParamsSchema = z.object({
 	id: z.string().uuid(),

@@ -108,6 +108,73 @@ describe('parseChatLine', () => {
 		expect(events).toEqual([])
 	})
 
+	// AC-T2: the persisted user envelope carries a `maskin_attachments` array
+	// so reload can rebuild the user bubble — including inline file cards —
+	// without re-uploading the bytes.
+	it('reads maskin_attachments off a user envelope and emits them on the user event', () => {
+		const line = JSON.stringify({
+			type: 'user',
+			message: { role: 'user', content: 'look at this' },
+			maskin_attachments: [
+				{
+					kind: 'file',
+					id: 'file-uuid-1',
+					name: 'photo.png',
+					mime_type: 'image/png',
+					size_bytes: 1234,
+				},
+				{ kind: 'object', id: 'obj-1', title: 'Bet Alpha', type: 'bet' },
+			],
+		})
+		expect(parseChatLine(line, { includeUser: true })).toEqual([
+			{
+				kind: 'user',
+				text: 'look at this',
+				attachments: [
+					{
+						kind: 'file',
+						id: 'file-uuid-1',
+						name: 'photo.png',
+						mimeType: 'image/png',
+						sizeBytes: 1234,
+					},
+					{ kind: 'object', id: 'obj-1', title: 'Bet Alpha', type: 'bet' },
+				],
+			},
+		])
+	})
+
+	it('emits a user event for an image-only message even when content is empty', () => {
+		const line = JSON.stringify({
+			type: 'user',
+			message: { role: 'user', content: '' },
+			maskin_attachments: [
+				{
+					kind: 'file',
+					id: 'file-uuid-2',
+					name: 'shot.png',
+					mime_type: 'image/png',
+					size_bytes: 9,
+				},
+			],
+		})
+		expect(parseChatLine(line, { includeUser: true })).toEqual([
+			{
+				kind: 'user',
+				text: '',
+				attachments: [
+					{
+						kind: 'file',
+						id: 'file-uuid-2',
+						name: 'shot.png',
+						mimeType: 'image/png',
+						sizeBytes: 9,
+					},
+				],
+			},
+		])
+	})
+
 	it('parses a successful result envelope into a result event', () => {
 		const events = parseChatLine(loadFixtureAsLine('result-success'))
 		expect(events).toEqual([

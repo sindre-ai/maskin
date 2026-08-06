@@ -98,12 +98,13 @@ build_context() {
     echo "" >> "$context_file"
   fi
 
-  # Append skills
-  if [ -d /agent/skills ] && [ "$(ls -A /agent/skills/*.md 2>/dev/null)" ]; then
+  # Append skills — each skill lives at /agent/skills/<name>/SKILL.md
+  # (agent-storage.ts pullWorkspaceSkillsForAgent), not as a flat <name>.md.
+  if [ -d /agent/skills ] && [ "$(ls -A /agent/skills/*/SKILL.md 2>/dev/null)" ]; then
     echo "## Skills" >> "$context_file"
     echo "" >> "$context_file"
-    for f in /agent/skills/*.md; do
-      echo "### $(basename "$f" .md)" >> "$context_file"
+    for f in /agent/skills/*/SKILL.md; do
+      echo "### $(basename "$(dirname "$f")")" >> "$context_file"
       echo "" >> "$context_file"
       cat "$f" >> "$context_file"
       echo "" >> "$context_file"
@@ -217,6 +218,25 @@ CREDS_EOF
   echo "[system] Claude OAuth credentials written to $creds_dir/.credentials.json"
 }
 
+# Point git's github.com credential helper at our just-in-time token script
+# instead of relying on GITHUB_TOKEN staying valid for the whole session.
+# GitHub App installation tokens expire after exactly 1 hour, so a session
+# running longer than that would otherwise start failing git push/fetch/clone
+# partway through. Skipped entirely if no GitHub integration is configured
+# (GITHUB_INTEGRATION_ID unset), same as the GITHUB_TOKEN injection it backs.
+setup_github_credential_helper() {
+  if [ -z "$GITHUB_INTEGRATION_ID" ]; then
+    return
+  fi
+
+  # Reset any pre-existing helper chain for this host so ours is authoritative,
+  # then add ours. An empty value clears the list per git-credential(1).
+  git config --global credential."https://github.com".helper ""
+  git config --global --add credential."https://github.com".helper "/agent-github-credential-helper.sh"
+
+  echo "[system] GitHub credential helper configured for github.com"
+}
+
 # Run the agent
 run_agent() {
   # Pipe output to the agent-server's log ingest endpoint so the Maskin UI
@@ -266,7 +286,18 @@ run_agent() {
     # so the agent keeps running and this script can still reach its EXIT trap
     # (the completion signal).  curl returns 0 only once stdin hits EOF (the
     # agent exited) and the body flushed — the clean end-of-stream.
+    #
+    # Retry budget: 5 fast attempts (1s apart, ~5s) for the common quick blip,
+    # then slower attempts (10s apart) for another ~2 minutes to ride out an
+    # agent-server restart or network hiccup — a reader sitting idle between
+    # attempts just causes mild pipe backpressure (this loop never closes the
+    # read end), not the SIGPIPE risk that a fully-stopped reader would cause.
+    # Once that budget is exhausted we fall back to draining stdin, same as
+    # before, but first fire a one-shot best-effort marker POST so the switch
+    # to local-only output is visible in the Maskin UI instead of silent.
     local attempts=0
+    local fast_attempts=5
+    local max_attempts=17
     while true; do
       if curl -4 -sN -X POST "$log_ingest_url" \
           -H "Content-Type: text/plain" \
@@ -277,11 +308,19 @@ run_agent() {
         return 0
       fi
       attempts=$((attempts + 1))
-      if [ "$attempts" -ge 5 ]; then
+      if [ "$attempts" -ge "$max_attempts" ]; then
+        curl -4 -s --max-time 5 -X POST "$log_ingest_url" \
+          -H "Content-Type: text/plain" \
+          -d "[system] log streaming to Maskin failed after ${attempts} attempts — falling back to local-only output; further agent output will not appear in the Maskin UI for the rest of this session" \
+          -o /dev/null 2>/dev/null || true
         cat > /dev/null
         return 0
       fi
-      sleep 1
+      if [ "$attempts" -ge "$fast_attempts" ]; then
+        sleep 10
+      else
+        sleep 1
+      fi
     done
   }
 
@@ -380,5 +419,6 @@ install_runtime
 build_context
 setup_mcps
 setup_claude_credentials
+setup_github_credential_helper
 
 run_agent

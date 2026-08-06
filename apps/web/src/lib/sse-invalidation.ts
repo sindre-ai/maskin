@@ -14,6 +14,14 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 	queryClient.invalidateQueries({ queryKey: queryKeys.events.history(workspaceId) })
 	queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(event.entity_id) })
 
+	// Live-refresh the knowledge doc-header reference-count chip. The DoD
+	// tolerates a 5-minute lag (matches the hook's staleTime), but when a
+	// fresh cite lands over SSE we already know a downstream agent read this
+	// object — invalidate the counter so the chip catches up in the same tick.
+	if (event.action === 'workspace_knowledge_referenced') {
+		queryClient.invalidateQueries({ queryKey: queryKeys.objects.references(event.entity_id) })
+	}
+
 	// New comments may change unread counts for any subscriber in this workspace
 	// and the subscriber list for the entity that was commented on (the latter
 	// because the commenter auto-subscribes server-side).
@@ -34,6 +42,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'insight':
 		case 'bet':
 		case 'task':
+		case 'loop':
 		case 'knowledge':
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(event.entity_id) })

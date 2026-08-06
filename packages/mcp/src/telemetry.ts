@@ -52,7 +52,38 @@ export interface WidgetEvent {
 	ts: number
 }
 
-export type TelemetryEvent = ToolCallEvent | MutationEvent | WidgetEvent
+export interface ToolCallResponseSizeEvent {
+	event_type: 'tool_call_response_size'
+	tool_name: string
+	session_id: string
+	content_bytes: number
+	content_tokens: number
+	structured_content_bytes: number
+	structured_content_tokens: number
+	truncated: boolean
+}
+
+// MCP misfire event for the agent-reach-signal bet. The server-side
+// classifier in apps/dev/src/routes/mcp.ts owns the primary emission path;
+// this type is here so clients that surface handler-thrown misfires (or
+// downstream tests) speak the same shape as the server ingest.
+export type McpMisfireKind = 'tool_not_found' | 'unknown_param' | 'schema_validation_error'
+
+export interface ErrorEvent {
+	event_type: 'error'
+	kind: McpMisfireKind
+	tool_name: string
+	session_id: string
+	agent_actor_id?: string
+	requested_shape: Record<string, string>
+}
+
+export type TelemetryEvent =
+	| ToolCallEvent
+	| MutationEvent
+	| WidgetEvent
+	| ToolCallResponseSizeEvent
+	| ErrorEvent
 
 /** A telemetry sink ingests events. Production default POSTs to the API; tests
  *  inject capturing sinks; deployments without telemetry endpoints can pass a
@@ -139,6 +170,56 @@ export function recordWidgetEvent(
 			card_kind: event.card_kind,
 			session_id: SESSION_ID,
 			ts: Date.now(),
+		},
+		cfg,
+	)
+}
+
+// Cheap `bytes/4` token estimator. The response-scoping bet's First test only
+// needs to rank tools by p95 — accuracy beyond that doesn't earn the cost of
+// wiring a real tokenizer. T4's token cap is the place to revisit this.
+export function estimateTokensFromBytes(bytes: number): number {
+	if (bytes <= 0) return 0
+	return Math.ceil(bytes / 4)
+}
+
+// Serialize an arbitrary tool-response payload to its on-the-wire JSON. Returns
+// 0 bytes for null/undefined channels so a tool that omits `structuredContent`
+// reports a clean zero instead of skewing the aggregate.
+function measureJsonBytes(value: unknown): number {
+	if (value === undefined || value === null) return 0
+	try {
+		const json = JSON.stringify(value)
+		return json ? Buffer.byteLength(json, 'utf8') : 0
+	} catch {
+		return 0
+	}
+}
+
+export function recordToolCallResponseSize(
+	sink: TelemetrySink,
+	target: TelemetryConfig,
+	event: {
+		tool_name: string
+		content: unknown
+		structured_content: unknown
+		truncated: boolean
+		workspace_id?: string
+	},
+): void {
+	const cfg = event.workspace_id ? { ...target, workspaceId: event.workspace_id } : target
+	const contentBytes = measureJsonBytes(event.content)
+	const structuredBytes = measureJsonBytes(event.structured_content)
+	sink(
+		{
+			event_type: 'tool_call_response_size',
+			tool_name: event.tool_name,
+			session_id: SESSION_ID,
+			content_bytes: contentBytes,
+			content_tokens: estimateTokensFromBytes(contentBytes),
+			structured_content_bytes: structuredBytes,
+			structured_content_tokens: estimateTokensFromBytes(structuredBytes),
+			truncated: event.truncated,
 		},
 		cfg,
 	)

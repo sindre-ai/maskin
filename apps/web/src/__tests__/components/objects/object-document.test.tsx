@@ -1,7 +1,7 @@
 import { ObjectDocumentView } from '@/components/objects/object-document'
 import { render, screen } from '@testing-library/react'
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event'
-import { buildActorResponse, buildObjectResponse } from '../../factories'
+import { buildObjectResponse } from '../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -20,20 +20,21 @@ vi.mock('@/components/activity/object-activity', () => ({
 	ObjectActivity: () => <div data-testid="object-activity" />,
 }))
 
-vi.mock('@/components/shared/subscribe-toggle', () => ({
-	SubscribeToggle: () => <div data-testid="subscribe-toggle" />,
-}))
+// The knowledge doc-header chip reads live counts through `useKnowledgeReferences`.
+// Mock the whole use-objects module here so the ObjectDocumentView tests below
+// can drive chip visibility deterministically (0 → hidden, N>0 → visible).
+const mockUseKnowledgeReferences = vi.fn()
+mockUseKnowledgeReferences.mockReturnValue({ data: undefined })
+vi.mock('@/hooks/use-objects', async () => {
+	const actual = await vi.importActual<typeof import('@/hooks/use-objects')>('@/hooks/use-objects')
+	return {
+		...actual,
+		useKnowledgeReferences: (...args: unknown[]) => mockUseKnowledgeReferences(...args),
+	}
+})
 
-vi.mock('@/components/objects/metadata-properties', () => ({
-	MetadataProperties: () => <div data-testid="metadata-properties" />,
-}))
-
-vi.mock('@/components/objects/linked-objects', () => ({
-	LinkedObjects: () => <div data-testid="linked-objects" />,
-}))
-
-vi.mock('@/components/objects/object-files', () => ({
-	ObjectFiles: () => <div data-testid="object-files" />,
+vi.mock('@/components/objects/loop-card', () => ({
+	LoopCard: () => <div data-testid="loop-card" />,
 }))
 
 const baseProps = {
@@ -45,6 +46,8 @@ const baseProps = {
 	onUpdateDriver: vi.fn(),
 	onDelete: vi.fn(),
 }
+
+const betStatuses = ['proposed', 'active', 'paused', 'succeeded', 'failed', 'archived']
 
 describe('ObjectDocumentView', () => {
 	it('renders title in textarea', () => {
@@ -59,11 +62,17 @@ describe('ObjectDocumentView', () => {
 		expect(screen.getByText('bet')).toBeInTheDocument()
 	})
 
-	it('shows creator name and avatar when provided', () => {
-		const object = buildObjectResponse()
-		const creator = buildActorResponse({ name: 'Alice' })
-		render(<ObjectDocumentView {...baseProps} object={object} creator={creator} />)
-		expect(screen.getByText('Alice')).toBeInTheDocument()
+	it('does not render creator or timestamps in the header (moved to right sidebar)', () => {
+		// Subscribe + created_by + created_at + updated_at all moved into the
+		// right-side properties sidebar. `ObjectDocumentView` is the reading
+		// path; those fields no longer appear here.
+		const object = buildObjectResponse({
+			createdAt: '2026-06-01T10:00:00.000Z',
+			updatedAt: '2026-06-01T10:05:00.000Z',
+		})
+		const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
+		expect(container.querySelectorAll('time').length).toBe(0)
+		expect(container.textContent).not.toMatch(/updated \d/)
 	})
 
 	it('calls onUpdateTitle on blur when title changed', async () => {
@@ -95,6 +104,22 @@ describe('ObjectDocumentView', () => {
 		expect(onUpdateTitle).not.toHaveBeenCalled()
 	})
 
+	it('updates displayed title when rerendered with a different object', () => {
+		const objectA = buildObjectResponse({
+			id: '11111111-1111-1111-1111-111111111111',
+			title: 'Object A title',
+		})
+		const objectB = buildObjectResponse({
+			id: '22222222-2222-2222-2222-222222222222',
+			title: 'Object B title',
+		})
+		const { rerender } = render(<ObjectDocumentView {...baseProps} object={objectA} />)
+		expect(screen.getByDisplayValue('Object A title')).toBeInTheDocument()
+		rerender(<ObjectDocumentView {...baseProps} object={objectB} />)
+		expect(screen.getByDisplayValue('Object B title')).toBeInTheDocument()
+		expect(screen.queryByDisplayValue('Object A title')).not.toBeInTheDocument()
+	})
+
 	it('shows "Saved" indicator when showSaved is true', () => {
 		const object = buildObjectResponse()
 		render(<ObjectDocumentView {...baseProps} object={object} showSaved />)
@@ -105,6 +130,32 @@ describe('ObjectDocumentView', () => {
 		const object = buildObjectResponse()
 		render(<ObjectDocumentView {...baseProps} object={object} />)
 		expect(screen.queryByText('Saved')).not.toBeInTheDocument()
+	})
+
+	it('does not render Properties, Files, or Linked Objects in the body', () => {
+		const object = buildObjectResponse({ title: 'A bet' })
+		render(<ObjectDocumentView {...baseProps} object={object} />)
+		// AC-U5: the main reading path holds no property grid; properties + files
+		// live in a right drawer (rendered by the parent ObjectDocument, not the View).
+		// Linked objects are no longer here at all — they move into the timeline
+		// in the sibling "Relationships into the timeline" task.
+		expect(screen.queryByTestId('metadata-properties')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('object-files')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('linked-objects')).not.toBeInTheDocument()
+	})
+
+	describe('LoopCard wiring', () => {
+		it('renders LoopCard when type is loop', () => {
+			const object = buildObjectResponse({ type: 'loop', status: 'holding' })
+			render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(screen.getByTestId('loop-card')).toBeInTheDocument()
+		})
+
+		it('does not render LoopCard for other types', () => {
+			const object = buildObjectResponse({ type: 'bet' })
+			render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(screen.queryByTestId('loop-card')).not.toBeInTheDocument()
+		})
 	})
 
 	it('shows AgentWorkingBadge when activeSessionId present', () => {
@@ -187,6 +238,131 @@ describe('ObjectDocumentView', () => {
 			await user.click(screen.getByRole('option', { name: /Unassigned/ }))
 
 			expect(onUpdateDriver).toHaveBeenCalledWith(null)
+		})
+	})
+
+	describe('above-title header row order', () => {
+		// DoD contract for T2: the four editable identity elements sit above
+		// the <h1> textarea in the DOM, in the order TypeBadge → status →
+		// IndicatorBadgeChip → OwnerSelect. This is the frame test — the
+		// per-viewport fold assertion lives in the Playwright spec.
+		it('renders TypeBadge, StatusSelect, IndicatorBadgeChip, and OwnerSelect above the title', () => {
+			const members = [
+				{ actorId: 'actor-alice', role: 'owner', joinedAt: null, name: 'Alice', type: 'human' },
+			]
+			const object = buildObjectResponse({ type: 'bet', status: 'active' })
+			const { container } = render(
+				<ObjectDocumentView
+					{...baseProps}
+					object={object}
+					statuses={betStatuses}
+					members={members}
+					betStatus={{ state: 'progressing', pendingAction: null, decisionsSoFar: [] }}
+				/>,
+			)
+			const textarea = container.querySelector('textarea')
+			expect(textarea).not.toBeNull()
+			if (!textarea) return
+			const typeBadge = screen.getByText('bet')
+			// Node.DOCUMENT_POSITION_FOLLOWING = 4 — bit set when `textarea`
+			// follows `typeBadge` in DOM order.
+			expect(typeBadge.compareDocumentPosition(textarea) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+				Node.DOCUMENT_POSITION_FOLLOWING,
+			)
+		})
+
+		it('no longer renders SubscribeToggle, creator, or created/updated chips inline', () => {
+			const object = buildObjectResponse({
+				type: 'knowledge',
+				createdAt: '2026-06-01T10:00:00.000Z',
+				updatedAt: '2026-06-01T10:05:00.000Z',
+			})
+			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(screen.queryByTestId('subscribe-toggle')).not.toBeInTheDocument()
+			expect(container.querySelectorAll('time').length).toBe(0)
+			expect(screen.queryByText(/Referenced by/)).not.toBeInTheDocument()
+		})
+	})
+
+	// One handler, two entry points: picking `archived` in the status picker
+	// dispatches through `onArchive` — the same handler the row `⋯` menu's
+	// Archive item calls. Prevents the picker path from silently duplicating
+	// or bypassing archive logic.
+	describe('status picker → archive routing', () => {
+		it('routes archived picks through onArchive for bets when handler is provided', async () => {
+			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+			const onArchive = vi.fn()
+			const onUpdateStatus = vi.fn()
+			const object = buildObjectResponse({ type: 'bet', status: 'active' })
+
+			render(
+				<ObjectDocumentView
+					{...baseProps}
+					object={object}
+					statuses={betStatuses}
+					onArchive={onArchive}
+					onUpdateStatus={onUpdateStatus}
+				/>,
+			)
+
+			const triggers = screen.getAllByRole('combobox')
+			// StatusSelect is the first combobox (mounted before OwnerSelect).
+			await user.click(triggers[0])
+			await user.click(screen.getByRole('option', { name: /archived/i }))
+
+			expect(onArchive).toHaveBeenCalledTimes(1)
+			expect(onUpdateStatus).not.toHaveBeenCalled()
+		})
+
+		it('routes non-archived picks through onUpdateStatus even when onArchive is provided', async () => {
+			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+			const onArchive = vi.fn()
+			const onUpdateStatus = vi.fn()
+			const object = buildObjectResponse({ type: 'bet', status: 'active' })
+
+			render(
+				<ObjectDocumentView
+					{...baseProps}
+					object={object}
+					statuses={betStatuses}
+					onArchive={onArchive}
+					onUpdateStatus={onUpdateStatus}
+				/>,
+			)
+
+			const triggers = screen.getAllByRole('combobox')
+			await user.click(triggers[0])
+			await user.click(screen.getByRole('option', { name: /paused/i }))
+
+			expect(onUpdateStatus).toHaveBeenCalledWith('paused')
+			expect(onArchive).not.toHaveBeenCalled()
+		})
+
+		it('leaves non-bet types on the generic onUpdateStatus path', async () => {
+			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+			const onArchive = vi.fn()
+			const onUpdateStatus = vi.fn()
+			// A task in a workspace whose enum still happens to include
+			// `archived` should fall through to the generic status route — archive
+			// isn't a supported action on non-bet types in this ship.
+			const object = buildObjectResponse({ type: 'task', status: 'todo' })
+
+			render(
+				<ObjectDocumentView
+					{...baseProps}
+					object={object}
+					statuses={['todo', 'archived']}
+					onArchive={onArchive}
+					onUpdateStatus={onUpdateStatus}
+				/>,
+			)
+
+			const triggers = screen.getAllByRole('combobox')
+			await user.click(triggers[0])
+			await user.click(screen.getByRole('option', { name: /archived/i }))
+
+			expect(onUpdateStatus).toHaveBeenCalledWith('archived')
+			expect(onArchive).not.toHaveBeenCalled()
 		})
 	})
 })

@@ -98,7 +98,12 @@ export const objects = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
-	(t) => [index('objects_ws_type_status_idx').on(t.workspaceId, t.type, t.status)],
+	(t) => [
+		index('objects_ws_type_status_idx').on(t.workspaceId, t.type, t.status),
+		// Range-scan path for list_objects(updated_before/updated_after) — the
+		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0043.
+		index('objects_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
+	],
 )
 
 // ── Relationships ───────────────────────────────────────────────────────────
@@ -117,7 +122,13 @@ export const relationships = pgTable(
 			.notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 	},
-	(t) => [unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type)],
+	(t) => [
+		unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type),
+		check(
+			'relationships_source_target_type_kind',
+			sql`${t.sourceType} IN ('object', 'file') AND ${t.targetType} IN ('object', 'file')`,
+		),
+	],
 )
 
 // ── Events ──────────────────────────────────────────────────────────────────
@@ -174,6 +185,29 @@ export const integrations = pgTable(
 			.on(t.workspaceId, t.provider)
 			.where(sql`${t.externalId} IS NULL`),
 	],
+)
+
+// ── Slack User Links ───────────────────────────────────────────────────────
+// Per-(Slack team, Slack user) routing into a Maskin actor + default
+// workspace. Read by the Slack webhook route on every @mention; written by
+// the OAuth account-link step (T2) and reaped on disconnect (T5). See
+// drizzle/0040_slack_user_links.sql.
+
+export const slackUserLinks = pgTable(
+	'slack_user_links',
+	{
+		slackTeamId: text('slack_team_id').notNull(),
+		slackUserId: text('slack_user_id').notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		defaultWorkspaceId: uuid('default_workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+	},
+	(t) => [primaryKey({ columns: [t.slackTeamId, t.slackUserId] })],
 )
 
 // ── Triggers ────────────────────────────────────────────────────────────────
@@ -243,6 +277,9 @@ export const sessions = pgTable(
 	},
 	(t) => [
 		index('sessions_ws_status_idx').on(t.workspaceId, t.status),
+		// Range-scan path for list_sessions(updated_before/updated_after) — the
+		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
+		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
 		index('sessions_actor_completed_idx')
 			.on(t.actorId, t.completedAt)
@@ -312,6 +349,8 @@ export const workspaceSkills = pgTable(
 		storageKey: text('storage_key').notNull(),
 		sizeBytes: integer('size_bytes').notNull(),
 		isValid: boolean('is_valid').notNull().default(true),
+		isFolder: boolean('is_folder').notNull().default(false),
+		fileCount: integer('file_count'),
 		// Per-row marker keys for managed-package installs; nullable everywhere.
 		metadata: jsonb('metadata'),
 		createdBy: uuid('created_by').references(() => actors.id),
@@ -695,7 +734,7 @@ export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$in
 
 // ── Catalog Packages ──────────────────────────────────────────────────────────
 //
-// Vetted, installable loops (formerly "bundles") of actors, triggers, skills,
+// Vetted, installable bundles of actors, triggers, skills,
 // and integrations. Any workspace can install a package and Maskin pushes
 // version updates to locked installs via the cron in T5. A package is a single
 // row here; the elements it ships with live in `catalog_package_items` as
@@ -707,7 +746,7 @@ export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$in
 // `catalog_package_items.source_item_id` it was provisioned from). The
 // version-push cron uses both keys to find what to update and to resolve
 // intra-package wiring (e.g. a trigger whose `target_actor_id` points at an
-// agent in the same loop) against the snapshot graph instead of the live
+// agent in the same package) against the snapshot graph instead of the live
 // publisher workspace. Carried as a nullable `metadata jsonb` column on each
 // of the four element tables (added by 0035_install_metadata.sql) so non-
 // install rows pay nothing and install rows are findable by a partial

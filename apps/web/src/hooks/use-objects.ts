@@ -1,8 +1,15 @@
 import type { createObjectSchema, updateObjectSchema } from '@maskin/shared'
 import { type InfiniteData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { RowSelectionState } from '@tanstack/react-table'
+import { type Dispatch, type SetStateAction, useCallback } from 'react'
 import { toast } from 'sonner'
 import type { z } from 'zod'
-import { trackBetArchived, trackBetCreated, trackBetStatusChanged } from '../lib/analytics'
+import {
+	trackBetArchived,
+	trackBetCreated,
+	trackBetStatusChanged,
+	trackLoopGraduated,
+} from '../lib/analytics'
 import type {
 	BulkUpdateObjectsInput,
 	BulkUpdateObjectsResponse,
@@ -22,19 +29,41 @@ export function useObjects(workspaceId: string, filters?: Record<string, string>
 	})
 }
 
-export function useObject(id: string) {
+export function useObject(id: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.objects.detail(id),
 		queryFn: () => api.objects.get(id),
-		enabled: !!id,
+		enabled: !!id && (options?.enabled ?? true),
 	})
 }
 
-export function useObjectGraph(workspaceId: string, id: string) {
+export function useObjectGraph(
+	workspaceId: string,
+	id: string,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
 	return useQuery({
 		queryKey: queryKeys.objects.graph(id),
 		queryFn: () => api.objects.graph(id, workspaceId),
-		enabled: !!id && !!workspaceId,
+		enabled: enabled && !!id && !!workspaceId,
+	})
+}
+
+// Powers the "Referenced by N contexts/week" chip on the knowledge doc
+// header. DoD is happy with async freshness up to 5 minutes — a longer stale
+// window plus the SSE-driven cache invalidation that fires on any new
+// `workspace_knowledge_referenced` event keeps this cheap without stalling
+// the chip after a real cite.
+export function useKnowledgeReferences(
+	workspaceId: string,
+	id: string,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
+	return useQuery({
+		queryKey: queryKeys.objects.references(id),
+		queryFn: () => api.objects.references(id, workspaceId),
+		enabled: enabled && !!id && !!workspaceId,
+		staleTime: 5 * 60 * 1000,
 	})
 }
 
@@ -46,6 +75,17 @@ export function useCreateObject(workspaceId: string) {
 			queryClient.setQueryData(queryKeys.objects.detail(data.id), data)
 			if (data.type === 'bet') {
 				trackBetCreated({ entity_id: data.id, entity_type: 'bet' })
+			}
+			if (data.type === 'loop') {
+				const metadata = data.metadata as Record<string, unknown> | null
+				const rawSourceBetId = metadata?.source_bet_id
+				const sourceBetId =
+					typeof rawSourceBetId === 'string' && rawSourceBetId.length > 0 ? rawSourceBetId : null
+				trackLoopGraduated({
+					entity_id: data.id,
+					entity_type: 'loop',
+					source_bet_id: sourceBetId,
+				})
 			}
 		},
 		onSettled: (_data, _err, variables) => {
@@ -62,9 +102,21 @@ export function useUpdateObject(workspaceId: string) {
 	return useMutation({
 		mutationFn: ({ id, data }: { id: string; data: UpdateObjectInput }) =>
 			api.objects.update(id, data),
-		onMutate: ({ id }) => {
+		onMutate: ({ id, data }) => {
 			const cached = queryClient.getQueryData<ObjectResponse>(queryKeys.objects.detail(id))
-			return { prevStatus: cached?.status ?? null, type: cached?.type ?? null }
+			// Archiving is the one status transition where the row must disappear
+			// from default reads (T3's `include_archived=false` gate) instead of
+			// just changing colour. Optimistically drop it from the list caches so
+			// the row is gone before the server response settles; onSettled's
+			// invalidation will re-hydrate either way.
+			const listSnapshots =
+				data.status === 'archived'
+					? optimisticallyHideArchivedRow(queryClient, workspaceId, id)
+					: null
+			return { prevStatus: cached?.status ?? null, type: cached?.type ?? null, listSnapshots }
+		},
+		onError: (_err, _vars, ctx) => {
+			if (ctx?.listSnapshots) restoreListSnapshots(queryClient, ctx.listSnapshots)
 		},
 		onSuccess: (data, variables, ctx) => {
 			const nextStatus = variables.data.status
@@ -88,6 +140,47 @@ export function useUpdateObject(workspaceId: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
 		},
 	})
+}
+
+interface ListSnapshots {
+	flat: Array<[readonly unknown[], ObjectResponse[] | undefined]>
+	infinite: Array<[readonly unknown[], InfiniteData<ObjectResponse[]> | undefined]>
+}
+
+function optimisticallyHideArchivedRow(
+	queryClient: ReturnType<typeof useQueryClient>,
+	workspaceId: string,
+	id: string,
+): ListSnapshots {
+	const flat = queryClient.getQueriesData<ObjectResponse[]>({
+		queryKey: queryKeys.objects.listPrefix(workspaceId),
+	})
+	for (const [key, cache] of flat) {
+		if (!cache) continue
+		queryClient.setQueryData<ObjectResponse[]>(
+			key,
+			cache.filter((obj) => obj.id !== id),
+		)
+	}
+	const infinite = queryClient.getQueriesData<InfiniteData<ObjectResponse[]>>({
+		queryKey: queryKeys.objects.listInfinitePrefix(workspaceId),
+	})
+	for (const [key, cache] of infinite) {
+		if (!cache) continue
+		queryClient.setQueryData<InfiniteData<ObjectResponse[]>>(key, {
+			...cache,
+			pages: cache.pages.map((page) => page.filter((obj) => obj.id !== id)),
+		})
+	}
+	return { flat, infinite }
+}
+
+function restoreListSnapshots(
+	queryClient: ReturnType<typeof useQueryClient>,
+	snapshots: ListSnapshots,
+) {
+	for (const [key, cache] of snapshots.flat) queryClient.setQueryData(key, cache)
+	for (const [key, cache] of snapshots.infinite) queryClient.setQueryData(key, cache)
 }
 
 type ObjectListCache = ObjectResponse[]
@@ -187,6 +280,102 @@ export function useBulkUpdateObjects(workspaceId: string) {
 			for (const id of idsToInvalidate) {
 				queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
 			}
+		},
+	})
+}
+
+export interface BulkOperationResponse {
+	results: Array<{ id: string; ok: boolean; error?: string }>
+}
+
+// Shared toast + selection-retention logic for bulk object mutations (status
+// change, owner change, delete). Guards against a malformed `results` shape
+// so an API contract drift can't throw inside a query-observer onSuccess
+// callback — TanStack Query swallows that exception (`void Promise.reject(e)`)
+// with no user-visible signal, leaving the toast unshown and the selection
+// un-trimmed despite the mutation having actually completed.
+export function useBulkResultHandlers(
+	clearSelection: () => void,
+	setRowSelection: Dispatch<SetStateAction<RowSelectionState>>,
+) {
+	const reportBulkResult = useCallback(
+		(response: BulkOperationResponse, total: number, verb: 'updated' | 'deleted') => {
+			if (!Array.isArray(response?.results)) {
+				toast.error(`Failed to ${verb === 'deleted' ? 'delete' : 'update'} objects`)
+				return
+			}
+			const okCount = response.results.filter((r) => r.ok).length
+			const failed = total - okCount
+			if (failed === 0) {
+				toast.success(`${okCount} object${okCount === 1 ? '' : 's'} ${verb}`)
+				clearSelection()
+			} else {
+				const firstError = response.results.find((r) => !r.ok)?.error
+				toast.error(`${okCount} of ${total} ${verb}; ${failed} failed`, {
+					description: firstError,
+				})
+			}
+		},
+		[clearSelection],
+	)
+
+	const retainOnlyFailed = useCallback(
+		(response: BulkOperationResponse) => {
+			if (!Array.isArray(response?.results)) return
+			const failedIds = new Set(response.results.filter((r) => !r.ok).map((r) => r.id))
+			if (failedIds.size === 0) return
+			setRowSelection((prev) => {
+				const next: RowSelectionState = {}
+				for (const id of Object.keys(prev)) {
+					if (failedIds.has(id)) next[id] = prev[id] as boolean
+				}
+				return next
+			})
+		},
+		[setRowSelection],
+	)
+
+	return { reportBulkResult, retainOnlyFailed }
+}
+
+// Stamp / unstamp the "Verified" chip on a Knowledge Author write. Server-side
+// this is a scoped write on `metadata.verified_by` + `metadata.verified_at`
+// wrapped with a dedicated `verified` / `unverified` timeline event; server
+// enforces the "human admin/owner only" rule so the mutation is safe to
+// surface behind a client-side visibility guard.
+export function useVerifyObject(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, verified }: { id: string; verified: boolean }) =>
+			api.objects.verify(id, verified),
+		onSuccess: (data) => {
+			queryClient.setQueryData(queryKeys.objects.detail(data.id), data)
+		},
+		onSettled: (_data, _err, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+		},
+	})
+}
+
+// Roll back a single Knowledge Author write on a knowledge object. Server
+// re-verifies the KA identity, the 7-day window, and the caller's role, so
+// the mutation is safe to expose behind the client-side visibility guard.
+// Invalidates detail + graph + list on settle so the SSE-refreshed timeline
+// picks up the reversal + reversal event row without a manual refresh.
+export function useUndoKnowledgeWrite(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, eventId }: { id: string; eventId: number }) =>
+			api.objects.undoWrite(id, eventId),
+		onSuccess: (data) => {
+			queryClient.setQueryData(queryKeys.objects.detail(data.id), data)
+		},
+		onSettled: (_data, _err, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 		},
 	})
 }

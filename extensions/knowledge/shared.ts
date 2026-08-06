@@ -8,7 +8,21 @@ export const KNOWLEDGE_STATUSES = ['draft', 'validated', 'deprecated']
 export const KNOWLEDGE_RELATIONSHIP_TYPES = ['supersedes', 'contradicts', 'about']
 export const KNOWLEDGE_DISPLAY_NAME = 'Article'
 
+export const KNOWLEDGE_DOC_TYPES = [
+	'topic_page',
+	'playbook',
+	'operational',
+	'profile',
+	'changelog',
+	'reference',
+	'note',
+]
+
 export const KNOWLEDGE_FIELDS: FieldDefinition[] = [
+	{ name: 'doc_type', type: 'enum', values: KNOWLEDGE_DOC_TYPES },
+	{ name: 'provenance', type: 'text' },
+	{ name: 'last_validated_at', type: 'date' },
+	{ name: 'review_by', type: 'date' },
 	{ name: 'summary', type: 'text', required: true },
 	{
 		name: 'confidence',
@@ -16,7 +30,6 @@ export const KNOWLEDGE_FIELDS: FieldDefinition[] = [
 		values: ['low', 'medium', 'high'],
 	},
 	{ name: 'tags', type: 'text' },
-	{ name: 'last_validated_at', type: 'date' },
 ]
 
 export const KNOWLEDGE_DEFAULT_SETTINGS: ModuleDefaultSettings = {

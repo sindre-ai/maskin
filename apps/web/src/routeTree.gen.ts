@@ -13,12 +13,13 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
+import { Route as PrototypesAboveTitleHeaderRouteImport } from './routes/prototypes/above-title-header'
 import { Route as AuthedWorkspacesRouteImport } from './routes/_authed/workspaces'
 import { Route as AuthedWorkspaceIdRouteImport } from './routes/_authed/$workspaceId'
 import { Route as AuthedWorkspaceIdIndexRouteImport } from './routes/_authed/$workspaceId/index'
 import { Route as AuthedWorkspaceIdSettingsRouteImport } from './routes/_authed/$workspaceId/settings'
 import { Route as AuthedWorkspaceIdMarketplaceRouteImport } from './routes/_authed/$workspaceId/marketplace'
-import { Route as AuthedWorkspaceIdActivityRouteImport } from './routes/_authed/$workspaceId/activity'
+import { Route as AuthedWorkspaceIdBriefingRouteImport } from './routes/_authed/$workspaceId/briefing'
 import { Route as AuthedWorkspaceIdTriggersIndexRouteImport } from './routes/_authed/$workspaceId/triggers/index'
 import { Route as AuthedWorkspaceIdSettingsIndexRouteImport } from './routes/_authed/$workspaceId/settings/index'
 import { Route as AuthedWorkspaceIdObjectsIndexRouteImport } from './routes/_authed/$workspaceId/objects/index'
@@ -54,6 +55,12 @@ const AuthedIndexRoute = AuthedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthedRoute,
 } as any)
+const PrototypesAboveTitleHeaderRoute =
+  PrototypesAboveTitleHeaderRouteImport.update({
+    id: '/prototypes/above-title-header',
+    path: '/prototypes/above-title-header',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AuthedWorkspacesRoute = AuthedWorkspacesRouteImport.update({
   id: '/workspaces',
   path: '/workspaces',
@@ -81,10 +88,10 @@ const AuthedWorkspaceIdMarketplaceRoute =
     path: '/marketplace',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
-const AuthedWorkspaceIdActivityRoute =
-  AuthedWorkspaceIdActivityRouteImport.update({
-    id: '/activity',
-    path: '/activity',
+const AuthedWorkspaceIdBriefingRoute =
+  AuthedWorkspaceIdBriefingRouteImport.update({
+    id: '/briefing',
+    path: '/briefing',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
 const AuthedWorkspaceIdTriggersIndexRoute =
@@ -184,7 +191,8 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/workspaces': typeof AuthedWorkspacesRoute
-  '/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
+  '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
+  '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/$workspaceId/marketplace': typeof AuthedWorkspaceIdMarketplaceRoute
   '/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
   '/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
@@ -208,8 +216,9 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/workspaces': typeof AuthedWorkspacesRoute
+  '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/': typeof AuthedIndexRoute
-  '/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
+  '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/$workspaceId/marketplace': typeof AuthedWorkspaceIdMarketplaceRoute
   '/$workspaceId': typeof AuthedWorkspaceIdIndexRoute
   '/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
@@ -235,8 +244,9 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/_authed/workspaces': typeof AuthedWorkspacesRoute
+  '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/_authed/': typeof AuthedIndexRoute
-  '/_authed/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
+  '/_authed/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/_authed/$workspaceId/marketplace': typeof AuthedWorkspaceIdMarketplaceRoute
   '/_authed/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
   '/_authed/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
@@ -264,7 +274,8 @@ export interface FileRouteTypes {
     | '/signup'
     | '/$workspaceId'
     | '/workspaces'
-    | '/$workspaceId/activity'
+    | '/prototypes/above-title-header'
+    | '/$workspaceId/briefing'
     | '/$workspaceId/marketplace'
     | '/$workspaceId/settings'
     | '/$workspaceId/'
@@ -288,8 +299,9 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/workspaces'
+    | '/prototypes/above-title-header'
     | '/'
-    | '/$workspaceId/activity'
+    | '/$workspaceId/briefing'
     | '/$workspaceId/marketplace'
     | '/$workspaceId'
     | '/$workspaceId/agents/$agentId'
@@ -314,8 +326,9 @@ export interface FileRouteTypes {
     | '/signup'
     | '/_authed/$workspaceId'
     | '/_authed/workspaces'
+    | '/prototypes/above-title-header'
     | '/_authed/'
-    | '/_authed/$workspaceId/activity'
+    | '/_authed/$workspaceId/briefing'
     | '/_authed/$workspaceId/marketplace'
     | '/_authed/$workspaceId/settings'
     | '/_authed/$workspaceId/'
@@ -340,6 +353,7 @@ export interface RootRouteChildren {
   AuthedRoute: typeof AuthedRouteWithChildren
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  PrototypesAboveTitleHeaderRoute: typeof PrototypesAboveTitleHeaderRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -371,6 +385,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AuthedIndexRouteImport
       parentRoute: typeof AuthedRoute
+    }
+    '/prototypes/above-title-header': {
+      id: '/prototypes/above-title-header'
+      path: '/prototypes/above-title-header'
+      fullPath: '/prototypes/above-title-header'
+      preLoaderRoute: typeof PrototypesAboveTitleHeaderRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_authed/workspaces': {
       id: '/_authed/workspaces'
@@ -407,11 +428,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWorkspaceIdMarketplaceRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
-    '/_authed/$workspaceId/activity': {
-      id: '/_authed/$workspaceId/activity'
-      path: '/activity'
-      fullPath: '/$workspaceId/activity'
-      preLoaderRoute: typeof AuthedWorkspaceIdActivityRouteImport
+    '/_authed/$workspaceId/briefing': {
+      id: '/_authed/$workspaceId/briefing'
+      path: '/briefing'
+      fullPath: '/$workspaceId/briefing'
+      preLoaderRoute: typeof AuthedWorkspaceIdBriefingRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
     '/_authed/$workspaceId/triggers/': {
@@ -555,7 +576,7 @@ const AuthedWorkspaceIdSettingsRouteWithChildren =
   )
 
 interface AuthedWorkspaceIdRouteChildren {
-  AuthedWorkspaceIdActivityRoute: typeof AuthedWorkspaceIdActivityRoute
+  AuthedWorkspaceIdBriefingRoute: typeof AuthedWorkspaceIdBriefingRoute
   AuthedWorkspaceIdMarketplaceRoute: typeof AuthedWorkspaceIdMarketplaceRoute
   AuthedWorkspaceIdSettingsRoute: typeof AuthedWorkspaceIdSettingsRouteWithChildren
   AuthedWorkspaceIdIndexRoute: typeof AuthedWorkspaceIdIndexRoute
@@ -569,7 +590,7 @@ interface AuthedWorkspaceIdRouteChildren {
 }
 
 const AuthedWorkspaceIdRouteChildren: AuthedWorkspaceIdRouteChildren = {
-  AuthedWorkspaceIdActivityRoute: AuthedWorkspaceIdActivityRoute,
+  AuthedWorkspaceIdBriefingRoute: AuthedWorkspaceIdBriefingRoute,
   AuthedWorkspaceIdMarketplaceRoute: AuthedWorkspaceIdMarketplaceRoute,
   AuthedWorkspaceIdSettingsRoute: AuthedWorkspaceIdSettingsRouteWithChildren,
   AuthedWorkspaceIdIndexRoute: AuthedWorkspaceIdIndexRoute,
@@ -605,6 +626,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthedRoute: AuthedRouteWithChildren,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  PrototypesAboveTitleHeaderRoute: PrototypesAboveTitleHeaderRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

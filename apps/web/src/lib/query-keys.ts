@@ -12,6 +12,7 @@ export const queryKeys = {
 		boardPrefix: (workspaceId: string) => ['objects', workspaceId, 'board'] as const,
 		detail: (id: string) => ['objects', 'detail', id] as const,
 		graph: (id: string) => ['objects', 'graph', id] as const,
+		references: (id: string) => ['objects', 'references', id] as const,
 	},
 	bets: {
 		all: (workspaceId: string) => ['bets', workspaceId] as const,
@@ -53,6 +54,8 @@ export const queryKeys = {
 	workspaceSkills: {
 		all: (workspaceId: string) => ['workspace-skills', workspaceId] as const,
 		detail: (workspaceId: string, name: string) => ['workspace-skills', workspaceId, name] as const,
+		files: (workspaceId: string, skillId: string) =>
+			['workspace-skills', workspaceId, 'files', skillId] as const,
 	},
 	agentSkillAttachments: {
 		all: (actorId: string) => ['agent-skill-attachments', actorId] as const,
@@ -63,8 +66,6 @@ export const queryKeys = {
 		logs: (sessionId: string) => ['sessions', sessionId, 'logs'] as const,
 		byActor: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'running'] as const,
-		byActorAll: (workspaceId: string, actorId: string) =>
-			['sessions', workspaceId, 'actor', actorId] as const,
 		byActorAllInfinite: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'all', 'infinite'] as const,
 		byMentionObject: (workspaceId: string, objectId: string) =>
@@ -94,11 +95,20 @@ export const queryKeys = {
 	billing: {
 		usage: (workspaceId: string) => ['billing', workspaceId, 'usage'] as const,
 	},
+	briefing: {
+		current: (workspaceId: string) => ['briefing', workspaceId] as const,
+	},
 	subscriptions: {
 		subscribers: (entityType: string, entityId: string) =>
 			['subscriptions', 'subscribers', entityType, entityId] as const,
-		unread: (workspaceId: string, entityType?: string) =>
-			['subscriptions', 'unread', workspaceId, entityType ?? 'all'] as const,
+		unread: (workspaceId: string, entityType?: string, includeRecentlyRead?: boolean) =>
+			[
+				'subscriptions',
+				'unread',
+				workspaceId,
+				entityType ?? 'all',
+				includeRecentlyRead ? 'with-recent' : 'unread-only',
+			] as const,
 	},
 	userDisplaySettings: {
 		list: (workspaceId: string) => ['user-display-settings', workspaceId, 'list'] as const,

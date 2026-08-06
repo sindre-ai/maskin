@@ -98,6 +98,27 @@ export class S3StorageProvider implements StorageProvider {
 		return keys
 	}
 
+	async listWithMetadata(prefix: string): Promise<{ key: string; size: number }[]> {
+		const entries: { key: string; size: number }[] = []
+		let continuationToken: string | undefined
+
+		do {
+			const response = await this.client.send(
+				new ListObjectsV2Command({
+					Bucket: this.bucket,
+					Prefix: prefix,
+					ContinuationToken: continuationToken,
+				}),
+			)
+			for (const obj of response.Contents ?? []) {
+				if (obj.Key) entries.push({ key: obj.Key, size: obj.Size ?? 0 })
+			}
+			continuationToken = response.NextContinuationToken
+		} while (continuationToken)
+
+		return entries
+	}
+
 	async delete(key: string): Promise<void> {
 		await this.client.send(
 			new DeleteObjectCommand({

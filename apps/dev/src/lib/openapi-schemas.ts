@@ -55,6 +55,11 @@ export const objectResponseSchema = z.object({
 	subscriber_count: z.number().optional(),
 })
 
+export const actorSkillSchema = z.object({
+	id: z.string().uuid(),
+	name: z.string(),
+})
+
 export const actorResponseSchema = z.object({
 	id: z.string().uuid(),
 	type: z.string(),
@@ -72,6 +77,7 @@ export const actorResponseSchema = z.object({
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 	installedPackageId: z.string().uuid().nullable().optional(),
+	skills: z.array(actorSkillSchema).optional(),
 })
 
 export const actorWithKeySchema = actorResponseSchema.extend({
@@ -136,6 +142,28 @@ export const objectGraphResponseSchema = z.object({
 	// `data.attachmentFileIds`. Lets callers resolve file IDs without a
 	// follow-up round-trip to /api/files/:id.
 	files: z.array(fileSummarySchema),
+})
+
+export const traverseGraphNodeSchema = z.object({
+	id: z.string().uuid(),
+	type: z.string(),
+	title: z.string().nullable(),
+})
+
+export const traverseGraphEdgeSchema = z.object({
+	source: z.string().uuid(),
+	target: z.string().uuid(),
+	type: z.string(),
+})
+
+export const traverseGraphResponseSchema = z.object({
+	nodes: z.array(traverseGraphNodeSchema),
+	edges: z.array(traverseGraphEdgeSchema),
+	// Traversal stopped early because a bound was hit. Callers can widen
+	// `max_depth`/`max_nodes` and re-run, or accept the partial subgraph.
+	truncated: z.boolean(),
+	// Which bound tripped truncation. `null` when `truncated` is `false`.
+	truncated_reason: z.enum(['max_nodes', 'max_depth']).nullable(),
 })
 
 export const integrationResponseSchema = z.object({

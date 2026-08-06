@@ -1,4 +1,4 @@
-import posthog from 'posthog-js'
+import posthog, { type CaptureOptions } from 'posthog-js'
 
 const DEFAULT_HOST = 'https://eu.i.posthog.com'
 
@@ -25,12 +25,29 @@ export function isPosthogReady(): boolean {
 	return initialized
 }
 
-export function capture(name: string, props: Record<string, unknown>): void {
-	if (!initialized) return
+// Always attempt posthog.capture — do not gate on the module-local `initialized`
+// flag. posthog-js safely handles a capture() called before init (it queues the
+// event and flushes on init), and gating on our own flag has been the source of
+// silent event drops in production: if `initPosthog()` runs but the flag isn't
+// yet visible to a caller in another module realm (HMR reload, dev-server race,
+// lazy re-import), the event goes to `console.info` and never reaches PostHog.
+// The `try/catch` still keeps analytics from breaking the UI.
+export function capture(
+	name: string,
+	props: Record<string, unknown>,
+	options?: CaptureOptions,
+): void {
 	try {
-		posthog.capture(name, props)
-	} catch {
-		// Analytics must never break the UI.
+		// Only pass the third arg when set — passing an explicit `undefined`
+		// keeps the arity visible to `toHaveBeenCalledWith` matchers in the
+		// tests, breaking every capture spec that predates options support.
+		if (options) {
+			posthog.capture(name, props, options)
+		} else {
+			posthog.capture(name, props)
+		}
+	} catch (err) {
+		console.error('[posthog] capture failed', name, err)
 	}
 }
 

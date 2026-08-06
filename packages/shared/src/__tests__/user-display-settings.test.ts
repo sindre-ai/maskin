@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	ALL_TYPES_KEY,
+	CHROME_KEY,
 	displaySettingsBodySchema,
 	userDisplaySettingsParamsSchema,
 } from '../schemas/user-display-settings'
@@ -46,6 +47,118 @@ describe('displaySettingsBodySchema', () => {
 		for (let i = 0; i < 201; i++) vis[`col_${i}`] = true
 		expect(() => displaySettingsBodySchema.parse({ columnVisibility: vis })).toThrow(/at most 200/)
 	})
+
+	describe('groupExpanded and firstVisibleRowId', () => {
+		it('accepts a groupExpanded map alongside other settings', () => {
+			const parsed = displaySettingsBodySchema.parse({
+				groupBy: 'status',
+				groupExpanded: { 'metadata.status:active': true, 'metadata.status:done': false },
+			})
+			expect(parsed.groupExpanded).toEqual({
+				'metadata.status:active': true,
+				'metadata.status:done': false,
+			})
+		})
+
+		it('accepts firstVisibleRowId as a row id', () => {
+			const parsed = displaySettingsBodySchema.parse({ firstVisibleRowId: 'row_42' })
+			expect(parsed.firstVisibleRowId).toBe('row_42')
+		})
+
+		it('accepts firstVisibleRowId=null to signal cleared state', () => {
+			const parsed = displaySettingsBodySchema.parse({ firstVisibleRowId: null })
+			expect(parsed.firstVisibleRowId).toBeNull()
+		})
+
+		it('rejects a groupExpanded map with more than 200 entries', () => {
+			const groupExpanded: Record<string, boolean> = {}
+			for (let i = 0; i < 201; i++) groupExpanded[`group_${i}`] = true
+			expect(() => displaySettingsBodySchema.parse({ groupExpanded })).toThrow(/at most 200/)
+		})
+
+		it('leaves legacy blobs without the new fields untouched', () => {
+			const legacy = { view: 'list' as const, sort: 'title', order: 'asc' as const }
+			const parsed = displaySettingsBodySchema.parse(legacy)
+			expect(parsed.groupExpanded).toBeUndefined()
+			expect(parsed.firstVisibleRowId).toBeUndefined()
+		})
+	})
+
+	describe('timelineView (AC-T7)', () => {
+		it('accepts timelineView=timeline', () => {
+			expect(displaySettingsBodySchema.parse({ timelineView: 'timeline' }).timelineView).toBe(
+				'timeline',
+			)
+		})
+
+		it('accepts timelineView=table alongside other settings', () => {
+			const parsed = displaySettingsBodySchema.parse({
+				view: 'list',
+				sort: 'createdAt',
+				order: 'desc',
+				timelineView: 'table',
+			})
+			expect(parsed.timelineView).toBe('table')
+			expect(parsed.view).toBe('list')
+		})
+
+		it('rejects unknown timelineView values', () => {
+			expect(() => displaySettingsBodySchema.parse({ timelineView: 'graph' })).toThrow()
+		})
+	})
+
+	describe('chrome-level fields', () => {
+		it('accepts objectDetailSidebarCollapsed as a boolean', () => {
+			const parsed = displaySettingsBodySchema.parse({ objectDetailSidebarCollapsed: true })
+			expect(parsed.objectDetailSidebarCollapsed).toBe(true)
+		})
+
+		it('accepts foryouViewMode=card and foryouViewMode=list', () => {
+			expect(displaySettingsBodySchema.parse({ foryouViewMode: 'card' }).foryouViewMode).toBe(
+				'card',
+			)
+			expect(displaySettingsBodySchema.parse({ foryouViewMode: 'list' }).foryouViewMode).toBe(
+				'list',
+			)
+		})
+
+		it('accepts both new chrome fields alongside legacy settings', () => {
+			const parsed = displaySettingsBodySchema.parse({
+				view: 'list',
+				objectDetailSidebarCollapsed: false,
+				foryouViewMode: 'list',
+			})
+			expect(parsed.objectDetailSidebarCollapsed).toBe(false)
+			expect(parsed.foryouViewMode).toBe('list')
+		})
+
+		it('rejects unknown foryouViewMode values', () => {
+			expect(() => displaySettingsBodySchema.parse({ foryouViewMode: 'grid' })).toThrow()
+		})
+
+		it('still rejects unknown top-level keys when new chrome fields are set', () => {
+			expect(() =>
+				displaySettingsBodySchema.parse({
+					objectDetailSidebarCollapsed: true,
+					foryouViewMode: 'card',
+					sidebarSomething: 'nope',
+				}),
+			).toThrow()
+		})
+	})
+
+	it('accepts filters.metadata as a field->value record', () => {
+		const result = displaySettingsBodySchema.parse({
+			filters: { status: 'active', metadata: { segment: 'enterprise', confidence: 'high' } },
+		})
+		expect(result.filters?.metadata).toEqual({ segment: 'enterprise', confidence: 'high' })
+	})
+
+	it('rejects a filters.metadata map with more than 50 entries', () => {
+		const metadata: Record<string, string> = {}
+		for (let i = 0; i < 51; i++) metadata[`field_${i}`] = 'x'
+		expect(() => displaySettingsBodySchema.parse({ filters: { metadata } })).toThrow(/at most 50/)
+	})
 })
 
 describe('userDisplaySettingsParamsSchema', () => {
@@ -58,6 +171,12 @@ describe('userDisplaySettingsParamsSchema', () => {
 	it('accepts the All-tab sentinel', () => {
 		expect(userDisplaySettingsParamsSchema.parse({ object_type: ALL_TYPES_KEY })).toEqual({
 			object_type: '__all__',
+		})
+	})
+
+	it('accepts the chrome sentinel', () => {
+		expect(userDisplaySettingsParamsSchema.parse({ object_type: CHROME_KEY })).toEqual({
+			object_type: '__chrome__',
 		})
 	})
 
