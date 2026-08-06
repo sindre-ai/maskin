@@ -28,6 +28,8 @@ export const queryKeys = {
 	},
 	relationships: {
 		all: (workspaceId: string) => ['relationships', workspaceId] as const,
+		byObject: (workspaceId: string, objectId: string) =>
+			['relationships', workspaceId, 'object', objectId] as const,
 	},
 	triggers: {
 		all: (workspaceId: string) => ['triggers', workspaceId] as const,

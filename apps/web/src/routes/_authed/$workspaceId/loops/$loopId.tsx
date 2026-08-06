@@ -1,9 +1,8 @@
 import { ObjectActivity } from '@/components/activity/object-activity'
 import { PageHeader } from '@/components/layout/page-header'
+import { LoopFlow } from '@/components/loops/loop-flow'
 import { LoopHeader } from '@/components/loops/loop-header'
-import { LoopPipeline } from '@/components/loops/loop-pipeline'
 import { LoopStats } from '@/components/loops/loop-stats'
-import { LoopSteps } from '@/components/loops/loop-steps'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
@@ -72,14 +71,13 @@ function LoopDetailPage() {
 
 				<LoopStats loop={loop} />
 
-				<LoopSteps
+				<LoopFlow
+					workspaceId={workspaceId}
+					loopId={loop.id}
 					triggers={loopTriggers}
 					actors={actors}
-					triggerCount={loop.triggerIds.length}
-					agentCount={loop.agentIds.length}
+					childObjects={children ?? []}
 				/>
-
-				<LoopPipeline workspaceId={workspaceId} loopId={loop.id} childObjects={children ?? []} />
 
 				{object && (
 					<div>
