@@ -17,7 +17,7 @@ vi.mock('sonner', () => ({
 }))
 
 import { PackageCard } from '@/components/marketplace/package-card'
-import type { CatalogPackageSummary, InstalledPackageRow } from '@/lib/api'
+import type { CatalogPackageItem, CatalogPackageSummary, InstalledPackageRow } from '@/lib/api'
 import { TestWrapper } from '../../setup'
 
 const workspaceId = 'ws-1'
@@ -34,6 +34,23 @@ function pkg(overrides: Partial<CatalogPackageSummary> = {}): CatalogPackageSumm
 		created_at: null,
 		updated_at: null,
 		...overrides,
+	}
+}
+
+function item(
+	overrides: Partial<CatalogPackageItem> & {
+		id: string
+		itemType: CatalogPackageItem['item_type']
+		name: string
+	},
+): CatalogPackageItem {
+	return {
+		id: overrides.id,
+		package_id: 'pkg-1',
+		item_type: overrides.itemType,
+		source_item_id: overrides.id,
+		item_snapshot: { name: overrides.name, description: null },
+		created_at: null,
 	}
 }
 
@@ -120,5 +137,107 @@ describe('PackageCard', () => {
 		)
 		await userEvent.click(screen.getByRole('button', { name: /fork/i }))
 		expect(screen.getByText(/v1\.1\.0 is ready to install/)).toBeInTheDocument()
+	})
+
+	describe('composition chip row', () => {
+		it('does not render on single-type packages even when items are supplied', () => {
+			render(
+				<PackageCard
+					workspaceId={workspaceId}
+					pkg={pkg({ item_types: ['actor'] })}
+					items={[item({ id: 'i-1', itemType: 'actor', name: 'Relay Agent' })]}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(screen.queryByLabelText('Package composition')).not.toBeInTheDocument()
+		})
+
+		it('does not render on multi-type packages when no items are supplied', () => {
+			render(
+				<PackageCard workspaceId={workspaceId} pkg={pkg({ item_types: ['actor', 'trigger'] })} />,
+				{ wrapper: TestWrapper },
+			)
+			expect(screen.queryByLabelText('Package composition')).not.toBeInTheDocument()
+		})
+
+		it('renders one chip per actor with initial + short name and full name as accessible label', () => {
+			render(
+				<PackageCard
+					workspaceId={workspaceId}
+					pkg={pkg({ item_types: ['actor', 'trigger'] })}
+					items={[
+						item({ id: 'a-1', itemType: 'actor', name: 'Relay Support Agent' }),
+						item({ id: 'a-2', itemType: 'actor', name: 'Compass Insights Agent' }),
+						item({ id: 't-1', itemType: 'trigger', name: 'Nightly digest' }),
+					]}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			const row = screen.getByLabelText('Package composition')
+			expect(row).toBeInTheDocument()
+			// The short name is the first word of the full item name.
+			expect(screen.getByRole('button', { name: 'Relay Support Agent' })).toHaveTextContent(
+				/^R\s*Relay$/,
+			)
+			expect(screen.getByRole('button', { name: 'Compass Insights Agent' })).toHaveTextContent(
+				/^C\s*Compass$/,
+			)
+		})
+
+		it('renders a single count chip for triggers, not one chip per trigger', () => {
+			render(
+				<PackageCard
+					workspaceId={workspaceId}
+					pkg={pkg({ item_types: ['actor', 'trigger'] })}
+					items={[
+						item({ id: 'a-1', itemType: 'actor', name: 'Relay' }),
+						item({ id: 't-1', itemType: 'trigger', name: 'Nightly digest' }),
+						item({ id: 't-2', itemType: 'trigger', name: 'Weekly rollup' }),
+					]}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			const row = screen.getByLabelText('Package composition')
+			// Two trigger items → one count chip that says "2 triggers".
+			expect(row).toHaveTextContent(/2 triggers/)
+			// The trigger names live in the tooltip trigger's aria-label so touch
+			// users can read them via assistive tech even without opening the tip.
+			const triggerChip = screen.getByRole('button', {
+				name: /2 triggers: Nightly digest, Weekly rollup/,
+			})
+			expect(triggerChip).toBeInTheDocument()
+		})
+
+		it('singularises the trigger count chip when only one trigger is present', () => {
+			render(
+				<PackageCard
+					workspaceId={workspaceId}
+					pkg={pkg({ item_types: ['actor', 'trigger'] })}
+					items={[
+						item({ id: 'a-1', itemType: 'actor', name: 'Relay' }),
+						item({ id: 't-1', itemType: 'trigger', name: 'Nightly digest' }),
+					]}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(screen.getByLabelText('Package composition')).toHaveTextContent(/1 trigger(?!s)/)
+		})
+
+		it('renders one chip per integration with the full name as accessible label', () => {
+			render(
+				<PackageCard
+					workspaceId={workspaceId}
+					pkg={pkg({ item_types: ['actor', 'integration'] })}
+					items={[
+						item({ id: 'a-1', itemType: 'actor', name: 'Relay' }),
+						item({ id: 'i-1', itemType: 'integration', name: 'Intercom' }),
+						item({ id: 'i-2', itemType: 'integration', name: 'Slack' }),
+					]}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(screen.getByRole('button', { name: 'Intercom' })).toHaveTextContent(/^I\s*Intercom$/)
+			expect(screen.getByRole('button', { name: 'Slack' })).toHaveTextContent(/^S\s*Slack$/)
+		})
 	})
 })

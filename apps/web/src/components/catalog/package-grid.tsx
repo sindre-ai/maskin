@@ -47,6 +47,15 @@ export function PackageGrid({
 	const multiTypePkgs = packages.filter((p) => p.item_types.length > 1)
 	const singleTypePkgs = packages.filter((p) => p.item_types.length === 1)
 
+	// Group items by their source package so bundle cards can render a
+	// composition chip row without re-fetching what the route already loaded.
+	const itemsByPackage = new Map<string, CatalogPackageItem[]>()
+	for (const item of items) {
+		const list = itemsByPackage.get(item.package_id)
+		if (list) list.push(item)
+		else itemsByPackage.set(item.package_id, [item])
+	}
+
 	const showPackagesSection = filter === 'all' || filter === 'packages'
 	const typesToShow: CatalogItemType[] =
 		filter === 'packages' ? [] : filter === 'all' ? SECTION_ORDER : [filter as CatalogItemType]
@@ -74,6 +83,7 @@ export function PackageGrid({
 								workspaceId={workspaceId}
 								pkg={pkg}
 								install={installLookup?.(pkg.id)}
+								items={itemsByPackage.get(pkg.id)}
 							/>
 						))}
 					</div>
