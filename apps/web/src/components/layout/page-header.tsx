@@ -2,6 +2,7 @@ import { usePageHeader } from '@/lib/page-header-context'
 import { useEffect } from 'react'
 
 export function PageHeader({
+	title,
 	actions,
 	stickyIdentity,
 	contentPush,
@@ -30,5 +31,7 @@ export function PageHeader({
 		return () => setContentPush(undefined)
 	}, [contentPush, setContentPush])
 
-	return null
+	if (!title) return null
+
+	return <h1 className="mb-4 text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
 }

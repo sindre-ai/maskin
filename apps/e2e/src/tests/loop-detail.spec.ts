@@ -14,12 +14,18 @@ test.describe('Loop detail page', () => {
 				status: 'running',
 				content: 'Every customer who gives feedback hears back within 30 days',
 			})
-			await account.api.createTrigger(account.workspaceId, {
+			const trigger = await account.api.createTrigger(account.workspaceId, {
 				name: 'Triage feedback',
 				type: 'event',
 				action_prompt: 'Normalises the Slack event into the shared source',
 				target_actor_id: agent.id,
 				config: { entity_type: 'object', action: 'created' },
+			})
+			// Trigger membership lives on the loop row (metadata.trigger_ids per the
+			// T1 architecture decision) rather than a relationship, since a trigger
+			// can outlive the loop it's currently attached to — see loops.ts.
+			await account.api.updateObject(loop.id, account.workspaceId, {
+				metadata: { trigger_ids: [trigger.id] },
 			})
 			const insight = await account.api.createObject(account.workspaceId, {
 				type: 'insight',
@@ -66,12 +72,12 @@ test.describe('Loop detail page', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
-		await expect(page.getByText('Running')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByTestId('loop-pill')).toHaveText('Running', { timeout: 10000 })
 
 		await page.getByRole('button', { name: 'More' }).click()
 		await page.getByRole('menuitem', { name: 'Pause loop' }).click()
 
-		await expect(page.getByText('Paused')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByTestId('loop-pill')).toHaveText('Paused', { timeout: 10000 })
 	})
 
 	test('clicking a loop row from /loops navigates to the dedicated detail page, not the generic object page', async ({

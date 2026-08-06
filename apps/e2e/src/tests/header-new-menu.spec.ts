@@ -18,6 +18,15 @@ function headerNewTrigger(page: Page) {
 	return page.locator('header').getByRole('button', { name: /^new$/i })
 }
 
+// Scopes to the open dropdown's content — the E2E fixture derives the test
+// actor's display name from the test title (`E2E ${testInfo.title}...`), so
+// an unscoped `page.getByText('Create an object')` can spuriously match the
+// actor/workspace name in the sidebar on tests whose title contains that
+// phrase (e.g. this file's own "hides ... Create an object ..." test).
+function newMenu(page: Page) {
+	return page.getByRole('menu', { name: 'New' })
+}
+
 test.describe('Header New menu', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
 		test(`renders all entry points at ${vp.label}`, async ({ page, account }) => {
@@ -27,7 +36,7 @@ test.describe('Header New menu', () => {
 			await headerNewTrigger(page).click()
 
 			await expect(page.getByRole('menuitem', { name: /new chat/i })).toBeVisible()
-			await expect(page.getByText('Create an object')).toBeVisible()
+			await expect(newMenu(page).getByText('Create an object')).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /^new task$/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /^new insight$/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /^new bet$/i })).toBeVisible()
@@ -38,7 +47,10 @@ test.describe('Header New menu', () => {
 	}
 
 	test('New chat opens the chat panel', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}`)
+		// For You has its own inline composer for "New chat" (see
+		// ForYouHeaderActions/onStartConversation) — every other page opens the
+		// docked chat panel, so this asserts against the general contract.
+		await page.goto(`/${account.workspaceId}/objects`)
 
 		await headerNewTrigger(page).click()
 		await page.getByRole('menuitem', { name: /new chat/i }).click()
@@ -78,7 +90,9 @@ test.describe('Header New menu', () => {
 		// Creating a loop must land on the loop detail page, not the trigger one —
 		// confirms it created an objects row with type='loop', not a trigger.
 		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/loops/[^/]+$`))
-		await expect(page.getByText('Header New menu loop check')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('heading', { name: 'Header New menu loop check' })).toBeVisible({
+			timeout: 10000,
+		})
 	})
 
 	test('New agent opens CreatePicker for an agent', async ({ page, account }) => {
@@ -121,7 +135,7 @@ test.describe('Header New menu', () => {
 		await headerNewTrigger(page).click()
 
 		await expect(page.getByRole('menuitem', { name: /new chat/i })).toBeVisible()
-		await expect(page.getByText('Create an object')).toHaveCount(0)
+		await expect(newMenu(page).getByText('Create an object')).toHaveCount(0)
 		await expect(page.getByRole('menuitem', { name: /^new task$/i })).toHaveCount(0)
 	})
 })

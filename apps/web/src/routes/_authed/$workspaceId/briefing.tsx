@@ -18,7 +18,7 @@ function BriefingPage() {
 
 	return (
 		<div className="flex flex-col gap-4">
-			<PageHeader title="Briefing" />
+			<PageHeader />
 			<header>
 				<h1 className="text-2xl font-semibold leading-tight tracking-tight">Briefing</h1>
 				<p className="mt-0.5 text-sm text-muted-foreground">

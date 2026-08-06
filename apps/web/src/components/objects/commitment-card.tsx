@@ -5,7 +5,7 @@ import { trackLoopViewed } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
 import { useEffect } from 'react'
 
-interface LoopCardProps {
+interface CommitmentCardProps {
 	object: ObjectResponse
 	workspaceId: string
 }
@@ -16,7 +16,7 @@ function readString(metadata: unknown, key: string): string | null {
 	return typeof value === 'string' && value.length > 0 ? value : null
 }
 
-export function LoopCard({ object, workspaceId }: LoopCardProps) {
+export function CommitmentCard({ object, workspaceId }: CommitmentCardProps) {
 	const floor = readString(object.metadata, 'floor')
 	const cadence = readString(object.metadata, 'cadence')
 	const sourceBetId = readString(object.metadata, 'source_bet_id')
@@ -32,13 +32,13 @@ export function LoopCard({ object, workspaceId }: LoopCardProps) {
 
 	return (
 		<section
-			data-testid="loop-card"
-			aria-label="Loop"
+			data-testid="commitment-card"
+			aria-label="Commitment"
 			className="mb-6 rounded-lg border border-border bg-card p-4 shadow-sm"
 		>
 			<div className="flex items-start justify-between gap-2">
 				<h2 className="min-w-0 flex-1 text-base font-semibold leading-snug text-foreground truncate">
-					{object.title || 'Untitled loop'}
+					{object.title || 'Untitled commitment'}
 				</h2>
 				<StatusBadge status={object.status} className="shrink-0" />
 			</div>

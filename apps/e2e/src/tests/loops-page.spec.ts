@@ -31,7 +31,7 @@ test.describe('Loops list page', () => {
 			await page.goto(`/${account.workspaceId}/loops`)
 
 			await expect(page.getByText('Customer feedback')).toBeVisible({ timeout: 10000 })
-			await expect(page.getByText('Running')).toBeVisible()
+			await expect(page.getByTestId('loop-pill')).toHaveText('Running')
 			await expect(page.getByText(/in progress/i)).toBeVisible()
 		})
 	}
@@ -55,9 +55,11 @@ test.describe('Loops list page', () => {
 		await page.goto(`/${account.workspaceId}/triggers`)
 
 		await expect(page.getByRole('heading', { name: 'Triggers' })).toBeVisible({ timeout: 10000 })
-		// The empty state on Triggers is the pre-existing copy — asserting it
-		// verifies the extraction of TriggerRow into a shared component did not
-		// regress the Triggers surface.
-		await expect(page.getByText('No triggers yet')).toBeVisible()
+		// Every workspace is seeded with default triggers from the development
+		// template — a genuinely trigger-free workspace doesn't occur by
+		// default, so this asserts the list itself renders, verifying the
+		// extraction of TriggerRow into a shared component did not regress the
+		// Triggers surface.
+		await expect(page.getByText(/Runs on schedule/).first()).toBeVisible()
 	})
 })

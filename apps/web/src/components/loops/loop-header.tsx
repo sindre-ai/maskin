@@ -32,7 +32,10 @@ export function LoopHeader({
 					{loop.name ?? 'Untitled loop'}
 				</h1>
 				<div className="flex items-center gap-2 shrink-0">
-					<span className={cn('inline-flex items-center gap-1.5 text-xs font-medium', pill.text)}>
+					<span
+						data-testid="loop-pill"
+						className={cn('inline-flex items-center gap-1.5 text-xs font-medium', pill.text)}
+					>
 						<span className={cn('h-1.5 w-1.5 rounded-full', pill.dot)} />
 						{pill.label}
 					</span>

@@ -39,7 +39,9 @@ export function LoopRow({
 					<p className="text-sm font-medium text-foreground truncate">
 						{loop.name ?? 'Untitled loop'}
 					</p>
-					<span className={cn('text-[10px] font-medium', pill.text)}>{pill.label}</span>
+					<span data-testid="loop-pill" className={cn('text-[10px] font-medium', pill.text)}>
+						{pill.label}
+					</span>
 				</div>
 				{loop.guarantee && (
 					<p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{loop.guarantee}</p>

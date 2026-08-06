@@ -152,7 +152,12 @@ export class TestAPI {
 	async updateObject(
 		id: string,
 		workspaceId: string,
-		patch: Partial<{ status: string; title: string; content: string }>,
+		patch: Partial<{
+			status: string
+			title: string
+			content: string
+			metadata: Record<string, unknown>
+		}>,
 	): Promise<ObjectResponse> {
 		const res = await fetch(`${this.baseURL}/api/objects/${id}`, {
 			method: 'PATCH',
