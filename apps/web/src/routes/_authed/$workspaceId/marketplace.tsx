@@ -137,7 +137,17 @@ function MarketplacePage() {
 	return (
 		<div className="flex flex-col h-full min-h-0">
 			<div className="mb-4 md:mb-6">
-				<h1 className="text-lg font-semibold text-foreground">Marketplace</h1>
+				<div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+					<h1 className="text-lg font-semibold text-foreground">Marketplace</h1>
+					{data && packages.length > 0 ? (
+						<span
+							className="text-sm text-muted-foreground tabular-nums"
+							data-testid="catalog-count"
+						>
+							{packages.length} in the catalog
+						</span>
+					) : null}
+				</div>
 				<p className="mt-1 text-sm text-muted-foreground max-w-2xl">{SUBHEAD}</p>
 			</div>
 
