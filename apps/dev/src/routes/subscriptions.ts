@@ -2,7 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, objects, subscriptions } from '@maskin/db/schema'
 import {
-	LOOP_ATTENTION_STATUSES,
+	COMMITMENT_ATTENTION_STATUSES,
 	TERMINAL_BET_STATUSES,
 	markReadBodySchema,
 	markUnreadBodySchema,
@@ -418,25 +418,27 @@ app.openapi(listUnreadRoute, (async (c) => {
 				// source of truth shared with the notification fan-out gate in
 				// objects.ts — without (2) a watcher misses the terminal signal, see
 				// T2 on bet/notif-cascade-fix.
-				// (3) a Loop transitioning into an attention-worthy status
-				//     (at-risk / breached) — mirrors (2) for the Loop primitive.
-				//     Uses `type='loop'` in the polymorphic filter path per T2 on
-				//     bet/loops-primitive; a transition back to `holding` is
+				// (3) a Commitment transitioning into an attention-worthy status
+				//     (at-risk / breached) — mirrors (2) for the Commitment
+				//     primitive. Uses `type='commitment'` in the polymorphic
+				//     filter path (renamed from `loop` in T1 of
+				//     bet/loops-first-class); a transition back to `holding` is
 				//     quiet news and does not land in the feed.
-				//     LOOP_ATTENTION_STATUSES is the single source of truth shared
-				//     with the briefing composer's health-priority sort.
-				// (4) a Loop born already at an attention-worthy status — QA on
-				//     bet/loops-primitive found seeded `at-risk`/`breached` Loops
-				//     silent in the feed because their `created` event emits an
-				//     initial-status payload, not a transition. Mirrors (3) via
-				//     the `data->>'status'` fallback in `statusExpr` above; a
-				//     Loop born at `holding` stays quiet.
-				// Unlike TERMINAL_BET_STATUSES, a loop's status is never permanent —
-				// it can flip back to `holding` after arm (3) or (4) already matched an
-				// older unread event. Both loop arms additionally require the object's
-				// CURRENT status (via the `objects` join above) to still be
-				// attention-worthy, so a recovered loop stops surfacing once it's read
-				// back to `holding` even if the triggering event is still unread.
+				//     COMMITMENT_ATTENTION_STATUSES is the single source of truth
+				//     shared with the briefing composer's health-priority sort.
+				// (4) a Commitment born already at an attention-worthy status —
+				//     QA on the original loops-primitive bet found seeded
+				//     `at-risk`/`breached` rows silent in the feed because their
+				//     `created` event emits an initial-status payload, not a
+				//     transition. Mirrors (3) via the `data->>'status'` fallback
+				//     in `statusExpr` above; a row born at `holding` stays quiet.
+				// Unlike TERMINAL_BET_STATUSES, a commitment's status is never
+				// permanent — it can flip back to `holding` after arm (3) or (4)
+				// already matched an older unread event. Both commitment arms
+				// additionally require the object's CURRENT status (via the
+				// `objects` join above) to still be attention-worthy, so a
+				// recovered commitment stops surfacing once it's read back to
+				// `holding` even if the triggering event is still unread.
 				or(
 					and(eq(events.entityType, subscriptions.entityType), eq(events.action, 'commented')),
 					and(
@@ -447,17 +449,17 @@ app.openapi(listUnreadRoute, (async (c) => {
 					),
 					and(
 						eq(subscriptions.entityType, 'object'),
-						eq(events.entityType, 'loop'),
+						eq(events.entityType, 'commitment'),
 						eq(events.action, 'status_changed'),
-						inArray(statusExpr, [...LOOP_ATTENTION_STATUSES]),
-						inArray(objects.status, [...LOOP_ATTENTION_STATUSES]),
+						inArray(statusExpr, [...COMMITMENT_ATTENTION_STATUSES]),
+						inArray(objects.status, [...COMMITMENT_ATTENTION_STATUSES]),
 					),
 					and(
 						eq(subscriptions.entityType, 'object'),
-						eq(events.entityType, 'loop'),
+						eq(events.entityType, 'commitment'),
 						eq(events.action, 'created'),
-						inArray(statusExpr, [...LOOP_ATTENTION_STATUSES]),
-						inArray(objects.status, [...LOOP_ATTENTION_STATUSES]),
+						inArray(statusExpr, [...COMMITMENT_ATTENTION_STATUSES]),
+						inArray(objects.status, [...COMMITMENT_ATTENTION_STATUSES]),
 					),
 				),
 			),

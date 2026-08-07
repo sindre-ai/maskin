@@ -104,7 +104,7 @@ describe('ForYouCardQueue', () => {
 		expect(briefLink).toHaveAttribute('to', '/$workspaceId/briefing')
 
 		const loopsLink = screen.getByRole('link', { name: /review loops/i })
-		expect(loopsLink).toHaveAttribute('to', '/$workspaceId/objects')
+		expect(loopsLink).toHaveAttribute('to', '/$workspaceId/loops')
 	})
 
 	it('renders the first item in the queue and the remaining count', () => {

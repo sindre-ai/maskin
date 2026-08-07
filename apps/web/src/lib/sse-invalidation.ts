@@ -50,6 +50,9 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			if (event.entity_type === 'bet') {
 				queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
 			}
+			if (event.entity_type === 'loop') {
+				queryClient.invalidateQueries({ queryKey: queryKeys.loops.all(workspaceId) })
+			}
 			break
 		case 'relationship':
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })

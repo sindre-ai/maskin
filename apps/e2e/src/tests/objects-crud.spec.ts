@@ -1,21 +1,16 @@
 import { expect, test } from '../fixtures/auth.fixture'
 
 test.describe('Objects CRUD', () => {
-	test('can create an object via the header create picker', async ({ page, account }) => {
+	test('can create an object via the header New menu', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}/objects`)
 
-		// Header "Create new" button opens the CreatePicker dialog
-		await page.getByRole('button', { name: 'Create new' }).click()
+		// Header "New" menu → "New task" opens the CreatePicker dialog pre-seeded
+		// to the task subtype, so no type-selector step is shown.
+		// The objects list toolbar has its own "New" button too — scope to the
+		// global header so this exercises the header's New menu specifically.
+		await page.locator('header').getByRole('button', { name: /^new$/i }).click()
+		await page.getByRole('menuitem', { name: /new task/i }).click()
 
-		// The picker shows a type selector when opened from the header (no defaultType).
-		// Select "Object" then enter a title and submit. The radio input itself is
-		// sr-only (its label is the clickable tile), and "Object" text elsewhere on
-		// the page (nav, empty states) is still in the DOM behind the dialog overlay
-		// — scope to the "Type" radiogroup to disambiguate.
-		await page
-			.getByRole('radiogroup', { name: 'Type' })
-			.getByText('Object', { exact: true })
-			.click()
 		await page.getByPlaceholder('What are you creating?').fill('E2E Test Object')
 		await page.getByRole('button', { name: 'Create' }).click()
 
@@ -74,17 +69,15 @@ test.describe('Objects CRUD', () => {
 		await expect(page).not.toHaveURL(/objects\//, { timeout: 10000 })
 	})
 
-	test('can open create form via header create picker', async ({ page, account }) => {
+	test('can open create form via the header New menu', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}/objects`)
 
-		// The header + button opens the CreatePicker dialog
-		await page.getByRole('button', { name: 'Create new' }).click()
+		// The objects list toolbar has its own "New" button too — scope to the
+		// global header so this exercises the header's New menu specifically.
+		await page.locator('header').getByRole('button', { name: /^new$/i }).click()
+		await page.getByRole('menuitem', { name: /new insight/i }).click()
 
-		// Select Object type and verify the title input appears
-		await page
-			.getByRole('radiogroup', { name: 'Type' })
-			.getByText('Object', { exact: true })
-			.click()
+		// Seeded with a defaultType, so the picker skips straight to the title input.
 		await expect(page.getByPlaceholder('What are you creating?')).toBeVisible()
 	})
 })

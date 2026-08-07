@@ -900,7 +900,7 @@ describe('Subscriptions Integration', () => {
 				'POST',
 				'/api/objects',
 				buildCreateObjectBody({
-					type: 'loop',
+					type: 'commitment',
 					title: 'Customer bugs fixed <1 day',
 					status: 'holding',
 				}),
@@ -947,7 +947,7 @@ describe('Subscriptions Integration', () => {
 				'POST',
 				'/api/objects',
 				buildCreateObjectBody({
-					type: 'loop',
+					type: 'commitment',
 					title: 'Weekly release cadence',
 					status: 'holding',
 				}),
@@ -993,7 +993,7 @@ describe('Subscriptions Integration', () => {
 				'POST',
 				'/api/objects',
 				buildCreateObjectBody({
-					type: 'loop',
+					type: 'commitment',
 					title: 'Onboarding TTFV',
 					status: 'at-risk',
 				}),
@@ -1058,7 +1058,7 @@ describe('Subscriptions Integration', () => {
 		// T2 on bet/loops-primitive: when a Loop transitions into an
 		// attention-worthy status (at-risk / breached), every subscribed
 		// actor must see it in /api/subscriptions/unread — mirrors the bet
-		// terminal-status behaviour. Uses `type='loop'` in the polymorphic
+		// terminal-status behaviour. Uses `type='commitment'` in the polymorphic
 		// filter path, never `metadata_eq`.
 		const appA = appAs(aId)
 		const appB = appAs(bId)
@@ -1070,7 +1070,7 @@ describe('Subscriptions Integration', () => {
 				'POST',
 				'/api/objects',
 				buildCreateObjectBody({
-					type: 'loop',
+					type: 'commitment',
 					title: 'Customer bugs fixed <1 day',
 					status: 'holding',
 				}),
@@ -1109,7 +1109,7 @@ describe('Subscriptions Integration', () => {
 
 	it('a Loop transitioning back to holding does NOT surface in the unread feed', async () => {
 		// Symmetric guard for the bet's "non-terminal changes don't page" test.
-		// LOOP_ATTENTION_STATUSES = ['at-risk','breached'] only. A transition
+		// COMMITMENT_ATTENTION_STATUSES = ['at-risk','breached'] only. A transition
 		// into 'holding' is quiet news and must not enter the feed.
 		const appA = appAs(aId)
 		const appB = appAs(bId)
@@ -1121,7 +1121,7 @@ describe('Subscriptions Integration', () => {
 				'POST',
 				'/api/objects',
 				buildCreateObjectBody({
-					type: 'loop',
+					type: 'commitment',
 					title: 'Recovering loop',
 					status: 'at-risk',
 				}),
@@ -1157,7 +1157,7 @@ describe('Subscriptions Integration', () => {
 		// because the T2 unread-feed OR-arm gated on `status_changed` events
 		// and a Loop born at an attention-worthy status only emits `created`.
 		// Locks the fix — a `created` event with initial status ∈
-		// LOOP_ATTENTION_STATUSES enters the feed for a subscribed watcher.
+		// COMMITMENT_ATTENTION_STATUSES enters the feed for a subscribed watcher.
 		const appA = appAs(aId)
 		const appB = appAs(bId)
 		const headersA = { 'x-workspace-id': workspaceId }
@@ -1171,7 +1171,7 @@ describe('Subscriptions Integration', () => {
 				'POST',
 				'/api/objects',
 				buildCreateObjectBody({
-					type: 'loop',
+					type: 'commitment',
 					title: 'Seeded at-risk loop',
 					status: 'at-risk',
 				}),
@@ -1200,7 +1200,7 @@ describe('Subscriptions Integration', () => {
 	})
 
 	it('a Loop born at breached surfaces in a subscribed watcher', async () => {
-		// Symmetric to the at-risk-birth case above. LOOP_ATTENTION_STATUSES
+		// Symmetric to the at-risk-birth case above. COMMITMENT_ATTENTION_STATUSES
 		// carries both, so the same OR-arm must catch both.
 		const appA = appAs(aId)
 		const appB = appAs(bId)
@@ -1212,7 +1212,7 @@ describe('Subscriptions Integration', () => {
 				'POST',
 				'/api/objects',
 				buildCreateObjectBody({
-					type: 'loop',
+					type: 'commitment',
 					title: 'Seeded breached loop',
 					status: 'breached',
 				}),
@@ -1253,7 +1253,7 @@ describe('Subscriptions Integration', () => {
 				'POST',
 				'/api/objects',
 				buildCreateObjectBody({
-					type: 'loop',
+					type: 'commitment',
 					title: 'Quiet holding loop',
 					status: 'holding',
 				}),
@@ -1291,7 +1291,7 @@ describe('Subscriptions Integration', () => {
 				'POST',
 				'/api/objects',
 				buildCreateObjectBody({
-					type: 'loop',
+					type: 'commitment',
 					title: 'Silent loop',
 					status: 'holding',
 				}),
