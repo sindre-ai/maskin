@@ -67,6 +67,17 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Loop Details',
 		parent: '/_authed/$workspaceId/loops/',
 	},
+	'/_authed/$workspaceId/marketplace/': {
+		label: 'Marketplace',
+	},
+	'/_authed/$workspaceId/marketplace/$loopId/': {
+		label: 'Marketplace Item',
+		parent: '/_authed/$workspaceId/marketplace/',
+	},
+	'/_authed/$workspaceId/marketplace/$loopId/$itemId': {
+		label: 'Marketplace Item',
+		parent: '/_authed/$workspaceId/marketplace/$loopId/',
+	},
 }
 
 const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$workspaceId'])

@@ -20,6 +20,9 @@ test.describe('Marketplace loop count', () => {
 			const title = page.getByRole('heading', { name: 'Marketplace', level: 1 })
 			await expect(title).toBeVisible({ timeout: 20000 })
 
+			const identity = page.getByTestId('marketplace-header-identity')
+			await expect(identity).toBeVisible({ timeout: 20000 })
+
 			const count = page.locator(COUNT)
 			await expect(count).toBeVisible({ timeout: 20000 })
 			await expect(count).toHaveText(/^\d+ in the marketplace$/)
@@ -27,9 +30,9 @@ test.describe('Marketplace loop count', () => {
 			const marketplaceSize = Number(((await count.textContent()) ?? '').match(/^(\d+)/)?.[1])
 			expect(Number.isFinite(marketplaceSize) && marketplaceSize > 0).toBe(true)
 
-			// Same-source check: the sidebar (≥md) and mobile chip strip both
-			// render an "All N" from the same marketplace-loops payload that
-			// feeds the header count, so the two must always match.
+			// Same-source check: the Type chip row's "All N" renders from the same
+			// marketplace-loops payload that feeds the header count, so the two
+			// must always match.
 			const allTrigger = page.getByRole('button', { name: /^All\s+\d+$/ }).first()
 			await expect(allTrigger).toBeVisible()
 			const allLabel = (await allTrigger.textContent()) ?? ''

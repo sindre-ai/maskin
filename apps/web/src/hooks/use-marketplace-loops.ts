@@ -15,6 +15,14 @@ export function useMarketplaceLoops(filters?: MarketplaceLoopsFilters) {
 	})
 }
 
+export function useMarketplaceLoop(id: string) {
+	return useQuery({
+		queryKey: queryKeys.marketplaceLoops.detail(id),
+		queryFn: () => api.marketplaceLoops.get(id),
+		enabled: Boolean(id),
+	})
+}
+
 export function useInstallMarketplaceItem(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({

@@ -74,7 +74,7 @@ export function LoopGrid({
 			{hasLoops && (
 				<section className="space-y-3" aria-label="Loops">
 					<h2 className="text-sm font-semibold text-foreground">Loops</h2>
-					<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+					<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
 						{multiTypeLoops.map((loop) => (
 							<MarketplaceLoopCard
 								key={loop.id}
@@ -90,7 +90,7 @@ export function LoopGrid({
 			{typedSections.map(({ type, loopCards, itemCards }) => (
 				<section key={type} className="space-y-3" aria-label={SECTION_TITLE[type]}>
 					<h2 className="text-sm font-semibold text-foreground">{SECTION_TITLE[type]}</h2>
-					<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+					<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
 						{loopCards.map((loop) => (
 							<MarketplaceLoopCard
 								key={loop.id}

@@ -1,4 +1,6 @@
+import { PageHeader } from '@/components/layout/page-header'
 import { LoopGrid } from '@/components/marketplace/loop-grid'
+import { MarketplaceHeaderIdentity } from '@/components/marketplace/marketplace-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Input } from '@/components/ui/input'
@@ -20,26 +22,22 @@ import { useQueries } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 
-export const Route = createFileRoute('/_authed/$workspaceId/marketplace')({
+export const Route = createFileRoute('/_authed/$workspaceId/marketplace/')({
 	component: MarketplacePage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
 type TypeFilter = 'all' | 'loops' | MarketplaceItemType
-type UseCaseFilter = 'all' | string
+type FilterValue = TypeFilter | string
 
-interface TypeItem {
-	value: TypeFilter
+interface FilterItem {
+	value: FilterValue
 	label: string
 }
 
-interface UseCaseItem {
-	value: UseCaseFilter
-	label: string
-}
+const TYPE_VALUES = new Set<FilterValue>(['loops', 'actor', 'trigger', 'skill', 'integration'])
 
-const TYPE_ITEMS: TypeItem[] = [
-	{ value: 'all', label: 'All' },
+const TYPE_ITEMS: FilterItem[] = [
 	{ value: 'loops', label: 'Loops' },
 	{ value: 'actor', label: 'Agents' },
 	{ value: 'trigger', label: 'Triggers' },
@@ -47,24 +45,16 @@ const TYPE_ITEMS: TypeItem[] = [
 	{ value: 'integration', label: 'Integrations' },
 ]
 
-function buildUseCaseItems(counts: MarketplaceLoopCounts | undefined): UseCaseItem[] {
-	const base: UseCaseItem[] = [{ value: 'all', label: 'All' }]
-	if (!counts) return base
-	return [
-		...base,
-		...Object.keys(counts.by_use_case)
-			.sort()
-			.map((key) => ({ value: key, label: key })),
-	]
+function buildUseCaseItems(counts: MarketplaceLoopCounts | undefined): FilterItem[] {
+	if (!counts) return []
+	return Object.keys(counts.by_use_case)
+		.sort()
+		.map((key) => ({ value: key, label: key }))
 }
-
-const SUBHEAD =
-	'Vetted agents, triggers, skills, and integrations — install them on their own, or as loops wired end-to-end.'
 
 function MarketplacePage() {
 	const { workspaceId } = useWorkspace()
-	const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
-	const [useCaseFilter, setUseCaseFilter] = useState<UseCaseFilter>('all')
+	const [activeFilter, setActiveFilter] = useState<FilterValue>('all')
 	const [query, setQuery] = useState('')
 	const trimmedQuery = query.trim()
 
@@ -96,6 +86,29 @@ function MarketplacePage() {
 		}
 		return c
 	}, [allItems])
+
+	// Total catalog size shown in the header — must match the "All" chip's count.
+	const allCount = useMemo(
+		() => countForFilter('all', counts, itemCountsByType),
+		[counts, itemCountsByType],
+	)
+
+	// Hide chips with a known zero count — "All" always stays since it's the reset action.
+	const filterItems = useMemo(() => {
+		const dynamicItems = [...TYPE_ITEMS, ...useCaseItems].filter((item) => {
+			const count = countForFilter(item.value, counts, itemCountsByType)
+			return count === undefined || count > 0
+		})
+		return [{ value: 'all', label: 'All' }, ...dynamicItems]
+	}, [useCaseItems, counts, itemCountsByType])
+
+	// A selected filter is either a type ('loops' / 'actor' / ...) or a use-case
+	// label — only one can be active at a time, so derive both from the same value.
+	const typeFilter: TypeFilter = TYPE_VALUES.has(activeFilter)
+		? (activeFilter as TypeFilter)
+		: 'all'
+	const useCaseFilter =
+		TYPE_VALUES.has(activeFilter) || activeFilter === 'all' ? 'all' : activeFilter
 
 	// Loop lookup for use-case filtering of items.
 	const loopById = useMemo(() => {
@@ -147,169 +160,63 @@ function MarketplacePage() {
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
-			<div className="mb-4 md:mb-6">
-				<div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-					<h1 className="text-lg font-semibold text-foreground">Marketplace</h1>
-					{data && loops.length > 0 ? (
-						<span
-							className="text-sm text-muted-foreground tabular-nums"
-							data-testid="marketplace-count"
-						>
-							{loops.length} in the marketplace
-						</span>
-					) : null}
-				</div>
-				<p className="mt-1 text-sm text-muted-foreground max-w-2xl">{SUBHEAD}</p>
-			</div>
+			<PageHeader
+				stickyIdentity={
+					<MarketplaceHeaderIdentity count={data && loops.length > 0 ? allCount : undefined} />
+				}
+			/>
 
-			<div className="flex flex-col md:flex-row md:gap-4 lg:gap-8 flex-1 min-h-0">
-				{/* Mobile: horizontal chip strip. Hidden ≥md. */}
-				<nav aria-label="Marketplace filters" className="md:hidden -mx-1 mb-4 flex flex-col gap-2">
-					<div className="px-1">
-						<Input
-							type="search"
-							value={query}
-							onChange={(e) => setQuery(e.target.value)}
-							placeholder="Search the marketplace…"
-							aria-label="Filter marketplace"
-						/>
-					</div>
-					<ChipStrip
-						items={TYPE_ITEMS}
-						active={typeFilter}
-						onSelect={(v) => setTypeFilter(v as TypeFilter)}
-						counts={counts}
-						itemCounts={itemCountsByType}
-						kind="type"
-					/>
-					<ChipStrip
-						items={useCaseItems}
-						active={useCaseFilter}
-						onSelect={(v) => setUseCaseFilter(v as UseCaseFilter)}
-						counts={counts}
-						itemCounts={itemCountsByType}
-						kind="use_case"
-					/>
-				</nav>
-
-				{/* Desktop sidebar. Hidden <md. */}
-				<aside className="hidden md:block md:w-36 lg:w-48 md:shrink-0">
-					<SidebarGroup label="Type">
-						{TYPE_ITEMS.map((item) => (
-							<SidebarItem
-								key={item.value}
-								label={item.label}
-								count={countForType(item.value, counts, itemCountsByType)}
-								active={typeFilter === item.value}
-								onClick={() => setTypeFilter(item.value)}
-							/>
-						))}
-					</SidebarGroup>
-					<SidebarGroup label="Use case">
-						{useCaseItems.map((item) => (
-							<SidebarItem
-								key={item.value}
-								label={item.label}
-								count={countForUseCase(item.value, counts)}
-								active={useCaseFilter === item.value}
-								onClick={() => setUseCaseFilter(item.value)}
-							/>
-						))}
-					</SidebarGroup>
-				</aside>
-
-				<section className="flex-1 min-w-0">
-					<div className="hidden md:flex md:justify-end md:mb-4">
-						<Input
-							type="search"
-							value={query}
-							onChange={(e) => setQuery(e.target.value)}
-							placeholder="Search the marketplace…"
-							aria-label="Filter marketplace"
-							className="md:w-80"
-						/>
-					</div>
-					{isError ? (
-						<p className="text-sm text-muted-foreground">
-							Couldn't load the marketplace right now. Try refreshing.
-						</p>
-					) : isLoading ? (
-						<p className="text-sm text-muted-foreground">Loading marketplace…</p>
-					) : isMarketplaceEmpty ? (
-						<p className="text-sm text-muted-foreground">
-							No loops yet — check back once Maskin publishes the first one.
-						</p>
-					) : isFilterEmpty ? (
-						<EmptyState
-							title="No matches"
-							description="Try a different search term or clear the filters."
-						/>
-					) : (
-						<LoopGrid
-							loops={filteredLoops}
-							items={filteredItems}
-							typeFilter={typeFilter}
-							workspaceId={workspaceId}
-							installLookup={(id) => installsByLoop.get(id)}
-							installedItemLookup={(id) => installedItemsById.get(id)}
-						/>
-					)}
-				</section>
-			</div>
-		</div>
-	)
-}
-
-function SidebarGroup({ label, children }: { label: string; children: React.ReactNode }) {
-	return (
-		<div className="mb-4">
-			<div className="px-2 mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-				{label}
-			</div>
-			<ul className="flex flex-col gap-0.5">{children}</ul>
-		</div>
-	)
-}
-
-function SidebarItem({
-	label,
-	count,
-	active,
-	onClick,
-}: {
-	label: string
-	count: number | undefined
-	active: boolean
-	onClick: () => void
-}) {
-	return (
-		<li>
-			<button
-				type="button"
-				onClick={onClick}
-				className={cn(
-					'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors',
-					active
-						? 'bg-muted font-medium text-foreground'
-						: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
-				)}
+			<nav
+				aria-label="Marketplace filters"
+				className="mb-4 flex flex-col gap-2 md:flex-row md:items-center"
 			>
-				<span>{label}</span>
-				{typeof count === 'number' ? (
-					<>
-						{' '}
-						<span
-							className={cn(
-								'text-xs tabular-nums',
-								active ? 'text-muted-foreground' : 'text-muted-foreground/70',
-							)}
-						>
-							{count}
-						</span>
-					</>
-				) : null}
-			</button>
-		</li>
+				<div className="min-w-0 flex-1" data-testid="marketplace-filter-chips">
+					<ChipStrip
+						items={filterItems}
+						active={activeFilter}
+						onSelect={setActiveFilter}
+						counts={counts}
+						itemCounts={itemCountsByType}
+					/>
+				</div>
+				<Input
+					type="search"
+					value={query}
+					onChange={(e) => setQuery(e.target.value)}
+					placeholder="Search the marketplace…"
+					aria-label="Filter marketplace"
+					className="w-full shrink-0 md:w-80"
+				/>
+			</nav>
+
+			<div className="flex-1 min-w-0">
+				{isError ? (
+					<p className="text-sm text-muted-foreground">
+						Couldn't load the marketplace right now. Try refreshing.
+					</p>
+				) : isLoading ? (
+					<p className="text-sm text-muted-foreground">Loading marketplace…</p>
+				) : isMarketplaceEmpty ? (
+					<p className="text-sm text-muted-foreground">
+						No loops yet — check back once Maskin publishes the first one.
+					</p>
+				) : isFilterEmpty ? (
+					<EmptyState
+						title="No matches"
+						description="Try a different search term or clear the filters."
+					/>
+				) : (
+					<LoopGrid
+						loops={filteredLoops}
+						items={filteredItems}
+						typeFilter={typeFilter}
+						workspaceId={workspaceId}
+						installLookup={(id) => installsByLoop.get(id)}
+						installedItemLookup={(id) => installedItemsById.get(id)}
+					/>
+				)}
+			</div>
+		</div>
 	)
 }
 
@@ -319,22 +226,17 @@ function ChipStrip({
 	onSelect,
 	counts,
 	itemCounts,
-	kind,
 }: {
-	items: (TypeItem | UseCaseItem)[]
+	items: FilterItem[]
 	active: string
 	onSelect: (value: string) => void
 	counts: MarketplaceLoopCounts | undefined
 	itemCounts: Partial<Record<MarketplaceItemType, number>>
-	kind: 'type' | 'use_case'
 }) {
 	return (
 		<div className="flex gap-1.5 overflow-x-auto px-1 pb-1">
 			{items.map((item) => {
-				const count =
-					kind === 'type'
-						? countForType(item.value as TypeFilter, counts, itemCounts)
-						: countForUseCase(item.value as UseCaseFilter, counts)
+				const count = countForFilter(item.value, counts, itemCounts)
 				const isActive = active === item.value
 				return (
 					<button
@@ -364,25 +266,31 @@ function ChipStrip({
 	)
 }
 
+const ATOM_TYPES: MarketplaceItemType[] = ['actor', 'trigger', 'skill', 'integration']
+
 function countForType(
-	value: TypeFilter,
+	type: MarketplaceItemType,
+	counts: MarketplaceLoopCounts,
+	itemCounts: Partial<Record<MarketplaceItemType, number>>,
+): number {
+	// Use item-level count once loaded; fall back to loop-level count.
+	return itemCounts[type] ?? counts.by_type[type] ?? 0
+}
+
+function countForFilter(
+	value: FilterValue,
 	counts: MarketplaceLoopCounts | undefined,
 	itemCounts: Partial<Record<MarketplaceItemType, number>>,
 ): number | undefined {
 	if (!counts) return undefined
-	if (value === 'all' || value === 'loops') return counts.total
-	// Use item-level count once loaded; fall back to loop-level count.
-	return (
-		itemCounts[value as MarketplaceItemType] ?? counts.by_type[value as MarketplaceItemType] ?? 0
-	)
-}
-
-function countForUseCase(
-	value: UseCaseFilter,
-	counts: MarketplaceLoopCounts | undefined,
-): number | undefined {
-	if (!counts) return undefined
-	if (value === 'all') return counts.total
+	if (value === 'loops') return counts.total
+	if (value === 'all') {
+		// Total catalog size across every installable type — not the loop count.
+		return ATOM_TYPES.reduce((sum, type) => sum + countForType(type, counts, itemCounts), 0)
+	}
+	if (TYPE_VALUES.has(value)) {
+		return countForType(value as MarketplaceItemType, counts, itemCounts)
+	}
 	return counts.by_use_case[value] ?? 0
 }
 

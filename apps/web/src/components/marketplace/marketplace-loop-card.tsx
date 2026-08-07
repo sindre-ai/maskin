@@ -1,6 +1,5 @@
 import { getActorAvatarPaletteClass, getActorInitials } from '@/components/shared/actor-avatar'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type {
 	InstalledLoopRow,
@@ -9,10 +8,8 @@ import type {
 	MarketplaceLoopSummary,
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { useState } from 'react'
-import { ForkDialog } from './fork-dialog'
-import { InstallButton } from './install-button'
-import { UninstallDialog } from './uninstall-dialog'
+import { Link } from '@tanstack/react-router'
+import { LoopInstallControls } from './loop-install-controls'
 import { UpdateAvailableBanner } from './update-available-banner'
 
 interface MarketplaceLoopCardProps {
@@ -33,15 +30,19 @@ export function MarketplaceLoopCard({
 	install,
 	items,
 }: MarketplaceLoopCardProps) {
-	const [forkOpen, setForkOpen] = useState(false)
-	const [uninstallOpen, setUninstallOpen] = useState(false)
 	const locked = install?.isLocked ?? false
-	const forked = install ? !install.isLocked : false
 	const showUpdateBanner = locked && install?.hasUpdate === true
 	const isBundle = loop.item_types.length >= 2
 
 	return (
-		<article className="flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm">
+		<article className="relative flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm transition-colors hover:bg-muted/40">
+			<Link
+				to="/$workspaceId/marketplace/$loopId"
+				params={{ workspaceId, loopId: loop.id }}
+				className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+				aria-label={`Open ${loop.name}`}
+			/>
+
 			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0">
 					<h3 className="text-sm font-semibold text-foreground">{loop.name}</h3>
@@ -66,6 +67,10 @@ export function MarketplaceLoopCard({
 				) : null}
 			</div>
 
+			{/* This row is never itself positioned, so it paints below the overlay
+			    link and any empty space still opens the card. Only the chip buttons
+			    (given `relative`) paint above the link to catch their own clicks
+			    (buttons can't nest in an anchor). */}
 			{isBundle && items && items.length > 0 ? (
 				<CompositionChipRow items={items} />
 			) : (
@@ -83,68 +88,19 @@ export function MarketplaceLoopCard({
 
 			{showUpdateBanner ? <UpdateAvailableBanner newVersion={install.availableVersion} /> : null}
 
-			<div className="mt-auto flex items-center justify-end gap-2">
-				{!install ? (
-					<InstallButton workspaceId={workspaceId} loopId={loop.id} />
-				) : (
-					<>
-						{locked && (
-							<Button size="sm" variant="outline" onClick={() => setForkOpen(true)}>
-								Fork
-							</Button>
-						)}
-						<Button
-							size="sm"
-							variant="ghost"
-							className="text-muted-foreground hover:text-error"
-							onClick={() => setUninstallOpen(true)}
-						>
-							Remove
-						</Button>
-					</>
-				)}
+			<div className="mt-auto">
+				<LoopInstallControls workspaceId={workspaceId} loop={loop} install={install} />
 			</div>
-
-			{install && locked ? (
-				<ForkDialog
-					open={forkOpen}
-					onOpenChange={setForkOpen}
-					workspaceId={workspaceId}
-					installedLoopId={install.id}
-					loopName={loop.name}
-					installedVersion={install.installedVersion}
-					pendingVersion={install.hasUpdate ? install.availableVersion : null}
-				/>
-			) : null}
-
-			{install ? (
-				<UninstallDialog
-					open={uninstallOpen}
-					onOpenChange={setUninstallOpen}
-					workspaceId={workspaceId}
-					installedLoopId={install.id}
-					loopName={loop.name}
-					isLocked={locked}
-				/>
-			) : null}
-
-			{forked && install ? (
-				<p className="text-[11px] text-muted-foreground">{forkedHint(install)}</p>
-			) : null}
 		</article>
 	)
 }
 
-function forkedHint(install: InstalledLoopRow): string {
-	if (!install.hasUpdate) return ''
-	return `v${install.availableVersion} of the source is available. Your fork stays at v${install.installedVersion}.`
-}
-
 // Shape the raw marketplace items into the chip descriptors the row renders:
-// one chip per actor + integration, and a single count chip for triggers.
+// a single chip per integration, plus a count chip for agents and triggers
+// whenever there's more than one — a lone agent still gets its own named chip.
 type CompositionChip =
 	| { key: string; kind: 'actor'; name: string; label: string; initial: string }
-	| { key: string; kind: 'trigger'; count: number; names: string[] }
+	| { key: string; kind: 'count'; itemKind: 'agent' | 'trigger'; count: number; names: string[] }
 	| { key: string; kind: 'integration'; name: string; label: string; initial: string }
 
 function itemName(item: MarketplaceLoopItem): string {
@@ -154,19 +110,13 @@ function itemName(item: MarketplaceLoopItem): string {
 
 function buildChips(items: MarketplaceLoopItem[]): CompositionChip[] {
 	const chips: CompositionChip[] = []
+	const actorNames: string[] = []
 	const triggerNames: string[] = []
 
 	for (const item of items) {
 		const type = item.item_type as MarketplaceItemType
 		if (type === 'actor') {
-			const name = itemName(item)
-			chips.push({
-				key: `actor-${item.id}`,
-				kind: 'actor',
-				name,
-				label: name,
-				initial: (getActorInitials(name)[0] ?? '?').toUpperCase(),
-			})
+			actorNames.push(itemName(item))
 		} else if (type === 'integration') {
 			const name = itemName(item)
 			chips.push({
@@ -181,10 +131,30 @@ function buildChips(items: MarketplaceLoopItem[]): CompositionChip[] {
 		}
 	}
 
+	if (actorNames.length === 1) {
+		const name = actorNames[0]
+		chips.unshift({
+			key: 'actor-single',
+			kind: 'actor',
+			name,
+			label: name,
+			initial: (getActorInitials(name)[0] ?? '?').toUpperCase(),
+		})
+	} else if (actorNames.length > 1) {
+		chips.unshift({
+			key: 'agents-count',
+			kind: 'count',
+			itemKind: 'agent',
+			count: actorNames.length,
+			names: actorNames,
+		})
+	}
+
 	if (triggerNames.length > 0) {
 		chips.push({
 			key: 'triggers-count',
-			kind: 'trigger',
+			kind: 'count',
+			itemKind: 'trigger',
 			count: triggerNames.length,
 			names: triggerNames,
 		})
@@ -212,8 +182,8 @@ function CompositionChipRow({ items }: { items: MarketplaceLoopItem[] }) {
 								? `Integration · ${chip.name}`
 								: chip.names.join(' · ')
 					const label =
-						chip.kind === 'trigger'
-							? `${chip.count} ${chip.count === 1 ? 'trigger' : 'triggers'}`
+						chip.kind === 'count'
+							? `${chip.count} ${chip.itemKind}${chip.count === 1 ? '' : 's'}`
 							: chip.label
 					return (
 						<Tooltip key={chip.key}>
@@ -221,7 +191,7 @@ function CompositionChipRow({ items }: { items: MarketplaceLoopItem[] }) {
 								<button
 									type="button"
 									aria-label={tip}
-									className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/40 py-0.5 pr-2 pl-0.5 text-[11px] font-medium text-muted-foreground cursor-help hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+									className="relative inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/40 py-0.5 pr-2 pl-0.5 text-[11px] font-medium text-muted-foreground cursor-help hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 								>
 									<CompositionGlyph chip={chip} />
 									<span className="truncate">{label}</span>
@@ -261,7 +231,7 @@ function CompositionGlyph({ chip }: { chip: CompositionChip }) {
 			className={cn(base, 'border border-border bg-muted text-muted-foreground')}
 			aria-hidden="true"
 		>
-			↯
+			{chip.itemKind === 'agent' ? 'A' : '↯'}
 		</span>
 	)
 }
