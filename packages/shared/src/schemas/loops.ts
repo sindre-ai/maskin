@@ -34,8 +34,10 @@ export const loopSummarySchema = z.object({
 	/** Number of human decision points named on the loop — metadata field. */
 	humanDecisionPoints: z.number().int().nonnegative().nullable(),
 	/** Objects (bets/tasks/insights) currently being processed by this loop —
-	 * COUNT of objects with `metadata.loop_id = this.id` in a non-terminal
-	 * status for their type. Empty loops return 0, never null. */
+	 * COUNT of objects reached via an `in_loop` relationship edge (source=loop,
+	 * target=child; child objects carry no `metadata.loop_id` back-reference)
+	 * that are in a non-terminal status for their type. Empty loops return 0,
+	 * never null. */
 	inProgressCount: z.number().int().nonnegative(),
 	/** Same query as `inProgressCount` but filtered to terminal statuses. */
 	closedCount: z.number().int().nonnegative(),

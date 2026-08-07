@@ -5,6 +5,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { TriggerRow } from '@/components/triggers/trigger-row'
+import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useLoops } from '@/hooks/use-loops'
 import { useTriggers } from '@/hooks/use-triggers'
@@ -69,13 +70,11 @@ function LoopsPage() {
 					title="No loops running here yet"
 					description="Loops are persistent, multi-agent processes — a named pipeline that continuously ingests work, routes it through several agents, and surfaces decisions to you. Install one from the Marketplace, or start a new one."
 					action={
-						<Link
-							to="/$workspaceId/marketplace"
-							params={{ workspaceId }}
-							className="text-xs font-medium text-accent hover:underline"
-						>
-							Browse the Marketplace
-						</Link>
+						<Button size="sm" variant="outline" asChild>
+							<Link to="/$workspaceId/marketplace" params={{ workspaceId }}>
+								Browse the Marketplace
+							</Link>
+						</Button>
 					}
 				/>
 			) : (

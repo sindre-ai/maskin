@@ -1,9 +1,17 @@
 import { OpenAPIHono, type RouteHandler, createRoute } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, objects, readState, relationships, triggers } from '@maskin/db/schema'
-import { listLoopsResponseSchema } from '@maskin/shared'
-import { and, eq, sql } from 'drizzle-orm'
+import { TERMINAL_BET_STATUSES, listLoopsResponseSchema } from '@maskin/shared'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+
+/** Loose UUID match — used to filter free-form `metadata.trigger_ids` entries
+ * before they reach a query. Guards two things at once: an attacker-controlled
+ * string can never reach `sql.raw()` (see `loopIdArray`-style array literals
+ * elsewhere in this file), and a malformed id in the metadata can't crash the
+ * whole `/api/loops` response with a Postgres "invalid input syntax for type
+ * uuid" error — it's just silently dropped, same as any other stale id. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** Relationship `type` marking "this object is a member of this loop's
  * pipeline" — `source_id` is the loop, `target_id` is the child object.
@@ -26,7 +34,14 @@ const app = new OpenAPIHono<Env>()
 /**
  * Terminal statuses per object type — a child object in one of these values
  * counts toward the loop's `closedCount` and drops out of `inProgressCount`.
- * `bet` mirrors `TERMINAL_BET_STATUSES` from `packages/shared/src/schemas/objects.ts`;
+ * `bet` is `TERMINAL_BET_STATUSES` (`packages/shared/src/schemas/objects.ts`)
+ * *plus* `archived` — a deliberate, loop-scoped superset, not a mirror.
+ * `TERMINAL_BET_STATUSES` excludes `archived` on purpose (archiving a bet is
+ * a silent move that must not fan out a retro or unread-feed row), but that's
+ * a "does this warrant a notification" definition, not a "is this bet still
+ * active work" one. For loop progress tracking, an archived bet has stopped
+ * moving either way, so it belongs in `closedCount` here even though it never
+ * triggers the bet-terminal watcher signal.
  * `task` mirrors the done-set the CTO/validation flow treats as complete.
  * `insight`'s only closed state today is `discarded` (see workspace-briefing's
  * `ne(objects.status, 'discarded')` filter for open insights).
@@ -36,7 +51,7 @@ const app = new OpenAPIHono<Env>()
  * `packages/shared/src/schemas/objects.ts` alongside `TERMINAL_BET_STATUSES`.
  */
 const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
-	bet: ['succeeded', 'failed', 'paused', 'archived'],
+	bet: [...TERMINAL_BET_STATUSES, 'archived'],
 	task: ['done', 'validated', 'discarded'],
 	insight: ['discarded'],
 	commitment: [], // commitments never terminate — they're standing state
@@ -97,7 +112,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 		const meta = (l.metadata as Record<string, unknown> | null) ?? {}
 		const raw = meta.trigger_ids
 		const triggerIds = Array.isArray(raw)
-			? raw.filter((v): v is string => typeof v === 'string')
+			? raw.filter((v): v is string => typeof v === 'string' && UUID_RE.test(v))
 			: []
 		return { loopId: l.id, triggerIds }
 	})
@@ -163,14 +178,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 		const triggerRows = await db
 			.select({ id: triggers.id, targetActorId: triggers.targetActorId })
 			.from(triggers)
-			.where(
-				and(
-					eq(triggers.workspaceId, workspaceId),
-					sql`${triggers.id} = ANY(${sql.raw(
-						`ARRAY[${allTriggerIds.map((id) => `'${id}'`).join(',')}]::uuid[]`,
-					)})`,
-				),
-			)
+			.where(and(eq(triggers.workspaceId, workspaceId), inArray(triggers.id, allTriggerIds)))
 		for (const t of triggerRows) {
 			if (t.targetActorId) agentIdByTrigger.set(t.id, t.targetActorId)
 		}

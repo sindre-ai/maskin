@@ -192,6 +192,67 @@ describe('Loops read API integration', () => {
 		expect(otherRow?.closedCount).toBe(0)
 	})
 
+	it('computes medianTimeToCloseMs from closed children (updated_at − created_at), null when none are closed', async () => {
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Median timing',
+		})
+		const openLoop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'No closed children yet',
+		})
+
+		const createdAt = new Date('2026-01-01T00:00:00.000Z')
+		// Two closed children, closed 1s and 3s after creation — percentile_cont's
+		// linear interpolation over [1000, 3000] at the 0.5 quantile is exactly
+		// 2000ms, so this pins down both the SQL window function and the ms
+		// rounding in loops.ts rather than just checking "some number came back".
+		const closedFast = await insertObject(db, workspaceId, actorId, {
+			type: 'task',
+			status: 'done',
+			title: 'Closed in 1s',
+			createdAt,
+			updatedAt: new Date(createdAt.getTime() + 1000),
+		})
+		const closedSlow = await insertObject(db, workspaceId, actorId, {
+			type: 'task',
+			status: 'done',
+			title: 'Closed in 3s',
+			createdAt,
+			updatedAt: new Date(createdAt.getTime() + 3000),
+		})
+		const stillOpen = await insertObject(db, workspaceId, actorId, {
+			type: 'task',
+			status: 'in_progress',
+			title: 'Still open — must not count toward the median',
+			createdAt,
+			updatedAt: createdAt,
+		})
+
+		for (const target of [closedFast, closedSlow, stillOpen]) {
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: target.id,
+				type: 'in_loop',
+			})
+		}
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; medianTimeToCloseMs: number | null }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.medianTimeToCloseMs).toBe(2000)
+
+		const emptyRow = body.loops.find((l) => l.id === openLoop.id)
+		expect(emptyRow?.medianTimeToCloseMs).toBeNull()
+	})
+
 	it('ignores relationships of a different type when computing loop membership', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
