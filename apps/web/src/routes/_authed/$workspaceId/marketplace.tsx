@@ -1,4 +1,6 @@
+import { PageHeader } from '@/components/layout/page-header'
 import { LoopGrid } from '@/components/marketplace/loop-grid'
+import { MarketplaceHeaderIdentity } from '@/components/marketplace/marketplace-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Input } from '@/components/ui/input'
@@ -57,9 +59,6 @@ function buildUseCaseItems(counts: MarketplaceLoopCounts | undefined): UseCaseIt
 			.map((key) => ({ value: key, label: key })),
 	]
 }
-
-const SUBHEAD =
-	'Vetted agents, triggers, skills, and integrations — install them on their own, or as loops wired end-to-end.'
 
 function MarketplacePage() {
 	const { workspaceId } = useWorkspace()
@@ -147,169 +146,71 @@ function MarketplacePage() {
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
-			<div className="mb-4 md:mb-6">
-				<div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-					<h1 className="text-lg font-semibold text-foreground">Marketplace</h1>
-					{data && loops.length > 0 ? (
-						<span
-							className="text-sm text-muted-foreground tabular-nums"
-							data-testid="marketplace-count"
-						>
-							{loops.length} in the marketplace
-						</span>
-					) : null}
+			<PageHeader
+				stickyIdentity={
+					<MarketplaceHeaderIdentity count={data && loops.length > 0 ? loops.length : undefined} />
+				}
+			/>
+
+			<nav aria-label="Marketplace filters" className="mb-4 flex flex-col gap-2">
+				<div className="flex flex-col gap-2 md:flex-row md:items-center">
+					<div className="min-w-0 flex-1 overflow-x-auto" data-testid="marketplace-type-chips">
+						<ChipStrip
+							items={TYPE_ITEMS}
+							active={typeFilter}
+							onSelect={(v) => setTypeFilter(v as TypeFilter)}
+							counts={counts}
+							itemCounts={itemCountsByType}
+							kind="type"
+						/>
+					</div>
+					<Input
+						type="search"
+						value={query}
+						onChange={(e) => setQuery(e.target.value)}
+						placeholder="Search the marketplace…"
+						aria-label="Filter marketplace"
+						className="w-full shrink-0 md:w-80"
+					/>
 				</div>
-				<p className="mt-1 text-sm text-muted-foreground max-w-2xl">{SUBHEAD}</p>
-			</div>
+				<ChipStrip
+					items={useCaseItems}
+					active={useCaseFilter}
+					onSelect={(v) => setUseCaseFilter(v as UseCaseFilter)}
+					counts={counts}
+					itemCounts={itemCountsByType}
+					kind="use_case"
+				/>
+			</nav>
 
-			<div className="flex flex-col md:flex-row md:gap-4 lg:gap-8 flex-1 min-h-0">
-				{/* Mobile: horizontal chip strip. Hidden ≥md. */}
-				<nav aria-label="Marketplace filters" className="md:hidden -mx-1 mb-4 flex flex-col gap-2">
-					<div className="px-1">
-						<Input
-							type="search"
-							value={query}
-							onChange={(e) => setQuery(e.target.value)}
-							placeholder="Search the marketplace…"
-							aria-label="Filter marketplace"
-						/>
-					</div>
-					<ChipStrip
-						items={TYPE_ITEMS}
-						active={typeFilter}
-						onSelect={(v) => setTypeFilter(v as TypeFilter)}
-						counts={counts}
-						itemCounts={itemCountsByType}
-						kind="type"
+			<div className="flex-1 min-w-0">
+				{isError ? (
+					<p className="text-sm text-muted-foreground">
+						Couldn't load the marketplace right now. Try refreshing.
+					</p>
+				) : isLoading ? (
+					<p className="text-sm text-muted-foreground">Loading marketplace…</p>
+				) : isMarketplaceEmpty ? (
+					<p className="text-sm text-muted-foreground">
+						No loops yet — check back once Maskin publishes the first one.
+					</p>
+				) : isFilterEmpty ? (
+					<EmptyState
+						title="No matches"
+						description="Try a different search term or clear the filters."
 					/>
-					<ChipStrip
-						items={useCaseItems}
-						active={useCaseFilter}
-						onSelect={(v) => setUseCaseFilter(v as UseCaseFilter)}
-						counts={counts}
-						itemCounts={itemCountsByType}
-						kind="use_case"
+				) : (
+					<LoopGrid
+						loops={filteredLoops}
+						items={filteredItems}
+						typeFilter={typeFilter}
+						workspaceId={workspaceId}
+						installLookup={(id) => installsByLoop.get(id)}
+						installedItemLookup={(id) => installedItemsById.get(id)}
 					/>
-				</nav>
-
-				{/* Desktop sidebar. Hidden <md. */}
-				<aside className="hidden md:block md:w-36 lg:w-48 md:shrink-0">
-					<SidebarGroup label="Type">
-						{TYPE_ITEMS.map((item) => (
-							<SidebarItem
-								key={item.value}
-								label={item.label}
-								count={countForType(item.value, counts, itemCountsByType)}
-								active={typeFilter === item.value}
-								onClick={() => setTypeFilter(item.value)}
-							/>
-						))}
-					</SidebarGroup>
-					<SidebarGroup label="Use case">
-						{useCaseItems.map((item) => (
-							<SidebarItem
-								key={item.value}
-								label={item.label}
-								count={countForUseCase(item.value, counts)}
-								active={useCaseFilter === item.value}
-								onClick={() => setUseCaseFilter(item.value)}
-							/>
-						))}
-					</SidebarGroup>
-				</aside>
-
-				<section className="flex-1 min-w-0">
-					<div className="hidden md:flex md:justify-end md:mb-4">
-						<Input
-							type="search"
-							value={query}
-							onChange={(e) => setQuery(e.target.value)}
-							placeholder="Search the marketplace…"
-							aria-label="Filter marketplace"
-							className="md:w-80"
-						/>
-					</div>
-					{isError ? (
-						<p className="text-sm text-muted-foreground">
-							Couldn't load the marketplace right now. Try refreshing.
-						</p>
-					) : isLoading ? (
-						<p className="text-sm text-muted-foreground">Loading marketplace…</p>
-					) : isMarketplaceEmpty ? (
-						<p className="text-sm text-muted-foreground">
-							No loops yet — check back once Maskin publishes the first one.
-						</p>
-					) : isFilterEmpty ? (
-						<EmptyState
-							title="No matches"
-							description="Try a different search term or clear the filters."
-						/>
-					) : (
-						<LoopGrid
-							loops={filteredLoops}
-							items={filteredItems}
-							typeFilter={typeFilter}
-							workspaceId={workspaceId}
-							installLookup={(id) => installsByLoop.get(id)}
-							installedItemLookup={(id) => installedItemsById.get(id)}
-						/>
-					)}
-				</section>
-			</div>
-		</div>
-	)
-}
-
-function SidebarGroup({ label, children }: { label: string; children: React.ReactNode }) {
-	return (
-		<div className="mb-4">
-			<div className="px-2 mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-				{label}
-			</div>
-			<ul className="flex flex-col gap-0.5">{children}</ul>
-		</div>
-	)
-}
-
-function SidebarItem({
-	label,
-	count,
-	active,
-	onClick,
-}: {
-	label: string
-	count: number | undefined
-	active: boolean
-	onClick: () => void
-}) {
-	return (
-		<li>
-			<button
-				type="button"
-				onClick={onClick}
-				className={cn(
-					'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors',
-					active
-						? 'bg-muted font-medium text-foreground'
-						: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
 				)}
-			>
-				<span>{label}</span>
-				{typeof count === 'number' ? (
-					<>
-						{' '}
-						<span
-							className={cn(
-								'text-xs tabular-nums',
-								active ? 'text-muted-foreground' : 'text-muted-foreground/70',
-							)}
-						>
-							{count}
-						</span>
-					</>
-				) : null}
-			</button>
-		</li>
+			</div>
+		</div>
 	)
 }
 

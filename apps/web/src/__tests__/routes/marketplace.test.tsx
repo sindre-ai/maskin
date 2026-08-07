@@ -57,52 +57,37 @@ describe('MarketplacePage', () => {
 		})
 	})
 
-	it('renders the page heading and subhead', () => {
+	it('renders Type and Use case chip rows with counts from the API', () => {
 		render(<MarketplacePage />)
-		expect(screen.getByRole('heading', { name: 'Marketplace' })).toBeInTheDocument()
-		expect(screen.getByText(/Vetted agents, triggers, skills/)).toBeInTheDocument()
-	})
 
-	it('renders Type and Use case sidebar groups with counts from the API', () => {
-		render(<MarketplacePage />)
-		expect(screen.getAllByText('Type').length).toBeGreaterThan(0)
-		expect(screen.getAllByText('Use case').length).toBeGreaterThan(0)
-
-		// Desktop sidebar items render as buttons. The "All" label appears twice
-		// (Type + Use case groups).
-		expect(screen.getAllByRole('button', { name: /^All\s/ }).length).toBeGreaterThanOrEqual(2)
+		// "All" renders once per filter kind (Type row + Use case row).
+		expect(screen.getAllByRole('button', { name: /^All\s/ })).toHaveLength(2)
 		// Type counts fall back to by_type when no items are loaded.
-		expect(screen.getAllByRole('button', { name: /^Agents\s5/ }).length).toBeGreaterThanOrEqual(1)
-		expect(screen.getAllByRole('button', { name: /^Triggers\s2/ }).length).toBeGreaterThanOrEqual(1)
-		expect(screen.getAllByRole('button', { name: /^Skills\s6/ }).length).toBeGreaterThanOrEqual(1)
-		expect(
-			screen.getAllByRole('button', { name: /^Integrations\s3/ }).length,
-		).toBeGreaterThanOrEqual(1)
-		expect(screen.getAllByRole('button', { name: /^Discovery\s1/ }).length).toBeGreaterThanOrEqual(
-			1,
-		)
-		expect(screen.getAllByRole('button', { name: /^Sales\s2/ }).length).toBeGreaterThanOrEqual(1)
+		expect(screen.getByRole('button', { name: /^Agents\s5/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Triggers\s2/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Skills\s6/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Integrations\s3/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Discovery\s1/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Sales\s2/ })).toBeInTheDocument()
 	})
 
-	it('clicking a Type item marks it active in the desktop sidebar', async () => {
+	it('clicking a Type chip marks it active', async () => {
 		render(<MarketplacePage />)
 		const user = userEvent.setup()
-		const agentsButtons = screen.getAllByRole('button', { name: /^Agents\s5/ })
-		// In DOM order the chip-strip button comes first, the sidebar button second.
-		const sidebarBtn = agentsButtons[agentsButtons.length - 1]
-		await user.click(sidebarBtn)
-		expect(sidebarBtn.className).toMatch(/bg-muted/)
-		expect(sidebarBtn.className).toMatch(/font-medium/)
+		const btn = screen.getByRole('button', { name: /^Agents\s5/ })
+		await user.click(btn)
+		expect(btn.className).toMatch(/border-foreground/)
+		expect(btn.className).toMatch(/bg-foreground/)
 	})
 
-	it('renders sidebar without counts when the API request errors', () => {
+	it('renders chips without counts when the API request errors', () => {
 		mockUseMarketplaceLoops.mockReturnValue({
 			data: undefined,
 			isLoading: false,
 			isError: true,
 		})
 		render(<MarketplacePage />)
-		expect(screen.getAllByRole('button', { name: /^Agents$/ }).length).toBeGreaterThanOrEqual(1)
+		expect(screen.getByRole('button', { name: /^Agents$/ })).toBeInTheDocument()
 		expect(screen.getByText(/Couldn't load the marketplace/i)).toBeInTheDocument()
 	})
 
@@ -194,17 +179,7 @@ describe('MarketplacePage', () => {
 		expect(screen.getByText(/No loops yet/i)).toBeInTheDocument()
 	})
 
-	it('hides the desktop sidebar via the md:hidden / hidden md:block split', () => {
-		render(<MarketplacePage />)
-		const chipNav = screen.getByRole('navigation', { name: 'Marketplace filters' })
-		expect(chipNav.className).toMatch(/md:hidden/)
-		const aside = chipNav.parentElement?.querySelector('aside')
-		expect(aside).not.toBeNull()
-		expect(aside?.className).toMatch(/hidden/)
-		expect(aside?.className).toMatch(/md:block/)
-	})
-
-	it('renders the free-text filter input in both the mobile nav and the desktop section', () => {
+	it('renders the free-text filter input inside the filter nav', () => {
 		mockUseMarketplaceLoops.mockReturnValue({
 			data: {
 				loops: [
@@ -226,13 +201,9 @@ describe('MarketplacePage', () => {
 			isError: false,
 		})
 		render(<MarketplacePage />)
-		const inputs = screen.getAllByRole('searchbox', { name: 'Filter marketplace' })
-		expect(inputs).toHaveLength(2)
-		// The mobile input sits inside the filter nav; the desktop input sits
-		// inside the content <section>. Both share the same query state.
+		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
 		const chipNav = screen.getByRole('navigation', { name: 'Marketplace filters' })
-		expect(chipNav.contains(inputs[0])).toBe(true)
-		expect(chipNav.contains(inputs[1])).toBe(false)
+		expect(chipNav.contains(input)).toBe(true)
 	})
 
 	it('narrows the visible loops when the user types into the filter', async () => {
@@ -273,8 +244,8 @@ describe('MarketplacePage', () => {
 		expect(loops).toHaveTextContent('Build & Ship')
 
 		const user = userEvent.setup()
-		const [mobileInput] = screen.getAllByRole('searchbox', { name: 'Filter marketplace' })
-		await user.type(mobileInput, 'discover')
+		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
+		await user.type(input, 'discover')
 		expect(screen.getByRole('region', { name: 'Loops' })).toHaveTextContent('Discover & Research')
 		expect(screen.getByRole('region', { name: 'Loops' })).not.toHaveTextContent('Build & Ship')
 	})
@@ -302,8 +273,8 @@ describe('MarketplacePage', () => {
 		})
 		render(<MarketplacePage />)
 		const user = userEvent.setup()
-		const [mobileInput] = screen.getAllByRole('searchbox', { name: 'Filter marketplace' })
-		await user.type(mobileInput, 'zzzznomatchxyz')
+		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
+		await user.type(input, 'zzzznomatchxyz')
 		expect(screen.getByText('No matches')).toBeInTheDocument()
 		expect(screen.queryByRole('region', { name: 'Loops' })).not.toBeInTheDocument()
 		expect(screen.queryByText(/Showing all/i)).not.toBeInTheDocument()

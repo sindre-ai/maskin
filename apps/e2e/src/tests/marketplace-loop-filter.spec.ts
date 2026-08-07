@@ -37,17 +37,24 @@ test.describe('Marketplace loop filter', () => {
 			const loopsBox = await loopsSection.boundingBox()
 			if (!filterBox || !loopsBox) throw new Error('missing bounding boxes')
 
+			const typeChips = page.getByTestId('marketplace-type-chips')
+			const chipBox = await typeChips.boundingBox()
+			if (!chipBox) throw new Error('missing chip bounding box')
+
 			if (viewport.width < 768) {
-				// Mobile: filter sits above the type chip strip (and therefore above the
-				// grid), full-width across the content column.
-				const typeChip = page.getByRole('button', { name: /^Agents\s/ }).first()
-				const chipBox = await typeChip.boundingBox()
-				if (!chipBox) throw new Error('missing chip bounding box')
-				expect(filterBox.y + filterBox.height).toBeLessThanOrEqual(chipBox.y + 1)
-				// Roughly fills the column (allow for the -mx-1/px-1 gutter).
+				// Mobile: Type chip row sits above the (now full-width, stacked) search input.
+				expect(chipBox.y + chipBox.height).toBeLessThanOrEqual(filterBox.y + 1)
 				expect(filterBox.width).toBeGreaterThan(viewport.width * 0.85)
 			} else {
-				// Desktop / tablet: filter sits above the grid, right-aligned at ~320px.
+				// Desktop / tablet: filter shares a row with the Type chips specifically
+				// (not the Use-case row below), sits to their right, above the grid,
+				// right-aligned at ~320px. Uses the chip-row wrapper's clipped bounding
+				// box, not an individual chip's, since the wrapper is overflow-x-auto and
+				// a single chip's layout box can exceed the visible clipped region.
+				expect(
+					Math.abs(filterBox.y + filterBox.height / 2 - (chipBox.y + chipBox.height / 2)),
+				).toBeLessThan(4)
+				expect(filterBox.x).toBeGreaterThan(chipBox.x + chipBox.width)
 				expect(filterBox.y + filterBox.height).toBeLessThanOrEqual(loopsBox.y + 1)
 				expect(Math.round(filterBox.width)).toBeGreaterThanOrEqual(300)
 				expect(Math.round(filterBox.width)).toBeLessThanOrEqual(340)
