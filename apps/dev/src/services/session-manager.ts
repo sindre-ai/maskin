@@ -1178,10 +1178,24 @@ export class SessionManager extends EventEmitter {
 		const llmConfig = (agent.llmConfig as Record<string, unknown>) ?? {}
 		const sessionConfig = session.config as Record<string, unknown>
 
+		// A conversation-triggered session's own system prompt is the agent's
+		// full persona/workflow doc (often long and domain-specific, e.g. an
+		// autonomous bet-shaping or triage workflow) — it says nothing about
+		// being in a live chat. Without this preamble, that framing only lives
+		// in the first user turn (see conversation-responder.ts) where it has
+		// to compete with everything below it; agents observably fall back to
+		// their usual autonomous behavior (reading data, taking actions) and
+		// never call post_conversation_message, so the human sees no reply at
+		// all. Prepending it to SYSTEM_PROMPT instead makes it agent-agnostic
+		// and load-bearing regardless of how the agent's own prompt is written.
+		const conversationPreamble = sessionConfig.conversation
+			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. The ONLY way your reply becomes visible to them is by calling the post_conversation_message tool — reading data or taking other actions is invisible to them by itself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
+			: ''
+
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
-			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
+			SYSTEM_PROMPT: `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}`,
 			MASKIN_API_URL: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 		}

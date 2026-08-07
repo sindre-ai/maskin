@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { actors, conversationParticipants, messages, workspaces } from '@maskin/db/schema'
-import { and, desc, eq, isNull, ne } from 'drizzle-orm'
+import { and, count, desc, eq, isNull, ne } from 'drizzle-orm'
 import { resolveChatCredentials } from '../lib/llm-routing'
 import type { LLMTool } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
@@ -89,6 +89,21 @@ export async function evaluateAndRespond(ctx: {
 		)
 	if (candidates.length === 0) return
 
+	// A conversation with exactly two active participants total (the author
+	// + this one agent) is a direct 1:1 — the user has nobody else to expect
+	// a reply from, so the "silence is fine" framing below should be much
+	// weaker than in a group chat where relevance was only inferred.
+	const totalParticipantsRow = await db
+		.select({ value: count() })
+		.from(conversationParticipants)
+		.where(
+			and(
+				eq(conversationParticipants.conversationId, conversationId),
+				isNull(conversationParticipants.leftAt),
+			),
+		)
+	const isDirectConversation = (totalParticipantsRow[0]?.value ?? 0) === 2
+
 	// Loop-prevention cap: walk from the most recent message back, count
 	// consecutive agent-authored messages at the tail (the new message is
 	// included, since it's already inserted at this point).
@@ -129,15 +144,17 @@ export async function evaluateAndRespond(ctx: {
 
 	await Promise.allSettled(
 		candidates.map(async (agent) => {
+			const wasMentioned = mentioned.has(agent.id)
 			// @mention fast-path — skip the relevance check entirely, an
 			// explicit @mention is already an unambiguous signal to respond.
-			const shouldRespond = mentioned.has(agent.id)
+			const shouldRespond = wasMentioned
 				? true
 				: await checkRelevance({
 						agent,
 						wsSettings,
 						conversationHistory,
 						newMessageContent: message.content,
+						isDirectConversation,
 					})
 			if (!shouldRespond) return
 
@@ -151,6 +168,8 @@ export async function evaluateAndRespond(ctx: {
 							content: buildConversationTurnPrompt({
 								authorName: message.authorName,
 								newMessageContent: message.content,
+								isDirectConversation,
+								wasMentioned,
 							}),
 						},
 					})
@@ -173,6 +192,8 @@ export async function evaluateAndRespond(ctx: {
 				agentId: agent.id,
 				message,
 				conversationHistory,
+				isDirectConversation,
+				wasMentioned,
 			})
 		}),
 	)
@@ -198,6 +219,8 @@ async function spawnOrJoinConversationSession(params: {
 	agentId: string
 	message: { actorId: string; content: string; authorName: string }
 	conversationHistory: Array<{ actorName: string; content: string }>
+	isDirectConversation: boolean
+	wasMentioned: boolean
 }): Promise<void> {
 	const {
 		sessionManager,
@@ -207,6 +230,8 @@ async function spawnOrJoinConversationSession(params: {
 		agentId,
 		message,
 		conversationHistory,
+		isDirectConversation,
+		wasMentioned,
 	} = params
 
 	try {
@@ -218,6 +243,8 @@ async function spawnOrJoinConversationSession(params: {
 				newMessageContent: message.content,
 				authorName: message.authorName,
 				authorActorId: message.actorId,
+				isDirectConversation,
+				wasMentioned,
 			}),
 			config: {
 				interactive: true,
@@ -253,6 +280,8 @@ async function spawnOrJoinConversationSession(params: {
 				content: buildConversationTurnPrompt({
 					authorName: message.authorName,
 					newMessageContent: message.content,
+					isDirectConversation,
+					wasMentioned,
 				}),
 			},
 		})
@@ -302,8 +331,9 @@ async function checkRelevance(params: {
 	wsSettings: WorkspaceSettings
 	conversationHistory: Array<{ actorName: string; content: string }>
 	newMessageContent: string
+	isDirectConversation: boolean
 }): Promise<boolean> {
-	const { agent, wsSettings, conversationHistory, newMessageContent } = params
+	const { agent, wsSettings, conversationHistory, newMessageContent, isDirectConversation } = params
 	const llmConfig = (agent.llmConfig as Record<string, unknown>) ?? {}
 	const credentials = resolveChatCredentials({
 		wsSettings,
@@ -333,7 +363,9 @@ async function checkRelevance(params: {
 					content: [
 						`You are ${agent.name}${agent.description ? `, ${agent.description}` : ''}.`,
 						agent.systemPrompt ?? '',
-						'You are one of several participants in a group chat. A new message just arrived. Decide whether YOU specifically should reply — not whether someone could reply. Stay silent when the message is directed at someone else, already answered, small talk between humans, or you have nothing useful to add. Call decide_response with your answer.',
+						isDirectConversation
+							? "This is a direct 1:1 chat between you and the user — there's no one else who could reply instead. A new message just arrived. Decide whether it warrants a reply from you. Default to responding; only decide against it if the message clearly needs no response (e.g. a plain acknowledgment). Call decide_response with your answer."
+							: 'You are one of several participants in a group chat. A new message just arrived. Decide whether YOU specifically should reply — not whether someone could reply. Stay silent when the message is directed at someone else, already answered, small talk between humans, or you have nothing useful to add. Call decide_response with your answer.',
 					]
 						.filter(Boolean)
 						.join('\n\n'),
@@ -375,6 +407,8 @@ function buildConversationReplyPrompt(ctx: {
 	newMessageContent: string
 	authorName: string
 	authorActorId: string
+	isDirectConversation: boolean
+	wasMentioned: boolean
 }): string {
 	return [
 		'A new message was posted in a conversation you are a participant in, and you decided a reply from you may add value. This session stays open for the rest of this conversation — later messages will arrive as further turns, not new prompts.',
@@ -384,7 +418,8 @@ function buildConversationReplyPrompt(ctx: {
 		formatConversationTranscript(ctx.conversationHistory) || '(no prior messages)',
 		'"""',
 		'',
-		'The response can be any combination of: taking an action, posting a reply via post_conversation_message, or doing nothing if on reflection no response is warranted after all — silence is a valid outcome.',
+		`The response can be any combination of: taking an action, or posting a reply via post_conversation_message. ${describeReplyExpectation(ctx)}`,
+		'IMPORTANT: taking an action (reading data, calling other tools) is invisible to the user by itself — they only see a reply once you call post_conversation_message. If you take actions first, still call post_conversation_message afterward to report back, unless you deliberately chose silence per the guidance above.',
 		'',
 		`Conversation ID: ${ctx.conversationId}`,
 		`Author of the new message: ${ctx.authorName} (actor ID: ${ctx.authorActorId})`,
@@ -393,6 +428,27 @@ function buildConversationReplyPrompt(ctx: {
 		ctx.newMessageContent,
 		'"""',
 	].join('\n')
+}
+
+/**
+ * Calibrates how strongly the seed/turn prompt should push toward an actual
+ * reply. Silence is always technically available, but it means something
+ * different depending on context: in a 1:1 with the user, or when directly
+ * @mentioned, there's no one else to answer — silence reads as being ignored,
+ * not as "someone else has it." In a group chat where relevance was only
+ * inferred, silence is a normal, frequent outcome.
+ */
+function describeReplyExpectation(ctx: {
+	isDirectConversation: boolean
+	wasMentioned: boolean
+}): string {
+	if (ctx.isDirectConversation) {
+		return "This conversation is just you and the user — there's no one else for them to hear back from, so they are expecting a reply from you. Only stay silent if the message truly needs no response (e.g. a plain 'thanks')."
+	}
+	if (ctx.wasMentioned) {
+		return 'The user @mentioned you directly, which is an explicit, unambiguous request for your reply — silence here reads as being ignored. Reply unless you have a clear reason not to.'
+	}
+	return "You judged this message relevant enough to act on, so lean toward replying. Doing nothing is still valid if, on reflection, a response from you doesn't actually add anything — but don't default to silence just because it's an option."
 }
 
 /**
@@ -405,6 +461,13 @@ function buildConversationReplyPrompt(ctx: {
 function buildConversationTurnPrompt(ctx: {
 	authorName: string
 	newMessageContent: string
+	isDirectConversation: boolean
+	wasMentioned: boolean
 }): string {
-	return `${ctx.authorName}: ${ctx.newMessageContent}`
+	const reminder = ctx.isDirectConversation
+		? " (it's just the two of you here — they're expecting a reply)"
+		: ctx.wasMentioned
+			? ' (they @mentioned you directly — expecting a reply)'
+			: ''
+	return `${ctx.authorName}: ${ctx.newMessageContent}${reminder}`
 }
