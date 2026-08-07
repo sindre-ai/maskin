@@ -48,6 +48,30 @@ describe('describeCronExpression', () => {
 	it('drops a leading seconds field on 6-field cron', () => {
 		expect(describeCronExpression('0 0 9 * * *')).toBe('every day at 9:00 AM')
 	})
+
+	it('treats day-of-week 7 as Sunday', () => {
+		expect(describeCronExpression('0 17 * * 7')).toBe('every Sunday at 5:00 PM')
+	})
+
+	it('falls back to the raw expression for a restricted month field', () => {
+		expect(describeCronExpression('0 9 1 6 *')).toBe('0 9 1 6 *')
+	})
+
+	it('falls back to the raw expression when hour is wildcard but day-of-week is restricted', () => {
+		expect(describeCronExpression('0 * * * 0')).toBe('0 * * * 0')
+	})
+
+	it('falls back to the raw expression when minute is wildcard but day-of-month is restricted', () => {
+		expect(describeCronExpression('* 8 15 * *')).toBe('* 8 15 * *')
+	})
+
+	it('falls back to the raw expression for out-of-range field values', () => {
+		expect(describeCronExpression('0 25 * * 1')).toBe('0 25 * * 1')
+		expect(describeCronExpression('60 9 * * *')).toBe('60 9 * * *')
+		expect(describeCronExpression('0 9 32 * *')).toBe('0 9 32 * *')
+		expect(describeCronExpression('0 9 0 * *')).toBe('0 9 0 * *')
+		expect(describeCronExpression('0 9 * * 8')).toBe('0 9 * * 8')
+	})
 })
 
 describe('parseCronExpression', () => {
@@ -55,5 +79,15 @@ describe('parseCronExpression', () => {
 		expect(parseCronExpression('*/15 * * * *')).toBeNull()
 		expect(parseCronExpression('0 9 * * MON')).toBeNull()
 		expect(parseCronExpression('garbage')).toBeNull()
+	})
+
+	it('returns null for a restricted month field', () => {
+		expect(parseCronExpression('0 9 1 6 *')).toBeNull()
+	})
+
+	it('returns null for out-of-range field values', () => {
+		expect(parseCronExpression('0 25 * * 1')).toBeNull()
+		expect(parseCronExpression('60 9 * * *')).toBeNull()
+		expect(parseCronExpression('0 9 32 * *')).toBeNull()
 	})
 })

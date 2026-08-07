@@ -18,26 +18,50 @@ const DAY_NAMES: Record<string, string> = {
 	'6': 'Saturday',
 }
 
-function isSimpleField(field: string | undefined): field is string {
-	return field === '*' || /^\d+$/.test(field ?? '')
+function isFieldInRange(field: string | undefined, min: number, max: number): field is string {
+	if (field === undefined || !/^\d+$/.test(field)) return false
+	const n = Number(field)
+	return n >= min && n <= max
 }
 
-/** Standard 5-field cron (minute hour dayOfMonth month dayOfWeek) — month is
- * always `*` for the schedules this app generates, so it's parsed but unused.
- * A leading seconds field (6-field cron) is tolerated and dropped. Returns
- * `null` for anything this app doesn't generate itself — step syntax, lists
- * (`9,15`), ranges (`1-5`), day names (`MON`) — so callers can fall back to
- * showing the raw expression instead of a confidently wrong one. */
+function isValidOrWildcard(field: string | undefined, min: number, max: number): field is string {
+	return field === '*' || isFieldInRange(field, min, max)
+}
+
+/** Standard 5-field cron (minute hour dayOfMonth month dayOfWeek). A leading
+ * seconds field (6-field cron) is tolerated and dropped. Returns `null` for
+ * anything this app doesn't generate itself — a restricted month field, an
+ * out-of-range field, step syntax, lists (`9,15`), ranges (`1-5`), day names
+ * (`MON`) — so callers can fall back to showing the raw expression instead of
+ * a confidently wrong one. */
 export function parseCronExpression(expr: string): ParsedCron | null {
 	const parts = expr.trim().split(/\s+/)
 	const fields = parts.length === 6 ? parts.slice(1) : parts
 	if (fields.length !== 5) return null
-	const [minute, hour, dayOfMonth, , dayOfWeek] = fields
-	if (![minute, hour, dayOfMonth, dayOfWeek].every(isSimpleField)) return null
+	const [minute, hour, dayOfMonth, month, dayOfWeek] = fields
+	if (month !== '*') return null
+	if (!isValidOrWildcard(minute, 0, 59)) return null
+	if (!isValidOrWildcard(hour, 0, 23)) return null
+	if (!isValidOrWildcard(dayOfMonth, 1, 31)) return null
+	if (!isValidOrWildcard(dayOfWeek, 0, 7)) return null
+	const normalizedDayOfWeek = dayOfWeek === '7' ? '0' : dayOfWeek
 
-	if (dayOfWeek !== '*') return { frequency: 'weekly', minute, hour, dayOfWeek, dayOfMonth: '1' }
-	if (dayOfMonth !== '*') return { frequency: 'monthly', minute, hour, dayOfWeek: '1', dayOfMonth }
-	if (hour !== '*') return { frequency: 'daily', minute, hour, dayOfWeek: '1', dayOfMonth: '1' }
+	// A wildcard hour/minute makes the schedule fire more than once within the
+	// bucket implied by the other fields (e.g. every minute on Sundays) — this
+	// app never generates that, so fall back rather than guess a time.
+	if (normalizedDayOfWeek !== '*') {
+		if (hour === '*' || minute === '*') return null
+		return { frequency: 'weekly', minute, hour, dayOfWeek: normalizedDayOfWeek, dayOfMonth: '1' }
+	}
+	if (dayOfMonth !== '*') {
+		if (hour === '*' || minute === '*') return null
+		return { frequency: 'monthly', minute, hour, dayOfWeek: '1', dayOfMonth }
+	}
+	if (hour !== '*') {
+		if (minute === '*') return null
+		return { frequency: 'daily', minute, hour, dayOfWeek: '1', dayOfMonth: '1' }
+	}
+	if (minute === '*') return null
 	return { frequency: 'hourly', minute, hour: '9', dayOfWeek: '1', dayOfMonth: '1' }
 }
 
