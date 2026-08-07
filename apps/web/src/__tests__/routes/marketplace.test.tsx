@@ -57,11 +57,11 @@ describe('MarketplacePage', () => {
 		})
 	})
 
-	it('renders Type and Use case chip rows with counts from the API', () => {
+	it('renders type and use-case chips in a single list with counts from the API', () => {
 		render(<MarketplacePage />)
 
-		// "All" renders once per filter kind (Type row + Use case row).
-		expect(screen.getAllByRole('button', { name: /^All\s/ })).toHaveLength(2)
+		// Only one "All" chip — type and use-case filters share a single list.
+		expect(screen.getAllByRole('button', { name: /^All\s/ })).toHaveLength(1)
 		// Type counts fall back to by_type when no items are loaded.
 		expect(screen.getByRole('button', { name: /^Agents\s5/ })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /^Triggers\s2/ })).toBeInTheDocument()
@@ -71,13 +71,45 @@ describe('MarketplacePage', () => {
 		expect(screen.getByRole('button', { name: /^Sales\s2/ })).toBeInTheDocument()
 	})
 
-	it('clicking a Type chip marks it active', async () => {
+	it('hides chips with a zero count', () => {
+		render(<MarketplacePage />)
+		// COUNTS.by_use_case.Research is 0 — its chip should not render at all.
+		expect(screen.queryByRole('button', { name: /^Research/ })).not.toBeInTheDocument()
+	})
+
+	it('shows the total catalog size on "All", not the loop count', () => {
+		render(<MarketplacePage />)
+		// Sum of by_type counts (5 + 2 + 6 + 3 = 16), not COUNTS.total (4 loops).
+		expect(screen.getByRole('button', { name: /^All\s16/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Loops\s4/ })).toBeInTheDocument()
+	})
+
+	it('clicking a chip marks it active', async () => {
 		render(<MarketplacePage />)
 		const user = userEvent.setup()
 		const btn = screen.getByRole('button', { name: /^Agents\s5/ })
 		await user.click(btn)
 		expect(btn.className).toMatch(/border-foreground/)
 		expect(btn.className).toMatch(/bg-foreground/)
+	})
+
+	it('only one chip can be active at a time, across type and use-case chips', async () => {
+		render(<MarketplacePage />)
+		const user = userEvent.setup()
+
+		const agentsBtn = screen.getByRole('button', { name: /^Agents\s5/ })
+		await user.click(agentsBtn)
+		expect(agentsBtn.className).toMatch(/border-foreground/)
+
+		const discoveryBtn = screen.getByRole('button', { name: /^Discovery\s1/ })
+		await user.click(discoveryBtn)
+		expect(discoveryBtn.className).toMatch(/border-foreground/)
+		expect(agentsBtn.className).not.toMatch(/border-foreground/)
+
+		const allBtn = screen.getByRole('button', { name: /^All\s/ })
+		await user.click(allBtn)
+		expect(allBtn.className).toMatch(/border-foreground/)
+		expect(discoveryBtn.className).not.toMatch(/border-foreground/)
 	})
 
 	it('renders chips without counts when the API request errors', () => {

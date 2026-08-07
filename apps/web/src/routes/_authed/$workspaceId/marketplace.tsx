@@ -28,20 +28,16 @@ export const Route = createFileRoute('/_authed/$workspaceId/marketplace')({
 })
 
 type TypeFilter = 'all' | 'loops' | MarketplaceItemType
-type UseCaseFilter = 'all' | string
+type FilterValue = TypeFilter | string
 
-interface TypeItem {
-	value: TypeFilter
+interface FilterItem {
+	value: FilterValue
 	label: string
 }
 
-interface UseCaseItem {
-	value: UseCaseFilter
-	label: string
-}
+const TYPE_VALUES = new Set<FilterValue>(['loops', 'actor', 'trigger', 'skill', 'integration'])
 
-const TYPE_ITEMS: TypeItem[] = [
-	{ value: 'all', label: 'All' },
+const TYPE_ITEMS: FilterItem[] = [
 	{ value: 'loops', label: 'Loops' },
 	{ value: 'actor', label: 'Agents' },
 	{ value: 'trigger', label: 'Triggers' },
@@ -49,21 +45,16 @@ const TYPE_ITEMS: TypeItem[] = [
 	{ value: 'integration', label: 'Integrations' },
 ]
 
-function buildUseCaseItems(counts: MarketplaceLoopCounts | undefined): UseCaseItem[] {
-	const base: UseCaseItem[] = [{ value: 'all', label: 'All' }]
-	if (!counts) return base
-	return [
-		...base,
-		...Object.keys(counts.by_use_case)
-			.sort()
-			.map((key) => ({ value: key, label: key })),
-	]
+function buildUseCaseItems(counts: MarketplaceLoopCounts | undefined): FilterItem[] {
+	if (!counts) return []
+	return Object.keys(counts.by_use_case)
+		.sort()
+		.map((key) => ({ value: key, label: key }))
 }
 
 function MarketplacePage() {
 	const { workspaceId } = useWorkspace()
-	const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
-	const [useCaseFilter, setUseCaseFilter] = useState<UseCaseFilter>('all')
+	const [activeFilter, setActiveFilter] = useState<FilterValue>('all')
 	const [query, setQuery] = useState('')
 	const trimmedQuery = query.trim()
 
@@ -95,6 +86,23 @@ function MarketplacePage() {
 		}
 		return c
 	}, [allItems])
+
+	// Hide chips with a known zero count — "All" always stays since it's the reset action.
+	const filterItems = useMemo(() => {
+		const dynamicItems = [...TYPE_ITEMS, ...useCaseItems].filter((item) => {
+			const count = countForFilter(item.value, counts, itemCountsByType)
+			return count === undefined || count > 0
+		})
+		return [{ value: 'all', label: 'All' }, ...dynamicItems]
+	}, [useCaseItems, counts, itemCountsByType])
+
+	// A selected filter is either a type ('loops' / 'actor' / ...) or a use-case
+	// label — only one can be active at a time, so derive both from the same value.
+	const typeFilter: TypeFilter = TYPE_VALUES.has(activeFilter)
+		? (activeFilter as TypeFilter)
+		: 'all'
+	const useCaseFilter =
+		TYPE_VALUES.has(activeFilter) || activeFilter === 'all' ? 'all' : activeFilter
 
 	// Loop lookup for use-case filtering of items.
 	const loopById = useMemo(() => {
@@ -152,34 +160,26 @@ function MarketplacePage() {
 				}
 			/>
 
-			<nav aria-label="Marketplace filters" className="mb-4 flex flex-col gap-2">
-				<div className="flex flex-col gap-2 md:flex-row md:items-center">
-					<div className="min-w-0 flex-1 overflow-x-auto" data-testid="marketplace-type-chips">
-						<ChipStrip
-							items={TYPE_ITEMS}
-							active={typeFilter}
-							onSelect={(v) => setTypeFilter(v as TypeFilter)}
-							counts={counts}
-							itemCounts={itemCountsByType}
-							kind="type"
-						/>
-					</div>
-					<Input
-						type="search"
-						value={query}
-						onChange={(e) => setQuery(e.target.value)}
-						placeholder="Search the marketplace…"
-						aria-label="Filter marketplace"
-						className="w-full shrink-0 md:w-80"
+			<nav
+				aria-label="Marketplace filters"
+				className="mb-4 flex flex-col gap-2 md:flex-row md:items-center"
+			>
+				<div className="min-w-0 flex-1" data-testid="marketplace-filter-chips">
+					<ChipStrip
+						items={filterItems}
+						active={activeFilter}
+						onSelect={setActiveFilter}
+						counts={counts}
+						itemCounts={itemCountsByType}
 					/>
 				</div>
-				<ChipStrip
-					items={useCaseItems}
-					active={useCaseFilter}
-					onSelect={(v) => setUseCaseFilter(v as UseCaseFilter)}
-					counts={counts}
-					itemCounts={itemCountsByType}
-					kind="use_case"
+				<Input
+					type="search"
+					value={query}
+					onChange={(e) => setQuery(e.target.value)}
+					placeholder="Search the marketplace…"
+					aria-label="Filter marketplace"
+					className="w-full shrink-0 md:w-80"
 				/>
 			</nav>
 
@@ -220,22 +220,17 @@ function ChipStrip({
 	onSelect,
 	counts,
 	itemCounts,
-	kind,
 }: {
-	items: (TypeItem | UseCaseItem)[]
+	items: FilterItem[]
 	active: string
 	onSelect: (value: string) => void
 	counts: MarketplaceLoopCounts | undefined
 	itemCounts: Partial<Record<MarketplaceItemType, number>>
-	kind: 'type' | 'use_case'
 }) {
 	return (
 		<div className="flex gap-1.5 overflow-x-auto px-1 pb-1">
 			{items.map((item) => {
-				const count =
-					kind === 'type'
-						? countForType(item.value as TypeFilter, counts, itemCounts)
-						: countForUseCase(item.value as UseCaseFilter, counts)
+				const count = countForFilter(item.value, counts, itemCounts)
 				const isActive = active === item.value
 				return (
 					<button
@@ -265,25 +260,31 @@ function ChipStrip({
 	)
 }
 
+const ATOM_TYPES: MarketplaceItemType[] = ['actor', 'trigger', 'skill', 'integration']
+
 function countForType(
-	value: TypeFilter,
+	type: MarketplaceItemType,
+	counts: MarketplaceLoopCounts,
+	itemCounts: Partial<Record<MarketplaceItemType, number>>,
+): number {
+	// Use item-level count once loaded; fall back to loop-level count.
+	return itemCounts[type] ?? counts.by_type[type] ?? 0
+}
+
+function countForFilter(
+	value: FilterValue,
 	counts: MarketplaceLoopCounts | undefined,
 	itemCounts: Partial<Record<MarketplaceItemType, number>>,
 ): number | undefined {
 	if (!counts) return undefined
-	if (value === 'all' || value === 'loops') return counts.total
-	// Use item-level count once loaded; fall back to loop-level count.
-	return (
-		itemCounts[value as MarketplaceItemType] ?? counts.by_type[value as MarketplaceItemType] ?? 0
-	)
-}
-
-function countForUseCase(
-	value: UseCaseFilter,
-	counts: MarketplaceLoopCounts | undefined,
-): number | undefined {
-	if (!counts) return undefined
-	if (value === 'all') return counts.total
+	if (value === 'loops') return counts.total
+	if (value === 'all') {
+		// Total catalog size across every installable type — not the loop count.
+		return ATOM_TYPES.reduce((sum, type) => sum + countForType(type, counts, itemCounts), 0)
+	}
+	if (TYPE_VALUES.has(value)) {
+		return countForType(value as MarketplaceItemType, counts, itemCounts)
+	}
 	return counts.by_use_case[value] ?? 0
 }
 
