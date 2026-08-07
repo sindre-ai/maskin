@@ -11,6 +11,33 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
+const setPaletteOpen = vi.fn()
+vi.mock('@/lib/command-palette-context', () => ({
+	useCommandPalette: () => ({ open: false, setOpen: setPaletteOpen }),
+}))
+
+// Stub the picker so this test doesn't need QueryClient/workspace-context
+// setup for the create flow — mirrors header.test.tsx's mock, since
+// ForYouHeaderActions renders the same shared NewMenu.
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: ({
+		open,
+		defaultType,
+		defaultObjectSubtype,
+	}: {
+		open: boolean
+		defaultType?: string
+		defaultObjectSubtype?: string
+	}) =>
+		open ? (
+			<div
+				data-testid="create-picker"
+				data-type={defaultType}
+				data-subtype={defaultObjectSubtype}
+			/>
+		) : null,
+}))
+
 import {
 	ForYouHeader,
 	ForYouHeaderActions,
@@ -39,7 +66,6 @@ function renderHeader(overrides: Partial<React.ComponentProps<typeof ForYouHeade
 function renderActions(overrides: Partial<React.ComponentProps<typeof ForYouHeaderActions>> = {}) {
 	const props: React.ComponentProps<typeof ForYouHeaderActions> = {
 		onStartConversation: vi.fn(),
-		onCreateObject: vi.fn(),
 		...overrides,
 	}
 	return { props, ...render(<ForYouHeaderActions {...props} />) }
@@ -67,17 +93,19 @@ describe('ForYouHeaderActions', () => {
 		const onStartConversation = vi.fn()
 		renderActions({ onStartConversation })
 		await user.click(screen.getByRole('button', { name: /^new$/i }))
-		await user.click(screen.getByRole('menuitem', { name: /start conversation/i }))
+		await user.click(screen.getByRole('menuitem', { name: /new chat/i }))
 		expect(onStartConversation).toHaveBeenCalledTimes(1)
 	})
 
-	it('opens the New menu and creates a bet', async () => {
+	it('opens CreatePicker seeded to the right object subtype from New bet', async () => {
 		const user = userEvent.setup()
-		const onCreateObject = vi.fn()
-		renderActions({ onCreateObject })
+		renderActions()
 		await user.click(screen.getByRole('button', { name: /^new$/i }))
 		await user.click(screen.getByRole('menuitem', { name: /new bet/i }))
-		expect(onCreateObject).toHaveBeenCalledWith('bet')
+
+		const picker = screen.getByTestId('create-picker')
+		expect(picker).toHaveAttribute('data-type', 'object')
+		expect(picker).toHaveAttribute('data-subtype', 'bet')
 	})
 })
 

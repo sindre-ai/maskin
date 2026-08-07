@@ -47,7 +47,7 @@ import { SourceBadge } from '../shared/source-badge'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
-import { LoopCard } from './loop-card'
+import { CommitmentCard } from './commitment-card'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
 import { OwnerSelect, StatusSelect } from './property-selects'
@@ -258,7 +258,9 @@ export function ObjectDocumentView({
 					/>
 				)}
 
-				{object.type === 'loop' && <LoopCard object={object} workspaceId={workspaceId} />}
+				{object.type === 'commitment' && (
+					<CommitmentCard object={object} workspaceId={workspaceId} />
+				)}
 			</div>
 
 			{/* Content — long-form prose caps at 75ch on viewports ≥1280px (AC-U1). */}

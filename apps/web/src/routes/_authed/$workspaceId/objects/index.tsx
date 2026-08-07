@@ -1134,7 +1134,6 @@ function ObjectsPage() {
 				}}
 				boardSupported={boardSupported}
 				onImportClick={() => setImportOpen(true)}
-				onNewClick={() => setCreatePickerOpen(true)}
 			/>
 
 			{hasChipFilters && (

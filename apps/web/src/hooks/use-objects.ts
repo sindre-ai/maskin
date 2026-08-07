@@ -4,12 +4,7 @@ import type { RowSelectionState } from '@tanstack/react-table'
 import { type Dispatch, type SetStateAction, useCallback } from 'react'
 import { toast } from 'sonner'
 import type { z } from 'zod'
-import {
-	trackBetArchived,
-	trackBetCreated,
-	trackBetStatusChanged,
-	trackLoopGraduated,
-} from '../lib/analytics'
+import { trackBetArchived, trackBetCreated, trackBetStatusChanged } from '../lib/analytics'
 import type {
 	BulkUpdateObjectsInput,
 	BulkUpdateObjectsResponse,
@@ -22,10 +17,15 @@ import { queryKeys } from '../lib/query-keys'
 type CreateObjectInput = z.input<typeof createObjectSchema>
 type UpdateObjectInput = z.input<typeof updateObjectSchema>
 
-export function useObjects(workspaceId: string, filters?: Record<string, string>) {
+export function useObjects(
+	workspaceId: string,
+	filters?: Record<string, string>,
+	options?: { enabled?: boolean },
+) {
 	return useQuery({
 		queryKey: queryKeys.objects.list(workspaceId, filters),
 		queryFn: () => api.objects.list(workspaceId, filters),
+		enabled: options?.enabled ?? true,
 	})
 }
 
@@ -75,17 +75,6 @@ export function useCreateObject(workspaceId: string) {
 			queryClient.setQueryData(queryKeys.objects.detail(data.id), data)
 			if (data.type === 'bet') {
 				trackBetCreated({ entity_id: data.id, entity_type: 'bet' })
-			}
-			if (data.type === 'loop') {
-				const metadata = data.metadata as Record<string, unknown> | null
-				const rawSourceBetId = metadata?.source_bet_id
-				const sourceBetId =
-					typeof rawSourceBetId === 'string' && rawSourceBetId.length > 0 ? rawSourceBetId : null
-				trackLoopGraduated({
-					entity_id: data.id,
-					entity_type: 'loop',
-					source_bet_id: sourceBetId,
-				})
 			}
 		},
 		onSettled: (_data, _err, variables) => {

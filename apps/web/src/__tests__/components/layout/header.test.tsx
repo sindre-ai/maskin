@@ -1,10 +1,15 @@
 import { Header } from '@/components/layout/header'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tanstack/react-router', () => ({
 	useMatches: vi.fn(() => [
-		{ routeId: '/_authed/$workspaceId/', pathname: '/ws-1', params: { workspaceId: 'ws-1' } },
+		{
+			routeId: '/_authed/$workspaceId/objects/',
+			pathname: '/ws-1/objects',
+			params: { workspaceId: 'ws-1' },
+		},
 	]),
 	useNavigate: () => vi.fn(),
 	useRouter: () => ({ history: { back: vi.fn() } }),
@@ -23,6 +28,11 @@ vi.mock('@/lib/chat-context', () => ({
 	useChat: () => ({ setOpen: setChatOpen }),
 }))
 
+const setPaletteOpen = vi.fn()
+vi.mock('@/lib/command-palette-context', () => ({
+	useCommandPalette: () => ({ open: false, setOpen: setPaletteOpen }),
+}))
+
 vi.mock('@/components/ui/sidebar', () => ({
 	SidebarTrigger: ({ className }: { className?: string }) => (
 		<button type="button" className={className}>
@@ -32,17 +42,33 @@ vi.mock('@/components/ui/sidebar', () => ({
 }))
 
 // Stub the picker so header tests don't need QueryClient/workspace-context setup —
-// header responsibility is opening it, not the create flow itself (covered elsewhere).
+// header responsibility is opening it with the right config, not the create
+// flow itself (covered elsewhere). Renders the config it was opened with so
+// tests can assert which creatable type/subtype the header requested.
 vi.mock('@/components/shared/create-picker', () => ({
-	CreatePicker: ({ open }: { open: boolean }) =>
-		open ? <div data-testid="create-picker" /> : null,
+	CreatePicker: ({
+		open,
+		defaultType,
+		defaultObjectSubtype,
+	}: {
+		open: boolean
+		defaultType?: string
+		defaultObjectSubtype?: string
+	}) =>
+		open ? (
+			<div
+				data-testid="create-picker"
+				data-type={defaultType}
+				data-subtype={defaultObjectSubtype}
+			/>
+		) : null,
 }))
 
 import { usePageHeader } from '@/lib/page-header-context'
 import { useMatches } from '@tanstack/react-router'
 
 describe('Header', () => {
-	it('renders Create dropdown button', () => {
+	it('renders the New menu trigger', () => {
 		vi.mocked(useMatches).mockReturnValue([
 			{
 				routeId: '/_authed/$workspaceId/objects/',
@@ -51,7 +77,7 @@ describe('Header', () => {
 			},
 		] as ReturnType<typeof useMatches>)
 		render(<Header />)
-		expect(screen.getByRole('button', { name: /create new/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^new$/i })).toBeInTheDocument()
 	})
 
 	it('shows breadcrumbs from route matches', () => {
@@ -73,22 +99,61 @@ describe('Header', () => {
 		expect(screen.getByText('Members')).toBeInTheDocument()
 	})
 
-	it('renders a chat launcher that opens the panel without navigating', () => {
+	it('opens the chat panel from the New menu without navigating', async () => {
 		setChatOpen.mockClear()
-		vi.mocked(useMatches).mockReturnValue([
-			{
-				routeId: '/_authed/$workspaceId/objects/',
-				pathname: '/ws-1/objects',
-				params: { workspaceId: 'ws-1' },
-			},
-		] as ReturnType<typeof useMatches>)
+		const user = userEvent.setup()
 		render(<Header />)
-		const launcher = screen.getByRole('button', { name: /open chat/i })
-		fireEvent.click(launcher)
+
+		await user.click(screen.getByRole('button', { name: /^new$/i }))
+		await user.click(screen.getByRole('menuitem', { name: /new chat/i }))
+
 		expect(setChatOpen).toHaveBeenCalledWith(true)
 	})
 
-	it('hides the Create and Open chat buttons on the For You page', () => {
+	it('opens CreatePicker seeded to the right object subtype', async () => {
+		const user = userEvent.setup()
+		render(<Header />)
+
+		await user.click(screen.getByRole('button', { name: /^new$/i }))
+		await user.click(screen.getByRole('menuitem', { name: /new insight/i }))
+
+		const picker = screen.getByTestId('create-picker')
+		expect(picker).toHaveAttribute('data-type', 'object')
+		expect(picker).toHaveAttribute('data-subtype', 'insight')
+	})
+
+	it('opens CreatePicker as a loop from New loop', async () => {
+		const user = userEvent.setup()
+		render(<Header />)
+
+		await user.click(screen.getByRole('button', { name: /^new$/i }))
+		await user.click(screen.getByRole('menuitem', { name: /new loop/i }))
+
+		expect(screen.getByTestId('create-picker')).toHaveAttribute('data-type', 'loop')
+	})
+
+	it('opens CreatePicker as an agent from New agent', async () => {
+		const user = userEvent.setup()
+		render(<Header />)
+
+		await user.click(screen.getByRole('button', { name: /^new$/i }))
+		await user.click(screen.getByRole('menuitem', { name: /new agent/i }))
+
+		expect(screen.getByTestId('create-picker')).toHaveAttribute('data-type', 'agent')
+	})
+
+	it('opens the command palette from Find a past conversation', async () => {
+		setPaletteOpen.mockClear()
+		const user = userEvent.setup()
+		render(<Header />)
+
+		await user.click(screen.getByRole('button', { name: /^new$/i }))
+		await user.click(screen.getByRole('menuitem', { name: /find a past conversation/i }))
+
+		expect(setPaletteOpen).toHaveBeenCalledWith(true)
+	})
+
+	it('hides the New menu on the For You page', () => {
 		vi.mocked(useMatches).mockReturnValue([
 			{ routeId: '/_authed/$workspaceId/', pathname: '/ws-1', params: { workspaceId: 'ws-1' } },
 		] as ReturnType<typeof useMatches>)
@@ -101,8 +166,7 @@ describe('Header', () => {
 		})
 
 		render(<Header />)
-		expect(screen.queryByRole('button', { name: /create new/i })).not.toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: /open chat/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /^new$/i })).not.toBeInTheDocument()
 	})
 
 	it('renders page header actions from usePageHeader', () => {
@@ -131,7 +195,7 @@ describe('Header', () => {
 		expect(trigger.className).toMatch(/\bmd:hidden\b/)
 	})
 
-	it('hides the Create button on object-detail pages', () => {
+	it('hides the "Create an object" section on object-detail pages, but keeps the New menu', async () => {
 		vi.mocked(useMatches).mockReturnValue([
 			{
 				routeId: '/_authed/$workspaceId/objects/',
@@ -152,11 +216,18 @@ describe('Header', () => {
 			setContentPush: vi.fn(),
 		})
 
+		const user = userEvent.setup()
 		render(<Header />)
-		expect(screen.queryByRole('button', { name: /create new/i })).not.toBeInTheDocument()
+
+		expect(screen.getByRole('button', { name: /^new$/i })).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: /^new$/i }))
+
+		expect(screen.getByRole('menuitem', { name: /new chat/i })).toBeInTheDocument()
+		expect(screen.queryByText('Create an object')).not.toBeInTheDocument()
+		expect(screen.queryByRole('menuitem', { name: /new task/i })).not.toBeInTheDocument()
 	})
 
-	it('keeps the Create button on the objects list surface', () => {
+	it('keeps the "Create an object" section on the objects list surface', async () => {
 		vi.mocked(useMatches).mockReturnValue([
 			{
 				routeId: '/_authed/$workspaceId/objects/',
@@ -172,48 +243,12 @@ describe('Header', () => {
 			setContentPush: vi.fn(),
 		})
 
+		const user = userEvent.setup()
 		render(<Header />)
-		expect(screen.getByRole('button', { name: /create new/i })).toBeInTheDocument()
-	})
+		await user.click(screen.getByRole('button', { name: /^new$/i }))
 
-	it('keeps the Create button on the agents list surface', () => {
-		vi.mocked(useMatches).mockReturnValue([
-			{
-				routeId: '/_authed/$workspaceId/agents',
-				pathname: '/ws-1/agents',
-				params: { workspaceId: 'ws-1' },
-			},
-		] as ReturnType<typeof useMatches>)
-		vi.mocked(usePageHeader).mockReturnValue({
-			actions: null,
-			stickyIdentity: null,
-			setActions: vi.fn(),
-			setStickyIdentity: vi.fn(),
-			setContentPush: vi.fn(),
-		})
-
-		render(<Header />)
-		expect(screen.getByRole('button', { name: /create new/i })).toBeInTheDocument()
-	})
-
-	it('keeps the Create button on the triggers list surface', () => {
-		vi.mocked(useMatches).mockReturnValue([
-			{
-				routeId: '/_authed/$workspaceId/triggers/',
-				pathname: '/ws-1/triggers',
-				params: { workspaceId: 'ws-1' },
-			},
-		] as ReturnType<typeof useMatches>)
-		vi.mocked(usePageHeader).mockReturnValue({
-			actions: null,
-			stickyIdentity: null,
-			setActions: vi.fn(),
-			setStickyIdentity: vi.fn(),
-			setContentPush: vi.fn(),
-		})
-
-		render(<Header />)
-		expect(screen.getByRole('button', { name: /create new/i })).toBeInTheDocument()
+		expect(screen.getByText('Create an object')).toBeInTheDocument()
+		expect(screen.getByRole('menuitem', { name: /new task/i })).toBeInTheDocument()
 	})
 
 	it('renders the sticky identity projection when the hero has scrolled off', () => {

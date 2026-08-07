@@ -166,21 +166,7 @@ export function ForYouCardQueue({ workspaceId, queue }: ForYouCardQueueProps) {
 								</Link>
 							</Button>
 							<Button size="sm" variant="ghost" asChild>
-								<Link
-									to="/$workspaceId/objects"
-									params={{ workspaceId }}
-									search={{
-										type: 'loop',
-										sort: 'createdAt',
-										order: 'desc',
-										status: undefined,
-										driver: undefined,
-										q: undefined,
-										groupBy: undefined,
-										ids: undefined,
-										includeArchived: undefined,
-									}}
-								>
+								<Link to="/$workspaceId/loops" params={{ workspaceId }}>
 									Review loops →
 								</Link>
 							</Button>

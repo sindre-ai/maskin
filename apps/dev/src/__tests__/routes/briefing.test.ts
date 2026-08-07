@@ -36,21 +36,21 @@ describe('GET /api/briefing', () => {
 		const ws = buildWorkspace({ id: wsId })
 		const atRisk = buildObject({
 			workspaceId: wsId,
-			type: 'loop',
+			type: 'commitment',
 			status: 'at-risk',
 			title: 'Customer bugs fixed <1 day',
 			metadata: { floor: '≤1 day median TTR', cadence: 'weekly' },
 		})
 		const breached = buildObject({
 			workspaceId: wsId,
-			type: 'loop',
+			type: 'commitment',
 			status: 'breached',
 			title: 'Onboarding NPS ≥ 40',
 			metadata: { floor: '≥40 NPS', cadence: 'monthly' },
 		})
 		const holding = buildObject({
 			workspaceId: wsId,
-			type: 'loop',
+			type: 'commitment',
 			status: 'holding',
 			title: 'Weekly deploy Fridays',
 			metadata: { floor: 'ship at least 1/week', cadence: 'weekly' },
@@ -62,7 +62,7 @@ describe('GET /api/briefing', () => {
 		expect(res.status).toBe(200)
 		const { markdown } = (await res.json()) as { markdown: string }
 
-		expect(markdown).toContain('## Loops')
+		expect(markdown).toContain('## Commitments')
 
 		// Priority ordering: breached appears before at-risk, at-risk before holding.
 		const breachedIdx = markdown.indexOf('Onboarding NPS ≥ 40')
@@ -89,7 +89,7 @@ describe('GET /api/briefing', () => {
 		const res = await app.request(jsonGet('/api/briefing', { 'x-workspace-id': wsId }))
 		expect(res.status).toBe(200)
 		const { markdown } = (await res.json()) as { markdown: string }
-		expect(markdown).not.toContain('## Loops')
+		expect(markdown).not.toContain('## Commitments')
 	})
 
 	it('returns 400 when x-workspace-id header is missing', async () => {
