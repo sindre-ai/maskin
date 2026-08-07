@@ -85,6 +85,7 @@ import {
 	resolveLlmRoute,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { recordOverageIfCrossed } from '../lib/overage-billing'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
 	AgentServerAuthError,
@@ -2375,6 +2376,10 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		if (status === 'completed' && llmRoute === LLM_ROUTE_MASKIN_PLAN) {
+			await this.reportOverageIfApplicable(session.workspaceId, session.actorId, sessionId)
+		}
+
 		try {
 			await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
 		} catch (err) {
@@ -2488,6 +2493,31 @@ export class SessionManager extends EventEmitter {
 			workspaceId: claim.workspaceId,
 			utcDay,
 		})
+	}
+
+	/**
+	 * Fire-and-forget wrapper around `recordOverageIfCrossed` for a completed
+	 * maskin_plan session. Fetches the workspace's current billing settings
+	 * (they may have changed since the session started) and never throws —
+	 * an overage-reporting failure must not affect session completion, which
+	 * downstream watchdogs and SSE clients depend on.
+	 */
+	private async reportOverageIfApplicable(
+		workspaceId: string,
+		actorId: string,
+		sessionId: string,
+	): Promise<void> {
+		try {
+			const [ws] = await this.db
+				.select({ settings: workspaces.settings })
+				.from(workspaces)
+				.where(eq(workspaces.id, workspaceId))
+				.limit(1)
+			const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
+			await recordOverageIfCrossed({ db: this.db, workspaceId, sessionId, actorId, wsSettings })
+		} catch (err) {
+			logger.warn('Failed to record overage usage', { sessionId, workspaceId, error: String(err) })
+		}
 	}
 
 	private async runWatchdog(): Promise<void> {
@@ -3372,6 +3402,11 @@ export class SessionManager extends EventEmitter {
 				sessionId,
 				error: String(err),
 			})
+		}
+
+		const remoteLlmRoute = (updated.config as Record<string, unknown>)?.llm_route
+		if (status === 'completed' && remoteLlmRoute === LLM_ROUTE_MASKIN_PLAN) {
+			await this.reportOverageIfApplicable(updated.workspaceId, updated.actorId, sessionId)
 		}
 
 		// Terminal system log is required for SSE /logs/stream clients to close.

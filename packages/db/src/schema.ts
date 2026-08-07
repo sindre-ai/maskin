@@ -636,6 +636,52 @@ export const webhookDeliveries = pgTable(
 	],
 )
 
+// ── Workspace Overage Usage ─────────────────────────────────────────────────
+// Idempotency ledger for Stripe metered overage billing. Once a pro/team
+// workspace with `billing.overage_enabled` exceeds its hard cap, each new
+// block of `OVERAGE_BLOCK_TOKENS` consumed claims a row here (unique per
+// workspace/period/block index) before the block is reported to Stripe as a
+// meter event. The claim-before-report ordering, mirrored on
+// `webhookDeliveries`, means a crash or retry between the claim and the
+// Stripe call can never double-charge — `reportedAt IS NULL` marks a claim
+// whose Stripe report never confirmed, which the overage reconciler retries.
+
+export const workspaceOverageUsage = pgTable(
+	'workspace_overage_usage',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		// Unix seconds — matches `billing.period_start` so a ledger row is scoped
+		// to the exact Stripe billing period it was incurred in.
+		periodStart: integer('period_start').notNull(),
+		// 1-based index of the overage block within this period.
+		blockIndex: integer('block_index').notNull(),
+		// Cumulative maskin_plan overage tokens observed when this block was
+		// claimed — audit trail only, not used for billing math after the fact.
+		tokensAtBlock: integer('tokens_at_block').notNull(),
+		// Session whose completion crossed this block. Nullable because the
+		// reconciler's retries don't have a specific session in hand.
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		stripeMeterEventId: text('stripe_meter_event_id'),
+		// NULL = claimed but not yet confirmed billed (in flight, or orphaned by
+		// a crash — the reconciler retries these past a staleness threshold).
+		reportedAt: timestamp('reported_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('workspace_overage_usage_ws_period_block_uniq').on(
+			t.workspaceId,
+			t.periodStart,
+			t.blockIndex,
+		),
+		index('workspace_overage_usage_unreported_idx')
+			.on(t.reportedAt)
+			.where(sql`${t.reportedAt} IS NULL`),
+	],
+)
+
 // ── Idempotency Records ─────────────────────────────────────────────────────
 // Outbound-side idempotency ledger for the API's `Idempotency-Key` header.
 // Replaces the previous in-memory cache so that a session snapshot + replay

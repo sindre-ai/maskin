@@ -27,6 +27,10 @@ const baseUsage = {
 	period_resets_in_ms: 30 * 24 * 60 * 60 * 1000,
 	stripe_customer_id: null,
 	stripe_subscription_id: null,
+	overage_enabled: false,
+	overage_blocks_used: 0,
+	overage_usd_charged: 0,
+	overage_block_tokens: 32_000_000,
 }
 
 describe('formatTokens', () => {
@@ -267,6 +271,59 @@ describe('BillingSection', () => {
 		await screen.findByText('Trial')
 		const currentPlanButton = screen.getByRole('button', { name: 'Current plan' })
 		expect(currentPlanButton).toBeDisabled()
+	})
+
+	it('shows the overage chip and a non-alarming bar when blocks have been billed', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			status: 'active',
+			hard_cap_tokens: 32_000_000,
+			tokens_used: 40_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+			overage_enabled: true,
+			overage_blocks_used: 2,
+			overage_usd_charged: 40,
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" byollmAllowed />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Pro — $20/mo')
+		expect(screen.getByText(/\+2 overage blocks · \$40 this period/)).toBeInTheDocument()
+		// Overage is expected, billable usage — the bar must not read as an error.
+		const bar = screen.getByRole('progressbar')
+		expect(bar.className).not.toContain('bg-error')
+	})
+
+	it('shows the hard-blocked (error) bar when over cap without overage enabled', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			status: 'active',
+			hard_cap_tokens: 32_000_000,
+			tokens_used: 40_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+			overage_enabled: false,
+			overage_blocks_used: 0,
+			overage_usd_charged: 0,
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" byollmAllowed />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Pro — $20/mo')
+		expect(screen.queryByText(/overage block/)).not.toBeInTheDocument()
+		const bar = screen.getByRole('progressbar')
+		expect(bar.className).toContain('bg-error')
 	})
 
 	it('toggles the plan comparison grid via Compare plans / Hide plans', async () => {

@@ -28,6 +28,7 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
+	STRIPE_PRICE_OVERAGE_BLOCK: 'price_overage_block',
 	MASKIN_PRO_HARD_CAP_TOKENS: PRO_ENV_SENTINEL,
 	MASKIN_TEAM_HARD_CAP_TOKENS: TEAM_ENV_SENTINEL,
 }
@@ -528,6 +529,83 @@ describe('GET /api/billing/usage', () => {
 		const body = await res.json()
 		expect(body.period_start).toBeNull()
 		expect(body).toMatchObject({ plan: 'pro', hard_cap_tokens: 32_000_000 })
+	})
+
+	it('reports overage_enabled and confirmed block counts for a pro workspace over cap', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		const periodStart = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'pro',
+							status: 'active',
+							hard_cap_tokens: 32_000_000,
+							period_start: periodStart,
+							overage_enabled: true,
+						},
+					},
+				},
+			],
+			[{ inputTokens: 40_000_000, outputTokens: 0 }], // sessions sum — over cap
+			[{ count: 2 }], // confirmed overage blocks this period
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).toMatchObject({
+			overage_enabled: true,
+			overage_blocks_used: 2,
+			overage_usd_charged: 40,
+			overage_block_tokens: 32_000_000,
+		})
+	})
+
+	it('reports zero overage blocks when overage is not enabled', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		const periodStart = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: { plan: 'pro', status: 'active', period_start: periodStart },
+					},
+				},
+			],
+			[],
+			[],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).toMatchObject({
+			overage_enabled: false,
+			overage_blocks_used: 0,
+			overage_usd_charged: 0,
+		})
+	})
+
+	it('reports no overage fields for a trial workspace', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).toMatchObject({
+			plan: 'trial',
+			overage_enabled: false,
+			overage_blocks_used: 0,
+			overage_usd_charged: 0,
+		})
 	})
 
 	it('floors a fractional period_start so the response schema accepts it', async () => {

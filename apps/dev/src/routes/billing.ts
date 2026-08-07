@@ -1,10 +1,12 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { workspaces } from '@maskin/db/schema'
+import { workspaceOverageUsage, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import { and, count, eq, isNotNull } from 'drizzle-orm'
 import {
 	DEFAULT_PERIOD_LENGTH_MS,
+	OVERAGE_BLOCK_PRICE_USD,
+	OVERAGE_BLOCK_TOKENS,
 	PRO_HARD_CAP_DEFAULT_TOKENS,
 	TEAM_HARD_CAP_DEFAULT_TOKENS,
 	TRIAL_HARD_CAP_DEFAULT_TOKENS,
@@ -106,6 +108,13 @@ const usageResponseSchema = z.object({
 	period_resets_in_ms: z.number().int().nullable(),
 	stripe_customer_id: z.string().nullable(),
 	stripe_subscription_id: z.string().nullable(),
+	// Overage billing: only meaningful for pro/team. `overage_blocks_used`
+	// only counts blocks Stripe has actually confirmed (reported_at IS NOT
+	// NULL) — in-flight claims aren't shown as billed yet.
+	overage_enabled: z.boolean(),
+	overage_blocks_used: z.number().int().nonnegative(),
+	overage_usd_charged: z.number().nonnegative(),
+	overage_block_tokens: z.number().int().positive(),
 })
 
 const usageRoute = createRoute({
@@ -181,12 +190,29 @@ app.openapi(usageRoute, async (c) => {
 
 	const resetsIn = Math.max(0, periodEndMs - Date.now())
 
+	const overageEnabled = billing?.overage_enabled === true
+	let overageBlocksUsed = 0
+	if ((plan === 'pro' || plan === 'team') && periodStartSec !== null) {
+		const [row] = await db
+			.select({ count: count() })
+			.from(workspaceOverageUsage)
+			.where(
+				and(
+					eq(workspaceOverageUsage.workspaceId, workspaceId),
+					eq(workspaceOverageUsage.periodStart, periodStartSec),
+					isNotNull(workspaceOverageUsage.reportedAt),
+				),
+			)
+		overageBlocksUsed = row?.count ?? 0
+	}
+
 	logger.info('Billing usage read', {
 		workspaceId,
 		plan,
 		status,
 		tokensUsed,
 		hardCap,
+		overageBlocksUsed,
 	})
 
 	return c.json(
@@ -199,6 +225,10 @@ app.openapi(usageRoute, async (c) => {
 			period_resets_in_ms: plan === 'byollm' ? null : resetsIn,
 			stripe_customer_id: billing?.stripe_customer_id ?? null,
 			stripe_subscription_id: billing?.stripe_subscription_id ?? null,
+			overage_enabled: overageEnabled,
+			overage_blocks_used: overageBlocksUsed,
+			overage_usd_charged: overageBlocksUsed * OVERAGE_BLOCK_PRICE_USD,
+			overage_block_tokens: OVERAGE_BLOCK_TOKENS,
 		},
 		200,
 	)

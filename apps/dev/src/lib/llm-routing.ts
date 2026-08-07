@@ -165,13 +165,30 @@ function effectivePeriodEnd(
 }
 
 /**
+ * True once a workspace may keep running past its hard cap and get billed
+ * per-block overage instead of being blocked. Trial never qualifies — overage
+ * requires a paid plan with a card on file, which is what `overage_enabled`
+ * (written by the Stripe webhook once the metered line item is confirmed on
+ * the subscription) and an `active` status together represent. `past_due`/
+ * `canceled` intentionally still hard-block: a workspace that can't be billed
+ * for its base plan shouldn't be allowed to run up unbillable overage either.
+ */
+export function canUseOverage(plan: MaskinPlan, billing: WorkspaceSettings['billing']): boolean {
+	if (plan === 'trial') return false
+	return billing?.overage_enabled === true && billing?.status === 'active'
+}
+
+/**
  * Pre-flight check on the maskin_plan route. Called from `createSession` so the
  * HTTP caller gets a 402 *before* a session row is created (the v1 contract
  * with the over-cap banner). Also invoked at route-resolution time as
  * defense-in-depth against background calls that skipped the pre-check.
  *
  * No-op when the workspace is not on a maskin-plan-routed plan or when no cap
- * applies (e.g., paid plan pre-Stripe). Throws `PlanCapExceededError` otherwise.
+ * applies (e.g., paid plan pre-Stripe). Throws `PlanCapExceededError` when the
+ * cap is exceeded and overage billing isn't available for this workspace
+ * (`canUseOverage`) — otherwise lets the caller through; actual overage usage
+ * is metered separately at session-completion time (`lib/overage-billing.ts`).
  */
 export async function checkPlanCap(params: {
 	db: Database
@@ -196,6 +213,7 @@ export async function checkPlanCap(params: {
 
 	const used = await getWorkspacePlanTokenUsage(params.db, params.workspaceId, periodStartMs)
 	if (used < cap) return
+	if (canUseOverage(maskinPlan, billing)) return
 
 	throw new PlanCapExceededError({
 		plan: maskinPlan,

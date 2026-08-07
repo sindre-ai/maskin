@@ -75,7 +75,8 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		tagline: 'For teams running real workflows day to day.',
 		features: [
 			`${formatTokens(CAP_DEFAULTS.pro)} tokens of usage included each month`,
-			'More usage at cost, no markup',
+			// $20 mirrors OVERAGE_BLOCK_PRICE_USD in apps/dev/src/lib/billing-defaults.ts.
+			`$20 per extra ${formatTokens(CAP_DEFAULTS.pro)} of usage after that, no markup`,
 			'Hosted by Maskin — no API key needed',
 		],
 	},
@@ -87,7 +88,7 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		tagline: 'Heavier loops, volume rates, one invoice.',
 		features: [
 			`${formatTokens(CAP_DEFAULTS.team)} tokens of usage included each month`,
-			'Volume rate beyond that',
+			`$20 per extra ${formatTokens(CAP_DEFAULTS.pro)} of usage after that, same rate as Pro`,
 			'Hosted by Maskin — no API key needed',
 		],
 	},
@@ -274,8 +275,9 @@ export function BillingSection({
 		<div>
 			<Label className="mb-1 text-bold">Maskin Subscription</Label>
 			<p className="text-xs text-muted-foreground mb-3">
-				Hosted LLM — pay Maskin, no API key needed. Hard-capped tokens per period so spend never
-				surprises you.
+				Hosted LLM — pay Maskin, no API key needed. Included tokens per period, then{' '}
+				{formatTokens(CAP_DEFAULTS.pro)}-token blocks at $20 each — no hard stop, no surprise
+				invoice.
 			</p>
 
 			<UsageBanner
@@ -355,7 +357,15 @@ function UsageBanner({
 	periodMs: number | null
 	resetsIn: string
 }) {
-	const needsAttention = usage.status === 'past_due' || usage.status === 'canceled' || pct >= 85
+	// Once overage billing is active, hitting/crossing the included allotment is
+	// an expected, billable event — not a problem — so it no longer earns the
+	// alarmed banner border or bar color. Those stay reserved for the workspace
+	// actually being blocked (no overage available) or the subscription itself
+	// being unhealthy (past_due/canceled).
+	const canOverage = isPaid && usage.overage_enabled
+	const hardBlocked = pct >= 100 && !canOverage
+	const needsAttention =
+		usage.status === 'past_due' || usage.status === 'canceled' || (pct >= 85 && !canOverage)
 
 	return (
 		<div
@@ -398,7 +408,7 @@ function UsageBanner({
 					</div>
 					<div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
 						<div
-							className={`h-full transition-all ${pct >= 100 ? 'bg-error' : pct >= 85 ? 'bg-warning' : 'bg-primary'}`}
+							className={`h-full transition-all ${hardBlocked ? 'bg-error' : pct >= 85 ? 'bg-warning' : 'bg-primary'}`}
 							style={{ width: `${pct}%` }}
 							role="progressbar"
 							aria-valuenow={pct}
@@ -407,6 +417,12 @@ function UsageBanner({
 							tabIndex={-1}
 						/>
 					</div>
+					{usage.overage_blocks_used > 0 && (
+						<p className="mt-1 text-xs text-muted-foreground">
+							+{usage.overage_blocks_used} overage block{usage.overage_blocks_used > 1 ? 's' : ''} ·
+							${usage.overage_usd_charged} this period
+						</p>
+					)}
 				</div>
 			)}
 

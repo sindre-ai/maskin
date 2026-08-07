@@ -11,6 +11,7 @@ import { type DevBootstrapResult, maybeBootstrapDev, seedCatalogIfEmpty } from '
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { OverageUsageReconciler } from './services/overage-usage-reconciler'
 import { PackageVersionPusher } from './services/package-version-pusher'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
@@ -113,6 +114,10 @@ logger.info('Webhook deliveries cleaner started')
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
+
+const overageUsageReconciler = new OverageUsageReconciler(db)
+overageUsageReconciler.start()
+logger.info('Overage usage reconciler started')
 
 const packageVersionPusher = new PackageVersionPusher(db, agentStorage)
 packageVersionPusher.start()

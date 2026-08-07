@@ -1,8 +1,9 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
+import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { webhookDeliveries, workspaces } from '@maskin/db/schema'
+import { events, actors, webhookDeliveries, workspaceMembers, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { createApiError } from '../lib/errors'
 import { settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
@@ -12,6 +13,7 @@ import {
 	hardCapForPlan,
 	isHandledStripeEvent,
 	mapSubscriptionStatus,
+	overageItemIdFromSubscription,
 	planForPriceId,
 	priceIdFromSubscription,
 	readStripeEnv,
@@ -19,6 +21,10 @@ import {
 	verifyStripeWebhook,
 } from '../lib/stripe'
 import type { StripeEnv } from '../lib/stripe'
+
+const STRIPE_SYSTEM_ACTOR_NAME = 'Stripe'
+
+type Tx = Pick<Database, 'select' | 'insert'>
 
 type Env = {
 	Variables: {
@@ -262,6 +268,7 @@ async function applyEvent(
 				const sub = event.data.object as Stripe.Subscription
 				const priceId = priceIdFromSubscription(sub)
 				const plan = priceId ? planForPriceId(priceId, stripeEnv) : null
+				const overageItemId = overageItemIdFromSubscription(sub, stripeEnv)
 				next = {
 					...next,
 					plan: plan ?? next.plan,
@@ -273,6 +280,8 @@ async function applyEvent(
 					hard_cap_tokens: plan ? hardCapForPlan(plan, stripeEnv) : next.hard_cap_tokens,
 					period_start: sub.current_period_start ?? next.period_start,
 					period_end: sub.current_period_end ?? next.period_end,
+					overage_enabled: overageItemId !== null,
+					stripe_overage_item_id: overageItemId,
 				}
 				break
 			}
@@ -285,6 +294,8 @@ async function applyEvent(
 					status: 'canceled',
 					hard_cap_tokens: null,
 					period_start: sub.canceled_at ?? next.period_start,
+					overage_enabled: false,
+					stripe_overage_item_id: null,
 				}
 				break
 			}
@@ -317,7 +328,78 @@ async function applyEvent(
 			.update(workspaces)
 			.set({ settings: merged, updatedAt: new Date() })
 			.where(eq(workspaces.id, workspaceId))
+
+		// Audit log per `.claude/rules/known-pitfalls.md` ("Missing Events Audit
+		// Log"). Only fires when overage entitlement actually flips, not on
+		// every webhook delivery, so a workspace that's merely renewing doesn't
+		// accumulate no-op rows. Event types that don't touch `overage_enabled`
+		// in the switch above (checkout.session.completed, invoice.*) leave it
+		// `undefined` on `next` — normalize both sides to booleans before
+		// comparing, or `undefined !== false` would fire this on every delivery.
+		const previousOverageEnabled = current.overage_enabled ?? false
+		const nextOverageEnabled = next.overage_enabled ?? false
+		if (nextOverageEnabled !== previousOverageEnabled) {
+			const systemActorId = await getOrCreateStripeSystemActor(tx, workspaceId)
+			await tx.insert(events).values({
+				workspaceId,
+				actorId: systemActorId,
+				action: 'workspace_billing_overage_updated',
+				entityType: 'workspace',
+				entityId: workspaceId,
+				data: { overage_enabled: nextOverageEnabled, previous: previousOverageEnabled },
+			})
+		}
 	})
+}
+
+/**
+ * Get-or-create the shared "Stripe" system actor used to attribute
+ * webhook-driven audit events, mirroring the pattern in
+ * `routes/integrations.ts` (system actor per provider, ensured as a
+ * workspace member so the events row's workspace-scoped reads resolve it).
+ */
+async function getOrCreateStripeSystemActor(tx: Tx, workspaceId: string): Promise<string> {
+	let [systemActor] = await tx
+		.select({ id: actors.id })
+		.from(actors)
+		.where(and(eq(actors.type, 'system'), eq(actors.name, STRIPE_SYSTEM_ACTOR_NAME)))
+		.limit(1)
+
+	if (!systemActor) {
+		const [newActor] = await tx
+			.insert(actors)
+			.values({
+				type: 'system',
+				name: STRIPE_SYSTEM_ACTOR_NAME,
+				apiKey: generateApiKey().key,
+			})
+			.returning({ id: actors.id })
+		if (!newActor) {
+			throw new Error('Failed to create Stripe system actor')
+		}
+		systemActor = newActor
+	}
+
+	const [existingMember] = await tx
+		.select({ workspaceId: workspaceMembers.workspaceId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				eq(workspaceMembers.actorId, systemActor.id),
+			),
+		)
+		.limit(1)
+
+	if (!existingMember) {
+		await tx.insert(workspaceMembers).values({
+			workspaceId,
+			actorId: systemActor.id,
+			role: 'system',
+		})
+	}
+
+	return systemActor.id
 }
 
 export default app

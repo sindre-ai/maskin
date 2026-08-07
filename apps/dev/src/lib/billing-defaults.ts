@@ -97,3 +97,15 @@ export const TEAM_HARD_CAP_DEFAULT_TOKENS = 320_000_000
 
 /** Billing periods on paid plans run ~30 days; used when Stripe hasn't written `period_end` yet. */
 export const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
+ * Overage billing: once a pro/team workspace with `billing.overage_enabled`
+ * exceeds its hard cap, it keeps running and is billed `OVERAGE_BLOCK_PRICE_USD`
+ * per `OVERAGE_BLOCK_TOKENS` of additional usage via a Stripe metered price
+ * (see `lib/stripe.ts#reportOverageBlock`). The block size is pinned to the
+ * Pro cap on purpose — Pro ($20/32M) and Team ($200/320M) already resolve to
+ * the same $0.625-per-1M-token rate, so overage at this size is literally
+ * "the same rate, no markup" rather than a new number to justify.
+ */
+export const OVERAGE_BLOCK_TOKENS = PRO_HARD_CAP_DEFAULT_TOKENS
+export const OVERAGE_BLOCK_PRICE_USD = 20

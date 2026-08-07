@@ -20,6 +20,7 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
+	STRIPE_PRICE_OVERAGE_BLOCK: 'price_overage_block',
 	MASKIN_PRO_HARD_CAP_TOKENS: '32000000',
 	MASKIN_TEAM_HARD_CAP_TOKENS: '320000000',
 }
@@ -497,6 +498,150 @@ describe('POST /api/webhooks/stripe', () => {
 			stripe_customer_id: 'cus_42',
 			stripe_subscription_id: 'sub_42',
 			status: 'active',
+		})
+	})
+
+	it('marks overage_enabled and writes an audit event when the metered item is attached', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [
+			[{ id: 'claim-overage' }], // webhook delivery claim
+			[{ id: 'system-actor-1' }], // create Stripe system actor (not found → created)
+			[], // create workspace member row for the system actor
+			[], // events insert
+		]
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: { billing: { plan: 'pro', status: 'active' } } }], // workspace
+			[], // system actor lookup — not found
+			[], // workspace member lookup — not found
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_sub_overage',
+			type: 'customer.subscription.updated',
+			data: {
+				object: {
+					id: 'sub_overage',
+					customer: 'cus_overage',
+					status: 'active',
+					current_period_start: 1_700_000_000,
+					current_period_end: 1_702_592_000,
+					metadata: { workspace_id: workspaceId },
+					items: {
+						data: [
+							{ price: { id: 'price_pro' } },
+							{ id: 'si_overage', price: { id: 'price_overage_block' } },
+						],
+					},
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({
+			overage_enabled: true,
+			stripe_overage_item_id: 'si_overage',
+		})
+
+		const eventInsert = calls.inserts.find(
+			(i): i is { action: string; workspaceId: string } =>
+				!!i &&
+				typeof i === 'object' &&
+				(i as Record<string, unknown>).action === 'workspace_billing_overage_updated',
+		)
+		expect(eventInsert).toBeDefined()
+		expect(eventInsert?.workspaceId).toBe(workspaceId)
+	})
+
+	it('does not write an audit event when overage_enabled is unchanged', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-no-overage' }]]
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: { billing: { plan: 'pro', status: 'active' } } }],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_sub_no_overage',
+			type: 'customer.subscription.updated',
+			data: {
+				object: {
+					id: 'sub_no_overage',
+					customer: 'cus_no_overage',
+					status: 'active',
+					current_period_start: 1_700_000_000,
+					current_period_end: 1_702_592_000,
+					metadata: { workspace_id: workspaceId },
+					items: { data: [{ price: { id: 'price_pro' } }] },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({
+			overage_enabled: false,
+			stripe_overage_item_id: null,
+		})
+
+		const eventInsert = calls.inserts.find(
+			(i): i is { action: string } =>
+				!!i &&
+				typeof i === 'object' &&
+				(i as Record<string, unknown>).action === 'workspace_billing_overage_updated',
+		)
+		expect(eventInsert).toBeUndefined()
+	})
+
+	it('clears overage_enabled and stripe_overage_item_id on customer.subscription.deleted', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-del-overage' }], [{ id: 'system-actor-2' }], [], []]
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'team',
+							status: 'active',
+							stripe_subscription_id: 'sub_x',
+							overage_enabled: true,
+							stripe_overage_item_id: 'si_old',
+						},
+					},
+				},
+			],
+			[], // system actor lookup — not found
+			[], // workspace member lookup — not found
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_sub_del_overage',
+			type: 'customer.subscription.deleted',
+			data: {
+				object: {
+					id: 'sub_x',
+					customer: 'cus_x',
+					status: 'canceled',
+					canceled_at: 1_700_001_000,
+					metadata: { workspace_id: workspaceId },
+					items: { data: [{ price: { id: 'price_team' } }] },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({
+			overage_enabled: false,
+			stripe_overage_item_id: null,
 		})
 	})
 

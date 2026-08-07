@@ -20,6 +20,9 @@ async function mockUsage(
 		tokens_used: number
 		hard_cap_tokens: number | null
 		period_resets_in_ms: number | null
+		overage_enabled?: boolean
+		overage_blocks_used?: number
+		overage_usd_charged?: number
 	},
 ) {
 	await page.route('**/api/billing/usage*', async (route) => {
@@ -30,6 +33,10 @@ async function mockUsage(
 				period_start: null,
 				stripe_customer_id: null,
 				stripe_subscription_id: null,
+				overage_enabled: false,
+				overage_blocks_used: 0,
+				overage_usd_charged: 0,
+				overage_block_tokens: 32_000_000,
 				...usage,
 			}),
 		})
@@ -112,4 +119,36 @@ test.describe('Billing plans — Settings UI', () => {
 		// value) drives the warning state in both modes.
 		expect(borderColors.light).not.toBe(borderColors.dark)
 	})
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`shows the overage chip (not a hard-block) once a pro workspace is over cap with overage enabled — ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await mockUsage(page, {
+				plan: 'pro',
+				status: 'active',
+				tokens_used: 40_000_000,
+				hard_cap_tokens: 32_000_000,
+				period_resets_in_ms: 20 * 24 * 60 * 60 * 1000,
+				overage_enabled: true,
+				overage_blocks_used: 2,
+				overage_usd_charged: 40,
+			})
+
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await page.goto(`/${account.workspaceId}/settings/keys`)
+
+			await expect(page.getByText('Pro — $20/mo')).toBeVisible()
+			await expect(page.getByText(/\+2 overage blocks · \$40 this period/)).toBeVisible()
+
+			// Over-cap-with-overage is expected, billable usage, not a failure —
+			// the bar must render in the warning/primary tone, never the error
+			// color reserved for the true hard-blocked case.
+			const bar = page.getByRole('progressbar')
+			await expect(bar).toBeVisible()
+			const barClass = await bar.getAttribute('class')
+			expect(barClass).not.toContain('bg-error')
+		})
+	}
 })

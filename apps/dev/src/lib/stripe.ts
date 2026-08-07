@@ -11,6 +11,8 @@ export interface StripeEnv {
 	priceTeam: string
 	proHardCapTokens: number
 	teamHardCapTokens: number
+	/** Metered price backing the overage-billing meter (see `reportOverageBlock`). */
+	priceOverageBlock: string
 }
 
 interface CheckoutInputs {
@@ -34,6 +36,7 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		'STRIPE_WEBHOOK_SECRET',
 		'STRIPE_PRICE_PRO',
 		'STRIPE_PRICE_TEAM',
+		'STRIPE_PRICE_OVERAGE_BLOCK',
 		'MASKIN_PRO_HARD_CAP_TOKENS',
 		'MASKIN_TEAM_HARD_CAP_TOKENS',
 	] as const
@@ -61,17 +64,23 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		webhookSecret: env.STRIPE_WEBHOOK_SECRET as string,
 		pricePro: env.STRIPE_PRICE_PRO as string,
 		priceTeam: env.STRIPE_PRICE_TEAM as string,
+		priceOverageBlock: env.STRIPE_PRICE_OVERAGE_BLOCK as string,
 		proHardCapTokens: parseTokenCap('MASKIN_PRO_HARD_CAP_TOKENS'),
 		teamHardCapTokens: parseTokenCap('MASKIN_TEAM_HARD_CAP_TOKENS'),
 	}
 }
 
+// Pinned explicitly (rather than left to the SDK's bundled default) because
+// overage billing depends on the Billing Meters API's current shape — an
+// unpinned client silently picking up a newer default apiVersion on a stripe@17
+// bump could change meter-event semantics out from under us.
+const STRIPE_API_VERSION: Stripe.LatestApiVersion = '2025-02-24.acacia'
+
 export function getStripeClient(env?: StripeEnv): Stripe {
 	if (cachedClient) return cachedClient
 	const cfg = env ?? readStripeEnv()
 	cachedClient = new Stripe(cfg.secretKey, {
-		// Pin to the SDK's bundled apiVersion. Letting it default protects us
-		// from a manual mismatch when stripe@17 is bumped.
+		apiVersion: STRIPE_API_VERSION,
 		typescript: true,
 	})
 	return cachedClient
@@ -96,6 +105,44 @@ export function hardCapForPlan(plan: PaidMaskinPlan, env: StripeEnv): number {
 	return plan === 'pro' ? env.proHardCapTokens : env.teamHardCapTokens
 }
 
+/** Corresponds to the `event_name` configured on the overage Meter in Stripe (Phase 0 dashboard setup). */
+export const OVERAGE_METER_EVENT_NAME = 'maskin_overage_block'
+
+/**
+ * Report one overage block (`OVERAGE_BLOCK_TOKENS` of usage, billed at
+ * `OVERAGE_BLOCK_PRICE_USD`) to Stripe via the Billing Meters API. Callers
+ * must claim the block in `workspace_overage_usage` first (unique per
+ * workspace/period/block) and pass a idempotency key derived from that same
+ * tuple — Stripe's own idempotency layer is defense in depth on top of the DB
+ * claim, not a substitute for it.
+ */
+export async function reportOverageBlock(
+	stripe: Stripe,
+	params: { customerId: string; blockIdempotencyKey: string },
+): Promise<Stripe.Billing.MeterEvent> {
+	const response = await stripe.billing.meterEvents.create(
+		{
+			event_name: OVERAGE_METER_EVENT_NAME,
+			payload: { value: '1', stripe_customer_id: params.customerId },
+		},
+		{ idempotencyKey: params.blockIdempotencyKey },
+	)
+	return response
+}
+
+/**
+ * Find the subscription item carrying the metered overage price, if any.
+ * Presence (not the customer's payment status) is what `overage_enabled`
+ * tracks — a subscription only has this item once Checkout attached it.
+ */
+export function overageItemIdFromSubscription(
+	subscription: Stripe.Subscription,
+	env: StripeEnv,
+): string | null {
+	const item = subscription.items?.data?.find((i) => i.price?.id === env.priceOverageBlock)
+	return item?.id ?? null
+}
+
 /**
  * Build the args for a Checkout Session that creates a Stripe Customer
  * tagged with our workspaceId. The customer is the durable link between
@@ -114,7 +161,10 @@ export async function createCheckoutSession(
 		client_reference_id: inputs.workspaceId,
 		success_url: inputs.successUrl,
 		cancel_url: inputs.cancelUrl,
-		line_items: [{ price: priceId, quantity: 1 }],
+		// Metered prices take no `quantity` — Stripe reports usage separately via
+		// meter events (see `reportOverageBlock`). Attaching it at checkout time
+		// means overage is available from day one, with no separate opt-in flow.
+		line_items: [{ price: priceId, quantity: 1 }, { price: env.priceOverageBlock }],
 		metadata: { workspace_id: inputs.workspaceId, plan: inputs.plan },
 		subscription_data: {
 			metadata: { workspace_id: inputs.workspaceId, plan: inputs.plan },

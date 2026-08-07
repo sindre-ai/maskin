@@ -11,8 +11,19 @@ export type { ActorListItem, ActorResponse, AgentState, DisplaySettingsBody, Tri
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
+export interface PlanCapContext {
+	plan: string
+	used: number
+	cap: number
+	period_end: number | null
+}
+
 export class ApiError extends Error {
 	fieldErrors: Record<string, string[]>
+	/** Structured error code from the backend's `{ error: { code, ... } }` body, e.g. `PLAN_CAP_EXCEEDED`. */
+	code?: string
+	/** Populated when `code === 'PLAN_CAP_EXCEEDED'` — the plan/used/cap/reset context for a typed upgrade CTA. */
+	planCapContext?: PlanCapContext
 
 	constructor(
 		public status: number,
@@ -65,16 +76,27 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 		let fieldErrors: Record<string, string[]> | undefined
 		let message: string
+		let code: string | undefined
+		let planCapContext: PlanCapContext | undefined
 
 		if (typeof data.error === 'object' && data.error?.code) {
 			// Structured error format: { error: { code, message, details?, suggestion? } }
 			message = data.error.message
+			code = data.error.code
 			if (data.error.details && Array.isArray(data.error.details)) {
 				fieldErrors = {}
 				for (const detail of data.error.details) {
 					const field = detail.field || '_root'
 					if (!fieldErrors[field]) fieldErrors[field] = []
 					fieldErrors[field].push(detail.message)
+				}
+			}
+			if (code === 'PLAN_CAP_EXCEEDED') {
+				planCapContext = {
+					plan: data.error.plan,
+					used: data.error.used,
+					cap: data.error.cap,
+					period_end: data.error.period_end ?? null,
 				}
 			}
 		} else if (typeof data.error === 'string') {
@@ -84,7 +106,10 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			message = data.error?.message || res.statusText
 		}
 
-		throw new ApiError(res.status, message, fieldErrors)
+		const err = new ApiError(res.status, message, fieldErrors)
+		err.code = code
+		err.planCapContext = planCapContext
+		throw err
 	}
 
 	return res.json()
@@ -820,6 +845,10 @@ export interface BillingUsageResponse {
 	period_resets_in_ms: number | null
 	stripe_customer_id: string | null
 	stripe_subscription_id: string | null
+	overage_enabled: boolean
+	overage_blocks_used: number
+	overage_usd_charged: number
+	overage_block_tokens: number
 }
 
 // Types derived from backend response schemas
