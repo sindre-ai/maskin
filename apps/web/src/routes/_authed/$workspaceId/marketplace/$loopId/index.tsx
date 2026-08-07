@@ -16,7 +16,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/marketplace/$loopId/
 function MarketplaceLoopDetailPage() {
 	const { loopId } = Route.useParams()
 	const { workspaceId } = useWorkspace()
-	const { data, isLoading } = useMarketplaceLoop(loopId)
+	const { data, isLoading, isError } = useMarketplaceLoop(loopId)
 	const { data: installsData } = useInstalledLoops(workspaceId)
 	const install = installsData?.installs.find((row) => row.sourceLoopId === loopId)
 
@@ -26,6 +26,17 @@ function MarketplaceLoopDetailPage() {
 				<Skeleton className="h-8 w-64" />
 				<Skeleton className="h-4 w-full max-w-96" />
 				<Skeleton className="h-32 w-full" />
+			</div>
+		)
+	}
+
+	if (isError) {
+		return (
+			<div className="max-w-3xl mx-auto">
+				<EmptyState
+					title="Couldn't load this loop"
+					description="Something went wrong loading the catalog. Try refreshing."
+				/>
 			</div>
 		)
 	}

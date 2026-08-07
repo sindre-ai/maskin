@@ -16,7 +16,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/marketplace/$loopId/
 function MarketplaceItemDetailPage() {
 	const { loopId, itemId } = Route.useParams()
 	const { workspaceId } = useWorkspace()
-	const { data, isLoading } = useMarketplaceLoop(loopId)
+	const { data, isLoading, isError } = useMarketplaceLoop(loopId)
 	const { data: installsData } = useInstalledLoops(workspaceId)
 	const { data: installedItemsData } = useInstalledMarketplaceItems(workspaceId)
 
@@ -30,6 +30,17 @@ function MarketplaceItemDetailPage() {
 				<Skeleton className="h-8 w-64" />
 				<Skeleton className="h-4 w-full max-w-96" />
 				<Skeleton className="h-32 w-full" />
+			</div>
+		)
+	}
+
+	if (isError) {
+		return (
+			<div className="max-w-3xl mx-auto">
+				<EmptyState
+					title="Couldn't load this item"
+					description="Something went wrong loading the catalog. Try refreshing."
+				/>
 			</div>
 		)
 	}

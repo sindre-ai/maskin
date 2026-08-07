@@ -68,7 +68,14 @@ export function ItemInstallControls({
 						onConfirm={(keepItems) => {
 							uninstallMutation.mutate(
 								{ itemId: item.id, keepProvisionedItems: keepItems },
-								{ onSuccess: () => setRemoveOpen(false) },
+								{
+									onSuccess: () => {
+										setRemoveOpen(false)
+										// Clear a stale install success flag so a later re-install
+										// isn't immediately masked by this uninstall's own state.
+										installMutation.reset()
+									},
+								},
 							)
 						}}
 						confirmPending={uninstallMutation.isPending}
@@ -80,7 +87,12 @@ export function ItemInstallControls({
 					variant="default"
 					className="relative h-7 text-xs"
 					disabled={installMutation.isPending}
-					onClick={() => installMutation.mutate(item.id)}
+					onClick={() => {
+						// Clear a stale uninstall success flag — otherwise re-installing
+						// after a remove keeps rendering the "Install" button.
+						uninstallMutation.reset()
+						installMutation.mutate(item.id)
+					}}
 				>
 					{installMutation.isPending ? 'Installing…' : 'Install'}
 				</Button>

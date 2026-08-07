@@ -74,7 +74,7 @@ export function LoopInstallControls({ workspaceId, loop, install }: LoopInstallC
 				/>
 			) : null}
 
-			{forked && install ? (
+			{forked && install?.hasUpdate ? (
 				<p className="text-[11px] text-muted-foreground">{forkedHint(install)}</p>
 			) : null}
 		</>
@@ -82,6 +82,5 @@ export function LoopInstallControls({ workspaceId, loop, install }: LoopInstallC
 }
 
 function forkedHint(install: InstalledLoopRow): string {
-	if (!install.hasUpdate) return ''
 	return `v${install.availableVersion} of the source is available. Your fork stays at v${install.installedVersion}.`
 }

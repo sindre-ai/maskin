@@ -18,11 +18,22 @@ const DAY_NAMES: Record<string, string> = {
 	'6': 'Saturday',
 }
 
+function isSimpleField(field: string | undefined): field is string {
+	return field === '*' || /^\d+$/.test(field ?? '')
+}
+
 /** Standard 5-field cron (minute hour dayOfMonth month dayOfWeek) — month is
- * always `*` for the schedules this app generates, so it's parsed but unused. */
-export function parseCronExpression(expr: string): ParsedCron {
-	const parts = expr.split(' ')
-	const [minute = '0', hour = '9', dayOfMonth = '1', , dayOfWeek = '1'] = parts
+ * always `*` for the schedules this app generates, so it's parsed but unused.
+ * A leading seconds field (6-field cron) is tolerated and dropped. Returns
+ * `null` for anything this app doesn't generate itself — step syntax, lists
+ * (`9,15`), ranges (`1-5`), day names (`MON`) — so callers can fall back to
+ * showing the raw expression instead of a confidently wrong one. */
+export function parseCronExpression(expr: string): ParsedCron | null {
+	const parts = expr.trim().split(/\s+/)
+	const fields = parts.length === 6 ? parts.slice(1) : parts
+	if (fields.length !== 5) return null
+	const [minute, hour, dayOfMonth, , dayOfWeek] = fields
+	if (![minute, hour, dayOfMonth, dayOfWeek].every(isSimpleField)) return null
 
 	if (dayOfWeek !== '*') return { frequency: 'weekly', minute, hour, dayOfWeek, dayOfMonth: '1' }
 	if (dayOfMonth !== '*') return { frequency: 'monthly', minute, hour, dayOfWeek: '1', dayOfMonth }
@@ -50,7 +61,10 @@ export function describeCronSchedule(parsed: ParsedCron): string {
 	}
 }
 
-/** Human-readable schedule from a raw cron expression, e.g. "0 17 * * 0" -> "every Sunday at 5:00 PM". */
+/** Human-readable schedule from a raw cron expression, e.g. "0 17 * * 0" -> "every Sunday at 5:00 PM".
+ * Falls back to the raw expression when it uses syntax this app doesn't generate itself
+ * (steps, lists, ranges, day names) rather than rendering a wrong description. */
 export function describeCronExpression(expr: string): string {
-	return describeCronSchedule(parseCronExpression(expr))
+	const parsed = parseCronExpression(expr)
+	return parsed ? describeCronSchedule(parsed) : expr
 }
