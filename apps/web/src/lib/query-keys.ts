@@ -117,16 +117,16 @@ export const queryKeys = {
 		detail: (workspaceId: string, objectType: string) =>
 			['user-display-settings', workspaceId, 'detail', objectType] as const,
 	},
-	catalogItems: {
-		installed: (workspaceId: string) => ['catalog-items', workspaceId, 'installed'] as const,
+	marketplaceItems: {
+		installed: (workspaceId: string) => ['marketplace-items', workspaceId, 'installed'] as const,
 	},
-	catalogPackages: {
+	marketplaceLoops: {
 		list: (filters?: { type?: string; use_case?: string; q?: string }) =>
-			['catalog-packages', 'list', filters ?? {}] as const,
-		detail: (id: string) => ['catalog-packages', 'detail', id] as const,
+			['marketplace-loops', 'list', filters ?? {}] as const,
+		detail: (id: string) => ['marketplace-loops', 'detail', id] as const,
 	},
-	installedPackages: {
-		all: (workspaceId: string) => ['installed-packages', workspaceId] as const,
-		list: (workspaceId: string) => ['installed-packages', workspaceId, 'list'] as const,
+	installedLoops: {
+		all: (workspaceId: string) => ['installed-loops', workspaceId] as const,
+		list: (workspaceId: string) => ['installed-loops', workspaceId, 'list'] as const,
 	},
 } as const

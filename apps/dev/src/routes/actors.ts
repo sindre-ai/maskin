@@ -655,7 +655,7 @@ app.openapi(getActorRoute, (async (c) => {
 				agentStateUpdatedAt: actors.agentStateUpdatedAt,
 				createdAt: actors.createdAt,
 				updatedAt: actors.updatedAt,
-				installedPackageId: sql<string | null>`${actors.metadata}->>'installed_package_id'`,
+				installedLoopId: sql<string | null>`${actors.metadata}->>'installed_loop_id'`,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))

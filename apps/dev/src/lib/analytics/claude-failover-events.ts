@@ -5,7 +5,7 @@ import { capturePosthogEvent } from './posthog'
 // truth (audit + SSE real-time); this forwards a copy to PostHog so the
 // bet's `metadata.posthog_query` dashboards actually see traffic. Each
 // track fn wraps a single `capturePosthogEvent` call following the same
-// pattern as `catalog-events.ts`.
+// pattern as `loop-events.ts`.
 //
 // `capturePosthogEvent` is best-effort and never throws — see `posthog.ts`.
 // Callers should invoke these AFTER the internal event insert's

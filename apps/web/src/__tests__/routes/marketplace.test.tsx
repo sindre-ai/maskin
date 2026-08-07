@@ -14,21 +14,21 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
-const mockUseCatalogPackages = vi.fn()
-vi.mock('@/hooks/use-catalog-packages', () => ({
-	useCatalogPackages: () => mockUseCatalogPackages(),
-	useInstallCatalogItem: () => ({ mutate: vi.fn(), isPending: false, isSuccess: false }),
-	useInstalledCatalogItems: () => ({ data: undefined, isLoading: false }),
-	useUninstallCatalogItem: () => ({ mutate: vi.fn(), isPending: false, isSuccess: false }),
+const mockUseMarketplaceLoops = vi.fn()
+vi.mock('@/hooks/use-marketplace-loops', () => ({
+	useMarketplaceLoops: () => mockUseMarketplaceLoops(),
+	useInstallMarketplaceItem: () => ({ mutate: vi.fn(), isPending: false, isSuccess: false }),
+	useInstalledMarketplaceItems: () => ({ data: undefined, isLoading: false }),
+	useUninstallMarketplaceItem: () => ({ mutate: vi.fn(), isPending: false, isSuccess: false }),
 }))
 
-vi.mock('@/hooks/use-installed-packages', () => ({
-	useInstalledPackages: () => ({ data: { installs: [] }, isLoading: false, isError: false }),
-	useInstallPackage: () => ({ mutate: vi.fn(), isPending: false }),
-	useForkInstalledPackage: () => ({ mutate: vi.fn(), isPending: false }),
+vi.mock('@/hooks/use-installed-loops', () => ({
+	useInstalledLoops: () => ({ data: { installs: [] }, isLoading: false, isError: false }),
+	useInstallLoop: () => ({ mutate: vi.fn(), isPending: false }),
+	useForkInstalledLoop: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
-// useQueries is used to fetch individual items from multi-type packages.
+// useQueries is used to fetch individual items from multi-type loops.
 // Default to returning no data so most tests stay simple.
 const mockUseQueries = vi.fn((): unknown[] => [])
 vi.mock('@tanstack/react-query', async () => {
@@ -50,8 +50,8 @@ describe('MarketplacePage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockUseQueries.mockReturnValue([])
-		mockUseCatalogPackages.mockReturnValue({
-			data: { packages: [], counts: COUNTS },
+		mockUseMarketplaceLoops.mockReturnValue({
+			data: { loops: [], counts: COUNTS },
 			isLoading: false,
 			isError: false,
 		})
@@ -96,20 +96,20 @@ describe('MarketplacePage', () => {
 	})
 
 	it('renders sidebar without counts when the API request errors', () => {
-		mockUseCatalogPackages.mockReturnValue({
+		mockUseMarketplaceLoops.mockReturnValue({
 			data: undefined,
 			isLoading: false,
 			isError: true,
 		})
 		render(<MarketplacePage />)
 		expect(screen.getAllByRole('button', { name: /^Agents$/ }).length).toBeGreaterThanOrEqual(1)
-		expect(screen.getByText(/Couldn't load the catalog/i)).toBeInTheDocument()
+		expect(screen.getByText(/Couldn't load the marketplace/i)).toBeInTheDocument()
 	})
 
-	it('places a multi-type package in the Packages section, not in Agents or Triggers', () => {
-		mockUseCatalogPackages.mockReturnValue({
+	it('places a multi-type loop in the Loops section, not in Agents or Triggers', () => {
+		mockUseMarketplaceLoops.mockReturnValue({
 			data: {
-				packages: [
+				loops: [
 					{
 						id: 'p1',
 						name: 'Customer Continuous Discovery',
@@ -128,17 +128,17 @@ describe('MarketplacePage', () => {
 			isError: false,
 		})
 		render(<MarketplacePage />)
-		expect(screen.getByRole('region', { name: 'Packages' })).toHaveTextContent(
+		expect(screen.getByRole('region', { name: 'Loops' })).toHaveTextContent(
 			'Customer Continuous Discovery',
 		)
 		expect(screen.queryByRole('region', { name: 'Agents' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('region', { name: 'Triggers' })).not.toBeInTheDocument()
 	})
 
-	it('shows individual items in typed sections when package details are loaded', () => {
-		mockUseCatalogPackages.mockReturnValue({
+	it('shows individual items in typed sections when loop details are loaded', () => {
+		mockUseMarketplaceLoops.mockReturnValue({
 			data: {
-				packages: [
+				loops: [
 					{
 						id: 'p1',
 						name: 'Customer Continuous Discovery',
@@ -159,11 +159,11 @@ describe('MarketplacePage', () => {
 		mockUseQueries.mockReturnValue([
 			{
 				data: {
-					package: { id: 'p1', name: 'CCD' },
+					loop: { id: 'p1', name: 'CCD' },
 					items: [
 						{
 							id: 'i1',
-							package_id: 'p1',
+							loop_id: 'p1',
 							item_type: 'actor',
 							source_item_id: 'src-1',
 							item_snapshot: { name: 'Feedback Agent', description: 'Handles feedback' },
@@ -171,7 +171,7 @@ describe('MarketplacePage', () => {
 						},
 						{
 							id: 'i2',
-							package_id: 'p1',
+							loop_id: 'p1',
 							item_type: 'trigger',
 							source_item_id: 'src-2',
 							item_snapshot: { name: 'Daily Sweep', description: 'Runs daily' },
@@ -182,16 +182,16 @@ describe('MarketplacePage', () => {
 			},
 		])
 		render(<MarketplacePage />)
-		expect(screen.getByRole('region', { name: 'Packages' })).toHaveTextContent(
+		expect(screen.getByRole('region', { name: 'Loops' })).toHaveTextContent(
 			'Customer Continuous Discovery',
 		)
 		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent('Feedback Agent')
 		expect(screen.getByRole('region', { name: 'Triggers' })).toHaveTextContent('Daily Sweep')
 	})
 
-	it('shows the empty-state copy when the catalog has no packages', () => {
+	it('shows the empty-state copy when the marketplace has no loops', () => {
 		render(<MarketplacePage />)
-		expect(screen.getByText(/No packages yet/i)).toBeInTheDocument()
+		expect(screen.getByText(/No loops yet/i)).toBeInTheDocument()
 	})
 
 	it('hides the desktop sidebar via the md:hidden / hidden md:block split', () => {
@@ -205,9 +205,9 @@ describe('MarketplacePage', () => {
 	})
 
 	it('renders the free-text filter input in both the mobile nav and the desktop section', () => {
-		mockUseCatalogPackages.mockReturnValue({
+		mockUseMarketplaceLoops.mockReturnValue({
 			data: {
-				packages: [
+				loops: [
 					{
 						id: 'p1',
 						name: 'Alpha',
@@ -226,7 +226,7 @@ describe('MarketplacePage', () => {
 			isError: false,
 		})
 		render(<MarketplacePage />)
-		const inputs = screen.getAllByRole('searchbox', { name: 'Filter catalog' })
+		const inputs = screen.getAllByRole('searchbox', { name: 'Filter marketplace' })
 		expect(inputs).toHaveLength(2)
 		// The mobile input sits inside the filter nav; the desktop input sits
 		// inside the content <section>. Both share the same query state.
@@ -235,10 +235,10 @@ describe('MarketplacePage', () => {
 		expect(chipNav.contains(inputs[1])).toBe(false)
 	})
 
-	it('narrows the visible packages when the user types into the filter', async () => {
-		mockUseCatalogPackages.mockReturnValue({
+	it('narrows the visible loops when the user types into the filter', async () => {
+		mockUseMarketplaceLoops.mockReturnValue({
 			data: {
-				packages: [
+				loops: [
 					{
 						id: 'p1',
 						name: 'Discover & Research',
@@ -268,23 +268,21 @@ describe('MarketplacePage', () => {
 			isError: false,
 		})
 		render(<MarketplacePage />)
-		const packages = screen.getByRole('region', { name: 'Packages' })
-		expect(packages).toHaveTextContent('Discover & Research')
-		expect(packages).toHaveTextContent('Build & Ship')
+		const loops = screen.getByRole('region', { name: 'Loops' })
+		expect(loops).toHaveTextContent('Discover & Research')
+		expect(loops).toHaveTextContent('Build & Ship')
 
 		const user = userEvent.setup()
-		const [mobileInput] = screen.getAllByRole('searchbox', { name: 'Filter catalog' })
+		const [mobileInput] = screen.getAllByRole('searchbox', { name: 'Filter marketplace' })
 		await user.type(mobileInput, 'discover')
-		expect(screen.getByRole('region', { name: 'Packages' })).toHaveTextContent(
-			'Discover & Research',
-		)
-		expect(screen.getByRole('region', { name: 'Packages' })).not.toHaveTextContent('Build & Ship')
+		expect(screen.getByRole('region', { name: 'Loops' })).toHaveTextContent('Discover & Research')
+		expect(screen.getByRole('region', { name: 'Loops' })).not.toHaveTextContent('Build & Ship')
 	})
 
 	it('renders a clean empty state when the query matches nothing', async () => {
-		mockUseCatalogPackages.mockReturnValue({
+		mockUseMarketplaceLoops.mockReturnValue({
 			data: {
-				packages: [
+				loops: [
 					{
 						id: 'p1',
 						name: 'Alpha',
@@ -304,11 +302,11 @@ describe('MarketplacePage', () => {
 		})
 		render(<MarketplacePage />)
 		const user = userEvent.setup()
-		const [mobileInput] = screen.getAllByRole('searchbox', { name: 'Filter catalog' })
+		const [mobileInput] = screen.getAllByRole('searchbox', { name: 'Filter marketplace' })
 		await user.type(mobileInput, 'zzzznomatchxyz')
 		expect(screen.getByText('No matches')).toBeInTheDocument()
-		expect(screen.queryByRole('region', { name: 'Packages' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('region', { name: 'Loops' })).not.toBeInTheDocument()
 		expect(screen.queryByText(/Showing all/i)).not.toBeInTheDocument()
-		expect(screen.queryByText(/No packages yet/i)).not.toBeInTheDocument()
+		expect(screen.queryByText(/No loops yet/i)).not.toBeInTheDocument()
 	})
 })

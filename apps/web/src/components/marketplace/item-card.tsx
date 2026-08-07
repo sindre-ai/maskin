@@ -1,16 +1,19 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { useInstallCatalogItem, useUninstallCatalogItem } from '@/hooks/use-catalog-packages'
+import {
+	useInstallMarketplaceItem,
+	useUninstallMarketplaceItem,
+} from '@/hooks/use-marketplace-loops'
 import type {
-	CatalogItemInstalledEntry,
-	CatalogItemType,
-	CatalogPackageItem,
-	InstalledPackageRow,
+	InstalledLoopRow,
+	MarketplaceItemInstalledEntry,
+	MarketplaceItemType,
+	MarketplaceLoopItem,
 } from '@/lib/api'
 import { useState } from 'react'
 import { UninstallDialog } from './uninstall-dialog'
 
-const TYPE_LABEL: Record<CatalogItemType, string> = {
+const TYPE_LABEL: Record<MarketplaceItemType, string> = {
 	actor: 'Agent',
 	trigger: 'Trigger',
 	skill: 'Skill',
@@ -19,11 +22,11 @@ const TYPE_LABEL: Record<CatalogItemType, string> = {
 
 interface ItemCardProps {
 	workspaceId: string
-	item: CatalogPackageItem
-	/** Set when the whole parent package is installed — suppresses individual install/remove. */
-	install?: InstalledPackageRow
+	item: MarketplaceLoopItem
+	/** Set when the whole parent loop is installed — suppresses individual install/remove. */
+	install?: InstalledLoopRow
 	/** Set when this specific item was individually installed. */
-	installedEntity?: CatalogItemInstalledEntry
+	installedEntity?: MarketplaceItemInstalledEntry
 }
 
 export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCardProps) {
@@ -32,8 +35,8 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 	const description = (snapshot.description as string) ?? null
 	const locked = install?.isLocked ?? false
 
-	const installMutation = useInstallCatalogItem(workspaceId)
-	const uninstallMutation = useUninstallCatalogItem(workspaceId)
+	const installMutation = useInstallMarketplaceItem(workspaceId)
+	const uninstallMutation = useUninstallMarketplaceItem(workspaceId)
 	const [removeOpen, setRemoveOpen] = useState(false)
 
 	// Compute installed state across sessions (server data) and within the session (mutation state).
@@ -93,7 +96,7 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 								open={removeOpen}
 								onOpenChange={setRemoveOpen}
 								workspaceId={workspaceId}
-								packageName={name}
+								loopName={name}
 								isLocked={false}
 								onConfirm={(keepItems) => {
 									uninstallMutation.mutate(

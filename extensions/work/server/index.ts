@@ -25,7 +25,7 @@ const LOOP_FIELDS: FieldDefinition[] = [
 	{ name: 'entry_condition', type: 'text' },
 	{ name: 'close_condition', type: 'text' },
 	{ name: 'human_decision_points', type: 'number' },
-	{ name: 'installed_from_package_id', type: 'text' },
+	{ name: 'installed_from_marketplace_loop_id', type: 'text' },
 ]
 
 const workExtension: ModuleDefinition = {

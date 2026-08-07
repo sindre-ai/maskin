@@ -1,16 +1,16 @@
-import { PackageGrid } from '@/components/catalog/package-grid'
+import { LoopGrid } from '@/components/marketplace/loop-grid'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Input } from '@/components/ui/input'
-import { useCatalogPackages, useInstalledCatalogItems } from '@/hooks/use-catalog-packages'
-import { useInstalledPackages } from '@/hooks/use-installed-packages'
+import { useInstalledLoops } from '@/hooks/use-installed-loops'
+import { useInstalledMarketplaceItems, useMarketplaceLoops } from '@/hooks/use-marketplace-loops'
 import type {
-	CatalogItemInstalledEntry,
-	CatalogItemType,
-	CatalogPackageCounts,
-	CatalogPackageItem,
-	CatalogPackageSummary,
-	InstalledPackageRow,
+	InstalledLoopRow,
+	MarketplaceItemInstalledEntry,
+	MarketplaceItemType,
+	MarketplaceLoopCounts,
+	MarketplaceLoopItem,
+	MarketplaceLoopSummary,
 } from '@/lib/api'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -25,7 +25,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/marketplace')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-type TypeFilter = 'all' | 'packages' | CatalogItemType
+type TypeFilter = 'all' | 'loops' | MarketplaceItemType
 type UseCaseFilter = 'all' | string
 
 interface TypeItem {
@@ -40,14 +40,14 @@ interface UseCaseItem {
 
 const TYPE_ITEMS: TypeItem[] = [
 	{ value: 'all', label: 'All' },
-	{ value: 'packages', label: 'Packages' },
+	{ value: 'loops', label: 'Loops' },
 	{ value: 'actor', label: 'Agents' },
 	{ value: 'trigger', label: 'Triggers' },
 	{ value: 'skill', label: 'Skills' },
 	{ value: 'integration', label: 'Integrations' },
 ]
 
-function buildUseCaseItems(counts: CatalogPackageCounts | undefined): UseCaseItem[] {
+function buildUseCaseItems(counts: MarketplaceLoopCounts | undefined): UseCaseItem[] {
 	const base: UseCaseItem[] = [{ value: 'all', label: 'All' }]
 	if (!counts) return base
 	return [
@@ -59,7 +59,7 @@ function buildUseCaseItems(counts: CatalogPackageCounts | undefined): UseCaseIte
 }
 
 const SUBHEAD =
-	'Vetted agents, triggers, skills, and integrations — install them on their own, or as packages wired end-to-end.'
+	'Vetted agents, triggers, skills, and integrations — install them on their own, or as loops wired end-to-end.'
 
 function MarketplacePage() {
 	const { workspaceId } = useWorkspace()
@@ -68,48 +68,48 @@ function MarketplacePage() {
 	const [query, setQuery] = useState('')
 	const trimmedQuery = query.trim()
 
-	const { data, isLoading, isError } = useCatalogPackages()
+	const { data, isLoading, isError } = useMarketplaceLoops()
 	const counts = data?.counts
-	const packages = data?.packages ?? []
+	const loops = data?.loops ?? []
 	const useCaseItems = useMemo(() => buildUseCaseItems(counts), [counts])
 
-	// Fetch individual items for multi-type packages (bundles) so they can be
+	// Fetch individual items for multi-type loops (bundles) so they can be
 	// shown independently in the Agents / Triggers / etc. sections.
-	const multiTypePkgIds = useMemo(
-		() => packages.filter((p) => p.item_types.length > 1).map((p) => p.id),
-		[packages],
+	const multiTypeLoopIds = useMemo(
+		() => loops.filter((l) => l.item_types.length > 1).map((l) => l.id),
+		[loops],
 	)
 	const detailQueries = useQueries({
-		queries: multiTypePkgIds.map((id) => ({
-			queryKey: queryKeys.catalogPackages.detail(id),
-			queryFn: () => api.catalogPackages.get(id),
+		queries: multiTypeLoopIds.map((id) => ({
+			queryKey: queryKeys.marketplaceLoops.detail(id),
+			queryFn: () => api.marketplaceLoops.get(id),
 		})),
 	})
 	const allItems = useMemo(() => detailQueries.flatMap((q) => q.data?.items ?? []), [detailQueries])
 
 	// Item-level type counts for the sidebar (prefer item granularity once loaded).
 	const itemCountsByType = useMemo(() => {
-		const c: Partial<Record<CatalogItemType, number>> = {}
+		const c: Partial<Record<MarketplaceItemType, number>> = {}
 		for (const item of allItems) {
-			const t = item.item_type as CatalogItemType
+			const t = item.item_type as MarketplaceItemType
 			c[t] = (c[t] ?? 0) + 1
 		}
 		return c
 	}, [allItems])
 
-	// Package lookup for use-case filtering of items.
-	const packageById = useMemo(() => {
-		const m = new Map<string, CatalogPackageSummary>()
-		for (const pkg of packages) m.set(pkg.id, pkg)
+	// Loop lookup for use-case filtering of items.
+	const loopById = useMemo(() => {
+		const m = new Map<string, MarketplaceLoopSummary>()
+		for (const loop of loops) m.set(loop.id, loop)
 		return m
-	}, [packages])
+	}, [loops])
 
-	const filteredPackages = useMemo(
+	const filteredLoops = useMemo(
 		() =>
-			packages
-				.filter((pkg) => useCaseFilter === 'all' || pkg.use_case === useCaseFilter)
-				.filter((pkg) => matchesPackageQuery(pkg, trimmedQuery)),
-		[packages, useCaseFilter, trimmedQuery],
+			loops
+				.filter((loop) => useCaseFilter === 'all' || loop.use_case === useCaseFilter)
+				.filter((loop) => matchesLoopQuery(loop, trimmedQuery)),
+		[loops, useCaseFilter, trimmedQuery],
 	)
 
 	const filteredItems = useMemo(
@@ -117,45 +117,45 @@ function MarketplacePage() {
 			allItems
 				.filter(
 					(item) =>
-						useCaseFilter === 'all' || packageById.get(item.package_id)?.use_case === useCaseFilter,
+						useCaseFilter === 'all' || loopById.get(item.loop_id)?.use_case === useCaseFilter,
 				)
 				.filter((item) => matchesItemQuery(item, trimmedQuery)),
-		[allItems, useCaseFilter, packageById, trimmedQuery],
+		[allItems, useCaseFilter, loopById, trimmedQuery],
 	)
 
-	const { data: installsData } = useInstalledPackages(workspaceId)
-	const installsByPackage = useMemo(() => {
-		const map = new Map<string, InstalledPackageRow>()
+	const { data: installsData } = useInstalledLoops(workspaceId)
+	const installsByLoop = useMemo(() => {
+		const map = new Map<string, InstalledLoopRow>()
 		for (const row of installsData?.installs ?? []) {
-			map.set(row.sourcePackageId, row)
+			map.set(row.sourceLoopId, row)
 		}
 		return map
 	}, [installsData])
 
-	const { data: installedItemsData } = useInstalledCatalogItems(workspaceId)
+	const { data: installedItemsData } = useInstalledMarketplaceItems(workspaceId)
 	const installedItemsById = useMemo(() => {
-		const map = new Map<string, CatalogItemInstalledEntry>()
+		const map = new Map<string, MarketplaceItemInstalledEntry>()
 		for (const entry of installedItemsData?.items ?? []) {
-			map.set(entry.catalog_item_id, entry)
+			map.set(entry.marketplace_item_id, entry)
 		}
 		return map
 	}, [installedItemsData])
 
-	const isCatalogEmpty = !isLoading && !isError && packages.length === 0
-	const hasResults = filteredPackages.length > 0 || filteredItems.length > 0
-	const isFilterEmpty = !isLoading && !isError && !isCatalogEmpty && !hasResults
+	const isMarketplaceEmpty = !isLoading && !isError && loops.length === 0
+	const hasResults = filteredLoops.length > 0 || filteredItems.length > 0
+	const isFilterEmpty = !isLoading && !isError && !isMarketplaceEmpty && !hasResults
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
 			<div className="mb-4 md:mb-6">
 				<div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
 					<h1 className="text-lg font-semibold text-foreground">Marketplace</h1>
-					{data && packages.length > 0 ? (
+					{data && loops.length > 0 ? (
 						<span
 							className="text-sm text-muted-foreground tabular-nums"
-							data-testid="catalog-count"
+							data-testid="marketplace-count"
 						>
-							{packages.length} in the catalog
+							{loops.length} in the marketplace
 						</span>
 					) : null}
 				</div>
@@ -170,8 +170,8 @@ function MarketplacePage() {
 							type="search"
 							value={query}
 							onChange={(e) => setQuery(e.target.value)}
-							placeholder="Search the catalog…"
-							aria-label="Filter catalog"
+							placeholder="Search the marketplace…"
+							aria-label="Filter marketplace"
 						/>
 					</div>
 					<ChipStrip
@@ -224,20 +224,20 @@ function MarketplacePage() {
 							type="search"
 							value={query}
 							onChange={(e) => setQuery(e.target.value)}
-							placeholder="Search the catalog…"
-							aria-label="Filter catalog"
+							placeholder="Search the marketplace…"
+							aria-label="Filter marketplace"
 							className="md:w-80"
 						/>
 					</div>
 					{isError ? (
 						<p className="text-sm text-muted-foreground">
-							Couldn't load the catalog right now. Try refreshing.
+							Couldn't load the marketplace right now. Try refreshing.
 						</p>
 					) : isLoading ? (
-						<p className="text-sm text-muted-foreground">Loading catalog…</p>
-					) : isCatalogEmpty ? (
+						<p className="text-sm text-muted-foreground">Loading marketplace…</p>
+					) : isMarketplaceEmpty ? (
 						<p className="text-sm text-muted-foreground">
-							No packages yet — check back once Maskin publishes the first one.
+							No loops yet — check back once Maskin publishes the first one.
 						</p>
 					) : isFilterEmpty ? (
 						<EmptyState
@@ -245,12 +245,12 @@ function MarketplacePage() {
 							description="Try a different search term or clear the filters."
 						/>
 					) : (
-						<PackageGrid
-							packages={filteredPackages}
+						<LoopGrid
+							loops={filteredLoops}
 							items={filteredItems}
 							typeFilter={typeFilter}
 							workspaceId={workspaceId}
-							installLookup={(id) => installsByPackage.get(id)}
+							installLookup={(id) => installsByLoop.get(id)}
 							installedItemLookup={(id) => installedItemsById.get(id)}
 						/>
 					)}
@@ -324,8 +324,8 @@ function ChipStrip({
 	items: (TypeItem | UseCaseItem)[]
 	active: string
 	onSelect: (value: string) => void
-	counts: CatalogPackageCounts | undefined
-	itemCounts: Partial<Record<CatalogItemType, number>>
+	counts: MarketplaceLoopCounts | undefined
+	itemCounts: Partial<Record<MarketplaceItemType, number>>
 	kind: 'type' | 'use_case'
 }) {
 	return (
@@ -366,35 +366,37 @@ function ChipStrip({
 
 function countForType(
 	value: TypeFilter,
-	counts: CatalogPackageCounts | undefined,
-	itemCounts: Partial<Record<CatalogItemType, number>>,
+	counts: MarketplaceLoopCounts | undefined,
+	itemCounts: Partial<Record<MarketplaceItemType, number>>,
 ): number | undefined {
 	if (!counts) return undefined
-	if (value === 'all' || value === 'packages') return counts.total
-	// Use item-level count once loaded; fall back to package-level count.
-	return itemCounts[value as CatalogItemType] ?? counts.by_type[value as CatalogItemType] ?? 0
+	if (value === 'all' || value === 'loops') return counts.total
+	// Use item-level count once loaded; fall back to loop-level count.
+	return (
+		itemCounts[value as MarketplaceItemType] ?? counts.by_type[value as MarketplaceItemType] ?? 0
+	)
 }
 
 function countForUseCase(
 	value: UseCaseFilter,
-	counts: CatalogPackageCounts | undefined,
+	counts: MarketplaceLoopCounts | undefined,
 ): number | undefined {
 	if (!counts) return undefined
 	if (value === 'all') return counts.total
 	return counts.by_use_case[value] ?? 0
 }
 
-function matchesPackageQuery(pkg: CatalogPackageSummary, query: string): boolean {
+function matchesLoopQuery(loop: MarketplaceLoopSummary, query: string): boolean {
 	if (!query) return true
 	const needle = query.toLowerCase()
 	return (
-		pkg.name.toLowerCase().includes(needle) ||
-		pkg.description.toLowerCase().includes(needle) ||
-		(pkg.use_case?.toLowerCase().includes(needle) ?? false)
+		loop.name.toLowerCase().includes(needle) ||
+		loop.description.toLowerCase().includes(needle) ||
+		(loop.use_case?.toLowerCase().includes(needle) ?? false)
 	)
 }
 
-function matchesItemQuery(item: CatalogPackageItem, query: string): boolean {
+function matchesItemQuery(item: MarketplaceLoopItem, query: string): boolean {
 	if (!query) return true
 	const needle = query.toLowerCase()
 	const snapshot = item.item_snapshot as { name?: unknown; description?: unknown } | null

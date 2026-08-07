@@ -1145,16 +1145,16 @@ describe('tool handlers', () => {
 
 	describe('get_started handler', () => {
 		const workspace = { id: 'ws-1', name: 'My Workspace' }
-		const packages = [
+		const loops = [
 			{
-				id: 'pkg-dev-1',
+				id: 'loop-dev-1',
 				name: 'Development',
 				description: 'Product team shipping software',
 				use_case: 'development',
 				item_types: ['actor', 'trigger'],
 			},
 			{
-				id: 'pkg-growth-1',
+				id: 'loop-growth-1',
 				name: 'Growth',
 				description: 'Founder running a launch pipeline',
 				use_case: 'growth',
@@ -1162,12 +1162,12 @@ describe('tool handlers', () => {
 			},
 		]
 
-		it('lists marketplace packages when no package_id is given', async () => {
+		it('lists marketplace loops when no loop_id is given', async () => {
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ packages }),
+					json: () => Promise.resolve({ loops }),
 				} as Response)
 
 			const handler = getHandler('get_started')
@@ -1177,17 +1177,17 @@ describe('tool handlers', () => {
 			expect(text).toContain('My Workspace')
 			expect(text).toContain('Development')
 			expect(text).toContain('Growth')
-			expect(text).toContain('pkg-dev-1')
-			expect(text).toContain('package_id')
+			expect(text).toContain('loop-dev-1')
+			expect(text).toContain('loop_id')
 			expect(text).toContain('confirm: true')
 		})
 
-		it('returns empty-marketplace message when catalog has no packages', async () => {
+		it('returns empty-marketplace message when marketplace has no loops', async () => {
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ packages: [] }),
+					json: () => Promise.resolve({ loops: [] }),
 				} as Response)
 
 			const handler = getHandler('get_started')
@@ -1195,16 +1195,20 @@ describe('tool handlers', () => {
 			const text = result.content[0].text
 
 			expect(text).toContain('marketplace')
-			expect(text).not.toContain('package_id')
+			expect(text).not.toContain('loop_id')
 		})
 
-		it('installs package when package_id and confirm: true are provided', async () => {
+		it('installs loop when loop_id and confirm: true are provided', async () => {
 			const fetchSpy = vi
 				.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ provisioned: { actors: 3, triggers: 5, skills: 2 } }),
+					json: () =>
+						Promise.resolve({
+							objectId: 'loop-obj-1',
+							provisioned: { actors: 3, triggers: 5, skills: 2 },
+						}),
 				} as Response)
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
 				.mockResolvedValueOnce({
@@ -1214,20 +1218,23 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('get_started')
 			const result = (await handler({
-				package_id: 'pkg-dev-1',
+				loop_id: 'loop-dev-1',
 				confirm: true,
 			})) as { content: Array<{ text: string }> }
 			const text = result.content[0].text
 
 			expect(text).toContain('installed')
 			expect(text).toContain('My Workspace')
+			expect(text).toContain('/ws-1/loops/loop-obj-1')
 
 			const installCall = fetchSpy.mock.calls.find(
-				([, opts]) => (opts as RequestInit)?.method === 'POST',
+				([u, opts]) =>
+					(opts as RequestInit)?.method === 'POST' &&
+					(u as string).includes('/api/installed-loops'),
 			)
 			if (!installCall) throw new Error('install call not found')
 			const installBody = JSON.parse((installCall[1] as RequestInit).body as string)
-			expect(installBody.packageId).toBe('pkg-dev-1')
+			expect(installBody.loopId).toBe('loop-dev-1')
 			expect(installBody.workspaceId).toBe('ws-1')
 		})
 
@@ -1250,7 +1257,7 @@ describe('tool handlers', () => {
 				} as Response)
 
 			const handler = getHandler('get_started')
-			await handler({ package_id: 'pkg-dev-1', confirm: true, workspace_name: 'Acme' })
+			await handler({ loop_id: 'loop-dev-1', confirm: true, workspace_name: 'Acme' })
 
 			const patchCall = fetchSpy.mock.calls.find(
 				([u, opts]) =>
