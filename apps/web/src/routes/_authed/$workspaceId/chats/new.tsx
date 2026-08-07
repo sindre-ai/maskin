@@ -71,6 +71,7 @@ function NewConversationPage() {
 			: [],
 	)
 	const [query, setQuery] = useState('')
+	const [isPickerFocused, setIsPickerFocused] = useState(false)
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const [chipSending, setChipSending] = useState(false)
@@ -197,10 +198,15 @@ function NewConversationPage() {
 								onValueChange={setQuery}
 								placeholder="Add people or agents…"
 								aria-label="Add people or agents"
+								onFocus={() => setIsPickerFocused(true)}
+								onBlur={() => setIsPickerFocused(false)}
 								className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
 							/>
-							{query.length > 0 ? (
-								<Command.List className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-popover shadow-sm">
+							{isPickerFocused ? (
+								<Command.List
+									onMouseDown={(e) => e.preventDefault()}
+									className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-popover shadow-sm"
+								>
 									{candidates.length === 0 ? (
 										<div className="px-2 py-2 text-sm text-muted-foreground">No matches.</div>
 									) : (
