@@ -20,11 +20,6 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
-const setChatOpen = vi.fn()
-vi.mock('@/lib/chat-context', () => ({
-	useChat: () => ({ setOpen: setChatOpen }),
-}))
-
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return {
@@ -79,6 +74,7 @@ describe('AppSidebar', () => {
 	it('renders core navigation items', () => {
 		render(<AppSidebar />)
 		expect(screen.getByText('For You')).toBeInTheDocument()
+		expect(screen.getByText('Chats')).toBeInTheDocument()
 		expect(screen.getByText('Agents')).toBeInTheDocument()
 		expect(screen.getByText('Triggers')).toBeInTheDocument()
 	})
@@ -122,10 +118,10 @@ describe('AppSidebar', () => {
 		expect(screen.getByTestId('workspace-switcher')).toBeInTheDocument()
 	})
 
-	it('does not render a chat launcher — lives in the app header now', () => {
+	it('renders a Chats nav item linking to the full-screen chats surface', () => {
 		vi.mocked(useEnabledModules).mockReturnValue(['work'])
 		render(<AppSidebar />)
-		expect(screen.queryByText('Chat')).not.toBeInTheDocument()
+		expect(screen.getByText('Chats')).toBeInTheDocument()
 	})
 
 	it('shows an unread count next to For You when there are unread threads', () => {

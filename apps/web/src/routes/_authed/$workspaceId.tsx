@@ -1,17 +1,15 @@
-import { ChatPanel } from '@/components/chat/chat-panel'
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
-import { useActors } from '@/hooks/use-actors'
+import { useDefaultChatAgent } from '@/hooks/use-actors'
+import { useCreateConversation } from '@/hooks/use-conversations'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
-import { deriveEntryAgentRole } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
-import { ChatProvider, useChat } from '@/lib/chat-context'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
@@ -21,8 +19,8 @@ import {
 	registerWorkspaceProperties,
 	setCapturingEnabled,
 } from '@/lib/posthog'
-import { WorkspaceContext } from '@/lib/workspace-context'
-import { Outlet, createFileRoute } from '@tanstack/react-router'
+import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
+import { Outlet, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const STORAGE_KEY = 'maskin-sidebar-open'
@@ -53,7 +51,6 @@ export const Route = createFileRoute('/_authed/$workspaceId')({
 function WorkspaceLayout() {
 	const { workspaceId } = Route.useParams()
 	const { data: workspaces } = useWorkspaces()
-	const { data: actors } = useActors(workspaceId, { enabled: !!workspaceId })
 
 	// Connect SSE for real-time updates
 	const sseStatus = useSSE(workspaceId)
@@ -61,29 +58,6 @@ function WorkspaceLayout() {
 	const workspace = useMemo(
 		() => workspaces?.find((w) => w.id === workspaceId),
 		[workspaces, workspaceId],
-	)
-
-	// Prefer the workspace-level default_agent_id when set (Chief of Staff
-	// prototype bet); fall back to the Workspace Coach lookup by name. The
-	// fallback keeps every pre-CoS workspace unchanged — settings without a
-	// `default_agent_id` behave exactly as they did before this task.
-	const defaultAgent = useMemo(() => {
-		if (!actors) return null
-		const settings = workspace?.settings as { default_agent_id?: string | null } | undefined
-		const defaultId = settings?.default_agent_id
-		if (typeof defaultId === 'string' && defaultId.length > 0) {
-			const pinned = actors.find((a) => a.id === defaultId)
-			if (pinned) return pinned
-		}
-		return actors.find((a) => a.type === 'agent' && a.name === 'Workspace Coach') ?? null
-	}, [actors, workspace])
-	const agentActorId = defaultAgent?.id ?? null
-	// Chief of Staff prototype bet's `chat_session_started.entry_agent_role`:
-	// derived from the routing agent's display name so the property flips to
-	// `'chief-of-staff'` automatically once T3 makes CoS the default here.
-	const entryAgentRole = useMemo(
-		() => deriveEntryAgentRole(defaultAgent?.name ?? null),
-		[defaultAgent],
 	)
 
 	const [open, setOpenState] = useState(getInitialOpen)
@@ -129,38 +103,31 @@ function WorkspaceLayout() {
 
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
-			<ChatProvider workspaceId={workspaceId}>
-				<NewConversationProvider>
-					<CommandPaletteProvider>
-						<PendingPromptBootstrap agentActorId={agentActorId} />
-						<GuestDraftClaimBootstrap workspaceId={workspaceId} />
-						<PendingCommentsProvider workspaceId={workspaceId}>
-							<PageHeaderProvider>
-								<ChatPinShell>
-									<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
-										<AppSidebar />
-										<SidebarInset className="min-w-0">
-											<Header />
-											<div
-												className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8"
-												data-scroll-root
-											>
-												<Outlet />
-											</div>
-										</SidebarInset>
-									</SidebarProvider>
-								</ChatPinShell>
-							</PageHeaderProvider>
-							<CommandPalette />
-							<ChatPanel
-								workspaceId={workspaceId}
-								agentActorId={agentActorId}
-								entryAgentRole={entryAgentRole}
-							/>
-						</PendingCommentsProvider>
-					</CommandPaletteProvider>
-				</NewConversationProvider>
-			</ChatProvider>
+			<NewConversationProvider>
+				<CommandPaletteProvider>
+					<PendingPromptBootstrap />
+					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
+					<PendingCommentsProvider workspaceId={workspaceId}>
+						<PageHeaderProvider>
+							<ContentPushShell>
+								<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
+									<AppSidebar />
+									<SidebarInset className="min-w-0">
+										<Header />
+										<div
+											className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8"
+											data-scroll-root
+										>
+											<Outlet />
+										</div>
+									</SidebarInset>
+								</SidebarProvider>
+							</ContentPushShell>
+						</PageHeaderProvider>
+						<CommandPalette />
+					</PendingCommentsProvider>
+				</CommandPaletteProvider>
+			</NewConversationProvider>
 		</WorkspaceContext.Provider>
 	)
 }
@@ -204,53 +171,58 @@ function GuestDraftClaimBootstrap({ workspaceId }: { workspaceId: string }) {
 }
 
 /**
- * Reads `maskin_pending_prompt` from localStorage once the agent's actor ID
- * resolves, then opens the chat panel with that prompt as the first message.
- * Fires at most once per mount — the ref guard prevents a re-trigger if
- * `agentActorId` changes identity while remaining non-null.
+ * Reads `maskin_pending_prompt` from localStorage once the workspace's
+ * default chat agent resolves, creates a new conversation seeded with that
+ * prompt as the first message, and navigates straight to the resulting
+ * thread. Fires at most once per mount — the ref guard prevents a re-trigger
+ * if `defaultAgent` changes identity while remaining non-null.
  */
-function PendingPromptBootstrap({ agentActorId }: { agentActorId: string | null }) {
-	const { openWithContext } = useChat()
+function PendingPromptBootstrap() {
+	const { workspaceId } = useWorkspace()
+	const defaultAgent = useDefaultChatAgent()
+	const createConversation = useCreateConversation(workspaceId)
+	const navigate = useNavigate()
 	const firedRef = useRef(false)
 
 	useEffect(() => {
-		if (!agentActorId || firedRef.current) return
+		if (!defaultAgent || firedRef.current) return
 		const prompt = localStorage.getItem('maskin_pending_prompt')
 		if (!prompt) return
 		firedRef.current = true
 		localStorage.removeItem('maskin_pending_prompt')
-		openWithContext([], prompt)
-	}, [agentActorId, openWithContext])
+		createConversation
+			.mutateAsync({
+				title: defaultAgent.name,
+				participant_actor_ids: [defaultAgent.id],
+				initial_message: prompt,
+			})
+			.then((conversation) => {
+				navigate({
+					to: '/$workspaceId/chats/$conversationId',
+					params: { workspaceId, conversationId: conversation.id },
+				})
+			})
+			.catch(() => console.error('[maskin] failed to bootstrap pending-prompt conversation'))
+	}, [defaultAgent, createConversation, navigate, workspaceId])
 
 	return null
 }
 
 /**
  * Wraps the main layout (left sidebar + header + outlet) so that when the
- * chat panel is pinned AND open, or the current route reports its own fixed
- * right sidebar via PageHeaderContext (e.g. the object-detail properties
- * sidebar), the layout gets a right margin equal to whichever is wider — both
- * panels are fixed-positioned, so this margin is what makes them "push
- * content aside" instead of floating over it, and keeps the header's action
- * buttons clear of either.
+ * current route reports its own fixed right sidebar via PageHeaderContext
+ * (e.g. the object-detail properties sidebar), the layout gets a right
+ * margin equal to its width — that panel is fixed-positioned, so this margin
+ * is what makes it "push content aside" instead of floating over it, and
+ * keeps the header's action buttons clear of it.
  */
-function ChatPinShell({ children }: { children: ReactNode }) {
-	const { pinned, open, panelWidth } = useChat()
+function ContentPushShell({ children }: { children: ReactNode }) {
 	const { contentPush } = usePageHeader()
 	const isMobile = useIsMobile()
-	// On mobile both panels overlay the viewport (Sheet/Sheet), so a stale
-	// `pinned=true` from desktop must not apply a margin that would squash
-	// the main content off-screen.
-	const chatPushed = pinned && open && !isMobile
+	// On mobile the panel overlays the viewport (Sheet), so it must not apply
+	// a margin that would squash the main content off-screen.
 	const pagePushed = Boolean(contentPush) && !isMobile
-	let marginRight: string | number = 0
-	if (chatPushed && pagePushed) {
-		marginRight = `max(${panelWidth}px, ${contentPush})`
-	} else if (chatPushed) {
-		marginRight = `${panelWidth}px`
-	} else if (pagePushed) {
-		marginRight = contentPush as string
-	}
+	const marginRight: string | number = pagePushed ? (contentPush as string) : 0
 	return (
 		<div className="transition-[margin] duration-200 ease-linear" style={{ marginRight }}>
 			{children}

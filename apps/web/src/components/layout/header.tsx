@@ -9,9 +9,9 @@ import {
 } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
 import { SidebarTrigger } from '@/components/ui/sidebar'
-import { useChat } from '@/lib/chat-context'
 import { usePageHeader } from '@/lib/page-header-context'
-import { useMatches, useRouter } from '@tanstack/react-router'
+import { useWorkspace } from '@/lib/workspace-context'
+import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Fragment } from 'react'
 
@@ -77,7 +77,8 @@ const FOR_YOU_ROUTE_ID = '/_authed/$workspaceId/'
 export function Header() {
 	const matches = useMatches()
 	const { actions, stickyIdentity } = usePageHeader()
-	const { setOpen: setChatOpen } = useChat()
+	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
 	const router = useRouter()
 
 	// Find the leaf (last non-hidden) match
@@ -200,7 +201,10 @@ export function Header() {
 				<div className="ml-auto flex shrink-0 items-center gap-2">
 					{actions}
 					{!isForYouPage && (
-						<NewMenu onNewChat={() => setChatOpen(true)} hideObjectSection={isObjectDetail} />
+						<NewMenu
+							onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
+							hideObjectSection={isObjectDetail}
+						/>
 					)}
 				</div>
 			</div>

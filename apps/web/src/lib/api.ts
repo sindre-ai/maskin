@@ -726,6 +726,54 @@ export const api = {
 			}),
 	},
 
+	conversations: {
+		list: (workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<ConversationListResponse>(`/conversations${qs}`, { workspaceId })
+		},
+		get: (id: string, workspaceId: string) =>
+			request<ConversationDetailResponse>(`/conversations/${id}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateConversationInput) =>
+			request<ConversationDetailResponse>('/conversations', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		update: (id: string, workspaceId: string, data: UpdateConversationInput) =>
+			request<ConversationDetailResponse>(`/conversations/${id}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		addParticipants: (id: string, workspaceId: string, actorIds: string[]) =>
+			request<ConversationParticipantResponse[]>(`/conversations/${id}/participants`, {
+				method: 'POST',
+				body: { actor_ids: actorIds },
+				workspaceId,
+			}),
+		removeParticipant: (id: string, actorId: string, workspaceId: string) =>
+			request<void>(`/conversations/${id}/participants/${actorId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		messages: (id: string, workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<MessagesListResponse>(`/conversations/${id}/messages${qs}`, { workspaceId })
+		},
+		postMessage: (id: string, workspaceId: string, data: PostMessageInput) =>
+			request<MessageResponse>(`/conversations/${id}/messages`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		updateMe: (id: string, workspaceId: string, data: UpdateConversationParticipantStateInput) =>
+			request<ConversationParticipantStateResponse>(`/conversations/${id}/me`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+	},
+
 	files: {
 		list: (
 			workspaceId: string,
@@ -1204,6 +1252,112 @@ export interface UpdateFileInput {
 	content?: string
 	encoding?: 'base64' | 'utf8'
 	annotations?: FileAnnotation[]
+}
+
+// Conversation entity fields are camelCase (Drizzle column names passed
+// through `serialize()`, which only stringifies Dates — it does not
+// snake_case). Only per-viewer computed fields (pinned, archived,
+// unread_count, snippet, last_read_message_id) are literal keys added by the
+// route handler, and those happen to already read as snake_case/plain words.
+// See apps/dev/src/lib/openapi-schemas.ts (conversation*ResponseSchema).
+export interface ConversationParticipantResponse {
+	actorId: string
+	actorName: string
+	actorType: 'human' | 'agent'
+	joinedAt: string | null
+	addedBy: string | null
+}
+
+export interface ConversationListItemResponse {
+	id: string
+	workspaceId: string
+	title: string
+	createdBy: string
+	lastMessageAt: string | null
+	createdAt: string | null
+	updatedAt: string | null
+	pinned: boolean
+	archived: boolean
+	unread_count: number
+	snippet: string | null
+	participants: ConversationParticipantResponse[]
+}
+
+export interface ConversationListResponse {
+	conversations: ConversationListItemResponse[]
+	has_more: boolean
+}
+
+export interface ConversationDetailResponse {
+	id: string
+	workspaceId: string
+	title: string
+	createdBy: string
+	lastMessageAt: string | null
+	createdAt: string | null
+	updatedAt: string | null
+	pinned: boolean
+	archived: boolean
+	last_read_message_id: number | null
+	participants: ConversationParticipantResponse[]
+}
+
+export interface ConversationParticipantStateResponse {
+	pinned: boolean
+	archived: boolean
+	last_read_message_id: number | null
+}
+
+export interface MessageAttachment {
+	file_id: string
+	name?: string
+	mime_type?: string
+	size_bytes?: number
+}
+
+export interface MessageMetadata {
+	attachments?: MessageAttachment[]
+	mentions?: string[]
+}
+
+export interface MessageResponse {
+	id: number
+	conversationId: string
+	actorId: string
+	actorName: string
+	actorType: 'human' | 'agent'
+	kind: 'message' | 'system'
+	content: string
+	metadata: MessageMetadata | null
+	sessionId: string | null
+	createdAt: string | null
+}
+
+export interface MessagesListResponse {
+	messages: MessageResponse[]
+	has_more: boolean
+}
+
+export interface CreateConversationInput {
+	title: string
+	participant_actor_ids: string[]
+	initial_message?: string
+}
+
+export interface UpdateConversationInput {
+	title: string
+}
+
+export interface UpdateConversationParticipantStateInput {
+	pinned?: boolean
+	archived?: boolean
+	last_read_message_id?: number
+}
+
+export interface PostMessageInput {
+	content: string
+	metadata?: MessageMetadata
+	session_id?: string
 }
 
 export interface SessionConfigInput {

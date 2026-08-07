@@ -1,7 +1,9 @@
 import {
 	COMMENT_MAX_ATTACHMENTS,
 	COMMENT_MAX_LENGTH,
+	MESSAGE_MAX_LENGTH,
 	createCommentSchema,
+	messageMetadataSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
 	skillNameSchema,
@@ -806,6 +808,37 @@ export const tools = {
 			...createCommentSchema.shape,
 		}),
 	},
+
+	// ─── Conversations ───────────────────────────────────────
+	get_conversation: {
+		description:
+			"Get a conversation's title and current participant list (humans and agents). Call this before replying so you know who else is in the room.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			conversation_id: z.string().uuid(),
+		}),
+	},
+	list_conversation_messages: {
+		description:
+			'List messages in a conversation, most-recent first. Use before_id (fetch older) or after_id (fetch newer) with the id of a message you already have to page through history.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			conversation_id: z.string().uuid(),
+			before_id: z.number().int().positive().optional(),
+			after_id: z.number().int().positive().optional(),
+			limit: z.number().int().min(1).max(200).default(50),
+		}),
+	},
+	post_conversation_message: {
+		description: `Post a reply into a conversation you are a participant in. You were invoked because you decided (or were @mentioned) that a reply might add value — read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Only call this when a reply genuinely helps; silence is a valid outcome, and posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			conversation_id: z.string().uuid(),
+			content: z.string().min(1).max(MESSAGE_MAX_LENGTH),
+			metadata: messageMetadataSchema.optional(),
+		}),
+	},
+
 	create_trigger: {
 		description:
 			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). The target_actor_id must be an agent actor.",

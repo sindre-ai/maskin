@@ -1,6 +1,5 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
-import { installChatMocks } from '../helpers/chat.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -11,6 +10,11 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  * three ship-gate viewports and pins the visible height tightly — a loose
  * bound (e.g. `≤ 44`) would let a `size="touch"` revert slip past, exactly
  * the NIT flagged on PR #1040's checkbox tap-area spec.
+ *
+ * Exercises the new-conversation composer (`/chats/new`) — the sidebar chat
+ * sheet this spec used to target was replaced by the full-screen chats
+ * surface. The Attach button renders regardless of whether participants
+ * have been picked yet, so no conversation/session setup is needed.
  */
 
 // Design size for the Attach button (`h-7` = 28 px). A `size="sm"` (h-9 = 36),
@@ -19,15 +23,9 @@ const VISIBLE_HEIGHT_PX = 28
 const VISIBLE_HEIGHT_TOLERANCE_PX = 4
 const TAP_TARGET_MIN_PX = 44
 
-async function openChatAndLocateAttach(page: Page, workspaceId: string) {
-	// The header's "New" menu is hidden on the For You page (its own header
-	// surfaces equivalent actions) — use the Objects list instead.
-	await page.goto(`/${workspaceId}/objects`)
-	await page.getByRole('button', { name: /^new$/i }).click()
-	await page.getByRole('menuitem', { name: /new chat/i }).click()
-	await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible({ timeout: 10_000 })
-	const sheet = page.locator('[data-surface="sheet"]')
-	const attach = sheet.getByRole('button', { name: 'Attach image' })
+async function openNewChatAndLocateAttach(page: Page, workspaceId: string) {
+	await page.goto(`/${workspaceId}/chats/new`)
+	const attach = page.getByRole('button', { name: 'Attach image' })
 	await expect(attach).toBeVisible({ timeout: 10_000 })
 	await expect(attach).toBeEnabled({ timeout: 10_000 })
 	return attach
@@ -38,13 +36,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 		test.use({ viewport: { width: viewport.width, height: viewport.height } })
 
 		test('44 px ::before hit surface with visible glyph unchanged', async ({ page, account }) => {
-			await installChatMocks(page, {
-				workspaceId: account.workspaceId,
-				humanActorId: account.actorId,
-				humanActorName: 'E2E Test User',
-			})
-
-			const attach = await openChatAndLocateAttach(page, account.workspaceId)
+			const attach = await openNewChatAndLocateAttach(page, account.workspaceId)
 
 			const measurements = await attach.evaluate((el: HTMLElement) => {
 				const rect = el.getBoundingClientRect()

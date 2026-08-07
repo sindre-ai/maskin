@@ -17,6 +17,17 @@ export const queryKeys = {
 	bets: {
 		all: (workspaceId: string) => ['bets', workspaceId] as const,
 	},
+	conversations: {
+		all: (workspaceId: string) => ['conversations', workspaceId] as const,
+		listInfinite: (workspaceId: string, filters?: Record<string, unknown>) =>
+			['conversations', workspaceId, 'listInfinite', filters] as const,
+		listInfinitePrefix: (workspaceId: string) =>
+			['conversations', workspaceId, 'listInfinite'] as const,
+		detail: (id: string) => ['conversations', 'detail', id] as const,
+		messages: (id: string, filters?: Record<string, unknown>) =>
+			['conversations', 'detail', id, 'messages', filters] as const,
+		messagesPrefix: (id: string) => ['conversations', 'detail', id, 'messages'] as const,
+	},
 	actors: {
 		all: (workspaceId?: string) => ['actors', workspaceId] as const,
 		detail: (id: string) => ['actors', 'detail', id] as const,
@@ -75,6 +86,8 @@ export const queryKeys = {
 			['sessions', workspaceId, 'actor', actorId, 'all', 'infinite'] as const,
 		byMentionObject: (workspaceId: string, objectId: string) =>
 			['sessions', workspaceId, 'mention-object', objectId] as const,
+		byConversation: (workspaceId: string, conversationId: string) =>
+			['sessions', workspaceId, 'conversation', conversationId] as const,
 		usage: (
 			workspaceId: string,
 			actorId: string,

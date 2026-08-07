@@ -308,6 +308,107 @@ export const sessionLogs = pgTable(
 	(t) => [index('session_logs_session_idx').on(t.sessionId, t.createdAt)],
 )
 
+// ── Conversations ────────────────────────────────────────────────────────
+
+export const conversations = pgTable(
+	'conversations',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		title: text('title').notNull(),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		// Denormalized so "my conversations ordered by last activity" is a plain
+		// index scan instead of a MAX(messages.id) aggregate per row. Bumped in
+		// the same transaction as every message insert.
+		lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull().defaultNow(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt)],
+)
+
+export type Conversation = typeof conversations.$inferSelect
+export type NewConversation = typeof conversations.$inferInsert
+
+// ── Conversation Participants ──────────────────────────────────────────────
+//
+// Per-user pin/archive/read state lives here rather than on `conversations` —
+// two humans in the same conversation can have independently pinned/archived/
+// read state. `leftAt` is a soft-remove (not a DELETE) so a re-added
+// participant keeps their prior pin/archive/read history and a removed
+// participant keeps a stable author FK on their historical messages.
+
+export const conversationParticipants = pgTable(
+	'conversation_participants',
+	{
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		addedBy: uuid('added_by').references(() => actors.id),
+		joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+		leftAt: timestamp('left_at', { withTimezone: true }),
+		pinned: boolean('pinned').notNull().default(false),
+		archived: boolean('archived').notNull().default(false),
+		// High-water mark into messages.id (bigserial, monotonic).
+		lastReadMessageId: bigint('last_read_message_id', { mode: 'number' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.conversationId, t.actorId] }),
+		// Leading column actorId (reverse of the PK's leading column) — required
+		// for "list my active conversations" to be an index scan.
+		index('conversation_participants_actor_active_idx')
+			.on(t.actorId, t.conversationId)
+			.where(sql`${t.leftAt} IS NULL`),
+	],
+)
+
+export type ConversationParticipant = typeof conversationParticipants.$inferSelect
+export type NewConversationParticipant = typeof conversationParticipants.$inferInsert
+
+// ── Messages ────────────────────────────────────────────────────────────────
+//
+// One row per chat turn in a conversation, human- or agent-authored.
+// `sessionId` links an agent-authored message back to the one-shot session
+// that produced it (NULL for human messages) — cost/token drill-down is a
+// join at read time, same nullable-FK shape as notifications.sessionId and
+// agentFiles.sessionId. The unique constraint on sessionId also acts as the
+// idempotency guard for the post_conversation_message MCP tool.
+
+export const messages = pgTable(
+	'messages',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		kind: text('kind').notNull().default('message'),
+		content: text('content').notNull(),
+		metadata: jsonb('metadata'),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('messages_conversation_id_idx').on(t.conversationId, t.id),
+		unique('messages_session_id_uniq').on(t.sessionId),
+		check('messages_kind_check', sql`${t.kind} IN ('message', 'system')`),
+	],
+)
+
+export type Message = typeof messages.$inferSelect
+export type NewMessage = typeof messages.$inferInsert
+
 // ── Agent Files ────────────────────────────────────────────────────────────
 
 export const agentFiles = pgTable(

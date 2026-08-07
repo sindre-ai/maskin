@@ -104,5 +104,13 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			// all() is a prefix of detail() so this covers both list and detail queries.
 			queryClient.invalidateQueries({ queryKey: queryKeys.files.all(workspaceId) })
 			break
+		case 'conversation':
+			// Message posts also carry entity_type 'conversation' (entity_id is the
+			// conversation, not the message) — detail(id) is a prefix of
+			// messages(id, ...) so this one invalidation covers the thread's
+			// detail, participants, and message pages too.
+			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.detail(event.entity_id) })
+			break
 	}
 }

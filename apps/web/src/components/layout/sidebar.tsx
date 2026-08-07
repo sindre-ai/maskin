@@ -12,7 +12,7 @@ import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useUnread } from '@/hooks/use-subscriptions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
-import { Bot, Layers, RefreshCw, Store, Zap } from 'lucide-react'
+import { Bot, Layers, MessageSquare, RefreshCw, Store, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 import { NavUser } from './nav-user'
 import { SidebarActivity } from './sidebar-activity'
@@ -26,6 +26,7 @@ const FOR_YOU_ROUTE = '/$workspaceId' as const
 // (`metadata.posthog_query`).
 const coreNavItems: SidebarNavItemDef[] = [
 	{ key: 'for-you', label: 'For You', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
+	{ key: 'chats', label: 'Chats', to: '/$workspaceId/chats', icon: MessageSquare },
 	{ key: 'agents', label: 'Agents', to: '/$workspaceId/agents', icon: Bot },
 	{ key: 'loops', label: 'Loops', to: '/$workspaceId/loops', icon: RefreshCw },
 	{ key: 'triggers', label: 'Triggers', to: '/$workspaceId/triggers', icon: Zap },

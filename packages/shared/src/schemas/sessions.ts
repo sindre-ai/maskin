@@ -68,6 +68,17 @@ export const sessionThreadReplyContextSchema = z.object({
 })
 export type SessionThreadReplyContext = z.infer<typeof sessionThreadReplyContextSchema>
 
+// Set internally by the conversations route (and by the conversation-responder
+// service) when an agent participant spawns a one-shot session to reply to a
+// new message in a conversation it's a member of. Lets the UI find in-flight
+// sessions for a given conversation (e.g. a "typing" indicator), same purpose
+// as sessionMentionContextSchema/sessionThreadReplyContextSchema above.
+export const sessionConversationContextSchema = z.object({
+	conversation_id: z.string().uuid(),
+	message_id: z.number().int().positive(),
+})
+export type SessionConversationContext = z.infer<typeof sessionConversationContextSchema>
+
 // Mirrors MAX_PREVIEW_GUEST_PORTS in apps/agent-server/src/index.ts — a
 // session only ever needs to forward a handful of local dev servers.
 const MAX_PREVIEW_GUEST_PORTS = 8
@@ -84,6 +95,7 @@ export const sessionConfigSchema = z.object({
 	interactive: z.boolean().default(false),
 	mention: sessionMentionContextSchema.optional(),
 	thread_reply: sessionThreadReplyContextSchema.optional(),
+	conversation: sessionConversationContextSchema.optional(),
 	// When true, provision a browser sidecar and inject BROWSER_CDP_URL so
 	// @playwright/mcp can attach. See needsBrowserSidecar() in session-manager.ts
 	// for the legacy auto-detection path (MCP config referencing ${BROWSER_CDP_URL}).
@@ -117,6 +129,7 @@ export const sessionQuerySchema = z.object({
 	status: sessionStatusSchema.optional(),
 	actor_id: z.string().uuid().optional(),
 	mention_object_id: z.string().uuid().optional(),
+	conversation_id: z.string().uuid().optional(),
 	/** Half-open: rows satisfy `updated_at < updated_before`. Bound excluded. */
 	updated_before: z.string().datetime({ offset: true }).optional(),
 	/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */

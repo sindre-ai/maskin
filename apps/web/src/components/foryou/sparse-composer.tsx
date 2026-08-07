@@ -1,9 +1,15 @@
 import { Composer } from '@/components/chat/chat'
 import { Button } from '@/components/ui/button'
+import { useDefaultChatAgent } from '@/hooks/use-actors'
+import { useCreateConversation } from '@/hooks/use-conversations'
 import { trackForyouSparseComposerShown, trackForyouSparseComposerSubmit } from '@/lib/analytics'
-import { type ChatAttachment, useChat } from '@/lib/chat-context'
-import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
+import {
+	EMPTY_CHAT_SELECTION,
+	buildOneShotActionPrompt,
+	chatSelectionReducer,
+} from '@/lib/chat-selection'
 import { useWorkspace } from '@/lib/workspace-context'
+import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 const QUICK_START_CHIPS = [
@@ -21,15 +27,18 @@ interface SparseComposerProps {
 
 /**
  * Composer shown on the For You page when the feed is sparse (`items.length < 3`).
- * Stages the message (and any selected agent/items) in `chatContext` via
- * `openWithContext` — the sidebar's composer auto-sends it as the first turn.
+ * Creates a new conversation with the workspace's default chat agent (falls
+ * back to the picked agent via the slash picker) and navigates to the thread
+ * — the full-screen chats surface replaced the old sidebar sheet.
  *
  * Reuses `<Composer>` directly so behaviour (Enter-to-send, slash picker,
  * selection chips, error display) stays in one place.
  */
 export function SparseComposer({ itemsCount, onFocusChange }: SparseComposerProps) {
-	const { openWithContext } = useChat()
 	const { workspaceId } = useWorkspace()
+	const defaultChatAgent = useDefaultChatAgent()
+	const createConversation = useCreateConversation(workspaceId)
+	const navigate = useNavigate()
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	// Snapshot at mount so the `_shown` event reflects the state that produced
 	// this composer, not whatever the feed mutates into later.
@@ -71,39 +80,44 @@ export function SparseComposer({ itemsCount, onFocusChange }: SparseComposerProp
 		}
 	}, [])
 
+	// Resolves the agent the message should be sent to: whatever the slash
+	// picker selected, else the workspace's default chat agent.
+	const defaultAgent = selection.agent ?? defaultChatAgent
+
 	const onSend = useCallback(
 		async (content: string) => {
 			setChipError(null)
-			const attachments: ChatAttachment[] = []
-			if (selection.agent) {
-				attachments.push({ kind: 'agent', id: selection.agent.id, name: selection.agent.name })
+			if (!defaultAgent) {
+				const err = new Error('No agent available to start a chat')
+				setChipError(err.message)
+				throw err
 			}
-			for (const obj of selection.objects) {
-				attachments.push({
-					kind: 'object',
-					id: obj.id,
-					title: obj.title,
-					type: obj.type ?? undefined,
-				})
-			}
-			for (const notif of selection.notifications) {
-				attachments.push({ kind: 'notification', id: notif.id, title: notif.title })
-			}
-			for (const file of selection.files) {
-				attachments.push({
-					kind: 'file',
-					fileId: file.fileId,
-					name: file.name,
-					sizeBytes: file.sizeBytes,
-					...(file.mimeType ? { mimeType: file.mimeType } : {}),
-				})
-			}
+			const hasContext =
+				selection.objects.length > 0 ||
+				selection.notifications.length > 0 ||
+				selection.files.length > 0
+			const initialMessage = hasContext
+				? buildOneShotActionPrompt(
+						content,
+						selection.objects,
+						selection.notifications,
+						selection.files,
+					)
+				: content
 			const itemsCountAtSubmit = itemsCount
-			await openWithContext(attachments, content)
+			const conversation = await createConversation.mutateAsync({
+				title: defaultAgent.name ?? 'New chat',
+				participant_actor_ids: [defaultAgent.id],
+				initial_message: initialMessage,
+			})
 			trackForyouSparseComposerSubmit({ items_count: itemsCountAtSubmit })
 			dispatchSelection({ type: 'clear_all' })
+			navigate({
+				to: '/$workspaceId/chats/$conversationId',
+				params: { workspaceId, conversationId: conversation.id },
+			})
 		},
-		[itemsCount, openWithContext, selection],
+		[itemsCount, defaultAgent, selection, createConversation, navigate, workspaceId],
 	)
 
 	const handleChipClick = useCallback(

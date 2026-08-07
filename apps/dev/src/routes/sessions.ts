@@ -143,6 +143,14 @@ app.openapi(listSessionsRoute, (async (c) => {
 			sql`(${sessions.config}->'mention'->>'object_id' = ${query.mention_object_id} OR ${sessions.config}->'thread_reply'->>'object_id' = ${query.mention_object_id})`,
 		)
 	}
+	if (query.conversation_id) {
+		// Conversation-triggered sessions (see conversation-responder.ts) —
+		// lets the UI show a "this agent is responding" indicator for a
+		// conversation the same way mention_object_id does for object comments.
+		conditions.push(
+			sql`${sessions.config}->'conversation'->>'conversation_id' = ${query.conversation_id}`,
+		)
+	}
 	// Half-open contract — Zod has already validated these as ISO-8601 strings.
 	if (query.updated_before) conditions.push(lt(sessions.updatedAt, new Date(query.updated_before)))
 	if (query.updated_after) conditions.push(gt(sessions.updatedAt, new Date(query.updated_after)))

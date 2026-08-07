@@ -46,16 +46,18 @@ test.describe('Header New menu', () => {
 		})
 	}
 
-	test('New chat opens the chat panel', async ({ page, account }) => {
+	test('New chat navigates to the new-conversation composer', async ({ page, account }) => {
 		// For You has its own inline composer for "New chat" (see
-		// ForYouHeaderActions/onStartConversation) — every other page opens the
-		// docked chat panel, so this asserts against the general contract.
+		// ForYouHeaderActions/onStartConversation) — every other page navigates
+		// to the full-screen new-conversation composer, so this asserts against
+		// the general contract.
 		await page.goto(`/${account.workspaceId}/objects`)
 
 		await headerNewTrigger(page).click()
 		await page.getByRole('menuitem', { name: /new chat/i }).click()
 
-		await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible({ timeout: 10000 })
+		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/chats/new$`))
+		await expect(page.getByRole('heading', { name: 'New chat' })).toBeVisible({ timeout: 10000 })
 	})
 
 	test('New task opens CreatePicker seeded to the task subtype', async ({ page, account }) => {

@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMemo } from 'react'
 import { toast } from 'sonner'
 import { type CreateActorInput, type RunAgentInput, type UpdateActorInput, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
+import { useWorkspace } from '../lib/workspace-context'
 
 export function useActors(workspaceId?: string, options?: { enabled?: boolean }) {
 	return useQuery({
@@ -9,6 +11,31 @@ export function useActors(workspaceId?: string, options?: { enabled?: boolean })
 		queryFn: () => api.actors.list(workspaceId),
 		enabled: options?.enabled,
 	})
+}
+
+/**
+ * Resolves the agent a new one-shot conversation should default to: the
+ * workspace's configured `default_agent_id` setting, falling back to the
+ * "Workspace Coach" actor by name — same derivation the old sidebar chat
+ * panel used in `$workspaceId.tsx` before the full-screen chats surface
+ * replaced it. Used by any entry point that starts a chat without the user
+ * explicitly picking participants (e.g. the For You sparse composer, the
+ * landing-page pending-prompt handoff).
+ */
+export function useDefaultChatAgent(): { id: string; name: string } | null {
+	const { workspace, workspaceId } = useWorkspace()
+	const { data: actors } = useActors(workspaceId, { enabled: true })
+	return useMemo(() => {
+		if (!actors) return null
+		const settings = workspace.settings as { default_agent_id?: string | null } | undefined
+		const defaultId = settings?.default_agent_id
+		if (typeof defaultId === 'string' && defaultId.length > 0) {
+			const pinned = actors.find((a) => a.id === defaultId)
+			if (pinned) return { id: pinned.id, name: pinned.name }
+		}
+		const coach = actors.find((a) => a.type === 'agent' && a.name === 'Workspace Coach')
+		return coach ? { id: coach.id, name: coach.name } : null
+	}, [actors, workspace])
 }
 
 export function useActor(id: string) {

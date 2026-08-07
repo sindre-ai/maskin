@@ -5,6 +5,12 @@ import { type SubscriptionProbe, resolveClaudeCredentialsWithFailover } from './
 import type { OAuthSlotKind } from './claude-oauth-slots'
 import type { WorkspaceSettings } from './types'
 
+const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
+	anthropic: 'claude-haiku-4-5-20251001',
+	openai: 'gpt-4o-mini',
+	ollama: 'llama3',
+}
+
 /**
  * Tag persisted on `sessions.config.llm_route` so we can later attribute usage
  * (and enforce per-actor quotas) for sessions that ran on the system fallback.
@@ -251,5 +257,84 @@ export async function resolveLlmRoute(params: {
 			ANTHROPIC_SMALL_FAST_MODEL:
 				fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4-flash',
 		},
+	}
+}
+
+export interface ChatCredentials {
+	provider: 'anthropic' | 'openai' | 'ollama'
+	apiKey: string
+	baseUrl?: string
+	model: string
+}
+
+/**
+ * Resolves credentials for a same-process, non-container LLM call (e.g. the
+ * conversation-responder's "should I respond" relevance check via
+ * `LLMAdapter.chat()`). This is a narrower sibling of `resolveLlmRoute`, not
+ * a replacement — that function mints container-CLI env vars for the `claude`
+ * binary (including Claude OAuth, which is not a portable bearer token
+ * outside that CLI). Priority order mirrors resolveLlmRoute where the
+ * concepts overlap:
+ *
+ *   1. Agent-level api_key (any provider — direct API calls aren't limited
+ *      to anthropic the way container env injection is)
+ *   2. Workspace custom_llm (OpenAI-compatible endpoint)
+ *   3. Claude OAuth is intentionally skipped — see note above
+ *   4. Workspace anthropic api_key (`settings.llm_keys.anthropic`)
+ *   5. System fallback (MASKIN_FALLBACK_OPENROUTER_KEY), OpenRouter's
+ *      OpenAI-compatible endpoint
+ *
+ * Returns null if no usable credential exists — callers should fail closed
+ * (skip the check, don't respond) rather than error loudly, since this powers
+ * a best-effort relevance heuristic, not a user-facing action.
+ */
+export function resolveChatCredentials(params: {
+	wsSettings: WorkspaceSettings
+	agent: AgentLlmConfig
+}): ChatCredentials | null {
+	const { wsSettings, agent } = params
+
+	if (agent.apiKey && agent.provider) {
+		const provider = agent.provider as ChatCredentials['provider']
+		if (provider === 'anthropic' || provider === 'openai' || provider === 'ollama') {
+			return {
+				provider,
+				apiKey: agent.apiKey,
+				model: agent.model?.trim() || DEFAULT_CHAT_MODEL[provider],
+			}
+		}
+	}
+
+	const custom = wsSettings.custom_llm
+	if (
+		custom?.enabled &&
+		custom.base_url?.trim() &&
+		custom.api_key?.trim() &&
+		custom.model?.trim()
+	) {
+		return {
+			provider: 'openai',
+			apiKey: custom.api_key.trim(),
+			baseUrl: custom.base_url.trim(),
+			model: custom.small_fast_model?.trim() || custom.model.trim(),
+		}
+	}
+
+	const wsAnthropic = wsSettings.llm_keys?.anthropic
+	if (wsAnthropic) {
+		return { provider: 'anthropic', apiKey: wsAnthropic, model: DEFAULT_CHAT_MODEL.anthropic }
+	}
+
+	const fallback = readFallbackConfig()
+	if (!fallback.apiKey) return null
+	return {
+		provider: 'openai',
+		apiKey: fallback.apiKey,
+		// OpenRouter's OpenAI-compatible endpoint lives at /api/v1, distinct
+		// from fallback.baseUrl's default ('/api') which targets the Claude
+		// CLI's ANTHROPIC_BASE_URL — that shape expects the CLI to append its
+		// own Anthropic-style path, ours needs the OpenAI-style /v1 prefix.
+		baseUrl: 'https://openrouter.ai/api/v1',
+		model: fallback.smallModel ?? fallback.model ?? DEFAULT_CHAT_MODEL.openai,
 	}
 }
