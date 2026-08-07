@@ -1,5 +1,6 @@
 import { RelativeTime } from '@/components/shared/relative-time'
 import type { TriggerResponse } from '@/lib/api'
+import { describeCronExpression } from '@/lib/cron'
 import { Link } from '@tanstack/react-router'
 import { Bell, Clock, Zap } from 'lucide-react'
 
@@ -16,8 +17,8 @@ export function describeTrigger(trigger: Pick<TriggerResponse, 'type' | 'config'
 		return `When ${entity} is ${action}`
 	}
 	if (trigger.type === 'cron') {
-		const expr = String(config.expression ?? '')
-		return `Runs on schedule: ${expr}`
+		const expr = config.expression ? String(config.expression) : ''
+		return expr ? `Runs ${describeCronExpression(expr)}` : 'Runs on a schedule'
 	}
 	if (trigger.type === 'reminder') {
 		const at = config.scheduled_at ? new Date(String(config.scheduled_at)) : null

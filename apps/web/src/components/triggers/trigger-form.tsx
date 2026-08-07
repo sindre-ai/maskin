@@ -15,6 +15,7 @@ import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
+import { describeCronSchedule, parseCronExpression } from '@/lib/cron'
 import type { SafeJsonValue } from '@maskin/shared'
 import { Bell, Check, Clock, Info, X, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -132,24 +133,6 @@ const DAYS_OF_MONTH = Array.from({ length: 31 }, (_, i) => ({
 	label: String(i + 1),
 }))
 
-// --- Cron parser ---
-
-function parseCronExpression(expr: string): {
-	frequency: 'hourly' | 'daily' | 'weekly' | 'monthly'
-	minute: string
-	hour: string
-	dayOfWeek: string
-	dayOfMonth: string
-} {
-	const parts = expr.split(' ')
-	const [minute = '0', hour = '9', dayOfMonth = '1', , dayOfWeek = '1'] = parts
-
-	if (dayOfWeek !== '*') return { frequency: 'weekly', minute, hour, dayOfWeek, dayOfMonth: '1' }
-	if (dayOfMonth !== '*') return { frequency: 'monthly', minute, hour, dayOfWeek: '1', dayOfMonth }
-	if (hour !== '*') return { frequency: 'daily', minute, hour, dayOfWeek: '1', dayOfMonth: '1' }
-	return { frequency: 'hourly', minute, hour: '9', dayOfWeek: '1', dayOfMonth: '1' }
-}
-
 // --- Trigger type descriptions ---
 
 const TRIGGER_TYPE_INFO: Record<
@@ -218,25 +201,22 @@ function buildTriggerSummary({
 	}
 
 	if (type === 'cron') {
-		const dayNames: Record<string, string> = {
-			'0': 'Sunday',
-			'1': 'Monday',
-			'2': 'Tuesday',
-			'3': 'Wednesday',
-			'4': 'Thursday',
-			'5': 'Friday',
-			'6': 'Saturday',
-		}
-		const h = Number(hour ?? 9)
-		const m = Number(minute ?? 0)
-		const timeStr = `${h === 0 ? 12 : h > 12 ? h - 12 : h}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
-		let schedule = 'on a schedule'
-		if (frequency === 'hourly') schedule = `every hour at minute ${m}`
-		else if (frequency === 'daily') schedule = `every day at ${timeStr}`
-		else if (frequency === 'weekly')
-			schedule = `every ${dayNames[dayOfWeek ?? '1'] ?? 'Monday'} at ${timeStr}`
-		else if (frequency === 'monthly')
-			schedule = `on day ${dayOfMonth ?? '1'} of each month at ${timeStr}`
+		const validFrequency =
+			frequency === 'hourly' ||
+			frequency === 'daily' ||
+			frequency === 'weekly' ||
+			frequency === 'monthly'
+				? frequency
+				: null
+		const schedule = validFrequency
+			? describeCronSchedule({
+					frequency: validFrequency,
+					minute: minute ?? '0',
+					hour: hour ?? '9',
+					dayOfWeek: dayOfWeek ?? '1',
+					dayOfMonth: dayOfMonth ?? '1',
+				})
+			: 'on a schedule'
 		return `Runs ${schedule} — ${agent} will be prompted to act.`
 	}
 
