@@ -141,10 +141,11 @@ function forkedHint(install: InstalledLoopRow): string {
 }
 
 // Shape the raw marketplace items into the chip descriptors the row renders:
-// one chip per actor + integration, and a single count chip for triggers.
+// a single chip per integration, plus a count chip for agents and triggers
+// whenever there's more than one — a lone agent still gets its own named chip.
 type CompositionChip =
 	| { key: string; kind: 'actor'; name: string; label: string; initial: string }
-	| { key: string; kind: 'trigger'; count: number; names: string[] }
+	| { key: string; kind: 'count'; itemKind: 'agent' | 'trigger'; count: number; names: string[] }
 	| { key: string; kind: 'integration'; name: string; label: string; initial: string }
 
 function itemName(item: MarketplaceLoopItem): string {
@@ -154,19 +155,13 @@ function itemName(item: MarketplaceLoopItem): string {
 
 function buildChips(items: MarketplaceLoopItem[]): CompositionChip[] {
 	const chips: CompositionChip[] = []
+	const actorNames: string[] = []
 	const triggerNames: string[] = []
 
 	for (const item of items) {
 		const type = item.item_type as MarketplaceItemType
 		if (type === 'actor') {
-			const name = itemName(item)
-			chips.push({
-				key: `actor-${item.id}`,
-				kind: 'actor',
-				name,
-				label: name,
-				initial: (getActorInitials(name)[0] ?? '?').toUpperCase(),
-			})
+			actorNames.push(itemName(item))
 		} else if (type === 'integration') {
 			const name = itemName(item)
 			chips.push({
@@ -181,10 +176,30 @@ function buildChips(items: MarketplaceLoopItem[]): CompositionChip[] {
 		}
 	}
 
+	if (actorNames.length === 1) {
+		const name = actorNames[0]
+		chips.unshift({
+			key: 'actor-single',
+			kind: 'actor',
+			name,
+			label: name,
+			initial: (getActorInitials(name)[0] ?? '?').toUpperCase(),
+		})
+	} else if (actorNames.length > 1) {
+		chips.unshift({
+			key: 'agents-count',
+			kind: 'count',
+			itemKind: 'agent',
+			count: actorNames.length,
+			names: actorNames,
+		})
+	}
+
 	if (triggerNames.length > 0) {
 		chips.push({
 			key: 'triggers-count',
-			kind: 'trigger',
+			kind: 'count',
+			itemKind: 'trigger',
 			count: triggerNames.length,
 			names: triggerNames,
 		})
@@ -212,8 +227,8 @@ function CompositionChipRow({ items }: { items: MarketplaceLoopItem[] }) {
 								? `Integration · ${chip.name}`
 								: chip.names.join(' · ')
 					const label =
-						chip.kind === 'trigger'
-							? `${chip.count} ${chip.count === 1 ? 'trigger' : 'triggers'}`
+						chip.kind === 'count'
+							? `${chip.count} ${chip.itemKind}${chip.count === 1 ? '' : 's'}`
 							: chip.label
 					return (
 						<Tooltip key={chip.key}>
@@ -261,7 +276,7 @@ function CompositionGlyph({ chip }: { chip: CompositionChip }) {
 			className={cn(base, 'border border-border bg-muted text-muted-foreground')}
 			aria-hidden="true"
 		>
-			↯
+			{chip.itemKind === 'agent' ? 'A' : '↯'}
 		</span>
 	)
 }

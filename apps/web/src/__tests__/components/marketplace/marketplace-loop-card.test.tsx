@@ -141,7 +141,7 @@ describe('MarketplaceLoopCard', () => {
 			}
 		}
 
-		it('renders one chip per actor and one count chip for triggers on a bundle', () => {
+		it('renders a count chip for agents and triggers on a bundle with more than one of each', () => {
 			render(
 				<MarketplaceLoopCard
 					workspaceId={workspaceId}
@@ -156,12 +156,30 @@ describe('MarketplaceLoopCard', () => {
 				{ wrapper: TestWrapper },
 			)
 			const row = screen.getByLabelText('Bundle composition')
-			expect(row).toHaveTextContent('Relay')
-			expect(row).toHaveTextContent('Compass')
+			expect(row).toHaveTextContent('2 agents')
 			expect(row).toHaveTextContent('2 triggers')
-			// Single count chip for triggers, not one per trigger name
+			// Single count chip for each, not one per agent/trigger name
+			expect(row).not.toHaveTextContent('Relay')
+			expect(row).not.toHaveTextContent('Compass')
 			expect(row).not.toHaveTextContent('On Slack message')
 			expect(row).not.toHaveTextContent('Fri 5 PM digest')
+		})
+
+		it('renders a single named chip when there is exactly one agent', () => {
+			render(
+				<MarketplaceLoopCard
+					workspaceId={workspaceId}
+					loop={loop({ item_types: ['actor', 'trigger'] })}
+					items={[
+						item({ id: 'a1', itemType: 'actor', name: 'Relay' }),
+						item({ id: 't1', itemType: 'trigger', name: 'On new signup' }),
+					]}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			const row = screen.getByLabelText('Bundle composition')
+			expect(row).toHaveTextContent('Relay')
+			expect(row).not.toHaveTextContent('1 agent')
 		})
 
 		it('renders one chip per integration on a bundle', () => {
