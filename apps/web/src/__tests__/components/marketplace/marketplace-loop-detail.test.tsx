@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
@@ -132,6 +132,32 @@ describe('MarketplaceLoopDetail', () => {
 		expect(screen.getAllByText('Relay')).toHaveLength(2)
 		expect(screen.getByText('When signal is created')).toBeInTheDocument()
 		expect(screen.getByText('Acknowledge the customer in their own words.')).toBeInTheDocument()
+	})
+
+	it('previews the first 5 steps and reveals the rest on click', () => {
+		const triggerItems = Array.from({ length: 7 }, (_, i) =>
+			item({
+				id: `t${i}`,
+				item_type: 'trigger',
+				item_snapshot: {
+					name: `Trigger ${i}`,
+					type: 'event',
+					config: { entity_type: 'signal', action: 'created' },
+					actionPrompt: `Step ${i}`,
+					targetActorId: 'actor-source-1',
+				},
+			}),
+		)
+		render(<MarketplaceLoopDetail workspaceId={workspaceId} loop={loop()} items={triggerItems} />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByText('Step 0')).toBeInTheDocument()
+		expect(screen.getByText('Step 4')).toBeInTheDocument()
+		expect(screen.queryByText('Step 5')).not.toBeInTheDocument()
+
+		fireEvent.click(screen.getByRole('button', { name: 'Show 2 more steps' }))
+		expect(screen.getByText('Step 5')).toBeInTheDocument()
+		expect(screen.getByText('Step 6')).toBeInTheDocument()
 	})
 
 	it('does not render "How it works" when the loop has no triggers', () => {

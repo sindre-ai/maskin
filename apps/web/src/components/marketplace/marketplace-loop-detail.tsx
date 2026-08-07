@@ -1,11 +1,17 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { describeTrigger } from '@/components/triggers/trigger-row'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import type { InstalledLoopRow, MarketplaceLoopItem, MarketplaceLoopSummary } from '@/lib/api'
 import { Link } from '@tanstack/react-router'
+import { useState } from 'react'
 import { ITEM_TYPE_LABEL } from './item-type-label'
 import { LoopInstallControls } from './loop-install-controls'
 import { MarketplaceDetailHeader } from './marketplace-detail-header'
+
+// A loop can carry dozens of triggers with multi-paragraph action prompts —
+// show a short preview by default so the page doesn't open into a wall of text.
+const HOW_IT_WORKS_PREVIEW_COUNT = 5
 
 interface MarketplaceLoopDetailProps {
 	workspaceId: string
@@ -89,12 +95,15 @@ interface ActorSnapshot {
  * `source_item_id` in the same loop (see dev-bootstrap.ts), so every trigger
  * resolves to a real agent from the bundle. */
 function LoopHowItWorks({ items }: { items: MarketplaceLoopItem[] }) {
+	const [expanded, setExpanded] = useState(false)
 	const triggers = items.filter((item) => item.item_type === 'trigger')
 	if (triggers.length === 0) return null
 
 	const actorsBySourceId = new Map(
 		items.filter((item) => item.item_type === 'actor').map((item) => [item.source_item_id, item]),
 	)
+	const shown = expanded ? triggers : triggers.slice(0, HOW_IT_WORKS_PREVIEW_COUNT)
+	const remaining = triggers.length - shown.length
 
 	return (
 		<div>
@@ -103,10 +112,20 @@ function LoopHowItWorks({ items }: { items: MarketplaceLoopItem[] }) {
 				<span className="text-xs text-muted-foreground">when it acts, and what it does</span>
 			</div>
 			<div className="flex flex-col gap-2">
-				{triggers.map((trigger) => (
+				{shown.map((trigger) => (
 					<TriggerFlowRow key={trigger.id} trigger={trigger} actorsBySourceId={actorsBySourceId} />
 				))}
 			</div>
+			{remaining > 0 && (
+				<Button
+					variant="ghost"
+					size="sm"
+					className="mt-2 text-muted-foreground"
+					onClick={() => setExpanded(true)}
+				>
+					Show {remaining} more {remaining === 1 ? 'step' : 'steps'}
+				</Button>
+			)}
 		</div>
 	)
 }
@@ -147,7 +166,9 @@ function TriggerFlowRow({
 					<span className="text-sm font-medium text-foreground">{agentName}</span>
 					{when && <span className="text-xs text-muted-foreground">{when}</span>}
 				</div>
-				{actionPrompt && <p className="mt-1 text-xs text-muted-foreground">{actionPrompt}</p>}
+				{actionPrompt && (
+					<p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{actionPrompt}</p>
+				)}
 			</div>
 		</div>
 	)
