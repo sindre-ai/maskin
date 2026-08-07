@@ -1,3 +1,5 @@
+import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { describeTrigger } from '@/components/triggers/trigger-row'
 import { Badge } from '@/components/ui/badge'
 import type { InstalledLoopRow, MarketplaceLoopItem, MarketplaceLoopSummary } from '@/lib/api'
 import { Link } from '@tanstack/react-router'
@@ -50,6 +52,8 @@ export function MarketplaceLoopDetail({
 				actions={<LoopInstallControls workspaceId={workspaceId} loop={loop} install={install} />}
 			/>
 
+			<LoopHowItWorks items={items} />
+
 			{items.length > 0 && (
 				<div>
 					<div className="mb-3 flex items-center gap-2">
@@ -63,6 +67,88 @@ export function MarketplaceLoopDetail({
 					</div>
 				</div>
 			)}
+		</div>
+	)
+}
+
+interface TriggerSnapshot {
+	name?: unknown
+	type?: unknown
+	config?: unknown
+	actionPrompt?: unknown
+	targetActorId?: unknown
+}
+
+interface ActorSnapshot {
+	name?: unknown
+	type?: unknown
+}
+
+/** Real, derived from each trigger item's own snapshot — not per-loop copy.
+ * `targetActorId` is validated at publish time to match an actor item's
+ * `source_item_id` in the same loop (see dev-bootstrap.ts), so every trigger
+ * resolves to a real agent from the bundle. */
+function LoopHowItWorks({ items }: { items: MarketplaceLoopItem[] }) {
+	const triggers = items.filter((item) => item.item_type === 'trigger')
+	if (triggers.length === 0) return null
+
+	const actorsBySourceId = new Map(
+		items.filter((item) => item.item_type === 'actor').map((item) => [item.source_item_id, item]),
+	)
+
+	return (
+		<div>
+			<div className="mb-3 flex items-center gap-2">
+				<h2 className="text-sm font-semibold text-foreground">How it works</h2>
+				<span className="text-xs text-muted-foreground">when it acts, and what it does</span>
+			</div>
+			<div className="flex flex-col gap-2">
+				{triggers.map((trigger) => (
+					<TriggerFlowRow key={trigger.id} trigger={trigger} actorsBySourceId={actorsBySourceId} />
+				))}
+			</div>
+		</div>
+	)
+}
+
+function TriggerFlowRow({
+	trigger,
+	actorsBySourceId,
+}: {
+	trigger: MarketplaceLoopItem
+	actorsBySourceId: Map<string, MarketplaceLoopItem>
+}) {
+	const snapshot = trigger.item_snapshot as TriggerSnapshot
+	const type = typeof snapshot.type === 'string' ? snapshot.type : ''
+	const config = (snapshot.config ?? null) as Record<string, unknown> | null
+	const actionPrompt = typeof snapshot.actionPrompt === 'string' ? snapshot.actionPrompt : ''
+	const targetActorId = typeof snapshot.targetActorId === 'string' ? snapshot.targetActorId : ''
+
+	const agentItem = actorsBySourceId.get(targetActorId)
+	const agentSnapshot = agentItem?.item_snapshot as ActorSnapshot | undefined
+	const agentName =
+		typeof agentSnapshot?.name === 'string' && agentSnapshot.name.trim()
+			? agentSnapshot.name
+			: 'An agent'
+	const agentType = typeof agentSnapshot?.type === 'string' ? agentSnapshot.type : 'agent'
+
+	const when = type ? describeTrigger({ type, config }) : ''
+
+	return (
+		<div className="flex items-start gap-3 rounded-lg border border-border bg-background p-3">
+			<ActorAvatar
+				id={targetActorId || agentName}
+				name={agentName}
+				type={agentType}
+				className="mt-0.5"
+			/>
+			<div className="min-w-0 flex-1">
+				<div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+					<span className="text-sm font-medium text-foreground">{agentName}</span>
+					{when && <span className="text-xs text-muted-foreground">{when}</span>}
+				</div>
+				{actionPrompt && <p className="mt-1 text-xs text-muted-foreground">{actionPrompt}</p>}
+			</div>
 		</div>
 	)
 }

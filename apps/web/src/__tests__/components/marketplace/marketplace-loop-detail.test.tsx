@@ -98,4 +98,51 @@ describe('MarketplaceLoopDetail', () => {
 		})
 		expect(screen.queryByText('What it brings')).not.toBeInTheDocument()
 	})
+
+	it('renders "How it works" from real trigger + actor snapshots', () => {
+		render(
+			<MarketplaceLoopDetail
+				workspaceId={workspaceId}
+				loop={loop()}
+				items={[
+					item({
+						id: 'a1',
+						item_type: 'actor',
+						source_item_id: 'actor-source-1',
+						item_snapshot: { name: 'Relay', type: 'agent' },
+					}),
+					item({
+						id: 't1',
+						item_type: 'trigger',
+						source_item_id: 'trigger-source-1',
+						item_snapshot: {
+							name: 'On new feedback',
+							type: 'event',
+							config: { entity_type: 'signal', action: 'created' },
+							actionPrompt: 'Acknowledge the customer in their own words.',
+							targetActorId: 'actor-source-1',
+						},
+					}),
+				]}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByText('How it works')).toBeInTheDocument()
+		// "Relay" appears once in "How it works" and once in "What it brings".
+		expect(screen.getAllByText('Relay')).toHaveLength(2)
+		expect(screen.getByText('When signal is created')).toBeInTheDocument()
+		expect(screen.getByText('Acknowledge the customer in their own words.')).toBeInTheDocument()
+	})
+
+	it('does not render "How it works" when the loop has no triggers', () => {
+		render(
+			<MarketplaceLoopDetail
+				workspaceId={workspaceId}
+				loop={loop()}
+				items={[item({ id: 'a1', item_type: 'actor', item_snapshot: { name: 'Relay' } })]}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.queryByText('How it works')).not.toBeInTheDocument()
+	})
 })

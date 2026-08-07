@@ -3,7 +3,7 @@ import type { TriggerResponse } from '@/lib/api'
 import { Link } from '@tanstack/react-router'
 import { Bell, Clock, Zap } from 'lucide-react'
 
-function describeTrigger(trigger: TriggerResponse): string {
+export function describeTrigger(trigger: Pick<TriggerResponse, 'type' | 'config'>): string {
 	const config = trigger.config ?? {}
 	if (trigger.type === 'event') {
 		const entity = String(config.entity_type ?? 'object')
