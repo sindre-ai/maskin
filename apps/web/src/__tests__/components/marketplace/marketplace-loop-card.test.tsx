@@ -16,6 +16,11 @@ vi.mock('sonner', () => ({
 	toast: { success: vi.fn(), error: vi.fn() },
 }))
 
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
+
 import { MarketplaceLoopCard } from '@/components/marketplace/marketplace-loop-card'
 import type { InstalledLoopRow, MarketplaceLoopItem, MarketplaceLoopSummary } from '@/lib/api'
 import { TestWrapper } from '../../setup'

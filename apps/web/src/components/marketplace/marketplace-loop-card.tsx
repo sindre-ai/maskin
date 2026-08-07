@@ -1,6 +1,5 @@
 import { getActorAvatarPaletteClass, getActorInitials } from '@/components/shared/actor-avatar'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type {
 	InstalledLoopRow,
@@ -9,10 +8,8 @@ import type {
 	MarketplaceLoopSummary,
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { useState } from 'react'
-import { ForkDialog } from './fork-dialog'
-import { InstallButton } from './install-button'
-import { UninstallDialog } from './uninstall-dialog'
+import { Link } from '@tanstack/react-router'
+import { LoopInstallControls } from './loop-install-controls'
 import { UpdateAvailableBanner } from './update-available-banner'
 
 interface MarketplaceLoopCardProps {
@@ -33,39 +30,44 @@ export function MarketplaceLoopCard({
 	install,
 	items,
 }: MarketplaceLoopCardProps) {
-	const [forkOpen, setForkOpen] = useState(false)
-	const [uninstallOpen, setUninstallOpen] = useState(false)
 	const locked = install?.isLocked ?? false
-	const forked = install ? !install.isLocked : false
 	const showUpdateBanner = locked && install?.hasUpdate === true
 	const isBundle = loop.item_types.length >= 2
 
 	return (
 		<article className="flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm">
-			<div className="flex items-start justify-between gap-3">
-				<div className="min-w-0">
-					<h3 className="text-sm font-semibold text-foreground">{loop.name}</h3>
-					<p className="mt-1 text-xs text-muted-foreground line-clamp-2">{loop.description}</p>
+			<Link
+				to="/$workspaceId/marketplace/$loopId"
+				params={{ workspaceId, loopId: loop.id }}
+				className="flex flex-col gap-1 rounded-md -m-1 p-1 hover:bg-muted/40"
+			>
+				<div className="flex items-start justify-between gap-3">
+					<div className="min-w-0">
+						<h3 className="text-sm font-semibold text-foreground">{loop.name}</h3>
+						<p className="mt-1 text-xs text-muted-foreground line-clamp-2">{loop.description}</p>
+					</div>
+					{install ? (
+						locked ? (
+							<Badge
+								variant="secondary"
+								className="shrink-0 whitespace-nowrap text-[11px] font-medium"
+							>
+								🔒 Managed · v{install.installedVersion}
+							</Badge>
+						) : (
+							<Badge
+								variant="outline"
+								className="shrink-0 whitespace-nowrap text-[11px] font-medium text-foreground"
+							>
+								⑂ Forked from v{install.installedVersion}
+							</Badge>
+						)
+					) : null}
 				</div>
-				{install ? (
-					locked ? (
-						<Badge
-							variant="secondary"
-							className="shrink-0 whitespace-nowrap text-[11px] font-medium"
-						>
-							🔒 Managed · v{install.installedVersion}
-						</Badge>
-					) : (
-						<Badge
-							variant="outline"
-							className="shrink-0 whitespace-nowrap text-[11px] font-medium text-foreground"
-						>
-							⑂ Forked from v{install.installedVersion}
-						</Badge>
-					)
-				) : null}
-			</div>
+			</Link>
 
+			{/* Chips can contain interactive tooltip triggers, so they stay
+			    outside the clickable header Link (buttons can't nest in an anchor). */}
 			{isBundle && items && items.length > 0 ? (
 				<CompositionChipRow items={items} />
 			) : (
@@ -83,61 +85,11 @@ export function MarketplaceLoopCard({
 
 			{showUpdateBanner ? <UpdateAvailableBanner newVersion={install.availableVersion} /> : null}
 
-			<div className="mt-auto flex items-center justify-end gap-2">
-				{!install ? (
-					<InstallButton workspaceId={workspaceId} loopId={loop.id} />
-				) : (
-					<>
-						{locked && (
-							<Button size="sm" variant="outline" onClick={() => setForkOpen(true)}>
-								Fork
-							</Button>
-						)}
-						<Button
-							size="sm"
-							variant="ghost"
-							className="text-muted-foreground hover:text-error"
-							onClick={() => setUninstallOpen(true)}
-						>
-							Remove
-						</Button>
-					</>
-				)}
+			<div className="mt-auto">
+				<LoopInstallControls workspaceId={workspaceId} loop={loop} install={install} />
 			</div>
-
-			{install && locked ? (
-				<ForkDialog
-					open={forkOpen}
-					onOpenChange={setForkOpen}
-					workspaceId={workspaceId}
-					installedLoopId={install.id}
-					loopName={loop.name}
-					installedVersion={install.installedVersion}
-					pendingVersion={install.hasUpdate ? install.availableVersion : null}
-				/>
-			) : null}
-
-			{install ? (
-				<UninstallDialog
-					open={uninstallOpen}
-					onOpenChange={setUninstallOpen}
-					workspaceId={workspaceId}
-					installedLoopId={install.id}
-					loopName={loop.name}
-					isLocked={locked}
-				/>
-			) : null}
-
-			{forked && install ? (
-				<p className="text-[11px] text-muted-foreground">{forkedHint(install)}</p>
-			) : null}
 		</article>
 	)
-}
-
-function forkedHint(install: InstalledLoopRow): string {
-	if (!install.hasUpdate) return ''
-	return `v${install.availableVersion} of the source is available. Your fork stays at v${install.installedVersion}.`
 }
 
 // Shape the raw marketplace items into the chip descriptors the row renders:

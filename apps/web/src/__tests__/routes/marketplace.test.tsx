@@ -36,7 +36,7 @@ vi.mock('@tanstack/react-query', async () => {
 	return { ...actual, useQueries: () => mockUseQueries() }
 })
 
-import { Route } from '@/routes/_authed/$workspaceId/marketplace'
+import { Route } from '@/routes/_authed/$workspaceId/marketplace/index'
 
 const MarketplacePage = (Route as unknown as { component: React.FC }).component
 

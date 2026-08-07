@@ -22,7 +22,7 @@ import { useQueries } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 
-export const Route = createFileRoute('/_authed/$workspaceId/marketplace')({
+export const Route = createFileRoute('/_authed/$workspaceId/marketplace/')({
 	component: MarketplacePage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })

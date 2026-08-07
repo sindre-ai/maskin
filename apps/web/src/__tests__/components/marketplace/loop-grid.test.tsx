@@ -5,6 +5,11 @@ vi.mock('sonner', () => ({
 	toast: { success: vi.fn(), error: vi.fn() },
 }))
 
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
+
 import { LoopGrid } from '@/components/marketplace/loop-grid'
 import type { MarketplaceLoopItem, MarketplaceLoopSummary } from '@/lib/api'
 import { TestWrapper } from '../../setup'
