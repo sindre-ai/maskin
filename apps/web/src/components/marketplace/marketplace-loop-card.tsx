@@ -35,39 +35,42 @@ export function MarketplaceLoopCard({
 	const isBundle = loop.item_types.length >= 2
 
 	return (
-		<article className="flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm">
+		<article className="relative flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm transition-colors hover:bg-muted/40">
 			<Link
 				to="/$workspaceId/marketplace/$loopId"
 				params={{ workspaceId, loopId: loop.id }}
-				className="flex flex-col gap-1 rounded-md -m-1 p-1 hover:bg-muted/40"
-			>
-				<div className="flex items-start justify-between gap-3">
-					<div className="min-w-0">
-						<h3 className="text-sm font-semibold text-foreground">{loop.name}</h3>
-						<p className="mt-1 text-xs text-muted-foreground line-clamp-2">{loop.description}</p>
-					</div>
-					{install ? (
-						locked ? (
-							<Badge
-								variant="secondary"
-								className="shrink-0 whitespace-nowrap text-[11px] font-medium"
-							>
-								🔒 Managed · v{install.installedVersion}
-							</Badge>
-						) : (
-							<Badge
-								variant="outline"
-								className="shrink-0 whitespace-nowrap text-[11px] font-medium text-foreground"
-							>
-								⑂ Forked from v{install.installedVersion}
-							</Badge>
-						)
-					) : null}
-				</div>
-			</Link>
+				className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+				aria-label={`Open ${loop.name}`}
+			/>
 
-			{/* Chips can contain interactive tooltip triggers, so they stay
-			    outside the clickable header Link (buttons can't nest in an anchor). */}
+			<div className="flex items-start justify-between gap-3">
+				<div className="min-w-0">
+					<h3 className="text-sm font-semibold text-foreground">{loop.name}</h3>
+					<p className="mt-1 text-xs text-muted-foreground line-clamp-2">{loop.description}</p>
+				</div>
+				{install ? (
+					locked ? (
+						<Badge
+							variant="secondary"
+							className="shrink-0 whitespace-nowrap text-[11px] font-medium"
+						>
+							🔒 Managed · v{install.installedVersion}
+						</Badge>
+					) : (
+						<Badge
+							variant="outline"
+							className="shrink-0 whitespace-nowrap text-[11px] font-medium text-foreground"
+						>
+							⑂ Forked from v{install.installedVersion}
+						</Badge>
+					)
+				) : null}
+			</div>
+
+			{/* This row is never itself positioned, so it paints below the overlay
+			    link and any empty space still opens the card. Only the chip buttons
+			    (given `relative`) paint above the link to catch their own clicks
+			    (buttons can't nest in an anchor). */}
 			{isBundle && items && items.length > 0 ? (
 				<CompositionChipRow items={items} />
 			) : (
@@ -188,7 +191,7 @@ function CompositionChipRow({ items }: { items: MarketplaceLoopItem[] }) {
 								<button
 									type="button"
 									aria-label={tip}
-									className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/40 py-0.5 pr-2 pl-0.5 text-[11px] font-medium text-muted-foreground cursor-help hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+									className="relative inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/40 py-0.5 pr-2 pl-0.5 text-[11px] font-medium text-muted-foreground cursor-help hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 								>
 									<CompositionGlyph chip={chip} />
 									<span className="truncate">{label}</span>

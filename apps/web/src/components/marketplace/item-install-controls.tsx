@@ -42,6 +42,9 @@ export function ItemInstallControls({
 	if (install) return null
 
 	return (
+		// This row is never itself positioned, so its empty space still opens
+		// the card. Each button gets `relative` to individually paint above
+		// the card's overlay link and catch its own click.
 		<div className="flex items-center justify-end gap-2">
 			{isCurrentlyInstalled ? (
 				<>
@@ -51,7 +54,7 @@ export function ItemInstallControls({
 					<Button
 						size="sm"
 						variant="ghost"
-						className="h-7 text-xs text-muted-foreground hover:text-destructive"
+						className="relative h-7 text-xs text-muted-foreground hover:text-destructive"
 						onClick={() => setRemoveOpen(true)}
 					>
 						Remove
@@ -75,7 +78,7 @@ export function ItemInstallControls({
 				<Button
 					size="sm"
 					variant="default"
-					className="h-7 text-xs"
+					className="relative h-7 text-xs"
 					disabled={installMutation.isPending}
 					onClick={() => installMutation.mutate(item.id)}
 				>

@@ -23,7 +23,9 @@ test.describe('Marketplace detail pages', () => {
 			const loopName = (await firstCard.locator('h3').first().textContent())?.trim()
 			expect(loopName).toBeTruthy()
 
-			await firstCard.locator('h3').first().click()
+			// The whole card is clickable (except the install controls), so clicking
+			// anywhere on the card body — not just the title — must navigate.
+			await firstCard.getByRole('link').click()
 
 			await expect(page).toHaveURL(/\/marketplace\/[^/]+\/?$/)
 			await expect(page.getByRole('heading', { name: loopName ?? '', level: 1 })).toBeVisible({
@@ -58,7 +60,7 @@ test.describe('Marketplace detail pages', () => {
 		const itemName = (await firstItemCard.locator('h3').first().textContent())?.trim()
 		expect(itemName).toBeTruthy()
 
-		await firstItemCard.locator('h3').first().click()
+		await firstItemCard.getByRole('link').click()
 
 		await expect(page).toHaveURL(/\/marketplace\/[^/]+\/[^/]+$/)
 		await expect(page.getByRole('heading', { name: itemName ?? '', level: 1 })).toBeVisible({
@@ -72,5 +74,49 @@ test.describe('Marketplace detail pages', () => {
 
 		await expect(page).toHaveURL(/\/marketplace\/[^/]+\/?$/)
 		await expect(page.getByText('What it brings')).toBeVisible({ timeout: 20000 })
+	})
+
+	test('clicking non-interactive card content still opens the detail page, but Install installs in place', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 1024, height: 768 })
+		await page.goto(`/${account.workspaceId}/marketplace`)
+
+		const agentsSection = page.getByRole('region', { name: 'Agents' })
+		await expect(agentsSection).toBeVisible({ timeout: 20000 })
+
+		const card = agentsSection
+			.locator('article')
+			.filter({ has: page.getByRole('button', { name: /^install$/i }) })
+			.first()
+		await expect(card).toBeVisible()
+		const itemName = (await card.locator('h3').first().textContent())?.trim()
+		expect(itemName).toBeTruthy()
+
+		// The type-chip text has no click handler of its own — clicking it must
+		// still fall through to the card's link, proving the whole card (not
+		// just the title) is clickable. Real mouse coordinates are used (rather
+		// than locator.click()) since the chip itself is pointer-events:none and
+		// would fail Playwright's "receives events" actionability check even
+		// though a real click there lands on the card's link underneath.
+		const chip = card.getByText(/^(Agent|Trigger|Skill|Integration)$/)
+		const chipBox = await chip.boundingBox()
+		if (!chipBox) throw new Error('missing chip bounding box')
+		await page.mouse.click(chipBox.x + chipBox.width / 2, chipBox.y + chipBox.height / 2)
+
+		await expect(page).toHaveURL(/\/marketplace\/[^/]+\/[^/]+$/)
+		await expect(page.getByRole('heading', { name: itemName ?? '', level: 1 })).toBeVisible({
+			timeout: 20000,
+		})
+
+		await page.goBack()
+		await expect(agentsSection).toBeVisible({ timeout: 20000 })
+
+		// The Install button is the one part of the card that must NOT
+		// navigate — it installs the item in place instead of opening it.
+		await card.getByRole('button', { name: /^install$/i }).click()
+		await expect(card.getByText('Installed')).toBeVisible()
+		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/marketplace$`))
 	})
 })

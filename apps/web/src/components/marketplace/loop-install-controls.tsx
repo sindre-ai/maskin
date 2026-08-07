@@ -21,20 +21,28 @@ export function LoopInstallControls({ workspaceId, loop, install }: LoopInstallC
 
 	return (
 		<>
+			{/* This row is never itself positioned, so its empty space still opens
+			    the card. Each button gets `relative` to individually paint above
+			    the card's overlay link and catch its own click. */}
 			<div className="flex items-center justify-end gap-2">
 				{!install ? (
 					<InstallButton workspaceId={workspaceId} loopId={loop.id} />
 				) : (
 					<>
 						{locked && (
-							<Button size="sm" variant="outline" onClick={() => setForkOpen(true)}>
+							<Button
+								size="sm"
+								variant="outline"
+								className="relative"
+								onClick={() => setForkOpen(true)}
+							>
 								Fork
 							</Button>
 						)}
 						<Button
 							size="sm"
 							variant="ghost"
-							className="text-muted-foreground hover:text-error"
+							className="relative text-muted-foreground hover:text-error"
 							onClick={() => setUninstallOpen(true)}
 						>
 							Remove

@@ -44,7 +44,7 @@ describe('ItemCard', () => {
 		render(<ItemCard workspaceId={workspaceId} item={item()} />, { wrapper: TestWrapper })
 		expect(screen.getByText('Relay')).toBeInTheDocument()
 		expect(screen.getByText('Handles handoffs.')).toBeInTheDocument()
-		const link = screen.getByText('Relay').closest('a')
+		const link = screen.getByRole('link', { name: /open relay/i })
 		expect(link).toHaveAttribute('href', '/$workspaceId/marketplace/$loopId/$itemId')
 	})
 

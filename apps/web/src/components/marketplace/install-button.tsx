@@ -21,6 +21,7 @@ export function InstallButton({
 	return (
 		<Button
 			size="sm"
+			className="relative"
 			disabled={disabled || isInstalling}
 			onClick={() => install.mutate({ loopId })}
 		>
