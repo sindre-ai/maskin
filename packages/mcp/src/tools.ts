@@ -68,15 +68,15 @@ export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
 	get_started: {
 		description:
-			'THE ONBOARDING TOOL FOR MASKIN. Call this whenever a user asks to set up, configure, initialize, or onboard a Maskin workspace. Lists available marketplace packages and installs one. Flow: (1) call with no args (or just workspace_id) to get a PREVIEW of available packages. (2) Ask the user which package they want and what to name the workspace. (3) Call again with { package_id, confirm: true, workspace_name? } to install.',
+			'THE ONBOARDING TOOL FOR MASKIN. Call this whenever a user asks to set up, configure, initialize, or onboard a Maskin workspace. Lists available marketplace loops and installs one. Flow: (1) call with no args (or just workspace_id) to get a PREVIEW of available loops. (2) Ask the user which loop they want and what to name the workspace. (3) Call again with { loop_id, confirm: true, workspace_name? } to install.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			package_id: z
+			loop_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					'The catalog package ID to install. Get this from the preview list returned when called without confirm.',
+					'The marketplace loop ID to install. Get this from the preview list returned when called without confirm.',
 				),
 			workspace_name: z
 				.string()
@@ -88,7 +88,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Set true to install the chosen package. Without this, the tool returns the list of available packages.',
+					'Set true to install the chosen loop. Without this, the tool returns the list of available loops.',
 				),
 		}),
 	},

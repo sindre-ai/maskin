@@ -103,7 +103,7 @@ describe('WorkspaceSwitcher', () => {
 		client.setQueryData(queryKeys.subscriptions.unread('ws-a'), {
 			items: [{ entity_id: 'a' }],
 		})
-		client.setQueryData(queryKeys.installedPackages.all('ws-a'), [{ id: 'pkg-1' }])
+		client.setQueryData(queryKeys.installedLoops.all('ws-a'), [{ id: 'loop-1' }])
 		client.setQueryData(queryKeys.events.history('ws-a'), [{ id: 'event-1' }])
 
 		const user = userEvent.setup()
@@ -119,7 +119,7 @@ describe('WorkspaceSwitcher', () => {
 		expect(client.getQueryData(queryKeys.objects.all('ws-a'))).toBeUndefined()
 		expect(client.getQueryData(queryKeys.sessions.all('ws-a'))).toBeUndefined()
 		expect(client.getQueryData(queryKeys.subscriptions.unread('ws-a'))).toBeUndefined()
-		expect(client.getQueryData(queryKeys.installedPackages.all('ws-a'))).toBeUndefined()
+		expect(client.getQueryData(queryKeys.installedLoops.all('ws-a'))).toBeUndefined()
 		expect(client.getQueryData(queryKeys.events.history('ws-a'))).toBeUndefined()
 	})
 

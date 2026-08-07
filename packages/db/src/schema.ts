@@ -37,9 +37,9 @@ export const actors = pgTable('actors', {
 	isSystem: boolean('is_system').notNull().default(false),
 	agentState: text('agent_state').notNull().default('idle').$type<AgentState>(),
 	agentStateUpdatedAt: timestamp('agent_state_updated_at', { withTimezone: true }),
-	// Per-row marker keys for managed-package installs. Nullable everywhere;
-	// install-provisioned rows carry { installed_package_id, source_item_id }
-	// so the T5 version-push cron can find them. See catalogPackages comment.
+	// Per-row marker keys for managed-loop installs. Nullable everywhere;
+	// install-provisioned rows carry { installed_loop_id, source_item_id }
+	// so the T5 version-push cron can find them. See marketplaceLoops comment.
 	metadata: jsonb('metadata'),
 	// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
 	createdBy: uuid('created_by').references((): any => actors.id),
@@ -732,27 +732,33 @@ export const workspaceOnboardingPrompts = pgTable(
 export type WorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferSelect
 export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferInsert
 
-// ── Catalog Packages ──────────────────────────────────────────────────────────
+// ── Marketplace Loops ──────────────────────────────────────────────────────────
 //
 // Vetted, installable bundles of actors, triggers, skills,
-// and integrations. Any workspace can install a package and Maskin pushes
-// version updates to locked installs via the cron in T5. A package is a single
-// row here; the elements it ships with live in `catalog_package_items` as
-// frozen snapshots, one per published version.
+// and integrations. Any workspace can install a loop and Maskin pushes
+// version updates to locked installs via the cron in T5. A marketplace loop is
+// a single row here; the elements it ships with live in `marketplace_loop_items`
+// as frozen snapshots, one per published version.
+//
+// Not to be confused with the `objects` table's `type = 'loop'` rows (the
+// loops-first-class bet's "persistent multi-agent process" concept) — a
+// marketplace loop is the installable *template*; installing one creates a
+// `type = 'loop'` object that is the *running instance*, linked back via
+// `installedLoops.objectId` and `objects.metadata.installed_from_marketplace_loop_id`.
 //
 // Re-provisioning convention — every actor/trigger/skill/integration row
-// created by an install must carry `metadata.installed_package_id` (the
-// `installed_packages.id` row) and `metadata.source_item_id` (the
-// `catalog_package_items.source_item_id` it was provisioned from). The
+// created by an install must carry `metadata.installed_loop_id` (the
+// `installed_loops.id` row) and `metadata.source_item_id` (the
+// `marketplace_loop_items.source_item_id` it was provisioned from). The
 // version-push cron uses both keys to find what to update and to resolve
-// intra-package wiring (e.g. a trigger whose `target_actor_id` points at an
-// agent in the same package) against the snapshot graph instead of the live
+// intra-loop wiring (e.g. a trigger whose `target_actor_id` points at an
+// agent in the same loop) against the snapshot graph instead of the live
 // publisher workspace. Carried as a nullable `metadata jsonb` column on each
 // of the four element tables (added by 0035_install_metadata.sql) so non-
 // install rows pay nothing and install rows are findable by a partial
-// expression index on `metadata->>'installed_package_id'`.
+// expression index on `metadata->>'installed_loop_id'`.
 
-export const catalogPackages = pgTable('catalog_packages', {
+export const marketplaceLoops = pgTable('marketplace_loops', {
 	id: uuid('id').defaultRandom().primaryKey(),
 	name: text('name').notNull(),
 	slug: text('slug').notNull().unique(),
@@ -763,62 +769,69 @@ export const catalogPackages = pgTable('catalog_packages', {
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
-export type CatalogPackage = typeof catalogPackages.$inferSelect
-export type NewCatalogPackage = typeof catalogPackages.$inferInsert
+export type MarketplaceLoop = typeof marketplaceLoops.$inferSelect
+export type NewMarketplaceLoop = typeof marketplaceLoops.$inferInsert
 
-// ── Catalog Package Items ─────────────────────────────────────────────────────
+// ── Marketplace Loop Items ─────────────────────────────────────────────────────
 //
-// Frozen snapshots of each element that ships with a published package.
-// `source_item_id` is the original actor/trigger/skill/integration id in the
-// publishing workspace — kept so intra-package wiring inside `item_snapshot`
-// (e.g. a `target_actor_id` referencing another item in the same package) can
+// Frozen snapshots of each element that ships with a published marketplace
+// loop. `source_item_id` is the original actor/trigger/skill/integration id in
+// the publishing workspace — kept so intra-loop wiring inside `item_snapshot`
+// (e.g. a `target_actor_id` referencing another item in the same loop) can
 // be resolved against this set of rows during install and re-provisioning.
 
-export const catalogPackageItems = pgTable(
-	'catalog_package_items',
+export const marketplaceLoopItems = pgTable(
+	'marketplace_loop_items',
 	{
 		id: uuid('id').defaultRandom().primaryKey(),
-		packageId: uuid('package_id')
+		loopId: uuid('loop_id')
 			.notNull()
-			.references(() => catalogPackages.id, { onDelete: 'cascade' }),
+			.references(() => marketplaceLoops.id, { onDelete: 'cascade' }),
 		itemType: text('item_type').notNull(),
 		sourceItemId: uuid('source_item_id').notNull(),
 		itemSnapshot: jsonb('item_snapshot').notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
-		index('catalog_package_items_package_idx').on(t.packageId),
-		index('catalog_package_items_package_source_idx').on(t.packageId, t.sourceItemId),
+		index('marketplace_loop_items_loop_idx').on(t.loopId),
+		index('marketplace_loop_items_loop_source_idx').on(t.loopId, t.sourceItemId),
 		check(
-			'catalog_package_items_item_type_check',
+			'marketplace_loop_items_item_type_check',
 			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration')`,
 		),
 	],
 )
 
-export type CatalogPackageItem = typeof catalogPackageItems.$inferSelect
-export type NewCatalogPackageItem = typeof catalogPackageItems.$inferInsert
+export type MarketplaceLoopItem = typeof marketplaceLoopItems.$inferSelect
+export type NewMarketplaceLoopItem = typeof marketplaceLoopItems.$inferInsert
 
-// ── Installed Packages ────────────────────────────────────────────────────────
+// ── Installed Loops ────────────────────────────────────────────────────────────
 //
-// One row per package installed into a workspace. `is_locked` defaults to true
-// — Maskin owns the install and pushes version updates via the cron in T5
-// until the workspace explicitly forks. Forking sets `forked_at` and flips
-// `is_locked` to false; the row is preserved so install lineage survives the
-// fork. The `source_locked_idx` keys the cron's "all locked installs of this
-// package" lookup; the `(workspace_id, source_package_id)` unique key prevents
-// double-installs of the same catalog package into one workspace.
+// One row per marketplace loop installed into a workspace. `is_locked`
+// defaults to true — Maskin owns the install and pushes version updates via
+// the cron in T5 until the workspace explicitly forks. Forking sets
+// `forked_at` and flips `is_locked` to false; the row is preserved so install
+// lineage survives the fork. The `source_locked_idx` keys the cron's "all
+// locked installs of this loop" lookup; the `(workspace_id, source_loop_id)`
+// unique key prevents double-installs of the same marketplace loop into one
+// workspace.
+//
+// `objectId` points at the `objects` row (`type = 'loop'`) created at install
+// time to represent this install as a running loops-first-class Loop — see
+// the comment above `marketplaceLoops`. Nullable because it's only set inside
+// the install transaction after the object insert returns its id.
 
-export const installedPackages = pgTable(
-	'installed_packages',
+export const installedLoops = pgTable(
+	'installed_loops',
 	{
 		id: uuid('id').defaultRandom().primaryKey(),
 		workspaceId: uuid('workspace_id')
 			.notNull()
 			.references(() => workspaces.id, { onDelete: 'cascade' }),
-		sourcePackageId: uuid('source_package_id')
+		sourceLoopId: uuid('source_loop_id')
 			.notNull()
-			.references(() => catalogPackages.id),
+			.references(() => marketplaceLoops.id),
+		objectId: uuid('object_id').references(() => objects.id),
 		installedVersion: text('installed_version').notNull(),
 		isLocked: boolean('is_locked').notNull().default(true),
 		forkedAt: timestamp('forked_at', { withTimezone: true }),
@@ -826,34 +839,34 @@ export const installedPackages = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
-		unique('installed_packages_ws_source_uniq').on(t.workspaceId, t.sourcePackageId),
-		index('installed_packages_source_locked_idx').on(t.sourcePackageId, t.isLocked),
+		unique('installed_loops_ws_source_uniq').on(t.workspaceId, t.sourceLoopId),
+		index('installed_loops_source_locked_idx').on(t.sourceLoopId, t.isLocked),
 	],
 )
 
-export type InstalledPackage = typeof installedPackages.$inferSelect
-export type NewInstalledPackage = typeof installedPackages.$inferInsert
+export type InstalledLoop = typeof installedLoops.$inferSelect
+export type NewInstalledLoop = typeof installedLoops.$inferInsert
 
 // ── Loop Active Days ──────────────────────────────────────────────────────────
 //
-// One row per (installed_package_id, UTC day) that has emitted a
+// One row per (installed_loop_id, UTC day) that has emitted a
 // `loop_active_day` PostHog event. The PRIMARY KEY is the idempotency
 // guarantee: the session-completion path runs INSERT ... ON CONFLICT DO
 // NOTHING and only fires the analytics event when the insert actually
 // added a row. The ON DELETE CASCADE drops the rows automatically when an
 // install is deleted, so an install re-created later for the same
-// workspace + package can emit `loop_active_day` again from day one.
+// workspace + loop can emit `loop_active_day` again from day one.
 
 export const loopActiveDays = pgTable(
 	'loop_active_days',
 	{
-		installedPackageId: uuid('installed_package_id')
+		installedLoopId: uuid('installed_loop_id')
 			.notNull()
-			.references(() => installedPackages.id, { onDelete: 'cascade' }),
+			.references(() => installedLoops.id, { onDelete: 'cascade' }),
 		utcDay: text('utc_day').notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
-	(t) => [primaryKey({ columns: [t.installedPackageId, t.utcDay] })],
+	(t) => [primaryKey({ columns: [t.installedLoopId, t.utcDay] })],
 )
 
 export type LoopActiveDay = typeof loopActiveDays.$inferSelect

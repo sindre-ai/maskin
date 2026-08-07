@@ -57,7 +57,7 @@ describe('work extension — loop registration (T2 of bet/loops-first-class, new
 			'entry_condition',
 			'close_condition',
 			'human_decision_points',
-			'installed_from_package_id',
+			'installed_from_marketplace_loop_id',
 		])
 		for (const field of loop?.defaultFields ?? []) {
 			expect(field.required ?? false).toBe(false)

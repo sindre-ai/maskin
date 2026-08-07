@@ -76,7 +76,7 @@ export const actorResponseSchema = z.object({
 	agentStateUpdatedAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
-	installedPackageId: z.string().uuid().nullable().optional(),
+	installedLoopId: z.string().uuid().nullable().optional(),
 	skills: z.array(actorSkillSchema).optional(),
 })
 

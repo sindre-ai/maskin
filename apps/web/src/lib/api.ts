@@ -521,57 +521,60 @@ export const api = {
 			request<{ success: boolean }>('/claude-oauth/swap', { method: 'POST', workspaceId }),
 	},
 
-	catalogPackages: {
+	marketplaceLoops: {
 		list: (params?: { type?: string; use_case?: string; q?: string }) => {
 			const qs = params
 				? `?${new URLSearchParams(
 						Object.entries(params).filter(([, v]) => v !== undefined) as [string, string][],
 					)}`
 				: ''
-			return request<CatalogPackagesListResponse>(`/catalog/packages${qs}`)
+			return request<MarketplaceLoopsListResponse>(`/marketplace/loops${qs}`)
 		},
-		get: (id: string) => request<CatalogPackageDetailResponse>(`/catalog/packages/${id}`),
+		get: (id: string) => request<MarketplaceLoopDetailResponse>(`/marketplace/loops/${id}`),
 	},
 
-	catalogItems: {
+	marketplaceItems: {
 		install: (itemId: string, workspaceId: string) =>
-			request<CatalogItemInstallResponse>(`/catalog/items/${encodeURIComponent(itemId)}/install`, {
-				method: 'POST',
-				body: { workspaceId },
-				workspaceId,
-			}),
+			request<MarketplaceItemInstallResponse>(
+				`/marketplace/items/${encodeURIComponent(itemId)}/install`,
+				{
+					method: 'POST',
+					body: { workspaceId },
+					workspaceId,
+				},
+			),
 		installed: (workspaceId: string) =>
-			request<CatalogItemsInstalledResponse>(
-				`/catalog/items/installed?workspaceId=${encodeURIComponent(workspaceId)}`,
+			request<MarketplaceItemsInstalledResponse>(
+				`/marketplace/items/installed?workspaceId=${encodeURIComponent(workspaceId)}`,
 				{ workspaceId },
 			),
 		uninstall: (itemId: string, workspaceId: string, keepProvisionedItems: boolean) =>
-			request<{ deleted: boolean }>(`/catalog/items/${encodeURIComponent(itemId)}/uninstall`, {
+			request<{ deleted: boolean }>(`/marketplace/items/${encodeURIComponent(itemId)}/uninstall`, {
 				method: 'DELETE',
 				body: { workspaceId, keepProvisionedItems },
 				workspaceId,
 			}),
 	},
 
-	installedPackages: {
+	installedLoops: {
 		list: (workspaceId: string) =>
-			request<InstalledPackagesListResponse>(
-				`/installed-packages?workspaceId=${encodeURIComponent(workspaceId)}`,
+			request<InstalledLoopsListResponse>(
+				`/installed-loops?workspaceId=${encodeURIComponent(workspaceId)}`,
 				{ workspaceId },
 			),
-		install: (workspaceId: string, packageId: string) =>
-			request<InstalledPackageInstallResponse>('/installed-packages', {
+		install: (workspaceId: string, loopId: string) =>
+			request<InstalledLoopInstallResponse>('/installed-loops', {
 				method: 'POST',
-				body: { packageId, workspaceId },
+				body: { loopId, workspaceId },
 				workspaceId,
 			}),
-		fork: (workspaceId: string, installedPackageId: string) =>
-			request<InstalledPackageForkResponse>(`/installed-packages/${installedPackageId}/fork`, {
+		fork: (workspaceId: string, installedLoopId: string) =>
+			request<InstalledLoopForkResponse>(`/installed-loops/${installedLoopId}/fork`, {
 				method: 'POST',
 				workspaceId,
 			}),
-		uninstall: (workspaceId: string, installedPackageId: string, keepProvisionedItems: boolean) =>
-			request<{ deleted: boolean }>(`/installed-packages/${installedPackageId}`, {
+		uninstall: (workspaceId: string, installedLoopId: string, keepProvisionedItems: boolean) =>
+			request<{ deleted: boolean }>(`/installed-loops/${installedLoopId}`, {
 				method: 'DELETE',
 				body: { keepProvisionedItems },
 				workspaceId,
@@ -1374,66 +1377,67 @@ export interface ImportMappingInput {
 	csvOptions?: CsvOptions
 }
 
-export type CatalogItemType = 'actor' | 'trigger' | 'skill' | 'integration'
+export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration'
 
-export interface CatalogPackageSummary {
+export interface MarketplaceLoopSummary {
 	id: string
 	name: string
 	slug: string
 	description: string
 	version: string
 	use_case: string | null
-	item_types: CatalogItemType[]
+	item_types: MarketplaceItemType[]
 	created_at: string | null
 	updated_at: string | null
 }
 
-export interface CatalogPackageItem {
+export interface MarketplaceLoopItem {
 	id: string
-	package_id: string
-	item_type: CatalogItemType
+	loop_id: string
+	item_type: MarketplaceItemType
 	source_item_id: string
 	item_snapshot: Record<string, unknown>
 	created_at: string | null
 }
 
-export interface CatalogPackageCounts {
+export interface MarketplaceLoopCounts {
 	total: number
-	by_type: Record<CatalogItemType, number>
+	by_type: Record<MarketplaceItemType, number>
 	by_use_case: Record<string, number>
 }
 
-export interface CatalogPackagesListResponse {
-	packages: CatalogPackageSummary[]
-	counts: CatalogPackageCounts
+export interface MarketplaceLoopsListResponse {
+	loops: MarketplaceLoopSummary[]
+	counts: MarketplaceLoopCounts
 }
 
-export interface CatalogPackageDetailResponse {
-	package: CatalogPackageSummary
-	items: CatalogPackageItem[]
+export interface MarketplaceLoopDetailResponse {
+	loop: MarketplaceLoopSummary
+	items: MarketplaceLoopItem[]
 }
 
-export interface CatalogItemInstallResponse {
+export interface MarketplaceItemInstallResponse {
 	id: string
-	item_type: CatalogItemType
+	item_type: MarketplaceItemType
 	name: string
 }
 
-export interface CatalogItemInstalledEntry {
-	catalog_item_id: string
+export interface MarketplaceItemInstalledEntry {
+	marketplace_item_id: string
 	entity_id: string
 	entity_type: 'actor' | 'trigger' | 'skill' | 'integration'
 }
 
-export interface CatalogItemsInstalledResponse {
-	items: CatalogItemInstalledEntry[]
+export interface MarketplaceItemsInstalledResponse {
+	items: MarketplaceItemInstalledEntry[]
 }
 
-export interface InstalledPackageRow {
+export interface InstalledLoopRow {
 	id: string
 	workspaceId: string
-	sourcePackageId: string
-	packageName: string
+	sourceLoopId: string
+	objectId: string | null
+	loopName: string
 	installedVersion: string
 	isLocked: boolean
 	forkedAt: string | null
@@ -1443,14 +1447,15 @@ export interface InstalledPackageRow {
 	hasUpdate: boolean
 }
 
-export interface InstalledPackagesListResponse {
-	installs: InstalledPackageRow[]
+export interface InstalledLoopsListResponse {
+	installs: InstalledLoopRow[]
 }
 
-interface InstalledPackageInstallResponse {
+interface InstalledLoopInstallResponse {
 	id: string
 	workspaceId: string
-	sourcePackageId: string
+	sourceLoopId: string
+	objectId: string | null
 	installedVersion: string
 	isLocked: boolean
 	forkedAt: string | null
@@ -1459,10 +1464,11 @@ interface InstalledPackageInstallResponse {
 	provisioned: { actors: number; triggers: number; skills: number; integrations: number }
 }
 
-interface InstalledPackageForkResponse {
+interface InstalledLoopForkResponse {
 	id: string
 	workspaceId: string
-	sourcePackageId: string
+	sourceLoopId: string
+	objectId: string | null
 	installedVersion: string
 	isLocked: boolean
 	forkedAt: string | null

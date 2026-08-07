@@ -36,11 +36,7 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
-import {
-	claimLoopActiveDay,
-	trackLoopActiveDay,
-	utcDayString,
-} from '../lib/analytics/catalog-events'
+import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import {
 	detectChiefOfStaffDomainOutput,
 	loadCoSSessionContext,
@@ -2322,8 +2318,8 @@ export class SessionManager extends EventEmitter {
 			)
 		}
 
-		// Ship-metric emit. If this session belongs to a managed-catalog actor
-		// (carries `metadata.installed_package_id`), claim the per-(workspace,
+		// Ship-metric emit. If this session belongs to a managed-marketplace actor
+		// (carries `metadata.installed_loop_id`), claim the per-(workspace,
 		// install, UTC day) idempotency slot and emit `loop_active_day` to
 		// PostHog when the claim is won. Both the lookup and the emit are
 		// best-effort — analytics failures must not affect the completion
@@ -2398,8 +2394,8 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * If the completing session's actor is part of a managed-catalog install
-	 * (carries `metadata.installed_package_id`), claim today's idempotency
+	 * If the completing session's actor is part of a managed-marketplace install
+	 * (carries `metadata.installed_loop_id`), claim today's idempotency
 	 * slot and emit `loop_active_day`. Returns silently when the actor isn't
 	 * a managed install or when today has already been claimed for that
 	 * install — both are normal no-ops.
@@ -2412,11 +2408,11 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 
 		const meta = (actor?.metadata as Record<string, unknown> | null) ?? null
-		const installedPackageId = meta?.installed_package_id
-		if (typeof installedPackageId !== 'string' || installedPackageId.length === 0) return
+		const installedLoopId = meta?.installed_loop_id
+		if (typeof installedLoopId !== 'string' || installedLoopId.length === 0) return
 
 		const utcDay = utcDayString()
-		const claim = await claimLoopActiveDay(this.db, installedPackageId, utcDay)
+		const claim = await claimLoopActiveDay(this.db, installedLoopId, utcDay)
 		if (!claim) return
 
 		// Guard against a misaligned actor metadata (workspace_id mismatch is
@@ -2428,20 +2424,20 @@ export class SessionManager extends EventEmitter {
 			logger.warn('loop_active_day workspace mismatch', {
 				actorWorkspace: workspaceId,
 				installWorkspace: claim.workspaceId,
-				installedPackageId,
+				installedLoopId,
 			})
 		}
 
 		await trackLoopActiveDay({
-			installedPackageId: claim.installedPackageId,
-			packageId: claim.packageId,
-			packageSlug: claim.packageSlug,
+			installedLoopId: claim.installedLoopId,
+			loopId: claim.loopId,
+			loopSlug: claim.loopSlug,
 			workspaceId: claim.workspaceId,
 			utcDay,
 		})
 
 		logger.info('loop_active_day emitted', {
-			installedPackageId: claim.installedPackageId,
+			installedLoopId: claim.installedLoopId,
 			workspaceId: claim.workspaceId,
 			utcDay,
 		})

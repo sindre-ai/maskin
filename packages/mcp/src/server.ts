@@ -5268,9 +5268,9 @@ export function createMcpServer(config: McpConfig) {
 				)
 			}
 
-			// PREVIEW: list marketplace packages so the user can pick one.
-			if (!args.package_id || !args.confirm) {
-				let packages: Array<{
+			// PREVIEW: list marketplace loops so the user can pick one.
+			if (!args.loop_id || !args.confirm) {
+				let loops: Array<{
 					id: string
 					name: string
 					description: string
@@ -5278,10 +5278,10 @@ export function createMcpServer(config: McpConfig) {
 					item_types: string[]
 				}> = []
 				try {
-					const result = (await apiCall(config, 'GET', '/api/catalog/packages', undefined, {
+					const result = (await apiCall(config, 'GET', '/api/marketplace/loops', undefined, {
 						skipWorkspace: true,
 					})) as {
-						packages: Array<{
+						loops: Array<{
 							id: string
 							name: string
 							description: string
@@ -5289,29 +5289,29 @@ export function createMcpServer(config: McpConfig) {
 							item_types: string[]
 						}>
 					}
-					packages = result.packages ?? []
+					loops = result.loops ?? []
 				} catch (err) {
-					return textResponse(`❌ Failed to fetch marketplace packages: ${String(err)}`)
+					return textResponse(`❌ Failed to fetch marketplace loops: ${String(err)}`)
 				}
 
-				if (packages.length === 0) {
+				if (loops.length === 0) {
 					return textResponse(
-						`👋 Welcome to Maskin!\n\nThe marketplace has no packages yet. Once packages are published you'll be able to install them here.\n\nIn the meantime, use the marketplace UI in the app to browse and install packages as they become available.`,
+						`👋 Welcome to Maskin!\n\nThe marketplace has no loops yet. Once loops are published you'll be able to install them here.\n\nIn the meantime, use the marketplace UI in the app to browse and install loops as they become available.`,
 					)
 				}
 
-				const packageLines = packages.map((p) => {
-					const types = p.item_types.length > 0 ? ` [${p.item_types.join(', ')}]` : ''
-					const useCase = p.use_case ? ` · ${p.use_case}` : ''
-					return `  • ${p.name}${useCase}${types}\n    ${p.description}\n    id: ${p.id}`
+				const loopLines = loops.map((l) => {
+					const types = l.item_types.length > 0 ? ` [${l.item_types.join(', ')}]` : ''
+					const useCase = l.use_case ? ` · ${l.use_case}` : ''
+					return `  • ${l.name}${useCase}${types}\n    ${l.description}\n    id: ${l.id}`
 				})
 
 				return textResponse(
-					`👋 Welcome to Maskin! Let's set up "${workspace.name}".\n\nAvailable packages:\n\n${packageLines.join('\n\n')}\n\nAsk the user:\n  1. Which package would they like to install?\n  2. What should the workspace be named? (currently "${workspace.name}")\n\nThen call get_started again with:\n  package_id: "<id from above>"\n  confirm: true\n  workspace_name: "<name if they want to rename>"`,
+					`👋 Welcome to Maskin! Let's set up "${workspace.name}".\n\nAvailable loops:\n\n${loopLines.join('\n\n')}\n\nAsk the user:\n  1. Which loop would they like to install?\n  2. What should the workspace be named? (currently "${workspace.name}")\n\nThen call get_started again with:\n  loop_id: "<id from above>"\n  confirm: true\n  workspace_name: "<name if they want to rename>"`,
 				)
 			}
 
-			// INSTALL: rename workspace (if requested), then install the package.
+			// INSTALL: rename workspace (if requested), then install the loop.
 			if (args.workspace_name && args.workspace_name.trim() !== workspace.name) {
 				try {
 					await apiCall(
@@ -5330,14 +5330,19 @@ export function createMcpServer(config: McpConfig) {
 			}
 
 			let installSummary = ''
+			let loopObjectId: string | undefined
 			try {
 				const result = (await apiCall(
 					config,
 					'POST',
-					'/api/installed-packages',
-					{ packageId: args.package_id, workspaceId: workspace.id },
+					'/api/installed-loops',
+					{ loopId: args.loop_id, workspaceId: workspace.id },
 					{ workspaceId: workspace.id },
-				)) as { provisioned?: { actors: number; triggers: number; skills: number } }
+				)) as {
+					objectId?: string | null
+					provisioned?: { actors: number; triggers: number; skills: number }
+				}
+				loopObjectId = result.objectId ?? undefined
 				const p = result.provisioned
 				if (p) {
 					const parts = [
@@ -5345,11 +5350,10 @@ export function createMcpServer(config: McpConfig) {
 						p.triggers > 0 ? `${p.triggers} trigger${p.triggers === 1 ? '' : 's'}` : '',
 						p.skills > 0 ? `${p.skills} skill${p.skills === 1 ? '' : 's'}` : '',
 					].filter(Boolean)
-					installSummary =
-						parts.length > 0 ? `Installed: ${parts.join(', ')}.` : 'Package installed.'
+					installSummary = parts.length > 0 ? `Installed: ${parts.join(', ')}.` : 'Loop installed.'
 				}
 			} catch (err) {
-				return textResponse(`❌ Failed to install package: ${String(err)}`)
+				return textResponse(`❌ Failed to install loop: ${String(err)}`)
 			}
 
 			// Build magic login link (only safe on localhost).
@@ -5411,9 +5415,13 @@ INSTRUCTIONS FOR THE "Connect your Claude subscription" SECTION — render this 
 
 Then on a NEW line, ask: "Let me know once that's done and I'll kick things off." Do NOT proceed to next steps until the user confirms credentials are imported (or explicitly says to skip). If they skip, flag that agent sessions will fail until credentials are added.`
 
-			return textResponse(
-				`✅ Package installed in workspace "${workspace.name}". ${installSummary}
+			const loopLine = loopObjectId
+				? `\n🔁 It's now running as a Loop: ${frontendUrl}/${workspace.id}/loops/${loopObjectId}${magicSuffix}`
+				: ''
 
+			return textResponse(
+				`✅ Loop installed in workspace "${workspace.name}". ${installSummary}
+${loopLine}
 🌐 Open the workspace: ${workspaceUrl}
 ${claudeCredsBlock}`,
 			)

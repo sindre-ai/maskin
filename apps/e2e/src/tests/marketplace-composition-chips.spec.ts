@@ -2,8 +2,8 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // Covers T1 of the Marketplace polish bet: the composition chip row on
-// multi-item bundle package cards (packages with ≥2 component types).
-// The dev bootstrap seeds four bundle packages (Discover & Research, Build &
+// multi-item bundle loop cards (loops with ≥2 component types).
+// The dev bootstrap seeds four bundle loops (Discover & Research, Build &
 // Ship, Strategy & Growth, Team Ops), each carrying actor + trigger + skill
 // items — so the marketplace loads a real 3+ bundle-card grid without extra
 // setup.
@@ -19,12 +19,12 @@ test.describe('Marketplace composition chip row', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/marketplace`)
 
-			// Wait for the Packages section (bundle-card container) to render.
-			const packagesSection = page.getByRole('region', { name: 'Packages' })
-			await expect(packagesSection).toBeVisible({ timeout: 20000 })
+			// Wait for the Loops section (bundle-card container) to render.
+			const loopsSection = page.getByRole('region', { name: 'Loops' })
+			await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 			// AC: every bundle card shows the composition chip row.
-			const chipRows = packagesSection.locator(CHIP_ROW)
+			const chipRows = loopsSection.locator(CHIP_ROW)
 			const rowCount = await chipRows.count()
 			expect(rowCount).toBeGreaterThanOrEqual(1)
 			for (let i = 0; i < rowCount; i++) {
@@ -43,7 +43,7 @@ test.describe('Marketplace composition chip row', () => {
 
 			// AC: at least one trigger count chip renders on a bundle card — the
 			// seeded bundles all include multiple triggers.
-			await expect(packagesSection.getByText(/\d+ triggers?/).first()).toBeVisible()
+			await expect(loopsSection.getByText(/\d+ triggers?/).first()).toBeVisible()
 		})
 	}
 
@@ -54,7 +54,7 @@ test.describe('Marketplace composition chip row', () => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		// Agents section holds individual-item cards from multi-type packages
+		// Agents section holds individual-item cards from multi-type loops
 		// (item cards) — those never render the chip row.
 		const agents = page.getByRole('region', { name: 'Agents' })
 		await expect(agents).toBeVisible({ timeout: 20000 })
@@ -68,10 +68,10 @@ test.describe('Marketplace composition chip row', () => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		const packagesSection = page.getByRole('region', { name: 'Packages' })
-		await expect(packagesSection).toBeVisible({ timeout: 20000 })
+		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
-		const firstChip = packagesSection.locator(CHIP_ROW).first().locator('> *').first()
+		const firstChip = loopsSection.locator(CHIP_ROW).first().locator('> *').first()
 		await firstChip.scrollIntoViewIfNeeded()
 		await firstChip.hover()
 
