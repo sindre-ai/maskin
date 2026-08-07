@@ -87,6 +87,12 @@ function MarketplacePage() {
 		return c
 	}, [allItems])
 
+	// Total catalog size shown in the header — must match the "All" chip's count.
+	const allCount = useMemo(
+		() => countForFilter('all', counts, itemCountsByType),
+		[counts, itemCountsByType],
+	)
+
 	// Hide chips with a known zero count — "All" always stays since it's the reset action.
 	const filterItems = useMemo(() => {
 		const dynamicItems = [...TYPE_ITEMS, ...useCaseItems].filter((item) => {
@@ -156,7 +162,7 @@ function MarketplacePage() {
 		<div className="flex flex-col h-full min-h-0">
 			<PageHeader
 				stickyIdentity={
-					<MarketplaceHeaderIdentity count={data && loops.length > 0 ? loops.length : undefined} />
+					<MarketplaceHeaderIdentity count={data && loops.length > 0 ? allCount : undefined} />
 				}
 			/>
 
